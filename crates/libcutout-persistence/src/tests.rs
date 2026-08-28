@@ -296,6 +296,87 @@ fn database_persists_migrated_mobile_state() {
 }
 
 #[test]
+fn ride_map_metadata_normalizes_and_bounds_text() {
+    let _guard = test_guard();
+    let path = std::env::temp_dir().join(format!(
+        "libcutout-persistence-map-metadata-validation-{}.sqlite",
+        uuid::Uuid::new_v4()
+    ));
+    let database = RideDatabase::open(&path).unwrap();
+    let ride = database.create_ride(RideSource::Live, 1).unwrap();
+
+    database
+        .update_ride_map_metadata(
+            ride,
+            Some("  candidate  "),
+            Some(" associated "),
+            None,
+            None,
+        )
+        .unwrap();
+    database.transition(ride, RideEvent::Start).unwrap();
+    let ride_record = database.find_ride(ride).unwrap().expect("recording ride");
+    assert_eq!(ride_record.candidate_vehicle(), Some("candidate"));
+    assert_eq!(ride_record.associated_vehicle(), Some("associated"));
+
+    let too_long = "x".repeat(513);
+    let error = database
+        .update_ride_map_metadata(ride, Some(&too_long), None, None, None)
+        .unwrap_err();
+    assert!(matches!(
+        error,
+        StorageError::InvalidStoredValue {
+            field: "candidate vehicle",
+            ..
+        }
+    ));
+    database.shutdown().unwrap();
+    let _ = std::fs::remove_file(path);
+}
+
+#[test]
+fn device_names_normalize_lookup_and_bound_text() {
+    let _guard = test_guard();
+    let path = std::env::temp_dir().join(format!(
+        "libcutout-persistence-device-name-validation-{}.sqlite",
+        uuid::Uuid::new_v4()
+    ));
+    let database = RideDatabase::open(&path).unwrap();
+
+    database
+        .save_device_name("  device-a  ", "  NF2557  ", 1)
+        .unwrap();
+    assert_eq!(
+        database.device_name(" device-a ").unwrap().as_deref(),
+        Some("NF2557")
+    );
+
+    let too_long = "x".repeat(513);
+    let error = database
+        .save_device_name("device-a", &too_long, 2)
+        .unwrap_err();
+    assert!(matches!(
+        error,
+        StorageError::InvalidStoredValue {
+            field: "display name",
+            ..
+        }
+    ));
+    let error = database
+        .save_device_name(&too_long, "NF2557", 3)
+        .unwrap_err();
+    assert!(matches!(
+        error,
+        StorageError::InvalidStoredValue {
+            field: "platform identifier",
+            ..
+        }
+    ));
+    database.shutdown().unwrap();
+    let _ = std::fs::remove_file(path);
+}
+
+#[test]
 fn database_preflights_confirms_and_deduplicates_managed_pevcap_artifacts() {
     let _guard = test_guard();
     let database_path = std::env::temp_dir().join(format!(
