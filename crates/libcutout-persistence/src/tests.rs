@@ -1583,6 +1583,80 @@ fn pevcap_confirmation_rejects_a_source_changed_after_preflight() {
 }
 
 #[test]
+fn pevcap_confirmation_reconciles_a_committed_finish_response_loss() {
+    let _guard = test_guard();
+    let database_path = std::env::temp_dir().join(format!(
+        "libcutout-persistence-pevcap-finish-response-loss-db-{}.sqlite",
+        uuid::Uuid::new_v4()
+    ));
+    let artifact_path = std::env::temp_dir().join(format!(
+        "libcutout-persistence-pevcap-finish-response-loss-{}.jsonl",
+        uuid::Uuid::new_v4()
+    ));
+    let capture = PevcapCapture::new(
+        PevcapHeader::new(
+            WallClockUnixTimestamp::new(1_700_000_000_000),
+            "darwin",
+            None,
+            &[],
+            &[],
+            None,
+            None,
+            "test",
+            [0; 32],
+            &[],
+        )
+        .unwrap(),
+        vec![PevcapRecord::link_up(MonotonicTimestamp::new(1_000), None).with_phone_location(
+            PevcapPhoneLocation {
+                wall_clock_unix_ms: 1_700_000_000_000,
+                latitude_degrees: 40.0,
+                longitude_degrees: -105.0,
+                altitude_meters: 1_600.0,
+                horizontal_accuracy_meters: Some(3.0),
+                vertical_accuracy_meters: None,
+                speed_meters_per_second: None,
+                speed_accuracy_meters_per_second: None,
+                course_degrees: None,
+                course_accuracy_degrees: None,
+            },
+        )],
+    );
+    let source_bytes = capture.to_jsonl().unwrap().into_bytes();
+    std::fs::write(&artifact_path, &source_bytes).unwrap();
+
+    let database = RideDatabase::open(&database_path).unwrap();
+    let preview = database
+        .preflight_pevcap(&artifact_path, PevcapEncoding::Jsonl)
+        .unwrap();
+    RideDatabase::fail_next_pevcap_finish_response_for_test();
+
+    let receipt = database
+        .confirm_pevcap_import(&preview, 1_700_000_000_000)
+        .unwrap();
+    assert!(!receipt.duplicate);
+    assert_eq!(receipt.location_count, 1);
+    assert_eq!(
+        std::fs::read(&receipt.managed_artifact_path).unwrap(),
+        source_bytes
+    );
+    let duplicate = database
+        .confirm_pevcap_import(&preview, 1_700_000_000_001)
+        .unwrap();
+    assert!(duplicate.duplicate);
+    assert_eq!(
+        duplicate.managed_artifact_path,
+        receipt.managed_artifact_path
+    );
+
+    database.shutdown().unwrap();
+    let _ = std::fs::remove_file(&receipt.managed_artifact_path);
+    let _ = std::fs::remove_dir(receipt.managed_artifact_path.parent().unwrap());
+    let _ = std::fs::remove_file(database_path);
+    let _ = std::fs::remove_file(artifact_path);
+}
+
+#[test]
 fn pevcap_confirmation_cleans_managed_artifact_when_begin_fails() {
     let _guard = test_guard();
     let database_path = std::env::temp_dir().join(format!(

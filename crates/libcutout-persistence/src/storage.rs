@@ -2047,6 +2047,11 @@ impl RideDatabase {
         preflight_pevcap(path, encoding)
     }
 
+    #[cfg(test)]
+    pub(crate) fn fail_next_pevcap_finish_response_for_test() {
+        worker::drop_next_pevcap_finish_response_for_test();
+    }
+
     /// Confirms a reviewed PEVCAP preview, copies it into managed storage, and commits bounded
     /// location batches without monopolizing the database worker.
     ///
@@ -2147,7 +2152,10 @@ impl RideDatabase {
                         preview.artifact_digest(),
                         preview.artifact_size(),
                     )?;
-                    return Ok(receipt);
+                    return Ok(PevcapImportReceipt {
+                        duplicate: false,
+                        ..receipt
+                    });
                 }
                 Ok(None) => {}
                 Err(_) => return result,
