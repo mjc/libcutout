@@ -1,7 +1,7 @@
 use crate::{
     DistanceMillimetres, LocationAdmission, LocationSample, LocationSource, MonotonicMilliseconds,
     RideEvent, RideLifecycleState, RidePointCount, RideSummary, TransitionError, distance_between,
-    distance_between_millimetres,
+    distance_between_millimetres, location::AdmittedLocationSample,
 };
 
 const MAX_HORIZONTAL_ACCURACY_MILLIMETRES: u32 = 100_000;
@@ -1036,8 +1036,23 @@ impl RideMapRecorder {
         LocationAdmission::Accepted
     }
 
+    /// Admits a sample for recording after applying the complete route policy.
+    pub(crate) fn admit_sample(
+        &self,
+        sample: LocationSample,
+    ) -> Result<AdmittedLocationSample, LocationAdmission> {
+        match self.check_sample(&sample) {
+            LocationAdmission::Accepted => Ok(AdmittedLocationSample::new(sample)),
+            admission => Err(admission),
+        }
+    }
+
     /// Records a sample after durable storage has accepted it.
     pub fn record_sample(&mut self, sample: LocationSample) -> bool {
+        let Ok(admitted_sample) = self.admit_sample(sample) else {
+            return false;
+        };
+        let sample = admitted_sample.sample();
         let next_segment_id = self.segment_id_for_sample(&sample);
         let gap_started = next_segment_id != self.segment_id;
         let segment_started = self.segment_started || gap_started;
@@ -1184,7 +1199,7 @@ mod tests {
         recorder.apply_transition(RideLifecycleState::Paused);
         recorder.apply_transition(RideLifecycleState::Active);
         assert_eq!(recorder.current_segment_id().value(), 1);
-        assert!(recorder.record_sample(sample(1_003, 40.001)));
+        assert!(recorder.record_sample(sample(1_003, 40.000_001)));
         assert_eq!(recorder.segment_count(), RideSegmentCount::new(2));
         assert_eq!(
             recorder
@@ -1305,6 +1320,21 @@ mod tests {
             recorder.check_sample(&changed),
             LocationAdmission::OutOfOrder
         );
+    }
+
+    #[test]
+    fn recording_rechecks_admission_before_mutating_the_route() {
+        let mut recorder = RideMapRecorder::new();
+        recorder.start(monotonic(1_000), None).expect("starts");
+        assert!(recorder.record_sample(sample(1_001, 40.0)));
+
+        let unrealistic_jump = sample(1_002, 40.001);
+        assert_eq!(
+            recorder.check_sample(&unrealistic_jump),
+            LocationAdmission::UnrealisticJump
+        );
+        assert!(!recorder.record_sample(unrealistic_jump));
+        assert_eq!(recorder.point_count(), 1);
     }
 
     #[test]
