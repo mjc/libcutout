@@ -1003,25 +1003,7 @@ fn database_preflights_confirms_and_deduplicates_managed_pevcap_artifacts() {
         &[],
     )
     .unwrap();
-    let capture = PevcapCapture::new(
-        header,
-        vec![
-            PevcapRecord::link_up(MonotonicTimestamp::new(1), None).with_phone_location(
-                PevcapPhoneLocation {
-                    wall_clock_unix_ms: 1_700_000_000_000,
-                    latitude_degrees: 40.0,
-                    longitude_degrees: -105.0,
-                    altitude_meters: 1_600.0,
-                    horizontal_accuracy_meters: Some(3.0),
-                    vertical_accuracy_meters: Some(4.0),
-                    speed_meters_per_second: Some(0.0),
-                    speed_accuracy_meters_per_second: Some(1.0),
-                    course_degrees: Some(0.0),
-                    course_accuracy_degrees: Some(1.0),
-                },
-            ),
-        ],
-    );
+    let capture = PevcapCapture::new(header, vec![pevcap_location_record(1, 40.0, 3.0)]);
     std::fs::write(&artifact_path, capture.to_jsonl().unwrap()).unwrap();
 
     let database = RideDatabase::open(&database_path).unwrap();
