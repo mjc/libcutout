@@ -1611,6 +1611,15 @@ impl RideDatabase {
         self.request(move |reply| Command::FindRide { ride_id, reply })
     }
 
+    /// Finds the newest ride that still needs lifecycle recovery.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StorageError`] when the worker cannot query or decode the record.
+    pub fn newest_recoverable_ride(&self) -> Result<Option<RideRecord>, StorageError> {
+        self.request(|reply| Command::NewestRecoverableRide { reply })
+    }
+
     /// Lists one bounded page of visible rides in stable newest-first order.
     ///
     /// # Errors
@@ -1900,6 +1909,9 @@ enum Command {
     },
     FindRide {
         ride_id: RideId,
+        reply: Reply<Option<RideRecord>>,
+    },
+    NewestRecoverableRide {
         reply: Reply<Option<RideRecord>>,
     },
     ListRides {
@@ -2196,6 +2208,9 @@ fn worker_loop(mut connection: Connection, receiver: &Receiver<Command>) {
             }
             Command::FindRide { ride_id, reply } => {
                 let _ = reply.send(find_ride(&connection, ride_id));
+            }
+            Command::NewestRecoverableRide { reply } => {
+                let _ = reply.send(newest_recoverable_ride(&connection));
             }
             Command::ListRides {
                 cursor,
@@ -4037,6 +4052,37 @@ fn find_ride(connection: &Connection, ride_id: RideId) -> Result<Option<RideReco
              FROM rides
              WHERE state NOT IN ('draft', 'discarded') AND id = ?1",
             params![ride_id.uuid().to_string()],
+            ride_record_from_row,
+        )
+        .optional()
+        .map_err(StorageError::from)
+}
+
+fn newest_recoverable_ride(connection: &Connection) -> Result<Option<RideRecord>, StorageError> {
+    connection
+        .query_row(
+            "SELECT id, source, state, created_at_ms, monotonic_created_at_ms, updated_at_ms,
+                    CASE
+                        WHEN (SELECT MAX(monotonic_ms) FROM ride_points WHERE ride_id = rides.id)
+                                 IS NULL
+                            OR (monotonic_created_at_ms IS NOT NULL
+                                AND (SELECT MAX(monotonic_ms) FROM ride_points WHERE ride_id = rides.id)
+                                    < monotonic_created_at_ms)
+                            THEN 0
+                        WHEN monotonic_created_at_ms IS NOT NULL
+                            THEN (SELECT MAX(monotonic_ms) FROM ride_points WHERE ride_id = rides.id)
+                                 - monotonic_created_at_ms
+                        ELSE (SELECT MAX(monotonic_ms) - MIN(monotonic_ms)
+                              FROM ride_points WHERE ride_id = rides.id)
+                    END,
+                    point_count, distance_mm,
+                    (SELECT COUNT(DISTINCT segment_id) FROM ride_points WHERE ride_id = rides.id),
+                    candidate_vehicle, associated_vehicle, associated_at_ms, last_telemetry_at_ms
+             FROM rides
+             WHERE state IN ('active', 'paused', 'stopped', 'interrupted')
+             ORDER BY created_at_ms DESC, id DESC
+             LIMIT 1",
+            [],
             ride_record_from_row,
         )
         .optional()

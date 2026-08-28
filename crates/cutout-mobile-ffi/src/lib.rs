@@ -4610,6 +4610,15 @@ impl RideDatabaseHandle {
             .map(|ride| ride.and_then(|record| record.monotonic_created_at_milliseconds()))
             .map_err(map_ride_database_error)
     }
+
+    fn newest_recoverable_ride(
+        &self,
+    ) -> Result<Option<MobileRideRecordDto>, MobileRideDatabaseError> {
+        self.inner
+            .newest_recoverable_ride()
+            .map(|ride| ride.as_ref().map(mobile_ride_record_dto))
+            .map_err(map_ride_database_error)
+    }
 }
 
 /// Rust-owned live ride map state. The mutex protects callbacks arriving from different Apple
@@ -4678,36 +4687,41 @@ impl MobileRideMapCoreInner {
         let Some(database) = self.database.as_ref() else {
             return Ok(());
         };
-        let page = database.list_rides(None, 50).map_err(map_core_error)?;
-        let Some(ride) = page.rides.into_iter().find(|ride| {
-            matches!(
-                ride.state,
-                MobileRideLifecycleStateDto::Active
-                    | MobileRideLifecycleStateDto::Paused
-                    | MobileRideLifecycleStateDto::Stopped
-                    | MobileRideLifecycleStateDto::Interrupted
-            )
-        }) else {
+        let Some(ride) = database.newest_recoverable_ride().map_err(map_core_error)? else {
             return Ok(());
         };
         let persisted_monotonic_start = database
             .monotonic_created_at_milliseconds(&ride.id)
             .map_err(map_core_error)?;
         self.active_ride_id = Some(ride.id.clone());
-        let mut cursor = None;
+        let tail_start = ride
+            .summary
+            .point_count
+            .saturating_sub(ride_maps::MAX_LIVE_ROUTE_POINTS as u64);
+        let cursor = tail_start
+            .checked_sub(1)
+            .map(|sequence| MobileRoutePointCursorDto { sequence });
+        let mut cursor = cursor;
         let mut samples = Vec::new();
         loop {
             let page = database
                 .route_points(ride.id.clone(), cursor, 500)
                 .map_err(map_core_error)?;
-            for point in page.points {
-                let sample = mobile_ride_location(point.location).map_err(map_core_error)?;
-                samples.push(ride_maps::RideMapPoint::new(
-                    sample,
-                    ride_maps::RideMapSegmentId::new(point.segment_id),
-                    map_ride_telemetry_state(point.telemetry_state),
-                ));
-            }
+            samples.extend(
+                page.points
+                    .into_iter()
+                    .map(|point| {
+                        mobile_ride_location(point.location).map(|sample| {
+                            ride_maps::RideMapPoint::new(
+                                sample,
+                                ride_maps::RideMapSegmentId::new(point.segment_id),
+                                map_ride_telemetry_state(point.telemetry_state),
+                            )
+                        })
+                    })
+                    .collect::<Result<Vec<_>, _>>()
+                    .map_err(map_core_error)?,
+            );
             if samples.len() > ride_maps::MAX_LIVE_ROUTE_POINTS {
                 let excess = samples.len() - ride_maps::MAX_LIVE_ROUTE_POINTS;
                 samples.drain(..excess);
@@ -13606,7 +13620,7 @@ mod tests {
             state
                 .start_gps_only(1_000, Some("pev-1".to_owned()))
                 .expect("map recording starts");
-            for index in 0..501_u64 {
+            for index in 0..(ride_maps::MAX_LIVE_ROUTE_POINTS as u64 + 2) {
                 state
                     .ingest_location(
                         1_000 + index * 1_000,
@@ -13625,14 +13639,83 @@ mod tests {
         let state = MobileRideMapCore::with_database(database.clone());
         let snapshot = state.current_snapshot().expect("interrupted ride restores");
         assert_eq!(snapshot.state, MobileRideLifecycleStateDto::Interrupted);
-        assert_eq!(snapshot.summary.point_count, 501);
-        let last_page = state.points_after(Some(499), 10).unwrap();
-        assert_eq!(last_page.points.len(), 1);
-        assert_eq!(last_page.points[0].sequence, 500);
-        assert!(!last_page.has_more);
+        assert_eq!(
+            snapshot.summary.point_count,
+            ride_maps::MAX_LIVE_ROUTE_POINTS as u64 + 2
+        );
+        let restored = state.inner.lock().unwrap_or_else(PoisonError::into_inner);
+        assert_eq!(
+            restored.recorder.points().len(),
+            ride_maps::MAX_LIVE_ROUTE_POINTS
+        );
+        assert_eq!(restored.recorder.first_point_sequence().as_u64(), 2);
+        assert_eq!(
+            restored
+                .recorder
+                .points()
+                .last()
+                .unwrap()
+                .sample()
+                .monotonic_milliseconds()
+                .as_u64(),
+            1_000 + 4_097 * 1_000
+        );
+        drop(restored);
         let rides = database.list_rides(None, 10).expect("recovered ride lists");
         assert_eq!(rides.rides.len(), 1);
         assert_eq!(rides.rides[0].candidate_vehicle.as_deref(), Some("pev-1"));
+
+        database.shutdown().expect("reopened database shuts down");
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn mobile_ride_map_core_restores_recoverable_ride_beyond_history_page() {
+        let _guard = RIDE_DATABASE_TEST_LOCK
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        let path = std::env::temp_dir().join(format!(
+            "cutout-mobile-map-recovery-page-{}-{}.sqlite3",
+            std::process::id(),
+            Uuid::new_v4()
+        ));
+        let _ = fs::remove_file(&path);
+        let database =
+            open_ride_database(path.to_string_lossy().into_owned()).expect("database opens");
+        let recoverable = database
+            .create_ride(MobileRideSourceDto::Live, 1_000)
+            .expect("recoverable ride creates");
+        database
+            .transition(recoverable.clone(), MobileRideEventDto::Start)
+            .expect("recoverable ride starts");
+        for timestamp in 2_000..=2_050 {
+            let ride = database
+                .create_ride(MobileRideSourceDto::Live, timestamp)
+                .expect("newer ride creates");
+            database
+                .transition(ride.clone(), MobileRideEventDto::Start)
+                .expect("newer ride starts");
+            database
+                .transition(ride.clone(), MobileRideEventDto::Stop)
+                .expect("newer ride stops");
+            database
+                .transition(ride, MobileRideEventDto::Save)
+                .expect("newer ride saves");
+        }
+        database.shutdown().expect("database shuts down");
+
+        let database =
+            open_ride_database(path.to_string_lossy().into_owned()).expect("database reopens");
+        let state = MobileRideMapCore::with_database(database.clone());
+        assert!(
+            state.current_snapshot().is_some(),
+            "restore failed: {:?}",
+            state.initialization_error()
+        );
+        assert_eq!(
+            state.current_snapshot().map(|snapshot| snapshot.ride_id),
+            Some(recoverable.value)
+        );
 
         database.shutdown().expect("reopened database shuts down");
         let _ = fs::remove_file(path);
