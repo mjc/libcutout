@@ -3094,6 +3094,8 @@ pub enum MobileRideMapCoreTelemetryStateDto {
     AssociatedFresh,
     /// The associated vehicle telemetry has gone stale.
     AssociatedStale,
+    /// A newer Rust telemetry state is not known to this mobile binding.
+    Unknown,
 }
 
 /// Result of observing a confirmed vehicle telemetry timestamp.
@@ -3109,6 +3111,8 @@ pub enum MobileRideMapTelemetryObservationDto {
     TimestampOutOfOrder,
     /// The ride is not open for telemetry.
     RideNotOpen,
+    /// A newer Rust observation is not known to this mobile binding.
+    Unknown,
 }
 
 impl From<ride_maps::TelemetryObservation> for MobileRideMapTelemetryObservationDto {
@@ -3119,7 +3123,7 @@ impl From<ride_maps::TelemetryObservation> for MobileRideMapTelemetryObservation
             ride_maps::TelemetryObservation::NotAssociated => Self::NotAssociated,
             ride_maps::TelemetryObservation::TimestampOutOfOrder => Self::TimestampOutOfOrder,
             ride_maps::TelemetryObservation::RideNotOpen => Self::RideNotOpen,
-            _ => unreachable!("mobile FFI must map every telemetry observation"),
+            _ => Self::Unknown,
         }
     }
 }
@@ -3131,7 +3135,7 @@ impl From<ride_maps::RouteTelemetryState> for MobileRideMapCoreTelemetryStateDto
             ride_maps::RouteTelemetryState::AssociatedNoTelemetry => Self::AssociatedNoTelemetry,
             ride_maps::RouteTelemetryState::AssociatedFresh => Self::AssociatedFresh,
             ride_maps::RouteTelemetryState::AssociatedStale => Self::AssociatedStale,
-            _ => unreachable!("mobile FFI must map every route telemetry state"),
+            _ => Self::Unknown,
         }
     }
 }
@@ -3209,6 +3213,8 @@ pub enum MobileRideMapCoreAssociationDto {
     TimestampOutOfOrder,
     /// No recording is currently open.
     RideNotOpen,
+    /// A newer Rust association outcome is not known to this mobile binding.
+    Unknown,
 }
 
 impl From<ride_maps::VehicleAssociation> for MobileRideMapCoreAssociationDto {
@@ -3220,7 +3226,7 @@ impl From<ride_maps::VehicleAssociation> for MobileRideMapCoreAssociationDto {
             ride_maps::VehicleAssociation::IdentityMismatch => Self::IdentityMismatch,
             ride_maps::VehicleAssociation::TimestampOutOfOrder => Self::TimestampOutOfOrder,
             ride_maps::VehicleAssociation::RideNotOpen => Self::RideNotOpen,
-            _ => unreachable!("mobile FFI must map every vehicle association"),
+            _ => Self::Unknown,
         }
     }
 }
@@ -4621,6 +4627,18 @@ struct MobileRideMapCoreInner {
     initialization_error: Option<MobileRideMapCoreErrorDto>,
 }
 
+fn restored_monotonic_start_milliseconds(
+    persisted_start: Option<u64>,
+    last_restored_sample: Option<u64>,
+    persisted_duration: u64,
+) -> u64 {
+    // Legacy rides lack a persisted start; use the full-route duration rather than the
+    // first point retained in the bounded in-memory tail.
+    persisted_start
+        .or_else(|| last_restored_sample.map(|last| last.saturating_sub(persisted_duration)))
+        .unwrap_or(0)
+}
+
 impl MobileRideMapCoreInner {
     fn transition_state(
         &mut self,
@@ -4699,17 +4717,17 @@ impl MobileRideMapCoreInner {
                 break;
             }
         }
+        let last_restored_monotonic = samples
+            .last()
+            .map(|sample| sample.sample().monotonic_milliseconds().as_u64());
+        let restored_start_milliseconds = restored_monotonic_start_milliseconds(
+            persisted_monotonic_start,
+            last_restored_monotonic,
+            ride.duration_milliseconds,
+        );
         self.recorder = ride_maps::RideMapRecorder::restored_with_metadata_and_summary(
             map_ride_lifecycle_state(ride.state),
-            ride_maps::MonotonicMilliseconds::new(
-                persisted_monotonic_start
-                    .or_else(|| {
-                        samples
-                            .first()
-                            .map(|sample| sample.sample().monotonic_milliseconds().as_u64())
-                    })
-                    .unwrap_or(0),
-            ),
+            ride_maps::MonotonicMilliseconds::new(restored_start_milliseconds),
             ride_maps::RideMapMetadata {
                 candidate_vehicle: ride
                     .candidate_vehicle
@@ -4908,6 +4926,10 @@ fn map_ride_telemetry_state(
         }
         MobileRideMapCoreTelemetryStateDto::AssociatedStale => {
             ride_maps::RouteTelemetryState::AssociatedStale
+        }
+        MobileRideMapCoreTelemetryStateDto::Unknown => {
+            // Unknown provenance must not claim that a vehicle telemetry sample was observed.
+            ride_maps::RouteTelemetryState::GpsOnly
         }
     }
 }
@@ -13592,6 +13614,19 @@ mod tests {
 
         database.shutdown().expect("reopened database shuts down");
         let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn legacy_restore_anchors_start_to_full_route_duration() {
+        assert_eq!(
+            restored_monotonic_start_milliseconds(None, Some(10_000), 9_000),
+            1_000
+        );
+        assert_eq!(
+            restored_monotonic_start_milliseconds(Some(2_000), Some(10_000), 9_000),
+            2_000
+        );
+        assert_eq!(restored_monotonic_start_milliseconds(None, None, 9_000), 0);
     }
 
     #[test]
