@@ -752,6 +752,45 @@ fn ride_history_duration_is_persisted_from_lifecycle_clock() {
 }
 
 #[test]
+fn lifecycle_transition_uses_latest_durable_location_timestamp() {
+    let _guard = test_guard();
+    let path = std::env::temp_dir().join(format!(
+        "libcutout-persistence-lifecycle-watermark-{}.sqlite",
+        uuid::Uuid::new_v4()
+    ));
+    let database = RideDatabase::open(&path).unwrap();
+    let ride = database
+        .create_ride_with_monotonic_start(RideSource::Live, 1_700_000_000_000, Some(1_000))
+        .unwrap();
+    database
+        .transition_at(ride, RideEvent::Start, 1_000)
+        .unwrap();
+    database
+        .append_location(
+            ride,
+            LocationSample::new(
+                Coordinate::from_degrees(40.0, -105.0).unwrap(),
+                5_000,
+                1_700_000_004_000,
+                None,
+                LocationSource::Live,
+            ),
+        )
+        .unwrap();
+
+    database
+        .transition_at(ride, RideEvent::Pause, 3_000)
+        .unwrap();
+
+    let record = database.find_ride(ride).unwrap().unwrap();
+    assert_eq!(record.paused_at_milliseconds(), Some(5_000));
+    assert_eq!(record.duration_milliseconds(), 4_000);
+
+    database.shutdown().unwrap();
+    let _ = std::fs::remove_file(path);
+}
+
+#[test]
 fn find_and_list_ride_projections_agree_for_all_route_shapes() {
     let _guard = test_guard();
     let path = std::env::temp_dir().join(format!(

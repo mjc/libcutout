@@ -364,6 +364,22 @@ pub struct RideLifecycleTiming {
     pub paused_duration_milliseconds: RideDurationMilliseconds,
 }
 
+/// Clamps a lifecycle timestamp to the monotonic watermark already observed by a ride.
+#[must_use]
+pub const fn clamped_transition_timestamp(
+    created_at_milliseconds: MonotonicMilliseconds,
+    latest_observed_milliseconds: Option<MonotonicMilliseconds>,
+    requested_at_milliseconds: MonotonicMilliseconds,
+) -> MonotonicMilliseconds {
+    let latest_observed_milliseconds = match latest_observed_milliseconds {
+        Some(value) => value,
+        None => MonotonicMilliseconds::new(0),
+    };
+    requested_at_milliseconds
+        .max(created_at_milliseconds)
+        .max(latest_observed_milliseconds)
+}
+
 impl RideLifecycleTiming {
     /// Returns active elapsed time at a monotonic timestamp.
     #[must_use]
@@ -869,9 +885,11 @@ impl RideMapRecorder {
         state: RideLifecycleState,
         at_milliseconds: MonotonicMilliseconds,
     ) {
-        let at_milliseconds = at_milliseconds
-            .max(self.created_at_milliseconds)
-            .max(self.last_monotonic_milliseconds);
+        let at_milliseconds = clamped_transition_timestamp(
+            self.created_at_milliseconds,
+            Some(self.last_monotonic_milliseconds),
+            at_milliseconds,
+        );
         if let Some(previous_state) = self.state {
             let timing = RideLifecycleTiming {
                 duration_milliseconds: self.completed_duration_milliseconds,
@@ -1139,6 +1157,18 @@ mod tests {
             None,
             LocationSource::Live,
         )
+    }
+
+    #[test]
+    fn clamped_transition_timestamp_uses_the_latest_watermark() {
+        assert_eq!(
+            super::clamped_transition_timestamp(
+                monotonic(1_000),
+                Some(monotonic(5_000)),
+                monotonic(3_000),
+            ),
+            monotonic(5_000)
+        );
     }
 
     #[test]

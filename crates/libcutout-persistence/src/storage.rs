@@ -6532,10 +6532,21 @@ fn load_ride_write_state(
         duration_ms,
         paused_at_ms,
         paused_duration_ms,
-    ): (String, String, u64, Option<u64>, u64, Option<u64>, u64) = connection
+        latest_monotonic_ms,
+    ): (
+        String,
+        String,
+        u64,
+        Option<u64>,
+        u64,
+        Option<u64>,
+        u64,
+        Option<u64>,
+    ) = connection
         .query_row(
             "SELECT source, state, updated_at_ms, monotonic_created_at_ms,
-                    duration_ms, paused_at_ms, paused_duration_ms
+                    duration_ms, paused_at_ms, paused_duration_ms,
+                    (SELECT MAX(monotonic_ms) FROM ride_points WHERE ride_id = rides.id)
              FROM rides WHERE id = ?1",
             params![ride_id.uuid().to_string()],
             |row| {
@@ -6547,12 +6558,13 @@ fn load_ride_write_state(
                     row.get(4)?,
                     row.get(5)?,
                     row.get(6)?,
+                    row.get(7)?,
                 ))
             },
         )
         .optional()?
         .ok_or(StorageError::NotFound)?;
-    Ok(RideWriteState::with_duration(
+    Ok(RideWriteState::with_duration_and_latest(
         ride_source_from_db(&source)?,
         state_from_db(&lifecycle)?,
         updated_at_ms,
@@ -6560,6 +6572,7 @@ fn load_ride_write_state(
         duration_ms,
         paused_at_ms,
         paused_duration_ms,
+        latest_monotonic_ms,
     ))
 }
 
