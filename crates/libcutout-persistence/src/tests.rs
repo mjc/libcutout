@@ -14,9 +14,9 @@ use rusqlite::Connection;
 use cutout_ride_maps::{RideLifecycleState, RideMapSegmentId, RideSegmentStartReason};
 
 use super::{
-    GeoBounds, HistoryContextBudget, PevcapImportOutcome, QueryLimit, RideDatabase,
-    RideHistoryQuery, RideId, RideRecord, RideSource, RouteProjectionCancellation, StorageError,
-    VoltageSagModelRecord,
+    GeoBounds, HistoryContextBudget, PevcapImportOutcome, PevcapImportPreview, PevcapImportWarning,
+    QueryLimit, RideDatabase, RideHistoryQuery, RideId, RideRecord, RideSource,
+    RouteProjectionCancellation, StorageError, VoltageSagModelRecord,
 };
 
 static TEST_LOCK: Mutex<()> = Mutex::new(());
@@ -1003,7 +1003,25 @@ fn database_preflights_confirms_and_deduplicates_managed_pevcap_artifacts() {
         &[],
     )
     .unwrap();
-    let capture = PevcapCapture::new(header, vec![pevcap_location_record(1, 40.0, 3.0)]);
+    let capture = PevcapCapture::new(
+        header,
+        vec![
+            PevcapRecord::link_up(MonotonicTimestamp::new(1), None).with_phone_location(
+                PevcapPhoneLocation {
+                    wall_clock_unix_ms: 1_700_000_000_001,
+                    latitude_degrees: 40.0,
+                    longitude_degrees: -105.0,
+                    altitude_meters: 1_600.0,
+                    horizontal_accuracy_meters: Some(3.0),
+                    vertical_accuracy_meters: None,
+                    speed_meters_per_second: None,
+                    speed_accuracy_meters_per_second: None,
+                    course_degrees: None,
+                    course_accuracy_degrees: None,
+                },
+            ),
+        ],
+    );
     std::fs::write(&artifact_path, capture.to_jsonl().unwrap()).unwrap();
 
     let database = RideDatabase::open(&database_path).unwrap();
@@ -1635,6 +1653,141 @@ fn pevcap_confirmation_reconciles_a_committed_finish_response_loss() {
     assert_eq!(
         duplicate.managed_artifact_path,
         receipt.managed_artifact_path
+    );
+
+    database.shutdown().unwrap();
+    let _ = std::fs::remove_file(&receipt.managed_artifact_path);
+    let _ = std::fs::remove_dir(receipt.managed_artifact_path.parent().unwrap());
+    let _ = std::fs::remove_file(database_path);
+    let _ = std::fs::remove_file(artifact_path);
+}
+
+#[test]
+fn duplicate_pevcap_confirmation_rejects_tampered_reviewed_facts() {
+    let _guard = test_guard();
+    let database_path = std::env::temp_dir().join(format!(
+        "libcutout-persistence-pevcap-duplicate-tampered-db-{}.sqlite",
+        uuid::Uuid::new_v4()
+    ));
+    let artifact_path = std::env::temp_dir().join(format!(
+        "libcutout-persistence-pevcap-duplicate-tampered-{}.jsonl",
+        uuid::Uuid::new_v4()
+    ));
+    let capture = PevcapCapture::new(
+        PevcapHeader::new(
+            WallClockUnixTimestamp::new(1_700_000_000_000),
+            "darwin",
+            None,
+            &[],
+            &[],
+            None,
+            None,
+            "test",
+            [0; 32],
+            &[],
+        )
+        .unwrap(),
+        vec![
+            PevcapRecord::link_up(MonotonicTimestamp::new(1_000), None).with_phone_location(
+                PevcapPhoneLocation {
+                    wall_clock_unix_ms: 1_700_000_000_000,
+                    latitude_degrees: 40.0,
+                    longitude_degrees: -105.0,
+                    altitude_meters: 1_600.0,
+                    horizontal_accuracy_meters: Some(3.0),
+                    vertical_accuracy_meters: None,
+                    speed_meters_per_second: None,
+                    speed_accuracy_meters_per_second: None,
+                    course_degrees: None,
+                    course_accuracy_degrees: None,
+                },
+            ),
+        ],
+    );
+    std::fs::write(&artifact_path, capture.to_jsonl().unwrap()).unwrap();
+
+    let database = RideDatabase::open(&database_path).unwrap();
+    let preview = database
+        .preflight_pevcap(&artifact_path, PevcapEncoding::Jsonl)
+        .unwrap();
+    let receipt = database
+        .confirm_pevcap_import(&preview, 1_700_000_000_000)
+        .unwrap();
+    let with_facts =
+        |artifact_size, record_count, location_count, duration_milliseconds, outcome, warnings| {
+            PevcapImportPreview::from_parts(
+                preview.source_path().to_owned(),
+                preview.encoding(),
+                preview.artifact_digest().to_owned(),
+                artifact_size,
+                record_count,
+                location_count,
+                duration_milliseconds,
+                outcome,
+                warnings,
+            )
+        };
+    for tampered in [
+        with_facts(
+            preview.artifact_size(),
+            preview.record_count() + 1,
+            preview.location_count(),
+            preview.duration_milliseconds(),
+            preview.outcome(),
+            preview.warnings().to_vec(),
+        ),
+        with_facts(
+            preview.artifact_size(),
+            preview.record_count(),
+            preview.location_count() + 1,
+            preview.duration_milliseconds(),
+            preview.outcome(),
+            preview.warnings().to_vec(),
+        ),
+        with_facts(
+            preview.artifact_size(),
+            preview.record_count(),
+            preview.location_count(),
+            preview.duration_milliseconds() + 1,
+            preview.outcome(),
+            preview.warnings().to_vec(),
+        ),
+        with_facts(
+            preview.artifact_size(),
+            preview.record_count(),
+            preview.location_count(),
+            preview.duration_milliseconds(),
+            PevcapImportOutcome::CaptureOnly,
+            vec![PevcapImportWarning::NoRouteLocations],
+        ),
+        with_facts(
+            preview.artifact_size(),
+            preview.record_count(),
+            preview.location_count(),
+            preview.duration_milliseconds(),
+            preview.outcome(),
+            vec![PevcapImportWarning::NoRouteLocations],
+        ),
+        with_facts(
+            preview.artifact_size() + 1,
+            preview.record_count(),
+            preview.location_count(),
+            preview.duration_milliseconds(),
+            preview.outcome(),
+            preview.warnings().to_vec(),
+        ),
+    ] {
+        assert!(matches!(
+            database.confirm_pevcap_import(&tampered, 1_700_000_000_001),
+            Err(StorageError::PevcapPreviewChanged)
+        ));
+    }
+    assert_eq!(
+        database
+            .confirm_pevcap_import(&preview, 1_700_000_000_002)
+            .unwrap()
+            .ride_id,
+        receipt.ride_id
     );
 
     database.shutdown().unwrap();

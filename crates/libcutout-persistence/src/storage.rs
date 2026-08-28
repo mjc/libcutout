@@ -842,6 +842,34 @@ impl PevcapImportPreview {
     pub fn warnings(&self) -> &[PevcapImportWarning] {
         &self.warnings
     }
+    #[cfg(test)]
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "test-only malformed preview fixture"
+    )]
+    pub(crate) fn from_parts(
+        source_path: PathBuf,
+        encoding: PevcapEncoding,
+        artifact_digest: String,
+        artifact_size: u64,
+        record_count: u64,
+        location_count: u64,
+        duration_milliseconds: u64,
+        outcome: PevcapImportOutcome,
+        warnings: Vec<PevcapImportWarning>,
+    ) -> Self {
+        Self {
+            source_path,
+            encoding,
+            artifact_digest,
+            artifact_size,
+            record_count,
+            location_count,
+            duration_milliseconds,
+            outcome,
+            warnings: Arc::from(warnings),
+        }
+    }
 }
 
 /// Durable result of one PEVCAP artifact import.
@@ -2069,14 +2097,7 @@ impl RideDatabase {
             digest: preview.artifact_digest.clone(),
             reply,
         })? {
-            let directory = pevcap_import_directory(self.path.as_ref());
-            ensure_managed_pevcap_directory(&directory)?;
-            validate_managed_pevcap_artifact(
-                &directory,
-                &receipt.managed_artifact_path,
-                preview.artifact_digest(),
-                preview.artifact_size(),
-            )?;
+            validate_existing_pevcap_confirmation(self.path.as_ref(), &receipt, preview)?;
             return Ok(receipt);
         }
 
@@ -2099,12 +2120,7 @@ impl RideDatabase {
         let PevcapBegin::Started { ride_id } = begin else {
             return match begin {
                 PevcapBegin::Duplicate(receipt) => {
-                    validate_managed_pevcap_artifact(
-                        &pevcap_import_directory(self.path.as_ref()),
-                        &receipt.managed_artifact_path,
-                        preview.artifact_digest(),
-                        preview.artifact_size(),
-                    )?;
+                    validate_existing_pevcap_confirmation(self.path.as_ref(), &receipt, preview)?;
                     Ok(receipt)
                 }
                 PevcapBegin::Started { .. } => unreachable!(),
@@ -2145,13 +2161,7 @@ impl RideDatabase {
                 reply,
             }) {
                 Ok(Some(receipt)) => {
-                    let directory = pevcap_import_directory(self.path.as_ref());
-                    validate_managed_pevcap_artifact(
-                        &directory,
-                        &receipt.managed_artifact_path,
-                        preview.artifact_digest(),
-                        preview.artifact_size(),
-                    )?;
+                    validate_existing_pevcap_confirmation(self.path.as_ref(), &receipt, preview)?;
                     return Ok(PevcapImportReceipt {
                         duplicate: false,
                         ..receipt
@@ -4035,6 +4045,42 @@ fn validate_managed_pevcap_artifact(
     }
     Ok(())
 }
+
+fn validate_existing_pevcap_confirmation(
+    database_path: &Path,
+    receipt: &PevcapImportReceipt,
+    preview: &PevcapImportPreview,
+) -> Result<(), StorageError> {
+    let directory = pevcap_import_directory(database_path);
+    ensure_managed_pevcap_directory(&directory)?;
+    validate_managed_pevcap_artifact(
+        &directory,
+        &receipt.managed_artifact_path,
+        preview.artifact_digest(),
+        preview.artifact_size(),
+    )?;
+    if receipt.artifact_digest != preview.artifact_digest
+        || receipt.record_count != preview.record_count
+        || receipt.location_count != preview.location_count
+        || receipt.outcome != preview.outcome
+    {
+        return Err(StorageError::PevcapPreviewChanged);
+    }
+    let managed_preview = preflight_pevcap(&receipt.managed_artifact_path, preview.encoding())
+        .map_err(|_| StorageError::PevcapPreviewChanged)?;
+    if managed_preview.artifact_digest != preview.artifact_digest
+        || managed_preview.artifact_size != preview.artifact_size
+        || managed_preview.record_count != preview.record_count
+        || managed_preview.location_count != preview.location_count
+        || managed_preview.duration_milliseconds != preview.duration_milliseconds
+        || managed_preview.outcome != preview.outcome
+        || managed_preview.warnings != preview.warnings
+    {
+        return Err(StorageError::PevcapPreviewChanged);
+    }
+    Ok(())
+}
+
 fn pevcap_import_directory(database_path: &Path) -> PathBuf {
     let mut directory_name = database_path.as_os_str().to_owned();
     directory_name.push(".pevcap-imports");
