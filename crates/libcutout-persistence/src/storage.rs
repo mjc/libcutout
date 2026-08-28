@@ -50,6 +50,7 @@ struct PevcapRoutePoint {
     segment_id: RideMapSegmentId,
     telemetry_state: RouteTelemetryState,
 }
+const MAX_STORED_TEXT_CHARS: usize = 512;
 
 /// Origin of a canonical ride record.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -874,6 +875,26 @@ pub struct PevcapImportPreview {
     duration_milliseconds: u64,
     outcome: PevcapImportOutcome,
     warnings: Arc<[PevcapImportWarning]>,
+}
+
+fn normalize_stored_text(value: &str, field: &'static str) -> Result<String, StorageError> {
+    let value = value.trim();
+    if value.is_empty() || value.chars().count() > MAX_STORED_TEXT_CHARS {
+        return Err(StorageError::InvalidStoredValue {
+            field,
+            value: value.to_owned(),
+        });
+    }
+    Ok(value.to_owned())
+}
+
+fn normalize_optional_stored_text(
+    value: Option<&str>,
+    field: &'static str,
+) -> Result<Option<String>, StorageError> {
+    value
+        .map(|value| normalize_stored_text(value, field))
+        .transpose()
 }
 
 impl PevcapImportPreview {
@@ -1900,21 +1921,14 @@ impl RideDatabase {
         associated_at_ms: Option<u64>,
         last_telemetry_at_ms: Option<u64>,
     ) -> Result<(), StorageError> {
-        for (field, value) in [
-            ("candidate vehicle", candidate_vehicle),
-            ("associated vehicle", associated_vehicle),
-        ] {
-            if value.is_some_and(|value| value.trim().is_empty() || value.len() > 512) {
-                return Err(StorageError::InvalidStoredValue {
-                    field,
-                    value: value.unwrap_or_default().to_owned(),
-                });
-            }
-        }
+        let candidate_vehicle =
+            normalize_optional_stored_text(candidate_vehicle, "candidate vehicle")?;
+        let associated_vehicle =
+            normalize_optional_stored_text(associated_vehicle, "associated vehicle")?;
         self.request(move |reply| Command::UpdateRideMapMetadata {
             ride_id,
-            candidate_vehicle: candidate_vehicle.map(str::to_owned),
-            associated_vehicle: associated_vehicle.map(str::to_owned),
+            candidate_vehicle,
+            associated_vehicle,
             associated_at_ms,
             last_telemetry_at_ms,
             reply,
@@ -1973,17 +1987,12 @@ impl RideDatabase {
         display_name: &str,
         updated_at_ms: u64,
     ) -> Result<(), StorageError> {
-        let platform_identifier = platform_identifier.trim();
-        let display_name = display_name.trim();
-        if platform_identifier.is_empty() || display_name.is_empty() {
-            return Err(StorageError::InvalidStoredValue {
-                field: "device name",
-                value: "empty".to_owned(),
-            });
-        }
+        let platform_identifier =
+            normalize_stored_text(platform_identifier, "platform identifier")?;
+        let display_name = normalize_stored_text(display_name, "display name")?;
         self.request(move |reply| Command::SaveDeviceName {
-            platform_identifier: platform_identifier.to_owned(),
-            display_name: display_name.to_owned(),
+            platform_identifier,
+            display_name,
             updated_at_ms,
             reply,
         })
@@ -1995,8 +2004,9 @@ impl RideDatabase {
     ///
     /// Returns a storage error when the worker cannot query the device record.
     pub fn device_name(&self, platform_identifier: &str) -> Result<Option<String>, StorageError> {
+        let platform_identifier = platform_identifier.trim().to_owned();
         self.request(move |reply| Command::DeviceName {
-            platform_identifier: platform_identifier.to_owned(),
+            platform_identifier,
             reply,
         })
     }
