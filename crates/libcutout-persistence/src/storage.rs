@@ -28,7 +28,8 @@ use uuid::Uuid;
 
 mod ride_write;
 use ride_write::{
-    LocationWriteDecision, LocationWriteMode, RideWriteState, wall_clock_now_milliseconds,
+    LocationWriteDecision, LocationWriteMode, RideWriteState, RideWriteStateParts,
+    wall_clock_now_milliseconds,
 };
 
 const COMMAND_QUEUE_CAPACITY: usize = 64;
@@ -6581,25 +6582,18 @@ fn load_ride_write_state(
     connection: &Connection,
     ride_id: RideId,
 ) -> Result<RideWriteState, StorageError> {
-    let (
-        source,
-        lifecycle,
-        updated_at_ms,
-        monotonic_created_at_ms,
-        duration_ms,
-        paused_at_ms,
-        paused_duration_ms,
-        latest_monotonic_ms,
-    ): (
-        String,
-        String,
-        u64,
-        Option<u64>,
-        u64,
-        Option<u64>,
-        u64,
-        Option<u64>,
-    ) = connection
+    struct StoredRideWriteState {
+        source: String,
+        lifecycle: String,
+        updated_at_ms: u64,
+        monotonic_created_at_ms: Option<u64>,
+        duration_ms: u64,
+        paused_at_ms: Option<u64>,
+        paused_duration_ms: u64,
+        latest_monotonic_ms: Option<u64>,
+    }
+
+    let stored = connection
         .query_row(
             "SELECT source, state, updated_at_ms, monotonic_created_at_ms,
                     duration_ms, paused_at_ms, paused_duration_ms,
@@ -6607,30 +6601,30 @@ fn load_ride_write_state(
              FROM rides WHERE id = ?1",
             params![ride_id.uuid().to_string()],
             |row| {
-                Ok((
-                    row.get(0)?,
-                    row.get(1)?,
-                    row.get(2)?,
-                    row.get(3)?,
-                    row.get(4)?,
-                    row.get(5)?,
-                    row.get(6)?,
-                    row.get(7)?,
-                ))
+                Ok(StoredRideWriteState {
+                    source: row.get(0)?,
+                    lifecycle: row.get(1)?,
+                    updated_at_ms: row.get(2)?,
+                    monotonic_created_at_ms: row.get(3)?,
+                    duration_ms: row.get(4)?,
+                    paused_at_ms: row.get(5)?,
+                    paused_duration_ms: row.get(6)?,
+                    latest_monotonic_ms: row.get(7)?,
+                })
             },
         )
         .optional()?
         .ok_or(StorageError::NotFound)?;
-    Ok(RideWriteState::with_duration_and_latest(
-        ride_source_from_db(&source)?,
-        state_from_db(&lifecycle)?,
-        updated_at_ms,
-        monotonic_created_at_ms,
-        duration_ms,
-        paused_at_ms,
-        paused_duration_ms,
-        latest_monotonic_ms,
-    ))
+    Ok(RideWriteState::from_parts(&RideWriteStateParts {
+        source: ride_source_from_db(&stored.source)?,
+        lifecycle: state_from_db(&stored.lifecycle)?,
+        updated_at_ms: stored.updated_at_ms,
+        monotonic_created_at_ms: stored.monotonic_created_at_ms,
+        duration_ms: stored.duration_ms,
+        paused_at_ms: stored.paused_at_ms,
+        paused_duration_ms: stored.paused_duration_ms,
+        latest_monotonic_ms: stored.latest_monotonic_ms,
+    }))
 }
 
 #[derive(Clone, Copy)]
