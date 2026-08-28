@@ -4453,6 +4453,10 @@ impl RideDatabaseHandle {
             .map_err(map_ride_database_error)
     }
 
+    #[allow(
+        clippy::needless_pass_by_value,
+        reason = "owned UniFFI boundary value is converted once"
+    )]
     fn create_started_ride_with_monotonic_start(
         &self,
         source: MobileRideSourceDto,
@@ -5024,14 +5028,6 @@ impl MobileRideMapCoreInner {
     }
 }
 
-fn wall_clock_unix_milliseconds() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .ok()
-        .and_then(|duration| u64::try_from(duration.as_millis()).ok())
-        .unwrap_or(u64::MAX)
-}
-
 fn map_ride_lifecycle_state(state: MobileRideLifecycleStateDto) -> ride_maps::RideLifecycleState {
     match state {
         MobileRideLifecycleStateDto::Draft => ride_maps::RideLifecycleState::Draft,
@@ -5207,7 +5203,7 @@ impl MobileRideMapCore {
                 database
                     .update_ride_map_metadata(
                         id,
-                        None,
+                        staged.candidate_vehicle().map(str::to_owned),
                         Some(platform_identifier),
                         staged
                             .associated_at_milliseconds()
@@ -5356,7 +5352,7 @@ impl MobileRideMapCore {
                 database
                     .update_ride_map_metadata(
                         id,
-                        None,
+                        staged.candidate_vehicle().map(str::to_owned),
                         Some(platform_identifier.clone()),
                         staged
                             .associated_at_milliseconds()
@@ -5543,33 +5539,44 @@ impl MobileRideMapCore {
                 continue;
             }
             completed.push(match result {
-                Ok(ride_maps::LocationAdmission::Accepted) => {
+                Ok(result) if result.admission() == ride_maps::LocationAdmission::Accepted => {
                     state.recorder.record_sample(pending.sample);
+                    let mut point = pending.point;
+                    if let Some(sequence) = result.sequence() {
+                        point.sequence = sequence;
+                    }
                     MobileRideMapCoreDecisionDto::Accepted {
-                        point: pending.point,
+                        point,
                         segment_started: pending.segment_started,
                     }
                 }
-                Ok(ride_maps::LocationAdmission::Duplicate) => {
+                Ok(result) if result.admission() == ride_maps::LocationAdmission::Duplicate => {
                     MobileRideMapCoreDecisionDto::Ignored {
                         reason: MobileRideMapDecisionReasonDto::DuplicateLocation,
                     }
                 }
-                Ok(ride_maps::LocationAdmission::OutOfOrder) => {
+                Ok(result) if result.admission() == ride_maps::LocationAdmission::OutOfOrder => {
                     MobileRideMapCoreDecisionDto::Rejected {
                         reason: MobileRideMapDecisionReasonDto::TimestampOutOfOrder,
                     }
                 }
-                Ok(ride_maps::LocationAdmission::AccuracyTooLow) => {
+                Ok(result)
+                    if result.admission() == ride_maps::LocationAdmission::AccuracyTooLow =>
+                {
                     MobileRideMapCoreDecisionDto::Rejected {
                         reason: MobileRideMapDecisionReasonDto::AccuracyTooLow,
                     }
                 }
-                Ok(ride_maps::LocationAdmission::UnrealisticJump) => {
+                Ok(result)
+                    if result.admission() == ride_maps::LocationAdmission::UnrealisticJump =>
+                {
                     MobileRideMapCoreDecisionDto::Rejected {
                         reason: MobileRideMapDecisionReasonDto::UnrealisticJump,
                     }
                 }
+                Ok(_) => MobileRideMapCoreDecisionDto::StorageError {
+                    message: "unknown location admission result".to_owned(),
+                },
                 Err(error) => MobileRideMapCoreDecisionDto::StorageError {
                     message: error.to_string(),
                 },
@@ -5693,6 +5700,16 @@ impl MobileRideMapCoreInner {
             .apply_transition_at(next, ride_maps::MonotonicMilliseconds::new(at_milliseconds));
         self.admission_recorder
             .apply_transition_at(next, ride_maps::MonotonicMilliseconds::new(at_milliseconds));
+        if matches!(
+            next,
+            ride_maps::RideLifecycleState::Stopped
+                | ride_maps::RideLifecycleState::Interrupted
+                | ride_maps::RideLifecycleState::Saved
+                | ride_maps::RideLifecycleState::Discarded
+        ) {
+            self.pending_location_writes.clear();
+            self.admission_recorder = self.recorder.clone();
+        }
         Ok(self.snapshot_at(next.into(), at_milliseconds))
     }
 }
@@ -13840,7 +13857,7 @@ mod tests {
             state.start_gps_only(1_000, Some("   ".to_owned())),
             Err(MobileRideMapCoreErrorDto::Storage(_))
         ));
-        assert!(state.current_snapshot().is_none());
+        assert!(state.current_snapshot(1_000).is_none());
         assert!(
             database
                 .list_rides(None, 10)
@@ -13923,9 +13940,12 @@ mod tests {
         state
             .start_gps_only(1_000, None)
             .expect("map recording starts");
-        state
-            .ingest_location(1_000, 1_700_000_000_000, 40.0, -105.0, 3.0)
-            .expect("first location is accepted");
+        assert!(matches!(
+            state
+                .ingest_location(1_000, 1_700_000_000_000, 40.0, -105.0, 3.0)
+                .expect("first location is queued"),
+            MobileRideMapCoreDecisionDto::Pending { .. }
+        ));
         while state.poll_location_writes().is_empty() {
             thread::yield_now();
         }
@@ -13982,29 +14002,38 @@ mod tests {
         state
             .start_gps_only(1_000, None)
             .expect("map recording starts");
-        state
-            .ingest_location(1_000, 1_700_000_000_000, 40.0, -105.0, 3.0)
-            .expect("first location is accepted");
+        assert!(matches!(
+            state
+                .ingest_location(1_000, 1_700_000_000_000, 40.0, -105.0, 3.0)
+                .expect("first location is queued"),
+            MobileRideMapCoreDecisionDto::Pending { .. }
+        ));
+        while state.poll_location_writes().is_empty() {
+            thread::yield_now();
+        }
         let second = state
             .ingest_location(40_000, 1_700_000_039_000, 40.001, -105.0, 3.0)
             .expect("post-gap location is accepted");
-        assert_eq!(
+        assert!(matches!(
             second,
-            MobileRideMapCoreDecisionDto::Accepted {
-                point: MobileRideMapCorePointDto {
-                    sequence: 1,
-                    segment_id: 1,
-                    latitude_degrees: 40.001,
-                    longitude_degrees: -105.0,
-                    wall_clock_unix_ms: 1_700_000_039_000,
-                    monotonic_ms: 40_000,
-                    horizontal_accuracy_meters: 3.0,
-                    telemetry_state: MobileRideMapCoreTelemetryStateDto::GpsOnly,
-                },
-                segment_started: true,
+            MobileRideMapCoreDecisionDto::Pending { .. }
+        ));
+        let settled = loop {
+            let decisions = state.poll_location_writes();
+            if !decisions.is_empty() {
+                break decisions;
             }
+            thread::yield_now();
+        };
+        assert!(
+            settled
+                .iter()
+                .any(|decision| matches!(decision, MobileRideMapCoreDecisionDto::Accepted { .. })),
+            "second location did not settle: {settled:?}"
         );
-        let snapshot = state.current_snapshot().expect("active snapshot exists");
+        let snapshot = state
+            .current_snapshot(40_000)
+            .expect("active snapshot exists");
         assert_eq!(snapshot.segment_count, 2);
         assert!(snapshot.summary.distance_meters.abs() < f64::EPSILON);
         let points = state.points_after(None, 10).expect("route points load");
@@ -14063,14 +14092,45 @@ mod tests {
                 .expect("external durable append succeeds"),
             MobileRideLocationAdmissionDto::Accepted
         );
-        assert_eq!(
+        assert!(matches!(
             state
                 .ingest_location(1_001, 1_700_000_000_001, 40.0, -105.0, 3.0)
-                .expect("duplicate admission is reported"),
+                .expect("duplicate admission is queued"),
+            MobileRideMapCoreDecisionDto::Pending { .. }
+        ));
+        let settled = loop {
+            let decisions = state.poll_location_writes();
+            if !decisions.is_empty() {
+                break decisions;
+            }
+            thread::yield_now();
+        };
+        assert!(settled.iter().any(|decision| matches!(
+            decision,
             MobileRideMapCoreDecisionDto::Ignored {
                 reason: MobileRideMapDecisionReasonDto::DuplicateLocation,
             }
-        );
+        )));
+        assert!(matches!(
+            state
+                .ingest_location(2_000, 1_700_000_002_000, 40.001, -105.0, 3.0)
+                .expect("post-duplicate location is queued"),
+            MobileRideMapCoreDecisionDto::Pending { .. }
+        ));
+        let settled = loop {
+            let decisions = state.poll_location_writes();
+            if !decisions.is_empty() {
+                break decisions;
+            }
+            thread::yield_now();
+        };
+        assert!(settled.iter().any(|decision| matches!(
+            decision,
+            MobileRideMapCoreDecisionDto::Accepted {
+                point: MobileRideMapCorePointDto { sequence: 1, .. },
+                ..
+            }
+        )));
 
         database.shutdown().expect("database shuts down");
         let _ = fs::remove_file(path);
@@ -14143,7 +14203,7 @@ mod tests {
         let rides = database.list_rides(None, 10).expect("recovered ride lists");
         assert_eq!(rides.rides.len(), 1);
         assert_eq!(rides.rides[0].candidate_vehicle.as_deref(), Some("pev-1"));
-        assert_eq!(rides.rides[0].duration_milliseconds, 500_000);
+        assert_eq!(rides.rides[0].duration_milliseconds, 4_097_000);
 
         database.shutdown().expect("reopened database shuts down");
         let _ = fs::remove_file(path);

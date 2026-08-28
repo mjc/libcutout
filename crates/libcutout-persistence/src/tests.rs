@@ -170,14 +170,15 @@ fn current_database_repairs_monotonic_ride_creation_times() {
 
     crate::storage::repair_legacy_ride_creation_times(&mut connection).unwrap();
 
-    let created_at_ms: u64 = connection
+    let (created_at_ms, monotonic_created_at_ms): (u64, Option<u64>) = connection
         .query_row(
-            "SELECT created_at_ms FROM rides WHERE id = ?1",
+            "SELECT created_at_ms, monotonic_created_at_ms FROM rides WHERE id = ?1",
             ["00000000-0000-0000-0000-000000000001"],
-            |row| row.get(0),
+            |row| Ok((row.get(0)?, row.get(1)?)),
         )
         .unwrap();
     assert_eq!(created_at_ms, 1_700_000_001_000);
+    assert_eq!(monotonic_created_at_ms, Some(1_000));
 }
 
 #[test]
@@ -327,7 +328,9 @@ fn async_location_write_returns_before_worker_completion_and_can_be_polled() {
         }
         std::thread::yield_now();
     };
-    assert_eq!(result.unwrap(), LocationAdmission::Accepted);
+    let result = result.unwrap();
+    assert_eq!(result.admission(), LocationAdmission::Accepted);
+    assert_eq!(result.sequence(), Some(0));
     assert!(pending.try_result().is_none());
 
     database.shutdown().unwrap();
@@ -1485,6 +1488,10 @@ fn version_eight_migration_adds_monotonic_ride_start_column() {
         .execute_batch(
             "
             ALTER TABLE rides DROP COLUMN monotonic_created_at_ms;
+            ALTER TABLE rides DROP COLUMN monotonic_last_event_ms;
+            ALTER TABLE rides DROP COLUMN paused_at_ms;
+            ALTER TABLE rides DROP COLUMN paused_duration_ms;
+            ALTER TABLE rides DROP COLUMN completed_duration_ms;
             DROP TABLE devices;
             PRAGMA application_id = 1129665615;
             PRAGMA user_version = 8;
@@ -1510,7 +1517,7 @@ fn version_eight_migration_adds_monotonic_ride_start_column() {
             |row| row.get(0),
         )
         .unwrap();
-    assert_eq!(version, 10);
+    assert_eq!(version, 11);
     assert!(has_monotonic_start);
 
     let _ = std::fs::remove_file(path);
