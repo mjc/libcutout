@@ -5559,6 +5559,10 @@ impl MobileRideMapCoreInner {
         state
     }
 
+    fn ensure_operational(&self) -> Result<(), MobileRideMapCoreErrorDto> {
+        self.initialization_error.clone().map_or(Ok(()), Err)
+    }
+
     fn restore_active_ride(&mut self) -> Result<(), MobileRideMapCoreErrorDto> {
         let Some(database) = self.database.as_ref() else {
             return Ok(());
@@ -5707,6 +5711,7 @@ impl MobileRideMapCoreInner {
         identity: &ride_maps::VehicleIdentity,
         at_ms: u64,
     ) -> Result<ride_maps::VehicleAssociation, MobileRideMapCoreErrorDto> {
+        self.ensure_operational()?;
         let mut staged = self.recorder.clone();
         let mut admission_staged = self.admission_recorder.clone();
         let association =
@@ -5746,6 +5751,7 @@ impl MobileRideMapCoreInner {
         at_ms: u64,
         last_connected_vehicle: Option<String>,
     ) -> Result<MobileRideMapCoreSnapshotDto, MobileRideMapCoreErrorDto> {
+        self.ensure_operational()?;
         if self.recorder.state().is_some_and(|current| {
             !matches!(
                 current,
@@ -6164,6 +6170,7 @@ impl MobileRideMapCore {
         at_ms: u64,
     ) -> Result<MobileRideMapCoreSnapshotDto, MobileRideMapCoreErrorDto> {
         let mut state = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
+        state.ensure_operational()?;
         if state.recorder.state().is_none_or(|current| {
             matches!(
                 current,
@@ -6292,6 +6299,7 @@ impl MobileRideMapCore {
         at_ms: u64,
     ) -> Result<MobileRideMapCoreAssociationDto, MobileRideMapCoreErrorDto> {
         let mut state = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
+        state.ensure_operational()?;
         let Some(identity) = ride_maps::VehicleIdentity::new(&platform_identifier) else {
             return Ok(ride_maps::VehicleAssociation::CandidateMissing.into());
         };
@@ -6310,6 +6318,7 @@ impl MobileRideMapCore {
         at_ms: u64,
     ) -> Result<MobileRideMapTelemetryObservationDto, MobileRideMapCoreErrorDto> {
         let mut state = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
+        state.ensure_operational()?;
         let mut staged = state.recorder.clone();
         let mut admission_staged = state.admission_recorder.clone();
         let observation = staged.observe_telemetry(ride_maps::MonotonicMilliseconds::new(at_ms));
@@ -6361,6 +6370,7 @@ impl MobileRideMapCore {
         horizontal_accuracy_meters: f64,
     ) -> Result<MobileRideMapCoreDecisionDto, MobileRideMapCoreErrorDto> {
         let mut state = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
+        state.ensure_operational()?;
         let Some(id) = state.active_ride_id.clone() else {
             return Err(MobileRideMapCoreErrorDto::NoActiveRide);
         };
@@ -6778,6 +6788,7 @@ impl MobileRideMapCoreInner {
         event: MobileRideEventDto,
         at_milliseconds: Option<u64>,
     ) -> Result<MobileRideMapCoreSnapshotDto, MobileRideMapCoreErrorDto> {
+        self.ensure_operational()?;
         let Some(id) = self.active_ride_id.clone() else {
             return Err(MobileRideMapCoreErrorDto::NoActiveRide);
         };
@@ -16755,6 +16766,17 @@ mod tests {
             state.initialization_error(),
             Some(MobileRideMapCoreErrorDto::Storage(_))
         ));
+        let initialization_error = state
+            .initialization_error()
+            .expect("restore error remains available");
+        assert_eq!(
+            state.start_gps_only(1_000, None),
+            Err(initialization_error.clone())
+        );
+        assert_eq!(
+            state.ingest_location(1_001, 1_700_000_000_001, 40.0, -105.0, 3.0),
+            Err(initialization_error)
+        );
 
         let _ = fs::remove_file(path);
     }
