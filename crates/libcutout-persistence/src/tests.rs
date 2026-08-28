@@ -214,6 +214,53 @@ fn queued_location_reports_worker_rejection() {
 }
 
 #[test]
+fn queued_location_returns_durable_admission() {
+    let _guard = test_guard();
+    let path = std::env::temp_dir().join(format!(
+        "libcutout-persistence-queued-location-admission-{}.sqlite",
+        uuid::Uuid::new_v4()
+    ));
+    let database = RideDatabase::open(&path).unwrap();
+    let ride = database
+        .create_ride(RideSource::Live, 1_700_000_000_000)
+        .unwrap();
+    database.transition(ride, RideEvent::Start).unwrap();
+    let sample = LocationSample::new(
+        Coordinate::from_degrees(40.0, -105.0).unwrap(),
+        1_001,
+        1_700_000_000_001,
+        None,
+        LocationSource::Live,
+    );
+
+    assert_eq!(
+        database
+            .enqueue_location_with_segment_and_telemetry(
+                ride,
+                sample,
+                0,
+                RouteTelemetryState::GpsOnly,
+            )
+            .unwrap(),
+        LocationAdmission::Accepted
+    );
+    assert_eq!(
+        database
+            .enqueue_location_with_segment_and_telemetry(
+                ride,
+                sample,
+                0,
+                RouteTelemetryState::GpsOnly,
+            )
+            .unwrap(),
+        LocationAdmission::Duplicate
+    );
+
+    database.shutdown().unwrap();
+    let _ = std::fs::remove_file(path);
+}
+
+#[test]
 fn ride_history_duration_is_derived_from_rust_monotonic_state() {
     let _guard = test_guard();
     let path = std::env::temp_dir().join(format!(
@@ -221,22 +268,74 @@ fn ride_history_duration_is_derived_from_rust_monotonic_state() {
         uuid::Uuid::new_v4()
     ));
     let database = RideDatabase::open(&path).unwrap();
-    let ride = database.create_ride(RideSource::Live, 1_000).unwrap();
+    let ride = database
+        .create_ride(RideSource::Live, 1_700_000_000_000)
+        .unwrap();
     database.transition(ride, RideEvent::Start).unwrap();
-    let sample = LocationSample::new(
+    let first = LocationSample::new(
         Coordinate::from_degrees(40.0, -105.0).unwrap(),
         3_000,
         1_700_000_003_000,
         None,
         LocationSource::Live,
     );
-    database.append_location(ride, sample).unwrap();
+    let second = LocationSample::new(
+        Coordinate::from_degrees(40.0001, -105.0).unwrap(),
+        5_000,
+        1_700_000_005_000,
+        None,
+        LocationSource::Live,
+    );
+    database.append_location(ride, first).unwrap();
+    database.append_location(ride, second).unwrap();
 
     let page = database
         .list_rides(None, QueryLimit::new(1).unwrap())
         .unwrap();
     assert_eq!(page.rides()[0].duration_milliseconds(), 2_000);
+    assert_eq!(
+        database
+            .find_ride(ride)
+            .unwrap()
+            .unwrap()
+            .duration_milliseconds(),
+        2_000
+    );
 
+    database.shutdown().unwrap();
+    let _ = std::fs::remove_file(path);
+}
+
+#[test]
+fn monotonic_ride_start_is_persisted_separately_from_wall_clock_ordering() {
+    let _guard = test_guard();
+    let path = std::env::temp_dir().join(format!(
+        "libcutout-persistence-monotonic-ride-start-{}.sqlite",
+        uuid::Uuid::new_v4()
+    ));
+    let database = RideDatabase::open(&path).unwrap();
+    let ride = database
+        .create_ride_with_monotonic_start(RideSource::Live, 1_700_000_000_000, Some(1_000))
+        .unwrap();
+    database.transition(ride, RideEvent::Start).unwrap();
+    database
+        .append_location(
+            ride,
+            LocationSample::new(
+                Coordinate::from_degrees(40.0, -105.0).unwrap(),
+                2_000,
+                1_700_000_001_000,
+                None,
+                LocationSource::Live,
+            ),
+        )
+        .unwrap();
+    database.shutdown().unwrap();
+
+    let database = RideDatabase::open(&path).unwrap();
+    let record = database.find_ride(ride).unwrap().unwrap();
+    assert_eq!(record.created_at_milliseconds(), 1_700_000_000_000);
+    assert_eq!(record.monotonic_created_at_milliseconds(), Some(1_000));
     database.shutdown().unwrap();
     let _ = std::fs::remove_file(path);
 }
@@ -780,7 +879,7 @@ fn legacy_schema_versions_migrate_to_the_current_schema() {
         let current_version: i64 = connection
             .pragma_query_value(None, "user_version", |row| row.get(0))
             .unwrap();
-        assert_eq!(current_version, 9);
+        assert_eq!(current_version, 10);
         let devices_table: String = connection
             .query_row(
                 "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'devices'",
@@ -1126,6 +1225,59 @@ fn filtered_ride_history_queries_stay_rust_owned_and_bounded() {
             .map(RideRecord::id)
             .collect::<Vec<_>>(),
         vec![first]
+    );
+
+    database.shutdown().unwrap();
+    let _ = std::fs::remove_file(path);
+}
+
+#[test]
+fn filtered_history_escapes_like_wildcards() {
+    let _guard = test_guard();
+    let path = std::env::temp_dir().join(format!(
+        "libcutout-persistence-filtered-wildcards-{}.sqlite",
+        uuid::Uuid::new_v4()
+    ));
+    let database = RideDatabase::open(&path).unwrap();
+    let wildcard_decoy = database.create_ride(RideSource::Live, 30).unwrap();
+    let wildcard_literal = database.create_ride(RideSource::Live, 40).unwrap();
+    for ride in [wildcard_decoy, wildcard_literal] {
+        database.transition(ride, RideEvent::Start).unwrap();
+        database.transition(ride, RideEvent::Stop).unwrap();
+        database.transition(ride, RideEvent::Save).unwrap();
+    }
+    database
+        .save_device_name("device-decoy", "name-Xliteral", 41)
+        .unwrap();
+    database
+        .save_device_name("device_%\\literal", "name_%\\literal", 42)
+        .unwrap();
+    database
+        .update_ride_map_metadata(wildcard_decoy, None, Some("device-decoy"), None, None)
+        .unwrap();
+    database
+        .update_ride_map_metadata(
+            wildcard_literal,
+            None,
+            Some("device_%\\literal"),
+            None,
+            None,
+        )
+        .unwrap();
+    let literal_search = database
+        .list_rides_filtered(
+            None,
+            QueryLimit::new(10).unwrap(),
+            RideHistoryQuery::new(None, None, Some("name_%\\literal")),
+        )
+        .unwrap();
+    assert_eq!(
+        literal_search
+            .rides()
+            .iter()
+            .map(RideRecord::id)
+            .collect::<Vec<_>>(),
+        vec![wildcard_literal]
     );
     database.shutdown().unwrap();
     let _ = std::fs::remove_file(path);
