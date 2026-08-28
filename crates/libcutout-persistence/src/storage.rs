@@ -13,7 +13,7 @@ use rusqlite::{Connection, ErrorCode, OptionalExtension, params};
 use sha2::{Digest, Sha256};
 use std::{
     fs::{self, File, OpenOptions},
-    io::{BufReader, Read},
+    io::{BufReader, Read, Write},
     path::{Path, PathBuf},
     sync::{
         Arc, Mutex, OnceLock,
@@ -2152,6 +2152,7 @@ impl RideDatabase {
                     &managed.path,
                     preview.encoding(),
                     &mut scan,
+                    None,
                     |samples| {
                         self.request(|reply| Command::AppendPevcapLocationBatch {
                             ride_id,
@@ -5586,12 +5587,13 @@ fn preflight_pevcap(
     }
     let artifact_size = metadata.len();
     check_pevcap_limit("artifact bytes", MAX_PEVCAP_ARTIFACT_BYTES, artifact_size)?;
-    let artifact_digest = artifact_digest(&path)?;
+    let mut digest = Sha256::new();
 
     let mut scan = PevcapScanSummary::default();
-    stream_pevcap_location_batches(&path, encoding, &mut scan, |samples| {
+    stream_pevcap_location_batches(&path, encoding, &mut scan, Some(&mut digest), |samples| {
         Ok(u64::try_from(samples.len()).unwrap_or(u64::MAX))
     })?;
+    let artifact_digest = hex_encode(digest.finalize());
     let duration_milliseconds = scan
         .route_latest_milliseconds
         .zip(scan.route_earliest_milliseconds)
@@ -5666,18 +5668,20 @@ fn prepare_managed_pevcap(
     ));
     let copied = (|| {
         let source = File::open(&preview.source_path)?;
-        let mut destination_file = OpenOptions::new()
+        let destination_file = OpenOptions::new()
             .create_new(true)
             .write(true)
             .open(&temporary)?;
+        let mut destination_file = DigestingWriter::new(destination_file);
         let copied = std::io::copy(&mut BufReader::new(source), &mut destination_file)?;
-        destination_file.sync_all()?;
+        destination_file.flush()?;
+        destination_file.writer.sync_all()?;
         if copied != preview.artifact_size
-            || artifact_digest(&temporary)? != preview.artifact_digest
+            || hex_encode(destination_file.finalize().finalize()) != preview.artifact_digest
         {
             return Err(StorageError::PevcapPreviewChanged);
         }
-        let mut permissions = destination_file.metadata()?.permissions();
+        let mut permissions = fs::metadata(&temporary)?.permissions();
         permissions.set_readonly(true);
         fs::set_permissions(&temporary, permissions)?;
         fs::rename(&temporary, &destination)?;
@@ -5704,6 +5708,7 @@ fn stream_pevcap_location_batches(
     path: &Path,
     encoding: PevcapEncoding,
     scan: &mut PevcapScanSummary,
+    digest: Option<&mut Sha256>,
     mut append: impl FnMut(Vec<PevcapRoutePoint>) -> Result<u64, StorageError>,
 ) -> Result<u64, StorageError> {
     let mut batch = Vec::with_capacity(PEVCAP_LOCATION_BATCH_SIZE);
@@ -5712,7 +5717,7 @@ fn stream_pevcap_location_batches(
 
     // Binary PEVCAP stores records and independent locations in separate sections. Replay both
     // encodings in that same canonical order without buffering the capture in memory.
-    stream_pevcap_events(path, encoding, |event| {
+    stream_pevcap_events(path, encoding, digest, |event| {
         if let PevcapEvent::Record(record) = event {
             scan.observe_record(&record)?;
             if let Some(location) = record.phone_location {
@@ -5729,7 +5734,7 @@ fn stream_pevcap_location_batches(
         }
         Ok(())
     })?;
-    stream_pevcap_events(path, encoding, |event| {
+    stream_pevcap_events(path, encoding, None, |event| {
         if let PevcapEvent::Location(location) = event {
             append_pevcap_location(
                 location.location,
@@ -5753,11 +5758,18 @@ fn stream_pevcap_location_batches(
 fn stream_pevcap_events(
     path: &Path,
     encoding: PevcapEncoding,
+    digest: Option<&mut Sha256>,
     mut visit: impl FnMut(PevcapEvent) -> Result<(), StorageError>,
 ) -> Result<(), StorageError> {
     let file = File::open(path)?;
-    let mut reader = PevcapReader::new(BufReader::new(file), encoding)
-        .map_err(|error| StorageError::PevcapImport(error.to_string()))?;
+    let mut reader = PevcapReader::new(
+        DigestingReader {
+            reader: file,
+            digest,
+        },
+        encoding,
+    )
+    .map_err(|error| StorageError::PevcapImport(error.to_string()))?;
     while let Some(event) = reader
         .next_event()
         .map_err(|error| StorageError::PevcapImport(error.to_string()))?
@@ -5765,6 +5777,51 @@ fn stream_pevcap_events(
         visit(event)?;
     }
     Ok(())
+}
+
+struct DigestingReader<'a> {
+    reader: File,
+    digest: Option<&'a mut Sha256>,
+}
+
+impl Read for DigestingReader<'_> {
+    fn read(&mut self, buffer: &mut [u8]) -> std::io::Result<usize> {
+        let read = self.reader.read(buffer)?;
+        if let Some(digest) = self.digest.as_mut() {
+            digest.update(&buffer[..read]);
+        }
+        Ok(read)
+    }
+}
+
+struct DigestingWriter<W> {
+    writer: W,
+    digest: Sha256,
+}
+
+impl<W> DigestingWriter<W> {
+    fn new(writer: W) -> Self {
+        Self {
+            writer,
+            digest: Sha256::new(),
+        }
+    }
+
+    fn finalize(self) -> Sha256 {
+        self.digest
+    }
+}
+
+impl<W: Write> Write for DigestingWriter<W> {
+    fn write(&mut self, buffer: &[u8]) -> std::io::Result<usize> {
+        let written = self.writer.write(buffer)?;
+        self.digest.update(&buffer[..written]);
+        Ok(written)
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        self.writer.flush()
+    }
 }
 
 fn append_pevcap_location(

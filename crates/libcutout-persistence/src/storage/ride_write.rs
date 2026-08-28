@@ -26,6 +26,17 @@ pub(super) struct RideWriteState {
     latest_monotonic_ms: Option<u64>,
 }
 
+pub(super) struct RideWriteStateParts {
+    pub(super) source: RideSource,
+    pub(super) lifecycle: RideLifecycleState,
+    pub(super) updated_at_ms: u64,
+    pub(super) monotonic_created_at_ms: Option<u64>,
+    pub(super) duration_ms: u64,
+    pub(super) paused_at_ms: Option<u64>,
+    pub(super) paused_duration_ms: u64,
+    pub(super) latest_monotonic_ms: Option<u64>,
+}
+
 impl RideWriteState {
     #[cfg(test)]
     const fn with_duration(
@@ -37,7 +48,7 @@ impl RideWriteState {
         paused_at_ms: Option<u64>,
         paused_duration_ms: u64,
     ) -> Self {
-        Self::with_duration_and_latest(
+        Self::from_parts(&RideWriteStateParts {
             source,
             lifecycle,
             updated_at_ms,
@@ -45,29 +56,20 @@ impl RideWriteState {
             duration_ms,
             paused_at_ms,
             paused_duration_ms,
-            None,
-        )
+            latest_monotonic_ms: None,
+        })
     }
 
-    pub(super) const fn with_duration_and_latest(
-        source: RideSource,
-        lifecycle: RideLifecycleState,
-        updated_at_ms: u64,
-        monotonic_created_at_ms: Option<u64>,
-        duration_ms: u64,
-        paused_at_ms: Option<u64>,
-        paused_duration_ms: u64,
-        latest_monotonic_ms: Option<u64>,
-    ) -> Self {
+    pub(super) const fn from_parts(parts: &RideWriteStateParts) -> Self {
         Self {
-            source,
-            lifecycle,
-            updated_at_ms,
-            monotonic_created_at_ms,
-            duration_ms,
-            paused_at_ms,
-            paused_duration_ms,
-            latest_monotonic_ms,
+            source: parts.source,
+            lifecycle: parts.lifecycle,
+            updated_at_ms: parts.updated_at_ms,
+            monotonic_created_at_ms: parts.monotonic_created_at_ms,
+            duration_ms: parts.duration_ms,
+            paused_at_ms: parts.paused_at_ms,
+            paused_duration_ms: parts.paused_duration_ms,
+            latest_monotonic_ms: parts.latest_monotonic_ms,
         }
     }
 
@@ -309,16 +311,16 @@ mod tests {
 
     #[test]
     fn transition_time_is_clamped_to_the_latest_durable_sample() {
-        let state = RideWriteState::with_duration_and_latest(
-            RideSource::Live,
-            RideLifecycleState::Active,
-            20,
-            Some(1_000),
-            0,
-            None,
-            0,
-            Some(5_000),
-        );
+        let state = RideWriteState::from_parts(&RideWriteStateParts {
+            source: RideSource::Live,
+            lifecycle: RideLifecycleState::Active,
+            updated_at_ms: 20,
+            monotonic_created_at_ms: Some(1_000),
+            duration_ms: 0,
+            paused_at_ms: None,
+            paused_duration_ms: 0,
+            latest_monotonic_ms: Some(5_000),
+        });
 
         let transition = state
             .transition_at(RideEvent::Pause, 30, Some(3_000))
