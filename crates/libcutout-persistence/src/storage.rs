@@ -2064,6 +2064,14 @@ impl RideDatabase {
             digest: preview.artifact_digest.clone(),
             reply,
         })? {
+            let directory = pevcap_import_directory(self.path.as_ref());
+            ensure_managed_pevcap_directory(&directory)?;
+            validate_managed_pevcap_artifact(
+                &directory,
+                &receipt.managed_artifact_path,
+                preview.artifact_digest(),
+                preview.artifact_size(),
+            )?;
             return Ok(receipt);
         }
 
@@ -2085,7 +2093,15 @@ impl RideDatabase {
         };
         let PevcapBegin::Started { ride_id } = begin else {
             return match begin {
-                PevcapBegin::Duplicate(receipt) => Ok(receipt),
+                PevcapBegin::Duplicate(receipt) => {
+                    validate_managed_pevcap_artifact(
+                        &pevcap_import_directory(self.path.as_ref()),
+                        &receipt.managed_artifact_path,
+                        preview.artifact_digest(),
+                        preview.artifact_size(),
+                    )?;
+                    Ok(receipt)
+                }
                 PevcapBegin::Started { .. } => unreachable!(),
             };
         };
@@ -3882,23 +3898,28 @@ fn prepare_managed_pevcap(
     database_path: &Path,
     preview: &PevcapImportPreview,
 ) -> Result<ManagedArtifact, StorageError> {
-    let mut directory_name = database_path.as_os_str().to_owned();
-    directory_name.push(".pevcap-imports");
-    let directory = PathBuf::from(directory_name);
-    fs::create_dir_all(&directory)?;
+    let directory = pevcap_import_directory(database_path);
+    ensure_managed_pevcap_directory(&directory)?;
     let extension = match preview.encoding {
         PevcapEncoding::Jsonl => "jsonl",
         PevcapEncoding::Binary => "pevcap",
     };
     let destination = directory.join(format!("{}.{}", preview.artifact_digest, extension));
-    if destination.exists() {
-        if artifact_digest(&destination)? != preview.artifact_digest {
-            return Err(StorageError::PevcapPreviewChanged);
+    match fs::symlink_metadata(&destination) {
+        Ok(_) => {
+            validate_managed_pevcap_artifact(
+                &directory,
+                &destination,
+                preview.artifact_digest(),
+                preview.artifact_size(),
+            )?;
+            return Ok(ManagedArtifact {
+                path: destination,
+                created: false,
+            });
         }
-        return Ok(ManagedArtifact {
-            path: destination,
-            created: false,
-        });
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => return Err(StorageError::Io(error)),
     }
 
     let temporary = directory.join(format!(
@@ -3934,6 +3955,60 @@ fn prepare_managed_pevcap(
         path: destination,
         created: true,
     })
+}
+
+fn ensure_managed_pevcap_directory(directory: &Path) -> Result<(), StorageError> {
+    match fs::symlink_metadata(directory) {
+        Ok(metadata) => {
+            let file_type = metadata.file_type();
+            if file_type.is_dir() && !file_type.is_symlink() {
+                Ok(())
+            } else {
+                Err(StorageError::PevcapPreviewChanged)
+            }
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            match fs::create_dir(directory) {
+                Ok(()) => Ok(()),
+                Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+                    ensure_managed_pevcap_directory(directory)
+                }
+                Err(error) => Err(StorageError::Io(error)),
+            }
+        }
+        Err(error) => Err(StorageError::Io(error)),
+    }
+}
+
+fn validate_managed_pevcap_artifact(
+    directory: &Path,
+    path: &Path,
+    expected_digest: &str,
+    expected_size: u64,
+) -> Result<(), StorageError> {
+    if path.parent() != Some(directory) {
+        return Err(StorageError::PevcapPreviewChanged);
+    }
+    let metadata = fs::symlink_metadata(path).map_err(|error| {
+        if error.kind() == std::io::ErrorKind::NotFound {
+            StorageError::PevcapPreviewChanged
+        } else {
+            StorageError::Io(error)
+        }
+    })?;
+    let file_type = metadata.file_type();
+    if !file_type.is_file() || file_type.is_symlink() || metadata.len() != expected_size {
+        return Err(StorageError::PevcapPreviewChanged);
+    }
+    if artifact_digest(path)? != expected_digest {
+        return Err(StorageError::PevcapPreviewChanged);
+    }
+    Ok(())
+}
+fn pevcap_import_directory(database_path: &Path) -> PathBuf {
+    let mut directory_name = database_path.as_os_str().to_owned();
+    directory_name.push(".pevcap-imports");
+    PathBuf::from(directory_name)
 }
 
 fn stream_pevcap_location_batches(

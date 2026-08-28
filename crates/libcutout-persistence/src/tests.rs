@@ -1069,6 +1069,48 @@ fn database_preflights_confirms_and_deduplicates_managed_pevcap_artifacts() {
     assert!(second.duplicate);
     assert_eq!(second.ride_id, first.ride_id);
     assert_eq!(second.managed_artifact_path, first.managed_artifact_path);
+    std::fs::remove_file(&first.managed_artifact_path).unwrap();
+    assert!(matches!(
+        database.confirm_pevcap_import(&preview, 1_700_000_000_002),
+        Err(StorageError::PevcapPreviewChanged)
+    ));
+    std::fs::write(&first.managed_artifact_path, b"tampered").unwrap();
+    assert!(matches!(
+        database.confirm_pevcap_import(&preview, 1_700_000_000_003),
+        Err(StorageError::PevcapPreviewChanged)
+    ));
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::symlink;
+
+        let external_file = artifact_path.with_extension("external");
+        std::fs::remove_file(&first.managed_artifact_path).unwrap();
+        std::fs::write(&external_file, b"keep").unwrap();
+        symlink(&external_file, &first.managed_artifact_path).unwrap();
+        assert!(matches!(
+            database.confirm_pevcap_import(&preview, 1_700_000_000_004),
+            Err(StorageError::PevcapPreviewChanged)
+        ));
+        assert_eq!(std::fs::read(&external_file).unwrap(), b"keep");
+        std::fs::remove_file(&first.managed_artifact_path).unwrap();
+
+        let managed_directory = first.managed_artifact_path.parent().unwrap();
+        let external_directory = artifact_path.with_extension("external-directory");
+        std::fs::remove_dir(managed_directory).unwrap();
+        std::fs::create_dir(&external_directory).unwrap();
+        let sentinel = external_directory.join("sentinel");
+        std::fs::write(&sentinel, b"keep").unwrap();
+        symlink(&external_directory, managed_directory).unwrap();
+        assert!(matches!(
+            database.confirm_pevcap_import(&preview, 1_700_000_000_005),
+            Err(StorageError::PevcapPreviewChanged)
+        ));
+        assert_eq!(std::fs::read(&sentinel).unwrap(), b"keep");
+        std::fs::remove_file(managed_directory).unwrap();
+        std::fs::remove_file(sentinel).unwrap();
+        std::fs::remove_dir(external_directory).unwrap();
+        std::fs::remove_file(external_file).unwrap();
+    }
     database.shutdown().unwrap();
     let _ = std::fs::remove_file(&first.managed_artifact_path);
     let _ = std::fs::remove_dir(first.managed_artifact_path.parent().unwrap());
