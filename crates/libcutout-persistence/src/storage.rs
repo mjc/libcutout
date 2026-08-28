@@ -2131,6 +2131,28 @@ impl RideDatabase {
                 reply,
             })
         })();
+        if matches!(result.as_ref(), Err(StorageError::ResponseDropped)) {
+            // The finish transaction may have committed before its reply was lost. Reconcile the
+            // durable receipt before cleanup; deleting the managed artifact in that case would
+            // leave a successful import pointing at missing bytes.
+            match self.request(|reply| Command::PevcapImportLookup {
+                digest: preview.artifact_digest.clone(),
+                reply,
+            }) {
+                Ok(Some(receipt)) => {
+                    let directory = pevcap_import_directory(self.path.as_ref());
+                    validate_managed_pevcap_artifact(
+                        &directory,
+                        &receipt.managed_artifact_path,
+                        preview.artifact_digest(),
+                        preview.artifact_size(),
+                    )?;
+                    return Ok(receipt);
+                }
+                Ok(None) => {}
+                Err(_) => return result,
+            }
+        }
         if result.is_err() {
             let _ = self.request(|reply| Command::AbortPevcapImport {
                 digest: preview.artifact_digest.clone(),
