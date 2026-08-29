@@ -4900,7 +4900,8 @@ impl RideDatabaseHandle {
                 id,
                 location,
                 segment_id,
-                map_ride_telemetry_state(telemetry_state),
+                map_ride_telemetry_state(telemetry_state)
+                    .map_err(|_| MobileRideDatabaseError::StorageFailure)?,
             )
             .map(Into::into)
             .map_err(map_ride_database_error)
@@ -4927,7 +4928,8 @@ impl RideDatabaseHandle {
                 id,
                 location,
                 segment_id,
-                map_ride_telemetry_state(telemetry_state),
+                map_ride_telemetry_state(telemetry_state)
+                    .map_err(|_| MobileRideDatabaseError::StorageFailure)?,
             )
             .map(Into::into)
             .map_err(map_ride_database_error)
@@ -5079,7 +5081,8 @@ fn enqueue_location_async(
             id,
             location,
             segment_id,
-            map_ride_telemetry_state(telemetry_state),
+            map_ride_telemetry_state(telemetry_state)
+                .map_err(|_| MobileRideDatabaseError::StorageFailure)?,
         )
         .map_err(map_ride_database_error)
 }
@@ -5175,12 +5178,16 @@ impl MobileRideMapCoreInner {
                 page.points
                     .into_iter()
                     .map(|point| {
-                        mobile_ride_location(point.location).map(|sample| {
-                            ride_maps::RideMapPoint::new(
-                                sample,
-                                ride_maps::RideMapSegmentId::new(point.segment_id),
-                                map_ride_telemetry_state(point.telemetry_state),
-                            )
+                        mobile_ride_location(point.location).and_then(|sample| {
+                            map_ride_telemetry_state(point.telemetry_state)
+                                .map_err(|_| MobileRideDatabaseError::StorageFailure)
+                                .map(|telemetry_state| {
+                                    ride_maps::RideMapPoint::new(
+                                        sample,
+                                        ride_maps::RideMapSegmentId::new(point.segment_id),
+                                        telemetry_state,
+                                    )
+                                })
                         })
                     })
                     .collect::<Result<Vec<_>, _>>()
@@ -5399,22 +5406,19 @@ fn map_ride_lifecycle_state(state: MobileRideLifecycleStateDto) -> ride_maps::Ri
 
 fn map_ride_telemetry_state(
     state: MobileRideMapCoreTelemetryStateDto,
-) -> ride_maps::RouteTelemetryState {
+) -> Result<ride_maps::RouteTelemetryState, &'static str> {
     match state {
-        MobileRideMapCoreTelemetryStateDto::GpsOnly => ride_maps::RouteTelemetryState::GpsOnly,
+        MobileRideMapCoreTelemetryStateDto::GpsOnly => Ok(ride_maps::RouteTelemetryState::GpsOnly),
         MobileRideMapCoreTelemetryStateDto::AssociatedNoTelemetry => {
-            ride_maps::RouteTelemetryState::AssociatedNoTelemetry
+            Ok(ride_maps::RouteTelemetryState::AssociatedNoTelemetry)
         }
         MobileRideMapCoreTelemetryStateDto::AssociatedFresh => {
-            ride_maps::RouteTelemetryState::AssociatedFresh
+            Ok(ride_maps::RouteTelemetryState::AssociatedFresh)
         }
         MobileRideMapCoreTelemetryStateDto::AssociatedStale => {
-            ride_maps::RouteTelemetryState::AssociatedStale
+            Ok(ride_maps::RouteTelemetryState::AssociatedStale)
         }
-        MobileRideMapCoreTelemetryStateDto::Unknown => {
-            // Unknown provenance must not claim that a vehicle telemetry sample was observed.
-            ride_maps::RouteTelemetryState::GpsOnly
-        }
+        MobileRideMapCoreTelemetryStateDto::Unknown => Err("unsupported telemetry state"),
     }
 }
 
@@ -5995,14 +5999,25 @@ impl MobileRideMapCore {
                 .points
                 .into_iter()
                 .map(|point| {
-                    MobileRideMapCoreInner::point_from_location(
-                        point.location,
-                        point.sequence,
-                        ride_maps::RideMapSegmentId::new(point.segment_id),
-                        map_ride_telemetry_state(point.telemetry_state),
-                    )
+                    map_ride_telemetry_state(point.telemetry_state)
+                        .map_err(|_| {
+                            MobileRideMapCoreErrorDto::Storage(
+                                "unsupported telemetry state".to_owned(),
+                            )
+                        })
+                        .map(|telemetry_state| {
+                            MobileRideMapCoreInner::point_from_location(
+                                point.location,
+                                point.sequence,
+                                ride_maps::RideMapSegmentId::new(point.segment_id),
+                                telemetry_state,
+                            )
+                        })
                 })
-                .collect();
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(|_| {
+                    MobileRideMapCoreErrorDto::Storage("unsupported telemetry state".to_owned())
+                })?;
             return Ok(MobileRideMapCorePointBatchDto {
                 points,
                 next_cursor: page.next_cursor.map(|cursor| cursor.sequence),
@@ -10323,6 +10338,14 @@ mod tests {
         bytes[0..4].copy_from_slice(&[0xdc, 0x5a, 0x5c, 38]);
         bytes[28..30].copy_from_slice(&(model_id * 1_000).to_be_bytes());
         bytes
+    }
+
+    #[test]
+    fn unknown_mobile_telemetry_state_is_not_downgraded_to_gps_only() {
+        assert_eq!(
+            map_ride_telemetry_state(MobileRideMapCoreTelemetryStateDto::Unknown),
+            Err("unsupported telemetry state")
+        );
     }
 
     #[test]
