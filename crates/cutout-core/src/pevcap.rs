@@ -59,6 +59,12 @@ pub const PEVCAP_CAPTURE_EVIDENCE_ANNOTATION_KEY: &str = "capture_evidence";
 #[cfg(feature = "serde")]
 const PEVCAP_BINARY_LENGTH_PREFIX_BYTES: usize = 4;
 
+#[cfg(feature = "serde")]
+const PEVCAP_MAX_STREAM_PAYLOAD_BYTES: usize = 1024 * 1024;
+
+#[cfg(feature = "serde")]
+const PEVCAP_MAX_JSONL_LINE_BYTES: usize = 1024 * 1024;
+
 /// Standard hardware capture session labels.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum CaptureSessionLabel {
@@ -361,7 +367,7 @@ impl<R: Read> PevcapReader<R> {
 
         loop {
             line.clear();
-            if reader.read_line(&mut line)? == 0 {
+            if read_stream_jsonl_line(&mut reader, &mut line)? == 0 {
                 return Err(PevcapJsonlError::MissingHeader);
             }
             line_number += 1;
@@ -495,17 +501,11 @@ impl<R: Read> PevcapReader<R> {
             return Ok(None);
         }
         *finished = true;
-        let mut trailing = Vec::new();
-        reader
-            .read_to_end(&mut trailing)
-            .map_err(PevcapBinaryError::Io)?;
-        if trailing.is_empty() {
+        let trailing_len = read_stream_trailing_len(reader)?;
+        if trailing_len == 0 {
             Ok(None)
         } else {
-            Err(PevcapBinaryError::TrailingBytes {
-                len: trailing.len(),
-            }
-            .into())
+            Err(PevcapBinaryError::TrailingBytes { len: trailing_len }.into())
         }
     }
 
@@ -533,7 +533,7 @@ impl<R: Read> PevcapReader<R> {
 
         loop {
             line.clear();
-            if reader.read_line(line).map_err(PevcapJsonlError::Io)? == 0 {
+            if read_stream_jsonl_line(reader, line)? == 0 {
                 return Ok(None);
             }
             *line_number += 1;
@@ -653,17 +653,11 @@ impl<R: Read> PevcapReader<R> {
             return Ok(None);
         }
         *finished = true;
-        let mut trailing = Vec::new();
-        reader
-            .read_to_end(&mut trailing)
-            .map_err(PevcapBinaryError::Io)?;
-        if trailing.is_empty() {
+        let trailing_len = read_stream_trailing_len(reader)?;
+        if trailing_len == 0 {
             Ok(None)
         } else {
-            Err(PevcapBinaryError::TrailingBytes {
-                len: trailing.len(),
-            }
-            .into())
+            Err(PevcapBinaryError::TrailingBytes { len: trailing_len }.into())
         }
     }
 
@@ -710,7 +704,7 @@ impl<R: Read> PevcapReader<R> {
     ) -> Result<Option<PevcapLocationSample>, PevcapStreamError> {
         loop {
             line.clear();
-            if reader.read_line(line).map_err(PevcapJsonlError::Io)? == 0 {
+            if read_stream_jsonl_line(reader, line)? == 0 {
                 return Ok(None);
             }
             *line_number += 1;
@@ -763,7 +757,7 @@ impl<R: Read> PevcapReader<R> {
     ) -> Result<Option<PevcapEvent>, PevcapStreamError> {
         loop {
             line.clear();
-            if reader.read_line(line).map_err(PevcapJsonlError::Io)? == 0 {
+            if read_stream_jsonl_line(reader, line)? == 0 {
                 return Ok(None);
             }
             *line_number += 1;
@@ -846,17 +840,11 @@ impl<R: Read> PevcapReader<R> {
             return Ok(None);
         }
         *finished = true;
-        let mut trailing = Vec::new();
-        reader
-            .read_to_end(&mut trailing)
-            .map_err(PevcapBinaryError::Io)?;
-        if trailing.is_empty() {
+        let trailing_len = read_stream_trailing_len(reader)?;
+        if trailing_len == 0 {
             Ok(None)
         } else {
-            Err(PevcapBinaryError::TrailingBytes {
-                len: trailing.len(),
-            }
-            .into())
+            Err(PevcapBinaryError::TrailingBytes { len: trailing_len }.into())
         }
     }
 }
@@ -1150,7 +1138,60 @@ fn read_stream_len_prefixed<R: Read>(
     section: PevcapBinarySection,
 ) -> Result<Vec<u8>, PevcapBinaryError> {
     let len = read_stream_u32(reader, section)? as usize;
+    if len > PEVCAP_MAX_STREAM_PAYLOAD_BYTES {
+        return Err(PevcapBinaryError::PayloadTooLarge {
+            section,
+            len,
+            max: PEVCAP_MAX_STREAM_PAYLOAD_BYTES,
+        });
+    }
     read_stream_exact(reader, len, section)
+}
+
+#[cfg(feature = "serde")]
+fn read_stream_trailing_len<R: Read>(reader: &mut R) -> Result<usize, PevcapBinaryError> {
+    let mut buffer = [0_u8; 4096];
+    let mut total = 0_usize;
+    loop {
+        let read = reader.read(&mut buffer).map_err(PevcapBinaryError::Io)?;
+        if read == 0 {
+            return Ok(total);
+        }
+        total = total.saturating_add(read);
+    }
+}
+
+#[cfg(feature = "serde")]
+fn read_stream_jsonl_line<R: BufRead>(
+    reader: &mut R,
+    line: &mut String,
+) -> Result<usize, PevcapJsonlError> {
+    let mut bytes = Vec::new();
+    loop {
+        let chunk = reader.fill_buf().map_err(PevcapJsonlError::Io)?;
+        if chunk.is_empty() {
+            break;
+        }
+        let newline = chunk.iter().position(|byte| *byte == b'\n');
+        let take = newline.map_or(chunk.len(), |index| index + 1);
+        if bytes.len().saturating_add(take) > PEVCAP_MAX_JSONL_LINE_BYTES {
+            return Err(PevcapJsonlError::LineTooLong {
+                max: PEVCAP_MAX_JSONL_LINE_BYTES,
+            });
+        }
+        bytes.extend_from_slice(&chunk[..take]);
+        reader.consume(take);
+        if newline.is_some() {
+            break;
+        }
+    }
+    if bytes.is_empty() {
+        line.clear();
+        return Ok(0);
+    }
+    *line = String::from_utf8(bytes)
+        .map_err(|error| PevcapJsonlError::Io(io::Error::new(io::ErrorKind::InvalidData, error)))?;
+    Ok(line.len())
 }
 
 /// Direction of a captured transport record.
@@ -2482,6 +2523,13 @@ pub enum PevcapJsonlError {
         source: serde_json::Error,
     },
 
+    /// A JSONL line exceeded the bounded streaming buffer.
+    #[error("PEVCAP JSONL line exceeds the {max}-byte limit")]
+    LineTooLong {
+        /// Maximum accepted line length.
+        max: usize,
+    },
+
     /// The JSONL stream did not start with a capture header.
     #[error("PEVCAP JSONL is missing a header line")]
     MissingHeader,
@@ -2614,6 +2662,19 @@ pub enum PevcapBinaryError {
 
         /// Payload length.
         len: usize,
+    },
+
+    /// A streaming payload exceeded the bounded decoder buffer.
+    #[error("PEVCAP binary {section:?} payload length {len} exceeds the {max}-byte limit")]
+    PayloadTooLarge {
+        /// Container section being decoded.
+        section: PevcapBinarySection,
+
+        /// Advertised payload length.
+        len: usize,
+
+        /// Maximum accepted payload length.
+        max: usize,
     },
 
     /// Header metadata violated bounded PEVCAP limits.
@@ -4872,6 +4933,66 @@ mod tests {
                 section: PevcapBinarySection::Location
             })
         ));
+    }
+
+    #[cfg(feature = "serde")]
+    #[test]
+    fn streaming_binary_rejects_oversized_payload_before_allocating() {
+        let capture = PevcapCapture::new(
+            PevcapHeader::new(
+                wc(1),
+                "darwin",
+                None,
+                &[],
+                &[],
+                None,
+                None,
+                "0.1.0",
+                [0; 32],
+                &[],
+            )
+            .expect("header should validate"),
+            vec![],
+        );
+        let mut binary = capture.to_binary().expect("empty capture should encode");
+        let header_len = u32::from_le_bytes(binary[12..16].try_into().unwrap()) as usize;
+        let count_offset = 16 + header_len;
+        binary[count_offset..count_offset + 4].copy_from_slice(&1_u32.to_le_bytes());
+        binary.splice(count_offset + 4..count_offset + 4, u32::MAX.to_le_bytes());
+
+        let mut reader = PevcapReader::new(Cursor::new(binary), PevcapEncoding::Binary)
+            .expect("streaming reader should validate the header");
+        assert!(matches!(
+            reader.next_record(),
+            Err(PevcapStreamError::Binary(
+                PevcapBinaryError::PayloadTooLarge {
+                    section: PevcapBinarySection::Record,
+                    len,
+                    max,
+                }
+            )) if len == u32::MAX as usize && max == PEVCAP_MAX_STREAM_PAYLOAD_BYTES
+        ));
+    }
+
+    #[cfg(feature = "serde")]
+    #[test]
+    fn streaming_jsonl_rejects_oversized_lines_before_parsing() {
+        let header = sample_pevcap_capture()
+            .to_jsonl()
+            .expect("capture should encode");
+        let input = format!("{}{}", header, "x".repeat(PEVCAP_MAX_JSONL_LINE_BYTES + 1));
+        let mut reader = PevcapReader::new(Cursor::new(input.into_bytes()), PevcapEncoding::Jsonl)
+            .expect("streaming reader should validate the header");
+        loop {
+            match reader.next_record() {
+                Err(PevcapStreamError::Jsonl(PevcapJsonlError::LineTooLong { max })) => {
+                    assert_eq!(max, PEVCAP_MAX_JSONL_LINE_BYTES);
+                    break;
+                }
+                Ok(Some(_)) => {}
+                other => panic!("expected oversized line error, got {other:?}"),
+            }
+        }
     }
 
     #[cfg(feature = "serde")]
