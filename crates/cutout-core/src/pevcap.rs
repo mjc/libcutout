@@ -1187,9 +1187,8 @@ impl PevcapHeader {
     ///
     /// # Errors
     ///
-    /// Returns [`PevcapHeaderError::TooManyAdvertisedServices`] when the
-    /// observed service list exceeds the format bound, or similarly for GATT
-    /// fingerprints and annotations.
+    /// Returns [`PevcapHeaderError::TooManyItems`] when a bounded header list
+    /// exceeds the format limit.
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         wall_clock_start_unix_ms: WallClockUnixTimestamp,
