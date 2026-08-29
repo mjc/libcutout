@@ -3078,6 +3078,9 @@ pub enum MobileRideMapCoreErrorDto {
     /// The supplied location values are invalid.
     #[error("invalid location")]
     InvalidLocation,
+    /// The route display budget, viewport, or privacy policy is invalid.
+    #[error("invalid route projection")]
+    InvalidRouteProjection,
     /// The canonical database rejected the operation.
     #[error("ride map storage failure: {0}")]
     Storage(String),
@@ -3360,6 +3363,45 @@ pub struct MobileRoutePointPageDto {
     pub next_cursor: Option<MobileRoutePointCursorDto>,
 }
 
+/// Privacy classification attached to a projected route coordinate.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Enum)]
+pub enum MobileRideMapRoutePrivacyClassDto {
+    Precise,
+    GridRedacted,
+}
+
+/// Privacy policy applied before coordinates cross the mobile boundary.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Enum)]
+pub enum MobileRideMapRoutePrivacyPolicyDto {
+    Precise,
+    Grid { grid_e7: u32 },
+}
+
+/// Rust-owned options for a bounded route projection.
+#[derive(Clone, Debug, PartialEq, uniffi::Record)]
+pub struct MobileRideMapRouteProjectionOptionsDto {
+    pub viewport: Option<MobileGeoBoundsDto>,
+    pub budget: u32,
+    pub privacy: MobileRideMapRoutePrivacyPolicyDto,
+}
+
+/// One bounded projected route point.
+#[derive(Clone, Copy, Debug, PartialEq, uniffi::Record)]
+pub struct MobileRideMapRouteDisplayPointDto {
+    pub sequence: u64,
+    pub segment_id: u64,
+    pub latitude_degrees: f64,
+    pub longitude_degrees: f64,
+    pub privacy_class: MobileRideMapRoutePrivacyClassDto,
+}
+
+/// Bounded route projection returned by Rust.
+#[derive(Clone, Debug, PartialEq, uniffi::Record)]
+pub struct MobileRideMapRouteProjectionDto {
+    pub points: Vec<MobileRideMapRouteDisplayPointDto>,
+    pub source_point_count: u64,
+}
+
 /// Bounded startup state produced by Rust after recovering interrupted rides.
 #[derive(Clone, Debug, Eq, PartialEq, uniffi::Record)]
 pub struct MobileBootstrapSnapshotDto {
@@ -3570,6 +3612,12 @@ pub enum MobileRideDatabaseError {
     /// Geographic query bounds were non-finite, out of range, or reversed.
     #[error("invalid geographic bounds")]
     InvalidGeographicBounds,
+    /// The route display budget, viewport, or privacy policy is invalid.
+    #[error("invalid route projection")]
+    InvalidRouteProjection,
+    /// A cancellable route projection was cancelled.
+    #[error("route projection cancelled")]
+    Cancelled,
     /// PEVCAP preflight rejected an artifact that exceeded a hard resource limit.
     #[error("PEVCAP resource limit exceeded")]
     PevcapLimitExceeded,
@@ -3627,6 +3675,7 @@ fn map_ride_database_error(error: persistence::StorageError) -> MobileRideDataba
         persistence::StorageError::InvalidGeographicBounds => {
             MobileRideDatabaseError::InvalidGeographicBounds
         }
+        persistence::StorageError::Cancelled => MobileRideDatabaseError::Cancelled,
         persistence::StorageError::PevcapLimitExceeded { .. } => {
             MobileRideDatabaseError::PevcapLimitExceeded
         }
@@ -3726,6 +3775,99 @@ fn mobile_geo_bounds(
     .map_err(map_ride_database_error)
 }
 
+fn mobile_route_projection_options_for_database(
+    options: &MobileRideMapRouteProjectionOptionsDto,
+) -> Result<
+    (
+        Option<ride_maps::RouteViewport>,
+        ride_maps::RouteDisplayBudget,
+        ride_maps::RoutePrivacyPolicy,
+    ),
+    MobileRideDatabaseError,
+> {
+    let viewport = options
+        .viewport
+        .map(|bounds| {
+            let minimum = ride_maps::Coordinate::from_degrees(
+                bounds.minimum_latitude_degrees,
+                bounds.minimum_longitude_degrees,
+            )
+            .map_err(|_| MobileRideDatabaseError::InvalidRouteProjection)?;
+            let maximum = ride_maps::Coordinate::from_degrees(
+                bounds.maximum_latitude_degrees,
+                bounds.maximum_longitude_degrees,
+            )
+            .map_err(|_| MobileRideDatabaseError::InvalidRouteProjection)?;
+            ride_maps::RouteViewport::new(
+                minimum.latitude(),
+                maximum.latitude(),
+                minimum.longitude(),
+                maximum.longitude(),
+            )
+            .ok_or(MobileRideDatabaseError::InvalidRouteProjection)
+        })
+        .transpose()?;
+    let budget = usize::try_from(options.budget)
+        .ok()
+        .and_then(ride_maps::RouteDisplayBudget::new)
+        .ok_or(MobileRideDatabaseError::InvalidRouteProjection)?;
+    let privacy = match options.privacy {
+        MobileRideMapRoutePrivacyPolicyDto::Precise => ride_maps::RoutePrivacyPolicy::Precise,
+        MobileRideMapRoutePrivacyPolicyDto::Grid { grid_e7 } => {
+            ride_maps::RoutePrivacyPolicy::grid(
+                ride_maps::RoutePrivacyGridE7::new(grid_e7)
+                    .ok_or(MobileRideDatabaseError::InvalidRouteProjection)?,
+            )
+        }
+    };
+    Ok((viewport, budget, privacy))
+}
+
+fn mobile_route_projection_options(
+    options: &MobileRideMapRouteProjectionOptionsDto,
+) -> Result<
+    (
+        Option<ride_maps::RouteViewport>,
+        ride_maps::RouteDisplayBudget,
+        ride_maps::RoutePrivacyPolicy,
+    ),
+    MobileRideMapCoreErrorDto,
+> {
+    mobile_route_projection_options_for_database(options)
+        .map_err(|_| MobileRideMapCoreErrorDto::InvalidRouteProjection)
+}
+
+fn mobile_route_display_point_dto(
+    point: ride_maps::RouteDisplayPoint,
+) -> MobileRideMapRouteDisplayPointDto {
+    MobileRideMapRouteDisplayPointDto {
+        sequence: point.sequence().as_u64(),
+        segment_id: point.segment_id().value(),
+        latitude_degrees: point.coordinate().latitude_degrees(),
+        longitude_degrees: point.coordinate().longitude_degrees(),
+        privacy_class: match point.privacy_class() {
+            ride_maps::RoutePrivacyClass::Precise => MobileRideMapRoutePrivacyClassDto::Precise,
+            ride_maps::RoutePrivacyClass::GridRedacted => {
+                MobileRideMapRoutePrivacyClassDto::GridRedacted
+            }
+        },
+    }
+}
+
+fn mobile_route_projection_dto(
+    projection: &persistence::RoutePointProjection,
+) -> MobileRideMapRouteProjectionDto {
+    MobileRideMapRouteProjectionDto {
+        points: projection
+            .points()
+            .iter()
+            .copied()
+            .map(mobile_route_display_point_dto)
+            .collect(),
+        source_point_count: projection.source_point_count(),
+    }
+}
+
 fn mobile_query_limit(value: u32) -> Result<persistence::QueryLimit, MobileRideDatabaseError> {
     persistence::QueryLimit::new(value).map_err(map_ride_database_error)
 }
@@ -3814,6 +3956,27 @@ fn mobile_ride_location_dto(location: ride_maps::LocationSample) -> MobileRideLo
 #[derive(Debug, uniffi::Object)]
 pub struct RideDatabaseHandle {
     inner: persistence::RideDatabase,
+}
+
+/// Cooperative cancellation for one durable route projection.
+#[derive(Debug, uniffi::Object)]
+pub struct MobileRouteProjectionCancellation {
+    inner: persistence::RouteProjectionCancellation,
+}
+
+#[uniffi::export]
+impl MobileRouteProjectionCancellation {
+    #[uniffi::constructor]
+    #[must_use]
+    pub fn new() -> Arc<Self> {
+        Arc::new(Self {
+            inner: persistence::RouteProjectionCancellation::new(),
+        })
+    }
+
+    pub fn cancel(&self) {
+        self.inner.cancel();
+    }
 }
 
 /// Acquires the process-wide Rust-owned ride database service for `path`.
@@ -4626,6 +4789,52 @@ impl RideDatabaseHandle {
             .map_err(map_ride_database_error)
     }
 
+    /// Projects one durable route through Rust-owned viewport, LOD, and privacy policy.
+    ///
+    /// # Errors
+    ///
+    /// Returns a typed database error when the ride ID, options, or worker is invalid.
+    #[allow(clippy::needless_pass_by_value, reason = "UniFFI owns boundary DTOs")]
+    pub fn project_route_points(
+        &self,
+        ride_id: MobileRideIdDto,
+        options: MobileRideMapRouteProjectionOptionsDto,
+    ) -> Result<MobileRideMapRouteProjectionDto, MobileRideDatabaseError> {
+        let ride_id = parse_mobile_ride_id(&ride_id)?;
+        let (viewport, budget, privacy) = mobile_route_projection_options_for_database(&options)?;
+        self.inner
+            .project_route_points(ride_id, viewport, budget, privacy)
+            .map(|projection| mobile_route_projection_dto(&projection))
+            .map_err(map_ride_database_error)
+    }
+
+    /// Projects one durable route while honoring cooperative cancellation.
+    ///
+    /// # Errors
+    ///
+    /// Returns a typed database error when the ride ID, options, cancellation token, or worker is
+    /// invalid.
+    #[allow(clippy::needless_pass_by_value, reason = "UniFFI owns boundary DTOs")]
+    pub fn project_route_points_cancellable(
+        &self,
+        ride_id: MobileRideIdDto,
+        options: MobileRideMapRouteProjectionOptionsDto,
+        cancellation: Arc<MobileRouteProjectionCancellation>,
+    ) -> Result<MobileRideMapRouteProjectionDto, MobileRideDatabaseError> {
+        let ride_id = parse_mobile_ride_id(&ride_id)?;
+        let (viewport, budget, privacy) = mobile_route_projection_options_for_database(&options)?;
+        self.inner
+            .project_route_points_cancellable(
+                ride_id,
+                viewport,
+                budget,
+                privacy,
+                cancellation.inner.clone(),
+            )
+            .map(|projection| mobile_route_projection_dto(&projection))
+            .map_err(map_ride_database_error)
+    }
+
     /// Loads the durable summary projection for a ride.
     ///
     /// # Errors
@@ -5304,7 +5513,7 @@ impl MobileRideMapCore {
     /// # Errors
     ///
     /// Returns an error when no stopped ride exists or durable storage rejects the transition.
-    /// Pending writes are retained until they settle so the saved recorder matches SQLite.
+    /// Pending writes are retained until they settle so the saved recorder matches `SQLite`.
     pub fn save(&self) -> Result<MobileRideMapCoreSnapshotDto, MobileRideMapCoreErrorDto> {
         let mut state = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
         let saved_ride_id = state.active_ride_id.clone();
@@ -5688,6 +5897,34 @@ impl MobileRideMapCore {
             points,
             next_cursor,
             has_more,
+        })
+    }
+
+    /// Projects the Rust-owned in-memory route tail into bounded display points.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`MobileRideMapCoreErrorDto::InvalidRouteProjection`] when the options are invalid.
+    #[allow(clippy::needless_pass_by_value, reason = "UniFFI owns boundary DTOs")]
+    pub fn project_points(
+        &self,
+        options: MobileRideMapRouteProjectionOptionsDto,
+    ) -> Result<MobileRideMapRouteProjectionDto, MobileRideMapCoreErrorDto> {
+        let state = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
+        let (viewport, budget, privacy) = mobile_route_projection_options(&options)?;
+        let points = ride_maps::project_route_points(
+            state.recorder.points(),
+            state.recorder.first_point_sequence(),
+            viewport,
+            budget,
+            privacy,
+        )
+        .into_iter()
+        .map(mobile_route_display_point_dto)
+        .collect();
+        Ok(MobileRideMapRouteProjectionDto {
+            points,
+            source_point_count: state.recorder.point_count(),
         })
     }
 }
