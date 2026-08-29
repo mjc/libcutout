@@ -36,7 +36,6 @@ const MAX_PEVCAP_RECORDS: u64 = 10_000_000;
 const MAX_PEVCAP_DURATION_MILLISECONDS: u64 = 24 * 60 * 60 * 1_000;
 const PEVCAP_LOCATION_BATCH_SIZE: usize = 256;
 const MAX_STORED_TEXT_CHARS: usize = 512;
-
 /// Origin of a canonical ride record.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum RideSource {
@@ -537,7 +536,7 @@ fn normalize_stored_text(value: &str, field: &'static str) -> Result<String, Sto
     if value.is_empty() || value.chars().count() > MAX_STORED_TEXT_CHARS {
         return Err(StorageError::InvalidStoredValue {
             field,
-            value: value.to_owned(),
+            value: value.chars().take(MAX_STORED_TEXT_CHARS).collect(),
         });
     }
     Ok(value.to_owned())
@@ -977,8 +976,29 @@ pub struct RideDatabase {
 /// has to wait for `SQLite` while holding its recording-state lock.
 #[derive(Debug)]
 pub struct PendingLocationWrite {
-    response: Receiver<Result<LocationAdmission, StorageError>>,
+    response: Receiver<Result<LocationWriteResult, StorageError>>,
     consumed: bool,
+}
+
+/// Durable outcome for one asynchronously appended location.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct LocationWriteResult {
+    admission: LocationAdmission,
+    sequence: Option<u64>,
+}
+
+impl LocationWriteResult {
+    /// Returns the durable admission decision.
+    #[must_use]
+    pub const fn admission(self) -> LocationAdmission {
+        self.admission
+    }
+
+    /// Returns the persisted sequence when the point was accepted.
+    #[must_use]
+    pub const fn sequence(self) -> Option<u64> {
+        self.sequence
+    }
 }
 
 impl PendingLocationWrite {
@@ -986,7 +1006,7 @@ impl PendingLocationWrite {
     ///
     /// `None` means that the worker is still processing the command. A terminal result is
     /// returned at most once.
-    pub fn try_result(&mut self) -> Option<Result<LocationAdmission, StorageError>> {
+    pub fn try_result(&mut self) -> Option<Result<LocationWriteResult, StorageError>> {
         if self.consumed {
             return None;
         }
@@ -1091,18 +1111,13 @@ impl RideDatabase {
         source: RideSource,
         created_at_ms: u64,
     ) -> Result<RideId, StorageError> {
-        self.request(move |reply| Command::CreateRide {
-            source,
-            created_at_ms,
-            monotonic_created_at_ms: None,
-            reply,
-        })
+        self.create_ride_with_monotonic_start(source, created_at_ms, None)
     }
 
     /// Creates a draft ride with separate wall-clock and monotonic start timestamps.
     ///
-    /// The wall-clock value is used for history ordering; the monotonic value is used for elapsed
-    /// duration calculations and may be absent for imported or legacy records.
+    /// The wall-clock value is used for history ordering; the monotonic value is used only for
+    /// elapsed-duration calculations and may be absent for imported records.
     ///
     /// # Errors
     ///
@@ -1117,6 +1132,32 @@ impl RideDatabase {
             source,
             created_at_ms,
             monotonic_created_at_ms,
+            reply,
+        })
+    }
+
+    /// Atomically creates and starts a live ride with its candidate vehicle metadata.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StorageError`] when metadata validation, the lifecycle transition, or the
+    /// transactional write fails.
+    pub fn create_started_ride_with_monotonic_start(
+        &self,
+        source: RideSource,
+        created_at_ms: u64,
+        monotonic_created_at_ms: Option<u64>,
+        candidate_vehicle: Option<&str>,
+    ) -> Result<RideId, StorageError> {
+        let candidate_vehicle =
+            normalize_optional_stored_text(candidate_vehicle, "candidate vehicle")?;
+        let occurred_at_ms = wall_clock_now_milliseconds()?;
+        self.request(move |reply| Command::CreateStartedRide {
+            source,
+            created_at_ms,
+            monotonic_created_at_ms,
+            candidate_vehicle,
+            occurred_at_ms,
             reply,
         })
     }
@@ -1650,34 +1691,6 @@ impl RideDatabase {
         })
     }
 
-    /// Persists one location in order with lifecycle transitions on the database worker.
-    ///
-    /// The bounded command queue rejects submissions with [`StorageError::QueueFull`] while it is
-    /// saturated. This method waits for the durable write result and returns the admission so
-    /// callers can distinguish accepted, duplicate, and out-of-order samples. Callers must
-    /// perform admission against their Rust-owned recording projection before submitting the
-    /// sample.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`StorageError::QueueFull`] when the bounded command queue is saturated, or
-    /// [`StorageError::WorkerStopped`] when the worker is no longer available.
-    pub fn enqueue_location_with_segment_and_telemetry(
-        &self,
-        ride_id: RideId,
-        sample: LocationSample,
-        segment_id: u64,
-        telemetry_state: RouteTelemetryState,
-    ) -> Result<LocationAdmission, StorageError> {
-        self.request(|reply| Command::AppendLocation {
-            ride_id,
-            sample,
-            segment_id,
-            telemetry_state,
-            reply,
-        })
-    }
-
     /// Queues one location write without waiting for the `SQLite` worker.
     ///
     /// The bounded queue applies backpressure at submission time. Once accepted, callers can
@@ -1695,7 +1708,7 @@ impl RideDatabase {
         telemetry_state: RouteTelemetryState,
     ) -> Result<PendingLocationWrite, StorageError> {
         let (reply, response) = response_channel();
-        self.enqueue(Command::AppendLocation {
+        self.enqueue(Command::AppendLocationAsync {
             ride_id,
             sample,
             segment_id,
@@ -1882,6 +1895,14 @@ enum Command {
         candidate_vehicle: Option<String>,
         reply: Reply<RideId>,
     },
+    CreateStartedRide {
+        source: RideSource,
+        created_at_ms: u64,
+        monotonic_created_at_ms: Option<u64>,
+        candidate_vehicle: Option<String>,
+        occurred_at_ms: u64,
+        reply: Reply<RideId>,
+    },
     UpdateRideMapMetadata {
         ride_id: RideId,
         candidate_vehicle: Option<String>,
@@ -2020,6 +2041,13 @@ enum Command {
         telemetry_state: RouteTelemetryState,
         reply: Reply<LocationAdmission>,
     },
+    AppendLocationAsync {
+        ride_id: RideId,
+        sample: LocationSample,
+        segment_id: u64,
+        telemetry_state: RouteTelemetryState,
+        reply: Reply<LocationWriteResult>,
+    },
     Summary {
         ride_id: RideId,
         reply: Reply<RideSummary>,
@@ -2080,6 +2108,23 @@ fn worker_loop(mut connection: Connection, receiver: &Receiver<Command>) {
                     created_at_ms,
                     monotonic_created_at_ms,
                     candidate_vehicle.as_deref(),
+                ));
+            }
+            Command::CreateStartedRide {
+                source,
+                created_at_ms,
+                monotonic_created_at_ms,
+                candidate_vehicle,
+                occurred_at_ms,
+                reply,
+            } => {
+                let _ = reply.send(create_started_ride(
+                    &mut connection,
+                    source,
+                    created_at_ms,
+                    monotonic_created_at_ms,
+                    candidate_vehicle.as_deref(),
+                    occurred_at_ms,
                 ));
             }
             Command::UpdateRideMapMetadata {
@@ -2327,6 +2372,21 @@ fn worker_loop(mut connection: Connection, receiver: &Receiver<Command>) {
                     telemetry_state,
                 ));
             }
+            Command::AppendLocationAsync {
+                ride_id,
+                sample,
+                segment_id,
+                telemetry_state,
+                reply,
+            } => {
+                let _ = reply.send(append_location_with_result(
+                    &mut connection,
+                    ride_id,
+                    sample,
+                    segment_id,
+                    telemetry_state,
+                ));
+            }
             Command::Summary { ride_id, reply } => {
                 let _ = reply.send(load_summary(&connection, ride_id));
             }
@@ -2405,12 +2465,58 @@ fn configure_connection(connection: &mut Connection) -> Result<BootstrapSnapshot
         return Err(StorageError::SpatialCapabilityUnavailable);
     }
     migrate(connection)?;
+    repair_legacy_ride_creation_times(connection)?;
     verify_current_schema(connection)?;
     recover_abandoned_pevcap_imports(connection)?;
     let recovered_rides = recover_interrupted_rides(connection)?;
     Ok(BootstrapSnapshot {
         recovered_rides: recovered_rides.into(),
     })
+}
+
+/// Repairs rides created with a monotonic timestamp before the durable wall-clock boundary was
+/// enforced. The update is idempotent and uses the first persisted wall-clock sample when one is
+/// available, otherwise the durable update time.
+pub(crate) fn repair_legacy_ride_creation_times(
+    connection: &mut Connection,
+) -> Result<(), StorageError> {
+    const MIN_UNIX_MILLISECONDS: u64 = 100_000_000_000;
+
+    let transaction = connection.transaction()?;
+    transaction.execute(
+        "UPDATE rides
+         SET created_at_ms = COALESCE(
+             (
+                 SELECT MIN(wall_clock_ms)
+                 FROM ride_points
+                 WHERE ride_points.ride_id = rides.id
+                   AND wall_clock_ms >= ?1
+                   AND wall_clock_ms <= rides.updated_at_ms
+             ),
+             updated_at_ms
+         )
+         WHERE created_at_ms < ?1
+           AND updated_at_ms >= ?1",
+        [MIN_UNIX_MILLISECONDS],
+    )?;
+    transaction.execute(
+        "UPDATE rides
+         SET monotonic_created_at_ms = (
+             SELECT MIN(monotonic_ms)
+             FROM ride_points
+             WHERE ride_points.ride_id = rides.id
+         )
+         WHERE monotonic_created_at_ms IS NULL
+           AND source = 'live'
+           AND EXISTS (
+               SELECT 1
+               FROM ride_points
+               WHERE ride_points.ride_id = rides.id
+           )",
+        [],
+    )?;
+    transaction.commit()?;
+    Ok(())
 }
 
 fn recover_abandoned_pevcap_imports(connection: &mut Connection) -> Result<(), StorageError> {
@@ -2535,7 +2641,7 @@ fn migrate(connection: &mut Connection) -> Result<(), StorageError> {
     Ok(())
 }
 
-fn create_current_schema(connection: &Connection) -> Result<(), StorageError> {
+pub(crate) fn create_current_schema(connection: &Connection) -> Result<(), StorageError> {
     connection.execute_batch(
         "
         CREATE TABLE rides (
@@ -2957,7 +3063,18 @@ fn recover_interrupted_rides(connection: &mut Connection) -> Result<Vec<RideId>,
         recovered
     };
     transaction.execute(
-        "UPDATE rides SET state = 'interrupted' WHERE state IN ('active', 'paused')",
+        "UPDATE rides
+         SET state = 'interrupted',
+             completed_duration_ms = CASE
+                 WHEN monotonic_created_at_ms IS NOT NULL
+                     AND monotonic_last_event_ms IS NOT NULL
+                     THEN MAX(0, monotonic_last_event_ms - monotonic_created_at_ms
+                         - paused_duration_ms
+                         - CASE WHEN state = 'paused' AND paused_at_ms IS NOT NULL
+                             THEN monotonic_last_event_ms - paused_at_ms ELSE 0 END)
+                 ELSE completed_duration_ms
+             END
+         WHERE state IN ('active', 'paused')",
         [],
     )?;
     transaction.commit()?;
@@ -3076,6 +3193,28 @@ fn create_started_live_ride(
             candidate_vehicle,
         ],
     )?;
+    transaction.commit()?;
+    Ok(ride_id)
+}
+
+fn create_started_ride(
+    connection: &mut Connection,
+    source: RideSource,
+    created_at_ms: u64,
+    monotonic_created_at_ms: Option<u64>,
+    candidate_vehicle: Option<&str>,
+    occurred_at_ms: u64,
+) -> Result<RideId, StorageError> {
+    let transaction = connection.transaction()?;
+    let ride_id = create_ride(&transaction, source, created_at_ms, monotonic_created_at_ms)?;
+    transition_ride(
+        &transaction,
+        ride_id,
+        RideEvent::Start,
+        occurred_at_ms,
+        monotonic_created_at_ms,
+    )?;
+    update_ride_map_metadata(&transaction, ride_id, candidate_vehicle, None, None, None)?;
     transaction.commit()?;
     Ok(ride_id)
 }
@@ -3729,7 +3868,9 @@ fn append_pevcap_location_batch(
             0,
             RouteTelemetryState::GpsOnly,
             LocationWriteMode::PevcapImport,
-        )? == LocationAdmission::Accepted
+        )?
+        .admission()
+            == LocationAdmission::Accepted
         {
             accepted = accepted.saturating_add(1);
         }
@@ -4006,8 +4147,20 @@ fn append_location(
     segment_id: u64,
     telemetry_state: RouteTelemetryState,
 ) -> Result<LocationAdmission, StorageError> {
+    let result =
+        append_location_with_result(connection, ride_id, sample, segment_id, telemetry_state)?;
+    Ok(result.admission())
+}
+
+fn append_location_with_result(
+    connection: &mut Connection,
+    ride_id: RideId,
+    sample: LocationSample,
+    segment_id: u64,
+    telemetry_state: RouteTelemetryState,
+) -> Result<LocationWriteResult, StorageError> {
     let transaction = connection.transaction()?;
-    let admission = append_location_in_transaction(
+    let result = append_location_in_transaction(
         &transaction,
         ride_id,
         sample,
@@ -4016,7 +4169,7 @@ fn append_location(
         LocationWriteMode::Live,
     )?;
     transaction.commit()?;
-    Ok(admission)
+    Ok(result)
 }
 
 fn append_location_in_transaction(
@@ -4026,7 +4179,7 @@ fn append_location_in_transaction(
     segment_id: u64,
     telemetry_state: RouteTelemetryState,
     mode: LocationWriteMode,
-) -> Result<LocationAdmission, StorageError> {
+) -> Result<LocationWriteResult, StorageError> {
     let write_state = load_ride_write_state(connection, ride_id)?;
     let previous = connection
         .query_row(
@@ -4085,6 +4238,11 @@ fn append_location_in_transaction(
             let sequence = previous
                 .map(|(sequence, _, _)| sequence + 1)
                 .unwrap_or_default();
+            let durable_sequence =
+                u64::try_from(sequence).map_err(|_| StorageError::InvalidStoredValue {
+                    field: "ride_points.sequence",
+                    value: sequence.to_string(),
+                })?;
             let insert = LocationInsert {
                 ride_id,
                 sequence,
@@ -4095,16 +4253,25 @@ fn append_location_in_transaction(
                 updated_at_ms,
             };
             match insert_location(connection, &insert) {
-                Ok(()) => Ok(LocationAdmission::Accepted),
+                Ok(()) => Ok(LocationWriteResult {
+                    admission: LocationAdmission::Accepted,
+                    sequence: Some(durable_sequence),
+                }),
                 Err(StorageError::Sqlite(rusqlite::Error::SqliteFailure(error, _)))
                     if error.code == rusqlite::ErrorCode::ConstraintViolation =>
                 {
-                    Ok(LocationAdmission::Duplicate)
+                    Ok(LocationWriteResult {
+                        admission: LocationAdmission::Duplicate,
+                        sequence: None,
+                    })
                 }
                 Err(error) => Err(error),
             }
         }
-        LocationWriteDecision::Rejected(admission) => Ok(admission),
+        LocationWriteDecision::Rejected(admission) => Ok(LocationWriteResult {
+            admission,
+            sequence: None,
+        }),
     }
 }
 

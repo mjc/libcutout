@@ -1,11 +1,11 @@
-use std::time::{SystemTime, SystemTimeError, UNIX_EPOCH};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use cutout_ride_maps::{
     LocationAdmission, LocationSample, RideEvent, RideLifecycleState, TransitionError,
     distance_between,
 };
 
-use super::RideSource;
+use super::{RideSource, StorageError};
 
 #[derive(Clone, Copy)]
 pub(super) enum LocationWriteMode {
@@ -108,13 +108,24 @@ impl RideWriteState {
                     RideLifecycleState::Active | RideLifecycleState::Paused,
                     RideLifecycleState::Stopped | RideLifecycleState::Interrupted,
                 ) => {
-                    completed_duration_ms = active_duration_at(
-                        monotonic_created_at_ms,
-                        at,
-                        self.lifecycle == RideLifecycleState::Paused,
-                        paused_at_ms,
-                        paused_duration_ms,
-                    );
+                    if self.lifecycle == RideLifecycleState::Paused {
+                        completed_duration_ms = active_duration_at(
+                            monotonic_created_at_ms,
+                            paused_at_ms.unwrap_or(at),
+                            false,
+                            None,
+                            paused_duration_ms,
+                        );
+                    } else {
+                        completed_duration_ms = active_duration_at(
+                            monotonic_created_at_ms,
+                            at,
+                            false,
+                            None,
+                            paused_duration_ms,
+                        );
+                    }
+                    paused_at_ms = None;
                 }
                 _ => {}
             }
@@ -246,9 +257,12 @@ pub(super) enum LocationWriteDecision {
     Rejected(LocationAdmission),
 }
 
-pub(super) fn wall_clock_now_milliseconds() -> Result<u64, SystemTimeError> {
+pub(super) fn wall_clock_now_milliseconds() -> Result<u64, StorageError> {
     let milliseconds = SystemTime::now().duration_since(UNIX_EPOCH)?.as_millis();
-    Ok(u64::try_from(milliseconds).unwrap_or(u64::MAX))
+    u64::try_from(milliseconds).map_err(|_| StorageError::InvalidStoredValue {
+        field: "wall clock milliseconds",
+        value: "out of range".to_owned(),
+    })
 }
 
 #[cfg(test)]
