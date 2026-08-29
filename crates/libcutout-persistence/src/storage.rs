@@ -1344,25 +1344,35 @@ impl PendingLocationWrite {
         }
     }
 
-    /// Waits for a durable result until a monotonic deadline without consuming this ticket.
+    /// Waits for a durable result until a monotonic deadline, consuming a terminal result.
     ///
     /// `None` means that the worker is still delayed or queued when the deadline arrives; the
-    /// ticket can be polled again later. This bounds caller wait time without pretending that a
-    /// still-running `SQLite` command has been cancelled.
+    /// ticket can be polled again later. Once a result or worker disconnect is observed, this
+    /// ticket is consumed and subsequent polling returns `None`. This bounds caller wait time
+    /// without pretending that a still-running `SQLite` command has been cancelled.
     ///
     /// # Errors
     ///
     /// Returns [`StorageError::ResponseDropped`] when the database worker disappears before
     /// sending a result.
     pub fn wait_result_until(
-        &self,
+        &mut self,
         deadline: Instant,
     ) -> Result<Option<Result<LocationWriteResult, StorageError>>, StorageError> {
+        if self.consumed {
+            return Ok(None);
+        }
         let timeout = deadline.saturating_duration_since(Instant::now());
         match self.response.recv_timeout(timeout) {
-            Ok(result) => Ok(Some(result)),
+            Ok(result) => {
+                self.consumed = true;
+                Ok(Some(result))
+            }
             Err(mpsc::RecvTimeoutError::Timeout) => Ok(None),
-            Err(mpsc::RecvTimeoutError::Disconnected) => Err(StorageError::ResponseDropped),
+            Err(mpsc::RecvTimeoutError::Disconnected) => {
+                self.consumed = true;
+                Err(StorageError::ResponseDropped)
+            }
         }
     }
 

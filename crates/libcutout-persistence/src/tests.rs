@@ -348,6 +348,43 @@ fn async_location_write_returns_before_worker_completion_and_can_be_polled() {
 }
 
 #[test]
+fn async_location_write_wait_consumes_and_does_not_lose_result() {
+    let _guard = test_guard();
+    let path = std::env::temp_dir().join(format!(
+        "libcutout-persistence-async-location-consumption-{}.sqlite",
+        uuid::Uuid::new_v4()
+    ));
+    let database = RideDatabase::open(&path).unwrap();
+    let ride = database.create_ride(RideSource::Live, 1_000).unwrap();
+    database.transition(ride, RideEvent::Start).unwrap();
+    let sample = LocationSample::new(
+        Coordinate::from_degrees(40.0, -105.0).unwrap(),
+        1_001,
+        1_700_000_000_001,
+        None,
+        LocationSource::Live,
+    );
+    let mut pending = database
+        .enqueue_location_async(ride, sample, 0, RouteTelemetryState::GpsOnly)
+        .unwrap();
+
+    let result = pending
+        .wait_result_until(Instant::now() + Duration::from_secs(1))
+        .expect("worker should return a result")
+        .expect("deadline should include the result")
+        .expect("location write should be accepted");
+    assert_eq!(result.admission(), LocationAdmission::Accepted);
+    assert!(pending.try_result().is_none());
+    assert!(matches!(
+        pending.wait_result_until(Instant::now()),
+        Ok(None)
+    ));
+
+    database.shutdown().unwrap();
+    let _ = std::fs::remove_file(path);
+}
+
+#[test]
 fn async_location_write_can_bound_wait_for_a_delayed_worker() {
     let _guard = test_guard();
     let path = std::env::temp_dir().join(format!(
@@ -370,7 +407,7 @@ fn async_location_write_can_bound_wait_for_a_delayed_worker() {
         None,
         LocationSource::Live,
     );
-    let pending = database
+    let mut pending = database
         .enqueue_location_async(ride, sample, 0, RouteTelemetryState::GpsOnly)
         .unwrap();
     entered_receiver
@@ -411,7 +448,7 @@ fn async_location_write_can_bound_wait_for_a_worker_gate() {
         None,
         LocationSource::Live,
     );
-    let pending = database
+    let mut pending = database
         .enqueue_location_with_worker_gate_for_test(
             ride,
             sample,
@@ -458,7 +495,7 @@ fn consumed_location_write_reports_worker_failure_and_recovers() {
         None,
         LocationSource::Live,
     );
-    let pending = database
+    let mut pending = database
         .enqueue_location_with_worker_failure_for_test(
             ride,
             sample,
