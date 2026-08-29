@@ -4742,6 +4742,7 @@ const MAX_PENDING_LOCATION_WRITES: usize = 64;
 struct MobileRideMapCoreInner {
     database: Option<Arc<RideDatabaseHandle>>,
     active_ride_id: Option<MobileRideIdDto>,
+    settled_ride_id: Option<MobileRideIdDto>,
     recorder: ride_maps::RideMapRecorder,
     admission_recorder: ride_maps::RideMapRecorder,
     pending_location_writes: VecDeque<PendingMapLocationWrite>,
@@ -4784,6 +4785,7 @@ impl MobileRideMapCoreInner {
         let mut state = Self {
             database,
             active_ride_id: None,
+            settled_ride_id: None,
             recorder: ride_maps::RideMapRecorder::new(),
             admission_recorder: ride_maps::RideMapRecorder::new(),
             pending_location_writes: VecDeque::new(),
@@ -5023,6 +5025,7 @@ impl MobileRideMapCoreInner {
         self.recorder = staged_recorder.clone();
         self.admission_recorder = staged_recorder;
         self.active_ride_id = Some(id);
+        self.settled_ride_id = None;
         self.pending_location_writes.clear();
         Ok(self.snapshot(MobileRideLifecycleStateDto::Active))
     }
@@ -5301,11 +5304,17 @@ impl MobileRideMapCore {
     /// # Errors
     ///
     /// Returns an error when no stopped ride exists or durable storage rejects the transition.
+    /// Pending writes are retained until they settle so the saved recorder matches SQLite.
     pub fn save(&self) -> Result<MobileRideMapCoreSnapshotDto, MobileRideMapCoreErrorDto> {
         let mut state = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
+        let saved_ride_id = state.active_ride_id.clone();
         let snapshot = state.transition_inner(MobileRideEventDto::Save)?;
         state.active_ride_id = None;
-        state.pending_location_writes.clear();
+        state.settled_ride_id = if state.pending_location_writes.is_empty() {
+            None
+        } else {
+            saved_ride_id
+        };
         state.admission_recorder = state.recorder.clone();
         Ok(snapshot)
     }
@@ -5315,10 +5324,12 @@ impl MobileRideMapCore {
     /// # Errors
     ///
     /// Returns an error when no stopped ride exists or durable storage rejects the transition.
+    /// Discard intentionally cancels pending in-memory results for the discarded ride.
     pub fn discard(&self) -> Result<MobileRideMapCoreSnapshotDto, MobileRideMapCoreErrorDto> {
         let mut state = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
         let snapshot = state.transition_inner(MobileRideEventDto::Discard)?;
         state.active_ride_id = None;
+        state.settled_ride_id = None;
         state.pending_location_writes.clear();
         state.admission_recorder = state.recorder.clone();
         Ok(snapshot)
@@ -5523,11 +5534,14 @@ impl MobileRideMapCore {
     /// Polls durable location writes without waiting for `SQLite`.
     ///
     /// A pending write is removed when its worker result becomes available. Results belonging to
-    /// a ride that is no longer active are discarded so a late completion cannot affect a newly
-    /// started ride.
+    /// a ride that is neither active nor settling after save are discarded so a late completion
+    /// cannot affect a newly started ride.
     pub fn poll_location_writes(&self) -> Vec<MobileRideMapCoreDecisionDto> {
         let mut state = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
-        let active_ride_id = state.active_ride_id.clone();
+        let current_ride_id = state
+            .active_ride_id
+            .clone()
+            .or_else(|| state.settled_ride_id.clone());
         let mut completed = Vec::new();
         let mut remaining = VecDeque::with_capacity(state.pending_location_writes.len());
         while let Some(mut pending) = state.pending_location_writes.pop_front() {
@@ -5535,7 +5549,7 @@ impl MobileRideMapCore {
                 remaining.push_back(pending);
                 continue;
             };
-            if active_ride_id.as_ref() != Some(&pending.ride_id) {
+            if current_ride_id.as_ref() != Some(&pending.ride_id) {
                 continue;
             }
             completed.push(match result {
@@ -5583,6 +5597,9 @@ impl MobileRideMapCore {
             });
         }
         state.pending_location_writes = remaining;
+        if state.active_ride_id.is_none() && state.pending_location_writes.is_empty() {
+            state.settled_ride_id = None;
+        }
         // Rebuild the admission projection from the durable projection plus only writes that are
         // still pending. This removes a provisional point after a durable rejection.
         let mut rebuilt = state.recorder.clone();
@@ -5700,16 +5717,6 @@ impl MobileRideMapCoreInner {
             .apply_transition_at(next, ride_maps::MonotonicMilliseconds::new(at_milliseconds));
         self.admission_recorder
             .apply_transition_at(next, ride_maps::MonotonicMilliseconds::new(at_milliseconds));
-        if matches!(
-            next,
-            ride_maps::RideLifecycleState::Stopped
-                | ride_maps::RideLifecycleState::Interrupted
-                | ride_maps::RideLifecycleState::Saved
-                | ride_maps::RideLifecycleState::Discarded
-        ) {
-            self.pending_location_writes.clear();
-            self.admission_recorder = self.recorder.clone();
-        }
         Ok(self.snapshot_at(next.into(), at_milliseconds))
     }
 }
@@ -13685,6 +13692,56 @@ mod tests {
         );
         assert_eq!(
             state.current_snapshot(1_002).unwrap().summary.point_count,
+            1
+        );
+
+        database.shutdown().expect("database shuts down");
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn mobile_ride_map_core_settles_pending_location_after_stop() {
+        let _guard = RIDE_DATABASE_TEST_LOCK
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        let path = std::env::temp_dir().join(format!(
+            "cutout-mobile-map-terminal-pending-{}-{}.sqlite3",
+            std::process::id(),
+            Uuid::new_v4()
+        ));
+        let _ = fs::remove_file(&path);
+        let database =
+            open_ride_database(path.to_string_lossy().into_owned()).expect("database opens");
+        let state = MobileRideMapCore::with_database(database.clone());
+        let started = state.start_gps_only(1_000, None).expect("recording starts");
+
+        assert!(matches!(
+            state
+                .ingest_location(1_001, 1_700_000_000_001, 40.0, -105.0, 3.0)
+                .expect("location queues without waiting"),
+            MobileRideMapCoreDecisionDto::Pending { .. }
+        ));
+        state.stop(1_002).expect("recording stops");
+        state.save().expect("recording saves");
+
+        let settled = drain_location_writes(&state);
+        assert!(settled.iter().any(|decision| matches!(
+            decision,
+            MobileRideMapCoreDecisionDto::Accepted {
+                point: MobileRideMapCorePointDto { sequence: 0, .. },
+                ..
+            }
+        )));
+        let inner = state.inner.lock().unwrap_or_else(PoisonError::into_inner);
+        assert_eq!(inner.recorder.summary().point_count().as_u64(), 1);
+        drop(inner);
+        assert_eq!(
+            database
+                .summary(MobileRideIdDto {
+                    value: started.ride_id,
+                })
+                .expect("durable summary loads")
+                .point_count,
             1
         );
 
