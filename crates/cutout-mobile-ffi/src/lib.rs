@@ -38,10 +38,11 @@ use cutout_core::{
     NotificationEvidenceDto, NotificationIngestOutcomeDto, ParserDiagnosticCountDto,
     ParserDiagnosticsDto, ParserDroppedBytesDto, ParserErrorDto, ParserFrameLenDto,
     ParserGapEvidenceDto, PayloadBodyLenDto, PevcapEncoding as CorePevcapEncoding, PevcapHeader,
-    PevcapPhoneLocation, PevcapRecord, PevcapResolvedIdentity, PhaseCurrentReadingDto,
-    PowerReadingDto, ProtocolFamily, ProtocolFamilyDto, ProtocolTag, RIDE_SESSION_STALE_AFTER,
-    RawFieldValue, RawFieldValueDto, RawTelemetryReadback, RawTelemetryReadbackDto,
-    ReadOnlyOutputPayload, ReservedPayloadEvidenceDto, RideOperatingModeDto, RideOperatingStateDto,
+    PevcapLocationSample, PevcapPhoneLocation, PevcapRecord, PevcapResolvedIdentity,
+    PhaseCurrentReadingDto, PowerReadingDto, ProtocolFamily, ProtocolFamilyDto, ProtocolTag,
+    RIDE_SESSION_STALE_AFTER, RawFieldValue, RawFieldValueDto, RawTelemetryReadback,
+    RawTelemetryReadbackDto, ReadOnlyOutputPayload, ReservedPayloadEvidenceDto,
+    RideOperatingModeDto, RideOperatingStateDto,
     RideSessionAppPresence as CoreRideSessionAppPresence,
     RideSessionDecision as CoreRideSessionDecision, RideSessionEffect as CoreRideSessionEffect,
     RideSessionEndReason as CoreRideSessionEndReason,
@@ -269,7 +270,7 @@ pub struct DiscoveryCandidate {
 }
 
 /// Mobile advertised manufacturer data summary.
-#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Record)]
+#[derive(Clone, Debug, Eq, PartialEq, uniffi::Record)]
 pub struct DiscoveryManufacturerDataSummary {
     /// Bluetooth company identifier.
     pub company_identifier: u16,
@@ -2892,12 +2893,59 @@ pub struct MobilePhoneLocationSampleDto {
     pub latitude_degrees: f64,
     pub longitude_degrees: f64,
     pub altitude_meters: f64,
-    pub horizontal_accuracy_meters: f64,
-    pub vertical_accuracy_meters: f64,
-    pub speed_meters_per_second: f64,
-    pub speed_accuracy_meters_per_second: f64,
-    pub course_degrees: f64,
-    pub course_accuracy_degrees: f64,
+    pub horizontal_accuracy_meters: Option<f64>,
+    pub vertical_accuracy_meters: Option<f64>,
+    pub speed_meters_per_second: Option<f64>,
+    pub speed_accuracy_meters_per_second: Option<f64>,
+    pub course_degrees: Option<f64>,
+    pub course_accuracy_degrees: Option<f64>,
+}
+
+impl MobilePhoneLocationSampleDto {
+    /// Normalizes Core Location sentinel values into typed absence.
+    fn canonical(self) -> Option<Self> {
+        let location = PevcapPhoneLocation {
+            wall_clock_unix_ms: self.wall_clock_unix_ms,
+            latitude_degrees: self.latitude_degrees,
+            longitude_degrees: self.longitude_degrees,
+            altitude_meters: self.altitude_meters,
+            horizontal_accuracy_meters: self.horizontal_accuracy_meters,
+            vertical_accuracy_meters: self.vertical_accuracy_meters,
+            speed_meters_per_second: self.speed_meters_per_second,
+            speed_accuracy_meters_per_second: self.speed_accuracy_meters_per_second,
+            course_degrees: self.course_degrees,
+            course_accuracy_degrees: self.course_accuracy_degrees,
+        }
+        .canonical()
+        .ok()?;
+        Some(Self {
+            wall_clock_unix_ms: location.wall_clock_unix_ms,
+            latitude_degrees: location.latitude_degrees,
+            longitude_degrees: location.longitude_degrees,
+            altitude_meters: location.altitude_meters,
+            horizontal_accuracy_meters: location.horizontal_accuracy_meters,
+            vertical_accuracy_meters: location.vertical_accuracy_meters,
+            speed_meters_per_second: location.speed_meters_per_second,
+            speed_accuracy_meters_per_second: location.speed_accuracy_meters_per_second,
+            course_degrees: location.course_degrees,
+            course_accuracy_degrees: location.course_accuracy_degrees,
+        })
+    }
+
+    fn pevcap_location(self) -> PevcapPhoneLocation {
+        PevcapPhoneLocation {
+            wall_clock_unix_ms: self.wall_clock_unix_ms,
+            latitude_degrees: self.latitude_degrees,
+            longitude_degrees: self.longitude_degrees,
+            altitude_meters: self.altitude_meters,
+            horizontal_accuracy_meters: self.horizontal_accuracy_meters,
+            vertical_accuracy_meters: self.vertical_accuracy_meters,
+            speed_meters_per_second: self.speed_meters_per_second,
+            speed_accuracy_meters_per_second: self.speed_accuracy_meters_per_second,
+            course_degrees: self.course_degrees,
+            course_accuracy_degrees: self.course_accuracy_degrees,
+        }
+    }
 }
 
 /// Rust-owned phone location snapshot returned to the mobile UI and capture path.
@@ -3081,6 +3129,9 @@ pub enum MobileRideMapCoreErrorDto {
     /// The route display budget, viewport, or privacy policy is invalid.
     #[error("invalid route projection")]
     InvalidRouteProjection,
+    /// A live route projection was cancelled by its caller.
+    #[error("live route projection cancelled")]
+    Cancelled,
     /// The canonical database rejected the operation.
     #[error("ride map storage failure: {0}")]
     Storage(String),
@@ -3158,8 +3209,8 @@ pub struct MobileRideMapCorePointDto {
     pub wall_clock_unix_ms: u64,
     /// Monotonic timestamp in milliseconds.
     pub monotonic_ms: u64,
-    /// Horizontal accuracy in metres.
-    pub horizontal_accuracy_meters: f64,
+    /// Horizontal accuracy in metres, when the source provided it.
+    pub horizontal_accuracy_meters: Option<f64>,
     /// Vehicle telemetry provenance.
     pub telemetry_state: MobileRideMapCoreTelemetryStateDto,
 }
@@ -3400,6 +3451,9 @@ pub struct MobileRideMapRouteDisplayPointDto {
 pub struct MobileRideMapRouteProjectionDto {
     pub points: Vec<MobileRideMapRouteDisplayPointDto>,
     pub source_point_count: u64,
+    pub source_segment_count: u64,
+    pub candidate_segment_count: u64,
+    pub displayed_segment_count: u64,
 }
 
 /// Bounded startup state produced by Rust after recovering interrupted rides.
@@ -3565,7 +3619,7 @@ pub struct MobileTrailSegmentPageDto {
 #[derive(Clone, Debug, PartialEq, uniffi::Record)]
 pub struct MobileMapPointDto {
     /// Stable point identifier.
-    pub id: u64,
+    pub id: String,
     /// User-visible point name.
     pub name: String,
     /// Point coordinate.
@@ -3573,9 +3627,9 @@ pub struct MobileMapPointDto {
 }
 
 /// Stable cursor for a subsequent map-point page.
-#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Record)]
+#[derive(Clone, Debug, Eq, PartialEq, uniffi::Record)]
 pub struct MobileMapPointCursorDto {
-    pub id: u64,
+    pub id: String,
 }
 
 /// One bounded page of indexed map points.
@@ -3691,7 +3745,8 @@ fn map_ride_database_error(error: persistence::StorageError) -> MobileRideDataba
         persistence::StorageError::QueueFull => MobileRideDatabaseError::QueueFull,
         persistence::StorageError::WorkerStopped
         | persistence::StorageError::ResponseDropped
-        | persistence::StorageError::WorkerStart(_) => MobileRideDatabaseError::WorkerStopped,
+        | persistence::StorageError::WorkerStart(_)
+        | persistence::StorageError::DeadlineExceeded => MobileRideDatabaseError::WorkerStopped,
         persistence::StorageError::Sqlite(_)
         | persistence::StorageError::Io(_)
         | persistence::StorageError::InvalidStoredValue { .. }
@@ -3865,7 +3920,59 @@ fn mobile_route_projection_dto(
             .map(mobile_route_display_point_dto)
             .collect(),
         source_point_count: projection.source_point_count(),
+        source_segment_count: projection.source_segment_count(),
+        candidate_segment_count: projection.candidate_segment_count(),
+        displayed_segment_count: projection.displayed_segment_count(),
     }
+}
+
+fn mobile_segment_count(
+    points: &[ride_maps::RideMapPoint],
+    viewport: Option<ride_maps::RouteViewport>,
+    mut is_cancelled: impl FnMut() -> bool,
+) -> Result<u64, MobileRideMapCoreErrorDto> {
+    let mut previous_segment = None;
+    let mut count = 0usize;
+    for point in points.iter().copied() {
+        if is_cancelled() {
+            return Err(MobileRideMapCoreErrorDto::Cancelled);
+        }
+        if !viewport.is_none_or(|viewport| viewport.contains(point.sample().coordinate())) {
+            continue;
+        }
+        let segment_id = point.segment_id();
+        if previous_segment != Some(segment_id) {
+            count += 1;
+            previous_segment = Some(segment_id);
+        }
+    }
+    Ok(u64::try_from(count).unwrap_or(u64::MAX))
+}
+
+fn mobile_displayed_segment_count(points: &[MobileRideMapRouteDisplayPointDto]) -> u64 {
+    let count = ride_maps::count_segment_runs(
+        points
+            .iter()
+            .map(|point| ride_maps::RideMapSegmentId::new(point.segment_id)),
+    );
+    u64::try_from(count).unwrap_or(u64::MAX)
+}
+
+fn mobile_route_display_points(
+    points: impl IntoIterator<Item = ride_maps::RouteDisplayPoint>,
+    mut is_cancelled: impl FnMut() -> bool,
+) -> Result<Vec<MobileRideMapRouteDisplayPointDto>, MobileRideMapCoreErrorDto> {
+    let mut display_points = Vec::new();
+    for point in points {
+        if is_cancelled() {
+            return Err(MobileRideMapCoreErrorDto::Cancelled);
+        }
+        display_points.push(mobile_route_display_point_dto(point));
+    }
+    if is_cancelled() {
+        return Err(MobileRideMapCoreErrorDto::Cancelled);
+    }
+    Ok(display_points)
 }
 
 fn mobile_query_limit(value: u32) -> Result<persistence::QueryLimit, MobileRideDatabaseError> {
@@ -3976,6 +4083,38 @@ impl MobileRouteProjectionCancellation {
 
     pub fn cancel(&self) {
         self.inner.cancel();
+    }
+}
+
+/// Cooperative cancellation for one live in-memory route projection.
+///
+/// This token is intentionally separate from [`MobileRouteProjectionCancellation`]: live
+/// projections do not use the `SQLite` worker or its interrupt handle.
+#[derive(Debug, uniffi::Object)]
+pub struct MobileLiveRouteProjectionCancellation {
+    cancelled: Arc<AtomicBool>,
+}
+
+#[uniffi::export]
+impl MobileLiveRouteProjectionCancellation {
+    /// Creates an active live-projection cancellation token.
+    #[uniffi::constructor]
+    #[must_use]
+    pub fn new() -> Arc<Self> {
+        Arc::new(Self {
+            cancelled: Arc::new(AtomicBool::new(false)),
+        })
+    }
+
+    /// Requests cancellation of the associated live projection.
+    pub fn cancel(&self) {
+        self.cancelled.store(true, Ordering::Release);
+    }
+}
+
+impl MobileLiveRouteProjectionCancellation {
+    fn is_cancelled(&self) -> bool {
+        self.cancelled.load(Ordering::Acquire)
     }
 }
 
@@ -4298,11 +4437,11 @@ impl RideDatabaseHandle {
         &self,
         name: String,
         coordinate: MobileMapCoordinateDto,
-    ) -> Result<u64, MobileRideDatabaseError> {
+    ) -> Result<String, MobileRideDatabaseError> {
         let coordinate = mobile_map_coordinate(coordinate)?;
         self.inner
             .create_map_point(&name, coordinate)
-            .map(persistence::MapPointId::get)
+            .map(|id| id.uuid().to_string())
             .map_err(map_ride_database_error)
     }
 
@@ -4318,9 +4457,14 @@ impl RideDatabaseHandle {
         limit: u32,
     ) -> Result<MobileMapPointPageDto, MobileRideDatabaseError> {
         let bounds = mobile_geo_bounds(bounds)?;
-        let cursor = cursor.map(|cursor| {
-            persistence::MapPointCursor::new(persistence::MapPointId::from_u64(cursor.id))
-        });
+        let cursor = cursor
+            .map(|cursor| {
+                Uuid::parse_str(&cursor.id)
+                    .map(persistence::MapPointId::from_uuid)
+                    .map(persistence::MapPointCursor::new)
+                    .map_err(|_| MobileRideDatabaseError::InvalidIdentifier)
+            })
+            .transpose()?;
         let limit = mobile_query_limit(limit)?;
         self.inner
             .map_points_in_bounds(bounds, cursor, limit)
@@ -4329,13 +4473,13 @@ impl RideDatabaseHandle {
                     .points()
                     .iter()
                     .map(|point| MobileMapPointDto {
-                        id: point.id.get(),
+                        id: point.id.uuid().to_string(),
                         name: point.name.clone(),
                         coordinate: mobile_map_coordinate_dto(point.coordinate),
                     })
                     .collect(),
                 next_cursor: page.next_cursor().map(|cursor| MobileMapPointCursorDto {
-                    id: cursor.id().get(),
+                    id: cursor.id().uuid().to_string(),
                 }),
             })
             .map_err(map_ride_database_error)
@@ -4756,7 +4900,8 @@ impl RideDatabaseHandle {
                 id,
                 location,
                 segment_id,
-                map_ride_telemetry_state(telemetry_state),
+                map_ride_telemetry_state(telemetry_state)
+                    .map_err(|_| MobileRideDatabaseError::StorageFailure)?,
             )
             .map(Into::into)
             .map_err(map_ride_database_error)
@@ -4783,7 +4928,8 @@ impl RideDatabaseHandle {
                 id,
                 location,
                 segment_id,
-                map_ride_telemetry_state(telemetry_state),
+                map_ride_telemetry_state(telemetry_state)
+                    .map_err(|_| MobileRideDatabaseError::StorageFailure)?,
             )
             .map(Into::into)
             .map_err(map_ride_database_error)
@@ -4829,7 +4975,7 @@ impl RideDatabaseHandle {
                 viewport,
                 budget,
                 privacy,
-                cancellation.inner.clone(),
+                &cancellation.inner,
             )
             .map(|projection| mobile_route_projection_dto(&projection))
             .map_err(map_ride_database_error)
@@ -4935,7 +5081,8 @@ fn enqueue_location_async(
             id,
             location,
             segment_id,
-            map_ride_telemetry_state(telemetry_state),
+            map_ride_telemetry_state(telemetry_state)
+                .map_err(|_| MobileRideDatabaseError::StorageFailure)?,
         )
         .map_err(map_ride_database_error)
 }
@@ -5031,12 +5178,16 @@ impl MobileRideMapCoreInner {
                 page.points
                     .into_iter()
                     .map(|point| {
-                        mobile_ride_location(point.location).map(|sample| {
-                            ride_maps::RideMapPoint::new(
-                                sample,
-                                ride_maps::RideMapSegmentId::new(point.segment_id),
-                                map_ride_telemetry_state(point.telemetry_state),
-                            )
+                        mobile_ride_location(point.location).and_then(|sample| {
+                            map_ride_telemetry_state(point.telemetry_state)
+                                .map_err(|_| MobileRideDatabaseError::StorageFailure)
+                                .map(|telemetry_state| {
+                                    ride_maps::RideMapPoint::new(
+                                        sample,
+                                        ride_maps::RideMapSegmentId::new(point.segment_id),
+                                        telemetry_state,
+                                    )
+                                })
                         })
                     })
                     .collect::<Result<Vec<_>, _>>()
@@ -5116,7 +5267,7 @@ impl MobileRideMapCoreInner {
             monotonic_ms: location.monotonic_milliseconds,
             horizontal_accuracy_meters: location
                 .horizontal_accuracy_millimetres
-                .map_or(0.0, |value| f64::from(value) / 1_000.0),
+                .map(|value| f64::from(value) / 1_000.0),
             telemetry_state: telemetry_state.into(),
         }
     }
@@ -5255,22 +5406,19 @@ fn map_ride_lifecycle_state(state: MobileRideLifecycleStateDto) -> ride_maps::Ri
 
 fn map_ride_telemetry_state(
     state: MobileRideMapCoreTelemetryStateDto,
-) -> ride_maps::RouteTelemetryState {
+) -> Result<ride_maps::RouteTelemetryState, &'static str> {
     match state {
-        MobileRideMapCoreTelemetryStateDto::GpsOnly => ride_maps::RouteTelemetryState::GpsOnly,
+        MobileRideMapCoreTelemetryStateDto::GpsOnly => Ok(ride_maps::RouteTelemetryState::GpsOnly),
         MobileRideMapCoreTelemetryStateDto::AssociatedNoTelemetry => {
-            ride_maps::RouteTelemetryState::AssociatedNoTelemetry
+            Ok(ride_maps::RouteTelemetryState::AssociatedNoTelemetry)
         }
         MobileRideMapCoreTelemetryStateDto::AssociatedFresh => {
-            ride_maps::RouteTelemetryState::AssociatedFresh
+            Ok(ride_maps::RouteTelemetryState::AssociatedFresh)
         }
         MobileRideMapCoreTelemetryStateDto::AssociatedStale => {
-            ride_maps::RouteTelemetryState::AssociatedStale
+            Ok(ride_maps::RouteTelemetryState::AssociatedStale)
         }
-        MobileRideMapCoreTelemetryStateDto::Unknown => {
-            // Unknown provenance must not claim that a vehicle telemetry sample was observed.
-            ride_maps::RouteTelemetryState::GpsOnly
-        }
+        MobileRideMapCoreTelemetryStateDto::Unknown => Err("unsupported telemetry state"),
     }
 }
 
@@ -5851,14 +5999,25 @@ impl MobileRideMapCore {
                 .points
                 .into_iter()
                 .map(|point| {
-                    MobileRideMapCoreInner::point_from_location(
-                        point.location,
-                        point.sequence,
-                        ride_maps::RideMapSegmentId::new(point.segment_id),
-                        map_ride_telemetry_state(point.telemetry_state),
-                    )
+                    map_ride_telemetry_state(point.telemetry_state)
+                        .map_err(|_| {
+                            MobileRideMapCoreErrorDto::Storage(
+                                "unsupported telemetry state".to_owned(),
+                            )
+                        })
+                        .map(|telemetry_state| {
+                            MobileRideMapCoreInner::point_from_location(
+                                point.location,
+                                point.sequence,
+                                ride_maps::RideMapSegmentId::new(point.segment_id),
+                                telemetry_state,
+                            )
+                        })
                 })
-                .collect();
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(|_| {
+                    MobileRideMapCoreErrorDto::Storage("unsupported telemetry state".to_owned())
+                })?;
             return Ok(MobileRideMapCorePointBatchDto {
                 points,
                 next_cursor: page.next_cursor.map(|cursor| cursor.sequence),
@@ -5910,23 +6069,69 @@ impl MobileRideMapCore {
         &self,
         options: MobileRideMapRouteProjectionOptionsDto,
     ) -> Result<MobileRideMapRouteProjectionDto, MobileRideMapCoreErrorDto> {
-        let state = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
-        let (viewport, budget, privacy) = mobile_route_projection_options(&options)?;
-        let points = ride_maps::project_route_points(
-            state.recorder.points(),
-            state.recorder.first_point_sequence(),
-            viewport,
-            budget,
-            privacy,
-        )
-        .into_iter()
-        .map(mobile_route_display_point_dto)
-        .collect();
-        Ok(MobileRideMapRouteProjectionDto {
-            points,
-            source_point_count: state.recorder.point_count(),
-        })
+        project_live_route_points(self, &options, || false)
     }
+
+    /// Projects the Rust-owned route tail while honoring live-projection cancellation.
+    ///
+    /// The recorder snapshot is copied while the core mutex is held, then all route scanning and
+    /// projection work happens after the mutex is released. This keeps a long presentation
+    /// projection from blocking location admission or lifecycle transitions.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`MobileRideMapCoreErrorDto::Cancelled`] when the caller requests cancellation,
+    /// or [`MobileRideMapCoreErrorDto::InvalidRouteProjection`] for invalid options.
+    #[allow(clippy::needless_pass_by_value, reason = "UniFFI owns boundary DTOs")]
+    pub fn project_points_cancellable(
+        &self,
+        options: MobileRideMapRouteProjectionOptionsDto,
+        cancellation: Arc<MobileLiveRouteProjectionCancellation>,
+    ) -> Result<MobileRideMapRouteProjectionDto, MobileRideMapCoreErrorDto> {
+        project_live_route_points(self, &options, || cancellation.is_cancelled())
+    }
+}
+
+fn project_live_route_points(
+    core: &MobileRideMapCore,
+    options: &MobileRideMapRouteProjectionOptionsDto,
+    mut is_cancelled: impl FnMut() -> bool,
+) -> Result<MobileRideMapRouteProjectionDto, MobileRideMapCoreErrorDto> {
+    if is_cancelled() {
+        return Err(MobileRideMapCoreErrorDto::Cancelled);
+    }
+    let (viewport, budget, privacy) = mobile_route_projection_options(options)?;
+    let (points, first_sequence, source_point_count, source_segment_count) = {
+        let state = core.inner.lock().unwrap_or_else(PoisonError::into_inner);
+        (
+            state.recorder.points().to_vec(),
+            state.recorder.first_point_sequence(),
+            state.recorder.point_count(),
+            state.recorder.segment_count().as_u64(),
+        )
+    };
+    if is_cancelled() {
+        return Err(MobileRideMapCoreErrorDto::Cancelled);
+    }
+    let candidate_segment_count = mobile_segment_count(&points, viewport, &mut is_cancelled)?;
+    let projected_points = ride_maps::project_route_points_cancellable(
+        &points,
+        first_sequence,
+        viewport,
+        budget,
+        privacy,
+        &mut is_cancelled,
+    )
+    .map_err(|_| MobileRideMapCoreErrorDto::Cancelled)?;
+    let points = mobile_route_display_points(projected_points, &mut is_cancelled)?;
+    let displayed_segment_count = mobile_displayed_segment_count(&points);
+    Ok(MobileRideMapRouteProjectionDto {
+        points,
+        source_point_count,
+        source_segment_count,
+        candidate_segment_count,
+        displayed_segment_count,
+    })
 }
 
 impl MobileRideMapCoreInner {
@@ -7297,6 +7502,7 @@ struct CaptureMetadata {
 
 enum CaptureWriterMessage {
     Record,
+    Location(PevcapLocationSample),
     Metadata(CaptureMetadata),
     Flush(SyncSender<Result<(), String>>),
     Finish(SyncSender<Result<(), String>>),
@@ -7501,6 +7707,10 @@ fn run_capture_writer(
     }
 }
 
+#[allow(
+    clippy::too_many_lines,
+    reason = "the capture writer keeps its flush and finish state machine in one loop"
+)]
 fn write_capture_stream(
     path: &Path,
     header: &mut PevcapHeader,
@@ -7535,18 +7745,26 @@ fn write_capture_stream(
                     .take()
                     .ok_or_else(|| "capture record slot was empty".to_string())?;
                 let line = record.to_jsonl_line().map_err(|error| error.to_string())?;
-                let bytes = write_line(&mut writer, &line)? as u64;
-                state.bytes_written.fetch_add(bytes, Ordering::AcqRel);
-                state
-                    .physical_bytes_written
-                    .fetch_add(bytes, Ordering::AcqRel);
-                bytes_since_flush = bytes_since_flush.saturating_add(bytes);
-                maybe_flush(
+                write_capture_event_line(
                     &mut writer,
+                    &line,
+                    state,
                     &mut bytes_since_flush,
                     &mut last_flush,
                     &mut last_sync,
-                    false,
+                )?;
+            }
+            CaptureWriterMessage::Location(location) => {
+                let line = location
+                    .to_jsonl_line()
+                    .map_err(|error| error.to_string())?;
+                write_capture_event_line(
+                    &mut writer,
+                    &line,
+                    state,
+                    &mut bytes_since_flush,
+                    &mut last_flush,
+                    &mut last_sync,
                 )?;
             }
             CaptureWriterMessage::Metadata(metadata) => {
@@ -7609,6 +7827,23 @@ fn write_capture_stream(
         .get_mut()
         .sync_data()
         .map_err(|error| error.to_string())
+}
+
+fn write_capture_event_line(
+    writer: &mut BufWriter<File>,
+    line: &str,
+    state: &CaptureWriterState,
+    bytes_since_flush: &mut u64,
+    last_flush: &mut Instant,
+    last_sync: &mut Instant,
+) -> Result<(), String> {
+    let bytes = write_line(writer, line)? as u64;
+    state.bytes_written.fetch_add(bytes, Ordering::AcqRel);
+    state
+        .physical_bytes_written
+        .fetch_add(bytes, Ordering::AcqRel);
+    *bytes_since_flush = (*bytes_since_flush).saturating_add(bytes);
+    maybe_flush(writer, bytes_since_flush, last_flush, last_sync, false)
 }
 
 fn reply_capture_writer_result(
@@ -7945,21 +8180,36 @@ impl MobilePevcapCaptureBuilder {
         if let Some(telemetry) = telemetry {
             record = record.with_telemetry(raw_telemetry_from_mobile(telemetry));
         }
-        if let Some(location) = phone_location {
-            record = record.with_phone_location(PevcapPhoneLocation {
-                wall_clock_unix_ms: location.wall_clock_unix_ms,
-                latitude_degrees: location.latitude_degrees,
-                longitude_degrees: location.longitude_degrees,
-                altitude_meters: location.altitude_meters,
-                horizontal_accuracy_meters: location.horizontal_accuracy_meters,
-                vertical_accuracy_meters: location.vertical_accuracy_meters,
-                speed_meters_per_second: location.speed_meters_per_second,
-                speed_accuracy_meters_per_second: location.speed_accuracy_meters_per_second,
-                course_degrees: location.course_degrees,
-                course_accuracy_degrees: location.course_accuracy_degrees,
-            });
+        if let Some(location) = phone_location.and_then(MobilePhoneLocationSampleDto::canonical) {
+            record = record.with_phone_location(location.pevcap_location());
         }
         self.send_record(record)
+    }
+
+    /// Records an independent Core Location sample in the PEVCAP location stream.
+    ///
+    /// The sample is kept separate from transport records so it remains available even when no
+    /// BLE notification is received at the same instant. The writer queue is bounded; `false`
+    /// means the sample was rejected by canonical validation or could not be queued.
+    pub fn record_location_sample(
+        &self,
+        receipt_monotonic_ms: MobileMonotonicMillisDto,
+        sample: MobilePhoneLocationSampleDto,
+        simulated: Option<bool>,
+        produced_by_accessory: Option<bool>,
+    ) -> bool {
+        let Some(sample) = sample.canonical() else {
+            return false;
+        };
+        let Ok(location) = PevcapLocationSample::new(
+            receipt_monotonic_ms.into_core(),
+            sample.pevcap_location(),
+            simulated,
+            produced_by_accessory,
+        ) else {
+            return false;
+        };
+        self.send_location(location)
     }
 }
 
@@ -8004,6 +8254,14 @@ impl MobilePevcapCaptureBuilder {
             .unwrap_or_else(PoisonError::into_inner)
             .as_ref()
             .is_some_and(|writer| writer.try_send_record(record))
+    }
+
+    fn send_location(&self, location: PevcapLocationSample) -> bool {
+        self.writer
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .as_ref()
+            .is_some_and(|writer| writer.try_send(CaptureWriterMessage::Location(location)))
     }
 }
 
@@ -8262,12 +8520,13 @@ fn phone_location_snapshot(
 }
 
 fn phone_location_speed(sample: MobilePhoneLocationSampleDto) -> Option<SpeedReading> {
-    if !sample.speed_meters_per_second.is_finite() || sample.speed_meters_per_second < 0.0 {
+    let speed = sample.speed_meters_per_second?;
+    if !speed.is_finite() || speed < 0.0 {
         return None;
     }
     Some(SpeedReading {
         value: Speed {
-            value: round_f64_to_i32(sample.speed_meters_per_second * 1_000.0),
+            value: round_f64_to_i32(speed * 1_000.0),
         },
         source: MobileValueSourceDto::Reported,
         quality: MobileValueQualityDto::Known,
@@ -10079,6 +10338,14 @@ mod tests {
         bytes[0..4].copy_from_slice(&[0xdc, 0x5a, 0x5c, 38]);
         bytes[28..30].copy_from_slice(&(model_id * 1_000).to_be_bytes());
         bytes
+    }
+
+    #[test]
+    fn unknown_mobile_telemetry_state_is_not_downgraded_to_gps_only() {
+        assert_eq!(
+            map_ride_telemetry_state(MobileRideMapCoreTelemetryStateDto::Unknown),
+            Err("unsupported telemetry state")
+        );
     }
 
     #[test]
@@ -13003,15 +13270,19 @@ mod tests {
             latitude_degrees: 39.739_235_8,
             longitude_degrees: -104.990_251,
             altitude_meters: 1_609.344,
-            horizontal_accuracy_meters: 0.8,
-            vertical_accuracy_meters: 1.2,
-            speed_meters_per_second: 4.470_400_25,
-            speed_accuracy_meters_per_second: 0.25,
-            course_degrees: 271.5,
-            course_accuracy_degrees: 3.0,
+            horizontal_accuracy_meters: Some(0.8),
+            vertical_accuracy_meters: Some(1.2),
+            speed_meters_per_second: Some(4.470_400_25),
+            speed_accuracy_meters_per_second: Some(0.25),
+            course_degrees: Some(271.5),
+            course_accuracy_degrees: Some(3.0),
         }
     }
 
+    #[allow(
+        clippy::too_many_lines,
+        reason = "This integration fixture spells out the complete mobile capture contract."
+    )]
     #[test]
     fn mobile_capture_builder_exports_cli_readable_jsonl() {
         let path = std::env::temp_dir().join(format!(
@@ -13050,6 +13321,15 @@ mod tests {
             }),
             firmware: None,
         }));
+        assert!(builder.record_location_sample(
+            ms(7),
+            capture_phone_location_fixture(),
+            Some(false),
+            Some(true)
+        ));
+        let mut invalid_location = capture_phone_location_fixture();
+        invalid_location.latitude_degrees = f64::NAN;
+        assert!(!builder.record_location_sample(ms(7), invalid_location, None, None));
         assert!(builder.record_notification_with_context(
             ms(8),
             vec![0; 16],
@@ -13080,6 +13360,10 @@ mod tests {
         let capture = PevcapCapture::decode(&bytes, PevcapEncoding::Jsonl)
             .expect("stream writer output is PEVCAP");
         assert_eq!(capture.records.len(), 2);
+        assert_eq!(capture.locations.len(), 1);
+        assert_eq!(capture.locations[0].receipt_monotonic_ms, ms(7).into_core());
+        assert_eq!(capture.locations[0].simulated, Some(false));
+        assert_eq!(capture.locations[0].produced_by_accessory, Some(true));
         let notification = &capture.records[0];
         let telemetry = notification
             .telemetry
@@ -13093,7 +13377,7 @@ mod tests {
             39.739_235_8_f64.to_bits()
         );
         assert_eq!(
-            location.speed_meters_per_second.to_bits(),
+            location.speed_meters_per_second.unwrap().to_bits(),
             4.470_400_25_f64.to_bits()
         );
         assert_eq!(capture.header.advertised_services.len(), 1);
@@ -13837,7 +14121,7 @@ mod tests {
                     longitude_degrees: -105.0,
                     wall_clock_unix_ms: 1_700_000_003_002,
                     monotonic_ms: 3_002,
-                    horizontal_accuracy_meters: 3.0,
+                    horizontal_accuracy_meters: Some(3.0),
                     telemetry_state: MobileRideMapCoreTelemetryStateDto::AssociatedNoTelemetry,
                 },
                 segment_started: true,
@@ -14416,6 +14700,47 @@ mod tests {
                 ..
             }
         )));
+
+        database.shutdown().expect("database shuts down");
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn mobile_ride_map_core_preserves_missing_accuracy_in_durable_points() {
+        let _guard = RIDE_DATABASE_TEST_LOCK
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        let path = std::env::temp_dir().join(format!(
+            "cutout-mobile-map-missing-accuracy-{}-{}.sqlite3",
+            std::process::id(),
+            Uuid::new_v4()
+        ));
+        let _ = fs::remove_file(&path);
+        let database =
+            open_ride_database(path.to_string_lossy().into_owned()).expect("database opens");
+        let state = MobileRideMapCore::with_database(database.clone());
+        let snapshot = state
+            .start_gps_only(1_000, None)
+            .expect("map recording starts");
+        database
+            .append_location(
+                MobileRideIdDto {
+                    value: snapshot.ride_id,
+                },
+                MobileRideLocationDto {
+                    latitude_degrees: 40.0,
+                    longitude_degrees: -105.0,
+                    monotonic_milliseconds: 1_001,
+                    wall_clock_unix_milliseconds: 1_700_000_000_001,
+                    horizontal_accuracy_millimetres: None,
+                    source: MobileRideSourceDto::Live,
+                },
+            )
+            .expect("external durable append succeeds");
+
+        let points = state.points_after(None, 10).expect("route points load");
+        assert_eq!(points.points.len(), 1);
+        assert_eq!(points.points[0].horizontal_accuracy_meters, None);
 
         database.shutdown().expect("database shuts down");
         let _ = fs::remove_file(path);
