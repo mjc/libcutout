@@ -1454,12 +1454,11 @@ fn pevcap_confirmation_cleans_managed_artifact_when_begin_fails() {
     let mut managed_directory = database_path.as_os_str().to_owned();
     managed_directory.push(".pevcap-imports");
     let managed_directory = std::path::PathBuf::from(managed_directory);
-    assert_eq!(
-        std::fs::read_dir(&managed_directory)
-            .map(|entries| entries.count())
-            .unwrap_or(0),
-        0
-    );
+    let managed_entries = match std::fs::read_dir(&managed_directory) {
+        Ok(entries) => entries.count(),
+        Err(_) => 0,
+    };
+    assert_eq!(managed_entries, 0);
     database.shutdown().unwrap();
     let _ = std::fs::remove_dir(managed_directory);
     let _ = std::fs::remove_file(database_path);

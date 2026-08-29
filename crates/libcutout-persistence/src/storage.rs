@@ -4904,11 +4904,15 @@ fn stream_pevcap_location_batches(
             }
         };
         let candidate = if take_attached {
-            attached.take().expect("attached candidate is present")
+            match attached.take() {
+                Some(candidate) => candidate,
+                None => break,
+            }
         } else {
-            independent
-                .take()
-                .expect("independent candidate is present")
+            match independent.take() {
+                Some(candidate) => candidate,
+                None => break,
+            }
         };
         append_pevcap_location(
             candidate.location,
