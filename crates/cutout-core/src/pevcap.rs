@@ -828,17 +828,19 @@ impl<R: Read> PevcapReader<R> {
             *remaining_locations = read_stream_u32(reader, PevcapBinarySection::LocationCount)?;
             *locations_count_read = true;
         }
-        if *remaining_locations > 0 {
+        while *remaining_locations > 0 {
             let payload = read_stream_len_prefixed(reader, PevcapBinarySection::Location)?;
             *remaining_locations -= 1;
-            let location = serde_json::from_slice::<PevcapLocationJson>(&payload)
-                .map_err(|source| PevcapBinaryError::Deserialize {
-                    section: PevcapBinarySection::Location,
-                    source,
-                })?
-                .try_into_location()
-                .map_err(PevcapBinaryError::Location)?;
-            return Ok(Some(location));
+            let location =
+                serde_json::from_slice::<PevcapLocationJson>(&payload).map_err(|source| {
+                    PevcapBinaryError::Deserialize {
+                        section: PevcapBinarySection::Location,
+                        source,
+                    }
+                })?;
+            if let Ok(location) = location.try_into_location() {
+                return Ok(Some(location));
+            }
         }
         if *finished {
             return Ok(None);
@@ -3669,6 +3671,59 @@ mod tests {
                 PevcapJsonlError::UnsupportedVersion { .. }
             ))
         ));
+    }
+
+    #[cfg(feature = "serde")]
+    #[test]
+    fn streaming_binary_location_reader_skips_invalid_samples() {
+        let header = PevcapHeader::new(
+            wc(1),
+            "darwin",
+            None,
+            &[],
+            &[],
+            None,
+            None,
+            "0.1.0",
+            [0; 32],
+            &[],
+        )
+        .expect("header should validate");
+        let location = PevcapLocationSample::new(
+            ms(3),
+            PevcapPhoneLocation {
+                wall_clock_unix_ms: 1_700_000_000_003,
+                latitude_degrees: 39.7,
+                longitude_degrees: -104.9,
+                altitude_meters: 1_600.0,
+                horizontal_accuracy_meters: Some(2.0),
+                vertical_accuracy_meters: None,
+                speed_meters_per_second: None,
+                speed_accuracy_meters_per_second: None,
+                course_degrees: Some(0.0),
+                course_accuracy_degrees: None,
+            },
+            None,
+            None,
+        )
+        .expect("location should validate");
+        let capture = PevcapCapture::new_with_locations(header, vec![], vec![location]);
+        let mut bytes = capture.to_binary().expect("capture should encode");
+        let latitude = b"39.7";
+        let offset = bytes
+            .windows(latitude.len())
+            .position(|window| window == latitude)
+            .expect("encoded latitude should be present");
+        bytes[offset..offset + latitude.len()].copy_from_slice(b"91.0");
+
+        let mut reader = PevcapReader::new(Cursor::new(bytes), PevcapEncoding::Binary)
+            .expect("streaming reader should validate the header");
+        assert_eq!(
+            reader
+                .next_location()
+                .expect("invalid location should be skipped"),
+            None
+        );
     }
 
     #[cfg(feature = "serde")]
