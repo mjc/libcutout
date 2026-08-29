@@ -29,13 +29,21 @@ pub use recording::{
     RouteTelemetryState, TELEMETRY_FRESHNESS_MILLISECONDS, TelemetryObservation,
     VehicleAssociation, VehicleIdentity, VehicleIdentityError,
 };
+mod projection;
+pub use projection::{
+    MAX_ROUTE_DISPLAY_POINTS, RouteDisplayBudget, RouteDisplayPoint, RoutePrivacyClass,
+    RoutePrivacyGridE7, RoutePrivacyPolicy, RouteProjectionAccumulator, RouteViewport,
+    project_route_points, project_route_points_from_iter,
+};
 
 #[cfg(test)]
 mod tests {
     use super::{
         Coordinate, DistanceMillimetres, LatitudeE7, LocationAdmission, LocationSample,
-        LocationSource, LongitudeE7, MonotonicMilliseconds, RideEvent, RideLifecycleState,
-        RidePointCount, RideSummary, TransitionError, VehicleIdentity, WallClockUnixMilliseconds,
+        LocationSource, LongitudeE7, MAX_ROUTE_DISPLAY_POINTS, MonotonicMilliseconds, RideEvent,
+        RideLifecycleState, RideMapRecorder, RidePointCount, RideSummary, RouteDisplayBudget,
+        RoutePrivacyClass, RoutePrivacyGridE7, RoutePrivacyPolicy, RouteViewport, TransitionError,
+        VehicleIdentity, WallClockUnixMilliseconds, project_route_points,
     };
 
     #[test]
@@ -129,5 +137,60 @@ mod tests {
             Some(VehicleIdentity::new("NF2557").expect("test identity is valid"))
         );
         assert_eq!(VehicleIdentity::new("   "), None);
+    }
+
+    #[test]
+    fn route_projection_is_bounded_and_privacy_classified() {
+        let mut recorder = RideMapRecorder::new();
+        recorder
+            .start(MonotonicMilliseconds::new(1_000), None)
+            .unwrap();
+        for (offset, latitude) in [(0, 40.0), (1_000, 40.0001), (2_000, 40.0002)] {
+            let sample = LocationSample::new(
+                Coordinate::from_degrees(latitude, -105.0).unwrap(),
+                MonotonicMilliseconds::new(1_000 + offset),
+                WallClockUnixMilliseconds::new(1_700_000_000_000 + offset),
+                None,
+                LocationSource::Live,
+            );
+            assert_eq!(recorder.check_sample(&sample), LocationAdmission::Accepted);
+            recorder.record_sample(sample);
+        }
+        let viewport = RouteViewport::new(
+            LatitudeE7::new(400_000_000),
+            LatitudeE7::new(400_002_000),
+            LongitudeE7::new(-1_050_000_000),
+            LongitudeE7::new(-1_049_999_000),
+        )
+        .unwrap();
+        let projection = project_route_points(
+            recorder.points(),
+            recorder.first_point_sequence(),
+            Some(viewport),
+            RouteDisplayBudget::new(2).unwrap(),
+            RoutePrivacyPolicy::grid(RoutePrivacyGridE7::new(1_000).unwrap()),
+        );
+        assert_eq!(projection.len(), 2);
+        assert!(
+            projection
+                .iter()
+                .all(|point| point.privacy_class() == RoutePrivacyClass::GridRedacted)
+        );
+    }
+
+    #[test]
+    fn route_projection_rejects_unbounded_configuration() {
+        assert!(RouteDisplayBudget::new(0).is_none());
+        assert!(RouteDisplayBudget::new(MAX_ROUTE_DISPLAY_POINTS + 1).is_none());
+        assert!(
+            RouteViewport::new(
+                LatitudeE7::new(400_001_000),
+                LatitudeE7::new(400_000_000),
+                LongitudeE7::new(-1_050_000_000),
+                LongitudeE7::new(-1_049_999_000),
+            )
+            .is_none()
+        );
+        assert!(RoutePrivacyGridE7::new(7).is_none());
     }
 }

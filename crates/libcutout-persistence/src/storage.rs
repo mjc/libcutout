@@ -4,7 +4,9 @@ use cutout_core::{
 };
 use cutout_ride_maps::{
     Coordinate, LocationAdmission, LocationSample, LocationSource, RideEvent, RideLifecycleState,
-    RideSummary, RouteTelemetryState, TransitionError,
+    RideMapPoint, RideMapSegmentId, RideSummary, RouteDisplayBudget, RouteDisplayPoint,
+    RoutePrivacyPolicy, RouteProjectionAccumulator, RouteTelemetryState, RouteViewport,
+    TransitionError,
 };
 use hex::encode as hex_encode;
 use rusqlite::{Connection, OptionalExtension, params};
@@ -15,6 +17,7 @@ use std::{
     path::{Path, PathBuf},
     sync::{
         Arc, Mutex, OnceLock,
+        atomic::{AtomicBool, Ordering},
         mpsc::{self, Receiver, SyncSender},
     },
     thread::{self, JoinHandle},
@@ -938,6 +941,9 @@ pub enum StorageError {
     /// The spatial schema could not be initialized.
     #[error("SQLite spatial schema initialization failed: {0}")]
     SpatialSchemaInitialization(String),
+    /// A cancellable route projection was cancelled before completion.
+    #[error("route projection cancelled")]
+    Cancelled,
 }
 
 enum SpatialSchemaState {
@@ -985,6 +991,52 @@ pub struct PendingLocationWrite {
 pub struct LocationWriteResult {
     admission: LocationAdmission,
     sequence: Option<u64>,
+}
+
+/// One bounded, privacy-classified projection of a durable ride route.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RoutePointProjection {
+    points: Vec<RouteDisplayPoint>,
+    source_point_count: u64,
+}
+
+impl RoutePointProjection {
+    /// Returns the bounded display points in canonical sequence order.
+    #[must_use]
+    pub fn points(&self) -> &[RouteDisplayPoint] {
+        &self.points
+    }
+
+    /// Returns the complete durable point count before viewport or LOD filtering.
+    #[must_use]
+    pub const fn source_point_count(&self) -> u64 {
+        self.source_point_count
+    }
+}
+
+/// Cooperative cancellation token for a durable route projection.
+#[derive(Clone, Debug, Default)]
+pub struct RouteProjectionCancellation {
+    cancelled: Arc<AtomicBool>,
+}
+
+impl RouteProjectionCancellation {
+    /// Creates an active cancellation token.
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Requests cancellation.
+    pub fn cancel(&self) {
+        self.cancelled.store(true, Ordering::Release);
+    }
+
+    /// Returns whether cancellation was requested.
+    #[must_use]
+    pub fn is_cancelled(&self) -> bool {
+        self.cancelled.load(Ordering::Acquire)
+    }
 }
 
 impl LocationWriteResult {
@@ -1801,6 +1853,53 @@ impl RideDatabase {
         })
     }
 
+    /// Projects a durable route through Rust-owned viewport, LOD, and privacy policy.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StorageError::NotFound`] when the ride does not exist or another storage error
+    /// when the route cannot be decoded.
+    pub fn project_route_points(
+        &self,
+        ride_id: RideId,
+        viewport: Option<RouteViewport>,
+        budget: RouteDisplayBudget,
+        privacy: RoutePrivacyPolicy,
+    ) -> Result<RoutePointProjection, StorageError> {
+        self.request(move |reply| Command::ProjectRoutePoints {
+            ride_id,
+            viewport,
+            budget,
+            privacy,
+            cancellation: None,
+            reply,
+        })
+    }
+
+    /// Projects a durable route while honoring cooperative cancellation.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StorageError::Cancelled`] when cancellation is requested, or another storage
+    /// error when the route cannot be decoded.
+    pub fn project_route_points_cancellable(
+        &self,
+        ride_id: RideId,
+        viewport: Option<RouteViewport>,
+        budget: RouteDisplayBudget,
+        privacy: RoutePrivacyPolicy,
+        cancellation: RouteProjectionCancellation,
+    ) -> Result<RoutePointProjection, StorageError> {
+        self.request(move |reply| Command::ProjectRoutePoints {
+            ride_id,
+            viewport,
+            budget,
+            privacy,
+            cancellation: Some(cancellation),
+            reply,
+        })
+    }
+
     /// Stops the process-wide worker and releases its ownership slot.
     ///
     /// # Errors
@@ -2070,6 +2169,14 @@ enum Command {
         cursor: Option<RoutePointCursor>,
         limit: QueryLimit,
         reply: Reply<RoutePointPage>,
+    },
+    ProjectRoutePoints {
+        ride_id: RideId,
+        viewport: Option<RouteViewport>,
+        budget: RouteDisplayBudget,
+        privacy: RoutePrivacyPolicy,
+        cancellation: Option<RouteProjectionCancellation>,
+        reply: Reply<RoutePointProjection>,
     },
     Shutdown {
         reply: Reply<()>,
@@ -2411,6 +2518,23 @@ fn worker_loop(mut connection: Connection, receiver: &Receiver<Command>) {
                 reply,
             } => {
                 let _ = reply.send(route_points(&connection, ride_id, cursor, limit));
+            }
+            Command::ProjectRoutePoints {
+                ride_id,
+                viewport,
+                budget,
+                privacy,
+                cancellation,
+                reply,
+            } => {
+                let _ = reply.send(project_route_points(
+                    &connection,
+                    ride_id,
+                    viewport,
+                    budget,
+                    privacy,
+                    cancellation.as_ref(),
+                ));
             }
             Command::Shutdown { reply } => {
                 let _ = reply.send(Ok(()));
@@ -4697,6 +4821,108 @@ fn route_points(
         points,
         next_cursor,
     })
+}
+
+fn project_route_points(
+    connection: &Connection,
+    ride_id: RideId,
+    viewport: Option<RouteViewport>,
+    budget: RouteDisplayBudget,
+    privacy: RoutePrivacyPolicy,
+    cancellation: Option<&RouteProjectionCancellation>,
+) -> Result<RoutePointProjection, StorageError> {
+    let cancelled = || cancellation.is_some_and(RouteProjectionCancellation::is_cancelled);
+    if cancelled() {
+        return Err(StorageError::Cancelled);
+    }
+    let ride_id = ride_id.uuid().to_string();
+    let exists: bool = connection.query_row(
+        "SELECT EXISTS(SELECT 1 FROM rides WHERE id = ?1)",
+        [&ride_id],
+        |row| row.get(0),
+    )?;
+    if !exists {
+        return Err(StorageError::NotFound);
+    }
+    let visibility = route_point_viewport_predicate(viewport);
+    let query = format!(
+        "SELECT sequence, segment_id, telemetry_state, monotonic_ms, wall_clock_ms, latitude_e7, longitude_e7, horizontal_accuracy_mm, source, COUNT(*) OVER() AS source_count, SUM(CASE WHEN {visibility} THEN 1 ELSE 0 END) OVER() AS candidate_count, ({visibility}) AS is_visible FROM ride_points WHERE ride_id = ?1 ORDER BY sequence ASC"
+    );
+    let mut statement = connection.prepare(&query)?;
+    let rows = if let Some(viewport) = viewport {
+        statement.query_map(
+            params![
+                ride_id,
+                viewport.minimum_latitude().as_i32(),
+                viewport.maximum_latitude().as_i32(),
+                viewport.minimum_longitude().as_i32(),
+                viewport.maximum_longitude().as_i32(),
+            ],
+            project_route_row,
+        )?
+    } else {
+        statement.query_map([ride_id], project_route_row)?
+    };
+    let mut accumulator = None;
+    let mut source_point_count = 0;
+    let mut candidate_ordinal = 0;
+    for row in rows {
+        if cancelled() {
+            return Err(StorageError::Cancelled);
+        }
+        let (point, row_source_count, candidate_count, is_visible) = row?;
+        source_point_count = row_source_count;
+        if !is_visible {
+            continue;
+        }
+        let accumulator = accumulator.get_or_insert_with(|| {
+            RouteProjectionAccumulator::new(
+                usize::try_from(candidate_count).unwrap_or(usize::MAX),
+                budget,
+                privacy,
+            )
+        });
+        accumulator.push(
+            candidate_ordinal,
+            point.sequence(),
+            RideMapPoint::new(
+                point.sample(),
+                RideMapSegmentId::new(point.segment_id()),
+                point.telemetry_state(),
+            ),
+        );
+        candidate_ordinal += 1;
+        if accumulator.is_complete() {
+            break;
+        }
+    }
+    if cancelled() {
+        return Err(StorageError::Cancelled);
+    }
+    Ok(RoutePointProjection {
+        points: accumulator.map_or_else(Vec::new, RouteProjectionAccumulator::finish),
+        source_point_count,
+    })
+}
+
+fn project_route_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<(RoutePoint, u64, u64, bool)> {
+    Ok((
+        route_point_from_row(row)?,
+        row.get(9)?,
+        row.get(10)?,
+        row.get::<_, i64>(11)? != 0,
+    ))
+}
+
+fn route_point_viewport_predicate(viewport: Option<RouteViewport>) -> String {
+    let Some(viewport) = viewport else {
+        return "1".to_owned();
+    };
+    if viewport.crosses_antimeridian() {
+        "latitude_e7 BETWEEN ?2 AND ?3 AND (longitude_e7 >= ?4 OR longitude_e7 <= ?5)".to_owned()
+    } else {
+        "latitude_e7 BETWEEN ?2 AND ?3 AND longitude_e7 BETWEEN ?4 AND ?5".to_owned()
+    }
 }
 
 fn route_point_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<RoutePoint> {

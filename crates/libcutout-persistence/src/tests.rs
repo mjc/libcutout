@@ -6,7 +6,8 @@ use cutout_core::{
     PevcapRecord, WallClockUnixTimestamp,
 };
 use cutout_ride_maps::{
-    Coordinate, LocationAdmission, LocationSample, LocationSource, RideEvent, RouteTelemetryState,
+    Coordinate, LocationAdmission, LocationSample, LocationSource, RideEvent, RouteDisplayBudget,
+    RoutePrivacyPolicy, RouteTelemetryState, RouteViewport,
 };
 use rusqlite::Connection;
 
@@ -1619,6 +1620,98 @@ fn route_points_persist_telemetry_provenance() {
         page.points()[0].telemetry_state(),
         RouteTelemetryState::AssociatedFresh
     );
+
+    database.shutdown().unwrap();
+    let _ = std::fs::remove_file(path);
+}
+
+#[test]
+fn route_projection_is_bounded_viewport_aware_and_cancellable() {
+    let _guard = test_guard();
+    let path = std::env::temp_dir().join(format!(
+        "libcutout-persistence-route-projection-{}.sqlite",
+        uuid::Uuid::new_v4()
+    ));
+    let database = RideDatabase::open(&path).unwrap();
+    let ride = database.create_ride(RideSource::Live, 10).unwrap();
+    database.transition(ride, RideEvent::Start).unwrap();
+    for sequence in 0_u32..100 {
+        let sequence_ms = u64::from(sequence);
+        let sample = LocationSample::new(
+            Coordinate::from_degrees(40.0 + f64::from(sequence) / 1_000_000.0, -105.0).unwrap(),
+            1_000 + sequence_ms * 1_000,
+            1_700_000_000_000 + sequence_ms * 1_000,
+            None,
+            LocationSource::Live,
+        );
+        assert_eq!(
+            database.append_location(ride, sample).unwrap(),
+            LocationAdmission::Accepted
+        );
+    }
+
+    let projection = database
+        .project_route_points(
+            ride,
+            None,
+            RouteDisplayBudget::new(8).unwrap(),
+            RoutePrivacyPolicy::Precise,
+        )
+        .unwrap();
+    assert_eq!(projection.source_point_count(), 100);
+    assert_eq!(projection.points().len(), 8);
+
+    let viewport = RouteViewport::new(
+        cutout_ride_maps::LatitudeE7::new(400_000_000),
+        cutout_ride_maps::LatitudeE7::new(400_000_050),
+        cutout_ride_maps::LongitudeE7::new(-1_050_000_000),
+        cutout_ride_maps::LongitudeE7::new(-1_049_999_000),
+    )
+    .unwrap();
+    let visible = database
+        .project_route_points(
+            ride,
+            Some(viewport),
+            RouteDisplayBudget::new(8).unwrap(),
+            RoutePrivacyPolicy::Precise,
+        )
+        .unwrap();
+    assert!(!visible.points().is_empty());
+    assert!(visible.points().iter().all(|point| {
+        viewport.minimum_latitude().as_i32() <= point.coordinate().latitude().as_i32()
+            && point.coordinate().latitude().as_i32() <= viewport.maximum_latitude().as_i32()
+    }));
+
+    let antimeridian = RouteViewport::new(
+        cutout_ride_maps::LatitudeE7::new(-900_000_000),
+        cutout_ride_maps::LatitudeE7::new(900_000_000),
+        cutout_ride_maps::LongitudeE7::new(1_790_000_000),
+        cutout_ride_maps::LongitudeE7::new(-1_790_000_000),
+    )
+    .unwrap();
+    assert!(antimeridian.crosses_antimeridian());
+    let antimeridian_projection = database
+        .project_route_points(
+            ride,
+            Some(antimeridian),
+            RouteDisplayBudget::new(8).unwrap(),
+            RoutePrivacyPolicy::Precise,
+        )
+        .unwrap();
+    assert!(antimeridian_projection.points().is_empty());
+
+    let cancellation = super::RouteProjectionCancellation::new();
+    cancellation.cancel();
+    assert!(matches!(
+        database.project_route_points_cancellable(
+            ride,
+            None,
+            RouteDisplayBudget::new(8).unwrap(),
+            RoutePrivacyPolicy::Precise,
+            cancellation,
+        ),
+        Err(StorageError::Cancelled)
+    ));
 
     database.shutdown().unwrap();
     let _ = std::fs::remove_file(path);
