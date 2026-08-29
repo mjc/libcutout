@@ -1,10 +1,7 @@
 use core::convert::Infallible;
 
 #[cfg(feature = "serde")]
-use std::{
-    collections::VecDeque,
-    io::{self, BufRead, BufReader, Read},
-};
+use std::io::{self, BufRead, BufReader, Read};
 
 use arrayvec::ArrayVec;
 use bytes::Bytes;
@@ -317,7 +314,7 @@ enum PevcapReaderState<R: Read> {
         line_number: usize,
         header: PevcapHeader,
         line: String,
-        pending_locations: VecDeque<PevcapLocationSample>,
+        supports_locations: bool,
     },
     Binary {
         reader: R,
@@ -401,7 +398,7 @@ impl<R: Read> PevcapReader<R> {
                     line_number,
                     header: header.try_into_header()?,
                     line: String::new(),
-                    pending_locations: VecDeque::new(),
+                    supports_locations: version.supports_locations(),
                 },
             });
         }
@@ -461,7 +458,7 @@ impl<R: Read> PevcapReader<R> {
                 reader,
                 line_number,
                 line,
-                pending_locations,
+                supports_locations,
                 ..
             } => loop {
                 line.clear();
@@ -492,16 +489,19 @@ impl<R: Read> PevcapReader<R> {
                             }
                         })?))
                     }
-                    PevcapJsonlLine::Location { location } => {
-                        let location = location.try_into_location().map_err(|source| {
-                            PevcapJsonlError::Location {
+                    PevcapJsonlLine::Location { location: _ } => {
+                        if !*supports_locations {
+                            return Err(PevcapJsonlError::UnsupportedVersion {
                                 line: *line_number,
-                                source,
+                                version: PevcapFormatVersion {
+                                    major: PEVCAP_VERSION_MAJOR,
+                                    minor: PEVCAP_VERSION_MINOR_LEGACY,
+                                },
                             }
-                        })?;
-                        // Preserve standalone samples for callers that consume transport and
-                        // location streams through the same reader.
-                        pending_locations.push_back(location);
+                            .into());
+                        }
+                        // Record-only consumers intentionally discard standalone locations;
+                        // use `next_event` when the physical interleaving matters.
                         continue;
                     }
                 };
@@ -575,12 +575,13 @@ impl<R: Read> PevcapReader<R> {
             reader,
             line_number,
             line,
+            supports_locations,
             ..
         } = &mut self.state
         else {
             return Ok(None);
         };
-        Self::next_jsonl_event(reader, line_number, line)
+        Self::next_jsonl_event(reader, line_number, line, *supports_locations)
     }
 
     fn next_binary_event(&mut self) -> Result<Option<PevcapEvent>, PevcapStreamError> {
@@ -643,9 +644,9 @@ impl<R: Read> PevcapReader<R> {
                 reader,
                 line_number,
                 line,
-                pending_locations,
+                supports_locations,
                 ..
-            } => Self::next_jsonl_location(reader, line_number, line, pending_locations),
+            } => Self::next_jsonl_location(reader, line_number, line, *supports_locations),
             PevcapReaderState::Binary {
                 reader,
                 remaining_records,
@@ -667,11 +668,8 @@ impl<R: Read> PevcapReader<R> {
         reader: &mut BufReader<R>,
         line_number: &mut usize,
         line: &mut String,
-        pending_locations: &mut VecDeque<PevcapLocationSample>,
+        supports_locations: bool,
     ) -> Result<Option<PevcapLocationSample>, PevcapStreamError> {
-        if let Some(location) = pending_locations.pop_front() {
-            return Ok(Some(location));
-        }
         loop {
             line.clear();
             if reader.read_line(line).map_err(PevcapJsonlError::Io)? == 0 {
@@ -701,12 +699,19 @@ impl<R: Read> PevcapReader<R> {
                         })?;
                 }
                 PevcapJsonlLine::Location { location } => {
-                    return Ok(Some(location.try_into_location().map_err(|source| {
-                        PevcapJsonlError::Location {
+                    if !supports_locations {
+                        return Err(PevcapJsonlError::UnsupportedVersion {
                             line: *line_number,
-                            source,
+                            version: PevcapFormatVersion {
+                                major: PEVCAP_VERSION_MAJOR,
+                                minor: PEVCAP_VERSION_MINOR_LEGACY,
+                            },
                         }
-                    })?));
+                        .into());
+                    }
+                    if let Ok(location) = location.try_into_location() {
+                        return Ok(Some(location));
+                    }
                 }
             }
         }
@@ -716,6 +721,7 @@ impl<R: Read> PevcapReader<R> {
         reader: &mut BufReader<R>,
         line_number: &mut usize,
         line: &mut String,
+        supports_locations: bool,
     ) -> Result<Option<PevcapEvent>, PevcapStreamError> {
         loop {
             line.clear();
@@ -745,7 +751,19 @@ impl<R: Read> PevcapReader<R> {
                             source,
                         })?,
                 ))),
-                PevcapJsonlLine::Location { location } => Ok(Some(location_event(location))),
+                PevcapJsonlLine::Location { location } => {
+                    if !supports_locations {
+                        return Err(PevcapJsonlError::UnsupportedVersion {
+                            line: *line_number,
+                            version: PevcapFormatVersion {
+                                major: PEVCAP_VERSION_MAJOR,
+                                minor: PEVCAP_VERSION_MINOR_LEGACY,
+                            },
+                        }
+                        .into());
+                    }
+                    Ok(Some(location_event(location)))
+                }
             };
         }
     }
@@ -2056,6 +2074,11 @@ impl PevcapCapture {
     /// represented by the v1 length prefix.
     #[cfg(feature = "serde")]
     pub fn to_binary(&self) -> Result<Vec<u8>, PevcapBinaryError> {
+        if !self.version.supports_locations() && !self.locations.is_empty() {
+            return Err(PevcapBinaryError::LocationsUnsupported {
+                version: self.version,
+            });
+        }
         let header = serde_json::to_vec(&PevcapHeaderJson::from(&self.header))
             .map_err(PevcapBinaryError::Serialize)?;
 
@@ -2078,17 +2101,21 @@ impl PevcapCapture {
             write_len_prefixed(&mut output, PevcapBinarySection::Record, &payload)?;
         }
 
-        write_u32_le(
-            &mut output,
-            u32::try_from(self.locations.len()).map_err(|_| PevcapBinaryError::LengthTooLarge {
-                section: PevcapBinarySection::LocationCount,
-                len: self.locations.len(),
-            })?,
-        );
-        for location in &self.locations {
-            let payload = serde_json::to_vec(&PevcapLocationJson::from(location))
-                .map_err(PevcapBinaryError::Serialize)?;
-            write_len_prefixed(&mut output, PevcapBinarySection::Location, &payload)?;
+        if self.version.supports_locations() {
+            write_u32_le(
+                &mut output,
+                u32::try_from(self.locations.len()).map_err(|_| {
+                    PevcapBinaryError::LengthTooLarge {
+                        section: PevcapBinarySection::LocationCount,
+                        len: self.locations.len(),
+                    }
+                })?,
+            );
+            for location in &self.locations {
+                let payload = serde_json::to_vec(&PevcapLocationJson::from(location))
+                    .map_err(PevcapBinaryError::Serialize)?;
+                write_len_prefixed(&mut output, PevcapBinarySection::Location, &payload)?;
+            }
         }
 
         Ok(output)
@@ -2543,6 +2570,13 @@ pub enum PevcapBinaryError {
     /// A location payload violated location invariants.
     #[error("malformed PEVCAP binary location payload: {0}")]
     Location(PevcapPhoneLocationError),
+
+    /// The selected binary version cannot represent independent locations.
+    #[error("PEVCAP binary version {version:?} cannot encode locations")]
+    LocationsUnsupported {
+        /// Version selected for encoding.
+        version: PevcapFormatVersion,
+    },
 }
 
 /// PEVCAP binary container section identifier for error reporting.
@@ -3481,19 +3515,36 @@ mod tests {
             let mut reader = PevcapReader::new(Cursor::new(input), encoding)
                 .expect("streaming reader should validate the header");
             assert_eq!(
-                reader.next_record().expect("record should decode"),
-                Some(capture.records[0].clone())
-            );
-            assert_eq!(reader.next_record().expect("records should finish"), None);
-            assert_eq!(
-                reader.next_location().expect("location should decode"),
-                Some(location)
+                reader.next_event().expect("record should decode"),
+                Some(PevcapEvent::Record(capture.records[0].clone()))
             );
             assert_eq!(
-                reader.next_location().expect("locations should finish"),
-                None
+                reader.next_event().expect("location should decode"),
+                Some(PevcapEvent::Location(location))
             );
+            assert_eq!(reader.next_event().expect("stream should finish"), None);
         }
+
+        let legacy_input = capture.to_jsonl().expect("capture should encode").replacen(
+            "\"minor\":1",
+            "\"minor\":0",
+            1,
+        );
+        let mut legacy_reader = PevcapReader::new(
+            Cursor::new(legacy_input.into_bytes()),
+            PevcapEncoding::Jsonl,
+        )
+        .expect("legacy streaming header should validate");
+        assert!(matches!(
+            legacy_reader.next_event().expect("record should decode"),
+            Some(PevcapEvent::Record(_))
+        ));
+        assert!(matches!(
+            legacy_reader.next_event(),
+            Err(PevcapStreamError::Jsonl(
+                PevcapJsonlError::UnsupportedVersion { .. }
+            ))
+        ));
     }
 
     #[cfg(feature = "serde")]
@@ -4519,6 +4570,60 @@ mod tests {
         assert!(binary.starts_with(&PEVCAP_MAGIC));
         assert_eq!(decoded, capture);
         assert_eq!(decoded.records[0].target, Some(target));
+    }
+
+    #[cfg(feature = "serde")]
+    #[test]
+    fn legacy_binary_conversion_omits_unsupported_location_section() {
+        let header = PevcapHeader::new(
+            wc(1),
+            "darwin",
+            None,
+            &[],
+            &[],
+            None,
+            None,
+            "0.1.0",
+            [0; 32],
+            &[],
+        )
+        .expect("header should validate");
+        let mut capture = PevcapCapture::new(header, vec![]);
+        capture.version = PevcapFormatVersion {
+            major: PEVCAP_VERSION_MAJOR,
+            minor: PEVCAP_VERSION_MINOR_LEGACY,
+        };
+
+        let binary = capture.to_binary().expect("legacy binary should encode");
+        let decoded = PevcapCapture::from_binary(&binary).expect("legacy binary should decode");
+        assert!(decoded.locations.is_empty());
+        assert!(decoded.records.is_empty());
+
+        let mut capture_with_location = capture.clone();
+        capture_with_location.locations.push(
+            PevcapLocationSample::new(
+                ms(2),
+                PevcapPhoneLocation {
+                    wall_clock_unix_ms: 1_700_000_000_002,
+                    latitude_degrees: 39.7,
+                    longitude_degrees: -104.9,
+                    altitude_meters: 1_600.0,
+                    horizontal_accuracy_meters: Some(2.0),
+                    vertical_accuracy_meters: None,
+                    speed_meters_per_second: None,
+                    speed_accuracy_meters_per_second: None,
+                    course_degrees: None,
+                    course_accuracy_degrees: None,
+                },
+                None,
+                None,
+            )
+            .expect("location should validate"),
+        );
+        assert!(matches!(
+            capture_with_location.to_binary(),
+            Err(PevcapBinaryError::LocationsUnsupported { .. })
+        ));
     }
 
     #[cfg(feature = "serde")]
