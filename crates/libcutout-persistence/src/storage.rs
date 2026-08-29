@@ -738,6 +738,12 @@ pub struct MapPoint {
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub struct MapPointId(Uuid);
 
+impl Default for MapPointId {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl MapPointId {
     /// Creates an identifier for a newly stored point.
     #[must_use]
@@ -1437,9 +1443,9 @@ impl RideDatabase {
 
     /// Reacquires the database service after its worker has exited.
     ///
-    /// A worker failure disconnects the sender held by this handle; callers must replace the
-    /// failed handle with the returned handle before issuing more commands. If the worker is
-    /// still healthy, this returns another handle to the existing service.
+    /// A worker failure disconnects the sender held by this handle. Ordinary requests recover
+    /// transparently; use this when an explicit health check or fresh handle is needed. If the
+    /// worker is still healthy, this returns another handle to the existing service.
     ///
     /// # Errors
     ///
@@ -2240,7 +2246,7 @@ impl RideDatabase {
             viewport,
             budget,
             privacy,
-            default_route_projection_cancellation(),
+            &default_route_projection_cancellation(),
         )
     }
 
@@ -2256,7 +2262,7 @@ impl RideDatabase {
         viewport: Option<RouteViewport>,
         budget: RouteDisplayBudget,
         privacy: RoutePrivacyPolicy,
-        cancellation: RouteProjectionCancellation,
+        cancellation: &RouteProjectionCancellation,
     ) -> Result<RoutePointProjection, StorageError> {
         let deadline = cancellation.deadline();
         let (reply, response) = response_channel();
@@ -2273,7 +2279,7 @@ impl RideDatabase {
             reply,
         })?;
         match deadline {
-            Some(deadline) => receive_until(&response, deadline, &cancellation),
+            Some(deadline) => receive_until(&response, deadline, cancellation),
             None => receive(&response),
         }
     }
@@ -2419,7 +2425,6 @@ fn receive_until<T>(
         Ok(result) => result,
         Err(mpsc::RecvTimeoutError::Timeout) => {
             cancellation.cancel();
-            cancellation.interrupt();
             Err(StorageError::DeadlineExceeded)
         }
         Err(mpsc::RecvTimeoutError::Disconnected) => Err(StorageError::ResponseDropped),
@@ -3347,6 +3352,10 @@ fn migrate(connection: &mut Connection) -> Result<(), StorageError> {
     Ok(())
 }
 
+#[allow(
+    clippy::too_many_lines,
+    reason = "Keep the current schema definition in one atomic migration contract."
+)]
 pub(crate) fn create_current_schema(connection: &Connection) -> Result<(), StorageError> {
     connection.execute_batch(
         "
@@ -3394,7 +3403,8 @@ pub(crate) fn create_current_schema(connection: &Connection) -> Result<(), Stora
             horizontal_accuracy_mm INTEGER CHECK (horizontal_accuracy_mm IS NULL OR horizontal_accuracy_mm >= 0),
             source TEXT NOT NULL CHECK (source IN ('live', 'pevcap_import')),
             PRIMARY KEY (ride_id, sequence),
-            UNIQUE (ride_id, monotonic_ms, wall_clock_ms, latitude_e7, longitude_e7)
+            UNIQUE (ride_id, monotonic_ms, wall_clock_ms, latitude_e7, longitude_e7),
+            FOREIGN KEY (ride_id, segment_id) REFERENCES ride_segments(ride_id, segment_id)
         );
         CREATE TABLE selected_device (
             singleton_key BLOB PRIMARY KEY NOT NULL CHECK (length(singleton_key) = 16),
@@ -3639,6 +3649,11 @@ fn migrate_v3_to_current(connection: &mut Connection) -> Result<(), StorageError
             (id, source, state, created_at_ms, updated_at_ms, point_count, distance_mm)
         SELECT id, source, state, created_at_ms, updated_at_ms, point_count, distance_mm
         FROM rides_legacy;
+        INSERT INTO ride_segments
+            (ride_id, segment_id, sequence, start_reason, source,
+             started_monotonic_ms, started_wall_clock_ms)
+        SELECT id, 0, 0, 'initial', source, 0, created_at_ms
+        FROM rides_legacy;
         INSERT INTO ride_points
             (ride_id, sequence, segment_id, telemetry_state, monotonic_ms, wall_clock_ms, latitude_e7,
              longitude_e7, horizontal_accuracy_mm, source)
@@ -3667,7 +3682,7 @@ fn migrate_v3_to_current(connection: &mut Connection) -> Result<(), StorageError
         DROP TABLE voltage_sag_models_legacy;
         DROP TABLE ride_session_marker_legacy;
         PRAGMA application_id = 1129665615;
-        PRAGMA user_version = 10;
+        PRAGMA user_version = 14;
         ",
     )?;
     transaction.commit()?;
@@ -3835,7 +3850,7 @@ fn migrate_v10_to_current(connection: &mut Connection) -> Result<(), StorageErro
         COMMIT;
         ",
     )?;
-    Ok(())
+    migrate_v11_to_current(connection)
 }
 
 fn migrate_v11_to_current(connection: &mut Connection) -> Result<(), StorageError> {
@@ -4720,9 +4735,30 @@ fn preflight_pevcap(
                 Some(latest_milliseconds.map_or(milliseconds, |current| current.max(milliseconds)));
         }
     }
+    let mut location_earliest_milliseconds = None::<u64>;
+    let mut location_latest_milliseconds = None::<u64>;
     let location_count = stream_pevcap_location_batches(&path, encoding, |samples| {
+        for point in &samples {
+            let milliseconds = point.sample.monotonic_milliseconds().as_u64();
+            location_earliest_milliseconds = Some(
+                location_earliest_milliseconds
+                    .map_or(milliseconds, |current| current.min(milliseconds)),
+            );
+            location_latest_milliseconds = Some(
+                location_latest_milliseconds
+                    .map_or(milliseconds, |current| current.max(milliseconds)),
+            );
+        }
         Ok(u64::try_from(samples.len()).unwrap_or(u64::MAX))
     })?;
+    let earliest_milliseconds = earliest_milliseconds
+        .into_iter()
+        .chain(location_earliest_milliseconds)
+        .min();
+    let latest_milliseconds = latest_milliseconds
+        .into_iter()
+        .chain(location_latest_milliseconds)
+        .max();
     let duration_milliseconds = latest_milliseconds
         .zip(earliest_milliseconds)
         .map_or(0, |(latest, earliest)| latest.saturating_sub(earliest));
@@ -4834,6 +4870,7 @@ fn stream_pevcap_location_batches(
     let mut accepted = 0_u64;
     let mut recorder = RideMapRecorder::new();
     let mut started = false;
+    let mut last_location_key = None;
     while let Some(event) = reader
         .next_event()
         .map_err(|error| StorageError::PevcapImport(error.to_string()))?
@@ -4849,6 +4886,7 @@ fn stream_pevcap_location_batches(
                         &mut batch,
                         &mut accepted,
                         &mut append,
+                        &mut last_location_key,
                     )?;
                 }
             }
@@ -4860,6 +4898,7 @@ fn stream_pevcap_location_batches(
                 &mut batch,
                 &mut accepted,
                 &mut append,
+                &mut last_location_key,
             )?,
             PevcapEvent::LocationRejected(_) => {}
         }
@@ -4870,6 +4909,10 @@ fn stream_pevcap_location_batches(
     Ok(accepted)
 }
 
+#[allow(
+    clippy::too_many_arguments,
+    reason = "The importer mutates one bounded replay state and its append sink together."
+)]
 fn append_pevcap_location(
     location: PevcapPhoneLocation,
     monotonic_ms: u64,
@@ -4878,6 +4921,7 @@ fn append_pevcap_location(
     batch: &mut Vec<PevcapRoutePoint>,
     accepted: &mut u64,
     append: &mut impl FnMut(Vec<PevcapRoutePoint>) -> Result<u64, StorageError>,
+    last_location_key: &mut Option<(u64, i32, i32)>,
 ) -> Result<(), StorageError> {
     let Ok(location) = location.canonical() else {
         return Ok(());
@@ -4887,16 +4931,21 @@ fn append_pevcap_location(
     else {
         return Ok(());
     };
-    let Some(horizontal_accuracy_millimetres) =
-        pevcap_accuracy_millimetres(location.horizontal_accuracy_meters)
-    else {
+    let location_key = (
+        location.wall_clock_unix_ms,
+        coordinate.latitude().as_i32(),
+        coordinate.longitude().as_i32(),
+    );
+    if *last_location_key == Some(location_key) {
         return Ok(());
-    };
+    }
+    let horizontal_accuracy_millimetres =
+        pevcap_accuracy_millimetres(location.horizontal_accuracy_meters);
     let sample = LocationSample::new(
         coordinate,
         monotonic_ms,
         location.wall_clock_unix_ms,
-        Some(horizontal_accuracy_millimetres),
+        horizontal_accuracy_millimetres,
         LocationSource::PevcapImport,
     );
     if !*started {
@@ -4911,6 +4960,7 @@ fn append_pevcap_location(
     }
     let telemetry_state = recorder.telemetry_state_at(sample.monotonic_milliseconds());
     recorder.record_sample(sample);
+    *last_location_key = Some(location_key);
     batch.push(PevcapRoutePoint {
         sample,
         segment_id,
@@ -6024,17 +6074,17 @@ fn project_route_points(
         .unwrap_or(u64::MAX);
     Ok(RoutePointProjection {
         points,
-        source_point_count: counts.source_point_count.max(source_point_count),
-        source_segment_count: counts.source_segment_count,
-        candidate_segment_count: counts.candidate_segment_count,
+        source_point_count: counts.source_points.max(source_point_count),
+        source_segment_count: counts.source_segments,
+        candidate_segment_count: counts.candidate_segments,
         displayed_segment_count,
     })
 }
 
 struct RouteProjectionCounts {
-    source_point_count: u64,
-    source_segment_count: u64,
-    candidate_segment_count: u64,
+    source_points: u64,
+    source_segments: u64,
+    candidate_segments: u64,
 }
 
 fn route_projection_counts(
@@ -6085,9 +6135,9 @@ fn route_projection_counts(
         source_segment_count
     };
     Ok(RouteProjectionCounts {
-        source_point_count,
-        source_segment_count,
-        candidate_segment_count,
+        source_points: source_point_count,
+        source_segments: source_segment_count,
+        candidate_segments: candidate_segment_count,
     })
 }
 

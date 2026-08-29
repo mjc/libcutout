@@ -2,8 +2,8 @@ use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
 use cutout_core::{
-    MonotonicTimestamp, PevcapCapture, PevcapEncoding, PevcapHeader, PevcapPhoneLocation,
-    PevcapRecord, WallClockUnixTimestamp,
+    MonotonicTimestamp, PevcapCapture, PevcapEncoding, PevcapHeader, PevcapLocationSample,
+    PevcapPhoneLocation, PevcapRecord, WallClockUnixTimestamp,
 };
 use cutout_ride_maps::{
     Coordinate, LocationAdmission, LocationSample, LocationSource, RideEvent, RouteDisplayBudget,
@@ -156,6 +156,15 @@ fn current_database_repairs_monotonic_ride_creation_times() {
             "INSERT INTO rides
              (id, source, state, created_at_ms, updated_at_ms, point_count, distance_mm)
              VALUES (?1, 'live', 'saved', 1_000, 1_700_000_002_000, 2, 1)",
+            ["00000000-0000-0000-0000-000000000001"],
+        )
+        .unwrap();
+    connection
+        .execute(
+            "INSERT INTO ride_segments
+                (ride_id, segment_id, sequence, start_reason, source,
+                 started_monotonic_ms, started_wall_clock_ms)
+             VALUES (?1, 0, 0, 'initial', 'live', 0, 1_700_000_000_000)",
             ["00000000-0000-0000-0000-000000000001"],
         )
         .unwrap();
@@ -953,6 +962,146 @@ fn database_preflights_confirms_and_deduplicates_managed_pevcap_artifacts() {
 }
 
 #[test]
+fn pevcap_import_keeps_a_valid_location_without_horizontal_accuracy() {
+    let _guard = test_guard();
+    let database_path = std::env::temp_dir().join(format!(
+        "libcutout-persistence-pevcap-no-accuracy-db-{}.sqlite",
+        uuid::Uuid::new_v4()
+    ));
+    let artifact_path = std::env::temp_dir().join(format!(
+        "libcutout-persistence-pevcap-no-accuracy-{}.jsonl",
+        uuid::Uuid::new_v4()
+    ));
+    let header = PevcapHeader::new(
+        WallClockUnixTimestamp::new(1_700_000_000_000),
+        "darwin",
+        None,
+        &[],
+        &[],
+        None,
+        None,
+        "test",
+        [0; 32],
+        &[],
+    )
+    .unwrap();
+    let capture = PevcapCapture::new(
+        header,
+        vec![
+            PevcapRecord::link_up(MonotonicTimestamp::new(1), None).with_phone_location(
+                PevcapPhoneLocation {
+                    wall_clock_unix_ms: 1_700_000_000_000,
+                    latitude_degrees: 40.0,
+                    longitude_degrees: -105.0,
+                    altitude_meters: 1_600.0,
+                    horizontal_accuracy_meters: None,
+                    vertical_accuracy_meters: None,
+                    speed_meters_per_second: None,
+                    speed_accuracy_meters_per_second: None,
+                    course_degrees: None,
+                    course_accuracy_degrees: None,
+                },
+            ),
+        ],
+    );
+    std::fs::write(&artifact_path, capture.to_jsonl().unwrap()).unwrap();
+
+    let database = RideDatabase::open(&database_path).unwrap();
+    let preview = database
+        .preflight_pevcap(&artifact_path, PevcapEncoding::Jsonl)
+        .unwrap();
+    assert_eq!(preview.location_count(), 1);
+    let receipt = database
+        .confirm_pevcap_import(&preview, 1_700_000_000_000)
+        .unwrap();
+    let ride_id = receipt.ride_id.unwrap();
+    let connection = Connection::open(&database_path).unwrap();
+    let accuracy: Option<i64> = connection
+        .query_row(
+            "SELECT horizontal_accuracy_mm FROM ride_points WHERE ride_id = ?1",
+            [ride_id.uuid().to_string()],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(accuracy, None);
+    database.shutdown().unwrap();
+    let managed_artifact_path = receipt.managed_artifact_path;
+    let _ = std::fs::remove_file(&managed_artifact_path);
+    let _ = std::fs::remove_dir(managed_artifact_path.parent().unwrap());
+    let _ = std::fs::remove_file(database_path);
+    let _ = std::fs::remove_file(artifact_path);
+}
+
+#[test]
+fn pevcap_import_deduplicates_repeated_attached_location_context() {
+    let _guard = test_guard();
+    let database_path = std::env::temp_dir().join(format!(
+        "libcutout-persistence-pevcap-context-db-{}.sqlite",
+        uuid::Uuid::new_v4()
+    ));
+    let artifact_path = std::env::temp_dir().join(format!(
+        "libcutout-persistence-pevcap-context-{}.jsonl",
+        uuid::Uuid::new_v4()
+    ));
+    let header = PevcapHeader::new(
+        WallClockUnixTimestamp::new(1_700_000_000_000),
+        "darwin",
+        None,
+        &[],
+        &[],
+        None,
+        None,
+        "test",
+        [0; 32],
+        &[],
+    )
+    .unwrap();
+    let location = PevcapPhoneLocation {
+        wall_clock_unix_ms: 1_700_000_000_000,
+        latitude_degrees: 40.0,
+        longitude_degrees: -105.0,
+        altitude_meters: 1_600.0,
+        horizontal_accuracy_meters: Some(3.0),
+        vertical_accuracy_meters: None,
+        speed_meters_per_second: None,
+        speed_accuracy_meters_per_second: None,
+        course_degrees: None,
+        course_accuracy_degrees: None,
+    };
+    let capture = PevcapCapture::new(
+        header,
+        vec![
+            PevcapRecord::link_up(MonotonicTimestamp::new(1), None).with_phone_location(location),
+            PevcapRecord::link_up(MonotonicTimestamp::new(2), None).with_phone_location(location),
+        ],
+    );
+    std::fs::write(&artifact_path, capture.to_jsonl().unwrap()).unwrap();
+
+    let database = RideDatabase::open(&database_path).unwrap();
+    let preview = database
+        .preflight_pevcap(&artifact_path, PevcapEncoding::Jsonl)
+        .unwrap();
+    assert_eq!(preview.location_count(), 1);
+    let receipt = database
+        .confirm_pevcap_import(&preview, 1_700_000_000_000)
+        .unwrap();
+    assert_eq!(
+        database
+            .summary(receipt.ride_id.unwrap())
+            .unwrap()
+            .point_count()
+            .as_u64(),
+        1
+    );
+    database.shutdown().unwrap();
+    let managed_artifact_path = receipt.managed_artifact_path;
+    let _ = std::fs::remove_file(&managed_artifact_path);
+    let _ = std::fs::remove_dir(managed_artifact_path.parent().unwrap());
+    let _ = std::fs::remove_file(database_path);
+    let _ = std::fs::remove_file(artifact_path);
+}
+
+#[test]
 fn malformed_pevcap_import_does_not_publish_an_orphan_ride() {
     let _guard = test_guard();
     let database_path = std::env::temp_dir().join(format!(
@@ -1039,6 +1188,73 @@ fn capture_only_pevcap_import_does_not_publish_an_empty_ride() {
     database.shutdown().unwrap();
     let _ = std::fs::remove_file(&receipt.managed_artifact_path);
     let _ = std::fs::remove_dir(receipt.managed_artifact_path.parent().unwrap());
+    let _ = std::fs::remove_file(database_path);
+    let _ = std::fs::remove_file(artifact_path);
+}
+
+#[test]
+fn location_only_pevcap_preflight_applies_duration_limit() {
+    let _guard = test_guard();
+    let database_path = std::env::temp_dir().join(format!(
+        "libcutout-persistence-pevcap-location-duration-db-{}.sqlite",
+        uuid::Uuid::new_v4()
+    ));
+    let artifact_path = std::env::temp_dir().join(format!(
+        "libcutout-persistence-pevcap-location-duration-{}.jsonl",
+        uuid::Uuid::new_v4()
+    ));
+    let header = PevcapHeader::new(
+        WallClockUnixTimestamp::new(1_700_000_000_000),
+        "darwin",
+        None,
+        &[],
+        &[],
+        None,
+        None,
+        "test",
+        [0; 32],
+        &[],
+    )
+    .unwrap();
+    let location = |monotonic_ms, wall_clock_unix_ms| {
+        PevcapLocationSample::new(
+            MonotonicTimestamp::new(monotonic_ms),
+            PevcapPhoneLocation {
+                wall_clock_unix_ms,
+                latitude_degrees: 40.0,
+                longitude_degrees: -105.0,
+                altitude_meters: 1_600.0,
+                horizontal_accuracy_meters: Some(3.0),
+                vertical_accuracy_meters: None,
+                speed_meters_per_second: None,
+                speed_accuracy_meters_per_second: None,
+                course_degrees: None,
+                course_accuracy_degrees: None,
+            },
+            None,
+            None,
+        )
+        .unwrap()
+    };
+    let capture = PevcapCapture::new_with_locations(
+        header,
+        vec![],
+        vec![
+            location(0, 1_700_000_000_000),
+            location(24 * 60 * 60 * 1_000 + 1, 1_700_086_400_001),
+        ],
+    );
+    std::fs::write(&artifact_path, capture.to_jsonl().unwrap()).unwrap();
+
+    let database = RideDatabase::open(&database_path).unwrap();
+    assert!(matches!(
+        database.preflight_pevcap(&artifact_path, PevcapEncoding::Jsonl),
+        Err(StorageError::PevcapLimitExceeded {
+            resource: "duration milliseconds",
+            ..
+        })
+    ));
+    database.shutdown().unwrap();
     let _ = std::fs::remove_file(database_path);
     let _ = std::fs::remove_file(artifact_path);
 }
@@ -1254,12 +1470,14 @@ fn legacy_schema_versions_migrate_to_the_current_schema() {
         drop(connection);
         let database = RideDatabase::open(&path).unwrap();
         database.shutdown().unwrap();
+        let reopened = RideDatabase::open(&path).unwrap();
+        reopened.shutdown().unwrap();
 
         let connection = Connection::open(&path).unwrap();
         let current_version: i64 = connection
             .pragma_query_value(None, "user_version", |row| row.get(0))
             .unwrap();
-        assert_eq!(current_version, 10);
+        assert_eq!(current_version, 14);
         let devices_table: String = connection
             .query_row(
                 "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'devices'",
@@ -1853,7 +2071,7 @@ fn expired_durable_route_projection_returns_a_typed_deadline() {
             None,
             RouteDisplayBudget::new(2).unwrap(),
             RoutePrivacyPolicy::Precise,
-            cancellation,
+            &cancellation,
         )
         .expect_err("an expired projection must not enter the worker");
 
@@ -1905,7 +2123,7 @@ fn cancelled_in_flight_route_projection_leaves_worker_usable() {
             None,
             RouteDisplayBudget::new(2).unwrap(),
             RoutePrivacyPolicy::Precise,
-            projection_cancellation,
+            &projection_cancellation,
         )
     });
 
@@ -2106,7 +2324,7 @@ fn version_eight_migration_adds_monotonic_ride_start_column() {
             |row| row.get(0),
         )
         .unwrap();
-    assert_eq!(version, 11);
+    assert_eq!(version, 14);
     assert!(has_monotonic_start);
 
     let _ = std::fs::remove_file(path);
@@ -2296,7 +2514,7 @@ fn route_projection_is_bounded_viewport_aware_and_cancellable() {
             None,
             RouteDisplayBudget::new(8).unwrap(),
             RoutePrivacyPolicy::Precise,
-            cancellation,
+            &cancellation,
         ),
         Err(StorageError::Cancelled)
     ));
@@ -2339,4 +2557,30 @@ fn migrated_ride_tables_enforce_the_current_constraints() {
             .is_err()
     );
     let _ = std::fs::remove_file(path);
+}
+
+#[test]
+fn fresh_ride_points_enforce_segment_foreign_keys() {
+    let _guard = test_guard();
+    let connection = Connection::open_in_memory().unwrap();
+    crate::storage::create_current_schema(&connection).unwrap();
+    connection
+        .execute(
+            "INSERT INTO rides
+                (id, source, state, created_at_ms, updated_at_ms, point_count, distance_mm)
+             VALUES ('ride', 'live', 'active', 0, 0, 0, 0)",
+            [],
+        )
+        .unwrap();
+    assert!(
+        connection
+            .execute(
+                "INSERT INTO ride_points
+                (ride_id, sequence, segment_id, telemetry_state, monotonic_ms, wall_clock_ms,
+                 latitude_e7, longitude_e7, horizontal_accuracy_mm, source)
+             VALUES ('ride', 0, 99, 0, 0, 0, 0, 0, NULL, 'live')",
+                [],
+            )
+            .is_err()
+    );
 }

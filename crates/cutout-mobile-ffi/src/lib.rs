@@ -4973,7 +4973,7 @@ impl RideDatabaseHandle {
                 viewport,
                 budget,
                 privacy,
-                cancellation.inner.clone(),
+                &cancellation.inner,
             )
             .map(|projection| mobile_route_projection_dto(&projection))
             .map_err(map_ride_database_error)
@@ -13256,6 +13256,10 @@ mod tests {
         }
     }
 
+    #[allow(
+        clippy::too_many_lines,
+        reason = "This integration fixture spells out the complete mobile capture contract."
+    )]
     #[test]
     fn mobile_capture_builder_exports_cli_readable_jsonl() {
         let path = std::env::temp_dir().join(format!(
