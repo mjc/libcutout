@@ -446,6 +446,69 @@ impl<R: Read> PevcapReader<R> {
         }
     }
 
+    fn next_binary_record(&mut self) -> Result<Option<PevcapRecord>, PevcapStreamError> {
+        let PevcapReaderState::Binary {
+            reader,
+            remaining_records,
+            remaining_locations,
+            locations_count_read,
+            finished,
+            ..
+        } = &mut self.state
+        else {
+            return Ok(None);
+        };
+
+        if *remaining_records > 0 {
+            let payload = read_stream_len_prefixed(reader, PevcapBinarySection::Record)?;
+            *remaining_records -= 1;
+            let record = serde_json::from_slice::<PevcapRecordJson>(&payload)
+                .map_err(|source| PevcapBinaryError::Deserialize {
+                    section: PevcapBinarySection::Record,
+                    source,
+                })?
+                .try_into_record()
+                .map_err(PevcapBinaryError::Record)?;
+            return Ok(Some(record));
+        }
+        if !*locations_count_read {
+            *remaining_locations = read_stream_u32(reader, PevcapBinarySection::LocationCount)?;
+            *locations_count_read = true;
+        }
+        if *remaining_locations > 0 {
+            while *remaining_locations > 0 {
+                let payload = read_stream_len_prefixed(reader, PevcapBinarySection::Location)?;
+                *remaining_locations -= 1;
+                // Record-only consumers discard locations, but still validate their structural
+                // JSON so malformed payloads cannot hide before EOF. Canonical location
+                // invariants are reported by `next_event`/`next_location`.
+                let _ =
+                    serde_json::from_slice::<PevcapLocationJson>(&payload).map_err(|source| {
+                        PevcapBinaryError::Deserialize {
+                            section: PevcapBinarySection::Location,
+                            source,
+                        }
+                    })?;
+            }
+        }
+        if *finished {
+            return Ok(None);
+        }
+        *finished = true;
+        let mut trailing = Vec::new();
+        reader
+            .read_to_end(&mut trailing)
+            .map_err(PevcapBinaryError::Io)?;
+        if trailing.is_empty() {
+            Ok(None)
+        } else {
+            Err(PevcapBinaryError::TrailingBytes {
+                len: trailing.len(),
+            }
+            .into())
+        }
+    }
+
     /// Reads the next record, retaining no previously decoded records.
     ///
     /// # Errors
@@ -453,117 +516,65 @@ impl<R: Read> PevcapReader<R> {
     /// Returns [`PevcapStreamError`] when the next record is malformed, the
     /// stream is truncated, or an underlying read fails.
     pub fn next_record(&mut self) -> Result<Option<PevcapRecord>, PevcapStreamError> {
-        match &mut self.state {
-            PevcapReaderState::Jsonl {
-                reader,
-                line_number,
-                line,
-                supports_locations,
-                ..
-            } => loop {
-                line.clear();
-                if reader.read_line(line).map_err(PevcapJsonlError::Io)? == 0 {
-                    return Ok(None);
+        if matches!(&self.state, PevcapReaderState::Binary { .. }) {
+            return self.next_binary_record();
+        }
+
+        let PevcapReaderState::Jsonl {
+            reader,
+            line_number,
+            line,
+            supports_locations,
+            ..
+        } = &mut self.state
+        else {
+            return Ok(None);
+        };
+
+        loop {
+            line.clear();
+            if reader.read_line(line).map_err(PevcapJsonlError::Io)? == 0 {
+                return Ok(None);
+            }
+            *line_number += 1;
+            let trimmed = line.trim();
+            if trimmed.is_empty() {
+                continue;
+            }
+            let parsed = serde_json::from_str::<PevcapJsonlLine>(trimmed).map_err(|source| {
+                PevcapJsonlError::Deserialize {
+                    line: *line_number,
+                    source,
                 }
-                *line_number += 1;
-                let trimmed = line.trim();
-                if trimmed.is_empty() {
-                    continue;
+            })?;
+            return match parsed {
+                PevcapJsonlLine::Header { .. } => {
+                    Err(PevcapJsonlError::DuplicateHeader { line: *line_number }.into())
                 }
-                let parsed =
-                    serde_json::from_str::<PevcapJsonlLine>(trimmed).map_err(|source| {
-                        PevcapJsonlError::Deserialize {
+                PevcapJsonlLine::Record { record } => {
+                    Ok(Some(record.try_into_record().map_err(|source| {
+                        PevcapJsonlError::Record {
                             line: *line_number,
                             source,
                         }
-                    })?;
-                return match parsed {
-                    PevcapJsonlLine::Header { .. } => {
-                        Err(PevcapJsonlError::DuplicateHeader { line: *line_number }.into())
-                    }
-                    PevcapJsonlLine::Record { record } => {
-                        Ok(Some(record.try_into_record().map_err(|source| {
-                            PevcapJsonlError::Record {
-                                line: *line_number,
-                                source,
-                            }
-                        })?))
-                    }
-                    PevcapJsonlLine::Location { location: _ } => {
-                        if !*supports_locations {
-                            return Err(PevcapJsonlError::UnsupportedVersion {
-                                line: *line_number,
-                                version: PevcapFormatVersion {
-                                    major: PEVCAP_VERSION_MAJOR,
-                                    minor: PEVCAP_VERSION_MINOR_LEGACY,
-                                },
-                            }
-                            .into());
-                        }
-                        // Record-only consumers intentionally discard standalone locations;
-                        // use `next_event` when the physical interleaving matters.
-                        continue;
-                    }
-                };
-            },
-            PevcapReaderState::Binary {
-                reader,
-                remaining_records,
-                remaining_locations,
-                locations_count_read,
-                finished,
-                ..
-            } => {
-                if *remaining_records > 0 {
-                    let payload = read_stream_len_prefixed(reader, PevcapBinarySection::Record)?;
-                    *remaining_records -= 1;
-                    let record = serde_json::from_slice::<PevcapRecordJson>(&payload)
-                        .map_err(|source| PevcapBinaryError::Deserialize {
-                            section: PevcapBinarySection::Record,
-                            source,
-                        })?
-                        .try_into_record()
-                        .map_err(PevcapBinaryError::Record)?;
-                    return Ok(Some(record));
+                    })?))
                 }
-                if !*locations_count_read {
-                    *remaining_locations =
-                        read_stream_u32(reader, PevcapBinarySection::LocationCount)?;
-                    *locations_count_read = true;
-                }
-                if *remaining_locations > 0 {
-                    while *remaining_locations > 0 {
-                        let payload =
-                            read_stream_len_prefixed(reader, PevcapBinarySection::Location)?;
-                        *remaining_locations -= 1;
-                        // Record-only consumers discard locations, but still validate their
-                        // structural JSON so malformed payloads cannot hide before EOF. Canonical
-                        // location invariants are reported by `next_event`/`next_location`.
-                        let _ = serde_json::from_slice::<PevcapLocationJson>(&payload).map_err(
-                            |source| PevcapBinaryError::Deserialize {
-                                section: PevcapBinarySection::Location,
-                                source,
+                PevcapJsonlLine::Location { location: _ } => {
+                    if !*supports_locations {
+                        return Err(PevcapJsonlError::UnsupportedVersion {
+                            line: *line_number,
+                            version: PevcapFormatVersion {
+                                major: PEVCAP_VERSION_MAJOR,
+                                minor: PEVCAP_VERSION_MINOR_LEGACY,
                             },
-                        )?;
+                        }
+                        .into());
                     }
+                    // Record-only consumers intentionally discard standalone locations;
+                    // use `next_event` when the physical interleaving matters.
+                    continue;
                 }
-                if *finished {
-                    return Ok(None);
-                }
-                *finished = true;
-                let mut trailing = Vec::new();
-                reader
-                    .read_to_end(&mut trailing)
-                    .map_err(PevcapBinaryError::Io)?;
-                if trailing.is_empty() {
-                    Ok(None)
-                } else {
-                    Err(PevcapBinaryError::TrailingBytes {
-                        len: trailing.len(),
-                    }
-                    .into())
-                }
-            }
+            };
         }
     }
 
