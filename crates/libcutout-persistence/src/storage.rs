@@ -4844,42 +4844,9 @@ fn project_route_points(
     if !exists {
         return Err(StorageError::NotFound);
     }
-    let source_point_count = connection.query_row(
-        "SELECT COUNT(*) FROM ride_points WHERE ride_id = ?1",
-        [&ride_id],
-        |row| row.get(0),
-    )?;
-    if cancelled() {
-        return Err(StorageError::Cancelled);
-    }
-    let predicate = route_point_viewport_predicate(viewport);
-    let candidate_count = if let Some(viewport) = viewport {
-        connection.query_row(
-            &format!("SELECT COUNT(*) FROM ride_points WHERE ride_id = ?1{predicate}"),
-            params![
-                ride_id,
-                viewport.minimum_latitude().as_i32(),
-                viewport.maximum_latitude().as_i32(),
-                viewport.minimum_longitude().as_i32(),
-                viewport.maximum_longitude().as_i32(),
-            ],
-            |row| row.get::<_, u64>(0),
-        )?
-    } else {
-        source_point_count
-    };
-    if cancelled() {
-        return Err(StorageError::Cancelled);
-    }
-    let candidate_count = usize::try_from(candidate_count).unwrap_or(usize::MAX);
-    if candidate_count == 0 {
-        return Ok(RoutePointProjection {
-            points: Vec::new(),
-            source_point_count,
-        });
-    }
+    let visibility = route_point_viewport_predicate(viewport);
     let query = format!(
-        "SELECT sequence, segment_id, telemetry_state, monotonic_ms, wall_clock_ms, latitude_e7, longitude_e7, horizontal_accuracy_mm, source FROM ride_points WHERE ride_id = ?1{predicate} ORDER BY sequence ASC"
+        "SELECT sequence, segment_id, telemetry_state, monotonic_ms, wall_clock_ms, latitude_e7, longitude_e7, horizontal_accuracy_mm, source, COUNT(*) OVER() AS source_count, SUM(CASE WHEN {visibility} THEN 1 ELSE 0 END) OVER() AS candidate_count, ({visibility}) AS is_visible FROM ride_points WHERE ride_id = ?1 ORDER BY sequence ASC"
     );
     let mut statement = connection.prepare(&query)?;
     let rows = if let Some(viewport) = viewport {
@@ -4891,19 +4858,32 @@ fn project_route_points(
                 viewport.minimum_longitude().as_i32(),
                 viewport.maximum_longitude().as_i32(),
             ],
-            route_point_from_row,
+            project_route_row,
         )?
     } else {
-        statement.query_map([ride_id], route_point_from_row)?
+        statement.query_map([ride_id], project_route_row)?
     };
-    let mut accumulator = RouteProjectionAccumulator::new(candidate_count, budget, privacy);
-    for (ordinal, row) in rows.enumerate() {
+    let mut accumulator = None;
+    let mut source_point_count = 0;
+    let mut candidate_ordinal = 0;
+    for row in rows {
         if cancelled() {
             return Err(StorageError::Cancelled);
         }
-        let point = row?;
+        let (point, row_source_count, candidate_count, is_visible) = row?;
+        source_point_count = row_source_count;
+        if !is_visible {
+            continue;
+        }
+        let accumulator = accumulator.get_or_insert_with(|| {
+            RouteProjectionAccumulator::new(
+                usize::try_from(candidate_count).unwrap_or(usize::MAX),
+                budget,
+                privacy,
+            )
+        });
         accumulator.push(
-            ordinal,
+            candidate_ordinal,
             point.sequence(),
             RideMapPoint::new(
                 point.sample(),
@@ -4911,6 +4891,7 @@ fn project_route_points(
                 point.telemetry_state(),
             ),
         );
+        candidate_ordinal += 1;
         if accumulator.is_complete() {
             break;
         }
@@ -4919,20 +4900,28 @@ fn project_route_points(
         return Err(StorageError::Cancelled);
     }
     Ok(RoutePointProjection {
-        points: accumulator.finish(),
+        points: accumulator.map_or_else(Vec::new, RouteProjectionAccumulator::finish),
         source_point_count,
     })
 }
 
+fn project_route_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<(RoutePoint, u64, u64, bool)> {
+    Ok((
+        route_point_from_row(row)?,
+        row.get(9)?,
+        row.get(10)?,
+        row.get::<_, i64>(11)? != 0,
+    ))
+}
+
 fn route_point_viewport_predicate(viewport: Option<RouteViewport>) -> String {
     let Some(viewport) = viewport else {
-        return String::new();
+        return "1".to_owned();
     };
     if viewport.crosses_antimeridian() {
-        " AND latitude_e7 BETWEEN ?2 AND ?3 AND (longitude_e7 >= ?4 OR longitude_e7 <= ?5)"
-            .to_owned()
+        "latitude_e7 BETWEEN ?2 AND ?3 AND (longitude_e7 >= ?4 OR longitude_e7 <= ?5)".to_owned()
     } else {
-        " AND latitude_e7 BETWEEN ?2 AND ?3 AND longitude_e7 BETWEEN ?4 AND ?5".to_owned()
+        "latitude_e7 BETWEEN ?2 AND ?3 AND longitude_e7 BETWEEN ?4 AND ?5".to_owned()
     }
 }
 
