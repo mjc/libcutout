@@ -1776,10 +1776,7 @@ impl RideDatabase {
         preview: &PevcapImportPreview,
         created_at_ms: u64,
     ) -> Result<PevcapImportReceipt, StorageError> {
-        let current = preflight_pevcap(preview.source_path(), preview.encoding())?;
-        if current != *preview {
-            return Err(StorageError::PevcapPreviewChanged);
-        }
+        verify_pevcap_preview_source(preview)?;
         if let Some(receipt) = self.request(|reply| Command::PevcapImportLookup {
             digest: preview.artifact_digest.clone(),
             reply,
@@ -1788,13 +1785,21 @@ impl RideDatabase {
         }
 
         let managed = prepare_managed_pevcap(self.path.as_ref(), preview)?;
-        let begin = self.request(|reply| Command::BeginPevcapImport {
+        let begin = match self.request(|reply| Command::BeginPevcapImport {
             digest: preview.artifact_digest.clone(),
             managed_path: managed.path.clone(),
             outcome: preview.outcome,
             created_at_ms,
             reply,
-        })?;
+        }) {
+            Ok(begin) => begin,
+            Err(error) => {
+                if managed.created {
+                    let _ = fs::remove_file(&managed.path);
+                }
+                return Err(error);
+            }
+        };
         let PevcapBegin::Started { ride_id } = begin else {
             return match begin {
                 PevcapBegin::Duplicate(receipt) => Ok(receipt),
@@ -4701,6 +4706,22 @@ fn artifact_digest(path: &Path) -> Result<String, StorageError> {
     Ok(hex_encode(digest.finalize()))
 }
 
+fn verify_pevcap_preview_source(preview: &PevcapImportPreview) -> Result<(), StorageError> {
+    let metadata = preview
+        .source_path()
+        .metadata()
+        .map_err(|_| StorageError::PevcapPreviewChanged)?;
+    if !metadata.is_file() || metadata.len() != preview.artifact_size {
+        return Err(StorageError::PevcapPreviewChanged);
+    }
+    if artifact_digest(preview.source_path()).map_err(|_| StorageError::PevcapPreviewChanged)?
+        != preview.artifact_digest
+    {
+        return Err(StorageError::PevcapPreviewChanged);
+    }
+    Ok(())
+}
+
 fn preflight_pevcap(
     path: &Path,
     encoding: PevcapEncoding,
@@ -4863,50 +4884,113 @@ fn stream_pevcap_location_batches(
     encoding: PevcapEncoding,
     mut append: impl FnMut(Vec<PevcapRoutePoint>) -> Result<u64, StorageError>,
 ) -> Result<u64, StorageError> {
-    let file = File::open(path)?;
-    let mut reader = PevcapReader::new(BufReader::new(file), encoding)
-        .map_err(|error| StorageError::PevcapImport(error.to_string()))?;
+    let mut record_reader = pevcap_reader(path, encoding)?;
+    let mut location_reader = pevcap_reader(path, encoding)?;
     let mut batch = Vec::with_capacity(PEVCAP_LOCATION_BATCH_SIZE);
     let mut accepted = 0_u64;
     let mut recorder = RideMapRecorder::new();
     let mut started = false;
-    let mut last_location_key = None;
-    while let Some(event) = reader
-        .next_event()
-        .map_err(|error| StorageError::PevcapImport(error.to_string()))?
-    {
-        match event {
-            PevcapEvent::Record(record) => {
-                if let Some(location) = record.phone_location {
-                    append_pevcap_location(
-                        location,
-                        record.monotonic_ms.as_milliseconds(),
-                        &mut recorder,
-                        &mut started,
-                        &mut batch,
-                        &mut accepted,
-                        &mut append,
-                        &mut last_location_key,
-                    )?;
-                }
+    let mut attached = next_attached_location(&mut record_reader)?;
+    let mut independent = next_independent_location(&mut location_reader)?;
+    let mut last_emitted_key = None;
+    let mut last_attached_key = None;
+    loop {
+        let take_attached = match (&attached, &independent) {
+            (None, None) => break,
+            (Some(_), None) => true,
+            (None, Some(_)) => false,
+            (Some(attached), Some(independent)) => {
+                attached.monotonic_ms <= independent.monotonic_ms
             }
-            PevcapEvent::Location(location) => append_pevcap_location(
-                location.location,
-                location.receipt_monotonic_ms.as_milliseconds(),
-                &mut recorder,
-                &mut started,
-                &mut batch,
-                &mut accepted,
-                &mut append,
-                &mut last_location_key,
-            )?,
-            PevcapEvent::LocationRejected(_) => {}
+        };
+        let candidate = if take_attached {
+            attached.take().expect("attached candidate is present")
+        } else {
+            independent
+                .take()
+                .expect("independent candidate is present")
+        };
+        append_pevcap_location(
+            candidate.location,
+            candidate.monotonic_ms,
+            candidate.origin,
+            &mut recorder,
+            &mut started,
+            &mut batch,
+            &mut accepted,
+            &mut append,
+            &mut last_emitted_key,
+            &mut last_attached_key,
+        )?;
+        if take_attached {
+            attached = next_attached_location(&mut record_reader)?;
+        } else {
+            independent = next_independent_location(&mut location_reader)?;
         }
     }
     if !batch.is_empty() {
         accepted = accepted.saturating_add(append(batch)?);
     }
     Ok(accepted)
+}
+
+fn pevcap_reader(
+    path: &Path,
+    encoding: PevcapEncoding,
+) -> Result<PevcapReader<BufReader<File>>, StorageError> {
+    let file = File::open(path)?;
+    PevcapReader::new(BufReader::new(file), encoding)
+        .map_err(|error| StorageError::PevcapImport(error.to_string()))
+}
+
+#[derive(Clone, Copy)]
+enum PevcapLocationOrigin {
+    Attached,
+    Independent,
+}
+
+struct PevcapLocationCandidate {
+    location: PevcapPhoneLocation,
+    monotonic_ms: u64,
+    origin: PevcapLocationOrigin,
+}
+
+fn next_attached_location(
+    reader: &mut PevcapReader<BufReader<File>>,
+) -> Result<Option<PevcapLocationCandidate>, StorageError> {
+    loop {
+        let event = reader
+            .next_event()
+            .map_err(|error| StorageError::PevcapImport(error.to_string()))?;
+        let Some(event) = event else { return Ok(None) };
+        if let PevcapEvent::Record(record) = event {
+            if let Some(location) = record.phone_location {
+                return Ok(Some(PevcapLocationCandidate {
+                    location,
+                    monotonic_ms: record.monotonic_ms.as_milliseconds(),
+                    origin: PevcapLocationOrigin::Attached,
+                }));
+            }
+        }
+    }
+}
+
+fn next_independent_location(
+    reader: &mut PevcapReader<BufReader<File>>,
+) -> Result<Option<PevcapLocationCandidate>, StorageError> {
+    loop {
+        let event = reader
+            .next_event()
+            .map_err(|error| StorageError::PevcapImport(error.to_string()))?;
+        let Some(event) = event else { return Ok(None) };
+        if let PevcapEvent::Location(location) = event {
+            return Ok(Some(PevcapLocationCandidate {
+                location: location.location,
+                monotonic_ms: location.receipt_monotonic_ms.as_milliseconds(),
+                origin: PevcapLocationOrigin::Independent,
+            }));
+        }
+    }
 }
 
 #[allow(
@@ -4916,12 +5000,14 @@ fn stream_pevcap_location_batches(
 fn append_pevcap_location(
     location: PevcapPhoneLocation,
     monotonic_ms: u64,
+    origin: PevcapLocationOrigin,
     recorder: &mut RideMapRecorder,
     started: &mut bool,
     batch: &mut Vec<PevcapRoutePoint>,
     accepted: &mut u64,
     append: &mut impl FnMut(Vec<PevcapRoutePoint>) -> Result<u64, StorageError>,
-    last_location_key: &mut Option<(u64, i32, i32)>,
+    last_emitted_key: &mut Option<(u64, i32, i32)>,
+    last_attached_key: &mut Option<(u64, i32, i32)>,
 ) -> Result<(), StorageError> {
     let Ok(location) = location.canonical() else {
         return Ok(());
@@ -4936,7 +5022,10 @@ fn append_pevcap_location(
         coordinate.latitude().as_i32(),
         coordinate.longitude().as_i32(),
     );
-    if *last_location_key == Some(location_key) {
+    if *last_emitted_key == Some(location_key)
+        || (matches!(origin, PevcapLocationOrigin::Attached)
+            && *last_attached_key == Some(location_key))
+    {
         return Ok(());
     }
     let horizontal_accuracy_millimetres =
@@ -4960,7 +5049,10 @@ fn append_pevcap_location(
     }
     let telemetry_state = recorder.telemetry_state_at(sample.monotonic_milliseconds());
     recorder.record_sample(sample);
-    *last_location_key = Some(location_key);
+    *last_emitted_key = Some(location_key);
+    if matches!(origin, PevcapLocationOrigin::Attached) {
+        *last_attached_key = Some(location_key);
+    }
     batch.push(PevcapRoutePoint {
         sample,
         segment_id,

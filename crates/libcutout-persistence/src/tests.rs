@@ -1102,6 +1102,108 @@ fn pevcap_import_deduplicates_repeated_attached_location_context() {
 }
 
 #[test]
+fn pevcap_jsonl_and_binary_imports_preserve_merged_route_order() {
+    let _guard = test_guard();
+    let header = PevcapHeader::new(
+        WallClockUnixTimestamp::new(1_700_000_000_000),
+        "darwin",
+        None,
+        &[],
+        &[],
+        None,
+        None,
+        "test",
+        [0; 32],
+        &[],
+    )
+    .unwrap();
+    let attached = || PevcapPhoneLocation {
+        wall_clock_unix_ms: 1_700_000_000_000,
+        latitude_degrees: 40.0,
+        longitude_degrees: -105.0,
+        altitude_meters: 1_600.0,
+        horizontal_accuracy_meters: Some(3.0),
+        vertical_accuracy_meters: None,
+        speed_meters_per_second: None,
+        speed_accuracy_meters_per_second: None,
+        course_degrees: None,
+        course_accuracy_degrees: None,
+    };
+    let independent = PevcapLocationSample::new(
+        MonotonicTimestamp::new(2_000),
+        PevcapPhoneLocation {
+            wall_clock_unix_ms: 1_700_000_000_001,
+            latitude_degrees: 40.00001,
+            longitude_degrees: -105.0,
+            altitude_meters: 1_600.0,
+            horizontal_accuracy_meters: Some(3.0),
+            vertical_accuracy_meters: None,
+            speed_meters_per_second: None,
+            speed_accuracy_meters_per_second: None,
+            course_degrees: None,
+            course_accuracy_degrees: None,
+        },
+        None,
+        None,
+    )
+    .unwrap();
+    let capture = PevcapCapture::new_with_locations(
+        header,
+        vec![
+            PevcapRecord::link_up(MonotonicTimestamp::new(1_000), None)
+                .with_phone_location(attached()),
+            PevcapRecord::link_up(MonotonicTimestamp::new(3_000), None)
+                .with_phone_location(attached()),
+        ],
+        vec![independent],
+    );
+    let mut imported_routes = Vec::new();
+
+    for encoding in [PevcapEncoding::Jsonl, PevcapEncoding::Binary] {
+        let database_path = std::env::temp_dir().join(format!(
+            "libcutout-persistence-pevcap-order-db-{}.sqlite",
+            uuid::Uuid::new_v4()
+        ));
+        let artifact_path = std::env::temp_dir().join(format!(
+            "libcutout-persistence-pevcap-order-{}.artifact",
+            uuid::Uuid::new_v4()
+        ));
+        std::fs::write(&artifact_path, capture.encode(encoding).unwrap()).unwrap();
+        let database = RideDatabase::open(&database_path).unwrap();
+        let preview = database.preflight_pevcap(&artifact_path, encoding).unwrap();
+        assert_eq!(preview.location_count(), 2);
+        let receipt = database
+            .confirm_pevcap_import(&preview, 1_700_000_000_000)
+            .unwrap();
+        let route = database
+            .route_points(receipt.ride_id.unwrap(), None, QueryLimit::new(10).unwrap())
+            .unwrap()
+            .points()
+            .iter()
+            .map(|point| {
+                (
+                    point.sample().monotonic_milliseconds().as_u64(),
+                    point.sample().coordinate().latitude().as_i32(),
+                    point.sample().coordinate().longitude().as_i32(),
+                )
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(route.len(), 2);
+        assert_eq!(route[0].0, 1_000);
+        assert_eq!(route[1].0, 2_000);
+        imported_routes.push(route);
+        database.shutdown().unwrap();
+        let managed_artifact_path = receipt.managed_artifact_path;
+        let _ = std::fs::remove_file(&managed_artifact_path);
+        let _ = std::fs::remove_dir(managed_artifact_path.parent().unwrap());
+        let _ = std::fs::remove_file(database_path);
+        let _ = std::fs::remove_file(artifact_path);
+    }
+
+    assert_eq!(imported_routes[0], imported_routes[1]);
+}
+
+#[test]
 fn malformed_pevcap_import_does_not_publish_an_orphan_ride() {
     let _guard = test_guard();
     let database_path = std::env::temp_dir().join(format!(
@@ -1310,6 +1412,56 @@ fn pevcap_confirmation_rejects_a_source_changed_after_preflight() {
             .is_empty()
     );
     database.shutdown().unwrap();
+    let _ = std::fs::remove_file(database_path);
+    let _ = std::fs::remove_file(artifact_path);
+}
+
+#[test]
+fn pevcap_confirmation_cleans_managed_artifact_when_begin_fails() {
+    let _guard = test_guard();
+    let database_path = std::env::temp_dir().join(format!(
+        "libcutout-persistence-pevcap-begin-failure-db-{}.sqlite",
+        uuid::Uuid::new_v4()
+    ));
+    let artifact_path = std::env::temp_dir().join(format!(
+        "libcutout-persistence-pevcap-begin-failure-{}.jsonl",
+        uuid::Uuid::new_v4()
+    ));
+    let header = PevcapHeader::new(
+        WallClockUnixTimestamp::new(1_700_000_000_000),
+        "darwin",
+        None,
+        &[],
+        &[],
+        None,
+        None,
+        "test",
+        [0; 32],
+        &[],
+    )
+    .unwrap();
+    let capture = PevcapCapture::new(
+        header,
+        vec![PevcapRecord::link_up(MonotonicTimestamp::new(1), None)],
+    );
+    std::fs::write(&artifact_path, capture.to_jsonl().unwrap()).unwrap();
+
+    let database = RideDatabase::open(&database_path).unwrap();
+    let preview = database
+        .preflight_pevcap(&artifact_path, PevcapEncoding::Jsonl)
+        .unwrap();
+    assert!(database.confirm_pevcap_import(&preview, u64::MAX).is_err());
+    let mut managed_directory = database_path.as_os_str().to_owned();
+    managed_directory.push(".pevcap-imports");
+    let managed_directory = std::path::PathBuf::from(managed_directory);
+    assert_eq!(
+        std::fs::read_dir(&managed_directory)
+            .map(|entries| entries.count())
+            .unwrap_or(0),
+        0
+    );
+    database.shutdown().unwrap();
+    let _ = std::fs::remove_dir(managed_directory);
     let _ = std::fs::remove_file(database_path);
     let _ = std::fs::remove_file(artifact_path);
 }
