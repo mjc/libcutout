@@ -32,10 +32,14 @@ impl RouteDisplayBudget {
 pub struct RoutePrivacyGridE7(u32);
 
 impl RoutePrivacyGridE7 {
-    /// Creates a non-zero fixed-point grid size.
+    /// Creates a grid size that preserves valid WGS84 bounds after snapping.
     #[must_use]
     pub const fn new(value: u32) -> Option<Self> {
-        if value == 0 { None } else { Some(Self(value)) }
+        if value == 0 || 900_000_000 % value != 0 {
+            None
+        } else {
+            Some(Self(value))
+        }
     }
 
     /// Returns the grid size in fixed-point degrees.

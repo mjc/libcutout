@@ -191,5 +191,6 @@ mod tests {
             )
             .is_none()
         );
+        assert!(RoutePrivacyGridE7::new(7).is_none());
     }
 }
