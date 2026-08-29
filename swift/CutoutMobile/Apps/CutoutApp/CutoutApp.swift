@@ -10,6 +10,7 @@ struct CutoutApp: App {
     @NSApplicationDelegateAdaptor(CutoutAppDelegate.self) private var appDelegate
     #endif
     @State private var model = CutoutAppModel()
+    @State private var lighting = LightingRouteModel()
     @State private var navigationPath = CutoutAppRoute.navigationPath(for: .initialRoute())
     @Environment(\.scenePhase) private var scenePhase
 
@@ -25,6 +26,7 @@ struct CutoutApp: App {
             rootView
                 .task {
                     model.start()
+                    lighting.startIfRemembered()
                 }
                 .onChange(of: scenePhase) {
                     switch scenePhase {
@@ -51,12 +53,12 @@ struct CutoutApp: App {
 
     @ViewBuilder
     private var rootView: some View {
-        #if os(macOS)
-        ContentView(model: model, navigationPath: $navigationPath)
+#if os(macOS)
+        ContentView(model: model, lighting: lighting, navigationPath: $navigationPath)
             .frame(minWidth: 360, minHeight: 280)
-        #else
-        ContentView(model: model, navigationPath: $navigationPath)
-        #endif
+#else
+        ContentView(model: model, lighting: lighting, navigationPath: $navigationPath)
+#endif
     }
 
     private var currentRoute: CutoutAppRoute {
@@ -77,6 +79,7 @@ struct CutoutNavigationCommands: Commands {
     nonisolated static func shortcut(for tabID: PevScreenTabID) -> Character {
         switch tabID {
         case .ride: "1"
+        case .lighting: "7"
         case .pack: "2"
         case .map: "3"
         case .tune: "4"
@@ -95,7 +98,7 @@ struct CutoutNavigationCommands: Commands {
                     Button(tab.title) {
                         guard let target = tab.destinationTarget else { return }
                         navigationPath = CutoutAppRoute.navigationPath(
-                            for: .route(forNavigationTarget: target)
+                            for: currentRoute.destination(forNavigationTarget: target)
                         )
                     }
                     .keyboardShortcut(KeyEquivalent(Self.shortcut(for: tab.id)), modifiers: .command)

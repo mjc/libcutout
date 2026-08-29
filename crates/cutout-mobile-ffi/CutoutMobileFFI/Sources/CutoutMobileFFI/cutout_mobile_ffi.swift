@@ -1923,6 +1923,345 @@ public func FfiConverterTypeMobileChargeEstimator_lower(_ value: MobileChargeEst
 
 
 /**
+ * Rust-owned candidate profile for an observed `MELK-OC21` controller.
+ */
+public protocol MobileMelkLightingProfileProtocol: AnyObject, Sendable {
+
+    /**
+     * Creates a brightness command write.
+     *
+     * # Errors
+     *
+     * Returns [`MobileMelkLightingError::InvalidBrightness`] when `percentage` is greater than
+     * 100.
+     */
+    func setBrightness(percentage: UInt8) throws  -> MobileMelkLightingWriteDto
+
+    /**
+     * Creates an on/off command write.
+     */
+    func setPower(on: Bool)  -> MobileMelkLightingWriteDto
+
+    /**
+     * Creates a solid RGB command write.
+     */
+    func setSolidColor(red: UInt8, green: UInt8, blue: UInt8)  -> MobileMelkLightingWriteDto
+
+}
+/**
+ * Rust-owned candidate profile for an observed `MELK-OC21` controller.
+ */
+open class MobileMelkLightingProfile: MobileMelkLightingProfileProtocol, @unchecked Sendable {
+    fileprivate let handle: UInt64
+
+    /// Used to instantiate a [FFIObject] without an actual handle, for fakes in tests, mostly.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public struct NoHandle {
+        public init() {}
+    }
+
+    // TODO: We'd like this to be `private` but for Swifty reasons,
+    // we can't implement `FfiConverter` without making this `required` and we can't
+    // make it `required` without making it `public`.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    required public init(unsafeFromHandle handle: UInt64) {
+        self.handle = handle
+    }
+
+    // This constructor can be used to instantiate a fake object.
+    // - Parameter noHandle: Placeholder value so we can have a constructor separate from the default empty one that may be implemented for classes extending [FFIObject].
+    //
+    // - Warning:
+    //     Any object instantiated with this constructor cannot be passed to an actual Rust-backed object. Since there isn't a backing handle the FFI lower functions will crash.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public init(noHandle: NoHandle) {
+        self.handle = 0
+    }
+
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public func uniffiCloneHandle() -> UInt64 {
+        return try! rustCall { uniffi_cutout_mobile_ffi_fn_clone_mobilemelklightingprofile(self.handle, $0) }
+    }
+    /**
+     * Selects the profile only when the family name and all typed GATT roles agree.
+     *
+     * # Errors
+     *
+     * Returns [`MobileMelkLightingError::InvalidGattEvidence`] when the identity evidence does
+     * not match the candidate profile.
+     */
+public convenience init(name: String, evidence: MobileMelkLightingGattEvidence)throws  {
+    let handle =
+        try rustCallWithError(FfiConverterTypeMobileMelkLightingError_lift) {
+    uniffi_cutout_mobile_ffi_fn_constructor_mobilemelklightingprofile_new(
+        FfiConverterString.lower(name),
+        FfiConverterTypeMobileMelkLightingGattEvidence_lower(evidence),$0
+    )
+}
+    self.init(unsafeFromHandle: handle)
+}
+
+    deinit {
+        if handle == 0 {
+            // Mock objects have handle=0 don't try to free them
+            return
+        }
+
+        try! rustCall { uniffi_cutout_mobile_ffi_fn_free_mobilemelklightingprofile(handle, $0) }
+    }
+
+
+
+
+    /**
+     * Creates a brightness command write.
+     *
+     * # Errors
+     *
+     * Returns [`MobileMelkLightingError::InvalidBrightness`] when `percentage` is greater than
+     * 100.
+     */
+open func setBrightness(percentage: UInt8)throws  -> MobileMelkLightingWriteDto  {
+    return try  FfiConverterTypeMobileMelkLightingWriteDto_lift(try rustCallWithError(FfiConverterTypeMobileMelkLightingError_lift) {
+    uniffi_cutout_mobile_ffi_fn_method_mobilemelklightingprofile_set_brightness(
+            self.uniffiCloneHandle(),
+        FfiConverterUInt8.lower(percentage),$0
+    )
+})
+}
+
+    /**
+     * Creates an on/off command write.
+     */
+open func setPower(on: Bool) -> MobileMelkLightingWriteDto  {
+    return try!  FfiConverterTypeMobileMelkLightingWriteDto_lift(try! rustCall() {
+    uniffi_cutout_mobile_ffi_fn_method_mobilemelklightingprofile_set_power(
+            self.uniffiCloneHandle(),
+        FfiConverterBool.lower(on),$0
+    )
+})
+}
+
+    /**
+     * Creates a solid RGB command write.
+     */
+open func setSolidColor(red: UInt8, green: UInt8, blue: UInt8) -> MobileMelkLightingWriteDto  {
+    return try!  FfiConverterTypeMobileMelkLightingWriteDto_lift(try! rustCall() {
+    uniffi_cutout_mobile_ffi_fn_method_mobilemelklightingprofile_set_solid_color(
+            self.uniffiCloneHandle(),
+        FfiConverterUInt8.lower(red),
+        FfiConverterUInt8.lower(green),
+        FfiConverterUInt8.lower(blue),$0
+    )
+})
+}
+
+
+
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobileMelkLightingProfile: FfiConverter {
+    typealias FfiType = UInt64
+    typealias SwiftType = MobileMelkLightingProfile
+
+    public static func lift(_ handle: UInt64) throws -> MobileMelkLightingProfile {
+        return MobileMelkLightingProfile(unsafeFromHandle: handle)
+    }
+
+    public static func lower(_ value: MobileMelkLightingProfile) -> UInt64 {
+        return value.uniffiCloneHandle()
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileMelkLightingProfile {
+        let handle: UInt64 = try readInt(&buf)
+        return try lift(handle)
+    }
+
+    public static func write(_ value: MobileMelkLightingProfile, into buf: inout [UInt8]) {
+        writeInt(&buf, lower(value))
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileMelkLightingProfile_lift(_ handle: UInt64) throws -> MobileMelkLightingProfile {
+    return try FfiConverterTypeMobileMelkLightingProfile.lift(handle)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileMelkLightingProfile_lower(_ value: MobileMelkLightingProfile) -> UInt64 {
+    return FfiConverterTypeMobileMelkLightingProfile.lower(value)
+}
+
+
+
+
+
+
+/**
+ * Rust-owned marker for one selected MELK accessory and its confirmed state.
+ */
+public protocol MobileMelkLightingRestoreMarkerProtocol: AnyObject, Sendable {
+
+    /**
+     * Reconciles a marker with a restored platform identity and opt-in flag.
+     */
+    func recover(restoredPlatformIdentifier: String, restoreEnabled: Bool)  -> MobileMelkLightingRestoreDecisionDto
+
+}
+/**
+ * Rust-owned marker for one selected MELK accessory and its confirmed state.
+ */
+open class MobileMelkLightingRestoreMarker: MobileMelkLightingRestoreMarkerProtocol, @unchecked Sendable {
+    fileprivate let handle: UInt64
+
+    /// Used to instantiate a [FFIObject] without an actual handle, for fakes in tests, mostly.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public struct NoHandle {
+        public init() {}
+    }
+
+    // TODO: We'd like this to be `private` but for Swifty reasons,
+    // we can't implement `FfiConverter` without making this `required` and we can't
+    // make it `required` without making it `public`.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    required public init(unsafeFromHandle handle: UInt64) {
+        self.handle = handle
+    }
+
+    // This constructor can be used to instantiate a fake object.
+    // - Parameter noHandle: Placeholder value so we can have a constructor separate from the default empty one that may be implemented for classes extending [FFIObject].
+    //
+    // - Warning:
+    //     Any object instantiated with this constructor cannot be passed to an actual Rust-backed object. Since there isn't a backing handle the FFI lower functions will crash.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public init(noHandle: NoHandle) {
+        self.handle = 0
+    }
+
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public func uniffiCloneHandle() -> UInt64 {
+        return try! rustCall { uniffi_cutout_mobile_ffi_fn_clone_mobilemelklightingrestoremarker(self.handle, $0) }
+    }
+    /**
+     * Creates a marker from a confirmed, bounded requested state.
+     *
+     * # Errors
+     *
+     * Returns `InvalidBrightness` when the requested brightness is outside the
+     * protocol's percentage range.
+     */
+public convenience init(platformIdentifier: String, requested: MobileMelkLightingRestoreStateDto)throws  {
+    let handle =
+        try rustCallWithError(FfiConverterTypeMobileMelkLightingError_lift) {
+    uniffi_cutout_mobile_ffi_fn_constructor_mobilemelklightingrestoremarker_new(
+        FfiConverterString.lower(platformIdentifier),
+        FfiConverterTypeMobileMelkLightingRestoreStateDto_lower(requested),$0
+    )
+}
+    self.init(unsafeFromHandle: handle)
+}
+
+    deinit {
+        if handle == 0 {
+            // Mock objects have handle=0 don't try to free them
+            return
+        }
+
+        try! rustCall { uniffi_cutout_mobile_ffi_fn_free_mobilemelklightingrestoremarker(handle, $0) }
+    }
+
+
+
+
+    /**
+     * Reconciles a marker with a restored platform identity and opt-in flag.
+     */
+open func recover(restoredPlatformIdentifier: String, restoreEnabled: Bool) -> MobileMelkLightingRestoreDecisionDto  {
+    return try!  FfiConverterTypeMobileMelkLightingRestoreDecisionDto_lift(try! rustCall() {
+    uniffi_cutout_mobile_ffi_fn_method_mobilemelklightingrestoremarker_recover(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(restoredPlatformIdentifier),
+        FfiConverterBool.lower(restoreEnabled),$0
+    )
+})
+}
+
+
+
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobileMelkLightingRestoreMarker: FfiConverter {
+    typealias FfiType = UInt64
+    typealias SwiftType = MobileMelkLightingRestoreMarker
+
+    public static func lift(_ handle: UInt64) throws -> MobileMelkLightingRestoreMarker {
+        return MobileMelkLightingRestoreMarker(unsafeFromHandle: handle)
+    }
+
+    public static func lower(_ value: MobileMelkLightingRestoreMarker) -> UInt64 {
+        return value.uniffiCloneHandle()
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileMelkLightingRestoreMarker {
+        let handle: UInt64 = try readInt(&buf)
+        return try lift(handle)
+    }
+
+    public static func write(_ value: MobileMelkLightingRestoreMarker, into buf: inout [UInt8]) {
+        writeInt(&buf, lower(value))
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileMelkLightingRestoreMarker_lift(_ handle: UInt64) throws -> MobileMelkLightingRestoreMarker {
+    return try FfiConverterTypeMobileMelkLightingRestoreMarker.lift(handle)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileMelkLightingRestoreMarker_lower(_ value: MobileMelkLightingRestoreMarker) -> UInt64 {
+    return FfiConverterTypeMobileMelkLightingRestoreMarker.lower(value)
+}
+
+
+
+
+
+
+/**
  * Mobile-facing builder for a PEVCAP capture export.
  */
 public protocol MobilePevcapCaptureBuilderProtocol: AnyObject, Sendable {
@@ -2409,6 +2748,521 @@ public func FfiConverterTypeMobilePhoneLocationState_lift(_ handle: UInt64) thro
 #endif
 public func FfiConverterTypeMobilePhoneLocationState_lower(_ value: MobilePhoneLocationState) -> UInt64 {
     return FfiConverterTypeMobilePhoneLocationState.lower(value)
+}
+
+
+
+
+
+
+/**
+ * Rust-owned versioned persistence record for one standalone RGB accessory.
+ */
+public protocol MobileRgbLightingAccessoryRecordProtocol: AnyObject, Sendable {
+
+    /**
+     * Adds one named solid-lighting preset.
+     *
+     * # Errors
+     *
+     * Returns a typed record error for invalid state/name, duplicate names, or the preset bound.
+     */
+    func addPreset(name: String, requested: MobileMelkLightingRestoreStateDto) throws
+
+    /**
+     * Returns the optional user alias.
+     */
+    func alias()  -> String?
+
+    /**
+     * Returns the latest command-confirmation evidence.
+     */
+    func confirmation()  -> MobileRgbLightingConfirmationStateDto
+
+    /**
+     * Returns the last independently confirmed state.
+     */
+    func confirmedState()  -> MobileMelkLightingRestoreStateDto?
+
+    /**
+     * Returns the persisted transport status.
+     */
+    func connection()  -> MobileRgbLightingConnectionStateDto
+
+    /**
+     * Encodes this record as versioned bytes.
+     *
+     * # Errors
+     *
+     * Returns [`MobileRgbLightingRecordError::InvalidEncoding`] when Rust cannot serialize the
+     * record.
+     */
+    func encode() throws  -> Data
+
+    /**
+     * Returns the persisted platform identity.
+     */
+    func platformIdentifier()  -> String
+
+    /**
+     * Returns all named presets in insertion order.
+     */
+    func presets()  -> [MobileRgbLightingPresetDto]
+
+    /**
+     * Returns the verified profile kind.
+     */
+    func profile()  -> MobileRgbLightingProfileKindDto
+
+    /**
+     * Returns the verified profile schema version.
+     */
+    func profileVersion()  -> UInt16
+
+    /**
+     * Returns the last requested solid-lighting state.
+     */
+    func requestedState()  -> MobileMelkLightingRestoreStateDto?
+
+    /**
+     * Returns whether explicit same-profile restore is enabled.
+     */
+    func restoreEnabled()  -> Bool
+
+    /**
+     * Sets or clears the user alias.
+     *
+     * # Errors
+     *
+     * Returns [`MobileRgbLightingRecordError::InvalidText`] for an empty or oversized alias.
+     */
+    func setAlias(alias: String?) throws
+
+    /**
+     * Records command-confirmation evidence.
+     */
+    func setConfirmation(state: MobileRgbLightingConfirmationStateDto)
+
+    /**
+     * Records the last independently confirmed state.
+     *
+     * # Errors
+     *
+     * Returns [`MobileRgbLightingRecordError::InvalidState`] for brightness above 100 percent.
+     */
+    func setConfirmedState(state: MobileMelkLightingRestoreStateDto?) throws
+
+    /**
+     * Records transport status without treating it as output truth.
+     */
+    func setConnection(state: MobileRgbLightingConnectionStateDto)
+
+    /**
+     * Records the last typed state requested by the user.
+     *
+     * # Errors
+     *
+     * Returns [`MobileRgbLightingRecordError::InvalidState`] for brightness above 100 percent.
+     */
+    func setRequestedState(state: MobileMelkLightingRestoreStateDto?) throws
+
+    /**
+     * Sets the explicit restore preference.
+     */
+    func setRestoreEnabled(enabled: Bool)
+
+    /**
+     * Sets or clears the installed-vehicle association.
+     *
+     * # Errors
+     *
+     * Returns [`MobileRgbLightingRecordError::InvalidText`] for an empty or oversized identifier.
+     */
+    func setVehicleIdentifier(identifier: String?) throws
+
+    /**
+     * Returns the optional installed-vehicle association.
+     */
+    func vehicleIdentifier()  -> String?
+
+}
+/**
+ * Rust-owned versioned persistence record for one standalone RGB accessory.
+ */
+open class MobileRgbLightingAccessoryRecord: MobileRgbLightingAccessoryRecordProtocol, @unchecked Sendable {
+    fileprivate let handle: UInt64
+
+    /// Used to instantiate a [FFIObject] without an actual handle, for fakes in tests, mostly.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public struct NoHandle {
+        public init() {}
+    }
+
+    // TODO: We'd like this to be `private` but for Swifty reasons,
+    // we can't implement `FfiConverter` without making this `required` and we can't
+    // make it `required` without making it `public`.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    required public init(unsafeFromHandle handle: UInt64) {
+        self.handle = handle
+    }
+
+    // This constructor can be used to instantiate a fake object.
+    // - Parameter noHandle: Placeholder value so we can have a constructor separate from the default empty one that may be implemented for classes extending [FFIObject].
+    //
+    // - Warning:
+    //     Any object instantiated with this constructor cannot be passed to an actual Rust-backed object. Since there isn't a backing handle the FFI lower functions will crash.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public init(noHandle: NoHandle) {
+        self.handle = 0
+    }
+
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public func uniffiCloneHandle() -> UInt64 {
+        return try! rustCall { uniffi_cutout_mobile_ffi_fn_clone_mobilergblightingaccessoryrecord(self.handle, $0) }
+    }
+    /**
+     * Creates an empty record for one verified profile.
+     *
+     * # Errors
+     *
+     * Returns a typed record error when the identity or profile version is invalid.
+     */
+public convenience init(platformIdentifier: String, profile: MobileRgbLightingProfileKindDto, profileVersion: UInt16)throws  {
+    let handle =
+        try rustCallWithError(FfiConverterTypeMobileRgbLightingRecordError_lift) {
+    uniffi_cutout_mobile_ffi_fn_constructor_mobilergblightingaccessoryrecord_new(
+        FfiConverterString.lower(platformIdentifier),
+        FfiConverterTypeMobileRgbLightingProfileKindDto_lower(profile),
+        FfiConverterUInt16.lower(profileVersion),$0
+    )
+}
+    self.init(unsafeFromHandle: handle)
+}
+
+    deinit {
+        if handle == 0 {
+            // Mock objects have handle=0 don't try to free them
+            return
+        }
+
+        try! rustCall { uniffi_cutout_mobile_ffi_fn_free_mobilergblightingaccessoryrecord(handle, $0) }
+    }
+
+
+    /**
+     * Decodes a persisted record without exposing JSON to Swift.
+     *
+     * # Errors
+     *
+     * Returns a typed record error when bytes are malformed, unsupported, or out of bounds.
+     */
+public static func decode(bytes: Data)throws  -> MobileRgbLightingAccessoryRecord  {
+    return try  FfiConverterTypeMobileRgbLightingAccessoryRecord_lift(try rustCallWithError(FfiConverterTypeMobileRgbLightingRecordError_lift) {
+    uniffi_cutout_mobile_ffi_fn_constructor_mobilergblightingaccessoryrecord_decode(
+        FfiConverterData.lower(bytes),$0
+    )
+})
+}
+
+
+
+    /**
+     * Adds one named solid-lighting preset.
+     *
+     * # Errors
+     *
+     * Returns a typed record error for invalid state/name, duplicate names, or the preset bound.
+     */
+open func addPreset(name: String, requested: MobileMelkLightingRestoreStateDto)throws   {try rustCallWithError(FfiConverterTypeMobileRgbLightingRecordError_lift) {
+    uniffi_cutout_mobile_ffi_fn_method_mobilergblightingaccessoryrecord_add_preset(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(name),
+        FfiConverterTypeMobileMelkLightingRestoreStateDto_lower(requested),$0
+    )
+}
+}
+
+    /**
+     * Returns the optional user alias.
+     */
+open func alias() -> String?  {
+    return try!  FfiConverterOptionString.lift(try! rustCall() {
+    uniffi_cutout_mobile_ffi_fn_method_mobilergblightingaccessoryrecord_alias(
+            self.uniffiCloneHandle(),$0
+    )
+})
+}
+
+    /**
+     * Returns the latest command-confirmation evidence.
+     */
+open func confirmation() -> MobileRgbLightingConfirmationStateDto  {
+    return try!  FfiConverterTypeMobileRgbLightingConfirmationStateDto_lift(try! rustCall() {
+    uniffi_cutout_mobile_ffi_fn_method_mobilergblightingaccessoryrecord_confirmation(
+            self.uniffiCloneHandle(),$0
+    )
+})
+}
+
+    /**
+     * Returns the last independently confirmed state.
+     */
+open func confirmedState() -> MobileMelkLightingRestoreStateDto?  {
+    return try!  FfiConverterOptionTypeMobileMelkLightingRestoreStateDto.lift(try! rustCall() {
+    uniffi_cutout_mobile_ffi_fn_method_mobilergblightingaccessoryrecord_confirmed_state(
+            self.uniffiCloneHandle(),$0
+    )
+})
+}
+
+    /**
+     * Returns the persisted transport status.
+     */
+open func connection() -> MobileRgbLightingConnectionStateDto  {
+    return try!  FfiConverterTypeMobileRgbLightingConnectionStateDto_lift(try! rustCall() {
+    uniffi_cutout_mobile_ffi_fn_method_mobilergblightingaccessoryrecord_connection(
+            self.uniffiCloneHandle(),$0
+    )
+})
+}
+
+    /**
+     * Encodes this record as versioned bytes.
+     *
+     * # Errors
+     *
+     * Returns [`MobileRgbLightingRecordError::InvalidEncoding`] when Rust cannot serialize the
+     * record.
+     */
+open func encode()throws  -> Data  {
+    return try  FfiConverterData.lift(try rustCallWithError(FfiConverterTypeMobileRgbLightingRecordError_lift) {
+    uniffi_cutout_mobile_ffi_fn_method_mobilergblightingaccessoryrecord_encode(
+            self.uniffiCloneHandle(),$0
+    )
+})
+}
+
+    /**
+     * Returns the persisted platform identity.
+     */
+open func platformIdentifier() -> String  {
+    return try!  FfiConverterString.lift(try! rustCall() {
+    uniffi_cutout_mobile_ffi_fn_method_mobilergblightingaccessoryrecord_platform_identifier(
+            self.uniffiCloneHandle(),$0
+    )
+})
+}
+
+    /**
+     * Returns all named presets in insertion order.
+     */
+open func presets() -> [MobileRgbLightingPresetDto]  {
+    return try!  FfiConverterSequenceTypeMobileRgbLightingPresetDto.lift(try! rustCall() {
+    uniffi_cutout_mobile_ffi_fn_method_mobilergblightingaccessoryrecord_presets(
+            self.uniffiCloneHandle(),$0
+    )
+})
+}
+
+    /**
+     * Returns the verified profile kind.
+     */
+open func profile() -> MobileRgbLightingProfileKindDto  {
+    return try!  FfiConverterTypeMobileRgbLightingProfileKindDto_lift(try! rustCall() {
+    uniffi_cutout_mobile_ffi_fn_method_mobilergblightingaccessoryrecord_profile(
+            self.uniffiCloneHandle(),$0
+    )
+})
+}
+
+    /**
+     * Returns the verified profile schema version.
+     */
+open func profileVersion() -> UInt16  {
+    return try!  FfiConverterUInt16.lift(try! rustCall() {
+    uniffi_cutout_mobile_ffi_fn_method_mobilergblightingaccessoryrecord_profile_version(
+            self.uniffiCloneHandle(),$0
+    )
+})
+}
+
+    /**
+     * Returns the last requested solid-lighting state.
+     */
+open func requestedState() -> MobileMelkLightingRestoreStateDto?  {
+    return try!  FfiConverterOptionTypeMobileMelkLightingRestoreStateDto.lift(try! rustCall() {
+    uniffi_cutout_mobile_ffi_fn_method_mobilergblightingaccessoryrecord_requested_state(
+            self.uniffiCloneHandle(),$0
+    )
+})
+}
+
+    /**
+     * Returns whether explicit same-profile restore is enabled.
+     */
+open func restoreEnabled() -> Bool  {
+    return try!  FfiConverterBool.lift(try! rustCall() {
+    uniffi_cutout_mobile_ffi_fn_method_mobilergblightingaccessoryrecord_restore_enabled(
+            self.uniffiCloneHandle(),$0
+    )
+})
+}
+
+    /**
+     * Sets or clears the user alias.
+     *
+     * # Errors
+     *
+     * Returns [`MobileRgbLightingRecordError::InvalidText`] for an empty or oversized alias.
+     */
+open func setAlias(alias: String?)throws   {try rustCallWithError(FfiConverterTypeMobileRgbLightingRecordError_lift) {
+    uniffi_cutout_mobile_ffi_fn_method_mobilergblightingaccessoryrecord_set_alias(
+            self.uniffiCloneHandle(),
+        FfiConverterOptionString.lower(alias),$0
+    )
+}
+}
+
+    /**
+     * Records command-confirmation evidence.
+     */
+open func setConfirmation(state: MobileRgbLightingConfirmationStateDto)  {try! rustCall() {
+    uniffi_cutout_mobile_ffi_fn_method_mobilergblightingaccessoryrecord_set_confirmation(
+            self.uniffiCloneHandle(),
+        FfiConverterTypeMobileRgbLightingConfirmationStateDto_lower(state),$0
+    )
+}
+}
+
+    /**
+     * Records the last independently confirmed state.
+     *
+     * # Errors
+     *
+     * Returns [`MobileRgbLightingRecordError::InvalidState`] for brightness above 100 percent.
+     */
+open func setConfirmedState(state: MobileMelkLightingRestoreStateDto?)throws   {try rustCallWithError(FfiConverterTypeMobileRgbLightingRecordError_lift) {
+    uniffi_cutout_mobile_ffi_fn_method_mobilergblightingaccessoryrecord_set_confirmed_state(
+            self.uniffiCloneHandle(),
+        FfiConverterOptionTypeMobileMelkLightingRestoreStateDto.lower(state),$0
+    )
+}
+}
+
+    /**
+     * Records transport status without treating it as output truth.
+     */
+open func setConnection(state: MobileRgbLightingConnectionStateDto)  {try! rustCall() {
+    uniffi_cutout_mobile_ffi_fn_method_mobilergblightingaccessoryrecord_set_connection(
+            self.uniffiCloneHandle(),
+        FfiConverterTypeMobileRgbLightingConnectionStateDto_lower(state),$0
+    )
+}
+}
+
+    /**
+     * Records the last typed state requested by the user.
+     *
+     * # Errors
+     *
+     * Returns [`MobileRgbLightingRecordError::InvalidState`] for brightness above 100 percent.
+     */
+open func setRequestedState(state: MobileMelkLightingRestoreStateDto?)throws   {try rustCallWithError(FfiConverterTypeMobileRgbLightingRecordError_lift) {
+    uniffi_cutout_mobile_ffi_fn_method_mobilergblightingaccessoryrecord_set_requested_state(
+            self.uniffiCloneHandle(),
+        FfiConverterOptionTypeMobileMelkLightingRestoreStateDto.lower(state),$0
+    )
+}
+}
+
+    /**
+     * Sets the explicit restore preference.
+     */
+open func setRestoreEnabled(enabled: Bool)  {try! rustCall() {
+    uniffi_cutout_mobile_ffi_fn_method_mobilergblightingaccessoryrecord_set_restore_enabled(
+            self.uniffiCloneHandle(),
+        FfiConverterBool.lower(enabled),$0
+    )
+}
+}
+
+    /**
+     * Sets or clears the installed-vehicle association.
+     *
+     * # Errors
+     *
+     * Returns [`MobileRgbLightingRecordError::InvalidText`] for an empty or oversized identifier.
+     */
+open func setVehicleIdentifier(identifier: String?)throws   {try rustCallWithError(FfiConverterTypeMobileRgbLightingRecordError_lift) {
+    uniffi_cutout_mobile_ffi_fn_method_mobilergblightingaccessoryrecord_set_vehicle_identifier(
+            self.uniffiCloneHandle(),
+        FfiConverterOptionString.lower(identifier),$0
+    )
+}
+}
+
+    /**
+     * Returns the optional installed-vehicle association.
+     */
+open func vehicleIdentifier() -> String?  {
+    return try!  FfiConverterOptionString.lift(try! rustCall() {
+    uniffi_cutout_mobile_ffi_fn_method_mobilergblightingaccessoryrecord_vehicle_identifier(
+            self.uniffiCloneHandle(),$0
+    )
+})
+}
+
+
+
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobileRgbLightingAccessoryRecord: FfiConverter {
+    typealias FfiType = UInt64
+    typealias SwiftType = MobileRgbLightingAccessoryRecord
+
+    public static func lift(_ handle: UInt64) throws -> MobileRgbLightingAccessoryRecord {
+        return MobileRgbLightingAccessoryRecord(unsafeFromHandle: handle)
+    }
+
+    public static func lower(_ value: MobileRgbLightingAccessoryRecord) -> UInt64 {
+        return value.uniffiCloneHandle()
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileRgbLightingAccessoryRecord {
+        let handle: UInt64 = try readInt(&buf)
+        return try lift(handle)
+    }
+
+    public static func write(_ value: MobileRgbLightingAccessoryRecord, into buf: inout [UInt8]) {
+        writeInt(&buf, lower(value))
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileRgbLightingAccessoryRecord_lift(_ handle: UInt64) throws -> MobileRgbLightingAccessoryRecord {
+    return try FfiConverterTypeMobileRgbLightingAccessoryRecord.lift(handle)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileRgbLightingAccessoryRecord_lower(_ value: MobileRgbLightingAccessoryRecord) -> UInt64 {
+    return FfiConverterTypeMobileRgbLightingAccessoryRecord.lower(value)
 }
 
 
@@ -7185,6 +8039,356 @@ public func FfiConverterTypeMobileMapPointPageDto_lower(_ value: MobileMapPointP
 
 
 /**
+ * Typed GATT-role evidence observed for a standalone MELK controller.
+ *
+ * Swift/CoreBluetooth derives these flags from discovered UUIDs and
+ * characteristic properties; it never supplies UUIDs or protocol bytes to
+ * the Rust profile boundary.
+ */
+public struct MobileMelkLightingGattEvidence: Equatable, Hashable {
+    /**
+     * The verified `FFF0` primary service was observed.
+     */
+    public var servicePresent: Bool
+    /**
+     * The verified `FFF3` characteristic supports write-without-response.
+     */
+    public var writeWithoutResponse: Bool
+    /**
+     * The verified `FFF4` characteristic supports notifications or indicates.
+     */
+    public var notifyOrIndicate: Bool
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * The verified `FFF0` primary service was observed.
+         */servicePresent: Bool,
+        /**
+         * The verified `FFF3` characteristic supports write-without-response.
+         */writeWithoutResponse: Bool,
+        /**
+         * The verified `FFF4` characteristic supports notifications or indicates.
+         */notifyOrIndicate: Bool) {
+        self.servicePresent = servicePresent
+        self.writeWithoutResponse = writeWithoutResponse
+        self.notifyOrIndicate = notifyOrIndicate
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension MobileMelkLightingGattEvidence: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobileMelkLightingGattEvidence: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileMelkLightingGattEvidence {
+        return
+            try MobileMelkLightingGattEvidence(
+                servicePresent: FfiConverterBool.read(from: &buf),
+                writeWithoutResponse: FfiConverterBool.read(from: &buf),
+                notifyOrIndicate: FfiConverterBool.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: MobileMelkLightingGattEvidence, into buf: inout [UInt8]) {
+        FfiConverterBool.write(value.servicePresent, into: &buf)
+        FfiConverterBool.write(value.writeWithoutResponse, into: &buf)
+        FfiConverterBool.write(value.notifyOrIndicate, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileMelkLightingGattEvidence_lift(_ buf: RustBuffer) throws -> MobileMelkLightingGattEvidence {
+    return try FfiConverterTypeMobileMelkLightingGattEvidence.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileMelkLightingGattEvidence_lower(_ value: MobileMelkLightingGattEvidence) -> RustBuffer {
+    return FfiConverterTypeMobileMelkLightingGattEvidence.lower(value)
+}
+
+
+/**
+ * Result of reconciling a persisted lighting marker.
+ */
+public struct MobileMelkLightingRestoreDecisionDto: Equatable, Hashable {
+    /**
+     * Typed decision kind.
+     */
+    public var kind: MobileMelkLightingRestoreDecisionKindDto
+    /**
+     * Requested state when `kind` is `Restore`.
+     */
+    public var requested: MobileMelkLightingRestoreStateDto?
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * Typed decision kind.
+         */kind: MobileMelkLightingRestoreDecisionKindDto,
+        /**
+         * Requested state when `kind` is `Restore`.
+         */requested: MobileMelkLightingRestoreStateDto?) {
+        self.kind = kind
+        self.requested = requested
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension MobileMelkLightingRestoreDecisionDto: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobileMelkLightingRestoreDecisionDto: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileMelkLightingRestoreDecisionDto {
+        return
+            try MobileMelkLightingRestoreDecisionDto(
+                kind: FfiConverterTypeMobileMelkLightingRestoreDecisionKindDto.read(from: &buf),
+                requested: FfiConverterOptionTypeMobileMelkLightingRestoreStateDto.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: MobileMelkLightingRestoreDecisionDto, into buf: inout [UInt8]) {
+        FfiConverterTypeMobileMelkLightingRestoreDecisionKindDto.write(value.kind, into: &buf)
+        FfiConverterOptionTypeMobileMelkLightingRestoreStateDto.write(value.requested, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileMelkLightingRestoreDecisionDto_lift(_ buf: RustBuffer) throws -> MobileMelkLightingRestoreDecisionDto {
+    return try FfiConverterTypeMobileMelkLightingRestoreDecisionDto.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileMelkLightingRestoreDecisionDto_lower(_ value: MobileMelkLightingRestoreDecisionDto) -> RustBuffer {
+    return FfiConverterTypeMobileMelkLightingRestoreDecisionDto.lower(value)
+}
+
+
+/**
+ * Complete solid-lighting state stored for an explicit restore.
+ */
+public struct MobileMelkLightingRestoreStateDto: Equatable, Hashable {
+    /**
+     * Whether the controller was requested on.
+     */
+    public var powerOn: Bool
+    /**
+     * Requested red channel.
+     */
+    public var red: UInt8
+    /**
+     * Requested green channel.
+     */
+    public var green: UInt8
+    /**
+     * Requested blue channel.
+     */
+    public var blue: UInt8
+    /**
+     * Requested brightness percentage.
+     */
+    public var brightness: UInt8
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * Whether the controller was requested on.
+         */powerOn: Bool,
+        /**
+         * Requested red channel.
+         */red: UInt8,
+        /**
+         * Requested green channel.
+         */green: UInt8,
+        /**
+         * Requested blue channel.
+         */blue: UInt8,
+        /**
+         * Requested brightness percentage.
+         */brightness: UInt8) {
+        self.powerOn = powerOn
+        self.red = red
+        self.green = green
+        self.blue = blue
+        self.brightness = brightness
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension MobileMelkLightingRestoreStateDto: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobileMelkLightingRestoreStateDto: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileMelkLightingRestoreStateDto {
+        return
+            try MobileMelkLightingRestoreStateDto(
+                powerOn: FfiConverterBool.read(from: &buf),
+                red: FfiConverterUInt8.read(from: &buf),
+                green: FfiConverterUInt8.read(from: &buf),
+                blue: FfiConverterUInt8.read(from: &buf),
+                brightness: FfiConverterUInt8.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: MobileMelkLightingRestoreStateDto, into buf: inout [UInt8]) {
+        FfiConverterBool.write(value.powerOn, into: &buf)
+        FfiConverterUInt8.write(value.red, into: &buf)
+        FfiConverterUInt8.write(value.green, into: &buf)
+        FfiConverterUInt8.write(value.blue, into: &buf)
+        FfiConverterUInt8.write(value.brightness, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileMelkLightingRestoreStateDto_lift(_ buf: RustBuffer) throws -> MobileMelkLightingRestoreStateDto {
+    return try FfiConverterTypeMobileMelkLightingRestoreStateDto.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileMelkLightingRestoreStateDto_lower(_ value: MobileMelkLightingRestoreStateDto) -> RustBuffer {
+    return FfiConverterTypeMobileMelkLightingRestoreStateDto.lower(value)
+}
+
+
+/**
+ * One bounded MELK lighting write plus its independent confirmation policy.
+ */
+public struct MobileMelkLightingWriteDto: Equatable, Hashable {
+    /**
+     * Characteristic receiving the command frame.
+     */
+    public var characteristic: Data
+    /**
+     * Candidate protocol frame emitted by Rust.
+     */
+    public var payload: Data
+    /**
+     * Required transport write mode.
+     */
+    public var mode: MobileMelkLightingWriteModeDto
+    /**
+     * Characteristic whose notifications may confirm the command.
+     */
+    public var confirmationCharacteristic: Data
+    /**
+     * Capture-backed minimum command interval, when known.
+     */
+    public var minimumIntervalMs: UInt16?
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * Characteristic receiving the command frame.
+         */characteristic: Data,
+        /**
+         * Candidate protocol frame emitted by Rust.
+         */payload: Data,
+        /**
+         * Required transport write mode.
+         */mode: MobileMelkLightingWriteModeDto,
+        /**
+         * Characteristic whose notifications may confirm the command.
+         */confirmationCharacteristic: Data,
+        /**
+         * Capture-backed minimum command interval, when known.
+         */minimumIntervalMs: UInt16?) {
+        self.characteristic = characteristic
+        self.payload = payload
+        self.mode = mode
+        self.confirmationCharacteristic = confirmationCharacteristic
+        self.minimumIntervalMs = minimumIntervalMs
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension MobileMelkLightingWriteDto: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobileMelkLightingWriteDto: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileMelkLightingWriteDto {
+        return
+            try MobileMelkLightingWriteDto(
+                characteristic: FfiConverterData.read(from: &buf),
+                payload: FfiConverterData.read(from: &buf),
+                mode: FfiConverterTypeMobileMelkLightingWriteModeDto.read(from: &buf),
+                confirmationCharacteristic: FfiConverterData.read(from: &buf),
+                minimumIntervalMs: FfiConverterOptionUInt16.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: MobileMelkLightingWriteDto, into buf: inout [UInt8]) {
+        FfiConverterData.write(value.characteristic, into: &buf)
+        FfiConverterData.write(value.payload, into: &buf)
+        FfiConverterTypeMobileMelkLightingWriteModeDto.write(value.mode, into: &buf)
+        FfiConverterData.write(value.confirmationCharacteristic, into: &buf)
+        FfiConverterOptionUInt16.write(value.minimumIntervalMs, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileMelkLightingWriteDto_lift(_ buf: RustBuffer) throws -> MobileMelkLightingWriteDto {
+    return try FfiConverterTypeMobileMelkLightingWriteDto.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileMelkLightingWriteDto_lower(_ value: MobileMelkLightingWriteDto) -> RustBuffer {
+    return FfiConverterTypeMobileMelkLightingWriteDto.lower(value)
+}
+
+
+/**
  * Mobile DTO monotonic timestamp.
  */
 public struct MobileMonotonicMillisDto: Equatable, Hashable {
@@ -8830,6 +10034,75 @@ public func FfiConverterTypeMobileResolvedIdentityDto_lift(_ buf: RustBuffer) th
 #endif
 public func FfiConverterTypeMobileResolvedIdentityDto_lower(_ value: MobileResolvedIdentityDto) -> RustBuffer {
     return FfiConverterTypeMobileResolvedIdentityDto.lower(value)
+}
+
+
+/**
+ * One named solid-lighting preset crossing the mobile boundary.
+ */
+public struct MobileRgbLightingPresetDto: Equatable, Hashable {
+    /**
+     * User-visible preset name.
+     */
+    public var name: String
+    /**
+     * Typed solid-lighting state stored by the preset.
+     */
+    public var requested: MobileMelkLightingRestoreStateDto
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * User-visible preset name.
+         */name: String,
+        /**
+         * Typed solid-lighting state stored by the preset.
+         */requested: MobileMelkLightingRestoreStateDto) {
+        self.name = name
+        self.requested = requested
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension MobileRgbLightingPresetDto: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobileRgbLightingPresetDto: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileRgbLightingPresetDto {
+        return
+            try MobileRgbLightingPresetDto(
+                name: FfiConverterString.read(from: &buf),
+                requested: FfiConverterTypeMobileMelkLightingRestoreStateDto.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: MobileRgbLightingPresetDto, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.name, into: &buf)
+        FfiConverterTypeMobileMelkLightingRestoreStateDto.write(value.requested, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileRgbLightingPresetDto_lift(_ buf: RustBuffer) throws -> MobileRgbLightingPresetDto {
+    return try FfiConverterTypeMobileRgbLightingPresetDto.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileRgbLightingPresetDto_lower(_ value: MobileRgbLightingPresetDto) -> RustBuffer {
+    return FfiConverterTypeMobileRgbLightingPresetDto.lower(value)
 }
 
 
@@ -15039,6 +16312,243 @@ public func FfiConverterTypeMobileIgnoredNotificationReasonDto_lower(_ value: Mo
 }
 
 
+
+/**
+ * Invalid input presented to the MELK lighting boundary.
+ */
+public enum MobileMelkLightingError: Swift.Error, Equatable, Hashable, Foundation.LocalizedError {
+
+
+
+    /**
+     * Name and observed GATT evidence did not identify the candidate profile.
+     */
+    case InvalidGattEvidence
+    /**
+     * Brightness was outside the protocol's 0..=100 range.
+     */
+    case InvalidBrightness
+
+
+
+
+
+
+    public var errorDescription: String? {
+        String(reflecting: self)
+    }
+
+}
+
+#if compiler(>=6)
+extension MobileMelkLightingError: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobileMelkLightingError: FfiConverterRustBuffer {
+    typealias SwiftType = MobileMelkLightingError
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileMelkLightingError {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+
+
+
+
+        case 1: return .InvalidGattEvidence
+        case 2: return .InvalidBrightness
+
+         default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: MobileMelkLightingError, into buf: inout [UInt8]) {
+        switch value {
+
+
+
+
+
+        case .InvalidGattEvidence:
+            writeInt(&buf, Int32(1))
+
+
+        case .InvalidBrightness:
+            writeInt(&buf, Int32(2))
+
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileMelkLightingError_lift(_ buf: RustBuffer) throws -> MobileMelkLightingError {
+    return try FfiConverterTypeMobileMelkLightingError.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileMelkLightingError_lower(_ value: MobileMelkLightingError) -> RustBuffer {
+    return FfiConverterTypeMobileMelkLightingError.lower(value)
+}
+
+// Note that we don't yet support `indirect` for enums.
+// See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
+/**
+ * Typed result kind for an attempted lighting restore.
+ */
+
+public enum MobileMelkLightingRestoreDecisionKindDto: Equatable, Hashable {
+
+    /**
+     * Restore was disabled by the user.
+     */
+    case disabled
+    /**
+     * `CoreBluetooth` restored a different platform identity.
+     */
+    case differentAccessory
+    /**
+     * The remembered state may be restored.
+     */
+    case restore
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension MobileMelkLightingRestoreDecisionKindDto: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobileMelkLightingRestoreDecisionKindDto: FfiConverterRustBuffer {
+    typealias SwiftType = MobileMelkLightingRestoreDecisionKindDto
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileMelkLightingRestoreDecisionKindDto {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+
+        case 1: return .disabled
+
+        case 2: return .differentAccessory
+
+        case 3: return .restore
+
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: MobileMelkLightingRestoreDecisionKindDto, into buf: inout [UInt8]) {
+        switch value {
+
+
+        case .disabled:
+            writeInt(&buf, Int32(1))
+
+
+        case .differentAccessory:
+            writeInt(&buf, Int32(2))
+
+
+        case .restore:
+            writeInt(&buf, Int32(3))
+
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileMelkLightingRestoreDecisionKindDto_lift(_ buf: RustBuffer) throws -> MobileMelkLightingRestoreDecisionKindDto {
+    return try FfiConverterTypeMobileMelkLightingRestoreDecisionKindDto.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileMelkLightingRestoreDecisionKindDto_lower(_ value: MobileMelkLightingRestoreDecisionKindDto) -> RustBuffer {
+    return FfiConverterTypeMobileMelkLightingRestoreDecisionKindDto.lower(value)
+}
+
+
+// Note that we don't yet support `indirect` for enums.
+// See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
+/**
+ * GATT write mode for a standalone MELK lighting command.
+ */
+
+public enum MobileMelkLightingWriteModeDto: Equatable, Hashable {
+
+    /**
+     * Write without waiting for a transport acknowledgement.
+     */
+    case withoutResponse
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension MobileMelkLightingWriteModeDto: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobileMelkLightingWriteModeDto: FfiConverterRustBuffer {
+    typealias SwiftType = MobileMelkLightingWriteModeDto
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileMelkLightingWriteModeDto {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+
+        case 1: return .withoutResponse
+
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: MobileMelkLightingWriteModeDto, into buf: inout [UInt8]) {
+        switch value {
+
+
+        case .withoutResponse:
+            writeInt(&buf, Int32(1))
+
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileMelkLightingWriteModeDto_lift(_ buf: RustBuffer) throws -> MobileMelkLightingWriteModeDto {
+    return try FfiConverterTypeMobileMelkLightingWriteModeDto.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileMelkLightingWriteModeDto_lower(_ value: MobileMelkLightingWriteModeDto) -> RustBuffer {
+    return FfiConverterTypeMobileMelkLightingWriteModeDto.lower(value)
+}
+
+
 // Note that we don't yet support `indirect` for enums.
 // See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
 /**
@@ -15736,6 +17246,383 @@ public func FfiConverterTypeMobileReadbackAvailabilityDto_lower(_ value: MobileR
     return FfiConverterTypeMobileReadbackAvailabilityDto.lower(value)
 }
 
+
+// Note that we don't yet support `indirect` for enums.
+// See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
+/**
+ * Persisted command-confirmation evidence for a standalone RGB accessory.
+ */
+
+public enum MobileRgbLightingConfirmationStateDto: Equatable, Hashable {
+
+    /**
+     * No explicit confirmation exists.
+     */
+    case unknown
+    /**
+     * The command was independently confirmed.
+     */
+    case confirmed
+    /**
+     * The command was explicitly left unconfirmed.
+     */
+    case unconfirmed
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension MobileRgbLightingConfirmationStateDto: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobileRgbLightingConfirmationStateDto: FfiConverterRustBuffer {
+    typealias SwiftType = MobileRgbLightingConfirmationStateDto
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileRgbLightingConfirmationStateDto {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+
+        case 1: return .unknown
+
+        case 2: return .confirmed
+
+        case 3: return .unconfirmed
+
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: MobileRgbLightingConfirmationStateDto, into buf: inout [UInt8]) {
+        switch value {
+
+
+        case .unknown:
+            writeInt(&buf, Int32(1))
+
+
+        case .confirmed:
+            writeInt(&buf, Int32(2))
+
+
+        case .unconfirmed:
+            writeInt(&buf, Int32(3))
+
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileRgbLightingConfirmationStateDto_lift(_ buf: RustBuffer) throws -> MobileRgbLightingConfirmationStateDto {
+    return try FfiConverterTypeMobileRgbLightingConfirmationStateDto.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileRgbLightingConfirmationStateDto_lower(_ value: MobileRgbLightingConfirmationStateDto) -> RustBuffer {
+    return FfiConverterTypeMobileRgbLightingConfirmationStateDto.lower(value)
+}
+
+
+// Note that we don't yet support `indirect` for enums.
+// See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
+/**
+ * Persisted transport status for a standalone RGB accessory.
+ */
+
+public enum MobileRgbLightingConnectionStateDto: Equatable, Hashable {
+
+    /**
+     * No current transport conclusion is available.
+     */
+    case unknown
+    /**
+     * The accessory is known to be disconnected.
+     */
+    case disconnected
+    /**
+     * The verified accessory is currently connected.
+     */
+    case ready
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension MobileRgbLightingConnectionStateDto: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobileRgbLightingConnectionStateDto: FfiConverterRustBuffer {
+    typealias SwiftType = MobileRgbLightingConnectionStateDto
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileRgbLightingConnectionStateDto {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+
+        case 1: return .unknown
+
+        case 2: return .disconnected
+
+        case 3: return .ready
+
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: MobileRgbLightingConnectionStateDto, into buf: inout [UInt8]) {
+        switch value {
+
+
+        case .unknown:
+            writeInt(&buf, Int32(1))
+
+
+        case .disconnected:
+            writeInt(&buf, Int32(2))
+
+
+        case .ready:
+            writeInt(&buf, Int32(3))
+
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileRgbLightingConnectionStateDto_lift(_ buf: RustBuffer) throws -> MobileRgbLightingConnectionStateDto {
+    return try FfiConverterTypeMobileRgbLightingConnectionStateDto.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileRgbLightingConnectionStateDto_lower(_ value: MobileRgbLightingConnectionStateDto) -> RustBuffer {
+    return FfiConverterTypeMobileRgbLightingConnectionStateDto.lower(value)
+}
+
+
+// Note that we don't yet support `indirect` for enums.
+// See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
+/**
+ * Verified standalone RGB profile persisted by the mobile boundary.
+ */
+
+public enum MobileRgbLightingProfileKindDto: Equatable, Hashable {
+
+    /**
+     * ELK-BLEDOM/MELK profile verified for MELK-OC21.
+     */
+    case melkOc21
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension MobileRgbLightingProfileKindDto: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobileRgbLightingProfileKindDto: FfiConverterRustBuffer {
+    typealias SwiftType = MobileRgbLightingProfileKindDto
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileRgbLightingProfileKindDto {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+
+        case 1: return .melkOc21
+
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: MobileRgbLightingProfileKindDto, into buf: inout [UInt8]) {
+        switch value {
+
+
+        case .melkOc21:
+            writeInt(&buf, Int32(1))
+
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileRgbLightingProfileKindDto_lift(_ buf: RustBuffer) throws -> MobileRgbLightingProfileKindDto {
+    return try FfiConverterTypeMobileRgbLightingProfileKindDto.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileRgbLightingProfileKindDto_lower(_ value: MobileRgbLightingProfileKindDto) -> RustBuffer {
+    return FfiConverterTypeMobileRgbLightingProfileKindDto.lower(value)
+}
+
+
+
+/**
+ * Invalid persisted RGB accessory data presented by the mobile platform.
+ */
+public enum MobileRgbLightingRecordError: Swift.Error, Equatable, Hashable, Foundation.LocalizedError {
+
+
+
+    /**
+     * Bytes do not match the record schema.
+     */
+    case InvalidEncoding
+    /**
+     * The record schema version is not supported.
+     */
+    case UnsupportedVersion
+    /**
+     * An identity or user label is empty or too large.
+     */
+    case InvalidText
+    /**
+     * The profile is not verified by this build.
+     */
+    case InvalidProfile
+    /**
+     * Profile version zero is not meaningful.
+     */
+    case InvalidProfileVersion
+    /**
+     * The bounded preset count was exceeded.
+     */
+    case TooManyPresets
+    /**
+     * A preset name is already present.
+     */
+    case DuplicatePreset
+    /**
+     * A persisted state was outside the typed domain.
+     */
+    case InvalidState
+
+
+
+
+
+
+    public var errorDescription: String? {
+        String(reflecting: self)
+    }
+
+}
+
+#if compiler(>=6)
+extension MobileRgbLightingRecordError: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobileRgbLightingRecordError: FfiConverterRustBuffer {
+    typealias SwiftType = MobileRgbLightingRecordError
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileRgbLightingRecordError {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+
+
+
+
+        case 1: return .InvalidEncoding
+        case 2: return .UnsupportedVersion
+        case 3: return .InvalidText
+        case 4: return .InvalidProfile
+        case 5: return .InvalidProfileVersion
+        case 6: return .TooManyPresets
+        case 7: return .DuplicatePreset
+        case 8: return .InvalidState
+
+         default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: MobileRgbLightingRecordError, into buf: inout [UInt8]) {
+        switch value {
+
+
+
+
+
+        case .InvalidEncoding:
+            writeInt(&buf, Int32(1))
+
+
+        case .UnsupportedVersion:
+            writeInt(&buf, Int32(2))
+
+
+        case .InvalidText:
+            writeInt(&buf, Int32(3))
+
+
+        case .InvalidProfile:
+            writeInt(&buf, Int32(4))
+
+
+        case .InvalidProfileVersion:
+            writeInt(&buf, Int32(5))
+
+
+        case .TooManyPresets:
+            writeInt(&buf, Int32(6))
+
+
+        case .DuplicatePreset:
+            writeInt(&buf, Int32(7))
+
+
+        case .InvalidState:
+            writeInt(&buf, Int32(8))
+
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileRgbLightingRecordError_lift(_ buf: RustBuffer) throws -> MobileRgbLightingRecordError {
+    return try FfiConverterTypeMobileRgbLightingRecordError.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileRgbLightingRecordError_lower(_ value: MobileRgbLightingRecordError) -> RustBuffer {
+    return FfiConverterTypeMobileRgbLightingRecordError.lower(value)
+}
 
 
 /**
@@ -19667,6 +21554,30 @@ fileprivate struct FfiConverterOptionTypeMobileMapPointCursorDto: FfiConverterRu
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterOptionTypeMobileMelkLightingRestoreStateDto: FfiConverterRustBuffer {
+    typealias SwiftType = MobileMelkLightingRestoreStateDto?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeMobileMelkLightingRestoreStateDto.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeMobileMelkLightingRestoreStateDto.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterOptionTypeMobileMonotonicMillisDto: FfiConverterRustBuffer {
     typealias SwiftType = MobileMonotonicMillisDto?
 
@@ -20998,6 +22909,31 @@ fileprivate struct FfiConverterSequenceTypeMobileRawFloatFieldValueDto: FfiConve
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterSequenceTypeMobileRgbLightingPresetDto: FfiConverterRustBuffer {
+    typealias SwiftType = [MobileRgbLightingPresetDto]
+
+    public static func write(_ value: [MobileRgbLightingPresetDto], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeMobileRgbLightingPresetDto.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [MobileRgbLightingPresetDto] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [MobileRgbLightingPresetDto]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeMobileRgbLightingPresetDto.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterSequenceTypeMobileRideIdDto: FfiConverterRustBuffer {
     typealias SwiftType = [MobileRideIdDto]
 
@@ -21542,6 +23478,18 @@ private let initializationResult: InitializationResult = {
     if (uniffi_cutout_mobile_ffi_checksum_method_mobilechargeestimator_voltage_sag_model() != 1861) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_cutout_mobile_ffi_checksum_method_mobilemelklightingprofile_set_brightness() != 50193) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cutout_mobile_ffi_checksum_method_mobilemelklightingprofile_set_power() != 54431) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cutout_mobile_ffi_checksum_method_mobilemelklightingprofile_set_solid_color() != 10213) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cutout_mobile_ffi_checksum_method_mobilemelklightingrestoremarker_recover() != 2627) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_cutout_mobile_ffi_checksum_method_mobilepevcapcapturebuilder_add_advertised_service() != 1575) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -21585,6 +23533,66 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cutout_mobile_ffi_checksum_method_mobilephonelocationstate_ingest() != 46273) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cutout_mobile_ffi_checksum_method_mobilergblightingaccessoryrecord_add_preset() != 45455) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cutout_mobile_ffi_checksum_method_mobilergblightingaccessoryrecord_alias() != 9688) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cutout_mobile_ffi_checksum_method_mobilergblightingaccessoryrecord_confirmation() != 28103) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cutout_mobile_ffi_checksum_method_mobilergblightingaccessoryrecord_confirmed_state() != 17765) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cutout_mobile_ffi_checksum_method_mobilergblightingaccessoryrecord_connection() != 49869) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cutout_mobile_ffi_checksum_method_mobilergblightingaccessoryrecord_encode() != 2341) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cutout_mobile_ffi_checksum_method_mobilergblightingaccessoryrecord_platform_identifier() != 23946) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cutout_mobile_ffi_checksum_method_mobilergblightingaccessoryrecord_presets() != 29129) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cutout_mobile_ffi_checksum_method_mobilergblightingaccessoryrecord_profile() != 24132) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cutout_mobile_ffi_checksum_method_mobilergblightingaccessoryrecord_profile_version() != 38009) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cutout_mobile_ffi_checksum_method_mobilergblightingaccessoryrecord_requested_state() != 50043) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cutout_mobile_ffi_checksum_method_mobilergblightingaccessoryrecord_restore_enabled() != 26224) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cutout_mobile_ffi_checksum_method_mobilergblightingaccessoryrecord_set_alias() != 52166) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cutout_mobile_ffi_checksum_method_mobilergblightingaccessoryrecord_set_confirmation() != 41202) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cutout_mobile_ffi_checksum_method_mobilergblightingaccessoryrecord_set_confirmed_state() != 102) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cutout_mobile_ffi_checksum_method_mobilergblightingaccessoryrecord_set_connection() != 28780) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cutout_mobile_ffi_checksum_method_mobilergblightingaccessoryrecord_set_requested_state() != 52555) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cutout_mobile_ffi_checksum_method_mobilergblightingaccessoryrecord_set_restore_enabled() != 50428) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cutout_mobile_ffi_checksum_method_mobilergblightingaccessoryrecord_set_vehicle_identifier() != 9966) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cutout_mobile_ffi_checksum_method_mobilergblightingaccessoryrecord_vehicle_identifier() != 283) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cutout_mobile_ffi_checksum_method_ridedatabasehandle_append_location() != 46770) {
@@ -21701,10 +23709,22 @@ private let initializationResult: InitializationResult = {
     if (uniffi_cutout_mobile_ffi_checksum_constructor_mobilechargeestimator_new() != 7351) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_cutout_mobile_ffi_checksum_constructor_mobilemelklightingprofile_new() != 6018) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cutout_mobile_ffi_checksum_constructor_mobilemelklightingrestoremarker_new() != 31811) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_cutout_mobile_ffi_checksum_constructor_mobilepevcapcapturebuilder_new() != 58179) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cutout_mobile_ffi_checksum_constructor_mobilephonelocationstate_new() != 19112) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cutout_mobile_ffi_checksum_constructor_mobilergblightingaccessoryrecord_decode() != 40463) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cutout_mobile_ffi_checksum_constructor_mobilergblightingaccessoryrecord_new() != 61123) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cutout_mobile_ffi_checksum_constructor_vescreadonlysession_new() != 39732) {

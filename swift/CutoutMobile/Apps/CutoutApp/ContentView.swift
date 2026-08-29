@@ -2,18 +2,17 @@ import Accessibility
 import CutoutMobile
 import Foundation
 import SwiftUI
-#if os(iOS)
-import UIKit
-#endif
 
 struct ContentView: View {
     let model: CutoutAppModel
+    let lighting: LightingRouteModel
     @Binding private var navigationPath: [CutoutAppRoute]
     @AccessibilityFocusState private var focusedRoute: CutoutAppRoute?
     @State private var connectionAnnouncements = ConnectionAccessibilityAnnouncements()
 
-    init(model: CutoutAppModel, navigationPath: Binding<[CutoutAppRoute]>) {
+    init(model: CutoutAppModel, lighting: LightingRouteModel, navigationPath: Binding<[CutoutAppRoute]>) {
         self.model = model
+        self.lighting = lighting
         _navigationPath = navigationPath
     }
 
@@ -92,7 +91,7 @@ struct ContentView: View {
     }
 
     private func selectTarget(_ target: PevNavigationTarget) {
-        navigate(to: CutoutAppRoute.route(forNavigationTarget: target))
+        navigate(to: route.destination(forNavigationTarget: target))
     }
 
     private func navigate(to route: CutoutAppRoute) {
@@ -167,6 +166,8 @@ struct ContentView: View {
         switch destination {
         case .eucRide:
             EucRideRouteView(model: model)
+        case .lighting:
+            LightingRouteView(model: lighting, rideModel: model)
         case .eucPack(let packScreen):
             EucPackRouteView(
                 model: model,
@@ -189,6 +190,8 @@ struct ContentView: View {
         switch destination {
         case .eucRide, .vescRide:
             localizedAppText("navigation.section.ride")
+        case .lighting:
+            localizedAppText("navigation.section.lighting")
         case .eucPack:
             localizedAppText("navigation.section.pack")
         case .vescDebug:
@@ -222,18 +225,10 @@ struct ContentView: View {
     private var tabAccent: Color {
         #if os(iOS)
         switch route {
-        case .vescRide, .vescDebug:
-            Color(uiColor: UIColor { traits in
-                traits.userInterfaceStyle == .dark
-                    ? .systemPurple
-                    : UIColor(red: 0.34, green: 0.08, blue: 0.52, alpha: 1)
-            })
+        case .vescRide, .vescDebug, .lighting(.vesc):
+            Color.purple
         default:
-            Color(uiColor: UIColor { traits in
-                traits.userInterfaceStyle == .dark
-                    ? .systemYellow
-                    : UIColor(red: 0.45, green: 0.25, blue: 0.0, alpha: 1)
-                })
+            Color.yellow
         }
         #else
         .primary
@@ -247,6 +242,8 @@ private extension PevScreenTabID {
         switch self {
         case .ride:
             "speedometer"
+        case .lighting:
+            "lightbulb.2"
         case .pack:
             "battery.100percent"
         case .debug:

@@ -649,6 +649,10 @@
       "comment" : "Top-level app navigation title for live riding telemetry.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Ride" } } }
     },
+    "navigation.section.lighting" : {
+      "comment" : "Top-level app navigation title for standalone RGB lighting control.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Lighting" } } }
+    },
     "navigation.tab.cells" : {
       "comment" : "Compact navigation tab title for battery cells.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Cells" } } }

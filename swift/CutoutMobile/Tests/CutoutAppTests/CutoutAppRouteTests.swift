@@ -1,6 +1,8 @@
+import Observation
 import XCTest
 @testable import CutoutApp
-import CutoutMobile
+@testable import CutoutMobile
+import CutoutMobileFFI
 
 final class CutoutAppRouteTests: XCTestCase {
     func testScreenRoutesMatchTopLevelSections() {
@@ -18,6 +20,7 @@ final class CutoutAppRouteTests: XCTestCase {
     func testNavigationLabelsResolveFromTheAppCatalog() {
         XCTAssertEqual(localizedAppText("navigation.tab.cells"), "Cells")
         XCTAssertEqual(localizedAppText("navigation.tab.faults"), "Faults")
+        XCTAssertEqual(localizedAppText("navigation.section.lighting"), "Lighting")
         XCTAssertEqual(localizedAppText("picker.title"), "Choose device")
         XCTAssertEqual(localizedAppText("picker.subtitle.nearby_devices"), "Nearby Bluetooth devices")
         XCTAssertEqual(localizedAppText("bms.detail.back_to_cell_map"), "Back to cell map")
@@ -89,6 +92,54 @@ final class CutoutAppRouteTests: XCTestCase {
         )
     }
 
+    func testLightingPresetSavingRequiresConfirmedCommandAndIdentity() {
+        XCTAssertTrue(
+            lightingPresetSaveEligibility(
+                platformIdentifier: "A1B2C3D4-E5F6-4789-ABCD-0123456789AB",
+                commandStatus: .confirmed
+            )
+        )
+        XCTAssertFalse(
+            lightingPresetSaveEligibility(
+                platformIdentifier: nil,
+                commandStatus: .confirmed
+            )
+        )
+        XCTAssertFalse(
+            lightingPresetSaveEligibility(
+                platformIdentifier: "A1B2C3D4-E5F6-4789-ABCD-0123456789AB",
+                commandStatus: .requested
+            )
+        )
+        XCTAssertFalse(
+            lightingPresetSaveEligibility(
+                platformIdentifier: "A1B2C3D4-E5F6-4789-ABCD-0123456789AB",
+                commandStatus: .unconfirmed
+            )
+        )
+    }
+
+    func testLightingAutoStartRequiresRememberedIdentity() {
+        XCTAssertTrue(shouldAutoStartLightingSession(platformIdentifier: "A1B2C3D4-E5F6-4789-ABCD-0123456789AB"))
+        XCTAssertFalse(shouldAutoStartLightingSession(platformIdentifier: nil))
+        XCTAssertFalse(shouldAutoStartLightingSession(platformIdentifier: ""))
+        XCTAssertFalse(shouldAutoStartLightingSession(platformIdentifier: "legacy-melk"))
+    }
+
+    func testLightingColorSelectionKeepsPrimaryAndNeutralColorsStable() {
+        let red = lightingColorSelection(red: 255, green: 0, blue: 0)
+        XCTAssertEqual(red.hue, 0, accuracy: 0.0001)
+        XCTAssertEqual(red.saturation, 1, accuracy: 0.0001)
+
+        let cyan = lightingColorSelection(red: 0, green: 255, blue: 255)
+        XCTAssertEqual(cyan.hue, 0.5, accuracy: 0.0001)
+        XCTAssertEqual(cyan.saturation, 1, accuracy: 0.0001)
+
+        let white = lightingColorSelection(red: 255, green: 255, blue: 255)
+        XCTAssertEqual(white.hue, 0, accuracy: 0.0001)
+        XCTAssertEqual(white.saturation, 0, accuracy: 0.0001)
+    }
+
     func testEucPackRouteRejectsNonPackScreens() {
         XCTAssertNil(EucPackScreen(screenID: .vescRide))
         XCTAssertNil(EucPackScreen(screenID: .vescDebug))
@@ -99,6 +150,7 @@ final class CutoutAppRouteTests: XCTestCase {
         let routes: Set<CutoutAppRoute> = [
             .devicePicker,
             .eucRide,
+            .lighting(.euc),
             .eucPack(.bmsOverview),
             .eucPack(.bmsCellMap6S),
             .eucPack(.bmsCellMap40S),
@@ -111,7 +163,7 @@ final class CutoutAppRouteTests: XCTestCase {
             .capture,
         ]
 
-        XCTAssertEqual(routes.count, 12)
+        XCTAssertEqual(routes.count, 13)
     }
 
     func testBmsDetailRouteStaysSelectedOnlyWhileItsGroupExists() {
@@ -139,8 +191,10 @@ final class CutoutAppRouteTests: XCTestCase {
     func testRouteOwnsTheSameTabsUsedByWindowCommandsAndContent() {
         XCTAssertTrue(CutoutAppRoute.devicePicker.navigationTabs.isEmpty)
         XCTAssertTrue(CutoutAppRoute.capture.navigationTabs.isEmpty)
-        XCTAssertEqual(CutoutAppRoute.eucRide.navigationTabs.map(\.id), [.ride, .pack, .map, .tune])
-        XCTAssertEqual(CutoutAppRoute.vescRide.navigationTabs.map(\.id), [.ride, .debug, .map, .logs])
+        XCTAssertEqual(CutoutAppRoute.eucRide.navigationTabs.map(\.id), [.ride, .lighting, .pack, .map, .tune])
+        XCTAssertEqual(CutoutAppRoute.vescRide.navigationTabs.map(\.id), [.ride, .lighting, .debug, .map, .logs])
+        XCTAssertEqual(CutoutAppRoute.lighting(.euc).navigationTabs.first(where: { $0.id == .lighting })?.isSelected, true)
+        XCTAssertEqual(CutoutAppRoute.lighting(.vesc).navigationTabs.first(where: { $0.id == .lighting })?.isSelected, true)
         XCTAssertTrue(
             CutoutAppRoute.eucPack(.bmsOverview).navigationTabs.first(where: { $0.id == .pack })?.isSelected == true
         )
@@ -153,6 +207,7 @@ final class CutoutAppRouteTests: XCTestCase {
         XCTAssertEqual(CutoutAppRoute.route(forNavigationTarget: .vescRide), .vescRide)
         XCTAssertEqual(CutoutAppRoute.route(forNavigationTarget: .screen(.bmsOverview)), .eucPack(.bmsOverview))
         XCTAssertEqual(CutoutNavigationCommands.shortcut(for: .ride), "1")
+        XCTAssertEqual(CutoutNavigationCommands.shortcut(for: .lighting), "7")
         XCTAssertEqual(CutoutNavigationCommands.shortcut(for: .pack), "2")
         XCTAssertEqual(CutoutNavigationCommands.shortcut(for: .map), "3")
         XCTAssertEqual(CutoutNavigationCommands.shortcut(for: .tune), "4")
@@ -161,10 +216,10 @@ final class CutoutAppRouteTests: XCTestCase {
     }
 
     func testNativeNavigationOmitsUnavailableDestinations() {
-        XCTAssertEqual(CutoutAppRoute.eucRide.availableNavigationTabs.map(\.id), [.ride, .pack])
-        XCTAssertEqual(CutoutAppRoute.eucPack(.bmsOverview).availableNavigationTabs.map(\.id), [.ride, .pack])
-        XCTAssertEqual(CutoutAppRoute.vescRide.availableNavigationTabs.map(\.id), [.ride, .debug])
-        XCTAssertEqual(CutoutAppRoute.vescDebug.availableNavigationTabs.map(\.id), [.ride, .debug])
+        XCTAssertEqual(CutoutAppRoute.eucRide.availableNavigationTabs.map(\.id), [.ride, .lighting, .pack])
+        XCTAssertEqual(CutoutAppRoute.eucPack(.bmsOverview).availableNavigationTabs.map(\.id), [.ride, .lighting, .pack])
+        XCTAssertEqual(CutoutAppRoute.vescRide.availableNavigationTabs.map(\.id), [.ride, .lighting, .debug])
+        XCTAssertEqual(CutoutAppRoute.vescDebug.availableNavigationTabs.map(\.id), [.ride, .lighting, .debug])
         XCTAssertTrue(CutoutAppRoute.devicePicker.availableNavigationTabs.isEmpty)
         XCTAssertTrue(CutoutAppRoute.capture.availableNavigationTabs.isEmpty)
     }
@@ -174,12 +229,13 @@ final class CutoutAppRouteTests: XCTestCase {
         let tabs = nestedPackRoute.availableNavigationTabs
 
         XCTAssertEqual(nestedPackRoute.destination(for: tabs[0]), .eucRide)
-        XCTAssertEqual(nestedPackRoute.destination(for: tabs[1]), nestedPackRoute)
-        XCTAssertEqual(CutoutAppRoute.vescDebug.destination(for: CutoutAppRoute.vescDebug.availableNavigationTabs[1]), .vescDebug)
+        XCTAssertEqual(nestedPackRoute.destination(for: tabs[1]), .lighting(.euc))
+        XCTAssertEqual(nestedPackRoute.destination(for: tabs[2]), nestedPackRoute)
+        XCTAssertEqual(CutoutAppRoute.vescDebug.destination(for: CutoutAppRoute.vescDebug.availableNavigationTabs[2]), .vescDebug)
     }
 
     func testUnavailableTabHasNoDestination() {
-        let unavailableMapTab = CutoutAppRoute.eucRide.navigationTabs[2]
+        let unavailableMapTab = CutoutAppRoute.eucRide.navigationTabs[3]
 
         XCTAssertNil(CutoutAppRoute.eucRide.destination(for: unavailableMapTab))
     }
@@ -500,4 +556,393 @@ final class CutoutAppRouteTests: XCTestCase {
         XCTAssertNil(BmsAlertLevel.unknown.accessibilityAnnouncement)
     }
 
+    func testMELKScanPolicyRoutesStandaloneAccessoryWithoutAnEUCModelHint() {
+        let service = BluetoothUuid.bluetooth16(0xfff0)
+        let advertisement = CoreBluetoothAdvertisement(
+            peripheralIdentifier: CoreBluetoothPeripheralIdentifier("melk-1"),
+            localName: "MELK-OC21  6A",
+            advertisedServiceUuids: [service]
+        )
+        let coordinator = CoreBluetoothCentralCoordinator(
+            scanPolicy: .melk,
+            writeLimit: TransportWriteLimitBytes(23)
+        )
+
+        XCTAssertEqual(coordinator.scanPolicy.serviceUuids, [service])
+        XCTAssertEqual(
+            coordinator.handleDiscovered(advertisement),
+            .connect(peripheralIdentifier: CoreBluetoothPeripheralIdentifier("melk-1"))
+        )
+    }
+
+    func testMELKCommandEvidenceNeverTreatsAWriteAsConfirmedByDefault() {
+        var evidence = MelkLightingCommandEvidence()
+        XCTAssertEqual(evidence.status, .idle)
+
+        evidence.requested()
+        XCTAssertEqual(evidence.status, .requested)
+        evidence.unconfirmed()
+        XCTAssertEqual(evidence.status, .unconfirmed)
+        evidence.requested()
+        evidence.confirmed()
+        XCTAssertEqual(evidence.status, .confirmed)
+    }
+
+    func testObservedMELKInventoryPlansTypedWriteAndNotificationSubscription() throws {
+        let service = BluetoothUuid.bluetooth16(0xfff0)
+        let write = BluetoothUuid.bluetooth16(0xfff3)
+        let notify = BluetoothUuid.bluetooth16(0xfff4)
+        let harness = try MelkLightingCommandProfile(
+            name: "MELK-OC21  6A",
+            inventory: CoreBluetoothGattInventory(services: [
+                CoreBluetoothGattService(
+                    uuid: service,
+                    characteristics: [
+                        CoreBluetoothGattCharacteristic(
+                            uuid: write,
+                            properties: [.writeWithoutResponse]
+                        ),
+                        CoreBluetoothGattCharacteristic(
+                            uuid: notify,
+                            properties: [.notify]
+                        ),
+                    ]
+                ),
+            ])
+        )
+
+        let plan = harness.setPower(true)
+        XCTAssertEqual(plan.operation, .writeWithoutResponse(
+            channel: write,
+            bytes: Data([0x7e, 0x00, 0x04, 0x01, 0, 0, 0, 0, 0xef])
+        ))
+        XCTAssertEqual(plan.confirmationChannel, notify)
+        XCTAssertEqual(harness.subscription, .subscribe(channel: notify))
+    }
+
+    func testMELKProfileRejectsUnverifiedIdentityAndCharacteristicRoles() {
+        XCTAssertThrowsError(
+            try MelkLightingCommandProfile(
+                name: "Govee_H607C_D635",
+                inventory: CoreBluetoothGattInventory(services: [] as [CoreBluetoothGattService])
+            )
+        )
+    }
+
+    func testRememberedMELKTargetAcceptsOnlyTheSamePlatformIdentity() {
+        let target = MelkLightingTargetPolicy(preferredPlatformIdentifier: "A1B2C3D4-E5F6-4789-ABCD-0123456789AB")
+
+        XCTAssertTrue(target.accepts(CoreBluetoothPeripheralIdentifier("a1b2c3d4-e5f6-4789-abcd-0123456789ab")))
+        XCTAssertFalse(target.accepts(CoreBluetoothPeripheralIdentifier("B1B2C3D4-E5F6-4789-ABCD-0123456789AB")))
+        XCTAssertFalse(target.isInvalid)
+    }
+
+    func testFirstPairingTargetAcceptsAnyPlatformIdentity() {
+        let target = MelkLightingTargetPolicy(preferredPlatformIdentifier: nil)
+
+        XCTAssertTrue(target.accepts(CoreBluetoothPeripheralIdentifier("first-melk")))
+        XCTAssertFalse(target.isInvalid)
+    }
+
+    func testMalformedRememberedTargetFailsClosed() {
+        let target = MelkLightingTargetPolicy(preferredPlatformIdentifier: "legacy-melk")
+
+        XCTAssertTrue(target.isInvalid)
+        XCTAssertFalse(target.accepts(CoreBluetoothPeripheralIdentifier("legacy-melk")))
+    }
+
+    func testConnectionLossStatesResetLightingRestoreEligibility() {
+        let resetStates: [MelkLightingPeripheralState] = [
+            .scanning,
+            .connecting,
+            .retrying(attempt: 1, delayMilliseconds: 250),
+            .disconnected,
+            .failed("Bluetooth unavailable"),
+        ]
+        let stableStates: [MelkLightingPeripheralState] = [
+            .idle,
+            .discovering,
+            .ready,
+        ]
+
+        XCTAssertTrue(resetStates.allSatisfy(\.resetsRestoreEligibility))
+        XCTAssertTrue(stableStates.allSatisfy { !$0.resetsRestoreEligibility })
+    }
+
+    @MainActor
+    func testLightingRouteModelUsesInjectedSessionLifecycle() throws {
+        let suiteName = "CutoutAppRouteTests.lightingSession"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defaults.removePersistentDomain(forName: suiteName)
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        let fake = TestLightingSession()
+        let model = LightingRouteModel(
+            session: fake,
+            persistence: LightingAccessoryPersistence(defaults: defaults)
+        )
+
+        model.start()
+        XCTAssertEqual(fake.startCalls, [nil])
+        model.stop()
+        XCTAssertEqual(fake.stopCalls, 1)
+    }
+
+    @MainActor
+    func testLightingRouteModelPublishesPresetChanges() throws {
+        let suiteName = "CutoutAppRouteTests.lightingPresets"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defaults.removePersistentDomain(forName: suiteName)
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        let persistence = LightingAccessoryPersistence(defaults: defaults)
+        XCTAssertTrue(
+            persistence.ensureRecord(
+                platformIdentifier: "A1B2C3D4-E5F6-4789-ABCD-0123456789AB"
+            )
+        )
+        let model = LightingRouteModel(
+            session: TestLightingSession(),
+            persistence: persistence
+        )
+        model.setPower(true)
+        model.markConfirmed()
+
+        let flag = ObservationFlag()
+        withObservationTracking {
+            _ = model.presets
+        } onChange: {
+            flag.value = true
+        }
+
+        model.savePreset(named: "Night")
+
+        XCTAssertTrue(flag.value)
+        XCTAssertEqual(model.presets.map(\.name), ["Night"])
+    }
+
+    @MainActor
+    func testLightingRouteModelMarksPendingCommandUnconfirmedAfterLinkLoss() async {
+        let fake = TestLightingSession()
+        let model = LightingRouteModel(session: fake)
+
+        fake.emitState(.ready)
+        await Task.yield()
+        model.setPower(true)
+        XCTAssertEqual(model.commandStatus, .requested)
+
+        fake.emitState(.retrying(attempt: 1, delayMilliseconds: 250))
+        await Task.yield()
+
+        XCTAssertEqual(model.commandStatus, .unconfirmed)
+    }
+
+    @MainActor
+    func testLightingRouteModelPersistsOnlyStableConnectionStates() async throws {
+        let suiteName = "CutoutAppRouteTests.lightingConnectionState"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defaults.removePersistentDomain(forName: suiteName)
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        let persistence = LightingAccessoryPersistence(defaults: defaults)
+        XCTAssertTrue(persistence.ensureRecord(platformIdentifier: "A1B2C3D4-E5F6-4789-ABCD-0123456789AB"))
+        let fake = TestLightingSession()
+        let model = LightingRouteModel(session: fake, persistence: persistence)
+        model.start()
+
+        let transientStates: [MelkLightingPeripheralState] = [
+            .scanning,
+            .connecting,
+            .discovering,
+            .retrying(attempt: 1, delayMilliseconds: 250),
+            .failed("Bluetooth unavailable"),
+        ]
+        for state in transientStates {
+            fake.emitState(state)
+            await Task.yield()
+            let data = try XCTUnwrap(defaults.data(forKey: "lighting.accessory.record"))
+            let record = try MobileRgbLightingAccessoryRecord.decode(bytes: data)
+            XCTAssertEqual(record.connection(), .unknown, "unexpected persisted state for \(state)")
+        }
+
+        fake.emitState(.ready)
+        await Task.yield()
+        var data = try XCTUnwrap(defaults.data(forKey: "lighting.accessory.record"))
+        var record = try MobileRgbLightingAccessoryRecord.decode(bytes: data)
+        XCTAssertEqual(record.connection(), .ready)
+
+        fake.emitState(.disconnected)
+        await Task.yield()
+        data = try XCTUnwrap(defaults.data(forKey: "lighting.accessory.record"))
+        record = try MobileRgbLightingAccessoryRecord.decode(bytes: data)
+        XCTAssertEqual(record.connection(), .disconnected)
+    }
+
+    @MainActor
+    func testLightingRouteModelRestoresConfirmedStateForRememberedIdentity() async throws {
+        let suiteName = "CutoutAppRouteTests.lightingRestore"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defaults.removePersistentDomain(forName: suiteName)
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        let platformIdentifier = "A1B2C3D4-E5F6-4789-ABCD-0123456789AB"
+        let persistence = LightingAccessoryPersistence(defaults: defaults)
+        XCTAssertTrue(persistence.ensureRecord(platformIdentifier: platformIdentifier))
+        let requested = MobileMelkLightingRestoreStateDto(
+            powerOn: true,
+            red: 12,
+            green: 34,
+            blue: 56,
+            brightness: 78
+        )
+        try persistence.confirm(requested)
+        persistence.setRestoreEnabled(true)
+
+        let fake = TestLightingSession()
+        let model = LightingRouteModel(
+            session: fake,
+            persistence: LightingAccessoryPersistence(defaults: defaults)
+        )
+
+        model.start()
+        XCTAssertEqual(fake.startCalls, [platformIdentifier])
+        fake.emitIdentity(
+            MelkLightingPeripheralIdentity(
+                name: "MELK-OC21 6A",
+                platformIdentifier: platformIdentifier,
+                rssi: -40
+            )
+        )
+        fake.emitRecord("candidate=MELK-OC21 6A id=\(platformIdentifier) rssi=-40")
+        await Task.yield()
+        fake.emitState(.ready)
+        await Task.yield()
+
+        XCTAssertEqual(fake.powerRequests, [true])
+        XCTAssertEqual(fake.colorRequests, ["12,34,56"])
+        XCTAssertEqual(fake.brightnessRequests, [78])
+        XCTAssertEqual(model.commandStatus, .requested)
+    }
+
+    @MainActor
+    func testLightingRouteModelStopsRestoreAfterPowerFailure() async throws {
+        let suiteName = "CutoutAppRouteTests.lightingRestoreFailure"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defaults.removePersistentDomain(forName: suiteName)
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        let platformIdentifier = "B1C2D3E4-F5A6-4789-ABCD-0123456789AB"
+        let persistence = LightingAccessoryPersistence(defaults: defaults)
+        XCTAssertTrue(persistence.ensureRecord(platformIdentifier: platformIdentifier))
+        let requested = MobileMelkLightingRestoreStateDto(
+            powerOn: true,
+            red: 90,
+            green: 80,
+            blue: 70,
+            brightness: 60
+        )
+        try persistence.confirm(requested)
+        persistence.setRestoreEnabled(true)
+
+        let fake = TestLightingSession()
+        fake.powerResult = false
+        let model = LightingRouteModel(
+            session: fake,
+            persistence: LightingAccessoryPersistence(defaults: defaults)
+        )
+
+        model.start()
+        fake.emitIdentity(
+            MelkLightingPeripheralIdentity(
+                name: "MELK-OC21 6A",
+                platformIdentifier: platformIdentifier,
+                rssi: -40
+            )
+        )
+        fake.emitRecord("candidate=MELK-OC21 6A id=\(platformIdentifier) rssi=-40")
+        await Task.yield()
+        fake.emitState(.ready)
+        await Task.yield()
+
+        XCTAssertEqual(fake.powerRequests, [true])
+        XCTAssertTrue(fake.colorRequests.isEmpty)
+        XCTAssertTrue(fake.brightnessRequests.isEmpty)
+        XCTAssertEqual(model.commandStatus, .idle)
+    }
+
+    @MainActor
+    func testLightingRouteModelConsumesTypedIdentityEvents() async {
+        let fake = TestLightingSession()
+        let model = LightingRouteModel(session: fake)
+
+        fake.emitIdentity(
+            MelkLightingPeripheralIdentity(
+                name: "MELK-OC21 6A",
+                platformIdentifier: "A1B2C3D4-E5F6-4789-ABCD-0123456789AB",
+                rssi: -40
+            )
+        )
+        fake.emitRecord("candidate=MELK-OC21 6A id=legacy-melk rssi=-40")
+        await Task.yield()
+
+        XCTAssertEqual(model.peripheralName, "MELK-OC21 6A")
+        XCTAssertEqual(model.peripheralIdentifier, "A1B2C3D4-E5F6-4789-ABCD-0123456789AB")
+    }
+}
+
+private final class ObservationFlag: @unchecked Sendable {
+    var value = false
+}
+
+private final class TestLightingSession: MelkLightingPeripheralSessionProtocol {
+    var onIdentity: ((MelkLightingPeripheralIdentity) -> Void)?
+    var onStateChange: ((MelkLightingPeripheralState) -> Void)?
+    var onNotification: ((Data) -> Void)?
+    var onRecord: ((String) -> Void)?
+    var startCalls: [String?] = []
+    var stopCalls = 0
+    var powerResult = true
+    var colorResult = true
+    var brightnessResult = true
+    var powerRequests: [Bool] = []
+    var colorRequests: [String] = []
+    var brightnessRequests: [UInt8] = []
+
+    func start(preferredPlatformIdentifier: String?) {
+        startCalls.append(preferredPlatformIdentifier)
+    }
+
+    func stop() {
+        stopCalls += 1
+    }
+
+    func setPower(_ on: Bool) -> Bool {
+        powerRequests.append(on)
+        return powerResult
+    }
+
+    func setSolidColor(red: UInt8, green: UInt8, blue: UInt8) -> Bool {
+        colorRequests.append("\(red),\(green),\(blue)")
+        return colorResult
+    }
+
+    func setBrightness(_ percentage: UInt8) throws -> Bool {
+        brightnessRequests.append(percentage)
+        return brightnessResult
+    }
+
+    func markLastCommandConfirmed() {}
+    func markLastCommandUnconfirmed() {}
+
+    func emitIdentity(_ identity: MelkLightingPeripheralIdentity) {
+        onIdentity?(identity)
+    }
+
+    func emitRecord(_ record: String) {
+        onRecord?(record)
+    }
+
+    func emitState(_ state: MelkLightingPeripheralState) {
+        onStateChange?(state)
+    }
 }

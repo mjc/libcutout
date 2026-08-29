@@ -1,0 +1,647 @@
+import CutoutMobileFFI
+import Foundation
+
+/// Limits reconnects to a remembered CoreBluetooth identity after first pairing.
+///
+/// A missing identity is the only state that permits first-pairing discovery. Persisted values
+/// are parsed as UUIDs before they can influence a connection; malformed values fail closed.
+struct MelkLightingTargetPolicy: Equatable, Sendable {
+    let preferredUUID: UUID?
+    let isInvalid: Bool
+
+    init(preferredPlatformIdentifier: String?) {
+        guard let preferredPlatformIdentifier else {
+            preferredUUID = nil
+            isInvalid = false
+            return
+        }
+        preferredUUID = UUID(uuidString: preferredPlatformIdentifier)
+        isInvalid = preferredUUID == nil
+    }
+
+    func accepts(_ identifier: CoreBluetoothPeripheralIdentifier) -> Bool {
+        guard !isInvalid else { return false }
+        guard let preferredUUID else { return true }
+        return UUID(uuidString: identifier.rawValue) == preferredUUID
+    }
+}
+
+/// Failure while matching an observed standalone MELK controller to its typed profile.
+enum MelkLightingProtocolError: Error, Equatable, Sendable {
+    case missingService
+    case missingWriteCharacteristic
+    case missingNotificationCharacteristic
+    case profileRejected
+}
+
+/// Explicit result state for a lighting command.
+public enum MelkLightingCommandStatus: Equatable, Sendable {
+    case idle
+    case requested
+    case confirmed
+    case unconfirmed
+}
+
+/// Small state tracker used by the live lighting session; a write never self-confirms.
+struct MelkLightingCommandEvidence: Equatable, Sendable {
+    private(set) var status: MelkLightingCommandStatus = .idle
+
+    init() {}
+
+    mutating func requested() {
+        status = .requested
+    }
+
+    mutating func confirmed() {
+        guard status == .requested else { return }
+        status = .confirmed
+    }
+
+    mutating func unconfirmed() {
+        guard status == .requested else { return }
+        status = .unconfirmed
+    }
+}
+
+/// One Rust-owned MELK write ready for the existing CoreBluetooth operation sink.
+struct MelkLightingWritePlan: Equatable, Sendable {
+    let operation: CoreBluetoothPlannedOperation
+    let confirmationChannel: BluetoothUuid
+    let minimumIntervalMilliseconds: UInt16?
+
+    init(
+        operation: CoreBluetoothPlannedOperation,
+        confirmationChannel: BluetoothUuid,
+        minimumIntervalMilliseconds: UInt16?
+    ) {
+        self.operation = operation
+        self.confirmationChannel = confirmationChannel
+        self.minimumIntervalMilliseconds = minimumIntervalMilliseconds
+    }
+}
+
+/// Smallest reusable iPhone/CoreBluetooth seam for validating `MELK-OC21`.
+///
+/// Rust selects the profile and emits command bytes. This type only validates the observed GATT
+/// roles and adapts those typed writes to the existing CoreBluetooth operation sink.
+struct MelkLightingCommandProfile: Sendable {
+    static let service = BluetoothUuid.bluetooth16(0xfff0)
+    static let write = BluetoothUuid.bluetooth16(0xfff3)
+    static let notify = BluetoothUuid.bluetooth16(0xfff4)
+
+    private let profile: MobileMelkLightingProfile
+
+    let subscription: CoreBluetoothPlannedOperation
+
+    init(
+        name: String,
+        inventory: CoreBluetoothGattInventory
+    ) throws {
+        guard let serviceInventory = inventory.services.first(where: { $0.uuid == Self.service }) else {
+            throw MelkLightingProtocolError.missingService
+        }
+        guard let writeCharacteristic = serviceInventory.characteristics.first(where: {
+            $0.uuid == Self.write && $0.properties.contains(.writeWithoutResponse)
+        }) else {
+            throw MelkLightingProtocolError.missingWriteCharacteristic
+        }
+        guard let notifyCharacteristic = serviceInventory.characteristics.first(where: {
+            $0.uuid == Self.notify && ($0.properties.contains(.notify) || $0.properties.contains(.indicate))
+        }) else {
+            throw MelkLightingProtocolError.missingNotificationCharacteristic
+        }
+
+        do {
+            profile = try MobileMelkLightingProfile(
+                name: name,
+                evidence: MobileMelkLightingGattEvidence(
+                    servicePresent: true,
+                    writeWithoutResponse: writeCharacteristic.properties.contains(.writeWithoutResponse),
+                    notifyOrIndicate: notifyCharacteristic.properties.contains(.notify)
+                        || notifyCharacteristic.properties.contains(.indicate)
+                )
+            )
+        } catch {
+            throw MelkLightingProtocolError.profileRejected
+        }
+        subscription = .subscribe(channel: notifyCharacteristic.uuid)
+    }
+
+    func setPower(_ on: Bool) -> MelkLightingWritePlan {
+        plan(profile.setPower(on: on))
+    }
+
+    func setSolidColor(red: UInt8, green: UInt8, blue: UInt8) -> MelkLightingWritePlan {
+        plan(profile.setSolidColor(red: red, green: green, blue: blue))
+    }
+
+    func setBrightness(_ percentage: UInt8) throws -> MelkLightingWritePlan {
+        plan(try profile.setBrightness(percentage: percentage))
+    }
+
+    private func plan(_ write: MobileMelkLightingWriteDto) -> MelkLightingWritePlan {
+        precondition(write.mode == .withoutResponse)
+        guard let channel = BluetoothUuid(write.characteristic),
+              let confirmationChannel = BluetoothUuid(write.confirmationCharacteristic)
+        else {
+            preconditionFailure("Rust MELK writes contain fixed-width UUIDs")
+        }
+        return MelkLightingWritePlan(
+            operation: .writeWithoutResponse(channel: channel, bytes: write.payload),
+            confirmationChannel: confirmationChannel,
+            minimumIntervalMilliseconds: write.minimumIntervalMs
+        )
+    }
+}
+
+#if canImport(CoreBluetooth)
+import CoreBluetooth
+
+/// Connection state for the independent standalone MELK lighting session.
+public enum MelkLightingPeripheralState: Equatable, Sendable {
+    case idle
+    case scanning
+    case connecting
+    case retrying(attempt: Int, delayMilliseconds: UInt64)
+    case discovering
+    case ready
+    case disconnected
+    case failed(String)
+}
+
+public extension MelkLightingPeripheralState {
+    /// Returns whether a state transition invalidates a one-shot restore attempt.
+    var resetsRestoreEligibility: Bool {
+        switch self {
+        case .scanning, .connecting, .retrying, .disconnected, .failed:
+            true
+        case .idle, .discovering, .ready:
+            false
+        }
+    }
+}
+
+/// A typed identity observation emitted when CoreBluetooth has selected a MELK peripheral.
+public struct MelkLightingPeripheralIdentity: Equatable, Sendable {
+    public let name: String?
+    public let platformIdentifier: String
+    public let rssi: Int?
+
+    public init(name: String?, platformIdentifier: String, rssi: Int?) {
+        self.name = name
+        self.platformIdentifier = platformIdentifier
+        self.rssi = rssi
+    }
+}
+
+/// The app-facing seam for an independent MELK lighting connection.
+///
+/// Keeping the CoreBluetooth implementation behind this protocol lets the route model test
+/// lifecycle and restore behavior without sharing the ride session or requiring hardware.
+public protocol MelkLightingPeripheralSessionProtocol: AnyObject {
+    var onIdentity: ((MelkLightingPeripheralIdentity) -> Void)? { get set }
+    var onStateChange: ((MelkLightingPeripheralState) -> Void)? { get set }
+    var onNotification: ((Data) -> Void)? { get set }
+    var onRecord: ((String) -> Void)? { get set }
+
+    func start(preferredPlatformIdentifier: String?)
+    func stop()
+    @discardableResult
+    func setPower(_ on: Bool) -> Bool
+    @discardableResult
+    func setSolidColor(red: UInt8, green: UInt8, blue: UInt8) -> Bool
+    @discardableResult
+    func setBrightness(_ percentage: UInt8) throws -> Bool
+    func markLastCommandConfirmed()
+    func markLastCommandUnconfirmed()
+}
+
+/// A secondary CoreBluetooth connection for validating MELK without replacing a ride session.
+///
+/// The lighting session owns its own central manager, so it can remain connected while the primary
+/// EUC/VESC central connection continues to receive telemetry. A command starts as `requested`
+/// and is never marked successful by a write callback; the caller must explicitly record
+/// confirmation or lack of confirmation.
+public final class MelkLightingPeripheralSession: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate, @unchecked Sendable {
+    private let queue: DispatchQueue
+    private let queueKey = DispatchSpecificKey<Void>()
+    private let reconnectController: ConnectionReconnectController
+    private var central: CBCentralManager?
+    private var peripheral: CBPeripheral?
+    private var advertisedName: String?
+    private var harness: MelkLightingCommandProfile?
+    private var sink: CoreBluetoothPeripheralOperationSink?
+    private var targetPolicy = MelkLightingTargetPolicy(preferredPlatformIdentifier: nil)
+    private var reconnectEnabled = true
+
+    public private(set) var connectionState: MelkLightingPeripheralState = .idle
+    public private(set) var peripheralName: String?
+    public private(set) var peripheralIdentifier: String?
+    private var commandEvidence = MelkLightingCommandEvidence()
+
+    /// Called on the lighting session's CoreBluetooth queue.
+    public var onStateChange: ((MelkLightingPeripheralState) -> Void)?
+
+    /// Called on the lighting session's CoreBluetooth queue for raw FFF4 notification bytes.
+    public var onNotification: ((Data) -> Void)?
+
+    /// Called on the lighting session's CoreBluetooth queue for the selected peripheral identity.
+    public var onIdentity: ((MelkLightingPeripheralIdentity) -> Void)?
+
+    /// Called on the lighting session's CoreBluetooth queue for bounded diagnostic records.
+    public var onRecord: ((String) -> Void)?
+
+    public init(queue: DispatchQueue = DispatchQueue(label: "io.cutout.melk-lighting")) {
+        self.queue = queue
+        self.reconnectController = ConnectionReconnectController(
+            scheduler: DispatchQueueReconnectScheduler(queue: queue)
+        )
+        super.init()
+        queue.setSpecific(key: queueKey, value: ())
+    }
+
+    public func start(preferredPlatformIdentifier: String? = nil) {
+        onQueue {
+            guard central == nil else { return }
+            targetPolicy = MelkLightingTargetPolicy(
+                preferredPlatformIdentifier: preferredPlatformIdentifier
+            )
+            reconnectEnabled = true
+            reconnectController.cancel()
+#if os(iOS)
+            central = CBCentralManager(
+                delegate: self,
+                queue: queue,
+                options: [CBCentralManagerOptionRestoreIdentifierKey: "io.cutout.melk-lighting"]
+            )
+#else
+            central = CBCentralManager(delegate: self, queue: queue)
+#endif
+        }
+    }
+
+    public func stop() {
+        onQueue {
+            reconnectEnabled = false
+            reconnectController.cancel()
+            if commandEvidence.status == .requested {
+                commandEvidence.unconfirmed()
+            }
+            if let peripheral {
+                central?.cancelPeripheralConnection(peripheral)
+            }
+            central?.stopScan()
+            central = nil
+            peripheral = nil
+            advertisedName = nil
+            peripheralName = nil
+            peripheralIdentifier = nil
+            harness = nil
+            sink = nil
+            transition(to: .disconnected)
+        }
+    }
+
+    @discardableResult
+    public func setPower(_ on: Bool) -> Bool {
+        onQueue {
+            guard let harness else { return false }
+            return submit(harness.setPower(on))
+        }
+    }
+
+    @discardableResult
+    public func setSolidColor(red: UInt8, green: UInt8, blue: UInt8) -> Bool {
+        onQueue {
+            guard let harness else { return false }
+            return submit(harness.setSolidColor(red: red, green: green, blue: blue))
+        }
+    }
+
+    /// Returns `InvalidBrightness` without issuing a write when the percentage is out of range.
+    @discardableResult
+    public func setBrightness(_ percentage: UInt8) throws -> Bool {
+        try onQueue {
+            guard let harness else { return false }
+            return submit(try harness.setBrightness(percentage))
+        }
+    }
+
+    /// Marks the most recent requested command confirmed by an external protocol/physical check.
+    public func markLastCommandConfirmed() {
+        onQueue { commandEvidence.confirmed() }
+    }
+
+    /// Marks the most recent requested command unconfirmed.
+    public func markLastCommandUnconfirmed() {
+        onQueue { commandEvidence.unconfirmed() }
+    }
+
+    public func centralManagerDidUpdateState(_ central: CBCentralManager) {
+        onQueue {
+            guard !targetPolicy.isInvalid else {
+                transition(to: .failed("Remembered lighting identity is invalid"))
+                record("scan=refused invalid remembered identity")
+                return
+            }
+            guard central.state == .poweredOn else {
+                reconnectController.cancel()
+                transition(to: .failed("Bluetooth unavailable: \(central.state.rawValue)"))
+                return
+            }
+            if let peripheral, peripheral.state == .connected {
+                transition(to: .discovering)
+                peripheral.delegate = self
+                peripheral.discoverServices(CoreBluetoothScanPolicy.melk.coreBluetoothServiceUuids)
+                return
+            }
+            if let preferredUUID = targetPolicy.preferredUUID,
+               let restoredPeripheral = central.retrievePeripherals(withIdentifiers: [preferredUUID]).first {
+                connect(central: central, peripheral: restoredPeripheral)
+                record("target=melk id=\(preferredUUID.uuidString)")
+                return
+            }
+            // MELK-OC21 does not advertise FFF0 in its advertisement packet. Filter only after
+            // connecting and discovering the GATT inventory; the advertised name is the
+            // candidate gate that keeps this standalone scan narrow. When a remembered identity
+            // exists, didDiscoverPeripheral applies the identity filter before this gate.
+            central.scanForPeripherals(withServices: nil)
+            transition(to: .scanning)
+            let target = targetPolicy.preferredUUID.map { " id=\($0.uuidString)" } ?? ""
+            record("scan=melk services=all; gatt=FFF0 post-connect\(target)")
+        }
+    }
+
+    public func centralManager(
+        _ central: CBCentralManager,
+        didDiscover peripheral: CBPeripheral,
+        advertisementData: [String: Any],
+        rssi: NSNumber
+    ) {
+        onQueue {
+            guard targetPolicy.accepts(
+                CoreBluetoothPeripheralIdentifier(peripheral.identifier.uuidString)
+            ) else {
+                return
+            }
+            let name = (advertisementData[CBAdvertisementDataLocalNameKey] as? String) ?? peripheral.name
+            guard name?.trimmingCharacters(in: .whitespacesAndNewlines)
+                .lowercased().hasPrefix("melk") == true else {
+                return
+            }
+            central.stopScan()
+            record("candidate=\(name ?? "") id=\(peripheral.identifier.uuidString) rssi=\(rssi)")
+            connect(central: central, peripheral: peripheral, advertisedName: name, rssi: rssi.intValue)
+        }
+    }
+
+    public func centralManager(_ central: CBCentralManager, didConnect peripheral: CBPeripheral) {
+        onQueue {
+            reconnectController.cancel()
+            transition(to: .discovering)
+            peripheral.discoverServices(CoreBluetoothScanPolicy.melk.coreBluetoothServiceUuids)
+        }
+    }
+
+    public func centralManager(
+        _ central: CBCentralManager,
+        didFailToConnect peripheral: CBPeripheral,
+        error: Error?
+    ) {
+        onQueue {
+            if reconnectEnabled {
+                scheduleReconnect(
+                    central: central,
+                    peripheral: peripheral,
+                    reason: error.map(String.init(describing:)) ?? "connect failed"
+                )
+                return
+            }
+            transition(to: .failed(error.map(String.init(describing:)) ?? "connect failed"))
+        }
+    }
+
+    public func centralManager(
+        _ central: CBCentralManager,
+        didDisconnectPeripheral peripheral: CBPeripheral,
+        error: Error?
+    ) {
+        onQueue {
+            guard self.peripheral?.identifier == peripheral.identifier else { return }
+            if commandEvidence.status == .requested {
+                commandEvidence.unconfirmed()
+            }
+            harness = nil
+            sink = nil
+            record("disconnected error=\(String(describing: error))")
+            if reconnectEnabled, central.state == .poweredOn {
+                scheduleReconnect(
+                    central: central,
+                    peripheral: peripheral,
+                    reason: error.map(String.init(describing:)) ?? "link lost"
+                )
+            } else {
+                self.peripheral = nil
+                advertisedName = nil
+                transition(to: .disconnected)
+            }
+        }
+    }
+
+    public func centralManager(
+        _ central: CBCentralManager,
+        willRestoreState dict: [String: Any]
+    ) {
+        onQueue {
+            guard let restored = dict[CBCentralManagerRestoredStatePeripheralsKey] as? [CBPeripheral],
+                  let restoredPeripheral = restored.first else {
+                return
+            }
+            guard targetPolicy.preferredUUID != nil,
+                  targetPolicy.accepts(
+                      CoreBluetoothPeripheralIdentifier(restoredPeripheral.identifier.uuidString)
+                  ) else {
+                record("restore=melk ignored different identity")
+                return
+            }
+            peripheral = restoredPeripheral
+            advertisedName = restoredPeripheral.name
+            peripheralName = restoredPeripheral.name
+            peripheralIdentifier = restoredPeripheral.identifier.uuidString
+            onIdentity?(MelkLightingPeripheralIdentity(
+                name: restoredPeripheral.name,
+                platformIdentifier: restoredPeripheral.identifier.uuidString,
+                rssi: nil
+            ))
+            restoredPeripheral.delegate = self
+            if restoredPeripheral.state == .connected {
+                transition(to: .discovering)
+                restoredPeripheral.discoverServices(CoreBluetoothScanPolicy.melk.coreBluetoothServiceUuids)
+            } else {
+                transition(to: .connecting)
+                central.connect(restoredPeripheral)
+            }
+            record("restore=melk id=\(restoredPeripheral.identifier.uuidString)")
+        }
+    }
+
+    private func connect(
+        central: CBCentralManager,
+        peripheral: CBPeripheral,
+        advertisedName: String? = nil,
+        rssi: Int? = nil
+    ) {
+        self.peripheral = peripheral
+        self.advertisedName = advertisedName ?? peripheral.name
+        peripheralName = advertisedName ?? peripheral.name
+        peripheralIdentifier = peripheral.identifier.uuidString
+        onIdentity?(MelkLightingPeripheralIdentity(
+            name: advertisedName ?? peripheral.name,
+            platformIdentifier: peripheral.identifier.uuidString,
+            rssi: rssi
+        ))
+        peripheral.delegate = self
+        if peripheral.state == .connected {
+            transition(to: .discovering)
+            peripheral.discoverServices(CoreBluetoothScanPolicy.melk.coreBluetoothServiceUuids)
+        } else {
+            transition(to: .connecting)
+            central.connect(peripheral)
+        }
+    }
+
+    public func peripheral(_ peripheral: CBPeripheral, didDiscoverServices error: Error?) {
+        onQueue {
+            guard error == nil else {
+                transition(to: .failed(error.map(String.init(describing:)) ?? "service discovery failed"))
+                return
+            }
+            peripheral.services?.forEach { peripheral.discoverCharacteristics(nil, for: $0) }
+        }
+    }
+
+    public func peripheral(
+        _ peripheral: CBPeripheral,
+        didDiscoverCharacteristicsFor service: CBService,
+        error: Error?
+    ) {
+        onQueue {
+            guard error == nil else {
+                transition(to: .failed(error.map(String.init(describing:)) ?? "characteristic discovery failed"))
+                return
+            }
+            guard let name = advertisedName ?? peripheral.name else {
+                transition(to: .failed("missing MELK name"))
+                return
+            }
+            do {
+                let candidate = try MelkLightingCommandProfile(
+                    name: name,
+                    inventory: CoreBluetoothGattInventory(services: peripheral.services ?? [])
+                )
+                harness = candidate
+                sink = CoreBluetoothPeripheralOperationSink(peripheral: peripheral)
+                if case let .subscribe(channel) = candidate.subscription {
+                    sink?.subscribe(channel: channel)
+                }
+                record("gatt=FFF0 write=FFF3 notify=FFF4")
+            } catch {
+                transition(to: .failed(String(describing: error)))
+            }
+        }
+    }
+
+    public func peripheral(
+        _ peripheral: CBPeripheral,
+        didUpdateNotificationStateFor characteristic: CBCharacteristic,
+        error: Error?
+    ) {
+        onQueue {
+            guard characteristic.uuid == MelkLightingCommandProfile.notify.coreBluetoothUuid else {
+                return
+            }
+            guard error == nil, characteristic.isNotifying else {
+                transition(to: .failed(error.map(String.init(describing:)) ?? "FFF4 notify unavailable"))
+                return
+            }
+            transition(to: .ready)
+            record("notify_state=true")
+        }
+    }
+
+    public func peripheral(
+        _ peripheral: CBPeripheral,
+        didUpdateValueFor characteristic: CBCharacteristic,
+        error: Error?
+    ) {
+        onQueue {
+            guard error == nil, characteristic.uuid == MelkLightingCommandProfile.notify.coreBluetoothUuid,
+                  let value = characteristic.value else { return }
+            onNotification?(value)
+            record("notification=\(value.count) bytes")
+        }
+    }
+
+    private func submit(_ plan: MelkLightingWritePlan) -> Bool {
+        guard connectionState == .ready, let sink,
+              case let .writeWithoutResponse(channel, bytes) = plan.operation else {
+            return false
+        }
+        sink.writeWithoutResponse(channel: channel, bytes: bytes)
+        commandEvidence.requested()
+        record("requested=\(bytes.map { String(format: "%02x", $0) }.joined())")
+        return true
+    }
+
+    private func scheduleReconnect(
+        central: CBCentralManager,
+        peripheral: CBPeripheral,
+        reason: String
+    ) {
+        guard let schedule = reconnectController.schedule(jitter: 0.5, operation: { [weak self] in
+            guard let self,
+                  self.reconnectEnabled,
+                  self.central === central,
+                  self.peripheral?.identifier == peripheral.identifier,
+                  central.state == .poweredOn else {
+                return
+            }
+            self.transition(to: .connecting)
+            central.connect(peripheral)
+        }) else {
+            transition(to: .failed(
+                "Accessory reconnect exhausted after \(ConnectionReconnectPolicy.maximumAttempts) attempts"
+            ))
+            record("reconnect_exhausted reason=\(reason)")
+            return
+        }
+
+        transition(to: .retrying(
+            attempt: schedule.attempt,
+            delayMilliseconds: schedule.delayMilliseconds
+        ))
+        record(
+            "reconnect_attempt=\(schedule.attempt) delay_ms=\(schedule.delayMilliseconds) reason=\(reason)"
+        )
+    }
+
+    private func transition(to state: MelkLightingPeripheralState) {
+        connectionState = state
+        onStateChange?(state)
+    }
+
+    private func record(_ message: String) {
+        onRecord?(message)
+    }
+
+    private func onQueue<T>(_ work: () throws -> T) rethrows -> T {
+        if DispatchQueue.getSpecific(key: queueKey) != nil {
+            return try work()
+        }
+        return try queue.sync(execute: work)
+    }
+}
+
+extension MelkLightingPeripheralSession: MelkLightingPeripheralSessionProtocol {}
+
+#endif
