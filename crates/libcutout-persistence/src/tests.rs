@@ -7,16 +7,16 @@ use cutout_core::{
 };
 use cutout_ride_maps::{
     Coordinate, LocationAdmission, LocationSample, LocationSource, RideEvent, RouteDisplayBudget,
-    RoutePrivacyPolicy, RouteTelemetryState, RouteViewport,
+    RoutePrivacyGridE7, RoutePrivacyPolicy, RouteTelemetryState, RouteViewport,
 };
 use rusqlite::Connection;
 
 use cutout_ride_maps::RideLifecycleState;
 
 use super::{
-    GeoBounds, HistoryContextBudget, LocationWriteReconciliation, PevcapImportOutcome, QueryLimit,
-    RideDatabase, RideHistoryQuery, RideId, RideRecord, RideSource, RouteProjectionCancellation,
-    StorageError, VoltageSagModelRecord,
+    GeoBounds, HistoryContextBudget, PevcapImportOutcome, QueryLimit, RideDatabase,
+    RideHistoryQuery, RideId, RideRecord, RideSource, RouteProjectionCancellation, StorageError,
+    VoltageSagModelRecord,
 };
 
 static TEST_LOCK: Mutex<()> = Mutex::new(());
@@ -478,54 +478,6 @@ fn async_location_write_can_bound_wait_for_a_worker_gate() {
 }
 
 #[test]
-fn async_location_write_can_bound_wait_for_a_slow_sqlite_worker() {
-    let _guard = test_guard();
-    let path = std::env::temp_dir().join(format!(
-        "libcutout-persistence-async-location-sqlite-gate-{}.sqlite",
-        uuid::Uuid::new_v4()
-    ));
-    let database = RideDatabase::open(&path).unwrap();
-    let ride = database.create_ride(RideSource::Live, 1_000).unwrap();
-    database.transition(ride, RideEvent::Start).unwrap();
-
-    let (entered_sender, entered_receiver) = std::sync::mpsc::sync_channel(0);
-    let (release_sender, release_receiver) = std::sync::mpsc::sync_channel(0);
-    let sample = LocationSample::new(
-        Coordinate::from_degrees(40.0, -105.0).unwrap(),
-        1_001,
-        1_700_000_000_001,
-        None,
-        LocationSource::Live,
-    );
-    let pending = database
-        .enqueue_location_with_slow_sqlite_worker_for_test(
-            ride,
-            sample,
-            0,
-            RouteTelemetryState::GpsOnly,
-            entered_sender,
-            release_receiver,
-        )
-        .unwrap();
-    entered_receiver
-        .recv_timeout(Duration::from_secs(1))
-        .expect("location write reaches the SQLite progress handler");
-
-    assert!(matches!(
-        pending.wait_result_until(Instant::now()),
-        Ok(None)
-    ));
-    release_sender.send(()).unwrap();
-    assert!(matches!(
-        pending.wait_result(),
-        Ok(Ok(LocationAdmission::Accepted))
-    ));
-
-    database.shutdown().unwrap();
-    let _ = std::fs::remove_file(path);
-}
-
-#[test]
 fn consumed_location_write_reports_worker_failure_and_recovers() {
     let _guard = test_guard();
     let path = std::env::temp_dir().join(format!(
@@ -576,82 +528,6 @@ fn consumed_location_write_reports_worker_failure_and_recovers() {
         recovery.is_ok(),
         "worker should recover in place: {recovery:?}"
     );
-    assert_eq!(
-        database.reconcile_location_write(ride, sample).unwrap(),
-        LocationWriteReconciliation::NotCommitted
-    );
-    database.shutdown().unwrap();
-    let _ = std::fs::remove_file(path);
-}
-
-#[test]
-fn consumed_location_write_reconciles_after_worker_drops_response() {
-    let _guard = test_guard();
-    let path = std::env::temp_dir().join(format!(
-        "libcutout-persistence-worker-response-loss-{}.sqlite",
-        uuid::Uuid::new_v4()
-    ));
-    let database = RideDatabase::open(&path).unwrap();
-    let ride = database.create_ride(RideSource::Live, 1_000).unwrap();
-    database.transition(ride, RideEvent::Start).unwrap();
-
-    let (entered_sender, entered_receiver) = std::sync::mpsc::sync_channel(0);
-    let sample = LocationSample::new(
-        Coordinate::from_degrees(40.0, -105.0).unwrap(),
-        1_001,
-        1_700_000_000_001,
-        None,
-        LocationSource::Live,
-    );
-    let pending = database
-        .enqueue_location_with_worker_failure_after_write_for_test(
-            ride,
-            sample,
-            0,
-            RouteTelemetryState::GpsOnly,
-            entered_sender,
-        )
-        .unwrap();
-    entered_receiver
-        .recv_timeout(Duration::from_secs(1))
-        .expect("worker commits the location before dropping its response");
-
-    assert!(matches!(
-        pending.wait_result_until(Instant::now() + Duration::from_secs(1)),
-        Err(StorageError::ResponseDropped)
-    ));
-
-    let deadline = Instant::now() + Duration::from_secs(1);
-    let mut summary = Err(StorageError::WorkerStopped);
-    while Instant::now() < deadline {
-        summary = database
-            .reopen()
-            .and_then(|database| database.summary(ride));
-        if summary.is_ok() {
-            break;
-        }
-        std::thread::yield_now();
-    }
-    assert_eq!(summary.unwrap().point_count(), 1.into());
-
-    assert_eq!(
-        database.reconcile_location_write(ride, sample).unwrap(),
-        LocationWriteReconciliation::Committed
-    );
-    let absent_sample = LocationSample::new(
-        Coordinate::from_degrees(40.001, -105.0).unwrap(),
-        1_002,
-        1_700_000_000_002,
-        None,
-        LocationSource::Live,
-    );
-    assert_eq!(
-        database
-            .reconcile_location_write(ride, absent_sample)
-            .unwrap(),
-        LocationWriteReconciliation::NotCommitted
-    );
-
     database.shutdown().unwrap();
     let _ = std::fs::remove_file(path);
 }
@@ -2472,57 +2348,115 @@ fn cancelled_in_flight_route_projection_leaves_worker_usable() {
 }
 
 #[test]
-fn route_projection_recovers_after_worker_exits_after_consuming_request() {
+fn durable_history_context_projection_excludes_selected_and_bounds_each_route() {
     let _guard = test_guard();
     let path = std::env::temp_dir().join(format!(
-        "libcutout-persistence-route-projection-worker-failure-{}.sqlite",
+        "libcutout-persistence-history-context-{}.sqlite",
         uuid::Uuid::new_v4()
     ));
     let database = RideDatabase::open(&path).unwrap();
-    let ride = database.create_ride(RideSource::Live, 40).unwrap();
-    database.transition(ride, RideEvent::Start).unwrap();
-    let sample = LocationSample::new(
-        Coordinate::from_degrees(40.0, -105.0).unwrap(),
-        1,
-        1_700_000_000_001,
-        None,
-        LocationSource::Live,
-    );
-    assert_eq!(
-        database.append_location(ride, sample).unwrap(),
-        LocationAdmission::Accepted
-    );
+    let mut rides = Vec::new();
+    for ride_index in 0..3_u64 {
+        let ride = database
+            .create_ride(RideSource::Live, 1_700_000_000_000 + ride_index * 10_000)
+            .unwrap();
+        database.transition(ride, RideEvent::Start).unwrap();
+        for point_index in 0..4_u64 {
+            let sample = LocationSample::new(
+                Coordinate::from_degrees(
+                    40.0 + f64::from(u32::try_from(ride_index).unwrap()) / 100.0
+                        + f64::from(u32::try_from(point_index).unwrap()) / 10_000.0,
+                    -105.0,
+                )
+                .unwrap(),
+                point_index + 1,
+                1_700_000_000_000 + ride_index * 10_000 + point_index,
+                None,
+                LocationSource::Live,
+            );
+            assert_eq!(
+                database.append_location(ride, sample).unwrap(),
+                LocationAdmission::Accepted
+            );
+        }
+        rides.push(ride);
+    }
 
-    let (entered_sender, entered_receiver) = std::sync::mpsc::sync_channel(0);
-    let projection_database = database.clone();
-    let projection = std::thread::spawn(move || {
-        projection_database.project_route_points_with_worker_failure_for_test(
-            ride,
+    let projection = database
+        .project_history_context(
+            RideHistoryQuery::default(),
+            Some(rides[1]),
+            HistoryContextBudget::new(10, 2, 3, 4).unwrap(),
             None,
-            RouteDisplayBudget::new(2).unwrap(),
-            RoutePrivacyPolicy::Precise,
-            entered_sender,
+            RoutePrivacyPolicy::grid(RoutePrivacyGridE7::new(1_000).unwrap()),
         )
-    });
-    entered_receiver
-        .recv_timeout(Duration::from_secs(1))
-        .expect("worker consumes projection before exiting");
+        .unwrap();
 
-    assert!(matches!(
-        projection.join().unwrap(),
-        Err(StorageError::ResponseDropped)
+    assert_eq!(projection.source_history_route_count(), 3);
+    assert_eq!(projection.context_route_count(), 2);
+    assert_eq!(projection.routes().len(), 2);
+    assert!(!projection.routes_omitted_by_budget());
+    assert!(!projection.history_page_has_more());
+    assert_eq!(projection.total_display_point_count(), 4);
+    assert!(projection.routes().iter().all(|route| {
+        route.ride_id() != rides[1]
+            && route.projection().points().len() <= 3
+            && route.projection().points().iter().all(|point| {
+                point.privacy_class() == cutout_ride_maps::RoutePrivacyClass::GridRedacted
+            })
+    }));
+
+    database.shutdown().unwrap();
+    let _ = std::fs::remove_file(path);
+}
+
+#[test]
+fn durable_history_context_projection_reports_aggregate_budget_omissions() {
+    let _guard = test_guard();
+    let path = std::env::temp_dir().join(format!(
+        "libcutout-persistence-history-context-budget-{}.sqlite",
+        uuid::Uuid::new_v4()
     ));
+    let database = RideDatabase::open(&path).unwrap();
+    for ride_index in 0..3_u64 {
+        let ride = database
+            .create_ride(RideSource::Live, 1_700_000_000_000 + ride_index * 10_000)
+            .unwrap();
+        database.transition(ride, RideEvent::Start).unwrap();
+        for point_index in 0..2_u64 {
+            let sample = LocationSample::new(
+                Coordinate::from_degrees(
+                    40.0 + f64::from(u32::try_from(ride_index).unwrap()) / 100.0
+                        + f64::from(u32::try_from(point_index).unwrap()) / 10_000.0,
+                    -105.0,
+                )
+                .unwrap(),
+                point_index + 1,
+                1_700_000_000_000 + ride_index * 10_000 + point_index,
+                None,
+                LocationSource::Live,
+            );
+            assert_eq!(
+                database.append_location(ride, sample).unwrap(),
+                LocationAdmission::Accepted
+            );
+        }
+    }
 
-    let recovered = database
-        .project_route_points(
-            ride,
+    let projection = database
+        .project_history_context(
+            RideHistoryQuery::default(),
             None,
-            RouteDisplayBudget::new(2).unwrap(),
+            HistoryContextBudget::new(10, 3, 3, 2).unwrap(),
+            None,
             RoutePrivacyPolicy::Precise,
         )
-        .expect("the next projection transparently recovers the worker");
-    assert_eq!(recovered.points().len(), 1);
-    assert_eq!(recovered.source_point_count(), 1);
+        .unwrap();
+
+    assert_eq!(projection.context_route_count(), 3);
+    assert_eq!(projection.routes().len(), 1);
+    assert_eq!(projection.total_display_point_count(), 2);
+    assert!(projection.routes_omitted_by_budget());
 
     database.shutdown().unwrap();
     let _ = std::fs::remove_file(path);

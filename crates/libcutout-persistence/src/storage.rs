@@ -1,9 +1,11 @@
 use cutout_core::{PevcapEncoding, PevcapEvent, PevcapPhoneLocation, PevcapReader};
 use cutout_ride_maps::{
-    Coordinate, LocationAdmission, LocationSample, LocationSource, RideEvent, RideLifecycleState,
-    RideMapPoint, RideMapRecorder, RideMapSegmentId, RideSummary, RouteDisplayBudget,
-    RouteDisplayPoint, RoutePrivacyPolicy, RouteProjectionAccumulator, RouteTelemetryState,
-    RouteViewport, TransitionError, count_segment_runs,
+    AverageSpeedMillimetresPerSecond, Coordinate, LocationAdmission, LocationSample,
+    LocationSource, RideEvent, RideLifecycleState, RideMapPoint, RideMapRecorder, RideMapSegmentId,
+    RidePointCount, RidePointSequence, RideSegmentStartReason, RideSummary, RouteDisplayBudget,
+    RouteDisplayPoint, RouteEndpointMetadata, RoutePrivacyPolicy, RouteProjectionAccumulator,
+    RouteSegmentDisplayMetadata, RouteTelemetryState, RouteViewport, TransitionError,
+    count_segment_runs, route_segment_display_metadata,
 };
 use hex::encode as hex_encode;
 use rusqlite::{Connection, ErrorCode, OptionalExtension, params};
@@ -563,6 +565,7 @@ impl RoutePointCursor {
 pub struct RoutePoint {
     sequence: u64,
     segment_id: u64,
+    start_reason: RideSegmentStartReason,
     sample: LocationSample,
     telemetry_state: RouteTelemetryState,
 }
@@ -970,12 +973,6 @@ impl MapPointId {
     }
 }
 
-impl Default for MapPointId {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 /// Validated fixed-point WGS84 query bounds.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct GeoBounds {
@@ -1197,12 +1194,6 @@ pub enum StorageError {
     /// the same sample blindly.
     #[error("ride database response was dropped")]
     ResponseDropped,
-    /// Reconciliation confirmed that a response-lost location was not committed.
-    ///
-    /// This is intentionally distinct from [`StorageError::ResponseDropped`]: callers have
-    /// resolved the unknown outcome and must decide whether to re-admit the sample explicitly.
-    #[error("location write was not committed after response loss")]
-    LocationWriteNotCommitted,
     /// A second worker could not be started.
     #[error("could not start ride database worker: {0}")]
     WorkerStart(String),
@@ -1296,8 +1287,12 @@ pub struct RoutePointProjection {
     points: Vec<RouteDisplayPoint>,
     source_point_count: u64,
     source_segment_count: u64,
+    candidate_point_count: u64,
     candidate_segment_count: u64,
     displayed_segment_count: u64,
+    background_gap_count: u64,
+    endpoint_metadata: RouteEndpointMetadata,
+    segments: Vec<RouteSegmentDisplayMetadata>,
 }
 
 impl RoutePointProjection {
@@ -1307,31 +1302,54 @@ impl RoutePointProjection {
         &self.points
     }
 
-    /// Returns the complete durable point count before viewport or LOD filtering.
+    /// Returns the complete durable point count before LOD or viewport filtering.
     #[must_use]
     pub const fn source_point_count(&self) -> u64 {
         self.source_point_count
     }
 
-    /// Returns the complete durable segment count before viewport or display LOD.
+    /// Returns the complete durable segment count before viewport filtering or display LOD.
     #[must_use]
     pub const fn source_segment_count(&self) -> u64 {
         self.source_segment_count
     }
 
-    /// Returns the segment count represented by points in the viewport.
+    /// Returns the point count inside the requested viewport before display LOD.
+    #[must_use]
+    pub const fn candidate_point_count(&self) -> u64 {
+        self.candidate_point_count
+    }
+
+    /// Returns the segment count represented by points inside the requested viewport.
     #[must_use]
     pub const fn candidate_segment_count(&self) -> u64 {
         self.candidate_segment_count
     }
 
-    /// Returns the segment count represented by bounded display points.
+    /// Returns the segment count represented by the bounded display points.
     #[must_use]
     pub const fn displayed_segment_count(&self) -> u64 {
         self.displayed_segment_count
     }
-}
 
+    /// Returns the complete durable count of segments started by a background location gap.
+    #[must_use]
+    pub const fn background_gap_count(&self) -> u64 {
+        self.background_gap_count
+    }
+
+    /// Returns canonical endpoint sequences and viewport visibility.
+    #[must_use]
+    pub const fn endpoint_metadata(&self) -> RouteEndpointMetadata {
+        self.endpoint_metadata
+    }
+
+    /// Returns bounded metadata for the visible projected segment runs.
+    #[must_use]
+    pub fn segments(&self) -> &[RouteSegmentDisplayMetadata] {
+        &self.segments
+    }
+}
 /// Cooperative cancellation token for a durable route projection.
 #[derive(Clone, Default)]
 pub struct RouteProjectionCancellation {
@@ -2351,28 +2369,6 @@ impl RideDatabase {
         })
     }
 
-    /// Reconciles a location after [`StorageError::ResponseDropped`].
-    ///
-    /// This performs a durable identity lookup after reacquiring the worker. `Committed` means
-    /// the location is already present and must not be retried. `NotCommitted` means the atomic
-    /// location transaction left no matching row and the caller may enqueue the sample once.
-    /// This method never retries a write itself.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`StorageError`] when the worker cannot be reacquired or the lookup fails.
-    pub fn reconcile_location_write(
-        &self,
-        ride_id: RideId,
-        sample: LocationSample,
-    ) -> Result<LocationWriteReconciliation, StorageError> {
-        self.request(move |reply| Command::ReconcileLocationWrite {
-            ride_id,
-            sample,
-            reply,
-        })
-    }
-
     /// Enqueues a location behind a deterministic worker gate for persistence tests.
     #[cfg(test)]
     pub(crate) fn enqueue_location_with_worker_gate_for_test(
@@ -2400,59 +2396,15 @@ impl RideDatabase {
         })
     }
 
-    /// Enqueues a location while a `SQLite` progress callback holds the worker before the write.
-    #[cfg(test)]
-    pub(crate) fn enqueue_location_with_slow_sqlite_worker_for_test(
-        &self,
-        ride_id: RideId,
-        sample: LocationSample,
-        segment_id: u64,
-        telemetry_state: RouteTelemetryState,
-        entered: SyncSender<()>,
-        release: Receiver<()>,
-    ) -> Result<PendingLocationWrite, StorageError> {
-        let (reply, response) = response_channel();
-        self.enqueue(Command::AppendLocationWithSlowSqliteWorker {
-            ride_id,
-            sample,
-            segment_id: RideMapSegmentId::new(segment_id),
-            telemetry_state,
-            entered,
-            release,
-            reply,
-        })?;
-        Ok(PendingLocationWrite { response })
-    }
-
     /// Enqueues a location and deliberately loses its terminal response after worker failure.
     #[cfg(test)]
     pub(crate) fn enqueue_location_with_worker_failure_for_test(
         &self,
-        ride_id: RideId,
-        sample: LocationSample,
-        segment_id: u64,
-        telemetry_state: RouteTelemetryState,
+        _ride_id: RideId,
+        _sample: LocationSample,
+        _segment_id: u64,
+        _telemetry_state: RouteTelemetryState,
         entered: SyncSender<()>,
-    ) -> Result<PendingLocationWrite, StorageError> {
-        self.enqueue_location_worker_failure_for_test(
-            ride_id,
-            sample,
-            segment_id,
-            telemetry_state,
-            entered,
-            WorkerFailurePoint::BeforeWrite,
-        )
-    }
-
-    #[cfg(test)]
-    fn enqueue_location_worker_failure_for_test(
-        &self,
-        ride_id: RideId,
-        sample: LocationSample,
-        segment_id: u64,
-        telemetry_state: RouteTelemetryState,
-        entered: SyncSender<()>,
-        failure_point: WorkerFailurePoint,
     ) -> Result<PendingLocationWrite, StorageError> {
         let (reply, response) = response_channel();
         self.enqueue(Command::AppendLocationWithWorkerFailure { entered, reply })?;
@@ -2460,28 +2412,6 @@ impl RideDatabase {
             response,
             consumed: false,
         })
-    }
-
-    /// Enqueues a location, commits it, and deliberately loses its terminal response after
-    /// worker failure. This models a worker dying after `SQLite` commits but before the caller
-    /// observes the result.
-    #[cfg(test)]
-    pub(crate) fn enqueue_location_with_worker_failure_after_write_for_test(
-        &self,
-        ride_id: RideId,
-        sample: LocationSample,
-        segment_id: u64,
-        telemetry_state: RouteTelemetryState,
-        entered: SyncSender<()>,
-    ) -> Result<PendingLocationWrite, StorageError> {
-        self.enqueue_location_worker_failure_for_test(
-            ride_id,
-            sample,
-            segment_id,
-            telemetry_state,
-            entered,
-            WorkerFailurePoint::AfterWrite,
-        )
     }
 
     /// Loads the durable summary projection for one ride.
@@ -2895,13 +2825,6 @@ struct ManagedArtifact {
     created: bool,
 }
 
-#[cfg(test)]
-#[derive(Clone, Copy)]
-enum WorkerFailurePoint {
-    BeforeWrite,
-    AfterWrite,
-}
-
 enum Command {
     Capabilities {
         reply: Reply<SqliteCapabilities>,
@@ -3082,11 +3005,7 @@ enum Command {
         reply: Reply<LocationWriteResult>,
     },
     #[cfg(test)]
-    AppendLocationWithSlowSqliteWorker {
-        ride_id: RideId,
-        sample: LocationSample,
-        segment_id: RideMapSegmentId,
-        telemetry_state: RouteTelemetryState,
+    AppendLocationWithWorkerFailure {
         entered: SyncSender<()>,
         reply: Reply<LocationWriteResult>,
     },
@@ -3135,15 +3054,6 @@ enum Command {
         budget: RouteDisplayBudget,
         privacy: RoutePrivacyPolicy,
         cancellation: Option<RouteProjectionCancellation>,
-        reply: Reply<RoutePointProjection>,
-    },
-    #[cfg(test)]
-    ProjectRoutePointsWithWorkerFailure {
-        ride_id: RideId,
-        viewport: Option<RouteViewport>,
-        budget: RouteDisplayBudget,
-        privacy: RoutePrivacyPolicy,
-        entered: SyncSender<()>,
         reply: Reply<RoutePointProjection>,
     },
     #[cfg(test)]
@@ -3498,45 +3408,7 @@ fn worker_loop(
                 let _ = reply.send(result);
             }
             #[cfg(test)]
-            Command::AppendLocationWithSlowSqliteWorker {
-                ride_id,
-                sample,
-                segment_id,
-                telemetry_state,
-                entered,
-                release,
-                reply,
-            } => {
-                install_sqlite_progress_gate(&connection, entered, release);
-                let result = append_location(
-                    &mut connection,
-                    ride_id,
-                    sample,
-                    segment_id,
-                    telemetry_state,
-                );
-                connection.progress_handler(0, None::<fn() -> bool>);
-                let _ = reply.send(result);
-            }
-            #[cfg(test)]
-            Command::AppendLocationWithWorkerFailure {
-                ride_id,
-                sample,
-                segment_id,
-                telemetry_state,
-                entered,
-                failure_point,
-                reply,
-            } => {
-                if matches!(failure_point, WorkerFailurePoint::AfterWrite) {
-                    let _ = append_location(
-                        &mut connection,
-                        ride_id,
-                        sample,
-                        segment_id,
-                        telemetry_state,
-                    );
-                }
+            Command::AppendLocationWithWorkerFailure { entered, reply } => {
                 worker_alive.store(false, Ordering::Release);
                 let _ = entered.send(());
                 drop(reply);
@@ -3622,21 +3494,6 @@ fn worker_loop(
                     cancellation.clear_interrupt();
                 }
                 let _ = reply.send(result);
-            }
-            #[cfg(test)]
-            Command::ProjectRoutePointsWithWorkerFailure {
-                ride_id,
-                viewport,
-                budget,
-                privacy,
-                entered,
-                reply,
-            } => {
-                let _ = project_route_points(&connection, ride_id, viewport, budget, privacy, None);
-                worker_alive.store(false, Ordering::Release);
-                let _ = entered.send(());
-                drop(reply);
-                break;
             }
             #[cfg(test)]
             Command::InstallRouteProjectionTestGate {
@@ -3936,7 +3793,7 @@ pub(crate) fn create_current_schema(connection: &Connection) -> Result<(), Stora
         CREATE TABLE ride_segments (
             ride_id TEXT NOT NULL REFERENCES rides(id) ON DELETE CASCADE,
             segment_id INTEGER NOT NULL CHECK (segment_id >= 0),
-            point_count INTEGER NOT NULL CHECK (point_count >= 0),
+            point_count INTEGER NOT NULL DEFAULT 0 CHECK (point_count >= 0),
             sequence INTEGER NOT NULL CHECK (sequence >= 0),
             start_reason TEXT NOT NULL CHECK (start_reason IN ('initial', 'resume', 'background_gap', 'import_boundary')),
             source TEXT NOT NULL CHECK (source IN ('live', 'pevcap_import')),
@@ -4529,7 +4386,7 @@ fn migrate_v13_to_current(connection: &mut Connection) -> Result<(), StorageErro
     if map_points_are_uuid_backed && trail_segments_are_composite {
         connection
             .execute_batch("PRAGMA application_id = 1129665615; PRAGMA user_version = 14;")?;
-        return Ok(());
+        return migrate_v14_to_current(connection);
     }
     let transaction = connection.transaction()?;
     transaction.execute_batch(
@@ -6100,38 +5957,6 @@ fn append_location_with_result(
     Ok(result)
 }
 
-fn reconcile_location_write(
-    connection: &Connection,
-    ride_id: RideId,
-    sample: LocationSample,
-) -> Result<LocationWriteReconciliation, StorageError> {
-    let committed: bool = connection.query_row(
-        "SELECT EXISTS(
-             SELECT 1 FROM ride_points
-             WHERE ride_id = ?1
-               AND monotonic_ms = ?2
-               AND wall_clock_ms = ?3
-               AND latitude_e7 = ?4
-               AND longitude_e7 = ?5
-               AND source = ?6
-         )",
-        params![
-            ride_id.uuid().to_string(),
-            sample.monotonic_milliseconds().as_u64(),
-            sample.wall_clock_unix_milliseconds().as_u64(),
-            sample.coordinate().latitude().as_i32(),
-            sample.coordinate().longitude().as_i32(),
-            source_to_db(sample.source()),
-        ],
-        |row| row.get(0),
-    )?;
-    Ok(if committed {
-        LocationWriteReconciliation::Committed
-    } else {
-        LocationWriteReconciliation::NotCommitted
-    })
-}
-
 fn append_location_in_transaction(
     connection: &Connection,
     ride_id: RideId,
@@ -6195,7 +6020,7 @@ fn append_location_in_transaction(
             distance_millimetres,
             updated_at_ms,
         } => {
-            ensure_ride_segment(connection, ride_id, sample, segment_id)?;
+            ensure_ride_segment(connection, ride_id, previous.as_ref(), sample, segment_id)?;
             let sequence = previous
                 .map(|(sequence, _, _)| sequence + 1)
                 .unwrap_or_default();
@@ -6239,37 +6064,54 @@ fn append_location_in_transaction(
 fn ensure_ride_segment(
     connection: &Connection,
     ride_id: RideId,
+    previous: Option<&(i64, u64, LocationSample)>,
     sample: LocationSample,
     segment_id: u64,
 ) -> Result<(), StorageError> {
+    let segment_identity = RideMapSegmentId::new(segment_id);
     let segment_id = i64::try_from(segment_id).map_err(|_| StorageError::InvalidStoredValue {
         field: "ride segment identifier",
         value: segment_id.to_string(),
     })?;
-    let source = source_to_db(sample.source());
-    let start_reason = if segment_id == 0 {
-        "initial"
-    } else if matches!(sample.source(), LocationSource::PevcapImport) {
-        "import_boundary"
-    } else {
-        "background_gap"
-    };
-    let updated = connection.execute(
-        "UPDATE ride_segments
-         SET ended_monotonic_ms = MAX(COALESCE(ended_monotonic_ms, started_monotonic_ms), ?3),
-             ended_wall_clock_ms = MAX(COALESCE(ended_wall_clock_ms, started_wall_clock_ms), ?4)
-         WHERE ride_id = ?1 AND segment_id = ?2 AND source = ?5",
-        params![
-            ride_id.uuid().to_string(),
-            segment_id,
-            sample.monotonic_milliseconds().as_u64(),
-            sample.wall_clock_unix_milliseconds().as_u64(),
-            source,
-        ],
-    )?;
-    if updated != 0 {
+    let existing = connection
+        .query_row(
+            "SELECT start_reason, source FROM ride_segments
+             WHERE ride_id = ?1 AND segment_id = ?2",
+            params![ride_id.uuid().to_string(), segment_id],
+            |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
+        )
+        .optional()?;
+    if let Some((reason, source)) = existing {
+        segment_start_reason_from_db(&reason)?;
+        let expected_source = source_to_db(sample.source());
+        if source != expected_source {
+            return Err(StorageError::InvalidStoredValue {
+                field: "ride segment source",
+                value: source,
+            });
+        }
+        connection.execute(
+            "UPDATE ride_segments
+             SET ended_monotonic_ms = MAX(COALESCE(ended_monotonic_ms, started_monotonic_ms), ?3),
+                 ended_wall_clock_ms = MAX(COALESCE(ended_wall_clock_ms, started_wall_clock_ms), ?4)
+             WHERE ride_id = ?1 AND segment_id = ?2",
+            params![
+                ride_id.uuid().to_string(),
+                segment_id,
+                sample.monotonic_milliseconds().as_u64(),
+                sample.wall_clock_unix_milliseconds().as_u64(),
+            ],
+        )?;
         return Ok(());
     }
+
+    let start_reason = segment_start_reason(previous, sample, segment_identity);
+    let start_reason = match start_reason {
+        RideSegmentStartReason::Initial => "initial",
+        RideSegmentStartReason::Resume => "resume",
+        RideSegmentStartReason::BackgroundGap => "background_gap",
+        RideSegmentStartReason::ImportBoundary => "import_boundary",
+    };
     connection.execute(
         "INSERT INTO ride_segments
             (ride_id, segment_id, point_count, sequence, start_reason, source,
@@ -6279,12 +6121,38 @@ fn ensure_ride_segment(
             ride_id.uuid().to_string(),
             segment_id,
             start_reason,
-            source,
+            source_to_db(sample.source()),
             sample.monotonic_milliseconds().as_u64(),
             sample.wall_clock_unix_milliseconds().as_u64(),
         ],
     )?;
     Ok(())
+}
+
+fn segment_start_reason(
+    previous: Option<&(i64, u64, LocationSample)>,
+    sample: LocationSample,
+    segment_id: RideMapSegmentId,
+) -> RideSegmentStartReason {
+    let Some((_, previous_segment_id, previous_sample)) = previous else {
+        return match sample.source() {
+            LocationSource::Live => RideSegmentStartReason::Initial,
+            LocationSource::PevcapImport => RideSegmentStartReason::ImportBoundary,
+        };
+    };
+    if *previous_segment_id == segment_id.value() {
+        return RideSegmentStartReason::Initial;
+    }
+    let gap_started = sample
+        .monotonic_milliseconds()
+        .as_u64()
+        .saturating_sub(previous_sample.monotonic_milliseconds().as_u64())
+        > cutout_ride_maps::MAX_GAP_MILLISECONDS;
+    if gap_started {
+        RideSegmentStartReason::BackgroundGap
+    } else {
+        RideSegmentStartReason::Resume
+    }
 }
 
 #[allow(
@@ -6402,7 +6270,7 @@ fn insert_location(connection: &Connection, insert: &LocationInsert) -> Result<(
         "UPDATE ride_segments
          SET point_count = point_count + 1
          WHERE ride_id = ?1 AND segment_id = ?2",
-        params![ride_id.uuid().to_string(), segment_id.value()],
+        params![ride_id.uuid().to_string(), segment_id],
     )?;
     Ok(())
 }
@@ -6421,6 +6289,14 @@ fn load_summary(connection: &Connection, ride_id: RideId) -> Result<RideSummary,
         )
         .optional()?
         .ok_or(StorageError::NotFound)
+}
+
+fn load_summary_with_duration(
+    connection: &Connection,
+    ride_id: RideId,
+) -> Result<(RideSummary, u64), StorageError> {
+    let ride = find_ride(connection, ride_id)?.ok_or(StorageError::NotFound)?;
+    Ok((ride.summary(), ride.duration_milliseconds()))
 }
 
 fn find_ride(connection: &Connection, ride_id: RideId) -> Result<Option<RideRecord>, StorageError> {
@@ -6452,7 +6328,11 @@ fn find_ride(connection: &Connection, ride_id: RideId) -> Result<Option<RideReco
                     END,
                     point_count, distance_mm,
                     (SELECT COUNT(DISTINCT segment_id) FROM ride_points WHERE ride_id = rides.id),
-                    candidate_vehicle, associated_vehicle, associated_at_ms, last_telemetry_at_ms
+                    candidate_vehicle, associated_vehicle, associated_at_ms, last_telemetry_at_ms,
+                    (SELECT display_name FROM devices
+                     WHERE platform_identifier = rides.candidate_vehicle),
+                    (SELECT display_name FROM devices
+                     WHERE platform_identifier = rides.associated_vehicle)
              FROM rides
              WHERE state NOT IN ('draft', 'discarded') AND id = ?1",
             params![ride_id.uuid().to_string()],
@@ -6491,7 +6371,11 @@ fn newest_recoverable_ride(connection: &Connection) -> Result<Option<RideRecord>
                     END,
                     point_count, distance_mm,
                     (SELECT COUNT(DISTINCT segment_id) FROM ride_points WHERE ride_id = rides.id),
-                    candidate_vehicle, associated_vehicle, associated_at_ms, last_telemetry_at_ms
+                    candidate_vehicle, associated_vehicle, associated_at_ms, last_telemetry_at_ms,
+                    (SELECT display_name FROM devices
+                     WHERE platform_identifier = rides.candidate_vehicle),
+                    (SELECT display_name FROM devices
+                     WHERE platform_identifier = rides.associated_vehicle)
              FROM rides
              WHERE state IN ('active', 'paused', 'stopped', 'interrupted')
              ORDER BY created_at_ms DESC, id DESC
@@ -6554,7 +6438,8 @@ fn list_rides(
                            rides.point_count, rides.distance_mm,
                            (SELECT COUNT(DISTINCT segment_id) FROM ride_points WHERE ride_id = rides.id),
                            rides.candidate_vehicle, rides.associated_vehicle, rides.associated_at_ms,
-                           rides.last_telemetry_at_ms
+                           rides.last_telemetry_at_ms,
+                           candidate_device.display_name, associated_device.display_name
                     FROM rides
                     LEFT JOIN devices AS associated_device
                         ON associated_device.platform_identifier = rides.associated_vehicle
@@ -6696,6 +6581,8 @@ fn ride_record_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<RideRecord>
         associated_vehicle: row.get(15)?,
         associated_at_ms: row.get(16)?,
         last_telemetry_at_ms: row.get(17)?,
+        candidate_vehicle_name: row.get(18)?,
+        associated_vehicle_name: row.get(19)?,
     })
 }
 
@@ -6748,6 +6635,80 @@ fn route_points(
     })
 }
 
+fn project_history_context(
+    connection: &Connection,
+    query: &RideHistoryQuery,
+    selected_ride: Option<RideId>,
+    budget: HistoryContextBudget,
+    viewport: Option<RouteViewport>,
+    privacy: RoutePrivacyPolicy,
+    cancellation: &RouteProjectionCancellation,
+) -> Result<HistoryContextProjection, StorageError> {
+    projection_checkpoint(Some(cancellation))?;
+    let page = list_rides(connection, None, budget.history_page_limit, query)?;
+    projection_checkpoint(Some(cancellation))?;
+
+    let source_history_route_count = u64::try_from(page.rides.len()).unwrap_or(u64::MAX);
+    let context_route_count = u64::try_from(
+        page.rides
+            .iter()
+            .filter(|ride| Some(ride.id) != selected_ride)
+            .count(),
+    )
+    .unwrap_or(u64::MAX);
+    let mut routes = Vec::with_capacity(budget.max_routes);
+    let mut total_display_point_count = 0usize;
+    let mut routes_omitted_by_budget = false;
+
+    for ride in &page.rides {
+        if Some(ride.id) == selected_ride {
+            continue;
+        }
+        if routes.len() == budget.max_routes {
+            routes_omitted_by_budget = true;
+            break;
+        }
+        let remaining = budget
+            .total_point_budget
+            .saturating_sub(total_display_point_count);
+        if remaining == 0 {
+            routes_omitted_by_budget = true;
+            break;
+        }
+        projection_checkpoint(Some(cancellation))?;
+        let route_budget = RouteDisplayBudget::new(
+            budget.per_route_budget.as_usize().min(remaining),
+        )
+        .ok_or(StorageError::InvalidHistoryContextBudget {
+            field: "aggregate point budget",
+            value: u32::try_from(remaining).unwrap_or(u32::MAX),
+        })?;
+        let projection = project_route_points(
+            connection,
+            ride.id,
+            viewport,
+            route_budget,
+            privacy,
+            Some(cancellation),
+        )?;
+        total_display_point_count =
+            total_display_point_count.saturating_add(projection.points().len());
+        routes.push(HistoryContextRoute {
+            ride_id: ride.id,
+            projection,
+        });
+    }
+
+    Ok(HistoryContextProjection {
+        routes,
+        source_history_route_count,
+        context_route_count,
+        total_display_point_count: u64::try_from(total_display_point_count).unwrap_or(u64::MAX),
+        routes_omitted_by_budget,
+        history_page_has_more: page.next_cursor.is_some(),
+    })
+}
+
 fn project_route_points(
     connection: &Connection,
     ride_id: RideId,
@@ -6756,10 +6717,7 @@ fn project_route_points(
     privacy: RoutePrivacyPolicy,
     cancellation: Option<&RouteProjectionCancellation>,
 ) -> Result<RoutePointProjection, StorageError> {
-    let cancelled = || cancellation.is_some_and(RouteProjectionCancellation::is_cancelled);
-    if cancelled() {
-        return Err(StorageError::Cancelled);
-    }
+    projection_checkpoint(cancellation)?;
     let ride_id = ride_id.uuid().to_string();
     let exists: bool = projection_sqlite(
         connection.query_row(
@@ -6772,79 +6730,173 @@ fn project_route_points(
     if !exists {
         return Err(StorageError::NotFound);
     }
+
+    projection_checkpoint(cancellation)?;
+
     let counts = route_projection_counts(connection, &ride_id, viewport, cancellation)?;
-    let visibility = route_point_viewport_expression(viewport);
-    let query = format!(
-        "SELECT sequence, segment_id, telemetry_state, monotonic_ms, wall_clock_ms, latitude_e7, longitude_e7, horizontal_accuracy_mm, source, COUNT(*) OVER() AS source_count, SUM(CASE WHEN {visibility} THEN 1 ELSE 0 END) OVER() AS candidate_count, ({visibility}) AS is_visible FROM ride_points WHERE ride_id = ?1 ORDER BY sequence ASC"
+    projection_checkpoint(cancellation)?;
+    let candidate_count = usize::try_from(counts.candidate_point_count).unwrap_or(usize::MAX);
+    let endpoint_metadata = route_endpoint_metadata_from_storage(
+        connection,
+        &ride_id,
+        counts.source_start_sequence,
+        counts.source_end_sequence,
+        viewport,
+        cancellation,
+    )?;
+    if candidate_count == 0 {
+        return Ok(RoutePointProjection {
+            points: Vec::new(),
+            source_point_count: counts.source_point_count,
+            source_segment_count: counts.source_segment_count,
+            candidate_point_count: counts.candidate_point_count,
+            candidate_segment_count: counts.candidate_segment_count,
+            displayed_segment_count: 0,
+            background_gap_count: counts.background_gap_count,
+            endpoint_metadata,
+            segments: Vec::new(),
+        });
+    }
+
+    let (points, displayed_segment_count, segments) = project_route_candidates(
+        connection,
+        &ride_id,
+        &counts,
+        viewport,
+        budget,
+        privacy,
+        cancellation,
+    )?;
+    Ok(RoutePointProjection {
+        points,
+        source_point_count: counts.source_point_count,
+        source_segment_count: counts.source_segment_count,
+        candidate_point_count: counts.candidate_point_count,
+        candidate_segment_count: counts.candidate_segment_count,
+        displayed_segment_count,
+        background_gap_count: counts.background_gap_count,
+        endpoint_metadata,
+        segments,
+    })
+}
+
+fn project_route_candidates(
+    connection: &Connection,
+    ride_id: &str,
+    counts: &RouteProjectionCounts,
+    viewport: Option<RouteViewport>,
+    budget: RouteDisplayBudget,
+    privacy: RoutePrivacyPolicy,
+    cancellation: Option<&RouteProjectionCancellation>,
+) -> Result<
+    (
+        Vec<RouteDisplayPoint>,
+        u64,
+        Vec<RouteSegmentDisplayMetadata>,
+    ),
+    StorageError,
+> {
+    let select = format!(
+        "SELECT points.sequence, points.segment_id, points.telemetry_state, points.monotonic_ms,
+                points.wall_clock_ms, points.latitude_e7, points.longitude_e7,
+                points.horizontal_accuracy_mm, points.source, segments.start_reason,
+                segments.point_count
+         FROM ride_points AS points
+         JOIN ride_segments AS segments
+           ON segments.ride_id = points.ride_id AND segments.segment_id = points.segment_id
+         WHERE points.ride_id = ?1{}
+         ORDER BY points.sequence ASC",
+        counts.viewport_predicate
     );
-    let mut statement = connection.prepare(&query)?;
+    let mut statement = projection_sqlite(connection.prepare(&select), cancellation)?;
+    projection_checkpoint(cancellation)?;
     let rows = if let Some(viewport) = viewport {
-        statement.query_map(
-            params![
-                ride_id,
-                viewport.minimum_latitude().as_i32(),
-                viewport.maximum_latitude().as_i32(),
-                viewport.minimum_longitude().as_i32(),
-                viewport.maximum_longitude().as_i32(),
-            ],
-            project_route_row,
+        projection_sqlite(
+            statement.query_map(
+                params![
+                    ride_id,
+                    viewport.minimum_latitude().as_i32(),
+                    viewport.maximum_latitude().as_i32(),
+                    viewport.minimum_longitude().as_i32(),
+                    viewport.maximum_longitude().as_i32(),
+                ],
+                projected_route_point_from_row,
+            ),
+            cancellation,
         )?
     } else {
-        statement.query_map([ride_id], project_route_row)?
+        projection_sqlite(
+            statement.query_map([ride_id], projected_route_point_from_row),
+            cancellation,
+        )?
     };
-    let mut accumulator = None;
-    let mut source_point_count = 0;
-    let mut candidate_ordinal = 0;
-    for row in rows {
-        if cancelled() {
-            return Err(StorageError::Cancelled);
-        }
-        let (point, row_source_count, candidate_count, is_visible) = row?;
-        source_point_count = row_source_count;
-        if !is_visible {
-            continue;
-        }
-        let accumulator = accumulator.get_or_insert_with(|| {
-            RouteProjectionAccumulator::new(
-                usize::try_from(candidate_count).unwrap_or(usize::MAX),
-                budget,
-                privacy,
-            )
-        });
-        accumulator.push(
+    let candidate_count = usize::try_from(counts.candidate_point_count).unwrap_or(usize::MAX);
+    let mut accumulator = RouteProjectionAccumulator::new(candidate_count, budget, privacy);
+    for (candidate_ordinal, row) in rows.enumerate() {
+        projection_checkpoint(cancellation)?;
+        let (point, canonical_point_count) = projection_sqlite(row, cancellation)?;
+        accumulator.push_with_canonical_point_count(
             candidate_ordinal,
             point.sequence(),
-            RideMapPoint::new(
+            RideMapPoint::new_with_start_reason(
                 point.sample(),
                 RideMapSegmentId::new(point.segment_id()),
                 point.telemetry_state(),
+                point.start_reason(),
             ),
+            Some(RidePointCount::new(canonical_point_count)),
         );
-        candidate_ordinal += 1;
         if accumulator.is_complete() {
             break;
         }
     }
-    if cancelled() {
-        return Err(StorageError::Cancelled);
-    }
-    let points = accumulator.map_or_else(Vec::new, RouteProjectionAccumulator::finish);
-    let displayed_segment_count = count_segment_runs(points.iter().map(|point| point.segment_id()))
-        .try_into()
-        .unwrap_or(u64::MAX);
-    Ok(RoutePointProjection {
-        points,
-        source_point_count: counts.source_points.max(source_point_count),
-        source_segment_count: counts.source_segments,
-        candidate_segment_count: counts.candidate_segments,
-        displayed_segment_count,
-    })
+    projection_checkpoint(cancellation)?;
+    let points = accumulator.finish();
+    let segments = route_segment_display_metadata(points.iter().copied());
+    let displayed_segment_count = u64::try_from(count_segment_runs(
+        points.iter().copied().map(RouteDisplayPoint::segment_id),
+    ))
+    .unwrap_or(u64::MAX);
+    Ok((points, displayed_segment_count, segments))
+}
+
+fn route_endpoint_metadata_from_storage(
+    connection: &Connection,
+    ride_id: &str,
+    source_start_sequence: Option<u64>,
+    source_end_sequence: Option<u64>,
+    viewport: Option<RouteViewport>,
+    cancellation: Option<&RouteProjectionCancellation>,
+) -> Result<RouteEndpointMetadata, StorageError> {
+    Ok(RouteEndpointMetadata::new(
+        source_start_sequence.map(RidePointSequence::new),
+        source_end_sequence.map(RidePointSequence::new),
+        endpoint_is_visible(
+            connection,
+            ride_id,
+            source_start_sequence,
+            viewport,
+            cancellation,
+        )?,
+        endpoint_is_visible(
+            connection,
+            ride_id,
+            source_end_sequence,
+            viewport,
+            cancellation,
+        )?,
+    ))
 }
 
 struct RouteProjectionCounts {
-    source_points: u64,
-    source_segments: u64,
-    candidate_segments: u64,
+    source_point_count: u64,
+    source_segment_count: u64,
+    background_gap_count: u64,
+    candidate_point_count: u64,
+    candidate_segment_count: u64,
+    viewport_predicate: String,
+    source_start_sequence: Option<u64>,
+    source_end_sequence: Option<u64>,
 }
 
 fn route_projection_counts(
@@ -6891,8 +6943,24 @@ fn route_projection_counts(
     )?;
     projection_checkpoint(cancellation)?;
     let viewport_predicate = route_point_viewport_predicate(viewport);
-    let candidate_segment_count = if let Some(viewport) = viewport {
-        let count = projection_sqlite(
+    let (candidate_point_count, candidate_segment_count) = if let Some(viewport) = viewport {
+        let parameters = params![
+            ride_id,
+            viewport.minimum_latitude().as_i32(),
+            viewport.maximum_latitude().as_i32(),
+            viewport.minimum_longitude().as_i32(),
+            viewport.maximum_longitude().as_i32(),
+        ];
+        let candidate_point_count = projection_sqlite(
+            connection.query_row(
+                &format!("SELECT COUNT(*) FROM ride_points WHERE ride_id = ?1{viewport_predicate}"),
+                parameters,
+                |row| row.get::<_, u64>(0),
+            ),
+            cancellation,
+        )?;
+        projection_checkpoint(cancellation)?;
+        let candidate_segment_count = projection_sqlite(
             connection.query_row(
                 &format!(
                     "SELECT COUNT(DISTINCT segment_id) FROM ride_points WHERE ride_id = ?1{viewport_predicate}"
@@ -6909,41 +6977,86 @@ fn route_projection_counts(
             cancellation,
         )?;
         projection_checkpoint(cancellation)?;
-        count
+        (candidate_point_count, candidate_segment_count)
     } else {
-        source_segment_count
+        (source_point_count, source_segment_count)
     };
     Ok(RouteProjectionCounts {
-        source_points: source_point_count,
-        source_segments: source_segment_count,
-        candidate_segments: candidate_segment_count,
+        source_point_count,
+        source_segment_count,
+        background_gap_count,
+        candidate_point_count,
+        candidate_segment_count,
+        viewport_predicate,
+        source_start_sequence,
+        source_end_sequence,
     })
 }
 
-fn project_route_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<(RoutePoint, u64, u64, bool)> {
-    Ok((
-        route_point_from_row(row)?,
-        row.get(9)?,
-        row.get(10)?,
-        row.get::<_, i64>(11)? != 0,
-    ))
+fn endpoint_is_visible(
+    connection: &Connection,
+    ride_id: &str,
+    sequence: Option<u64>,
+    viewport: Option<RouteViewport>,
+    cancellation: Option<&RouteProjectionCancellation>,
+) -> Result<bool, StorageError> {
+    let Some(sequence) = sequence else {
+        return Ok(false);
+    };
+    let sequence = i64::try_from(sequence).unwrap_or(i64::MAX);
+    let Some(viewport) = viewport else {
+        return Ok(true);
+    };
+    let visible = if viewport.crosses_antimeridian() {
+        connection.query_row(
+            "SELECT EXISTS(
+                SELECT 1 FROM ride_points
+                WHERE ride_id = ?1 AND sequence = ?2
+                  AND latitude_e7 BETWEEN ?3 AND ?4
+                  AND (longitude_e7 >= ?5 OR longitude_e7 <= ?6)
+            )",
+            params![
+                ride_id,
+                sequence,
+                viewport.minimum_latitude().as_i32(),
+                viewport.maximum_latitude().as_i32(),
+                viewport.minimum_longitude().as_i32(),
+                viewport.maximum_longitude().as_i32(),
+            ],
+            |row| row.get(0),
+        )?
+    } else {
+        connection.query_row(
+            "SELECT EXISTS(
+                SELECT 1 FROM ride_points
+                WHERE ride_id = ?1 AND sequence = ?2
+                  AND latitude_e7 BETWEEN ?3 AND ?4
+                  AND longitude_e7 BETWEEN ?5 AND ?6
+            )",
+            params![
+                ride_id,
+                sequence,
+                viewport.minimum_latitude().as_i32(),
+                viewport.maximum_latitude().as_i32(),
+                viewport.minimum_longitude().as_i32(),
+                viewport.maximum_longitude().as_i32(),
+            ],
+            |row| row.get(0),
+        )?
+    };
+    projection_checkpoint(cancellation)?;
+    Ok(visible)
 }
 
 fn route_point_viewport_predicate(viewport: Option<RouteViewport>) -> String {
     let Some(viewport) = viewport else {
         return String::new();
     };
-    format!(" AND {}", route_point_viewport_expression(Some(viewport)))
-}
-
-fn route_point_viewport_expression(viewport: Option<RouteViewport>) -> String {
-    let Some(viewport) = viewport else {
-        return "1".to_owned();
-    };
     if viewport.crosses_antimeridian() {
-        "latitude_e7 BETWEEN ?2 AND ?3 AND (longitude_e7 >= ?4 OR longitude_e7 <= ?5)".to_owned()
+        " AND latitude_e7 BETWEEN ?2 AND ?3 AND (longitude_e7 >= ?4 OR longitude_e7 <= ?5)"
+            .to_owned()
     } else {
-        "latitude_e7 BETWEEN ?2 AND ?3 AND longitude_e7 BETWEEN ?4 AND ?5".to_owned()
+        " AND latitude_e7 BETWEEN ?2 AND ?3 AND longitude_e7 BETWEEN ?4 AND ?5".to_owned()
     }
 }
 
@@ -6966,6 +7079,7 @@ fn route_point_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<RoutePoint>
     Ok(RoutePoint {
         sequence: row.get(0)?,
         segment_id: row.get(1)?,
+        start_reason,
         telemetry_state: RouteTelemetryState::from_storage(row.get(2)?).ok_or_else(|| {
             rusqlite::Error::FromSqlConversionFailure(
                 2,
@@ -6988,6 +7102,19 @@ fn route_point_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<RoutePoint>
 
 fn projected_route_point_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<(RoutePoint, u64)> {
     Ok((route_point_from_row(row)?, row.get(10)?))
+}
+
+fn segment_start_reason_from_db(value: &str) -> Result<RideSegmentStartReason, StorageError> {
+    match value {
+        "initial" => Ok(RideSegmentStartReason::Initial),
+        "resume" => Ok(RideSegmentStartReason::Resume),
+        "background_gap" => Ok(RideSegmentStartReason::BackgroundGap),
+        "import_boundary" => Ok(RideSegmentStartReason::ImportBoundary),
+        other => Err(StorageError::InvalidStoredValue {
+            field: "ride segment start reason",
+            value: other.to_owned(),
+        }),
+    }
 }
 
 fn ride_source_from_db(value: &str) -> Result<RideSource, StorageError> {

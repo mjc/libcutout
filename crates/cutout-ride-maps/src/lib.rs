@@ -24,10 +24,11 @@ pub use summary::{
 };
 mod recording;
 pub use recording::{
-    MAX_LIVE_ROUTE_POINTS, RideDurationMilliseconds, RideMapMetadata, RideMapPoint,
-    RideMapRecorder, RideMapSegmentId, RidePointSequence, RideRecordingTiming, RideSegmentCount,
-    RouteTelemetryState, TELEMETRY_FRESHNESS_MILLISECONDS, TelemetryObservation,
-    VehicleAssociation, VehicleIdentity, VehicleIdentityError,
+    BackgroundGapCount, MAX_GAP_MILLISECONDS, MAX_LIVE_ROUTE_POINTS, RideDurationMilliseconds,
+    RideMapMetadata, RideMapPoint, RideMapRecorder, RideMapSegmentId, RidePointSequence,
+    RideRecordingTiming, RideSegmentCount, RideSegmentStartReason, RouteTelemetryState,
+    TELEMETRY_FRESHNESS_MILLISECONDS, TelemetryObservation, VehicleAssociation, VehicleIdentity,
+    VehicleIdentityError,
 };
 mod projection;
 pub use projection::{
@@ -43,12 +44,14 @@ mod tests {
     use std::cell::Cell;
 
     use super::{
-        Coordinate, DistanceMillimetres, LatitudeE7, LocationAdmission, LocationSample,
-        LocationSource, LongitudeE7, MAX_ROUTE_DISPLAY_POINTS, MonotonicMilliseconds, RideEvent,
-        RideLifecycleState, RideMapRecorder, RidePointCount, RideSummary, RouteDisplayBudget,
-        RoutePrivacyClass, RoutePrivacyGridE7, RoutePrivacyPolicy, RouteProjectionError,
-        RouteViewport, TransitionError, VehicleIdentity, WallClockUnixMilliseconds,
-        project_route_points, project_route_points_cancellable,
+        AverageSpeedMillimetresPerSecond, BackgroundGapCount, Coordinate, DistanceMillimetres,
+        LatitudeE7, LocationAdmission, LocationSample, LocationSource, LongitudeE7,
+        MAX_ROUTE_DISPLAY_POINTS, MonotonicMilliseconds, RideEvent, RideLifecycleState,
+        RideMapPoint, RideMapRecorder, RideMapSegmentId, RidePointCount, RidePointSequence,
+        RideSummary, RouteDisplayBudget, RoutePrivacyClass, RoutePrivacyGridE7, RoutePrivacyPolicy,
+        RouteProjectionError, RouteTelemetryState, RouteViewport, TransitionError, VehicleIdentity,
+        WallClockUnixMilliseconds, project_route_points, project_route_points_cancellable,
+        route_endpoint_metadata,
     };
 
     #[test]

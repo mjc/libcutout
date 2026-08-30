@@ -5,7 +5,8 @@ use crate::{
 };
 
 const MAX_HORIZONTAL_ACCURACY_MILLIMETRES: u32 = 100_000;
-const MAX_GAP_MILLISECONDS: u64 = 30_000;
+/// Maximum timestamp gap before starting a new route segment.
+pub const MAX_GAP_MILLISECONDS: u64 = 30_000;
 const MAX_IMPLIED_SPEED_MILLIMETRES_PER_SECOND: u64 = 100_000;
 
 /// A non-empty platform identity for a connected vehicle.
@@ -93,6 +94,19 @@ impl RideMapSegmentId {
     const fn next(self) -> Self {
         Self(self.0.saturating_add(1))
     }
+}
+
+/// Why a new ordered route segment began.
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub enum RideSegmentStartReason {
+    /// The first accepted point in a ride.
+    Initial,
+    /// A paused ride resumed and started a new route segment.
+    Resume,
+    /// A location gap exceeded the route continuity threshold.
+    BackgroundGap,
+    /// An imported artifact established the first canonical route segment.
+    ImportBoundary,
 }
 
 /// Number of route segments admitted to one ride recording.
@@ -553,6 +567,10 @@ impl RideMapRecorder {
                 last_monotonic_milliseconds.saturating_sub(created_at_milliseconds),
             )
         };
+        let observed_background_gap_count = points
+            .iter()
+            .filter(|point| point.segment_start_reason() == RideSegmentStartReason::BackgroundGap)
+            .count();
         Self {
             state: Some(state),
             created_at_milliseconds,
@@ -606,6 +624,10 @@ impl RideMapRecorder {
         let paused_at = timing
             .paused_at_milliseconds()
             .map(|at| at.max(created_at_milliseconds).min(last));
+        let observed_background_gap_count = points
+            .iter()
+            .filter(|point| point.segment_start_reason() == RideSegmentStartReason::BackgroundGap)
+            .count();
         Self {
             state: Some(state),
             created_at_milliseconds,
@@ -622,6 +644,9 @@ impl RideMapRecorder {
                 .last()
                 .map_or(RideMapSegmentId::new(0), |point| point.segment_id()),
             segment_started: false,
+            background_gap_count: metadata.background_gap_count.max(BackgroundGapCount::new(
+                u64::try_from(observed_background_gap_count).unwrap_or(u64::MAX),
+            )),
             first_point_sequence,
             summary,
             points,
@@ -1018,11 +1043,14 @@ impl RideMapRecorder {
                 .saturating_add(RidePointCount::new(1)),
             self.summary.distance().saturating_add(distance).as_u64(),
         );
-        self.last_monotonic_milliseconds = sample.monotonic_milliseconds();
-        self.points.push(RideMapPoint::new(
+        self.last_monotonic_milliseconds = self
+            .last_monotonic_milliseconds
+            .max(sample.monotonic_milliseconds());
+        self.points.push(RideMapPoint::new_with_start_reason(
             sample,
             self.segment_id,
             self.telemetry_state_at(sample.monotonic_milliseconds()),
+            segment_start_reason,
         ));
         if self.points.len() > MAX_LIVE_ROUTE_POINTS {
             let excess = self.points.len() - MAX_LIVE_ROUTE_POINTS;
