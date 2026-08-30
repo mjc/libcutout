@@ -11,7 +11,7 @@ use cutout_ride_maps::{
 };
 use rusqlite::Connection;
 
-use cutout_ride_maps::{RideLifecycleState, RideSegmentStartReason};
+use cutout_ride_maps::{RideLifecycleState, RideMapSegmentId, RideSegmentStartReason};
 
 use super::{
     GeoBounds, HistoryContextBudget, PevcapImportOutcome, QueryLimit, RideDatabase,
@@ -333,7 +333,7 @@ fn async_location_write_returns_before_worker_completion_and_can_be_polled() {
         .enqueue_location_async(
             ride,
             sample,
-            0,
+            RideMapSegmentId::new(0),
             RideSegmentStartReason::Initial,
             RouteTelemetryState::GpsOnly,
         )
@@ -375,7 +375,7 @@ fn async_location_write_wait_consumes_and_does_not_lose_result() {
         .enqueue_location_async(
             ride,
             sample,
-            0,
+            RideMapSegmentId::new(0),
             RideSegmentStartReason::Initial,
             RouteTelemetryState::GpsOnly,
         )
@@ -424,7 +424,7 @@ fn async_location_write_can_bound_wait_for_a_delayed_worker() {
         .enqueue_location_async(
             ride,
             sample,
-            0,
+            RideMapSegmentId::new(0),
             RideSegmentStartReason::Initial,
             RouteTelemetryState::GpsOnly,
         )
@@ -471,7 +471,7 @@ fn async_location_write_can_bound_wait_for_a_worker_gate() {
         .enqueue_location_with_worker_gate_for_test(
             ride,
             sample,
-            0,
+            RideMapSegmentId::new(0),
             RouteTelemetryState::GpsOnly,
             entered_sender,
             release_receiver,

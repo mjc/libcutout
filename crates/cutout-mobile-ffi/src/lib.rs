@@ -5387,7 +5387,7 @@ fn enqueue_location_async(
     database: &RideDatabaseHandle,
     id: &MobileRideIdDto,
     location: MobileRideLocationDto,
-    segment_id: u64,
+    segment_id: ride_maps::RideMapSegmentId,
     start_reason: ride_maps::RideSegmentStartReason,
     telemetry_state: MobileRideMapCoreTelemetryStateDto,
 ) -> Result<persistence::PendingLocationWrite, MobileRideDatabaseError> {
@@ -6212,7 +6212,7 @@ impl MobileRideMapCore {
                 database,
                 &id,
                 location,
-                segment_id.value(),
+                segment_id,
                 start_reason,
                 telemetry_state.into(),
             )

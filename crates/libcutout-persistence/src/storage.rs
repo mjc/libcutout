@@ -49,6 +49,20 @@ struct PevcapRoutePoint {
     start_reason: RideSegmentStartReason,
     telemetry_state: RouteTelemetryState,
 }
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum SegmentStartReasonInput {
+    Infer,
+    Recorded(RideSegmentStartReason),
+}
+
+#[derive(Clone, Copy)]
+struct PreviousRidePoint {
+    sequence: i64,
+    segment_id: RideMapSegmentId,
+    sample: LocationSample,
+}
+
 const MAX_STORED_TEXT_CHARS: usize = 512;
 /// Origin of a canonical ride record.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -2334,7 +2348,7 @@ impl RideDatabase {
         self.request(move |reply| Command::AppendLocation {
             ride_id,
             sample,
-            segment_id,
+            segment_id: RideMapSegmentId::new(segment_id),
             telemetry_state,
             reply,
         })
@@ -2353,7 +2367,7 @@ impl RideDatabase {
         &self,
         ride_id: RideId,
         sample: LocationSample,
-        segment_id: u64,
+        segment_id: RideMapSegmentId,
         start_reason: RideSegmentStartReason,
         telemetry_state: RouteTelemetryState,
     ) -> Result<PendingLocationWrite, StorageError> {
@@ -2378,7 +2392,7 @@ impl RideDatabase {
         &self,
         ride_id: RideId,
         sample: LocationSample,
-        segment_id: u64,
+        segment_id: RideMapSegmentId,
         telemetry_state: RouteTelemetryState,
         entered: SyncSender<()>,
         release: Receiver<()>,
@@ -2387,7 +2401,7 @@ impl RideDatabase {
         self.enqueue(Command::AppendLocationWithWorkerGate {
             ride_id,
             sample,
-            segment_id: RideMapSegmentId::new(segment_id),
+            segment_id,
             telemetry_state,
             entered,
             release,
@@ -2994,14 +3008,14 @@ enum Command {
     AppendLocation {
         ride_id: RideId,
         sample: LocationSample,
-        segment_id: u64,
+        segment_id: RideMapSegmentId,
         telemetry_state: RouteTelemetryState,
         reply: Reply<LocationAdmission>,
     },
     AppendLocationAsync {
         ride_id: RideId,
         sample: LocationSample,
-        segment_id: u64,
+        segment_id: RideMapSegmentId,
         start_reason: RideSegmentStartReason,
         telemetry_state: RouteTelemetryState,
         reply: Reply<LocationWriteResult>,
@@ -3397,7 +3411,7 @@ fn worker_loop(
                     sample,
                     segment_id,
                     telemetry_state,
-                    Some(start_reason),
+                    SegmentStartReasonInput::Recorded(start_reason),
                 ));
             }
             #[cfg(test)]
@@ -3416,9 +3430,9 @@ fn worker_loop(
                     &mut connection,
                     ride_id,
                     sample,
-                    segment_id.value(),
+                    segment_id,
                     telemetry_state,
-                    None,
+                    SegmentStartReasonInput::Infer,
                 );
                 let _ = reply.send(result);
             }
@@ -5668,9 +5682,9 @@ fn append_pevcap_location_batch(
             &transaction,
             ride_id,
             point.sample,
-            point.segment_id.value(),
+            point.segment_id,
             point.telemetry_state,
-            Some(point.start_reason),
+            SegmentStartReasonInput::Recorded(point.start_reason),
             LocationWriteMode::PevcapImport,
         )?
         .admission()
@@ -5954,7 +5968,7 @@ fn append_location(
     connection: &mut Connection,
     ride_id: RideId,
     sample: LocationSample,
-    segment_id: u64,
+    segment_id: RideMapSegmentId,
     telemetry_state: RouteTelemetryState,
 ) -> Result<LocationAdmission, StorageError> {
     let result = append_location_with_result(
@@ -5963,7 +5977,7 @@ fn append_location(
         sample,
         segment_id,
         telemetry_state,
-        None,
+        SegmentStartReasonInput::Infer,
     )?;
     Ok(result.admission())
 }
@@ -5972,9 +5986,9 @@ fn append_location_with_result(
     connection: &mut Connection,
     ride_id: RideId,
     sample: LocationSample,
-    segment_id: u64,
+    segment_id: RideMapSegmentId,
     telemetry_state: RouteTelemetryState,
-    start_reason: Option<RideSegmentStartReason>,
+    start_reason: SegmentStartReasonInput,
 ) -> Result<LocationWriteResult, StorageError> {
     let transaction = connection.transaction()?;
     let result = append_location_in_transaction(
@@ -5990,63 +6004,70 @@ fn append_location_with_result(
     Ok(result)
 }
 
-#[allow(clippy::too_many_lines, reason = "keeps one location write atomic")]
-fn append_location_in_transaction(
+fn load_previous_ride_point(
     connection: &Connection,
     ride_id: RideId,
-    sample: LocationSample,
-    segment_id: u64,
-    telemetry_state: RouteTelemetryState,
-    start_reason: Option<RideSegmentStartReason>,
-    mode: LocationWriteMode,
-) -> Result<LocationWriteResult, StorageError> {
-    let write_state = load_ride_write_state(connection, ride_id)?;
-    let previous = connection
+) -> Result<Option<PreviousRidePoint>, StorageError> {
+    connection
         .query_row(
             "SELECT sequence, segment_id, monotonic_ms, wall_clock_ms, latitude_e7, longitude_e7, horizontal_accuracy_mm, source
              FROM ride_points WHERE ride_id = ?1 ORDER BY sequence DESC LIMIT 1",
             params![ride_id.uuid().to_string()],
             |row| {
-                let coordinate = Coordinate::from_fixed_parts(row.get(4)?, row.get(5)?).map_err(|_| {
-                    rusqlite::Error::FromSqlConversionFailure(
-                        4,
-                        rusqlite::types::Type::Integer,
-                        Box::new(StorageError::InvalidStoredValue {
-                            field: "coordinate",
-                            value: "out of range".to_owned(),
-                        }),
-                    )
-                })?;
-                let source = source_from_db(row.get::<_, String>(7)?.as_str()).map_err(|error| {
-                    rusqlite::Error::FromSqlConversionFailure(
-                        7,
-                        rusqlite::types::Type::Text,
-                        Box::new(error),
-                    )
-                })?;
-                Ok((
-                    row.get::<_, i64>(0)?,
-                    row.get::<_, u64>(1)?,
-                    LocationSample::new(
+                let coordinate =
+                    Coordinate::from_fixed_parts(row.get(4)?, row.get(5)?).map_err(|_| {
+                        rusqlite::Error::FromSqlConversionFailure(
+                            4,
+                            rusqlite::types::Type::Integer,
+                            Box::new(StorageError::InvalidStoredValue {
+                                field: "coordinate",
+                                value: "out of range".to_owned(),
+                            }),
+                        )
+                    })?;
+                let source =
+                    source_from_db(row.get::<_, String>(7)?.as_str()).map_err(|error| {
+                        rusqlite::Error::FromSqlConversionFailure(
+                            7,
+                            rusqlite::types::Type::Text,
+                            Box::new(error),
+                        )
+                    })?;
+                Ok(PreviousRidePoint {
+                    sequence: row.get::<_, i64>(0)?,
+                    segment_id: RideMapSegmentId::new(row.get::<_, u64>(1)?),
+                    sample: LocationSample::new(
                         coordinate,
                         row.get::<_, u64>(2)?,
                         row.get::<_, u64>(3)?,
                         row.get::<_, Option<u32>>(6)?,
                         source,
                     ),
-                ))
+                })
             },
         )
-        .optional()?;
+        .optional()
+        .map_err(StorageError::from)
+}
+
+fn append_location_in_transaction(
+    connection: &Connection,
+    ride_id: RideId,
+    sample: LocationSample,
+    segment_id: RideMapSegmentId,
+    telemetry_state: RouteTelemetryState,
+    start_reason: SegmentStartReasonInput,
+    mode: LocationWriteMode,
+) -> Result<LocationWriteResult, StorageError> {
+    let write_state = load_ride_write_state(connection, ride_id)?;
+    let previous = load_previous_ride_point(connection, ride_id)?;
     let decision = write_state
         .decide_location(
             previous
                 .as_ref()
-                .map(|(_, previous_segment_id, previous_sample)| {
-                    (*previous_segment_id, *previous_sample)
-                }),
+                .map(|previous| (previous.segment_id.value(), previous.sample)),
             sample,
-            segment_id,
+            segment_id.value(),
             mode,
         )
         .map_err(StorageError::InvalidRideState)?;
@@ -6063,9 +6084,7 @@ fn append_location_in_transaction(
                 segment_id,
                 start_reason,
             )?;
-            let sequence = previous
-                .map(|(sequence, _, _)| sequence + 1)
-                .unwrap_or_default();
+            let sequence = previous.map_or(0, |previous| previous.sequence + 1);
             let durable_sequence =
                 u64::try_from(sequence).map_err(|_| StorageError::InvalidStoredValue {
                     field: "ride_points.sequence",
@@ -6106,21 +6125,21 @@ fn append_location_in_transaction(
 fn ensure_ride_segment(
     connection: &Connection,
     ride_id: RideId,
-    previous: Option<&(i64, u64, LocationSample)>,
+    previous: Option<&PreviousRidePoint>,
     sample: LocationSample,
-    segment_id: u64,
-    start_reason: Option<RideSegmentStartReason>,
+    segment_id: RideMapSegmentId,
+    start_reason: SegmentStartReasonInput,
 ) -> Result<(), StorageError> {
-    let segment_identity = RideMapSegmentId::new(segment_id);
-    let segment_id = i64::try_from(segment_id).map_err(|_| StorageError::InvalidStoredValue {
-        field: "ride segment identifier",
-        value: segment_id.to_string(),
-    })?;
+    let stored_segment_id =
+        i64::try_from(segment_id.value()).map_err(|_| StorageError::InvalidStoredValue {
+            field: "ride segment identifier",
+            value: segment_id.value().to_string(),
+        })?;
     let existing = connection
         .query_row(
             "SELECT start_reason, source FROM ride_segments
              WHERE ride_id = ?1 AND segment_id = ?2",
-            params![ride_id.uuid().to_string(), segment_id],
+            params![ride_id.uuid().to_string(), stored_segment_id],
             |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
         )
         .optional()?;
@@ -6140,7 +6159,7 @@ fn ensure_ride_segment(
              WHERE ride_id = ?1 AND segment_id = ?2",
             params![
                 ride_id.uuid().to_string(),
-                segment_id,
+                stored_segment_id,
                 sample.monotonic_milliseconds().as_u64(),
                 sample.wall_clock_unix_milliseconds().as_u64(),
             ],
@@ -6148,8 +6167,10 @@ fn ensure_ride_segment(
         return Ok(());
     }
 
-    let start_reason =
-        start_reason.unwrap_or_else(|| segment_start_reason(previous, sample, segment_identity));
+    let start_reason = match start_reason {
+        SegmentStartReasonInput::Infer => segment_start_reason(previous, sample, segment_id),
+        SegmentStartReasonInput::Recorded(reason) => reason,
+    };
     let start_reason = match start_reason {
         RideSegmentStartReason::Initial => "initial",
         RideSegmentStartReason::Resume => "resume",
@@ -6163,7 +6184,7 @@ fn ensure_ride_segment(
          VALUES (?1, ?2, 0, ?2, ?3, ?4, ?5, ?5, ?6, ?6)",
         params![
             ride_id.uuid().to_string(),
-            segment_id,
+            stored_segment_id,
             start_reason,
             source_to_db(sample.source()),
             sample.monotonic_milliseconds().as_u64(),
@@ -6174,23 +6195,23 @@ fn ensure_ride_segment(
 }
 
 fn segment_start_reason(
-    previous: Option<&(i64, u64, LocationSample)>,
+    previous: Option<&PreviousRidePoint>,
     sample: LocationSample,
     segment_id: RideMapSegmentId,
 ) -> RideSegmentStartReason {
-    let Some((_, previous_segment_id, previous_sample)) = previous else {
+    let Some(previous) = previous else {
         return match sample.source() {
             LocationSource::Live => RideSegmentStartReason::Initial,
             LocationSource::PevcapImport => RideSegmentStartReason::ImportBoundary,
         };
     };
-    if *previous_segment_id == segment_id.value() {
+    if previous.segment_id == segment_id {
         return RideSegmentStartReason::Initial;
     }
     let gap_started = sample
         .monotonic_milliseconds()
         .as_u64()
-        .saturating_sub(previous_sample.monotonic_milliseconds().as_u64())
+        .saturating_sub(previous.sample.monotonic_milliseconds().as_u64())
         > cutout_ride_maps::MAX_GAP_MILLISECONDS;
     if gap_started {
         RideSegmentStartReason::BackgroundGap
@@ -6263,7 +6284,7 @@ struct LocationInsert {
     ride_id: RideId,
     sequence: i64,
     sample: LocationSample,
-    segment_id: u64,
+    segment_id: RideMapSegmentId,
     telemetry_state: RouteTelemetryState,
     distance_millimetres: u64,
     updated_at_ms: u64,
@@ -6286,7 +6307,7 @@ fn insert_location(connection: &Connection, insert: &LocationInsert) -> Result<(
         params![
             ride_id.uuid().to_string(),
             sequence,
-            segment_id,
+            segment_id.value(),
             telemetry_state.storage_value(),
             sample.monotonic_milliseconds().as_u64(),
             sample.wall_clock_unix_milliseconds().as_u64(),
@@ -6314,7 +6335,7 @@ fn insert_location(connection: &Connection, insert: &LocationInsert) -> Result<(
         "UPDATE ride_segments
          SET point_count = point_count + 1
          WHERE ride_id = ?1 AND segment_id = ?2",
-        params![ride_id.uuid().to_string(), segment_id],
+        params![ride_id.uuid().to_string(), segment_id.value()],
     )?;
     Ok(())
 }
