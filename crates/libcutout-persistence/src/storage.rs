@@ -4444,12 +4444,14 @@ fn migrate_v14_to_current(connection: &mut Connection) -> Result<(), StorageErro
         "ALTER TABLE ride_segments
              ADD COLUMN point_count INTEGER NOT NULL DEFAULT 0 CHECK (point_count >= 0);
          UPDATE ride_segments
-         SET point_count = (
-             SELECT COUNT(*)
+         SET point_count = counts.point_count
+         FROM (
+             SELECT ride_id, segment_id, COUNT(*) AS point_count
              FROM ride_points
-             WHERE ride_points.ride_id = ride_segments.ride_id
-               AND ride_points.segment_id = ride_segments.segment_id
-         );
+             GROUP BY ride_id, segment_id
+         ) AS counts
+         WHERE ride_segments.ride_id = counts.ride_id
+           AND ride_segments.segment_id = counts.segment_id;
          PRAGMA application_id = 1129665615;
          PRAGMA user_version = 15;",
     )?;
@@ -6916,7 +6918,7 @@ fn route_projection_counts(
     projection_checkpoint(cancellation)?;
     let source_segment_count = projection_sqlite(
         connection.query_row(
-            "SELECT COUNT(*) FROM ride_segments WHERE ride_id = ?1",
+            "SELECT COUNT(*) FROM ride_segments WHERE ride_id = ?1 AND point_count > 0",
             [ride_id],
             |row| row.get::<_, u64>(0),
         ),
@@ -6926,7 +6928,7 @@ fn route_projection_counts(
     let background_gap_count = projection_sqlite(
         connection.query_row(
             "SELECT COUNT(*) FROM ride_segments
-             WHERE ride_id = ?1 AND start_reason = 'background_gap'",
+             WHERE ride_id = ?1 AND start_reason = 'background_gap' AND point_count > 0",
             [ride_id],
             |row| row.get::<_, u64>(0),
         ),

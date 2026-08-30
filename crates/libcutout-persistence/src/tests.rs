@@ -2844,6 +2844,59 @@ fn route_projection_is_bounded_viewport_aware_and_cancellable() {
 }
 
 #[test]
+fn route_projection_ignores_empty_segment_rows() {
+    let _guard = test_guard();
+    let path = std::env::temp_dir().join(format!(
+        "libcutout-persistence-empty-segment-projection-{}.sqlite",
+        uuid::Uuid::new_v4()
+    ));
+    let database = RideDatabase::open(&path).unwrap();
+    let ride = database.create_ride(RideSource::Live, 10).unwrap();
+    database.transition(ride, RideEvent::Start).unwrap();
+    let sample = LocationSample::new(
+        Coordinate::from_degrees(40.0, -105.0).unwrap(),
+        1_000,
+        1_700_000_000_000,
+        None,
+        LocationSource::Live,
+    );
+    assert_eq!(
+        database.append_location(ride, sample).unwrap(),
+        LocationAdmission::Accepted
+    );
+    database.shutdown().unwrap();
+
+    let connection = Connection::open(&path).unwrap();
+    connection
+        .execute(
+            "INSERT INTO ride_segments
+                (ride_id, segment_id, point_count, sequence, start_reason, source,
+                 started_monotonic_ms, ended_monotonic_ms,
+                 started_wall_clock_ms, ended_wall_clock_ms)
+             VALUES (?1, 1, 0, 1, 'background_gap', 'live', 2_000, 2_000,
+                     1_700_000_001_000, 1_700_000_001_000)",
+            [ride.uuid().to_string()],
+        )
+        .unwrap();
+    drop(connection);
+
+    let database = RideDatabase::open(&path).unwrap();
+    let projection = database
+        .project_route_points(
+            ride,
+            None,
+            RouteDisplayBudget::new(8).unwrap(),
+            RoutePrivacyPolicy::Precise,
+        )
+        .unwrap();
+    assert_eq!(projection.source_segment_count(), 1);
+    assert_eq!(projection.background_gap_count(), 0);
+
+    database.shutdown().unwrap();
+    let _ = std::fs::remove_file(path);
+}
+
+#[test]
 fn migrated_ride_tables_enforce_the_current_constraints() {
     let _guard = test_guard();
     let path = std::env::temp_dir().join(format!(
