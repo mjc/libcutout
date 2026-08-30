@@ -51,8 +51,8 @@ mod tests {
         RideSegmentStartReason, RideSummary, RouteDisplayBudget, RoutePrivacyClass,
         RoutePrivacyGridE7, RoutePrivacyPolicy, RouteProjectionError, RouteTelemetryState,
         RouteViewport, TransitionError, VehicleIdentity, WallClockUnixMilliseconds,
-        project_route_points, project_route_points_cancellable, project_route_points_from_iter,
-        route_endpoint_metadata, route_segment_display_metadata,
+        Wgs84Coordinate, project_route_points, project_route_points_cancellable,
+        project_route_points_from_iter, route_endpoint_metadata, route_segment_display_metadata,
     };
 
     #[test]
