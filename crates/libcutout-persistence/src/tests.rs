@@ -1737,6 +1737,13 @@ fn database_preflights_confirms_and_deduplicates_managed_pevcap_artifacts() {
             .readonly()
     );
     assert_ne!(first.managed_artifact_path, artifact_path);
+    let duplicate_preview = database
+        .preflight_pevcap(&artifact_path, PevcapEncoding::Jsonl)
+        .unwrap();
+    assert_eq!(
+        format!("{:?}", duplicate_preview.outcome()),
+        "AlreadyImported"
+    );
     assert!(matches!(
         database.append_location(
             ride_id,

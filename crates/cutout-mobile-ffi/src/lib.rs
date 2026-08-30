@@ -4083,6 +4083,8 @@ pub enum MobilePevcapImportOutcomeDto {
     RideAndCapture,
     /// Confirmation produces only a managed capture because no route locations exist.
     CaptureOnly,
+    /// The capture digest already has a committed import receipt.
+    AlreadyImported,
 }
 
 impl From<persistence::PevcapImportOutcome> for MobilePevcapImportOutcomeDto {
@@ -4090,6 +4092,7 @@ impl From<persistence::PevcapImportOutcome> for MobilePevcapImportOutcomeDto {
         match outcome {
             persistence::PevcapImportOutcome::RideAndCapture => Self::RideAndCapture,
             persistence::PevcapImportOutcome::CaptureOnly => Self::CaptureOnly,
+            persistence::PevcapImportOutcome::AlreadyImported => Self::AlreadyImported,
         }
     }
 }
