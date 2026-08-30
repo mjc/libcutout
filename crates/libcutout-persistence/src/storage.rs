@@ -6383,19 +6383,22 @@ fn validate_segment_id(
     // A +1 transition may come from a pause/resume boundary, which is persisted as
     // lifecycle state rather than a route-point row. A time gap must still account for
     // the increment itself, so it cannot be combined with an arbitrary jump.
-    let segment_id_is_valid = previous.is_none_or(|(_, previous_segment_id, previous_sample)| {
-        let gap_started = sample
-            .monotonic_milliseconds()
-            .as_u64()
-            .saturating_sub(previous_sample.monotonic_milliseconds().as_u64())
-            > MAX_GAP_MILLISECONDS;
-        if gap_started {
-            segment_id.value() == expected_segment_id
-        } else {
-            segment_id.value() == *previous_segment_id
-                || segment_id.value() == previous_segment_id.saturating_add(1)
+    let segment_id_is_valid = match previous {
+        None => segment_id.value() == expected_segment_id,
+        Some((_, previous_segment_id, previous_sample)) => {
+            let gap_started = sample
+                .monotonic_milliseconds()
+                .as_u64()
+                .saturating_sub(previous_sample.monotonic_milliseconds().as_u64())
+                > MAX_GAP_MILLISECONDS;
+            if gap_started {
+                segment_id.value() == expected_segment_id
+            } else {
+                segment_id.value() == *previous_segment_id
+                    || segment_id.value() == previous_segment_id.saturating_add(1)
+            }
         }
-    });
+    };
     if segment_id_is_valid {
         Ok(())
     } else {

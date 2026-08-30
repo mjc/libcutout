@@ -3530,6 +3530,18 @@ fn route_points_reject_arbitrary_segment_id() {
             LocationSource::Live,
         )
     };
+    assert!(matches!(
+        database.append_location_with_segment_and_telemetry(
+            ride,
+            sample(11),
+            1,
+            RouteTelemetryState::GpsOnly,
+        ),
+        Err(StorageError::InvalidSegmentId {
+            expected: 0,
+            actual: 1
+        })
+    ));
     database
         .append_location_with_segment_and_telemetry(
             ride,
