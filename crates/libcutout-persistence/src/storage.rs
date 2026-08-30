@@ -762,12 +762,36 @@ pub enum PevcapImportOutcome {
     AlreadyImported,
 }
 
-impl PevcapImportOutcome {
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum NewPevcapImportOutcome {
+    RideAndCapture,
+    CaptureOnly,
+}
+
+impl TryFrom<PevcapImportOutcome> for NewPevcapImportOutcome {
+    type Error = StorageError;
+
+    fn try_from(outcome: PevcapImportOutcome) -> Result<Self, Self::Error> {
+        match outcome {
+            PevcapImportOutcome::RideAndCapture => Ok(Self::RideAndCapture),
+            PevcapImportOutcome::CaptureOnly => Ok(Self::CaptureOnly),
+            PevcapImportOutcome::AlreadyImported => Err(StorageError::PevcapPreviewChanged),
+        }
+    }
+}
+
+impl NewPevcapImportOutcome {
+    const fn as_public(self) -> PevcapImportOutcome {
+        match self {
+            Self::RideAndCapture => PevcapImportOutcome::RideAndCapture,
+            Self::CaptureOnly => PevcapImportOutcome::CaptureOnly,
+        }
+    }
+
     const fn as_db(self) -> &'static str {
         match self {
             Self::RideAndCapture => "ride_and_capture",
             Self::CaptureOnly => "capture_only",
-            Self::AlreadyImported => "already_imported",
         }
     }
 }
@@ -2372,12 +2396,13 @@ impl RideDatabase {
             return Ok(receipt);
         }
         verify_pevcap_preview_source(preview)?;
+        let outcome = NewPevcapImportOutcome::try_from(preview.outcome)?;
 
         let managed = prepare_managed_pevcap(self.path.as_ref(), preview)?;
         let begin = match self.request(|reply| Command::BeginPevcapImport {
             digest: preview.artifact_digest.clone(),
             managed_path: managed.path.clone(),
-            outcome: preview.outcome,
+            outcome,
             created_at_ms,
             reply,
         }) {
@@ -2415,7 +2440,7 @@ impl RideDatabase {
                 digest: preview.artifact_digest.clone(),
                 ride_id,
                 managed_path: managed.path.clone(),
-                outcome: preview.outcome,
+                outcome,
                 artifact_size: preview.artifact_size,
                 record_count: preview.record_count,
                 location_count,
@@ -3298,7 +3323,7 @@ enum Command {
     BeginPevcapImport {
         digest: String,
         managed_path: PathBuf,
-        outcome: PevcapImportOutcome,
+        outcome: NewPevcapImportOutcome,
         created_at_ms: u64,
         reply: Reply<PevcapBegin>,
     },
@@ -3311,7 +3336,7 @@ enum Command {
         digest: String,
         ride_id: Option<RideId>,
         managed_path: PathBuf,
-        outcome: PevcapImportOutcome,
+        outcome: NewPevcapImportOutcome,
         artifact_size: u64,
         record_count: u64,
         location_count: u64,
@@ -4673,7 +4698,6 @@ fn pevcap_outcome_from_db(value: &str) -> Result<PevcapImportOutcome, StorageErr
     match value {
         "ride_and_capture" => Ok(PevcapImportOutcome::RideAndCapture),
         "capture_only" => Ok(PevcapImportOutcome::CaptureOnly),
-        "already_imported" => Ok(PevcapImportOutcome::AlreadyImported),
         _ => Err(StorageError::InvalidStoredValue {
             field: "PEVCAP import outcome",
             value: value.to_owned(),
@@ -4685,7 +4709,7 @@ fn begin_pevcap_import(
     connection: &mut Connection,
     digest: &str,
     managed_path: &Path,
-    outcome: PevcapImportOutcome,
+    outcome: NewPevcapImportOutcome,
     created_at_ms: u64,
 ) -> Result<PevcapBegin, StorageError> {
     if let Some(receipt) = pevcap_import_receipt(connection, digest, true)? {
@@ -4701,16 +4725,13 @@ fn begin_pevcap_import(
         return Err(StorageError::PevcapImportInProgress);
     }
     let ride_id = match outcome {
-        PevcapImportOutcome::RideAndCapture => Some(create_ride(
+        NewPevcapImportOutcome::RideAndCapture => Some(create_ride(
             &transaction,
             RideSource::PevcapImport,
             created_at_ms,
             None,
         )?),
-        PevcapImportOutcome::CaptureOnly => None,
-        PevcapImportOutcome::AlreadyImported => {
-            return Err(StorageError::PevcapPreviewChanged);
-        }
+        NewPevcapImportOutcome::CaptureOnly => None,
     };
     transaction.execute(
         "INSERT INTO pevcap_import_work (artifact_digest, artifact_path, ride_id)
@@ -4758,7 +4779,7 @@ fn finish_pevcap_import(
     digest: &str,
     ride_id: Option<RideId>,
     managed_path: &Path,
-    outcome: PevcapImportOutcome,
+    outcome: NewPevcapImportOutcome,
     artifact_size: u64,
     record_count: u64,
     location_count: u64,
@@ -4813,7 +4834,7 @@ fn finish_pevcap_import(
         ride_id,
         artifact_digest: digest.to_owned(),
         managed_artifact_path: managed_path.to_owned(),
-        outcome,
+        outcome: outcome.as_public(),
         record_count,
         location_count,
         duplicate: false,
