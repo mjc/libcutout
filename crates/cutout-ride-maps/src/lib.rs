@@ -9,7 +9,7 @@
 //! Rust-owned ride recording and geospatial domain primitives.
 
 mod coordinate;
-pub use coordinate::{Coordinate, CoordinateError, LatitudeE7, LongitudeE7};
+pub use coordinate::{CoordinateError, LatitudeE7, LongitudeE7, Wgs84Coordinate};
 mod lifecycle;
 pub use lifecycle::{RideEvent, RideLifecycleState, TransitionError};
 mod location;
@@ -44,7 +44,7 @@ mod tests {
     use std::cell::Cell;
 
     use super::{
-        AverageSpeedMillimetresPerSecond, BackgroundGapCount, Coordinate, DistanceMillimetres,
+        AverageSpeedMillimetresPerSecond, BackgroundGapCount, CoordinateError, DistanceMillimetres,
         LatitudeE7, LocationAdmission, LocationSample, LocationSource, LongitudeE7,
         MAX_ROUTE_DISPLAY_POINTS, MonotonicMilliseconds, RideEvent, RideLifecycleState,
         RideMapPoint, RideMapRecorder, RideMapSegmentId, RidePointCount, RidePointSequence,
@@ -57,17 +57,31 @@ mod tests {
 
     #[test]
     fn coordinate_rejects_non_finite_and_out_of_range_values() {
-        assert!(Coordinate::from_degrees(40.0, -105.0).is_ok());
-        assert!(Coordinate::from_degrees(f64::NAN, -105.0).is_err());
-        assert!(Coordinate::from_degrees(91.0, -105.0).is_err());
-        assert!(Coordinate::from_degrees(40.0, 181.0).is_err());
+        assert!(Wgs84Coordinate::from_degrees(40.0, -105.0).is_ok());
+        assert!(Wgs84Coordinate::from_degrees(f64::NAN, -105.0).is_err());
+        assert!(Wgs84Coordinate::from_degrees(91.0, -105.0).is_err());
+        assert!(Wgs84Coordinate::from_degrees(40.0, 181.0).is_err());
+        assert_eq!(
+            LatitudeE7::try_from(900_000_001),
+            Err(CoordinateError::LatitudeOutOfRange)
+        );
+        assert_eq!(
+            LongitudeE7::try_from(-1_800_000_001),
+            Err(CoordinateError::LongitudeOutOfRange)
+        );
     }
 
     #[test]
     fn coordinate_uses_fixed_point_degree_values() {
-        let coordinate = Coordinate::from_degrees(40.123_456_7, -105.765_432_1).unwrap();
-        assert_eq!(coordinate.latitude(), LatitudeE7::new(401_234_567));
-        assert_eq!(coordinate.longitude(), LongitudeE7::new(-1_057_654_321));
+        let coordinate = Wgs84Coordinate::from_degrees(40.123_456_7, -105.765_432_1).unwrap();
+        assert_eq!(
+            coordinate.latitude(),
+            LatitudeE7::try_from(401_234_567).unwrap()
+        );
+        assert_eq!(
+            coordinate.longitude(),
+            LongitudeE7::try_from(-1_057_654_321).unwrap()
+        );
     }
 
     #[test]
@@ -89,7 +103,7 @@ mod tests {
 
     #[test]
     fn location_admission_deduplicates_repeated_samples() {
-        let coordinate = Coordinate::from_degrees(40.0, -105.0).unwrap();
+        let coordinate = Wgs84Coordinate::from_degrees(40.0, -105.0).unwrap();
         let sample = LocationSample::new(
             coordinate,
             MonotonicMilliseconds::new(1_000),
@@ -107,14 +121,14 @@ mod tests {
     #[test]
     fn ride_summary_counts_points_and_distance() {
         let first = LocationSample::new(
-            Coordinate::from_degrees(40.0, -105.0).unwrap(),
+            Wgs84Coordinate::from_degrees(40.0, -105.0).unwrap(),
             MonotonicMilliseconds::new(1_000),
             WallClockUnixMilliseconds::new(1_700_000_000_000),
             None,
             LocationSource::Live,
         );
         let second = LocationSample::new(
-            Coordinate::from_degrees(40.0, -104.999).unwrap(),
+            Wgs84Coordinate::from_degrees(40.0, -104.999).unwrap(),
             MonotonicMilliseconds::new(2_000),
             WallClockUnixMilliseconds::new(1_700_000_001_000),
             None,
@@ -185,7 +199,7 @@ mod tests {
             (3_000, 40.0003),
         ] {
             let sample = LocationSample::new(
-                Coordinate::from_degrees(latitude, -105.0).unwrap(),
+                Wgs84Coordinate::from_degrees(latitude, -105.0).unwrap(),
                 MonotonicMilliseconds::new(1_000 + offset),
                 WallClockUnixMilliseconds::new(1_700_000_000_000 + offset),
                 None,
@@ -196,10 +210,10 @@ mod tests {
         }
 
         let viewport = RouteViewport::new(
-            LatitudeE7::new(400_000_000),
-            LatitudeE7::new(400_002_000),
-            LongitudeE7::new(-1_050_000_000),
-            LongitudeE7::new(-1_049_999_000),
+            LatitudeE7::try_from(400_000_000).unwrap(),
+            LatitudeE7::try_from(400_002_000).unwrap(),
+            LongitudeE7::try_from(-1_050_000_000).unwrap(),
+            LongitudeE7::try_from(-1_049_999_000).unwrap(),
         )
         .unwrap();
         let projection = project_route_points(
@@ -228,19 +242,19 @@ mod tests {
         assert!(RouteDisplayBudget::new(MAX_ROUTE_DISPLAY_POINTS + 1).is_none());
         assert!(
             RouteViewport::new(
-                LatitudeE7::new(400_001_000),
-                LatitudeE7::new(400_000_000),
-                LongitudeE7::new(-1_050_000_000),
-                LongitudeE7::new(-1_049_999_000),
+                LatitudeE7::try_from(400_001_000).unwrap(),
+                LatitudeE7::try_from(400_000_000).unwrap(),
+                LongitudeE7::try_from(-1_050_000_000).unwrap(),
+                LongitudeE7::try_from(-1_049_999_000).unwrap(),
             )
             .is_none()
         );
         assert!(
             RouteViewport::new(
-                LatitudeE7::new(400_000_000),
-                LatitudeE7::new(400_001_000),
-                LongitudeE7::new(1_790_000_000),
-                LongitudeE7::new(-1_790_000_000),
+                LatitudeE7::try_from(400_000_000).unwrap(),
+                LatitudeE7::try_from(400_001_000).unwrap(),
+                LongitudeE7::try_from(1_790_000_000).unwrap(),
+                LongitudeE7::try_from(-1_790_000_000).unwrap(),
             )
             .unwrap()
             .crosses_antimeridian()
@@ -251,7 +265,7 @@ mod tests {
     #[test]
     fn route_projection_keeps_routes_over_the_cap_bounded() {
         let sample = LocationSample::new(
-            Coordinate::from_degrees(40.0, -105.0).unwrap(),
+            Wgs84Coordinate::from_degrees(40.0, -105.0).unwrap(),
             MonotonicMilliseconds::new(1_000),
             WallClockUnixMilliseconds::new(1_700_000_000_000),
             None,
@@ -282,7 +296,7 @@ mod tests {
     fn projected_segments_preserve_reason_and_bounded_render_metadata() {
         let sample = |offset| {
             LocationSample::new(
-                Coordinate::from_degrees(40.0 + offset / 10_000.0, -105.0).unwrap(),
+                Wgs84Coordinate::from_degrees(40.0 + offset / 10_000.0, -105.0).unwrap(),
                 MonotonicMilliseconds::new(1_000),
                 WallClockUnixMilliseconds::new(1_700_000_000_000),
                 None,
@@ -346,7 +360,7 @@ mod tests {
         recorder
             .start(MonotonicMilliseconds::new(1_000), None)
             .unwrap();
-        let coordinate = Coordinate::from_fixed_parts(-900_000_000, -1_800_000_000).unwrap();
+        let coordinate = Wgs84Coordinate::from_fixed_parts(-900_000_000, -1_800_000_000).unwrap();
         let sample = LocationSample::new(
             coordinate,
             MonotonicMilliseconds::new(1_000),
@@ -382,7 +396,7 @@ mod tests {
             .unwrap();
         for offset in 0..4_u32 {
             let sample = LocationSample::new(
-                Coordinate::from_degrees(40.0 + f64::from(offset) / 10_000.0, -105.0).unwrap(),
+                Wgs84Coordinate::from_degrees(40.0 + f64::from(offset) / 10_000.0, -105.0).unwrap(),
                 MonotonicMilliseconds::new(1_000 + u64::from(offset) * 1_000),
                 WallClockUnixMilliseconds::new(1_700_000_000_000 + u64::from(offset) * 1_000),
                 None,
@@ -422,7 +436,7 @@ mod tests {
             .unwrap();
         for (offset, latitude) in [(0, 40.0), (1_000, 40.0001), (2_000, 40.0002)] {
             let sample = LocationSample::new(
-                Coordinate::from_degrees(latitude, -105.0).unwrap(),
+                Wgs84Coordinate::from_degrees(latitude, -105.0).unwrap(),
                 MonotonicMilliseconds::new(1_000 + offset),
                 WallClockUnixMilliseconds::new(1_700_000_000_000 + offset),
                 None,
@@ -433,10 +447,10 @@ mod tests {
         }
 
         let viewport = RouteViewport::new(
-            LatitudeE7::new(400_001_000),
-            LatitudeE7::new(400_001_000),
-            LongitudeE7::new(-1_050_000_000),
-            LongitudeE7::new(-1_049_999_000),
+            LatitudeE7::try_from(400_001_000).unwrap(),
+            LatitudeE7::try_from(400_001_000).unwrap(),
+            LongitudeE7::try_from(-1_050_000_000).unwrap(),
+            LongitudeE7::try_from(-1_049_999_000).unwrap(),
         )
         .unwrap();
         let endpoints = route_endpoint_metadata(
@@ -470,7 +484,7 @@ mod tests {
             .unwrap();
         for (offset, latitude) in [(0, 40.0), (1_000, 40.0001), (2_000, 40.0002)] {
             let sample = LocationSample::new(
-                Coordinate::from_degrees(latitude, -105.0).unwrap(),
+                Wgs84Coordinate::from_degrees(latitude, -105.0).unwrap(),
                 MonotonicMilliseconds::new(1_000 + offset),
                 WallClockUnixMilliseconds::new(1_700_000_000_000 + offset),
                 None,
@@ -521,7 +535,7 @@ mod tests {
     fn route_endpoint_metadata_uses_supplied_sequences_for_noncontiguous_points() {
         let sample = |latitude| {
             LocationSample::new(
-                Coordinate::from_degrees(latitude, -105.0).unwrap(),
+                Wgs84Coordinate::from_degrees(latitude, -105.0).unwrap(),
                 MonotonicMilliseconds::new(1_000),
                 WallClockUnixMilliseconds::new(1_700_000_000_000),
                 None,
@@ -562,7 +576,7 @@ mod tests {
             .unwrap();
         for offset in 0..4_u32 {
             let sample = LocationSample::new(
-                Coordinate::from_degrees(40.0 + f64::from(offset) / 10_000.0, -105.0).unwrap(),
+                Wgs84Coordinate::from_degrees(40.0 + f64::from(offset) / 10_000.0, -105.0).unwrap(),
                 MonotonicMilliseconds::new(1_000 + u64::from(offset) * 1_000),
                 WallClockUnixMilliseconds::new(1_700_000_000_000 + u64::from(offset) * 1_000),
                 None,

@@ -1,15 +1,17 @@
 use thiserror::Error;
 
 const DEGREES_SCALE: f64 = 10_000_000.0;
+const MIN_LATITUDE_E7: i32 = -900_000_000;
+const MAX_LATITUDE_E7: i32 = 900_000_000;
+const MIN_LONGITUDE_E7: i32 = -1_800_000_000;
+const MAX_LONGITUDE_E7: i32 = 1_800_000_000;
 
 /// Latitude stored as signed degrees multiplied by 10^7.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct LatitudeE7(i32);
 
 impl LatitudeE7 {
-    /// Creates a fixed-point latitude after the caller has validated its range.
-    #[must_use]
-    pub const fn new(value: i32) -> Self {
+    const fn from_validated(value: i32) -> Self {
         Self(value)
     }
 
@@ -25,9 +27,7 @@ impl LatitudeE7 {
 pub struct LongitudeE7(i32);
 
 impl LongitudeE7 {
-    /// Creates a fixed-point longitude after the caller has validated its range.
-    #[must_use]
-    pub const fn new(value: i32) -> Self {
+    const fn from_validated(value: i32) -> Self {
         Self(value)
     }
 
@@ -40,12 +40,12 @@ impl LongitudeE7 {
 
 /// A validated WGS84 coordinate represented without floating-point storage.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
-pub struct Coordinate {
+pub struct Wgs84Coordinate {
     latitude: LatitudeE7,
     longitude: LongitudeE7,
 }
 
-impl Coordinate {
+impl Wgs84Coordinate {
     /// Creates a coordinate from WGS84 degrees.
     ///
     /// # Errors
@@ -62,10 +62,10 @@ impl Coordinate {
             return Err(CoordinateError::LongitudeOutOfRange);
         }
 
-        Ok(Self {
-            latitude: LatitudeE7::new(degrees_to_e7(latitude)),
-            longitude: LongitudeE7::new(degrees_to_e7(longitude)),
-        })
+        Ok(Self::from_parts(
+            LatitudeE7::from_validated(degrees_to_e7(latitude)),
+            LongitudeE7::from_validated(degrees_to_e7(longitude)),
+        ))
     }
 
     /// Creates a coordinate from checked fixed-point degree values.
@@ -74,23 +74,27 @@ impl Coordinate {
     ///
     /// Returns a typed error when either fixed-point value is outside WGS84 bounds.
     pub fn from_fixed_parts(latitude: i32, longitude: i32) -> Result<Self, CoordinateError> {
-        if !(-900_000_000..=900_000_000).contains(&latitude) {
-            return Err(CoordinateError::LatitudeOutOfRange);
+        let latitude = LatitudeE7::try_from(latitude)?;
+        let longitude = LongitudeE7::try_from(longitude)?;
+        Ok(Self::from_parts(latitude, longitude))
+    }
+
+    /// Creates a coordinate from already-validated WGS84 components.
+    #[must_use]
+    pub const fn from_parts(latitude: LatitudeE7, longitude: LongitudeE7) -> Self {
+        Self {
+            latitude,
+            longitude,
         }
-        if !(-1_800_000_000..=1_800_000_000).contains(&longitude) {
-            return Err(CoordinateError::LongitudeOutOfRange);
-        }
-        Ok(Self {
-            latitude: LatitudeE7::new(latitude),
-            longitude: LongitudeE7::new(longitude),
-        })
     }
 
     pub(crate) const fn from_bounded_fixed_parts(latitude: i32, longitude: i32) -> Self {
-        Self {
-            latitude: LatitudeE7::new(latitude),
-            longitude: LongitudeE7::new(longitude),
-        }
+        debug_assert!(latitude >= MIN_LATITUDE_E7 && latitude <= MAX_LATITUDE_E7);
+        debug_assert!(longitude >= MIN_LONGITUDE_E7 && longitude <= MAX_LONGITUDE_E7);
+        Self::from_parts(
+            LatitudeE7::from_validated(latitude),
+            LongitudeE7::from_validated(longitude),
+        )
     }
 
     /// Returns the fixed-point latitude.
@@ -115,6 +119,30 @@ impl Coordinate {
     #[must_use]
     pub fn longitude_degrees(self) -> f64 {
         f64::from(self.longitude.0) / DEGREES_SCALE
+    }
+}
+
+impl TryFrom<i32> for LatitudeE7 {
+    type Error = CoordinateError;
+
+    fn try_from(value: i32) -> Result<Self, Self::Error> {
+        if (MIN_LATITUDE_E7..=MAX_LATITUDE_E7).contains(&value) {
+            Ok(Self::from_validated(value))
+        } else {
+            Err(CoordinateError::LatitudeOutOfRange)
+        }
+    }
+}
+
+impl TryFrom<i32> for LongitudeE7 {
+    type Error = CoordinateError;
+
+    fn try_from(value: i32) -> Result<Self, Self::Error> {
+        if (MIN_LONGITUDE_E7..=MAX_LONGITUDE_E7).contains(&value) {
+            Ok(Self::from_validated(value))
+        } else {
+            Err(CoordinateError::LongitudeOutOfRange)
+        }
     }
 }
 

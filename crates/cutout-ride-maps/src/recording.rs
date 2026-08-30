@@ -1017,8 +1017,8 @@ mod tests {
         RideSegmentCount, RideSegmentStartReason, VehicleAssociation,
     };
     use crate::{
-        Coordinate, LocationAdmission, LocationSample, LocationSource, RideEvent,
-        RideLifecycleState, VehicleIdentity, WallClockUnixMilliseconds,
+        LocationAdmission, LocationSample, LocationSource, RideEvent, RideLifecycleState,
+        VehicleIdentity, WallClockUnixMilliseconds, Wgs84Coordinate,
     };
 
     fn identity(value: &str) -> VehicleIdentity {
@@ -1031,7 +1031,7 @@ mod tests {
 
     fn sample(monotonic_ms: u64, latitude: f64) -> LocationSample {
         LocationSample::new(
-            Coordinate::from_degrees(latitude, -105.0).expect("valid coordinate"),
+            Wgs84Coordinate::from_degrees(latitude, -105.0).expect("valid coordinate"),
             monotonic(monotonic_ms),
             WallClockUnixMilliseconds::new(1_700_000_000_000 + monotonic_ms),
             None,

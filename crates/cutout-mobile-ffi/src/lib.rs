@@ -4035,12 +4035,15 @@ fn parse_mobile_trail_id(
 
 fn mobile_map_coordinate(
     coordinate: MobileMapCoordinateDto,
-) -> Result<ride_maps::Coordinate, MobileRideDatabaseError> {
-    ride_maps::Coordinate::from_degrees(coordinate.latitude_degrees, coordinate.longitude_degrees)
-        .map_err(|_| MobileRideDatabaseError::InvalidCoordinate)
+) -> Result<ride_maps::Wgs84Coordinate, MobileRideDatabaseError> {
+    ride_maps::Wgs84Coordinate::from_degrees(
+        coordinate.latitude_degrees,
+        coordinate.longitude_degrees,
+    )
+    .map_err(|_| MobileRideDatabaseError::InvalidCoordinate)
 }
 
-fn mobile_map_coordinate_dto(coordinate: ride_maps::Coordinate) -> MobileMapCoordinateDto {
+fn mobile_map_coordinate_dto(coordinate: ride_maps::Wgs84Coordinate) -> MobileMapCoordinateDto {
     MobileMapCoordinateDto {
         latitude_degrees: coordinate.latitude_degrees(),
         longitude_degrees: coordinate.longitude_degrees(),
@@ -4086,12 +4089,12 @@ fn mobile_route_projection_options_for_database(
     let viewport = options
         .viewport
         .map(|bounds| {
-            let minimum = ride_maps::Coordinate::from_degrees(
+            let minimum = ride_maps::Wgs84Coordinate::from_degrees(
                 bounds.minimum_latitude_degrees,
                 bounds.minimum_longitude_degrees,
             )
             .map_err(|_| MobileRideDatabaseError::InvalidRouteProjection)?;
-            let maximum = ride_maps::Coordinate::from_degrees(
+            let maximum = ride_maps::Wgs84Coordinate::from_degrees(
                 bounds.maximum_latitude_degrees,
                 bounds.maximum_longitude_degrees,
             )
@@ -4364,9 +4367,11 @@ fn mobile_pevcap_receipt(
 fn mobile_ride_location(
     location: MobileRideLocationDto,
 ) -> Result<ride_maps::LocationSample, MobileRideDatabaseError> {
-    let coordinate =
-        ride_maps::Coordinate::from_degrees(location.latitude_degrees, location.longitude_degrees)
-            .map_err(|_| MobileRideDatabaseError::InvalidCoordinate)?;
+    let coordinate = ride_maps::Wgs84Coordinate::from_degrees(
+        location.latitude_degrees,
+        location.longitude_degrees,
+    )
+    .map_err(|_| MobileRideDatabaseError::InvalidCoordinate)?;
     Ok(ride_maps::LocationSample::new(
         coordinate,
         ride_maps::MonotonicMilliseconds::new(location.monotonic_milliseconds),
@@ -15094,8 +15099,8 @@ mod tests {
 
     #[test]
     fn mobile_segment_count_honors_cancellation_during_scan() {
-        let coordinate =
-            ride_maps::Coordinate::from_degrees(40.0, -105.0).expect("fixture coordinate is valid");
+        let coordinate = ride_maps::Wgs84Coordinate::from_degrees(40.0, -105.0)
+            .expect("fixture coordinate is valid");
         let points = [0, 0, 1, 1].map(|segment_id| {
             ride_maps::RideMapPoint::new(
                 ride_maps::LocationSample::new(

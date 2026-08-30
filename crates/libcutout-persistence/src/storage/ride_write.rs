@@ -217,7 +217,7 @@ pub(super) fn wall_clock_now_milliseconds() -> Result<u64, SystemTimeError> {
 
 #[cfg(test)]
 mod tests {
-    use cutout_ride_maps::{Coordinate, LocationSource, RideMapSegmentId};
+    use cutout_ride_maps::{LocationSource, RideMapSegmentId, Wgs84Coordinate};
 
     use super::*;
 
@@ -245,7 +245,7 @@ mod tests {
             0,
         );
         let sample = LocationSample::new(
-            Coordinate::from_degrees(40.0, -105.0).unwrap(),
+            Wgs84Coordinate::from_degrees(40.0, -105.0).unwrap(),
             1,
             30,
             None,
@@ -321,7 +321,7 @@ mod tests {
             0,
         );
         let sample = LocationSample::new(
-            Coordinate::from_degrees(40.0, -105.0).unwrap(),
+            Wgs84Coordinate::from_degrees(40.0, -105.0).unwrap(),
             10_000,
             1_700_000_010_000,
             None,

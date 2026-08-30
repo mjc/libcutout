@@ -1,12 +1,12 @@
 use cutout_core::{PevcapEncoding, PevcapEvent, PevcapPhoneLocation, PevcapReader};
 use cutout_ride_maps::{
-    AverageSpeedMillimetresPerSecond, Coordinate, LocationAdmission, LocationSample,
-    LocationSource, MAX_GAP_MILLISECONDS, MAX_LIVE_ROUTE_POINTS, MonotonicMilliseconds, RideEvent,
+    AverageSpeedMillimetresPerSecond, LocationAdmission, LocationSample, LocationSource,
+    MAX_GAP_MILLISECONDS, MAX_LIVE_ROUTE_POINTS, MonotonicMilliseconds, RideEvent,
     RideLifecycleState, RideMapPoint, RideMapRecorder, RideMapSegmentId, RidePointCount,
     RidePointSequence, RideSegmentStartReason, RideSummary, RouteDisplayBudget, RouteDisplayPoint,
     RouteEndpointMetadata, RoutePrivacyPolicy, RouteProjectionAccumulator,
     RouteSegmentDisplayMetadata, RouteTelemetryState, RouteViewport, TransitionError,
-    WallClockUnixMilliseconds, count_segment_runs, route_segment_display_metadata,
+    WallClockUnixMilliseconds, Wgs84Coordinate, count_segment_runs, route_segment_display_metadata,
 };
 use hex::encode as hex_encode;
 use rusqlite::{Connection, ErrorCode, OptionalExtension, params};
@@ -1033,9 +1033,9 @@ pub struct TrailSegment {
     /// Stable sequence within the trail.
     pub sequence: u32,
     /// Segment start coordinate.
-    pub start: Coordinate,
+    pub start: Wgs84Coordinate,
     /// Segment end coordinate.
-    pub end: Coordinate,
+    pub end: Wgs84Coordinate,
 }
 
 /// One charging/food point stored in the spatial index.
@@ -1046,7 +1046,7 @@ pub struct MapPoint {
     /// User-visible name.
     pub name: String,
     /// Point coordinate.
-    pub coordinate: Coordinate,
+    pub coordinate: Wgs84Coordinate,
 }
 
 /// Stable UUID for a stored map point.
@@ -1102,10 +1102,12 @@ impl GeoBounds {
         minimum_longitude_degrees: f64,
         maximum_longitude_degrees: f64,
     ) -> Result<Self, StorageError> {
-        let minimum = Coordinate::from_degrees(minimum_latitude_degrees, minimum_longitude_degrees)
-            .map_err(|_| StorageError::InvalidGeographicBounds)?;
-        let maximum = Coordinate::from_degrees(maximum_latitude_degrees, maximum_longitude_degrees)
-            .map_err(|_| StorageError::InvalidGeographicBounds)?;
+        let minimum =
+            Wgs84Coordinate::from_degrees(minimum_latitude_degrees, minimum_longitude_degrees)
+                .map_err(|_| StorageError::InvalidGeographicBounds)?;
+        let maximum =
+            Wgs84Coordinate::from_degrees(maximum_latitude_degrees, maximum_longitude_degrees)
+                .map_err(|_| StorageError::InvalidGeographicBounds)?;
         if minimum.latitude().as_i32() > maximum.latitude().as_i32() {
             return Err(StorageError::InvalidGeographicBounds);
         }
@@ -2146,8 +2148,8 @@ impl RideDatabase {
         &self,
         trail_id: TrailId,
         sequence: u32,
-        start: Coordinate,
-        end: Coordinate,
+        start: Wgs84Coordinate,
+        end: Wgs84Coordinate,
     ) -> Result<(), StorageError> {
         self.request(move |reply| Command::AppendTrailSegment {
             trail_id,
@@ -2185,7 +2187,7 @@ impl RideDatabase {
     pub fn create_map_point(
         &self,
         name: &str,
-        coordinate: Coordinate,
+        coordinate: Wgs84Coordinate,
     ) -> Result<MapPointId, StorageError> {
         self.request(move |reply| Command::CreateMapPoint {
             name: name.to_owned(),
@@ -3213,8 +3215,8 @@ enum Command {
     AppendTrailSegment {
         trail_id: TrailId,
         sequence: u32,
-        start: Coordinate,
-        end: Coordinate,
+        start: Wgs84Coordinate,
+        end: Wgs84Coordinate,
         reply: Reply<()>,
     },
     TrailSegmentsInBounds {
@@ -3225,7 +3227,7 @@ enum Command {
     },
     CreateMapPoint {
         name: String,
-        coordinate: Coordinate,
+        coordinate: Wgs84Coordinate,
         reply: Reply<MapPointId>,
     },
     MapPointsInBounds {
@@ -5208,8 +5210,8 @@ fn append_trail_segment(
     state: &mut SpatialSchemaState,
     trail_id: TrailId,
     sequence: u32,
-    start: Coordinate,
-    end: Coordinate,
+    start: Wgs84Coordinate,
+    end: Wgs84Coordinate,
 ) -> Result<(), StorageError> {
     ensure_spatial_schema(connection, state)?;
     let transaction = connection.transaction()?;
@@ -5324,9 +5326,9 @@ fn trail_segment_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<TrailSegm
             }),
         )
     })?;
-    let start = Coordinate::from_fixed_parts(row.get(2)?, row.get(3)?)
+    let start = Wgs84Coordinate::from_fixed_parts(row.get(2)?, row.get(3)?)
         .map_err(|_| rusqlite::Error::InvalidQuery)?;
-    let end = Coordinate::from_fixed_parts(row.get(4)?, row.get(5)?)
+    let end = Wgs84Coordinate::from_fixed_parts(row.get(4)?, row.get(5)?)
         .map_err(|_| rusqlite::Error::InvalidQuery)?;
     Ok(TrailSegment {
         trail_id: TrailId::from_uuid(trail_id),
@@ -5340,7 +5342,7 @@ fn create_map_point(
     connection: &mut Connection,
     state: &mut SpatialSchemaState,
     name: &str,
-    coordinate: Coordinate,
+    coordinate: Wgs84Coordinate,
 ) -> Result<MapPointId, StorageError> {
     if name.trim().is_empty() {
         return Err(StorageError::InvalidStoredValue {
@@ -5426,7 +5428,7 @@ fn map_points_in_bounds(
                     }),
                 )
             })?;
-            let coordinate = Coordinate::from_fixed_parts(row.get(2)?, row.get(3)?)
+            let coordinate = Wgs84Coordinate::from_fixed_parts(row.get(2)?, row.get(3)?)
                 .map_err(|_| rusqlite::Error::InvalidQuery)?;
             Ok(MapPoint {
                 id: MapPointId::from_uuid(id),
@@ -5692,7 +5694,7 @@ fn append_pevcap_location(
         return Ok(());
     };
     let Ok(coordinate) =
-        Coordinate::from_degrees(location.latitude_degrees, location.longitude_degrees)
+        Wgs84Coordinate::from_degrees(location.latitude_degrees, location.longitude_degrees)
     else {
         return Ok(());
     };
@@ -6199,7 +6201,7 @@ fn append_location_in_transaction(
              FROM ride_points WHERE ride_id = ?1 ORDER BY sequence DESC LIMIT 1",
             params![ride_id.uuid().to_string()],
             |row| {
-                let coordinate = Coordinate::from_fixed_parts(row.get(4)?, row.get(5)?).map_err(|_| {
+                let coordinate = Wgs84Coordinate::from_fixed_parts(row.get(4)?, row.get(5)?).map_err(|_| {
                     rusqlite::Error::FromSqlConversionFailure(
                         4,
                         rusqlite::types::Type::Integer,
@@ -7360,13 +7362,14 @@ fn route_point_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<RoutePoint>
     let start_reason = segment_start_reason_from_db(&start_reason_value).map_err(|error| {
         rusqlite::Error::FromSqlConversionFailure(9, rusqlite::types::Type::Text, Box::new(error))
     })?;
-    let coordinate = Coordinate::from_fixed_parts(row.get(5)?, row.get(6)?).map_err(|error| {
-        rusqlite::Error::FromSqlConversionFailure(
-            5,
-            rusqlite::types::Type::Integer,
-            Box::new(error),
-        )
-    })?;
+    let coordinate =
+        Wgs84Coordinate::from_fixed_parts(row.get(5)?, row.get(6)?).map_err(|error| {
+            rusqlite::Error::FromSqlConversionFailure(
+                5,
+                rusqlite::types::Type::Integer,
+                Box::new(error),
+            )
+        })?;
     Ok(RoutePoint {
         sequence: RidePointSequence::new(row.get(0)?),
         segment_id: RideMapSegmentId::new(row.get(1)?),

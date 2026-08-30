@@ -1,6 +1,6 @@
 use crate::{
-    Coordinate, LatitudeE7, LongitudeE7, RideMapPoint, RideMapSegmentId, RidePointCount,
-    RidePointSequence, RideSegmentStartReason,
+    LatitudeE7, LongitudeE7, RideMapPoint, RideMapSegmentId, RidePointCount, RidePointSequence,
+    RideSegmentStartReason, Wgs84Coordinate,
 };
 
 /// Failure returned when a route projection is cancelled before completion.
@@ -79,7 +79,7 @@ impl RoutePrivacyPolicy {
         Self::Grid(size)
     }
 
-    fn project(self, coordinate: Coordinate) -> (Coordinate, RoutePrivacyClass) {
+    fn project(self, coordinate: Wgs84Coordinate) -> (Wgs84Coordinate, RoutePrivacyClass) {
         match self {
             Self::Precise => (coordinate, RoutePrivacyClass::Precise),
             Self::Grid(grid) => {
@@ -95,7 +95,7 @@ impl RoutePrivacyPolicy {
                     -1_800_000_000,
                     1_800_000_000,
                 );
-                let coordinate = Coordinate::from_bounded_fixed_parts(latitude, longitude);
+                let coordinate = Wgs84Coordinate::from_bounded_fixed_parts(latitude, longitude);
                 (coordinate, RoutePrivacyClass::GridRedacted)
             }
         }
@@ -166,7 +166,7 @@ impl RouteViewport {
 
     /// Returns whether a coordinate lies inside this viewport.
     #[must_use]
-    pub fn contains(self, coordinate: Coordinate) -> bool {
+    pub fn contains(self, coordinate: Wgs84Coordinate) -> bool {
         let latitude = coordinate.latitude().as_i32();
         let longitude = coordinate.longitude().as_i32();
         let latitude_visible =
@@ -188,7 +188,7 @@ pub struct RouteDisplayPoint {
     segment_id: RideMapSegmentId,
     segment_start_reason: RideSegmentStartReason,
     canonical_point_count: Option<RidePointCount>,
-    coordinate: Coordinate,
+    coordinate: Wgs84Coordinate,
     privacy_class: RoutePrivacyClass,
 }
 
@@ -506,7 +506,7 @@ impl RouteDisplayPoint {
 
     /// Returns the privacy-projected coordinate.
     #[must_use]
-    pub const fn coordinate(self) -> Coordinate {
+    pub const fn coordinate(self) -> Wgs84Coordinate {
         self.coordinate
     }
 

@@ -1,4 +1,4 @@
-use crate::Coordinate;
+use crate::Wgs84Coordinate;
 
 /// Monotonic milliseconds used for ordering samples and lifecycle events.
 #[derive(Clone, Copy, Debug, Default, Eq, Hash, Ord, PartialEq, PartialOrd)]
@@ -72,7 +72,7 @@ pub enum LocationSource {
 /// A validated location sample with explicit millisecond and millimetre units.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct LocationSample {
-    coordinate: Coordinate,
+    coordinate: Wgs84Coordinate,
     monotonic_milliseconds: MonotonicMilliseconds,
     wall_clock_unix_milliseconds: WallClockUnixMilliseconds,
     horizontal_accuracy_millimetres: Option<u32>,
@@ -83,7 +83,7 @@ impl LocationSample {
     /// Creates a location sample from already validated platform values.
     #[must_use]
     pub fn new(
-        coordinate: Coordinate,
+        coordinate: Wgs84Coordinate,
         monotonic_milliseconds: impl Into<MonotonicMilliseconds>,
         wall_clock_unix_milliseconds: impl Into<WallClockUnixMilliseconds>,
         horizontal_accuracy_millimetres: Option<u32>,
@@ -100,7 +100,7 @@ impl LocationSample {
 
     /// Returns the coordinate.
     #[must_use]
-    pub const fn coordinate(self) -> Coordinate {
+    pub const fn coordinate(self) -> Wgs84Coordinate {
         self.coordinate
     }
 

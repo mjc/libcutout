@@ -8,11 +8,11 @@ use cutout_core::{
     PevcapPhoneLocation, PevcapRecord, RawTelemetryReadback, WallClockUnixTimestamp,
 };
 use cutout_ride_maps::{
-    Coordinate, LatitudeE7, LocationAdmission, LocationSample, LocationSource, LongitudeE7,
+    LatitudeE7, LocationAdmission, LocationSample, LocationSource, LongitudeE7,
     MAX_LIVE_ROUTE_POINTS, MAX_ROUTE_DISPLAY_POINTS, MonotonicMilliseconds, RideEvent,
     RideMapSegmentId, RidePointSequence, RideSegmentStartReason, RouteDisplayBudget,
     RoutePrivacyGridE7, RoutePrivacyPolicy, RouteTelemetryState, RouteViewport,
-    WallClockUnixMilliseconds,
+    WallClockUnixMilliseconds, Wgs84Coordinate,
 };
 use rusqlite::Connection;
 
@@ -136,7 +136,7 @@ fn database_owns_one_service_and_reopens_persisted_rides() {
         .unwrap();
     first.transition(ride, RideEvent::Start).unwrap();
     let sample = LocationSample::new(
-        Coordinate::from_degrees(40.0, -105.0).unwrap(),
+        Wgs84Coordinate::from_degrees(40.0, -105.0).unwrap(),
         1_000,
         1_700_000_000_000,
         None,
@@ -147,7 +147,7 @@ fn database_owns_one_service_and_reopens_persisted_rides() {
         LocationAdmission::Accepted
     );
     let second_sample = LocationSample::new(
-        Coordinate::from_degrees(40.001, -105.001).unwrap(),
+        Wgs84Coordinate::from_degrees(40.001, -105.001).unwrap(),
         2_000,
         1_700_000_002_000,
         None,
@@ -242,7 +242,7 @@ fn ride_updates_follow_domain_timestamps_without_regressing() {
 
     database.transition(ride, RideEvent::Start).unwrap();
     let sample = LocationSample::new(
-        Coordinate::from_degrees(40.0, -105.0).unwrap(),
+        Wgs84Coordinate::from_degrees(40.0, -105.0).unwrap(),
         1_000,
         sample_at_ms,
         None,
@@ -274,7 +274,7 @@ fn queued_location_reports_worker_rejection() {
     let database = RideDatabase::open(&path).unwrap();
     let ride = database.create_ride(RideSource::Live, 1_000).unwrap();
     let sample = LocationSample::new(
-        Coordinate::from_degrees(40.0, -105.0).unwrap(),
+        Wgs84Coordinate::from_degrees(40.0, -105.0).unwrap(),
         1_001,
         1_700_000_000_001,
         None,
@@ -306,7 +306,7 @@ fn async_location_write_reports_completion_without_waiting() {
     let ride = database.create_ride(RideSource::Live, 1_000).unwrap();
     database.transition(ride, RideEvent::Start).unwrap();
     let sample = LocationSample::new(
-        Coordinate::from_degrees(40.0, -105.0).unwrap(),
+        Wgs84Coordinate::from_degrees(40.0, -105.0).unwrap(),
         1_001,
         1_700_000_000_001,
         None,
@@ -345,7 +345,7 @@ fn async_location_write_can_bound_wait_for_a_delayed_worker() {
         .install_route_projection_test_gate(entered_sender, release_receiver)
         .unwrap();
     let sample = LocationSample::new(
-        Coordinate::from_degrees(40.0, -105.0).unwrap(),
+        Wgs84Coordinate::from_degrees(40.0, -105.0).unwrap(),
         1_001,
         1_700_000_000_001,
         None,
@@ -386,7 +386,7 @@ fn async_location_write_can_bound_wait_for_a_worker_gate() {
     let (entered_sender, entered_receiver) = std::sync::mpsc::sync_channel(0);
     let (release_sender, release_receiver) = std::sync::mpsc::sync_channel(0);
     let sample = LocationSample::new(
-        Coordinate::from_degrees(40.0, -105.0).unwrap(),
+        Wgs84Coordinate::from_degrees(40.0, -105.0).unwrap(),
         1_001,
         1_700_000_000_001,
         None,
@@ -434,7 +434,7 @@ fn async_location_write_can_bound_wait_for_a_slow_sqlite_worker() {
     let (entered_sender, entered_receiver) = std::sync::mpsc::sync_channel(0);
     let (release_sender, release_receiver) = std::sync::mpsc::sync_channel(0);
     let sample = LocationSample::new(
-        Coordinate::from_degrees(40.0, -105.0).unwrap(),
+        Wgs84Coordinate::from_degrees(40.0, -105.0).unwrap(),
         1_001,
         1_700_000_000_001,
         None,
@@ -481,7 +481,7 @@ fn consumed_location_write_reports_worker_failure_and_recovers() {
 
     let (entered_sender, entered_receiver) = std::sync::mpsc::sync_channel(0);
     let sample = LocationSample::new(
-        Coordinate::from_degrees(40.0, -105.0).unwrap(),
+        Wgs84Coordinate::from_degrees(40.0, -105.0).unwrap(),
         1_001,
         1_700_000_000_001,
         None,
@@ -540,7 +540,7 @@ fn consumed_location_write_reconciles_after_worker_drops_response() {
 
     let (entered_sender, entered_receiver) = std::sync::mpsc::sync_channel(0);
     let sample = LocationSample::new(
-        Coordinate::from_degrees(40.0, -105.0).unwrap(),
+        Wgs84Coordinate::from_degrees(40.0, -105.0).unwrap(),
         1_001,
         1_700_000_000_001,
         None,
@@ -582,7 +582,7 @@ fn consumed_location_write_reconciles_after_worker_drops_response() {
         LocationWriteReconciliation::Committed
     );
     let absent_sample = LocationSample::new(
-        Coordinate::from_degrees(40.001, -105.0).unwrap(),
+        Wgs84Coordinate::from_degrees(40.001, -105.0).unwrap(),
         1_002,
         1_700_000_000_002,
         None,
@@ -650,7 +650,7 @@ fn ride_history_duration_is_derived_from_rust_monotonic_state() {
     let ride = database.create_ride(RideSource::Live, 1_000).unwrap();
     database.transition(ride, RideEvent::Start).unwrap();
     let sample = LocationSample::new(
-        Coordinate::from_degrees(40.0, -105.0).unwrap(),
+        Wgs84Coordinate::from_degrees(40.0, -105.0).unwrap(),
         3_000,
         1_700_000_003_000,
         None,
@@ -683,7 +683,7 @@ fn ride_history_separates_wall_clock_order_from_monotonic_duration() {
         .append_location(
             ride,
             LocationSample::new(
-                Coordinate::from_degrees(40.0, -105.0).unwrap(),
+                Wgs84Coordinate::from_degrees(40.0, -105.0).unwrap(),
                 12_500,
                 1_700_000_002_500,
                 None,
@@ -773,7 +773,7 @@ fn find_and_list_ride_projections_agree_for_all_route_shapes() {
         .append_location(
             one_point_ride,
             LocationSample::new(
-                Coordinate::from_degrees(40.0, -105.0).unwrap(),
+                Wgs84Coordinate::from_degrees(40.0, -105.0).unwrap(),
                 12_500,
                 1_700_000_012_500,
                 Some(3_000),
@@ -798,7 +798,7 @@ fn find_and_list_ride_projections_agree_for_all_route_shapes() {
         .append_location_with_segment_and_telemetry(
             multi_segment_ride,
             LocationSample::new(
-                Coordinate::from_degrees(40.0, -105.0).unwrap(),
+                Wgs84Coordinate::from_degrees(40.0, -105.0).unwrap(),
                 21_000,
                 1_700_000_021_000,
                 Some(3_000),
@@ -812,7 +812,7 @@ fn find_and_list_ride_projections_agree_for_all_route_shapes() {
         .append_location_with_segment_and_telemetry(
             multi_segment_ride,
             LocationSample::new(
-                Coordinate::from_degrees(40.001, -105.0).unwrap(),
+                Wgs84Coordinate::from_degrees(40.001, -105.0).unwrap(),
                 52_000,
                 1_700_000_052_000,
                 Some(3_000),
@@ -862,7 +862,7 @@ fn queued_location_preserves_the_durable_admission_outcome() {
     let ride = database.create_ride(RideSource::Live, 1_000).unwrap();
     database.transition(ride, RideEvent::Start).unwrap();
     let sample = LocationSample::new(
-        Coordinate::from_degrees(40.0, -105.0).unwrap(),
+        Wgs84Coordinate::from_degrees(40.0, -105.0).unwrap(),
         1_001,
         1_700_000_000_001,
         None,
@@ -1024,7 +1024,7 @@ fn database_preflights_confirms_and_deduplicates_managed_pevcap_artifacts() {
         database.append_location(
             ride_id,
             LocationSample::new(
-                Coordinate::from_degrees(40.1, -105.1).unwrap(),
+                Wgs84Coordinate::from_degrees(40.1, -105.1).unwrap(),
                 2,
                 1_700_000_000_001,
                 None,
@@ -1159,7 +1159,7 @@ fn pevcap_import_uses_live_admission_and_segmentation_policy() {
         (40_000, 40.001, 1),
     ] {
         let sample = LocationSample::new(
-            Coordinate::from_degrees(latitude_degrees, -105.0).unwrap(),
+            Wgs84Coordinate::from_degrees(latitude_degrees, -105.0).unwrap(),
             monotonic_ms,
             1_700_000_000_000 + monotonic_ms,
             Some(3_000),
@@ -1937,8 +1937,8 @@ fn database_indexes_trails_and_map_points_with_rtree() {
         return;
     }
     let trail = database.create_trail("Front Range").unwrap();
-    let start = Coordinate::from_degrees(40.0, -105.0).unwrap();
-    let end = Coordinate::from_degrees(40.001, -105.001).unwrap();
+    let start = Wgs84Coordinate::from_degrees(40.0, -105.0).unwrap();
+    let end = Wgs84Coordinate::from_degrees(40.001, -105.001).unwrap();
     database.append_trail_segment(trail, 0, start, end).unwrap();
     let bounds = GeoBounds::new(39.9, 40.1, -105.1, -104.9).unwrap();
     let segments = database
@@ -2006,7 +2006,7 @@ fn spatial_queries_validate_page_and_cross_the_antimeridian() {
     }
     for (name, longitude) in [("west", -179.5), ("east", 179.5), ("outside", 0.0)] {
         database
-            .create_map_point(name, Coordinate::from_degrees(0.0, longitude).unwrap())
+            .create_map_point(name, Wgs84Coordinate::from_degrees(0.0, longitude).unwrap())
             .unwrap();
     }
     let bounds = GeoBounds::new(-1.0, 1.0, 179.0, -179.0).unwrap();
@@ -2406,7 +2406,7 @@ fn ride_history_and_route_queries_are_stably_bounded() {
     database.transition(ride, RideEvent::Start).unwrap();
     for sequence in 0_u32..3 {
         let sample = LocationSample::new(
-            Coordinate::from_degrees(40.0 + f64::from(sequence) / 10_000.0, -105.0).unwrap(),
+            Wgs84Coordinate::from_degrees(40.0 + f64::from(sequence) / 10_000.0, -105.0).unwrap(),
             u64::from(sequence + 1),
             1_700_000_000_000 + u64::from(sequence),
             None,
@@ -2445,7 +2445,7 @@ fn latest_route_points_return_the_bounded_tail_in_ascending_order() {
     for sequence in 0..u64::try_from(MAX_LIVE_ROUTE_POINTS + 2).unwrap() {
         let offset = f64::from(u32::try_from(sequence).unwrap()) / 1_000_000.0;
         let sample = LocationSample::new(
-            Coordinate::from_degrees(40.0 + offset, -105.0).unwrap(),
+            Wgs84Coordinate::from_degrees(40.0 + offset, -105.0).unwrap(),
             sequence + 1,
             1_700_000_000_000 + sequence,
             None,
@@ -2484,7 +2484,7 @@ fn durable_route_projection_is_bounded_and_viewport_filtered_in_rust() {
     database.transition(ride, RideEvent::Start).unwrap();
     for offset in 0..4_u64 {
         let sample = LocationSample::new(
-            Coordinate::from_degrees(
+            Wgs84Coordinate::from_degrees(
                 40.0 + f64::from(u32::try_from(offset).unwrap()) / 10_000.0,
                 -105.0,
             )
@@ -2501,10 +2501,10 @@ fn durable_route_projection_is_bounded_and_viewport_filtered_in_rust() {
     }
 
     let viewport = RouteViewport::new(
-        LatitudeE7::new(400_000_000),
-        LatitudeE7::new(400_002_000),
-        LongitudeE7::new(-1_050_000_000),
-        LongitudeE7::new(-1_049_999_000),
+        LatitudeE7::try_from(400_000_000).unwrap(),
+        LatitudeE7::try_from(400_002_000).unwrap(),
+        LongitudeE7::try_from(-1_050_000_000).unwrap(),
+        LongitudeE7::try_from(-1_049_999_000).unwrap(),
     )
     .unwrap();
     let projection = database
@@ -2559,7 +2559,7 @@ fn durable_history_context_projection_excludes_selected_and_bounds_each_route() 
         database.transition(ride, RideEvent::Start).unwrap();
         for point_index in 0..4_u64 {
             let sample = LocationSample::new(
-                Coordinate::from_degrees(
+                Wgs84Coordinate::from_degrees(
                     40.0 + f64::from(u32::try_from(ride_index).unwrap()) / 100.0
                         + f64::from(u32::try_from(point_index).unwrap()) / 10_000.0,
                     -105.0,
@@ -2621,7 +2621,7 @@ fn durable_history_context_projection_reports_aggregate_budget_omissions() {
         database.transition(ride, RideEvent::Start).unwrap();
         for point_index in 0..2_u64 {
             let sample = LocationSample::new(
-                Coordinate::from_degrees(
+                Wgs84Coordinate::from_degrees(
                     40.0 + f64::from(u32::try_from(ride_index).unwrap()) / 100.0
                         + f64::from(u32::try_from(point_index).unwrap()) / 10_000.0,
                     -105.0,
@@ -2672,7 +2672,7 @@ fn segment_point_counts_are_maintained_transactionally() {
         [(1_u64, 40.0001, 0_u64), (2, 40.0002, 0), (3, 40.0003, 1)]
     {
         let sample = LocationSample::new(
-            Coordinate::from_degrees(latitude_degrees, -105.0).unwrap(),
+            Wgs84Coordinate::from_degrees(latitude_degrees, -105.0).unwrap(),
             monotonic_ms,
             1_700_000_000_000 + monotonic_ms,
             None,
@@ -2719,7 +2719,7 @@ fn schema_v14_migration_backfills_segment_point_counts() {
     database.transition(ride, RideEvent::Start).unwrap();
     for (monotonic_ms, latitude_degrees) in [(1_u64, 40.0001), (2, 40.0002)] {
         let sample = LocationSample::new(
-            Coordinate::from_degrees(latitude_degrees, -105.0).unwrap(),
+            Wgs84Coordinate::from_degrees(latitude_degrees, -105.0).unwrap(),
             monotonic_ms,
             1_700_000_000_000 + monotonic_ms,
             None,
@@ -2803,7 +2803,7 @@ fn durable_projection_keeps_long_routes_bounded_with_exact_source_counts() {
     for sequence in 0..=MAX_ROUTE_DISPLAY_POINTS {
         let sequence = u64::try_from(sequence).unwrap();
         let sample = LocationSample::new(
-            Coordinate::from_degrees(
+            Wgs84Coordinate::from_degrees(
                 40.0 + f64::from(u32::try_from(sequence).unwrap()) / 1_000_000.0,
                 -105.0,
             )
@@ -2861,7 +2861,7 @@ fn durable_route_projection_reports_segments_omitted_by_display_budget() {
     .enumerate()
     {
         let sample = LocationSample::new(
-            Coordinate::from_degrees(latitude_degrees, -105.0).unwrap(),
+            Wgs84Coordinate::from_degrees(latitude_degrees, -105.0).unwrap(),
             monotonic_ms,
             1_700_000_000_000 + monotonic_ms,
             None,
@@ -2932,7 +2932,7 @@ fn durable_route_projection_exposes_typed_bounded_segment_metadata() {
         (40_000_u64, 2_u64, 40.0002),
     ] {
         let sample = LocationSample::new(
-            Coordinate::from_degrees(latitude, -105.0).unwrap(),
+            Wgs84Coordinate::from_degrees(latitude, -105.0).unwrap(),
             monotonic_ms,
             1_700_000_000_000 + monotonic_ms,
             None,
@@ -3001,7 +3001,7 @@ fn cancelled_durable_route_projection_returns_before_scanning() {
     for sequence in 0_u64..4_096 {
         let offset = f64::from(u32::try_from(sequence).unwrap()) / 1_000_000.0;
         let sample = LocationSample::new(
-            Coordinate::from_degrees(40.0 + offset, -105.0).unwrap(),
+            Wgs84Coordinate::from_degrees(40.0 + offset, -105.0).unwrap(),
             sequence + 1,
             1_700_000_000_000 + sequence,
             None,
@@ -3073,7 +3073,7 @@ fn cancelled_in_flight_route_projection_leaves_worker_usable() {
     database.transition(ride, RideEvent::Start).unwrap();
     for sequence in 0_u64..4 {
         let sample = LocationSample::new(
-            Coordinate::from_degrees(
+            Wgs84Coordinate::from_degrees(
                 40.0 + f64::from(u32::try_from(sequence).unwrap()) / 10_000.0,
                 -105.0,
             )
@@ -3124,7 +3124,7 @@ fn cancelled_in_flight_route_projection_leaves_worker_usable() {
 
     assert!(database.find_ride(ride).unwrap().is_some());
     let next_sample = LocationSample::new(
-        Coordinate::from_degrees(40.001, -105.0).unwrap(),
+        Wgs84Coordinate::from_degrees(40.001, -105.0).unwrap(),
         5,
         1_700_000_000_005,
         None,
@@ -3150,7 +3150,7 @@ fn route_projection_recovers_after_worker_exits_after_consuming_request() {
     let ride = database.create_ride(RideSource::Live, 40).unwrap();
     database.transition(ride, RideEvent::Start).unwrap();
     let sample = LocationSample::new(
-        Coordinate::from_degrees(40.0, -105.0).unwrap(),
+        Wgs84Coordinate::from_degrees(40.0, -105.0).unwrap(),
         1,
         1_700_000_000_001,
         None,
@@ -3485,7 +3485,7 @@ fn route_points_persist_telemetry_provenance() {
     let ride = database.create_ride(RideSource::Live, 10).unwrap();
     database.transition(ride, RideEvent::Start).unwrap();
     let sample = LocationSample::new(
-        Coordinate::from_degrees(40.0, -105.0).unwrap(),
+        Wgs84Coordinate::from_degrees(40.0, -105.0).unwrap(),
         11,
         1_700_000_000_011,
         Some(3_000),
@@ -3523,7 +3523,7 @@ fn route_points_reject_arbitrary_segment_id() {
     database.transition(ride, RideEvent::Start).unwrap();
     let sample = |monotonic_ms| {
         LocationSample::new(
-            Coordinate::from_degrees(40.0, -105.0).unwrap(),
+            Wgs84Coordinate::from_degrees(40.0, -105.0).unwrap(),
             monotonic_ms,
             1_700_000_000_000 + monotonic_ms,
             Some(3_000),
@@ -3622,7 +3622,7 @@ fn ride_segments_persist_ordered_reason_and_source_metadata() {
     database.transition(ride, RideEvent::Start).unwrap();
     let sample = |monotonic_ms| {
         LocationSample::new(
-            Coordinate::from_degrees(40.0, -105.0).unwrap(),
+            Wgs84Coordinate::from_degrees(40.0, -105.0).unwrap(),
             monotonic_ms,
             1_700_000_000_000 + monotonic_ms,
             Some(3_000),
