@@ -694,12 +694,13 @@ impl RideMapRecorder {
     /// Returns the segment that would contain a candidate sample.
     #[must_use]
     pub fn segment_id_for_sample(&self, sample: &LocationSample) -> RideMapSegmentId {
-        let gap_started = self.points.last().is_some_and(|previous| {
-            sample
-                .monotonic_milliseconds()
-                .saturating_sub(previous.sample().monotonic_milliseconds())
-                > MAX_GAP_MILLISECONDS
-        });
+        let gap_started = !self.segment_started
+            && self.points.last().is_some_and(|previous| {
+                sample
+                    .monotonic_milliseconds()
+                    .saturating_sub(previous.sample().monotonic_milliseconds())
+                    > MAX_GAP_MILLISECONDS
+            });
         if gap_started {
             self.segment_id.next()
         } else {
@@ -1163,6 +1164,28 @@ mod tests {
             recorder.points()[0].segment_start_reason(),
             RideSegmentStartReason::Initial
         );
+        assert_eq!(
+            recorder.points()[1].segment_start_reason(),
+            RideSegmentStartReason::Resume
+        );
+    }
+
+    #[test]
+    fn resumed_segment_does_not_also_start_a_background_gap() {
+        let mut recorder = RideMapRecorder::new();
+        recorder.start(monotonic(1_000), None).expect("starts");
+        assert!(recorder.record_sample(sample(1_001, 40.0)));
+
+        recorder.apply_transition_at(RideLifecycleState::Paused, monotonic(2_000));
+        recorder.apply_transition_at(
+            RideLifecycleState::Active,
+            monotonic(2_000 + super::MAX_GAP_MILLISECONDS + 1),
+        );
+        assert!(recorder.record_sample(sample(2_000 + super::MAX_GAP_MILLISECONDS + 2, 40.001,)));
+
+        assert_eq!(recorder.current_segment_id().value(), 1);
+        assert_eq!(recorder.segment_count(), RideSegmentCount::new(2));
+        assert_eq!(recorder.background_gap_count().as_u64(), 0);
         assert_eq!(
             recorder.points()[1].segment_start_reason(),
             RideSegmentStartReason::Resume

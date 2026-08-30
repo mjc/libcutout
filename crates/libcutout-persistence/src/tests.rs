@@ -11,7 +11,7 @@ use cutout_ride_maps::{
 };
 use rusqlite::Connection;
 
-use cutout_ride_maps::RideLifecycleState;
+use cutout_ride_maps::{RideLifecycleState, RideSegmentStartReason};
 
 use super::{
     GeoBounds, HistoryContextBudget, PevcapImportOutcome, QueryLimit, RideDatabase,
@@ -330,7 +330,13 @@ fn async_location_write_returns_before_worker_completion_and_can_be_polled() {
 
     let started = Instant::now();
     let mut pending = database
-        .enqueue_location_async(ride, sample, 0, RouteTelemetryState::GpsOnly)
+        .enqueue_location_async(
+            ride,
+            sample,
+            0,
+            RideSegmentStartReason::Initial,
+            RouteTelemetryState::GpsOnly,
+        )
         .unwrap();
     assert!(started.elapsed() < Duration::from_millis(100));
     let result = loop {
@@ -366,7 +372,13 @@ fn async_location_write_wait_consumes_and_does_not_lose_result() {
         LocationSource::Live,
     );
     let mut pending = database
-        .enqueue_location_async(ride, sample, 0, RouteTelemetryState::GpsOnly)
+        .enqueue_location_async(
+            ride,
+            sample,
+            0,
+            RideSegmentStartReason::Initial,
+            RouteTelemetryState::GpsOnly,
+        )
         .unwrap();
 
     let result = pending
@@ -409,7 +421,13 @@ fn async_location_write_can_bound_wait_for_a_delayed_worker() {
         LocationSource::Live,
     );
     let mut pending = database
-        .enqueue_location_async(ride, sample, 0, RouteTelemetryState::GpsOnly)
+        .enqueue_location_async(
+            ride,
+            sample,
+            0,
+            RideSegmentStartReason::Initial,
+            RouteTelemetryState::GpsOnly,
+        )
         .unwrap();
     entered_receiver
         .recv_timeout(Duration::from_secs(1))
@@ -2395,7 +2413,7 @@ fn durable_history_context_projection_excludes_selected_and_bounds_each_route() 
     assert_eq!(projection.source_history_route_count(), 3);
     assert_eq!(projection.context_route_count(), 2);
     assert_eq!(projection.routes().len(), 2);
-    assert!(!projection.routes_omitted_by_budget());
+    assert!(projection.routes_omitted_by_budget());
     assert!(!projection.history_page_has_more());
     assert_eq!(projection.total_display_point_count(), 4);
     assert!(projection.routes().iter().all(|route| {

@@ -46,6 +46,7 @@ const DEFAULT_ROUTE_PROJECTION_TIMEOUT: Duration = Duration::from_secs(2);
 struct PevcapRoutePoint {
     sample: LocationSample,
     segment_id: RideMapSegmentId,
+    start_reason: RideSegmentStartReason,
     telemetry_state: RouteTelemetryState,
 }
 const MAX_STORED_TEXT_CHARS: usize = 512;
@@ -2353,6 +2354,7 @@ impl RideDatabase {
         ride_id: RideId,
         sample: LocationSample,
         segment_id: u64,
+        start_reason: RideSegmentStartReason,
         telemetry_state: RouteTelemetryState,
     ) -> Result<PendingLocationWrite, StorageError> {
         let (reply, response) = response_channel();
@@ -2360,6 +2362,7 @@ impl RideDatabase {
             ride_id,
             sample,
             segment_id,
+            start_reason,
             telemetry_state,
             reply,
         })?;
@@ -2654,7 +2657,6 @@ impl RideDatabase {
     /// Returns [`StorageError`] when the worker cannot stop or its ownership slot cannot be
     /// released.
     pub fn shutdown(self) -> Result<(), StorageError> {
-        self.request_blocking(|reply| Command::Shutdown { reply })?;
         let mut owner = owner().lock().map_err(|_| StorageError::WorkerStopped)?;
         let Some(mut existing) = owner.take() else {
             return Ok(());
@@ -2663,10 +2665,19 @@ impl RideDatabase {
             *owner = Some(existing);
             return Err(StorageError::WorkerStopped);
         }
-        if let Some(join) = existing.join.take() {
-            join.join().map_err(|_| StorageError::WorkerStopped)?;
-        }
-        Ok(())
+
+        let (reply, response) = response_channel();
+        let response_result = existing
+            .sender
+            .send(Command::Shutdown { reply })
+            .map_err(|_| StorageError::WorkerStopped)
+            .and_then(|()| receive(&response));
+        let join_result = existing.join.take().map_or(Ok(()), |join| {
+            join.join().map_err(|_| StorageError::WorkerStopped)
+        });
+
+        response_result?;
+        join_result
     }
 
     fn request<T>(&self, build: impl FnOnce(Reply<T>) -> Command) -> Result<T, StorageError> {
@@ -2991,6 +3002,7 @@ enum Command {
         ride_id: RideId,
         sample: LocationSample,
         segment_id: u64,
+        start_reason: RideSegmentStartReason,
         telemetry_state: RouteTelemetryState,
         reply: Reply<LocationWriteResult>,
     },
@@ -3375,6 +3387,7 @@ fn worker_loop(
                 ride_id,
                 sample,
                 segment_id,
+                start_reason,
                 telemetry_state,
                 reply,
             } => {
@@ -3384,6 +3397,7 @@ fn worker_loop(
                     sample,
                     segment_id,
                     telemetry_state,
+                    Some(start_reason),
                 ));
             }
             #[cfg(test)]
@@ -3404,6 +3418,7 @@ fn worker_loop(
                     sample,
                     segment_id.value(),
                     telemetry_state,
+                    None,
                 );
                 let _ = reply.send(result);
             }
@@ -5507,6 +5522,12 @@ fn append_pevcap_location(
     }
     let telemetry_state = recorder.telemetry_state_at(sample.monotonic_milliseconds());
     recorder.record_sample(sample);
+    let start_reason = recorder
+        .points()
+        .last()
+        .map_or(RideSegmentStartReason::ImportBoundary, |point| {
+            point.segment_start_reason()
+        });
     *last_emitted_key = Some(location_key);
     if matches!(origin, PevcapLocationOrigin::Attached) {
         *last_attached_key = Some(location_key);
@@ -5514,6 +5535,7 @@ fn append_pevcap_location(
     batch.push(PevcapRoutePoint {
         sample,
         segment_id,
+        start_reason,
         telemetry_state,
     });
     if batch.len() == PEVCAP_LOCATION_BATCH_SIZE {
@@ -5648,6 +5670,7 @@ fn append_pevcap_location_batch(
             point.sample,
             point.segment_id.value(),
             point.telemetry_state,
+            Some(point.start_reason),
             LocationWriteMode::PevcapImport,
         )?
         .admission()
@@ -5934,8 +5957,14 @@ fn append_location(
     segment_id: u64,
     telemetry_state: RouteTelemetryState,
 ) -> Result<LocationAdmission, StorageError> {
-    let result =
-        append_location_with_result(connection, ride_id, sample, segment_id, telemetry_state)?;
+    let result = append_location_with_result(
+        connection,
+        ride_id,
+        sample,
+        segment_id,
+        telemetry_state,
+        None,
+    )?;
     Ok(result.admission())
 }
 
@@ -5945,6 +5974,7 @@ fn append_location_with_result(
     sample: LocationSample,
     segment_id: u64,
     telemetry_state: RouteTelemetryState,
+    start_reason: Option<RideSegmentStartReason>,
 ) -> Result<LocationWriteResult, StorageError> {
     let transaction = connection.transaction()?;
     let result = append_location_in_transaction(
@@ -5953,18 +5983,21 @@ fn append_location_with_result(
         sample,
         segment_id,
         telemetry_state,
+        start_reason,
         LocationWriteMode::Live,
     )?;
     transaction.commit()?;
     Ok(result)
 }
 
+#[allow(clippy::too_many_lines, reason = "keeps one location write atomic")]
 fn append_location_in_transaction(
     connection: &Connection,
     ride_id: RideId,
     sample: LocationSample,
     segment_id: u64,
     telemetry_state: RouteTelemetryState,
+    start_reason: Option<RideSegmentStartReason>,
     mode: LocationWriteMode,
 ) -> Result<LocationWriteResult, StorageError> {
     let write_state = load_ride_write_state(connection, ride_id)?;
@@ -6022,7 +6055,14 @@ fn append_location_in_transaction(
             distance_millimetres,
             updated_at_ms,
         } => {
-            ensure_ride_segment(connection, ride_id, previous.as_ref(), sample, segment_id)?;
+            ensure_ride_segment(
+                connection,
+                ride_id,
+                previous.as_ref(),
+                sample,
+                segment_id,
+                start_reason,
+            )?;
             let sequence = previous
                 .map(|(sequence, _, _)| sequence + 1)
                 .unwrap_or_default();
@@ -6069,6 +6109,7 @@ fn ensure_ride_segment(
     previous: Option<&(i64, u64, LocationSample)>,
     sample: LocationSample,
     segment_id: u64,
+    start_reason: Option<RideSegmentStartReason>,
 ) -> Result<(), StorageError> {
     let segment_identity = RideMapSegmentId::new(segment_id);
     let segment_id = i64::try_from(segment_id).map_err(|_| StorageError::InvalidStoredValue {
@@ -6107,7 +6148,8 @@ fn ensure_ride_segment(
         return Ok(());
     }
 
-    let start_reason = segment_start_reason(previous, sample, segment_identity);
+    let start_reason =
+        start_reason.unwrap_or_else(|| segment_start_reason(previous, sample, segment_identity));
     let start_reason = match start_reason {
         RideSegmentStartReason::Initial => "initial",
         RideSegmentStartReason::Resume => "resume",
@@ -6693,6 +6735,9 @@ fn project_history_context(
             privacy,
             Some(cancellation),
         )?;
+        routes_omitted_by_budget |= route_budget.as_usize() < budget.per_route_budget.as_usize()
+            && projection.candidate_point_count()
+                > u64::try_from(projection.points().len()).unwrap_or(u64::MAX);
         total_display_point_count =
             total_display_point_count.saturating_add(projection.points().len());
         routes.push(HistoryContextRoute {

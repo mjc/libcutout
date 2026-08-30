@@ -5388,6 +5388,7 @@ fn enqueue_location_async(
     id: &MobileRideIdDto,
     location: MobileRideLocationDto,
     segment_id: u64,
+    start_reason: ride_maps::RideSegmentStartReason,
     telemetry_state: MobileRideMapCoreTelemetryStateDto,
 ) -> Result<persistence::PendingLocationWrite, MobileRideDatabaseError> {
     let id = parse_mobile_ride_id(id)?;
@@ -5398,6 +5399,7 @@ fn enqueue_location_async(
             id,
             location,
             segment_id,
+            start_reason,
             map_ride_telemetry_state(telemetry_state)
                 .map_err(|_| MobileRideDatabaseError::StorageFailure)?,
         )
@@ -5522,7 +5524,6 @@ impl MobileRideMapCoreInner {
         let Some(ride) = database.newest_recoverable_ride().map_err(map_core_error)? else {
             return Ok(());
         };
-        self.active_ride_id = Some(ride.id.clone());
         let background_gap_count = database
             .project_route_points(
                 ride.id.clone(),
@@ -5582,6 +5583,7 @@ impl MobileRideMapCoreInner {
             ),
             timing,
         );
+        self.active_ride_id = Some(ride.id);
         self.admission_recorder = self.recorder.clone();
         Ok(())
     }
@@ -6192,11 +6194,12 @@ impl MobileRideMapCore {
         let sequence = state.admission_recorder.point_count();
         let mut staged_recorder = state.admission_recorder.clone();
         let segment_started = staged_recorder.record_sample(sample);
+        let start_reason = MobileRideMapCoreInner::last_point_start_reason(&staged_recorder);
         let point = MobileRideMapCoreInner::point_from_location(
             location,
             sequence,
             segment_id,
-            MobileRideMapCoreInner::last_point_start_reason(&staged_recorder),
+            start_reason,
             telemetry_state,
         );
         if let Some(database) = state.database.as_ref() {
@@ -6210,6 +6213,7 @@ impl MobileRideMapCore {
                 &id,
                 location,
                 segment_id.value(),
+                start_reason,
                 telemetry_state.into(),
             )
             .map_err(map_core_error)?;
@@ -15122,6 +15126,58 @@ mod tests {
             .expect("durable summary loads");
         assert_eq!(durable_summary.distance_millimetres, 0);
         assert_eq!(durable_summary.average_speed_millimetres_per_second, None);
+
+        database.shutdown().expect("database shuts down");
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn mobile_ride_map_core_persists_resume_after_a_long_pause() {
+        let _guard = RIDE_DATABASE_TEST_LOCK
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        let path = std::env::temp_dir().join(format!(
+            "cutout-mobile-map-long-resume-{}-{}.sqlite3",
+            std::process::id(),
+            Uuid::new_v4()
+        ));
+        let _ = fs::remove_file(&path);
+        let database =
+            open_ride_database(path.to_string_lossy().into_owned()).expect("database opens");
+        let state = MobileRideMapCore::with_database(database.clone());
+        state
+            .start_gps_only(1_000, None)
+            .expect("map recording starts");
+        state
+            .ingest_location(1_001, 1_700_000_000_001, 40.0, -105.0, 3.0)
+            .expect("first location queues");
+        while drain_location_writes(&state).is_empty() {
+            thread::yield_now();
+        }
+
+        state.pause_at(2_000).expect("ride pauses");
+        let resumed_at = 2_000 + ride_maps::MAX_GAP_MILLISECONDS + 1;
+        state.resume_at(resumed_at).expect("ride resumes");
+        state
+            .ingest_location(
+                resumed_at + 1,
+                1_700_000_000_000 + resumed_at + 1,
+                40.001,
+                -105.0,
+                3.0,
+            )
+            .expect("resumed location queues");
+        while drain_location_writes(&state).is_empty() {
+            thread::yield_now();
+        }
+
+        let points = state.points_after(None, 10).expect("route points load");
+        assert_eq!(points.points.len(), 2);
+        assert_eq!(points.points[1].segment_id, 1);
+        assert_eq!(
+            points.points[1].start_reason,
+            MobileRideSegmentStartReasonDto::Resume
+        );
 
         database.shutdown().expect("database shuts down");
         let _ = fs::remove_file(path);
