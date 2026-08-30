@@ -883,7 +883,10 @@ impl RideMapRecorder {
             }
             _ => {}
         }
-        if self.state == Some(RideLifecycleState::Paused) && state == RideLifecycleState::Active {
+        if self.state == Some(RideLifecycleState::Paused)
+            && state == RideLifecycleState::Active
+            && !self.segment_started
+        {
             self.segment_id = self.segment_id.next();
             self.segment_started = true;
         }
@@ -1096,8 +1099,8 @@ impl RideMapRecorder {
 #[cfg(test)]
 mod tests {
     use super::{
-        MonotonicMilliseconds, RideDurationMilliseconds, RideMapRecorder, RidePointSequence,
-        RideSegmentCount, RideSegmentStartReason, VehicleAssociation,
+        MonotonicMilliseconds, RideDurationMilliseconds, RideMapRecorder, RideMapSegmentId,
+        RidePointSequence, RideSegmentCount, RideSegmentStartReason, VehicleAssociation,
     };
     use crate::{
         Coordinate, LocationAdmission, LocationSample, LocationSource, RideEvent,
@@ -1189,6 +1192,22 @@ mod tests {
         assert_eq!(
             recorder.points()[1].segment_start_reason(),
             RideSegmentStartReason::Resume
+        );
+    }
+
+    #[test]
+    fn resume_before_the_first_sample_keeps_the_initial_segment() {
+        let mut recorder = RideMapRecorder::new();
+        recorder.start(monotonic(1_000), None).expect("starts");
+        recorder.apply_transition_at(RideLifecycleState::Paused, monotonic(5_000));
+        recorder.apply_transition_at(RideLifecycleState::Active, monotonic(7_000));
+
+        assert_eq!(recorder.current_segment_id(), RideMapSegmentId::new(0));
+        assert!(recorder.record_sample(sample(8_000, 40.0)));
+        assert_eq!(recorder.segment_count(), RideSegmentCount::new(1));
+        assert_eq!(
+            recorder.points()[0].segment_start_reason(),
+            RideSegmentStartReason::Initial
         );
     }
 

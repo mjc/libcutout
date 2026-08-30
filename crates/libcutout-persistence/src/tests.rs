@@ -309,10 +309,10 @@ fn queued_location_returns_durable_admission() {
 }
 
 #[test]
-fn async_location_write_returns_before_worker_completion_and_can_be_polled() {
+fn queued_location_write_returns_before_worker_completion_and_can_be_polled() {
     let _guard = test_guard();
     let path = std::env::temp_dir().join(format!(
-        "libcutout-persistence-async-location-{}.sqlite",
+        "libcutout-persistence-queued-location-{}.sqlite",
         uuid::Uuid::new_v4()
     ));
     let database = RideDatabase::open(&path).unwrap();
@@ -330,7 +330,7 @@ fn async_location_write_returns_before_worker_completion_and_can_be_polled() {
 
     let started = Instant::now();
     let mut pending = database
-        .enqueue_location_async(
+        .queue_location(
             ride,
             sample,
             RideMapSegmentId::new(0),
@@ -355,10 +355,10 @@ fn async_location_write_returns_before_worker_completion_and_can_be_polled() {
 }
 
 #[test]
-fn async_location_write_wait_consumes_and_does_not_lose_result() {
+fn queued_location_write_wait_consumes_and_does_not_lose_result() {
     let _guard = test_guard();
     let path = std::env::temp_dir().join(format!(
-        "libcutout-persistence-async-location-consumption-{}.sqlite",
+        "libcutout-persistence-queued-location-consumption-{}.sqlite",
         uuid::Uuid::new_v4()
     ));
     let database = RideDatabase::open(&path).unwrap();
@@ -372,7 +372,7 @@ fn async_location_write_wait_consumes_and_does_not_lose_result() {
         LocationSource::Live,
     );
     let mut pending = database
-        .enqueue_location_async(
+        .queue_location(
             ride,
             sample,
             RideMapSegmentId::new(0),
@@ -398,10 +398,10 @@ fn async_location_write_wait_consumes_and_does_not_lose_result() {
 }
 
 #[test]
-fn async_location_write_can_bound_wait_for_a_delayed_worker() {
+fn queued_location_write_can_bound_wait_for_a_delayed_worker() {
     let _guard = test_guard();
     let path = std::env::temp_dir().join(format!(
-        "libcutout-persistence-async-location-deadline-{}.sqlite",
+        "libcutout-persistence-queued-location-deadline-{}.sqlite",
         uuid::Uuid::new_v4()
     ));
     let database = RideDatabase::open(&path).unwrap();
@@ -421,7 +421,7 @@ fn async_location_write_can_bound_wait_for_a_delayed_worker() {
         LocationSource::Live,
     );
     let mut pending = database
-        .enqueue_location_async(
+        .queue_location(
             ride,
             sample,
             RideMapSegmentId::new(0),
@@ -448,10 +448,10 @@ fn async_location_write_can_bound_wait_for_a_delayed_worker() {
 }
 
 #[test]
-fn async_location_write_can_bound_wait_for_a_worker_gate() {
+fn queued_location_write_can_bound_wait_for_a_worker_gate() {
     let _guard = test_guard();
     let path = std::env::temp_dir().join(format!(
-        "libcutout-persistence-async-location-worker-gate-{}.sqlite",
+        "libcutout-persistence-queued-location-worker-gate-{}.sqlite",
         uuid::Uuid::new_v4()
     ));
     let database = RideDatabase::open(&path).unwrap();

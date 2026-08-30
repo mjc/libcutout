@@ -5383,7 +5383,7 @@ impl RideDatabaseHandle {
 
 /// Rust-owned live ride map state. The mutex protects callbacks arriving from different Apple
 /// delegate queues while the database handle keeps durable lifecycle and route writes in Rust.
-fn enqueue_location_async(
+fn queue_location(
     database: &RideDatabaseHandle,
     id: &MobileRideIdDto,
     location: MobileRideLocationDto,
@@ -5395,7 +5395,7 @@ fn enqueue_location_async(
     let location = mobile_ride_location(location)?;
     database
         .inner
-        .enqueue_location_async(
+        .queue_location(
             id,
             location,
             segment_id,
@@ -6208,7 +6208,7 @@ impl MobileRideMapCore {
                     message: "ride location write queue is full".to_owned(),
                 });
             }
-            let write = enqueue_location_async(
+            let write = queue_location(
                 database,
                 &id,
                 location,
@@ -15438,6 +15438,61 @@ mod tests {
             Some(MobileRideMapCoreErrorDto::Storage(_))
         ));
 
+        let _ = fs::remove_file(path);
+    }
+    #[test]
+    fn mobile_ride_map_core_restores_pause_excluded_duration_after_reopen() {
+        let _guard = RIDE_DATABASE_TEST_LOCK
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        let path = std::env::temp_dir().join(format!(
+            "cutout-mobile-map-pause-recovery-{}-{}.sqlite3",
+            std::process::id(),
+            Uuid::new_v4()
+        ));
+        let _ = fs::remove_file(&path);
+        {
+            let database =
+                open_ride_database(path.to_string_lossy().into_owned()).expect("database opens");
+            let state = MobileRideMapCore::with_database(database.clone());
+            state
+                .start_gps_only(1_000, None)
+                .expect("map recording starts");
+            state.pause_at(5_000).expect("recording pauses");
+            state.resume_at(7_000).expect("recording resumes");
+            let pending = state
+                .ingest_location(8_000, 1_700_000_008_000, 40.0, -105.0, 3.0)
+                .expect("route point queues");
+            assert!(matches!(
+                pending,
+                MobileRideMapCoreDecisionDto::Pending { .. }
+            ));
+            let decisions = drain_location_writes(&state);
+            assert!(
+                decisions.iter().any(|decision| matches!(
+                    decision,
+                    MobileRideMapCoreDecisionDto::Accepted { .. }
+                )),
+                "{decisions:?}"
+            );
+            let live_rides = database.list_rides(None, 10).expect("live ride lists");
+            assert_eq!(live_rides.rides[0].duration_milliseconds, 5_000);
+            database.shutdown().expect("database shuts down");
+        }
+
+        let database =
+            open_ride_database(path.to_string_lossy().into_owned()).expect("database reopens");
+        let state = MobileRideMapCore::with_database(database.clone());
+        let snapshot = state
+            .current_snapshot(8_000)
+            .expect("interrupted ride restores");
+        assert_eq!(snapshot.state, MobileRideLifecycleStateDto::Interrupted);
+        assert_eq!(snapshot.summary.duration_milliseconds, 5_000);
+        let rides = database.list_rides(None, 10).expect("recovered ride lists");
+        assert_eq!(rides.rides[0].duration_milliseconds, 5_000);
+        assert_eq!(rides.rides[0].paused_duration_milliseconds, 2_000);
+
+        database.shutdown().expect("reopened database shuts down");
         let _ = fs::remove_file(path);
     }
 }
