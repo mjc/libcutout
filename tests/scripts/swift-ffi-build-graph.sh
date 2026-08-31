@@ -130,6 +130,49 @@ write_complete_fake_package() {
   }
 )
 
+(
+  fakebin="$tmp/fake-bin"
+  counter="$tmp/generation-count"
+  mkdir -p "$fakebin"
+  cp "$root/scripts/swift-package-common.sh" "$fake/scripts/swift-package-common.sh"
+  cp "$root/scripts/regenerate-swift-ffi.sh" "$fake/scripts/regenerate-swift-ffi.sh"
+  chmod +x "$fake/scripts/regenerate-swift-ffi.sh"
+  printf '%s\n' \
+    '#!/usr/bin/env bash' \
+    'set -euo pipefail' \
+    'printf "%s\\n" "$$" >>"$CUTOUT_FAKE_COUNTER"' \
+    'sleep 0.2' \
+    'package="$PWD/CutoutMobileFFI"' \
+    'mkdir -p "$package/Sources/CutoutMobileFFI" "$package/cutout_mobile_ffiFFI.xcframework"' \
+    'touch "$package/Package.swift" "$package/Sources/CutoutMobileFFI/cutout_mobile_ffi.swift"' \
+    'printf "%s\\n" "<?xml version=\\"1.0\\" encoding=\\"UTF-8\\"?>" "<!DOCTYPE plist PUBLIC \\"-//Apple//DTD PLIST 1.0//EN\\" \\"http://www.apple.com/DTDs/PropertyList-1.0.dtd\\">" "<plist version=\\"1.0\\"><dict><key>AvailableLibraries</key><array/></dict></plist>" >"$package/cutout_mobile_ffiFFI.xcframework/Info.plist"' \
+    'for slice in ios-arm64 ios-arm64_x86_64-simulator macos-arm64_x86_64; do' \
+    '  mkdir -p "$package/cutout_mobile_ffiFFI.xcframework/$slice/Headers/cutout_mobile_ffiFFI"' \
+    '  touch "$package/cutout_mobile_ffiFFI.xcframework/$slice/libcutout_mobile_ffi.a" "$package/cutout_mobile_ffiFFI.xcframework/$slice/Headers/cutout_mobile_ffiFFI/cutout_mobile_ffiFFI.h" "$package/cutout_mobile_ffiFFI.xcframework/$slice/Headers/cutout_mobile_ffiFFI/module.modulemap"' \
+    'done' >"$fakebin/cargo"
+  printf '%s\n' '#!/usr/bin/env bash' 'printf "Linux\\n"' >"$fakebin/uname"
+  chmod +x "$fakebin/cargo" "$fakebin/uname"
+  rm -rf -- "$(cutout_swift_ffi_package_dir "$fake")" "$fake/crates/cutout-mobile-ffi/CutoutMobileFFI"
+
+  env -u RUSTC_WRAPPER -u RUSTC_WORKSPACE_WRAPPER \
+    CUTOUT_FAKE_COUNTER="$counter" PATH="$fakebin:$PATH" \
+    "$fake/scripts/regenerate-swift-ffi.sh" >"$tmp/generation-one.log" 2>&1 &
+  first_pid=$!
+  env -u RUSTC_WRAPPER -u RUSTC_WORKSPACE_WRAPPER \
+    CUTOUT_FAKE_COUNTER="$counter" PATH="$fakebin:$PATH" \
+    "$fake/scripts/regenerate-swift-ffi.sh" >"$tmp/generation-two.log" 2>&1 &
+  second_pid=$!
+  wait "$first_pid"
+  wait "$second_pid"
+
+  [[ "$(wc -l <"$counter")" -eq 1 ]] || {
+    echo "expected concurrent regeneration to invoke cargo exactly once" >&2
+    cat "$tmp/generation-one.log" "$tmp/generation-two.log" >&2
+    exit 1
+  }
+  cutout_require_swift_ffi_build_input "$fake"
+)
+
 generated="$tmp/generated-package"
 mkdir -p "$generated"
 printf 'old\n' >"$generated/original"

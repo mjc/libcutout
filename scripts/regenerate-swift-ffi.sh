@@ -12,16 +12,16 @@ cd "$crate"
 cutout_use_xcode_developer_dir "/Applications/Xcode.app/Contents/Developer"
 
 lock="$(dirname "$package")/.generation.lock"
-while ! mkdir "$lock" 2>/dev/null; do
-  if [[ -f "$lock/pid" ]] && ! kill -0 "$(<"$lock/pid")" 2>/dev/null; then
-    rm -rf -- "$lock"
+while ! ln -s "$$" "$lock" 2>/dev/null; do
+  owner="$(readlink "$lock" 2>/dev/null || true)"
+  if [[ "$owner" =~ ^[0-9]+$ ]] && ! kill -0 "$owner" 2>/dev/null; then
+    rm -f -- "$lock"
     continue
   fi
   sleep 0.1
 done
-printf '%s\n' "$$" >"$lock/pid"
 cleanup_lock() {
-  rm -rf -- "$lock"
+  [[ "$(readlink "$lock" 2>/dev/null || true)" == "$$" ]] && rm -f -- "$lock"
 }
 trap cleanup_lock EXIT
 trap 'exit 129' HUP
