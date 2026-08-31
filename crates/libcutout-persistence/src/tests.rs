@@ -7,15 +7,16 @@ use cutout_core::{
 };
 use cutout_ride_maps::{
     Coordinate, LocationAdmission, LocationSample, LocationSource, RideEvent, RouteDisplayBudget,
-    RoutePrivacyPolicy, RouteTelemetryState, RouteViewport,
+    RoutePrivacyGridE7, RoutePrivacyPolicy, RouteTelemetryState, RouteViewport,
 };
 use rusqlite::Connection;
 
-use cutout_ride_maps::RideLifecycleState;
+use cutout_ride_maps::{RideLifecycleState, RideMapSegmentId, RideSegmentStartReason};
 
 use super::{
-    GeoBounds, PevcapImportOutcome, QueryLimit, RideDatabase, RideHistoryQuery, RideId, RideRecord,
-    RideSource, RouteProjectionCancellation, StorageError, VoltageSagModelRecord,
+    GeoBounds, HistoryContextBudget, PevcapImportOutcome, QueryLimit, RideDatabase,
+    RideHistoryQuery, RideId, RideRecord, RideSource, RouteProjectionCancellation, StorageError,
+    VoltageSagModelRecord,
 };
 
 static TEST_LOCK: Mutex<()> = Mutex::new(());
@@ -308,10 +309,10 @@ fn queued_location_returns_durable_admission() {
 }
 
 #[test]
-fn async_location_write_returns_before_worker_completion_and_can_be_polled() {
+fn queued_location_write_returns_before_worker_completion_and_can_be_polled() {
     let _guard = test_guard();
     let path = std::env::temp_dir().join(format!(
-        "libcutout-persistence-async-location-{}.sqlite",
+        "libcutout-persistence-queued-location-{}.sqlite",
         uuid::Uuid::new_v4()
     ));
     let database = RideDatabase::open(&path).unwrap();
@@ -329,7 +330,13 @@ fn async_location_write_returns_before_worker_completion_and_can_be_polled() {
 
     let started = Instant::now();
     let mut pending = database
-        .enqueue_location_async(ride, sample, 0, RouteTelemetryState::GpsOnly)
+        .queue_location(
+            ride,
+            sample,
+            RideMapSegmentId::new(0),
+            RideSegmentStartReason::Initial,
+            RouteTelemetryState::GpsOnly,
+        )
         .unwrap();
     assert!(started.elapsed() < Duration::from_millis(100));
     let result = loop {
@@ -348,10 +355,10 @@ fn async_location_write_returns_before_worker_completion_and_can_be_polled() {
 }
 
 #[test]
-fn async_location_write_wait_consumes_and_does_not_lose_result() {
+fn queued_location_write_wait_consumes_and_does_not_lose_result() {
     let _guard = test_guard();
     let path = std::env::temp_dir().join(format!(
-        "libcutout-persistence-async-location-consumption-{}.sqlite",
+        "libcutout-persistence-queued-location-consumption-{}.sqlite",
         uuid::Uuid::new_v4()
     ));
     let database = RideDatabase::open(&path).unwrap();
@@ -365,7 +372,13 @@ fn async_location_write_wait_consumes_and_does_not_lose_result() {
         LocationSource::Live,
     );
     let mut pending = database
-        .enqueue_location_async(ride, sample, 0, RouteTelemetryState::GpsOnly)
+        .queue_location(
+            ride,
+            sample,
+            RideMapSegmentId::new(0),
+            RideSegmentStartReason::Initial,
+            RouteTelemetryState::GpsOnly,
+        )
         .unwrap();
 
     let result = pending
@@ -385,10 +398,10 @@ fn async_location_write_wait_consumes_and_does_not_lose_result() {
 }
 
 #[test]
-fn async_location_write_can_bound_wait_for_a_delayed_worker() {
+fn queued_location_write_can_bound_wait_for_a_delayed_worker() {
     let _guard = test_guard();
     let path = std::env::temp_dir().join(format!(
-        "libcutout-persistence-async-location-deadline-{}.sqlite",
+        "libcutout-persistence-queued-location-deadline-{}.sqlite",
         uuid::Uuid::new_v4()
     ));
     let database = RideDatabase::open(&path).unwrap();
@@ -408,7 +421,13 @@ fn async_location_write_can_bound_wait_for_a_delayed_worker() {
         LocationSource::Live,
     );
     let mut pending = database
-        .enqueue_location_async(ride, sample, 0, RouteTelemetryState::GpsOnly)
+        .queue_location(
+            ride,
+            sample,
+            RideMapSegmentId::new(0),
+            RideSegmentStartReason::Initial,
+            RouteTelemetryState::GpsOnly,
+        )
         .unwrap();
     entered_receiver
         .recv_timeout(Duration::from_secs(1))
@@ -429,10 +448,10 @@ fn async_location_write_can_bound_wait_for_a_delayed_worker() {
 }
 
 #[test]
-fn async_location_write_can_bound_wait_for_a_worker_gate() {
+fn queued_location_write_can_bound_wait_for_a_worker_gate() {
     let _guard = test_guard();
     let path = std::env::temp_dir().join(format!(
-        "libcutout-persistence-async-location-worker-gate-{}.sqlite",
+        "libcutout-persistence-queued-location-worker-gate-{}.sqlite",
         uuid::Uuid::new_v4()
     ));
     let database = RideDatabase::open(&path).unwrap();
@@ -452,7 +471,7 @@ fn async_location_write_can_bound_wait_for_a_worker_gate() {
         .enqueue_location_with_worker_gate_for_test(
             ride,
             sample,
-            0,
+            RideMapSegmentId::new(0),
             RouteTelemetryState::GpsOnly,
             entered_sender,
             release_receiver,
@@ -568,6 +587,28 @@ fn database_commands_restart_the_worker_after_an_unexpected_exit() {
     assert_eq!(database.service_id(), service_id);
 
     database.shutdown().unwrap();
+    let _ = std::fs::remove_file(path);
+}
+#[test]
+fn shutdown_prevents_stale_handles_from_restarting_the_worker() {
+    let _guard = test_guard();
+    let path = std::env::temp_dir().join(format!(
+        "libcutout-persistence-worker-shutdown-{}.sqlite",
+        uuid::Uuid::new_v4()
+    ));
+    let database = RideDatabase::open(&path).unwrap();
+    let stale_handle = database.clone();
+
+    database.begin_shutdown_for_test().unwrap();
+    database.stop_worker_for_test().unwrap();
+    assert!(matches!(
+        stale_handle.capabilities(),
+        Err(StorageError::WorkerStopped)
+    ));
+
+    drop(stale_handle);
+    drop(database);
+    RideDatabase::open(&path).unwrap().shutdown().unwrap();
     let _ = std::fs::remove_file(path);
 }
 
@@ -1658,14 +1699,18 @@ fn legacy_schema_versions_migrate_to_the_current_schema() {
         drop(connection);
         let database = RideDatabase::open(&path).unwrap();
         database.shutdown().unwrap();
-        let reopened = RideDatabase::open(&path).unwrap();
-        reopened.shutdown().unwrap();
 
         let connection = Connection::open(&path).unwrap();
         let current_version: i64 = connection
             .pragma_query_value(None, "user_version", |row| row.get(0))
             .unwrap();
-        assert_eq!(current_version, 14);
+        assert_eq!(current_version, 15);
+        drop(connection);
+
+        let reopened = RideDatabase::open(&path).unwrap();
+        reopened.shutdown().unwrap();
+
+        let connection = Connection::open(&path).unwrap();
         let devices_table: String = connection
             .query_row(
                 "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'devices'",
@@ -2063,7 +2108,7 @@ fn schema_v13_spatial_rows_migrate_without_integer_domain_ids() {
     let version: i64 = connection
         .pragma_query_value(None, "user_version", |row| row.get(0))
         .unwrap();
-    assert_eq!(version, 14);
+    assert_eq!(version, 15);
     let rtree_id: i64 = connection
         .query_row(
             "SELECT rtree_id FROM trail_segment_spatial_keys",
@@ -2127,7 +2172,7 @@ fn schema_v12_singleton_rows_migrate_to_uuid_keys_without_data_loss() {
     let version: i64 = connection
         .pragma_query_value(None, "user_version", |row| row.get(0))
         .unwrap();
-    assert_eq!(version, 14);
+    assert_eq!(version, 15);
     let selected_key_length: u64 = connection
         .query_row(
             "SELECT length(singleton_key) FROM selected_device",
@@ -2347,6 +2392,121 @@ fn cancelled_in_flight_route_projection_leaves_worker_usable() {
 }
 
 #[test]
+fn durable_history_context_projection_excludes_selected_and_bounds_each_route() {
+    let _guard = test_guard();
+    let path = std::env::temp_dir().join(format!(
+        "libcutout-persistence-history-context-{}.sqlite",
+        uuid::Uuid::new_v4()
+    ));
+    let database = RideDatabase::open(&path).unwrap();
+    let mut rides = Vec::new();
+    for ride_index in 0..3_u64 {
+        let ride = database
+            .create_ride(RideSource::Live, 1_700_000_000_000 + ride_index * 10_000)
+            .unwrap();
+        database.transition(ride, RideEvent::Start).unwrap();
+        for point_index in 0..4_u64 {
+            let sample = LocationSample::new(
+                Coordinate::from_degrees(
+                    40.0 + f64::from(u32::try_from(ride_index).unwrap()) / 100.0
+                        + f64::from(u32::try_from(point_index).unwrap()) / 10_000.0,
+                    -105.0,
+                )
+                .unwrap(),
+                point_index + 1,
+                1_700_000_000_000 + ride_index * 10_000 + point_index,
+                None,
+                LocationSource::Live,
+            );
+            assert_eq!(
+                database.append_location(ride, sample).unwrap(),
+                LocationAdmission::Accepted
+            );
+        }
+        rides.push(ride);
+    }
+
+    let projection = database
+        .project_history_context(
+            RideHistoryQuery::default(),
+            Some(rides[1]),
+            HistoryContextBudget::new(10, 2, 3, 4).unwrap(),
+            None,
+            RoutePrivacyPolicy::grid(RoutePrivacyGridE7::new(1_000).unwrap()),
+        )
+        .unwrap();
+
+    assert_eq!(projection.source_history_route_count(), 3);
+    assert_eq!(projection.context_route_count(), 2);
+    assert_eq!(projection.routes().len(), 2);
+    assert!(projection.routes_omitted_by_budget());
+    assert!(!projection.history_page_has_more());
+    assert_eq!(projection.total_display_point_count(), 4);
+    assert!(projection.routes().iter().all(|route| {
+        route.ride_id() != rides[1]
+            && route.projection().points().len() <= 3
+            && route.projection().points().iter().all(|point| {
+                point.privacy_class() == cutout_ride_maps::RoutePrivacyClass::GridRedacted
+            })
+    }));
+
+    database.shutdown().unwrap();
+    let _ = std::fs::remove_file(path);
+}
+
+#[test]
+fn durable_history_context_projection_reports_aggregate_budget_omissions() {
+    let _guard = test_guard();
+    let path = std::env::temp_dir().join(format!(
+        "libcutout-persistence-history-context-budget-{}.sqlite",
+        uuid::Uuid::new_v4()
+    ));
+    let database = RideDatabase::open(&path).unwrap();
+    for ride_index in 0..3_u64 {
+        let ride = database
+            .create_ride(RideSource::Live, 1_700_000_000_000 + ride_index * 10_000)
+            .unwrap();
+        database.transition(ride, RideEvent::Start).unwrap();
+        for point_index in 0..2_u64 {
+            let sample = LocationSample::new(
+                Coordinate::from_degrees(
+                    40.0 + f64::from(u32::try_from(ride_index).unwrap()) / 100.0
+                        + f64::from(u32::try_from(point_index).unwrap()) / 10_000.0,
+                    -105.0,
+                )
+                .unwrap(),
+                point_index + 1,
+                1_700_000_000_000 + ride_index * 10_000 + point_index,
+                None,
+                LocationSource::Live,
+            );
+            assert_eq!(
+                database.append_location(ride, sample).unwrap(),
+                LocationAdmission::Accepted
+            );
+        }
+    }
+
+    let projection = database
+        .project_history_context(
+            RideHistoryQuery::default(),
+            None,
+            HistoryContextBudget::new(10, 3, 3, 2).unwrap(),
+            None,
+            RoutePrivacyPolicy::Precise,
+        )
+        .unwrap();
+
+    assert_eq!(projection.context_route_count(), 3);
+    assert_eq!(projection.routes().len(), 1);
+    assert_eq!(projection.total_display_point_count(), 2);
+    assert!(projection.routes_omitted_by_budget());
+
+    database.shutdown().unwrap();
+    let _ = std::fs::remove_file(path);
+}
+
+#[test]
 fn filtered_ride_history_queries_stay_rust_owned_and_bounded() {
     let _guard = test_guard();
     let path = std::env::temp_dir().join(format!(
@@ -2396,6 +2556,22 @@ fn filtered_ride_history_queries_stay_rust_owned_and_bounded() {
             .map(RideRecord::id)
             .collect::<Vec<_>>(),
         vec![first]
+    );
+    assert_eq!(
+        vehicle_filtered.rides()[0].associated_vehicle_name(),
+        Some("NF2557")
+    );
+    assert_eq!(
+        database
+            .list_ride_history_vehicle_options()
+            .unwrap()
+            .into_iter()
+            .map(|option| (
+                option.platform_identifier().to_owned(),
+                option.display_name().map(str::to_owned)
+            ))
+            .collect::<Vec<_>>(),
+        vec![("device-a".to_owned(), Some("NF2557".to_owned()))]
     );
 
     let name_searched = database
@@ -2512,7 +2688,7 @@ fn version_eight_migration_adds_monotonic_ride_start_column() {
             |row| row.get(0),
         )
         .unwrap();
-    assert_eq!(version, 14);
+    assert_eq!(version, 15);
     assert!(has_monotonic_start);
 
     let _ = std::fs::remove_file(path);
@@ -2706,6 +2882,59 @@ fn route_projection_is_bounded_viewport_aware_and_cancellable() {
         ),
         Err(StorageError::Cancelled)
     ));
+
+    database.shutdown().unwrap();
+    let _ = std::fs::remove_file(path);
+}
+
+#[test]
+fn route_projection_ignores_empty_segment_rows() {
+    let _guard = test_guard();
+    let path = std::env::temp_dir().join(format!(
+        "libcutout-persistence-empty-segment-projection-{}.sqlite",
+        uuid::Uuid::new_v4()
+    ));
+    let database = RideDatabase::open(&path).unwrap();
+    let ride = database.create_ride(RideSource::Live, 10).unwrap();
+    database.transition(ride, RideEvent::Start).unwrap();
+    let sample = LocationSample::new(
+        Coordinate::from_degrees(40.0, -105.0).unwrap(),
+        1_000,
+        1_700_000_000_000,
+        None,
+        LocationSource::Live,
+    );
+    assert_eq!(
+        database.append_location(ride, sample).unwrap(),
+        LocationAdmission::Accepted
+    );
+    database.shutdown().unwrap();
+
+    let connection = Connection::open(&path).unwrap();
+    connection
+        .execute(
+            "INSERT INTO ride_segments
+                (ride_id, segment_id, point_count, sequence, start_reason, source,
+                 started_monotonic_ms, ended_monotonic_ms,
+                 started_wall_clock_ms, ended_wall_clock_ms)
+             VALUES (?1, 1, 0, 1, 'background_gap', 'live', 2_000, 2_000,
+                     1_700_000_001_000, 1_700_000_001_000)",
+            [ride.uuid().to_string()],
+        )
+        .unwrap();
+    drop(connection);
+
+    let database = RideDatabase::open(&path).unwrap();
+    let projection = database
+        .project_route_points(
+            ride,
+            None,
+            RouteDisplayBudget::new(8).unwrap(),
+            RoutePrivacyPolicy::Precise,
+        )
+        .unwrap();
+    assert_eq!(projection.source_segment_count(), 1);
+    assert_eq!(projection.background_gap_count(), 0);
 
     database.shutdown().unwrap();
     let _ = std::fs::remove_file(path);

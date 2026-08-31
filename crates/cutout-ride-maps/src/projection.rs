@@ -1,5 +1,6 @@
 use crate::{
-    Coordinate, LatitudeE7, LongitudeE7, RideMapPoint, RideMapSegmentId, RidePointSequence,
+    Coordinate, LatitudeE7, LongitudeE7, RideMapPoint, RideMapSegmentId, RidePointCount,
+    RidePointSequence, RideSegmentStartReason,
 };
 
 /// Failure returned when a route projection is cancelled before completion.
@@ -86,12 +87,19 @@ impl RoutePrivacyPolicy {
         match self {
             Self::Precise => (coordinate, RoutePrivacyClass::Precise),
             Self::Grid(grid) => {
-                let latitude = snap_to_grid(coordinate.latitude().as_i32(), grid);
-                let longitude = snap_to_grid(coordinate.longitude().as_i32(), grid);
-                let coordinate = match Coordinate::from_fixed_parts(latitude, longitude) {
-                    Ok(coordinate) => coordinate,
-                    Err(_) => coordinate,
-                };
+                let latitude = snap_to_grid(
+                    coordinate.latitude().as_i32(),
+                    grid,
+                    -900_000_000,
+                    900_000_000,
+                );
+                let longitude = snap_to_grid(
+                    coordinate.longitude().as_i32(),
+                    grid,
+                    -1_800_000_000,
+                    1_800_000_000,
+                );
+                let coordinate = Coordinate::from_bounded_fixed_parts(latitude, longitude);
                 (coordinate, RoutePrivacyClass::GridRedacted)
             }
         }
@@ -182,8 +190,201 @@ impl RouteViewport {
 pub struct RouteDisplayPoint {
     sequence: RidePointSequence,
     segment_id: RideMapSegmentId,
+    segment_start_reason: RideSegmentStartReason,
+    canonical_point_count: Option<RidePointCount>,
     coordinate: Coordinate,
     privacy_class: RoutePrivacyClass,
+}
+
+/// Bounded metadata needed to render one visible route segment.
+///
+/// The visible count and sequence range describe points retained in the bounded display
+/// projection, not the complete canonical segment. The optional canonical count is populated
+/// when the source projection has complete segment cardinality. A segment with one retained point
+/// can be represented by an annotation or accessibility item even though a line renderer cannot
+/// draw it.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct RouteSegmentDisplayMetadata {
+    segment_id: RideMapSegmentId,
+    start_reason: RideSegmentStartReason,
+    visible_point_count: u64,
+    canonical_point_count: Option<RidePointCount>,
+    first_visible_sequence: Option<RidePointSequence>,
+    last_visible_sequence: Option<RidePointSequence>,
+}
+
+impl RouteSegmentDisplayMetadata {
+    /// Returns the canonical segment identity.
+    #[must_use]
+    pub const fn segment_id(self) -> RideMapSegmentId {
+        self.segment_id
+    }
+
+    /// Returns why this segment began.
+    #[must_use]
+    pub const fn start_reason(self) -> RideSegmentStartReason {
+        self.start_reason
+    }
+
+    /// Returns the number of points retained for this segment in this display projection.
+    ///
+    /// This is not the cardinality of the canonical source segment.
+    #[must_use]
+    pub const fn visible_point_count(self) -> u64 {
+        self.visible_point_count
+    }
+
+    /// Returns the number of points in the canonical source segment, when known.
+    #[must_use]
+    pub const fn canonical_point_count(self) -> Option<RidePointCount> {
+        self.canonical_point_count
+    }
+
+    /// Returns the first retained projected point sequence.
+    #[must_use]
+    pub const fn first_visible_sequence(self) -> Option<RidePointSequence> {
+        self.first_visible_sequence
+    }
+
+    /// Returns the last retained projected point sequence.
+    #[must_use]
+    pub const fn last_visible_sequence(self) -> Option<RidePointSequence> {
+        self.last_visible_sequence
+    }
+
+    /// Returns whether this segment has exactly one retained display point.
+    ///
+    /// A retained singleton does not imply that the canonical source segment contains one point;
+    /// display-budget sampling may retain only one point from a larger source segment.
+    #[must_use]
+    pub const fn is_retained_singleton(self) -> bool {
+        self.visible_point_count == 1
+    }
+}
+
+/// Groups bounded projected points into ordered segment render metadata.
+///
+/// The input is expected in canonical sequence order, as returned by the projection APIs. The
+/// result is bounded by the number of projected points and therefore cannot grow with an
+/// unprojected route.
+#[must_use]
+pub fn route_segment_display_metadata(
+    points: impl IntoIterator<Item = RouteDisplayPoint>,
+) -> Vec<RouteSegmentDisplayMetadata> {
+    let mut segments: Vec<RouteSegmentDisplayMetadata> = Vec::new();
+    for point in points {
+        if let Some(segment) = segments.last_mut()
+            && segment.segment_id == point.segment_id
+        {
+            segment.visible_point_count = segment.visible_point_count.saturating_add(1);
+            if segment.canonical_point_count.is_none() {
+                segment.canonical_point_count = point.canonical_point_count;
+            }
+            segment.last_visible_sequence = Some(point.sequence);
+            continue;
+        }
+        segments.push(RouteSegmentDisplayMetadata {
+            segment_id: point.segment_id,
+            start_reason: point.segment_start_reason,
+            visible_point_count: 1,
+            canonical_point_count: point.canonical_point_count,
+            first_visible_sequence: Some(point.sequence),
+            last_visible_sequence: Some(point.sequence),
+        });
+    }
+    segments
+}
+
+/// Canonical route endpoints and whether each endpoint is inside the requested viewport.
+///
+/// Endpoint visibility is intentionally separate from the bounded display points. A display
+/// budget may omit an endpoint even when it is in the viewport, and a viewport may omit an
+/// endpoint while still returning interior route points. Presentation code must use the sequence
+/// values to annotate only an actually displayed canonical endpoint.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct RouteEndpointMetadata {
+    start_sequence: Option<RidePointSequence>,
+    end_sequence: Option<RidePointSequence>,
+    start_visible: bool,
+    end_visible: bool,
+}
+
+impl RouteEndpointMetadata {
+    /// Creates endpoint metadata for a canonical route.
+    #[must_use]
+    pub const fn new(
+        start_sequence: Option<RidePointSequence>,
+        end_sequence: Option<RidePointSequence>,
+        start_visible: bool,
+        end_visible: bool,
+    ) -> Self {
+        Self {
+            start_sequence,
+            end_sequence,
+            start_visible,
+            end_visible,
+        }
+    }
+
+    /// Returns the canonical first-point sequence, when the route has points.
+    #[must_use]
+    pub const fn start_sequence(self) -> Option<RidePointSequence> {
+        self.start_sequence
+    }
+
+    /// Returns the canonical last-point sequence, when the route has points.
+    #[must_use]
+    pub const fn end_sequence(self) -> Option<RidePointSequence> {
+        self.end_sequence
+    }
+
+    /// Returns whether the canonical first point lies in the requested viewport.
+    #[must_use]
+    pub const fn start_visible(self) -> bool {
+        self.start_visible
+    }
+
+    /// Returns whether the canonical last point lies in the requested viewport.
+    #[must_use]
+    pub const fn end_visible(self) -> bool {
+        self.end_visible
+    }
+}
+
+/// Computes endpoint metadata from explicitly sequenced canonical points.
+///
+/// `points` may be a bounded tail or another non-contiguous canonical subset. The explicit
+/// `source_point_count` determines canonical endpoint sequences. A retained point with one of
+/// those sequences is visible only when it falls inside `viewport` (or no viewport is supplied).
+#[must_use]
+pub fn route_endpoint_metadata(
+    points: impl IntoIterator<Item = (RidePointSequence, RideMapPoint)>,
+    source_point_count: u64,
+    viewport: Option<RouteViewport>,
+) -> RouteEndpointMetadata {
+    let Some(end_offset) = source_point_count.checked_sub(1) else {
+        return RouteEndpointMetadata::default();
+    };
+    let start_sequence = RidePointSequence::new(0);
+    let end_sequence = RidePointSequence::new(end_offset);
+    let mut start_visible = false;
+    let mut end_visible = false;
+    for (sequence, point) in points {
+        let visible =
+            viewport.is_none_or(|viewport| viewport.contains(point.sample().coordinate()));
+        if sequence == start_sequence {
+            start_visible = visible;
+        }
+        if sequence == end_sequence {
+            end_visible = visible;
+        }
+    }
+    RouteEndpointMetadata::new(
+        Some(start_sequence),
+        Some(end_sequence),
+        start_visible,
+        end_visible,
+    )
 }
 
 /// Counts segment runs in canonical route order.
@@ -239,6 +440,17 @@ impl RouteProjectionAccumulator {
 
     /// Adds one candidate in ascending route order.
     pub fn push(&mut self, candidate_ordinal: usize, sequence: u64, point: RideMapPoint) {
+        self.push_with_canonical_point_count(candidate_ordinal, sequence, point, None);
+    }
+
+    /// Adds one candidate with an optional complete source-segment cardinality.
+    pub fn push_with_canonical_point_count(
+        &mut self,
+        candidate_ordinal: usize,
+        sequence: u64,
+        point: RideMapPoint,
+        canonical_point_count: Option<RidePointCount>,
+    ) {
         if self.output_ordinal == self.output_count || candidate_ordinal != self.next_target {
             return;
         }
@@ -246,6 +458,8 @@ impl RouteProjectionAccumulator {
         self.projected.push(RouteDisplayPoint {
             sequence: RidePointSequence::new(sequence),
             segment_id: point.segment_id(),
+            segment_start_reason: point.segment_start_reason(),
+            canonical_point_count,
             coordinate,
             privacy_class,
         });
@@ -280,6 +494,18 @@ impl RouteDisplayPoint {
     #[must_use]
     pub const fn segment_id(self) -> RideMapSegmentId {
         self.segment_id
+    }
+
+    /// Returns why the canonical segment began.
+    #[must_use]
+    pub const fn segment_start_reason(self) -> RideSegmentStartReason {
+        self.segment_start_reason
+    }
+
+    /// Returns the canonical source-segment cardinality, when known.
+    #[must_use]
+    pub const fn canonical_point_count(self) -> Option<RidePointCount> {
+        self.canonical_point_count
     }
 
     /// Returns the privacy-projected coordinate.
@@ -406,9 +632,17 @@ fn evenly_spaced_ordinal(
     }
 }
 
-fn snap_to_grid(value: i32, grid: RoutePrivacyGridE7) -> i32 {
+fn snap_to_grid(value: i32, grid: RoutePrivacyGridE7, minimum: i32, maximum: i32) -> i32 {
     let grid = i64::from(grid.as_u32());
     let snapped = i64::from(value).div_euclid(grid) * grid;
+    // Euclidean flooring can cross the negative world boundary when the boundary is not
+    // divisible by the grid. Move that bucket inward before clamping the representable domain.
+    let snapped = if snapped < i64::from(minimum) {
+        snapped + grid
+    } else {
+        snapped
+    };
+    let snapped = snapped.clamp(i64::from(minimum), i64::from(maximum));
     #[allow(clippy::cast_possible_truncation)]
     {
         snapped as i32
