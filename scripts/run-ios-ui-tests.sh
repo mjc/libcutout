@@ -33,12 +33,13 @@ source "$script_directory/swift-package-common.sh"
 
 root="$(cutout_repo_root)"
 cd "$root"
-cutout_ensure_swift_ffi_build_input "$root"
 
 if [[ "$(uname -s)" != Darwin || "$(uname -m)" != arm64 ]]; then
   echo "CutoutApp iOS UI tests require Apple Silicon Darwin" >&2
   exit 1
 fi
+
+cutout_ensure_swift_ffi_build_input "$root"
 
 cutout_use_xcode_developer_dir
 

@@ -24,6 +24,47 @@ cutout_swift_ffi_package_dir() {
   printf '%s\n' "$1/target/swift-ffi/CutoutMobileFFI"
 }
 
+cutout_swift_ffi_lock_path() {
+  printf '%s\n' "$(dirname "$(cutout_swift_ffi_package_dir "$1")")/.generation.lock"
+}
+
+cutout_acquire_swift_ffi_lock() {
+  local root lock owner current started timeout
+  root="$1"
+  lock="$(cutout_swift_ffi_lock_path "$root")"
+  mkdir -p "$(dirname "$lock")"
+  timeout="${CUTOUT_SWIFT_FFI_LOCK_TIMEOUT_SECONDS:-120}"
+  if [[ ! "$timeout" =~ ^[1-9][0-9]*$ ]]; then
+    echo "CUTOUT_SWIFT_FFI_LOCK_TIMEOUT_SECONDS must be a positive integer" >&2
+    return 2
+  fi
+  started="$SECONDS"
+  while ! ln -s "$$" "$lock" 2>/dev/null; do
+    owner="$(readlink "$lock" 2>/dev/null || true)"
+    if [[ -z "$owner" || ! "$owner" =~ ^[0-9]+$ ]]; then
+      echo "refusing malformed Swift FFI generation lock: $lock" >&2
+      return 1
+    fi
+    if ! kill -0 "$owner" 2>/dev/null; then
+      current="$(readlink "$lock" 2>/dev/null || true)"
+      [[ "$current" == "$owner" ]] && rm -f -- "$lock"
+      continue
+    fi
+    if (( SECONDS - started >= timeout )); then
+      echo "timed out waiting for Swift FFI generation lock: $lock (owner $owner)" >&2
+      return 1
+    fi
+    sleep 0.1
+  done
+}
+
+cutout_release_swift_ffi_lock() {
+  local lock owner
+  lock="$(cutout_swift_ffi_lock_path "$1")"
+  owner="$(readlink "$lock" 2>/dev/null || true)"
+  [[ "$owner" == "$$" ]] && rm -f -- "$lock"
+}
+
 cutout_replace_generated_directory() {
   local target parent name backup_root backup status
   target="$1"
@@ -66,23 +107,11 @@ cutout_swift_ffi_source_fingerprint() {
       printf '%s\n' \
         Cargo.lock Cargo.toml rust-toolchain.toml flake.lock flake.nix \
         scripts/regenerate-swift-ffi.sh
-      printf '%s\n' \
-        crates/cutout-core/Cargo.toml \
-        crates/cutout-mobile-ffi/Cargo.toml \
-        crates/cutout-protocols/Cargo.toml \
-        crates/cutout-ride-maps/Cargo.toml \
-        crates/libcutout-persistence/Cargo.toml
-      find \
-        crates/cutout-core/src \
-        crates/cutout-mobile-ffi/src \
-        crates/cutout-protocols/src \
-        crates/cutout-ride-maps/src \
-        crates/libcutout-persistence/src \
-        -type f -print
-      [[ ! -d crates/cutout-protocols/registry ]] \
-        || find crates/cutout-protocols/registry -type f -print
-      [[ ! -f crates/cutout-protocols/build.rs ]] || printf '%s\n' crates/cutout-protocols/build.rs
-      [[ ! -f crates/cutout-mobile-ffi/uniffi.toml ]] || printf '%s\n' crates/cutout-mobile-ffi/uniffi.toml
+      find crates -type f \( \
+        -name Cargo.toml -o -name build.rs -o -name '*.udl' -o -name uniffi.toml \
+        -o -path '*/src/*' -o -path '*/registry/*' \
+      \) -print
+      printf '%s\n' scripts/swift-package-common.sh
     } \
       | LC_ALL=C sort -u \
       | while IFS= read -r file; do
@@ -136,12 +165,37 @@ cutout_validate_swift_ffi_build_input() {
     return 1
   fi
   for input in "${required[@]}"; do
-    if [[ ! -f "$input" ]]; then
+    if [[ ! -s "$input" ]]; then
       echo "missing Swift FFI build input: $input" >&2
       echo "Run: nix develop -c ./scripts/regenerate-swift-ffi.sh" >&2
       return 1
     fi
   done
+
+  if ! grep -Eq 'Package[[:space:]]*\(' "$package/Package.swift"; then
+    echo "invalid Swift FFI Package.swift: $package/Package.swift" >&2
+    echo "Run: nix develop -c ./scripts/regenerate-swift-ffi.sh" >&2
+    return 1
+  fi
+  if ! python3 - "$package/cutout_mobile_ffiFFI.xcframework/Info.plist" <<'PY'
+import plistlib
+import sys
+
+try:
+    with open(sys.argv[1], "rb") as source:
+        plist = plistlib.load(source)
+except (OSError, plistlib.InvalidFileException) as error:
+    print(f"invalid Swift FFI XCFramework Info.plist: {error}", file=sys.stderr)
+    raise SystemExit(1)
+
+if not isinstance(plist.get("AvailableLibraries"), list):
+    print("invalid Swift FFI XCFramework Info.plist: missing AvailableLibraries", file=sys.stderr)
+    raise SystemExit(1)
+PY
+  then
+    echo "Run: nix develop -c ./scripts/regenerate-swift-ffi.sh" >&2
+    return 1
+  fi
 
   if [[ "$(uname -s)" == Darwin ]]; then
     if ! /usr/bin/lipo "${required[3]}" -verify_arch arm64 >/dev/null 2>&1 \
@@ -162,14 +216,29 @@ cutout_require_swift_ffi_build_input() {
 }
 
 cutout_ensure_swift_ffi_build_input() {
-  local root generator
+  local root generator status
   root="$1"
   generator="${2:-$root/scripts/regenerate-swift-ffi.sh}"
+  cutout_acquire_swift_ffi_lock "$root" || return
   if cutout_validate_swift_ffi_build_input "$root" 2>/dev/null; then
+    cutout_release_swift_ffi_lock "$root"
     return 0
   fi
-  "$generator"
-  cutout_validate_swift_ffi_build_input "$root"
+  if CUTOUT_SWIFT_FFI_LOCK_HELD=1 "$generator"; then
+    :
+  else
+    status=$?
+    cutout_release_swift_ffi_lock "$root"
+    return "$status"
+  fi
+  if cutout_validate_swift_ffi_build_input "$root"; then
+    :
+  else
+    status=$?
+    cutout_release_swift_ffi_lock "$root"
+    return "$status"
+  fi
+  cutout_release_swift_ffi_lock "$root"
 }
 
 cutout_create_ios_ui_test_result_bundle() {

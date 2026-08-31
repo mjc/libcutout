@@ -22,6 +22,7 @@ printf 'channel = "stable"\n' >"$fake/rust-toolchain.toml"
 printf '{}\n' >"$fake/flake.lock"
 printf 'inputs = {};\n' >"$fake/flake.nix"
 printf '#!/usr/bin/env bash\n' >"$fake/scripts/regenerate-swift-ffi.sh"
+cp "$root/scripts/swift-package-common.sh" "$fake/scripts/swift-package-common.sh"
 printf 'pub struct Core;\n' >"$fake/crates/cutout-core/src/lib.rs"
 printf 'pub struct Protocol;\n' >"$fake/crates/cutout-protocols/src/lib.rs"
 printf 'pub struct RideMaps;\n' >"$fake/crates/cutout-ride-maps/src/lib.rs"
@@ -45,21 +46,25 @@ if [[ "$(uname -s)" == Darwin ]]; then
   package="$fake/target/swift-ffi/CutoutMobileFFI"
   for slice in ios-arm64 ios-arm64_x86_64-simulator macos-arm64_x86_64; do
     mkdir -p "$package/cutout_mobile_ffiFFI.xcframework/$slice/Headers/cutout_mobile_ffiFFI"
-    touch \
-      "$package/cutout_mobile_ffiFFI.xcframework/$slice/libcutout_mobile_ffi.a" \
-      "$package/cutout_mobile_ffiFFI.xcframework/$slice/Headers/cutout_mobile_ffiFFI/cutout_mobile_ffiFFI.h" \
-      "$package/cutout_mobile_ffiFFI.xcframework/$slice/Headers/cutout_mobile_ffiFFI/module.modulemap"
+    printf 'generated\n' >"$package/cutout_mobile_ffiFFI.xcframework/$slice/libcutout_mobile_ffi.a"
+    printf 'generated\n' >"$package/cutout_mobile_ffiFFI.xcframework/$slice/Headers/cutout_mobile_ffiFFI/cutout_mobile_ffiFFI.h"
+    printf 'generated\n' >"$package/cutout_mobile_ffiFFI.xcframework/$slice/Headers/cutout_mobile_ffiFFI/module.modulemap"
   done
   mkdir -p "$package/Sources/CutoutMobileFFI"
-  touch \
-    "$package/Package.swift" \
-    "$package/Sources/CutoutMobileFFI/cutout_mobile_ffi.swift" \
-    "$package/cutout_mobile_ffiFFI.xcframework/Info.plist"
+  printf 'let package = Package(\n    name: "CutoutMobileFFI"\n)\n' >"$package/Package.swift"
+  printf 'generated\n' >"$package/Sources/CutoutMobileFFI/cutout_mobile_ffi.swift"
+  printf '%s\n' \
+    '<?xml version="1.0" encoding="UTF-8"?>' \
+    '<plist version="1.0"><dict><key>AvailableLibraries</key><array/></dict></plist>' \
+    >"$package/cutout_mobile_ffiFFI.xcframework/Info.plist"
   if cutout_require_swift_ffi_build_input "$fake" 2>"$tmp/architecture.log"; then
     echo "expected wrong-architecture XCFramework slices to fail before the Swift build" >&2
     exit 1
   fi
-  grep -q "wrong-architecture slice" "$tmp/architecture.log"
+  if ! grep -q "wrong-architecture slice" "$tmp/architecture.log"; then
+    cat "$tmp/architecture.log" >&2
+    exit 1
+  fi
 fi
 
 printf 'pub struct Changed;\n' >>"$fake/crates/cutout-core/src/lib.rs"
@@ -75,16 +80,17 @@ write_complete_fake_package() {
   mkdir -p \
     "$package/Sources/CutoutMobileFFI" \
     "$package/cutout_mobile_ffiFFI.xcframework"
-  touch \
-    "$package/Package.swift" \
-    "$package/Sources/CutoutMobileFFI/cutout_mobile_ffi.swift" \
-    "$package/cutout_mobile_ffiFFI.xcframework/Info.plist"
+  printf 'let package = Package(\n    name: "CutoutMobileFFI"\n)\n' >"$package/Package.swift"
+  printf 'generated\n' >"$package/Sources/CutoutMobileFFI/cutout_mobile_ffi.swift"
+  printf '%s\n' \
+    '<?xml version="1.0" encoding="UTF-8"?>' \
+    '<plist version="1.0"><dict><key>AvailableLibraries</key><array/></dict></plist>' \
+    >"$package/cutout_mobile_ffiFFI.xcframework/Info.plist"
   for slice in ios-arm64 ios-arm64_x86_64-simulator macos-arm64_x86_64; do
     mkdir -p "$package/cutout_mobile_ffiFFI.xcframework/$slice/Headers/cutout_mobile_ffiFFI"
-    touch \
-      "$package/cutout_mobile_ffiFFI.xcframework/$slice/libcutout_mobile_ffi.a" \
-      "$package/cutout_mobile_ffiFFI.xcframework/$slice/Headers/cutout_mobile_ffiFFI/cutout_mobile_ffiFFI.h" \
-      "$package/cutout_mobile_ffiFFI.xcframework/$slice/Headers/cutout_mobile_ffiFFI/module.modulemap"
+    printf 'generated\n' >"$package/cutout_mobile_ffiFFI.xcframework/$slice/libcutout_mobile_ffi.a"
+    printf 'generated\n' >"$package/cutout_mobile_ffiFFI.xcframework/$slice/Headers/cutout_mobile_ffiFFI/cutout_mobile_ffiFFI.h"
+    printf 'generated\n' >"$package/cutout_mobile_ffiFFI.xcframework/$slice/Headers/cutout_mobile_ffiFFI/module.modulemap"
   done
   cutout_swift_ffi_source_fingerprint "$fake" >"$package/.cutout-source.sha256"
 }
@@ -115,16 +121,23 @@ write_complete_fake_package() {
     exit 1
   }
 
-  rm -f -- "$(cutout_swift_ffi_package_dir "$fake")/cutout_mobile_ffiFFI.xcframework/ios-arm64/Headers/cutout_mobile_ffiFFI/module.modulemap"
+  : >"$(cutout_swift_ffi_package_dir "$fake")/Package.swift"
   cutout_ensure_swift_ffi_build_input "$fake" fake_regenerate
   [[ "$generation_count" -eq 2 ]] || {
+    echo "expected an empty generated file to trigger repair" >&2
+    exit 1
+  }
+
+  rm -f -- "$(cutout_swift_ffi_package_dir "$fake")/cutout_mobile_ffiFFI.xcframework/ios-arm64/Headers/cutout_mobile_ffiFFI/module.modulemap"
+  cutout_ensure_swift_ffi_build_input "$fake" fake_regenerate
+  [[ "$generation_count" -eq 3 ]] || {
     echo "expected a missing required file to trigger repair" >&2
     exit 1
   }
 
   printf 'pub struct ChangedAgain;\n' >>"$fake/crates/cutout-ride-maps/src/lib.rs"
   cutout_ensure_swift_ffi_build_input "$fake" fake_regenerate
-  [[ "$generation_count" -eq 3 ]] || {
+  [[ "$generation_count" -eq 4 ]] || {
     echo "expected a covered dependency change to trigger regeneration" >&2
     exit 1
   }
@@ -146,13 +159,17 @@ write_complete_fake_package() {
     'set -euo pipefail' \
     'printf "%s\\n" "$$" >>"$CUTOUT_FAKE_COUNTER"' \
     'sleep 0.2' \
+    'if [[ "${CUTOUT_FAKE_MUTATE:-0}" == 1 ]]; then printf "mutated\\n" >>"$PWD/../cutout-core/src/lib.rs"; fi' \
     'package="$PWD/CutoutMobileFFI"' \
     'mkdir -p "$package/Sources/CutoutMobileFFI" "$package/cutout_mobile_ffiFFI.xcframework"' \
-    'touch "$package/Package.swift" "$package/Sources/CutoutMobileFFI/cutout_mobile_ffi.swift"' \
-    'printf "%s\\n" "<?xml version=\\"1.0\\" encoding=\\"UTF-8\\"?>" "<!DOCTYPE plist PUBLIC \\"-//Apple//DTD PLIST 1.0//EN\\" \\"http://www.apple.com/DTDs/PropertyList-1.0.dtd\\">" "<plist version=\\"1.0\\"><dict><key>AvailableLibraries</key><array/></dict></plist>" >"$package/cutout_mobile_ffiFFI.xcframework/Info.plist"' \
+    'printf "let package = Package(\\n    name: \\\"CutoutMobileFFI\\\"\\n)\\n" >"$package/Package.swift"' \
+    'printf "generated\\n" >"$package/Sources/CutoutMobileFFI/cutout_mobile_ffi.swift"' \
+    'printf "%s\\n" "<plist><dict><key>AvailableLibraries</key><array/></dict></plist>" >"$package/cutout_mobile_ffiFFI.xcframework/Info.plist"' \
     'for slice in ios-arm64 ios-arm64_x86_64-simulator macos-arm64_x86_64; do' \
     '  mkdir -p "$package/cutout_mobile_ffiFFI.xcframework/$slice/Headers/cutout_mobile_ffiFFI"' \
-    '  touch "$package/cutout_mobile_ffiFFI.xcframework/$slice/libcutout_mobile_ffi.a" "$package/cutout_mobile_ffiFFI.xcframework/$slice/Headers/cutout_mobile_ffiFFI/cutout_mobile_ffiFFI.h" "$package/cutout_mobile_ffiFFI.xcframework/$slice/Headers/cutout_mobile_ffiFFI/module.modulemap"' \
+    '  printf "generated\\n" >"$package/cutout_mobile_ffiFFI.xcframework/$slice/libcutout_mobile_ffi.a"' \
+    '  printf "generated\\n" >"$package/cutout_mobile_ffiFFI.xcframework/$slice/Headers/cutout_mobile_ffiFFI/cutout_mobile_ffiFFI.h"' \
+    '  printf "generated\\n" >"$package/cutout_mobile_ffiFFI.xcframework/$slice/Headers/cutout_mobile_ffiFFI/module.modulemap"' \
     'done' >"$fakebin/cargo"
   printf '%s\n' '#!/usr/bin/env bash' 'printf "Linux\\n"' >"$fakebin/uname"
   chmod +x "$fakebin/cargo" "$fakebin/uname"
@@ -181,6 +198,42 @@ write_complete_fake_package() {
     exit 1
   }
   cutout_require_swift_ffi_build_input "$fake"
+
+  rm -rf -- "$(cutout_swift_ffi_package_dir "$fake")"
+  if env -u RUSTC_WRAPPER -u RUSTC_WORKSPACE_WRAPPER \
+      CUTOUT_FAKE_COUNTER="$counter" CUTOUT_FAKE_MUTATE=1 PATH="$fakebin:$PATH" \
+      "$fake/scripts/regenerate-swift-ffi.sh" >"$tmp/generation-mutated.log" 2>&1; then
+    echo "expected source changes during generation to reject the package" >&2
+    exit 1
+  fi
+  grep -q "inputs changed during generation" "$tmp/generation-mutated.log"
+
+  lock="$(cutout_swift_ffi_lock_path "$fake")"
+  ln -s 999999999 "$lock"
+  if ! CUTOUT_FAKE_COUNTER="$counter" PATH="$fakebin:$PATH" \
+      "$fake/scripts/regenerate-swift-ffi.sh" >"$tmp/stale-lock.log" 2>&1; then
+    cat "$tmp/stale-lock.log" >&2
+    exit 1
+  fi
+  test ! -e "$lock"
+  cutout_require_swift_ffi_build_input "$fake"
+
+  printf 'malformed\n' >"$lock"
+  if "$fake/scripts/regenerate-swift-ffi.sh" >"$tmp/malformed-lock.log" 2>&1; then
+    echo "expected a malformed lock to fail instead of hanging" >&2
+    exit 1
+  fi
+  grep -q "malformed Swift FFI generation lock" "$tmp/malformed-lock.log"
+  rm -f -- "$lock"
+
+  ln -s "$$" "$lock"
+  if CUTOUT_SWIFT_FFI_LOCK_TIMEOUT_SECONDS=1 \
+      "$fake/scripts/regenerate-swift-ffi.sh" >"$tmp/timeout-lock.log" 2>&1; then
+    echo "expected a live lock to time out" >&2
+    exit 1
+  fi
+  grep -q "timed out waiting for Swift FFI generation lock" "$tmp/timeout-lock.log"
+  rm -f -- "$lock"
 )
 
 generated="$tmp/generated-package"

@@ -11,22 +11,13 @@ mkdir -p "$(dirname "$package")"
 cd "$crate"
 cutout_use_xcode_developer_dir "/Applications/Xcode.app/Contents/Developer"
 
-lock="$(dirname "$package")/.generation.lock"
-while ! ln -s "$$" "$lock" 2>/dev/null; do
-  owner="$(readlink "$lock" 2>/dev/null || true)"
-  if [[ "$owner" =~ ^[0-9]+$ ]] && ! kill -0 "$owner" 2>/dev/null; then
-    rm -f -- "$lock"
-    continue
-  fi
-  sleep 0.1
-done
-cleanup_lock() {
-  [[ "$(readlink "$lock" 2>/dev/null || true)" == "$$" ]] && rm -f -- "$lock"
-}
-trap cleanup_lock EXIT
-trap 'exit 129' HUP
-trap 'exit 130' INT
-trap 'exit 143' TERM
+if [[ "${CUTOUT_SWIFT_FFI_LOCK_HELD:-0}" != 1 ]]; then
+  cutout_acquire_swift_ffi_lock "$root"
+  trap 'cutout_release_swift_ffi_lock "$root"' EXIT
+  trap 'exit 129' HUP
+  trap 'exit 130' INT
+  trap 'exit 143' TERM
+fi
 
 if cutout_validate_swift_ffi_build_input "$root" 2>/dev/null; then
   exit 0
@@ -36,6 +27,8 @@ if [[ -n "${RUSTC_WRAPPER:-}" || -n "${RUSTC_WORKSPACE_WRAPPER:-}" ]]; then
   echo "Swift FFI regeneration requires nix develop with Cargo wrappers disabled" >&2
   exit 1
 fi
+
+source_fingerprint="$(cutout_swift_ffi_source_fingerprint "$root")"
 
 generate_stage() {
   cargo swift package \
@@ -83,8 +76,11 @@ PY
     -type f \( -name '*.swift' -o -name '*.h' -o -name 'module.modulemap' \) \
     -exec perl -pi -e 's/[ \t]+$//' {} +
 
-  cutout_swift_ffi_source_fingerprint "$root" \
-    >"$stage/.cutout-source.sha256"
+  if [[ "$(cutout_swift_ffi_source_fingerprint "$root")" != "$source_fingerprint" ]]; then
+    echo "Swift FFI inputs changed during generation; refusing to install a mixed artifact" >&2
+    return 1
+  fi
+  printf '%s\n' "$source_fingerprint" >"$stage/.cutout-source.sha256"
 }
 
 cutout_replace_generated_directory "$stage" generate_stage
