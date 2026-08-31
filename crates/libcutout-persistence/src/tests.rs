@@ -27,6 +27,141 @@ fn test_guard() -> std::sync::MutexGuard<'static, ()> {
         .unwrap_or_else(std::sync::PoisonError::into_inner)
 }
 
+fn pevcap_header() -> PevcapHeader {
+    PevcapHeader::new(
+        WallClockUnixTimestamp::new(1_700_000_000_000),
+        "darwin",
+        None,
+        &[],
+        &[],
+        None,
+        None,
+        "test",
+        [0; 32],
+        &[],
+    )
+    .unwrap()
+}
+
+fn pevcap_phone_location(
+    monotonic_ms: u64,
+    latitude_degrees: f64,
+    horizontal_accuracy_meters: Option<f64>,
+) -> PevcapPhoneLocation {
+    PevcapPhoneLocation {
+        wall_clock_unix_ms: 1_700_000_000_000 + monotonic_ms,
+        latitude_degrees,
+        longitude_degrees: -105.0,
+        altitude_meters: 1_600.0,
+        horizontal_accuracy_meters,
+        vertical_accuracy_meters: None,
+        speed_meters_per_second: None,
+        speed_accuracy_meters_per_second: None,
+        course_degrees: None,
+        course_accuracy_degrees: None,
+    }
+}
+
+fn pevcap_location_record(
+    monotonic_ms: u64,
+    latitude_degrees: f64,
+    horizontal_accuracy_meters: Option<f64>,
+) -> PevcapRecord {
+    PevcapRecord::link_up(MonotonicTimestamp::new(monotonic_ms), None).with_phone_location(
+        pevcap_phone_location(monotonic_ms, latitude_degrees, horizontal_accuracy_meters),
+    )
+}
+
+fn pevcap_preview_variant(
+    preview: &PevcapImportPreview,
+    artifact_size: u64,
+    record_count: u64,
+    location_count: u64,
+    duration_milliseconds: u64,
+    outcome: PevcapImportOutcome,
+    warnings: Vec<PevcapImportWarning>,
+) -> PevcapImportPreview {
+    PevcapImportPreview::from_parts(
+        preview.source_path().to_owned(),
+        preview.encoding(),
+        preview.artifact_digest().to_owned(),
+        artifact_size,
+        record_count,
+        location_count,
+        duration_milliseconds,
+        outcome,
+        warnings,
+    )
+}
+
+fn assert_duplicate_preview_variants_rejected(
+    database: &RideDatabase,
+    preview: &PevcapImportPreview,
+) {
+    let variants = [
+        pevcap_preview_variant(
+            preview,
+            preview.artifact_size(),
+            preview.record_count() + 1,
+            preview.location_count(),
+            preview.duration_milliseconds(),
+            preview.outcome(),
+            preview.warnings().to_vec(),
+        ),
+        pevcap_preview_variant(
+            preview,
+            preview.artifact_size(),
+            preview.record_count(),
+            preview.location_count() + 1,
+            preview.duration_milliseconds(),
+            preview.outcome(),
+            preview.warnings().to_vec(),
+        ),
+        pevcap_preview_variant(
+            preview,
+            preview.artifact_size(),
+            preview.record_count(),
+            preview.location_count(),
+            preview.duration_milliseconds() + 1,
+            preview.outcome(),
+            preview.warnings().to_vec(),
+        ),
+        pevcap_preview_variant(
+            preview,
+            preview.artifact_size(),
+            preview.record_count(),
+            preview.location_count(),
+            preview.duration_milliseconds(),
+            PevcapImportOutcome::CaptureOnly,
+            vec![PevcapImportWarning::NoRouteLocations],
+        ),
+        pevcap_preview_variant(
+            preview,
+            preview.artifact_size(),
+            preview.record_count(),
+            preview.location_count(),
+            preview.duration_milliseconds(),
+            preview.outcome(),
+            vec![PevcapImportWarning::NoRouteLocations],
+        ),
+        pevcap_preview_variant(
+            preview,
+            preview.artifact_size() + 1,
+            preview.record_count(),
+            preview.location_count(),
+            preview.duration_milliseconds(),
+            preview.outcome(),
+            preview.warnings().to_vec(),
+        ),
+    ];
+    for preview in variants {
+        assert!(matches!(
+            database.confirm_pevcap_import(&preview, 1_700_000_000_001),
+            Err(StorageError::PevcapPreviewChanged)
+        ));
+    }
+}
+
 fn create_legacy_schema(path: &std::path::Path, version: i64) {
     let connection = Connection::open(path).unwrap();
     connection
@@ -980,6 +1115,10 @@ fn device_names_normalize_lookup_and_bound_text() {
 }
 
 #[test]
+#[allow(
+    clippy::too_many_lines,
+    reason = "one end-to-end test keeps managed-artifact integrity failures in a single audit trail"
+)]
 fn database_preflights_confirms_and_deduplicates_managed_pevcap_artifacts() {
     let _guard = test_guard();
     let database_path = std::env::temp_dir().join(format!(
@@ -990,37 +1129,9 @@ fn database_preflights_confirms_and_deduplicates_managed_pevcap_artifacts() {
         "libcutout-persistence-pevcap-{}.jsonl",
         uuid::Uuid::new_v4()
     ));
-    let header = PevcapHeader::new(
-        WallClockUnixTimestamp::new(1_700_000_000_000),
-        "darwin",
-        None,
-        &[],
-        &[],
-        None,
-        None,
-        "test",
-        [0; 32],
-        &[],
-    )
-    .unwrap();
     let capture = PevcapCapture::new(
-        header,
-        vec![
-            PevcapRecord::link_up(MonotonicTimestamp::new(1), None).with_phone_location(
-                PevcapPhoneLocation {
-                    wall_clock_unix_ms: 1_700_000_000_001,
-                    latitude_degrees: 40.0,
-                    longitude_degrees: -105.0,
-                    altitude_meters: 1_600.0,
-                    horizontal_accuracy_meters: Some(3.0),
-                    vertical_accuracy_meters: None,
-                    speed_meters_per_second: None,
-                    speed_accuracy_meters_per_second: None,
-                    course_degrees: None,
-                    course_accuracy_degrees: None,
-                },
-            ),
-        ],
+        pevcap_header(),
+        vec![pevcap_location_record(1, 40.0, Some(3.0))],
     );
     std::fs::write(&artifact_path, capture.to_jsonl().unwrap()).unwrap();
 
@@ -1261,56 +1372,20 @@ fn pevcap_import_deduplicates_repeated_attached_location_context() {
 #[test]
 fn pevcap_jsonl_and_binary_imports_preserve_merged_route_order() {
     let _guard = test_guard();
-    let header = PevcapHeader::new(
-        WallClockUnixTimestamp::new(1_700_000_000_000),
-        "darwin",
-        None,
-        &[],
-        &[],
-        None,
-        None,
-        "test",
-        [0; 32],
-        &[],
-    )
-    .unwrap();
-    let attached = |monotonic_ms: u64, latitude_degrees: f64| PevcapPhoneLocation {
-        wall_clock_unix_ms: 1_700_000_000_000 + monotonic_ms,
-        latitude_degrees,
-        longitude_degrees: -105.0,
-        altitude_meters: 1_600.0,
-        horizontal_accuracy_meters: Some(3.0),
-        vertical_accuracy_meters: None,
-        speed_meters_per_second: None,
-        speed_accuracy_meters_per_second: None,
-        course_degrees: None,
-        course_accuracy_degrees: None,
-    };
     let independent = PevcapLocationSample::new(
         MonotonicTimestamp::new(2_000),
-        PevcapPhoneLocation {
-            wall_clock_unix_ms: 1_700_000_000_001,
-            latitude_degrees: 40.00001,
-            longitude_degrees: -105.0,
-            altitude_meters: 1_600.0,
-            horizontal_accuracy_meters: Some(3.0),
-            vertical_accuracy_meters: None,
-            speed_meters_per_second: None,
-            speed_accuracy_meters_per_second: None,
-            course_degrees: None,
-            course_accuracy_degrees: None,
-        },
+        pevcap_phone_location(2_000, 40.00001, Some(3.0)),
         None,
         None,
     )
     .unwrap();
     let capture = PevcapCapture::new_with_locations(
-        header,
+        pevcap_header(),
         vec![
             PevcapRecord::link_up(MonotonicTimestamp::new(1_000), None)
-                .with_phone_location(attached(1_000, 40.0)),
+                .with_phone_location(pevcap_phone_location(1_000, 40.0, Some(3.0))),
             PevcapRecord::link_up(MonotonicTimestamp::new(3_000), None)
-                .with_phone_location(attached(3_000, 40.0002)),
+                .with_phone_location(pevcap_phone_location(3_000, 40.0002, Some(3.0))),
         ],
         vec![independent],
     );
@@ -1674,35 +1749,8 @@ fn duplicate_pevcap_confirmation_rejects_tampered_reviewed_facts() {
         uuid::Uuid::new_v4()
     ));
     let capture = PevcapCapture::new(
-        PevcapHeader::new(
-            WallClockUnixTimestamp::new(1_700_000_000_000),
-            "darwin",
-            None,
-            &[],
-            &[],
-            None,
-            None,
-            "test",
-            [0; 32],
-            &[],
-        )
-        .unwrap(),
-        vec![
-            PevcapRecord::link_up(MonotonicTimestamp::new(1_000), None).with_phone_location(
-                PevcapPhoneLocation {
-                    wall_clock_unix_ms: 1_700_000_000_000,
-                    latitude_degrees: 40.0,
-                    longitude_degrees: -105.0,
-                    altitude_meters: 1_600.0,
-                    horizontal_accuracy_meters: Some(3.0),
-                    vertical_accuracy_meters: None,
-                    speed_meters_per_second: None,
-                    speed_accuracy_meters_per_second: None,
-                    course_degrees: None,
-                    course_accuracy_degrees: None,
-                },
-            ),
-        ],
+        pevcap_header(),
+        vec![pevcap_location_record(1_000, 40.0, Some(3.0))],
     );
     std::fs::write(&artifact_path, capture.to_jsonl().unwrap()).unwrap();
 
@@ -1713,75 +1761,7 @@ fn duplicate_pevcap_confirmation_rejects_tampered_reviewed_facts() {
     let receipt = database
         .confirm_pevcap_import(&preview, 1_700_000_000_000)
         .unwrap();
-    let with_facts =
-        |artifact_size, record_count, location_count, duration_milliseconds, outcome, warnings| {
-            PevcapImportPreview::from_parts(
-                preview.source_path().to_owned(),
-                preview.encoding(),
-                preview.artifact_digest().to_owned(),
-                artifact_size,
-                record_count,
-                location_count,
-                duration_milliseconds,
-                outcome,
-                warnings,
-            )
-        };
-    for tampered in [
-        with_facts(
-            preview.artifact_size(),
-            preview.record_count() + 1,
-            preview.location_count(),
-            preview.duration_milliseconds(),
-            preview.outcome(),
-            preview.warnings().to_vec(),
-        ),
-        with_facts(
-            preview.artifact_size(),
-            preview.record_count(),
-            preview.location_count() + 1,
-            preview.duration_milliseconds(),
-            preview.outcome(),
-            preview.warnings().to_vec(),
-        ),
-        with_facts(
-            preview.artifact_size(),
-            preview.record_count(),
-            preview.location_count(),
-            preview.duration_milliseconds() + 1,
-            preview.outcome(),
-            preview.warnings().to_vec(),
-        ),
-        with_facts(
-            preview.artifact_size(),
-            preview.record_count(),
-            preview.location_count(),
-            preview.duration_milliseconds(),
-            PevcapImportOutcome::CaptureOnly,
-            vec![PevcapImportWarning::NoRouteLocations],
-        ),
-        with_facts(
-            preview.artifact_size(),
-            preview.record_count(),
-            preview.location_count(),
-            preview.duration_milliseconds(),
-            preview.outcome(),
-            vec![PevcapImportWarning::NoRouteLocations],
-        ),
-        with_facts(
-            preview.artifact_size() + 1,
-            preview.record_count(),
-            preview.location_count(),
-            preview.duration_milliseconds(),
-            preview.outcome(),
-            preview.warnings().to_vec(),
-        ),
-    ] {
-        assert!(matches!(
-            database.confirm_pevcap_import(&tampered, 1_700_000_000_001),
-            Err(StorageError::PevcapPreviewChanged)
-        ));
-    }
+    assert_duplicate_preview_variants_rejected(&database, &preview);
     assert_eq!(
         database
             .confirm_pevcap_import(&preview, 1_700_000_000_002)
