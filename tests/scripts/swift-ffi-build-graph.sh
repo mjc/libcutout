@@ -114,6 +114,20 @@ write_complete_fake_package() {
     echo "expected an unchanged package to skip generation" >&2
     exit 1
   }
+
+  rm -f -- "$(cutout_swift_ffi_package_dir "$fake")/cutout_mobile_ffiFFI.xcframework/ios-arm64/Headers/cutout_mobile_ffiFFI/module.modulemap"
+  cutout_ensure_swift_ffi_build_input "$fake" fake_regenerate
+  [[ "$generation_count" -eq 2 ]] || {
+    echo "expected a missing required file to trigger repair" >&2
+    exit 1
+  }
+
+  printf 'pub struct ChangedAgain;\n' >>"$fake/crates/cutout-ride-maps/src/lib.rs"
+  cutout_ensure_swift_ffi_build_input "$fake" fake_regenerate
+  [[ "$generation_count" -eq 3 ]] || {
+    echo "expected a covered dependency change to trigger regeneration" >&2
+    exit 1
+  }
 )
 
 generated="$tmp/generated-package"

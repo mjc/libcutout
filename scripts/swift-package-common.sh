@@ -132,7 +132,9 @@ cutout_validate_swift_ffi_build_input() {
     "$package/cutout_mobile_ffiFFI.xcframework/macos-arm64_x86_64/Headers/cutout_mobile_ffiFFI/module.modulemap"
   )
 
-  cutout_require_current_swift_ffi "$root"
+  if ! cutout_require_current_swift_ffi "$root"; then
+    return 1
+  fi
   for input in "${required[@]}"; do
     if [[ ! -f "$input" ]]; then
       echo "missing Swift FFI build input: $input" >&2
