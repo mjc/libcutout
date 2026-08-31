@@ -1,8 +1,9 @@
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use cutout_ride_maps::{
-    LocationAdmission, LocationSample, RideEvent, RideLifecycleState, TransitionError,
-    distance_between,
+    LocationAdmission, LocationSample, MonotonicMilliseconds, RideEvent, RideLifecycleState,
+    RideMapSegmentId, TransitionError, clamped_transition_timestamp, distance_between,
+    route_admission,
 };
 
 use super::{RideSource, StorageError};
@@ -14,11 +15,25 @@ pub(super) enum LocationWriteMode {
 }
 
 #[derive(Clone, Copy)]
+pub(super) struct RideWriteStateParts {
+    pub(super) source: RideSource,
+    pub(super) lifecycle: RideLifecycleState,
+    pub(super) monotonic_created_at_ms: Option<u64>,
+    pub(super) monotonic_last_event_ms: Option<u64>,
+    pub(super) latest_observed_monotonic_ms: Option<u64>,
+    pub(super) paused_at_ms: Option<u64>,
+    pub(super) paused_duration_ms: u64,
+    pub(super) completed_duration_ms: u64,
+    pub(super) updated_at_ms: u64,
+}
+
+#[derive(Clone, Copy)]
 pub(super) struct RideWriteState {
     source: RideSource,
     lifecycle: RideLifecycleState,
     monotonic_created_at_ms: Option<u64>,
     monotonic_last_event_ms: Option<u64>,
+    latest_observed_monotonic_ms: Option<u64>,
     paused_at_ms: Option<u64>,
     paused_duration_ms: u64,
     completed_duration_ms: u64,
@@ -32,20 +47,21 @@ impl RideWriteState {
         lifecycle: RideLifecycleState,
         updated_at_ms: u64,
         monotonic_created_at_ms: Option<u64>,
-        duration_ms: u64,
+        completed_duration_ms: u64,
         paused_at_ms: Option<u64>,
         paused_duration_ms: u64,
     ) -> Self {
-        Self {
+        Self::from_parts(&RideWriteStateParts {
             source,
             lifecycle,
             monotonic_created_at_ms,
             monotonic_last_event_ms: None,
+            latest_observed_monotonic_ms: None,
             paused_at_ms,
             paused_duration_ms,
-            completed_duration_ms: duration_ms,
+            completed_duration_ms,
             updated_at_ms,
-        }
+        })
     }
 
     #[cfg(test)]
@@ -54,32 +70,30 @@ impl RideWriteState {
         lifecycle: RideLifecycleState,
         updated_at_ms: u64,
     ) -> Self {
-        Self::new_with_timing(source, lifecycle, None, None, None, 0, 0, updated_at_ms)
-    }
-
-    #[allow(
-        clippy::too_many_arguments,
-        reason = "fields mirror the persisted lifecycle timing columns"
-    )]
-    pub(super) const fn new_with_timing(
-        source: RideSource,
-        lifecycle: RideLifecycleState,
-        monotonic_created_at_ms: Option<u64>,
-        monotonic_last_event_ms: Option<u64>,
-        paused_at_ms: Option<u64>,
-        paused_duration_ms: u64,
-        completed_duration_ms: u64,
-        updated_at_ms: u64,
-    ) -> Self {
-        Self {
+        Self::from_parts(&RideWriteStateParts {
             source,
             lifecycle,
-            monotonic_created_at_ms,
-            monotonic_last_event_ms,
-            paused_at_ms,
-            paused_duration_ms,
-            completed_duration_ms,
+            monotonic_created_at_ms: None,
+            monotonic_last_event_ms: None,
+            latest_observed_monotonic_ms: None,
+            paused_at_ms: None,
+            paused_duration_ms: 0,
+            completed_duration_ms: 0,
             updated_at_ms,
+        })
+    }
+
+    pub(super) const fn from_parts(parts: &RideWriteStateParts) -> Self {
+        Self {
+            source: parts.source,
+            lifecycle: parts.lifecycle,
+            monotonic_created_at_ms: parts.monotonic_created_at_ms,
+            monotonic_last_event_ms: parts.monotonic_last_event_ms,
+            latest_observed_monotonic_ms: parts.latest_observed_monotonic_ms,
+            paused_at_ms: parts.paused_at_ms,
+            paused_duration_ms: parts.paused_duration_ms,
+            completed_duration_ms: parts.completed_duration_ms,
+            updated_at_ms: parts.updated_at_ms,
         }
     }
 
@@ -105,7 +119,23 @@ impl RideWriteState {
         let mut paused_duration_ms = self.paused_duration_ms;
         let mut completed_duration_ms = self.completed_duration_ms;
         let at = monotonic_at_ms
-            .or(self.monotonic_last_event_ms)
+            .map(|milliseconds| {
+                clamped_transition_timestamp(
+                    self.monotonic_created_at_ms
+                        .map(MonotonicMilliseconds::new)
+                        .unwrap_or_default(),
+                    self.latest_observed_monotonic_ms
+                        .map(MonotonicMilliseconds::new),
+                    MonotonicMilliseconds::new(milliseconds),
+                )
+                .as_u64()
+            })
+            .or_else(|| {
+                self.monotonic_last_event_ms
+                    .into_iter()
+                    .chain(self.latest_observed_monotonic_ms)
+                    .max()
+            })
             .or(self.monotonic_created_at_ms);
         if self.lifecycle == RideLifecycleState::Draft
             && lifecycle == RideLifecycleState::Active
@@ -177,21 +207,21 @@ impl RideWriteState {
         self,
         previous: Option<(u64, LocationSample)>,
         sample: LocationSample,
-        segment_id: u64,
+        segment_id: RideMapSegmentId,
         mode: LocationWriteMode,
     ) -> Result<LocationWriteDecision, RideLifecycleState> {
         if !self.accepts_location(mode) {
             return Err(self.lifecycle);
         }
 
-        let admission = sample.admission(previous.as_ref().map(|(_, sample)| sample));
+        let admission = route_admission(previous.as_ref().map(|(_, sample)| sample), &sample);
         if admission != LocationAdmission::Accepted {
             return Ok(LocationWriteDecision::Rejected(admission));
         }
 
         Ok(LocationWriteDecision::Accepted {
             distance_millimetres: previous
-                .filter(|(previous_segment_id, _)| *previous_segment_id == segment_id)
+                .filter(|(previous_segment_id, _)| *previous_segment_id == segment_id.value())
                 .map(|(_, previous)| distance_between(previous, sample).as_u64())
                 .unwrap_or_default(),
             updated_at_ms: self
@@ -304,7 +334,7 @@ pub(super) fn wall_clock_now_milliseconds() -> Result<u64, StorageError> {
 
 #[cfg(test)]
 mod tests {
-    use cutout_ride_maps::{Coordinate, LocationSource};
+    use cutout_ride_maps::{Coordinate, LocationSource, RideMapSegmentId};
 
     use super::*;
 
@@ -324,7 +354,12 @@ mod tests {
         );
         assert!(matches!(
             state
-                .decide_location(None, sample, 0, LocationWriteMode::Live)
+                .decide_location(
+                    None,
+                    sample,
+                    RideMapSegmentId::new(0),
+                    LocationWriteMode::Live,
+                )
                 .unwrap(),
             LocationWriteDecision::Accepted {
                 updated_at_ms: 30,
@@ -371,5 +406,47 @@ mod tests {
         assert_eq!(transition.duration_milliseconds(), 2_000);
         assert_eq!(transition.paused_at_milliseconds(), None);
         assert_eq!(transition.paused_duration_milliseconds(), 2_000);
+    }
+
+    #[test]
+    fn transition_time_is_clamped_to_the_latest_durable_sample() {
+        let state = RideWriteState::from_parts(&RideWriteStateParts {
+            source: RideSource::Live,
+            lifecycle: RideLifecycleState::Active,
+            monotonic_created_at_ms: Some(1_000),
+            monotonic_last_event_ms: None,
+            latest_observed_monotonic_ms: Some(5_000),
+            paused_at_ms: None,
+            paused_duration_ms: 0,
+            completed_duration_ms: 0,
+            updated_at_ms: 20,
+        });
+
+        let transition = state
+            .transition_at(RideEvent::Pause, 30, Some(3_000))
+            .unwrap();
+
+        assert_eq!(transition.paused_at_milliseconds(), Some(5_000));
+        assert_eq!(transition.monotonic_last_event_milliseconds(), Some(5_000));
+    }
+
+    #[test]
+    fn transition_without_monotonic_time_uses_the_latest_durable_sample() {
+        let state = RideWriteState::from_parts(&RideWriteStateParts {
+            source: RideSource::Live,
+            lifecycle: RideLifecycleState::Active,
+            monotonic_created_at_ms: Some(1_000),
+            monotonic_last_event_ms: Some(2_000),
+            latest_observed_monotonic_ms: Some(5_000),
+            paused_at_ms: None,
+            paused_duration_ms: 0,
+            completed_duration_ms: 0,
+            updated_at_ms: 20,
+        });
+
+        let transition = state.transition_at(RideEvent::Pause, 30, None).unwrap();
+
+        assert_eq!(transition.paused_at_milliseconds(), Some(5_000));
+        assert_eq!(transition.monotonic_last_event_milliseconds(), Some(5_000));
     }
 }

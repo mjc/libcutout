@@ -20,6 +20,14 @@ use std::sync::{
     mpsc::Receiver,
 };
 
+#[cfg(test)]
+static DROP_NEXT_PEVCAP_FINISH_RESPONSE: AtomicBool = AtomicBool::new(false);
+
+#[cfg(test)]
+pub(super) fn drop_next_pevcap_finish_response_for_test() {
+    DROP_NEXT_PEVCAP_FINISH_RESPONSE.store(true, Ordering::Release);
+}
+
 pub(super) fn run(connection: Connection, receiver: &Receiver<Command>, worker_alive: &AtomicBool) {
     let mut worker = DatabaseWorker {
         connection,
@@ -210,10 +218,11 @@ impl DatabaseWorker<'_> {
                 artifact_size,
                 record_count,
                 location_count,
+                duration_milliseconds,
                 imported_at_ms,
                 reply,
             } => {
-                let _ = reply.send(finish_pevcap_import(
+                let result = finish_pevcap_import(
                     connection,
                     &digest,
                     ride_id,
@@ -222,8 +231,17 @@ impl DatabaseWorker<'_> {
                     artifact_size,
                     record_count,
                     location_count,
+                    duration_milliseconds,
                     imported_at_ms,
-                ));
+                );
+                #[cfg(test)]
+                if DROP_NEXT_PEVCAP_FINISH_RESPONSE.swap(false, Ordering::AcqRel) {
+                    drop(reply);
+                } else {
+                    let _ = reply.send(result);
+                }
+                #[cfg(not(test))]
+                let _ = reply.send(result);
             }
             Command::AbortPevcapImport {
                 digest,

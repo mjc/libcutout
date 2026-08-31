@@ -79,6 +79,23 @@ pub struct LocationSample {
     source: LocationSource,
 }
 
+/// A location sample that has passed the recorder's route-admission policy.
+///
+/// The private field prevents callers from manufacturing an admitted sample without using
+/// [`crate::RideMapRecorder::admit_sample`].
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) struct AdmittedLocationSample(LocationSample);
+
+impl AdmittedLocationSample {
+    pub(super) const fn new(sample: LocationSample) -> Self {
+        Self(sample)
+    }
+
+    pub(super) const fn sample(self) -> LocationSample {
+        self.0
+    }
+}
+
 impl LocationSample {
     /// Creates a location sample from already validated platform values.
     #[must_use]

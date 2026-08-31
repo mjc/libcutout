@@ -51,7 +51,7 @@ fn acquire(path: &Path, service_id: Uuid) -> Result<RideDatabase, StorageError> 
     }
 
     let mut connection = Connection::open(&canonical_path)?;
-    let bootstrap = configure_connection(&mut connection)?;
+    let bootstrap = configure_connection(&mut connection, &canonical_path)?;
     let (sender, receiver) = mpsc::sync_channel(COMMAND_QUEUE_CAPACITY);
     let worker_alive = Arc::new(AtomicBool::new(true));
     let worker_alive_for_thread = Arc::clone(&worker_alive);

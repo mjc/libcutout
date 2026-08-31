@@ -32,7 +32,8 @@ mod worker;
 pub(crate) use migrations::create_current_schema;
 use migrations::{migrate, table_exists, verify_current_schema};
 use ride_write::{
-    LocationWriteDecision, LocationWriteMode, RideWriteState, wall_clock_now_milliseconds,
+    LocationWriteDecision, LocationWriteMode, RideWriteState, RideWriteStateParts,
+    wall_clock_now_milliseconds,
 };
 
 const COMMAND_QUEUE_CAPACITY: usize = 64;
@@ -43,6 +44,7 @@ const MAX_PEVCAP_ARTIFACT_BYTES: u64 = 512 * 1024 * 1024;
 const MAX_PEVCAP_RECORDS: u64 = 10_000_000;
 const MAX_PEVCAP_DURATION_MILLISECONDS: u64 = 24 * 60 * 60 * 1_000;
 const PEVCAP_LOCATION_BATCH_SIZE: usize = 256;
+const MAX_MANAGED_PEVCAP_DIRECTORY_ATTEMPTS: usize = 8;
 const DEFAULT_ROUTE_PROJECTION_TIMEOUT: Duration = Duration::from_secs(2);
 
 #[derive(Clone, Copy)]
@@ -840,6 +842,34 @@ impl PevcapImportPreview {
     #[must_use]
     pub fn warnings(&self) -> &[PevcapImportWarning] {
         &self.warnings
+    }
+    #[cfg(test)]
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "test-only malformed preview fixture"
+    )]
+    pub(crate) fn from_parts(
+        source_path: PathBuf,
+        encoding: PevcapEncoding,
+        artifact_digest: String,
+        artifact_size: u64,
+        record_count: u64,
+        location_count: u64,
+        duration_milliseconds: u64,
+        outcome: PevcapImportOutcome,
+        warnings: Vec<PevcapImportWarning>,
+    ) -> Self {
+        Self {
+            source_path,
+            encoding,
+            artifact_digest,
+            artifact_size,
+            record_count,
+            location_count,
+            duration_milliseconds,
+            outcome,
+            warnings: Arc::from(warnings),
+        }
     }
 }
 
@@ -2046,6 +2076,11 @@ impl RideDatabase {
         preflight_pevcap(path, encoding)
     }
 
+    #[cfg(test)]
+    pub(crate) fn fail_next_pevcap_finish_response_for_test() {
+        worker::drop_next_pevcap_finish_response_for_test();
+    }
+
     /// Confirms a reviewed PEVCAP preview, copies it into managed storage, and commits bounded
     /// location batches without monopolizing the database worker.
     ///
@@ -2063,6 +2098,7 @@ impl RideDatabase {
             digest: preview.artifact_digest.clone(),
             reply,
         })? {
+            validate_existing_pevcap_confirmation(self.path.as_ref(), &receipt, preview)?;
             return Ok(receipt);
         }
 
@@ -2084,7 +2120,10 @@ impl RideDatabase {
         };
         let PevcapBegin::Started { ride_id } = begin else {
             return match begin {
-                PevcapBegin::Duplicate(receipt) => Ok(receipt),
+                PevcapBegin::Duplicate(receipt) => {
+                    validate_existing_pevcap_confirmation(self.path.as_ref(), &receipt, preview)?;
+                    Ok(receipt)
+                }
                 PevcapBegin::Started { .. } => unreachable!(),
             };
         };
@@ -2109,10 +2148,30 @@ impl RideDatabase {
                 artifact_size: preview.artifact_size,
                 record_count: preview.record_count,
                 location_count,
+                duration_milliseconds: preview.duration_milliseconds,
                 imported_at_ms: created_at_ms,
                 reply,
             })
         })();
+        if matches!(result.as_ref(), Err(StorageError::ResponseDropped)) {
+            // The finish transaction may have committed before its reply was lost. Reconcile the
+            // durable receipt before cleanup; deleting the managed artifact in that case would
+            // leave a successful import pointing at missing bytes.
+            match self.request(|reply| Command::PevcapImportLookup {
+                digest: preview.artifact_digest.clone(),
+                reply,
+            }) {
+                Ok(Some(receipt)) => {
+                    validate_existing_pevcap_confirmation(self.path.as_ref(), &receipt, preview)?;
+                    return Ok(PevcapImportReceipt {
+                        duplicate: false,
+                        ..receipt
+                    });
+                }
+                Ok(None) => {}
+                Err(_) => return result,
+            }
+        }
         if result.is_err() {
             let _ = self.request(|reply| Command::AbortPevcapImport {
                 digest: preview.artifact_digest.clone(),
@@ -2932,6 +2991,7 @@ enum Command {
         artifact_size: u64,
         record_count: u64,
         location_count: u64,
+        duration_milliseconds: u64,
         imported_at_ms: u64,
         reply: Reply<PevcapImportReceipt>,
     },
@@ -3108,7 +3168,10 @@ fn canonical_backup_path(path: &Path) -> Result<PathBuf, StorageError> {
     Ok(destination)
 }
 
-fn configure_connection(connection: &mut Connection) -> Result<BootstrapSnapshot, StorageError> {
+fn configure_connection(
+    connection: &mut Connection,
+    database_path: &Path,
+) -> Result<BootstrapSnapshot, StorageError> {
     connection.pragma_update(None, "foreign_keys", "ON")?;
     let foreign_keys: i64 =
         connection.pragma_query_value(None, "foreign_keys", |row| row.get(0))?;
@@ -3126,7 +3189,7 @@ fn configure_connection(connection: &mut Connection) -> Result<BootstrapSnapshot
     migrate(connection)?;
     repair_legacy_ride_creation_times(connection)?;
     verify_current_schema(connection)?;
-    recover_abandoned_pevcap_imports(connection)?;
+    recover_abandoned_pevcap_imports(connection, database_path)?;
     let recovered_rides = recover_interrupted_rides(connection)?;
     Ok(BootstrapSnapshot {
         recovered_rides: recovered_rides.into(),
@@ -3178,7 +3241,10 @@ pub(crate) fn repair_legacy_ride_creation_times(
     Ok(())
 }
 
-fn recover_abandoned_pevcap_imports(connection: &mut Connection) -> Result<(), StorageError> {
+fn recover_abandoned_pevcap_imports(
+    connection: &mut Connection,
+    database_path: &Path,
+) -> Result<(), StorageError> {
     let paths = {
         let mut statement = connection
             .prepare("SELECT artifact_path FROM pevcap_import_work ORDER BY artifact_digest")?;
@@ -3192,7 +3258,14 @@ fn recover_abandoned_pevcap_imports(connection: &mut Connection) -> Result<(), S
     )?;
     transaction.execute("DELETE FROM pevcap_import_work", [])?;
     transaction.commit()?;
+    let mut managed_directory_name = database_path.as_os_str().to_owned();
+    managed_directory_name.push(".pevcap-imports");
+    let managed_directory = PathBuf::from(managed_directory_name);
     for path in paths {
+        let path = Path::new(&path);
+        if path.parent() != Some(managed_directory.as_path()) {
+            continue;
+        }
         if let Err(error) = fs::remove_file(path)
             && error.kind() != std::io::ErrorKind::NotFound
         {
@@ -3820,16 +3893,9 @@ fn preflight_pevcap(
         }
         Ok(u64::try_from(samples.len()).unwrap_or(u64::MAX))
     })?;
-    let earliest_milliseconds = earliest_milliseconds
-        .into_iter()
-        .chain(location_earliest_milliseconds)
-        .min();
-    let latest_milliseconds = latest_milliseconds
-        .into_iter()
-        .chain(location_latest_milliseconds)
-        .max();
-    let duration_milliseconds = latest_milliseconds
-        .zip(earliest_milliseconds)
+    let duration_milliseconds = location_latest_milliseconds
+        .zip(location_earliest_milliseconds)
+        .or_else(|| latest_milliseconds.zip(earliest_milliseconds))
         .map_or(0, |(latest, earliest)| latest.saturating_sub(earliest));
     check_pevcap_limit(
         "duration milliseconds",
@@ -3873,23 +3939,28 @@ fn prepare_managed_pevcap(
     database_path: &Path,
     preview: &PevcapImportPreview,
 ) -> Result<ManagedArtifact, StorageError> {
-    let mut directory_name = database_path.as_os_str().to_owned();
-    directory_name.push(".pevcap-imports");
-    let directory = PathBuf::from(directory_name);
-    fs::create_dir_all(&directory)?;
+    let directory = pevcap_import_directory(database_path);
+    ensure_managed_pevcap_directory(&directory)?;
     let extension = match preview.encoding {
         PevcapEncoding::Jsonl => "jsonl",
         PevcapEncoding::Binary => "pevcap",
     };
     let destination = directory.join(format!("{}.{}", preview.artifact_digest, extension));
-    if destination.exists() {
-        if artifact_digest(&destination)? != preview.artifact_digest {
-            return Err(StorageError::PevcapPreviewChanged);
+    match fs::symlink_metadata(&destination) {
+        Ok(_) => {
+            validate_managed_pevcap_artifact(
+                &directory,
+                &destination,
+                preview.artifact_digest(),
+                preview.artifact_size(),
+            )?;
+            return Ok(ManagedArtifact {
+                path: destination,
+                created: false,
+            });
         }
-        return Ok(ManagedArtifact {
-            path: destination,
-            created: false,
-        });
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => return Err(StorageError::Io(error)),
     }
 
     let temporary = directory.join(format!(
@@ -3925,6 +3996,97 @@ fn prepare_managed_pevcap(
         path: destination,
         created: true,
     })
+}
+
+fn ensure_managed_pevcap_directory(directory: &Path) -> Result<(), StorageError> {
+    for _ in 0..MAX_MANAGED_PEVCAP_DIRECTORY_ATTEMPTS {
+        match fs::symlink_metadata(directory) {
+            Ok(metadata) => {
+                let file_type = metadata.file_type();
+                return if file_type.is_dir() && !file_type.is_symlink() {
+                    Ok(())
+                } else {
+                    Err(StorageError::PevcapPreviewChanged)
+                };
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                match fs::create_dir(directory) {
+                    Ok(()) => return Ok(()),
+                    Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
+                    Err(error) => return Err(StorageError::Io(error)),
+                }
+            }
+            Err(error) => return Err(StorageError::Io(error)),
+        }
+    }
+    Err(StorageError::PevcapPreviewChanged)
+}
+
+fn validate_managed_pevcap_artifact(
+    directory: &Path,
+    path: &Path,
+    expected_digest: &str,
+    expected_size: u64,
+) -> Result<(), StorageError> {
+    if path.parent() != Some(directory) {
+        return Err(StorageError::PevcapPreviewChanged);
+    }
+    let metadata = fs::symlink_metadata(path).map_err(|error| {
+        if error.kind() == std::io::ErrorKind::NotFound {
+            StorageError::PevcapPreviewChanged
+        } else {
+            StorageError::Io(error)
+        }
+    })?;
+    let file_type = metadata.file_type();
+    if !file_type.is_file() || file_type.is_symlink() || metadata.len() != expected_size {
+        return Err(StorageError::PevcapPreviewChanged);
+    }
+    if artifact_digest(path)? != expected_digest {
+        return Err(StorageError::PevcapPreviewChanged);
+    }
+    Ok(())
+}
+
+fn validate_existing_pevcap_confirmation(
+    database_path: &Path,
+    receipt: &PevcapImportReceipt,
+    preview: &PevcapImportPreview,
+) -> Result<(), StorageError> {
+    let directory = pevcap_import_directory(database_path);
+    ensure_managed_pevcap_directory(&directory)?;
+    validate_managed_pevcap_artifact(
+        &directory,
+        &receipt.managed_artifact_path,
+        preview.artifact_digest(),
+        preview.artifact_size(),
+    )?;
+    if receipt.artifact_digest != preview.artifact_digest
+        || receipt.record_count != preview.record_count
+        || receipt.location_count != preview.location_count
+        || receipt.outcome != preview.outcome
+    {
+        return Err(StorageError::PevcapPreviewChanged);
+    }
+    let managed_preview = preflight_pevcap(&receipt.managed_artifact_path, preview.encoding())
+        .map_err(|_| StorageError::PevcapPreviewChanged)?;
+    if managed_preview.artifact_digest != preview.artifact_digest
+        || managed_preview.artifact_size != preview.artifact_size
+        || managed_preview.record_count != preview.record_count
+        || managed_preview.location_count != preview.location_count
+        || managed_preview.duration_milliseconds != preview.duration_milliseconds
+        || managed_preview.outcome != preview.outcome
+        || managed_preview.warnings != preview.warnings
+    {
+        return Err(StorageError::PevcapPreviewChanged);
+    }
+    Ok(())
+}
+
+fn pevcap_import_directory(database_path: &Path) -> PathBuf {
+    let mut directory_name = database_path.as_os_str().to_owned();
+    directory_name.push(".pevcap-imports");
+    PathBuf::from(directory_name)
 }
 
 fn stream_pevcap_location_batches(
@@ -4272,6 +4434,7 @@ fn finish_pevcap_import(
     artifact_size: u64,
     record_count: u64,
     location_count: u64,
+    duration_milliseconds: u64,
     imported_at_ms: u64,
 ) -> Result<PevcapImportReceipt, StorageError> {
     let transaction = connection.transaction()?;
@@ -4291,6 +4454,10 @@ fn finish_pevcap_import(
             RideEvent::Import,
             imported_at_ms,
             None,
+        )?;
+        transaction.execute(
+            "UPDATE rides SET completed_duration_ms = MAX(completed_duration_ms, ?1) WHERE id = ?2",
+            params![duration_milliseconds, ride_id.uuid().to_string()],
         )?;
     }
     transaction.execute(
@@ -4632,7 +4799,7 @@ fn append_location_in_transaction(
                 .as_ref()
                 .map(|previous| (previous.segment_id.value(), previous.sample)),
             sample,
-            segment_id.value(),
+            segment_id,
             mode,
         )
         .map_err(StorageError::InvalidRideState)?;
@@ -4785,63 +4952,56 @@ fn segment_start_reason(
     }
 }
 
-#[allow(
-    clippy::type_complexity,
-    reason = "tuple mirrors the fixed-width lifecycle row"
-)]
+struct StoredRideWriteState {
+    source: String,
+    lifecycle: String,
+    monotonic_created_at_ms: Option<u64>,
+    monotonic_last_event_ms: Option<u64>,
+    latest_observed_monotonic_ms: Option<u64>,
+    paused_at_ms: Option<u64>,
+    paused_duration_ms: u64,
+    completed_duration_ms: u64,
+    updated_at_ms: u64,
+}
+
 fn load_ride_write_state(
     connection: &Connection,
     ride_id: RideId,
 ) -> Result<RideWriteState, StorageError> {
-    let (
-        source,
-        lifecycle,
-        monotonic_created_at_ms,
-        monotonic_last_event_ms,
-        paused_at_ms,
-        paused_duration_ms,
-        completed_duration_ms,
-        updated_at_ms,
-    ): (
-        String,
-        String,
-        Option<u64>,
-        Option<u64>,
-        Option<u64>,
-        u64,
-        u64,
-        u64,
-    ) = connection
+    let stored = connection
         .query_row(
             "SELECT source, state, monotonic_created_at_ms, monotonic_last_event_ms,
+                    (SELECT MAX(monotonic_ms) FROM ride_points WHERE ride_id = rides.id),
                     paused_at_ms, paused_duration_ms, completed_duration_ms, updated_at_ms
              FROM rides WHERE id = ?1",
             params![ride_id.uuid().to_string()],
             |row| {
-                Ok((
-                    row.get(0)?,
-                    row.get(1)?,
-                    row.get(2)?,
-                    row.get(3)?,
-                    row.get(4)?,
-                    row.get(5)?,
-                    row.get(6)?,
-                    row.get(7)?,
-                ))
+                Ok(StoredRideWriteState {
+                    source: row.get(0)?,
+                    lifecycle: row.get(1)?,
+                    monotonic_created_at_ms: row.get(2)?,
+                    monotonic_last_event_ms: row.get(3)?,
+                    latest_observed_monotonic_ms: row.get(4)?,
+                    paused_at_ms: row.get(5)?,
+                    paused_duration_ms: row.get(6)?,
+                    completed_duration_ms: row.get(7)?,
+                    updated_at_ms: row.get(8)?,
+                })
             },
         )
         .optional()?
         .ok_or(StorageError::NotFound)?;
-    Ok(RideWriteState::new_with_timing(
-        ride_source_from_db(&source)?,
-        state_from_db(&lifecycle)?,
-        monotonic_created_at_ms,
-        monotonic_last_event_ms,
-        paused_at_ms,
-        paused_duration_ms,
-        completed_duration_ms,
-        updated_at_ms,
-    ))
+    Ok(RideWriteState::from_parts(&RideWriteStateParts {
+        source: ride_source_from_db(&stored.source)?,
+        lifecycle: state_from_db(&stored.lifecycle)?,
+        monotonic_created_at_ms: stored.monotonic_created_at_ms,
+        monotonic_last_event_ms: stored.monotonic_last_event_ms,
+        latest_observed_monotonic_ms: stored.latest_observed_monotonic_ms,
+        paused_at_ms: stored.paused_at_ms,
+        paused_duration_ms: stored.paused_duration_ms,
+        completed_duration_ms: stored.completed_duration_ms,
+        updated_at_ms: stored.updated_at_ms,
+    }))
 }
 
 #[derive(Clone, Copy)]

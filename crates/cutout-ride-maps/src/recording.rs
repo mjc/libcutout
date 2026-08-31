@@ -1,13 +1,46 @@
 use crate::{
     DistanceMillimetres, LocationAdmission, LocationSample, LocationSource, MonotonicMilliseconds,
     RideEvent, RideLifecycleState, RidePointCount, RideSummary, TransitionError, distance_between,
-    distance_between_millimetres,
+    distance_between_millimetres, location::AdmittedLocationSample,
 };
 
 const MAX_HORIZONTAL_ACCURACY_MILLIMETRES: u32 = 100_000;
 /// Maximum timestamp gap before starting a new route segment.
 pub const MAX_GAP_MILLISECONDS: u64 = 30_000;
 const MAX_IMPLIED_SPEED_MILLIMETRES_PER_SECOND: u64 = 100_000;
+
+/// Applies route admission policy to a candidate and its latest accepted predecessor.
+#[must_use]
+pub fn route_admission(
+    previous: Option<&LocationSample>,
+    sample: &LocationSample,
+) -> LocationAdmission {
+    if sample
+        .horizontal_accuracy_millimetres()
+        .is_some_and(|accuracy| accuracy > MAX_HORIZONTAL_ACCURACY_MILLIMETRES)
+    {
+        return LocationAdmission::AccuracyTooLow;
+    }
+    let admission = sample.admission(previous);
+    if admission != LocationAdmission::Accepted {
+        return admission;
+    }
+    let Some(previous) = previous else {
+        return LocationAdmission::Accepted;
+    };
+    let elapsed = sample
+        .monotonic_milliseconds()
+        .saturating_sub(previous.monotonic_milliseconds());
+    if elapsed <= MAX_GAP_MILLISECONDS {
+        let distance = distance_between_millimetres(*previous, *sample);
+        if u128::from(distance) * 1_000
+            > u128::from(MAX_IMPLIED_SPEED_MILLIMETRES_PER_SECOND) * u128::from(elapsed)
+        {
+            return LocationAdmission::UnrealisticJump;
+        }
+    }
+    LocationAdmission::Accepted
+}
 
 /// A non-empty platform identity for a connected vehicle.
 #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
@@ -399,6 +432,22 @@ impl RideRecordingTiming {
     pub const fn completed_duration_milliseconds(self) -> RideDurationMilliseconds {
         self.completed_duration
     }
+}
+
+/// Clamps a lifecycle timestamp to the monotonic watermark already observed by a ride.
+#[must_use]
+pub const fn clamped_transition_timestamp(
+    created_at_milliseconds: MonotonicMilliseconds,
+    latest_observed_milliseconds: Option<MonotonicMilliseconds>,
+    requested_at_milliseconds: MonotonicMilliseconds,
+) -> MonotonicMilliseconds {
+    let latest_observed_milliseconds = match latest_observed_milliseconds {
+        Some(value) => value,
+        None => MonotonicMilliseconds::new(0),
+    };
+    requested_at_milliseconds
+        .max(created_at_milliseconds)
+        .max(latest_observed_milliseconds)
 }
 
 /// Rust-owned live recording projection independent of storage or FFI DTOs.
@@ -858,9 +907,11 @@ impl RideMapRecorder {
         state: RideLifecycleState,
         at_milliseconds: MonotonicMilliseconds,
     ) {
-        let at_milliseconds = at_milliseconds
-            .max(self.created_at_milliseconds)
-            .max(self.last_monotonic_milliseconds);
+        let at_milliseconds = clamped_transition_timestamp(
+            self.created_at_milliseconds,
+            Some(self.last_monotonic_milliseconds),
+            at_milliseconds,
+        );
         match (self.state, state) {
             (Some(RideLifecycleState::Active), RideLifecycleState::Paused) => {
                 self.paused_at_milliseconds = Some(at_milliseconds);
@@ -991,35 +1042,26 @@ impl RideMapRecorder {
     #[must_use]
     pub fn check_sample(&self, sample: &LocationSample) -> LocationAdmission {
         let previous = self.points.last().map(|point| point.sample());
-        if sample
-            .horizontal_accuracy_millimetres()
-            .is_some_and(|accuracy| accuracy > MAX_HORIZONTAL_ACCURACY_MILLIMETRES)
-        {
-            return LocationAdmission::AccuracyTooLow;
+        route_admission(previous.as_ref(), sample)
+    }
+
+    /// Admits a sample for recording after applying the complete route policy.
+    pub(crate) fn admit_sample(
+        &self,
+        sample: LocationSample,
+    ) -> Result<AdmittedLocationSample, LocationAdmission> {
+        match self.check_sample(&sample) {
+            LocationAdmission::Accepted => Ok(AdmittedLocationSample::new(sample)),
+            admission => Err(admission),
         }
-        let admission = sample.admission(previous.as_ref());
-        if admission != LocationAdmission::Accepted {
-            return admission;
-        }
-        let Some(previous) = previous else {
-            return LocationAdmission::Accepted;
-        };
-        let elapsed = sample
-            .monotonic_milliseconds()
-            .saturating_sub(previous.monotonic_milliseconds());
-        if elapsed <= MAX_GAP_MILLISECONDS {
-            let distance = distance_between_millimetres(previous, *sample);
-            if u128::from(distance) * 1_000
-                > u128::from(MAX_IMPLIED_SPEED_MILLIMETRES_PER_SECOND) * u128::from(elapsed)
-            {
-                return LocationAdmission::UnrealisticJump;
-            }
-        }
-        LocationAdmission::Accepted
     }
 
     /// Records a sample after durable storage has accepted it.
     pub fn record_sample(&mut self, sample: LocationSample) -> bool {
+        let Ok(admitted_sample) = self.admit_sample(sample) else {
+            return false;
+        };
+        let sample = admitted_sample.sample();
         let next_segment_id = self.segment_id_for_sample(&sample);
         let gap_started = next_segment_id != self.segment_id;
         let segment_started = self.segment_started || gap_started;
@@ -1101,6 +1143,7 @@ mod tests {
     use super::{
         MonotonicMilliseconds, RideDurationMilliseconds, RideMapRecorder, RideMapSegmentId,
         RidePointSequence, RideSegmentCount, RideSegmentStartReason, VehicleAssociation,
+        route_admission,
     };
     use crate::{
         Coordinate, LocationAdmission, LocationSample, LocationSource, RideEvent,
@@ -1123,6 +1166,18 @@ mod tests {
             None,
             LocationSource::Live,
         )
+    }
+
+    #[test]
+    fn clamped_transition_timestamp_uses_the_latest_watermark() {
+        assert_eq!(
+            super::clamped_transition_timestamp(
+                monotonic(1_000),
+                Some(monotonic(5_000)),
+                monotonic(3_000),
+            ),
+            monotonic(5_000)
+        );
     }
 
     #[test]
@@ -1154,7 +1209,7 @@ mod tests {
         recorder.apply_transition(RideLifecycleState::Paused);
         recorder.apply_transition(RideLifecycleState::Active);
         assert_eq!(recorder.current_segment_id().value(), 1);
-        assert!(recorder.record_sample(sample(1_003, 40.001)));
+        assert!(recorder.record_sample(sample(1_003, 40.000_001)));
         assert_eq!(recorder.segment_count(), RideSegmentCount::new(2));
         assert_eq!(
             recorder
@@ -1274,6 +1329,43 @@ mod tests {
         assert_eq!(
             recorder.check_sample(&changed),
             LocationAdmission::OutOfOrder
+        );
+    }
+
+    #[test]
+    fn recording_rechecks_admission_before_mutating_the_route() {
+        let mut recorder = RideMapRecorder::new();
+        recorder.start(monotonic(1_000), None).expect("starts");
+        assert!(recorder.record_sample(sample(1_001, 40.0)));
+
+        let unrealistic_jump = sample(1_002, 40.001);
+        assert_eq!(
+            recorder.check_sample(&unrealistic_jump),
+            LocationAdmission::UnrealisticJump
+        );
+        assert!(!recorder.record_sample(unrealistic_jump));
+        assert_eq!(recorder.point_count(), 1);
+    }
+
+    #[test]
+    fn route_admission_applies_accuracy_and_speed_policy_without_recorder_state() {
+        let previous = sample(1_000, 40.0);
+        let low_accuracy = LocationSample::new(
+            previous.coordinate(),
+            1_001,
+            1_700_000_000_001,
+            Some(100_001),
+            LocationSource::Live,
+        );
+        assert_eq!(
+            route_admission(Some(&previous), &low_accuracy),
+            LocationAdmission::AccuracyTooLow
+        );
+
+        let unrealistic_jump = sample(1_001, 40.001);
+        assert_eq!(
+            route_admission(Some(&previous), &unrealistic_jump),
+            LocationAdmission::UnrealisticJump
         );
     }
 
