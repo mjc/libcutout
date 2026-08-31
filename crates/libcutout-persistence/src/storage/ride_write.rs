@@ -3,6 +3,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use cutout_ride_maps::{
     LocationAdmission, LocationSample, MonotonicMilliseconds, RideEvent, RideLifecycleState,
     RideMapSegmentId, TransitionError, clamped_transition_timestamp, distance_between,
+    route_admission,
 };
 
 use super::{RideSource, StorageError};
@@ -129,7 +130,12 @@ impl RideWriteState {
                 )
                 .as_u64()
             })
-            .or(self.monotonic_last_event_ms)
+            .or_else(|| {
+                self.monotonic_last_event_ms
+                    .into_iter()
+                    .chain(self.latest_observed_monotonic_ms)
+                    .max()
+            })
             .or(self.monotonic_created_at_ms);
         if self.lifecycle == RideLifecycleState::Draft
             && lifecycle == RideLifecycleState::Active
@@ -208,7 +214,7 @@ impl RideWriteState {
             return Err(self.lifecycle);
         }
 
-        let admission = sample.admission(previous.as_ref().map(|(_, sample)| sample));
+        let admission = route_admission(previous.as_ref().map(|(_, sample)| sample), &sample);
         if admission != LocationAdmission::Accepted {
             return Ok(LocationWriteDecision::Rejected(admission));
         }
@@ -419,6 +425,26 @@ mod tests {
         let transition = state
             .transition_at(RideEvent::Pause, 30, Some(3_000))
             .unwrap();
+
+        assert_eq!(transition.paused_at_milliseconds(), Some(5_000));
+        assert_eq!(transition.monotonic_last_event_milliseconds(), Some(5_000));
+    }
+
+    #[test]
+    fn transition_without_monotonic_time_uses_the_latest_durable_sample() {
+        let state = RideWriteState::from_parts(&RideWriteStateParts {
+            source: RideSource::Live,
+            lifecycle: RideLifecycleState::Active,
+            monotonic_created_at_ms: Some(1_000),
+            monotonic_last_event_ms: Some(2_000),
+            latest_observed_monotonic_ms: Some(5_000),
+            paused_at_ms: None,
+            paused_duration_ms: 0,
+            completed_duration_ms: 0,
+            updated_at_ms: 20,
+        });
+
+        let transition = state.transition_at(RideEvent::Pause, 30, None).unwrap();
 
         assert_eq!(transition.paused_at_milliseconds(), Some(5_000));
         assert_eq!(transition.monotonic_last_event_milliseconds(), Some(5_000));

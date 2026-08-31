@@ -4008,13 +4008,27 @@ fn ensure_managed_pevcap_directory(directory: &Path) -> Result<(), StorageError>
             }
         }
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-            match fs::create_dir(directory) {
-                Ok(()) => Ok(()),
-                Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
-                    ensure_managed_pevcap_directory(directory)
+            for _ in 0..8 {
+                match fs::create_dir(directory) {
+                    Ok(()) => return Ok(()),
+                    Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+                        match fs::symlink_metadata(directory) {
+                            Ok(metadata) => {
+                                let file_type = metadata.file_type();
+                                return if file_type.is_dir() && !file_type.is_symlink() {
+                                    Ok(())
+                                } else {
+                                    Err(StorageError::PevcapPreviewChanged)
+                                };
+                            }
+                            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                            Err(error) => return Err(StorageError::Io(error)),
+                        }
+                    }
+                    Err(error) => return Err(StorageError::Io(error)),
                 }
-                Err(error) => Err(StorageError::Io(error)),
             }
+            Err(StorageError::PevcapPreviewChanged)
         }
         Err(error) => Err(StorageError::Io(error)),
     }

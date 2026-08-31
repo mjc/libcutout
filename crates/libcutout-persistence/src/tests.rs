@@ -444,6 +444,60 @@ fn queued_location_returns_durable_admission() {
 }
 
 #[test]
+fn durable_location_admission_matches_route_policy() {
+    let _guard = test_guard();
+    let path = std::env::temp_dir().join(format!(
+        "libcutout-persistence-route-policy-{}.sqlite",
+        uuid::Uuid::new_v4()
+    ));
+    let database = RideDatabase::open(&path).unwrap();
+    let ride = database
+        .create_ride(RideSource::Live, 1_700_000_000_000)
+        .unwrap();
+    database.transition(ride, RideEvent::Start).unwrap();
+
+    let first = LocationSample::new(
+        Coordinate::from_degrees(40.0, -105.0).unwrap(),
+        1_000,
+        1_700_000_000_000,
+        None,
+        LocationSource::Live,
+    );
+    assert_eq!(
+        database.append_location(ride, first).unwrap(),
+        LocationAdmission::Accepted
+    );
+
+    let low_accuracy = LocationSample::new(
+        Coordinate::from_degrees(40.0, -105.0).unwrap(),
+        1_001,
+        1_700_000_000_001,
+        Some(100_001),
+        LocationSource::Live,
+    );
+    assert_eq!(
+        database.append_location(ride, low_accuracy).unwrap(),
+        LocationAdmission::AccuracyTooLow
+    );
+
+    let unrealistic_jump = LocationSample::new(
+        Coordinate::from_degrees(40.001, -105.0).unwrap(),
+        1_002,
+        1_700_000_000_002,
+        None,
+        LocationSource::Live,
+    );
+    assert_eq!(
+        database.append_location(ride, unrealistic_jump).unwrap(),
+        LocationAdmission::UnrealisticJump
+    );
+
+    assert_eq!(database.summary(ride).unwrap().point_count().as_u64(), 1);
+    database.shutdown().unwrap();
+    let _ = std::fs::remove_file(path);
+}
+
+#[test]
 fn queued_location_write_returns_before_worker_completion_and_can_be_polled() {
     let _guard = test_guard();
     let path = std::env::temp_dir().join(format!(

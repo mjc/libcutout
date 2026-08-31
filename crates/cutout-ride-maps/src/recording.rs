@@ -9,6 +9,39 @@ const MAX_HORIZONTAL_ACCURACY_MILLIMETRES: u32 = 100_000;
 pub const MAX_GAP_MILLISECONDS: u64 = 30_000;
 const MAX_IMPLIED_SPEED_MILLIMETRES_PER_SECOND: u64 = 100_000;
 
+/// Applies route admission policy to a candidate and its latest accepted predecessor.
+#[must_use]
+pub fn route_admission(
+    previous: Option<&LocationSample>,
+    sample: &LocationSample,
+) -> LocationAdmission {
+    if sample
+        .horizontal_accuracy_millimetres()
+        .is_some_and(|accuracy| accuracy > MAX_HORIZONTAL_ACCURACY_MILLIMETRES)
+    {
+        return LocationAdmission::AccuracyTooLow;
+    }
+    let admission = sample.admission(previous);
+    if admission != LocationAdmission::Accepted {
+        return admission;
+    }
+    let Some(previous) = previous else {
+        return LocationAdmission::Accepted;
+    };
+    let elapsed = sample
+        .monotonic_milliseconds()
+        .saturating_sub(previous.monotonic_milliseconds());
+    if elapsed <= MAX_GAP_MILLISECONDS {
+        let distance = distance_between_millimetres(*previous, *sample);
+        if u128::from(distance) * 1_000
+            > u128::from(MAX_IMPLIED_SPEED_MILLIMETRES_PER_SECOND) * u128::from(elapsed)
+        {
+            return LocationAdmission::UnrealisticJump;
+        }
+    }
+    LocationAdmission::Accepted
+}
+
 /// A non-empty platform identity for a connected vehicle.
 #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct VehicleIdentity(String);
@@ -1009,31 +1042,7 @@ impl RideMapRecorder {
     #[must_use]
     pub fn check_sample(&self, sample: &LocationSample) -> LocationAdmission {
         let previous = self.points.last().map(|point| point.sample());
-        if sample
-            .horizontal_accuracy_millimetres()
-            .is_some_and(|accuracy| accuracy > MAX_HORIZONTAL_ACCURACY_MILLIMETRES)
-        {
-            return LocationAdmission::AccuracyTooLow;
-        }
-        let admission = sample.admission(previous.as_ref());
-        if admission != LocationAdmission::Accepted {
-            return admission;
-        }
-        let Some(previous) = previous else {
-            return LocationAdmission::Accepted;
-        };
-        let elapsed = sample
-            .monotonic_milliseconds()
-            .saturating_sub(previous.monotonic_milliseconds());
-        if elapsed <= MAX_GAP_MILLISECONDS {
-            let distance = distance_between_millimetres(previous, *sample);
-            if u128::from(distance) * 1_000
-                > u128::from(MAX_IMPLIED_SPEED_MILLIMETRES_PER_SECOND) * u128::from(elapsed)
-            {
-                return LocationAdmission::UnrealisticJump;
-            }
-        }
-        LocationAdmission::Accepted
+        route_admission(previous.as_ref(), sample)
     }
 
     /// Admits a sample for recording after applying the complete route policy.
@@ -1134,6 +1143,7 @@ mod tests {
     use super::{
         MonotonicMilliseconds, RideDurationMilliseconds, RideMapRecorder, RideMapSegmentId,
         RidePointSequence, RideSegmentCount, RideSegmentStartReason, VehicleAssociation,
+        route_admission,
     };
     use crate::{
         Coordinate, LocationAdmission, LocationSample, LocationSource, RideEvent,
@@ -1335,6 +1345,28 @@ mod tests {
         );
         assert!(!recorder.record_sample(unrealistic_jump));
         assert_eq!(recorder.point_count(), 1);
+    }
+
+    #[test]
+    fn route_admission_applies_accuracy_and_speed_policy_without_recorder_state() {
+        let previous = sample(1_000, 40.0);
+        let low_accuracy = LocationSample::new(
+            previous.coordinate(),
+            1_001,
+            1_700_000_000_001,
+            Some(100_001),
+            LocationSource::Live,
+        );
+        assert_eq!(
+            route_admission(Some(&previous), &low_accuracy),
+            LocationAdmission::AccuracyTooLow
+        );
+
+        let unrealistic_jump = sample(1_001, 40.001);
+        assert_eq!(
+            route_admission(Some(&previous), &unrealistic_jump),
+            LocationAdmission::UnrealisticJump
+        );
     }
 
     #[test]
