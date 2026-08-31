@@ -12,7 +12,7 @@ let package = Package(
         .library(name: "CutoutMobile", targets: ["CutoutMobile"]),
     ],
     dependencies: [
-        .package(path: "../../crates/cutout-mobile-ffi/CutoutMobileFFI"),
+        .package(path: "../../target/swift-ffi/CutoutMobileFFI"),
     ],
     targets: [
         .target(

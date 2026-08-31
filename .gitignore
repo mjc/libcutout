@@ -18,3 +18,4 @@ entities.json
 # Keep raw capture payloads out of MemPalace; file durable facts instead.
 *.pevcap.jsonl
 crates/cutout-mobile-ffi/generated/
+crates/cutout-mobile-ffi/CutoutMobileFFI/
