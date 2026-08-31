@@ -4012,7 +4012,7 @@ fn ensure_managed_pevcap_directory(directory: &Path) -> Result<(), StorageError>
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
                 match fs::create_dir(directory) {
                     Ok(()) => return Ok(()),
-                    Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+                    Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
                     Err(error) => return Err(StorageError::Io(error)),
                 }
             }
