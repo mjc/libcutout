@@ -15234,7 +15234,7 @@ mod tests {
         )));
         assert!(matches!(
             state
-                .ingest_location(2_000, 1_700_000_002_000, 40.001, -105.0, 3.0)
+                .ingest_location(2_500, 1_700_000_002_500, 40.001, -105.0, 3.0)
                 .expect("post-duplicate location is queued"),
             MobileRideMapCoreDecisionDto::Pending { .. }
         ));
