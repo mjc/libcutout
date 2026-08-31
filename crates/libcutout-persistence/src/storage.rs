@@ -44,6 +44,7 @@ const MAX_PEVCAP_ARTIFACT_BYTES: u64 = 512 * 1024 * 1024;
 const MAX_PEVCAP_RECORDS: u64 = 10_000_000;
 const MAX_PEVCAP_DURATION_MILLISECONDS: u64 = 24 * 60 * 60 * 1_000;
 const PEVCAP_LOCATION_BATCH_SIZE: usize = 256;
+const MAX_MANAGED_PEVCAP_DIRECTORY_ATTEMPTS: usize = 8;
 const DEFAULT_ROUTE_PROJECTION_TIMEOUT: Duration = Duration::from_secs(2);
 
 #[derive(Clone, Copy)]
@@ -3998,40 +3999,27 @@ fn prepare_managed_pevcap(
 }
 
 fn ensure_managed_pevcap_directory(directory: &Path) -> Result<(), StorageError> {
-    match fs::symlink_metadata(directory) {
-        Ok(metadata) => {
-            let file_type = metadata.file_type();
-            if file_type.is_dir() && !file_type.is_symlink() {
-                Ok(())
-            } else {
-                Err(StorageError::PevcapPreviewChanged)
+    for _ in 0..MAX_MANAGED_PEVCAP_DIRECTORY_ATTEMPTS {
+        match fs::symlink_metadata(directory) {
+            Ok(metadata) => {
+                let file_type = metadata.file_type();
+                return if file_type.is_dir() && !file_type.is_symlink() {
+                    Ok(())
+                } else {
+                    Err(StorageError::PevcapPreviewChanged)
+                };
             }
-        }
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-            for _ in 0..8 {
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
                 match fs::create_dir(directory) {
                     Ok(()) => return Ok(()),
-                    Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
-                        match fs::symlink_metadata(directory) {
-                            Ok(metadata) => {
-                                let file_type = metadata.file_type();
-                                return if file_type.is_dir() && !file_type.is_symlink() {
-                                    Ok(())
-                                } else {
-                                    Err(StorageError::PevcapPreviewChanged)
-                                };
-                            }
-                            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-                            Err(error) => return Err(StorageError::Io(error)),
-                        }
-                    }
+                    Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
                     Err(error) => return Err(StorageError::Io(error)),
                 }
             }
-            Err(StorageError::PevcapPreviewChanged)
+            Err(error) => return Err(StorageError::Io(error)),
         }
-        Err(error) => Err(StorageError::Io(error)),
     }
+    Err(StorageError::PevcapPreviewChanged)
 }
 
 fn validate_managed_pevcap_artifact(

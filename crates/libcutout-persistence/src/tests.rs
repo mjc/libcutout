@@ -249,8 +249,8 @@ fn database_owns_one_service_and_reopens_persisted_rides() {
     );
     let second_sample = LocationSample::new(
         Coordinate::from_degrees(40.001, -105.001).unwrap(),
-        2_000,
-        1_700_000_002_000,
+        2_500,
+        1_700_000_002_500,
         None,
         LocationSource::Live,
     );
@@ -2617,8 +2617,8 @@ fn ride_history_and_route_queries_are_stably_bounded() {
     for sequence in 0_u32..3 {
         let sample = LocationSample::new(
             Coordinate::from_degrees(40.0 + f64::from(sequence) / 10_000.0, -105.0).unwrap(),
-            u64::from(sequence + 1),
-            1_700_000_000_000 + u64::from(sequence),
+            u64::from(sequence + 1) * 1_000,
+            1_700_000_000_000 + u64::from(sequence + 1) * 1_000,
             None,
             LocationSource::Live,
         );
@@ -2689,8 +2689,8 @@ fn cancelled_in_flight_route_projection_leaves_worker_usable() {
                 -105.0,
             )
             .unwrap(),
-            sequence + 1,
-            1_700_000_000_000 + sequence,
+            (sequence + 1) * 1_000,
+            1_700_000_000_000 + (sequence + 1) * 1_000,
             None,
             LocationSource::Live,
         );
@@ -2736,8 +2736,8 @@ fn cancelled_in_flight_route_projection_leaves_worker_usable() {
     assert!(database.find_ride(ride).unwrap().is_some());
     let next_sample = LocationSample::new(
         Coordinate::from_degrees(40.001, -105.0).unwrap(),
-        5,
-        1_700_000_000_005,
+        5_000,
+        1_700_000_005_000,
         None,
         LocationSource::Live,
     );
@@ -2772,8 +2772,8 @@ fn durable_history_context_projection_excludes_selected_and_bounds_each_route() 
                     -105.0,
                 )
                 .unwrap(),
-                point_index + 1,
-                1_700_000_000_000 + ride_index * 10_000 + point_index,
+                (point_index + 1) * 1_000,
+                1_700_000_000_000 + ride_index * 10_000 + (point_index + 1) * 1_000,
                 None,
                 LocationSource::Live,
             );
@@ -2834,8 +2834,8 @@ fn durable_history_context_projection_reports_aggregate_budget_omissions() {
                     -105.0,
                 )
                 .unwrap(),
-                point_index + 1,
-                1_700_000_000_000 + ride_index * 10_000 + point_index,
+                (point_index + 1) * 1_000,
+                1_700_000_000_000 + ride_index * 10_000 + (point_index + 1) * 1_000,
                 None,
                 LocationSource::Live,
             );
