@@ -19,6 +19,7 @@ struct OwnerEntry {
     service_id: Uuid,
     bootstrap: BootstrapSnapshot,
     sender: SyncSender<Command>,
+    shutting_down: bool,
     worker_alive: Arc<AtomicBool>,
     join: Option<JoinHandle<()>>,
 }
@@ -70,9 +71,31 @@ fn acquire(path: &Path, service_id: Uuid) -> Result<RideDatabase, StorageError> 
         bootstrap,
         sender,
         worker_alive,
+        shutting_down: false,
         join: Some(join),
     });
     Ok(handle)
+}
+
+pub(super) fn begin_shutdown(service_id: Uuid) -> Result<SyncSender<Command>, StorageError> {
+    let mut owner = owner().lock().map_err(|_| StorageError::WorkerStopped)?;
+    let Some(entry) = owner.as_mut() else {
+        return Err(StorageError::WorkerStopped);
+    };
+    if entry.service_id != service_id || entry.shutting_down {
+        return Err(StorageError::WorkerStopped);
+    }
+    entry.shutting_down = true;
+    Ok(entry.sender.clone())
+}
+
+pub(super) fn cancel_shutdown(service_id: Uuid) {
+    if let Ok(mut owner) = owner().lock()
+        && let Some(entry) = owner.as_mut()
+        && entry.service_id == service_id
+    {
+        entry.shutting_down = false;
+    }
 }
 
 pub(super) fn finish_shutdown(service_id: Uuid) -> Result<(), StorageError> {
@@ -102,7 +125,7 @@ pub(super) fn can_restart(service_id: Uuid) -> bool {
     owner().lock().ok().is_some_and(|owner| {
         owner
             .as_ref()
-            .is_some_and(|entry| entry.service_id == service_id)
+            .is_some_and(|entry| entry.service_id == service_id && !entry.shutting_down)
     })
 }
 

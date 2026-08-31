@@ -354,8 +354,8 @@ impl RouteEndpointMetadata {
 /// Computes endpoint metadata from explicitly sequenced canonical points.
 ///
 /// `points` may be a bounded tail or another non-contiguous canonical subset. The explicit
-/// `source_point_count` determines the canonical endpoint sequence values; a retained point is
-/// marked visible only when its supplied sequence and coordinate match that canonical endpoint.
+/// `source_point_count` determines canonical endpoint sequences. A retained point with one of
+/// those sequences is visible only when it falls inside `viewport` (or no viewport is supplied).
 #[must_use]
 pub fn route_endpoint_metadata(
     points: impl IntoIterator<Item = (RidePointSequence, RideMapPoint)>,

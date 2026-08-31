@@ -1455,7 +1455,8 @@ impl LocationWriteResult {
 
 #[cfg(test)]
 mod route_projection_cancellation_tests {
-    use super::RouteProjectionCancellation;
+    use super::{RouteProjectionCancellation, StorageError, endpoint_is_visible};
+    use cutout_ride_maps::{LatitudeE7, LongitudeE7, RouteViewport};
     use rusqlite::{Connection, ErrorCode};
     use std::{
         sync::{
@@ -1519,6 +1520,74 @@ mod route_projection_cancellation_tests {
             error,
             rusqlite::Error::SqliteFailure(failure, _)
                 if failure.code == ErrorCode::OperationInterrupted
+        ));
+    }
+
+    #[test]
+    fn endpoint_query_maps_sqlite_interrupt_to_cancellation() {
+        let connection = Connection::open_in_memory().expect("SQLite opens");
+        connection
+            .execute_batch(
+                "CREATE TABLE ride_points (
+                    ride_id TEXT NOT NULL,
+                    sequence INTEGER NOT NULL,
+                    latitude_e7 INTEGER NOT NULL,
+                    longitude_e7 INTEGER NOT NULL
+                );
+                INSERT INTO ride_points VALUES ('ride', 0, 400000000, -1050000000);",
+            )
+            .expect("route point exists");
+
+        let cancellation = RouteProjectionCancellation::new();
+        cancellation.install_interrupt(connection.get_interrupt_handle());
+        let query_cancellation = cancellation.clone();
+        let (query_entered_sender, query_entered_receiver) = sync_channel(0);
+        let (query_release_sender, query_release_receiver) = sync_channel(0);
+        let first_progress_callback = Arc::new(AtomicBool::new(true));
+        let callback_is_first = Arc::clone(&first_progress_callback);
+        connection.progress_handler(
+            1,
+            Some(move || {
+                if callback_is_first.swap(false, Ordering::AcqRel) {
+                    query_entered_sender
+                        .send(())
+                        .expect("endpoint query is waiting for cancellation");
+                    query_release_receiver
+                        .recv()
+                        .expect("endpoint query release is sent");
+                }
+                false
+            }),
+        );
+
+        let viewport = RouteViewport::new(
+            LatitudeE7::new(399_000_000),
+            LatitudeE7::new(401_000_000),
+            LongitudeE7::new(-1_051_000_000),
+            LongitudeE7::new(-1_049_000_000),
+        )
+        .expect("viewport is valid");
+        let query = thread::spawn(move || {
+            endpoint_is_visible(
+                &connection,
+                "ride",
+                Some(0),
+                Some(viewport),
+                Some(&query_cancellation),
+            )
+        });
+
+        query_entered_receiver
+            .recv()
+            .expect("endpoint query reached its first progress callback");
+        cancellation.cancel();
+        query_release_sender
+            .send(())
+            .expect("endpoint query release is received");
+
+        assert!(matches!(
+            query.join().expect("query thread does not panic"),
+            Err(StorageError::Cancelled)
         ));
     }
 }
@@ -2592,6 +2661,12 @@ impl RideDatabase {
         result
     }
 
+    /// Marks the service as shutting down without stopping its worker, for recovery tests.
+    #[cfg(test)]
+    pub(crate) fn begin_shutdown_for_test(&self) -> Result<(), StorageError> {
+        service::begin_shutdown(self.service_id).map(|_| ())
+    }
+
     /// Stops the process-wide worker and releases its ownership slot.
     ///
     /// # Errors
@@ -2599,7 +2674,13 @@ impl RideDatabase {
     /// Returns [`StorageError`] when the worker cannot stop or its ownership slot cannot be
     /// released.
     pub fn shutdown(self) -> Result<(), StorageError> {
-        self.request_blocking(|reply| Command::Shutdown { reply })?;
+        let sender = service::begin_shutdown(self.service_id)?;
+        let (reply, response) = response_channel();
+        if sender.send(Command::Shutdown { reply }).is_err() {
+            service::cancel_shutdown(self.service_id);
+            return Err(StorageError::WorkerStopped);
+        }
+        receive(&response)?;
         service::finish_shutdown(self.service_id)
     }
 
@@ -5559,43 +5640,46 @@ fn endpoint_is_visible(
     let Some(viewport) = viewport else {
         return Ok(true);
     };
-    let visible = if viewport.crosses_antimeridian() {
-        connection.query_row(
-            "SELECT EXISTS(
+    let visible = projection_sqlite(
+        if viewport.crosses_antimeridian() {
+            connection.query_row(
+                "SELECT EXISTS(
                 SELECT 1 FROM ride_points
                 WHERE ride_id = ?1 AND sequence = ?2
                   AND latitude_e7 BETWEEN ?3 AND ?4
                   AND (longitude_e7 >= ?5 OR longitude_e7 <= ?6)
             )",
-            params![
-                ride_id,
-                sequence,
-                viewport.minimum_latitude().as_i32(),
-                viewport.maximum_latitude().as_i32(),
-                viewport.minimum_longitude().as_i32(),
-                viewport.maximum_longitude().as_i32(),
-            ],
-            |row| row.get(0),
-        )?
-    } else {
-        connection.query_row(
-            "SELECT EXISTS(
+                params![
+                    ride_id,
+                    sequence,
+                    viewport.minimum_latitude().as_i32(),
+                    viewport.maximum_latitude().as_i32(),
+                    viewport.minimum_longitude().as_i32(),
+                    viewport.maximum_longitude().as_i32(),
+                ],
+                |row| row.get(0),
+            )
+        } else {
+            connection.query_row(
+                "SELECT EXISTS(
                 SELECT 1 FROM ride_points
                 WHERE ride_id = ?1 AND sequence = ?2
                   AND latitude_e7 BETWEEN ?3 AND ?4
                   AND longitude_e7 BETWEEN ?5 AND ?6
             )",
-            params![
-                ride_id,
-                sequence,
-                viewport.minimum_latitude().as_i32(),
-                viewport.maximum_latitude().as_i32(),
-                viewport.minimum_longitude().as_i32(),
-                viewport.maximum_longitude().as_i32(),
-            ],
-            |row| row.get(0),
-        )?
-    };
+                params![
+                    ride_id,
+                    sequence,
+                    viewport.minimum_latitude().as_i32(),
+                    viewport.maximum_latitude().as_i32(),
+                    viewport.minimum_longitude().as_i32(),
+                    viewport.maximum_longitude().as_i32(),
+                ],
+                |row| row.get(0),
+            )
+        },
+        cancellation,
+    )?;
     projection_checkpoint(cancellation)?;
     Ok(visible)
 }

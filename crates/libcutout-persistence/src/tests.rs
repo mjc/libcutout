@@ -589,6 +589,28 @@ fn database_commands_restart_the_worker_after_an_unexpected_exit() {
     database.shutdown().unwrap();
     let _ = std::fs::remove_file(path);
 }
+#[test]
+fn shutdown_prevents_stale_handles_from_restarting_the_worker() {
+    let _guard = test_guard();
+    let path = std::env::temp_dir().join(format!(
+        "libcutout-persistence-worker-shutdown-{}.sqlite",
+        uuid::Uuid::new_v4()
+    ));
+    let database = RideDatabase::open(&path).unwrap();
+    let stale_handle = database.clone();
+
+    database.begin_shutdown_for_test().unwrap();
+    database.stop_worker_for_test().unwrap();
+    assert!(matches!(
+        stale_handle.capabilities(),
+        Err(StorageError::WorkerStopped)
+    ));
+
+    drop(stale_handle);
+    drop(database);
+    RideDatabase::open(&path).unwrap().shutdown().unwrap();
+    let _ = std::fs::remove_file(path);
+}
 
 #[test]
 fn ride_history_duration_is_derived_from_rust_monotonic_state() {
@@ -1677,14 +1699,18 @@ fn legacy_schema_versions_migrate_to_the_current_schema() {
         drop(connection);
         let database = RideDatabase::open(&path).unwrap();
         database.shutdown().unwrap();
-        let reopened = RideDatabase::open(&path).unwrap();
-        reopened.shutdown().unwrap();
 
         let connection = Connection::open(&path).unwrap();
         let current_version: i64 = connection
             .pragma_query_value(None, "user_version", |row| row.get(0))
             .unwrap();
         assert_eq!(current_version, 15);
+        drop(connection);
+
+        let reopened = RideDatabase::open(&path).unwrap();
+        reopened.shutdown().unwrap();
+
+        let connection = Connection::open(&path).unwrap();
         let devices_table: String = connection
             .query_row(
                 "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'devices'",

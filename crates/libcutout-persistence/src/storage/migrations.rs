@@ -3,6 +3,11 @@ use rusqlite::{Connection, OptionalExtension, params};
 
 const CURRENT_SCHEMA_VERSION: i64 = 15;
 const APPLICATION_ID: i64 = 0x4355_544f;
+fn current_schema_pragmas() -> String {
+    format!(
+        "PRAGMA application_id = {APPLICATION_ID}; PRAGMA user_version = {CURRENT_SCHEMA_VERSION};"
+    )
+}
 
 pub(super) fn migrate(connection: &mut Connection) -> Result<(), StorageError> {
     let version: i64 = connection.pragma_query_value(None, "user_version", |row| row.get(0))?;
@@ -55,11 +60,7 @@ fn initialize_current_schema(connection: &Connection) -> Result<(), StorageError
         let _ = connection.execute_batch("ROLLBACK;");
         return Err(error);
     }
-    connection.execute_batch(
-        "PRAGMA application_id = 1129665615;
-         PRAGMA user_version = 15;
-         COMMIT;",
-    )?;
+    connection.execute_batch(&format!("{} COMMIT;", current_schema_pragmas()))?;
     Ok(())
 }
 
@@ -438,12 +439,10 @@ fn migrate_v3_to_current(connection: &mut Connection) -> Result<(), StorageError
         DROP TABLE selected_device_legacy;
         DROP TABLE voltage_sag_models_legacy;
         DROP TABLE ride_session_marker_legacy;
-        PRAGMA application_id = 1129665615;
-        PRAGMA user_version = 14;
         ",
     )?;
     transaction.commit()?;
-    Ok(())
+    migrate_v14_to_current(connection)
 }
 
 fn migrate_v4_to_current(connection: &mut Connection) -> Result<(), StorageError> {
@@ -777,10 +776,7 @@ fn migrate_v13_to_current(connection: &mut Connection) -> Result<(), StorageErro
 fn migrate_v14_to_current(connection: &mut Connection) -> Result<(), StorageError> {
     verify_legacy_schema(connection)?;
     if table_has_column(connection, "ride_segments", "point_count")? {
-        connection.execute_batch(
-            "PRAGMA application_id = 1129665615;
-             PRAGMA user_version = 15;",
-        )?;
+        connection.execute_batch(&current_schema_pragmas())?;
         return Ok(());
     }
     let transaction = connection.transaction()?;
@@ -796,9 +792,9 @@ fn migrate_v14_to_current(connection: &mut Connection) -> Result<(), StorageErro
          ) AS counts
          WHERE ride_segments.ride_id = counts.ride_id
            AND ride_segments.segment_id = counts.segment_id;
-         PRAGMA application_id = 1129665615;
-         PRAGMA user_version = 15;",
+         ",
     )?;
+    transaction.execute_batch(&current_schema_pragmas())?;
     transaction.commit()?;
     Ok(())
 }
