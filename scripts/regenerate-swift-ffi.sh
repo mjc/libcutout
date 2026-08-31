@@ -32,8 +32,7 @@ if cutout_validate_swift_ffi_build_input "$root" 2>/dev/null; then
   exit 0
 fi
 
-if [[ "${RUSTC_WRAPPER+x}" != x || -n "$RUSTC_WRAPPER" ||
-      "${RUSTC_WORKSPACE_WRAPPER+x}" != x || -n "$RUSTC_WORKSPACE_WRAPPER" ]]; then
+if [[ -n "${RUSTC_WRAPPER:-}" || -n "${RUSTC_WORKSPACE_WRAPPER:-}" ]]; then
   echo "Swift FFI regeneration requires nix develop with Cargo wrappers disabled" >&2
   exit 1
 fi

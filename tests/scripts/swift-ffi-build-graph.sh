@@ -131,6 +131,10 @@ write_complete_fake_package() {
 )
 
 (
+  uname() {
+    printf 'Linux\n'
+  }
+
   fakebin="$tmp/fake-bin"
   counter="$tmp/generation-count"
   mkdir -p "$fakebin"
@@ -162,8 +166,14 @@ write_complete_fake_package() {
     CUTOUT_FAKE_COUNTER="$counter" PATH="$fakebin:$PATH" \
     "$fake/scripts/regenerate-swift-ffi.sh" >"$tmp/generation-two.log" 2>&1 &
   second_pid=$!
-  wait "$first_pid"
-  wait "$second_pid"
+  if ! wait "$first_pid"; then
+    cat "$tmp/generation-one.log" >&2
+    exit 1
+  fi
+  if ! wait "$second_pid"; then
+    cat "$tmp/generation-two.log" >&2
+    exit 1
+  fi
 
   [[ "$(wc -l <"$counter")" -eq 1 ]] || {
     echo "expected concurrent regeneration to invoke cargo exactly once" >&2
