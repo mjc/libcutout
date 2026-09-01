@@ -493,11 +493,11 @@ final class RideMapStateTests: XCTestCase {
 
         let tail = try state.latestRoutePoints()
 
-        XCTAssertEqual(tail?.points.count, 4_096)
-        XCTAssertEqual(tail?.points.first?.sequence, 1)
-        XCTAssertEqual(tail?.points.last?.sequence, 4_096)
-        XCTAssertEqual(tail?.points.first?.startReason, .initial)
-        XCTAssertEqual(tail?.hasMore, false)
+        XCTAssertEqual(tail.points.count, 4_096)
+        XCTAssertEqual(tail.points.first?.sequence, 1)
+        XCTAssertEqual(tail.points.last?.sequence, 4_096)
+        XCTAssertEqual(tail.points.first?.startReason, .initial)
+        XCTAssertFalse(tail.hasMore)
     }
 
 }
