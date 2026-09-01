@@ -86,7 +86,7 @@ struct RideMapHistoryContentView: View {
 
     @MainActor
     static func normalizedSearchText(_ searchText: String) -> String {
-        searchText.trimmingCharacters(in: .whitespacesAndNewlines)
+        normalizedRideMapHistorySearchText(searchText)
     }
 
     private func vehicleLabel(for identity: String) -> String {
