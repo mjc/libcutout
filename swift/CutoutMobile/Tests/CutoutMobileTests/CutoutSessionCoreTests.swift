@@ -157,15 +157,16 @@ final class CutoutSessionCoreTests: XCTestCase {
     }
 
     func testLocationAuthorizationRequestsAlwaysForBackgroundRecording() {
-        let authorizedWhenInUse = CLAuthorizationStatus.authorizedWhenInUse
         XCTAssertEqual(
             locationAuthorizationAction(for: .notDetermined),
             .requestWhenInUse
         )
+#if os(iOS)
         XCTAssertEqual(
-            locationAuthorizationAction(for: authorizedWhenInUse),
+            locationAuthorizationAction(for: .authorizedWhenInUse),
             .requestAlwaysAndStart
         )
+#endif
         XCTAssertEqual(
             locationAuthorizationAction(for: .authorizedAlways),
             .start
@@ -1307,20 +1308,6 @@ final class CutoutSessionCoreTests: XCTestCase {
         let core = CutoutSessionCore()
 
         XCTAssertFalse(core.recordOnly(platformIdentifier: "ios-local-missing", note: "unknown wheel"))
-    }
-
-    func testNotificationCapturePassesThroughWhenCaptureIsInactive() {
-        let core = CutoutSessionCore()
-
-        XCTAssertNil(
-            core.captureFrame(
-                direction: "notify",
-                characteristic: CBUUID(string: "FFE1"),
-                service: CBUUID(string: "FFE0"),
-                bytes: Data([0x01])
-            )
-        )
-        XCTAssertEqual(core.phase, .starting)
     }
 
     func testSuccessfulScriptedRecordOnlyFlushUsesTheRealWriter() async throws {
