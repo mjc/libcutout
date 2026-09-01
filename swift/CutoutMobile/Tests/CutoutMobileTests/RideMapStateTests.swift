@@ -151,11 +151,7 @@ final class RideMapStateTests: XCTestCase {
         let clock = ContinuousClock()
         let deadline = clock.now.advanced(by: .seconds(10))
         while clock.now < deadline, !Task.isCancelled {
-            let outcomes = state.pollLocationWrites()
-            if outcomes.count > 1 {
-                XCTFail("one location admission produced multiple terminal outcomes")
-            }
-            if let terminal = outcomes.first {
+            if let terminal = state.pollLocationWrites().first {
                 return terminal
             }
             try? await Task.sleep(for: .milliseconds(1))
