@@ -25,6 +25,7 @@ struct RideMapHistoryListView: View {
                                 .font(.title3)
                                 .foregroundStyle(ride.rideId == selectedRideID ? PevColors.yellow : PevColors.muted)
                                 .frame(width: 30)
+                                .accessibilityHidden(true)
 
                             VStack(alignment: .leading, spacing: 3) {
                                 Text(rideTitle(for: ride))
@@ -40,6 +41,7 @@ struct RideMapHistoryListView: View {
                             Image(systemName: "chevron.right")
                                 .font(.caption.weight(.bold))
                                 .foregroundStyle(PevColors.muted)
+                                .accessibilityHidden(true)
                         }
                         .padding(.horizontal, 12)
                         .padding(.vertical, 10)

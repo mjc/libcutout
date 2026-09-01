@@ -39,6 +39,7 @@ struct RideMapControlsView: View {
             adaptiveControls {
                 Button(action: save) {
                     Label(localizedAppText("ride_map.save"), systemImage: "checkmark.circle.fill")
+                        .frame(maxWidth: .infinity, minHeight: 48)
                 }
                 .buttonStyle(.borderedProminent)
                 .accessibilityIdentifier("ride-map.save")
