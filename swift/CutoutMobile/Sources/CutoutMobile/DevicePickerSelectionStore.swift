@@ -47,9 +47,9 @@ public struct DevicePickerSelectionStore {
         guard !trimmed.isEmpty else { return nil }
         if let database,
            let persisted = try? database.deviceName(platformIdentifier: trimmed),
-           !persisted.isEmpty {
+           let normalized = normalizedDisplayName(persisted, platformIdentifier: trimmed) {
             defaults.removeObject(forKey: Self.deviceNameKeyPrefix + trimmed)
-            return persisted
+            return normalized
         }
         if let legacy = defaults.string(forKey: Self.deviceNameKeyPrefix + trimmed),
            let normalized = normalizedDisplayName(legacy, platformIdentifier: trimmed) {

@@ -28,7 +28,7 @@ final class DevicePickerSelectionStoreTests: XCTestCase {
         XCTAssertEqual(store.displayName(for: "ios-local-aero"), "NF2557")
     }
 
-    func testUuidIsNotSavedAsDeviceName() {
+    func testPlatformIdentifierIsNotSavedAsDeviceName() {
         let suiteName = "DevicePickerSelectionStoreTests-\(UUID().uuidString)"
         let defaults = UserDefaults(suiteName: suiteName)!
         defer { defaults.removePersistentDomain(forName: suiteName) }
