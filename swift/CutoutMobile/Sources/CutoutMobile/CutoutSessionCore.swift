@@ -1824,7 +1824,7 @@ public final class CutoutSessionCore: NSObject {
     }
 
     @discardableResult
-    func captureFrame(
+    private func captureFrame(
         direction: String,
         characteristic: CBUUID,
         service: CBUUID? = nil,
@@ -2931,12 +2931,11 @@ extension CutoutSessionCore: CLLocationManagerDelegate {
             for (location, monotonicMs) in zip(locations, monotonicMilliseconds) {
                 guard let sample = MobilePhoneLocationSampleDto(location: location) else { continue }
                 captureSamples.append((location, sample))
-                // A duplicate, stale, or future source timestamp is not a route point, but the
-                // canonical location event above still preserves that source observation.
-                guard let monotonicMs else { continue }
-                // Current-location readback is independent of ride recording. The map
-                // admission result below only controls the canonical capture context.
                 phoneLocationSnapshot = phoneLocationState.ingest(sample: sample)
+                // A duplicate, stale, or future source timestamp is not a route point, but the
+                // current-location readback and canonical capture still preserve the observation.
+                guard let monotonicMs else { continue }
+                guard rideMapStorageError == nil else { continue }
                 do {
                     let decision = try rideMapState.ingestLocation(
                         monotonicMs: monotonicMs.rawValue,
