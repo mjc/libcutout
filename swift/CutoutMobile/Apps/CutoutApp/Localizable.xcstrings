@@ -779,7 +779,7 @@
     },
     "ride_map.history_truncated_count" : {
       "comment" : "History route warning with the number of points currently projected for map display; the durable route remains complete.",
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Showing %lld route points; the full route remains stored." } } }
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Showing %ld route points; the full route remains stored." } } }
     },
     "ride_map.segments_omitted_by_budget" : {
       "comment" : "Warning shown when the bounded route projection omits one or more candidate segments from the map preview.",
@@ -823,7 +823,7 @@
     },
     "ride_map.live_route_truncated_count" : {
       "comment" : "Live route warning with the number of points currently projected for map display; the durable route remains complete.",
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Showing the newest %lld points; the full route remains stored." } } }
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Showing the newest %ld points; the full route remains stored." } } }
     },
     "ride_map.decision.accepted" : {
       "comment" : "Route truth status when a location update is durably accepted.",

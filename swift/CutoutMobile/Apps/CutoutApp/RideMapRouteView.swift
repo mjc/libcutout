@@ -207,8 +207,8 @@ private struct RideMapNavigationHeader: View {
 
     var body: some View {
         HStack(alignment: .firstTextBaseline, spacing: 12) {
-            if showBackButton {
-                Button(action: { back?() }) {
+            if showBackButton, let back {
+                Button(action: back) {
                     Label(localizedAppText("ride_map.detail_back"), systemImage: "chevron.left")
                 }
                 .buttonStyle(.plain)
@@ -227,7 +227,7 @@ private struct RideMapNavigationHeader: View {
         .padding(.horizontal, 20)
         .padding(.top, 12)
         .padding(.bottom, 14)
-        .accessibilityElement(children: .combine)
+        .accessibilityElement(children: showBackButton && back != nil ? .contain : .combine)
         .accessibilityIdentifier("ride-map.navigation-header")
     }
 }
