@@ -156,8 +156,8 @@ final class CutoutSessionCoreTests: XCTestCase {
         )
     }
 
-    func testLocationAuthorizationRequestsAlwaysForBackgroundRecording() throws {
-        let authorizedWhenInUse = try XCTUnwrap(CLAuthorizationStatus(rawValue: 4))
+    func testLocationAuthorizationRequestsAlwaysForBackgroundRecording() {
+        let authorizedWhenInUse = CLAuthorizationStatus.authorizedWhenInUse
         XCTAssertEqual(
             locationAuthorizationAction(for: .notDetermined),
             .requestWhenInUse
@@ -460,11 +460,13 @@ final class CutoutSessionCoreTests: XCTestCase {
         core.locationManager(CLLocationManager(), didUpdateLocations: [valid])
 
         var snapshot: MobileRideMapSnapshotDto?
-        for _ in 0 ..< 10_000 {
+        let clock = ContinuousClock()
+        let deadline = clock.now.advanced(by: .seconds(10))
+        while clock.now < deadline, !Task.isCancelled {
             _ = core.rideMapStateHandle.pollLocationWrites()
             snapshot = core.rideMapStateHandle.currentSnapshot(atMs: 20_000)
             if snapshot?.summary.pointCount == 1 { break }
-            await Task.yield()
+            try? await Task.sleep(for: .milliseconds(1))
         }
         XCTAssertEqual(snapshot?.summary.pointCount, 1)
     }
@@ -573,13 +575,16 @@ final class CutoutSessionCoreTests: XCTestCase {
         }
 
         var accepted: MobileRideMapDecisionDto?
-        for _ in 0 ..< 10_000 {
+        let clock = ContinuousClock()
+        let deadline = clock.now.advanced(by: .seconds(10))
+        while clock.now < deadline, !Task.isCancelled {
             if let outcome = state.pollLocationWrites().first {
                 accepted = outcome
                 break
             }
-            await Task.yield()
+            try? await Task.sleep(for: .milliseconds(1))
         }
+
 
         guard case let .accepted(acceptedPoint, acceptedSegmentStarted) = accepted else {
             return XCTFail("pending location did not produce a durable acceptance")
@@ -618,15 +623,17 @@ final class CutoutSessionCoreTests: XCTestCase {
         core.locationManager(CLLocationManager(), didUpdateLocations: [location])
 
         XCTAssertEqual(scheduler.scheduledCount, 1)
-        for _ in 0 ..< 10_000 {
+        let clock = ContinuousClock()
+        let deadline = clock.now.advanced(by: .seconds(10))
+        while clock.now < deadline, !Task.isCancelled {
             guard scheduler.runNext() else {
-                await Task.yield()
+                try? await Task.sleep(for: .milliseconds(1))
                 continue
             }
             if core.rideMapStateHandle.currentSnapshot(atMs: 20_000)?.summary.pointCount == 1 {
                 break
             }
-            await Task.yield()
+            try? await Task.sleep(for: .milliseconds(1))
         }
         XCTAssertEqual(
             core.rideMapStateHandle.currentSnapshot(atMs: 20_000)?.summary.pointCount,
@@ -672,12 +679,14 @@ final class CutoutSessionCoreTests: XCTestCase {
                 latitude: 39.7402
             )]
         )
-        for _ in 0 ..< 10_000 {
+        let clock = ContinuousClock()
+        let deadline = clock.now.advanced(by: .seconds(10))
+        while clock.now < deadline, !Task.isCancelled {
             _ = scheduler.runNext()
             if core.rideMapStateHandle.currentSnapshot(atMs: 20_000)?.summary.pointCount == 1 {
                 break
             }
-            await Task.yield()
+            try? await Task.sleep(for: .milliseconds(1))
         }
         XCTAssertEqual(
             core.rideMapStateHandle.currentSnapshot(atMs: 20_000)?.summary.pointCount,
