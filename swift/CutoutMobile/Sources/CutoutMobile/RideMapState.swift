@@ -292,7 +292,7 @@ public struct MobileRideMapSegmentDisplayMetadata: Equatable, Hashable, Sendable
         UInt64(segments.lazy.filter(\.isBackgroundGap).count)
     }
 
-    init(
+    public init(
         segmentId: UInt64,
         startReason: MobileRideMapSegmentStartReason,
         visiblePointCount: UInt64,
@@ -324,7 +324,7 @@ public struct MobileRideMapRouteProjection: Equatable, Hashable, Sendable {
     public let canonicalStartVisible: Bool
     public let canonicalEndVisible: Bool
 
-    init(
+    public init(
         points: [MobileRideMapRouteDisplayPoint],
         segments: [MobileRideMapSegmentDisplayMetadata],
         sourcePointCount: UInt64,
@@ -383,7 +383,7 @@ public struct MobileRideMapRouteEndpointMetadata: Equatable, Hashable, Sendable 
     public let canonicalStartVisible: Bool
     public let canonicalEndVisible: Bool
 
-    init(
+    public init(
         canonicalStartSequence: UInt64? = nil,
         canonicalEndSequence: UInt64? = nil,
         canonicalStartVisible: Bool = false,
