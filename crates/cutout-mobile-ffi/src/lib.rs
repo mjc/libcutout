@@ -5456,6 +5456,113 @@ impl MobileRideMapCoreInner {
         Ok((id, next))
     }
 
+    fn ingest_location(
+        &mut self,
+        monotonic_ms: u64,
+        wall_clock_unix_ms: u64,
+        latitude_degrees: f64,
+        longitude_degrees: f64,
+        horizontal_accuracy_meters: f64,
+    ) -> Result<MobileRideMapCoreDecisionDto, MobileRideMapCoreErrorDto> {
+        let Some(id) = self.active_ride_id.clone() else {
+            return Err(MobileRideMapCoreErrorDto::NoActiveRide);
+        };
+        if self.admission_recorder.state() != Some(ride_maps::RideLifecycleState::Active) {
+            return Ok(MobileRideMapCoreDecisionDto::Ignored {
+                reason: MobileRideMapDecisionReasonDto::RideNotRecording,
+            });
+        }
+        let location = MobileRideLocationDto {
+            latitude_degrees,
+            longitude_degrees,
+            monotonic_milliseconds: monotonic_ms,
+            wall_clock_unix_milliseconds: wall_clock_unix_ms,
+            horizontal_accuracy_millimetres: Some(horizontal_accuracy_millimetres(
+                horizontal_accuracy_meters,
+            )?),
+            source: MobileRideSourceDto::Live,
+        };
+        if wall_clock_unix_ms == 0 {
+            return Err(MobileRideMapCoreErrorDto::InvalidLocation);
+        }
+        let sample = mobile_ride_location(location).map_err(map_core_error)?;
+        let segment_id = self.admission_recorder.segment_id_for_sample(&sample);
+        match self.admission_recorder.check_sample(&sample) {
+            ride_maps::LocationAdmission::Duplicate => {
+                return Ok(MobileRideMapCoreDecisionDto::Ignored {
+                    reason: MobileRideMapDecisionReasonDto::DuplicateLocation,
+                });
+            }
+            ride_maps::LocationAdmission::OutOfOrder => {
+                return Ok(MobileRideMapCoreDecisionDto::Rejected {
+                    reason: MobileRideMapDecisionReasonDto::TimestampOutOfOrder,
+                });
+            }
+            ride_maps::LocationAdmission::AccuracyTooLow => {
+                return Ok(MobileRideMapCoreDecisionDto::Rejected {
+                    reason: MobileRideMapDecisionReasonDto::AccuracyTooLow,
+                });
+            }
+            ride_maps::LocationAdmission::UnrealisticJump => {
+                return Ok(MobileRideMapCoreDecisionDto::Rejected {
+                    reason: MobileRideMapDecisionReasonDto::UnrealisticJump,
+                });
+            }
+            ride_maps::LocationAdmission::Accepted => {}
+        }
+        let telemetry_state =
+            self.admission_recorder
+                .telemetry_state_at(ride_maps::MonotonicMilliseconds::new(
+                    location.monotonic_milliseconds,
+                ));
+        let sequence = self.admission_recorder.point_count();
+        let mut staged_recorder = self.admission_recorder.clone();
+        let segment_started = staged_recorder.record_sample(sample);
+        let start_reason = Self::last_point_start_reason(&staged_recorder);
+        let point = Self::point_from_location(
+            location,
+            sequence,
+            segment_id,
+            start_reason,
+            telemetry_state,
+        );
+        if let Some(database) = self.database.as_ref() {
+            if self.pending_location_writes.len() >= MAX_PENDING_LOCATION_WRITES {
+                return Ok(MobileRideMapCoreDecisionDto::StorageError {
+                    message: "ride location write queue is full".to_owned(),
+                });
+            }
+            let write = queue_location(
+                database,
+                &id,
+                location,
+                segment_id,
+                start_reason,
+                telemetry_state.into(),
+            )
+            .map_err(map_core_error)?;
+            self.admission_recorder = staged_recorder;
+            self.pending_location_writes
+                .push_back(PendingMapLocationWrite {
+                    ride_id: id,
+                    sample,
+                    point,
+                    segment_started,
+                    write,
+                });
+            return Ok(MobileRideMapCoreDecisionDto::Pending {
+                point,
+                segment_started,
+            });
+        }
+        self.recorder = staged_recorder.clone();
+        self.admission_recorder = staged_recorder;
+        Ok(MobileRideMapCoreDecisionDto::Accepted {
+            point,
+            segment_started,
+        })
+    }
+
     fn new(database: Option<Arc<RideDatabaseHandle>>) -> Self {
         let mut state = Self {
             database,
@@ -6139,105 +6246,13 @@ impl MobileRideMapCore {
         horizontal_accuracy_meters: f64,
     ) -> Result<MobileRideMapCoreDecisionDto, MobileRideMapCoreErrorDto> {
         let mut state = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
-        let Some(id) = state.active_ride_id.clone() else {
-            return Err(MobileRideMapCoreErrorDto::NoActiveRide);
-        };
-        if state.admission_recorder.state() != Some(ride_maps::RideLifecycleState::Active) {
-            return Ok(MobileRideMapCoreDecisionDto::Ignored {
-                reason: MobileRideMapDecisionReasonDto::RideNotRecording,
-            });
-        }
-        let location = MobileRideLocationDto {
+        state.ingest_location(
+            monotonic_ms,
+            wall_clock_unix_ms,
             latitude_degrees,
             longitude_degrees,
-            monotonic_milliseconds: monotonic_ms,
-            wall_clock_unix_milliseconds: wall_clock_unix_ms,
-            horizontal_accuracy_millimetres: Some(horizontal_accuracy_millimetres(
-                horizontal_accuracy_meters,
-            )?),
-            source: MobileRideSourceDto::Live,
-        };
-        if wall_clock_unix_ms == 0 {
-            return Err(MobileRideMapCoreErrorDto::InvalidLocation);
-        }
-        let sample = mobile_ride_location(location).map_err(map_core_error)?;
-        let segment_id = state.admission_recorder.segment_id_for_sample(&sample);
-        match state.admission_recorder.check_sample(&sample) {
-            ride_maps::LocationAdmission::Duplicate => {
-                return Ok(MobileRideMapCoreDecisionDto::Ignored {
-                    reason: MobileRideMapDecisionReasonDto::DuplicateLocation,
-                });
-            }
-            ride_maps::LocationAdmission::OutOfOrder => {
-                return Ok(MobileRideMapCoreDecisionDto::Rejected {
-                    reason: MobileRideMapDecisionReasonDto::TimestampOutOfOrder,
-                });
-            }
-            ride_maps::LocationAdmission::AccuracyTooLow => {
-                return Ok(MobileRideMapCoreDecisionDto::Rejected {
-                    reason: MobileRideMapDecisionReasonDto::AccuracyTooLow,
-                });
-            }
-            ride_maps::LocationAdmission::UnrealisticJump => {
-                return Ok(MobileRideMapCoreDecisionDto::Rejected {
-                    reason: MobileRideMapDecisionReasonDto::UnrealisticJump,
-                });
-            }
-            ride_maps::LocationAdmission::Accepted => {}
-        }
-        let telemetry_state =
-            state
-                .admission_recorder
-                .telemetry_state_at(ride_maps::MonotonicMilliseconds::new(
-                    location.monotonic_milliseconds,
-                ));
-        let sequence = state.admission_recorder.point_count();
-        let mut staged_recorder = state.admission_recorder.clone();
-        let segment_started = staged_recorder.record_sample(sample);
-        let start_reason = MobileRideMapCoreInner::last_point_start_reason(&staged_recorder);
-        let point = MobileRideMapCoreInner::point_from_location(
-            location,
-            sequence,
-            segment_id,
-            start_reason,
-            telemetry_state,
-        );
-        if let Some(database) = state.database.as_ref() {
-            if state.pending_location_writes.len() >= MAX_PENDING_LOCATION_WRITES {
-                return Ok(MobileRideMapCoreDecisionDto::StorageError {
-                    message: "ride location write queue is full".to_owned(),
-                });
-            }
-            let write = queue_location(
-                database,
-                &id,
-                location,
-                segment_id,
-                start_reason,
-                telemetry_state.into(),
-            )
-            .map_err(map_core_error)?;
-            state.admission_recorder = staged_recorder;
-            state
-                .pending_location_writes
-                .push_back(PendingMapLocationWrite {
-                    ride_id: id,
-                    sample,
-                    point,
-                    segment_started,
-                    write,
-                });
-            return Ok(MobileRideMapCoreDecisionDto::Pending {
-                point,
-                segment_started,
-            });
-        }
-        state.recorder = staged_recorder.clone();
-        state.admission_recorder = staged_recorder;
-        Ok(MobileRideMapCoreDecisionDto::Accepted {
-            point,
-            segment_started,
-        })
+            horizontal_accuracy_meters,
+        )
     }
 
     /// Forwards a complete Core Location callback while keeping timestamp admission in Rust.
@@ -6245,12 +6260,17 @@ impl MobileRideMapCore {
     /// The callback supplies receipt anchors once; Rust derives monotonic timestamps from each
     /// source timestamp, rejects future/invalid samples, and runs the canonical admission policy.
     /// No platform-side queue or per-sample timestamp state is required.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when durable persistence rejects an admitted sample.
     pub fn ingest_location_batch(
         &self,
         receipt_monotonic_ms: u64,
         receipt_wall_clock_unix_ms: u64,
         samples: Vec<MobilePhoneLocationSampleDto>,
     ) -> Result<Vec<MobileRideMapCoreDecisionDto>, MobileRideMapCoreErrorDto> {
+        let mut state = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
         let mut decisions = Vec::with_capacity(samples.len());
         for sample in samples {
             let Some(sample) = sample.canonical() else {
@@ -6268,7 +6288,7 @@ impl MobileRideMapCore {
             let Some(monotonic_ms) = receipt_monotonic_ms.checked_sub(elapsed_ms) else {
                 continue;
             };
-            match self.ingest_location(
+            match state.ingest_location(
                 monotonic_ms,
                 sample.wall_clock_unix_ms,
                 sample.latitude_degrees,
@@ -6280,7 +6300,7 @@ impl MobileRideMapCore {
                 // condition, so stop without discarding decisions already collected.
                 Err(MobileRideMapCoreErrorDto::NoActiveRide) => break,
                 Err(error) => return Err(error),
-            };
+            }
         }
         Ok(decisions)
     }
