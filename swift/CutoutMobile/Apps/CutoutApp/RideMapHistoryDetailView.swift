@@ -138,7 +138,7 @@ struct RideMapHistoryDetailView: View {
                                 shareText: shareText(for: ride),
                                 mapPosition: $mapPosition
                             )
-                        } else if initialHistoryID != nil {
+                        } else if initialHistoryID != nil && !isRouteLoading {
                             VStack(spacing: 12) {
                                 ContentUnavailableView(
                                     historyError == nil && routeError == nil
