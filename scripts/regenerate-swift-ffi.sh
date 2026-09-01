@@ -84,4 +84,4 @@ PY
 }
 
 cutout_replace_generated_directory "$stage" generate_stage
-cutout_replace_generated_directory "$package" mv "$stage" "$package"
+cutout_atomic_replace_generated_directory "$stage" "$package"

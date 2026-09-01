@@ -97,6 +97,62 @@ cutout_replace_generated_directory() {
   return "$status"
 }
 
+cutout_atomic_replace_generated_directory() {
+  local source target parent
+  source="$1"
+  target="$2"
+  parent="$(dirname "$target")"
+  if [[ "$source" != /* || "$target" != /* || "$source" == "/" || "$target" == "/" || ! -d "$parent" || ! -d "$source" ]]; then
+    echo "refusing unsafe generated-directory replacement: $source -> $target" >&2
+    return 2
+  fi
+
+  if [[ ! -e "$target" && ! -L "$target" ]]; then
+    mv -- "$source" "$target"
+    return
+  fi
+
+  python3 - "$source" "$target" <<'PY'
+import ctypes
+import os
+import platform
+import shutil
+import sys
+
+source, target = (os.fsencode(value) for value in sys.argv[1:])
+libc = ctypes.CDLL(None, use_errno=True)
+rename_swap = 2
+
+if sys.platform == "darwin":
+    swap = libc.renamex_np
+    swap.argtypes = [ctypes.c_char_p, ctypes.c_char_p, ctypes.c_uint]
+    swap.restype = ctypes.c_int
+    result = swap(source, target, rename_swap)
+elif sys.platform == "linux":
+    syscall_numbers = {"x86_64": 316, "aarch64": 276, "arm64": 276, "armv7l": 382, "riscv64": 276}
+    try:
+        syscall_number = syscall_numbers[platform.machine()]
+    except KeyError as error:
+        raise OSError(f"unsupported Linux architecture for atomic directory replacement: {platform.machine()}") from error
+    syscall = libc.syscall
+    syscall.argtypes = [ctypes.c_long, ctypes.c_int, ctypes.c_char_p, ctypes.c_int, ctypes.c_char_p, ctypes.c_uint]
+    syscall.restype = ctypes.c_long
+    result = syscall(syscall_number, -100, source, -100, target, rename_swap)
+else:
+    raise OSError(f"unsupported host for atomic directory replacement: {sys.platform}")
+
+if result != 0:
+    error = ctypes.get_errno()
+    raise OSError(error, os.strerror(error))
+
+old_target = os.fsdecode(source)
+if os.path.islink(old_target):
+    os.unlink(old_target)
+else:
+    shutil.rmtree(old_target)
+PY
+}
+
 cutout_swift_ffi_source_fingerprint() {
   local root
   root="$1"

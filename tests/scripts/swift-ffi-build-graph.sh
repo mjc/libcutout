@@ -267,3 +267,12 @@ successful_generation() {
 cutout_replace_generated_directory "$generated" successful_generation
 test ! -e "$generated/original"
 test -f "$generated/replacement"
+
+atomic_source="$tmp/atomic-source"
+mkdir -p "$atomic_source"
+printf 'atomic-new\n' >"$atomic_source/replacement"
+cutout_atomic_replace_generated_directory "$atomic_source" "$generated"
+test ! -e "$atomic_source"
+test ! -e "$generated/original"
+test -f "$generated/replacement"
+grep -q '^atomic-new$' "$generated/replacement"
