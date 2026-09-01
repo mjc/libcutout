@@ -1810,7 +1810,7 @@ public final class CutoutSessionCore: NSObject {
     }
 
     private func publishRideMapError(_ error: Error) {
-        guard let error = error as? MobileRideMapError, error != .NoActiveRide else { return }
+        guard let error = error as? MobileRideMapError, error != .noActiveRide else { return }
         publishOnMain { self.onRideMapErrorChange?(error) }
     }
 
@@ -2403,12 +2403,12 @@ extension CutoutSessionCore: CBCentralManagerDelegate {
     private func ensureRideMapRecordingForConnection(platformIdentifier: String) -> Bool {
         withRideMapLifecycleLock {
             do {
-                let previousRideID = rideMapState.currentSnapshot()?.rideId
+                let previousRideID = rideMapState.currentSnapshot()?.rideID
                 let snapshot = try rideMapState.ensureRecordingForVehicle(
                     platformIdentifier: platformIdentifier,
                     atMs: clock.now().rawValue
                 )
-                if snapshot.rideId != previousRideID {
+                if snapshot.rideID != previousRideID {
                     retirePendingPhoneLocations()
                     locationTimestampAdmission.reset()
                 }

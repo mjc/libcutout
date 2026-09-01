@@ -1985,6 +1985,7 @@ private actor FailingLiveActivityManager: LiveActivityRideLifecycleManaging {
 @MainActor
 private final class SessionDriverSpy: CutoutSessionDriving {
     let rideSessionStateHandle = CutoutSessionStateHandle()
+    let rideMapStateHandle = MobileRideMapState()
     var onDisplayStateChange: ((RideDisplayState) -> Void)?
     var onPhaseChange: ((SessionConnectionPhase) -> Void)?
     var onReconnectScheduled: ((SessionConnectionRetry) -> Void)?
@@ -1994,6 +1995,10 @@ private final class SessionDriverSpy: CutoutSessionDriving {
     var onFaultHistoryReadbackChange: ((FaultHistoryReadback?) -> Void)?
     var onBmsSnapshotChange: ((BmsSnapshot?) -> Void)?
     var onPhoneLocationSnapshotChange: ((MobilePhoneLocationSnapshotDto, MonotonicMilliseconds) -> Void)?
+    var onRideMapDecisionChange: ((MobileRideMapSnapshotDto, MobileRideMapDecisionDto) -> Void)?
+    var onRideMapSnapshotChange: ((MobileRideMapSnapshotDto) -> Void)?
+    var onRideMapErrorChange: ((MobileRideMapError) -> Void)?
+    var onRideMapAvailabilityChange: ((MobileRideMapAvailability) -> Void)?
     var onProtocolIdentityCandidateChange: ((DevicePickerDiscoveryCandidate?) -> Void)?
     var onBluetoothRestorationResolved: ((String?) -> Void)?
     var protocolIdentityCandidate: DevicePickerDiscoveryCandidate?
@@ -2062,6 +2067,8 @@ private final class SessionDriverSpy: CutoutSessionDriving {
     func disconnectAndScan() {
         disconnectCount += 1
     }
+
+    func resetRideMapLocationAdmission() {}
 
     func now() -> MonotonicMilliseconds {
         MonotonicMilliseconds(0)
