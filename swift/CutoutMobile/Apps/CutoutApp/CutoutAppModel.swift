@@ -3,6 +3,10 @@ import CutoutMobileFFI
 import Foundation
 import Observation
 
+func normalizedRideMapHistorySearchText(_ text: String) -> String {
+    text.trimmingCharacters(in: .whitespacesAndNewlines)
+}
+
 private enum RideSessionRestorationState {
     case complete
     case awaitingBluetooth
@@ -695,7 +699,7 @@ final class CutoutAppModel {
         MobileRideHistoryFilterDto(
             createdAfterMilliseconds: rideMapHistoryQueryDateAfterMilliseconds ?? historyDateAfterMilliseconds,
             vehicleIdentity: rideMapHistoryVehicleFilter,
-            searchText: RideMapHistoryContentView.normalizedSearchText(rideMapHistorySearchText)
+            searchText: normalizedRideMapHistorySearchText(rideMapHistorySearchText)
         )
     }
 
