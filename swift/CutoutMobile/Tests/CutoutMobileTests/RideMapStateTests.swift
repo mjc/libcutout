@@ -444,4 +444,37 @@ final class RideMapStateTests: XCTestCase {
         }
     }
 
+    func testStoredProjectionUsesRustBoundedRouteContract() async throws {
+        let state = MobileRideMapState()
+        _ = try state.startGpsOnly(atMs: 1_000, lastConnectedVehicle: nil)
+
+        for (offset, latitudeDegrees) in [
+            (1_001, 40.0),
+            (2_001, 40.0001),
+            (3_001, 40.0002),
+            (4_001, 40.0003),
+        ] {
+            _ = await settle(state, try state.ingestLocation(
+                monotonicMs: UInt64(offset),
+                wallClockUnixMs: 1_700_000_000_000 + UInt64(offset),
+                latitudeDegrees: latitudeDegrees,
+                longitudeDegrees: -105.0,
+                horizontalAccuracyMeters: 3
+            ))
+        }
+
+        let rideID = try state.stop(atMs: 4_001).rideID
+        _ = try state.save()
+
+        let projection = try state.projectStoredPoints(rideID: rideID, budget: 2)
+
+        XCTAssertEqual(projection.sourcePointCount, 4)
+        XCTAssertLessThanOrEqual(projection.points.count, 2)
+        XCTAssertEqual(projection.points.first?.sequence, 0)
+        XCTAssertEqual(projection.points.last?.sequence, 3)
+        XCTAssertEqual(projection.canonicalStartSequence, 0)
+        XCTAssertEqual(projection.canonicalEndSequence, 3)
+        XCTAssertTrue(projection.pointsOmittedByBudget)
+    }
+
 }
