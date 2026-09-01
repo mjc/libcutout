@@ -6240,7 +6240,45 @@ impl MobileRideMapCore {
         })
     }
 
-    /// Polls durable location writes without waiting for `SQLite`.
+    /// Forwards a complete Core Location callback while keeping timestamp admission in Rust.
+    ///
+    /// The callback supplies receipt anchors once; Rust derives monotonic timestamps from each
+    /// source timestamp, rejects future/invalid samples, and runs the canonical admission policy.
+    /// No platform-side queue or per-sample timestamp state is required.
+    pub fn ingest_location_batch(
+        &self,
+        receipt_monotonic_ms: u64,
+        receipt_wall_clock_unix_ms: u64,
+        samples: Vec<MobilePhoneLocationSampleDto>,
+    ) -> Result<Vec<MobileRideMapCoreDecisionDto>, MobileRideMapCoreErrorDto> {
+        let mut decisions = Vec::with_capacity(samples.len());
+        for sample in samples {
+            let Some(sample) = sample.canonical() else {
+                continue;
+            };
+            let Some(horizontal_accuracy_meters) = sample.horizontal_accuracy_meters else {
+                continue;
+            };
+            let Some(elapsed_ms) =
+                receipt_wall_clock_unix_ms.checked_sub(sample.wall_clock_unix_ms)
+            else {
+                // A source timestamp newer than the callback receipt is invalid.
+                continue;
+            };
+            let Some(monotonic_ms) = receipt_monotonic_ms.checked_sub(elapsed_ms) else {
+                continue;
+            };
+            decisions.push(self.ingest_location(
+                monotonic_ms,
+                sample.wall_clock_unix_ms,
+                sample.latitude_degrees,
+                sample.longitude_degrees,
+                horizontal_accuracy_meters,
+            )?);
+        }
+        Ok(decisions)
+    }
+
     ///
     /// A pending write is removed when its worker result becomes available. Results belonging to
     /// a ride that is neither active nor settling after save are discarded so a late completion
@@ -15494,5 +15532,47 @@ mod tests {
 
         database.shutdown().expect("reopened database shuts down");
         let _ = fs::remove_file(path);
+    }
+    #[test]
+    fn location_batch_preserves_source_order_and_receipt_anchor() {
+        let state = MobileRideMapCore::new();
+        state
+            .start_gps_only(9_000, None)
+            .expect("GPS-only recording starts");
+
+        let sample = |wall_clock_unix_ms, latitude_degrees| MobilePhoneLocationSampleDto {
+            wall_clock_unix_ms,
+            latitude_degrees,
+            longitude_degrees: -105.0,
+            altitude_meters: 1_600.0,
+            horizontal_accuracy_meters: Some(3.0),
+            vertical_accuracy_meters: None,
+            speed_meters_per_second: None,
+            speed_accuracy_meters_per_second: None,
+            course_degrees: None,
+            course_accuracy_degrees: None,
+        };
+        let decisions = state
+            .ingest_location_batch(
+                10_000,
+                1_700_000_001_000,
+                vec![
+                    sample(1_700_000_000_000, 40.0),
+                    sample(1_700_000_001_000, 40.00001),
+                    // Future source timestamps are dropped before admission.
+                    sample(1_700_000_002_000, 40.00002),
+                ],
+            )
+            .expect("batch admission succeeds");
+
+        assert_eq!(decisions.len(), 2);
+        assert!(matches!(
+            decisions[0],
+            MobileRideMapCoreDecisionDto::Accepted { .. }
+        ));
+        assert!(matches!(
+            decisions[1],
+            MobileRideMapCoreDecisionDto::Accepted { .. }
+        ));
     }
 }
