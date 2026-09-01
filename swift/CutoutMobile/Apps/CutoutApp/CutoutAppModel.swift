@@ -527,8 +527,6 @@ final class CutoutAppModel {
                 self.rideMapHistoryError = Self.mapRideMapError(error)
                 self.rideMapHistoryRouteLoading = false
                 self.rideMapHistoryDetailRouteLoading = false
-                self.rideMapHistorySegmentsOmittedByBudget = false
-                self.rideMapHistoryDetailSegmentsOmittedByBudget = false
             }
         }
     }
@@ -868,23 +866,6 @@ final class CutoutAppModel {
                 self.rideMapHistoryRouteLoading = false
                 self.rideMapHistoryDetailRouteError = self.rideMapHistoryRouteError
                 self.rideMapHistoryDetailRouteLoading = false
-                self.replaceRideMapHistoryDisplayPoints(
-                    self.rideMapHistoryDisplayPoints,
-                    endpointMetadata: .empty,
-                    segments: [],
-                    backgroundGapCount: 0,
-                    truncated: false,
-                    segmentsOmittedByBudget: false
-                )
-                self.rideMapHistoryDetailSegmentsOmittedByBudget = false
-                self.rideMapHistoryDetailSourcePointsOmittedByBudget = false
-                self.rideMapHistoryDetailSourceSegmentsOmittedByBudget = false
-                self.rideMapHistoryEndpointMetadata = .empty
-                self.rideMapHistoryDetailEndpointMetadata = .empty
-                self.rideMapHistorySegments = []
-                self.rideMapHistoryDetailSegments = []
-                self.rideMapHistoryBackgroundGapCount = 0
-                self.rideMapHistoryDetailBackgroundGapCount = 0
             }
         }
     }
