@@ -18,16 +18,26 @@ final class CutoutAppModelTests: XCTestCase {
     // durable-write waiter paired with the equivalent mobile-test helper.
     private static func settle(
         _ state: MobileRideMapState,
-        _ decision: MobileRideMapDecisionDto
+        _ decision: MobileRideMapDecisionDto,
+        file: StaticString = #filePath,
+        line: UInt = #line
     ) async -> MobileRideMapDecisionDto {
         guard case .pending = decision else { return decision }
-        for _ in 0 ..< 10_000 {
+        let deadline = ContinuousClock.now + .seconds(10)
+        while ContinuousClock.now < deadline {
             if let terminal = state.pollLocationWrites().first {
                 return terminal
             }
-            await Task.yield()
+            if Task.isCancelled {
+                break
+            }
+            try? await Task.sleep(for: .milliseconds(1))
         }
-        XCTFail("timed out waiting for durable ride-map location outcome")
+        XCTFail(
+            "timed out waiting for durable ride-map location outcome",
+            file: file,
+            line: line
+        )
         return decision
     }
 
