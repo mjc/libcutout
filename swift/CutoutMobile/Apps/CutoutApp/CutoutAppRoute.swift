@@ -125,7 +125,7 @@ enum CutoutAppRoute: Hashable {
 
     func availableNavigationTabs(for connectionRoute: DevicePickerConnectionRoute?) -> [PevScreenTab] {
         switch self {
-        case .rideMap:
+        case .rideMap, .rideMapDetail:
             guard let connectionRoute else { return [] }
             let tabs = switch connectionRoute {
             case .electricUnicycle:
@@ -143,10 +143,6 @@ enum CutoutAppRoute: Hashable {
                     disabledReason: tab.disabledReason
                 )
             }.filter { $0.isEnabled && $0.destinationTarget != nil }
-        case .rideMapDetail:
-            // Ride Detail is intentionally a full-screen navigation destination;
-            // its Back/Close control restores the parent Map destination.
-            return []
         default:
             return availableNavigationTabs
         }

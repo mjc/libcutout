@@ -32,7 +32,7 @@ struct DevicePickerRouteView: View {
             .buttonStyle(.borderedProminent)
             .padding(.horizontal, 24)
             .padding(.bottom, 8)
-            .accessibilityIdentifier("dashboard.nav.map")
+            .accessibilityIdentifier("device-picker.open-map")
         }
     }
 }
