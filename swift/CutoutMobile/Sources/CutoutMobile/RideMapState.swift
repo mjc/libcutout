@@ -14,26 +14,23 @@ public enum MobileRideMapAvailability: Equatable, Hashable, Sendable {
 
 /// Errors surfaced by the map presentation adapter.
 public enum MobileRideMapError: Error, Equatable, Hashable, Sendable {
-    case AlreadyRecording
-    case NoActiveRide
-    case InvalidTransition
-    case InvalidLocation
-    case InvalidRouteProjection
-    case RideNotFound
+    case alreadyRecording
+    case noActiveRide
+    case invalidTransition
+    case invalidLocation
+    case invalidRouteProjection
+    case rideNotFound
     case cancelled
-    case Storage(String)
+    case storageError(String)
 }
 
-private func monotonicMillisecondsNow() -> UInt64 {
-    DispatchTime.now().uptimeNanoseconds / 1_000_000
-}
+
 
 /// Swift-owned handle for cancelling one Rust durable route projection.
 public final class MobileRideMapProjectionCancellation: @unchecked Sendable {
     fileprivate let ffi: MobileRouteProjectionCancellation
 
-    public init(timeoutMilliseconds: UInt64 = 2_000) {
-        _ = timeoutMilliseconds
+    public init() {
         ffi = MobileRouteProjectionCancellation()
     }
 
@@ -113,7 +110,7 @@ public struct MobileRideMapPointDto: Equatable, Hashable, Sendable {
     public init(
         sequence: UInt64,
         segmentId: UInt64,
-        startReason: MobileRideMapSegmentStartReason = .unknown,
+        startReason: MobileRideMapSegmentStartReason,
         latitudeDegrees: Double,
         longitudeDegrees: Double,
         wallClockUnixMs: UInt64,
@@ -222,29 +219,21 @@ public struct MobileRideMapRouteDisplayPoint: Equatable, Hashable, Sendable {
         self.privacyClass = privacyClass
     }
 
-    public init(_ point: MobileRideMapPointDto) {
-        self.init(
-            sequence: point.sequence,
-            segmentId: point.segmentId,
-            latitudeDegrees: point.latitudeDegrees,
-            longitudeDegrees: point.longitudeDegrees,
-            privacyClass: .precise
-        )
-    }
+
 }
 
 /// Bounded metadata for one segment represented by a route projection.
 public struct MobileRideMapSegmentDisplayMetadata: Equatable, Hashable, Sendable, Identifiable {
-    public var segmentId: UInt64
-    public var startReason: MobileRideMapSegmentStartReason
+    public let segmentId: UInt64
+    public let startReason: MobileRideMapSegmentStartReason
     /// Number of points retained for this segment in the bounded display projection.
     /// This is not the cardinality of the canonical source segment.
-    public var visiblePointCount: UInt64
+    public let visiblePointCount: UInt64
     /// Number of points in the canonical source segment, when the projection has durable data.
     /// Live-tail projections may leave this unknown after older points are evicted.
-    public var canonicalPointCount: UInt64?
-    public var firstVisibleSequence: UInt64?
-    public var lastVisibleSequence: UInt64?
+    public let canonicalPointCount: UInt64?
+    public let firstVisibleSequence: UInt64?
+    public let lastVisibleSequence: UInt64?
 
     public var id: UInt64 { segmentId }
 
@@ -296,7 +285,7 @@ public struct MobileRideMapSegmentDisplayMetadata: Equatable, Hashable, Sendable
         UInt64(segments.lazy.filter(\.isBackgroundGap).count)
     }
 
-    public init(
+    init(
         segmentId: UInt64,
         startReason: MobileRideMapSegmentStartReason,
         visiblePointCount: UInt64,
@@ -314,21 +303,21 @@ public struct MobileRideMapSegmentDisplayMetadata: Equatable, Hashable, Sendable
 }
 
 public struct MobileRideMapRouteProjection: Equatable, Hashable, Sendable {
-    public var points: [MobileRideMapRouteDisplayPoint]
-    public var segments: [MobileRideMapSegmentDisplayMetadata]
-    public var sourcePointCount: UInt64
-    public var sourceSegmentCount: UInt64
-    public var candidatePointCount: UInt64
-    public var candidateSegmentCount: UInt64
-    public var displayedSegmentCount: UInt64
+    public let points: [MobileRideMapRouteDisplayPoint]
+    public let segments: [MobileRideMapSegmentDisplayMetadata]
+    public let sourcePointCount: UInt64
+    public let sourceSegmentCount: UInt64
+    public let candidatePointCount: UInt64
+    public let candidateSegmentCount: UInt64
+    public let displayedSegmentCount: UInt64
     /// Number of canonical BackgroundGap segments in the complete route.
-    public var backgroundGapCount: UInt64
-    public var canonicalStartSequence: UInt64?
-    public var canonicalEndSequence: UInt64?
-    public var canonicalStartVisible: Bool
-    public var canonicalEndVisible: Bool
+    public let backgroundGapCount: UInt64
+    public let canonicalStartSequence: UInt64?
+    public let canonicalEndSequence: UInt64?
+    public let canonicalStartVisible: Bool
+    public let canonicalEndVisible: Bool
 
-    public init(
+    init(
         points: [MobileRideMapRouteDisplayPoint],
         segments: [MobileRideMapSegmentDisplayMetadata],
         sourcePointCount: UInt64,
@@ -403,7 +392,7 @@ public struct MobileRideMapRouteEndpointMetadata: Equatable, Hashable, Sendable 
 }
 
 public struct MobileRideMapSnapshotDto: Equatable, Hashable, Sendable {
-    public var rideId: String
+    public var rideID: String
     public var state: MobileRideMapStateDto
     public var summary: MobileRideMapSummaryDto
     public var segmentCount: UInt64
@@ -411,7 +400,7 @@ public struct MobileRideMapSnapshotDto: Equatable, Hashable, Sendable {
 }
 
 public struct MobileRideMapHistorySummaryDto: Equatable, Hashable, Sendable {
-    public var rideId: String
+    public var rideID: String
     public var state: MobileRideMapStateDto
     public var summary: MobileRideMapSummaryDto
     public var segmentCount: UInt64
@@ -424,7 +413,7 @@ public struct MobileRideMapHistorySummaryDto: Equatable, Hashable, Sendable {
     public var telemetryState: MobileRideMapTelemetryStateDto
 
     public init(
-        rideId: String,
+        rideID: String,
         state: MobileRideMapStateDto,
         summary: MobileRideMapSummaryDto,
         segmentCount: UInt64,
@@ -435,7 +424,7 @@ public struct MobileRideMapHistorySummaryDto: Equatable, Hashable, Sendable {
         associatedVehicleName: String? = nil,
         telemetryState: MobileRideMapTelemetryStateDto
     ) {
-        self.rideId = rideId
+        self.rideID = rideID
         self.state = state
         self.summary = summary
         self.segmentCount = segmentCount
@@ -450,18 +439,12 @@ public struct MobileRideMapHistorySummaryDto: Equatable, Hashable, Sendable {
     /// Returns the persisted display name for the confirmed vehicle, falling back to the ride's
     /// candidate vehicle name when association was not completed.
     public var vehicleDisplayName: String? {
-        associatedVehicleName ?? candidateVehicleName
+        if associatedVehicle != nil {
+            return associatedVehicleName
+        }
+        return candidateVehicleName
     }
 
-    /// Derives the historical telemetry label from Rust's persisted association metadata.
-    /// A timestamp proves that telemetry was observed; freshness is evaluated while recording.
-    public static func telemetryState(
-        associatedVehicle: String?,
-        lastTelemetryAtMilliseconds: UInt64?
-    ) -> MobileRideMapTelemetryStateDto {
-        guard associatedVehicle != nil else { return .gpsOnly }
-        return lastTelemetryAtMilliseconds == nil ? .associatedNoTelemetry : .associatedFresh
-    }
 }
 
 public struct MobileRideMapHistoryVehicleOptionDto: Equatable, Hashable, Sendable, Identifiable {
