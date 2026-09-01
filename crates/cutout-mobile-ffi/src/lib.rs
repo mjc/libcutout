@@ -5486,7 +5486,6 @@ impl MobileRideMapCoreInner {
             return Err(MobileRideMapCoreErrorDto::InvalidLocation);
         }
         let sample = mobile_ride_location(location).map_err(map_core_error)?;
-        let segment_id = self.admission_recorder.segment_id_for_sample(&sample);
         match self.admission_recorder.check_sample(&sample) {
             ride_maps::LocationAdmission::Duplicate => {
                 return Ok(MobileRideMapCoreDecisionDto::Ignored {
@@ -5516,9 +5515,8 @@ impl MobileRideMapCoreInner {
                     location.monotonic_milliseconds,
                 ));
         let sequence = self.admission_recorder.point_count();
-        let mut staged_recorder = self.admission_recorder.clone();
-        let segment_started = staged_recorder.record_sample(sample);
-        let start_reason = Self::last_point_start_reason(&staged_recorder);
+        let (segment_id, segment_started, start_reason) =
+            self.admission_recorder.next_sample_metadata(sample);
         let point = Self::point_from_location(
             location,
             sequence,
@@ -5541,7 +5539,7 @@ impl MobileRideMapCoreInner {
                 telemetry_state.into(),
             )
             .map_err(map_core_error)?;
-            self.admission_recorder = staged_recorder;
+            self.admission_recorder.record_sample(sample);
             self.pending_location_writes
                 .push_back(PendingMapLocationWrite {
                     ride_id: id,
@@ -5555,8 +5553,8 @@ impl MobileRideMapCoreInner {
                 segment_started,
             });
         }
-        self.recorder = staged_recorder.clone();
-        self.admission_recorder = staged_recorder;
+        self.admission_recorder.record_sample(sample);
+        self.recorder = self.admission_recorder.clone();
         Ok(MobileRideMapCoreDecisionDto::Accepted {
             point,
             segment_started,
@@ -5715,17 +5713,6 @@ impl MobileRideMapCoreInner {
                 .map(|value| f64::from(value) / 1_000.0),
             telemetry_state: telemetry_state.into(),
         }
-    }
-
-    fn last_point_start_reason(
-        recorder: &ride_maps::RideMapRecorder,
-    ) -> ride_maps::RideSegmentStartReason {
-        recorder
-            .points()
-            .last()
-            .map_or(ride_maps::RideSegmentStartReason::Initial, |point| {
-                point.segment_start_reason()
-            })
     }
 
     fn summary(&self, state: MobileRideLifecycleStateDto) -> MobileRideMapCoreSummaryDto {
