@@ -53,11 +53,14 @@ public final class MobileLiveRideMapProjectionCancellation: @unchecked Sendable 
 }
 
 public enum MobileRideMapStateDto: Equatable, Hashable, Sendable {
-    case recording
+    case draft
+    case active
     case paused
     case stopped
-    case saved
+    case interrupted
     case discarded
+    case saved
+    case imported
 }
 
 public enum MobileRideMapTelemetryStateDto: Equatable, Hashable, Sendable {
@@ -78,10 +81,10 @@ public enum MobileRideMapTelemetryObservation: Equatable, Hashable, Sendable {
 }
 
 public struct MobileRideMapSummaryDto: Equatable, Hashable, Sendable {
-    public var pointCount: UInt64
-    public var distanceMeters: Double
-    public var durationMilliseconds: UInt64
-    public var averageSpeedMillimetresPerSecond: UInt64?
+    public let pointCount: UInt64
+    public let distanceMeters: Double
+    public let durationMilliseconds: UInt64
+    public let averageSpeedMillimetresPerSecond: UInt64?
 
     public init(
         pointCount: UInt64,
@@ -97,15 +100,15 @@ public struct MobileRideMapSummaryDto: Equatable, Hashable, Sendable {
 }
 
 public struct MobileRideMapPointDto: Equatable, Hashable, Sendable {
-    public var sequence: UInt64
-    public var segmentId: UInt64
-    public var startReason: MobileRideMapSegmentStartReason
-    public var latitudeDegrees: Double
-    public var longitudeDegrees: Double
-    public var wallClockUnixMs: UInt64
-    public var monotonicMs: UInt64
-    public var horizontalAccuracyMeters: Double?
-    public var telemetryState: MobileRideMapTelemetryStateDto
+    public let sequence: UInt64
+    public let segmentId: UInt64
+    public let startReason: MobileRideMapSegmentStartReason
+    public let latitudeDegrees: Double
+    public let longitudeDegrees: Double
+    public let wallClockUnixMs: UInt64
+    public let monotonicMs: UInt64
+    public let horizontalAccuracyMeters: Double?
+    public let telemetryState: MobileRideMapTelemetryStateDto
 
     public init(
         sequence: UInt64,
@@ -131,9 +134,15 @@ public struct MobileRideMapPointDto: Equatable, Hashable, Sendable {
 }
 
 public struct MobileRideMapPointBatchDto: Equatable, Hashable, Sendable {
-    public var points: [MobileRideMapPointDto]
-    public var nextCursor: UInt64?
-    public var hasMore: Bool
+    public let points: [MobileRideMapPointDto]
+    public let nextCursor: UInt64?
+    public let hasMore: Bool
+
+    public init(points: [MobileRideMapPointDto], nextCursor: UInt64?, hasMore: Bool) {
+        self.points = points
+        self.nextCursor = nextCursor
+        self.hasMore = hasMore
+    }
 }
 
 public enum MobileRideMapRoutePrivacyPolicy: Equatable, Hashable, Sendable {
@@ -199,13 +208,13 @@ public enum MobileRideMapSegmentStartReason: Equatable, Hashable, Sendable {
 }
 
 public struct MobileRideMapRouteDisplayPoint: Equatable, Hashable, Sendable {
-    public var sequence: UInt64
-    public var segmentId: UInt64
-    public var latitudeDegrees: Double
-    public var longitudeDegrees: Double
-    public var privacyClass: MobileRideMapRoutePrivacyClass
+    public let sequence: UInt64
+    public let segmentId: UInt64
+    public let latitudeDegrees: Double
+    public let longitudeDegrees: Double
+    public let privacyClass: MobileRideMapRoutePrivacyClass
 
-    public init(
+    init(
         sequence: UInt64,
         segmentId: UInt64,
         latitudeDegrees: Double,
@@ -218,8 +227,6 @@ public struct MobileRideMapRouteDisplayPoint: Equatable, Hashable, Sendable {
         self.longitudeDegrees = longitudeDegrees
         self.privacyClass = privacyClass
     }
-
-
 }
 
 /// Bounded metadata for one segment represented by a route projection.
@@ -376,7 +383,7 @@ public struct MobileRideMapRouteEndpointMetadata: Equatable, Hashable, Sendable 
     public let canonicalStartVisible: Bool
     public let canonicalEndVisible: Bool
 
-    public init(
+    init(
         canonicalStartSequence: UInt64? = nil,
         canonicalEndSequence: UInt64? = nil,
         canonicalStartVisible: Bool = false,
@@ -384,33 +391,47 @@ public struct MobileRideMapRouteEndpointMetadata: Equatable, Hashable, Sendable 
     ) {
         self.canonicalStartSequence = canonicalStartSequence
         self.canonicalEndSequence = canonicalEndSequence
-        self.canonicalStartVisible = canonicalStartVisible
-        self.canonicalEndVisible = canonicalEndVisible
+        self.canonicalStartVisible = canonicalStartVisible && canonicalStartSequence != nil
+        self.canonicalEndVisible = canonicalEndVisible && canonicalEndSequence != nil
     }
 
     public static let empty = Self()
 }
 
 public struct MobileRideMapSnapshotDto: Equatable, Hashable, Sendable {
-    public var rideID: String
-    public var state: MobileRideMapStateDto
-    public var summary: MobileRideMapSummaryDto
-    public var segmentCount: UInt64
-    public var associatedVehicle: String?
+    public let rideID: String
+    public let state: MobileRideMapStateDto
+    public let summary: MobileRideMapSummaryDto
+    public let segmentCount: UInt64
+    public let associatedVehicle: String?
+
+    public init(
+        rideID: String,
+        state: MobileRideMapStateDto,
+        summary: MobileRideMapSummaryDto,
+        segmentCount: UInt64,
+        associatedVehicle: String?
+    ) {
+        self.rideID = rideID
+        self.state = state
+        self.summary = summary
+        self.segmentCount = segmentCount
+        self.associatedVehicle = associatedVehicle
+    }
 }
 
 public struct MobileRideMapHistorySummaryDto: Equatable, Hashable, Sendable {
-    public var rideID: String
-    public var state: MobileRideMapStateDto
-    public var summary: MobileRideMapSummaryDto
-    public var segmentCount: UInt64
-    public var createdAtMilliseconds: UInt64
-    public var candidateVehicle: String?
-    public var associatedVehicle: String?
-    public var candidateVehicleName: String?
-    public var associatedVehicleName: String?
+    public let rideID: String
+    public let state: MobileRideMapStateDto
+    public let summary: MobileRideMapSummaryDto
+    public let segmentCount: UInt64
+    public let createdAtMilliseconds: UInt64
+    public let candidateVehicle: String?
+    public let associatedVehicle: String?
+    public let candidateVehicleName: String?
+    public let associatedVehicleName: String?
     /// Rust-derived telemetry provenance for the latest durable route evidence.
-    public var telemetryState: MobileRideMapTelemetryStateDto
+    public let telemetryState: MobileRideMapTelemetryStateDto
 
     public init(
         rideID: String,
@@ -460,8 +481,13 @@ public struct MobileRideMapHistoryVehicleOptionDto: Equatable, Hashable, Sendabl
 }
 
 public struct MobileRideMapHistoryPageDto: Equatable, Hashable, Sendable {
-    public var summaries: [MobileRideMapHistorySummaryDto]
-    public var nextCursor: MobileRideCursorDto?
+    public let summaries: [MobileRideMapHistorySummaryDto]
+    public let nextCursor: MobileRideCursorDto?
+
+    public init(summaries: [MobileRideMapHistorySummaryDto], nextCursor: MobileRideCursorDto?) {
+        self.summaries = summaries
+        self.nextCursor = nextCursor
+    }
 }
 
 /// Rust-enforced bounds for the history overview's contextual route projection.
@@ -470,10 +496,10 @@ public struct MobileRideMapHistoryPageDto: Equatable, Hashable, Sendable {
 /// into Swift. Keeping the limits in one value makes the memory contract visible at the call site
 /// and prevents a new history surface from accidentally requesting an unbounded projection.
 public struct MobileRideMapHistoryContextBudget: Equatable, Hashable, Sendable {
-    public var historyPageLimit: UInt32
-    public var maxRoutes: UInt32
-    public var perRouteBudget: UInt32
-    public var totalPointBudget: UInt32
+    public let historyPageLimit: UInt32
+    public let maxRoutes: UInt32
+    public let perRouteBudget: UInt32
+    public let totalPointBudget: UInt32
 
     public init(
         historyPageLimit: UInt32,
@@ -498,8 +524,8 @@ public struct MobileRideMapHistoryContextBudget: Equatable, Hashable, Sendable {
 
 /// One bounded contextual route returned by Rust for a history overview.
 public struct MobileRideMapHistoryContextRoute: Equatable, Hashable, Sendable, Identifiable {
-    public var rideID: String
-    public var projection: MobileRideMapRouteProjection
+    public let rideID: String
+    public let projection: MobileRideMapRouteProjection
 
     public init(rideID: String, projection: MobileRideMapRouteProjection) {
         self.rideID = rideID
@@ -511,12 +537,12 @@ public struct MobileRideMapHistoryContextRoute: Equatable, Hashable, Sendable, I
 
 /// Bounded surrounding-route context for a selected history route.
 public struct MobileRideMapHistoryContextProjection: Equatable, Hashable, Sendable {
-    public var routes: [MobileRideMapHistoryContextRoute]
-    public var sourceHistoryRouteCount: UInt64
-    public var contextRouteCount: UInt64
-    public var totalDisplayPointCount: UInt64
-    public var routesOmittedByBudget: Bool
-    public var historyPageHasMore: Bool
+    public let routes: [MobileRideMapHistoryContextRoute]
+    public let sourceHistoryRouteCount: UInt64
+    public let contextRouteCount: UInt64
+    public let totalDisplayPointCount: UInt64
+    public let routesOmittedByBudget: Bool
+    public let historyPageHasMore: Bool
 
     public init(
         routes: [MobileRideMapHistoryContextRoute],
@@ -559,11 +585,7 @@ public enum MobileRideMapDecisionDto: Equatable, Hashable, Sendable {
     case accepted(point: MobileRideMapPointDto, segmentStarted: Bool)
     case rejected(reason: MobileRideMapDecisionReason)
     case ignored(reason: MobileRideMapDecisionReason)
-    /// The point could not be queued or persisted. It is not part of the ride.
-    ///
-    /// `retryable` is true only after Rust reconciles a dropped response and proves that the
-    /// write was not committed. The caller may explicitly re-admit that sample; this adapter
-    /// never retries it automatically.
-    case storageError(message: String, retryable: Bool)
+    /// Durable persistence could not confirm this point. The point is not part of the durable ride.
+    case storageError(message: String)
 }
 
