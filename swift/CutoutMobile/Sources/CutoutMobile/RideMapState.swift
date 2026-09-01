@@ -622,7 +622,7 @@ public final class MobileRideMapState: @unchecked Sendable {
     }
 #endif
 
-    init(database: RideDatabaseHandle) {
+    public init(database: RideDatabaseHandle) {
         let core = MobileRideMapCore.withDatabase(database: database)
         let initializationError = core.initializationError().map(Self.mapCoreError)
         self.core = initializationError == nil ? core : nil
@@ -755,14 +755,14 @@ public final class MobileRideMapState: @unchecked Sendable {
         core?.pollLocationWrites().map(map) ?? []
     }
 
-    public func pointsAfter(afterCursor: UInt64?, limit: UInt32) throws -> MobileRideMapPointBatchDto? {
+    public func pointsAfter(afterCursor: UInt64?, limit: UInt32) throws -> MobileRideMapPointBatchDto {
         try withCore { map(try $0.pointsAfter(afterCursor: afterCursor, limit: limit)) }
     }
 
     /// Returns the Rust recorder's bounded active-route tail for live recovery.
     ///
     /// Unlike `pointsAfter`, this never starts at sequence zero or scans durable history.
-    public func latestRoutePoints() throws -> MobileRideMapPointBatchDto? {
+    public func latestRoutePoints() throws -> MobileRideMapPointBatchDto {
         try withCore {
             var cursor: UInt64?
             var tail: [MobileRideMapPointDto] = []
@@ -1185,7 +1185,7 @@ public final class MobileRideMapState: @unchecked Sendable {
         }
         if let error = error as? MobileRideDatabaseError {
             switch error {
-            case .NotFound: return .NoActiveRide
+            case .NotFound: return .RideNotFound
             case .InvalidTransition, .InvalidRideState: return .InvalidTransition
             case .Cancelled: return .cancelled
             default: return .Storage(String(describing: error))
