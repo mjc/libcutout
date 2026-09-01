@@ -6268,13 +6268,19 @@ impl MobileRideMapCore {
             let Some(monotonic_ms) = receipt_monotonic_ms.checked_sub(elapsed_ms) else {
                 continue;
             };
-            decisions.push(self.ingest_location(
+            match self.ingest_location(
                 monotonic_ms,
                 sample.wall_clock_unix_ms,
                 sample.latitude_degrees,
                 sample.longitude_degrees,
                 horizontal_accuracy_meters,
-            )?);
+            ) {
+                Ok(decision) => decisions.push(decision),
+                // No ride is recording; every remaining sample hits the same
+                // condition, so stop without discarding decisions already collected.
+                Err(MobileRideMapCoreErrorDto::NoActiveRide) => break,
+                Err(error) => return Err(error),
+            };
         }
         Ok(decisions)
     }
@@ -15574,5 +15580,41 @@ mod tests {
             decisions[1],
             MobileRideMapCoreDecisionDto::Accepted { .. }
         ));
+        let accepted_points = decisions
+            .iter()
+            .map(|decision| match decision {
+                MobileRideMapCoreDecisionDto::Accepted { point, .. } => point,
+                _ => panic!("expected accepted decision"),
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(accepted_points[0].wall_clock_unix_ms, 1_700_000_000_000);
+        assert_eq!(accepted_points[0].monotonic_ms, 9_000);
+        assert_eq!(accepted_points[1].wall_clock_unix_ms, 1_700_000_001_000);
+        assert_eq!(accepted_points[1].monotonic_ms, 10_000);
+    }
+
+    #[test]
+    fn location_batch_without_active_ride_is_ignored() {
+        let state = MobileRideMapCore::new();
+        let decisions = state
+            .ingest_location_batch(
+                10_000,
+                1_700_000_000_000,
+                vec![MobilePhoneLocationSampleDto {
+                    wall_clock_unix_ms: 1_700_000_000_000,
+                    latitude_degrees: 40.0,
+                    longitude_degrees: -105.0,
+                    altitude_meters: 1_600.0,
+                    horizontal_accuracy_meters: Some(3.0),
+                    vertical_accuracy_meters: None,
+                    speed_meters_per_second: None,
+                    speed_accuracy_meters_per_second: None,
+                    course_degrees: None,
+                    course_accuracy_degrees: None,
+                }],
+            )
+            .expect("no-active-ride batches are ignored");
+
+        assert!(decisions.is_empty());
     }
 }
