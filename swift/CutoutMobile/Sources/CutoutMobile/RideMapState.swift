@@ -593,10 +593,9 @@ public enum MobileRideMapDecisionDto: Equatable, Hashable, Sendable {
 /// lifecycle, association, admission, locking, and live-route projection state. The FFI core
 /// serializes every mutation, so this adapter is safe to call from the BLE and location queues.
 public final class MobileRideMapState: @unchecked Sendable {
-    private static let latestRoutePointLimit = 4_096
     private let core: MobileRideMapCore?
     private let database: RideDatabaseHandle?
-    public private(set) var initializationError: MobileRideMapError?
+    public let initializationError: MobileRideMapError?
     private let storageUnavailableError: MobileRideMapError?
 
 #if DEBUG
@@ -614,9 +613,7 @@ public final class MobileRideMapState: @unchecked Sendable {
             return
         }
         self.init(database: database)
-        // A shared process database is required by the Rust service. Keep each DEBUG fixture
-        // isolated at the map-core level by discarding any recovered active ride before use.
-        if let core, core.currentSnapshot(atMs: monotonicMillisecondsNow()) != nil {
+        if let core, core.currentSnapshot(atMs: Self.monotonicMillisecondsNow()) != nil {
             _ = try? core.discard()
         }
     }
@@ -634,14 +631,14 @@ public final class MobileRideMapState: @unchecked Sendable {
     init(storageUnavailable message: String) {
         core = nil
         database = nil
-        let error = MobileRideMapError.Storage(message)
+        let error = MobileRideMapError.storageError(message)
         initializationError = error
         storageUnavailableError = error
     }
 
     private func requireCore() throws -> MobileRideMapCore {
         guard let core else {
-            throw storageUnavailableError ?? .Storage("Rust ride database is unavailable")
+            throw storageUnavailableError ?? .storageError("Rust ride database is unavailable")
         }
         return core
     }
@@ -655,7 +652,7 @@ public final class MobileRideMapState: @unchecked Sendable {
     }
 
     public func currentSnapshot() -> MobileRideMapSnapshotDto? {
-        core?.currentSnapshot(atMs: monotonicMillisecondsNow()).map(mapSnapshot)
+        core?.currentSnapshot(atMs: Self.monotonicMillisecondsNow()).map(mapSnapshot)
     }
 
     public func currentSnapshot(atMs: UInt64) -> MobileRideMapSnapshotDto? {
@@ -734,7 +731,7 @@ public final class MobileRideMapState: @unchecked Sendable {
         sample: MobilePhoneLocationSampleDto
     ) throws -> MobileRideMapDecisionDto {
         guard let horizontalAccuracyMeters = sample.horizontalAccuracyMeters else {
-            throw MobileRideMapError.InvalidLocation
+            throw MobileRideMapError.invalidLocation
         }
         return try withCore {
             map(try $0.ingestLocation(
@@ -752,32 +749,15 @@ public final class MobileRideMapState: @unchecked Sendable {
     /// A pending location is not capture-admitted until this method returns its accepted
     /// outcome. Callers should poll from a bounded scheduler and publish each terminal result.
     public func pollLocationWrites() -> [MobileRideMapDecisionDto] {
-        core?.pollLocationWrites().map(map) ?? []
+        guard let core else {
+            guard case let .storageError(message)? = storageUnavailableError else { return [] }
+            return [.storageError(message: message)]
+        }
+        return core.pollLocationWrites().map(map)
     }
 
     public func pointsAfter(afterCursor: UInt64?, limit: UInt32) throws -> MobileRideMapPointBatchDto {
         try withCore { map(try $0.pointsAfter(afterCursor: afterCursor, limit: limit)) }
-    }
-
-    /// Returns the Rust recorder's bounded active-route tail for live recovery.
-    ///
-    /// Unlike `pointsAfter`, this never starts at sequence zero or scans durable history.
-    public func latestRoutePoints() throws -> MobileRideMapPointBatchDto {
-        try withCore {
-            var cursor: UInt64?
-            var tail: [MobileRideMapPointDto] = []
-            var hasMore = true
-            while hasMore {
-                let page = try $0.pointsAfter(afterCursor: cursor, limit: 500)
-                tail.append(contentsOf: page.points.map(mapPoint))
-                if tail.count > Self.latestRoutePointLimit {
-                    tail.removeFirst(tail.count - Self.latestRoutePointLimit)
-                }
-                cursor = page.nextCursor
-                hasMore = page.hasMore
-            }
-            return MobileRideMapPointBatchDto(points: tail, nextCursor: nil, hasMore: false)
-        }
     }
 
     /// Projects the Rust-owned recorder tail for a bounded map display.
@@ -818,7 +798,7 @@ public final class MobileRideMapState: @unchecked Sendable {
         cancellation: MobileRideMapProjectionCancellation? = nil
     ) throws -> MobileRideMapRouteProjection {
         guard let database else {
-            throw storageUnavailableError ?? .Storage("Rust ride database is unavailable")
+            throw storageUnavailableError ?? .storageError("Rust ride database is unavailable")
         }
         do {
             let options = MobileRideMapRouteProjectionOptionsDto(
@@ -844,7 +824,7 @@ public final class MobileRideMapState: @unchecked Sendable {
 
     public func storedHistoryVehicleOptions() throws -> [MobileRideMapHistoryVehicleOptionDto] {
         guard let database else {
-            throw storageUnavailableError ?? .Storage("Rust ride database is unavailable")
+            throw storageUnavailableError ?? .storageError("Rust ride database is unavailable")
         }
         do {
             return try database.listRideHistoryVehicleOptions().map {
@@ -860,7 +840,7 @@ public final class MobileRideMapState: @unchecked Sendable {
 
     public func storedHistoryRide(rideID: String) throws -> MobileRideMapHistorySummaryDto? {
         guard let database else {
-            throw storageUnavailableError ?? .Storage("Rust ride database is unavailable")
+            throw storageUnavailableError ?? .storageError("Rust ride database is unavailable")
         }
         do {
             let ride = try database.findRide(rideId: MobileRideIdDto(value: rideID))
@@ -876,7 +856,7 @@ public final class MobileRideMapState: @unchecked Sendable {
         filter: MobileRideHistoryFilterDto? = nil
     ) throws -> MobileRideMapHistoryPageDto {
         guard let database else {
-            throw storageUnavailableError ?? .Storage("Rust ride database is unavailable")
+            throw storageUnavailableError ?? .storageError("Rust ride database is unavailable")
         }
         do {
             let filter = filter ?? MobileRideHistoryFilterDto(
@@ -905,7 +885,7 @@ public final class MobileRideMapState: @unchecked Sendable {
         privacy: MobileRideMapRoutePrivacyPolicy = .precise
     ) throws -> MobileRideMapHistoryContextProjection {
         guard let database else {
-            throw storageUnavailableError ?? .Storage("Rust ride database is unavailable")
+            throw storageUnavailableError ?? .storageError("Rust ride database is unavailable")
         }
         do {
             let ffiBudget = MobileRideHistoryContextBudgetDto(
@@ -927,9 +907,18 @@ public final class MobileRideMapState: @unchecked Sendable {
         }
     }
 
+    private static func monotonicMillisecondsNow() -> UInt64 {
+        DispatchTime.now().uptimeNanoseconds / 1_000_000
+    }
+
+    private func mapHistoryTelemetryState(_ ride: MobileRideRecordDto) -> MobileRideMapTelemetryStateDto {
+        guard ride.associatedVehicle != nil else { return .gpsOnly }
+        return ride.lastTelemetryAtMilliseconds == nil ? .associatedNoTelemetry : .associatedStale
+    }
+
     private func mapHistorySummary(_ ride: MobileRideRecordDto) -> MobileRideMapHistorySummaryDto {
         MobileRideMapHistorySummaryDto(
-            rideId: ride.id.value,
+            rideID: ride.id.value,
             state: mapState(ride.state),
             summary: MobileRideMapSummaryDto(
                 pointCount: ride.summary.pointCount,
@@ -943,16 +932,13 @@ public final class MobileRideMapState: @unchecked Sendable {
             associatedVehicle: ride.associatedVehicle,
             candidateVehicleName: ride.candidateVehicleName,
             associatedVehicleName: ride.associatedVehicleName,
-            telemetryState: MobileRideMapHistorySummaryDto.telemetryState(
-                associatedVehicle: ride.associatedVehicle,
-                lastTelemetryAtMilliseconds: ride.lastTelemetryAtMilliseconds
-            )
+            telemetryState: mapHistoryTelemetryState(ride)
         )
     }
 
     public func storedPointsAfter(rideId: String, afterCursor: UInt64?, limit: UInt32) throws -> MobileRideMapPointBatchDto {
         guard let database else {
-            throw storageUnavailableError ?? .Storage("Rust ride database is unavailable")
+            throw storageUnavailableError ?? .storageError("Rust ride database is unavailable")
         }
         do {
             let page = try database.routePoints(
@@ -976,7 +962,7 @@ public final class MobileRideMapState: @unchecked Sendable {
 
     private func mapSnapshot(_ snapshot: MobileRideMapCoreSnapshotDto) -> MobileRideMapSnapshotDto {
         MobileRideMapSnapshotDto(
-            rideId: snapshot.rideId,
+            rideID: snapshot.rideId,
             state: mapState(snapshot.state),
             summary: MobileRideMapSummaryDto(
                 pointCount: snapshot.summary.pointCount,
@@ -1088,7 +1074,7 @@ public final class MobileRideMapState: @unchecked Sendable {
         case let .ignored(reason):
             return .ignored(reason: map(reason))
         case let .storageError(message):
-            return .storageError(message: message, retryable: false)
+            return .storageError(message: message)
         }
     }
 
@@ -1167,12 +1153,14 @@ public final class MobileRideMapState: @unchecked Sendable {
 
     private func mapState(_ state: MobileRideLifecycleStateDto) -> MobileRideMapStateDto {
         switch state {
-        case .active: return .recording
+        case .draft: return .draft
+        case .active: return .active
         case .paused: return .paused
-        case .stopped, .interrupted: return .stopped
-        case .saved, .imported: return .saved
-        case .draft: return .stopped
+        case .stopped: return .stopped
+        case .interrupted: return .interrupted
         case .discarded: return .discarded
+        case .saved: return .saved
+        case .imported: return .imported
         }
     }
 
@@ -1185,24 +1173,24 @@ public final class MobileRideMapState: @unchecked Sendable {
         }
         if let error = error as? MobileRideDatabaseError {
             switch error {
-            case .NotFound: return .RideNotFound
-            case .InvalidTransition, .InvalidRideState: return .InvalidTransition
+            case .NotFound: return .rideNotFound
+            case .InvalidTransition, .InvalidRideState: return .invalidTransition
             case .Cancelled: return .cancelled
-            default: return .Storage(String(describing: error))
+            default: return .storageError(String(describing: error))
             }
         }
-        return .Storage(String(describing: error))
+        return .storageError(String(describing: error))
     }
 
     private static func mapCoreError(_ error: MobileRideMapCoreErrorDto) -> MobileRideMapError {
         switch error {
-        case .AlreadyRecording: return .AlreadyRecording
-        case .NoActiveRide: return .NoActiveRide
-        case .InvalidTransition: return .InvalidTransition
-        case .InvalidLocation: return .InvalidLocation
-        case .InvalidRouteProjection: return .InvalidRouteProjection
+        case .AlreadyRecording: return .alreadyRecording
+        case .NoActiveRide: return .noActiveRide
+        case .InvalidTransition: return .invalidTransition
+        case .InvalidLocation: return .invalidLocation
+        case .InvalidRouteProjection: return .invalidRouteProjection
         case .Cancelled: return .cancelled
-        case let .Storage(message): return .Storage(message)
+        case let .Storage(message): return .storageError(message)
         }
     }
 }
