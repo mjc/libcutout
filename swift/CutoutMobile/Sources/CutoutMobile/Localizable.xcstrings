@@ -821,6 +821,54 @@
       "comment" : "Footpad ADC state with no reported reading.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "unavailable" } } }
     },
+    "ride_map.segment.background_gap" : {
+      "comment" : "Label for a segment that begins after a background-location gap.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Background gap" } } }
+    },
+    "ride_map.segment.canonical_singleton" : {
+      "comment" : "Accessibility text for a canonical route segment containing one point.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Single-point segment: %1$@" } } }
+    },
+    "ride_map.segment.display_singleton" : {
+      "comment" : "Accessibility text for one displayed point from a route segment.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Single displayed point from %1$@ segment (%2$@ points)" } } }
+    },
+    "ride_map.segment.import_boundary" : {
+      "comment" : "Label for a segment that begins at an import boundary.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Import boundary" } } }
+    },
+    "ride_map.segment.initial" : {
+      "comment" : "Label for the initial segment of a ride.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Initial segment" } } }
+    },
+    "ride_map.segment.resume" : {
+      "comment" : "Label for a segment resumed after a pause or reconnect.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Resumed segment" } } }
+    },
+    "ride_map.segment.singleton_background_gap" : {
+      "comment" : "Accessibility label for a single-point background-gap segment.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Single background-gap point" } } }
+    },
+    "ride_map.segment.singleton_import_boundary" : {
+      "comment" : "Accessibility label for a single-point import-boundary segment.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Single import-boundary point" } } }
+    },
+    "ride_map.segment.singleton_initial" : {
+      "comment" : "Accessibility label for a single-point initial segment.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Single initial point" } } }
+    },
+    "ride_map.segment.singleton_resume" : {
+      "comment" : "Accessibility label for a single-point resumed segment.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Single resumed point" } } }
+    },
+    "ride_map.segment.singleton_unknown" : {
+      "comment" : "Accessibility label for a single-point segment with an unknown start reason.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Single point with unknown segment reason" } } }
+    },
+    "ride_map.segment.unknown" : {
+      "comment" : "Label for a segment with an unknown start reason.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Unknown segment reason" } } }
+    },
     "tab.reason.map_unavailable" : {
       "comment" : "Reason shown when the Map tab is disabled.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Map is not available yet." } } }
