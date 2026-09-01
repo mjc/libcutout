@@ -344,7 +344,6 @@ final class CutoutAppModel {
                 ) else {
                     return
                 }
-                guard let result else { return }
                 self.rideMapPoints = Array(result.0.suffix(previewLimit))
                 self.applyLiveProjection(result.1)
             } catch {
@@ -961,10 +960,8 @@ final class CutoutAppModel {
     private nonisolated static func collectRideMapActiveTail(
         state: MobileRideMapState,
         previewLimit: Int
-    ) throws -> ([MobileRideMapPointDto], MobileRideMapRouteProjection)? {
-        guard let tail = try state.latestRoutePoints() else {
-            return nil
-        }
+    ) throws -> ([MobileRideMapPointDto], MobileRideMapRouteProjection) {
+        let tail = try state.latestRoutePoints()
         let projection = try state.projectPoints(budget: UInt32(previewLimit))
         return (tail.points, projection)
     }
