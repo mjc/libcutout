@@ -292,7 +292,7 @@ public struct MobileRideMapSegmentDisplayMetadata: Equatable, Hashable, Sendable
         UInt64(segments.lazy.filter(\.isBackgroundGap).count)
     }
 
-    init(
+    public init(
         segmentId: UInt64,
         startReason: MobileRideMapSegmentStartReason,
         visiblePointCount: UInt64,
@@ -324,7 +324,7 @@ public struct MobileRideMapRouteProjection: Equatable, Hashable, Sendable {
     public let canonicalStartVisible: Bool
     public let canonicalEndVisible: Bool
 
-    init(
+    public init(
         points: [MobileRideMapRouteDisplayPoint],
         segments: [MobileRideMapSegmentDisplayMetadata],
         sourcePointCount: UInt64,
@@ -383,7 +383,7 @@ public struct MobileRideMapRouteEndpointMetadata: Equatable, Hashable, Sendable 
     public let canonicalStartVisible: Bool
     public let canonicalEndVisible: Bool
 
-    init(
+    public init(
         canonicalStartSequence: UInt64? = nil,
         canonicalEndSequence: UInt64? = nil,
         canonicalStartVisible: Bool = false,
@@ -589,3 +589,608 @@ public enum MobileRideMapDecisionDto: Equatable, Hashable, Sendable {
     case storageError(message: String)
 }
 
+/// Swift keeps only presentation DTOs and the canonical history handle. Rust owns all active
+/// lifecycle, association, admission, locking, and live-route projection state. The FFI core
+/// serializes every mutation, so this adapter is safe to call from the BLE and location queues.
+public final class MobileRideMapState: @unchecked Sendable {
+    private let core: MobileRideMapCore?
+    private let database: RideDatabaseHandle?
+    public let initializationError: MobileRideMapError?
+    private let storageUnavailableError: MobileRideMapError?
+
+#if DEBUG
+    private static let debugDatabase: RideDatabaseHandle? = {
+        let path = FileManager.default.temporaryDirectory
+            .appendingPathComponent("cutout-map-test-\(UUID().uuidString).sqlite")
+            .path
+        return try? openRideDatabase(path: path)
+    }()
+
+    /// Creates a fresh durable map state for deterministic tests only.
+    public convenience init() {
+        guard let database = Self.debugDatabase else {
+            self.init(storageUnavailable: "Rust ride database is unavailable")
+            return
+        }
+        self.init(database: database)
+        if let core, core.currentSnapshot(atMs: Self.monotonicMillisecondsNow()) != nil {
+            _ = try? core.discard()
+        }
+    }
+#endif
+
+    public init(database: RideDatabaseHandle) {
+        let core = MobileRideMapCore.withDatabase(database: database)
+        let initializationError = core.initializationError().map(Self.mapCoreError)
+        self.core = initializationError == nil ? core : nil
+        self.database = database
+        self.initializationError = initializationError
+        storageUnavailableError = initializationError
+    }
+
+    init(storageUnavailable message: String) {
+        core = nil
+        database = nil
+        let error = MobileRideMapError.storageError(message)
+        initializationError = error
+        storageUnavailableError = error
+    }
+
+    private func requireCore() throws -> MobileRideMapCore {
+        guard let core else {
+            throw storageUnavailableError ?? .storageError("Rust ride database is unavailable")
+        }
+        return core
+    }
+
+    private func withCore<T>(_ operation: (MobileRideMapCore) throws -> T) throws -> T {
+        do {
+            return try operation(requireCore())
+        } catch {
+            throw map(error)
+        }
+    }
+
+    public func currentSnapshot() -> MobileRideMapSnapshotDto? {
+        core?.currentSnapshot(atMs: Self.monotonicMillisecondsNow()).map(mapSnapshot)
+    }
+
+    public func currentSnapshot(atMs: UInt64) -> MobileRideMapSnapshotDto? {
+        core?.currentSnapshot(atMs: atMs).map(mapSnapshot)
+    }
+
+    public func startGpsOnly(atMs: UInt64, lastConnectedVehicle: String?) throws -> MobileRideMapSnapshotDto {
+        try withCore {
+            mapSnapshot(try $0.startGpsOnly(atMs: atMs, lastConnectedVehicle: lastConnectedVehicle))
+        }
+    }
+
+    public func ensureRecordingForVehicle(
+        platformIdentifier: String,
+        atMs: UInt64
+    ) throws -> MobileRideMapSnapshotDto {
+        try withCore {
+            mapSnapshot(try $0.ensureRecordingForVehicle(
+                platformIdentifier: platformIdentifier,
+                atMs: atMs
+            ))
+        }
+    }
+
+    public func pause(atMs: UInt64) throws -> MobileRideMapSnapshotDto {
+        try transition { try $0.pauseAt(atMs: atMs) }
+    }
+
+    public func resume(atMs: UInt64) throws -> MobileRideMapSnapshotDto {
+        try transition { try $0.resumeAt(atMs: atMs) }
+    }
+
+    public func stop(atMs: UInt64) throws -> MobileRideMapSnapshotDto {
+        try transition { try $0.stopAt(atMs: atMs) }
+    }
+
+    public func save() throws -> MobileRideMapSnapshotDto {
+        try transition { try $0.save() }
+    }
+
+    public func discard() throws -> MobileRideMapSnapshotDto {
+        try transition { try $0.discard() }
+    }
+
+    public func observeVehicleConnection(platformIdentifier: String, atMs: UInt64) throws -> MobileRideMapAssociationDto {
+        try withCore {
+            map(try $0.observeVehicleConnection(platformIdentifier: platformIdentifier, atMs: atMs))
+        }
+    }
+
+    public func observeTelemetry(atMs: UInt64) throws -> MobileRideMapTelemetryObservation {
+        try withCore { map(try $0.observeTelemetry(atMs: atMs)) }
+    }
+
+    public func ingestLocation(
+        monotonicMs: UInt64,
+        wallClockUnixMs: UInt64,
+        latitudeDegrees: Double,
+        longitudeDegrees: Double,
+        horizontalAccuracyMeters: Double
+    ) throws -> MobileRideMapDecisionDto {
+        return try withCore {
+            map(try $0.ingestLocation(
+                monotonicMs: monotonicMs,
+                wallClockUnixMs: wallClockUnixMs,
+                latitudeDegrees: latitudeDegrees,
+                longitudeDegrees: longitudeDegrees,
+                horizontalAccuracyMeters: horizontalAccuracyMeters
+            ))
+        }
+    }
+
+    /// Ingests the same validated phone sample used by the capture writer.
+    public func ingestLocation(
+        monotonicMs: UInt64,
+        sample: MobilePhoneLocationSampleDto
+    ) throws -> MobileRideMapDecisionDto {
+        guard let horizontalAccuracyMeters = sample.horizontalAccuracyMeters else {
+            throw MobileRideMapError.invalidLocation
+        }
+        return try withCore {
+            map(try $0.ingestLocation(
+                monotonicMs: monotonicMs,
+                wallClockUnixMs: sample.wallClockUnixMs,
+                latitudeDegrees: sample.latitudeDegrees,
+                longitudeDegrees: sample.longitudeDegrees,
+                horizontalAccuracyMeters: horizontalAccuracyMeters
+            ))
+        }
+    }
+
+    /// Drains durable outcomes without waiting for the SQLite worker.
+    ///
+    /// A pending location is not capture-admitted until this method returns its accepted
+    /// outcome. Callers should poll from a bounded scheduler and publish each terminal result.
+    public func pollLocationWrites() -> [MobileRideMapDecisionDto] {
+        guard let core else {
+            guard case let .storageError(message)? = storageUnavailableError else { return [] }
+            return [.storageError(message: message)]
+        }
+        return core.pollLocationWrites().map(map)
+    }
+
+    public func pointsAfter(afterCursor: UInt64?, limit: UInt32) throws -> MobileRideMapPointBatchDto {
+        try withCore { map(try $0.pointsAfter(afterCursor: afterCursor, limit: limit)) }
+    }
+
+    /// Projects the Rust-owned recorder tail for a bounded map display.
+    ///
+    /// This is a presentation projection over the active recorder tail. Durable history uses
+    /// `projectStoredPoints`, so the application layer never performs route decimation itself.
+    public func projectPoints(
+        budget: UInt32,
+        viewport: MobileGeoBoundsDto? = nil,
+        privacy: MobileRideMapRoutePrivacyPolicy = .precise,
+        cancellation: MobileLiveRideMapProjectionCancellation? = nil
+    ) throws -> MobileRideMapRouteProjection {
+        try withCore {
+            let options = MobileRideMapRouteProjectionOptionsDto(
+                viewport: viewport,
+                budget: budget,
+                privacy: Self.ffiPrivacyPolicy(privacy)
+            )
+            if let cancellation {
+                return map(try $0.projectPointsCancellable(
+                    options: options,
+                    cancellation: cancellation.ffi
+                ))
+            }
+            return map(try $0.projectPoints(options: options))
+        }
+    }
+
+    /// Projects a durable route through Rust-owned viewport, LOD, and privacy policy.
+    ///
+    /// The raw route remains a persistence concern; only bounded display points cross into the
+    /// application layer.
+    public func projectStoredPoints(
+        rideID: String,
+        budget: UInt32,
+        viewport: MobileGeoBoundsDto? = nil,
+        privacy: MobileRideMapRoutePrivacyPolicy = .precise,
+        cancellation: MobileRideMapProjectionCancellation? = nil
+    ) throws -> MobileRideMapRouteProjection {
+        guard let database else {
+            throw storageUnavailableError ?? .storageError("Rust ride database is unavailable")
+        }
+        do {
+            let options = MobileRideMapRouteProjectionOptionsDto(
+                viewport: viewport,
+                budget: budget,
+                privacy: Self.ffiPrivacyPolicy(privacy)
+            )
+            let projectionCancellation = cancellation ?? MobileRideMapProjectionCancellation()
+            let projection = try database.projectRoutePointsCancellable(
+                rideId: MobileRideIdDto(value: rideID),
+                options: options,
+                cancellation: projectionCancellation.ffi
+            )
+            return map(projection)
+        } catch {
+            throw map(error)
+        }
+    }
+
+    public func storedSummaries(limit: UInt32) throws -> [MobileRideMapHistorySummaryDto] {
+        try storedHistoryPage(cursor: nil, limit: limit).summaries
+    }
+
+    public func storedHistoryVehicleOptions() throws -> [MobileRideMapHistoryVehicleOptionDto] {
+        guard let database else {
+            throw storageUnavailableError ?? .storageError("Rust ride database is unavailable")
+        }
+        do {
+            return try database.listRideHistoryVehicleOptions().map {
+                MobileRideMapHistoryVehicleOptionDto(
+                    platformIdentifier: $0.platformIdentifier,
+                    displayName: $0.displayName
+                )
+            }
+        } catch {
+            throw map(error)
+        }
+    }
+
+    public func storedHistoryRide(rideID: String) throws -> MobileRideMapHistorySummaryDto? {
+        guard let database else {
+            throw storageUnavailableError ?? .storageError("Rust ride database is unavailable")
+        }
+        do {
+            let ride = try database.findRide(rideId: MobileRideIdDto(value: rideID))
+            return ride.map(mapHistorySummary)
+        } catch {
+            throw map(error)
+        }
+    }
+
+    public func storedHistoryPage(
+        cursor: MobileRideCursorDto?,
+        limit: UInt32,
+        filter: MobileRideHistoryFilterDto? = nil
+    ) throws -> MobileRideMapHistoryPageDto {
+        guard let database else {
+            throw storageUnavailableError ?? .storageError("Rust ride database is unavailable")
+        }
+        do {
+            let filter = filter ?? MobileRideHistoryFilterDto(
+                createdAfterMilliseconds: nil,
+                vehicleIdentity: nil,
+                searchText: nil
+            )
+            let page = try database.listRidesFiltered(cursor: cursor, filter: filter, limit: limit)
+            let summaries = page.rides.map(mapHistorySummary)
+            return MobileRideMapHistoryPageDto(
+                summaries: summaries,
+                nextCursor: page.nextCursor
+            )
+        } catch {
+            throw map(error)
+        }
+    }
+
+    /// Projects bounded surrounding history routes through Rust-owned filtering, LOD, and
+    /// privacy policy. No raw historical points are accumulated by Swift.
+    public func projectStoredHistoryContext(
+        filter: MobileRideHistoryFilterDto,
+        selectedRideID: String?,
+        budget: MobileRideMapHistoryContextBudget = .overview,
+        viewport: MobileGeoBoundsDto? = nil,
+        privacy: MobileRideMapRoutePrivacyPolicy = .precise
+    ) throws -> MobileRideMapHistoryContextProjection {
+        guard let database else {
+            throw storageUnavailableError ?? .storageError("Rust ride database is unavailable")
+        }
+        do {
+            let ffiBudget = MobileRideHistoryContextBudgetDto(
+                historyPageLimit: budget.historyPageLimit,
+                maxRoutes: budget.maxRoutes,
+                perRouteBudget: budget.perRouteBudget,
+                totalPointBudget: budget.totalPointBudget
+            )
+            let options = MobileRideHistoryContextOptionsDto(
+                filter: filter,
+                selectedRideId: selectedRideID.map(MobileRideIdDto.init(value:)),
+                budget: ffiBudget,
+                viewport: viewport,
+                privacy: Self.ffiPrivacyPolicy(privacy)
+            )
+            return map(try database.projectHistoryContext(options: options))
+        } catch {
+            throw map(error)
+        }
+    }
+
+    private static func monotonicMillisecondsNow() -> UInt64 {
+        DispatchTime.now().uptimeNanoseconds / 1_000_000
+    }
+
+    private func mapHistoryTelemetryState(_ ride: MobileRideRecordDto) -> MobileRideMapTelemetryStateDto {
+        guard ride.associatedVehicle != nil else { return .gpsOnly }
+        return ride.lastTelemetryAtMilliseconds == nil ? .associatedNoTelemetry : .associatedStale
+    }
+
+    private func mapHistorySummary(_ ride: MobileRideRecordDto) -> MobileRideMapHistorySummaryDto {
+        MobileRideMapHistorySummaryDto(
+            rideID: ride.id.value,
+            state: mapState(ride.state),
+            summary: MobileRideMapSummaryDto(
+                pointCount: ride.summary.pointCount,
+                distanceMeters: Double(ride.summary.distanceMillimetres) / 1_000,
+                durationMilliseconds: ride.durationMilliseconds,
+                averageSpeedMillimetresPerSecond: ride.summary.averageSpeedMillimetresPerSecond
+            ),
+            segmentCount: ride.segmentCount,
+            createdAtMilliseconds: ride.createdAtMilliseconds,
+            candidateVehicle: ride.candidateVehicle,
+            associatedVehicle: ride.associatedVehicle,
+            candidateVehicleName: ride.candidateVehicleName,
+            associatedVehicleName: ride.associatedVehicleName,
+            telemetryState: mapHistoryTelemetryState(ride)
+        )
+    }
+
+    public func storedPointsAfter(rideId: String, afterCursor: UInt64?, limit: UInt32) throws -> MobileRideMapPointBatchDto {
+        guard let database else {
+            throw storageUnavailableError ?? .storageError("Rust ride database is unavailable")
+        }
+        do {
+            let page = try database.routePoints(
+                rideId: MobileRideIdDto(value: rideId),
+                cursor: afterCursor.map(MobileRoutePointCursorDto.init(sequence:)),
+                limit: limit
+            )
+            return MobileRideMapPointBatchDto(
+                points: page.points.map(mapStoredPoint),
+                nextCursor: page.nextCursor?.sequence,
+                hasMore: page.nextCursor != nil
+            )
+        } catch {
+            throw map(error)
+        }
+    }
+
+    private func transition(_ operation: (MobileRideMapCore) throws -> MobileRideMapCoreSnapshotDto) throws -> MobileRideMapSnapshotDto {
+        try withCore { mapSnapshot(try operation($0)) }
+    }
+
+    private func mapSnapshot(_ snapshot: MobileRideMapCoreSnapshotDto) -> MobileRideMapSnapshotDto {
+        MobileRideMapSnapshotDto(
+            rideID: snapshot.rideId,
+            state: mapState(snapshot.state),
+            summary: MobileRideMapSummaryDto(
+                pointCount: snapshot.summary.pointCount,
+                distanceMeters: snapshot.summary.distanceMeters,
+                durationMilliseconds: snapshot.summary.durationMilliseconds
+            ),
+            segmentCount: snapshot.segmentCount,
+            associatedVehicle: snapshot.associatedVehicle
+        )
+    }
+
+    private func map(_ batch: MobileRideMapCorePointBatchDto) -> MobileRideMapPointBatchDto {
+        MobileRideMapPointBatchDto(
+            points: batch.points.map(mapPoint),
+            nextCursor: batch.nextCursor,
+            hasMore: batch.hasMore
+        )
+    }
+
+    private func map(_ projection: MobileRideMapRouteProjectionDto) -> MobileRideMapRouteProjection {
+        MobileRideMapRouteProjection(
+            points: projection.points.map { point in
+                MobileRideMapRouteDisplayPoint(
+                    sequence: point.sequence,
+                    segmentId: point.segmentId,
+                    latitudeDegrees: point.latitudeDegrees,
+                    longitudeDegrees: point.longitudeDegrees,
+                    privacyClass: map(point.privacyClass)
+                )
+            },
+            segments: projection.segments.map { segment in
+                MobileRideMapSegmentDisplayMetadata(
+                    segmentId: segment.segmentId,
+                    startReason: map(segment.startReason),
+                    visiblePointCount: segment.visiblePointCount,
+                    canonicalPointCount: segment.canonicalPointCount,
+                    firstVisibleSequence: segment.firstVisibleSequence,
+                    lastVisibleSequence: segment.lastVisibleSequence
+                )
+            },
+            sourcePointCount: projection.sourcePointCount,
+            sourceSegmentCount: projection.sourceSegmentCount,
+            candidatePointCount: projection.candidatePointCount,
+            candidateSegmentCount: projection.candidateSegmentCount,
+            displayedSegmentCount: projection.displayedSegmentCount,
+            backgroundGapCount: projection.backgroundGapCount,
+            canonicalStartSequence: projection.canonicalStartSequence,
+            canonicalEndSequence: projection.canonicalEndSequence,
+            canonicalStartVisible: projection.canonicalStartVisible,
+            canonicalEndVisible: projection.canonicalEndVisible
+        )
+    }
+
+    private static func ffiPrivacyPolicy(
+        _ privacy: MobileRideMapRoutePrivacyPolicy
+    ) -> MobileRideMapRoutePrivacyPolicyDto {
+        switch privacy {
+        case .precise:
+            return .precise
+        case let .grid(e7):
+            return .grid(gridE7: e7)
+        }
+    }
+
+    private func map(
+        _ projection: MobileRideHistoryContextProjectionDto
+    ) -> MobileRideMapHistoryContextProjection {
+        MobileRideMapHistoryContextProjection(
+            routes: projection.routes.map {
+                MobileRideMapHistoryContextRoute(
+                    rideID: $0.rideId.value,
+                    projection: map($0.projection)
+                )
+            },
+            sourceHistoryRouteCount: projection.sourceHistoryRouteCount,
+            contextRouteCount: projection.contextRouteCount,
+            totalDisplayPointCount: projection.totalDisplayPointCount,
+            routesOmittedByBudget: projection.routesOmittedByBudget,
+            historyPageHasMore: projection.historyPageHasMore
+        )
+    }
+
+    private func map(_ privacyClass: MobileRideMapRoutePrivacyClassDto) -> MobileRideMapRoutePrivacyClass {
+        switch privacyClass {
+        case .precise: return .precise
+        case .gridRedacted: return .gridRedacted
+        }
+    }
+
+    private func map(
+        _ reason: MobileRideSegmentStartReasonDto
+    ) -> MobileRideMapSegmentStartReason {
+        switch reason {
+        case .initial: return .initial
+        case .resume: return .resume
+        case .backgroundGap: return .backgroundGap
+        case .importBoundary: return .importBoundary
+        }
+    }
+
+    private func map(_ decision: MobileRideMapCoreDecisionDto) -> MobileRideMapDecisionDto {
+        switch decision {
+        case let .pending(point, segmentStarted):
+            return .pending(point: mapPoint(point), segmentStarted: segmentStarted)
+        case let .accepted(point, segmentStarted):
+            return .accepted(point: mapPoint(point), segmentStarted: segmentStarted)
+        case let .rejected(reason):
+            return .rejected(reason: map(reason))
+        case let .ignored(reason):
+            return .ignored(reason: map(reason))
+        case let .storageError(message):
+            return .storageError(message: message)
+        }
+    }
+
+    private func map(_ reason: CutoutMobileFFI.MobileRideMapDecisionReasonDto) -> MobileRideMapDecisionReason {
+        switch reason {
+        case .rideNotRecording: return .rideNotRecording
+        case .duplicateLocation: return .duplicateLocation
+        case .timestampOutOfOrder: return .timestampOutOfOrder
+        case .accuracyTooLow: return .accuracyTooLow
+        case .unrealisticJump: return .unrealisticJump
+        }
+    }
+
+    private func map(_ association: MobileRideMapCoreAssociationDto) -> MobileRideMapAssociationDto {
+        switch association {
+        case .associated: return .associated
+        case .alreadyAssociated: return .alreadyAssociated
+        case .candidateMissing: return .candidateMissing
+        case .identityMismatch: return .identityMismatch
+        case .timestampOutOfOrder: return .timestampOutOfOrder
+        case .rideNotOpen: return .rideNotOpen
+        case .unknown: return .unknown
+        }
+    }
+
+    private func map(_ observation: CutoutMobileFFI.MobileRideMapTelemetryObservationDto) -> MobileRideMapTelemetryObservation {
+        switch observation {
+        case .observed: return .observed
+        case .alreadyObserved: return .alreadyObserved
+        case .notAssociated: return .notAssociated
+        case .timestampOutOfOrder: return .timestampOutOfOrder
+        case .rideNotOpen: return .rideNotOpen
+        case .unknown: return .unknown
+        }
+    }
+
+    private func mapPoint(_ point: MobileRideMapCorePointDto) -> MobileRideMapPointDto {
+        MobileRideMapPointDto(
+            sequence: point.sequence,
+            segmentId: point.segmentId,
+            startReason: map(point.startReason),
+            latitudeDegrees: point.latitudeDegrees,
+            longitudeDegrees: point.longitudeDegrees,
+            wallClockUnixMs: point.wallClockUnixMs,
+            monotonicMs: point.monotonicMs,
+            horizontalAccuracyMeters: point.horizontalAccuracyMeters,
+            telemetryState: map(point.telemetryState)
+        )
+    }
+
+    private func mapStoredPoint(_ point: MobileRoutePointDto) -> MobileRideMapPointDto {
+        MobileRideMapPointDto(
+            sequence: point.sequence,
+            segmentId: point.segmentId,
+            startReason: map(point.startReason),
+            latitudeDegrees: point.location.latitudeDegrees,
+            longitudeDegrees: point.location.longitudeDegrees,
+            wallClockUnixMs: point.location.wallClockUnixMilliseconds,
+            monotonicMs: point.location.monotonicMilliseconds,
+            horizontalAccuracyMeters: point.location.horizontalAccuracyMillimetres.map {
+                Double($0) / 1_000
+            },
+            telemetryState: map(point.telemetryState)
+        )
+    }
+
+    private func map(_ telemetry: MobileRideMapCoreTelemetryStateDto) -> MobileRideMapTelemetryStateDto {
+        switch telemetry {
+        case .gpsOnly: return .gpsOnly
+        case .associatedNoTelemetry: return .associatedNoTelemetry
+        case .associatedFresh: return .associatedFresh
+        case .associatedStale: return .associatedStale
+        case .unknown: return .unknown
+        }
+    }
+
+    private func mapState(_ state: MobileRideLifecycleStateDto) -> MobileRideMapStateDto {
+        switch state {
+        case .draft: return .draft
+        case .active: return .active
+        case .paused: return .paused
+        case .stopped: return .stopped
+        case .interrupted: return .interrupted
+        case .discarded: return .discarded
+        case .saved: return .saved
+        case .imported: return .imported
+        }
+    }
+
+    private func map(_ error: Error) -> MobileRideMapError {
+        if let error = error as? MobileRideMapError {
+            return error
+        }
+        if let error = error as? MobileRideMapCoreErrorDto {
+            return Self.mapCoreError(error)
+        }
+        if let error = error as? MobileRideDatabaseError {
+            switch error {
+            case .NotFound: return .rideNotFound
+            case .InvalidTransition, .InvalidRideState: return .invalidTransition
+            case .Cancelled: return .cancelled
+            default: return .storageError(String(describing: error))
+            }
+        }
+        return .storageError(String(describing: error))
+    }
+
+    private static func mapCoreError(_ error: MobileRideMapCoreErrorDto) -> MobileRideMapError {
+        switch error {
+        case .AlreadyRecording: return .alreadyRecording
+        case .NoActiveRide: return .noActiveRide
+        case .InvalidTransition: return .invalidTransition
+        case .InvalidLocation: return .invalidLocation
+        case .InvalidRouteProjection: return .invalidRouteProjection
+        case .Cancelled: return .cancelled
+        case let .Storage(message): return .storageError(message)
+        }
+    }
+}
