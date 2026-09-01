@@ -140,10 +140,6 @@ protocol ConnectionReconnectScheduling: AnyObject {
     func schedule(after delayMilliseconds: UInt64, operation: @escaping () -> Void) -> any ConnectionReconnectCancellable
 }
 
-protocol RideMapWritePollingScheduling: AnyObject {
-    func schedule(after delayMilliseconds: UInt64, operation: @escaping () -> Void)
-}
-
 final class ConnectionReconnectController {
     private let scheduler: any ConnectionReconnectScheduling
     private var pending: (any ConnectionReconnectCancellable)?
@@ -195,22 +191,6 @@ private final class MainQueueReconnectScheduler: ConnectionReconnectScheduling {
     }
 }
 
-private final class UtilityQueueRideMapPollScheduler: RideMapWritePollingScheduling {
-    private let queue = DispatchQueue(
-        label: "io.cutout.ride-map-location-poll",
-        qos: .utility
-    )
-
-    deinit {}
-
-    func schedule(after delayMilliseconds: UInt64, operation: @escaping () -> Void) {
-        queue.asyncAfter(
-            deadline: .now() + .milliseconds(Int(clamping: delayMilliseconds)),
-            execute: DispatchWorkItem(block: operation)
-        )
-    }
-}
-
 enum CoreBluetoothRestorationPolicy {
     static let restorationIdentifier = "io.cutout.central"
 
@@ -229,15 +209,6 @@ enum CoreBluetoothRestorationPolicy {
             return nil
         }
         return savedPlatformIdentifier
-    }
-}
-
-enum RideMapConnectionPolicy {
-    static func shouldEnsureRecording(
-        hasObservedConnection: Bool,
-        hasSelectedRoute: Bool
-    ) -> Bool {
-        !hasObservedConnection && hasSelectedRoute
     }
 }
 
@@ -336,94 +307,9 @@ struct BoundedDiagnosticLog {
     }
 }
 
-/// Retains phone samples until their durable map decision is published.
-///
-/// Rust emits polled write outcomes in enqueue order. Keeping that order here is important because
-/// point sequences restart at zero for every ride; a dictionary keyed only by sequence would let a
-/// late outcome for an older ride consume a newer ride's sample.
-struct PendingPhoneLocationQueue {
-    private struct Entry {
-        let sequence: UInt64
-        let sample: MobilePhoneLocationSampleDto
-    }
-
-    private var entries = [Entry]()
-
-    var isEmpty: Bool { entries.isEmpty }
-
-    var count: Int { entries.count }
-
-    mutating func append(_ sample: MobilePhoneLocationSampleDto, sequence: UInt64) {
-        guard entries.contains(where: { $0.sequence == sequence && $0.sample == sample }) == false else {
-            return
-        }
-        entries.append(Entry(sequence: sequence, sample: sample))
-    }
-
-    mutating func remove(sequence: UInt64, sample: MobilePhoneLocationSampleDto? = nil) {
-        entries.removeAll { entry in
-            entry.sequence == sequence && (sample == nil || entry.sample == sample)
-        }
-    }
-
-    mutating func removeAll() {
-        entries.removeAll(keepingCapacity: true)
-    }
-
-    mutating func take(for decision: MobileRideMapDecisionDto) -> MobilePhoneLocationSampleDto? {
-        let index: Int
-        switch decision {
-        case let .accepted(point, _):
-            guard let matchingIndex = entries.firstIndex(where: { $0.sequence == point.sequence }) else {
-                // A terminal accepted outcome without its retained sample means the Swift and
-                // Rust queues no longer share a trustworthy generation. Drop the remaining
-                // context so polling cannot spin forever or attach a later sequence to the wrong
-                // ride.
-                entries.removeAll(keepingCapacity: true)
-                return nil
-            }
-            index = matchingIndex
-        case .rejected, .ignored, .storageError:
-            guard entries.isEmpty == false else { return nil }
-            index = entries.startIndex
-        case .pending:
-            return nil
-        }
-        return entries.remove(at: index).sample
-    }
-}
-
-/// Tracks the newest location admitted by the map recorder for timestamp ordering.
-///
-/// A location is admitted when Rust accepts it immediately or queues it for durable
-/// persistence. Rejected, ignored, and storage-error outcomes must not move this
-/// boundary, because they were not part of the recorded route.
-struct LocationTimestampAdmission {
-    private(set) var lastAcceptedTimestamp: Date?
-
-    mutating func record(
-        _ timestamp: Date,
-        decision: MobileRideMapDecisionDto
-    ) {
-        switch decision {
-        case .accepted, .pending:
-            guard timestamp.timeIntervalSinceReferenceDate.isFinite else { return }
-            guard lastAcceptedTimestamp.map({ timestamp > $0 }) ?? true else { return }
-            lastAcceptedTimestamp = timestamp
-        case .rejected, .ignored, .storageError:
-            break
-        }
-    }
-
-    mutating func reset() {
-        lastAcceptedTimestamp = nil
-    }
-}
-
 public final class CutoutSessionCore: NSObject {
     public var rideSessionStateHandle: CutoutSessionStateHandle { rustSessionState }
-    public var rideMapStateHandle: MobileRideMapState { rideMapState }
-    public private(set) var rideMapStorageError: String?
+    public var rideMapStateHandle: MobileRideMapState? { rideMapState }
     public private(set) var displayState = RideDisplayState()
     public private(set) var phase = SessionConnectionPhase.starting
     public var records: [String] { diagnosticLog.values }
@@ -435,7 +321,6 @@ public final class CutoutSessionCore: NSObject {
     public private(set) var bmsSnapshot: BmsSnapshot?
     public private(set) var phoneLocationSnapshot = MobilePhoneLocationSnapshotDto(latestSample: nil, gpsSpeed: nil)
     public private(set) var protocolIdentityCandidate: DevicePickerDiscoveryCandidate?
-    public private(set) var rideMapAvailability = MobileRideMapAvailability.checking
 
     public var onDisplayStateChange: ((RideDisplayState) -> Void)?
     public var onPhaseChange: ((SessionConnectionPhase) -> Void)?
@@ -447,16 +332,12 @@ public final class CutoutSessionCore: NSObject {
     public var onFaultHistoryReadbackChange: ((FaultHistoryReadback?) -> Void)?
     public var onBmsSnapshotChange: ((BmsSnapshot?) -> Void)?
     public var onPhoneLocationSnapshotChange: ((MobilePhoneLocationSnapshotDto, MonotonicMilliseconds) -> Void)?
-    public var onRideMapDecisionChange: ((MobileRideMapSnapshotDto, MobileRideMapDecisionDto) -> Void)?
-    public var onRideMapSnapshotChange: ((MobileRideMapSnapshotDto) -> Void)?
-    public var onRideMapErrorChange: ((MobileRideMapError) -> Void)?
-    public var onRideMapAvailabilityChange: ((MobileRideMapAvailability) -> Void)?
     public var onProtocolIdentityCandidateChange: ((DevicePickerDiscoveryCandidate?) -> Void)?
     public var onBluetoothRestorationResolved: ((String?) -> Void)?
 
+
     private let clock: MonotonicClock
-    private let wallClock: WallClock
-    private var locationTimestampAdmission = LocationTimestampAdmission()
+    private let wallClock: () -> Date
     private var diagnosticLog = BoundedDiagnosticLog(capacity: 2_048)
     private let bleQueue = DispatchQueue(label: "io.cutout.corebluetooth")
     private let bleQueueKey = DispatchSpecificKey<Void>()
@@ -469,7 +350,6 @@ public final class CutoutSessionCore: NSObject {
     private var liveOwner: CoreBluetoothLiveSessionOwner?
     private var selectedModel: ElectricUnicycleModel?
     private var selectedRoute: DevicePickerConnectionRoute?
-    private var hasObservedRideMapConnection = false
     private var chargeEstimateProfile: ChargeEstimateProfile?
     private var vescBoardProfile: VescBoardProfile?
     private var isRecordOnly = false
@@ -492,25 +372,9 @@ public final class CutoutSessionCore: NSObject {
     private var displayPublishWorkItem: DispatchWorkItem?
     private var lastDisplayPublication: MonotonicMilliseconds?
     private var lastPublishedWarningSeverity: EucRideWarningSeverity?
+    private let rideMapState: MobileRideMapState?
     private let phoneLocationState = MobilePhoneLocationState()
-    private let admittedPhoneLocationState = MobilePhoneLocationState()
-    private let rideMapPollScheduler: any RideMapWritePollingScheduling
-    /// Serializes Core Location ingestion, durable polling, and lifecycle transitions.
-    ///
-    /// Rust serializes its own state, but Swift also retains the sample associated with each
-    /// pending write so a later accepted outcome can enter PEVCAP. This lock makes retiring that
-    /// Swift-side context atomic with the Rust lifecycle transition; otherwise a callback could
-    /// append an old sample immediately after a terminal transition drained its Rust ticket.
-    private let rideMapLifecycleLock = NSLock()
-    private let pendingPhoneLocationLock = NSLock()
-    private var pendingPhoneLocations = PendingPhoneLocationQueue()
-    /// Protected by `pendingPhoneLocationLock`; stale scheduled work checks this generation.
-    private var rideMapPollGeneration: UInt64 = 0
-    private var rideMapPollScheduled = false
-    private let rideMapState: MobileRideMapState
-    private var didRequestWhenInUseLocationAuthorization = false
     private var didRequestAlwaysLocationAuthorization = false
-    private var locationUpdatesStarted = false
     private var didResolveBluetoothRestoration = false
 #if DEBUG
     private let testScript: CutoutSessionTestScript?
@@ -522,116 +386,13 @@ public final class CutoutSessionCore: NSObject {
         let manager = CLLocationManager()
         manager.delegate = self
         manager.desiredAccuracy = kCLLocationAccuracyBestForNavigation
-        manager.distanceFilter = 5
         manager.activityType = .fitness
-#if os(iOS)
         manager.allowsBackgroundLocationUpdates = true
-#endif
         return manager
     }()
 
-    deinit {
-        if locationUpdatesStarted {
-            locationManager.stopUpdatingLocation()
-        }
-    }
-
     public override convenience init() {
         self.init(clock: MonotonicClock())
-    }
-
-    /// Starts a fresh location-admission boundary for a new ride-map recording.
-    public func resetRideMapLocationAdmission() {
-        withRideMapLifecycleLock {
-            locationTimestampAdmission.reset()
-        }
-    }
-
-    private func withRideMapLifecycleLock<Result>(
-        _ operation: () throws -> Result
-    ) rethrows -> Result {
-        rideMapLifecycleLock.lock()
-        defer { rideMapLifecycleLock.unlock() }
-        return try operation()
-    }
-
-    /// Retires the Swift-side context after Rust has completed a lifecycle transition.
-    ///
-    /// Rust consumes pending writes while stopping/saving/discarding. There is therefore no later
-    /// Rust decision for Swift to poll and use to remove its retained sample. A generation bump
-    /// invalidates already-scheduled work, while clearing the queue prevents sequence-zero reuse
-    /// from matching a previous ride's sample.
-    private func retirePendingPhoneLocations() {
-        pendingPhoneLocationLock.lock()
-        pendingPhoneLocations.removeAll()
-        rideMapPollGeneration &+= 1
-        rideMapPollScheduled = false
-        pendingPhoneLocationLock.unlock()
-        admittedPhoneLocationState.clear()
-    }
-
-    /// Starts a GPS-only ride through the Core-owned lifecycle barrier.
-    ///
-    /// App-layer lifecycle commands must use these methods instead of mutating
-    /// `rideMapStateHandle` directly. The barrier retires Swift's pending sample context whenever
-    /// Rust has completed a lifecycle transition, preventing delayed poll work from attaching a
-    /// prior ride's sample to a new ride.
-    public func startRideMapGpsOnly(
-        atMs: UInt64,
-        lastConnectedVehicle: String?
-    ) throws -> MobileRideMapSnapshotDto {
-        try withRideMapLifecycleLock {
-            let snapshot = try rideMapState.startGpsOnly(
-                atMs: atMs,
-                lastConnectedVehicle: lastConnectedVehicle
-            )
-            retirePendingPhoneLocations()
-            startLocationUpdatesIfAuthorized(locationManager)
-            return snapshot
-        }
-    }
-
-    public func pauseRideMap(atMs: UInt64) throws -> MobileRideMapSnapshotDto {
-        try withRideMapLifecycleLock {
-            let snapshot = try rideMapState.pause(atMs: atMs)
-            stopLocationUpdates()
-            return snapshot
-        }
-    }
-
-    public func resumeRideMap(atMs: UInt64) throws -> MobileRideMapSnapshotDto {
-        try withRideMapLifecycleLock {
-            let snapshot = try rideMapState.resume(atMs: atMs)
-            startLocationUpdatesIfAuthorized(locationManager)
-            return snapshot
-        }
-    }
-
-    public func stopRideMap(atMs: UInt64) throws -> MobileRideMapSnapshotDto {
-        try withRideMapLifecycleLock {
-            let snapshot = try rideMapState.stop(atMs: atMs)
-            retirePendingPhoneLocations()
-            stopLocationUpdates()
-            return snapshot
-        }
-    }
-
-    public func saveRideMap() throws -> MobileRideMapSnapshotDto {
-        try withRideMapLifecycleLock {
-            let snapshot = try rideMapState.save()
-            retirePendingPhoneLocations()
-            stopLocationUpdates()
-            return snapshot
-        }
-    }
-
-    public func discardRideMap() throws -> MobileRideMapSnapshotDto {
-        try withRideMapLifecycleLock {
-            let snapshot = try rideMapState.discard()
-            retirePendingPhoneLocations()
-            stopLocationUpdates()
-            return snapshot
-        }
     }
 
 #if DEBUG
@@ -641,12 +402,12 @@ public final class CutoutSessionCore: NSObject {
 
     init(
         clock: MonotonicClock,
-        wallClock: WallClock = WallClock(),
         testScript: CutoutSessionTestScript? = nil,
         reconnectScheduler: any ConnectionReconnectScheduling = MainQueueReconnectScheduler(),
         reconnectJitter: @escaping () -> Double = { Double.random(in: 0...1) },
-        rideMapPollScheduler: any RideMapWritePollingScheduling = UtilityQueueRideMapPollScheduler(),
-        selectedDeviceStore: DevicePickerSelectionStore = DevicePickerSelectionStore()
+        selectedDeviceStore: DevicePickerSelectionStore = DevicePickerSelectionStore(),
+        wallClock: @escaping () -> Date = { Date() },
+        rideMapState: MobileRideMapState? = nil
     ) {
         let rustSessionState = CutoutSessionStateHandle()
         self.rustSessionState = rustSessionState
@@ -657,32 +418,20 @@ public final class CutoutSessionCore: NSObject {
         )
         self.clock = clock
         self.wallClock = wallClock
-        self.locationTimestampAdmission = LocationTimestampAdmission()
+        self.rideMapState = rideMapState
         self.testScript = testScript
         self.reconnectController = ConnectionReconnectController(scheduler: reconnectScheduler)
         self.reconnectJitter = reconnectJitter
-        self.rideMapPollScheduler = rideMapPollScheduler
         self.selectedDeviceStore = selectedDeviceStore
-        if testScript == nil {
-            let storage = Self.makeRideMapState()
-            self.rideMapState = storage.state
-            self.rideMapStorageError = storage.error
-        } else {
-            self.rideMapState = MobileRideMapState()
-            self.rideMapStorageError = nil
-        }
         super.init()
         bleQueue.setSpecific(key: bleQueueKey, value: ())
-        if rideMapStorageError != nil {
-            rideMapAvailability = .storageUnavailable
-        }
     }
 #else
     init(
         clock: MonotonicClock,
-        wallClock: WallClock = WallClock(),
-        rideMapPollScheduler: any RideMapWritePollingScheduling = UtilityQueueRideMapPollScheduler(),
-        selectedDeviceStore: DevicePickerSelectionStore = DevicePickerSelectionStore()
+        selectedDeviceStore: DevicePickerSelectionStore = DevicePickerSelectionStore(),
+        wallClock: @escaping () -> Date = { Date() },
+        rideMapState: MobileRideMapState? = nil
     ) {
         let rustSessionState = CutoutSessionStateHandle()
         self.rustSessionState = rustSessionState
@@ -693,30 +442,14 @@ public final class CutoutSessionCore: NSObject {
         )
         self.clock = clock
         self.wallClock = wallClock
-        self.locationTimestampAdmission = LocationTimestampAdmission()
+        self.rideMapState = rideMapState
         self.reconnectController = ConnectionReconnectController(scheduler: MainQueueReconnectScheduler())
         self.reconnectJitter = { Double.random(in: 0...1) }
-        self.rideMapPollScheduler = rideMapPollScheduler
         self.selectedDeviceStore = selectedDeviceStore
-        let storage = Self.makeRideMapState()
-        self.rideMapState = storage.state
-        self.rideMapStorageError = storage.error
         super.init()
         bleQueue.setSpecific(key: bleQueueKey, value: ())
-        if rideMapStorageError != nil {
-            rideMapAvailability = .storageUnavailable
-        }
     }
 #endif
-
-    private static func makeRideMapState() -> (state: MobileRideMapState, error: String?) {
-        guard let database = RustPersistenceStore.shared else {
-            let error = "Rust ride database is unavailable"
-            return (MobileRideMapState(storageUnavailable: error), error)
-        }
-        let state = MobileRideMapState(database: database)
-        return (state, state.initializationError.map(String.init(describing:)))
-    }
 
     public func start() {
 #if DEBUG
@@ -727,8 +460,6 @@ public final class CutoutSessionCore: NSObject {
         }
 #endif
         _ = locationManager
-        updateRideMapAvailability(locationManager.authorizationStatus)
-        startLocationUpdatesIfAuthorized(locationManager)
         return onBleQueue {
             guard central == nil else {
                 return
@@ -998,7 +729,6 @@ public final class CutoutSessionCore: NSObject {
 
         self.selectedRoute = route
         self.selectedModel = selectedModel
-        ensureRideMapRecordingForConnection(platformIdentifier: platformIdentifier)
         testScriptWorkItem?.cancel()
         testScriptUpdateWorkItem?.cancel()
         setPhase(.discoveringServices)
@@ -1219,19 +949,6 @@ public final class CutoutSessionCore: NSObject {
     func applyNotificationStep(_ step: CoreBluetoothSessionStep, receivedAt: MonotonicMilliseconds) {
         cancelPendingReconnect()
         step.actions.forEach(applySessionAction)
-        if let peripheral {
-            ensureRideMapRecordingIfNeeded(platformIdentifier: peripheral.identifier.uuidString)
-        }
-        if step.actions.contains(where: { $0.rawTelemetry != nil }) {
-            do {
-                let observation = try rideMapState.observeTelemetry(atMs: receivedAt.rawValue)
-                if observation == .observed {
-                    publishRideMapSnapshot()
-                }
-            } catch {
-                publishRideMapError(error)
-            }
-        }
         let snapshot = step.snapshot
         displayState = displayState.reducing(snapshot: snapshot, receivedAt: receivedAt)
         hasObservedSpeedSnapshot = hasObservedSpeedSnapshot || snapshot?.speed?.value != nil
@@ -1606,7 +1323,6 @@ public final class CutoutSessionCore: NSObject {
         isRecordOnly = false
         isProbeOnly = false
         selectedRoute = nil
-        hasObservedRideMapConnection = false
         liveOwner = nil
         subscribedCharacteristics.removeAll()
         pendingServiceDiscoveries.removeAll()
@@ -1793,27 +1509,6 @@ public final class CutoutSessionCore: NSObject {
         publishOnMain { self.onPhoneLocationSnapshotChange?(value, receivedAt) }
     }
 
-    private func publishRideMapDecision(_ decision: MobileRideMapDecisionDto) {
-        // Do not read the Rust map projection from Core Location's callback. The FFI read is
-        // mutex-protected (and intentionally cheap today), but keeping it off the callback makes
-        // this path safe if the projection gains a durable read or other blocking work later.
-        let work = DispatchWorkItem { [weak self] in
-            guard let self, let snapshot = self.rideMapState.currentSnapshot() else { return }
-            self.onRideMapDecisionChange?(snapshot, decision)
-        }
-        DispatchQueue.main.async(execute: work)
-    }
-
-    private func publishRideMapSnapshot() {
-        guard let snapshot = rideMapState.currentSnapshot() else { return }
-        publishOnMain { self.onRideMapSnapshotChange?(snapshot) }
-    }
-
-    private func publishRideMapError(_ error: Error) {
-        guard let error = error as? MobileRideMapError, error != .noActiveRide else { return }
-        publishOnMain { self.onRideMapErrorChange?(error) }
-    }
-
     private func publishProtocolIdentityCandidate() {
         let value = protocolIdentityCandidate
         publishOnMain { self.onProtocolIdentityCandidateChange?(value) }
@@ -1823,16 +1518,15 @@ public final class CutoutSessionCore: NSObject {
         publishOnMain { self.onCaptureEvent?(event) }
     }
 
-    @discardableResult
     private func captureFrame(
         direction: String,
         characteristic: CBUUID,
         service: CBUUID? = nil,
         bytes: Data,
         telemetry: RawTelemetryReadback? = nil
-    ) -> Bool? {
+    ) {
         guard let channel = BluetoothUuid(coreBluetoothUuid: characteristic) else {
-            return nil
+            return
         }
 
         switch direction {
@@ -1841,13 +1535,10 @@ public final class CutoutSessionCore: NSObject {
                 record("capture_error=notification_missing_service characteristic=\(characteristic.uuidString)")
                 publishCaptureEvent(.failed)
                 setPhase(.failed(.notificationFailed("missing service UUID for \(characteristic.uuidString)")))
-                return false
+                return
             }
-            guard let builder = captureBuilder else {
-                return nil
-            }
-            let location = admittedPhoneLocationState.currentSnapshot().latestSample
-            let accepted = builder.recordNotificationWithContext(
+            let location = phoneLocationState.currentSnapshot().latestSample
+            _ = captureBuilder?.recordNotificationWithContext(
                 monotonicMs: MobileMonotonicMillisDto(milliseconds: captureElapsedMilliseconds()),
                 characteristic: channel.bytes,
                 service: serviceUuid.bytes,
@@ -1855,21 +1546,18 @@ public final class CutoutSessionCore: NSObject {
                 telemetry: telemetry?.dto,
                 phoneLocation: location
             )
-            guard acceptCaptureWrite(accepted) else { return false }
             record("capture_queue_depth=\(captureBuilder?.writerStatus().queuedMessages ?? 0)")
         case "write_without_response":
             let accepted = captureBuilder?.recordWriteWithoutResponse(
                 monotonicMs: MobileMonotonicMillisDto(milliseconds: captureElapsedMilliseconds()),
                 characteristic: channel.bytes,
                 bytes: bytes
-            )
-            guard let accepted else { return nil }
-            guard acceptCaptureWrite(accepted) else { return false }
+            ) ?? false
+            guard acceptCaptureWrite(accepted) else { return }
             record("capture_queue_depth=\(captureBuilder?.writerStatus().queuedMessages ?? 0)")
         default:
-            return nil
+            return
         }
-        return true
     }
 
     private func startCapture(
@@ -1877,7 +1565,6 @@ public final class CutoutSessionCore: NSObject {
         annotations extraAnnotations: [String] = [],
         evidence: String = "hardware_tested"
     ) {
-        admittedPhoneLocationState.clear()
         captureStartedAt = clock.now()
         captureNotificationCount = 0
 
@@ -1940,7 +1627,6 @@ public final class CutoutSessionCore: NSObject {
         captureBuilder = nil
         captureFileURL = nil
         captureStartedAt = nil
-        admittedPhoneLocationState.clear()
         let finish = DispatchWorkItem { [weak self] in
             let writerSucceeded = builder.finishWriter()
             let succeeded = priorWriteSucceeded && writerSucceeded
@@ -2235,7 +1921,6 @@ private extension CutoutSessionCore {
     func resumeConnectedPeripheral(_ peripheral: CBPeripheral) {
         assertOnBleQueue()
         guard liveOwner == nil else { return }
-        ensureRideMapRecordingIfNeeded(platformIdentifier: peripheral.identifier.uuidString)
         setPhase(.discoveringServices)
         let services = peripheral.services ?? []
         guard !services.isEmpty else {
@@ -2372,8 +2057,6 @@ extension CutoutSessionCore: CBCentralManagerDelegate {
 
     public func centralManager(_ central: CBCentralManager, didConnect peripheral: CBPeripheral) {
         assertOnBleQueue()
-        hasObservedRideMapConnection = false
-        ensureRideMapRecordingIfNeeded(platformIdentifier: peripheral.identifier.uuidString)
         setPhase(.discoveringServices)
         peripheral.delegate = self
         if isRecordOnly || isProbeOnly {
@@ -2383,42 +2066,6 @@ extension CutoutSessionCore: CBCentralManagerDelegate {
             )
         }
         peripheral.discoverServices(discoveryServiceUuidsForSelectedRoute)
-    }
-
-    private func ensureRideMapRecordingIfNeeded(platformIdentifier: String) {
-        guard RideMapConnectionPolicy.shouldEnsureRecording(
-            hasObservedConnection: hasObservedRideMapConnection,
-            hasSelectedRoute: selectedRoute != nil
-        ) else {
-            return
-        }
-        hasObservedRideMapConnection = true
-        guard ensureRideMapRecordingForConnection(platformIdentifier: platformIdentifier) else {
-            hasObservedRideMapConnection = false
-            return
-        }
-    }
-
-    @discardableResult
-    private func ensureRideMapRecordingForConnection(platformIdentifier: String) -> Bool {
-        withRideMapLifecycleLock {
-            do {
-                let previousRideID = rideMapState.currentSnapshot()?.rideID
-                let snapshot = try rideMapState.ensureRecordingForVehicle(
-                    platformIdentifier: platformIdentifier,
-                    atMs: clock.now().rawValue
-                )
-                if snapshot.rideID != previousRideID {
-                    retirePendingPhoneLocations()
-                    locationTimestampAdmission.reset()
-                }
-                publishOnMain { self.onRideMapSnapshotChange?(snapshot) }
-                return true
-            } catch {
-                publishRideMapError(error)
-                return false
-            }
-        }
     }
 
     public func centralManager(_: CBCentralManager, didFailToConnect peripheral: CBPeripheral, error: Error?) {
@@ -2507,24 +2154,24 @@ extension CutoutSessionCore: CBPeripheralDelegate {
         let detectionResolution = observeDetectionNotification(channel: channel, bytes: value)
         if isProbeOnly {
             guard promoteProbeIfResolved(detectionResolution, on: characteristic.service?.peripheral) else {
-                guard captureFrame(
+                captureFrame(
                     direction: "notify",
                     characteristic: characteristic.uuid,
                     service: characteristic.service?.uuid,
                     bytes: value
-                ) != false else { return }
+                )
                 captureNotificationCount += 1
                 publishCaptureEvent(.progress(captureProgress()))
                 return
             }
         }
         if isRecordOnly {
-            guard captureFrame(
+            captureFrame(
                 direction: "notify",
                 characteristic: characteristic.uuid,
                 service: characteristic.service?.uuid,
                 bytes: value
-            ) != false else { return }
+            )
             record("record_only_notification=\(characteristic.uuid.uuidString) bytes=\(value.count)")
             captureNotificationCount += 1
             publishCaptureEvent(.progress(captureProgress()))
@@ -2545,13 +2192,13 @@ extension CutoutSessionCore: CBPeripheralDelegate {
             let ingestMilliseconds = ingestFinishedAt.rawValue >= ingestStartedAt.rawValue
                 ? ingestFinishedAt.rawValue - ingestStartedAt.rawValue
                 : 0
-            guard captureFrame(
+            captureFrame(
                 direction: "notify",
                 characteristic: characteristic.uuid,
                 service: characteristic.service?.uuid,
                 bytes: value,
                 telemetry: step.actions.compactMap(\.rawTelemetry).last
-            ) != false else { return }
+            )
             record("notification=\(characteristic.uuid.uuidString) bytes=\(value.count)")
             captureNotificationCount += 1
             publishCaptureEvent(.progress(captureProgress()))
@@ -2624,11 +2271,7 @@ extension CutoutSessionCore: CoreBluetoothOperationSink {
 
     public func writeWithoutResponse(channel: BluetoothUuid, bytes: Data) {
         observeDetectionProbeWrite(channel: channel, bytes: bytes)
-        guard captureFrame(
-            direction: "write_without_response",
-            characteristic: channel.coreBluetoothUuid,
-            bytes: bytes
-        ) != false else { return }
+        captureFrame(direction: "write_without_response", characteristic: channel.coreBluetoothUuid, bytes: bytes)
         guard let characteristic = subscribedCharacteristics[channel] else {
             setPhase(.failed(.missingWriteChannel))
             return
@@ -2851,387 +2494,90 @@ extension CutoutSessionCore {
 }
 
 extension CutoutSessionCore: CLLocationManagerDelegate {
-    private func updateRideMapAvailability(_ status: CLAuthorizationStatus) {
-        let availability = locationAvailability(
-            servicesEnabled: CLLocationManager.locationServicesEnabled(),
-            authorizationStatus: status,
-            storageAvailable: rideMapStorageError == nil
-        )
-        guard availability != rideMapAvailability else { return }
-        rideMapAvailability = availability
-        publishOnMain { self.onRideMapAvailabilityChange?(availability) }
-    }
-
-    private func startLocationUpdatesIfAuthorized(_ manager: CLLocationManager) {
-        guard CLLocationManager.locationServicesEnabled() else {
-            updateRideMapAvailability(manager.authorizationStatus)
-            return
-        }
-        switch locationAuthorizationAction(for: manager.authorizationStatus) {
-        case .requestWhenInUse:
-            requestWhenInUseLocationAuthorizationIfNeeded()
-        case .requestAlwaysAndStart:
-            requestAlwaysLocationAuthorizationIfNeeded()
-            manager.startUpdatingLocation()
-            locationUpdatesStarted = true
-        case .start:
-            manager.startUpdatingLocation()
-            locationUpdatesStarted = true
-        case .stop:
-            stopLocationUpdates()
-        case .none:
-            break
-        }
-    }
-
     private func requestAlwaysLocationAuthorizationIfNeeded() {
         guard !didRequestAlwaysLocationAuthorization else { return }
         didRequestAlwaysLocationAuthorization = true
         locationManager.requestAlwaysAuthorization()
     }
 
-    private func requestWhenInUseLocationAuthorizationIfNeeded() {
-        guard !didRequestWhenInUseLocationAuthorization else { return }
-        didRequestWhenInUseLocationAuthorization = true
-        locationManager.requestWhenInUseAuthorization()
-    }
-
-    private func stopLocationUpdates() {
-        guard locationUpdatesStarted else { return }
-        locationManager.stopUpdatingLocation()
-        locationUpdatesStarted = false
-    }
-
     public func locationManagerDidChangeAuthorization(_ manager: CLLocationManager) {
-        updateRideMapAvailability(manager.authorizationStatus)
-        startLocationUpdatesIfAuthorized(manager)
-    }
-
-    public func locationManager(_ manager: CLLocationManager, didFailWithError error: Error) {
-        guard rideMapStorageError == nil else { return }
-        record("location_error=unavailable")
-        guard rideMapAvailability != .locationUnavailable else { return }
-        rideMapAvailability = .locationUnavailable
-        publishOnMain { self.onRideMapAvailabilityChange?(.locationUnavailable) }
-        _ = manager
-        _ = error
+        switch manager.authorizationStatus {
+        case .notDetermined:
+            manager.requestWhenInUseAuthorization()
+        case .authorizedAlways:
+            manager.startUpdatingLocation()
+        case .authorizedWhenInUse:
+            requestAlwaysLocationAuthorizationIfNeeded()
+            manager.startUpdatingLocation()
+        case .denied, .restricted:
+            break
+        @unknown default:
+            break
+        }
     }
 
     public func locationManager(_: CLLocationManager, didUpdateLocations locations: [CLLocation]) {
-        guard locations.isEmpty == false else { return }
-        let callbackMonotonicMs = clock.now().rawValue
-        var captureSamples = [(CLLocation, MobilePhoneLocationSampleDto)]()
-        withRideMapLifecycleLock {
-            let monotonicMilliseconds = monotonicMillisecondsForLocationBatch(
-                timestamps: locations.map(\.timestamp),
-                callbackMonotonicMs: MonotonicMilliseconds(callbackMonotonicMs),
-                callbackWallClock: wallClock.now(),
-                lastAcceptedTimestamp: locationTimestampAdmission.lastAcceptedTimestamp
-            )
-            for (location, monotonicMs) in zip(locations, monotonicMilliseconds) {
-                guard let sample = MobilePhoneLocationSampleDto(location: location) else { continue }
-                captureSamples.append((location, sample))
-                phoneLocationSnapshot = phoneLocationState.ingest(sample: sample)
-                // A duplicate, stale, or future source timestamp is not a route point, but the
-                // current-location readback and canonical capture still preserve the observation.
-                guard let monotonicMs else { continue }
-                guard rideMapStorageError == nil else { continue }
-                do {
-                    let decision = try rideMapState.ingestLocation(
-                        monotonicMs: monotonicMs.rawValue,
-                        sample: sample
-                    )
-                    handleRideMapLocationDecision(decision, sample: sample)
-                    locationTimestampAdmission.record(location.timestamp, decision: decision)
-                } catch {
-                    publishRideMapError(error)
-                }
-            }
-        }
-        // Keep capture writes outside the lifecycle lock. The capture path synchronizes with
-        // the BLE queue, whose callbacks can acquire the lifecycle lock in the opposite order.
-        for (location, sample) in captureSamples {
-            recordCaptureLocationSample(location, sample: sample)
+        guard !locations.isEmpty else { return }
+
+        let receiptMonotonicMs = clock.now().rawValue
+        let receiptWallClock = wallClock()
+        let samples = locations.compactMap(MobilePhoneLocationSampleDto.init(location:))
+        guard !samples.isEmpty else { return }
+
+        for sample in samples {
+            phoneLocationSnapshot = phoneLocationState.ingest(sample: sample)
         }
         publishPhoneLocationSnapshot()
-    }
 
-    /// Serializes independent location capture with BLE capture lifecycle mutations.
-    private func recordCaptureLocationSample(
-        _ location: CLLocation,
-        sample: MobilePhoneLocationSampleDto
-    ) {
-        onBleQueue {
-            guard let captureBuilder else { return }
-            let recorded = captureBuilder.recordLocationSample(
-                receiptMonotonicMs: MobileMonotonicMillisDto(
-                    milliseconds: captureElapsedMilliseconds()
-                ),
-                sample: sample,
-                simulated: location.sourceInformation?.isSimulatedBySoftware,
-                producedByAccessory: location.sourceInformation?.isProducedByAccessory
+        guard let rideMapState,
+              let receiptWallClockUnixMs = unixMilliseconds(for: receiptWallClock)
+        else { return }
+
+        do {
+            _ = try rideMapState.ingestLocationBatch(
+                receiptMonotonicMs: receiptMonotonicMs,
+                receiptWallClockUnixMs: receiptWallClockUnixMs,
+                samples: samples
             )
-            if !recorded {
-                _ = acceptCaptureWrite(false)
-            }
+        } catch {
+            record("ride_map_ingest_error=\(error)")
         }
     }
-
-    /// Applies a location decision to the PEVCAP context and publishes it. Pending decisions are
-    /// deliberately not capture-admitted; the sample is retained until Rust reports durable
-    /// acceptance from `pollLocationWrites()`.
-    private func handleRideMapLocationDecision(
-        _ decision: MobileRideMapDecisionDto,
-        sample: MobilePhoneLocationSampleDto? = nil
-    ) {
-        switch decision {
-        case let .pending(point, _):
-            guard let sample else { return }
-            rememberPendingPhoneLocation(sample, sequence: point.sequence)
-            scheduleRideMapWritePoll()
-        case let .accepted(point, _):
-            if sample != nil {
-                discardPendingPhoneLocation(sequence: point.sequence, sample: sample)
-            }
-            let admittedSample = sample ?? takePendingPhoneLocation(for: decision)
-            if let admittedSample {
-                _ = capturePhoneLocationSample(
-                    sample: admittedSample,
-                    decision: decision,
-                    state: admittedPhoneLocationState
-                )
-            }
-        case .rejected, .ignored, .storageError:
-            // A terminal outcome from the poll is FIFO with the pending write. Direct
-            // rejection/error outcomes carry the current sample and therefore have no pending
-            // entry to remove.
-            if sample == nil {
-                _ = takePendingPhoneLocation(for: decision)
-            }
-        }
-        publishRideMapDecision(decision)
-    }
-
-    private func rememberPendingPhoneLocation(
-        _ sample: MobilePhoneLocationSampleDto,
-        sequence: UInt64
-    ) {
-        pendingPhoneLocationLock.lock()
-        defer { pendingPhoneLocationLock.unlock() }
-        pendingPhoneLocations.append(sample, sequence: sequence)
-    }
-
-    private func takePendingPhoneLocation(
-        for decision: MobileRideMapDecisionDto
-    ) -> MobilePhoneLocationSampleDto? {
-        pendingPhoneLocationLock.lock()
-        defer { pendingPhoneLocationLock.unlock() }
-        return pendingPhoneLocations.take(for: decision)
-    }
-
-    private func discardPendingPhoneLocation(
-        sequence: UInt64,
-        sample: MobilePhoneLocationSampleDto?
-    ) {
-        pendingPhoneLocationLock.lock()
-        defer { pendingPhoneLocationLock.unlock() }
-        pendingPhoneLocations.remove(sequence: sequence, sample: sample)
-    }
-
-    private func scheduleRideMapWritePoll() {
-        pendingPhoneLocationLock.lock()
-        guard !rideMapPollScheduled else {
-            pendingPhoneLocationLock.unlock()
-            return
-        }
-        rideMapPollScheduled = true
-        let generation = rideMapPollGeneration
-        pendingPhoneLocationLock.unlock()
-
-        let work = { [weak self] in
-            guard let self else { return }
-            self.pollRideMapWrites(generation: generation)
-        }
-        rideMapPollScheduler.schedule(after: 50, operation: work)
-    }
-
-    private func pollRideMapWrites(generation: UInt64) {
-        let shouldPollAgain = withRideMapLifecycleLock { () -> Bool in
-            pendingPhoneLocationLock.lock()
-            guard generation == rideMapPollGeneration else {
-                pendingPhoneLocationLock.unlock()
-                return false
-            }
-            pendingPhoneLocationLock.unlock()
-
-            let decisions = rideMapState.pollLocationWrites()
-            decisions.forEach { handleRideMapLocationDecision($0) }
-
-            pendingPhoneLocationLock.lock()
-            guard generation == rideMapPollGeneration else {
-                pendingPhoneLocationLock.unlock()
-                return false
-            }
-            rideMapPollScheduled = false
-            let shouldPollAgain = !pendingPhoneLocations.isEmpty
-            pendingPhoneLocationLock.unlock()
-            return shouldPollAgain
-        }
-        if shouldPollAgain {
-            scheduleRideMapWritePoll()
-        }
-    }
-}
-
-enum LocationAuthorizationAction: Equatable {
-    case requestWhenInUse
-    case requestAlwaysAndStart
-    case start
-    case stop
-    case none
-}
-
-func locationAuthorizationAction(
-    for status: CLAuthorizationStatus
-) -> LocationAuthorizationAction {
-    switch status {
-    case .notDetermined:
-        return .requestWhenInUse
-    case .authorizedWhenInUse:
-        return .requestAlwaysAndStart
-    case .authorizedAlways:
-        return .start
-    case .denied, .restricted:
-        return .stop
-    @unknown default:
-        return .none
-    }
-}
-
-func locationAvailability(
-    servicesEnabled: Bool,
-    authorizationStatus: CLAuthorizationStatus,
-    storageAvailable: Bool
-) -> MobileRideMapAvailability {
-    guard storageAvailable else { return .storageUnavailable }
-    guard servicesEnabled else { return .servicesDisabled }
-    switch authorizationStatus {
-    case .notDetermined:
-        return .permissionRequired
-    case .authorizedAlways, .authorizedWhenInUse:
-        return .ready
-    case .denied:
-        return .denied
-    case .restricted:
-        return .restricted
-    @unknown default:
-        return .checking
-    }
-}
-
-func monotonicMillisecondsForLocationBatch(
-    timestamps: [Date],
-    callbackMonotonicMs: MonotonicMilliseconds,
-    callbackWallClock: Date = Date(),
-    lastAcceptedTimestamp: Date? = nil
-) -> [MonotonicMilliseconds?] {
-    guard callbackWallClock.timeIntervalSinceReferenceDate.isFinite else {
-        return Array(repeating: nil, count: timestamps.count)
-    }
-
-    var previousTimestamp = lastAcceptedTimestamp
-    var accepted = [(index: Int, timestamp: Date)]()
-    for (index, timestamp) in timestamps.enumerated() {
-        guard timestamp.timeIntervalSinceReferenceDate.isFinite,
-              timestamp <= callbackWallClock,
-              previousTimestamp.map({ timestamp > $0 }) ?? true
-        else {
-            continue
-        }
-        accepted.append((index, timestamp))
-        previousTimestamp = timestamp
-    }
-
-    guard let newestTimestamp = accepted.last?.timestamp else {
-        return Array(repeating: nil, count: timestamps.count)
-    }
-
-    var result = Array<MonotonicMilliseconds?>(repeating: nil, count: timestamps.count)
-    var previousMonotonic: UInt64?
-    for entry in accepted {
-        let elapsedMilliseconds = newestTimestamp.timeIntervalSince(entry.timestamp) * 1_000
-        guard elapsedMilliseconds.isFinite, elapsedMilliseconds >= 0,
-              elapsedMilliseconds < Double(UInt64.max)
-        else {
-            continue
-        }
-        let offsetMilliseconds = UInt64(elapsedMilliseconds.rounded(.up))
-        let callbackMilliseconds = callbackMonotonicMs.rawValue
-        guard callbackMilliseconds >= offsetMilliseconds else { continue }
-        let monotonic = callbackMilliseconds - offsetMilliseconds
-        guard previousMonotonic.map({ monotonic > $0 }) ?? true else { continue }
-        result[entry.index] = MonotonicMilliseconds(monotonic)
-        previousMonotonic = monotonic
-    }
-    return result
-}
-
-/// Returns a phone sample only when the map accepted that exact sample into the ride.
-///
-/// This helper controls the optional location context attached to a BLE notification. Independent
-/// Core Location observations are recorded by `recordLocationSample` and intentionally do not
-/// depend on route admission.
-func capturePhoneLocationSample(
-    sample: MobilePhoneLocationSampleDto,
-    decision: MobileRideMapDecisionDto,
-    state: MobilePhoneLocationState? = nil
-) -> MobilePhoneLocationSampleDto? {
-    guard case .accepted = decision else { return nil }
-    _ = state?.ingest(sample: sample)
-    return sample
 }
 
 private extension MobilePhoneLocationSampleDto {
     init?(location: CLLocation) {
-        guard let wallClockUnixMs = wallClockUnixMilliseconds(for: location.timestamp) else {
-            return nil
-        }
+        let timestamp = location.timestamp.timeIntervalSince1970 * 1_000
+        guard timestamp.isFinite, timestamp > 0, timestamp < Double(UInt64.max) else { return nil }
+        let coordinate = location.coordinate
+        guard coordinate.latitude.isFinite,
+              coordinate.longitude.isFinite,
+              location.altitude.isFinite
+        else { return nil }
+
         self.init(
-            wallClockUnixMs: wallClockUnixMs,
-            latitudeDegrees: location.coordinate.latitude,
-            longitudeDegrees: location.coordinate.longitude,
+            wallClockUnixMs: UInt64(timestamp.rounded(.down)),
+            latitudeDegrees: coordinate.latitude,
+            longitudeDegrees: coordinate.longitude,
             altitudeMeters: location.altitude,
-            horizontalAccuracyMeters: nonNegativeFinite(location.horizontalAccuracy),
-            verticalAccuracyMeters: nonNegativeFinite(location.verticalAccuracy),
-            speedMetersPerSecond: nonNegativeFinite(location.speed),
-            speedAccuracyMetersPerSecond: nonNegativeFinite(location.speedAccuracy),
-            courseDegrees: validCourse(location.course),
-            courseAccuracyDegrees: nonNegativeFinite(location.courseAccuracy)
+            horizontalAccuracyMeters: Self.nonNegativeFinite(location.horizontalAccuracy),
+            verticalAccuracyMeters: Self.nonNegativeFinite(location.verticalAccuracy),
+            speedMetersPerSecond: Self.nonNegativeFinite(location.speed),
+            speedAccuracyMetersPerSecond: Self.nonNegativeFinite(location.speedAccuracy),
+            courseDegrees: Self.nonNegativeFinite(location.course),
+            courseAccuracyDegrees: Self.nonNegativeFinite(location.courseAccuracy)
         )
     }
-}
 
-func wallClockUnixMilliseconds(for timestamp: Date) -> UInt64? {
-    let seconds = timestamp.timeIntervalSince1970
-    guard seconds.isFinite, seconds >= 0 else { return nil }
-
-    let milliseconds = seconds * 1_000
-    guard milliseconds.isFinite, milliseconds >= 0,
-          milliseconds < Double(Int64.max)
-    else {
-        return nil
+    private static func nonNegativeFinite(_ value: CLLocationDistance) -> Double? {
+        value.isFinite && value >= 0 ? value : nil
     }
+}
+
+private func unixMilliseconds(for date: Date) -> UInt64? {
+    let milliseconds = date.timeIntervalSince1970 * 1_000
+    guard milliseconds.isFinite, milliseconds >= 0, milliseconds < Double(UInt64.max) else { return nil }
     return UInt64(milliseconds.rounded(.down))
-}
-
-private func nonNegativeFinite(_ value: Double) -> Double? {
-    guard value.isFinite, value >= 0 else { return nil }
-    return value
-}
-
-private func validCourse(_ value: Double) -> Double? {
-    guard value.isFinite, value >= 0, value < 360 else { return nil }
-    return value
 }
 
 private extension CBCharacteristic {
@@ -3266,18 +2612,6 @@ struct MonotonicClock {
     }
 
     func now() -> MonotonicMilliseconds {
-        source()
-    }
-}
-
-struct WallClock {
-    private let source: () -> Date
-
-    init(now: @escaping () -> Date = { Date() }) {
-        source = now
-    }
-
-    func now() -> Date {
         source()
     }
 }

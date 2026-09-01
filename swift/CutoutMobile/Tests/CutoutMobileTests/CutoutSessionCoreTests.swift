@@ -1,5 +1,6 @@
 import XCTest
 import CutoutMobileFFI
+import CoreLocation
 #if canImport(CoreBluetooth)
 import CoreBluetooth
 #endif
@@ -2822,6 +2823,28 @@ func testVescRideSnapshotProjectsBatteryLevelAndUpdateTime() throws {
             support: .probeRecommended(disabledReason: "Identity probe required"),
             symbolName: "magnifyingglass"
         )
+    }
+    func testCoreLocationSentinelsBecomeTypedAbsenceBeforeForwarding() throws {
+        let location = CLLocation(
+            coordinate: CLLocationCoordinate2D(latitude: 39.7392, longitude: -104.9903),
+            altitude: 1_609,
+            horizontalAccuracy: -1,
+            verticalAccuracy: -1,
+            course: -1,
+            speed: -1,
+            timestamp: Date(timeIntervalSince1970: 1_700_000_000)
+        )
+        let core = CutoutSessionCore()
+
+        core.locationManager(CLLocationManager(), didUpdateLocations: [location])
+
+        let sample = try XCTUnwrap(core.phoneLocationSnapshot.latestSample)
+        XCTAssertNil(sample.horizontalAccuracyMeters)
+        XCTAssertNil(sample.verticalAccuracyMeters)
+        XCTAssertNil(sample.speedMetersPerSecond)
+        XCTAssertNil(sample.courseDegrees)
+        XCTAssertNil(sample.speedAccuracyMetersPerSecond)
+        XCTAssertNil(sample.courseAccuracyDegrees)
     }
 }
 
