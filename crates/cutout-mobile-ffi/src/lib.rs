@@ -3395,6 +3395,25 @@ pub struct MobileRideHistoryContextBudgetDto {
     pub total_point_budget: u32,
 }
 
+/// Rust-owned limits used by the mobile map presentation.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct MobileRideMapLimitsDto {
+    /// Maximum live-tail points retained by the in-memory map projection.
+    pub live_tail_point_limit: u32,
+    /// Maximum historical display points returned by one projection.
+    pub history_preview_point_limit: u32,
+    /// Default number of rides loaded per history page.
+    pub history_page_limit: u32,
+    /// Default number of surrounding routes in history context.
+    pub history_context_max_routes: u32,
+    /// Default display points per surrounding route.
+    pub history_context_per_route_budget: u32,
+    /// Default aggregate display points in history context.
+    pub history_context_total_point_budget: u32,
+    /// Duration covered by the recent-history filter.
+    pub history_recent_window_milliseconds: u64,
+}
+
 /// Inputs for a bounded history overview context projection.
 #[derive(Clone, Debug, PartialEq, uniffi::Record)]
 pub struct MobileRideHistoryContextOptionsDto {
@@ -4377,6 +4396,22 @@ impl MobileLiveRouteProjectionCancellation {
 impl MobileLiveRouteProjectionCancellation {
     fn is_cancelled(&self) -> bool {
         self.cancelled.load(Ordering::Acquire)
+    }
+}
+
+/// Returns the Rust-owned bounds used by mobile map projections and history pages.
+#[uniffi::export]
+#[must_use]
+pub fn mobile_ride_map_limits() -> MobileRideMapLimitsDto {
+    MobileRideMapLimitsDto {
+        live_tail_point_limit: u32::try_from(ride_maps::MAX_LIVE_ROUTE_POINTS).unwrap_or(u32::MAX),
+        history_preview_point_limit: u32::try_from(ride_maps::MAX_ROUTE_DISPLAY_POINTS)
+            .unwrap_or(u32::MAX),
+        history_page_limit: persistence::DEFAULT_HISTORY_PAGE_LIMIT,
+        history_context_max_routes: persistence::DEFAULT_HISTORY_CONTEXT_ROUTES,
+        history_context_per_route_budget: persistence::DEFAULT_HISTORY_CONTEXT_POINTS_PER_ROUTE,
+        history_context_total_point_budget: persistence::DEFAULT_HISTORY_CONTEXT_TOTAL_POINTS,
+        history_recent_window_milliseconds: persistence::DEFAULT_HISTORY_RECENT_WINDOW_MILLISECONDS,
     }
 }
 
@@ -10821,6 +10856,19 @@ mod tests {
     use cutout_protocols::{
         BEGODE_DATA_CHANNEL, BEGODE_SERVICE_CHANNEL, VESC_COMM_CUSTOM_APP_DATA, VESC_NOTIFY_CHANNEL,
     };
+
+    #[test]
+    fn mobile_ride_map_limits_match_rust_bounds() {
+        let limits = mobile_ride_map_limits();
+
+        assert_eq!(limits.live_tail_point_limit, 4_096);
+        assert_eq!(limits.history_preview_point_limit, 16_384);
+        assert_eq!(limits.history_page_limit, 50);
+        assert_eq!(limits.history_context_max_routes, 8);
+        assert_eq!(limits.history_context_per_route_budget, 512);
+        assert_eq!(limits.history_context_total_point_budget, 4_096);
+        assert_eq!(limits.history_recent_window_milliseconds, 2_592_000_000);
+    }
 
     static RIDE_DATABASE_TEST_LOCK: Mutex<()> = Mutex::new(());
 

@@ -46,11 +46,8 @@ extension CutoutSessionDriving {
 
     var rideMapStorageError: String? {
         guard let state = rideMapStateHandle else { return "Rust ride database is unavailable" }
-        guard let error = state.initializationError else { return nil }
-        if case let .storageError(message) = error {
-            return message
-        }
-        return String(describing: error)
+        guard case let .storageError(message)? = state.initializationError else { return nil }
+        return message
     }
 
     var rideMapAvailability: MobileRideMapAvailability {

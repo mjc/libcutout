@@ -38,6 +38,16 @@ use ride_write::{
 
 const COMMAND_QUEUE_CAPACITY: usize = 64;
 const MAX_QUERY_LIMIT: u32 = 500;
+/// Default number of rides loaded for one history page.
+pub const DEFAULT_HISTORY_PAGE_LIMIT: u32 = 50;
+/// Default number of surrounding routes shown in history context.
+pub const DEFAULT_HISTORY_CONTEXT_ROUTES: u32 = 8;
+/// Default per-route display budget for history context.
+pub const DEFAULT_HISTORY_CONTEXT_POINTS_PER_ROUTE: u32 = 512;
+/// Default aggregate display budget for history context.
+pub const DEFAULT_HISTORY_CONTEXT_TOTAL_POINTS: u32 = 4_096;
+/// Recent-history window used by the mobile map filter.
+pub const DEFAULT_HISTORY_RECENT_WINDOW_MILLISECONDS: u64 = 30 * 24 * 60 * 60 * 1_000;
 const MAX_HISTORY_CONTEXT_ROUTES: usize = 8;
 const MAX_HISTORY_CONTEXT_POINTS: usize = 4_096;
 const MAX_PEVCAP_ARTIFACT_BYTES: u64 = 512 * 1024 * 1024;

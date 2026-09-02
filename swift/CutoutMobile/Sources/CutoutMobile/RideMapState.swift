@@ -513,13 +513,41 @@ public struct MobileRideMapHistoryContextBudget: Equatable, Hashable, Sendable {
         self.totalPointBudget = totalPointBudget
     }
 
-    /// The bounded overview contract: at most eight surrounding rides and 4,096 display points.
-    public static let overview = Self(
-        historyPageLimit: 50,
-        maxRoutes: 8,
-        perRouteBudget: 512,
-        totalPointBudget: 4_096
-    )
+    /// The bounded overview contract returned by Rust.
+    public static var overview: Self {
+        let limits = MobileRideMapLimits.rustOwned
+        return Self(
+            historyPageLimit: limits.historyPageLimit,
+            maxRoutes: limits.historyContextMaxRoutes,
+            perRouteBudget: limits.historyContextPerRouteBudget,
+            totalPointBudget: limits.historyContextTotalPointBudget
+        )
+    }
+}
+
+/// Rust-owned bounds shared by every mobile map presentation.
+public struct MobileRideMapLimits: Equatable, Hashable, Sendable {
+    public let liveTailPointLimit: UInt32
+    public let historyPreviewPointLimit: UInt32
+    public let historyPageLimit: UInt32
+    public let historyContextMaxRoutes: UInt32
+    public let historyContextPerRouteBudget: UInt32
+    public let historyContextTotalPointBudget: UInt32
+    public let historyRecentWindowMilliseconds: UInt64
+
+    fileprivate init(_ dto: MobileRideMapLimitsDto) {
+        liveTailPointLimit = dto.liveTailPointLimit
+        historyPreviewPointLimit = dto.historyPreviewPointLimit
+        historyPageLimit = dto.historyPageLimit
+        historyContextMaxRoutes = dto.historyContextMaxRoutes
+        historyContextPerRouteBudget = dto.historyContextPerRouteBudget
+        historyContextTotalPointBudget = dto.historyContextTotalPointBudget
+        historyRecentWindowMilliseconds = dto.historyRecentWindowMilliseconds
+    }
+
+    public static var rustOwned: Self {
+        Self(mobileRideMapLimits())
+    }
 }
 
 /// One bounded contextual route returned by Rust for a history overview.
