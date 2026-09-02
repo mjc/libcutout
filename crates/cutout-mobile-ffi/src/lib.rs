@@ -1441,6 +1441,26 @@ pub fn mobile_manual_discovery_candidate() -> DiscoveryCandidate {
     }
 }
 
+/// Canonicalizes one discovered device display name without opening the database.
+///
+/// Empty and identifier-equal names are returned as absent.
+///
+/// # Errors
+///
+/// Returns a typed database error when an input exceeds the stored text bound.
+#[uniffi::export]
+#[allow(
+    clippy::needless_pass_by_value,
+    reason = "UniFFI owns boundary strings"
+)]
+pub fn normalize_device_display_name(
+    platform_identifier: String,
+    display_name: String,
+) -> Result<Option<String>, MobileRideDatabaseError> {
+    persistence::normalize_device_display_name(&platform_identifier, &display_name)
+        .map_err(map_ride_database_error)
+}
+
 /// Ambiguous picker candidate that requires user confirmation before routing.
 #[uniffi::export]
 #[must_use]
@@ -4875,6 +4895,32 @@ impl RideDatabaseHandle {
             .map_err(map_ride_database_error)
     }
 
+    /// Stores an optional display name and selects the device atomically.
+    ///
+    /// Blank or identifier-equal names are ignored by the Rust persistence boundary.
+    ///
+    /// # Errors
+    ///
+    /// Returns a typed database error when an identity, name, or worker is invalid.
+    #[allow(
+        clippy::needless_pass_by_value,
+        reason = "UniFFI owns boundary strings"
+    )]
+    pub fn remember_selected_device(
+        &self,
+        platform_identifier: String,
+        display_name: Option<String>,
+        updated_at_milliseconds: u64,
+    ) -> Result<(), MobileRideDatabaseError> {
+        self.inner
+            .remember_selected_device(
+                &platform_identifier,
+                display_name.as_deref(),
+                updated_at_milliseconds,
+            )
+            .map_err(map_ride_database_error)
+    }
+
     /// Stores a display name for a platform-local device identity.
     ///
     /// # Errors
@@ -4892,6 +4938,26 @@ impl RideDatabaseHandle {
     ) -> Result<(), MobileRideDatabaseError> {
         self.inner
             .save_device_name(&platform_identifier, &display_name, updated_at_milliseconds)
+            .map_err(map_ride_database_error)
+    }
+
+    /// Migrates a legacy display name through Rust's canonical device-name policy.
+    ///
+    /// # Errors
+    ///
+    /// Returns a typed database error when the identity, name, or worker is invalid.
+    #[allow(
+        clippy::needless_pass_by_value,
+        reason = "UniFFI owns boundary strings"
+    )]
+    pub fn migrate_device_name(
+        &self,
+        platform_identifier: String,
+        display_name: String,
+        updated_at_milliseconds: u64,
+    ) -> Result<Option<String>, MobileRideDatabaseError> {
+        self.inner
+            .migrate_device_name(&platform_identifier, &display_name, updated_at_milliseconds)
             .map_err(map_ride_database_error)
     }
 

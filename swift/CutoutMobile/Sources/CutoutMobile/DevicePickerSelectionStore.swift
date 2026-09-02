@@ -26,20 +26,27 @@ public struct DevicePickerSelectionStore {
                     }
                     return nil
                 }
-                if (try? database.saveSelectedDevice(
+                let normalizedIdentifier = legacy.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !normalizedIdentifier.isEmpty else {
+                    defaults.removeObject(forKey: Self.key)
+                    return nil
+                }
+                let legacyName = defaults.string(
+                    forKey: Self.deviceNameKeyPrefix + normalizedIdentifier
+                )
+                if (try? database.rememberSelectedDevice(
                     platformIdentifier: legacy,
+                    displayName: legacyName,
                     updatedAtMilliseconds: UInt64(Date().timeIntervalSince1970 * 1_000)
                 )) != nil {
                     defaults.removeObject(forKey: Self.key)
+                    defaults.removeObject(
+                        forKey: Self.deviceNameKeyPrefix + normalizedIdentifier
+                    )
                 }
-                _ = displayName(for: legacy)
-                return legacy
+                return normalizedIdentifier
             }
-            if let persisted = try? database.selectedDevice() {
-                _ = displayName(for: persisted)
-                return persisted
-            }
-            return nil
+            return try? database.selectedDevice()
         }
         return defaults.string(forKey: Self.key)
     }
@@ -48,28 +55,38 @@ public struct DevicePickerSelectionStore {
         let trimmed = platformIdentifier.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return nil }
         let legacyKey = Self.deviceNameKeyPrefix + trimmed
-        if let database,
-           let persisted = try? database.deviceName(platformIdentifier: trimmed) {
-            if let normalized = normalizedDisplayName(persisted, platformIdentifier: trimmed) {
+        if let database {
+            if let persisted = try? database.deviceName(platformIdentifier: trimmed) {
                 defaults.removeObject(forKey: legacyKey)
-                return normalized
+                return persisted
+            }
+        }
+        if let database, let legacy = defaults.string(forKey: legacyKey) {
+            do {
+                let migrated = try database.migrateDeviceName(
+                    platformIdentifier: trimmed,
+                    displayName: legacy,
+                    updatedAtMilliseconds: UInt64(Date().timeIntervalSince1970 * 1_000)
+                )
+                defaults.removeObject(forKey: legacyKey)
+                return migrated
+            } catch {
+                return nil
             }
         }
         if let legacy = defaults.string(forKey: legacyKey) {
-            guard let normalized = normalizedDisplayName(legacy, platformIdentifier: trimmed) else {
+            do {
+                let normalized = try normalizeDeviceDisplayName(
+                    platformIdentifier: trimmed,
+                    displayName: legacy
+                )
+                if let normalized {
+                    return normalized
+                }
                 defaults.removeObject(forKey: legacyKey)
+            } catch {
                 return nil
             }
-            if let database {
-                if (try? database.saveDeviceName(
-                    platformIdentifier: trimmed,
-                    displayName: normalized,
-                    updatedAtMilliseconds: UInt64(Date().timeIntervalSince1970 * 1_000)
-                )) != nil {
-                    defaults.removeObject(forKey: legacyKey)
-                }
-            }
-            return normalized
         }
         return nil
     }
@@ -79,34 +96,38 @@ public struct DevicePickerSelectionStore {
         guard !trimmed.isEmpty else { return }
 
         let updatedAtMilliseconds = UInt64(Date().timeIntervalSince1970 * 1_000)
-        if let normalizedName = normalizedDisplayName(displayName, platformIdentifier: trimmed) {
-            if let database {
-                if (try? database.saveDeviceName(
-                    platformIdentifier: trimmed,
-                    displayName: normalizedName,
-                    updatedAtMilliseconds: updatedAtMilliseconds
-                )) != nil {
-                    defaults.removeObject(forKey: Self.deviceNameKeyPrefix + trimmed)
-                } else {
-                    defaults.set(normalizedName, forKey: Self.deviceNameKeyPrefix + trimmed)
-                }
-            } else {
-                defaults.set(normalizedName, forKey: Self.deviceNameKeyPrefix + trimmed)
-            }
-        }
-
         if let database {
-            if (try? database.saveSelectedDevice(
+            if (try? database.rememberSelectedDevice(
                 platformIdentifier: trimmed,
+                displayName: displayName,
                 updatedAtMilliseconds: updatedAtMilliseconds
             )) != nil {
                 defaults.removeObject(forKey: Self.key)
+                defaults.removeObject(forKey: Self.deviceNameKeyPrefix + trimmed)
             } else {
                 defaults.set(trimmed, forKey: Self.key)
+                if let displayName {
+                    defaults.set(displayName, forKey: Self.deviceNameKeyPrefix + trimmed)
+                }
             }
             return
         }
         defaults.set(trimmed, forKey: Self.key)
+        if let displayName {
+            do {
+                let normalized = try normalizeDeviceDisplayName(
+                    platformIdentifier: trimmed,
+                    displayName: displayName
+                )
+                if let normalized {
+                    defaults.set(normalized, forKey: Self.deviceNameKeyPrefix + trimmed)
+                } else {
+                    defaults.removeObject(forKey: Self.deviceNameKeyPrefix + trimmed)
+                }
+            } catch {
+                defaults.removeObject(forKey: Self.deviceNameKeyPrefix + trimmed)
+            }
+        }
     }
 
     public func clear() throws {
@@ -123,13 +144,4 @@ public struct DevicePickerSelectionStore {
         defaults.removeObject(forKey: Self.key)
     }
 
-    private func normalizedDisplayName(
-        _ displayName: String?,
-        platformIdentifier: String
-    ) -> String? {
-        guard let displayName else { return nil }
-        let trimmed = displayName.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty, trimmed != platformIdentifier else { return nil }
-        return trimmed
-    }
 }
