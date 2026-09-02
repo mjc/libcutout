@@ -725,7 +725,7 @@ public final class MobileRideMapState: @unchecked Sendable {
         }
     }
 
-    /// Ingests the same validated phone sample used by the capture writer.
+    /// Ingests the canonical phone sample into Rust's recorder.
     public func ingestLocation(
         monotonicMs: UInt64,
         sample: MobilePhoneLocationSampleDto
@@ -744,9 +744,24 @@ public final class MobileRideMapState: @unchecked Sendable {
         }
     }
 
+    /// Forwards one complete Core Location callback to Rust; Rust owns source-time admission.
+    public func ingestLocationBatch(
+        receiptMonotonicMs: UInt64,
+        receiptWallClockUnixMs: UInt64,
+        samples: [MobilePhoneLocationSampleDto]
+    ) throws -> [MobileRideMapDecisionDto] {
+        try withCore {
+            try $0.ingestLocationBatch(
+                receiptMonotonicMs: receiptMonotonicMs,
+                receiptWallClockUnixMs: receiptWallClockUnixMs,
+                samples: samples
+            ).map(map)
+        }
+    }
+
     /// Drains durable outcomes without waiting for the SQLite worker.
     ///
-    /// A pending location is not capture-admitted until this method returns its accepted
+    /// A pending location is not part of the durable route until this method returns its accepted
     /// outcome. Callers should poll from a bounded scheduler and publish each terminal result.
     public func pollLocationWrites() -> [MobileRideMapDecisionDto] {
         guard let core else {

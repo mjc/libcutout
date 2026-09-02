@@ -757,6 +757,19 @@ impl RideMapRecorder {
         }
     }
 
+    /// Returns the segment metadata that recording `sample` would produce.
+    #[must_use]
+    pub fn next_sample_metadata(
+        &self,
+        sample: LocationSample,
+    ) -> (RideMapSegmentId, bool, RideSegmentStartReason) {
+        let next_segment_id = self.segment_id_for_sample(&sample);
+        let gap_started = next_segment_id != self.segment_id;
+        let segment_started = self.segment_started || gap_started;
+        let start_reason = self.segment_start_reason_for_sample(sample, next_segment_id);
+        (next_segment_id, segment_started, start_reason)
+    }
+
     /// Returns the Rust-owned number of route segments admitted to the ride.
     #[must_use]
     pub const fn segment_count(&self) -> RideSegmentCount {
@@ -1062,10 +1075,9 @@ impl RideMapRecorder {
             return false;
         };
         let sample = admitted_sample.sample();
-        let next_segment_id = self.segment_id_for_sample(&sample);
+        let (next_segment_id, segment_started, segment_start_reason) =
+            self.next_sample_metadata(sample);
         let gap_started = next_segment_id != self.segment_id;
-        let segment_started = self.segment_started || gap_started;
-        let segment_start_reason = self.segment_start_reason_for_sample(sample, next_segment_id);
         if segment_started && segment_start_reason == RideSegmentStartReason::BackgroundGap {
             self.background_gap_count = self
                 .background_gap_count

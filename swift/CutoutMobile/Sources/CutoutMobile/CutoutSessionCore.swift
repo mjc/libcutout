@@ -309,6 +309,7 @@ struct BoundedDiagnosticLog {
 
 public final class CutoutSessionCore: NSObject {
     public var rideSessionStateHandle: CutoutSessionStateHandle { rustSessionState }
+    public var rideMapStateHandle: MobileRideMapState? { rideMapState }
     public private(set) var displayState = RideDisplayState()
     public private(set) var phase = SessionConnectionPhase.starting
     public var records: [String] { diagnosticLog.values }
@@ -334,7 +335,9 @@ public final class CutoutSessionCore: NSObject {
     public var onProtocolIdentityCandidateChange: ((DevicePickerDiscoveryCandidate?) -> Void)?
     public var onBluetoothRestorationResolved: ((String?) -> Void)?
 
+
     private let clock: MonotonicClock
+    private let wallClock: () -> Date
     private var diagnosticLog = BoundedDiagnosticLog(capacity: 2_048)
     private let bleQueue = DispatchQueue(label: "io.cutout.corebluetooth")
     private let bleQueueKey = DispatchSpecificKey<Void>()
@@ -369,6 +372,7 @@ public final class CutoutSessionCore: NSObject {
     private var displayPublishWorkItem: DispatchWorkItem?
     private var lastDisplayPublication: MonotonicMilliseconds?
     private var lastPublishedWarningSeverity: EucRideWarningSeverity?
+    private let rideMapState: MobileRideMapState?
     private let phoneLocationState = MobilePhoneLocationState()
     private var didRequestAlwaysLocationAuthorization = false
     private var didResolveBluetoothRestoration = false
@@ -401,7 +405,9 @@ public final class CutoutSessionCore: NSObject {
         testScript: CutoutSessionTestScript? = nil,
         reconnectScheduler: any ConnectionReconnectScheduling = MainQueueReconnectScheduler(),
         reconnectJitter: @escaping () -> Double = { Double.random(in: 0...1) },
-        selectedDeviceStore: DevicePickerSelectionStore = DevicePickerSelectionStore()
+        selectedDeviceStore: DevicePickerSelectionStore = DevicePickerSelectionStore(),
+        wallClock: @escaping () -> Date = { Date() },
+        rideMapState: MobileRideMapState? = nil
     ) {
         let rustSessionState = CutoutSessionStateHandle()
         self.rustSessionState = rustSessionState
@@ -411,6 +417,8 @@ public final class CutoutSessionCore: NSObject {
             detectionSession: deviceDetectionSession
         )
         self.clock = clock
+        self.wallClock = wallClock
+        self.rideMapState = rideMapState
         self.testScript = testScript
         self.reconnectController = ConnectionReconnectController(scheduler: reconnectScheduler)
         self.reconnectJitter = reconnectJitter
@@ -421,7 +429,9 @@ public final class CutoutSessionCore: NSObject {
 #else
     init(
         clock: MonotonicClock,
-        selectedDeviceStore: DevicePickerSelectionStore = DevicePickerSelectionStore()
+        selectedDeviceStore: DevicePickerSelectionStore = DevicePickerSelectionStore(),
+        wallClock: @escaping () -> Date = { Date() },
+        rideMapState: MobileRideMapState? = nil
     ) {
         let rustSessionState = CutoutSessionStateHandle()
         self.rustSessionState = rustSessionState
@@ -431,6 +441,8 @@ public final class CutoutSessionCore: NSObject {
             detectionSession: deviceDetectionSession
         )
         self.clock = clock
+        self.wallClock = wallClock
+        self.rideMapState = rideMapState
         self.reconnectController = ConnectionReconnectController(scheduler: MainQueueReconnectScheduler())
         self.reconnectJitter = { Double.random(in: 0...1) }
         self.selectedDeviceStore = selectedDeviceStore
@@ -2505,21 +2517,67 @@ extension CutoutSessionCore: CLLocationManagerDelegate {
     }
 
     public func locationManager(_: CLLocationManager, didUpdateLocations locations: [CLLocation]) {
-        guard let location = locations.last else { return }
-        phoneLocationSnapshot = phoneLocationState.ingest(sample: MobilePhoneLocationSampleDto(
-            wallClockUnixMs: UInt64(max(0, location.timestamp.timeIntervalSince1970 * 1_000)),
-            latitudeDegrees: location.coordinate.latitude,
-            longitudeDegrees: location.coordinate.longitude,
-            altitudeMeters: location.altitude,
-            horizontalAccuracyMeters: location.horizontalAccuracy,
-            verticalAccuracyMeters: location.verticalAccuracy,
-            speedMetersPerSecond: location.speed,
-            speedAccuracyMetersPerSecond: location.speedAccuracy,
-            courseDegrees: location.course,
-            courseAccuracyDegrees: location.courseAccuracy
-        ))
+        guard !locations.isEmpty else { return }
+
+        let receiptMonotonicMs = clock.now().rawValue
+        let receiptWallClock = wallClock()
+        let samples = locations.compactMap(MobilePhoneLocationSampleDto.init(location:))
+        guard !samples.isEmpty else { return }
+
+        for sample in samples {
+            phoneLocationSnapshot = phoneLocationState.ingest(sample: sample)
+        }
         publishPhoneLocationSnapshot()
+
+        guard let rideMapState,
+              let receiptWallClockUnixMs = unixMilliseconds(for: receiptWallClock)
+        else { return }
+
+        do {
+            _ = try rideMapState.ingestLocationBatch(
+                receiptMonotonicMs: receiptMonotonicMs,
+                receiptWallClockUnixMs: receiptWallClockUnixMs,
+                samples: samples
+            )
+        } catch {
+            record("ride_map_ingest_error=\(error)")
+        }
     }
+}
+
+private extension MobilePhoneLocationSampleDto {
+    init?(location: CLLocation) {
+        let timestamp = location.timestamp.timeIntervalSince1970 * 1_000
+        guard timestamp.isFinite, timestamp > 0, timestamp < Double(UInt64.max) else { return nil }
+        let coordinate = location.coordinate
+        guard coordinate.latitude.isFinite,
+              coordinate.longitude.isFinite,
+              location.altitude.isFinite
+        else { return nil }
+
+        self.init(
+            wallClockUnixMs: UInt64(timestamp.rounded(.down)),
+            latitudeDegrees: coordinate.latitude,
+            longitudeDegrees: coordinate.longitude,
+            altitudeMeters: location.altitude,
+            horizontalAccuracyMeters: Self.nonNegativeFinite(location.horizontalAccuracy),
+            verticalAccuracyMeters: Self.nonNegativeFinite(location.verticalAccuracy),
+            speedMetersPerSecond: Self.nonNegativeFinite(location.speed),
+            speedAccuracyMetersPerSecond: Self.nonNegativeFinite(location.speedAccuracy),
+            courseDegrees: Self.nonNegativeFinite(location.course),
+            courseAccuracyDegrees: Self.nonNegativeFinite(location.courseAccuracy)
+        )
+    }
+
+    private static func nonNegativeFinite(_ value: CLLocationDistance) -> Double? {
+        value.isFinite && value >= 0 ? value : nil
+    }
+}
+
+private func unixMilliseconds(for date: Date) -> UInt64? {
+    let milliseconds = date.timeIntervalSince1970 * 1_000
+    guard milliseconds.isFinite, milliseconds >= 0, milliseconds < Double(UInt64.max) else { return nil }
+    return UInt64(milliseconds.rounded(.down))
 }
 
 private extension CBCharacteristic {
