@@ -2543,6 +2543,11 @@ extension CutoutSessionCore: CLLocationManagerDelegate {
             record("ride_map_ingest_error=\(error)")
         }
     }
+
+    /// Clears the Rust-owned location context before starting a new capture.
+    public func resetRideMapLocationAdmission() {
+        phoneLocationState.clear()
+    }
 }
 
 private extension MobilePhoneLocationSampleDto {

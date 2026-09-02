@@ -29,6 +29,7 @@ final class CutoutAppModel {
 
     private static let rideMapPreviewPointLimit = 4_096
     private static let rideMapHistoryPreviewPointLimit: UInt32 = 16_384
+    nonisolated private static let rideMapHistoryPageLimit: UInt32 = 50
 
     private(set) var displayState = RideDisplayState()
     private(set) var phase = SessionConnectionPhase.starting
@@ -109,9 +110,14 @@ final class CutoutAppModel {
     }
 
     var rideMapVehicleName: String? {
-        if let identity = rideMapVehicleIdentity,
-           let persisted = selectedDeviceStore.displayName(for: identity) {
-            return persisted
+        if let identity = rideMapVehicleIdentity {
+            if let cached = rideMapVehicleNameCache[identity] {
+                return cached
+            }
+            if let persisted = selectedDeviceStore.displayName(for: identity) {
+                rideMapVehicleNameCache[identity] = persisted
+                return persisted
+            }
         }
         if let identity = rideMapVehicleIdentity,
            let candidate = core.protocolIdentityCandidate,
@@ -132,9 +138,17 @@ final class CutoutAppModel {
 
     func rideMapVehicleName(for identity: String?) -> String? {
         guard let identity else { return nil }
-        return rideMapHistoryVehicleNames[identity]
-            ?? selectedDeviceStore.displayName(for: identity)
-            ?? (identity == rideMapVehicleIdentity ? rideMapVehicleName : nil)
+        if let name = rideMapHistoryVehicleNames[identity] {
+            return name
+        }
+        if let name = rideMapVehicleNameCache[identity] {
+            return name
+        }
+        if let name = selectedDeviceStore.displayName(for: identity) {
+            rideMapVehicleNameCache[identity] = name
+            return name
+        }
+        return identity == rideMapVehicleIdentity ? rideMapVehicleName : nil
     }
 
     static func meaningfulDeviceName(_ candidate: String?, identity: String) -> String? {
@@ -208,6 +222,7 @@ final class CutoutAppModel {
     private var restorationMarkerAtLaunch: Data?
     private var rideMapHistoryCursor: MobileRideCursorDto?
     private var rideMapHistoryQueryDateAfterMilliseconds: UInt64?
+    private var rideMapVehicleNameCache = [String: String]()
     private var rideMapHistoryLoadTask: Task<Void, Never>?
     private var rideMapHistoryPageTask: Task<Void, Never>?
     private var rideMapHistorySelectionTask: Task<Void, Never>?
@@ -271,6 +286,11 @@ final class CutoutAppModel {
         self.selectedDeviceStore = selectedDeviceStore
         self.rideSessionMarkerStore = rideSessionMarkerStore
         hasSavedDevice = selectedDeviceStore.platformIdentifier != nil
+        if let identity = selectedDeviceStore.platformIdentifier,
+           let name = selectedDeviceStore.displayName(for: identity)
+        {
+            rideMapVehicleNameCache[identity] = name
+        }
         restoreRideMapState()
         self.core.onDisplayStateChange = { [weak self] displayState in
             self?.displayState = displayState
@@ -466,27 +486,39 @@ final class CutoutAppModel {
         rideMapHistoryLoadTask = Task { [weak self] in
             do {
                 let result = try await Task.detached(priority: .userInitiated) {
-                    let page = try state.storedHistoryPage(cursor: nil, limit: 50, filter: filter)
+                    let page = try state.storedHistoryPage(
+                        cursor: nil,
+                        limit: Self.rideMapHistoryPageLimit,
+                        filter: filter
+                    )
                     let vehicleOptions = try state.storedHistoryVehicleOptions()
                     var summaries = page.summaries
                     if let requestedRideID,
                        summaries.contains(where: { $0.rideID == requestedRideID }) == false,
                        let requestedRide = try state.storedHistoryRide(rideID: requestedRideID)
                     {
-                        summaries.append(requestedRide)
+                        let insertionIndex = summaries.firstIndex {
+                            $0.createdAtMilliseconds < requestedRide.createdAtMilliseconds
+                        } ?? summaries.endIndex
+                        summaries.insert(requestedRide, at: insertionIndex)
                     }
                     return (summaries, page.nextCursor, vehicleOptions)
                 }.value
                 guard !Task.isCancelled, let self else { return }
+                self.rideMapHistoryLoadTask = nil
                 self.rideMapHistoryLoading = false
                 self.rideMapHistory = result.0
                 self.rideMapHistoryVehicleIdentities = Self.mergeRideMapHistoryVehicleIdentities(
                     existing: result.2.map(\.platformIdentifier),
                     incoming: result.0.flatMap { [$0.associatedVehicle, $0.candidateVehicle].compactMap { $0 } }
                 )
-                self.rideMapHistoryVehicleNames = Self.rideMapHistoryVehicleNames(
+                self.rideMapHistoryVehicleNames = Self.makeRideMapHistoryVehicleNames(
                     result.2,
                     summaries: result.0
+                )
+                self.rideMapVehicleNameCache.merge(
+                    self.rideMapHistoryVehicleNames,
+                    uniquingKeysWith: { _, incoming in incoming }
                 )
                 self.rideMapHistoryCursor = result.1
                 self.rideMapHistoryCanLoadMore = result.1 != nil
@@ -512,6 +544,7 @@ final class CutoutAppModel {
                 self.selectRideMapHistory(selectedID)
             } catch {
                 guard !Task.isCancelled, let self else { return }
+                self.rideMapHistoryLoadTask = nil
                 self.rideMapHistoryLoading = false
                 // Preserve the last good page so a transient storage failure does not
                 // turn an otherwise usable history screen into an empty state.
@@ -575,14 +608,15 @@ final class CutoutAppModel {
     }
 
     @MainActor
-    static func rideMapHistoryVehicleNames(
+    static func makeRideMapHistoryVehicleNames(
         _ options: [MobileRideMapHistoryVehicleOptionDto],
         summaries: [MobileRideMapHistorySummaryDto]
     ) -> [String: String] {
         var names = Dictionary(
-            uniqueKeysWithValues: options.compactMap { option in
+            options.compactMap { option in
                 option.displayName.map { (option.platformIdentifier, $0) }
-            }
+            },
+            uniquingKeysWith: { first, _ in first }
         )
         for summary in summaries {
             if let identity = summary.associatedVehicle,
@@ -621,7 +655,10 @@ final class CutoutAppModel {
     }
 
     func loadMoreRideMapHistory() {
-        guard rideMapHistoryCanLoadMore else { return }
+        guard rideMapHistoryCanLoadMore,
+              rideMapHistoryLoadTask == nil,
+              rideMapHistoryLoading == false
+        else { return }
         rideMapHistoryPageTask?.cancel()
         guard let state = core.rideMapStateHandle else { return }
         let cursor = rideMapHistoryCursor
@@ -629,7 +666,11 @@ final class CutoutAppModel {
         rideMapHistoryPageTask = Task { [weak self] in
             do {
                 let page = try await Task.detached(priority: .userInitiated) {
-                    try state.storedHistoryPage(cursor: cursor, limit: 50, filter: filter)
+                    try state.storedHistoryPage(
+                        cursor: cursor,
+                        limit: Self.rideMapHistoryPageLimit,
+                        filter: filter
+                    )
                 }.value
                 guard !Task.isCancelled, let self else { return }
                 self.rideMapHistory = Self.appendingUniqueHistory(
@@ -644,6 +685,10 @@ final class CutoutAppModel {
                 self.rideMapHistoryVehicleNames = Self.mergeRideMapHistoryVehicleNames(
                     existing: self.rideMapHistoryVehicleNames,
                     incoming: page.summaries
+                )
+                self.rideMapVehicleNameCache.merge(
+                    self.rideMapHistoryVehicleNames,
+                    uniquingKeysWith: { _, incoming in incoming }
                 )
                 self.rideMapHistoryCursor = page.nextCursor
                 self.rideMapHistoryCanLoadMore = page.nextCursor != nil
@@ -668,6 +713,12 @@ final class CutoutAppModel {
     func setRideMapHistoryVehicleFilter(_ identity: String?) {
         guard rideMapHistoryVehicleFilter != identity else { return }
         rideMapHistoryVehicleFilter = identity
+        loadRideMapHistory()
+    }
+
+    func setRideMapHistorySearchText(_ text: String) {
+        guard rideMapHistorySearchText != text else { return }
+        rideMapHistorySearchText = text
         loadRideMapHistory()
     }
 
@@ -867,6 +918,7 @@ final class CutoutAppModel {
                 self.rideMapHistoryRouteLoading = false
                 self.rideMapHistoryDetailRouteError = self.rideMapHistoryRouteError
                 self.rideMapHistoryDetailRouteLoading = false
+                self.replaceRideMapHistoryDetailDisplayPoints([], truncated: false)
             }
         }
     }
@@ -965,15 +1017,19 @@ final class CutoutAppModel {
     ) throws -> ([MobileRideMapPointDto], MobileRideMapRouteProjection) {
         var points = [MobileRideMapPointDto]()
         var cursor: UInt64?
-        repeat {
+        while true {
+            try Task.checkCancellation()
             let batch = try state.pointsAfter(afterCursor: cursor, limit: UInt32(previewLimit))
             points.append(contentsOf: batch.points)
-            cursor = batch.nextCursor
             if points.count > previewLimit {
                 points.removeFirst(points.count - previewLimit)
             }
-            if !batch.hasMore { break }
-        } while true
+            guard batch.hasMore,
+                  let nextCursor = batch.nextCursor,
+                  nextCursor != cursor
+            else { break }
+            cursor = nextCursor
+        }
         let projection = try state.projectPoints(budget: UInt32(previewLimit))
         return (points, projection)
     }
@@ -1038,7 +1094,12 @@ final class CutoutAppModel {
         guard let state = core.rideMapStateHandle else { return }
         let budget = UInt32(Self.rideMapPreviewPointLimit)
         rideMapLiveProjectionTask = Task { [weak self] in
+            defer {
+                self?.rideMapLiveProjectionTask = nil
+                self?.rideMapLiveProjectionCancellation = nil
+            }
             while let self {
+                guard self.rideMapLiveProjectionEnabled else { break }
                 let generation = self.rideMapLiveProjectionGeneration
                 let cancellation = MobileLiveRideMapProjectionCancellation()
                 self.rideMapLiveProjectionCancellation = cancellation
@@ -1047,9 +1108,7 @@ final class CutoutAppModel {
                         try state.projectPoints(budget: budget, cancellation: cancellation)
                     }.value
                     guard self.rideMapLiveProjectionEnabled else {
-                        self.rideMapLiveProjectionTask = nil
-                        self.rideMapLiveProjectionCancellation = nil
-                        return
+                        break
                     }
                     guard Self.shouldApplyLiveProjection(
                         generation: generation,
@@ -1061,9 +1120,7 @@ final class CutoutAppModel {
                     self.applyLiveProjection(projection)
                 } catch {
                     guard self.rideMapLiveProjectionEnabled else {
-                        self.rideMapLiveProjectionTask = nil
-                        self.rideMapLiveProjectionCancellation = nil
-                        return
+                        break
                     }
                     guard Self.shouldApplyLiveProjection(
                         generation: generation,
@@ -1075,8 +1132,6 @@ final class CutoutAppModel {
                     self.rideMapLiveError = Self.mapRideMapError(error)
                     self.clearLiveProjectionState()
                 }
-                self.rideMapLiveProjectionTask = nil
-                self.rideMapLiveProjectionCancellation = nil
                 return
             }
         }
@@ -1161,10 +1216,18 @@ final class CutoutAppModel {
             isRecordOnlyCapture = false
             captureLabel = nil
             recordOnlyDeviceKind = nil
+            let displayName = Self.meaningfulDeviceName(
+                selectedRow.title,
+                identity: platformIdentifier
+            )
+            let persistedDisplayName = selectedDeviceStore.displayName(for: platformIdentifier)
             selectedDeviceStore.save(
                 platformIdentifier: platformIdentifier,
-                displayName: selectedRow.title
+                displayName: displayName != persistedDisplayName ? displayName : nil
             )
+            if let displayName, displayName != persistedDisplayName {
+                rideMapVehicleNameCache[platformIdentifier] = displayName
+            }
             hasSavedDevice = true
             liveActivityIdentity = liveActivityIdentity(for: selectedRow)
             liveActivityGlyph = liveActivityGlyph(for: selectedRow)
@@ -1413,6 +1476,7 @@ final class CutoutAppModel {
                 platformIdentifier: candidate.platformIdentifier,
                 displayName: displayName
             )
+            rideMapVehicleNameCache[candidate.platformIdentifier] = displayName
         }
         if let model = candidate?.support.electricUnicycleModel {
             liveActivityIdentity = .model(model)
