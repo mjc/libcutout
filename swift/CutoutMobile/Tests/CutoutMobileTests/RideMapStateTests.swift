@@ -493,13 +493,23 @@ final class RideMapStateTests: XCTestCase {
 
         var points: [MobileRideMapPointDto] = []
         var cursor: UInt64?
-        while true {
+        var hasMore = true
+        for _ in 0 ..< 9 {
             let page = try state.pointsAfter(afterCursor: cursor, limit: 500)
             points.append(contentsOf: page.points)
-            guard page.hasMore else { break }
-            cursor = page.nextCursor
+            guard page.hasMore else {
+                hasMore = false
+                break
+            }
+            guard let nextCursor = page.nextCursor, nextCursor > (cursor ?? 0) else {
+                XCTFail("a paged response with more data must advance its cursor")
+                hasMore = false
+                break
+            }
+            cursor = nextCursor
         }
 
+        XCTAssertFalse(hasMore, "the expected 4,097 points must fit in nine 500-point pages")
         XCTAssertEqual(points.map(\.sequence), Array(0 ... 4_096))
         XCTAssertEqual(points.first?.startReason, .initial)
     }
