@@ -3,7 +3,7 @@ import CutoutMobileFFI
 import Foundation
 import Observation
 
-func normalizedRideMapHistorySearchText(_ text: String) -> String {
+private func normalizedRideMapHistorySearchText(_ text: String) -> String {
     text.trimmingCharacters(in: .whitespacesAndNewlines)
 }
 
