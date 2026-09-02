@@ -5,7 +5,7 @@ use cutout_ride_maps::{
     RidePointCount, RidePointSequence, RideSegmentStartReason, RideSummary, RouteDisplayBudget,
     RouteDisplayPoint, RouteEndpointMetadata, RoutePrivacyPolicy, RouteProjectionAccumulator,
     RouteSegmentDisplayMetadata, RouteTelemetryState, RouteViewport, TransitionError,
-    count_segment_runs, route_segment_display_metadata,
+    VehicleIdentity, WallClockUnixMilliseconds, count_segment_runs, route_segment_display_metadata,
 };
 use hex::encode as hex_encode;
 use rusqlite::{Connection, ErrorCode, OptionalExtension, params};
@@ -257,8 +257,8 @@ impl RideCursor {
 /// Rust-owned filters for bounded ride-history queries.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct RideHistoryQuery {
-    created_after_ms: Option<u64>,
-    vehicle_identity: Option<String>,
+    created_after_ms: Option<WallClockUnixMilliseconds>,
+    vehicle_identity: Option<VehicleIdentity>,
     search_text: Option<String>,
 }
 
@@ -292,11 +292,8 @@ impl RideHistoryQuery {
         search_text: Option<&str>,
     ) -> Self {
         Self {
-            created_after_ms: created_after_milliseconds,
-            vehicle_identity: vehicle_identity
-                .map(str::trim)
-                .filter(|value| !value.is_empty())
-                .map(str::to_owned),
+            created_after_ms: created_after_milliseconds.map(WallClockUnixMilliseconds::new),
+            vehicle_identity: vehicle_identity.and_then(VehicleIdentity::new),
             search_text: search_text
                 .map(str::trim)
                 .filter(|value| !value.is_empty())
@@ -307,13 +304,22 @@ impl RideHistoryQuery {
     /// Returns the inclusive lower creation-time bound.
     #[must_use]
     pub const fn created_after_milliseconds(&self) -> Option<u64> {
-        self.created_after_ms
+        match self.created_after_ms {
+            Some(value) => Some(value.as_u64()),
+            None => None,
+        }
     }
 
     /// Returns the stable platform identity filter.
     #[must_use]
-    pub fn vehicle_identity(&self) -> Option<&str> {
-        self.vehicle_identity.as_deref()
+    pub const fn created_after_timestamp(&self) -> Option<WallClockUnixMilliseconds> {
+        self.created_after_ms
+    }
+
+    /// Returns the typed stable platform identity filter.
+    #[must_use]
+    pub fn vehicle_identity(&self) -> Option<&VehicleIdentity> {
+        self.vehicle_identity.as_ref()
     }
 
     /// Returns the normalized user search text.
@@ -5315,8 +5321,8 @@ fn list_rides(
     let fetch_limit = i64::from(limit.get()) + 1;
     let created_after = query
         .created_after_ms
-        .map(|value| i64::try_from(value).unwrap_or(i64::MAX));
-    let vehicle_identity = query.vehicle_identity.as_deref();
+        .map(|value| i64::try_from(value.as_u64()).unwrap_or(i64::MAX));
+    let vehicle_identity = query.vehicle_identity.as_ref().map(VehicleIdentity::as_str);
     let search_text = query.search_text.as_deref().map(|value| {
         let escaped = value
             .to_lowercase()

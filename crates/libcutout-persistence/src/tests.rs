@@ -7,7 +7,8 @@ use cutout_core::{
 };
 use cutout_ride_maps::{
     Coordinate, LocationAdmission, LocationSample, LocationSource, RideEvent, RouteDisplayBudget,
-    RoutePrivacyGridE7, RoutePrivacyPolicy, RouteTelemetryState, RouteViewport,
+    RoutePrivacyGridE7, RoutePrivacyPolicy, RouteTelemetryState, RouteViewport, VehicleIdentity,
+    WallClockUnixMilliseconds,
 };
 use rusqlite::Connection;
 
@@ -3407,5 +3408,19 @@ fn fresh_ride_points_enforce_segment_foreign_keys() {
                 [],
             )
             .is_err()
+    );
+}
+
+#[test]
+fn history_query_preserves_typed_timestamp_and_vehicle_identity() {
+    let query = RideHistoryQuery::new(Some(15), Some(" device-a "), None);
+
+    assert_eq!(
+        query.created_after_timestamp(),
+        Some(WallClockUnixMilliseconds::new(15))
+    );
+    assert_eq!(
+        query.vehicle_identity(),
+        Some(&VehicleIdentity::new("device-a").unwrap())
     );
 }
