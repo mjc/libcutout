@@ -215,7 +215,7 @@ final class CutoutAppModel {
             isRecordOnlyCapture = false
             captureLabel = nil
             recordOnlyDeviceKind = nil
-            selectedDeviceStore.save(platformIdentifier: platformIdentifier)
+            selectedDeviceStore.save(platformIdentifier: platformIdentifier, displayName: selectedRow.title)
             hasSavedDevice = true
             liveActivityIdentity = liveActivityIdentity(for: selectedRow)
             liveActivityGlyph = liveActivityGlyph(for: selectedRow)

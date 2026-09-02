@@ -477,7 +477,7 @@ final class RideMapStateTests: XCTestCase {
         XCTAssertTrue(projection.pointsOmittedByBudget)
     }
 
-    func testMapStateLatestRoutePointsReturnsTheRustBoundedTail() async throws {
+    func testMapStatePointsAfterReturnsTheCompleteRustPagedSequence() async throws {
         let state = MobileRideMapState()
         _ = try state.startGpsOnly(atMs: 1_000, lastConnectedVehicle: nil)
         for offset in 0 ..< 4_097 {
@@ -491,13 +491,27 @@ final class RideMapStateTests: XCTestCase {
             ))
         }
 
-        let tail = try state.latestRoutePoints()
+        var points: [MobileRideMapPointDto] = []
+        var cursor: UInt64?
+        var hasMore = true
+        for _ in 0 ..< 9 {
+            let page = try state.pointsAfter(afterCursor: cursor, limit: 500)
+            points.append(contentsOf: page.points)
+            guard page.hasMore else {
+                hasMore = false
+                break
+            }
+            guard let nextCursor = page.nextCursor, nextCursor > (cursor ?? 0) else {
+                XCTFail("a paged response with more data must advance its cursor")
+                hasMore = false
+                break
+            }
+            cursor = nextCursor
+        }
 
-        XCTAssertEqual(tail.points.count, 4_096)
-        XCTAssertEqual(tail.points.first?.sequence, 1)
-        XCTAssertEqual(tail.points.last?.sequence, 4_096)
-        XCTAssertEqual(tail.points.first?.startReason, .initial)
-        XCTAssertFalse(tail.hasMore)
+        XCTAssertFalse(hasMore, "the expected 4,097 points must fit in nine 500-point pages")
+        XCTAssertEqual(points.map(\.sequence), Array(0 ... 4_096))
+        XCTAssertEqual(points.first?.startReason, .initial)
     }
 
 }

@@ -17,6 +17,7 @@ use super::{
     GeoBounds, HistoryContextBudget, PevcapImportOutcome, PevcapImportPreview, PevcapImportWarning,
     QueryLimit, RideDatabase, RideHistoryQuery, RideId, RideRecord, RideSource,
     RouteProjectionCancellation, StorageError, VoltageSagModelRecord,
+    normalize_device_display_name,
 };
 
 static TEST_LOCK: Mutex<()> = Mutex::new(());
@@ -1041,7 +1042,9 @@ fn database_persists_migrated_mobile_state() {
         uuid::Uuid::new_v4()
     ));
     let database = RideDatabase::open(&path).unwrap();
-    database.save_selected_device("ios-local-aero", 42).unwrap();
+    database
+        .save_selected_device("  ios-local-aero  ", 42)
+        .unwrap();
     assert_eq!(
         database.selected_device().unwrap().as_deref(),
         Some("ios-local-aero")
@@ -1084,6 +1087,32 @@ fn database_persists_migrated_mobile_state() {
     assert_eq!(reopened.voltage_sag_model("device-1").unwrap(), None);
     assert_eq!(reopened.ride_session_marker().unwrap(), None);
     reopened.shutdown().unwrap();
+    let _ = std::fs::remove_file(path);
+}
+
+#[test]
+fn remember_selected_device_normalizes_identity_and_name_together() {
+    let _guard = test_guard();
+    let path = std::env::temp_dir().join(format!(
+        "libcutout-persistence-device-selection-{}.sqlite",
+        uuid::Uuid::new_v4()
+    ));
+    let database = RideDatabase::open(&path).unwrap();
+
+    database
+        .remember_selected_device("  corebluetooth-a  ", Some("  NF2557  "), 42)
+        .unwrap();
+
+    assert_eq!(
+        database.selected_device().unwrap().as_deref(),
+        Some("corebluetooth-a")
+    );
+    assert_eq!(
+        database.device_name("corebluetooth-a").unwrap().as_deref(),
+        Some("NF2557")
+    );
+
+    database.shutdown().unwrap();
     let _ = std::fs::remove_file(path);
 }
 
@@ -1164,6 +1193,26 @@ fn device_names_normalize_lookup_and_bound_text() {
             ..
         }
     ));
+    assert_eq!(
+        normalize_device_display_name("device-a", "  device-a  ").unwrap(),
+        None
+    );
+    assert_eq!(
+        normalize_device_display_name("device-a", "  NF2557  ").unwrap(),
+        Some("NF2557".to_owned())
+    );
+    assert_eq!(
+        database
+            .migrate_device_name("device-a", "  NF2557  ", 4)
+            .unwrap(),
+        Some("NF2557".to_owned())
+    );
+    assert_eq!(
+        database
+            .migrate_device_name("device-a", " device-a ", 5)
+            .unwrap(),
+        None
+    );
     database.shutdown().unwrap();
     let _ = std::fs::remove_file(path);
 }

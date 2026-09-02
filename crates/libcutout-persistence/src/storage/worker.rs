@@ -5,11 +5,12 @@ use super::{
     create_ride, create_started_live_ride, create_started_ride, create_trail, device_name,
     export_ride_json, find_ride, finish_pevcap_import, list_ride_history_vehicle_options,
     list_rides, load_summary, load_summary_with_duration, map_points_in_bounds,
-    newest_recoverable_ride, pevcap_import_receipt, project_history_context, project_route_points,
-    rebuild_spatial_indexes, remove_voltage_sag_model, ride_session_marker, route_points,
-    save_device_name, save_ride_session_marker, save_selected_device, save_voltage_sag_model,
-    selected_device, sqlite_capabilities, trail_segments_in_bounds, transition_ride,
-    update_ride_map_metadata, voltage_sag_model,
+    migrate_device_name, newest_recoverable_ride, pevcap_import_receipt, project_history_context,
+    project_route_points, rebuild_spatial_indexes, remember_selected_device,
+    remove_voltage_sag_model, ride_session_marker, route_points, save_device_name,
+    save_ride_session_marker, save_selected_device, save_voltage_sag_model, selected_device,
+    sqlite_capabilities, trail_segments_in_bounds, transition_ride, update_ride_map_metadata,
+    voltage_sag_model,
 };
 use rusqlite::Connection;
 use std::ops::ControlFlow;
@@ -132,6 +133,19 @@ impl DatabaseWorker<'_> {
                     updated_at_ms,
                 ));
             }
+            Command::RememberSelectedDevice {
+                platform_identifier,
+                display_name,
+                updated_at_ms,
+                reply,
+            } => {
+                let _ = reply.send(remember_selected_device(
+                    connection,
+                    &platform_identifier,
+                    display_name.as_deref(),
+                    updated_at_ms,
+                ));
+            }
             Command::SaveDeviceName {
                 platform_identifier,
                 display_name,
@@ -139,6 +153,19 @@ impl DatabaseWorker<'_> {
                 reply,
             } => {
                 let _ = reply.send(save_device_name(
+                    connection,
+                    &platform_identifier,
+                    &display_name,
+                    updated_at_ms,
+                ));
+            }
+            Command::MigrateDeviceName {
+                platform_identifier,
+                display_name,
+                updated_at_ms,
+                reply,
+            } => {
+                let _ = reply.send(migrate_device_name(
                     connection,
                     &platform_identifier,
                     &display_name,

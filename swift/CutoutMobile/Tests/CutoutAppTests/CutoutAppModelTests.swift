@@ -221,6 +221,36 @@ final class CutoutAppModelTests: XCTestCase {
     }
 
     @MainActor
+    func testPairPersistsDiscoveredDeviceDisplayName() throws {
+        let suiteName = "CutoutAppModelTests.pairDisplayName.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        let platformIdentifier = "vesc-\(UUID().uuidString)"
+        let row = DevicePickerRow(
+            id: platformIdentifier,
+            title: "NF2557",
+            subtitle: "VESC Onewheel",
+            detail: "Discovered device",
+            state: DevicePickerRowState(action: .use),
+            symbolName: "circle.hexagongrid.circle",
+            connectionRoute: .vescOnewheel
+        )
+        let driver = SessionDriverSpy(rows: [row])
+        let model = CutoutAppModel(
+            core: driver,
+            selectedDeviceStore: DevicePickerSelectionStore(defaults: defaults)
+        )
+
+        model.start()
+        XCTAssertTrue(model.pair(platformIdentifier: platformIdentifier))
+        XCTAssertEqual(
+            DevicePickerSelectionStore(defaults: defaults).displayName(for: platformIdentifier),
+            row.title
+        )
+    }
+
+    @MainActor
     func testRepeatedUseCannotReplaceAnInFlightConnection() {
         let store = DevicePickerSelectionStore()
         XCTAssertNoThrow(try store.clear())

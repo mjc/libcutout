@@ -780,6 +780,34 @@ fn normalize_stored_text(value: &str, field: &'static str) -> Result<String, Sto
     Ok(value.to_owned())
 }
 
+fn normalize_optional_device_name(
+    value: Option<&str>,
+    platform_identifier: &str,
+) -> Result<Option<String>, StorageError> {
+    let Some(value) = value else { return Ok(None) };
+    let value = value.trim();
+    if value.is_empty() || value == platform_identifier {
+        return Ok(None);
+    }
+    normalize_stored_text(value, "display name").map(Some)
+}
+
+/// Canonicalizes a display name for one platform-local device identity.
+///
+/// Empty and identifier-equal names are absent; all other names are trimmed and bounded.
+///
+/// # Errors
+///
+/// Returns [`StorageError`] when the platform identifier or display name exceeds the stored text
+/// bound.
+pub fn normalize_device_display_name(
+    platform_identifier: &str,
+    display_name: &str,
+) -> Result<Option<String>, StorageError> {
+    let platform_identifier = normalize_stored_text(platform_identifier, "platform identifier")?;
+    normalize_optional_device_name(Some(display_name), &platform_identifier)
+}
+
 fn normalize_optional_stored_text(
     value: Option<&str>,
     field: &'static str,
@@ -1911,14 +1939,34 @@ impl RideDatabase {
         platform_identifier: &str,
         updated_at_ms: u64,
     ) -> Result<(), StorageError> {
-        if platform_identifier.trim().is_empty() {
-            return Err(StorageError::InvalidStoredValue {
-                field: "platform identifier",
-                value: "empty".to_owned(),
-            });
-        }
+        let platform_identifier =
+            normalize_stored_text(platform_identifier, "platform identifier")?;
         self.request(move |reply| Command::SaveSelectedDevice {
-            platform_identifier: platform_identifier.to_owned(),
+            platform_identifier,
+            updated_at_ms,
+            reply,
+        })
+    }
+
+    /// Stores a device name and selects the same device in one database transaction.
+    ///
+    /// A blank or identifier-equal display name is ignored, preserving any existing name.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StorageError`] when an input is invalid or the worker cannot commit the update.
+    pub fn remember_selected_device(
+        &self,
+        platform_identifier: &str,
+        display_name: Option<&str>,
+        updated_at_ms: u64,
+    ) -> Result<(), StorageError> {
+        let platform_identifier =
+            normalize_stored_text(platform_identifier, "platform identifier")?;
+        let display_name = normalize_optional_device_name(display_name, &platform_identifier)?;
+        self.request(move |reply| Command::RememberSelectedDevice {
+            platform_identifier,
+            display_name,
             updated_at_ms,
             reply,
         })
@@ -1957,6 +2005,34 @@ impl RideDatabase {
             normalize_stored_text(platform_identifier, "platform identifier")?;
         let display_name = normalize_stored_text(display_name, "display name")?;
         self.request(move |reply| Command::SaveDeviceName {
+            platform_identifier,
+            display_name,
+            updated_at_ms,
+            reply,
+        })
+    }
+
+    /// Migrates one legacy display name and returns its canonical value.
+    ///
+    /// Blank or identifier-equal values are treated as absent. The operation is idempotent.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StorageError`] when an input is invalid or the worker cannot commit the update.
+    pub fn migrate_device_name(
+        &self,
+        platform_identifier: &str,
+        display_name: &str,
+        updated_at_ms: u64,
+    ) -> Result<Option<String>, StorageError> {
+        let platform_identifier =
+            normalize_stored_text(platform_identifier, "platform identifier")?;
+        let display_name =
+            normalize_optional_device_name(Some(display_name), &platform_identifier)?;
+        let Some(display_name) = display_name else {
+            return Ok(None);
+        };
+        self.request(move |reply| Command::MigrateDeviceName {
             platform_identifier,
             display_name,
             updated_at_ms,
@@ -2929,12 +3005,24 @@ enum Command {
         updated_at_ms: u64,
         reply: Reply<()>,
     },
+    MigrateDeviceName {
+        platform_identifier: String,
+        display_name: String,
+        updated_at_ms: u64,
+        reply: Reply<Option<String>>,
+    },
     DeviceName {
         platform_identifier: String,
         reply: Reply<Option<String>>,
     },
     SaveSelectedDevice {
         platform_identifier: String,
+        updated_at_ms: u64,
+        reply: Reply<()>,
+    },
+    RememberSelectedDevice {
+        platform_identifier: String,
+        display_name: Option<String>,
         updated_at_ms: u64,
         reply: Reply<()>,
     },
@@ -4538,6 +4626,33 @@ fn selected_device(connection: &Connection) -> Result<Option<String>, StorageErr
         .map_err(StorageError::from)
 }
 
+fn remember_selected_device(
+    connection: &mut Connection,
+    platform_identifier: &str,
+    display_name: Option<&str>,
+    updated_at_ms: u64,
+) -> Result<(), StorageError> {
+    let transaction = connection.transaction()?;
+    if let Some(display_name) = display_name {
+        transaction.execute(
+            "INSERT INTO devices (platform_identifier, display_name, updated_at_ms)
+             VALUES (?1, ?2, ?3)
+             ON CONFLICT(platform_identifier) DO UPDATE SET display_name = excluded.display_name,
+                 updated_at_ms = excluded.updated_at_ms",
+            params![platform_identifier, display_name, updated_at_ms],
+        )?;
+    }
+    transaction.execute(
+        "INSERT INTO selected_device (singleton_key, platform_identifier, updated_at_ms)
+         VALUES (?1, ?2, ?3)
+         ON CONFLICT(singleton_key) DO UPDATE SET platform_identifier = excluded.platform_identifier,
+             updated_at_ms = excluded.updated_at_ms",
+        params![SelectedDeviceKey::VALUE.blob(), platform_identifier, updated_at_ms],
+    )?;
+    transaction.commit()?;
+    Ok(())
+}
+
 fn clear_selected_device(connection: &Connection) -> Result<(), StorageError> {
     connection.execute(
         "DELETE FROM selected_device WHERE singleton_key = ?1",
@@ -4559,6 +4674,16 @@ fn save_device_name(
         params![platform_identifier, display_name, updated_at_ms],
     )?;
     Ok(())
+}
+
+fn migrate_device_name(
+    connection: &Connection,
+    platform_identifier: &str,
+    display_name: &str,
+    updated_at_ms: u64,
+) -> Result<Option<String>, StorageError> {
+    save_device_name(connection, platform_identifier, display_name, updated_at_ms)?;
+    Ok(Some(display_name.to_owned()))
 }
 
 fn device_name(
