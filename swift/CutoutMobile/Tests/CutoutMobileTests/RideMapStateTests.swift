@@ -500,9 +500,7 @@ final class RideMapStateTests: XCTestCase {
             cursor = page.nextCursor
         }
 
-        XCTAssertEqual(points.count, 4_097)
-        XCTAssertEqual(points.first?.sequence, 0)
-        XCTAssertEqual(points.last?.sequence, 4_096)
+        XCTAssertEqual(points.map(\.sequence), Array(0 ... 4_096))
         XCTAssertEqual(points.first?.startReason, .initial)
     }
 
