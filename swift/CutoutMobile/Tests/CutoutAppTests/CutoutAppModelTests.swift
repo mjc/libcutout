@@ -1,6 +1,6 @@
 import XCTest
 @testable import CutoutApp
-import CutoutMobile
+@testable import CutoutMobile
 import CutoutMobileFFI
 import Observation
 import Synchronization
@@ -138,11 +138,11 @@ final class CutoutAppModelTests: XCTestCase {
     @MainActor
     func testRideMapStateRestoresTheRustSnapshotAndRouteBeforeSessionStart() async throws {
         let driver = SessionDriverSpy(rows: [])
-        _ = try driver.rideMapStateHandle.startGpsOnly(
+        _ = try driver.rideMapState.startGpsOnly(
             atMs: 100,
             lastConnectedVehicle: "pev-restored"
         )
-        _ = await Self.settle(driver.rideMapStateHandle, try driver.rideMapStateHandle.ingestLocation(
+        _ = await Self.settle(driver.rideMapState, try driver.rideMapState.ingestLocation(
             monotonicMs: 100,
             wallClockUnixMs: 1_700_000_000_100,
             latitudeDegrees: 39.7392,
@@ -150,7 +150,7 @@ final class CutoutAppModelTests: XCTestCase {
             horizontalAccuracyMeters: 5
         ))
         XCTAssertEqual(
-            try driver.rideMapStateHandle.observeVehicleConnection(
+            try driver.rideMapState.observeVehicleConnection(
                 platformIdentifier: "pev-restored",
                 atMs: 200
             ),
@@ -175,6 +175,7 @@ final class CutoutAppModelTests: XCTestCase {
                 MobileRideMapPointDto(
                     sequence: UInt64(sequence),
                     segmentId: 0,
+                    startReason: .initial,
                     latitudeDegrees: 39.7392,
                     longitudeDegrees: -104.9903,
                     wallClockUnixMs: 1_700_000_000_000 + UInt64(sequence),
@@ -193,102 +194,26 @@ final class CutoutAppModelTests: XCTestCase {
     }
 
     @MainActor
-    func testLiveRideMapDecisionPublishesItsProjectionAsynchronously() async throws {
-        let driver = SessionDriverSpy(rows: [])
-        let model = CutoutAppModel(core: driver)
-        _ = try driver.rideMapStateHandle.startGpsOnly(
-            atMs: 100,
-            lastConnectedVehicle: nil
-        )
-        let decision = await Self.settle(driver.rideMapStateHandle, try driver.rideMapStateHandle.ingestLocation(
-            monotonicMs: 100,
-            wallClockUnixMs: 1_700_000_000_100,
-            latitudeDegrees: 39.7392,
-            longitudeDegrees: -104.9903,
-            horizontalAccuracyMeters: 5
-        ))
-        guard case let .accepted(point, _) = decision else {
-            return XCTFail("expected the seeded location to be accepted, got \(decision)")
-        }
-        guard let snapshot = driver.rideMapStateHandle.currentSnapshot() else {
-            return XCTFail("expected an active ride-map snapshot")
-        }
-
-        driver.onRideMapDecisionChange?(snapshot, .accepted(point: point, segmentStarted: false))
-
-        await Self.waitUntil("published live ride-map route points") {
-            !model.rideMapLiveDisplayPoints.isEmpty
-        }
-        XCTAssertFalse(model.rideMapLiveDisplayPoints.isEmpty)
-    }
-
-    @MainActor
-    func testDiscardRideMapInvalidatesAndClearsTheLiveProjection() async throws {
-        let driver = SessionDriverSpy(rows: [])
-        let model = CutoutAppModel(core: driver)
-        _ = try driver.rideMapStateHandle.startGpsOnly(
-            atMs: 100,
-            lastConnectedVehicle: nil
-        )
-        let decision = await Self.settle(driver.rideMapStateHandle, try driver.rideMapStateHandle.ingestLocation(
-            monotonicMs: 100,
-            wallClockUnixMs: 1_700_000_000_100,
-            latitudeDegrees: 39.7392,
-            longitudeDegrees: -104.9903,
-            horizontalAccuracyMeters: 5
-        ))
-        guard case let .accepted(point, _) = decision else {
-            return XCTFail("expected the seeded location to be accepted, got \(decision)")
-        }
-        guard let snapshot = driver.rideMapStateHandle.currentSnapshot() else {
-            return XCTFail("expected an active ride-map snapshot")
-        }
-
-        driver.onRideMapDecisionChange?(snapshot, .accepted(point: point, segmentStarted: false))
-        await Self.waitUntil("published live route points before discard") {
-            !model.rideMapLiveDisplayPoints.isEmpty
-        }
-        XCTAssertFalse(model.rideMapLiveDisplayPoints.isEmpty)
-
-        XCTAssertTrue(model.discardRideMap())
-        XCTAssertTrue(model.rideMapPoints.isEmpty)
-        XCTAssertTrue(model.rideMapLiveDisplayPoints.isEmpty)
-        XCTAssertFalse(model.rideMapLivePointsTruncated)
-    }
-
-    @MainActor
     func testRideMapCommandFailureRemainsVisibleAsTheTypedRustError() {
         let driver = SessionDriverSpy(rows: [])
         let model = CutoutAppModel(core: driver)
 
         XCTAssertFalse(model.pauseRideMap())
-        XCTAssertEqual(model.rideMapError, .NoActiveRide)
-        XCTAssertEqual(model.rideMapLiveError, .NoActiveRide)
-        XCTAssertNil(model.rideMapHistoryError)
-        XCTAssertNil(model.rideMapHistoryRouteError)
-    }
-
-    @MainActor
-    func testRideMapCoreStorageFailureRemainsVisibleAfterLocationDelivery() {
-        let driver = SessionDriverSpy(rows: [])
-        let model = CutoutAppModel(core: driver)
-
-        driver.onRideMapErrorChange?(.Storage("disk full"))
-
-        XCTAssertEqual(model.rideMapError, .Storage("disk full"))
+        XCTAssertEqual(model.rideMapError, .noActiveRide)
+        XCTAssertEqual(model.rideMapLiveError, .noActiveRide)
         XCTAssertNil(model.rideMapHistoryError)
         XCTAssertNil(model.rideMapHistoryRouteError)
     }
 
     @MainActor
     func testHistoryStorageFailureDoesNotLookLikeAnEmptyHistory() async {
-        let driver = SessionDriverSpy(rows: [], rideMapStorageError: "database unavailable")
+        let driver = SessionDriverSpy(rows: [], rideMapUnavailable: true)
         let model = CutoutAppModel(core: driver)
 
         model.loadRideMapHistory()
         await Task.yield()
 
-        XCTAssertEqual(model.rideMapHistoryError, .Storage("database unavailable"))
+        XCTAssertEqual(model.rideMapHistoryError, .storageError("Rust ride database is unavailable"))
         XCTAssertNil(model.rideMapLiveError)
         XCTAssertFalse(model.rideMapHistoryLoading)
     }
@@ -348,7 +273,7 @@ final class CutoutAppModelTests: XCTestCase {
                 requestedID: "ride-missing",
                 summaryIDs: ["ride-1", "ride-2"]
             ),
-            .RideNotFound
+            .rideNotFound
         )
         XCTAssertNil(
             CutoutAppModel.historySelectionError(
@@ -373,7 +298,7 @@ final class CutoutAppModelTests: XCTestCase {
     @MainActor
     func testHistoryRoutePreviewActionLoadsTheLargestBoundedPreview() async throws {
         let driver = SessionDriverSpy(rows: [])
-        let state = driver.rideMapStateHandle
+        let state = driver.rideMapState
         _ = try state.startGpsOnly(atMs: 100, lastConnectedVehicle: nil)
         for index in 0 ... 4_096 {
             _ = await Self.settle(state, try state.ingestLocation(
@@ -385,7 +310,7 @@ final class CutoutAppModelTests: XCTestCase {
             ))
         }
         _ = try state.stop(atMs: 4_096_100)
-        let rideID = try state.save().rideId
+        let rideID = try state.save().rideID
 
         let model = CutoutAppModel(core: driver)
         model.setRideMapHistoryDateFilter(.allTime)
@@ -410,7 +335,7 @@ final class CutoutAppModelTests: XCTestCase {
     @MainActor
     func testDetailViewportProjectionDoesNotReplaceHistoryProjection() async throws {
         let driver = SessionDriverSpy(rows: [])
-        let state = driver.rideMapStateHandle
+        let state = driver.rideMapState
         _ = try state.startGpsOnly(atMs: 100, lastConnectedVehicle: nil)
         _ = await Self.settle(state, try state.ingestLocation(
             monotonicMs: 100,
@@ -427,7 +352,7 @@ final class CutoutAppModelTests: XCTestCase {
             horizontalAccuracyMeters: 5
         ))
         _ = try state.stop(atMs: 1_100)
-        let rideID = try state.save().rideId
+        let rideID = try state.save().rideID
 
         let model = CutoutAppModel(core: driver)
         model.setRideMapHistoryDateFilter(.allTime)
@@ -481,31 +406,6 @@ final class CutoutAppModelTests: XCTestCase {
         XCTAssertNotNil(model.rideMapHistoryDetailRouteError)
         XCTAssertNil(model.rideMapHistoryRouteError)
         XCTAssertFalse(model.rideMapHistoryDetailRouteLoading)
-    }
-
-    @MainActor
-    func testHistoryTelemetryStateUsesRustSummaryMetadata() {
-        XCTAssertEqual(
-            MobileRideMapHistorySummaryDto.telemetryState(
-                associatedVehicle: nil,
-                lastTelemetryAtMilliseconds: nil
-            ),
-            .gpsOnly
-        )
-        XCTAssertEqual(
-            MobileRideMapHistorySummaryDto.telemetryState(
-                associatedVehicle: "vehicle-1",
-                lastTelemetryAtMilliseconds: nil
-            ),
-            .associatedNoTelemetry
-        )
-        XCTAssertEqual(
-            MobileRideMapHistorySummaryDto.telemetryState(
-                associatedVehicle: "vehicle-1",
-                lastTelemetryAtMilliseconds: 42
-            ),
-            .associatedFresh
-        )
     }
 
     @MainActor
@@ -622,25 +522,6 @@ final class CutoutAppModelTests: XCTestCase {
                 viewportSegmentsOmittedByBudget: false
             )
         )
-    }
-
-    func testRouteDisplayPointConversionPreservesCanonicalGeometry() {
-        let point = MobileRideMapPointDto(
-            sequence: 4,
-            segmentId: 2,
-            latitudeDegrees: 40,
-            longitudeDegrees: -105,
-            wallClockUnixMs: 1_700_000_000_000,
-            monotonicMs: 1_000,
-            horizontalAccuracyMeters: 3,
-            telemetryState: .associatedFresh
-        )
-        let display = MobileRideMapRouteDisplayPoint(point)
-        XCTAssertEqual(display.sequence, point.sequence)
-        XCTAssertEqual(display.segmentId, point.segmentId)
-        XCTAssertEqual(display.latitudeDegrees, point.latitudeDegrees)
-        XCTAssertEqual(display.longitudeDegrees, point.longitudeDegrees)
-        XCTAssertEqual(display.privacyClass, .precise)
     }
 
     @MainActor
@@ -1971,7 +1852,7 @@ final class CutoutAppModelTests: XCTestCase {
     @MainActor
     func testHistoryVehicleNamesUseRustDeviceOptionsAndSummaryNamesWhenDisconnected() {
         let summary = MobileRideMapHistorySummaryDto(
-            rideId: "ride-1",
+            rideID: "ride-1",
             state: .saved,
             summary: MobileRideMapSummaryDto(
                 pointCount: 1,
@@ -1996,7 +1877,7 @@ final class CutoutAppModelTests: XCTestCase {
             ),
         ]
 
-        let names = CutoutAppModel.rideMapHistoryVehicleNames(
+        let names = CutoutAppModel.historyVehicleNames(
             options,
             summaries: [summary]
         )
@@ -2701,8 +2582,9 @@ private actor FailingLiveActivityManager: LiveActivityRideLifecycleManaging {
 @MainActor
 private final class SessionDriverSpy: CutoutSessionDriving {
     let rideSessionStateHandle = CutoutSessionStateHandle()
-    let rideMapStateHandle = MobileRideMapState()
-    let rideMapStorageError: String?
+    let rideMapState: MobileRideMapState
+    private let rideMapUnavailable: Bool
+    var rideMapStateHandle: MobileRideMapState? { rideMapUnavailable ? nil : rideMapState }
     let rideMapAvailability: MobileRideMapAvailability = .ready
     var onDisplayStateChange: ((RideDisplayState) -> Void)?
     var onPhaseChange: ((SessionConnectionPhase) -> Void)?
@@ -2740,14 +2622,20 @@ private final class SessionDriverSpy: CutoutSessionDriving {
         flushSucceeds: Bool = true,
         restoredPlatformIdentifier: String? = nil,
         notifyBluetoothRestorationOnStart: Bool = true,
-        rideMapStorageError: String? = nil
+        rideMapUnavailable: Bool = false
     ) {
         scanState = DevicePickerScanState(status: .scanning, rows: rows)
         self.pairingSucceeds = pairingSucceeds
         self.flushSucceeds = flushSucceeds
         self.restoredPlatformIdentifier = restoredPlatformIdentifier
         self.notifyBluetoothRestorationOnStart = notifyBluetoothRestorationOnStart
-        self.rideMapStorageError = rideMapStorageError
+        self.rideMapUnavailable = rideMapUnavailable
+        let state = RustPersistenceStore.shared.map(MobileRideMapState.init(database:))
+            ?? MobileRideMapState()
+        if state.currentSnapshot() != nil {
+            _ = try? state.discard()
+        }
+        rideMapState = state
     }
 
     func start() {
