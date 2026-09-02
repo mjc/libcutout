@@ -1,6 +1,6 @@
 import XCTest
 @testable import CutoutApp
-import CutoutMobile
+@testable import CutoutMobile
 import CutoutMobileFFI
 import Observation
 import Synchronization
@@ -14,16 +14,82 @@ final class CutoutAppModelTests: XCTestCase {
         writerError: nil
     )
 
+    // CutoutAppTests cannot import CutoutMobileTests; keep the target-local
+    // durable-write waiter paired with the equivalent mobile-test helper.
+    private static func settle(
+        _ state: MobileRideMapState,
+        _ decision: MobileRideMapDecisionDto,
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) async -> MobileRideMapDecisionDto {
+        guard case .pending = decision else { return decision }
+        let deadline = ContinuousClock.now + .seconds(10)
+        while ContinuousClock.now < deadline {
+            if let terminal = state.pollLocationWrites().first {
+                return terminal
+            }
+            if Task.isCancelled {
+                break
+            }
+            try? await Task.sleep(for: .milliseconds(1))
+        }
+        XCTFail(
+            "timed out waiting for durable ride-map location outcome",
+            file: file,
+            line: line
+        )
+        return decision
+    }
+
+    @MainActor
+    private static func waitUntil(
+        _ description: String,
+        maxTurns: Int = 10_000,
+        file: StaticString = #filePath,
+        line: UInt = #line,
+        condition: @escaping @MainActor () async -> Bool
+    ) async {
+        for _ in 0 ..< maxTurns {
+            if await condition() { return }
+            await Task.yield()
+        }
+        XCTFail("timed out waiting for \(description)", file: file, line: line)
+    }
+
     override func setUp() {
         super.setUp()
-        XCTAssertNoThrow(try RideSessionMarkerStore().clear())
-        XCTAssertNoThrow(try DevicePickerSelectionStore().clear())
+        clear(RideSessionMarkerStore())
+        clear(DevicePickerSelectionStore())
     }
 
     override func tearDown() {
-        XCTAssertNoThrow(try RideSessionMarkerStore().clear())
-        XCTAssertNoThrow(try DevicePickerSelectionStore().clear())
+        clear(RideSessionMarkerStore())
+        clear(DevicePickerSelectionStore())
         super.tearDown()
+    }
+
+    private func clear(
+        _ store: RideSessionMarkerStore,
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) {
+        do {
+            try store.clear()
+        } catch {
+            XCTFail("failed to clear ride session marker store: \(error)", file: file, line: line)
+        }
+    }
+
+    private func clear(
+        _ store: DevicePickerSelectionStore,
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) {
+        do {
+            try store.clear()
+        } catch {
+            XCTFail("failed to clear device picker selection store: \(error)", file: file, line: line)
+        }
     }
 
     @MainActor
@@ -67,6 +133,395 @@ final class CutoutAppModelTests: XCTestCase {
         XCTAssertTrue(observesChange({ _ = route.body }) {
             driver.onDisplayStateChange?(RideDisplayState(notificationCount: 1))
         })
+    }
+
+    @MainActor
+    func testRideMapStateRestoresTheRustSnapshotAndRouteBeforeSessionStart() async throws {
+        let driver = SessionDriverSpy(rows: [])
+        _ = try driver.rideMapState.startGpsOnly(
+            atMs: 100,
+            lastConnectedVehicle: "pev-restored"
+        )
+        _ = await Self.settle(driver.rideMapState, try driver.rideMapState.ingestLocation(
+            monotonicMs: 100,
+            wallClockUnixMs: 1_700_000_000_100,
+            latitudeDegrees: 39.7392,
+            longitudeDegrees: -104.9903,
+            horizontalAccuracyMeters: 5
+        ))
+        XCTAssertEqual(
+            try driver.rideMapState.observeVehicleConnection(
+                platformIdentifier: "pev-restored",
+                atMs: 200
+            ),
+            .associated
+        )
+
+        let model = CutoutAppModel(core: driver)
+
+        XCTAssertEqual(model.rideMapSnapshot?.associatedVehicle, "pev-restored")
+        XCTAssertEqual(model.rideMapSnapshot?.summary.pointCount, 1)
+        await Self.waitUntil("restored ride-map route points") {
+            !model.rideMapPoints.isEmpty
+        }
+        XCTAssertEqual(model.rideMapPoints.count, 1)
+    }
+
+    @MainActor
+    func testRideMapPointMetadataRetainsOnlyTheBoundedRustTail() {
+        var points = [MobileRideMapPointDto]()
+        for sequence in 0 ..< 4_097 {
+            CutoutAppModel.appendBoundedRideMapPoint(
+                MobileRideMapPointDto(
+                    sequence: UInt64(sequence),
+                    segmentId: 0,
+                    startReason: .initial,
+                    latitudeDegrees: 39.7392,
+                    longitudeDegrees: -104.9903,
+                    wallClockUnixMs: 1_700_000_000_000 + UInt64(sequence),
+                    monotonicMs: UInt64(sequence),
+                    horizontalAccuracyMeters: 5,
+                    telemetryState: .gpsOnly
+                ),
+                to: &points,
+                limit: 4_096
+            )
+        }
+
+        XCTAssertEqual(points.count, 4_096)
+        XCTAssertEqual(points.first?.sequence, 1)
+        XCTAssertEqual(points.last?.sequence, 4_096)
+    }
+
+    @MainActor
+    func testRideMapCommandFailureRemainsVisibleAsTheTypedRustError() {
+        let driver = SessionDriverSpy(rows: [])
+        let model = CutoutAppModel(core: driver)
+
+        XCTAssertFalse(model.pauseRideMap())
+        XCTAssertEqual(model.rideMapError, .noActiveRide)
+        XCTAssertEqual(model.rideMapLiveError, .noActiveRide)
+        XCTAssertNil(model.rideMapHistoryError)
+        XCTAssertNil(model.rideMapHistoryRouteError)
+    }
+
+    @MainActor
+    func testHistoryStorageFailureDoesNotLookLikeAnEmptyHistory() async {
+        let driver = SessionDriverSpy(rows: [], rideMapUnavailable: true)
+        let model = CutoutAppModel(core: driver)
+
+        model.loadRideMapHistory()
+        await Task.yield()
+
+        XCTAssertEqual(model.rideMapHistoryError, .storageError("Rust ride database is unavailable"))
+        XCTAssertNil(model.rideMapLiveError)
+        XCTAssertFalse(model.rideMapHistoryLoading)
+    }
+
+    @MainActor
+    func testRideMapLifecycleControlsUpdateRecordingState() {
+        let driver = SessionDriverSpy(rows: [])
+        let model = CutoutAppModel(core: driver)
+
+        XCTAssertFalse(model.isRideMapRecording)
+        XCTAssertTrue(model.startGpsOnlyRide())
+        XCTAssertEqual(driver.resetRideMapLocationAdmissionCount, 1)
+        XCTAssertTrue(model.isRideMapRecording)
+        XCTAssertTrue(model.pauseRideMap())
+        XCTAssertFalse(model.isRideMapRecording)
+        XCTAssertTrue(model.isRideMapPaused)
+        XCTAssertTrue(model.stopRideMap())
+        XCTAssertFalse(model.isRideMapRecording)
+        XCTAssertFalse(model.isRideMapPaused)
+    }
+
+    @MainActor
+    func testHistoryReloadPreservesTheSelectedRideWhenItStillMatches() {
+        XCTAssertEqual(
+            CutoutAppModel.preferredHistorySelection(
+                requestedID: nil,
+                currentID: "ride-2",
+                summaryIDs: ["ride-1", "ride-2"]
+            ),
+            "ride-2"
+        )
+        XCTAssertEqual(
+            CutoutAppModel.preferredHistorySelection(
+                requestedID: "ride-3",
+                currentID: "ride-2",
+                summaryIDs: ["ride-1", "ride-3"]
+            ),
+            "ride-3"
+        )
+        XCTAssertEqual(
+            CutoutAppModel.preferredHistorySelection(
+                requestedID: nil,
+                currentID: "ride-missing",
+                summaryIDs: ["ride-1", "ride-2"]
+            ),
+            "ride-1"
+        )
+        XCTAssertNil(
+            CutoutAppModel.preferredHistorySelection(
+                requestedID: "ride-missing",
+                currentID: "ride-2",
+                summaryIDs: ["ride-1", "ride-2"]
+            )
+        )
+        XCTAssertEqual(
+            CutoutAppModel.historySelectionError(
+                requestedID: "ride-missing",
+                summaryIDs: ["ride-1", "ride-2"]
+            ),
+            .rideNotFound
+        )
+        XCTAssertNil(
+            CutoutAppModel.historySelectionError(
+                requestedID: "ride-2",
+                summaryIDs: ["ride-1", "ride-2"]
+            )
+        )
+    }
+
+    @MainActor
+    func testHistoryPageAppendDoesNotDuplicateExistingRides() {
+        XCTAssertEqual(
+            CutoutAppModel.appendingUniqueHistory(
+                existing: ["ride-1", "ride-2"],
+                incoming: ["ride-2", "ride-3", "ride-1", "ride-4"],
+                id: { $0 }
+            ),
+            ["ride-1", "ride-2", "ride-3", "ride-4"]
+        )
+    }
+
+    @MainActor
+    func testHistoryRoutePreviewActionLoadsTheLargestBoundedPreview() async throws {
+        let driver = SessionDriverSpy(rows: [])
+        let state = driver.rideMapState
+        _ = try state.startGpsOnly(atMs: 100, lastConnectedVehicle: nil)
+        for index in 0 ... 4_096 {
+            _ = await Self.settle(state, try state.ingestLocation(
+                monotonicMs: 100 + UInt64(index) * 1_000,
+                wallClockUnixMs: 1_700_000_000_100 + UInt64(index) * 1_000,
+                latitudeDegrees: 39.7000 + Double(index) * 0.00001,
+                longitudeDegrees: -104.9000,
+                horizontalAccuracyMeters: 5
+            ))
+        }
+        _ = try state.stop(atMs: 4_096_100)
+        let rideID = try state.save().rideID
+
+        let model = CutoutAppModel(core: driver)
+        model.setRideMapHistoryDateFilter(.allTime)
+        model.loadRideMapHistory(selecting: rideID)
+        await Self.waitUntil("bounded history route preview", maxTurns: 100_000) {
+            model.selectedRideMapHistoryID == rideID
+                && model.rideMapHistoryDisplayPoints.count == 4_096
+                && !model.rideMapHistoryRouteLoading
+        }
+
+        XCTAssertTrue(model.rideMapHistoryPointsTruncated)
+        model.loadRoutePreviewMapHistory()
+        await Self.waitUntil("largest bounded history route preview", maxTurns: 100_000) {
+            model.rideMapHistoryDisplayPoints.count == 4_097
+                && !model.rideMapHistoryRouteLoading
+        }
+
+        XCTAssertEqual(model.rideMapHistoryDisplayPoints.count, 4_097)
+        XCTAssertFalse(model.rideMapHistoryPointsTruncated)
+    }
+
+    @MainActor
+    func testDetailViewportProjectionDoesNotReplaceHistoryProjection() async throws {
+        let driver = SessionDriverSpy(rows: [])
+        let state = driver.rideMapState
+        _ = try state.startGpsOnly(atMs: 100, lastConnectedVehicle: nil)
+        _ = await Self.settle(state, try state.ingestLocation(
+            monotonicMs: 100,
+            wallClockUnixMs: 1_700_000_000_100,
+            latitudeDegrees: 39.7000,
+            longitudeDegrees: -104.9000,
+            horizontalAccuracyMeters: 5
+        ))
+        _ = await Self.settle(state, try state.ingestLocation(
+            monotonicMs: 1_100,
+            wallClockUnixMs: 1_700_000_001_100,
+            latitudeDegrees: 39.7001,
+            longitudeDegrees: -104.9000,
+            horizontalAccuracyMeters: 5
+        ))
+        _ = try state.stop(atMs: 1_100)
+        let rideID = try state.save().rideID
+
+        let model = CutoutAppModel(core: driver)
+        model.setRideMapHistoryDateFilter(.allTime)
+        let initialHistoryProjectionVersion = model.rideMapHistoryProjectionVersion
+        let initialDetailProjectionVersion = model.rideMapHistoryDetailProjectionVersion
+        model.loadRideMapHistory(selecting: rideID)
+        await Self.waitUntil("history route selection", maxTurns: 100_000) {
+            model.selectedRideMapHistoryID == rideID
+                && model.rideMapHistoryDisplayPoints.isEmpty == false
+        }
+        XCTAssertEqual(model.selectedRideMapHistoryID, rideID)
+        let historyPoints = model.rideMapHistoryDisplayPoints
+        XCTAssertEqual(historyPoints.count, 2)
+        let selectedHistoryProjectionVersion = model.rideMapHistoryProjectionVersion
+        XCTAssertGreaterThan(selectedHistoryProjectionVersion, initialHistoryProjectionVersion)
+        let selectedDetailProjectionVersion = model.rideMapHistoryDetailProjectionVersion
+        XCTAssertGreaterThan(selectedDetailProjectionVersion, initialDetailProjectionVersion)
+
+        model.selectRideMapHistory(rideID)
+        await Self.waitUntil("same-shape history route reprojection", maxTurns: 100_000) {
+            model.rideMapHistoryProjectionVersion > selectedHistoryProjectionVersion
+        }
+        XCTAssertEqual(model.rideMapHistoryDisplayPoints, historyPoints)
+
+        model.projectRideMapHistoryDetailViewport(MobileGeoBoundsDto(
+            minimumLatitudeDegrees: 39.70009,
+            maximumLatitudeDegrees: 39.70011,
+            minimumLongitudeDegrees: -104.90001,
+            maximumLongitudeDegrees: -104.89999
+        ))
+        await Self.waitUntil("detail viewport projection", maxTurns: 100_000) {
+            model.rideMapHistoryDetailDisplayPoints.count == 1
+        }
+
+        XCTAssertEqual(model.rideMapHistoryDetailDisplayPoints.count, 1)
+        XCTAssertEqual(model.rideMapHistoryDisplayPoints, historyPoints)
+        XCTAssertGreaterThan(
+            model.rideMapHistoryDetailProjectionVersion,
+            selectedDetailProjectionVersion
+        )
+
+        model.projectRideMapHistoryDetailViewport(MobileGeoBoundsDto(
+            minimumLatitudeDegrees: 40,
+            maximumLatitudeDegrees: 39,
+            minimumLongitudeDegrees: -104.90001,
+            maximumLongitudeDegrees: -104.89999
+        ))
+        await Self.waitUntil("invalid history detail viewport error") {
+            model.rideMapHistoryDetailRouteError != nil
+        }
+        XCTAssertNotNil(model.rideMapHistoryDetailRouteError)
+        XCTAssertNil(model.rideMapHistoryRouteError)
+        XCTAssertFalse(model.rideMapHistoryDetailRouteLoading)
+    }
+
+    @MainActor
+    func testLiveProjectionGenerationRejectsStaleOrDisabledResults() {
+        XCTAssertTrue(
+            CutoutAppModel.shouldApplyLiveProjection(
+                generation: 3,
+                currentGeneration: 3,
+                enabled: true
+            )
+        )
+        XCTAssertFalse(
+            CutoutAppModel.shouldApplyLiveProjection(
+                generation: 2,
+                currentGeneration: 3,
+                enabled: true
+            )
+        )
+        XCTAssertFalse(
+            CutoutAppModel.shouldApplyLiveProjection(
+                generation: 3,
+                currentGeneration: 3,
+                enabled: false
+            )
+        )
+    }
+
+    @MainActor
+    func testRestoredProjectionDoesNotReplaceNewerLiveState() {
+        XCTAssertTrue(
+            CutoutAppModel.shouldApplyRestoredLiveProjection(
+                restorationGeneration: 3,
+                currentGeneration: 3,
+                liveProjectionEnabled: false
+            )
+        )
+        XCTAssertFalse(
+            CutoutAppModel.shouldApplyRestoredLiveProjection(
+                restorationGeneration: 2,
+                currentGeneration: 3,
+                liveProjectionEnabled: false
+            )
+        )
+        XCTAssertFalse(
+            CutoutAppModel.shouldApplyRestoredLiveProjection(
+                restorationGeneration: 3,
+                currentGeneration: 3,
+                liveProjectionEnabled: true
+            )
+        )
+    }
+
+    func testRouteProjectionUsesRustBoundedProjection() async throws {
+        let state = MobileRideMapState()
+        _ = try state.startGpsOnly(atMs: 100, lastConnectedVehicle: nil)
+        for sequence in 0 ..< 10 {
+            _ = await Self.settle(state, try state.ingestLocation(
+                monotonicMs: UInt64(1_000 + sequence * 1_000),
+                wallClockUnixMs: UInt64(1_700_000_000_000 + sequence * 1_000),
+                latitudeDegrees: 39.7 + Double(sequence) / 10_000,
+                longitudeDegrees: -104.9 - Double(sequence) / 10_000,
+                horizontalAccuracyMeters: 5
+            ))
+        }
+
+        let projection = try state.projectPoints(budget: 4)
+        XCTAssertEqual(projection.sourcePointCount, 10)
+        XCTAssertEqual(projection.candidatePointCount, 10)
+        XCTAssertEqual(projection.points.count, 4)
+        XCTAssertTrue(projection.pointsOmittedByBudget)
+        XCTAssertEqual(projection.points.first?.sequence, 0)
+        XCTAssertEqual(projection.points.last?.sequence, 9)
+    }
+
+    @MainActor
+    func testDetailViewportPreservesSourceBudgetOmission() {
+        XCTAssertTrue(
+            CutoutAppModel.detailPointsAreTruncated(
+                sourcePointsOmittedByBudget: true,
+                viewportPointsOmittedByBudget: false
+            )
+        )
+        XCTAssertTrue(
+            CutoutAppModel.detailPointsAreTruncated(
+                sourcePointsOmittedByBudget: false,
+                viewportPointsOmittedByBudget: true
+            )
+        )
+        XCTAssertFalse(
+            CutoutAppModel.detailPointsAreTruncated(
+                sourcePointsOmittedByBudget: false,
+                viewportPointsOmittedByBudget: false
+            )
+        )
+    }
+
+    @MainActor
+    func testDetailViewportPreservesSourceSegmentBudgetOmission() {
+        XCTAssertTrue(
+            CutoutAppModel.detailSegmentsAreOmitted(
+                sourceSegmentsOmittedByBudget: true,
+                viewportSegmentsOmittedByBudget: false
+            )
+        )
+        XCTAssertTrue(
+            CutoutAppModel.detailSegmentsAreOmitted(
+                sourceSegmentsOmittedByBudget: false,
+                viewportSegmentsOmittedByBudget: true
+            )
+        )
+        XCTAssertFalse(
+            CutoutAppModel.detailSegmentsAreOmitted(
+                sourceSegmentsOmittedByBudget: false,
+                viewportSegmentsOmittedByBudget: false
+            )
+        )
     }
 
     @MainActor
@@ -195,8 +650,8 @@ final class CutoutAppModelTests: XCTestCase {
     @MainActor
     func testSupportedPickerActionStartsTheSelectedConnection() {
         let store = DevicePickerSelectionStore()
-        XCTAssertNoThrow(try store.clear())
-        defer { XCTAssertNoThrow(try store.clear()) }
+        clear(store)
+        defer { clear(store) }
         let driver = SessionDriverSpy(
             rows: [
                 DevicePickerRow(
@@ -253,8 +708,8 @@ final class CutoutAppModelTests: XCTestCase {
     @MainActor
     func testRepeatedUseCannotReplaceAnInFlightConnection() {
         let store = DevicePickerSelectionStore()
-        XCTAssertNoThrow(try store.clear())
-        defer { XCTAssertNoThrow(try store.clear()) }
+        clear(store)
+        defer { clear(store) }
         let row = DevicePickerRow(
             id: "vesc-1234",
             title: "VESC",
@@ -489,7 +944,7 @@ final class CutoutAppModelTests: XCTestCase {
     func testDisconnectKeepsSavedDeviceUntilExplicitForget() {
         let store = DevicePickerSelectionStore()
         store.save(platformIdentifier: "saved-device")
-        defer { XCTAssertNoThrow(try store.clear()) }
+        defer { clear(store) }
         let model = CutoutAppModel()
 
         model.disconnectTransport()
@@ -513,8 +968,8 @@ final class CutoutAppModelTests: XCTestCase {
             connectionRoute: .vescOnewheel
         )
         let store = DevicePickerSelectionStore()
-        XCTAssertNoThrow(try store.clear())
-        defer { XCTAssertNoThrow(try store.clear()) }
+        clear(store)
+        defer { clear(store) }
         let driver = SessionDriverSpy(rows: [row])
         let model = CutoutAppModel(core: driver)
         model.start()
@@ -847,7 +1302,7 @@ final class CutoutAppModelTests: XCTestCase {
     func testRecordOnlyCaptureKeepsTheRememberedDevice() {
         let store = DevicePickerSelectionStore()
         store.save(platformIdentifier: "saved-device")
-        defer { XCTAssertNoThrow(try store.clear()) }
+        defer { clear(store) }
         let model = CutoutAppModel(core: SessionDriverSpy(rows: []))
 
         XCTAssertTrue(model.recordOnly(platformIdentifier: "unknown-device", deviceKind: "Unknown device"))
@@ -1325,6 +1780,121 @@ final class CutoutAppModelTests: XCTestCase {
     }
 
     @MainActor
+    func testRideMapVehicleNameRematchesTheCurrentProtocolIdentity() {
+        let driver = SessionDriverSpy(rows: [])
+        let model = CutoutAppModel(core: driver)
+        let supported = DevicePickerCandidateSupport.supported(
+            connectionRoute: .electricUnicycle,
+            electricUnicycleModel: .aero
+        )
+        let persistedName = DevicePickerDiscoveryCandidate(
+            platformIdentifier: "wheel-1",
+            displayName: "wheel-1",
+            productCategory: "Electric unicycle",
+            evidence: "restored selection",
+            detail: "restored selection",
+            support: supported,
+            symbolName: "circle.hexagongrid.circle"
+        )
+        let protocolIdentity = DevicePickerDiscoveryCandidate(
+            platformIdentifier: "wheel-1",
+            displayName: "NF2557",
+            productCategory: "Electric unicycle",
+            evidence: "Veteran protocol model id",
+            detail: "NOSFET Aero confirmed by model id 43",
+            support: supported,
+            symbolName: "circle.hexagongrid.circle"
+        )
+        driver.protocolIdentityCandidate = protocolIdentity
+
+        model.applyProtocolIdentityCandidate(persistedName)
+        XCTAssertEqual(model.selectedRideTitle, "wheel-1")
+        model.applyProtocolIdentityCandidate(protocolIdentity)
+
+        XCTAssertEqual(model.selectedRideTitle, "wheel-1")
+        XCTAssertEqual(model.rideMapVehicleIdentity, "wheel-1")
+        XCTAssertEqual(model.rideMapVehicleName, "NF2557")
+    }
+
+    @MainActor
+    func testProtocolIdentityCandidatePersistsNamesForHistoryIdentities() throws {
+        let suiteName = "CutoutAppModelTests.\(#function).\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let store = DevicePickerSelectionStore(defaults: defaults)
+        let model = CutoutAppModel(core: SessionDriverSpy(rows: []), selectedDeviceStore: store)
+        let supported = DevicePickerCandidateSupport.supported(
+            connectionRoute: .electricUnicycle,
+            electricUnicycleModel: .aero
+        )
+        let candidate = DevicePickerDiscoveryCandidate(
+            platformIdentifier: "old-core-bluetooth-id",
+            displayName: "NF2557",
+            productCategory: "Electric unicycle",
+            evidence: "advertisement",
+            detail: "resolved device",
+            support: supported,
+            symbolName: "circle.hexagongrid.circle"
+        )
+
+        model.applyProtocolIdentityCandidate(candidate)
+
+        XCTAssertEqual(store.displayName(for: "old-core-bluetooth-id"), "NF2557")
+    }
+
+    @MainActor
+    func testRideMapVehicleNameNeverTreatsThePlatformIdentityAsDisplayName() {
+        XCTAssertNil(CutoutAppModel.meaningfulDeviceName("wheel-1", identity: "wheel-1"))
+        XCTAssertNil(CutoutAppModel.meaningfulDeviceName("", identity: "wheel-1"))
+        XCTAssertEqual(CutoutAppModel.meaningfulDeviceName("NF2557", identity: "wheel-1"), "NF2557")
+    }
+
+    @MainActor
+    func testHistoryVehicleNamesUseRustDeviceOptionsAndSummaryNamesWhenDisconnected() {
+        let summary = MobileRideMapHistorySummaryDto(
+            rideID: "ride-1",
+            state: .saved,
+            summary: MobileRideMapSummaryDto(
+                pointCount: 1,
+                distanceMeters: 1,
+                durationMilliseconds: 1_000
+            ),
+            segmentCount: 1,
+            createdAtMilliseconds: 1,
+            candidateVehicle: nil,
+            associatedVehicle: "corebluetooth-old",
+            associatedVehicleName: "NF2557",
+            telemetryState: .associatedNoTelemetry
+        )
+        let options = [
+            MobileRideMapHistoryVehicleOptionDto(
+                platformIdentifier: "corebluetooth-old",
+                displayName: "NF2557"
+            ),
+            MobileRideMapHistoryVehicleOptionDto(
+                platformIdentifier: "corebluetooth-new",
+                displayName: "NF2557"
+            ),
+        ]
+
+        let names = CutoutAppModel.historyVehicleNames(
+            options,
+            summaries: [summary]
+        )
+
+        XCTAssertEqual(names["corebluetooth-old"], "NF2557")
+        XCTAssertEqual(names["corebluetooth-new"], "NF2557")
+        XCTAssertEqual(summary.vehicleDisplayName, "NF2557")
+        XCTAssertEqual(
+            CutoutAppModel.mergeRideMapHistoryVehicleIdentities(
+                existing: options.map(\.platformIdentifier),
+                incoming: []
+            ),
+            ["corebluetooth-new", "corebluetooth-old"]
+        )
+    }
+
+    @MainActor
     func testLiveActivityStartFailureIsObservableAndRetryable() async {
         let row = DevicePickerRow(
             id: "vesc-1234",
@@ -1344,9 +1914,8 @@ final class CutoutAppModelTests: XCTestCase {
         model.start()
         XCTAssertTrue(model.pair(platformIdentifier: row.id))
 
-        for _ in 0 ..< 20 {
-            if model.liveActivityError != nil { break }
-            try? await Task.sleep(for: .milliseconds(1))
+        await Self.waitUntil("live activity start failure") {
+            model.liveActivityError != nil
         }
 
         XCTAssertEqual(model.liveActivityError, .authorizationDenied)
@@ -1355,9 +1924,8 @@ final class CutoutAppModelTests: XCTestCase {
         XCTAssertTrue(model.pair(platformIdentifier: row.id))
         XCTAssertFalse(model.pair(platformIdentifier: row.id))
 
-        for _ in 0 ..< 20 {
-            if await manager.startCount == 2 { break }
-            try? await Task.sleep(for: .milliseconds(1))
+        await Self.waitUntil("live activity retry") {
+            await manager.startCount == 2
         }
 
         let startCount = await manager.startCount
@@ -1455,8 +2023,10 @@ final class CutoutAppModelTests: XCTestCase {
         }
         driver.onPhaseChange?(.bluetoothUnavailable(rawState: 4))
 
-        for _ in 0 ..< 20 {
-            if case .ended = driver.rideSessionStateHandle.rideSessionSnapshot().phase { break }
+        for _ in 0 ..< 200 {
+            if case .ended(reason: .unrecoverableSessionFailure) = driver.rideSessionStateHandle.rideSessionSnapshot().phase {
+                break
+            }
             await Task.yield()
         }
 
@@ -1617,15 +2187,13 @@ final class CutoutAppModelTests: XCTestCase {
         )
 
         model.start()
-        for _ in 0 ..< 50 {
-            if driver.rideSessionStateHandle.rideSessionSnapshot().phase == .reconnecting { break }
-            try? await Task.sleep(for: .milliseconds(1))
+        await Self.waitUntil("restored ride reconnecting phase") {
+            driver.rideSessionStateHandle.rideSessionSnapshot().phase == .reconnecting
         }
         driver.onPhaseChange?(.subscribing)
         driver.onPhaseChange?(.live)
-        for _ in 0 ..< 50 {
-            if driver.rideSessionStateHandle.rideSessionSnapshot().phase == .active { break }
-            try? await Task.sleep(for: .milliseconds(1))
+        await Self.waitUntil("restored ride active phase") {
+            driver.rideSessionStateHandle.rideSessionSnapshot().phase == .active
         }
 
         XCTAssertEqual(
@@ -1661,7 +2229,6 @@ final class CutoutAppModelTests: XCTestCase {
         )
 
         model.start()
-        try? await Task.sleep(for: .milliseconds(10))
 
         XCTAssertEqual(driver.pairedPlatformIdentifiers, [])
         let startCount = await manager.startCount
@@ -1699,7 +2266,6 @@ final class CutoutAppModelTests: XCTestCase {
         }
 
         driver.onBluetoothRestorationResolved?(platformIdentifier)
-        try? await Task.sleep(for: .milliseconds(10))
 
         XCTAssertEqual(driver.pairedPlatformIdentifiers, [platformIdentifier])
         let endReason = await manager.lastEndReason
@@ -1732,11 +2298,11 @@ final class CutoutAppModelTests: XCTestCase {
         )
 
         model.start()
-        for _ in 0 ..< 50 {
+        await Self.waitUntil("mismatched restored ride termination") {
             if case .ended(reason: .appReset) = driver.rideSessionStateHandle.rideSessionSnapshot().phase {
-                break
+                return true
             }
-            try? await Task.sleep(for: .milliseconds(1))
+            return false
         }
 
         let endReason = await manager.lastEndReason
@@ -1748,9 +2314,8 @@ final class CutoutAppModelTests: XCTestCase {
         XCTAssertNil(markerStore.marker)
 
         XCTAssertTrue(model.pair(platformIdentifier: restoredPlatformIdentifier))
-        for _ in 0 ..< 50 {
-            if await manager.startCount == 1 { break }
-            try? await Task.sleep(for: .milliseconds(1))
+        await Self.waitUntil("user-selected replacement ride activity") {
+            await manager.startCount == 1
         }
         let userActionStartCount = await manager.startCount
         XCTAssertEqual(userActionStartCount, 1)
@@ -1774,9 +2339,11 @@ final class CutoutAppModelTests: XCTestCase {
         )
 
         model.start()
-        for _ in 0 ..< 50 {
-            if case .ended = driver.rideSessionStateHandle.rideSessionSnapshot().phase { break }
-            try? await Task.sleep(for: .milliseconds(1))
+        await Self.waitUntil("orphaned ride termination") {
+            if case .ended = driver.rideSessionStateHandle.rideSessionSnapshot().phase {
+                return true
+            }
+            return false
         }
 
         XCTAssertEqual(
@@ -2015,6 +2582,10 @@ private actor FailingLiveActivityManager: LiveActivityRideLifecycleManaging {
 @MainActor
 private final class SessionDriverSpy: CutoutSessionDriving {
     let rideSessionStateHandle = CutoutSessionStateHandle()
+    let rideMapState: MobileRideMapState
+    private let rideMapUnavailable: Bool
+    var rideMapStateHandle: MobileRideMapState? { rideMapUnavailable ? nil : rideMapState }
+    let rideMapAvailability: MobileRideMapAvailability = .ready
     var onDisplayStateChange: ((RideDisplayState) -> Void)?
     var onPhaseChange: ((SessionConnectionPhase) -> Void)?
     var onReconnectScheduled: ((SessionConnectionRetry) -> Void)?
@@ -2024,6 +2595,10 @@ private final class SessionDriverSpy: CutoutSessionDriving {
     var onFaultHistoryReadbackChange: ((FaultHistoryReadback?) -> Void)?
     var onBmsSnapshotChange: ((BmsSnapshot?) -> Void)?
     var onPhoneLocationSnapshotChange: ((MobilePhoneLocationSnapshotDto, MonotonicMilliseconds) -> Void)?
+    var onRideMapDecisionChange: ((MobileRideMapSnapshotDto, MobileRideMapDecisionDto) -> Void)?
+    var onRideMapSnapshotChange: ((MobileRideMapSnapshotDto) -> Void)?
+    var onRideMapErrorChange: ((MobileRideMapError) -> Void)?
+    var onRideMapAvailabilityChange: ((MobileRideMapAvailability) -> Void)?
     var onProtocolIdentityCandidateChange: ((DevicePickerDiscoveryCandidate?) -> Void)?
     var onBluetoothRestorationResolved: ((String?) -> Void)?
     var protocolIdentityCandidate: DevicePickerDiscoveryCandidate?
@@ -2039,19 +2614,28 @@ private final class SessionDriverSpy: CutoutSessionDriving {
     private(set) var captureAnnotations = [String]()
     private(set) var flushCaptureCount = 0
     private(set) var disconnectCount = 0
+    private(set) var resetRideMapLocationAdmissionCount = 0
 
     init(
         rows: [DevicePickerRow],
         pairingSucceeds: Bool = true,
         flushSucceeds: Bool = true,
         restoredPlatformIdentifier: String? = nil,
-        notifyBluetoothRestorationOnStart: Bool = true
+        notifyBluetoothRestorationOnStart: Bool = true,
+        rideMapUnavailable: Bool = false
     ) {
         scanState = DevicePickerScanState(status: .scanning, rows: rows)
         self.pairingSucceeds = pairingSucceeds
         self.flushSucceeds = flushSucceeds
         self.restoredPlatformIdentifier = restoredPlatformIdentifier
         self.notifyBluetoothRestorationOnStart = notifyBluetoothRestorationOnStart
+        self.rideMapUnavailable = rideMapUnavailable
+        let state = RustPersistenceStore.shared.map(MobileRideMapState.init(database:))
+            ?? MobileRideMapState()
+        if state.currentSnapshot() != nil {
+            _ = try? state.discard()
+        }
+        rideMapState = state
     }
 
     func start() {
@@ -2091,6 +2675,10 @@ private final class SessionDriverSpy: CutoutSessionDriving {
 
     func disconnectAndScan() {
         disconnectCount += 1
+    }
+
+    func resetRideMapLocationAdmission() {
+        resetRideMapLocationAdmissionCount += 1
     }
 
     func now() -> MonotonicMilliseconds {
