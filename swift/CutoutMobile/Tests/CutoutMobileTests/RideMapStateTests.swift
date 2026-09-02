@@ -477,4 +477,27 @@ final class RideMapStateTests: XCTestCase {
         XCTAssertTrue(projection.pointsOmittedByBudget)
     }
 
+    func testMapStateLatestRoutePointsReturnsTheRustBoundedTail() async throws {
+        let state = MobileRideMapState()
+        _ = try state.startGpsOnly(atMs: 1_000, lastConnectedVehicle: nil)
+        for offset in 0 ..< 4_097 {
+            let monotonicMs = UInt64(1_001 + offset)
+            _ = await settle(state, try state.ingestLocation(
+                monotonicMs: monotonicMs,
+                wallClockUnixMs: 1_700_000_000_000 + monotonicMs,
+                latitudeDegrees: 40.0,
+                longitudeDegrees: -105.0,
+                horizontalAccuracyMeters: 3
+            ))
+        }
+
+        let tail = try state.latestRoutePoints()
+
+        XCTAssertEqual(tail.points.count, 4_096)
+        XCTAssertEqual(tail.points.first?.sequence, 1)
+        XCTAssertEqual(tail.points.last?.sequence, 4_096)
+        XCTAssertEqual(tail.points.first?.startReason, .initial)
+        XCTAssertFalse(tail.hasMore)
+    }
+
 }
