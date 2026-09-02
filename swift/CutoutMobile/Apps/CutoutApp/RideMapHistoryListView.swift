@@ -16,47 +16,14 @@ struct RideMapHistoryListView: View {
                 .accessibilityAddTraits(.isHeader)
 
             LazyVStack(spacing: 8) {
-                ForEach(rides, id: \.rideId) { ride in
-                    Button {
-                        select(ride.rideId)
-                    } label: {
-                        HStack(spacing: 12) {
-                            Image(systemName: "point.topleft.down.curvedto.point.bottomright.up")
-                                .font(.title3)
-                                .foregroundStyle(ride.rideId == selectedRideID ? PevColors.yellow : PevColors.muted)
-                                .frame(width: 30)
-                                .accessibilityHidden(true)
-
-                            VStack(alignment: .leading, spacing: 3) {
-                                Text(rideTitle(for: ride))
-                                    .font(.headline)
-                                    .lineLimit(1)
-                                Text(rideSubtitle(for: ride))
-                                    .font(.subheadline)
-                                    .foregroundStyle(PevColors.muted)
-                                    .lineLimit(1)
-                            }
-
-                            Spacer(minLength: 8)
-                            Image(systemName: "chevron.right")
-                                .font(.caption.weight(.bold))
-                                .foregroundStyle(PevColors.muted)
-                                .accessibilityHidden(true)
-                        }
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 10)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .background(
-                            ride.rideId == selectedRideID
-                                ? PevColors.yellow.opacity(0.13)
-                                : PevColors.pageBackground.opacity(0.55),
-                            in: .rect(cornerRadius: 16)
-                        )
-                    }
-                    .buttonStyle(.plain)
-                    .accessibilityAddTraits(ride.rideId == selectedRideID ? .isSelected : [])
-                    .accessibilityValue(Self.selectionAccessibilityValue(isSelected: ride.rideId == selectedRideID))
-                    .accessibilityIdentifier("ride-map.history-\(ride.rideId)")
+                ForEach(rides, id: \.rideID) { ride in
+                    RideMapHistoryRow(
+                        ride: ride,
+                        isSelected: ride.rideID == selectedRideID,
+                        title: rideTitle(for: ride),
+                        subtitle: rideSubtitle(for: ride),
+                        select: { select(ride.rideID) }
+                    )
                 }
             }
             if canLoadMore {
@@ -96,5 +63,56 @@ struct RideMapHistoryListView: View {
         }
         return Date(timeIntervalSince1970: Double(ride.createdAtMilliseconds) / 1_000)
             .formatted(.dateTime.month(.abbreviated).day().year().hour().minute())
+    }
+}
+
+private struct RideMapHistoryRow: View {
+    let ride: MobileRideMapHistorySummaryDto
+    let isSelected: Bool
+    let title: String
+    let subtitle: String
+    let select: () -> Void
+
+    var body: some View {
+        Button(action: select) {
+            HStack(spacing: 12) {
+                Image(systemName: "point.topleft.down.curvedto.point.bottomright.up")
+                    .font(.title3)
+                    .foregroundStyle(isSelected ? PevColors.yellow : PevColors.muted)
+                    .frame(width: 30)
+                    .accessibilityHidden(true)
+
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(title)
+                        .font(.headline)
+                        .lineLimit(1)
+                    Text(subtitle)
+                        .font(.subheadline)
+                        .foregroundStyle(PevColors.muted)
+                        .lineLimit(1)
+                }
+
+                Spacer(minLength: 8)
+                Image(systemName: "chevron.right")
+                    .font(.caption.weight(.bold))
+                    .foregroundStyle(PevColors.muted)
+                    .accessibilityHidden(true)
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 10)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(
+                isSelected
+                    ? PevColors.yellow.opacity(0.13)
+                    : PevColors.pageBackground.opacity(0.55),
+                in: .rect(cornerRadius: 16)
+            )
+        }
+        .buttonStyle(.plain)
+        .accessibilityAddTraits(isSelected ? .isSelected : [])
+        .accessibilityValue(
+            RideMapHistoryListView.selectionAccessibilityValue(isSelected: isSelected)
+        )
+        .accessibilityIdentifier("ride-map.history-\(ride.rideID)")
     }
 }

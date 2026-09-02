@@ -13,8 +13,8 @@ struct RideMapControlsView: View {
 
     var body: some View {
         switch state {
-        case .recording:
-            adaptiveControls {
+        case .active:
+            RideMapAdaptiveControls {
                 Button(action: pause) {
                     Label(localizedAppText("ride_map.pause"), systemImage: "pause.fill")
                         .frame(maxWidth: .infinity, minHeight: 48)
@@ -25,7 +25,7 @@ struct RideMapControlsView: View {
                 stopButton(prominent: true)
             }
         case .paused:
-            adaptiveControls {
+            RideMapAdaptiveControls {
                 Button(action: resume) {
                     Label(localizedAppText("ride_map.resume"), systemImage: "play.fill")
                         .frame(maxWidth: .infinity, minHeight: 48)
@@ -36,7 +36,7 @@ struct RideMapControlsView: View {
                 stopButton(prominent: false)
             }
         case .stopped:
-            adaptiveControls {
+            RideMapAdaptiveControls {
                 Button(action: save) {
                     Label(localizedAppText("ride_map.save"), systemImage: "checkmark.circle.fill")
                         .frame(maxWidth: .infinity, minHeight: 48)
@@ -48,26 +48,13 @@ struct RideMapControlsView: View {
                     isDiscardConfirmationPresented = true
                 } label: {
                     Label(localizedAppText("ride_map.discard"), systemImage: "trash")
+                        .frame(maxWidth: .infinity, minHeight: 48)
                 }
                 .buttonStyle(.bordered)
                 .accessibilityIdentifier("ride-map.discard")
             }
-        case .saved, .discarded, nil:
+        case .draft, .saved, .discarded, .interrupted, .imported, nil:
             startButton
-        }
-    }
-
-    @ViewBuilder
-    private func adaptiveControls<Content: View>(
-        @ViewBuilder content: () -> Content
-    ) -> some View {
-        ViewThatFits(in: .horizontal) {
-            HStack(spacing: 12) {
-                content()
-            }
-            VStack(alignment: .leading, spacing: 12) {
-                content()
-            }
         }
     }
 
@@ -75,6 +62,7 @@ struct RideMapControlsView: View {
     private func stopButton(prominent: Bool) -> some View {
         Button(role: .destructive, action: stop) {
             Label(localizedAppText("ride_map.stop"), systemImage: "stop.fill")
+                .frame(maxWidth: .infinity, minHeight: 48)
         }
         .modifier(StopButtonStyle(prominent: prominent))
         .tint(PevColors.red)
@@ -105,5 +93,24 @@ struct RideMapControlsView: View {
         .buttonStyle(.borderedProminent)
         .tint(PevColors.yellow)
         .accessibilityIdentifier("ride-map.start")
+    }
+}
+
+private struct RideMapAdaptiveControls<Content: View>: View {
+    private let content: Content
+
+    init(@ViewBuilder content: () -> Content) {
+        self.content = content()
+    }
+
+    var body: some View {
+        ViewThatFits(in: .horizontal) {
+            HStack(spacing: 12) {
+                content
+            }
+            VStack(alignment: .leading, spacing: 12) {
+                content
+            }
+        }
     }
 }

@@ -1,4 +1,3 @@
-import CoreLocation
 import MapKit
 import SwiftUI
 import CutoutMobile
@@ -8,6 +7,7 @@ struct RideMapLiveContentView: View {
     let points: [MobileRideMapPointDto]
     let displayPoints: [MobileRideMapRouteDisplayPoint]
     let routeID: String
+    let projectionVersion: UInt64
     let endpointMetadata: MobileRideMapRouteEndpointMetadata
     let segments: [MobileRideMapSegmentDisplayMetadata]
     let snapshot: MobileRideMapSnapshotDto?
@@ -38,7 +38,7 @@ struct RideMapLiveContentView: View {
             RideMapCanvasView(
                 points: displayPoints,
                 routeID: routeID,
-                projectionVersion: 0,
+                projectionVersion: projectionVersion,
                 showsStartMarker: showsRecordedBounds,
                 showsEndMarker: showsRecordedBounds,
                 showsCurrentMarker: true,
@@ -56,7 +56,7 @@ struct RideMapLiveContentView: View {
             .frame(maxWidth: .infinity)
 
             VStack(alignment: .leading, spacing: 12) {
-                if snapshot?.state == .recording {
+                if snapshot?.state == .active {
                     Text(recordingPillText)
                         .font(.caption.weight(.black))
                         .foregroundStyle(.black)
@@ -137,11 +137,6 @@ struct RideMapLiveContentView: View {
             ))
             }
         }
-        // Connected presentations place a floating TabView over the bottom
-        // safe area. Keep the final metrics/control rows above that surface.
-        .safeAreaInset(edge: .bottom, spacing: 0) {
-            Color.clear.frame(height: 92)
-        }
         .onChange(of: displayPoints.last?.sequence, initial: true) { _, _ in
             guard followsLatestPoint else { return }
             recenterOnLatestPoint()
@@ -155,7 +150,7 @@ struct RideMapLiveContentView: View {
             Button(localizedAppText("common.cancel"), role: .cancel) {}
         }
         .task(id: snapshot?.state) {
-            guard snapshot?.state == .recording else { return }
+            guard snapshot?.state == .active else { return }
             while Task.isCancelled == false {
                 refreshDuration()
                 do {
@@ -169,7 +164,7 @@ struct RideMapLiveContentView: View {
 
     private var statusTitle: String {
         switch snapshot?.state {
-        case .recording:
+        case .active:
             localizedAppText("ride_map.status.recording")
         case .paused:
             localizedAppText("ride_map.status.paused")
@@ -179,6 +174,12 @@ struct RideMapLiveContentView: View {
             localizedAppText("ride_map.status.saved")
         case .discarded:
             localizedAppText("ride_map.status.discarded")
+        case .draft:
+            localizedAppText("ride_map.status.draft")
+        case .interrupted:
+            localizedAppText("ride_map.status.interrupted")
+        case .imported:
+            localizedAppText("ride_map.status.imported")
         case nil:
             localizedAppText("ride_map.no_active")
         }
@@ -217,9 +218,9 @@ struct RideMapLiveContentView: View {
 
     static func showsRecordedBounds(for state: MobileRideMapStateDto?) -> Bool {
         switch state {
-        case .stopped, .saved, .discarded:
+        case .stopped, .saved, .discarded, .interrupted, .imported:
             true
-        case .recording, .paused, nil:
+        case .draft, .active, .paused, nil:
             false
         }
     }
