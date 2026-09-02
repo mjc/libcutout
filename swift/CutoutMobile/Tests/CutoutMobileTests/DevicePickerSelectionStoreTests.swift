@@ -44,14 +44,31 @@ final class DevicePickerSelectionStoreTests: XCTestCase {
         let defaults = UserDefaults(suiteName: suiteName)!
         defer { defaults.removePersistentDomain(forName: suiteName) }
 
+        let platformIdentifier = "ios-local-aero-\(UUID().uuidString)"
+        let key = "io.cutout.devicePicker.deviceName.\(platformIdentifier)"
         guard let database = RustPersistenceStore.shared else {
             throw XCTSkip("Rust ride database is unavailable in this test environment")
         }
-        defaults.set("NF2557", forKey: "io.cutout.devicePicker.deviceName.ios-local-aero")
+        defaults.set("NF2557", forKey: key)
         let store = DevicePickerSelectionStore(database: database, defaults: defaults)
 
-        XCTAssertEqual(store.displayName(for: "ios-local-aero"), "NF2557")
-        XCTAssertNil(defaults.string(forKey: "io.cutout.devicePicker.deviceName.ios-local-aero"))
-        XCTAssertEqual(store.displayName(for: "ios-local-aero"), "NF2557")
+        XCTAssertEqual(store.displayName(for: platformIdentifier), "NF2557")
+        XCTAssertNil(defaults.string(forKey: key))
+        XCTAssertEqual(store.displayName(for: platformIdentifier), "NF2557")
+    }
+
+    func testInvalidLegacyDeviceNameIsRemovedDuringLookup() {
+        let suiteName = "DevicePickerSelectionStoreTests-\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        let platformIdentifier = "ios-local-aero-\(UUID().uuidString)"
+        let key = "io.cutout.devicePicker.deviceName.\(platformIdentifier)"
+        defaults.set("  \(platformIdentifier)  ", forKey: key)
+
+        let store = DevicePickerSelectionStore(defaults: defaults)
+
+        XCTAssertNil(store.displayName(for: platformIdentifier))
+        XCTAssertNil(defaults.string(forKey: key))
     }
 }
