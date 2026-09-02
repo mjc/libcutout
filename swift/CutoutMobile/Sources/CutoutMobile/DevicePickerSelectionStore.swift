@@ -32,9 +32,11 @@ public struct DevicePickerSelectionStore {
                 )) != nil {
                     defaults.removeObject(forKey: Self.key)
                 }
+                _ = displayName(for: legacy)
                 return legacy
             }
             if let persisted = try? database.selectedDevice() {
+                _ = displayName(for: persisted)
                 return persisted
             }
             return nil
