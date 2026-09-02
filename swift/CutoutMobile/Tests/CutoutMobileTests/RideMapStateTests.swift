@@ -477,7 +477,7 @@ final class RideMapStateTests: XCTestCase {
         XCTAssertTrue(projection.pointsOmittedByBudget)
     }
 
-    func testMapStateLatestRoutePointsReturnsTheRustBoundedTail() async throws {
+    func testMapStatePointsAfterReturnsTheRustBoundedTail() async throws {
         let state = MobileRideMapState()
         _ = try state.startGpsOnly(atMs: 1_000, lastConnectedVehicle: nil)
         for offset in 0 ..< 4_097 {
@@ -491,13 +491,19 @@ final class RideMapStateTests: XCTestCase {
             ))
         }
 
-        let tail = try state.latestRoutePoints()
+        var points: [MobileRideMapPointDto] = []
+        var cursor: UInt64?
+        while true {
+            let page = try state.pointsAfter(afterCursor: cursor, limit: 500)
+            points.append(contentsOf: page.points)
+            guard page.hasMore else { break }
+            cursor = page.nextCursor
+        }
 
-        XCTAssertEqual(tail.points.count, 4_096)
-        XCTAssertEqual(tail.points.first?.sequence, 1)
-        XCTAssertEqual(tail.points.last?.sequence, 4_096)
-        XCTAssertEqual(tail.points.first?.startReason, .initial)
-        XCTAssertFalse(tail.hasMore)
+        XCTAssertEqual(points.count, 4_097)
+        XCTAssertEqual(points.first?.sequence, 0)
+        XCTAssertEqual(points.last?.sequence, 4_096)
+        XCTAssertEqual(points.first?.startReason, .initial)
     }
 
 }
