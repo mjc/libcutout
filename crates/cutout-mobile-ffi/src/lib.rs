@@ -6283,8 +6283,8 @@ impl MobileRideMapCore {
                 horizontal_accuracy_meters,
             ) {
                 Ok(decision) => decisions.push(decision),
-                // No ride is recording; every remaining sample hits the same
-                // condition, so stop without discarding decisions already collected.
+                // No active ride remains; every remaining sample would return NoActiveRide,
+                // so stop without discarding decisions already collected.
                 Err(MobileRideMapCoreErrorDto::NoActiveRide) => break,
                 Err(error) => return Err(error),
             }

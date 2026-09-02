@@ -106,9 +106,13 @@ cutout_atomic_replace_generated_directory() {
     echo "refusing unsafe generated-directory replacement: $source -> $target" >&2
     return 2
   fi
+  if [[ -e "$target" && ! -d "$target" && ! -L "$target" ]]; then
+    echo "refusing non-directory generated-directory target: $target" >&2
+    return 2
+  fi
 
   if [[ ! -e "$target" && ! -L "$target" ]]; then
-    mv -- "$source" "$target"
+    mv "$source" "$target"
     return
   fi
 

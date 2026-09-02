@@ -276,3 +276,13 @@ test ! -e "$atomic_source"
 test ! -e "$generated/original"
 test -f "$generated/replacement"
 grep -q '^atomic-new$' "$generated/replacement"
+
+atomic_file_source="$tmp/atomic-file-source"
+atomic_file_target="$tmp/atomic-file-target"
+mkdir -p "$atomic_file_source"
+printf 'file-target\n' >"$atomic_file_target"
+if cutout_atomic_replace_generated_directory "$atomic_file_source" "$atomic_file_target" 2>"$tmp/atomic-file.log"; then
+  echo "expected a regular-file target to be rejected" >&2
+  exit 1
+fi
+grep -q "refusing non-directory generated-directory target" "$tmp/atomic-file.log"
