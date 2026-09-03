@@ -83,7 +83,7 @@ struct RideMapHistoryDetailView: View {
 
     private var selectedRide: MobileRideMapHistorySummaryDto? {
         guard let initialHistoryID else { return nil }
-        return rides.first(where: { $0.rideId == initialHistoryID })
+        return rides.first(where: { $0.rideID == initialHistoryID })
     }
 
     private var selectionTaskID: String { initialHistoryID ?? "" }
@@ -171,11 +171,11 @@ struct RideMapHistoryDetailView: View {
             if rides.isEmpty { load() }
             return
         }
-        if rides.contains(where: { $0.rideId == initialHistoryID }) {
+        if rides.contains(where: { $0.rideID == initialHistoryID }) {
             guard Self.shouldSelectHistory(
                 initialHistoryID: initialHistoryID,
                 selectedHistoryID: selectedHistoryID,
-                availableHistoryIDs: rides.map(\.rideId)
+                availableHistoryIDs: rides.map(\.rideID)
             ) else {
                 return
             }
@@ -274,6 +274,7 @@ private struct RideMapHistoryDetailMap: View {
                 showsEndMarker: true,
                 showsCurrentMarker: false,
                 endpointMetadata: endpointMetadata,
+                cameraRegion: nil,
                 segments: segments,
                 contextRoutes: [],
                 fitsRouteOnChange: true,
@@ -374,7 +375,7 @@ private struct RideMapHistoryDetailSummary: View {
                     )
                 }
                 RideMapRouteTruthView(
-                    points: [],
+                    displayedPointCount: displayPointCount,
                     recordedPointCount: recordedPointCount,
                     rustSegmentCount: segmentCount,
                     decision: nil,

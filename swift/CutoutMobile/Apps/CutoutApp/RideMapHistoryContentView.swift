@@ -86,7 +86,7 @@ struct RideMapHistoryContentView: View {
 
     @MainActor
     static func normalizedSearchText(_ searchText: String) -> String {
-        normalizedRideMapHistorySearchText(searchText)
+        searchText.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     private func vehicleLabel(for identity: String) -> String {
@@ -205,6 +205,7 @@ struct RideMapHistoryContentView: View {
                 showsEndMarker: true,
                 showsCurrentMarker: false,
                 endpointMetadata: endpointMetadata,
+                cameraRegion: nil,
                 segments: segments,
                 contextRoutes: contextRoutes,
                 fitsRouteOnChange: true,
@@ -336,7 +337,7 @@ struct RideMapHistoryContentView: View {
 
     private var selectedRide: MobileRideMapHistorySummaryDto? {
         guard let selectedRideID else { return nil }
-        return rides.first { $0.rideId == selectedRideID }
+        return rides.first { $0.rideID == selectedRideID }
     }
 
     private var isSelectedRouteLoading: Bool {
