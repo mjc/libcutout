@@ -47,7 +47,6 @@ final class CutoutAppModel {
     private(set) var rideMapHistoryError: MobileRideMapError?
     private(set) var rideMapHistoryRouteError: MobileRideMapError?
     private(set) var rideMapHistoryDetailRouteError: MobileRideMapError?
-    private(set) var rideMapPoints = [MobileRideMapPointDto]()
     private(set) var rideMapLiveDisplayPoints = [MobileRideMapRouteDisplayPoint]()
     private(set) var rideMapLiveCameraRegion: MobileRideMapCameraRegion?
     private(set) var rideMapLiveEndpointMetadata = MobileRideMapRouteEndpointMetadata.empty
@@ -338,15 +337,12 @@ final class CutoutAppModel {
         updateRideMapDurationTicker()
         guard rideMapSnapshot != nil else { return }
         rideMapRestoreTask?.cancel()
-        let previewLimit = Int(Self.rideMapLimits.liveTailPointLimit)
+        let previewLimit = Self.rideMapLimits.liveTailPointLimit
         let restorationGeneration = rideMapLiveProjectionGeneration
         rideMapRestoreTask = Task { [weak self] in
             do {
                 let result = try await Task.detached(priority: .userInitiated) {
-                    try Self.collectRideMapActiveTail(
-                        state: state,
-                        previewLimit: previewLimit
-                    )
+                    try state.projectPoints(budget: previewLimit)
                 }.value
                 guard !Task.isCancelled, let self else { return }
                 guard Self.shouldApplyRestoredLiveProjection(
@@ -356,8 +352,7 @@ final class CutoutAppModel {
                 ) else {
                     return
                 }
-                self.rideMapPoints = Array(result.0.suffix(previewLimit))
-                self.applyLiveProjection(result.1)
+                self.applyLiveProjection(result)
             } catch {
                 guard !Task.isCancelled, let self else { return }
                 guard Self.shouldApplyRestoredLiveProjection(
@@ -368,7 +363,6 @@ final class CutoutAppModel {
                     return
                 }
                 self.rideMapLiveError = Self.mapRideMapError(error)
-                self.rideMapPoints = []
                 self.clearLiveProjectionState()
             }
         }
@@ -1038,41 +1032,6 @@ final class CutoutAppModel {
         }
     }
 
-    private nonisolated static func collectRideMapActiveTail(
-        state: MobileRideMapState,
-        previewLimit: Int
-    ) throws -> ([MobileRideMapPointDto], MobileRideMapRouteProjection) {
-        var points = [MobileRideMapPointDto]()
-        var cursor: UInt64?
-        while true {
-            try Task.checkCancellation()
-            let batch = try state.pointsAfter(afterCursor: cursor, limit: UInt32(previewLimit))
-            points.append(contentsOf: batch.points)
-            if points.count > previewLimit {
-                points.removeFirst(points.count - previewLimit)
-            }
-            guard batch.hasMore,
-                  let nextCursor = batch.nextCursor,
-                  nextCursor != cursor
-            else { break }
-            cursor = nextCursor
-        }
-        let projection = try state.projectPoints(budget: UInt32(previewLimit))
-        return (points, projection)
-    }
-
-    /// Keeps the Swift route-truth input bounded to the Rust live-route preview tail.
-    static func appendBoundedRideMapPoint(
-        _ point: MobileRideMapPointDto,
-        to points: inout [MobileRideMapPointDto],
-        limit: Int
-    ) {
-        points.append(point)
-        if points.count > limit {
-            points.removeFirst(points.count - limit)
-        }
-    }
-
     static func shouldApplyLiveProjection(
         generation: UInt64,
         currentGeneration: UInt64,
@@ -1096,12 +1055,7 @@ final class CutoutAppModel {
         rideMapLiveError = nil
         rideMapSnapshot = snapshot
         rideMapLastDecision = decision
-        if case let .accepted(point, _) = decision {
-            Self.appendBoundedRideMapPoint(
-                point,
-                to: &rideMapPoints,
-                limit: Int(Self.rideMapLimits.liveTailPointLimit)
-            )
+        if case .accepted = decision {
             requestLiveProjection()
         }
     }
@@ -1189,7 +1143,6 @@ final class CutoutAppModel {
         rideMapLiveProjectionEnabled = false
         rideMapLiveProjectionCancellation?.cancel()
         if clearPoints {
-            rideMapPoints.removeAll(keepingCapacity: true)
             clearLiveProjectionState()
             rideMapLastDecision = nil
         }

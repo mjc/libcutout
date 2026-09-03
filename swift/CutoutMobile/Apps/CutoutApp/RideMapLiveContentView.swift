@@ -1,10 +1,8 @@
 import MapKit
 import SwiftUI
 import CutoutMobile
-import CutoutMobileFFI
 
 struct RideMapLiveContentView: View {
-    let points: [MobileRideMapPointDto]
     let displayPoints: [MobileRideMapRouteDisplayPoint]
     let routeID: String
     let projectionVersion: UInt64
@@ -58,13 +56,13 @@ struct RideMapLiveContentView: View {
 
                 VStack(alignment: .leading, spacing: 12) {
                     RideMapLiveStatusView(
-                        points: points,
                         displayPointCount: displayPoints.count,
                         snapshot: snapshot,
                         availability: availability,
                         vehicleName: vehicleName,
                         mapError: mapError,
                         lastDecision: lastDecision,
+                        telemetryState: latestTelemetryState,
                         pointsTruncated: pointsTruncated,
                         segmentsOmittedByBudget: segmentsOmittedByBudget,
                         segments: segments,
@@ -116,6 +114,15 @@ struct RideMapLiveContentView: View {
         snapshot?.recordedBoundsAvailable == true
     }
 
+    private var latestTelemetryState: MobileRideMapTelemetryStateDto? {
+        switch lastDecision {
+        case let .pending(point, _), let .accepted(point, _):
+            point.telemetryState
+        case .rejected, .ignored, .storageError, nil:
+            snapshot?.associatedVehicle == nil ? .gpsOnly : .associatedNoTelemetry
+        }
+    }
+
     private func recenterOnLatestPoint() {
         guard let point = displayPoints.last, let cameraRegion else { return }
         followsLatestPoint = true
@@ -125,13 +132,13 @@ struct RideMapLiveContentView: View {
 }
 
 private struct RideMapLiveStatusView: View {
-    let points: [MobileRideMapPointDto]
     let displayPointCount: Int
     let snapshot: MobileRideMapSnapshotDto?
     let availability: MobileRideMapAvailability
     let vehicleName: String?
     let mapError: MobileRideMapError?
     let lastDecision: MobileRideMapDecisionDto?
+    let telemetryState: MobileRideMapTelemetryStateDto?
     let pointsTruncated: Bool
     let segmentsOmittedByBudget: Bool
     let segments: [MobileRideMapSegmentDisplayMetadata]
@@ -179,14 +186,15 @@ private struct RideMapLiveStatusView: View {
             .font(.title3.weight(.bold))
             .accessibilityAddTraits(.isHeader)
         RideMapRouteTruthView(
-            points: points,
+            displayedPointCount: displayPointCount,
             recordedPointCount: snapshot?.summary.pointCount,
             rustSegmentCount: snapshot?.segmentCount ?? 0,
             decision: lastDecision,
             showsRecordedBounds: snapshot?.recordedBoundsAvailable == true,
             segmentsOmittedByBudget: segmentsOmittedByBudget,
             segments: segments,
-            canonicalBackgroundGapCount: canonicalBackgroundGapCount
+            canonicalBackgroundGapCount: canonicalBackgroundGapCount,
+            telemetryState: telemetryState
         )
         if pointsTruncated {
             Text(localizedAppText("ride_map.live_route_truncated_count", displayPointCount))

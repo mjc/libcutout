@@ -1,6 +1,5 @@
 import CoreLocation
 import CutoutMobile
-import CutoutMobileFFI
 import MapKit
 import SwiftUI
 
@@ -166,39 +165,6 @@ struct RideMapCanvasView: View {
                 latitudeDelta: cameraRegion.latitudeSpanDegrees,
                 longitudeDelta: cameraRegion.longitudeSpanDegrees
             )
-        )
-    }
-
-    static func geoBounds(for region: MKCoordinateRegion) -> MobileGeoBoundsDto? {
-        let center = region.center
-        let span = region.span
-        guard center.latitude.isFinite,
-              center.longitude.isFinite,
-              span.latitudeDelta.isFinite,
-              span.longitudeDelta.isFinite,
-              span.latitudeDelta >= 0,
-              span.longitudeDelta >= 0
-        else {
-            return nil
-        }
-
-        let halfLatitude = min(span.latitudeDelta / 2, 90)
-        let minimumLatitude = max(-90, center.latitude - halfLatitude)
-        let maximumLatitude = min(90, center.latitude + halfLatitude)
-        let longitudeBounds: (minimum: Double, maximum: Double)
-        if span.longitudeDelta >= 360 {
-            longitudeBounds = (-180, 180)
-        } else {
-            longitudeBounds = (
-                normalizeLongitude(center.longitude - span.longitudeDelta / 2),
-                normalizeLongitude(center.longitude + span.longitudeDelta / 2)
-            )
-        }
-        return MobileGeoBoundsDto(
-            minimumLatitudeDegrees: minimumLatitude,
-            maximumLatitudeDegrees: maximumLatitude,
-            minimumLongitudeDegrees: longitudeBounds.minimum,
-            maximumLongitudeDegrees: longitudeBounds.maximum
         )
     }
 
@@ -474,12 +440,6 @@ struct RideMapCanvasView: View {
         mapPosition = .region(Self.mapRegion(for: cameraRegion))
     }
 
-    private static func normalizeLongitude(_ longitude: Double) -> Double {
-        let normalized = longitude.truncatingRemainder(dividingBy: 360)
-        if normalized > 180 { return normalized - 360 }
-        if normalized < -180 { return normalized + 360 }
-        return normalized
-    }
 }
 
 private struct RideMapRetainedSingletonSegmentMarker: View {

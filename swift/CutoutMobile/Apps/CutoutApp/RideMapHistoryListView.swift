@@ -1,5 +1,4 @@
 import CutoutMobile
-import CutoutMobileFFI
 import SwiftUI
 
 struct RideMapHistoryListView: View {

@@ -161,36 +161,10 @@ final class CutoutAppModelTests: XCTestCase {
 
         XCTAssertEqual(model.rideMapSnapshot?.associatedVehicle, "pev-restored")
         XCTAssertEqual(model.rideMapSnapshot?.summary.pointCount, 1)
-        await Self.waitUntil("restored ride-map route points") {
-            !model.rideMapPoints.isEmpty
+        await Self.waitUntil("restored ride-map projection") {
+            !model.rideMapLiveDisplayPoints.isEmpty
         }
-        XCTAssertEqual(model.rideMapPoints.count, 1)
-    }
-
-    @MainActor
-    func testRideMapPointMetadataRetainsOnlyTheBoundedRustTail() {
-        var points = [MobileRideMapPointDto]()
-        for sequence in 0 ..< 4_097 {
-            CutoutAppModel.appendBoundedRideMapPoint(
-                MobileRideMapPointDto(
-                    sequence: UInt64(sequence),
-                    segmentId: 0,
-                    startReason: .initial,
-                    latitudeDegrees: 39.7392,
-                    longitudeDegrees: -104.9903,
-                    wallClockUnixMs: 1_700_000_000_000 + UInt64(sequence),
-                    monotonicMs: UInt64(sequence),
-                    horizontalAccuracyMeters: 5,
-                    telemetryState: .gpsOnly
-                ),
-                to: &points,
-                limit: 4_096
-            )
-        }
-
-        XCTAssertEqual(points.count, 4_096)
-        XCTAssertEqual(points.first?.sequence, 1)
-        XCTAssertEqual(points.last?.sequence, 4_096)
+        XCTAssertEqual(model.rideMapLiveDisplayPoints.count, 1)
     }
 
     @MainActor

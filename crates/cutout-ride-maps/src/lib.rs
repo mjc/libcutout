@@ -382,6 +382,23 @@ mod tests {
     }
 
     #[test]
+    fn route_camera_region_is_absent_for_an_empty_projection() {
+        assert!(route_camera_region(std::iter::empty()).is_none());
+    }
+
+    #[test]
+    fn route_camera_region_keeps_a_single_point_visible() {
+        let coordinate = Coordinate::from_degrees(40.0, -105.0).unwrap();
+        let region = route_camera_region([coordinate]).unwrap();
+
+        assert!((region.center_latitude_degrees() - 40.0).abs() < f64::EPSILON);
+        assert!((region.center_longitude_degrees() + 105.0).abs() < f64::EPSILON);
+        assert!((region.latitude_span_degrees() - 0.002).abs() < f64::EPSILON);
+        assert!((region.longitude_span_degrees() - 0.002).abs() < f64::EPSILON);
+        assert_eq!(region.centered_on(coordinate), region);
+    }
+
+    #[test]
     fn cancellable_route_projection_returns_typed_cancellation_without_sleeping() {
         let mut recorder = RideMapRecorder::new();
         recorder
