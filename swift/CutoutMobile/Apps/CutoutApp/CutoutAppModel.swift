@@ -51,6 +51,7 @@ final class CutoutAppModel {
     private(set) var rideMapLiveCameraRegion: MobileRideMapCameraRegion?
     private(set) var rideMapLiveEndpointMetadata = MobileRideMapRouteEndpointMetadata.empty
     private(set) var rideMapLiveSegments = [MobileRideMapSegmentDisplayMetadata]()
+    private(set) var rideMapLiveTelemetryState: MobileRideMapTelemetryStateDto?
     private(set) var rideMapLiveBackgroundGapCount: UInt64 = 0
     private(set) var rideMapLivePointsTruncated = false
     private(set) var rideMapLiveSegmentsOmittedByBudget = false
@@ -334,6 +335,9 @@ final class CutoutAppModel {
     private func restoreRideMapState() {
         guard let state = core.rideMapStateHandle else { return }
         rideMapSnapshot = state.currentSnapshot()
+        rideMapLiveTelemetryState = rideMapSnapshot?.associatedVehicle == nil
+            ? .gpsOnly
+            : .associatedNoTelemetry
         updateRideMapDurationTicker()
         guard rideMapSnapshot != nil else { return }
         rideMapRestoreTask?.cancel()
@@ -1055,8 +1059,14 @@ final class CutoutAppModel {
         rideMapLiveError = nil
         rideMapSnapshot = snapshot
         rideMapLastDecision = decision
-        if case .accepted = decision {
+        switch decision {
+        case let .pending(point, _):
+            rideMapLiveTelemetryState = point.telemetryState
+        case let .accepted(point, _):
+            rideMapLiveTelemetryState = point.telemetryState
             requestLiveProjection()
+        case .rejected, .ignored, .storageError:
+            break
         }
     }
 
@@ -1133,6 +1143,7 @@ final class CutoutAppModel {
         rideMapLiveCameraRegion = nil
         rideMapLiveEndpointMetadata = .empty
         rideMapLiveSegments.removeAll(keepingCapacity: true)
+        rideMapLiveTelemetryState = nil
         rideMapLiveBackgroundGapCount = 0
         rideMapLivePointsTruncated = false
         rideMapLiveSegmentsOmittedByBudget = false
@@ -1159,6 +1170,9 @@ final class CutoutAppModel {
             if resetPoints {
                 invalidateLiveProjection(clearPoints: true)
             }
+            rideMapLiveTelemetryState = rideMapSnapshot?.associatedVehicle == nil
+                ? .gpsOnly
+                : .associatedNoTelemetry
             return true
         } catch {
             rideMapLiveError = Self.mapRideMapError(error)

@@ -15,6 +15,7 @@ struct RideMapLiveContentView: View {
     let vehicleName: String?
     let mapError: MobileRideMapError?
     let lastDecision: MobileRideMapDecisionDto?
+    let telemetryState: MobileRideMapTelemetryStateDto?
     let pointsTruncated: Bool
     let segmentsOmittedByBudget: Bool
     let canonicalBackgroundGapCount: UInt64
@@ -62,7 +63,7 @@ struct RideMapLiveContentView: View {
                         vehicleName: vehicleName,
                         mapError: mapError,
                         lastDecision: lastDecision,
-                        telemetryState: latestTelemetryState,
+                        telemetryState: telemetryState,
                         pointsTruncated: pointsTruncated,
                         segmentsOmittedByBudget: segmentsOmittedByBudget,
                         segments: segments,
@@ -112,15 +113,6 @@ struct RideMapLiveContentView: View {
 
     private var showsRecordedBounds: Bool {
         snapshot?.recordedBoundsAvailable == true
-    }
-
-    private var latestTelemetryState: MobileRideMapTelemetryStateDto? {
-        switch lastDecision {
-        case let .pending(point, _), let .accepted(point, _):
-            point.telemetryState
-        case .rejected, .ignored, .storageError, nil:
-            snapshot?.associatedVehicle == nil ? .gpsOnly : .associatedNoTelemetry
-        }
     }
 
     private func recenterOnLatestPoint() {

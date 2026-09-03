@@ -161,6 +161,7 @@ final class CutoutAppModelTests: XCTestCase {
 
         XCTAssertEqual(model.rideMapSnapshot?.associatedVehicle, "pev-restored")
         XCTAssertEqual(model.rideMapSnapshot?.summary.pointCount, 1)
+        XCTAssertEqual(model.rideMapLiveTelemetryState, .associatedNoTelemetry)
         await Self.waitUntil("restored ride-map projection") {
             !model.rideMapLiveDisplayPoints.isEmpty
         }
