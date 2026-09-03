@@ -9,6 +9,7 @@ struct RideMapLiveContentView: View {
     let routeID: String
     let projectionVersion: UInt64
     let endpointMetadata: MobileRideMapRouteEndpointMetadata
+    let cameraRegion: MobileRideMapCameraRegion?
     let segments: [MobileRideMapSegmentDisplayMetadata]
     let snapshot: MobileRideMapSnapshotDto?
     let availability: MobileRideMapAvailability
@@ -28,113 +29,73 @@ struct RideMapLiveContentView: View {
     let stop: () -> Void
     let start: () -> Void
     let discard: () -> Void
-    let refreshDuration: () -> Void
 
     @State private var isDiscardConfirmationPresented = false
 
     var body: some View {
         ScrollView(.vertical, showsIndicators: false) {
             VStack(spacing: 0) {
-            RideMapCanvasView(
-                points: displayPoints,
-                routeID: routeID,
-                projectionVersion: projectionVersion,
-                showsStartMarker: showsRecordedBounds,
-                showsEndMarker: showsRecordedBounds,
-                showsCurrentMarker: true,
-                endpointMetadata: endpointMetadata,
-                segments: segments,
-                contextRoutes: [],
-                fitsRouteOnChange: false,
-                mapPosition: $mapPosition,
-                isApplyingCamera: $isApplyingCamera,
-                cameraDidChange: { _ in followsLatestPoint = false }
-            )
-            // Keep the live hero compact enough that the metrics and controls
-            // remain above a connected TabView on the smallest iPhone.
-            .frame(height: 330)
-            .frame(maxWidth: .infinity)
-
-            VStack(alignment: .leading, spacing: 12) {
-                if snapshot?.state == .active {
-                    Text(recordingPillText)
-                        .font(.caption.weight(.black))
-                        .foregroundStyle(.black)
-                        .lineLimit(1)
-                        .minimumScaleFactor(0.72)
-                        .padding(.horizontal, 10)
-                        .padding(.vertical, 6)
-                        .background(PevColors.green, in: Capsule())
-                        .accessibilityIdentifier("ride-map.recording-pill")
-                }
-
-                if Self.showsPersistenceWarning(for: availability) {
-                    Label(
-                        localizedAppText("ride_map.persistence_unavailable"),
-                        systemImage: "exclamationmark.triangle.fill"
-                    )
-                    .font(.subheadline)
-                    .foregroundStyle(.orange)
-                    .accessibilityIdentifier("ride-map.persistence-warning")
-                } else if availability != .ready {
-                    Label(availabilityText, systemImage: "location.slash")
-                        .font(.subheadline)
-                        .foregroundStyle(.orange)
-                        .accessibilityIdentifier("ride-map.location-availability")
-                }
-                if mapError != nil {
-                    Label(
-                        localizedAppText("ride_map.command_failed"),
-                        systemImage: "exclamationmark.circle.fill"
-                    )
-                    .font(.subheadline)
-                    .foregroundStyle(.orange)
-                    .accessibilityIdentifier("ride-map.command-error")
-                }
-                Text(statusTitle)
-                    .font(.title3.weight(.bold))
-                    .accessibilityAddTraits(.isHeader)
-                RideMapRouteTruthView(
-                    points: points,
-                    recordedPointCount: snapshot?.summary.pointCount,
-                    rustSegmentCount: snapshot?.segmentCount ?? 0,
-                    decision: lastDecision,
-                    showsRecordedBounds: showsRecordedBounds,
-                    segmentsOmittedByBudget: segmentsOmittedByBudget,
+                RideMapCanvasView(
+                    points: displayPoints,
+                    routeID: routeID,
+                    projectionVersion: projectionVersion,
+                    showsStartMarker: showsRecordedBounds,
+                    showsEndMarker: showsRecordedBounds,
+                    showsCurrentMarker: true,
+                    endpointMetadata: endpointMetadata,
+                    cameraRegion: cameraRegion,
                     segments: segments,
-                    canonicalBackgroundGapCount: canonicalBackgroundGapCount
+                    contextRoutes: [],
+                    fitsRouteOnChange: false,
+                    mapPosition: $mapPosition,
+                    isApplyingCamera: $isApplyingCamera,
+                    cameraDidChange: { _ in followsLatestPoint = false }
                 )
-                if pointsTruncated {
-                    Text(localizedAppText("ride_map.live_route_truncated_count", displayPoints.count))
-                        .font(.caption)
-                        .foregroundStyle(PevColors.muted)
-                        .accessibilityIdentifier("ride-map.live-truncated")
+                // Keep the live hero compact enough that the metrics and controls
+                // remain above a connected TabView on the smallest iPhone.
+                .frame(height: 330)
+                .frame(maxWidth: .infinity)
+
+                VStack(alignment: .leading, spacing: 12) {
+                    RideMapLiveStatusView(
+                        points: points,
+                        displayPointCount: displayPoints.count,
+                        snapshot: snapshot,
+                        availability: availability,
+                        vehicleName: vehicleName,
+                        mapError: mapError,
+                        lastDecision: lastDecision,
+                        pointsTruncated: pointsTruncated,
+                        segmentsOmittedByBudget: segmentsOmittedByBudget,
+                        segments: segments,
+                        canonicalBackgroundGapCount: canonicalBackgroundGapCount
+                    )
+                    RideMapSummaryView(snapshot: snapshot, speed: speed, vehicleName: vehicleName)
+                    RideMapControlsView(
+                        state: snapshot?.state,
+                        isDiscardConfirmationPresented: $isDiscardConfirmationPresented,
+                        pause: pause,
+                        resume: resume,
+                        save: save,
+                        stop: stop,
+                        start: start
+                    )
+                    RideMapCameraControlsView(
+                        followsLatestPoint: $followsLatestPoint,
+                        recenter: recenterOnLatestPoint
+                    )
                 }
-                RideMapSummaryView(snapshot: snapshot, speed: speed, vehicleName: vehicleName)
-                RideMapControlsView(
-                    state: snapshot?.state,
-                    isDiscardConfirmationPresented: $isDiscardConfirmationPresented,
-                    pause: pause,
-                    resume: resume,
-                    save: save,
-                    stop: stop,
-                    start: start
+                .padding(.horizontal, 16)
+                .padding(.top, 16)
+                .padding(.bottom, 72)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(PevColors.pageBackground, in: UnevenRoundedRectangle(
+                    topLeadingRadius: 28,
+                    bottomLeadingRadius: 0,
+                    bottomTrailingRadius: 0,
+                    topTrailingRadius: 28
                 )
-                RideMapCameraControlsView(
-                    followsLatestPoint: $followsLatestPoint,
-                    recenter: recenterOnLatestPoint
                 )
-            }
-            .padding(.horizontal, 16)
-            .padding(.top, 16)
-            .padding(.bottom, 72)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(PevColors.pageBackground, in: UnevenRoundedRectangle(
-                topLeadingRadius: 28,
-                bottomLeadingRadius: 0,
-                bottomTrailingRadius: 0,
-                topTrailingRadius: 28
-            ))
             }
         }
         .onChange(of: displayPoints.last?.sequence, initial: true) { _, _ in
@@ -149,16 +110,89 @@ struct RideMapLiveContentView: View {
             Button(localizedAppText("ride_map.discard"), role: .destructive, action: discard)
             Button(localizedAppText("common.cancel"), role: .cancel) {}
         }
-        .task(id: snapshot?.state) {
-            guard snapshot?.state == .active else { return }
-            while Task.isCancelled == false {
-                refreshDuration()
-                do {
-                    try await Task.sleep(for: .seconds(1))
-                } catch {
-                    return
-                }
-            }
+    }
+
+    private var showsRecordedBounds: Bool {
+        snapshot?.recordedBoundsAvailable == true
+    }
+
+    private func recenterOnLatestPoint() {
+        guard let point = displayPoints.last, let cameraRegion else { return }
+        followsLatestPoint = true
+        isApplyingCamera = true
+        mapPosition = .region(RideMapCanvasView.mapRegion(for: cameraRegion, centeredOn: point))
+    }
+}
+
+private struct RideMapLiveStatusView: View {
+    let points: [MobileRideMapPointDto]
+    let displayPointCount: Int
+    let snapshot: MobileRideMapSnapshotDto?
+    let availability: MobileRideMapAvailability
+    let vehicleName: String?
+    let mapError: MobileRideMapError?
+    let lastDecision: MobileRideMapDecisionDto?
+    let pointsTruncated: Bool
+    let segmentsOmittedByBudget: Bool
+    let segments: [MobileRideMapSegmentDisplayMetadata]
+    let canonicalBackgroundGapCount: UInt64
+
+    var body: some View {
+        if snapshot?.state == .active {
+            Text(recordingPillText)
+                .font(.caption.weight(.black))
+                .foregroundStyle(.black)
+                .lineLimit(1)
+                .minimumScaleFactor(0.72)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 6)
+                .background(PevColors.green, in: Capsule())
+                .accessibilityIdentifier("ride-map.recording-pill")
+        }
+
+        if availability == .storageUnavailable {
+            Label(
+                localizedAppText("ride_map.persistence_unavailable"),
+                systemImage: "exclamationmark.triangle.fill"
+            )
+            .font(.subheadline)
+            .foregroundStyle(.orange)
+            .accessibilityIdentifier("ride-map.persistence-warning")
+        } else if availability != .ready {
+            Label(availabilityText, systemImage: "location.slash")
+                .font(.subheadline)
+                .foregroundStyle(.orange)
+                .accessibilityIdentifier("ride-map.location-availability")
+        }
+
+        if mapError != nil {
+            Label(
+                localizedAppText("ride_map.command_failed"),
+                systemImage: "exclamationmark.circle.fill"
+            )
+            .font(.subheadline)
+            .foregroundStyle(.orange)
+            .accessibilityIdentifier("ride-map.command-error")
+        }
+
+        Text(statusTitle)
+            .font(.title3.weight(.bold))
+            .accessibilityAddTraits(.isHeader)
+        RideMapRouteTruthView(
+            points: points,
+            recordedPointCount: snapshot?.summary.pointCount,
+            rustSegmentCount: snapshot?.segmentCount ?? 0,
+            decision: lastDecision,
+            showsRecordedBounds: snapshot?.recordedBoundsAvailable == true,
+            segmentsOmittedByBudget: segmentsOmittedByBudget,
+            segments: segments,
+            canonicalBackgroundGapCount: canonicalBackgroundGapCount
+        )
+        if pointsTruncated {
+            Text(localizedAppText("ride_map.live_route_truncated_count", displayPointCount))
+                .font(.caption)
+                .foregroundStyle(PevColors.muted)
+                .accessibilityIdentifier("ride-map.live-truncated")
         }
     }
 
@@ -209,49 +243,8 @@ struct RideMapLiveContentView: View {
     private var recordingPillText: String {
         let source = snapshot?.associatedVehicle == nil
             ? localizedAppText("ride_map.gps_only")
-            : vehicleName
-                ?? localizedAppText("ride_map.vehicle_name_unavailable")
-        // Keep the localized lifecycle label and preserve the device's persisted
-        // display name (`NF2557`) exactly as the user knows it.
+            : vehicleName ?? localizedAppText("ride_map.vehicle_name_unavailable")
         return "\(localizedAppText("ride_map.status.recording")) · \(source)"
-    }
-
-    static func showsRecordedBounds(for state: MobileRideMapStateDto?) -> Bool {
-        switch state {
-        case .stopped, .saved, .discarded, .interrupted, .imported:
-            true
-        case .draft, .active, .paused, nil:
-            false
-        }
-    }
-
-    @MainActor
-    static func showsPersistenceWarning(for availability: MobileRideMapAvailability) -> Bool {
-        availability == .storageUnavailable
-    }
-
-    private var showsRecordedBounds: Bool {
-        Self.showsRecordedBounds(for: snapshot?.state)
-    }
-
-    private func recenterOnLatestPoint() {
-        guard let point = displayPoints.last else { return }
-        followsLatestPoint = true
-        isApplyingCamera = true
-        mapPosition = .region(Self.routeRegion(centeredOn: point, points: displayPoints))
-    }
-
-    static func routeRegion(
-        centeredOn latest: MobileRideMapRouteDisplayPoint,
-        points: [MobileRideMapRouteDisplayPoint]
-    ) -> MKCoordinateRegion {
-        let center = CLLocationCoordinate2D(
-            latitude: latest.latitudeDegrees,
-            longitude: latest.longitudeDegrees
-        )
-        let span = RideMapCanvasView.region(for: points)?.span
-            ?? MKCoordinateSpan(latitudeDelta: 0.01, longitudeDelta: 0.01)
-        return MKCoordinateRegion(center: center, span: span)
     }
 }
 

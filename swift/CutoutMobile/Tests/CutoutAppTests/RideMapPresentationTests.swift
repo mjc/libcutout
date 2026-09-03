@@ -5,15 +5,30 @@ import XCTest
 
 final class RideMapPresentationTests: XCTestCase {
     func testLiveMapOnlyShowsRecordedBoundsForPersistedTerminalStates() {
-        XCTAssertFalse(RideMapLiveContentView.showsRecordedBounds(for: nil))
-        XCTAssertFalse(RideMapLiveContentView.showsRecordedBounds(for: .draft))
-        XCTAssertFalse(RideMapLiveContentView.showsRecordedBounds(for: .active))
-        XCTAssertFalse(RideMapLiveContentView.showsRecordedBounds(for: .paused))
-        XCTAssertTrue(RideMapLiveContentView.showsRecordedBounds(for: .stopped))
-        XCTAssertTrue(RideMapLiveContentView.showsRecordedBounds(for: .interrupted))
-        XCTAssertTrue(RideMapLiveContentView.showsRecordedBounds(for: .saved))
-        XCTAssertTrue(RideMapLiveContentView.showsRecordedBounds(for: .discarded))
-        XCTAssertTrue(RideMapLiveContentView.showsRecordedBounds(for: .imported))
+        let summary = MobileRideMapSummaryDto(
+            pointCount: 0,
+            distanceMeters: 0,
+            durationMilliseconds: 0
+        )
+        let snapshot = { (state: MobileRideMapStateDto, available: Bool) in
+            MobileRideMapSnapshotDto(
+                rideID: "ride",
+                state: state,
+                summary: summary,
+                segmentCount: 0,
+                associatedVehicle: nil,
+                recordedBoundsAvailable: available
+            )
+        }
+
+        XCTAssertFalse(snapshot(.draft, false).recordedBoundsAvailable)
+        XCTAssertFalse(snapshot(.active, false).recordedBoundsAvailable)
+        XCTAssertFalse(snapshot(.paused, false).recordedBoundsAvailable)
+        XCTAssertTrue(snapshot(.stopped, true).recordedBoundsAvailable)
+        XCTAssertTrue(snapshot(.interrupted, true).recordedBoundsAvailable)
+        XCTAssertTrue(snapshot(.saved, true).recordedBoundsAvailable)
+        XCTAssertTrue(snapshot(.discarded, true).recordedBoundsAvailable)
+        XCTAssertTrue(snapshot(.imported, true).recordedBoundsAvailable)
     }
 
     func testHistoryPresentationUsesSingularAndPluralPointStrings() {

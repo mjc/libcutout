@@ -309,6 +309,25 @@ public struct MobileRideMapSegmentDisplayMetadata: Equatable, Hashable, Sendable
     }
 }
 
+public struct MobileRideMapCameraRegion: Equatable, Hashable, Sendable {
+    public let centerLatitudeDegrees: Double
+    public let centerLongitudeDegrees: Double
+    public let latitudeSpanDegrees: Double
+    public let longitudeSpanDegrees: Double
+
+    public init(
+        centerLatitudeDegrees: Double,
+        centerLongitudeDegrees: Double,
+        latitudeSpanDegrees: Double,
+        longitudeSpanDegrees: Double
+    ) {
+        self.centerLatitudeDegrees = centerLatitudeDegrees
+        self.centerLongitudeDegrees = centerLongitudeDegrees
+        self.latitudeSpanDegrees = latitudeSpanDegrees
+        self.longitudeSpanDegrees = longitudeSpanDegrees
+    }
+}
+
 public struct MobileRideMapRouteProjection: Equatable, Hashable, Sendable {
     public let points: [MobileRideMapRouteDisplayPoint]
     public let segments: [MobileRideMapSegmentDisplayMetadata]
@@ -323,6 +342,7 @@ public struct MobileRideMapRouteProjection: Equatable, Hashable, Sendable {
     public let canonicalEndSequence: UInt64?
     public let canonicalStartVisible: Bool
     public let canonicalEndVisible: Bool
+    public let cameraRegion: MobileRideMapCameraRegion?
 
     public init(
         points: [MobileRideMapRouteDisplayPoint],
@@ -336,7 +356,8 @@ public struct MobileRideMapRouteProjection: Equatable, Hashable, Sendable {
         canonicalStartSequence: UInt64? = nil,
         canonicalEndSequence: UInt64? = nil,
         canonicalStartVisible: Bool = false,
-        canonicalEndVisible: Bool = false
+        canonicalEndVisible: Bool = false,
+        cameraRegion: MobileRideMapCameraRegion? = nil
     ) {
         self.points = points
         self.segments = segments
@@ -350,6 +371,7 @@ public struct MobileRideMapRouteProjection: Equatable, Hashable, Sendable {
         self.canonicalEndSequence = canonicalEndSequence
         self.canonicalStartVisible = canonicalStartVisible
         self.canonicalEndVisible = canonicalEndVisible
+        self.cameraRegion = cameraRegion
     }
 
     public var endpointMetadata: MobileRideMapRouteEndpointMetadata {
@@ -404,19 +426,22 @@ public struct MobileRideMapSnapshotDto: Equatable, Hashable, Sendable {
     public let summary: MobileRideMapSummaryDto
     public let segmentCount: UInt64
     public let associatedVehicle: String?
+    public let recordedBoundsAvailable: Bool
 
     public init(
         rideID: String,
         state: MobileRideMapStateDto,
         summary: MobileRideMapSummaryDto,
         segmentCount: UInt64,
-        associatedVehicle: String?
+        associatedVehicle: String?,
+        recordedBoundsAvailable: Bool = false
     ) {
         self.rideID = rideID
         self.state = state
         self.summary = summary
         self.segmentCount = segmentCount
         self.associatedVehicle = associatedVehicle
+        self.recordedBoundsAvailable = recordedBoundsAvailable
     }
 }
 
@@ -1013,7 +1038,8 @@ public final class MobileRideMapState: @unchecked Sendable {
                 durationMilliseconds: snapshot.summary.durationMilliseconds
             ),
             segmentCount: snapshot.segmentCount,
-            associatedVehicle: snapshot.associatedVehicle
+            associatedVehicle: snapshot.associatedVehicle,
+            recordedBoundsAvailable: snapshot.recordedBoundsAvailable
         )
     }
 
@@ -1055,7 +1081,15 @@ public final class MobileRideMapState: @unchecked Sendable {
             canonicalStartSequence: projection.canonicalStartSequence,
             canonicalEndSequence: projection.canonicalEndSequence,
             canonicalStartVisible: projection.canonicalStartVisible,
-            canonicalEndVisible: projection.canonicalEndVisible
+            canonicalEndVisible: projection.canonicalEndVisible,
+            cameraRegion: projection.cameraRegion.map {
+                MobileRideMapCameraRegion(
+                    centerLatitudeDegrees: $0.centerLatitudeDegrees,
+                    centerLongitudeDegrees: $0.centerLongitudeDegrees,
+                    latitudeSpanDegrees: $0.latitudeSpanDegrees,
+                    longitudeSpanDegrees: $0.longitudeSpanDegrees
+                )
+            }
         )
     }
 
