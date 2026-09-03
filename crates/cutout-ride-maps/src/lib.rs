@@ -32,11 +32,12 @@ pub use recording::{
 };
 mod projection;
 pub use projection::{
-    MAX_ROUTE_DISPLAY_POINTS, RouteDisplayBudget, RouteDisplayPoint, RouteEndpointMetadata,
-    RoutePrivacyClass, RoutePrivacyGridE7, RoutePrivacyPolicy, RouteProjectionAccumulator,
-    RouteProjectionError, RouteSegmentDisplayMetadata, RouteViewport, count_segment_runs,
-    project_route_points, project_route_points_cancellable, project_route_points_from_iter,
-    route_endpoint_metadata, route_segment_display_metadata,
+    MAX_ROUTE_DISPLAY_POINTS, RouteCameraRegion, RouteDisplayBudget, RouteDisplayPoint,
+    RouteEndpointMetadata, RoutePrivacyClass, RoutePrivacyGridE7, RoutePrivacyPolicy,
+    RouteProjectionAccumulator, RouteProjectionError, RouteSegmentDisplayMetadata, RouteViewport,
+    count_segment_runs, project_route_points, project_route_points_cancellable,
+    project_route_points_from_iter, route_camera_region, route_endpoint_metadata,
+    route_segment_display_metadata,
 };
 
 #[cfg(test)]
@@ -51,7 +52,7 @@ mod tests {
         RideSummary, RouteDisplayBudget, RoutePrivacyClass, RoutePrivacyGridE7, RoutePrivacyPolicy,
         RouteProjectionError, RouteTelemetryState, RouteViewport, TransitionError, VehicleIdentity,
         WallClockUnixMilliseconds, project_route_points, project_route_points_cancellable,
-        route_endpoint_metadata,
+        route_camera_region, route_endpoint_metadata,
     };
 
     #[test]
@@ -364,6 +365,20 @@ mod tests {
         assert!(endpoints.end_visible());
         assert_eq!(endpoints.start_sequence(), Some(RidePointSequence::new(0)));
         assert_eq!(endpoints.end_sequence(), Some(RidePointSequence::new(9)));
+    }
+
+    #[test]
+    fn route_camera_region_uses_short_antimeridian_interval() {
+        let region = route_camera_region([
+            Coordinate::from_degrees(10.0, 179.9).unwrap(),
+            Coordinate::from_degrees(10.2, -179.9).unwrap(),
+        ])
+        .unwrap();
+
+        assert!((region.center_latitude_degrees() - 10.1).abs() < f64::EPSILON);
+        assert!(region.center_longitude_degrees().abs() > 179.9);
+        assert!((region.longitude_span_degrees() - 0.27).abs() < 0.000_001);
+        assert!((region.latitude_span_degrees() - 0.27).abs() < 0.000_001);
     }
 
     #[test]

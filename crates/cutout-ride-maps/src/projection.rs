@@ -14,6 +14,101 @@ pub enum RouteProjectionError {
 /// Hard upper bound for a route projection returned to a presentation client.
 pub const MAX_ROUTE_DISPLAY_POINTS: usize = 16_384;
 
+/// A bounded camera region derived from projected WGS84 coordinates.
+///
+/// The region uses degrees only at the presentation boundary. Route coordinates remain fixed
+/// point inside the domain, and the longitude span is the shortest interval across the
+/// antimeridian when that is the smaller view.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct RouteCameraRegion {
+    center_latitude: LatitudeE7,
+    center_longitude: LongitudeE7,
+    latitude_span_e7: u64,
+    longitude_span_e7: u64,
+}
+
+impl RouteCameraRegion {
+    /// Returns the camera center latitude in WGS84 degrees.
+    #[must_use]
+    pub fn center_latitude_degrees(self) -> f64 {
+        f64::from(self.center_latitude.as_i32()) / 10_000_000.0
+    }
+
+    /// Returns the camera center longitude in WGS84 degrees.
+    #[must_use]
+    pub fn center_longitude_degrees(self) -> f64 {
+        f64::from(self.center_longitude.as_i32()) / 10_000_000.0
+    }
+
+    /// Returns the padded camera latitude span in degrees.
+    #[must_use]
+    pub fn latitude_span_degrees(self) -> f64 {
+        span_degrees(self.latitude_span_e7)
+    }
+
+    /// Returns the padded camera longitude span in degrees.
+    #[must_use]
+    pub fn longitude_span_degrees(self) -> f64 {
+        span_degrees(self.longitude_span_e7)
+    }
+
+    /// Returns this span centered on a different projected coordinate.
+    #[must_use]
+    pub fn centered_on(self, coordinate: Coordinate) -> Self {
+        Self {
+            center_latitude: coordinate.latitude(),
+            center_longitude: coordinate.longitude(),
+            ..self
+        }
+    }
+}
+
+/// Computes a padded camera region for a bounded set of projected coordinates.
+#[must_use]
+pub fn route_camera_region(
+    points: impl IntoIterator<Item = Coordinate>,
+) -> Option<RouteCameraRegion> {
+    let mut points = points.into_iter();
+    let first = points.next()?;
+    let mut minimum_latitude = first.latitude_degrees();
+    let mut maximum_latitude = minimum_latitude;
+    let mut longitudes = vec![first.longitude_degrees()];
+    for point in points {
+        minimum_latitude = minimum_latitude.min(point.latitude_degrees());
+        maximum_latitude = maximum_latitude.max(point.latitude_degrees());
+        longitudes.push(point.longitude_degrees());
+    }
+
+    let (center_longitude, longitude_span) = shortest_longitude_interval(&longitudes);
+    let center = Coordinate::from_degrees(
+        f64::midpoint(minimum_latitude, maximum_latitude),
+        center_longitude,
+    )
+    .ok()?;
+    Some(RouteCameraRegion {
+        center_latitude: center.latitude(),
+        center_longitude: center.longitude(),
+        latitude_span_e7: camera_span_e7((maximum_latitude - minimum_latitude) * 1.35),
+        longitude_span_e7: camera_span_e7(longitude_span * 1.35),
+    })
+}
+
+// Camera spans are bounded by the valid WGS84 domain and a small display pad, so every value is
+// below 2^53 and this conversion is exact despite the integer type being wider than f64's mantissa.
+#[allow(clippy::cast_precision_loss)]
+fn span_degrees(span_e7: u64) -> f64 {
+    span_e7 as f64 / 10_000_000.0
+}
+
+fn camera_span_e7(span_degrees: f64) -> u64 {
+    let span = span_degrees.max(0.002) * 10_000_000.0;
+    debug_assert!(span.is_finite());
+    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+    {
+        span.round() as u64
+    }
+}
+
 /// A non-zero bound on the number of route points returned by a projection.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct RouteDisplayBudget(usize);
@@ -614,6 +709,36 @@ pub fn project_route_points_from_iter(
 
 fn as_u64(value: usize) -> u64 {
     u64::try_from(value).unwrap_or(u64::MAX)
+}
+
+fn shortest_longitude_interval(longitudes: &[f64]) -> (f64, f64) {
+    if longitudes.len() <= 1 {
+        return (longitudes.first().copied().unwrap_or_default(), 0.0);
+    }
+
+    let mut normalized = longitudes
+        .iter()
+        .map(|longitude| (longitude + 180.0).rem_euclid(360.0))
+        .collect::<Vec<_>>();
+    normalized.sort_by(f64::total_cmp);
+
+    let mut largest_gap = -1.0;
+    let mut largest_gap_index = 0;
+    for (index, longitude) in normalized.iter().enumerate() {
+        let next = normalized
+            .get(index + 1)
+            .copied()
+            .unwrap_or(normalized[0] + 360.0);
+        let gap = next - longitude;
+        if gap > largest_gap {
+            largest_gap = gap;
+            largest_gap_index = index;
+        }
+    }
+
+    let start = normalized[(largest_gap_index + 1) % normalized.len()];
+    let span = 360.0 - largest_gap;
+    (((start + span / 2.0).rem_euclid(360.0)) - 180.0, span)
 }
 
 fn evenly_spaced_ordinal(
