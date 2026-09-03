@@ -1,9 +1,8 @@
 import CutoutMobile
-import CutoutMobileFFI
 import SwiftUI
 
 struct RideMapRouteTruthView: View {
-    let points: [MobileRideMapPointDto]
+    let displayedPointCount: Int
     let recordedPointCount: UInt64?
     let rustSegmentCount: UInt64
     let decision: MobileRideMapDecisionDto?
@@ -15,7 +14,7 @@ struct RideMapRouteTruthView: View {
     let telemetryState: MobileRideMapTelemetryStateDto?
 
     init(
-        points: [MobileRideMapPointDto],
+        displayedPointCount: Int,
         recordedPointCount: UInt64?,
         rustSegmentCount: UInt64,
         decision: MobileRideMapDecisionDto?,
@@ -26,7 +25,7 @@ struct RideMapRouteTruthView: View {
         hasRoute: Bool? = nil,
         telemetryState: MobileRideMapTelemetryStateDto? = nil
     ) {
-        self.points = points
+        self.displayedPointCount = displayedPointCount
         self.recordedPointCount = recordedPointCount
         self.rustSegmentCount = rustSegmentCount
         self.decision = decision
@@ -45,7 +44,7 @@ struct RideMapRouteTruthView: View {
                 .foregroundStyle(PevColors.muted)
                 .accessibilityIdentifier("ride-map.route-truth")
             if routeIsPresent, showsRecordedBounds {
-                Text(localizedAppText("ride_map.route_start_end", recordedPointCount ?? UInt64(points.count)))
+                Text(localizedAppText("ride_map.route_start_end", recordedPointCount ?? UInt64(displayedPointCount)))
                     .font(.caption)
                     .foregroundStyle(PevColors.muted)
             }
@@ -99,12 +98,12 @@ struct RideMapRouteTruthView: View {
     private var routeIsPresent: Bool {
         hasRoute ?? Self.routeExists(
             recordedPointCount: recordedPointCount,
-            displayedPointCount: points.count
+            displayedPointCount: displayedPointCount
         )
     }
 
     private var telemetryText: String {
-        guard let state = telemetryState ?? points.last?.telemetryState else {
+        guard let state = telemetryState else {
             return localizedAppText("ride_map.telemetry.gps_only")
         }
         switch state {
@@ -141,7 +140,7 @@ struct RideMapRouteTruthView: View {
             case .unrealisticJump:
                 return localizedAppText("ride_map.decision.jump")
             }
-        case let .storageError(message, _):
+        case let .storageError(message):
             return localizedAppText("ride_map.decision.storage_error", message)
         }
     }

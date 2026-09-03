@@ -47,10 +47,11 @@ final class CutoutAppModel {
     private(set) var rideMapHistoryError: MobileRideMapError?
     private(set) var rideMapHistoryRouteError: MobileRideMapError?
     private(set) var rideMapHistoryDetailRouteError: MobileRideMapError?
-    private(set) var rideMapPoints = [MobileRideMapPointDto]()
     private(set) var rideMapLiveDisplayPoints = [MobileRideMapRouteDisplayPoint]()
+    private(set) var rideMapLiveCameraRegion: MobileRideMapCameraRegion?
     private(set) var rideMapLiveEndpointMetadata = MobileRideMapRouteEndpointMetadata.empty
     private(set) var rideMapLiveSegments = [MobileRideMapSegmentDisplayMetadata]()
+    private(set) var rideMapLiveTelemetryState: MobileRideMapTelemetryStateDto?
     private(set) var rideMapLiveBackgroundGapCount: UInt64 = 0
     private(set) var rideMapLivePointsTruncated = false
     private(set) var rideMapLiveSegmentsOmittedByBudget = false
@@ -60,12 +61,14 @@ final class CutoutAppModel {
     private(set) var rideMapHistoryDateFilter = RideMapHistoryDateFilter.last30Days
     private(set) var rideMapHistoryVehicleFilter: String?
     private(set) var rideMapHistoryDisplayPoints = [MobileRideMapRouteDisplayPoint]()
+    private(set) var rideMapHistoryCameraRegion: MobileRideMapCameraRegion?
     private(set) var rideMapHistoryEndpointMetadata = MobileRideMapRouteEndpointMetadata.empty
     private(set) var rideMapHistorySegments = [MobileRideMapSegmentDisplayMetadata]()
     private(set) var rideMapHistoryBackgroundGapCount: UInt64 = 0
     private(set) var rideMapHistoryPointsTruncated = false
     private(set) var rideMapHistorySegmentsOmittedByBudget = false
     private(set) var rideMapHistoryDetailDisplayPoints = [MobileRideMapRouteDisplayPoint]()
+    private(set) var rideMapHistoryDetailCameraRegion: MobileRideMapCameraRegion?
     private(set) var rideMapHistoryDetailEndpointMetadata = MobileRideMapRouteEndpointMetadata.empty
     private(set) var rideMapHistoryDetailSegments = [MobileRideMapSegmentDisplayMetadata]()
     private(set) var rideMapHistoryDetailBackgroundGapCount: UInt64 = 0
@@ -231,6 +234,7 @@ final class CutoutAppModel {
     private var rideMapHistoryContextTask: Task<Void, Never>?
     private var rideMapRestoreTask: Task<Void, Never>?
     private var rideMapLiveProjectionTask: Task<Void, Never>?
+    private var rideMapDurationTask: Task<Void, Never>?
     private var rideMapLiveProjectionCancellation: MobileLiveRideMapProjectionCancellation?
     private var rideMapLiveProjectionGeneration: UInt64 = 0
     private var rideMapLiveProjectionEnabled = false
@@ -331,17 +335,18 @@ final class CutoutAppModel {
     private func restoreRideMapState() {
         guard let state = core.rideMapStateHandle else { return }
         rideMapSnapshot = state.currentSnapshot()
+        rideMapLiveTelemetryState = rideMapSnapshot?.associatedVehicle == nil
+            ? .gpsOnly
+            : .associatedNoTelemetry
+        updateRideMapDurationTicker()
         guard rideMapSnapshot != nil else { return }
         rideMapRestoreTask?.cancel()
-        let previewLimit = Int(Self.rideMapLimits.liveTailPointLimit)
+        let previewLimit = Self.rideMapLimits.liveTailPointLimit
         let restorationGeneration = rideMapLiveProjectionGeneration
         rideMapRestoreTask = Task { [weak self] in
             do {
                 let result = try await Task.detached(priority: .userInitiated) {
-                    try Self.collectRideMapActiveTail(
-                        state: state,
-                        previewLimit: previewLimit
-                    )
+                    try state.projectPoints(budget: previewLimit)
                 }.value
                 guard !Task.isCancelled, let self else { return }
                 guard Self.shouldApplyRestoredLiveProjection(
@@ -351,8 +356,7 @@ final class CutoutAppModel {
                 ) else {
                     return
                 }
-                self.rideMapPoints = Array(result.0.suffix(previewLimit))
-                self.applyLiveProjection(result.1)
+                self.applyLiveProjection(result)
             } catch {
                 guard !Task.isCancelled, let self else { return }
                 guard Self.shouldApplyRestoredLiveProjection(
@@ -363,7 +367,6 @@ final class CutoutAppModel {
                     return
                 }
                 self.rideMapLiveError = Self.mapRideMapError(error)
-                self.rideMapPoints = []
                 self.clearLiveProjectionState()
             }
         }
@@ -422,6 +425,24 @@ final class CutoutAppModel {
             return
         }
         rideMapSnapshot = snapshot
+    }
+
+    private func updateRideMapDurationTicker() {
+        rideMapDurationTask?.cancel()
+        guard rideMapSnapshot?.state == .active else {
+            rideMapDurationTask = nil
+            return
+        }
+        rideMapDurationTask = Task { [weak self] in
+            while Task.isCancelled == false {
+                self?.refreshRideMapDuration()
+                do {
+                    try await Task.sleep(for: .seconds(1))
+                } catch {
+                    return
+                }
+            }
+        }
     }
 
     @discardableResult
@@ -796,6 +817,7 @@ final class CutoutAppModel {
                 guard !Task.isCancelled, let self else { return }
                 self.replaceRideMapHistoryDetailDisplayPoints(
                     result.points,
+                    cameraRegion: result.cameraRegion,
                     endpointMetadata: result.endpointMetadata,
                     segments: result.segments,
                     backgroundGapCount: result.backgroundGapCount,
@@ -887,6 +909,7 @@ final class CutoutAppModel {
                 self.rideMapHistoryDetailRouteError = nil
                 self.replaceRideMapHistoryDisplayPoints(
                     result.points,
+                    cameraRegion: result.cameraRegion,
                     endpointMetadata: result.endpointMetadata,
                     segments: result.segments,
                     backgroundGapCount: result.backgroundGapCount,
@@ -897,6 +920,7 @@ final class CutoutAppModel {
                 self.rideMapHistoryDetailSourceSegmentsOmittedByBudget = result.segmentsOmittedByBudget
                 self.replaceRideMapHistoryDetailDisplayPoints(
                     result.points,
+                    cameraRegion: result.cameraRegion,
                     endpointMetadata: result.endpointMetadata,
                     segments: result.segments,
                     backgroundGapCount: result.backgroundGapCount,
@@ -929,6 +953,7 @@ final class CutoutAppModel {
 
     private func replaceRideMapHistoryDisplayPoints(
         _ points: [MobileRideMapRouteDisplayPoint],
+        cameraRegion: MobileRideMapCameraRegion? = nil,
         endpointMetadata: MobileRideMapRouteEndpointMetadata = .empty,
         segments: [MobileRideMapSegmentDisplayMetadata] = [],
         backgroundGapCount: UInt64 = 0,
@@ -936,6 +961,7 @@ final class CutoutAppModel {
         segmentsOmittedByBudget: Bool = false
     ) {
         rideMapHistoryDisplayPoints = points
+        rideMapHistoryCameraRegion = cameraRegion
         rideMapHistoryEndpointMetadata = endpointMetadata
         rideMapHistorySegments = segments
         rideMapHistoryBackgroundGapCount = backgroundGapCount
@@ -946,6 +972,7 @@ final class CutoutAppModel {
 
     private func replaceRideMapHistoryDetailDisplayPoints(
         _ points: [MobileRideMapRouteDisplayPoint],
+        cameraRegion: MobileRideMapCameraRegion? = nil,
         endpointMetadata: MobileRideMapRouteEndpointMetadata = .empty,
         segments: [MobileRideMapSegmentDisplayMetadata] = [],
         backgroundGapCount: UInt64 = 0,
@@ -953,6 +980,7 @@ final class CutoutAppModel {
         segmentsOmittedByBudget: Bool = false
     ) {
         rideMapHistoryDetailDisplayPoints = points
+        rideMapHistoryDetailCameraRegion = cameraRegion
         rideMapHistoryDetailEndpointMetadata = endpointMetadata
         rideMapHistoryDetailSegments = segments
         rideMapHistoryDetailBackgroundGapCount = backgroundGapCount
@@ -1008,41 +1036,6 @@ final class CutoutAppModel {
         }
     }
 
-    private nonisolated static func collectRideMapActiveTail(
-        state: MobileRideMapState,
-        previewLimit: Int
-    ) throws -> ([MobileRideMapPointDto], MobileRideMapRouteProjection) {
-        var points = [MobileRideMapPointDto]()
-        var cursor: UInt64?
-        while true {
-            try Task.checkCancellation()
-            let batch = try state.pointsAfter(afterCursor: cursor, limit: UInt32(previewLimit))
-            points.append(contentsOf: batch.points)
-            if points.count > previewLimit {
-                points.removeFirst(points.count - previewLimit)
-            }
-            guard batch.hasMore,
-                  let nextCursor = batch.nextCursor,
-                  nextCursor != cursor
-            else { break }
-            cursor = nextCursor
-        }
-        let projection = try state.projectPoints(budget: UInt32(previewLimit))
-        return (points, projection)
-    }
-
-    /// Keeps the Swift route-truth input bounded to the Rust live-route preview tail.
-    static func appendBoundedRideMapPoint(
-        _ point: MobileRideMapPointDto,
-        to points: inout [MobileRideMapPointDto],
-        limit: Int
-    ) {
-        points.append(point)
-        if points.count > limit {
-            points.removeFirst(points.count - limit)
-        }
-    }
-
     static func shouldApplyLiveProjection(
         generation: UInt64,
         currentGeneration: UInt64,
@@ -1066,13 +1059,14 @@ final class CutoutAppModel {
         rideMapLiveError = nil
         rideMapSnapshot = snapshot
         rideMapLastDecision = decision
-        if case let .accepted(point, _) = decision {
-            Self.appendBoundedRideMapPoint(
-                point,
-                to: &rideMapPoints,
-                limit: Int(Self.rideMapLimits.liveTailPointLimit)
-            )
+        switch decision {
+        case let .pending(point, _):
+            rideMapLiveTelemetryState = point.telemetryState
+        case let .accepted(point, _):
+            rideMapLiveTelemetryState = point.telemetryState
             requestLiveProjection()
+        case .rejected, .ignored, .storageError:
+            break
         }
     }
 
@@ -1136,6 +1130,7 @@ final class CutoutAppModel {
 
     private func applyLiveProjection(_ projection: MobileRideMapRouteProjection) {
         rideMapLiveDisplayPoints = projection.points
+        rideMapLiveCameraRegion = projection.cameraRegion
         rideMapLiveEndpointMetadata = projection.endpointMetadata
         rideMapLiveSegments = projection.segments
         rideMapLiveBackgroundGapCount = projection.backgroundGapCount
@@ -1145,8 +1140,10 @@ final class CutoutAppModel {
 
     private func clearLiveProjectionState() {
         rideMapLiveDisplayPoints.removeAll(keepingCapacity: true)
+        rideMapLiveCameraRegion = nil
         rideMapLiveEndpointMetadata = .empty
         rideMapLiveSegments.removeAll(keepingCapacity: true)
+        rideMapLiveTelemetryState = nil
         rideMapLiveBackgroundGapCount = 0
         rideMapLivePointsTruncated = false
         rideMapLiveSegmentsOmittedByBudget = false
@@ -1157,7 +1154,6 @@ final class CutoutAppModel {
         rideMapLiveProjectionEnabled = false
         rideMapLiveProjectionCancellation?.cancel()
         if clearPoints {
-            rideMapPoints.removeAll(keepingCapacity: true)
             clearLiveProjectionState()
             rideMapLastDecision = nil
         }
@@ -1170,9 +1166,13 @@ final class CutoutAppModel {
         do {
             rideMapSnapshot = try command()
             rideMapLiveError = nil
+            updateRideMapDurationTicker()
             if resetPoints {
                 invalidateLiveProjection(clearPoints: true)
             }
+            rideMapLiveTelemetryState = rideMapSnapshot?.associatedVehicle == nil
+                ? .gpsOnly
+                : .associatedNoTelemetry
             return true
         } catch {
             rideMapLiveError = Self.mapRideMapError(error)

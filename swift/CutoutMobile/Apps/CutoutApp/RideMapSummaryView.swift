@@ -21,13 +21,13 @@ struct RideMapSummaryView: View {
         ) -> Self {
             guard let lifecycle else { return .unavailable }
             switch lifecycle {
-            case .recording:
+            case .active:
                 return associatedVehicle == nil
                     ? .gpsOnly
                     : .associatedWithoutTelemetry
             case .paused:
                 return .paused
-            case .stopped, .saved, .discarded:
+            case .draft, .stopped, .saved, .discarded, .interrupted, .imported:
                 return .terminal
             }
         }

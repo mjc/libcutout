@@ -2,10 +2,11 @@ use cutout_core::{PevcapEncoding, PevcapEvent, PevcapPhoneLocation, PevcapReader
 use cutout_ride_maps::{
     AverageSpeedMillimetresPerSecond, Coordinate, LocationAdmission, LocationSample,
     LocationSource, RideEvent, RideLifecycleState, RideMapPoint, RideMapRecorder, RideMapSegmentId,
-    RidePointCount, RidePointSequence, RideSegmentStartReason, RideSummary, RouteDisplayBudget,
-    RouteDisplayPoint, RouteEndpointMetadata, RoutePrivacyPolicy, RouteProjectionAccumulator,
-    RouteSegmentDisplayMetadata, RouteTelemetryState, RouteViewport, TransitionError,
-    VehicleIdentity, WallClockUnixMilliseconds, count_segment_runs, route_segment_display_metadata,
+    RidePointCount, RidePointSequence, RideSegmentStartReason, RideSummary, RouteCameraRegion,
+    RouteDisplayBudget, RouteDisplayPoint, RouteEndpointMetadata, RoutePrivacyPolicy,
+    RouteProjectionAccumulator, RouteSegmentDisplayMetadata, RouteTelemetryState, RouteViewport,
+    TransitionError, VehicleIdentity, WallClockUnixMilliseconds, count_segment_runs,
+    route_camera_region, route_segment_display_metadata,
 };
 use hex::encode as hex_encode;
 use rusqlite::{Connection, ErrorCode, OptionalExtension, params};
@@ -1362,6 +1363,7 @@ pub struct LocationWriteResult {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RoutePointProjection {
     points: Vec<RouteDisplayPoint>,
+    camera_region: Option<RouteCameraRegion>,
     source_point_count: u64,
     source_segment_count: u64,
     candidate_point_count: u64,
@@ -1372,11 +1374,24 @@ pub struct RoutePointProjection {
     segments: Vec<RouteSegmentDisplayMetadata>,
 }
 
+struct ProjectedRouteCandidates {
+    points: Vec<RouteDisplayPoint>,
+    camera_region: Option<RouteCameraRegion>,
+    displayed_segment_count: u64,
+    segments: Vec<RouteSegmentDisplayMetadata>,
+}
+
 impl RoutePointProjection {
     /// Returns the bounded display points in canonical sequence order.
     #[must_use]
     pub fn points(&self) -> &[RouteDisplayPoint] {
         &self.points
+    }
+
+    /// Returns the Rust-computed camera region for the bounded display points.
+    #[must_use]
+    pub const fn camera_region(&self) -> Option<RouteCameraRegion> {
+        self.camera_region
     }
 
     /// Returns the complete durable point count before LOD or viewport filtering.
@@ -5681,6 +5696,7 @@ fn project_route_points(
     if candidate_count == 0 {
         return Ok(RoutePointProjection {
             points: Vec::new(),
+            camera_region: None,
             source_point_count: counts.source_point_count,
             source_segment_count: counts.source_segment_count,
             candidate_point_count: counts.candidate_point_count,
@@ -5692,7 +5708,7 @@ fn project_route_points(
         });
     }
 
-    let (points, displayed_segment_count, segments) = project_route_candidates(
+    let projected = project_route_candidates(
         connection,
         &ride_id,
         &counts,
@@ -5702,15 +5718,16 @@ fn project_route_points(
         cancellation,
     )?;
     Ok(RoutePointProjection {
-        points,
+        points: projected.points,
+        camera_region: projected.camera_region,
         source_point_count: counts.source_point_count,
         source_segment_count: counts.source_segment_count,
         candidate_point_count: counts.candidate_point_count,
         candidate_segment_count: counts.candidate_segment_count,
-        displayed_segment_count,
+        displayed_segment_count: projected.displayed_segment_count,
         background_gap_count: counts.background_gap_count,
         endpoint_metadata,
-        segments,
+        segments: projected.segments,
     })
 }
 
@@ -5722,14 +5739,7 @@ fn project_route_candidates(
     budget: RouteDisplayBudget,
     privacy: RoutePrivacyPolicy,
     cancellation: Option<&RouteProjectionCancellation>,
-) -> Result<
-    (
-        Vec<RouteDisplayPoint>,
-        u64,
-        Vec<RouteSegmentDisplayMetadata>,
-    ),
-    StorageError,
-> {
+) -> Result<ProjectedRouteCandidates, StorageError> {
     let select = format!(
         "SELECT points.sequence, points.segment_id, points.telemetry_state, points.monotonic_ms,
                 points.wall_clock_ms, points.latitude_e7, points.longitude_e7,
@@ -5786,12 +5796,18 @@ fn project_route_candidates(
     }
     projection_checkpoint(cancellation)?;
     let points = accumulator.finish();
+    let camera_region = route_camera_region(points.iter().map(|point| point.coordinate()));
     let segments = route_segment_display_metadata(points.iter().copied());
     let displayed_segment_count = u64::try_from(count_segment_runs(
         points.iter().copied().map(RouteDisplayPoint::segment_id),
     ))
     .unwrap_or(u64::MAX);
-    Ok((points, displayed_segment_count, segments))
+    Ok(ProjectedRouteCandidates {
+        points,
+        camera_region,
+        displayed_segment_count,
+        segments,
+    })
 }
 
 fn route_endpoint_metadata_from_storage(

@@ -1,6 +1,5 @@
 import CoreLocation
 import CutoutMobile
-import CutoutMobileFFI
 import MapKit
 import SwiftUI
 
@@ -57,6 +56,7 @@ struct RideMapCanvasView: View {
     let showsEndMarker: Bool
     let showsCurrentMarker: Bool
     let endpointMetadata: MobileRideMapRouteEndpointMetadata
+    let cameraRegion: MobileRideMapCameraRegion?
     let segments: [MobileRideMapSegmentDisplayMetadata]
     /// Rust-bounded surrounding routes. These are rendered as subdued context and never fit the
     /// camera or participate in the selected route's endpoint annotations.
@@ -149,60 +149,22 @@ struct RideMapCanvasView: View {
         )
     }
 
-    static func region(for points: [MobileRideMapRouteDisplayPoint]) -> MKCoordinateRegion? {
-        guard let first = points.first else { return nil }
-        var minimumLatitude = first.latitudeDegrees
-        var maximumLatitude = first.latitudeDegrees
-        var longitudes = [first.longitudeDegrees]
-        for point in points.dropFirst() {
-            minimumLatitude = min(minimumLatitude, point.latitudeDegrees)
-            maximumLatitude = max(maximumLatitude, point.latitudeDegrees)
-            longitudes.append(point.longitudeDegrees)
-        }
-
-        let longitude = shortestLongitudeInterval(longitudes)
-        return MKCoordinateRegion(
-            center: CLLocationCoordinate2D(
-                latitude: (minimumLatitude + maximumLatitude) / 2,
-                longitude: longitude.center
-            ),
-            span: MKCoordinateSpan(
-                latitudeDelta: max((maximumLatitude - minimumLatitude) * 1.35, 0.002),
-                longitudeDelta: max(longitude.span * 1.35, 0.002)
-            )
+    static func mapRegion(
+        for cameraRegion: MobileRideMapCameraRegion,
+        centeredOn latest: MobileRideMapRouteDisplayPoint? = nil
+    ) -> MKCoordinateRegion {
+        let center = latest.map {
+            CLLocationCoordinate2D(latitude: $0.latitudeDegrees, longitude: $0.longitudeDegrees)
+        } ?? CLLocationCoordinate2D(
+            latitude: cameraRegion.centerLatitudeDegrees,
+            longitude: cameraRegion.centerLongitudeDegrees
         )
-    }
-
-    static func geoBounds(for region: MKCoordinateRegion) -> MobileGeoBoundsDto? {
-        let center = region.center
-        let span = region.span
-        guard center.latitude.isFinite,
-              center.longitude.isFinite,
-              span.latitudeDelta.isFinite,
-              span.longitudeDelta.isFinite,
-              span.latitudeDelta >= 0,
-              span.longitudeDelta >= 0
-        else {
-            return nil
-        }
-
-        let halfLatitude = min(span.latitudeDelta / 2, 90)
-        let minimumLatitude = max(-90, center.latitude - halfLatitude)
-        let maximumLatitude = min(90, center.latitude + halfLatitude)
-        let longitudeBounds: (minimum: Double, maximum: Double)
-        if span.longitudeDelta >= 360 {
-            longitudeBounds = (-180, 180)
-        } else {
-            longitudeBounds = (
-                normalizeLongitude(center.longitude - span.longitudeDelta / 2),
-                normalizeLongitude(center.longitude + span.longitudeDelta / 2)
+        return MKCoordinateRegion(
+            center: center,
+            span: MKCoordinateSpan(
+                latitudeDelta: cameraRegion.latitudeSpanDegrees,
+                longitudeDelta: cameraRegion.longitudeSpanDegrees
             )
-        }
-        return MobileGeoBoundsDto(
-            minimumLatitudeDegrees: minimumLatitude,
-            maximumLatitudeDegrees: maximumLatitude,
-            minimumLongitudeDegrees: longitudeBounds.minimum,
-            maximumLongitudeDegrees: longitudeBounds.maximum
         )
     }
 
@@ -314,7 +276,7 @@ struct RideMapCanvasView: View {
             updatePaths(for: key)
             rebuildContextPaths()
             if fitsRouteOnChange, fittedRouteID != key.routeID, points.isEmpty == false {
-                fitMap(to: points)
+                fitMap(to: cameraRegion)
                 fittedRouteID = key.routeID
             }
         }
@@ -472,49 +434,12 @@ struct RideMapCanvasView: View {
         CLLocationCoordinate2D(latitude: point.latitudeDegrees, longitude: point.longitudeDegrees)
     }
 
-    private func fitMap(to points: [MobileRideMapRouteDisplayPoint]) {
-        guard let region = Self.region(for: points) else { return }
+    private func fitMap(to cameraRegion: MobileRideMapCameraRegion?) {
+        guard let cameraRegion else { return }
         isApplyingCamera = true
-        mapPosition = .region(region)
+        mapPosition = .region(Self.mapRegion(for: cameraRegion))
     }
 
-    private static func shortestLongitudeInterval(_ longitudes: [Double]) -> (center: Double, span: Double) {
-        guard longitudes.count > 1 else { return (longitudes[0], 0) }
-        let normalized = longitudes.map { longitude in
-            let shifted = (longitude + 180).truncatingRemainder(dividingBy: 360)
-            return shifted >= 0 ? shifted : shifted + 360
-        }.sorted()
-
-        var largestGap = -1.0
-        var largestGapIndex = 0
-        for index in normalized.indices {
-            let next = index == normalized.index(before: normalized.endIndex)
-                ? normalized[0] + 360
-                : normalized[index + 1]
-            let gap = next - normalized[index]
-            if gap > largestGap {
-                largestGap = gap
-                largestGapIndex = index
-            }
-        }
-
-        let startIndex = normalized.index(after: largestGapIndex) == normalized.endIndex
-            ? normalized.startIndex
-            : normalized.index(after: largestGapIndex)
-        let start = normalized[startIndex]
-        let end = normalized[largestGapIndex] + (normalized[largestGapIndex] < start ? 360 : 0)
-        let span = max(end - start, 0)
-        let rawCenter = start + span / 2 - 180
-        let center = rawCenter > 180 ? rawCenter - 360 : rawCenter
-        return (center, span)
-    }
-
-    private static func normalizeLongitude(_ longitude: Double) -> Double {
-        let normalized = longitude.truncatingRemainder(dividingBy: 360)
-        if normalized > 180 { return normalized - 360 }
-        if normalized < -180 { return normalized + 360 }
-        return normalized
-    }
 }
 
 private struct RideMapRetainedSingletonSegmentMarker: View {

@@ -3272,6 +3272,8 @@ pub struct MobileRideMapCoreSnapshotDto {
     pub segment_count: u64,
     /// Associated vehicle platform identifier, when available.
     pub associated_vehicle: Option<String>,
+    /// Whether canonical start/end annotations are meaningful for this lifecycle state.
+    pub recorded_bounds_available: bool,
 }
 
 /// Result of associating a connected vehicle with the active recording.
@@ -3593,6 +3595,19 @@ pub struct MobileRideMapSegmentDisplayMetadataDto {
     pub last_visible_sequence: Option<u64>,
 }
 
+/// Rust-computed camera region for a bounded route display projection.
+#[derive(Clone, Copy, Debug, PartialEq, uniffi::Record)]
+pub struct MobileRideMapCameraRegionDto {
+    /// Camera center latitude in WGS84 degrees.
+    pub center_latitude_degrees: f64,
+    /// Camera center longitude in WGS84 degrees.
+    pub center_longitude_degrees: f64,
+    /// Padded camera latitude span in degrees.
+    pub latitude_span_degrees: f64,
+    /// Padded camera longitude span in degrees.
+    pub longitude_span_degrees: f64,
+}
+
 /// Bounded Rust route display projection.
 #[derive(Clone, Debug, PartialEq, uniffi::Record)]
 pub struct MobileRideMapRouteProjectionDto {
@@ -3620,6 +3635,8 @@ pub struct MobileRideMapRouteProjectionDto {
     pub canonical_start_visible: bool,
     /// Whether the canonical last point lies in the requested viewport.
     pub canonical_end_visible: bool,
+    /// Rust-computed camera region for the bounded display points.
+    pub camera_region: Option<MobileRideMapCameraRegionDto>,
 }
 
 /// Bounded startup state produced by Rust after recovering interrupted rides.
@@ -4165,6 +4182,18 @@ fn mobile_route_projection_dto(
             .map(ride_maps::RidePointSequence::as_u64),
         canonical_start_visible: projection.endpoint_metadata().start_visible(),
         canonical_end_visible: projection.endpoint_metadata().end_visible(),
+        camera_region: projection.camera_region().map(mobile_camera_region_dto),
+    }
+}
+
+fn mobile_camera_region_dto(
+    region: cutout_ride_maps::RouteCameraRegion,
+) -> MobileRideMapCameraRegionDto {
+    MobileRideMapCameraRegionDto {
+        center_latitude_degrees: region.center_latitude_degrees(),
+        center_longitude_degrees: region.center_longitude_degrees(),
+        latitude_span_degrees: region.latitude_span_degrees(),
+        longitude_span_degrees: region.longitude_span_degrees(),
     }
 }
 
@@ -5860,6 +5889,14 @@ impl MobileRideMapCoreInner {
             summary: self.summary(state),
             segment_count: self.recorder.segment_count().as_u64(),
             associated_vehicle: self.recorder.associated_vehicle().map(str::to_owned),
+            recorded_bounds_available: matches!(
+                state,
+                MobileRideLifecycleStateDto::Stopped
+                    | MobileRideLifecycleStateDto::Interrupted
+                    | MobileRideLifecycleStateDto::Discarded
+                    | MobileRideLifecycleStateDto::Saved
+                    | MobileRideLifecycleStateDto::Imported
+            ),
         }
     }
 
@@ -6641,6 +6678,9 @@ fn project_live_route_points(
         &mut is_cancelled,
     )
     .map_err(|_| MobileRideMapCoreErrorDto::Cancelled)?;
+    let camera_region =
+        ride_maps::route_camera_region(projected_points.iter().map(|point| point.coordinate()))
+            .map(mobile_camera_region_dto);
     let segments = ride_maps::route_segment_display_metadata(projected_points.iter().copied())
         .into_iter()
         .map(mobile_segment_display_metadata_dto)
@@ -6664,6 +6704,7 @@ fn project_live_route_points(
             .map(ride_maps::RidePointSequence::as_u64),
         canonical_start_visible: endpoint_metadata.start_visible(),
         canonical_end_visible: endpoint_metadata.end_visible(),
+        camera_region,
     })
 }
 
