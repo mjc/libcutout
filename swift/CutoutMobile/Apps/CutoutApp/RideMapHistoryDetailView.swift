@@ -159,7 +159,8 @@ struct RideMapHistoryDetailView: View {
                                 state: routeState,
                                 loadRoutePreview: loadRoutePreview,
                                 shareText: shareText(for: ride),
-                                mapPosition: $mapPosition
+                                mapPosition: $mapPosition,
+                                isApplyingCamera: $isApplyingCamera
                             )
                         } else if activeHistoryID != nil && routeState != .loading {
                             RideMapHistoryDetailUnavailableState(

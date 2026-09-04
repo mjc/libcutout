@@ -128,6 +128,7 @@ struct RideMapHistoryDetailSummary: View {
     let loadRoutePreview: () -> Void
     let shareText: String
     @Binding var mapPosition: MapCameraPosition
+    @Binding var isApplyingCamera: Bool
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -231,6 +232,7 @@ struct RideMapHistoryDetailSummary: View {
     }
 
     private func showRoutePreview() {
+        isApplyingCamera = true
         loadRoutePreview()
         mapPosition = .automatic
     }
