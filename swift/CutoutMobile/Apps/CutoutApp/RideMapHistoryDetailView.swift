@@ -1,6 +1,6 @@
+import CutoutMobile
 import MapKit
 import SwiftUI
-import CutoutMobile
 
 struct RideMapHistoryDetailView: View {
     let initialHistoryID: String?
@@ -29,6 +29,17 @@ struct RideMapHistoryDetailView: View {
     @Binding var isApplyingCamera: Bool
     let close: () -> Void
 
+    private var selectedRide: MobileRideMapHistorySummaryDto? {
+        guard let initialHistoryID else { return nil }
+        return rides.first(where: { $0.rideID == initialHistoryID })
+    }
+
+    private var selectionTaskID: String { initialHistoryID ?? "" }
+
+    private var isRouteLoading: Bool {
+        routeError == nil && isLoading
+    }
+
     static func resolvedVehicleLabel(
         associatedVehicle: String?,
         candidateVehicle: String?,
@@ -52,7 +63,8 @@ struct RideMapHistoryDetailView: View {
         guard metersPerSecond.isFinite, metersPerSecond >= 0 else {
             return localizedAppText("ride_map.speed_unavailable")
         }
-        let displayUnit: UnitSpeed = locale.measurementSystem == .metric
+        let displayUnit: UnitSpeed =
+            locale.measurementSystem == .metric
             ? .kilometersPerHour
             : .milesPerHour
         return Measurement(value: metersPerSecond, unit: UnitSpeed.metersPerSecond)
@@ -72,7 +84,7 @@ struct RideMapHistoryDetailView: View {
         availableHistoryIDs: [String]
     ) -> Bool {
         guard let initialHistoryID,
-              availableHistoryIDs.contains(initialHistoryID)
+            availableHistoryIDs.contains(initialHistoryID)
         else {
             return false
         }
@@ -81,17 +93,6 @@ struct RideMapHistoryDetailView: View {
 
     static func routeID(for historyID: String?) -> String {
         historyID ?? "history-detail"
-    }
-
-    private var selectedRide: MobileRideMapHistorySummaryDto? {
-        guard let initialHistoryID else { return nil }
-        return rides.first(where: { $0.rideID == initialHistoryID })
-    }
-
-    private var selectionTaskID: String { initialHistoryID ?? "" }
-
-    private var isRouteLoading: Bool {
-        routeError == nil && isLoading
     }
 
     var body: some View {
@@ -122,7 +123,8 @@ struct RideMapHistoryDetailView: View {
                                 distance: distanceText(for: ride.summary),
                                 duration: durationText(for: ride.summary),
                                 averageSpeed: Self.averageSpeedText(
-                                    millimetresPerSecond: ride.summary.averageSpeedMillimetresPerSecond,
+                                    millimetresPerSecond: ride.summary
+                                        .averageSpeedMillimetresPerSecond,
                                     locale: .current
                                 ),
                                 recordedAt: recordedAtText(for: ride.createdAtMilliseconds),
@@ -142,30 +144,17 @@ struct RideMapHistoryDetailView: View {
                                 mapPosition: $mapPosition
                             )
                         } else if initialHistoryID != nil && !isRouteLoading {
-                            VStack(spacing: 12) {
-                                ContentUnavailableView(
-                                    historyError == nil && routeError == nil
-                                        ? localizedAppText("ride_map.history_empty")
-                                        : localizedAppText("ride_map.detail_error_title"),
-                                    systemImage: historyError == nil && routeError == nil
-                                        ? "map"
-                                        : "exclamationmark.triangle"
-                                )
-                                if historyError != nil || routeError != nil {
-                                    Button(localizedAppText("ride_map.history_retry"), action: retry)
-                                        .buttonStyle(.borderedProminent)
-                                        .tint(PevColors.yellow)
-                                        .accessibilityIdentifier("ride-map.detail-retry")
-                                }
-                            }
-                            .frame(maxWidth: .infinity, maxHeight: .infinity)
+                            RideMapHistoryDetailUnavailableState(
+                                hasError: historyError != nil || routeError != nil,
+                                retry: retry
+                            )
                         }
                     }
                 }
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-        .task(id: selectionTaskID) { loadSelectionIfNeeded() }
+        .task(id: selectionTaskID, loadSelectionIfNeeded)
         .accessibilityIdentifier("ride-map.detail")
     }
 
@@ -175,11 +164,13 @@ struct RideMapHistoryDetailView: View {
             return
         }
         if rides.contains(where: { $0.rideID == initialHistoryID }) {
-            guard Self.shouldSelectHistory(
-                initialHistoryID: initialHistoryID,
-                selectedHistoryID: selectedHistoryID,
-                availableHistoryIDs: rides.map(\.rideID)
-            ) else {
+            guard
+                Self.shouldSelectHistory(
+                    initialHistoryID: initialHistoryID,
+                    selectedHistoryID: selectedHistoryID,
+                    availableHistoryIDs: rides.map(\.rideID)
+                )
+            else {
                 return
             }
             select(initialHistoryID)
@@ -208,7 +199,7 @@ struct RideMapHistoryDetailView: View {
 
     private func vehicleLabel(for ride: MobileRideMapHistorySummaryDto) -> String {
         if let displayName = ride.vehicleDisplayName,
-           !displayName.isEmpty
+            !displayName.isEmpty
         {
             return displayName
         }
@@ -224,240 +215,7 @@ struct RideMapHistoryDetailView: View {
         let distance = distanceText(for: ride.summary)
         let duration = durationText(for: ride.summary)
         let title = localizedAppText("ride_map.detail_title")
-        return "\(title)\n\(distance) · \(duration) · \(RideMapHistoryListView.pointCountText(ride.summary.pointCount))"
-    }
-}
-
-private struct RideMapHistoryDetailHeader: View {
-    let close: () -> Void
-
-    var body: some View {
-        Text(localizedAppText("ride_map.detail_title"))
-            .font(.headline.weight(.semibold))
-            .lineLimit(2)
-            .multilineTextAlignment(.center)
-            .frame(maxWidth: .infinity, minHeight: 44)
-            .padding(.horizontal, 72)
-            .overlay(alignment: .leading) {
-                Button(action: close) {
-                    Label(localizedAppText("ride_map.detail_back"), systemImage: "chevron.left")
-                        .labelStyle(.titleAndIcon)
-                }
-                .buttonStyle(.plain)
-                .foregroundStyle(PevColors.yellow)
-                .frame(minWidth: 44, minHeight: 44)
-            }
-            .padding(.horizontal, 16)
-            .padding(.vertical, 8)
-            .background(PevColors.pageBackground)
-            .accessibilityIdentifier("ride-map.detail-header")
-    }
-}
-
-private struct RideMapHistoryDetailMap: View {
-    let points: [MobileRideMapRouteDisplayPoint]
-    let routeID: String
-    let projectionVersion: UInt64
-    let endpointMetadata: MobileRideMapRouteEndpointMetadata
-    let cameraRegion: MobileRideMapCameraRegion?
-    let segments: [MobileRideMapSegmentDisplayMetadata]
-    let isLoading: Bool
-    let hasNoPoints: Bool
-    let routeError: MobileRideMapError?
-    @Binding var mapPosition: MapCameraPosition
-    @Binding var isApplyingCamera: Bool
-    let cameraDidChange: (MKCoordinateRegion) -> Void
-
-    var body: some View {
-        ZStack {
-            RideMapCanvasView(
-                points: points,
-                routeID: routeID,
-                projectionVersion: projectionVersion,
-                showsStartMarker: true,
-                showsEndMarker: true,
-                showsCurrentMarker: false,
-                endpointMetadata: endpointMetadata,
-                cameraRegion: cameraRegion,
-                segments: segments,
-                contextRoutes: [],
-                fitsRouteOnChange: true,
-                mapPosition: $mapPosition,
-                isApplyingCamera: $isApplyingCamera,
-                cameraDidChange: cameraDidChange
-            )
-
-            if isLoading {
-                HStack(spacing: 8) {
-                    ProgressView()
-                        .tint(PevColors.yellow)
-                    Text(localizedAppText("ride_map.history_loading"))
-                        .font(.subheadline.weight(.semibold))
-                }
-                .padding(.horizontal, 14)
-                .padding(.vertical, 10)
-                .modifier(RideMapLoadingSurface())
-                .accessibilityIdentifier("ride-map.detail-loading")
-            } else if routeError != nil {
-                ContentUnavailableView(
-                    localizedAppText("ride_map.detail_error_title"),
-                    systemImage: "exclamationmark.triangle"
-                )
-                .accessibilityIdentifier("ride-map.detail-map-error")
-            } else if hasNoPoints {
-                ContentUnavailableView(
-                    localizedAppText("ride_map.no_points"),
-                    systemImage: "location.slash"
-                )
-                .accessibilityIdentifier("ride-map.detail-no-points")
-            }
-        }
-    }
-}
-
-private struct RideMapHistoryDetailSummary: View {
-    let distance: String
-    let duration: String
-    let averageSpeed: String
-    let recordedAt: String
-    let vehicle: String
-    let telemetryState: MobileRideMapTelemetryStateDto
-    let displayPointCount: Int
-    let recordedPointCount: UInt64
-    let pointsTruncated: Bool
-    let segmentCount: UInt64
-    let segments: [MobileRideMapSegmentDisplayMetadata]
-    let segmentsOmittedByBudget: Bool
-    let canonicalBackgroundGapCount: UInt64
-    let error: MobileRideMapError?
-    let isLoading: Bool
-    let loadRoutePreview: () -> Void
-    let shareText: String
-    @Binding var mapPosition: MapCameraPosition
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            if isLoading {
-                HStack(spacing: 8) {
-                    ProgressView()
-                        .tint(PevColors.yellow)
-                    Text(localizedAppText("ride_map.history_loading"))
-                        .font(.subheadline.weight(.semibold))
-                        .foregroundStyle(PevColors.muted)
-                }
-                .accessibilityIdentifier("ride-map.detail-summary-loading")
-            } else {
-                if error != nil {
-                    Label(
-                        localizedAppText("ride_map.command_failed"),
-                        systemImage: "exclamationmark.triangle"
-                    )
-                    .font(.caption)
-                    .foregroundStyle(.orange)
-                    .accessibilityIdentifier("ride-map.detail-error")
-                }
-                VStack(alignment: .leading, spacing: 3) {
-                    Text(recordedAt)
-                        .font(.subheadline.weight(.semibold))
-                    Text(vehicle)
-                        .font(.caption)
-                        .foregroundStyle(PevColors.muted)
-                }
-                .accessibilityElement(children: .combine)
-                HStack(alignment: .firstTextBaseline, spacing: 0) {
-                    RideMapDetailMetric(
-                        value: distance,
-                        label: localizedAppText("ride_map.metric_distance")
-                    )
-                    RideMapDetailMetric(
-                        value: duration,
-                        label: localizedAppText("ride_map.metric_elapsed")
-                    )
-                    RideMapDetailMetric(
-                        value: averageSpeed,
-                        label: localizedAppText("ride_map.metric_average_speed")
-                    )
-                }
-                RideMapRouteTruthView(
-                    displayedPointCount: displayPointCount,
-                    recordedPointCount: recordedPointCount,
-                    rustSegmentCount: segmentCount,
-                    decision: nil,
-                    showsRecordedBounds: !pointsTruncated,
-                    segmentsOmittedByBudget: segmentsOmittedByBudget,
-                    segments: segments,
-                    canonicalBackgroundGapCount: canonicalBackgroundGapCount,
-                    hasRoute: RideMapRouteTruthView.routeExists(
-                        recordedPointCount: recordedPointCount,
-                        displayedPointCount: displayPointCount
-                    ),
-                    telemetryState: telemetryState
-                )
-                if pointsTruncated {
-                    Text(localizedAppText("ride_map.history_truncated_count", displayPointCount))
-                        .font(.caption)
-                        .foregroundStyle(PevColors.muted)
-                        .accessibilityIdentifier("ride-map.detail-truncated")
-                }
-
-                HStack(spacing: 10) {
-                    if pointsTruncated {
-                        Button(localizedAppText("ride_map.show_route_preview")) {
-                            loadRoutePreview()
-                            mapPosition = .automatic
-                        }
-                        .buttonStyle(.bordered)
-                        .tint(PevColors.primaryText)
-                    }
-
-                    ShareLink(item: shareText) {
-                        Label(localizedAppText("ride_map.share"), systemImage: "square.and.arrow.up")
-                    }
-                    .buttonStyle(.bordered)
-                    .tint(PevColors.primaryText)
-                }
-            }
-        }
-        .font(.subheadline)
-        .padding(16)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(PevColors.cardFill, in: UnevenRoundedRectangle(
-            topLeadingRadius: 28,
-            bottomLeadingRadius: 0,
-            bottomTrailingRadius: 0,
-            topTrailingRadius: 28
-        ))
-        .padding(.bottom, 8)
-    }
-
-}
-
-private struct RideMapLoadingSurface: ViewModifier {
-    func body(content: Content) -> some View {
-        if #available(iOS 26, macOS 26, *) {
-            content.glassEffect(.regular, in: .capsule)
-        } else {
-            content
-                .background(PevColors.cardFill, in: Capsule())
-                .overlay { Capsule().stroke(PevColors.cardStroke, lineWidth: 1) }
-        }
-    }
-}
-
-private struct RideMapDetailMetric: View {
-    let value: String
-    let label: String
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 3) {
-            Text(value)
-                .font(.title2.weight(.bold).monospacedDigit())
-                .lineLimit(1)
-                .minimumScaleFactor(0.72)
-            Text(label)
-                .font(.caption)
-                .foregroundStyle(PevColors.muted)
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
+        return
+            "\(title)\n\(distance) · \(duration) · \(RideMapHistoryListView.pointCountText(ride.summary.pointCount))"
     }
 }
