@@ -83,7 +83,6 @@ struct RideMapRouteView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .background(PevColors.pageBackground)
         .foregroundStyle(PevColors.primaryText)
-        .preferredColorScheme(.dark)
         .accessibilityIdentifier("ride-map.screen")
 #if os(iOS)
         // Ride Detail owns its compact header so it remains attached to the map
