@@ -2,7 +2,6 @@ import SwiftUI
 import MapKit
 import Observation
 import CutoutMobile
-import CutoutMobileFFI
 
 @MainActor
 @Observable
@@ -177,6 +176,7 @@ struct RideMapRouteView: View {
             initialHistoryID: initialHistoryID,
             rides: model.rideMapHistory,
             displayPoints: model.rideMapHistoryDetailDisplayPoints,
+            cameraRegion: model.rideMapHistoryDetailCameraRegion,
             endpointMetadata: model.rideMapHistoryDetailEndpointMetadata,
             segments: model.rideMapHistoryDetailSegments,
             projectionVersion: model.rideMapHistoryDetailProjectionVersion,
