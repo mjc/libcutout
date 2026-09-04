@@ -159,6 +159,40 @@ final class RideMapPresentationTests: XCTestCase {
         XCTAssertEqual(recentered.span.longitudeDelta, fitted.span.longitudeDelta)
     }
 
+    func testMapGeoBoundsPreserveAntimeridianCrossing() {
+        let bounds = RideMapCanvasView.geoBounds(
+            for: MKCoordinateRegion(
+                center: CLLocationCoordinate2D(latitude: 10, longitude: 179),
+                span: MKCoordinateSpan(latitudeDelta: 2, longitudeDelta: 4)
+            )
+        )
+
+        XCTAssertEqual(bounds?.minimumLatitudeDegrees, 9)
+        XCTAssertEqual(bounds?.maximumLatitudeDegrees, 11)
+        XCTAssertEqual(bounds?.minimumLongitudeDegrees, 177)
+        XCTAssertEqual(bounds?.maximumLongitudeDegrees, -179)
+    }
+
+    func testMapGeoBoundsRejectInvalidSpansAndCoverTheWholeLongitudeRange() {
+        XCTAssertNil(
+            RideMapCanvasView.geoBounds(
+                for: MKCoordinateRegion(
+                    center: CLLocationCoordinate2D(latitude: 10, longitude: 20),
+                    span: MKCoordinateSpan(latitudeDelta: 0, longitudeDelta: 1)
+                )
+            )
+        )
+
+        let world = RideMapCanvasView.geoBounds(
+            for: MKCoordinateRegion(
+                center: CLLocationCoordinate2D(latitude: 10, longitude: 20),
+                span: MKCoordinateSpan(latitudeDelta: 2, longitudeDelta: 360)
+            )
+        )
+        XCTAssertEqual(world?.minimumLongitudeDegrees, -180)
+        XCTAssertEqual(world?.maximumLongitudeDegrees, 180)
+    }
+
     func testEndpointMarkersRequireTheRustCanonicalSequenceAndVisibility() {
         let points = [point(sequence: 4), point(sequence: 9)]
 

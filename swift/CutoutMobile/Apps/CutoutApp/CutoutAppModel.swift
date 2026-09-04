@@ -53,6 +53,7 @@ final class CutoutAppModel {
     private(set) var rideMapLiveSegments = [MobileRideMapSegmentDisplayMetadata]()
     private(set) var rideMapLiveTelemetryState: MobileRideMapTelemetryStateDto?
     private(set) var rideMapLiveBackgroundGapCount: UInt64 = 0
+    private(set) var rideMapLiveProjectionVersion: UInt64 = 0
     private(set) var rideMapLivePointsTruncated = false
     private(set) var rideMapLiveSegmentsOmittedByBudget = false
     private(set) var rideMapHistory = [MobileRideMapHistorySummaryDto]()
@@ -1129,6 +1130,7 @@ final class CutoutAppModel {
     }
 
     private func applyLiveProjection(_ projection: MobileRideMapRouteProjection) {
+        rideMapLiveProjectionVersion &+= 1
         rideMapLiveDisplayPoints = projection.points
         rideMapLiveCameraRegion = projection.cameraRegion
         rideMapLiveEndpointMetadata = projection.endpointMetadata
@@ -1139,6 +1141,7 @@ final class CutoutAppModel {
     }
 
     private func clearLiveProjectionState() {
+        rideMapLiveProjectionVersion &+= 1
         rideMapLiveDisplayPoints.removeAll(keepingCapacity: true)
         rideMapLiveCameraRegion = nil
         rideMapLiveEndpointMetadata = .empty
