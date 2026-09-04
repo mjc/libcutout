@@ -195,9 +195,11 @@ struct RideMapHistoryDetailSummary: View {
                 }
 
                 HStack(spacing: 10) {
-                    if pointsTruncated {
+                    if pointsTruncated || state == .error {
                         Button(
-                            localizedAppText("ride_map.show_route_preview"),
+                            state == .error
+                                ? localizedAppText("ride_map.history_retry")
+                                : localizedAppText("ride_map.show_route_preview"),
                             action: showRoutePreview
                         )
                         .buttonStyle(.bordered)

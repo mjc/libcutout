@@ -242,7 +242,9 @@ struct RideMapHistoryContentView: View {
     ) -> String {
         resolve(identity)
             .flatMap { $0.isEmpty ? nil : $0 }
-            ?? (identity == currentIdentity ? currentName : nil)
+            ?? (identity == currentIdentity
+                ? currentName.flatMap { $0.isEmpty ? nil : $0 }
+                : nil)
             ?? localizedAppText("ride_map.vehicle_name_unavailable")
     }
 

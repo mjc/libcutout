@@ -107,6 +107,15 @@ final class RideMapPresentationTests: XCTestCase {
             ),
             "Speed unavailable"
         )
+        XCTAssertEqual(
+            RideMapHistoryContentView.resolvedVehicleLabel(
+                identity: "vehicle",
+                currentIdentity: "vehicle",
+                currentName: "",
+                resolve: { _ in nil }
+            ),
+            "Vehicle name unavailable"
+        )
         let imperial = RideMapHistoryDetailView.averageSpeedText(
             millimetresPerSecond: 1_000,
             locale: Locale(identifier: "en_US")
@@ -115,9 +124,10 @@ final class RideMapPresentationTests: XCTestCase {
             millimetresPerSecond: 1_000,
             locale: Locale(identifier: "fr_FR")
         )
-        XCTAssertNotEqual(imperial, "Speed unavailable")
-        XCTAssertNotEqual(metric, "Speed unavailable")
-        XCTAssertNotEqual(imperial, metric)
+        XCTAssertTrue(imperial.contains("2.2"))
+        XCTAssertTrue(imperial.localizedCaseInsensitiveContains("mph"))
+        XCTAssertTrue(metric.contains("3,6"))
+        XCTAssertTrue(metric.localizedCaseInsensitiveContains("km/h"))
     }
 
     func testRideMapStringsResolveFromTheAppCatalog() {
