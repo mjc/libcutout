@@ -35,9 +35,7 @@ struct RideMapHistoryDetailMap: View {
     let endpointMetadata: MobileRideMapRouteEndpointMetadata
     let cameraRegion: MobileRideMapCameraRegion?
     let segments: [MobileRideMapSegmentDisplayMetadata]
-    let isLoading: Bool
-    let hasNoPoints: Bool
-    let routeError: MobileRideMapError?
+    let state: RideMapHistoryRouteState
     @Binding var mapPosition: MapCameraPosition
     @Binding var isApplyingCamera: Bool
     let cameraDidChange: (MKCoordinateRegion) -> Void
@@ -61,7 +59,7 @@ struct RideMapHistoryDetailMap: View {
                 cameraDidChange: cameraDidChange
             )
 
-            if isLoading {
+            if state == .loading {
                 HStack(spacing: 8) {
                     ProgressView()
                         .tint(PevColors.yellow)
@@ -72,13 +70,13 @@ struct RideMapHistoryDetailMap: View {
                 .padding(.vertical, 10)
                 .modifier(RideMapLoadingSurface())
                 .accessibilityIdentifier("ride-map.detail-loading")
-            } else if routeError != nil {
+            } else if state == .error {
                 ContentUnavailableView(
                     localizedAppText("ride_map.detail_error_title"),
                     systemImage: "exclamationmark.triangle"
                 )
                 .accessibilityIdentifier("ride-map.detail-map-error")
-            } else if hasNoPoints {
+            } else if state == .empty {
                 ContentUnavailableView(
                     localizedAppText("ride_map.no_points"),
                     systemImage: "location.slash"
@@ -126,15 +124,14 @@ struct RideMapHistoryDetailSummary: View {
     let segments: [MobileRideMapSegmentDisplayMetadata]
     let segmentsOmittedByBudget: Bool
     let canonicalBackgroundGapCount: UInt64
-    let error: MobileRideMapError?
-    let isLoading: Bool
+    let state: RideMapHistoryRouteState
     let loadRoutePreview: () -> Void
     let shareText: String
     @Binding var mapPosition: MapCameraPosition
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            if isLoading {
+            if state == .loading {
                 HStack(spacing: 8) {
                     ProgressView()
                         .tint(PevColors.yellow)
@@ -144,7 +141,7 @@ struct RideMapHistoryDetailSummary: View {
                 }
                 .accessibilityIdentifier("ride-map.detail-summary-loading")
             } else {
-                if error != nil {
+                if state == .error {
                     Label(
                         localizedAppText("ride_map.command_failed"),
                         systemImage: "exclamationmark.triangle"

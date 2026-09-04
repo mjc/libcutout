@@ -6,9 +6,9 @@ struct RideMapHistoryDetailView: View {
     let initialHistoryID: String?
     let rides: [MobileRideMapHistorySummaryDto]
     let displayPoints: [MobileRideMapRouteDisplayPoint]
-    /// Rust's bounded projection supplies the camera; `nil` keeps older route-shell callers
-    /// source-compatible until they pass the projection metadata through.
-    let cameraRegion: MobileRideMapCameraRegion? = nil
+    /// Rust's bounded projection supplies the camera; the default keeps older route-shell
+    /// callers source-compatible until they pass the projection metadata through.
+    var cameraRegion: MobileRideMapCameraRegion? = nil
     let endpointMetadata: MobileRideMapRouteEndpointMetadata
     let segments: [MobileRideMapSegmentDisplayMetadata]
     let projectionVersion: UInt64
@@ -43,8 +43,17 @@ struct RideMapHistoryDetailView: View {
 
     private var selectionTaskID: String { initialHistoryID ?? "" }
 
-    private var isRouteLoading: Bool {
-        routeError == nil && isLoading
+    private var routeState: RideMapHistoryRouteState {
+        if routeError != nil {
+            return .error
+        }
+        if isLoading {
+            return .loading
+        }
+        if selectedRide?.summary.pointCount == 0 {
+            return .empty
+        }
+        return .ready
     }
 
     static func resolvedVehicleLabel(
@@ -121,9 +130,7 @@ struct RideMapHistoryDetailView: View {
                             endpointMetadata: endpointMetadata,
                             cameraRegion: cameraRegion,
                             segments: segments,
-                            isLoading: isRouteLoading,
-                            hasNoPoints: selectedRide?.summary.pointCount == 0,
-                            routeError: routeError,
+                            state: routeState,
                             mapPosition: $mapPosition,
                             isApplyingCamera: $isApplyingCamera,
                             cameraDidChange: cameraDidChange
@@ -149,13 +156,12 @@ struct RideMapHistoryDetailView: View {
                                 segments: segments,
                                 segmentsOmittedByBudget: segmentsOmittedByBudget,
                                 canonicalBackgroundGapCount: canonicalBackgroundGapCount,
-                                error: routeError,
-                                isLoading: isRouteLoading,
+                                state: routeState,
                                 loadRoutePreview: loadRoutePreview,
                                 shareText: shareText(for: ride),
                                 mapPosition: $mapPosition
                             )
-                        } else if activeHistoryID != nil && !isRouteLoading {
+                        } else if activeHistoryID != nil && routeState != .loading {
                             RideMapHistoryDetailUnavailableState(
                                 hasError: historyError != nil || routeError != nil,
                                 retry: retry

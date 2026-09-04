@@ -10,9 +10,9 @@ struct RideMapHistoryContentView: View {
     @Binding var searchText: String
     let canLoadMore: Bool
     let displayPoints: [MobileRideMapRouteDisplayPoint]
-    /// Rust's bounded projection supplies the camera; `nil` keeps older route-shell callers
-    /// source-compatible until they pass the projection metadata through.
-    let cameraRegion: MobileRideMapCameraRegion? = nil
+    /// Rust's bounded projection supplies the camera; the default keeps older route-shell
+    /// callers source-compatible until they pass the projection metadata through.
+    var cameraRegion: MobileRideMapCameraRegion? = nil
     let endpointMetadata: MobileRideMapRouteEndpointMetadata
     let segments: [MobileRideMapSegmentDisplayMetadata]
     let contextRoutes: [MobileRideMapHistoryContextRoute]
@@ -72,6 +72,19 @@ struct RideMapHistoryContentView: View {
     private var isSelectedRouteEmpty: Bool {
         guard let selectedRide else { return false }
         return !isLoading && routeError == nil && selectedRide.summary.pointCount == 0
+    }
+
+    private var selectedRouteState: RideMapHistoryRouteState {
+        if isSelectedRouteLoading {
+            return .loading
+        }
+        if isSelectedRouteError {
+            return .error
+        }
+        if isSelectedRouteEmpty {
+            return .empty
+        }
+        return .ready
     }
 
     private var hasActiveFilters: Bool {
@@ -182,9 +195,7 @@ struct RideMapHistoryContentView: View {
                             cameraRegion: cameraRegion,
                             segments: segments,
                             contextRoutes: contextRoutes,
-                            isSelectedRouteLoading: isSelectedRouteLoading,
-                            isSelectedRouteError: isSelectedRouteError,
-                            isSelectedRouteEmpty: isSelectedRouteEmpty,
+                            state: selectedRouteState,
                             pointsTruncated: pointsTruncated,
                             segmentsOmittedByBudget: segmentsOmittedByBudget,
                             mapPosition: $mapPosition,

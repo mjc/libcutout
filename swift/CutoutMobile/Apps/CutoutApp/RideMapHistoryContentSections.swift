@@ -9,6 +9,13 @@ struct RideMapVehicleOption: Hashable, Identifiable {
     var id: String { identity }
 }
 
+enum RideMapHistoryRouteState: Equatable {
+    case loading
+    case error
+    case empty
+    case ready
+}
+
 struct RideMapHistoryFilterBar: View {
     let dateTitle: String
     let vehicleTitle: String
@@ -70,9 +77,7 @@ struct RideMapHistoryRouteSection: View {
     let cameraRegion: MobileRideMapCameraRegion?
     let segments: [MobileRideMapSegmentDisplayMetadata]
     let contextRoutes: [MobileRideMapHistoryContextRoute]
-    let isSelectedRouteLoading: Bool
-    let isSelectedRouteError: Bool
-    let isSelectedRouteEmpty: Bool
+    let state: RideMapHistoryRouteState
     let pointsTruncated: Bool
     let segmentsOmittedByBudget: Bool
     @Binding var mapPosition: MapCameraPosition
@@ -99,9 +104,9 @@ struct RideMapHistoryRouteSection: View {
                     cameraDidChange: cameraDidChange
                 )
 
-                if isSelectedRouteLoading {
+                if state == .loading {
                     RideMapHistoryLoadingSurface(identifier: "ride-map.history-map-loading")
-                } else if isSelectedRouteError {
+                } else if state == .error {
                     Label(
                         localizedAppText("ride_map.command_failed"),
                         systemImage: "exclamationmark.triangle"
@@ -112,7 +117,7 @@ struct RideMapHistoryRouteSection: View {
                     .padding(.vertical, 10)
                     .background(PevColors.cardFill, in: Capsule())
                     .accessibilityIdentifier("ride-map.history-map-error")
-                } else if isSelectedRouteEmpty {
+                } else if state == .empty {
                     ContentUnavailableView(
                         localizedAppText("ride_map.no_points"),
                         systemImage: "location.slash"
