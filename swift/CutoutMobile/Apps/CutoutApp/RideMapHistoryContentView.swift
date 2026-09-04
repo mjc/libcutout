@@ -2,7 +2,6 @@ import MapKit
 import SwiftUI
 import Foundation
 import CutoutMobile
-import CutoutMobileFFI
 
 struct RideMapHistoryContentView: View {
     let isRecording: Bool
@@ -11,6 +10,9 @@ struct RideMapHistoryContentView: View {
     @Binding var searchText: String
     let canLoadMore: Bool
     let displayPoints: [MobileRideMapRouteDisplayPoint]
+    /// Rust's bounded projection supplies the camera; `nil` keeps older route-shell callers
+    /// source-compatible until they pass the projection metadata through.
+    let cameraRegion: MobileRideMapCameraRegion? = nil
     let endpointMetadata: MobileRideMapRouteEndpointMetadata
     let segments: [MobileRideMapSegmentDisplayMetadata]
     let contextRoutes: [MobileRideMapHistoryContextRoute]
@@ -205,7 +207,7 @@ struct RideMapHistoryContentView: View {
                 showsEndMarker: true,
                 showsCurrentMarker: false,
                 endpointMetadata: endpointMetadata,
-                cameraRegion: nil,
+                cameraRegion: cameraRegion,
                 segments: segments,
                 contextRoutes: contextRoutes,
                 fitsRouteOnChange: true,
