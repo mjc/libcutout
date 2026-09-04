@@ -132,6 +132,7 @@ struct RideMapRouteView: View {
             searchText: $model.rideMapHistorySearchText,
             canLoadMore: model.rideMapHistoryCanLoadMore,
             displayPoints: model.rideMapHistoryDisplayPoints,
+            cameraRegion: model.rideMapHistoryCameraRegion,
             endpointMetadata: model.rideMapHistoryEndpointMetadata,
             segments: model.rideMapHistorySegments,
             contextRoutes: model.rideMapHistoryContextRoutes,

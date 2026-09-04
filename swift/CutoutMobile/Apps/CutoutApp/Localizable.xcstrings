@@ -875,7 +875,7 @@
     },
     "ride_map.route_truth" : {
       "comment" : "Route truth summary showing segmentation and telemetry provenance.",
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Segments: %lld · %@" } } }
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Segments: %1$lld · %2$@" } } }
     },
     "ride_map.route_start_end" : {
       "comment" : "Accessible route truth summary confirming the recorded start and end markers.",
