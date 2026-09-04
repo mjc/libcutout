@@ -30,8 +30,15 @@ struct RideMapHistoryDetailView: View {
     let close: () -> Void
 
     private var selectedRide: MobileRideMapHistorySummaryDto? {
-        guard let initialHistoryID else { return nil }
-        return rides.first(where: { $0.rideID == initialHistoryID })
+        guard let activeHistoryID else { return nil }
+        return rides.first(where: { $0.rideID == activeHistoryID })
+    }
+
+    private var activeHistoryID: String? {
+        Self.activeHistoryID(
+            initialHistoryID: initialHistoryID,
+            selectedHistoryID: selectedHistoryID
+        )
     }
 
     private var selectionTaskID: String { initialHistoryID ?? "" }
@@ -95,6 +102,11 @@ struct RideMapHistoryDetailView: View {
         historyID ?? "history-detail"
     }
 
+    @MainActor
+    static func activeHistoryID(initialHistoryID: String?, selectedHistoryID: String?) -> String? {
+        selectedHistoryID ?? initialHistoryID
+    }
+
     var body: some View {
         VStack(spacing: 0) {
             RideMapHistoryDetailHeader(close: close)
@@ -104,7 +116,7 @@ struct RideMapHistoryDetailView: View {
                     VStack(spacing: 0) {
                         RideMapHistoryDetailMap(
                             points: displayPoints,
-                            routeID: Self.routeID(for: initialHistoryID),
+                            routeID: Self.routeID(for: activeHistoryID),
                             projectionVersion: projectionVersion,
                             endpointMetadata: endpointMetadata,
                             cameraRegion: cameraRegion,
@@ -143,7 +155,7 @@ struct RideMapHistoryDetailView: View {
                                 shareText: shareText(for: ride),
                                 mapPosition: $mapPosition
                             )
-                        } else if initialHistoryID != nil && !isRouteLoading {
+                        } else if activeHistoryID != nil && !isRouteLoading {
                             RideMapHistoryDetailUnavailableState(
                                 hasError: historyError != nil || routeError != nil,
                                 retry: retry

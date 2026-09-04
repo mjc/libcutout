@@ -64,6 +64,62 @@ final class RideMapPresentationTests: XCTestCase {
         )
     }
 
+    func testHistoryDetailUsesTheCurrentSelectionForRouteIdentity() {
+        XCTAssertEqual(
+            RideMapHistoryDetailView.activeHistoryID(
+                initialHistoryID: "initial",
+                selectedHistoryID: "selected"
+            ),
+            "selected"
+        )
+        XCTAssertEqual(
+            RideMapHistoryDetailView.activeHistoryID(
+                initialHistoryID: "initial",
+                selectedHistoryID: nil
+            ),
+            "initial"
+        )
+    }
+
+    func testHistoryDetailVehicleAndSpeedFormattingKeepUnavailableExplicit() {
+        XCTAssertEqual(
+            RideMapHistoryDetailView.resolvedVehicleLabel(
+                associatedVehicle: "vehicle",
+                candidateVehicle: nil,
+                resolve: { _ in nil },
+                fallback: "GPS-only"
+            ),
+            "Vehicle name unavailable"
+        )
+        XCTAssertEqual(
+            RideMapHistoryDetailView.resolvedVehicleLabel(
+                associatedVehicle: nil,
+                candidateVehicle: nil,
+                resolve: { _ in nil },
+                fallback: "GPS-only"
+            ),
+            "GPS-only"
+        )
+        XCTAssertEqual(
+            RideMapHistoryDetailView.averageSpeedText(
+                millimetresPerSecond: nil,
+                locale: Locale(identifier: "en_US")
+            ),
+            "Speed unavailable"
+        )
+        let imperial = RideMapHistoryDetailView.averageSpeedText(
+            millimetresPerSecond: 1_000,
+            locale: Locale(identifier: "en_US")
+        )
+        let metric = RideMapHistoryDetailView.averageSpeedText(
+            millimetresPerSecond: 1_000,
+            locale: Locale(identifier: "fr_FR")
+        )
+        XCTAssertNotEqual(imperial, "Speed unavailable")
+        XCTAssertNotEqual(metric, "Speed unavailable")
+        XCTAssertNotEqual(imperial, metric)
+    }
+
     func testRideMapStringsResolveFromTheAppCatalog() {
         XCTAssertEqual(localizedAppText("ride_map.status.recording"), "Recording")
         XCTAssertEqual(localizedAppText("ride_map.start"), "Start GPS-only ride")
