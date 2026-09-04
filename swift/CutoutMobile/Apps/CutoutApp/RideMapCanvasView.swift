@@ -1,5 +1,6 @@
 import CoreLocation
 import CutoutMobile
+import CutoutMobileFFI
 import MapKit
 import SwiftUI
 
@@ -166,6 +167,50 @@ struct RideMapCanvasView: View {
                 longitudeDelta: cameraRegion.longitudeSpanDegrees
             )
         )
+    }
+
+    /// Converts MapKit's camera region into the validated Rust viewport contract.
+    /// Longitude bounds retain antimeridian crossings (minimum greater than maximum).
+    static func geoBounds(for region: MKCoordinateRegion) -> MobileGeoBoundsDto? {
+        let center = region.center
+        let span = region.span
+        guard center.latitude.isFinite, center.longitude.isFinite,
+              span.latitudeDelta.isFinite, span.longitudeDelta.isFinite,
+              span.latitudeDelta > 0, span.longitudeDelta > 0
+        else {
+            return nil
+        }
+
+        let halfLatitude = span.latitudeDelta / 2
+        let halfLongitude = span.longitudeDelta / 2
+        guard halfLatitude.isFinite, halfLongitude.isFinite else { return nil }
+
+        let minimumLatitude = max(-90, center.latitude - halfLatitude)
+        let maximumLatitude = min(90, center.latitude + halfLatitude)
+        guard minimumLatitude <= maximumLatitude else { return nil }
+
+        if span.longitudeDelta >= 360 {
+            return MobileGeoBoundsDto(
+                minimumLatitudeDegrees: minimumLatitude,
+                maximumLatitudeDegrees: maximumLatitude,
+                minimumLongitudeDegrees: -180,
+                maximumLongitudeDegrees: 180
+            )
+        }
+
+        return MobileGeoBoundsDto(
+            minimumLatitudeDegrees: minimumLatitude,
+            maximumLatitudeDegrees: maximumLatitude,
+            minimumLongitudeDegrees: normalizedLongitude(center.longitude - halfLongitude),
+            maximumLongitudeDegrees: normalizedLongitude(center.longitude + halfLongitude)
+        )
+    }
+
+    private static func normalizedLongitude(_ longitude: CLLocationDegrees) -> CLLocationDegrees {
+        let wrapped = longitude.truncatingRemainder(dividingBy: 360)
+        if wrapped > 180 { return wrapped - 360 }
+        if wrapped < -180 { return wrapped + 360 }
+        return wrapped
     }
 
     var body: some View {

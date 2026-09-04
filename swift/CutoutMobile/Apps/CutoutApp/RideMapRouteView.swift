@@ -97,10 +97,11 @@ struct RideMapRouteView: View {
 
     private var liveContent: some View {
         RideMapLiveContentView(
-            points: model.rideMapPoints,
             displayPoints: model.rideMapLiveDisplayPoints,
-            routeID: model.rideMapSnapshot?.rideId ?? "live",
+            routeID: "live",
+            projectionVersion: model.rideMapLiveProjectionVersion,
             endpointMetadata: model.rideMapLiveEndpointMetadata,
+            cameraRegion: model.rideMapLiveCameraRegion,
             segments: model.rideMapLiveSegments,
             snapshot: model.rideMapSnapshot,
             availability: model.rideMapAvailability,
@@ -108,6 +109,7 @@ struct RideMapRouteView: View {
             vehicleName: model.rideMapVehicleName,
             mapError: model.rideMapLiveError,
             lastDecision: model.rideMapLastDecision,
+            telemetryState: model.rideMapLiveTelemetryState,
             pointsTruncated: model.rideMapLivePointsTruncated,
             segmentsOmittedByBudget: model.rideMapLiveSegmentsOmittedByBudget,
             canonicalBackgroundGapCount: model.rideMapLiveBackgroundGapCount,
@@ -119,8 +121,7 @@ struct RideMapRouteView: View {
             save: { _ = model.saveRideMap() },
             stop: { _ = model.stopRideMap() },
             start: { _ = model.startGpsOnlyRide() },
-            discard: { _ = model.discardRideMap() },
-            refreshDuration: { model.refreshRideMapDuration() }
+            discard: { _ = model.discardRideMap() }
         )
     }
 
