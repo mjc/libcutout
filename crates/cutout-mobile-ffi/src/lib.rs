@@ -3089,6 +3089,8 @@ pub struct MobilePevcapMusicEventDto {
     pub provider: MobileMusicProviderDto,
     /// Opaque provider track identifier.
     pub track_id: String,
+    /// Monotonic timestamp of the provider observation.
+    pub monotonic_at_ms: u64,
     /// Provider-reported position within the track in milliseconds.
     pub track_position_ms: u64,
     /// Wall-clock sample time for the provider observation.
@@ -3107,6 +3109,7 @@ impl TryFrom<MobilePevcapMusicEventDto> for PevcapMusicEvent {
             event.provider.into(),
             event.track_id,
             event.track_position_ms,
+            MonotonicTimestamp::new(event.monotonic_at_ms),
             WallClockUnixTimestamp::from_milliseconds(event.wall_clock_unix_ms),
             event.clock_uncertainty_ms,
             event.ride_sequence,
@@ -6168,9 +6171,8 @@ impl MobilePevcapCaptureBuilder {
         phone_location: Option<MobilePhoneLocationSampleDto>,
         music: Option<MobilePevcapMusicEventDto>,
     ) -> bool {
-        let monotonic_at = monotonic_ms.into_core();
         let mut record = PevcapRecord::inbound_notification(
-            monotonic_at,
+            monotonic_ms.into_core(),
             mobile_gatt_channel(&characteristic),
             mobile_gatt_channel(&service),
             bytes,
@@ -6196,7 +6198,7 @@ impl MobilePevcapCaptureBuilder {
             return false;
         };
         if let Some(music) = music {
-            record = record.with_music(music.with_monotonic_at(monotonic_at));
+            record = record.with_music(music);
         }
         self.send_record(record)
     }
@@ -11382,6 +11384,7 @@ mod tests {
             Some(MobilePevcapMusicEventDto {
                 provider: MobileMusicProviderDto::AppleMusic,
                 track_id: "library-song-42".into(),
+                monotonic_at_ms: 17,
                 track_position_ms: 12_345,
                 wall_clock_unix_ms: 1_700_000_000_042,
                 clock_uncertainty_ms: 75,
@@ -11399,7 +11402,7 @@ mod tests {
             .expect("music correlation is retained");
         assert_eq!(music.provider, CoreMusicProvider::AppleMusic);
         assert_eq!(music.track_id.as_str(), "library-song-42");
-        assert_eq!(music.monotonic_at, MonotonicTimestamp::new(42));
+        assert_eq!(music.monotonic_at, MonotonicTimestamp::new(17));
         assert_eq!(music.track_position_ms, 12_345);
         assert_eq!(
             music.wall_clock_unix_ms.as_milliseconds(),
@@ -11427,6 +11430,7 @@ mod tests {
         assert!(builder.set_music_context(Some(MobilePevcapMusicEventDto {
             provider: MobileMusicProviderDto::Spotify,
             track_id: "spotify:track:context".into(),
+            monotonic_at_ms: 17,
             track_position_ms: 2_500,
             wall_clock_unix_ms: 1_700_000_000_100,
             clock_uncertainty_ms: 120,
@@ -11461,7 +11465,7 @@ mod tests {
                 .as_ref()
                 .expect("music context is correlated")
                 .monotonic_at,
-            MonotonicTimestamp::new(42)
+            MonotonicTimestamp::new(17)
         );
         assert!(capture.records[1].music.is_none());
         let _ = fs::remove_file(path);

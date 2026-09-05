@@ -415,6 +415,7 @@ final class CutoutAppModel {
         return MobilePevcapMusicEventDto(
             provider: observation.snapshot.provider,
             trackId: item.identifier,
+            monotonicAtMs: observation.snapshot.observedAtMs,
             trackPositionMs: positionMilliseconds,
             wallClockUnixMs: wallClockAtMs,
             clockUncertaintyMs: clockUncertaintyMs,

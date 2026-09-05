@@ -1011,7 +1011,7 @@ pub struct PevcapMusicEvent {
     pub provider: MusicProvider,
     /// Opaque provider track identifier; no title or artwork is retained.
     pub track_id: MusicIdentifier,
-    /// Capture-frame monotonic time used to correlate this event.
+    /// Monotonic timestamp of the provider observation.
     pub monotonic_at: MonotonicTimestamp,
     /// Provider-reported position within the track in milliseconds.
     pub track_position_ms: u64,
@@ -1034,26 +1034,6 @@ impl PevcapMusicEvent {
         provider: MusicProvider,
         track_id: impl Into<String>,
         track_position_ms: u64,
-        wall_clock_unix_ms: WallClockUnixTimestamp,
-        clock_uncertainty_milliseconds: u64,
-        ride_sequence: Option<u64>,
-    ) -> Result<Self, MusicValidationError> {
-        Self::new_with_monotonic(
-            provider,
-            track_id,
-            track_position_ms,
-            MonotonicTimestamp::new(0),
-            wall_clock_unix_ms,
-            clock_uncertainty_milliseconds,
-            ride_sequence,
-        )
-    }
-
-    /// Creates a bounded music correlation event with its capture-frame time.
-    pub fn new_with_monotonic(
-        provider: MusicProvider,
-        track_id: impl Into<String>,
-        track_position_ms: u64,
         monotonic_at: MonotonicTimestamp,
         wall_clock_unix_ms: WallClockUnixTimestamp,
         clock_uncertainty_milliseconds: u64,
@@ -1068,13 +1048,6 @@ impl PevcapMusicEvent {
             clock_uncertainty_milliseconds,
             ride_sequence,
         })
-    }
-
-    /// Returns a copy correlated to the supplied PEVCAP frame time.
-    #[must_use]
-    pub const fn with_monotonic_at(mut self, monotonic_at: MonotonicTimestamp) -> Self {
-        self.monotonic_at = monotonic_at;
-        self
     }
 }
 
@@ -2543,6 +2516,7 @@ impl PevcapMusicProviderJson {
 struct PevcapMusicEventJson {
     provider: PevcapMusicProviderJson,
     track_id: String,
+    monotonic_at_ms: u64,
     track_position_ms: u64,
     wall_clock_unix_ms: u64,
     clock_uncertainty_milliseconds: u64,
@@ -2556,6 +2530,7 @@ impl From<&PevcapMusicEvent> for PevcapMusicEventJson {
         Self {
             provider: event.provider.into(),
             track_id: event.track_id.as_str().to_owned(),
+            monotonic_at_ms: event.monotonic_at.get(),
             track_position_ms: event.track_position_ms,
             wall_clock_unix_ms: event.wall_clock_unix_ms.as_milliseconds(),
             clock_uncertainty_milliseconds: event.clock_uncertainty_milliseconds,
@@ -2571,6 +2546,7 @@ impl PevcapMusicEventJson {
             self.provider.into_provider(),
             self.track_id,
             self.track_position_ms,
+            MonotonicTimestamp::new(self.monotonic_at_ms),
             WallClockUnixTimestamp::from_milliseconds(self.wall_clock_unix_ms),
             self.clock_uncertainty_milliseconds,
             self.ride_sequence,
@@ -2623,14 +2599,12 @@ impl From<&PevcapRecord> for PevcapRecordJson {
 impl PevcapRecordJson {
     fn try_into_record(self) -> Result<PevcapRecord, PevcapRecordError> {
         self.validate()?;
-        let monotonic_at = MonotonicTimestamp::new(self.monotonic_ms);
         let music = self
             .music
             .map(PevcapMusicEventJson::try_into_event)
-            .transpose()?
-            .map(|music| music.with_monotonic_at(monotonic_at));
+            .transpose()?;
         Ok(PevcapRecord {
-            monotonic_ms: monotonic_at,
+            monotonic_ms: MonotonicTimestamp::new(self.monotonic_ms),
             direction: self.direction.into_direction(),
             characteristic: GattChannel::from_bytes(self.characteristic),
             service: self.service.map(GattChannel::from_bytes),
@@ -3953,11 +3927,11 @@ mod tests {
     #[test]
     fn pevcap_music_metadata_round_trips_in_both_encodings() {
         let mut capture = sample_pevcap_capture();
-        let event = PevcapMusicEvent::new_with_monotonic(
+        let event = PevcapMusicEvent::new(
             MusicProvider::AppleMusic,
             "i.am.opaque.track",
             42_000,
-            ms(9),
+            ms(4),
             wc(1_725_000_165_456),
             25,
             Some(17),
@@ -3976,7 +3950,7 @@ mod tests {
     #[test]
     fn pevcap_music_metadata_can_be_removed_before_export() {
         let mut capture = sample_pevcap_capture();
-        let event = PevcapMusicEvent::new_with_monotonic(
+        let event = PevcapMusicEvent::new(
             MusicProvider::Spotify,
             "opaque-spotify-track",
             1_234,
@@ -4002,7 +3976,7 @@ mod tests {
 
     #[test]
     fn pevcap_music_metadata_bounds_track_identifier() {
-        let blank = PevcapMusicEvent::new(MusicProvider::AppleMusic, " ", 0, wc(1), 0, None)
+        let blank = PevcapMusicEvent::new(MusicProvider::AppleMusic, " ", 0, ms(0), wc(1), 0, None)
             .expect_err("blank track identifiers are rejected");
         assert_eq!(blank, MusicValidationError::Blank("identifier"));
 
@@ -4010,6 +3984,7 @@ mod tests {
             MusicProvider::Spotify,
             "x".repeat(MAX_MUSIC_IDENTIFIER_BYTES + 1),
             0,
+            ms(0),
             wc(1),
             0,
             None,
@@ -4020,7 +3995,7 @@ mod tests {
 
     #[test]
     fn pevcap_music_metadata_preserves_monotonic_timestamp() {
-        let event = PevcapMusicEvent::new_with_monotonic(
+        let event = PevcapMusicEvent::new(
             MusicProvider::AppleMusic,
             "opaque-track",
             1_250,
@@ -4048,6 +4023,7 @@ mod tests {
             music: Some(PevcapMusicEventJson {
                 provider: PevcapMusicProviderJson::AppleMusic,
                 track_id: " ".to_owned(),
+                monotonic_at_ms: 1,
                 track_position_ms: 0,
                 wall_clock_unix_ms: 1,
                 clock_uncertainty_milliseconds: 0,
