@@ -127,17 +127,22 @@ reversible `TLT` write has completed a 54 -> 53 -> 54 readback round trip;
 an `ALM` write that did not produce a matching readback is reported as failed
 closed.
 
-## Backlog Implications
+## Current implementation and remaining proof
 
-- The next Aero implementation slice should parse captured notifications before
-  inventing read request bytes. The device is already streaming telemetry
-  unsolicited once subscribed.
-- Add a protocol classifier/reassembler for Veteran/Aero and Begode magic bytes.
-- Add an Aero telemetry fixture from the existing live capture and prove the
-  parser decodes at least family, frame length, model id, voltage, firmware
-  version, and basic telemetry fields.
-- Keep any setting without a typed readback and controlled device evidence
-  explicitly provisional; do not report a write as successful merely because
-  the BLE transport accepted the frame.
-- GPL repositories can be used as evidence and for behavioral cross-checks, but
-  Rust code should be written from MIT docs, live captures, and our own tests.
+The Rust tree now contains the protocol classifier/reassemblers and captured
+Aero fixtures described above. `VeteranFrameReassembler` and the Begode frame
+parser classify notification streams by wire magic; the Aero session fixture
+decodes frame length, model id, firmware, voltage, and the fixed-header
+telemetry fields. The registered session and CLI write path require the
+protocol GATT fingerprint plus model id `43` before arming any write.
+
+The remaining settings boundary is evidence, not an encoder gap: a setting
+without a typed readback and controlled device observation stays provisional.
+The CLI therefore reports transport acceptance separately and only calls the
+typed speed writes successful after a preflight-to-post-write readback
+transition. PWT, ANG, lights, pedal mode, and trip reset remain explicitly
+write-only or unconfirmed until the matching NF2557 effect/readback/rollback
+capture exists.
+
+GPL repositories remain behavioral cross-checks only; the Rust implementation
+is based on the MIT documentation, our captures, and tests.
