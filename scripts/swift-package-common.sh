@@ -20,6 +20,10 @@ cutout_ios_development_team() {
   printf '%s\n' "${CUTOUT_IOS_DEVELOPMENT_TEAM:-2RH32Y5HM5}"
 }
 
+cutout_swift_ffi_package_dir() {
+  printf '%s\n' "$1/target/swift-ffi/CutoutMobileFFI"
+}
+
 cutout_replace_generated_directory() {
   local target parent name backup_root backup status
   target="$1"
@@ -59,15 +63,19 @@ cutout_swift_ffi_source_fingerprint() {
   (
     cd "$root"
     {
-      printf '%s\n' Cargo.lock Cargo.toml rust-toolchain.toml
+      printf '%s\n' \
+        Cargo.lock Cargo.toml rust-toolchain.toml flake.lock flake.nix \
+        scripts/regenerate-swift-ffi.sh
       printf '%s\n' \
         crates/cutout-core/Cargo.toml \
         crates/cutout-mobile-ffi/Cargo.toml \
-        crates/cutout-protocols/Cargo.toml
+        crates/cutout-protocols/Cargo.toml \
+        crates/cutout-ride-maps/Cargo.toml
       find \
         crates/cutout-core/src \
         crates/cutout-mobile-ffi/src \
         crates/cutout-protocols/src \
+        crates/cutout-ride-maps/src \
         -type f -print
       [[ ! -d crates/cutout-protocols/registry ]] \
         || find crates/cutout-protocols/registry -type f -print
@@ -85,7 +93,7 @@ cutout_swift_ffi_source_fingerprint() {
 cutout_require_current_swift_ffi() {
   local root stamp expected actual
   root="$1"
-  stamp="$root/crates/cutout-mobile-ffi/CutoutMobileFFI/.cutout-source.sha256"
+  stamp="$(cutout_swift_ffi_package_dir "$root")/.cutout-source.sha256"
 
   if [[ -f "$stamp" ]]; then
     expected="$(tr -d '[:space:]' <"$stamp")"
@@ -102,11 +110,11 @@ cutout_require_current_swift_ffi() {
   return 1
 }
 
-cutout_require_swift_ffi_build_input() {
+cutout_validate_swift_ffi_build_input() {
   local root package
   local -a required
   root="$1"
-  package="$root/crates/cutout-mobile-ffi/CutoutMobileFFI"
+  package="$(cutout_swift_ffi_package_dir "$root")"
   required=(
     "$package/Package.swift"
     "$package/Sources/CutoutMobileFFI/cutout_mobile_ffi.swift"
@@ -122,7 +130,7 @@ cutout_require_swift_ffi_build_input() {
     "$package/cutout_mobile_ffiFFI.xcframework/macos-arm64_x86_64/Headers/cutout_mobile_ffiFFI/module.modulemap"
   )
 
-  cutout_require_current_swift_ffi "$root"
+  cutout_require_current_swift_ffi "$root" || return 1
   for input in "${required[@]}"; do
     if [[ ! -f "$input" ]]; then
       echo "missing Swift FFI build input: $input" >&2
@@ -143,6 +151,21 @@ cutout_require_swift_ffi_build_input() {
       return 1
     fi
   fi
+}
+
+cutout_require_swift_ffi_build_input() {
+  cutout_validate_swift_ffi_build_input "$@"
+}
+
+cutout_ensure_swift_ffi_build_input() {
+  local root generator
+  root="$1"
+  generator="${2:-$root/scripts/regenerate-swift-ffi.sh}"
+  if cutout_validate_swift_ffi_build_input "$root" 2>/dev/null; then
+    return 0
+  fi
+  "$generator"
+  cutout_validate_swift_ffi_build_input "$root"
 }
 
 cutout_create_ios_ui_test_result_bundle() {
@@ -241,7 +264,7 @@ cutout_build_ios_app_bundle() {
   product="$derived_data/Build/Products/$configuration-iphoneos/CutoutApp.app"
 
   cutout_use_xcode_developer_dir
-  cutout_require_swift_ffi_build_input "$root"
+  cutout_ensure_swift_ffi_build_input "$root"
 
   rm -rf "$product"
 
@@ -278,7 +301,7 @@ cutout_build_ios_device_app_bundle() {
   bundle_id="${CUTOUT_IOS_APP_BUNDLE_ID:-}"
 
   cutout_use_xcode_developer_dir
-  cutout_require_swift_ffi_build_input "$root"
+  cutout_ensure_swift_ffi_build_input "$root"
 
   rm -rf "$product"
 
@@ -319,7 +342,7 @@ cutout_archive_ios_release_testing_app() {
   local -a auth_args=()
 
   root="$(cutout_repo_root)"
-  cutout_require_swift_ffi_build_input "$root"
+  cutout_ensure_swift_ffi_build_input "$root"
   project="${CUTOUT_IOS_APP_PROJECT:-swift/CutoutMobile/CutoutApp.xcodeproj}"
   scheme="${CUTOUT_IOS_APP_SCHEME:-CutoutApp}"
   archive_path="${CUTOUT_IOS_AD_HOC_ARCHIVE_PATH:-$root/target/xcode-ad-hoc/CutoutApp.xcarchive}"

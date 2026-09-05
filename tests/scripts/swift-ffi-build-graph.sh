@@ -11,19 +11,27 @@ fake="$tmp/repository"
 mkdir -p \
   "$fake/crates/cutout-core/src" \
   "$fake/crates/cutout-protocols/src" \
+  "$fake/crates/cutout-ride-maps/src" \
+  "$fake/crates/libcutout-persistence/src" \
   "$fake/crates/cutout-mobile-ffi/src" \
-  "$fake/crates/cutout-mobile-ffi/CutoutMobileFFI"
+  "$fake/target/swift-ffi/CutoutMobileFFI" \
+  "$fake/scripts"
 printf '[workspace]\n' >"$fake/Cargo.toml"
 printf 'version = 4\n' >"$fake/Cargo.lock"
 printf 'channel = "stable"\n' >"$fake/rust-toolchain.toml"
+printf '{}\n' >"$fake/flake.lock"
+printf 'inputs = {};\n' >"$fake/flake.nix"
+printf '#!/usr/bin/env bash\n' >"$fake/scripts/regenerate-swift-ffi.sh"
 printf 'pub struct Core;\n' >"$fake/crates/cutout-core/src/lib.rs"
 printf 'pub struct Protocol;\n' >"$fake/crates/cutout-protocols/src/lib.rs"
+printf 'pub struct RideMaps;\n' >"$fake/crates/cutout-ride-maps/src/lib.rs"
+printf 'pub struct Persistence;\n' >"$fake/crates/libcutout-persistence/src/lib.rs"
 printf 'pub struct Mobile;\n' >"$fake/crates/cutout-mobile-ffi/src/lib.rs"
-for crate in cutout-core cutout-protocols cutout-mobile-ffi; do
+for crate in cutout-core cutout-protocols cutout-ride-maps cutout-mobile-ffi libcutout-persistence; do
   printf '[package]\nname = "%s"\n' "$crate" >"$fake/crates/$crate/Cargo.toml"
 done
 
-stamp="$fake/crates/cutout-mobile-ffi/CutoutMobileFFI/.cutout-source.sha256"
+stamp="$fake/target/swift-ffi/CutoutMobileFFI/.cutout-source.sha256"
 cutout_swift_ffi_source_fingerprint "$fake" >"$stamp"
 cutout_require_current_swift_ffi "$fake"
 
@@ -34,7 +42,7 @@ fi
 grep -q "missing Swift FFI build input" "$tmp/missing.log"
 
 if [[ "$(uname -s)" == Darwin ]]; then
-  package="$fake/crates/cutout-mobile-ffi/CutoutMobileFFI"
+  package="$fake/target/swift-ffi/CutoutMobileFFI"
   for slice in ios-arm64 ios-arm64_x86_64-simulator macos-arm64_x86_64; do
     mkdir -p "$package/cutout_mobile_ffiFFI.xcframework/$slice/Headers/cutout_mobile_ffiFFI"
     touch \
@@ -60,6 +68,53 @@ if cutout_require_current_swift_ffi "$fake" 2>"$tmp/stale.log"; then
   exit 1
 fi
 grep -q "scripts/regenerate-swift-ffi.sh" "$tmp/stale.log"
+
+write_complete_fake_package() {
+  local package slice
+  package="$(cutout_swift_ffi_package_dir "$fake")"
+  mkdir -p \
+    "$package/Sources/CutoutMobileFFI" \
+    "$package/cutout_mobile_ffiFFI.xcframework"
+  touch \
+    "$package/Package.swift" \
+    "$package/Sources/CutoutMobileFFI/cutout_mobile_ffi.swift" \
+    "$package/cutout_mobile_ffiFFI.xcframework/Info.plist"
+  for slice in ios-arm64 ios-arm64_x86_64-simulator macos-arm64_x86_64; do
+    mkdir -p "$package/cutout_mobile_ffiFFI.xcframework/$slice/Headers/cutout_mobile_ffiFFI"
+    touch \
+      "$package/cutout_mobile_ffiFFI.xcframework/$slice/libcutout_mobile_ffi.a" \
+      "$package/cutout_mobile_ffiFFI.xcframework/$slice/Headers/cutout_mobile_ffiFFI/cutout_mobile_ffiFFI.h" \
+      "$package/cutout_mobile_ffiFFI.xcframework/$slice/Headers/cutout_mobile_ffiFFI/module.modulemap"
+  done
+  cutout_swift_ffi_source_fingerprint "$fake" >"$package/.cutout-source.sha256"
+}
+
+(
+  # The focused ensure contract exercises package state; architecture validation
+  # remains covered separately above on Darwin.
+  uname() {
+    printf 'Linux\n'
+  }
+
+  generation_count=0
+  fake_regenerate() {
+    generation_count=$((generation_count + 1))
+    write_complete_fake_package
+  }
+
+  rm -rf -- "$(cutout_swift_ffi_package_dir "$fake")"
+  cutout_ensure_swift_ffi_build_input "$fake" fake_regenerate
+  [[ "$generation_count" -eq 1 ]] || {
+    echo "expected an absent package to trigger exactly one generation" >&2
+    exit 1
+  }
+
+  cutout_ensure_swift_ffi_build_input "$fake" fake_regenerate
+  [[ "$generation_count" -eq 1 ]] || {
+    echo "expected an unchanged package to skip generation" >&2
+    exit 1
+  }
+)
 
 generated="$tmp/generated-package"
 mkdir -p "$generated"
