@@ -105,6 +105,7 @@ public actor LiveActivityRideLifecycleCoordinator {
     private var latestRequestID: UInt64 = 0
     private var isOperationInFlight = false
     private var operationWaiters: [CheckedContinuation<Void, Never>] = []
+    private var operationQueueObservers: [(depth: Int, continuation: CheckedContinuation<Void, Never>)] = []
 
     public init(
         manager: some LiveActivityRideLifecycleManaging,
@@ -313,6 +314,23 @@ public actor LiveActivityRideLifecycleCoordinator {
 
         await withCheckedContinuation { continuation in
             operationWaiters.append(continuation)
+            resumeReadyOperationQueueObservers()
+        }
+    }
+
+    internal func waitForOperationQueueDepthForTesting(_ depth: Int) async {
+        guard operationWaiters.count < depth else { return }
+        await withCheckedContinuation { continuation in
+            operationQueueObservers.append((depth: depth, continuation: continuation))
+            resumeReadyOperationQueueObservers()
+        }
+    }
+
+    private func resumeReadyOperationQueueObservers() {
+        let ready = operationQueueObservers.filter { operationWaiters.count >= $0.depth }
+        operationQueueObservers.removeAll { operationWaiters.count >= $0.depth }
+        for observer in ready {
+            observer.continuation.resume()
         }
     }
 

@@ -3,10 +3,10 @@ import Foundation
 import OSLog
 
 /// The one Rust-owned SQLite service used by the mobile persistence adapters.
-enum RustPersistenceStore {
+public enum RustPersistenceStore {
     private static let logger = Logger(subsystem: "io.cutout.mobile", category: "persistence")
 
-    static let shared: RideDatabaseHandle? = {
+    public static let shared: RideDatabaseHandle? = {
         let fileManager = FileManager.default
         guard
             let applicationSupport = fileManager.urls(

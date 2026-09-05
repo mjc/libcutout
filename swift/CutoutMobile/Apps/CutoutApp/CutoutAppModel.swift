@@ -1675,7 +1675,8 @@ final class CutoutAppModel {
     private static func makeSessionDriver() -> any CutoutSessionDriving {
         #if DEBUG
         if let fixture = uiTestFixture {
-            return CutoutSessionCore(testScript: fixture.testScript)
+            let rideMapState = RustPersistenceStore.shared.map(MobileRideMapState.init(database:))
+            return CutoutSessionCore(testScript: fixture.testScript, rideMapState: rideMapState)
         }
         #endif
         return CutoutSessionCore()

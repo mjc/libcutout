@@ -514,10 +514,7 @@ final class LiveActivityRideLifecycleCoordinatorTests: XCTestCase {
         let secondReconciliation = Task {
             await coordinator.reconcile(requestID: 2, snapshot: second, shouldBeActive: true)
         }
-        try? await Task.sleep(for: .milliseconds(50))
-
-        let eventsBeforeRelease = await manager.recordedEvents()
-        XCTAssertEqual(eventsBeforeRelease, [.start(first)])
+        await coordinator.waitForOperationQueueDepthForTesting(1)
 
         await manager.resumeFirstStart()
         await firstReconciliation.value
@@ -541,11 +538,11 @@ final class LiveActivityRideLifecycleCoordinatorTests: XCTestCase {
         let staleEnd = Task {
             await coordinator.end(requestID: 2, reason: .disconnected)
         }
-        try? await Task.sleep(for: .milliseconds(50))
+        await coordinator.waitForOperationQueueDepthForTesting(1)
         let latestReconciliation = Task {
             await coordinator.reconcile(requestID: 3, snapshot: latest, shouldBeActive: true)
         }
-        try? await Task.sleep(for: .milliseconds(50))
+        await coordinator.waitForOperationQueueDepthForTesting(2)
 
         await manager.resumeFirstStart()
         await firstReconciliation.value

@@ -211,6 +211,26 @@ final class CutoutAppUITests: XCTestCase {
         XCTAssertEqual(Fixture.testFixture(for: "testEUCReconnectKeepsRideRoute"), .eucReconnect)
     }
 
+    func testHomeMapRouteKeepsMapAndStartActionReachable() throws {
+        let mapButton = app.buttons["device-picker.open-map"]
+        XCTAssertTrue(mapButton.waitForExistence(timeout: 8), app.debugDescription)
+        XCTAssertTrue(mapButton.isHittable)
+        mapButton.tap()
+
+        let mapScreen = app.descendants(matching: .any)["ride-map.screen"]
+        XCTAssertTrue(mapScreen.waitForExistence(timeout: 8), app.debugDescription)
+        XCTAssertTrue(app.descendants(matching: .any)["ride-map.map"].waitForExistence(timeout: 5))
+        let modePicker = mapScreen.descendants(matching: .any)["ride-map.mode-picker"]
+        XCTAssertTrue(modePicker.waitForExistence(timeout: 5), app.debugDescription)
+        let startButton = app.buttons["ride-map.start"]
+        XCTAssertTrue(startButton.waitForExistence(timeout: 5), app.debugDescription)
+        XCTAssertTrue(startButton.isEnabled)
+        XCTAssertTrue(startButton.isHittable)
+        XCTAssertGreaterThanOrEqual(startButton.frame.height, 44)
+        startButton.tap()
+        XCTAssertTrue(app.buttons["ride-map.pause"].waitForExistence(timeout: 5), app.debugDescription)
+    }
+
     func testCaptureAnnotationUsesOneStatefulAccessibleAction() {
         enterCapture()
 
@@ -3629,14 +3649,14 @@ private enum ConnectedDeviceFamily: Equatable {
     var tabNames: [String] {
         switch self {
         case .euc: ["ride", "pack"]
-        case .vesc: ["ride", "debug"]
+        case .vesc: ["ride", "debug", "map"]
         }
     }
 
     var unavailableTabNames: [String] {
         switch self {
         case .euc: ["map", "tune"]
-        case .vesc: ["map", "logs"]
+        case .vesc: ["logs"]
         }
     }
 
