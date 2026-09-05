@@ -313,7 +313,10 @@ final class CutoutAppRouteTests: XCTestCase {
                 .first(where: { $0.id == .debug })?.isSelected == true
         )
         XCTAssertEqual(
-            CutoutAppRoute.eucTune.navigationTabs.filter(\.isSelected).map(\.id),
+            CutoutAppRoute.eucTune
+                .navigationTabs(for: .electricUnicycle)
+                .filter(\.isSelected)
+                .map(\.id),
             [.tune]
         )
         XCTAssertEqual(CutoutAppRoute.route(forNavigationTarget: .vescRide), .vescRide)
@@ -372,7 +375,7 @@ final class CutoutAppRouteTests: XCTestCase {
         let vescTabs = CutoutAppRoute.rideMapDetail(rideID: "ride-1")
             .availableNavigationTabs(for: .vescOnewheel)
 
-        XCTAssertEqual(eucTabs.map(\.id), [.ride, .pack, .map])
+        XCTAssertEqual(eucTabs.map(\.id), [.ride, .pack, .map, .tune])
         XCTAssertEqual(vescTabs.map(\.id), [.ride, .debug, .map])
         XCTAssertEqual(eucTabs.first(where: { $0.isSelected })?.id, .map)
         XCTAssertEqual(vescTabs.first(where: { $0.isSelected })?.id, .map)
