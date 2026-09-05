@@ -16,10 +16,10 @@ path and requires a stationary safety confirmation.";
 const CLI_AFTER_LONG_HELP: &str = "\
 Examples:
   cutout scan --seconds 10
-  cutout connect --name-contains Aero --profile aero
+  cutout connect --id <platform-id> --profile aero
   cutout connect --address AA:BB:CC:DD:EE:FF --seconds 8 --profile aero
   cutout subscribe-raw --name-contains NF2557 --characteristic 0000ffe1-0000-1000-8000-00805f9b34fb
-  cutout capture --name-contains NF2557 --seconds 20 --profile aero
+  cutout capture --id <platform-id> --seconds 20 --profile aero
   cutout pevcap convert --input session.pevcap.jsonl --input-format jsonl --output session.pevcap --output-format binary
   cutout validation
   cutout vesc-probe --name-contains \"VESC BLE UART\"
@@ -1869,7 +1869,7 @@ mod tests {
                 "only mutating",
                 "stationary safety confirmation",
                 "Examples:",
-                "cutout capture --name-contains NF2557 --seconds 20",
+                "cutout capture --id <platform-id> --seconds 20 --profile aero",
                 "--name-contains matches a case-sensitive substring",
             ],
         );
@@ -1897,10 +1897,10 @@ mod tests {
             &help,
             &[
                 "cutout scan --seconds 10",
-                "cutout connect --name-contains Aero",
+                "cutout connect --id <platform-id> --profile aero",
                 "cutout connect --address AA:BB:CC:DD:EE:FF --seconds 8",
                 "cutout subscribe-raw --name-contains NF2557",
-                "cutout capture --name-contains NF2557 --seconds 20",
+                "cutout capture --id <platform-id> --seconds 20 --profile aero",
                 "cutout pevcap convert --input session.pevcap.jsonl",
                 "cutout validation",
                 "cutout vesc-probe --name-contains \"VESC BLE UART\"",
