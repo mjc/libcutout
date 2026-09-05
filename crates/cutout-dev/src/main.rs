@@ -14,6 +14,39 @@ use sha2::{Digest, Sha256};
 
 const GENERATED_PACKAGE: &str = "target/swift-ffi/CutoutMobileFFI";
 const CARGO_SWIFT_PACKAGE: &str = "crates/cutout-mobile-ffi/CutoutMobileFFI";
+const SWIFT_FFI_LOCK: &str = "target/swift-ffi/.cutout-swift-ffi.lock";
+
+struct SwiftFfiLock {
+    path: PathBuf,
+}
+
+impl SwiftFfiLock {
+    fn acquire(root: &Path) -> Result<Self> {
+        let path = root.join(SWIFT_FFI_LOCK);
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        let mut lock = fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&path)
+            .with_context(|| {
+                format!(
+                    "acquire Swift FFI generation lock {}; another generation may be running",
+                    path.display()
+                )
+            })?;
+        use std::io::Write as _;
+        writeln!(lock, "{}", std::process::id())?;
+        Ok(Self { path })
+    }
+}
+
+impl Drop for SwiftFfiLock {
+    fn drop(&mut self) {
+        let _ = fs::remove_file(&self.path);
+    }
+}
 
 #[derive(Debug, Eq, PartialEq)]
 enum DevCommand {
@@ -54,6 +87,7 @@ fn workspace_root() -> PathBuf {
 }
 
 fn ensure_swift_ffi(root: &Path) -> Result<()> {
+    let _lock = SwiftFfiLock::acquire(root)?;
     let package = root.join(GENERATED_PACKAGE);
     let expected = source_fingerprint(root)?;
     let current = fs::read_to_string(package.join(".cutout-source.sha256"))
