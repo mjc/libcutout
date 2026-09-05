@@ -1,6 +1,7 @@
 import XCTest
 @testable import CutoutApp
 import CutoutMobile
+import CutoutMobileFFI
 
 final class CutoutAppRouteTests: XCTestCase {
     func testAeroSettingsFormUsesCurrentValuesWhenAvailable() {
@@ -191,6 +192,14 @@ final class CutoutAppRouteTests: XCTestCase {
         XCTAssertEqual(
             EucSettingReadbackPresentation.chargeMode(.available(.charging)),
             "Charging"
+        )
+        XCTAssertEqual(
+            EucSettingReadbackPresentation.tripDistance(Distance(value: 1_609_344)),
+            "1.0 mi"
+        )
+        XCTAssertEqual(
+            EucSettingReadbackPresentation.tripDistance(nil),
+            "Unavailable"
         )
     }
 
