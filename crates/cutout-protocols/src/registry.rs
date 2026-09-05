@@ -104,7 +104,7 @@ pub struct SessionRegistration {
 }
 
 impl SessionRegistration {
-    /// Constructs the registered read-only session.
+    /// Constructs the registered telemetry session with its allow-listed controls.
     #[must_use]
     pub fn construct(self) -> RegisteredEucSession {
         (self.construct)()
@@ -115,8 +115,8 @@ include!(concat!(env!("OUT_DIR"), "/registry_models.rs"));
 
 /// Allocation-free registered session sum type.
 ///
-/// These sessions preserve read-only telemetry behavior while admitting each model's
-/// explicitly allow-listed benign controls, currently headlight changes.
+/// These sessions preserve telemetry behavior while admitting each model's explicitly
+/// allow-listed benign controls, currently headlight changes.
 #[allow(clippy::large_enum_variant)]
 #[derive(Clone, Debug)]
 pub enum RegisteredEucSession {
@@ -144,7 +144,7 @@ pub(super) fn begode_falcon_session() -> RegisteredEucSession {
     RegisteredEucSession::BegodeFalcon(BenignControlSession::<BegodeFalconModel, true>::default())
 }
 
-/// Constructs a registered Begode Falcon read-only session with explicit pack-voltage evidence.
+/// Constructs a registered Begode Falcon telemetry session with explicit pack-voltage evidence.
 #[must_use]
 pub fn begode_falcon_session_with_voltage_profile(
     profile: BegodePackVoltageProfile,
