@@ -6871,7 +6871,8 @@ public final class CoreBluetoothLiveSessionOwner: @unchecked Sendable {
             do {
                 _ = try self.handleTick(at: self.monotonicClock.now())
             } catch {
-                return
+                // Keep the lifecycle timer alive; a transient tick failure must
+                // not strand later confirmations and timeouts.
             }
             self.scheduleSettingTick()
         }
