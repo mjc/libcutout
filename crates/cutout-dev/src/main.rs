@@ -12,7 +12,8 @@ use anyhow::{Context, Result, bail, ensure};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 
-const GENERATED_PACKAGE: &str = "crates/cutout-mobile-ffi/CutoutMobileFFI";
+const GENERATED_PACKAGE: &str = "target/swift-ffi/CutoutMobileFFI";
+const CARGO_SWIFT_PACKAGE: &str = "crates/cutout-mobile-ffi/CutoutMobileFFI";
 
 #[derive(Debug, Eq, PartialEq)]
 enum DevCommand {
@@ -81,15 +82,32 @@ fn regenerate_swift_ffi(root: &Path, package: &Path) -> Result<()> {
     ensure_empty_wrapper("RUSTC_WRAPPER")?;
     ensure_empty_wrapper("RUSTC_WORKSPACE_WRAPPER")?;
 
+    let cargo_package = root.join(CARGO_SWIFT_PACKAGE);
     let backup = package.with_file_name(format!(".CutoutMobileFFI.backup.{}", std::process::id()));
+    let cargo_backup = cargo_package.with_file_name(format!(
+        ".CutoutMobileFFI.cargo-backup.{}",
+        std::process::id()
+    ));
     ensure!(
         !backup.exists(),
         "generated-package backup already exists: {}",
         backup.display()
     );
+    ensure!(
+        !cargo_backup.exists(),
+        "cargo-swift backup already exists: {}",
+        cargo_backup.display()
+    );
+    if let Some(parent) = package.parent() {
+        fs::create_dir_all(parent)?;
+    }
     if package.exists() {
         fs::rename(package, &backup)
             .with_context(|| format!("backing up {}", package.display()))?;
+    }
+    if cargo_package.exists() {
+        fs::rename(&cargo_package, &cargo_backup)
+            .with_context(|| format!("backing up {}", cargo_package.display()))?;
     }
 
     let result = run(
@@ -114,13 +132,25 @@ fn regenerate_swift_ffi(root: &Path, package: &Path) -> Result<()> {
             ]),
         "generate Swift FFI package",
     )
-    .and_then(|()| sort_xcframework_plist(package))
-    .and_then(|()| trim_generated_sources(package));
+    .and_then(|()| sort_xcframework_plist(&cargo_package))
+    .and_then(|()| trim_generated_sources(&cargo_package))
+    .and_then(|()| {
+        fs::rename(&cargo_package, package).with_context(|| {
+            format!(
+                "moving generated Swift FFI package from {} to {}",
+                cargo_package.display(),
+                package.display()
+            )
+        })
+    });
 
     match result {
         Ok(()) => {
             if backup.exists() {
                 fs::remove_dir_all(&backup)?;
+            }
+            if cargo_backup.exists() {
+                fs::remove_dir_all(&cargo_backup)?;
             }
             Ok(())
         }
@@ -130,6 +160,12 @@ fn regenerate_swift_ffi(root: &Path, package: &Path) -> Result<()> {
             }
             if backup.exists() {
                 fs::rename(&backup, package)?;
+            }
+            if cargo_package.exists() {
+                fs::remove_dir_all(&cargo_package)?;
+            }
+            if cargo_backup.exists() {
+                fs::rename(&cargo_backup, cargo_package)?;
             }
             Err(error)
         }
