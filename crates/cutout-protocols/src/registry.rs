@@ -104,7 +104,7 @@ pub struct SessionRegistration {
 }
 
 impl SessionRegistration {
-    /// Constructs the registered read-only session.
+    /// Constructs the registered telemetry session with its allow-listed controls.
     #[must_use]
     pub fn construct(self) -> RegisteredEucSession {
         (self.construct)()
@@ -115,8 +115,8 @@ include!(concat!(env!("OUT_DIR"), "/registry_models.rs"));
 
 /// Allocation-free registered session sum type.
 ///
-/// These sessions preserve read-only telemetry behavior while admitting each model's
-/// explicitly allow-listed benign controls, currently headlight changes.
+/// These sessions preserve telemetry behavior while admitting each model's explicitly
+/// allow-listed benign controls, currently headlight changes.
 #[allow(clippy::large_enum_variant)]
 #[derive(Clone, Debug)]
 pub enum RegisteredEucSession {
@@ -144,7 +144,7 @@ pub(super) fn begode_falcon_session() -> RegisteredEucSession {
     RegisteredEucSession::BegodeFalcon(BenignControlSession::<BegodeFalconModel, true>::default())
 }
 
-/// Constructs a registered Begode Falcon read-only session with explicit pack-voltage evidence.
+/// Constructs a registered Begode Falcon telemetry session with explicit pack-voltage evidence.
 #[must_use]
 pub fn begode_falcon_session_with_voltage_profile(
     profile: BegodePackVoltageProfile,
@@ -179,7 +179,7 @@ mod tests {
         BEGODE_SERVICE_CHANNEL, BegodeFalconModel, BegodePackVoltageProfile, MODEL_CATALOG,
         MODEL_REGISTRY, NOSFET_AERO_REGISTRY_ENTRY, NOSFET_AERO_SESSION_KEY, NosfetAeroModel,
         RegisteredEucSession, RegisteredModelSpec, VETERAN_DATA_CHANNEL, VETERAN_PARSER_KEY,
-        begode_falcon_target_voltage_profile, find_session_registration,
+        VETERAN_SERVICE_CHANNEL, begode_falcon_target_voltage_profile, find_session_registration,
     };
 
     #[test]
@@ -414,7 +414,7 @@ mod tests {
             panic!("Aero should have exactly one hardware-backed GATT fingerprint");
         };
 
-        assert_eq!(fingerprint.service, VETERAN_DATA_CHANNEL);
+        assert_eq!(fingerprint.service, VETERAN_SERVICE_CHANNEL);
         assert_eq!(fingerprint.characteristic, VETERAN_DATA_CHANNEL);
         assert!(fingerprint.roles.supports_read());
         assert!(fingerprint.roles.supports_write());

@@ -1934,6 +1934,8 @@ func testVescRideSnapshotProjectsBatteryLevelAndUpdateTime() throws {
                 beepMargin: .unsupported,
                 tiltback: .unsupported,
                 pedalMode: .unsupported,
+                rollAngle: .unsupported,
+                speedAlarmMode: .unsupported,
                 autoShutdownSeconds: .unsupported,
                 chargeMode: .unsupported
             )
@@ -1957,6 +1959,8 @@ func testVescRideSnapshotProjectsBatteryLevelAndUpdateTime() throws {
                 beepMargin: .unsupported,
                 tiltback: .unsupported,
                 pedalMode: .unsupported,
+                rollAngle: .unsupported,
+                speedAlarmMode: .unsupported,
                 autoShutdownSeconds: .unsupported,
                 chargeMode: .unsupported
             )

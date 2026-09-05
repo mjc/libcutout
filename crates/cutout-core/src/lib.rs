@@ -291,13 +291,13 @@ pub enum DeviceCommand {
     /// Set the NOSFET/Veteran tilt-back speed in whole km/h.
     SetAeroTiltbackSpeed(AeroSpeedSetting),
 
-    /// Set the NOSFET/Veteran PWM warning percentage.
+    /// Set the NOSFET/Veteran PWT (PWM tilt-back alarm) percentage.
     SetAeroPwmPercent(AeroPwmPercent),
 
     /// Set the NOSFET/Veteran speed alarm in whole km/h.
     SetAeroAlarmSpeed(AeroSpeedSetting),
 
-    /// Set the NOSFET/Veteran pedal-zero angle adjustment in tenths of a degree.
+    /// Set the NOSFET/Veteran ANG (vertical angle) adjustment in tenths of a degree.
     SetAeroAngleAdjustment(AeroAngleAdjustment),
 
     /// Set the NOSFET/Veteran high beam through its paired binary frames.
@@ -422,7 +422,7 @@ impl AeroSpeedSetting {
     }
 }
 
-/// NOSFET/Veteran PWM warning percentage.
+/// NOSFET/Veteran PWT (PWM tilt-back alarm) percentage.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct AeroPwmPercent(u8);
 
@@ -444,7 +444,7 @@ impl AeroPwmPercent {
     }
 }
 
-/// NOSFET/Veteran pedal-zero angle adjustment in tenths of a degree.
+/// NOSFET/Veteran ANG (vertical angle) adjustment in tenths of a degree.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct AeroAngleAdjustment(i8);
 
@@ -815,13 +815,13 @@ pub enum CommandKind {
     /// Set the NOSFET/Veteran tilt-back speed.
     SetAeroTiltbackSpeed,
 
-    /// Set the NOSFET/Veteran PWM warning percentage.
+    /// Set the NOSFET/Veteran PWT (PWM tilt-back alarm) percentage.
     SetAeroPwmPercent,
 
     /// Set the NOSFET/Veteran speed alarm.
     SetAeroAlarmSpeed,
 
-    /// Set the NOSFET/Veteran pedal-zero angle adjustment.
+    /// Set the NOSFET/Veteran ANG (vertical angle) adjustment.
     SetAeroAngleAdjustment,
 
     /// Set the NOSFET/Veteran high beam.
@@ -1105,6 +1105,9 @@ impl StationarySettingsPolicy {
         monotonic_ms: MonotonicTimestamp,
     ) -> Option<StationarySettingsArm> {
         self.arm(state, monotonic_ms).or_else(|| {
+            if !matches!(state, RideOperatingState::Riding) {
+                return None;
+            }
             let speed = speed?;
             let max_speed = max_speed?;
             (speed.as_millimetres_per_second().unsigned_abs()
@@ -10834,6 +10837,8 @@ mod tests {
             model: "NOSFET Aero",
             arm_duration: Duration::from_milliseconds(100),
         };
+        let low_speed = Speed::from_millimetres_per_second(500);
+        let max_speed = Speed::from_millimetres_per_second(500);
 
         assert!(
             policy
@@ -10858,6 +10863,36 @@ mod tests {
         assert!(
             policy
                 .arm(crate::RideOperatingState::Parked, ms(10))
+                .is_some()
+        );
+        assert!(
+            policy
+                .arm_with_speed(
+                    crate::RideOperatingState::Unknown,
+                    Some(low_speed),
+                    Some(max_speed),
+                    ms(10)
+                )
+                .is_none()
+        );
+        assert!(
+            policy
+                .arm_with_speed(
+                    crate::RideOperatingState::Charging,
+                    Some(low_speed),
+                    Some(max_speed),
+                    ms(10)
+                )
+                .is_none()
+        );
+        assert!(
+            policy
+                .arm_with_speed(
+                    crate::RideOperatingState::Riding,
+                    Some(low_speed),
+                    Some(max_speed),
+                    ms(10)
+                )
                 .is_some()
         );
     }

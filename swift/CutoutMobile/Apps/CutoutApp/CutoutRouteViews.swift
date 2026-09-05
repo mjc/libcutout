@@ -890,7 +890,7 @@ enum EucSettingReadbackPresentation {
         _ state: RollAngleSettingState?,
         fallback readback: ReadbackValue<RollAngle>
     ) -> String {
-        if let state, let value = state.current ?? state.requested {
+        if let state, let value = state.current {
             return value.displayName
         }
         guard let value = readback.value else {
@@ -905,7 +905,7 @@ enum EucSettingReadbackPresentation {
         _ state: SpeedAlarmModeSettingState?,
         fallback readback: ReadbackValue<SpeedAlarmMode>
     ) -> String {
-        if let state, let value = state.current ?? state.requested {
+        if let state, let value = state.current {
             return value.displayName
         }
         guard let value = readback.value else {

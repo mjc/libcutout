@@ -1146,6 +1146,8 @@ public struct SettingsReadback: Equatable, Hashable, Sendable {
             beepMargin: Self.missingReadback(for: availability),
             tiltback: Self.missingReadback(for: availability),
             pedalMode: Self.missingReadback(for: availability),
+            rollAngle: Self.missingReadback(for: availability),
+            speedAlarmMode: Self.missingReadback(for: availability),
             autoShutdownSeconds: Self.missingReadback(for: availability),
             chargeMode: Self.missingReadback(for: availability)
         )
@@ -1702,7 +1704,7 @@ public struct AeroSpeedSetting: Equatable, Hashable, Sendable {
     }
 }
 
-/// NOSFET/Veteran PWM warning percentage.
+/// NOSFET/Veteran PWT (PWM tilt-back alarm) percentage.
 public struct AeroPwmPercent: Equatable, Hashable, Sendable {
     public let percent: UInt8
 
@@ -1720,7 +1722,7 @@ public struct AeroPwmPercent: Equatable, Hashable, Sendable {
     }
 }
 
-/// NOSFET/Veteran pedal-zero angle adjustment in tenths of a degree.
+/// NOSFET/Veteran ANG (vertical angle) adjustment in tenths of a degree.
 public struct AeroAngleAdjustment: Equatable, Hashable, Sendable {
     public let tenthsOfDegree: Int8
 
@@ -6937,7 +6939,8 @@ public final class CoreBluetoothLiveSessionOwner: @unchecked Sendable {
             do {
                 _ = try self.handleTick(at: self.monotonicClock.now())
             } catch {
-                return
+                // Keep the lifecycle timer alive; a transient tick failure must
+                // not strand later confirmations and timeouts.
             }
             self.scheduleSettingTick()
         }

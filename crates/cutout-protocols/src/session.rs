@@ -1559,7 +1559,7 @@ fn gate_read_only_command<M: SupportsReadRequests>(command: DeviceCommand) -> Re
 pub struct NosfetAeroModel;
 
 const NOSFET_AERO_MODEL_GATT: [GattFingerprint; 1] = [GattFingerprint {
-    service: VETERAN_DATA_CHANNEL,
+    service: VETERAN_SERVICE_CHANNEL,
     characteristic: VETERAN_DATA_CHANNEL,
     roles: GattRoles::empty()
         .with_read()
@@ -1987,6 +1987,31 @@ struct PendingSettingsSequence {
     next_at: MonotonicTimestamp,
 }
 
+fn handle_benign_control<M: ReadOnlyModelSpec + SupportsBenignControls>(
+    command: DeviceCommand,
+    output: &mut Vec<SessionOutput>,
+) {
+    let kind = command.kind();
+    if M::CONTROL_CAPABILITIES.supports_command_kind(kind) {
+        if let Some(encoded) = M::encode_benign_control(command) {
+            output.push(SessionOutput::Transport(TransportAction::Write {
+                channel: M::WRITE_CHANNEL,
+                bytes: encoded.payload,
+                mode: encoded.mode,
+            }));
+            return;
+        }
+    }
+
+    output.push(SessionOutput::Event(DeviceEvent::ControlRefusal(
+        ControlRefusal {
+            command: kind,
+            safety_class: command.safety_class(),
+            reason: ControlRefusalReason::UnsupportedCommand,
+        },
+    )));
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct PendingSettingsSequence {
     remaining: ArrayVec<EncodedControlStep, 4>,
@@ -2332,24 +2357,7 @@ impl<
             SessionInput::Command(command)
                 if command.safety_class() == SafetyClass::BenignControl =>
             {
-                let kind = command.kind();
-                if M::CONTROL_CAPABILITIES.supports_command_kind(kind) {
-                    if let Some(encoded) = M::encode_benign_control(command) {
-                        output.push(SessionOutput::Transport(TransportAction::Write {
-                            channel: M::WRITE_CHANNEL,
-                            bytes: encoded.payload,
-                            mode: encoded.mode,
-                        }));
-                        return;
-                    }
-                }
-                output.push(SessionOutput::Event(DeviceEvent::ControlRefusal(
-                    ControlRefusal {
-                        command: kind,
-                        safety_class: SafetyClass::BenignControl,
-                        reason: ControlRefusalReason::UnsupportedCommand,
-                    },
-                )));
+                handle_benign_control::<M>(command, output);
             }
             input => self.read_only.handle(input, output),
         }
@@ -5146,6 +5154,68 @@ mod tests {
             SessionOutput::Transport(TransportAction::Write { bytes, .. })
                 if bytes.as_slice() == b"CLEARMETER"
         )));
+    }
+
+    #[test]
+    fn aero_stationary_settings_session_schedules_tlt_pwt_alm_and_ang() {
+        let cases = [
+            (
+                DeviceCommand::SetAeroTiltbackSpeed(
+                    cutout_core::AeroSpeedSetting::new(53).expect("53 km/h fits"),
+                ),
+                *b"LdAp",
+                12,
+                53,
+            ),
+            (
+                DeviceCommand::SetAeroPwmPercent(
+                    cutout_core::AeroPwmPercent::new(64).expect("64 percent fits"),
+                ),
+                *b"LdAp",
+                13,
+                64,
+            ),
+            (
+                DeviceCommand::SetAeroAlarmSpeed(
+                    cutout_core::AeroSpeedSetting::new(56).expect("56 km/h fits"),
+                ),
+                *b"LkAp",
+                12,
+                56,
+            ),
+            (
+                DeviceCommand::SetAeroAngleAdjustment(
+                    cutout_core::AeroAngleAdjustment::new(-12).expect("-1.2 degrees fits"),
+                ),
+                *b"LkAp",
+                11,
+                244,
+            ),
+        ];
+
+        for (command, magic, value_index, expected_value) in cases {
+            let mut session = StationarySettingsWriteSession::<NosfetAeroModel, false>::default();
+            let mut output = Vec::new();
+            session.arm(
+                StationarySettingsPolicy {
+                    model: NosfetAeroModel::MODEL,
+                    arm_duration: Duration::from_milliseconds(100),
+                }
+                .arm(RideOperatingState::Parked, ms(10))
+                .expect("parked state arms settings writes"),
+            );
+            session.handle(SessionInput::Command(command), &mut output);
+
+            let bytes = output.iter().find_map(|item| match item {
+                SessionOutput::Transport(TransportAction::Write { bytes, .. }) => {
+                    Some(bytes.as_slice())
+                }
+                _ => None,
+            });
+            let bytes = bytes.expect("Aero setting should schedule a transport write");
+            assert_eq!(&bytes[..4], &magic);
+            assert_eq!(bytes[value_index], expected_value);
+        }
     }
 
     #[test]

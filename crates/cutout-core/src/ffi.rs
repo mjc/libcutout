@@ -230,13 +230,13 @@ pub enum CommandKindDto {
     /// Set the NOSFET/Veteran tilt-back speed.
     SetAeroTiltbackSpeed,
 
-    /// Set the NOSFET/Veteran PWM warning percentage.
+    /// Set the NOSFET/Veteran PWT (PWM tilt-back alarm) percentage.
     SetAeroPwmPercent,
 
     /// Set the NOSFET/Veteran speed alarm.
     SetAeroAlarmSpeed,
 
-    /// Set the NOSFET/Veteran pedal-zero angle adjustment.
+    /// Set the NOSFET/Veteran ANG (vertical angle) adjustment.
     SetAeroAngleAdjustment,
 
     /// Set the NOSFET/Veteran high beam.
@@ -337,13 +337,13 @@ pub enum DeviceCommandDto {
     /// Set the NOSFET/Veteran tilt-back speed.
     SetAeroTiltbackSpeed(AeroSpeedSetting),
 
-    /// Set the NOSFET/Veteran PWM warning percentage.
+    /// Set the NOSFET/Veteran PWT (PWM tilt-back alarm) percentage.
     SetAeroPwmPercent(AeroPwmPercent),
 
     /// Set the NOSFET/Veteran speed alarm.
     SetAeroAlarmSpeed(AeroSpeedSetting),
 
-    /// Set the NOSFET/Veteran pedal-zero angle adjustment.
+    /// Set the NOSFET/Veteran ANG (vertical angle) adjustment.
     SetAeroAngleAdjustment(AeroAngleAdjustment),
 
     /// Set the NOSFET/Veteran high beam.

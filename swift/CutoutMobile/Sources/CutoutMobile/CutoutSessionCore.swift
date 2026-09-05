@@ -1318,6 +1318,7 @@ public final class CutoutSessionCore: NSObject {
         self.advertisement = advertisement
         selectedModel = model
         selectedRoute = .electricUnicycle
+        liveOwner = nil
         deviceDetectionSession.reset()
         _ = deviceDetectionSession.observeAdvertisement(name: advertisement.localName.map { Data($0.utf8) })
         startCapture(reason: "pair", annotations: ["route=electric_unicycle"])
