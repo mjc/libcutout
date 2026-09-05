@@ -4251,6 +4251,68 @@ mod tests {
     }
 
     #[test]
+    fn aero_stationary_settings_session_schedules_tlt_pwt_alm_and_ang() {
+        let cases = [
+            (
+                DeviceCommand::SetAeroTiltbackSpeed(
+                    cutout_core::AeroSpeedSetting::new(53).expect("53 km/h fits"),
+                ),
+                *b"LdAp",
+                12,
+                53,
+            ),
+            (
+                DeviceCommand::SetAeroPwmPercent(
+                    cutout_core::AeroPwmPercent::new(64).expect("64 percent fits"),
+                ),
+                *b"LdAp",
+                13,
+                64,
+            ),
+            (
+                DeviceCommand::SetAeroAlarmSpeed(
+                    cutout_core::AeroSpeedSetting::new(56).expect("56 km/h fits"),
+                ),
+                *b"LkAp",
+                12,
+                56,
+            ),
+            (
+                DeviceCommand::SetAeroAngleAdjustment(
+                    cutout_core::AeroAngleAdjustment::new(-12).expect("-1.2 degrees fits"),
+                ),
+                *b"LkAp",
+                11,
+                244,
+            ),
+        ];
+
+        for (command, magic, value_index, expected_value) in cases {
+            let mut session = StationarySettingsWriteSession::<NosfetAeroModel, false>::default();
+            let mut output = Vec::new();
+            session.arm(
+                StationarySettingsPolicy {
+                    model: NosfetAeroModel::MODEL,
+                    arm_duration: Duration::from_milliseconds(100),
+                }
+                .arm(RideOperatingState::Parked, ms(10))
+                .expect("parked state arms settings writes"),
+            );
+            session.handle(SessionInput::Command(command), &mut output);
+
+            let bytes = output.iter().find_map(|item| match item {
+                SessionOutput::Transport(TransportAction::Write { bytes, .. }) => {
+                    Some(bytes.as_slice())
+                }
+                _ => None,
+            });
+            let bytes = bytes.expect("Aero setting should schedule a transport write");
+            assert_eq!(&bytes[..4], &magic);
+            assert_eq!(bytes[value_index], expected_value);
+        }
+    }
+
+    #[test]
     fn aero_stationary_settings_session_schedules_high_beam_pair() {
         let mut session = StationarySettingsWriteSession::<NosfetAeroModel, false>::default();
         let mut output = Vec::new();
