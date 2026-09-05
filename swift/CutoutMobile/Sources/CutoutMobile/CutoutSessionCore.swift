@@ -321,9 +321,11 @@ public final class CutoutSessionCore: NSObject {
     public private(set) var bmsSnapshot: BmsSnapshot?
     public private(set) var phoneLocationSnapshot = MobilePhoneLocationSnapshotDto(latestSample: nil, gpsSpeed: nil)
     public private(set) var protocolIdentityCandidate: DevicePickerDiscoveryCandidate?
-    public var electricUnicycleModel: ElectricUnicycleModel? { selectedModel }
+    public var electricUnicycleModel: ElectricUnicycleModel? {
+        onBleQueue { selectedModel }
+    }
     public var settingsCapabilities: EucSettingsCapabilities? {
-        liveOwner?.settingsCapabilities ?? selectedModel?.settingsCapabilities
+        onBleQueue { liveOwner?.settingsCapabilities ?? selectedModel?.settingsCapabilities }
     }
     public var headlightState: LightSettingState? {
         onBleQueue { liveOwner?.headlightState }

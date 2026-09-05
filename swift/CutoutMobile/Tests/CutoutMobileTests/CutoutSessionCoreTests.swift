@@ -1380,9 +1380,9 @@ func testVescRideSnapshotProjectsBatteryLevelAndUpdateTime() throws {
 
     func testElectricUnicycleSessionExposesAeroSettingStates() throws {
         let session = try ElectricUnicycleSession(model: .aero)
-        let speed = AeroSpeedSetting(kilometresPerHour: 30)!
-        let pwm = AeroPwmPercent(percent: 64)!
-        let angle = AeroAngleAdjustment(tenthsOfDegree: -36)!
+        let speed = try XCTUnwrap(AeroSpeedSetting(kilometresPerHour: 30))
+        let pwm = try XCTUnwrap(AeroPwmPercent(percent: 64))
+        let angle = try XCTUnwrap(AeroAngleAdjustment(tenthsOfDegree: -36))
 
         XCTAssertEqual(session.aeroTiltbackSpeedState.kind, .unknown)
         XCTAssertEqual(session.aeroPwmPercentState.kind, .unknown)
