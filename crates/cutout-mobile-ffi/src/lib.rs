@@ -15750,6 +15750,30 @@ mod tests {
     }
 
     #[test]
+    fn aero_settings_simulator_is_reusable_through_mobile_ffi() {
+        let simulator = AeroSettingsSimulator::new();
+        let outputs = simulator.issue(
+            MobileCommandDto::SetAeroTiltbackSpeed(MobileAeroSpeedSettingDto {
+                kilometres_per_hour: 42,
+            }),
+            RideOperatingState::Parked,
+            None,
+            ms(10),
+        );
+
+        assert!(outputs.iter().any(|output| {
+            output.kind == MobileSessionOutputKindDto::Write
+                && output.bytes.starts_with(b"LdAp")
+        }));
+        assert_eq!(
+            simulator.readback().tiltback_speed,
+            Some(MobileAeroSpeedSettingDto {
+                kilometres_per_hour: 42,
+            })
+        );
+    }
+
+    #[test]
     fn falcon_wrapper_surfaces_unsupported_command_error() {
         let session = FalconBenignControlSession::new().expect("default profile should construct");
 
