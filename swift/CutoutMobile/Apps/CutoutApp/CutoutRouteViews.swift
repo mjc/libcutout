@@ -12,7 +12,11 @@ struct AppMusicCompactPlayerModifier: ViewModifier {
             selectedProvider: model.selectedMusicProvider,
             isHidden: model.isMusicPlayerHidden,
             historyPolicy: model.musicHistoryPolicy,
-            onCommand: { _ = model.handleMusicCommand($0) },
+            onCommand: { command in
+                Task { @MainActor in
+                    _ = await model.handleMusicCommand(command)
+                }
+            },
             onDismiss: model.dismissMusicPlayer,
             onRestore: model.restoreMusicPlayer,
             onSelectProvider: model.selectMusicProvider,

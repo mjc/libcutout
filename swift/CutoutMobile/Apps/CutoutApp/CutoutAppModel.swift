@@ -240,26 +240,27 @@ final class CutoutAppModel {
     }
 
     @discardableResult
-    func handleMusicCommand(_ command: MobileMusicCommandDto) -> MusicCommandOutcome {
+    func handleMusicCommand(_ command: MobileMusicCommandDto) async -> MusicCommandOutcome {
         guard let nowPlaying = musicNowPlaying else { return .unavailable }
         guard nowPlaying.supports(command) else { return .refused }
-        return dispatchMusicCommand(command, for: nowPlaying)
+        return await dispatchMusicCommand(command, for: nowPlaying)
     }
 
     private func dispatchMusicCommand(
         _ command: MobileMusicCommandDto,
         for nowPlaying: MusicNowPlaying
-    ) -> MusicCommandOutcome {
+    ) async -> MusicCommandOutcome {
 #if canImport(MediaPlayer) && os(iOS)
-        let didDispatch: Bool
+        let outcome: MusicCommandOutcome
         if nowPlaying.provider == .spotify {
-            didDispatch = spotifyMusicProvider.perform(command)
+            outcome = await spotifyMusicProvider.perform(command)
         } else {
-            didDispatch = appleMusicProvider.perform(command)
+            outcome = await appleMusicProvider.perform(command)
         }
-        guard didDispatch else { return .unavailable }
-        refreshMusicSnapshot()
-        return .accepted
+        if outcome == .accepted {
+            refreshMusicSnapshot()
+        }
+        return outcome
 #else
         return .unavailable
 #endif

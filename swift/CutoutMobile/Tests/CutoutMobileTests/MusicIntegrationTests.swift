@@ -205,6 +205,15 @@ final class MusicIntegrationTests: XCTestCase {
         XCTAssertNil(snapshot.item)
     }
 
+    func testMusicCommandOutcomeIncludesProviderFailure() {
+        XCTAssertEqual(MusicCommandOutcome.failed, .failed)
+    }
+
+    func testSpotifyAdapterReportsUnsupportedTransportAsUnavailable() async {
+        let outcome = await SpotifyProviderAdapter().perform(.play)
+        XCTAssertEqual(outcome, .unavailable)
+    }
+
     func testSpotifyAdapterUsesTheProviderDeepLinkForOpenProvider() {
         XCTAssertEqual(SpotifyProviderAdapter.providerURL.absoluteString, "spotify://")
     }

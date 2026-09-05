@@ -584,11 +584,12 @@ final class CutoutAppModelTests: XCTestCase {
     }
 
     @MainActor
-    func testMusicCommandOutcomeDistinguishesUnavailableAndRefused() {
+    func testMusicCommandOutcomeDistinguishesUnavailableAndRefused() async {
         let driver = SessionDriverSpy(rows: [])
         let model = CutoutAppModel(core: driver)
 
-        XCTAssertEqual(model.handleMusicCommand(.play), .unavailable)
+        let unavailable = await model.handleMusicCommand(.play)
+        XCTAssertEqual(unavailable, .unavailable)
 
         let snapshot = MobileMusicSnapshotDto(
             provider: .appleMusic,
@@ -611,7 +612,8 @@ final class CutoutAppModelTests: XCTestCase {
             wallClockAtMs: 20,
             clockUncertaintyMs: 1
         ))
-        XCTAssertEqual(model.handleMusicCommand(.play), .refused)
+        let refused = await model.handleMusicCommand(.play)
+        XCTAssertEqual(refused, .refused)
     }
 
     @MainActor

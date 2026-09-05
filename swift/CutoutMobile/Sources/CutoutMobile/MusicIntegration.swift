@@ -30,6 +30,8 @@ public enum MusicCommandOutcome: Equatable, Sendable {
     case accepted
     /// The current provider capabilities refused the command.
     case refused
+    /// The provider was available but rejected the transport operation.
+    case failed
     /// No usable provider adapter or current player is available.
     case unavailable
 }
@@ -841,17 +843,25 @@ public final class AppleMusicProviderAdapter {
     }
 
     @MainActor
-    public func perform(_ command: MobileMusicCommandDto) -> Bool {
+    public func perform(_ command: MobileMusicCommandDto) async -> MusicCommandOutcome {
         switch command {
         case .previous:
 #if canImport(MusicKit) && os(iOS)
-            Task { try? await systemPlayer.skipToPreviousEntry() }
+            do {
+                try await systemPlayer.skipToPreviousEntry()
+            } catch {
+                return .failed
+            }
 #else
             player.skipToPreviousItem()
 #endif
         case .play:
 #if canImport(MusicKit) && os(iOS)
-            Task { try? await systemPlayer.play() }
+            do {
+                try await systemPlayer.play()
+            } catch {
+                return .failed
+            }
 #else
             player.play()
 #endif
@@ -863,16 +873,23 @@ public final class AppleMusicProviderAdapter {
 #endif
         case .next:
 #if canImport(MusicKit) && os(iOS)
-            Task { try? await systemPlayer.skipToNextEntry() }
+            do {
+                try await systemPlayer.skipToNextEntry()
+            } catch {
+                return .failed
+            }
 #else
             player.skipToNextItem()
 #endif
         case .openProvider:
 #if canImport(UIKit) && os(iOS)
+            guard UIApplication.shared.canOpenURL(Self.providerURL) else { return .unavailable }
             UIApplication.shared.open(Self.providerURL)
+#else
+            return .unavailable
 #endif
         }
-        return true
+        return .accepted
     }
 
     public func snapshot(observedAtMs: UInt64) -> MobileMusicSnapshotDto {
@@ -949,13 +966,14 @@ public struct SpotifyProviderAdapter: Sendable {
     /// Playback control and metadata remain unavailable until App Remote is
     /// integrated and proven on a physical device.
     @MainActor
-    public func perform(_ command: MobileMusicCommandDto) -> Bool {
-        guard case .openProvider = command else { return false }
+    public func perform(_ command: MobileMusicCommandDto) async -> MusicCommandOutcome {
+        guard case .openProvider = command else { return .unavailable }
 #if canImport(UIKit) && os(iOS)
+        guard UIApplication.shared.canOpenURL(Self.providerURL) else { return .unavailable }
         UIApplication.shared.open(Self.providerURL)
-        return true
+        return .accepted
 #else
-        return false
+        return .unavailable
 #endif
     }
 
