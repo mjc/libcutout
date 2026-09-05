@@ -1551,6 +1551,7 @@ fn encode_hex(bytes: &[u8]) -> String {
 async fn connect(args: TargetedScanArgs, mode: SessionMode) -> Result<()> {
     let seconds = args.seconds();
     let requested_profile = args.profile();
+    require_explicit_live_profile(requested_profile)?;
     let commands = read_probe_commands(args.probes());
     let diagnostics_jsonl = args.diagnostics_jsonl();
     let read_only_jsonl = args.read_only_jsonl();
@@ -1656,6 +1657,7 @@ fn capture_output(
 async fn capture_reconnecting(args: CaptureArgs, output: CaptureOutput) -> Result<()> {
     let seconds = args.target.seconds();
     let requested_profile = args.target.profile();
+    require_explicit_live_profile(requested_profile)?;
     let target = args.target.clone().into_target();
     let commands = read_probe_commands(args.target.probes());
     let diagnostics_jsonl = args.target.diagnostics_jsonl();
@@ -2099,6 +2101,15 @@ fn auto_session_resolution() -> Result<SessionResolution> {
     bail!(
         "auto session resolution requires protocol identity evidence; advertised BLE names are display-only"
     )
+}
+
+fn require_explicit_live_profile(profile: SessionProfile) -> Result<()> {
+    if matches!(profile, SessionProfile::Auto) {
+        bail!(
+            "live EUC sessions require protocol identity evidence; pass --profile aero or --profile falcon"
+        );
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -5829,6 +5840,19 @@ mod tests {
                 .expect_err("auto resolution must not guess without protocol evidence");
             assert!(error.to_string().contains("protocol identity"));
         }
+    }
+
+    #[test]
+    fn live_sessions_reject_auto_before_connecting() {
+        let error = require_explicit_live_profile(SessionProfile::Auto)
+            .expect_err("live sessions must not guess a protocol");
+        assert!(
+            error
+                .to_string()
+                .contains("--profile aero or --profile falcon")
+        );
+        require_explicit_live_profile(SessionProfile::Aero)
+            .expect("explicit protocol profile is accepted");
     }
 
     #[test]
