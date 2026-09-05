@@ -257,7 +257,7 @@ final class CutoutAppModel {
         } else {
             outcome = await appleMusicProvider.perform(command)
         }
-        if outcome == .accepted {
+        if case .accepted = outcome {
             refreshMusicSnapshot()
         }
         return outcome
