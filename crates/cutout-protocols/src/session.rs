@@ -1596,6 +1596,31 @@ pub struct BenignControlSession<
     read_only: ReadOnlySession<M, ACCEPT_ANY_NOTIFICATION>,
 }
 
+fn handle_benign_control<M: ReadOnlyModelSpec + SupportsBenignControls>(
+    command: DeviceCommand,
+    output: &mut Vec<SessionOutput>,
+) {
+    let kind = command.kind();
+    if M::CONTROL_CAPABILITIES.supports_command_kind(kind) {
+        if let Some(encoded) = M::encode_benign_control(command) {
+            output.push(SessionOutput::Transport(TransportAction::Write {
+                channel: M::WRITE_CHANNEL,
+                bytes: encoded.payload,
+                mode: encoded.mode,
+            }));
+            return;
+        }
+    }
+
+    output.push(SessionOutput::Event(DeviceEvent::ControlRefusal(
+        ControlRefusal {
+            command: kind,
+            safety_class: command.safety_class(),
+            reason: ControlRefusalReason::UnsupportedCommand,
+        },
+    )));
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct PendingSettingsSequence {
     remaining: ArrayVec<EncodedControlStep, 4>,
@@ -1665,27 +1690,7 @@ impl<M: ReadOnlyModelSpec + SupportsBenignControls, const ACCEPT_ANY_NOTIFICATIO
             return;
         }
 
-        let kind = command.kind();
-        if command.safety_class() == SafetyClass::BenignControl
-            && M::CONTROL_CAPABILITIES.supports_command_kind(kind)
-        {
-            if let Some(encoded) = M::encode_benign_control(command) {
-                output.push(SessionOutput::Transport(TransportAction::Write {
-                    channel: M::WRITE_CHANNEL,
-                    bytes: encoded.payload,
-                    mode: encoded.mode,
-                }));
-                return;
-            }
-        }
-
-        output.push(SessionOutput::Event(DeviceEvent::ControlRefusal(
-            ControlRefusal {
-                command: kind,
-                safety_class: command.safety_class(),
-                reason: ControlRefusalReason::UnsupportedCommand,
-            },
-        )));
+        handle_benign_control::<M>(command, output);
     }
 }
 
@@ -1920,24 +1925,7 @@ impl<
             SessionInput::Command(command)
                 if command.safety_class() == SafetyClass::BenignControl =>
             {
-                let kind = command.kind();
-                if M::CONTROL_CAPABILITIES.supports_command_kind(kind) {
-                    if let Some(encoded) = M::encode_benign_control(command) {
-                        output.push(SessionOutput::Transport(TransportAction::Write {
-                            channel: M::WRITE_CHANNEL,
-                            bytes: encoded.payload,
-                            mode: encoded.mode,
-                        }));
-                        return;
-                    }
-                }
-                output.push(SessionOutput::Event(DeviceEvent::ControlRefusal(
-                    ControlRefusal {
-                        command: kind,
-                        safety_class: SafetyClass::BenignControl,
-                        reason: ControlRefusalReason::UnsupportedCommand,
-                    },
-                )));
+                handle_benign_control::<M>(command, output);
             }
             input => self.read_only.handle(input, output),
         }
