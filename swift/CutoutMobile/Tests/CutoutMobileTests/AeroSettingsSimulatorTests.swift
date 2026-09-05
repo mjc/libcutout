@@ -64,4 +64,19 @@ final class AeroSettingsSimulatorTests: XCTestCase {
         XCTAssertFalse(outputs.contains { $0.kind == .write })
         XCTAssertEqual(simulator.readback().pwmPercent?.percent, 60)
     }
+
+    func testMotionGatePreservesTypedRefusalReason() {
+        let simulator = AeroSettingsSimulator()
+
+        let result = simulator.issueChecked(
+            command: .setAeroPwmPercent(MobileAeroPwmPercentDto(percent: 71)),
+            operatingState: .riding,
+            speed: Speed(value: 501),
+            monotonicMs: MobileMonotonicMillisDto(milliseconds: 10)
+        )
+
+        XCTAssertEqual(result.error?.kind, .commandRefused)
+        XCTAssertEqual(result.error?.reason, .missingArm)
+        XCTAssertFalse(result.outputs.contains { $0.kind == .write })
+    }
 }
