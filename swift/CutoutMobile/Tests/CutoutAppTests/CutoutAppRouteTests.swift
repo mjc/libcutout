@@ -177,6 +177,34 @@ final class CutoutAppRouteTests: XCTestCase {
             "Hard"
         )
         XCTAssertEqual(
+            EucSettingReadbackPresentation.rollAngle(
+                RollAngleSettingState(kind: .pending, requested: .high),
+                fallback: .available(.documented(.low))
+            ),
+            "Low"
+        )
+        XCTAssertEqual(
+            EucSettingReadbackPresentation.rollAngle(
+                RollAngleSettingState(kind: .refused, requested: .high),
+                fallback: .available(.documented(.low))
+            ),
+            "Low"
+        )
+        XCTAssertEqual(
+            EucSettingReadbackPresentation.rollAngle(
+                RollAngleSettingState(kind: .timedOut, requested: .high),
+                fallback: .available(.documented(.low))
+            ),
+            "Low"
+        )
+        XCTAssertEqual(
+            EucSettingReadbackPresentation.rollAngle(
+                RollAngleSettingState(kind: .failed, requested: .high),
+                fallback: .available(.documented(.low))
+            ),
+            "Low"
+        )
+        XCTAssertEqual(
             EucSettingReadbackPresentation.speed(.unavailable),
             "Unavailable"
         )

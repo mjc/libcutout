@@ -3695,14 +3695,14 @@ private enum ConnectedDeviceFamily: Equatable {
 
     var tabNames: [String] {
         switch self {
-        case .euc: ["ride", "pack"]
+        case .euc: ["ride", "pack", "tune"]
         case .vesc: ["ride", "debug", "map"]
         }
     }
 
     var unavailableTabNames: [String] {
         switch self {
-        case .euc: ["map", "tune"]
+        case .euc: ["map"]
         case .vesc: ["logs"]
         }
     }
