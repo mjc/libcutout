@@ -176,7 +176,8 @@ fn regenerate_swift_ffi(root: &Path, package: &Path) -> Result<()> {
                 package.display()
             )
         })
-    });
+    })
+    .and_then(|()| verify_swift_ffi(package));
 
     match result {
         Ok(()) => {
