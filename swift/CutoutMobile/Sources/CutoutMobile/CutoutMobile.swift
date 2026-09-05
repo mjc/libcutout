@@ -1652,7 +1652,7 @@ public struct AeroSpeedSetting: Equatable, Hashable, Sendable {
     }
 }
 
-/// NOSFET/Veteran PWM warning percentage.
+/// NOSFET/Veteran PWT (PWM tilt-back alarm) percentage.
 public struct AeroPwmPercent: Equatable, Hashable, Sendable {
     public let percent: UInt8
 
@@ -1670,7 +1670,7 @@ public struct AeroPwmPercent: Equatable, Hashable, Sendable {
     }
 }
 
-/// NOSFET/Veteran pedal-zero angle adjustment in tenths of a degree.
+/// NOSFET/Veteran ANG (vertical angle) adjustment in tenths of a degree.
 public struct AeroAngleAdjustment: Equatable, Hashable, Sendable {
     public let tenthsOfDegree: Int8
 

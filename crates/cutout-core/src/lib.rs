@@ -287,13 +287,13 @@ pub enum DeviceCommand {
     /// Set the NOSFET/Veteran tilt-back speed in whole km/h.
     SetAeroTiltbackSpeed(AeroSpeedSetting),
 
-    /// Set the NOSFET/Veteran PWM warning percentage.
+    /// Set the NOSFET/Veteran PWT (PWM tilt-back alarm) percentage.
     SetAeroPwmPercent(AeroPwmPercent),
 
     /// Set the NOSFET/Veteran speed alarm in whole km/h.
     SetAeroAlarmSpeed(AeroSpeedSetting),
 
-    /// Set the NOSFET/Veteran pedal-zero angle adjustment in tenths of a degree.
+    /// Set the NOSFET/Veteran ANG (vertical angle) adjustment in tenths of a degree.
     SetAeroAngleAdjustment(AeroAngleAdjustment),
 
     /// Set the NOSFET/Veteran high beam through its paired binary frames.
@@ -418,7 +418,7 @@ impl AeroSpeedSetting {
     }
 }
 
-/// NOSFET/Veteran PWM warning percentage.
+/// NOSFET/Veteran PWT (PWM tilt-back alarm) percentage.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct AeroPwmPercent(u8);
 
@@ -440,7 +440,7 @@ impl AeroPwmPercent {
     }
 }
 
-/// NOSFET/Veteran pedal-zero angle adjustment in tenths of a degree.
+/// NOSFET/Veteran ANG (vertical angle) adjustment in tenths of a degree.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct AeroAngleAdjustment(i8);
 
@@ -564,13 +564,13 @@ pub enum CommandKind {
     /// Set the NOSFET/Veteran tilt-back speed.
     SetAeroTiltbackSpeed,
 
-    /// Set the NOSFET/Veteran PWM warning percentage.
+    /// Set the NOSFET/Veteran PWT (PWM tilt-back alarm) percentage.
     SetAeroPwmPercent,
 
     /// Set the NOSFET/Veteran speed alarm.
     SetAeroAlarmSpeed,
 
-    /// Set the NOSFET/Veteran pedal-zero angle adjustment.
+    /// Set the NOSFET/Veteran ANG (vertical angle) adjustment.
     SetAeroAngleAdjustment,
 
     /// Set the NOSFET/Veteran high beam.

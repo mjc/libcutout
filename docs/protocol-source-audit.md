@@ -104,6 +104,29 @@ device is considered fully specced.
   for temperature conversion. `CF` and `BF` firmware imply the frame `0x00`
   hardware-PWM field is authoritative; stock `GW` and `JN` do not.
 
+## Aero settings terminology
+
+The [NOSFET support page](https://www.nosfet.com/support) links the AERO
+manual, whose setting names are the protocol-facing labels used here:
+
+- `TLT`: tilt-back speed.
+- `PWT`: PWM tilt-back alarm percentage.
+- `ALM`: alarm speed.
+- `ANG`: vertical angle adjustment.
+
+The manual also lists `ANG %` (acceleration assist) and `ANG TLT` (gyro
+re-centering duration). Those are separate settings and must not be inferred
+from the `ANG` write. The Rust `AeroAngleAdjustment` type therefore describes
+`ANG` as a vertical-angle value; it does not claim to decode pedal mode.
+
+On the live NF2557/Aero capture (firmware 43.2.54), the repeated settings
+readback currently proves raw fields `0x0018=550`, `0x001a=540`, and
+`0x001e=1920`. The first two are the observed alarm and tilt-back values;
+`0x001e` remains raw until a controlled capture proves its meaning. A
+reversible `TLT` write has completed a 54 -> 53 -> 54 readback round trip;
+an `ALM` write that did not produce a matching readback is reported as failed
+closed.
+
 ## Backlog Implications
 
 - The next Aero implementation slice should parse captured notifications before
@@ -113,7 +136,8 @@ device is considered fully specced.
 - Add an Aero telemetry fixture from the existing live capture and prove the
   parser decodes at least family, frame length, model id, voltage, firmware
   version, and basic telemetry fields.
-- Keep control commands out of scope until the read-only parser and hardware
-  verification loop are stable.
+- Keep any setting without a typed readback and controlled device evidence
+  explicitly provisional; do not report a write as successful merely because
+  the BLE transport accepted the frame.
 - GPL repositories can be used as evidence and for behavioral cross-checks, but
   Rust code should be written from MIT docs, live captures, and our own tests.

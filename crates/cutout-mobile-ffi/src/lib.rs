@@ -1984,13 +1984,13 @@ pub enum MobileCommandDto {
     /// Set NOSFET/Veteran tilt-back speed in whole km/h.
     SetAeroTiltbackSpeed(MobileAeroSpeedSettingDto),
 
-    /// Set NOSFET/Veteran PWM warning percentage.
+    /// Set NOSFET/Veteran PWT (PWM tilt-back alarm) percentage.
     SetAeroPwmPercent(MobileAeroPwmPercentDto),
 
     /// Set NOSFET/Veteran speed alarm in whole km/h.
     SetAeroAlarmSpeed(MobileAeroSpeedSettingDto),
 
-    /// Set NOSFET/Veteran pedal-zero angle adjustment in tenths of a degree.
+    /// Set NOSFET/Veteran ANG (vertical angle) adjustment in tenths of a degree.
     SetAeroAngleAdjustment(MobileAeroAngleAdjustmentDto),
 
     /// Set the documented NOSFET/Veteran high beam; stationary-only.
@@ -2042,14 +2042,14 @@ impl From<CoreAeroSpeedSetting> for MobileAeroSpeedSettingDto {
     }
 }
 
-/// NOSFET/Veteran PWM warning percentage.
+/// NOSFET/Veteran PWT (PWM tilt-back alarm) percentage.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Record)]
 pub struct MobileAeroPwmPercentDto {
     /// PWM percentage, from 0 through 100.
     pub percent: u8,
 }
 
-/// NOSFET/Veteran pedal-zero angle adjustment.
+/// NOSFET/Veteran ANG (vertical angle) adjustment.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Record)]
 pub struct MobileAeroAngleAdjustmentDto {
     /// Signed tenths of a degree, from -100 through 100.
@@ -2299,13 +2299,13 @@ pub struct MobileEucSettingsCapabilitiesDto {
     /// NOSFET/Veteran tilt-back speed write support.
     pub aero_tiltback_speed: MobileSettingWriteSupportDto,
 
-    /// NOSFET/Veteran PWM warning write support.
+    /// NOSFET/Veteran PWT write support.
     pub aero_pwm_percent: MobileSettingWriteSupportDto,
 
     /// NOSFET/Veteran speed-alarm write support.
     pub aero_alarm_speed: MobileSettingWriteSupportDto,
 
-    /// NOSFET/Veteran pedal-zero angle write support.
+    /// NOSFET/Veteran ANG write support.
     pub aero_angle_adjustment: MobileSettingWriteSupportDto,
 }
 
@@ -2474,10 +2474,10 @@ pub struct MobileAeroPwmSettingStateDto {
     /// Current lifecycle phase.
     pub kind: MobileSettingStateKindDto,
 
-    /// Most recent current PWM warning percentage, when known.
+    /// Most recent current PWT percentage, when known.
     pub current: Option<MobileAeroPwmPercentDto>,
 
-    /// Requested PWM warning percentage, when a write is pending or terminal.
+    /// Requested PWT percentage, when a write is pending or terminal.
     pub requested: Option<MobileAeroPwmPercentDto>,
 
     /// Provenance for the current value.

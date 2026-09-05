@@ -271,9 +271,13 @@ pub(crate) enum AeroSetting {
     Headlight,
     HighBeam,
     Pedal,
+    #[value(alias = "tlt")]
     TiltbackSpeed,
+    #[value(alias = "pwt")]
     Pwm,
+    #[value(alias = "alm")]
     AlarmSpeed,
+    #[value(alias = "ang")]
     Angle,
     TripReset,
 }
@@ -656,7 +660,7 @@ impl From<TargetArgs> for ConnectionTarget {
 mod tests {
     use std::path::PathBuf;
 
-    use clap::{CommandFactory, Parser, error::ErrorKind};
+    use clap::{CommandFactory, Parser, ValueEnum, error::ErrorKind};
     use cutout_btle::MaxReconnectLinks;
     use uuid::Uuid;
 
@@ -1968,6 +1972,20 @@ mod tests {
                 confirm_stationary: true,
             })
         );
+    }
+
+    #[test]
+    fn parses_protocol_native_aero_setting_aliases() {
+        assert_eq!(
+            AeroSetting::from_str("tlt", true),
+            Ok(AeroSetting::TiltbackSpeed)
+        );
+        assert_eq!(AeroSetting::from_str("pwt", true), Ok(AeroSetting::Pwm));
+        assert_eq!(
+            AeroSetting::from_str("alm", true),
+            Ok(AeroSetting::AlarmSpeed)
+        );
+        assert_eq!(AeroSetting::from_str("ang", true), Ok(AeroSetting::Angle));
     }
 
     #[test]

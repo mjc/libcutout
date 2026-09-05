@@ -110,16 +110,16 @@
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Tilt-back" } } }
     },
     "settings.aero.pwm.title" : {
-      "comment" : "NOSFET Aero PWM warning setting.",
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "PWM warning" } } }
+      "comment" : "NOSFET Aero PWT (PWM tilt-back alarm) setting.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "PWT (PWM tilt-back)" } } }
     },
     "settings.aero.alarm.title" : {
       "comment" : "NOSFET Aero alarm speed setting.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Alarm speed" } } }
     },
     "settings.aero.angle.title" : {
-      "comment" : "NOSFET Aero pedal-zero angle adjustment setting.",
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Angle adjustment" } } }
+      "comment" : "NOSFET Aero ANG (vertical angle) adjustment setting.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "ANG (vertical angle)" } } }
     },
     "settings.capabilities.title" : {
       "comment" : "Section title for settings that are not currently editable.",
