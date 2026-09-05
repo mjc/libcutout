@@ -16,10 +16,10 @@ path and requires a stationary safety confirmation.";
 const CLI_AFTER_LONG_HELP: &str = "\
 Examples:
   cutout scan --seconds 10
-  cutout connect --name-contains Aero
-  cutout connect --address AA:BB:CC:DD:EE:FF --seconds 8
+  cutout connect --name-contains Aero --profile aero
+  cutout connect --address AA:BB:CC:DD:EE:FF --seconds 8 --profile aero
   cutout subscribe-raw --name-contains NF2557 --characteristic 0000ffe1-0000-1000-8000-00805f9b34fb
-  cutout capture --name-contains NF2557 --seconds 20
+  cutout capture --name-contains NF2557 --seconds 20 --profile aero
   cutout pevcap convert --input session.pevcap.jsonl --input-format jsonl --output session.pevcap --output-format binary
   cutout validation
   cutout vesc-probe --name-contains \"VESC BLE UART\"
@@ -43,9 +43,9 @@ summary of the discovered service/characteristic tree.
 
 If writable and notification-capable endpoints are discovered, Cutout also
 runs a read-only probe session against the selected endpoints and prints bridge
-counters. Profile auto currently keeps the existing Aero/Veteran path; use
---profile falcon with --probe identity --probe firmware for explicit Falcon
-verification. Add --probe settings to request the protocol settings readback.";
+counters. Live connect requires an explicit protocol profile (`--profile aero`
+or `--profile falcon`); advertised names never select a protocol. Add --probe
+settings to request the protocol settings readback.";
 const SUBSCRIBE_RAW_LONG_ABOUT: &str = "\
 Scan for a peripheral, connect, discover GATT, subscribe to a notify/indicate
 characteristic, and print raw notification chunks with timestamps.
@@ -56,10 +56,9 @@ characteristic in the discovered GATT tree is used.";
 const CAPTURE_LONG_ABOUT: &str = "\
 Connect to a selected read-only protocol profile and print capture records
 suitable for fixture work. Records include link metadata, subscribe/write
-actions, inbound notifications, provisional write bytes, and bridge counters. For explicit
-Falcon verification, use --profile falcon with --probe identity --probe
-firmware. Add --probe settings to request the protocol settings readback.
-Profile auto currently keeps the existing Aero/Veteran path.
+actions, inbound notifications, provisional write bytes, and bridge counters.
+Live capture requires an explicit protocol profile (`--profile aero` or
+`--profile falcon`); advertised names never select a protocol.
 
 Capture output may include device identifiers and raw notification payloads.
 Review it before sharing logs publicly.";
@@ -92,8 +91,9 @@ Open a read-only Ratatui dashboard backed by the Termina terminal backend.
 The dashboard is intended as a live inspection surface for discovery, device
 selection, telemetry samples, and recent events while the profile model grows.
 Use --demo for fixture-backed data. Without --demo, --device selects a live
-Bluetooth device by advertised name substring and the dashboard opens only
-after the device connects.
+Bluetooth target by advertised name substring and `--profile aero` or
+`--profile falcon` selects the protocol session after connection. The name is
+never used as protocol identity.
 
 This command does not modify the device. It is a visualization and monitoring
 surface for the data Cutout already knows how to collect.";
@@ -197,7 +197,9 @@ pub(crate) struct TargetedScanArgs {
     #[command(flatten)]
     pub(crate) scan: ScanArgs,
 
-    /// Read-only protocol profile to run after connecting.
+    /// Protocol profile to run after connecting. Live connect and capture
+    /// require an explicit `aero` or `falcon` value; `auto` is retained for
+    /// commands that can resolve identity from protocol evidence.
     #[arg(long, value_enum, default_value_t = SessionProfile::Auto)]
     pub(crate) profile: SessionProfile,
 
@@ -610,6 +612,10 @@ pub(crate) struct DashboardArgs {
     /// Live device name substring, or demo device name when used with --demo.
     #[arg(long = "device", value_name = "NAME")]
     pub(crate) device: Option<String>,
+
+    /// Explicit protocol profile required for a live dashboard session.
+    #[arg(long, value_enum, default_value_t = SessionProfile::Auto)]
+    pub(crate) profile: SessionProfile,
 
     #[command(flatten)]
     pub(crate) scan: ScanArgs,
@@ -1412,6 +1418,7 @@ mod tests {
                 pevcap: None,
                 pevcap_format: PevcapFormat::Jsonl,
                 device: None,
+                profile: SessionProfile::Auto,
                 scan: ScanArgs {
                     seconds: DEFAULT_SCAN_SECONDS,
                 },
@@ -1431,6 +1438,7 @@ mod tests {
                 pevcap: None,
                 pevcap_format: PevcapFormat::Jsonl,
                 device: Some("Aero NF2557".to_owned()),
+                profile: SessionProfile::Auto,
                 scan: ScanArgs {
                     seconds: DEFAULT_SCAN_SECONDS,
                 },
@@ -1457,6 +1465,7 @@ mod tests {
                 pevcap: None,
                 pevcap_format: PevcapFormat::Jsonl,
                 device: Some("NF2557".to_owned()),
+                profile: SessionProfile::Auto,
                 scan: ScanArgs { seconds: 12 },
             })
         );
@@ -1481,6 +1490,7 @@ mod tests {
                 pevcap: Some(PathBuf::from("aero.pevcap")),
                 pevcap_format: PevcapFormat::Binary,
                 device: None,
+                profile: SessionProfile::Auto,
                 scan: ScanArgs {
                     seconds: DEFAULT_SCAN_SECONDS,
                 },
@@ -2028,10 +2038,9 @@ mod tests {
             &[
                 "discover its GATT services",
                 "service/characteristic tree",
-                "--profile falcon",
-                "--probe identity",
-                "--probe firmware",
-                "auto currently keeps the existing Aero/Veteran path",
+                "Live connect requires an explicit protocol profile",
+                "advertised names never select a protocol",
+                "settings to request the protocol settings readback",
                 "prints bridge",
                 "counters",
                 "--address <ADDR>",
@@ -2078,12 +2087,9 @@ mod tests {
             &help,
             &[
                 "explicit",
-                "Falcon verification",
+                "Live capture requires an explicit protocol profile",
                 "--profile falcon",
-                "--probe identity",
-                "--probe",
-                "firmware",
-                "auto currently keeps the existing Aero/Veteran path",
+                "advertised names never select a protocol",
             ],
         );
     }
@@ -2168,7 +2174,8 @@ mod tests {
             &[
                 "Ratatui dashboard",
                 "Termina terminal backend",
-                "dashboard opens only",
+                "selects the protocol session after connection",
+                "never used as protocol identity",
                 "visualization and monitoring",
                 "does not modify the device",
             ],

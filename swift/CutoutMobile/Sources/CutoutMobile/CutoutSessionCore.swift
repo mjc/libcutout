@@ -426,7 +426,7 @@ public final class CutoutSessionCore: NSObject {
         manager.delegate = self
         manager.desiredAccuracy = kCLLocationAccuracyBestForNavigation
         manager.activityType = .fitness
-#if os(iOS)
+#if os(iOS) || os(macOS)
         manager.allowsBackgroundLocationUpdates = true
 #endif
         return manager

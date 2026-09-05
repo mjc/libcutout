@@ -1108,6 +1108,7 @@ async fn dashboard(args: DashboardArgs) -> Result<()> {
         seconds = args.seconds(),
         "scanning for dashboard device"
     );
+    require_explicit_live_profile(args.profile)?;
     let connection = connect_and_discover(&target, ScanWindow::from_secs(args.seconds())).await?;
     info!(
         observation = %connection.summary.observation,
@@ -1126,7 +1127,7 @@ async fn dashboard(args: DashboardArgs) -> Result<()> {
             info!("dashboard battery level unavailable from standard BLE characteristic");
         }
     }
-    run_live_dashboard(state, connection, tx, rx)
+    run_live_dashboard(state, connection, args.profile, tx, rx)
 }
 
 fn dashboard_live_target(args: &DashboardArgs) -> Result<ConnectionTarget> {
@@ -1144,6 +1145,7 @@ fn dashboard_live_target(args: &DashboardArgs) -> Result<ConnectionTarget> {
 fn run_live_dashboard(
     state: DashboardState,
     connection: ConnectedPeripheral,
+    profile: SessionProfile,
     tx: mpsc::Sender<DashboardUpdate>,
     rx: mpsc::Receiver<DashboardUpdate>,
 ) -> Result<()> {
@@ -1155,7 +1157,7 @@ fn run_live_dashboard(
         state,
         tx,
         rx,
-        move |tx| run_dashboard_live_updates(connection, tx),
+        move |tx| run_dashboard_live_updates(connection, profile, tx),
         |state, rx| run_dashboard_with_updates(state, &rx),
     )
 }
@@ -1253,6 +1255,7 @@ where
 
 async fn run_dashboard_live_updates(
     connection: ConnectedPeripheral,
+    profile: SessionProfile,
     tx: mpsc::Sender<DashboardUpdate>,
 ) {
     info!("dashboard live update task entered");
@@ -1267,7 +1270,7 @@ async fn run_dashboard_live_updates(
     }
     info!("dashboard live update selected session endpoints");
 
-    let selected_session = match dashboard_session_profile_from_summary(&connection.summary) {
+    let selected_session = match dashboard_session_profile(profile) {
         Ok(selected_session) => selected_session,
         Err(error) => {
             let _ = tx.send(DashboardUpdate::Log {
@@ -1560,8 +1563,7 @@ async fn connect(args: TargetedScanArgs, mode: SessionMode) -> Result<()> {
     let read_only_jsonl = args.read_only_jsonl();
     let connection =
         connect_and_discover(&args.into_target(), ScanWindow::from_secs(seconds)).await?;
-    let resolution =
-        selected_session_resolution_for_summary(requested_profile, &connection.summary)?;
+    let resolution = selected_session_resolution(requested_profile)?;
 
     info!("{}", connection.summary);
     if let Some(endpoints) = connection.summary.select_session_endpoints() {
@@ -1860,7 +1862,7 @@ async fn capture_reconnecting(args: CaptureArgs, output: CaptureOutput) -> Resul
     let diagnostics_jsonl = args.target.diagnostics_jsonl();
     let read_only_jsonl = args.target.read_only_jsonl();
     let mut host = BtleplugReconnectHost::new(target, ScanWindow::from_secs(seconds));
-    let resolution = selected_session_resolution_for_target(requested_profile, host.target())?;
+    let resolution = selected_session_resolution(requested_profile)?;
     let registration = resolution.selected_session.session_registration()?;
     let mut session = registration.construct();
     let reconnecting_capture = capture_reconnecting_session_with_commands(
@@ -1880,7 +1882,7 @@ async fn capture_reconnecting(args: CaptureArgs, output: CaptureOutput) -> Resul
             .map(|attempt| &attempt.summary),
     )
     .ok_or(BtleError::NoPeripheralMatched)?;
-    let summary_resolution = selected_session_resolution_for_summary(requested_profile, &summary)?;
+    let summary_resolution = selected_session_resolution(requested_profile)?;
     let resolved_identity = resolution
         .resolved_identity
         .or(summary_resolution.resolved_identity);
@@ -2266,24 +2268,7 @@ enum SessionResolutionSource {
     Explicit(SessionProfile),
 }
 
-fn selected_session_resolution_for_summary(
-    profile: SessionProfile,
-    _summary: &cutout_btle::ConnectionSummary,
-) -> Result<SessionResolution> {
-    match profile {
-        SessionProfile::Aero | SessionProfile::Falcon => Ok(SessionResolution {
-            selected_session: selected_session_profile(profile),
-            resolved_identity: pevcap_identity_for_profile(profile),
-            source: SessionResolutionSource::Explicit(profile),
-        }),
-        SessionProfile::Auto => auto_session_resolution(),
-    }
-}
-
-fn selected_session_resolution_for_target(
-    profile: SessionProfile,
-    _target: &ConnectionTarget,
-) -> Result<SessionResolution> {
+fn selected_session_resolution(profile: SessionProfile) -> Result<SessionResolution> {
     match profile {
         SessionProfile::Aero | SessionProfile::Falcon => Ok(SessionResolution {
             selected_session: selected_session_profile(profile),
@@ -2383,10 +2368,9 @@ fn selected_session_profile_for_catalog_entry(
     })
 }
 
-fn dashboard_session_profile_from_summary(
-    _summary: &cutout_btle::ConnectionSummary,
-) -> Result<SelectedSessionProfile> {
-    bail!("dashboard requires protocol identity evidence before selecting a session profile")
+fn dashboard_session_profile(profile: SessionProfile) -> Result<SelectedSessionProfile> {
+    require_explicit_live_profile(profile)?;
+    Ok(selected_session_profile(profile))
 }
 
 fn pevcap_identity_for_profile(profile: SessionProfile) -> Option<PevcapResolvedIdentity> {
@@ -3873,6 +3857,7 @@ mod tests {
             pevcap: None,
             pevcap_format: PevcapFormat::Jsonl,
             device: device.map(ToOwned::to_owned),
+            profile: SessionProfile::Auto,
             scan: ScanArgs { seconds: 5 },
         }
     }
@@ -6094,35 +6079,10 @@ mod tests {
     }
 
     #[test]
-    fn auto_session_resolution_ignores_advertised_name_hints() {
-        let falcon_summary = ConnectionSummary {
-            observation: PeripheralObservation {
-                identifier: "GotWay_002441".to_owned(),
-                address: None,
-                name: Some("GotWay_002441".to_owned()),
-                rssi: None,
-                advertised_services: Vec::new().into(),
-                manufacturer_data: Vec::new().into(),
-            },
-            services: Vec::new().into(),
-        };
-        let aero_summary = ConnectionSummary {
-            observation: PeripheralObservation {
-                identifier: "NF2557".to_owned(),
-                address: None,
-                name: Some("NF2557".to_owned()),
-                rssi: None,
-                advertised_services: Vec::new().into(),
-                manufacturer_data: Vec::new().into(),
-            },
-            services: Vec::new().into(),
-        };
-
-        for summary in [&falcon_summary, &aero_summary] {
-            let error = selected_session_resolution_for_summary(SessionProfile::Auto, summary)
-                .expect_err("auto resolution must not guess without protocol evidence");
-            assert!(error.to_string().contains("protocol identity"));
-        }
+    fn auto_session_resolution_requires_protocol_evidence() {
+        let error = selected_session_resolution(SessionProfile::Auto)
+            .expect_err("auto resolution must not guess without protocol evidence");
+        assert!(error.to_string().contains("protocol identity"));
     }
 
     #[test]
@@ -6139,54 +6099,18 @@ mod tests {
     }
 
     #[test]
-    fn dashboard_session_profile_from_summary_requires_protocol_identity() {
-        let falcon_summary = ConnectionSummary {
-            observation: PeripheralObservation {
-                identifier: "GotWay_002441".to_owned(),
-                address: None,
-                name: Some("GotWay_002441".to_owned()),
-                rssi: None,
-                advertised_services: Vec::new().into(),
-                manufacturer_data: Vec::new().into(),
-            },
-            services: Vec::new().into(),
-        };
-        let aero_summary = ConnectionSummary {
-            observation: PeripheralObservation {
-                identifier: "NF2557".to_owned(),
-                address: None,
-                name: Some("NF2557".to_owned()),
-                rssi: None,
-                advertised_services: Vec::new().into(),
-                manufacturer_data: Vec::new().into(),
-            },
-            services: Vec::new().into(),
-        };
-
-        for summary in [&falcon_summary, &aero_summary] {
-            let error = dashboard_session_profile_from_summary(summary)
-                .expect_err("advertised name must not select a session profile");
-            assert!(error.to_string().contains("protocol identity"));
-        }
-    }
-
-    #[test]
-    fn dashboard_session_profile_from_summary_rejects_unsupported_devices() {
-        let summary = ConnectionSummary {
-            observation: PeripheralObservation {
-                identifier: "unknown".to_owned(),
-                address: None,
-                name: Some("unknown".to_owned()),
-                rssi: None,
-                advertised_services: Vec::new().into(),
-                manufacturer_data: Vec::new().into(),
-            },
-            services: Vec::new().into(),
-        };
-
-        let error = dashboard_session_profile_from_summary(&summary)
-            .expect_err("unsupported device should not silently fall back");
+    fn dashboard_session_profile_requires_explicit_protocol() {
+        let error = dashboard_session_profile(SessionProfile::Auto)
+            .expect_err("dashboard must not guess a session from advertised names");
         assert!(error.to_string().contains("protocol identity"));
+        assert_eq!(
+            dashboard_session_profile(SessionProfile::Aero).expect("Aero profile"),
+            selected_aero_session_profile()
+        );
+        assert_eq!(
+            dashboard_session_profile(SessionProfile::Falcon).expect("Falcon profile"),
+            selected_falcon_session_profile()
+        );
     }
 
     #[test]
