@@ -1950,6 +1950,7 @@ public struct TelemetrySnapshot: Equatable, Hashable, Sendable {
     public let batteryTemperature: Temperature?
     public let pwm: DutyCycle?
     public let distance: Distance?
+    public let tripDistance: Distance?
     public let limpHomeRange: Distance?
     public let pitch: Angle?
     public let balanceAngle: Angle?
@@ -1980,6 +1981,7 @@ public struct TelemetrySnapshot: Equatable, Hashable, Sendable {
         batteryTemperature: Temperature? = nil,
         pwm: DutyCycle? = nil,
         distance: Distance? = nil,
+        tripDistance: Distance? = nil,
         limpHomeRange: Distance? = nil,
         pitch: Angle? = nil,
         balanceAngle: Angle? = nil,
@@ -2009,6 +2011,7 @@ public struct TelemetrySnapshot: Equatable, Hashable, Sendable {
         self.batteryTemperature = batteryTemperature
         self.pwm = pwm
         self.distance = distance
+        self.tripDistance = tripDistance
         self.limpHomeRange = limpHomeRange
         self.pitch = pitch
         self.balanceAngle = balanceAngle
@@ -2047,6 +2050,7 @@ public struct TelemetrySnapshot: Equatable, Hashable, Sendable {
             batteryTemperature: dto.batteryTemperature?.value,
             pwm: dto.pwm,
             distance: dto.distance?.value,
+            tripDistance: dto.tripDistance?.value,
             limpHomeRange: dto.limpHomeRange?.value,
             pitch: dto.pitch?.value,
             balanceAngle: dto.balanceAngle?.value,
