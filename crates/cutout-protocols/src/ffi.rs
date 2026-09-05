@@ -1,7 +1,8 @@
 use cutout_core::{
     Capabilities, ControlRefusal, ControlRefusalDto, ControlRefusalReason, DeviceCommand,
-    HostSession, ParserDiagnosticsDto, RideOperatingState, RideOperatingStateDto, SessionEventDto,
-    SessionInputDto, SessionOutputDto, TelemetrySnapshotDto,
+    HostSession, MonotonicTimestamp, ParserDiagnosticsDto, RideOperatingState,
+    RideOperatingStateDto, SessionEventDto, SessionInput, SessionInputDto, SessionOutputDto,
+    TelemetrySnapshotDto,
 };
 
 use crate::{
@@ -102,7 +103,7 @@ impl ConcreteAeroBenignControlSession {
 
     /// Drives one owned DTO input through the wrapped protocol reactor.
     pub fn ingest(&mut self, input: &SessionInputDto) {
-        self.host.ingest(input.as_session_input());
+        ingest_timestamped_command(&mut self.host, input);
     }
 
     /// Sets the host timestamp before a command input that carries no core timestamp.
@@ -220,7 +221,7 @@ impl ConcreteFalconBenignControlSession {
 
     /// Drives one owned DTO input through the wrapped protocol reactor.
     pub fn ingest(&mut self, input: &SessionInputDto) {
-        self.host.ingest(input.as_session_input());
+        ingest_timestamped_command(&mut self.host, input);
     }
 
     /// Sets the host timestamp before a command input that carries no core timestamp.
@@ -305,7 +306,7 @@ impl VescReadOnlySession {
 
     /// Drives one owned DTO input through the wrapped protocol reactor.
     pub fn ingest(&mut self, input: &SessionInputDto) {
-        self.host.ingest(input.as_session_input());
+        ingest_timestamped_command(&mut self.host, input);
     }
 
     /// Drives one DTO input and returns owned outputs plus any stable error DTO.
@@ -373,6 +374,8 @@ fn arm_stationary_settings<
     speed_mm_per_second: Option<i32>,
     monotonic_ms: u64,
 ) -> bool {
+    // A failed re-arm must revoke any token issued from older ride evidence.
+    host.session_mut().clear_arm();
     let state = match state {
         RideOperatingStateDto::Unknown => RideOperatingState::Unknown,
         RideOperatingStateDto::Parked => RideOperatingState::Parked,
@@ -381,11 +384,8 @@ fn arm_stationary_settings<
         RideOperatingStateDto::Charging => RideOperatingState::Charging,
     };
     let speed = speed_mm_per_second.map(cutout_core::Speed::from_millimetres_per_second);
-    let Some(arm) = M::arm_settings_write(
-        state,
-        speed,
-        cutout_core::MonotonicTimestamp::new(monotonic_ms),
-    ) else {
+    let Some(arm) = M::arm_settings_write(state, speed, MonotonicTimestamp::new(monotonic_ms))
+    else {
         return false;
     };
     host.session_mut().arm(arm);
@@ -452,8 +452,9 @@ fn input_command_refusal(
     input: &SessionInputDto,
     capabilities: Capabilities,
 ) -> Option<ControlRefusalDto> {
-    let SessionInputDto::Command(command) = input else {
-        return None;
+    let command = match input {
+        SessionInputDto::Command(command) | SessionInputDto::CommandAt { command, .. } => command,
+        _ => return None,
     };
     let command = DeviceCommand::from(*command);
     let kind = command.kind();
@@ -464,6 +465,18 @@ fn input_command_refusal(
             reason: ControlRefusalReason::UnsupportedCommand,
         })
     })
+}
+
+fn ingest_timestamped_command<S>(host: &mut HostSession<S>, input: &SessionInputDto)
+where
+    S: cutout_core::ProtocolSession,
+{
+    if let SessionInputDto::CommandAt { monotonic_ms, .. } = input {
+        host.ingest(SessionInput::Tick {
+            monotonic_ms: MonotonicTimestamp::new(monotonic_ms.milliseconds),
+        });
+    }
+    host.ingest(input.as_session_input());
 }
 
 fn drain_host_outputs<S>(host: &mut HostSession<S>) -> Vec<SessionOutputDto>
@@ -477,8 +490,8 @@ where
 mod tests {
     use cutout_core::{
         CommandKindDto, ControlRefusalDto, ControlRefusalReasonDto, DeviceCommandDto, LinkInfo,
-        MonotonicMillisDto, MonotonicTimestamp, ParserDiagnosticCountDto, SafetyClassDto,
-        SessionEventDto, SessionInputDto, SessionOutputDto, TransportActionDto,
+        MonotonicMillisDto, MonotonicTimestamp, ParserDiagnosticCountDto, RideOperatingStateDto,
+        SafetyClassDto, SessionEventDto, SessionInputDto, SessionOutputDto, TransportActionDto,
         TransportWriteLimit, TransportWriteLimitDto,
     };
 
@@ -552,6 +565,31 @@ mod tests {
             SessionOutputDto::Transport(TransportActionDto::Write { channel, bytes, .. })
                 if *channel == VETERAN_DATA_CHANNEL.as_bytes()
                     && bytes == b"SetLightON"
+        )));
+    }
+
+    #[test]
+    fn failed_rearm_revokes_the_previous_stationary_write_authorization() {
+        let mut session = new_nosfet_aero_benign_control_session();
+        assert!(session.arm_settings_writes(RideOperatingStateDto::Parked, Some(0), 10));
+        assert!(!session.arm_settings_writes(RideOperatingStateDto::Riding, Some(501), 11));
+
+        let result =
+            session.ingest_checked(&SessionInputDto::Command(DeviceCommandDto::ResetTripMeter));
+
+        assert_eq!(
+            result.error,
+            Some(ConcreteSessionErrorDto::CommandRefused {
+                refusal: ControlRefusalDto {
+                    command: CommandKindDto::ResetTripMeter,
+                    safety_class: SafetyClassDto::StationaryOnly,
+                    reason: ControlRefusalReasonDto::MissingArm,
+                }
+            })
+        );
+        assert!(result.outputs.iter().all(|output| !matches!(
+            output,
+            SessionOutputDto::Transport(TransportActionDto::Write { .. })
         )));
     }
 

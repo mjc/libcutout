@@ -1666,6 +1666,15 @@ pub enum SessionInputDto {
 
     /// Command requested by the host application.
     Command(DeviceCommandDto),
+
+    /// Command requested by the host application at an explicit host timestamp.
+    CommandAt {
+        /// Typed command requested by the host application.
+        command: DeviceCommandDto,
+
+        /// Host monotonic command timestamp.
+        monotonic_ms: MonotonicMillisDto,
+    },
 }
 
 impl From<SessionInput<'_>> for SessionInputDto {
@@ -1718,7 +1727,9 @@ impl SessionInputDto {
             Self::Tick { monotonic_ms } => SessionInput::Tick {
                 monotonic_ms: (*monotonic_ms).into_core(),
             },
-            Self::Command(command) => SessionInput::Command((*command).into()),
+            Self::Command(command) | Self::CommandAt { command, .. } => {
+                SessionInput::Command((*command).into())
+            }
         }
     }
 }

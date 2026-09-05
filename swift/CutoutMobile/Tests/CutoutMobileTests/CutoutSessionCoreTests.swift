@@ -1440,7 +1440,7 @@ func testVescRideSnapshotProjectsBatteryLevelAndUpdateTime() throws {
         XCTAssertEqual(falcon.settingsCapabilities.aeroHighBeam, .unsupported)
         XCTAssertEqual(falcon.settingsCapabilities.headlight, .supported)
         XCTAssertEqual(aero.settingsCapabilities.taillight, .unsupported)
-        XCTAssertEqual(aero.settingsCapabilities.pedalMode, .supported)
+        XCTAssertEqual(aero.settingsCapabilities.pedalMode, .unverified)
         XCTAssertEqual(aero.settingsCapabilities.rollAngle, .unsupported)
         XCTAssertEqual(falcon.settingsCapabilities.rollAngle, .supported)
         XCTAssertEqual(aero.settingsCapabilities.accelerationAssist, .unsupported)
@@ -1533,7 +1533,7 @@ func testVescRideSnapshotProjectsBatteryLevelAndUpdateTime() throws {
         XCTAssertEqual(session.aeroAngleAdjustmentState.requested, angle)
     }
 
-    func testElectricUnicycleSessionKeepsPedalModeWriteGuardedUntilArmed() throws {
+    func testElectricUnicycleSessionRefusesUnverifiedPedalModeBeforeTransport() throws {
         let session = try ElectricUnicycleSession(model: .aero)
 
         XCTAssertEqual(session.pedalModeState.kind, .unknown)
@@ -1542,12 +1542,12 @@ func testVescRideSnapshotProjectsBatteryLevelAndUpdateTime() throws {
         ) { error in
             XCTAssertEqual(
                 error as? CutoutSessionError,
-                .commandRefused(.setPedalMode(.hard), .missingArm)
+                .commandRefused(.setPedalMode(.hard), .unsupportedCommand)
             )
         }
         XCTAssertEqual(session.pedalModeState.kind, .refused)
         XCTAssertEqual(session.pedalModeState.requested, .hard)
-        XCTAssertEqual(session.pedalModeState.refusalReason, .missingArm)
+        XCTAssertEqual(session.pedalModeState.refusalReason, .unsupportedCommand)
     }
 
     func testFalconRollAngleWriteIsGuardedUntilArmed() throws {

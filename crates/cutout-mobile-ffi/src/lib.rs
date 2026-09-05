@@ -33,8 +33,8 @@ use cutout_core::{
     ChargeEstimateState, ChargeEstimateUnavailableReason, ChargeFlow, ChargeMode, ChargeModeDto,
     ChargeModeReadingDto, ChargeProfileIdentity, ChargeSessionIdentity, ChargeTimeEstimate,
     CommandKindDto, ControlRefusalReason as CoreControlRefusalReason, ControlRefusalReasonDto,
-    CutoutSessionState, DeviceCommandDto, DiscoveryCandidateSnapshot,
-    DiscoveryCandidateSupport as CoreDiscoveryCandidateSupport,
+    CutoutSessionState, DeviceCommand as CoreDeviceCommand, DeviceCommandDto, DeviceEvent,
+    DiscoveryCandidateSnapshot, DiscoveryCandidateSupport as CoreDiscoveryCandidateSupport,
     DiscoveryConnectionRoute as CoreDiscoveryConnectionRoute,
     DiscoveryElectricUnicycleModel as CoreDiscoveryElectricUnicycleModel,
     DiscoveryManufacturerDataSummary as CoreDiscoveryManufacturerDataSummary,
@@ -52,7 +52,8 @@ use cutout_core::{
     PevcapResolvedIdentity, PhaseCurrentReadingDto, PowerReadingDto, ProtocolFamily,
     ProtocolFamilyDto, ProtocolTag, RIDE_SESSION_STALE_AFTER, RawFieldValue, RawFieldValueDto,
     RawTelemetryReadback, RawTelemetryReadbackDto, ReadOnlyOutputPayload,
-    ReservedPayloadEvidenceDto, RideOperatingModeDto, RideOperatingStateDto,
+    ReservedPayloadEvidenceDto, RideOperatingModeDto,
+    RideOperatingState as CoreRideOperatingState, RideOperatingStateDto,
     RideSessionAppPresence as CoreRideSessionAppPresence,
     RideSessionDecision as CoreRideSessionDecision, RideSessionEffect as CoreRideSessionEffect,
     RideSessionEndReason as CoreRideSessionEndReason,
@@ -61,7 +62,7 @@ use cutout_core::{
     RideSessionMarkerError as CoreRideSessionMarkerError, RideSessionPhase as CoreRideSessionPhase,
     RideStopReasonDto, RideWarningDto, RollAngle as CoreRollAngle,
     SETTING_WRITE_CONFIRMATION_TIMEOUT, SemanticEventCountDto, SeriesCount, SessionEventDto,
-    SessionInputDto, SessionOutputDto, SettingCommandStatus as CoreSettingCommandStatus,
+    SessionInputDto, SessionOutput, SessionOutputDto, SettingCommandStatus as CoreSettingCommandStatus,
     SettingState as CoreSettingState, SettingValueSource as CoreSettingValueSource, SettingsEntry,
     SettingsEntryDto, SettingsReadback, SettingsReadbackAvailability,
     SettingsReadbackAvailabilityDto, SettingsReadbackDto, Speed as CoreSpeed,
@@ -82,12 +83,12 @@ use cutout_music::{
     MusicSnapshot as CoreMusicSnapshot, MusicTimelineOutcome as CoreMusicTimelineOutcome,
 };
 use cutout_protocols::{
-    BEGODE_DATA_CHANNEL, BEGODE_FIELD_LED_AND_LIGHT_MODE, BEGODE_FIELD_SETTINGS_BITS,
-    BEGODE_FIELD_TILTBACK_SPEED_KMH, ConcreteAeroBenignControlSession,
-    ConcreteFalconBenignControlSession, ConcreteFalconProfileDto, ConcreteSessionErrorDto,
-    ConcreteSessionStepResultDto, DeviceDetectionEvent, DeviceDetectionResolution,
-    DeviceDetectionSession, DeviceFamily, IdentityBannerEvidence, PendingProbe,
-    ProtocolFamilyClassification, ProtocolFamilyState, ProtocolModelIdentityEvidence,
+    AeroSettingsReadback, AeroSettingsSimulator as CoreAeroSettingsSimulator, BEGODE_DATA_CHANNEL,
+    BEGODE_FIELD_LED_AND_LIGHT_MODE, BEGODE_FIELD_SETTINGS_BITS, BEGODE_FIELD_TILTBACK_SPEED_KMH,
+    ConcreteAeroBenignControlSession, ConcreteFalconBenignControlSession, ConcreteFalconProfileDto,
+    ConcreteSessionErrorDto, ConcreteSessionStepResultDto, DeviceDetectionEvent,
+    DeviceDetectionResolution, DeviceDetectionSession, DeviceFamily, IdentityBannerEvidence,
+    PendingProbe, ProtocolFamilyClassification, ProtocolFamilyState, ProtocolModelIdentityEvidence,
     StagedIdentityInput, StagedIdentityOutcome, VETERAN_FIELD_AUTO_SHUTDOWN_TIME_REMAINING_SECONDS,
     VETERAN_FIELD_CHARGE_MODE, VETERAN_FIELD_PEDALS_MODE, VETERAN_FIELD_SPEED_ALERT_DECI_KMH,
     VETERAN_FIELD_SPEED_TILTBACK_DECI_KMH, VescBatteryType as CoreVescBatteryType,
@@ -2334,7 +2335,10 @@ pub struct MobileEucSettingsCapabilitiesDto {
 impl MobileEucSettingsCapabilitiesDto {
     const fn aero() -> Self {
         Self {
-            pedal_mode: MobileSettingWriteSupportDto::Supported,
+            // The encoders are available in the Rust simulator, but these
+            // settings stay out of the live mobile surface until capture and
+            // NF2557 hardware evidence proves their effects/readback.
+            pedal_mode: MobileSettingWriteSupportDto::Unverified,
             roll_angle: MobileSettingWriteSupportDto::Unsupported,
             speed_alarm_mode: MobileSettingWriteSupportDto::Unsupported,
             begode_max_speed: MobileSettingWriteSupportDto::Unsupported,
@@ -2344,12 +2348,23 @@ impl MobileEucSettingsCapabilitiesDto {
             headlight: MobileSettingWriteSupportDto::Supported,
             aero_high_beam: MobileSettingWriteSupportDto::Supported,
             taillight: MobileSettingWriteSupportDto::Unsupported,
-            reset_trip_meter: MobileSettingWriteSupportDto::Supported,
-            aero_tiltback_speed: MobileSettingWriteSupportDto::Supported,
-            aero_pwm_percent: MobileSettingWriteSupportDto::Supported,
-            aero_alarm_speed: MobileSettingWriteSupportDto::Supported,
-            aero_angle_adjustment: MobileSettingWriteSupportDto::Supported,
+            reset_trip_meter: MobileSettingWriteSupportDto::Unverified,
+            aero_tiltback_speed: MobileSettingWriteSupportDto::Unverified,
+            aero_pwm_percent: MobileSettingWriteSupportDto::Unverified,
+            aero_alarm_speed: MobileSettingWriteSupportDto::Unverified,
+            aero_angle_adjustment: MobileSettingWriteSupportDto::Unverified,
         }
+    }
+
+    const fn aero_validation() -> Self {
+        let mut capabilities = Self::aero();
+        capabilities.pedal_mode = MobileSettingWriteSupportDto::Supported;
+        capabilities.reset_trip_meter = MobileSettingWriteSupportDto::Supported;
+        capabilities.aero_tiltback_speed = MobileSettingWriteSupportDto::Supported;
+        capabilities.aero_pwm_percent = MobileSettingWriteSupportDto::Supported;
+        capabilities.aero_alarm_speed = MobileSettingWriteSupportDto::Supported;
+        capabilities.aero_angle_adjustment = MobileSettingWriteSupportDto::Supported;
+        capabilities
     }
 
     const fn falcon() -> Self {
@@ -3317,7 +3332,9 @@ impl MobileEucSettingTrackers {
         self.acceleration_assist.observe_step(input.kind, now, true);
         self.taillight.observe_step(input.kind, now, true);
 
-        self.observe_command(input.command, now, result);
+        if input.kind == MobileSessionInputKindDto::Command {
+            self.observe_command(input.command, now, result);
+        }
         for output in &result.outputs {
             if let Some(readback) = output.settings_readback.as_ref() {
                 self.observe_readback(readback, now);
@@ -12487,11 +12504,165 @@ fn mobile_gatt_channel(channel: &[u8]) -> GattChannel {
     GattChannel::from_bytes(mobile_channel_bytes(channel))
 }
 
+/// Typed readback returned by the Rust-owned Aero settings simulator.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct MobileAeroSettingsSimulatorReadbackDto {
+    /// Current TLT speed.
+    pub tiltback_speed: Option<MobileAeroSpeedSettingDto>,
+
+    /// Current PWT percentage.
+    pub pwm_percent: Option<MobileAeroPwmPercentDto>,
+
+    /// Current ALM speed.
+    pub alarm_speed: Option<MobileAeroSpeedSettingDto>,
+
+    /// Current ANG adjustment.
+    pub angle_adjustment: Option<MobileAeroAngleAdjustmentDto>,
+
+    /// Current pedal mode.
+    pub pedal_mode: Option<MobilePedalModeKindDto>,
+
+    /// Current high-beam state.
+    pub high_beam: Option<MobileLightStateDto>,
+
+    /// Current single-frame headlight state.
+    pub headlight: Option<MobileLightStateDto>,
+
+    /// Number of accepted trip-meter reset writes.
+    pub trip_meter_reset_count: u32,
+}
+
+impl From<AeroSettingsReadback> for MobileAeroSettingsSimulatorReadbackDto {
+    fn from(readback: AeroSettingsReadback) -> Self {
+        Self {
+            tiltback_speed: readback.tiltback_speed.map(Into::into),
+            pwm_percent: readback.pwm_percent.map(Into::into),
+            alarm_speed: readback.alarm_speed.map(Into::into),
+            angle_adjustment: readback.angle_adjustment.map(Into::into),
+            pedal_mode: readback.pedal_mode.map(Into::into),
+            high_beam: readback.high_beam.map(Into::into),
+            headlight: readback.headlight.map(Into::into),
+            trip_meter_reset_count: readback.trip_meter_reset_count,
+        }
+    }
+}
+
+/// Rust-owned, no-Bluetooth Aero settings simulator for mobile integration tests.
+///
+/// This is a thin FFI facade over [`cutout_protocols::AeroSettingsSimulator`].
+/// It intentionally exposes typed commands, typed readback, and the same mobile
+/// output DTOs as a live session; it does not expose a raw transport API.
+#[derive(Debug, uniffi::Object)]
+pub struct AeroSettingsSimulator {
+    inner: Mutex<CoreAeroSettingsSimulator>,
+}
+
+#[uniffi::export]
+impl AeroSettingsSimulator {
+    /// Creates a stationary NOSFET Aero simulator.
+    #[uniffi::constructor]
+    #[must_use]
+    pub fn new() -> Arc<Self> {
+        Arc::new(Self {
+            inner: Mutex::new(CoreAeroSettingsSimulator::default()),
+        })
+    }
+
+    /// Issues one typed command and returns the live-session-shaped outputs.
+    pub fn issue(
+        &self,
+        command: MobileCommandDto,
+        operating_state: RideOperatingState,
+        speed: Option<Speed>,
+        monotonic_ms: MobileMonotonicMillisDto,
+    ) -> Vec<MobileSessionOutputDto> {
+        self.issue_checked(command, operating_state, speed, monotonic_ms)
+            .outputs
+    }
+
+    /// Issues one typed command and preserves any typed refusal diagnostic.
+    pub fn issue_checked(
+        &self,
+        command: MobileCommandDto,
+        operating_state: RideOperatingState,
+        speed: Option<Speed>,
+        monotonic_ms: MobileMonotonicMillisDto,
+    ) -> MobileSessionStepResultDto {
+        if !mobile_command_is_valid(command) {
+            return mobile_command_refusal(command);
+        }
+        let core_command: CoreDeviceCommand = DeviceCommandDto::from(command).into();
+        let speed = speed.map(|speed| CoreSpeed::from_millimetres_per_second(speed.value));
+        let outputs = self.lock_inner().issue(
+            core_command,
+            simulator_operating_state(operating_state),
+            speed,
+            monotonic_ms.into_core(),
+        );
+        mobile_simulator_step_result(outputs, command)
+    }
+
+    /// Advances any delayed simulator output and returns live-session-shaped outputs.
+    pub fn tick(&self, monotonic_ms: MobileMonotonicMillisDto) -> Vec<MobileSessionOutputDto> {
+        self.lock_inner()
+            .tick(monotonic_ms.into_core())
+            .into_iter()
+            .map(|output| MobileSessionOutputDto::from(SessionOutputDto::from(output)))
+            .collect()
+    }
+
+    /// Returns the current typed simulator readback.
+    pub fn readback(&self) -> MobileAeroSettingsSimulatorReadbackDto {
+        self.lock_inner().readback().into()
+    }
+}
+
+impl AeroSettingsSimulator {
+    fn lock_inner(&self) -> MutexGuard<'_, CoreAeroSettingsSimulator> {
+        self.inner.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+}
+
+fn simulator_operating_state(state: RideOperatingState) -> CoreRideOperatingState {
+    match state {
+        RideOperatingState::Unknown => CoreRideOperatingState::Unknown,
+        RideOperatingState::Parked => CoreRideOperatingState::Parked,
+        RideOperatingState::Standing => CoreRideOperatingState::Standing,
+        RideOperatingState::Riding => CoreRideOperatingState::Riding,
+        RideOperatingState::Charging => CoreRideOperatingState::Charging,
+    }
+}
+
+fn mobile_simulator_step_result(
+    outputs: Vec<SessionOutput>,
+    command: MobileCommandDto,
+) -> MobileSessionStepResultDto {
+    let error = outputs.iter().find_map(|output| match output {
+        SessionOutput::Event(DeviceEvent::ControlRefusal(refusal)) => {
+            Some(MobileSessionStepErrorDto {
+                kind: MobileSessionStepErrorKindDto::CommandRefused,
+                command: Some(command),
+                reason: Some(refusal.reason.into()),
+            })
+        }
+        _ => None,
+    });
+
+    MobileSessionStepResultDto {
+        outputs: outputs
+            .into_iter()
+            .map(|output| MobileSessionOutputDto::from(SessionOutputDto::from(output)))
+            .collect(),
+        error,
+    }
+}
+
 /// Mobile-facing NOSFET Aero telemetry wrapper with allow-listed light control.
 #[derive(Debug, uniffi::Object)]
 pub struct AeroBenignControlSession {
     inner: Mutex<ConcreteAeroBenignControlSession>,
     settings: Mutex<MobileEucSettingTrackers>,
+    allow_unverified_settings: Mutex<bool>,
 }
 
 #[uniffi::export]
@@ -12503,7 +12674,16 @@ impl AeroBenignControlSession {
         Arc::new(Self {
             inner: Mutex::new(new_nosfet_aero_benign_control_session()),
             settings: Mutex::new(MobileEucSettingTrackers::default()),
+            allow_unverified_settings: Mutex::new(false),
         })
+    }
+
+    /// Enables the explicit local validation path for typed, unverified Aero settings.
+    pub fn enable_settings_validation(&self) {
+        *self
+            .allow_unverified_settings
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner) = true;
     }
 
     /// Drives one input and returns owned outputs plus any stable error DTO.
@@ -12512,6 +12692,28 @@ impl AeroBenignControlSession {
         if tracked_input.kind == MobileSessionInputKindDto::Command {
             self.lock_inner()
                 .set_monotonic(tracked_input.monotonic_ms.milliseconds);
+        }
+        if tracked_input.kind == MobileSessionInputKindDto::Command {
+            if let Some(command) = tracked_input.command {
+                let result = if !mobile_command_is_valid(command) {
+                    Some(mobile_command_refusal(command))
+                } else if mobile_aero_setting_support(
+                    command,
+                    *self
+                        .allow_unverified_settings
+                        .lock()
+                        .unwrap_or_else(PoisonError::into_inner),
+                ) != MobileSettingWriteSupportDto::Supported
+                {
+                    Some(mobile_command_refusal(command))
+                } else {
+                    None
+                };
+                if let Some(result) = result {
+                    self.lock_settings().observe_step(&tracked_input, &result, false);
+                    return result;
+                }
+            }
         }
         let input = SessionInputDto::from(input);
         let result = preserve_refused_command(
@@ -12544,7 +12746,15 @@ impl AeroBenignControlSession {
 
     /// Returns the capture-backed EUC setting write capabilities.
     pub fn settings_capabilities(&self) -> MobileEucSettingsCapabilitiesDto {
-        MobileEucSettingsCapabilitiesDto::aero()
+        if *self
+            .allow_unverified_settings
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+        {
+            MobileEucSettingsCapabilitiesDto::aero_validation()
+        } else {
+            MobileEucSettingsCapabilitiesDto::aero()
+        }
     }
 
     /// Arms settings writes only when the latest Rust-owned ride state is stationary.
@@ -12634,6 +12844,78 @@ impl AeroBenignControlSession {
     }
 }
 
+fn mobile_aero_setting_support(
+    command: MobileCommandDto,
+    allow_unverified_settings: bool,
+) -> MobileSettingWriteSupportDto {
+    let capabilities = if allow_unverified_settings {
+        MobileEucSettingsCapabilitiesDto::aero_validation()
+    } else {
+        MobileEucSettingsCapabilitiesDto::aero()
+    };
+    match command {
+        MobileCommandDto::SetPedalMode(_) => capabilities.pedal_mode,
+        MobileCommandDto::SetLights(_) => capabilities.headlight,
+        MobileCommandDto::SetAeroHighBeam(_) => capabilities.aero_high_beam,
+        MobileCommandDto::ResetTripMeter => capabilities.reset_trip_meter,
+        MobileCommandDto::SetAeroTiltbackSpeed(_) => capabilities.aero_tiltback_speed,
+        MobileCommandDto::SetAeroPwmPercent(_) => capabilities.aero_pwm_percent,
+        MobileCommandDto::SetAeroAlarmSpeed(_) => capabilities.aero_alarm_speed,
+        MobileCommandDto::SetAeroAngleAdjustment(_) => capabilities.aero_angle_adjustment,
+        MobileCommandDto::SetRollAngle(_)
+        | MobileCommandDto::SetSpeedAlarmMode(_)
+        | MobileCommandDto::SetBegodeMaxSpeed(_)
+        | MobileCommandDto::SetBegodeBeeperVolume(_)
+        | MobileCommandDto::SetBegodeLedMode(_)
+        | MobileCommandDto::SetAccelerationAssist(_)
+        | MobileCommandDto::SetTaillight(_)
+        | MobileCommandDto::RequestFaultHistory
+        | MobileCommandDto::RequestIdentity
+        | MobileCommandDto::RequestTelemetry
+        | MobileCommandDto::RequestFirmwareInfo
+        | MobileCommandDto::RequestBatteryInfo
+        | MobileCommandDto::RequestDiagnostics
+        | MobileCommandDto::RequestSettings
+        | MobileCommandDto::SoundHorn => MobileSettingWriteSupportDto::Supported,
+    }
+}
+
+fn mobile_command_refusal(command: MobileCommandDto) -> MobileSessionStepResultDto {
+    MobileSessionStepResultDto {
+        outputs: Vec::new(),
+        error: Some(MobileSessionStepErrorDto {
+            kind: MobileSessionStepErrorKindDto::CommandRefused,
+            command: Some(command),
+            reason: Some(MobileControlRefusalReasonDto::UnsupportedCommand),
+        }),
+    }
+}
+
+fn mobile_command_is_valid(command: MobileCommandDto) -> bool {
+    match command {
+        MobileCommandDto::SetAeroTiltbackSpeed(value)
+        | MobileCommandDto::SetAeroAlarmSpeed(value) => {
+            CoreAeroSpeedSetting::new(value.kilometres_per_hour).is_some()
+        }
+        MobileCommandDto::SetAeroPwmPercent(value) => {
+            CoreAeroPwmPercent::new(value.percent).is_some()
+        }
+        MobileCommandDto::SetAeroAngleAdjustment(value) => {
+            CoreAeroAngleAdjustment::new(value.tenths_of_degree).is_some()
+        }
+        MobileCommandDto::SetBegodeMaxSpeed(value) => {
+            CoreBegodeMaxSpeed::new(value.kilometres_per_hour).is_some()
+        }
+        MobileCommandDto::SetBegodeBeeperVolume(value) => {
+            CoreBegodeBeeperVolume::new(value.level).is_some()
+        }
+        MobileCommandDto::SetBegodeLedMode(value) => {
+            CoreBegodeLedModeSetting::new(value.mode).is_some()
+        }
+        _ => true,
+    }
+}
+
 impl AeroBenignControlSession {
     fn lock_inner(&self) -> MutexGuard<'_, ConcreteAeroBenignControlSession> {
         self.inner.lock().unwrap_or_else(PoisonError::into_inner)
@@ -12649,6 +12931,7 @@ impl Default for AeroBenignControlSession {
         Self {
             inner: Mutex::new(new_nosfet_aero_benign_control_session()),
             settings: Mutex::new(MobileEucSettingTrackers::default()),
+            allow_unverified_settings: Mutex::new(false),
         }
     }
 }
@@ -12671,12 +12954,13 @@ impl From<MobileSessionInputDto> for SessionInputDto {
             MobileSessionInputKindDto::Tick => Self::Tick {
                 monotonic_ms: input.monotonic_ms.into_core_ffi(),
             },
-            MobileSessionInputKindDto::Command => Self::Command(
-                input
+            MobileSessionInputKindDto::Command => Self::CommandAt {
+                command: input
                     .command
                     .unwrap_or(MobileCommandDto::RequestTelemetry)
                     .into(),
-            ),
+                monotonic_ms: input.monotonic_ms.into_core_ffi(),
+            },
         }
     }
 }
@@ -17198,6 +17482,65 @@ mod tests {
     }
 
     #[test]
+    fn aero_settings_simulator_is_reusable_through_mobile_ffi() {
+        let simulator = AeroSettingsSimulator::new();
+        let outputs = simulator.issue(
+            MobileCommandDto::SetAeroTiltbackSpeed(MobileAeroSpeedSettingDto {
+                kilometres_per_hour: 42,
+            }),
+            RideOperatingState::Parked,
+            None,
+            ms(10),
+        );
+
+        assert!(outputs.iter().any(|output| {
+            output.kind == MobileSessionOutputKindDto::Write && output.bytes.starts_with(b"LdAp")
+        }));
+        assert!(outputs.iter().any(|output| {
+            output.kind == MobileSessionOutputKindDto::SettingsReadback
+                && output.settings_readback.as_ref().is_some_and(|readback| {
+                    readback.entries.iter().any(|entry| {
+                        entry.field.id == VETERAN_FIELD_SPEED_TILTBACK_DECI_KMH
+                            && entry.field.value == 420
+                    })
+                })
+        }));
+        assert_eq!(
+            simulator.readback().tiltback_speed,
+            Some(MobileAeroSpeedSettingDto {
+                kilometres_per_hour: 42,
+            })
+        );
+    }
+
+    #[test]
+    fn aero_settings_simulator_preserves_typed_refusal_through_mobile_ffi() {
+        let simulator = AeroSettingsSimulator::new();
+        let command = MobileCommandDto::SetAeroPwmPercent(MobileAeroPwmPercentDto { percent: 71 });
+        let result = simulator.issue_checked(
+            command,
+            RideOperatingState::Riding,
+            Some(Speed { value: 501 }),
+            ms(10),
+        );
+
+        assert_eq!(
+            result.error,
+            Some(MobileSessionStepErrorDto {
+                kind: MobileSessionStepErrorKindDto::CommandRefused,
+                command: Some(command),
+                reason: Some(MobileControlRefusalReasonDto::MissingArm),
+            })
+        );
+        assert!(
+            result
+                .outputs
+                .iter()
+                .all(|output| output.kind != MobileSessionOutputKindDto::Write)
+        );
+    }
+
+    #[test]
     fn falcon_wrapper_surfaces_unsupported_command_error() {
         let session = FalconBenignControlSession::new().expect("default profile should construct");
 
@@ -17221,7 +17564,7 @@ mod tests {
     }
 
     #[test]
-    fn aero_wrapper_writes_documented_pedal_mode_after_stationary_arm() {
+    fn aero_wrapper_refuses_unverified_pedal_mode_before_transport() {
         let session = AeroBenignControlSession::new();
         assert!(session.arm_settings_writes(RideOperatingState::Parked, ms(0)));
 
@@ -17234,14 +17577,111 @@ mod tests {
             command: Some(MobileCommandDto::SetPedalMode(MobilePedalModeKindDto::Hard)),
         });
 
-        assert_eq!(result.error, None);
-        assert!(result.outputs.iter().any(|output| {
-            output.kind == MobileSessionOutputKindDto::Write && output.bytes == b"SETh"
-        }));
+        assert_eq!(
+            result.error.and_then(|error| error.reason),
+            Some(MobileControlRefusalReasonDto::UnsupportedCommand)
+        );
+        assert!(
+            result
+                .outputs
+                .iter()
+                .all(|output| output.kind != MobileSessionOutputKindDto::Write)
+        );
     }
 
     #[test]
-    fn aero_wrapper_tracks_tiltback_write_until_readback() {
+    fn aero_wrapper_rejects_malformed_bounded_values() {
+        let simulator = AeroSettingsSimulator::new();
+        let command = MobileCommandDto::SetAeroPwmPercent(MobileAeroPwmPercentDto { percent: 255 });
+
+        let result = simulator.issue_checked(command, RideOperatingState::Parked, None, ms(0));
+
+        assert_eq!(
+            result.error,
+            Some(MobileSessionStepErrorDto {
+                kind: MobileSessionStepErrorKindDto::CommandRefused,
+                command: Some(command),
+                reason: Some(MobileControlRefusalReasonDto::UnsupportedCommand),
+            })
+        );
+        assert!(result.outputs.is_empty());
+    }
+
+    #[test]
+    fn aero_wrapper_processes_lifecycle_inputs_with_unused_command_fields() {
+        let session = AeroBenignControlSession::new();
+        assert!(session.arm_settings_writes(RideOperatingState::Parked, ms(0)));
+        let _ = session.ingest_checked(MobileSessionInputDto {
+            kind: MobileSessionInputKindDto::Command,
+            monotonic_ms: ms(0),
+            max_write_len: None,
+            channel: Vec::new(),
+            bytes: Vec::new(),
+            command: Some(MobileCommandDto::SetAeroHighBeam(MobileLightStateDto::On)),
+        });
+
+        let link_down = session.ingest_checked(MobileSessionInputDto {
+            kind: MobileSessionInputKindDto::LinkDown,
+            monotonic_ms: ms(1),
+            max_write_len: None,
+            channel: Vec::new(),
+            bytes: Vec::new(),
+            command: Some(MobileCommandDto::SetAeroPwmPercent(
+                MobileAeroPwmPercentDto { percent: 60 },
+            )),
+        });
+        assert_eq!(link_down.error, None);
+        assert_eq!(session.aero_pwm_percent_state().requested, None);
+        let tick = session.ingest_checked(MobileSessionInputDto {
+            kind: MobileSessionInputKindDto::Tick,
+            monotonic_ms: ms(2),
+            max_write_len: None,
+            channel: Vec::new(),
+            bytes: Vec::new(),
+            command: None,
+        });
+        assert!(
+            tick.outputs
+                .iter()
+                .all(|output| output.kind != MobileSessionOutputKindDto::Write)
+        );
+    }
+
+    #[test]
+    fn aero_validation_mode_exposes_typed_unverified_controls() {
+        let session = AeroBenignControlSession::new();
+        assert_eq!(
+            session.settings_capabilities().aero_tiltback_speed,
+            MobileSettingWriteSupportDto::Unverified
+        );
+        session.enable_settings_validation();
+        assert_eq!(
+            session.settings_capabilities().aero_tiltback_speed,
+            MobileSettingWriteSupportDto::Supported
+        );
+        assert!(session.arm_settings_writes(RideOperatingState::Parked, ms(0)));
+        let result = session.ingest_checked(MobileSessionInputDto {
+            kind: MobileSessionInputKindDto::Command,
+            monotonic_ms: ms(0),
+            max_write_len: None,
+            channel: Vec::new(),
+            bytes: Vec::new(),
+            command: Some(MobileCommandDto::SetAeroTiltbackSpeed(
+                MobileAeroSpeedSettingDto {
+                    kilometres_per_hour: 21,
+                },
+            )),
+        });
+        assert!(
+            result
+                .outputs
+                .iter()
+                .any(|output| output.kind == MobileSessionOutputKindDto::Write)
+        );
+    }
+
+    #[test]
+    fn aero_wrapper_refuses_unverified_tiltback_before_transport() {
         let session = AeroBenignControlSession::new();
         assert!(session.arm_settings_writes(RideOperatingState::Parked, ms(0)));
 
@@ -17258,15 +17698,25 @@ mod tests {
             )),
         });
 
-        assert_eq!(result.error, None);
-        assert!(result.outputs.iter().any(|output| {
-            output.kind == MobileSessionOutputKindDto::Write && output.bytes.starts_with(b"LdAp")
-        }));
+        assert_eq!(
+            result.error.and_then(|error| error.reason),
+            Some(MobileControlRefusalReasonDto::UnsupportedCommand)
+        );
+        assert!(
+            result
+                .outputs
+                .iter()
+                .all(|output| output.kind != MobileSessionOutputKindDto::Write)
+        );
         assert_eq!(
             session.aero_tiltback_speed_state().requested,
             Some(MobileAeroSpeedSettingDto {
-                kilometres_per_hour: 21,
+                kilometres_per_hour: 21
             })
+        );
+        assert_eq!(
+            session.aero_tiltback_speed_state().kind,
+            MobileSettingStateKindDto::Refused
         );
     }
 
@@ -17351,7 +17801,7 @@ mod tests {
     }
 
     #[test]
-    fn aero_wrapper_tracks_pwm_and_angle_writes() {
+    fn aero_wrapper_refuses_unverified_pwm_and_angle_before_transport() {
         let session = AeroBenignControlSession::new();
         assert!(session.arm_settings_writes(RideOperatingState::Parked, ms(0)));
 
@@ -17369,12 +17819,15 @@ mod tests {
                 bytes: Vec::new(),
                 command: Some(command),
             });
-            assert_eq!(result.error, None);
+            assert_eq!(
+                result.error.and_then(|error| error.reason),
+                Some(MobileControlRefusalReasonDto::UnsupportedCommand)
+            );
             assert!(
                 result
                     .outputs
                     .iter()
-                    .any(|output| output.kind == MobileSessionOutputKindDto::Write)
+                    .all(|output| output.kind != MobileSessionOutputKindDto::Write)
             );
         }
 
@@ -17592,7 +18045,7 @@ mod tests {
     }
 
     #[test]
-    fn aero_wrapper_reports_missing_arm_for_pedal_mode() {
+    fn aero_wrapper_reports_unverified_pedal_refusal() {
         let session = AeroBenignControlSession::new();
 
         let _ = session.ingest_checked(MobileSessionInputDto {
@@ -17609,7 +18062,33 @@ mod tests {
         assert_eq!(state.requested, Some(MobilePedalModeKindDto::Hard));
         assert_eq!(
             state.refusal_reason,
-            Some(MobileControlRefusalReasonDto::MissingArm)
+            Some(MobileControlRefusalReasonDto::UnsupportedCommand)
+        );
+    }
+
+    #[test]
+    fn aero_wrapper_uses_command_timestamp_for_arm_expiry() {
+        let session = AeroBenignControlSession::new();
+        assert!(session.arm_settings_writes(RideOperatingState::Parked, ms(0)));
+
+        let result = session.ingest_checked(MobileSessionInputDto {
+            kind: MobileSessionInputKindDto::Command,
+            monotonic_ms: ms(5_001),
+            max_write_len: None,
+            channel: Vec::new(),
+            bytes: Vec::new(),
+            command: Some(MobileCommandDto::SetAeroHighBeam(MobileLightStateDto::On)),
+        });
+
+        assert_eq!(
+            result.error.and_then(|error| error.reason),
+            Some(MobileControlRefusalReasonDto::ExpiredArm)
+        );
+        assert!(
+            !result
+                .outputs
+                .iter()
+                .any(|output| output.kind == MobileSessionOutputKindDto::Write)
         );
     }
 
@@ -17852,7 +18331,27 @@ mod tests {
         );
         assert_eq!(
             aero.settings_capabilities().pedal_mode,
-            MobileSettingWriteSupportDto::Supported
+            MobileSettingWriteSupportDto::Unverified
+        );
+        assert_eq!(
+            aero.settings_capabilities().reset_trip_meter,
+            MobileSettingWriteSupportDto::Unverified
+        );
+        assert_eq!(
+            aero.settings_capabilities().aero_tiltback_speed,
+            MobileSettingWriteSupportDto::Unverified
+        );
+        assert_eq!(
+            aero.settings_capabilities().aero_pwm_percent,
+            MobileSettingWriteSupportDto::Unverified
+        );
+        assert_eq!(
+            aero.settings_capabilities().aero_alarm_speed,
+            MobileSettingWriteSupportDto::Unverified
+        );
+        assert_eq!(
+            aero.settings_capabilities().aero_angle_adjustment,
+            MobileSettingWriteSupportDto::Unverified
         );
         assert_eq!(
             falcon.settings_capabilities().pedal_mode,

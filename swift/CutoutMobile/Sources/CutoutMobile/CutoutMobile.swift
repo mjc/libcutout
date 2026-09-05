@@ -5569,12 +5569,16 @@ public final class ElectricUnicycleSession: @unchecked Sendable {
     private var persistedVoltageSagObservations: UInt16 = 0
     private var chargeEstimateState = ChargeEstimateState.missingProfile
 
-    public init(model: ElectricUnicycleModel, deviceIdentity: String? = nil) throws {
+    public init(
+        model: ElectricUnicycleModel,
+        deviceIdentity: String? = nil,
+        allowUnverifiedSettings: Bool = false
+    ) throws {
         self.model = model
         self.voltageSagIdentity = deviceIdentity
         self.inner = switch model {
         case .aero:
-            .aero(AeroBenignControlSession())
+            .aero(Self.makeAeroSession(allowUnverifiedSettings: allowUnverifiedSettings))
         case .falcon:
             .falcon(try FalconBenignControlSession())
         }
@@ -5586,6 +5590,14 @@ public final class ElectricUnicycleSession: @unchecked Sendable {
         {
             persistedVoltageSagObservations = model.observations
         }
+    }
+
+    private static func makeAeroSession(allowUnverifiedSettings: Bool) -> AeroBenignControlSession {
+        let session = AeroBenignControlSession()
+        if allowUnverifiedSettings {
+            session.enableSettingsValidation()
+        }
+        return session
     }
 
     public var diagnostics: ParserDiagnostics {
@@ -6162,11 +6174,13 @@ public enum CoreBluetoothSession: Sendable {
 
     public static func electricUnicycle(
         model: ElectricUnicycleModel,
-        deviceIdentity: String? = nil
+        deviceIdentity: String? = nil,
+        allowUnverifiedSettings: Bool = false
     ) throws -> CoreBluetoothSession {
         try .electricUnicycle(ElectricUnicycleSession(
             model: model,
-            deviceIdentity: deviceIdentity
+            deviceIdentity: deviceIdentity,
+            allowUnverifiedSettings: allowUnverifiedSettings
         ))
     }
 

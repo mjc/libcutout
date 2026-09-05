@@ -167,10 +167,15 @@ where
         source: SettingValueSource,
         confirmed_at: MonotonicTimestamp,
     ) -> bool {
-        let Self::Pending { requested, .. } = *self else {
+        let Self::Pending {
+            requested,
+            submitted_at,
+            ..
+        } = *self
+        else {
             return false;
         };
-        if requested != value {
+        if requested != value || confirmed_at < submitted_at {
             return false;
         }
         *self = Self::Confirmed {
@@ -192,6 +197,9 @@ where
     ) -> bool {
         if self.confirm_from(value, source, observed_at) {
             return true;
+        }
+        if self.terminal_readback_matches(value) {
+            return false;
         }
         if !matches!(self, Self::Pending { .. }) {
             *self = Self::Current(SettingValue { value, source });
@@ -275,6 +283,30 @@ where
             | Self::Refused { current, .. }
             | Self::TimedOut { current, .. }
             | Self::Failed { current, .. } => current,
+        }
+    }
+
+    fn terminal_readback_matches(self, value: Value) -> bool {
+        match self {
+            Self::Confirmed { value: current, .. } => current.value == value,
+            Self::Refused {
+                current: Some(current),
+                ..
+            }
+            | Self::TimedOut {
+                current: Some(current),
+                ..
+            }
+            | Self::Failed {
+                current: Some(current),
+                ..
+            } => current.value == value,
+            Self::Unknown
+            | Self::Current(_)
+            | Self::Pending { .. }
+            | Self::Refused { current: None, .. }
+            | Self::TimedOut { current: None, .. }
+            | Self::Failed { current: None, .. } => false,
         }
     }
 }

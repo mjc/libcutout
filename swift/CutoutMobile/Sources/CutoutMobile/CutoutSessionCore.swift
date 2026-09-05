@@ -836,9 +836,7 @@ public final class CutoutSessionCore: NSObject {
     ) -> SettingCommandResult {
         onBleQueue {
             guard phase == .live, let liveOwner else { return .failed }
-            guard liveOwner.armSettingsWrites(at: clock.now()) else {
-                return .refused(.missingArm)
-            }
+            _ = liveOwner.armSettingsWrites(at: clock.now())
             do {
                 try liveOwner.handleCommand(command, at: clock.now())
                 guard phase == .live else { return .failed }
@@ -1476,9 +1474,15 @@ public final class CutoutSessionCore: NSObject {
             guard let selectedModel else {
                 throw CutoutSessionError.unexpectedStepError("missing EUC model")
             }
+            #if DEBUG
+            let allowUnverifiedSettings = true
+            #else
+            let allowUnverifiedSettings = false
+            #endif
             return try .electricUnicycle(
                 model: selectedModel,
-                deviceIdentity: advertisement?.peripheralIdentifier.rawValue
+                deviceIdentity: advertisement?.peripheralIdentifier.rawValue,
+                allowUnverifiedSettings: allowUnverifiedSettings
             )
         case .vescOnewheel:
             if let vescBoardProfile {
