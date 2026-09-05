@@ -8,12 +8,18 @@ import UIKit
 
 struct ContentView: View {
     let model: CutoutAppModel
+    let rideMapPresentation: RideMapPresentationState
     @Binding private var navigationPath: [CutoutAppRoute]
     @AccessibilityFocusState private var focusedRoute: CutoutAppRoute?
     @State private var connectionAnnouncements = ConnectionAccessibilityAnnouncements()
 
-    init(model: CutoutAppModel, navigationPath: Binding<[CutoutAppRoute]>) {
+    init(
+        model: CutoutAppModel,
+        rideMapPresentation: RideMapPresentationState,
+        navigationPath: Binding<[CutoutAppRoute]>
+    ) {
         self.model = model
+        self.rideMapPresentation = rideMapPresentation
         _navigationPath = navigationPath
     }
 
@@ -57,8 +63,10 @@ struct ContentView: View {
                 AccessibilityNotification.Announcement(announcement).post()
             }
             switch state.navigationIntent(isRecordOnlyCapture: model.isRecordOnlyCapture) {
-            case .returnToPicker:
+            case .returnToPicker where !route.preservesNavigationOnConnectionLoss:
                 navigate(to: .devicePicker)
+            case .returnToPicker:
+                break
             case let .openRide(connectionRoute) where route == .devicePicker:
                 navigate(to: CutoutAppRoute.route(for: connectionRoute))
             case .stay, .openRide:
@@ -99,6 +107,14 @@ struct ContentView: View {
         navigationPath = CutoutAppRoute.navigationPath(for: route)
     }
 
+    private func closeRideMapDetail() {
+        guard case .rideMapDetail = navigationPath.last else {
+            navigate(to: .rideMap)
+            return
+        }
+        navigationPath.removeLast()
+    }
+
     private func disconnectAndReturnToPicker() {
         model.disconnectTransport()
         navigate(to: .devicePicker)
@@ -119,14 +135,19 @@ struct ContentView: View {
                     .ignoresSafeArea()
                 routedContent(for: destination)
             }
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
             .accessibilityFocused($focusedRoute, equals: destination)
+        } else if isRideMapDetail(destination) || (destination == .rideMap && model.selectedConnectionRoute == nil) {
+            mapDestinationContent(for: destination)
         } else {
             let tabs = TabView(selection: tabSelection) {
                 ForEach(availableTabs) { tab in
                     if let tabRoute = destination.destination(for: tab) {
                         Tab(value: tab.id) {
-                            connectedDestination(for: tabRoute)
-                                .id(tabRoute)
+                            destinationSurface(
+                                for: tabRoute,
+                                usesConnectedShell: true
+                            )
                         } label: {
                             Label(tab.title, systemImage: tab.id.systemImage)
                         }
@@ -145,21 +166,61 @@ struct ContentView: View {
         }
     }
 
-    private func connectedDestination(for destination: CutoutAppRoute) -> some View {
+    private func isRideMapDetail(_ destination: CutoutAppRoute) -> Bool {
+        if case .rideMapDetail = destination { return true }
+        return false
+    }
+
+    private func isRideMapDestination(_ destination: CutoutAppRoute) -> Bool {
+        destination == .rideMap || isRideMapDetail(destination)
+    }
+
+    @MainActor
+    static func usesConnectedMapShell(
+        for destination: CutoutAppRoute,
+        isConnected: Bool
+    ) -> Bool {
+        destination == .rideMap && isConnected
+    }
+
+    /// Shared map presentation shell for connected tabs and the home-route entry.
+    /// The only intentional difference between those paths is the surrounding tab or
+    /// navigation chrome; Map content, safe-area ownership, and accessibility context
+    /// stay in one place.
+    @ViewBuilder
+    private func mapDestinationContent(for destination: CutoutAppRoute) -> some View {
+        destinationSurface(
+            for: destination,
+            usesConnectedShell: Self.usesConnectedMapShell(
+                for: destination,
+                isConnected: model.selectedConnectionRoute != nil
+            )
+        )
+    }
+
+    @ViewBuilder
+    private func destinationSurface(
+        for destination: CutoutAppRoute,
+        usesConnectedShell: Bool
+    ) -> some View {
         ZStack {
             PevColors.pageBackground
                 .ignoresSafeArea()
-
-            PevAppShell(
-                sectionTitle: appSectionTitle(for: destination),
-                disconnect: disconnectAndReturnToPicker
-            ) {
+            if usesConnectedShell {
+                PevAppShell(
+                    sectionTitle: appSectionTitle(for: destination),
+                    disconnect: disconnectAndReturnToPicker
+                ) {
+                    routedContent(for: destination)
+                }
+            } else {
                 routedContent(for: destination)
             }
-            .accessibilityElement(children: .contain)
-            .accessibilityLabel(appSectionTitle(for: destination))
-            .accessibilityFocused($focusedRoute, equals: destination)
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel(appSectionTitle(for: destination))
+        .accessibilityFocused($focusedRoute, equals: destination)
     }
 
     @ViewBuilder
@@ -180,6 +241,22 @@ struct ContentView: View {
             VescDebugRouteView(model: model)
         case .capture:
             CaptureRouteView(model: model, finishCapture: finishCaptureAndReturnToPicker)
+        case .rideMap:
+            RideMapRouteView(model: model, presentation: rideMapPresentation, { rideID in
+                model.rideMapMode = .history
+                navigate(to: .rideMapDetail(rideID: rideID))
+            },
+            showsNavigationHeader: model.selectedConnectionRoute == nil,
+            showBackButton: model.selectedConnectionRoute == nil,
+            back: { navigate(to: .devicePicker) })
+        case let .rideMapDetail(rideID):
+            RideMapRouteView(
+                model: model,
+                presentation: rideMapPresentation,
+                initialHistoryID: rideID,
+                detailOnly: true,
+                closeDetail: closeRideMapDetail
+            )
         case .devicePicker:
             EmptyView()
         }
@@ -195,13 +272,15 @@ struct ContentView: View {
             localizedAppText("navigation.section.debug")
         case .capture:
             localizedAppText("navigation.section.capture")
+        case .rideMap, .rideMapDetail:
+            localizedAppText("navigation.section.map")
         case .devicePicker:
             localizedAppText("navigation.section.ride")
         }
     }
 
     private var availableTabs: [PevScreenTab] {
-        route.availableNavigationTabs
+        route.availableNavigationTabs(for: model.selectedConnectionRoute)
     }
 
     private var tabSelection: Binding<PevScreenTabID> {
@@ -221,8 +300,8 @@ struct ContentView: View {
 
     private var tabAccent: Color {
         #if os(iOS)
-        switch route {
-        case .vescRide, .vescDebug:
+        switch model.selectedConnectionRoute {
+        case .vescOnewheel:
             Color(uiColor: UIColor { traits in
                 traits.userInterfaceStyle == .dark
                     ? .systemPurple
@@ -233,7 +312,7 @@ struct ContentView: View {
                 traits.userInterfaceStyle == .dark
                     ? .systemYellow
                     : UIColor(red: 0.45, green: 0.25, blue: 0.0, alpha: 1)
-                })
+            })
         }
         #else
         .primary

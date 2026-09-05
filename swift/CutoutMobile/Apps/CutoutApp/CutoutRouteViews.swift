@@ -22,6 +22,18 @@ struct DevicePickerRouteView: View {
                 return true
             }
         )
+        .safeAreaInset(edge: .bottom, spacing: 12) {
+            Button {
+                navigate(.rideMap)
+            } label: {
+                Label(localizedAppText("tab.map"), systemImage: "map")
+                    .frame(maxWidth: .infinity, minHeight: 44)
+            }
+            .buttonStyle(.borderedProminent)
+            .padding(.horizontal, 24)
+            .padding(.bottom, 8)
+            .accessibilityIdentifier("device-picker.open-map")
+        }
     }
 }
 

@@ -168,15 +168,15 @@ final class PevScreenCatalogTests: XCTestCase {
         XCTAssertEqual(pevLocalizedText("euc.status.charging"), "Charging")
     }
 
-    func testVescRideTabsKeepUnavailableDestinationsDisabled() {
+    func testVescRideTabsExposeMapAndKeepLogsDisabled() {
         let tabs = PevRideTabs.vescRideTabs()
 
         XCTAssertEqual(tabs.map(\.title), ["Ride", "Debug", "Map", "Logs"])
-        XCTAssertEqual(tabs[2].disabledReason, "Map is not available yet.")
+        XCTAssertNil(tabs[2].disabledReason)
         XCTAssertEqual(tabs[3].disabledReason, "Logs are not available yet.")
-        XCTAssertFalse(tabs[2].isEnabled)
+        XCTAssertTrue(tabs[2].isEnabled)
         XCTAssertFalse(tabs[3].isEnabled)
-        XCTAssertNil(tabs[2].destinationTarget)
+        XCTAssertEqual(tabs[2].destinationTarget, .rideMap)
         XCTAssertNil(tabs[3].destinationTarget)
     }
 
@@ -197,7 +197,7 @@ final class PevScreenCatalogTests: XCTestCase {
         XCTAssertEqual(DevicePickerRowState(action: .review).actionTitle, "Review")
         XCTAssertEqual(DevicePickerRowState(action: .later).actionTitle, "Later")
         XCTAssertEqual(PevRideTabs.eucRideTabs().map(\.title), ["Ride", "Pack", "Map", "Tune"])
-        XCTAssertEqual(PevRideTabs.vescRideTabs()[2].disabledReason, "Map is not available yet.")
+        XCTAssertEqual(PevRideTabs.vescRideTabs()[2].destinationTarget, .rideMap)
     }
 
     func testSharedPickerStatusCopyResolvesFromThePackageCatalog() {

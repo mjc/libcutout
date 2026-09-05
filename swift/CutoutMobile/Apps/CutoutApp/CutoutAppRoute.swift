@@ -49,6 +49,8 @@ enum CutoutAppRoute: Hashable {
     case vescRide
     case vescDebug
     case capture
+    case rideMap
+    case rideMapDetail(rideID: String)
 
     static func initialRoute() -> CutoutAppRoute {
         .devicePicker
@@ -86,16 +88,34 @@ enum CutoutAppRoute: Hashable {
             .eucPack(.root)
         case .vescRide:
             .vescRide
+        case .rideMap:
+            .rideMap
         }
     }
 
     static func navigationPath(for route: CutoutAppRoute) -> [CutoutAppRoute] {
-        route == .devicePicker ? [] : [route]
+        switch route {
+        case .devicePicker:
+            []
+        case let .rideMapDetail(rideID):
+            [.rideMap, .rideMapDetail(rideID: rideID)]
+        default:
+            [route]
+        }
     }
 
-    var navigationTabs: [PevScreenTab] {
+    var preservesNavigationOnConnectionLoss: Bool {
         switch self {
-        case .devicePicker, .capture:
+        case .rideMap, .rideMapDetail:
+            true
+        default:
+            false
+        }
+    }
+
+    private var routeTabs: [PevScreenTab] {
+        switch self {
+        case .devicePicker, .capture, .rideMap, .rideMapDetail:
             []
         case .eucRide:
             PevRideTabs.eucRideTabs(selected: .eucRide)
@@ -108,8 +128,38 @@ enum CutoutAppRoute: Hashable {
         }
     }
 
-    var availableNavigationTabs: [PevScreenTab] {
-        navigationTabs.filter { $0.isEnabled && $0.destinationTarget != nil }
+    func navigationTabs(for connectionRoute: DevicePickerConnectionRoute?) -> [PevScreenTab] {
+        switch self {
+        case .rideMap, .rideMapDetail:
+            guard let connectionRoute else {
+                return [PevScreenTab(
+                    id: .map,
+                    title: pevLocalizedText("tab.map"),
+                    isSelected: true,
+                    destinationTarget: .rideMap
+                )]
+            }
+            let tabs = switch connectionRoute {
+            case .electricUnicycle: PevRideTabs.eucRideTabs()
+            case .vescOnewheel: PevRideTabs.vescRideTabs()
+            }
+            return tabs.map { tab in
+                PevScreenTab(
+                    id: tab.id,
+                    title: tab.title,
+                    isSelected: tab.id == .map,
+                    destinationScreenID: tab.destinationScreenID,
+                    destinationTarget: tab.destinationTarget,
+                    disabledReason: tab.disabledReason
+                )
+            }
+        default:
+            return routeTabs
+        }
+    }
+
+    func availableNavigationTabs(for connectionRoute: DevicePickerConnectionRoute?) -> [PevScreenTab] {
+        navigationTabs(for: connectionRoute).filter { $0.isEnabled && $0.destinationTarget != nil }
     }
 
     func destination(for tab: PevScreenTab) -> CutoutAppRoute? {

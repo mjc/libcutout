@@ -17,6 +17,7 @@ public enum PevNavigationTarget: Equatable, Hashable, Sendable {
     case screen(PevScreenID)
     case eucPack
     case vescRide
+    case rideMap
 }
 
 public enum DevicePickerConnectionRoute: String, Equatable, Hashable, Sendable {

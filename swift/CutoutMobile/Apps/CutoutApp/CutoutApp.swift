@@ -10,6 +10,7 @@ struct CutoutApp: App {
     @NSApplicationDelegateAdaptor(CutoutAppDelegate.self) private var appDelegate
     #endif
     @State private var model = CutoutAppModel()
+    @State private var rideMapPresentation = RideMapPresentationState()
     @State private var navigationPath = CutoutAppRoute.navigationPath(for: .initialRoute())
     @Environment(\.scenePhase) private var scenePhase
 
@@ -44,6 +45,7 @@ struct CutoutApp: App {
                 navigationTabs: navigationTabs,
                 currentRoute: currentRoute,
                 navigationPath: $navigationPath,
+                canDisconnect: model.selectedConnectionRoute != nil,
                 disconnect: model.disconnectTransport
             )
         }
@@ -52,10 +54,18 @@ struct CutoutApp: App {
     @ViewBuilder
     private var rootView: some View {
         #if os(macOS)
-        ContentView(model: model, navigationPath: $navigationPath)
+            ContentView(
+                model: model,
+                rideMapPresentation: rideMapPresentation,
+                navigationPath: $navigationPath
+            )
             .frame(minWidth: 360, minHeight: 280)
         #else
-        ContentView(model: model, navigationPath: $navigationPath)
+        ContentView(
+            model: model,
+            rideMapPresentation: rideMapPresentation,
+            navigationPath: $navigationPath
+        )
         #endif
     }
 
@@ -64,7 +74,7 @@ struct CutoutApp: App {
     }
 
     private var navigationTabs: [PevScreenTab] {
-        currentRoute.availableNavigationTabs
+        currentRoute.availableNavigationTabs(for: model.selectedConnectionRoute)
     }
 }
 
@@ -72,6 +82,7 @@ struct CutoutNavigationCommands: Commands {
     let navigationTabs: [PevScreenTab]
     let currentRoute: CutoutAppRoute
     @Binding var navigationPath: [CutoutAppRoute]
+    let canDisconnect: Bool
     let disconnect: () -> Void
 
     nonisolated static func shortcut(for tabID: PevScreenTabID) -> Character {
@@ -83,6 +94,13 @@ struct CutoutNavigationCommands: Commands {
         case .debug: "5"
         case .logs: "6"
         }
+    }
+
+    nonisolated static func canDisconnect(
+        currentRoute: CutoutAppRoute,
+        hasConnection: Bool
+    ) -> Bool {
+        currentRoute != .devicePicker && hasConnection
     }
 
     var body: some Commands {
@@ -110,7 +128,7 @@ struct CutoutNavigationCommands: Commands {
                 navigationPath = CutoutAppRoute.navigationPath(for: .devicePicker)
             }
             .keyboardShortcut("d", modifiers: [.command, .shift])
-            .disabled(currentRoute == .devicePicker)
+            .disabled(!Self.canDisconnect(currentRoute: currentRoute, hasConnection: canDisconnect))
         }
     }
 }
