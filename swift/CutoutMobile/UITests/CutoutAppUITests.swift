@@ -211,6 +211,21 @@ final class CutoutAppUITests: XCTestCase {
         XCTAssertEqual(Fixture.testFixture(for: "testEUCReconnectKeepsRideRoute"), .eucReconnect)
     }
 
+    func testHomeMapRouteKeepsMapAndStartActionReachable() throws {
+        XCTAssertTrue(pairAvailableDevice(.vesc))
+        let mapButton = app.buttons["dashboard.nav.map"]
+        XCTAssertTrue(mapButton.waitForExistence(timeout: 8), app.debugDescription)
+        XCTAssertTrue(mapButton.isHittable)
+        mapButton.tap()
+
+        let mapScreen = app.descendants(matching: .any)["ride-map.screen"]
+        XCTAssertTrue(mapScreen.waitForExistence(timeout: 8), app.debugDescription)
+        XCTAssertTrue(app.descendants(matching: .any)["ride-map.map"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.segmentedControls.firstMatch.waitForExistence(timeout: 5), app.debugDescription)
+        XCTAssertTrue(app.buttons["ride-map.start"].waitForExistence(timeout: 5), app.debugDescription)
+        XCTAssertGreaterThanOrEqual(app.buttons["ride-map.start"].frame.height, 44)
+    }
+
     func testCaptureAnnotationUsesOneStatefulAccessibleAction() {
         enterCapture()
 

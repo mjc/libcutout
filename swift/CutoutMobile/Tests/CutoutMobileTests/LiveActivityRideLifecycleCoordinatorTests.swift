@@ -514,7 +514,7 @@ final class LiveActivityRideLifecycleCoordinatorTests: XCTestCase {
         let secondReconciliation = Task {
             await coordinator.reconcile(requestID: 2, snapshot: second, shouldBeActive: true)
         }
-        try? await Task.sleep(for: .milliseconds(50))
+        await yieldTurns()
 
         let eventsBeforeRelease = await manager.recordedEvents()
         XCTAssertEqual(eventsBeforeRelease, [.start(first)])
@@ -541,11 +541,11 @@ final class LiveActivityRideLifecycleCoordinatorTests: XCTestCase {
         let staleEnd = Task {
             await coordinator.end(requestID: 2, reason: .disconnected)
         }
-        try? await Task.sleep(for: .milliseconds(50))
+        await yieldTurns()
         let latestReconciliation = Task {
             await coordinator.reconcile(requestID: 3, snapshot: latest, shouldBeActive: true)
         }
-        try? await Task.sleep(for: .milliseconds(50))
+        await yieldTurns()
 
         await manager.resumeFirstStart()
         await firstReconciliation.value
@@ -593,6 +593,12 @@ final class LiveActivityRideLifecycleCoordinatorTests: XCTestCase {
             ),
             LiveActivityRideReconciliation(adoptedIndex: 1, staleIndices: [0, 2])
         )
+    }
+}
+
+private func yieldTurns(_ count: Int = 1_000) async {
+    for _ in 0 ..< count {
+        await Task.yield()
     }
 }
 

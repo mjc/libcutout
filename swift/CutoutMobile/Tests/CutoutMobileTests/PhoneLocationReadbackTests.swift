@@ -51,6 +51,28 @@ final class PhoneLocationReadbackTests: XCTestCase {
         XCTAssertEqual(readback.detail(at: MonotonicMilliseconds(10_001)), "GPS unavailable")
     }
 
+    func testCoreLocationSampleExposesUnitTypedMetrics() {
+        let sample = MobilePhoneLocationSampleDto(
+            wallClockUnixMs: 1_700_000_000_000,
+            latitudeDegrees: 39.7,
+            longitudeDegrees: -104.9,
+            altitudeMeters: 1_600,
+            horizontalAccuracyMeters: 4,
+            verticalAccuracyMeters: 6,
+            speedMetersPerSecond: 2,
+            speedAccuracyMetersPerSecond: 0.2,
+            courseDegrees: 90,
+            courseAccuracyDegrees: 3
+        )
+
+        XCTAssertEqual(sample.latitudeDegrees, 39.7)
+        XCTAssertEqual(sample.longitudeDegrees, -104.9)
+        XCTAssertEqual(sample.altitudeMeters, 1_600)
+        XCTAssertEqual(sample.horizontalAccuracyMeters, 4)
+        XCTAssertEqual(sample.speedMetersPerSecond, 2)
+        XCTAssertEqual(sample.courseDegrees, 90)
+    }
+
     private func snapshot(sampleTime: UInt64, speed: Int32?) -> MobilePhoneLocationSnapshotDto {
         let sample = MobilePhoneLocationSampleDto(
             wallClockUnixMs: sampleTime,
@@ -59,7 +81,7 @@ final class PhoneLocationReadbackTests: XCTestCase {
             altitudeMeters: 1_600,
             horizontalAccuracyMeters: 4,
             verticalAccuracyMeters: 6,
-            speedMetersPerSecond: speed.map { Double($0) / 1_000 } ?? -1,
+            speedMetersPerSecond: speed.map { Double($0) / 1_000 },
             speedAccuracyMetersPerSecond: 0.2,
             courseDegrees: 90,
             courseAccuracyDegrees: 3
