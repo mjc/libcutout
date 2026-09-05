@@ -884,7 +884,7 @@ public final class AppleMusicProviderAdapter {
         case .openProvider:
 #if canImport(UIKit) && os(iOS)
             guard UIApplication.shared.canOpenURL(Self.providerURL) else { return .unavailable }
-            UIApplication.shared.open(Self.providerURL)
+            guard await UIApplication.shared.open(Self.providerURL) else { return .failed }
 #else
             return .unavailable
 #endif
@@ -970,7 +970,7 @@ public struct SpotifyProviderAdapter: Sendable {
         guard case .openProvider = command else { return .unavailable }
 #if canImport(UIKit) && os(iOS)
         guard UIApplication.shared.canOpenURL(Self.providerURL) else { return .unavailable }
-        UIApplication.shared.open(Self.providerURL)
+        guard await UIApplication.shared.open(Self.providerURL) else { return .failed }
         return .accepted
 #else
         return .unavailable
