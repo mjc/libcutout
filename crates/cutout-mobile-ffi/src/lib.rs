@@ -15890,6 +15890,33 @@ mod tests {
     }
 
     #[test]
+    fn aero_settings_simulator_preserves_typed_refusal_through_mobile_ffi() {
+        let simulator = AeroSettingsSimulator::new();
+        let command = MobileCommandDto::SetAeroPwmPercent(MobileAeroPwmPercentDto { percent: 71 });
+        let result = simulator.issue_checked(
+            command,
+            RideOperatingState::Riding,
+            Some(Speed { value: 501 }),
+            ms(10),
+        );
+
+        assert_eq!(
+            result.error,
+            Some(MobileSessionStepErrorDto {
+                kind: MobileSessionStepErrorKindDto::CommandRefused,
+                command: Some(command),
+                reason: Some(MobileControlRefusalReasonDto::MissingArm),
+            })
+        );
+        assert!(
+            result
+                .outputs
+                .iter()
+                .all(|output| output.kind != MobileSessionOutputKindDto::Write)
+        );
+    }
+
+    #[test]
     fn falcon_wrapper_surfaces_unsupported_command_error() {
         let session = FalconBenignControlSession::new().expect("default profile should construct");
 
