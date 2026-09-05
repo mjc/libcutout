@@ -9,6 +9,11 @@ use std::{
 };
 
 use anyhow::{Context, Result, bail, ensure};
+use cutout_core::{
+    AeroAngleAdjustment, AeroPwmPercent, AeroSpeedSetting, DeviceCommand, LightState,
+    MonotonicTimestamp, PedalMode, RideOperatingState,
+};
+use cutout_protocols::AeroSettingsSimulator;
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 
@@ -50,6 +55,7 @@ impl Drop for SwiftFfiLock {
 
 #[derive(Debug, Eq, PartialEq)]
 enum DevCommand {
+    AeroSettingsSimulator,
     SwiftFfi,
     IosDeploy(Vec<String>),
 }
@@ -58,6 +64,7 @@ fn main() -> Result<()> {
     let root = workspace_root();
     let args = env::args().skip(1).collect::<Vec<_>>();
     match parse_cli(&args)? {
+        DevCommand::AeroSettingsSimulator => run_aero_settings_simulator(),
         DevCommand::SwiftFfi => ensure_swift_ffi(&root),
         DevCommand::IosDeploy(launch_args) => deploy_ios(&root, &launch_args),
     }
@@ -65,6 +72,9 @@ fn main() -> Result<()> {
 
 fn parse_cli(args: &[String]) -> Result<DevCommand> {
     match args {
+        [simulator, scenario] if simulator == "simulator" && scenario == "aero-settings" => {
+            Ok(DevCommand::AeroSettingsSimulator)
+        }
         [command] if command == "swift-ffi" => Ok(DevCommand::SwiftFfi),
         [ios, deploy] if ios == "ios" && deploy == "deploy" => {
             Ok(DevCommand::IosDeploy(Vec::new()))
@@ -74,8 +84,64 @@ fn parse_cli(args: &[String]) -> Result<DevCommand> {
         {
             Ok(DevCommand::IosDeploy(launch_args.to_vec()))
         }
-        _ => bail!("usage: cutout-dev swift-ffi | cutout-dev ios deploy [-- <launch args>...]"),
+        _ => bail!(
+            "usage: cutout-dev simulator aero-settings | cutout-dev swift-ffi | cutout-dev ios deploy [-- <launch args>...]"
+        ),
     }
+}
+
+fn run_aero_settings_simulator() -> Result<()> {
+    let commands = [
+        DeviceCommand::SetAeroTiltbackSpeed(
+            AeroSpeedSetting::new(53).context("53 km/h is a valid Aero tiltback speed")?,
+        ),
+        DeviceCommand::SetAeroPwmPercent(
+            AeroPwmPercent::new(64).context("64% is a valid Aero PWM setting")?,
+        ),
+        DeviceCommand::SetAeroAlarmSpeed(
+            AeroSpeedSetting::new(56).context("56 km/h is a valid Aero alarm speed")?,
+        ),
+        DeviceCommand::SetAeroAngleAdjustment(
+            AeroAngleAdjustment::new(-12).context("-1.2 degrees is a valid Aero angle")?,
+        ),
+        DeviceCommand::SetPedalMode(PedalMode::Hard),
+        DeviceCommand::SetAeroHighBeam(LightState::On),
+        DeviceCommand::SetLights(LightState::On),
+        DeviceCommand::ResetTripMeter,
+    ];
+    let mut simulator = AeroSettingsSimulator::default();
+    println!("model={:?}", AeroSettingsSimulator::registry_entry().model);
+    println!(
+        "gatt_fingerprints={}",
+        AeroSettingsSimulator::gatt_fingerprints().len()
+    );
+
+    for (index, command) in commands.into_iter().enumerate() {
+        let high_beam = matches!(command, DeviceCommand::SetAeroHighBeam(_));
+        let before = simulator.writes().len();
+        let monotonic_ms =
+            10 + u64::try_from(index).context("scenario index fits in a timestamp")?;
+        let _ = simulator.issue(
+            command,
+            RideOperatingState::Parked,
+            None,
+            MonotonicTimestamp::new(monotonic_ms),
+        );
+        if high_beam {
+            let _ = simulator.tick(MonotonicTimestamp::new(monotonic_ms + 1));
+        }
+        println!("command={command:?}");
+        for write in &simulator.writes()[before..] {
+            println!(
+                "  write channel={:?} mode={:?} payload={}",
+                write.channel,
+                write.mode,
+                hex(write.payload.as_slice())
+            );
+        }
+        println!("  readback={:?}", simulator.readback());
+    }
+    Ok(())
 }
 
 fn workspace_root() -> PathBuf {
