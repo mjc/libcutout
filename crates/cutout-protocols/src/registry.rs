@@ -179,7 +179,7 @@ mod tests {
         BEGODE_SERVICE_CHANNEL, BegodeFalconModel, BegodePackVoltageProfile, MODEL_CATALOG,
         MODEL_REGISTRY, NOSFET_AERO_REGISTRY_ENTRY, NOSFET_AERO_SESSION_KEY, NosfetAeroModel,
         RegisteredEucSession, RegisteredModelSpec, VETERAN_DATA_CHANNEL, VETERAN_PARSER_KEY,
-        begode_falcon_target_voltage_profile, find_session_registration,
+        VETERAN_SERVICE_CHANNEL, begode_falcon_target_voltage_profile, find_session_registration,
     };
 
     #[test]
@@ -414,7 +414,7 @@ mod tests {
             panic!("Aero should have exactly one hardware-backed GATT fingerprint");
         };
 
-        assert_eq!(fingerprint.service, VETERAN_DATA_CHANNEL);
+        assert_eq!(fingerprint.service, VETERAN_SERVICE_CHANNEL);
         assert_eq!(fingerprint.characteristic, VETERAN_DATA_CHANNEL);
         assert!(fingerprint.roles.supports_read());
         assert!(fingerprint.roles.supports_write());

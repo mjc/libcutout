@@ -20,31 +20,32 @@ use cutout_btle::{
     TransportWriteCount, WriteProvenance, capture_raw_notifications,
     capture_reconnecting_session_with_commands, capture_session_with_channel_pair,
     capture_session_with_commands, connect_and_discover, drive_session,
-    drive_session_with_commands, read_battery_level, scan_peripherals,
+    drive_session_with_channel_pair, drive_session_with_commands, read_battery_level,
+    scan_peripherals,
 };
 use cutout_core::{
-    BatteryPageKind, BatteryPagePayload, BatteryReadback, BatteryReadbackAvailability,
-    CaptureDistribution, CaptureEvidence, CapturePrivacy, CaptureSessionLabel,
-    CatalogModelResolution, CommandKind, DeviceCommand, DeviceEvent, DiagnosticError,
-    DiagnosticErrorKind, DiagnosticSnapshot, FirmwareInfo, GattChannel, HostSession, Measured,
-    ModelCatalog, MonotonicTimestamp, NotificationByteLen, ParserDiagnostics, PevcapCapture,
-    PevcapDirection, PevcapEncoding, PevcapHeader, PevcapReader, PevcapRecord, PevcapReplayMode,
-    PevcapReplayStats, PevcapResolvedIdentity, ProtocolFamily, ProtocolSession, ReadOnlyResponse,
-    ReplayChunkComparison, SessionInput, SessionKey, SessionOutput, SettingsReadback,
-    SettingsReadbackAvailability, TelemetrySnapshot, TransportAction, TransportWriteLimit,
-    ValueQuality, ValueSource, VerificationStatus, VerifiedValue, WallClockUnixTimestamp,
-    WriteMode, WritePayload,
+    AeroAngleAdjustment, AeroPwmPercent, AeroSpeedSetting, BatteryPageKind, BatteryPagePayload,
+    BatteryReadback, BatteryReadbackAvailability, CaptureDistribution, CaptureEvidence,
+    CapturePrivacy, CaptureSessionLabel, CatalogModelResolution, CommandKind, DeviceCommand,
+    DeviceEvent, DiagnosticError, DiagnosticErrorKind, DiagnosticSnapshot, FirmwareInfo,
+    GattChannel, HostSession, LightState, Measured, ModelCatalog, MonotonicTimestamp,
+    NotificationByteLen, ParserDiagnostics, PedalMode, PevcapCapture, PevcapDirection,
+    PevcapEncoding, PevcapHeader, PevcapReader, PevcapRecord, PevcapReplayMode, PevcapReplayStats,
+    PevcapResolvedIdentity, ProtocolFamily, ProtocolSession, ReadOnlyResponse,
+    ReplayChunkComparison, RideOperatingState, SessionInput, SessionKey, SessionOutput,
+    SettingsReadback, SettingsReadbackAvailability, StationarySettingsPolicy, TelemetrySnapshot,
+    TransportAction, TransportWriteLimit, ValueQuality, ValueSource, VerificationStatus,
+    VerifiedValue, WallClockUnixTimestamp, WriteMode, WritePayload,
 };
-#[cfg(test)]
-use cutout_protocols::VETERAN_DATA_CHANNEL;
 use cutout_protocols::{
     BEGODE_DATA_CHANNEL, BEGODE_FALCON_REGISTRY_ENTRY, BEGODE_FALCON_SESSION_KEY, BegodeBmsSummary,
     BegodeCapacityEvidence, BegodeCapacitySelection, BegodeFrameParseResult,
     BegodeFrameReassembler, BegodePackEvidenceConsistency, BegodePackLayoutEvidence,
     BegodePackLayoutSelection, BegodeVoltageEvidence, BegodeVoltageProfileSelection, MODEL_CATALOG,
-    NOSFET_AERO_SESSION_KEY, ReadOnlySession, RefloatReadOnlyRequest, RefloatRealtimeValue,
-    RefloatReply, RefloatStreamDecoder, RefloatStreamResult, RegisteredEucSession,
-    VESC_MAX_FRAME_LEN, VESC_NOTIFY_CHANNEL, VESC_WRITE_CHANNEL, VescReadOnlyCodec,
+    NOSFET_AERO_REGISTRY_ENTRY, NOSFET_AERO_SESSION_KEY, ProtocolModelSpec, ReadOnlySession,
+    RefloatReadOnlyRequest, RefloatRealtimeValue, RefloatReply, RefloatStreamDecoder,
+    RefloatStreamResult, RegisteredEucSession, StationarySettingsWriteSession, VESC_MAX_FRAME_LEN,
+    VESC_NOTIFY_CHANNEL, VESC_WRITE_CHANNEL, VETERAN_DATA_CHANNEL, VescReadOnlyCodec,
     VescReadOnlyReply, VescReadOnlyRequest, VescReadOnlyStreamDecoder, VescReadOnlyStreamResult,
     VescStatsMask, begode_falcon_session_with_voltage_profile, encode_refloat_request,
     find_session_registration, select_begode_pack_capacity_from_annotations,
@@ -54,9 +55,9 @@ use cutout_protocols::{
 use tracing::{debug, info};
 
 use crate::cli::{
-    CaptureArgs, Cli, Command, DashboardArgs, PevcapArgs, PevcapCommand, PevcapConvertArgs,
-    PevcapFormat, PevcapReplayProfile, RawSubscribeArgs, ReadProbe, SessionProfile,
-    TargetedScanArgs, VescProbe, VescProbeArgs,
+    AeroSetting, AeroWriteArgs, CaptureArgs, Cli, Command, DashboardArgs, PevcapArgs,
+    PevcapCommand, PevcapConvertArgs, PevcapFormat, PevcapReplayProfile, RawSubscribeArgs,
+    ReadProbe, SessionProfile, TargetedScanArgs, VescProbe, VescProbeArgs,
 };
 use crate::dashboard::{
     DashboardCaptureProvenance, DashboardState, DashboardUpdate, firmware_summary_string,
@@ -84,6 +85,7 @@ pub async fn run(cli: Cli) -> Result<()> {
         Command::Pevcap(args) => pevcap(args)?,
         Command::Dashboard(args) => dashboard(args).await?,
         Command::VescProbe(args) => vesc_probe(args).await?,
+        Command::AeroWrite(args) => aero_write(args).await?,
     }
 
     Ok(())
@@ -1579,6 +1581,143 @@ async fn connect(args: TargetedScanArgs, mode: SessionMode) -> Result<()> {
     }
 
     Ok(())
+}
+
+async fn aero_write(args: AeroWriteArgs) -> Result<()> {
+    if !args.confirm_stationary {
+        bail!("aero-write requires --confirm-stationary");
+    }
+    if args.profile != SessionProfile::Aero {
+        bail!("aero-write requires --profile aero; auto-selection is refused for writes");
+    }
+    if args.target.name_contains.is_some() {
+        bail!("aero-write selects a peripheral by --id or --address, never by advertised name");
+    }
+    if args.target.identifier.is_none() && args.target.address.is_none() {
+        bail!("aero-write requires --id or --address");
+    }
+
+    let command = parse_aero_write_command(args.setting, &args.value)?;
+    let connection = connect_and_discover(
+        &args.target.into(),
+        ScanWindow::from_secs(args.scan.seconds()),
+    )
+    .await?;
+    if !aero_protocol_fingerprint_matches(&connection.summary) {
+        bail!(
+            "connected peripheral GATT fingerprint does not match the Aero protocol profile; no write issued"
+        );
+    }
+    let endpoints = connection
+        .summary
+        .select_session_endpoints()
+        .context("no writable and notification-capable Aero endpoints discovered")?;
+    let mut probe = ReadOnlySession::<cutout_protocols::NosfetAeroModel, true>::default();
+    let probe_report = drive_session_with_channel_pair(
+        &connection.peripheral,
+        &mut probe,
+        SessionChannelPair::new(VETERAN_DATA_CHANNEL, VETERAN_DATA_CHANNEL),
+        &connection.summary,
+        endpoints,
+        NotificationWindow::from_secs(args.scan.seconds()),
+        &[DeviceCommand::RequestFirmwareInfo],
+    )
+    .await?;
+    if !aero_protocol_model_id_matches(&probe_report) {
+        bail!(
+            "connected peripheral did not report the Aero protocol model id; no settings write issued"
+        );
+    }
+    info!("{}", connection.summary);
+    print_session_endpoints(endpoints);
+
+    let mut session =
+        StationarySettingsWriteSession::<cutout_protocols::NosfetAeroModel, true>::default();
+    let arm = StationarySettingsPolicy {
+        model: cutout_protocols::NosfetAeroModel::MODEL,
+        arm_duration: cutout_core::Duration::from_milliseconds(5_000),
+    }
+    .arm(RideOperatingState::Parked, MonotonicTimestamp::new(0))
+    .context("stationary confirmation did not produce a settings arm")?;
+    session.arm(arm);
+    let commands = [DeviceCommand::RequestTelemetry, command];
+    let report = drive_session_with_channel_pair(
+        &connection.peripheral,
+        &mut session,
+        SessionChannelPair::new(VETERAN_DATA_CHANNEL, VETERAN_DATA_CHANNEL),
+        &connection.summary,
+        endpoints,
+        NotificationWindow::from_secs(args.scan.seconds()),
+        &commands,
+    )
+    .await?;
+    print_session_report(&report);
+    info!(setting = ?args.setting, "Aero settings write completed");
+    Ok(())
+}
+
+fn aero_protocol_fingerprint_matches(summary: &cutout_btle::ConnectionSummary) -> bool {
+    NOSFET_AERO_REGISTRY_ENTRY.gatt.iter().any(|expected| {
+        summary.iter_gatt_fingerprints().any(|observed| {
+            observed.service == expected.service
+                && observed.characteristic == expected.characteristic
+                && (!expected.roles.supports_read() || observed.roles.supports_read())
+                && (!expected.roles.supports_write() || observed.roles.supports_write())
+                && (!expected.roles.supports_write_without_response()
+                    || observed.roles.supports_write_without_response())
+                && (!expected.roles.supports_notify() || observed.roles.supports_notify())
+                && (!expected.roles.supports_indicate() || observed.roles.supports_indicate())
+        })
+    })
+}
+
+fn aero_protocol_model_id_matches(report: &SessionBridgeReport) -> bool {
+    let Some(expected) = NOSFET_AERO_REGISTRY_ENTRY.wire_model_id else {
+        return false;
+    };
+    report
+        .firmware
+        .and_then(|firmware| firmware.firmware_major)
+        .is_some_and(|observed| observed.value == expected.value)
+}
+
+fn parse_aero_write_command(setting: AeroSetting, value: &str) -> Result<DeviceCommand> {
+    match setting {
+        AeroSetting::Headlight => Ok(DeviceCommand::SetLights(parse_light_state(value)?)),
+        AeroSetting::HighBeam => Ok(DeviceCommand::SetAeroHighBeam(parse_light_state(value)?)),
+        AeroSetting::Pedal => Ok(DeviceCommand::SetPedalMode(match value {
+            "hard" => PedalMode::Hard,
+            "medium" => PedalMode::Medium,
+            "soft" => PedalMode::Soft,
+            _ => bail!("pedal value must be hard, medium, or soft"),
+        })),
+        AeroSetting::TiltbackSpeed => Ok(DeviceCommand::SetAeroTiltbackSpeed(
+            AeroSpeedSetting::new(value.parse().context("tiltback speed must be 1..=99")?)
+                .context("tiltback speed must be 1..=99")?,
+        )),
+        AeroSetting::Pwm => Ok(DeviceCommand::SetAeroPwmPercent(
+            AeroPwmPercent::new(value.parse().context("PWM must be 0..=100")?)
+                .context("PWM must be 0..=100")?,
+        )),
+        AeroSetting::AlarmSpeed => Ok(DeviceCommand::SetAeroAlarmSpeed(
+            AeroSpeedSetting::new(value.parse().context("alarm speed must be 1..=99")?)
+                .context("alarm speed must be 1..=99")?,
+        )),
+        AeroSetting::Angle => Ok(DeviceCommand::SetAeroAngleAdjustment(
+            AeroAngleAdjustment::new(value.parse().context("angle must be -100..=100 tenths")?)
+                .context("angle must be -100..=100 tenths")?,
+        )),
+        AeroSetting::TripReset if value == "reset" => Ok(DeviceCommand::ResetTripMeter),
+        AeroSetting::TripReset => bail!("trip-reset value must be reset"),
+    }
+}
+
+fn parse_light_state(value: &str) -> Result<LightState> {
+    match value {
+        "on" => Ok(LightState::On),
+        "off" => Ok(LightState::Off),
+        _ => bail!("light value must be on or off"),
+    }
 }
 
 async fn vesc_probe(args: VescProbeArgs) -> Result<()> {
@@ -3520,6 +3659,68 @@ mod tests {
         ParserDroppedBytes::from_bytes(value)
     }
 
+    #[test]
+    fn aero_write_values_become_typed_commands() {
+        assert_eq!(
+            parse_aero_write_command(AeroSetting::Headlight, "off").expect("headlight parses"),
+            DeviceCommand::SetLights(LightState::Off)
+        );
+        assert_eq!(
+            parse_aero_write_command(AeroSetting::Pedal, "hard").expect("pedal parses"),
+            DeviceCommand::SetPedalMode(PedalMode::Hard)
+        );
+        assert_eq!(
+            parse_aero_write_command(AeroSetting::TiltbackSpeed, "31")
+                .expect("tiltback parses")
+                .kind(),
+            CommandKind::SetAeroTiltbackSpeed
+        );
+        assert_eq!(
+            parse_aero_write_command(AeroSetting::Pwm, "74")
+                .expect("PWM parses")
+                .kind(),
+            CommandKind::SetAeroPwmPercent
+        );
+        assert_eq!(
+            parse_aero_write_command(AeroSetting::Angle, "-12")
+                .expect("angle parses")
+                .kind(),
+            CommandKind::SetAeroAngleAdjustment
+        );
+        assert_eq!(
+            parse_aero_write_command(AeroSetting::TripReset, "reset").expect("trip reset parses"),
+            DeviceCommand::ResetTripMeter
+        );
+        assert!(parse_aero_write_command(AeroSetting::Pwm, "101").is_err());
+        assert!(parse_aero_write_command(AeroSetting::TripReset, "on").is_err());
+    }
+
+    #[test]
+    fn aero_write_requires_protocol_gatt_fingerprint() {
+        let summary = aero_connection_summary();
+        assert!(aero_protocol_fingerprint_matches(&summary));
+
+        let mut wrong = summary;
+        wrong.services[0].characteristics[0].uuid =
+            Uuid::from_u128(0x0000_ffe2_0000_1000_8000_0080_5f9b_34fb);
+        assert!(!aero_protocol_fingerprint_matches(&wrong));
+    }
+
+    #[test]
+    fn aero_write_requires_protocol_model_id() {
+        let mut report = SessionBridgeReport {
+            firmware: Some(FirmwareInfo {
+                firmware_major: Some(Measured::reported(43)),
+                ..FirmwareInfo::default()
+            }),
+            ..SessionBridgeReport::default()
+        };
+        assert!(aero_protocol_model_id_matches(&report));
+
+        report.firmware.as_mut().expect("firmware").firmware_major = Some(Measured::reported(42));
+        assert!(!aero_protocol_model_id_matches(&report));
+    }
+
     const fn diag_count(value: u64) -> ParserDiagnosticCount {
         ParserDiagnosticCount::from_events(value)
     }
@@ -3774,7 +3975,20 @@ mod tests {
                 .into(),
                 manufacturer_data: Vec::new().into(),
             },
-            services: Vec::new().into(),
+            services: vec![ServiceSummary {
+                uuid: Uuid::from_u128(0x0000_ffe0_0000_1000_8000_0080_5f9b_34fb),
+                primary: true,
+                characteristics: vec![cutout_btle::CharacteristicSummary {
+                    uuid: Uuid::from_u128(0x0000_ffe1_0000_1000_8000_0080_5f9b_34fb),
+                    service_uuid: Uuid::from_u128(0x0000_ffe0_0000_1000_8000_0080_5f9b_34fb),
+                    properties: CharPropFlags::READ
+                        | CharPropFlags::WRITE
+                        | CharPropFlags::WRITE_WITHOUT_RESPONSE
+                        | CharPropFlags::NOTIFY,
+                }]
+                .into(),
+            }]
+            .into(),
         }
     }
 

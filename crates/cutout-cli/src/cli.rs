@@ -8,11 +8,11 @@ use uuid::Uuid;
 const DEFAULT_SCAN_SECONDS: u64 = 5;
 const CLI_LONG_ABOUT: &str = "\
 Cutout is a cautious Bluetooth Low Energy utility for inspecting nearby PEV
-controllers and collecting read-only Aero/Veteran-family protocol evidence.
+controllers and collecting Aero/Veteran-family protocol evidence.
 
 The CLI currently focuses on discovery, endpoint inspection, and fixture
-capture. Commands may connect to hardware, but the protocol session used here
-is read-only.";
+capture. The explicitly confirmed `aero-write` command is the only mutating
+path and requires a stationary safety confirmation.";
 const CLI_AFTER_LONG_HELP: &str = "\
 Examples:
   cutout scan --seconds 10
@@ -23,6 +23,7 @@ Examples:
   cutout pevcap convert --input session.pevcap.jsonl --input-format jsonl --output session.pevcap --output-format binary
   cutout validation
   cutout vesc-probe --name-contains \"VESC BLE UART\"
+  cutout aero-write --id <platform-id> --profile aero --setting headlight --value off --confirm-stationary
   cutout dashboard --demo --device \"Aero NF2557\"
 
 Target selection:
@@ -104,6 +105,13 @@ prints the decoded session summary. Refloat package probes use the VESC custom
 app data path and stay read-only.
 
 No actuator commands are exposed.";
+const AERO_WRITE_LONG_ABOUT: &str = "\
+Issue one typed, stationary-gated NOSFET Aero settings write after connecting
+to a selected peripheral. The target is selected by its platform identifier or
+Bluetooth address; advertised names are never used for protocol identity.
+
+This command requires --confirm-stationary and is limited to the capture-backed
+Aero settings surface.";
 
 /// Parsed command-line arguments for the `cutout` binary.
 #[derive(Debug, Parser)]
@@ -151,6 +159,10 @@ pub(crate) enum Command {
     /// Probe a VESC BLE UART target directly.
     #[command(long_about = VESC_PROBE_LONG_ABOUT)]
     VescProbe(VescProbeArgs),
+
+    /// Issue one typed, stationary-gated NOSFET Aero settings write.
+    #[command(name = "aero-write", long_about = AERO_WRITE_LONG_ABOUT)]
+    AeroWrite(AeroWriteArgs),
 }
 
 impl Cli {
@@ -225,6 +237,43 @@ pub(crate) struct VescProbeArgs {
     /// Emit raw notification bytes as JSONL records.
     #[arg(long = "raw-notifications-jsonl")]
     pub(crate) raw_notifications_jsonl: bool,
+}
+
+#[derive(Clone, Debug, Args, PartialEq, Eq)]
+pub(crate) struct AeroWriteArgs {
+    #[command(flatten)]
+    pub(crate) target: TargetArgs,
+
+    #[command(flatten)]
+    pub(crate) scan: ScanArgs,
+
+    /// Explicitly selected protocol profile; `auto` is refused for writes.
+    #[arg(long, value_enum, default_value_t = SessionProfile::Auto)]
+    pub(crate) profile: SessionProfile,
+
+    /// Typed Aero setting to change.
+    #[arg(long, value_enum)]
+    pub(crate) setting: AeroSetting,
+
+    /// Typed value for the selected setting (`reset` for trip-reset).
+    #[arg(long, value_name = "VALUE")]
+    pub(crate) value: String,
+
+    /// Confirm the wheel is powered on and stationary before issuing the write.
+    #[arg(long)]
+    pub(crate) confirm_stationary: bool,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
+pub(crate) enum AeroSetting {
+    Headlight,
+    HighBeam,
+    Pedal,
+    TiltbackSpeed,
+    Pwm,
+    AlarmSpeed,
+    Angle,
+    TripReset,
 }
 
 impl VescProbeArgs {
@@ -606,11 +655,11 @@ mod tests {
     use uuid::Uuid;
 
     use super::{
-        CaptureArgs, CaptureDistributionArg, CaptureEvidenceArg, CaptureLabelArg,
-        CapturePrivacyArg, Cli, Command, DEFAULT_SCAN_SECONDS, DashboardArgs, PevcapArgs,
-        PevcapCommand, PevcapConvertArgs, PevcapFormat, PevcapReplayArgs, PevcapReplayProfile,
-        RawSubscribeArgs, ReadProbe, ScanArgs, SessionProfile, TargetArgs, TargetedScanArgs,
-        VescProbe, VescProbeArgs,
+        AeroSetting, AeroWriteArgs, CaptureArgs, CaptureDistributionArg, CaptureEvidenceArg,
+        CaptureLabelArg, CapturePrivacyArg, Cli, Command, DEFAULT_SCAN_SECONDS, DashboardArgs,
+        PevcapArgs, PevcapCommand, PevcapConvertArgs, PevcapFormat, PevcapReplayArgs,
+        PevcapReplayProfile, RawSubscribeArgs, ReadProbe, ScanArgs, SessionProfile, TargetArgs,
+        TargetedScanArgs, VescProbe, VescProbeArgs,
     };
 
     fn assert_contains_all(haystack: &str, needles: &[&str]) {
@@ -1807,7 +1856,8 @@ mod tests {
             &help,
             &[
                 "read-only",
-                "Commands may connect to hardware",
+                "only mutating",
+                "stationary safety confirmation",
                 "Examples:",
                 "cutout capture --name-contains NF2557 --seconds 20",
                 "--name-contains matches a case-sensitive substring",
@@ -1844,6 +1894,7 @@ mod tests {
                 "cutout pevcap convert --input session.pevcap.jsonl",
                 "cutout validation",
                 "cutout vesc-probe --name-contains \"VESC BLE UART\"",
+                "cutout aero-write --id <platform-id>",
                 "cutout dashboard",
             ],
         );
@@ -1867,8 +1918,45 @@ mod tests {
                 "validation",
                 "pevcap",
                 "dashboard",
-                "vesc-probe"
+                "vesc-probe",
+                "aero-write"
             ]
+        );
+    }
+
+    #[test]
+    fn parses_aero_write_with_protocol_target_and_stationary_confirmation() {
+        let cli = Cli::try_parse_from([
+            "cutout",
+            "aero-write",
+            "--id",
+            "platform-peripheral-id",
+            "--profile",
+            "aero",
+            "--setting",
+            "headlight",
+            "--value",
+            "off",
+            "--confirm-stationary",
+        ])
+        .expect("parser accepts typed Aero write");
+
+        assert_eq!(
+            cli.command,
+            Command::AeroWrite(AeroWriteArgs {
+                target: TargetArgs {
+                    address: None,
+                    identifier: Some("platform-peripheral-id".to_owned()),
+                    name_contains: None,
+                },
+                scan: ScanArgs {
+                    seconds: DEFAULT_SCAN_SECONDS,
+                },
+                profile: SessionProfile::Aero,
+                setting: AeroSetting::Headlight,
+                value: "off".to_owned(),
+                confirm_stationary: true,
+            })
         );
     }
 

@@ -22,13 +22,13 @@ use crate::{
     EncodedControlSequence, EncodedControlStep, EncodedRequest, FalconControlEncoder, FalconProbe,
     FalconRequestEncoder, RefloatCodecError, RefloatReadOnlyRequest, RefloatReply,
     RefloatStreamDecoder, RefloatStreamResult, RequestDisposition, VESC_NOTIFY_CHANNEL,
-    VESC_WRITE_CHANNEL, VETERAN_DATA_CHANNEL, VescBoardProfile, VescCodecError, VescReadOnlyCodec,
-    VescReadOnlyReply, VescReadOnlyRequest, VescReadOnlyStreamDecoder, VescReadOnlyStreamResult,
-    VescRequestEncoder, VescStatsTelemetry, VescValuesMask, VescValuesTelemetry,
-    VeteranBmsCellPage, VeteranBmsMetadataPage, VeteranBmsPageEvidence, VeteranBmsTemperaturePage,
-    VeteranFrame, VeteranFrameParseResult, VeteranFrameReassembler, VeteranReassemblyError,
-    VeteranTelemetry, VeteranTelemetryError, begode_falcon_target_voltage_profile,
-    decode_veteran_bms_page, util::u64_to_i64_saturating,
+    VESC_WRITE_CHANNEL, VETERAN_DATA_CHANNEL, VETERAN_SERVICE_CHANNEL, VescBoardProfile,
+    VescCodecError, VescReadOnlyCodec, VescReadOnlyReply, VescReadOnlyRequest,
+    VescReadOnlyStreamDecoder, VescReadOnlyStreamResult, VescRequestEncoder, VescStatsTelemetry,
+    VescValuesMask, VescValuesTelemetry, VeteranBmsCellPage, VeteranBmsMetadataPage,
+    VeteranBmsPageEvidence, VeteranBmsTemperaturePage, VeteranFrame, VeteranFrameParseResult,
+    VeteranFrameReassembler, VeteranReassemblyError, VeteranTelemetry, VeteranTelemetryError,
+    begode_falcon_target_voltage_profile, decode_veteran_bms_page, util::u64_to_i64_saturating,
 };
 
 /// Raw VESC electrical RPM telemetry field id.
@@ -1185,7 +1185,7 @@ fn gate_read_only_command<M: SupportsReadRequests>(command: DeviceCommand) -> Re
 pub struct NosfetAeroModel;
 
 const NOSFET_AERO_MODEL_GATT: [GattFingerprint; 1] = [GattFingerprint {
-    service: VETERAN_DATA_CHANNEL,
+    service: VETERAN_SERVICE_CHANNEL,
     characteristic: VETERAN_DATA_CHANNEL,
     roles: GattRoles::empty()
         .with_read()
