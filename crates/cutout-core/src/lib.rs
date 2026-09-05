@@ -6957,6 +6957,9 @@ pub struct TelemetryDelta {
     /// Total or trip distance in millimeters.
     pub distance: Option<Measured<Distance>>,
 
+    /// Trip distance in millimeters when the protocol reports it separately.
+    pub trip_distance: Option<Measured<Distance>>,
+
     /// Pitch in millidegrees.
     pub pitch: Option<Measured<Angle>>,
 
@@ -6997,6 +7000,7 @@ impl TelemetryDelta {
             battery_temperature: None,
             pwm: None,
             distance: None,
+            trip_distance: None,
             pitch: None,
             balance_angle: None,
             roll: None,
@@ -7090,6 +7094,9 @@ pub struct TelemetrySnapshot {
     /// Latest known total or trip distance in millimeters.
     pub distance: Option<Measured<Distance>>,
 
+    /// Latest known trip distance in millimeters when the protocol reports it separately.
+    pub trip_distance: Option<Measured<Distance>>,
+
     /// Latest known pitch in millidegrees.
     pub pitch: Option<Measured<Angle>>,
 
@@ -7158,6 +7165,9 @@ impl TelemetrySnapshot {
         }
         if delta.distance.is_some() {
             self.distance = delta.distance;
+        }
+        if delta.trip_distance.is_some() {
+            self.trip_distance = delta.trip_distance;
         }
         if delta.pitch.is_some() {
             self.pitch = delta.pitch;

@@ -4436,6 +4436,9 @@ pub struct MobileTelemetrySnapshotDto {
     /// Reported distance.
     pub distance: Option<DistanceReading>,
 
+    /// Reported trip distance when the active protocol exposes it separately.
+    pub trip_distance: Option<DistanceReading>,
+
     /// Limp-home/range estimate when modeled by the product contract.
     pub limp_home_range: Option<DistanceReading>,
 
@@ -11842,6 +11845,7 @@ impl From<TelemetrySnapshotDto> for MobileTelemetrySnapshotDto {
             battery_temperature: snapshot.battery_temperature.map(Into::into),
             pwm: snapshot.pwm.map(Into::into),
             distance: snapshot.distance.map(Into::into),
+            trip_distance: snapshot.trip_distance.map(Into::into),
             limp_home_range: None,
             pitch: snapshot.pitch.map(Into::into),
             balance_angle: snapshot.balance_angle.map(Into::into),
@@ -17054,6 +17058,7 @@ mod tests {
             battery_temperature: None,
             pwm: None,
             distance: None,
+            trip_distance: None,
             limp_home_range: None,
             pitch: None,
             balance_angle: None,

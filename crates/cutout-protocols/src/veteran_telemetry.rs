@@ -614,6 +614,9 @@ impl VeteranTelemetry {
             distance: Some(Measured::reported(Distance::from_millimetres(
                 self.total_distance.as_millimetres(),
             ))),
+            trip_distance: Some(Measured::reported(Distance::from_millimetres(
+                self.trip_distance.as_millimetres(),
+            ))),
             pitch: Some(Measured::reported(self.pitch)),
             battery_level_estimated: Some(Measured::estimated(self.battery_level_estimated)),
             ..TelemetryDelta::empty(at_ms)
@@ -1002,6 +1005,10 @@ mod tests {
         assert_eq!(
             delta.distance.map(|distance| distance.value),
             Some(telemetry.total_distance)
+        );
+        assert_eq!(
+            delta.trip_distance.map(|distance| distance.value),
+            Some(telemetry.trip_distance)
         );
     }
 

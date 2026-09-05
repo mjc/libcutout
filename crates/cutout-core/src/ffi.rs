@@ -2245,6 +2245,9 @@ pub struct TelemetryDeltaDto {
     /// Total or trip distance in millimeters.
     pub distance: Option<DistanceReadingDto>,
 
+    /// Trip distance in millimeters when the protocol reports it separately.
+    pub trip_distance: Option<DistanceReadingDto>,
+
     /// Pitch in millidegrees.
     pub pitch: Option<AngleReadingDto>,
 
@@ -2281,6 +2284,7 @@ impl From<TelemetryDelta> for TelemetryDeltaDto {
             battery_temperature: delta.battery_temperature.map(Into::into),
             pwm: delta.pwm.map(Into::into),
             distance: delta.distance.map(Into::into),
+            trip_distance: delta.trip_distance.map(Into::into),
             pitch: delta.pitch.map(Into::into),
             balance_angle: delta.balance_angle.map(Into::into),
             roll: delta.roll.map(Into::into),
@@ -2396,6 +2400,9 @@ pub struct TelemetrySnapshotDto {
     /// Total or trip distance in millimeters.
     pub distance: Option<DistanceReadingDto>,
 
+    /// Trip distance in millimeters when the protocol reports it separately.
+    pub trip_distance: Option<DistanceReadingDto>,
+
     /// Pitch in millidegrees.
     pub pitch: Option<AngleReadingDto>,
 
@@ -2434,6 +2441,7 @@ impl From<TelemetrySnapshot> for TelemetrySnapshotDto {
             battery_temperature: snapshot.battery_temperature.map(Into::into),
             pwm: snapshot.pwm.map(Into::into),
             distance: snapshot.distance.map(Into::into),
+            trip_distance: snapshot.trip_distance.map(Into::into),
             pitch: snapshot.pitch.map(Into::into),
             balance_angle: snapshot.balance_angle.map(Into::into),
             roll: snapshot.roll.map(Into::into),
@@ -3003,6 +3011,7 @@ mod tests {
             battery_temperature: None,
             pwm: Some(Measured::reported(DutyCycle::from_permille(250))),
             distance: Some(Measured::reported(Distance::from_millimetres(12_345))),
+            trip_distance: Some(Measured::reported(Distance::from_millimetres(678))),
             pitch: None,
             balance_angle: None,
             roll: None,
@@ -3043,6 +3052,7 @@ mod tests {
             RideStopReasonDto::Pitch
         );
         assert_eq!(dto.motor_current.expect("current").value, -1_500);
+        assert_eq!(dto.trip_distance.expect("trip distance").value, 678);
         assert_eq!(
             dto.footpad,
             Some(FootpadTelemetryDto {
