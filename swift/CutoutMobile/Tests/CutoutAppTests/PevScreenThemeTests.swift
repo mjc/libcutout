@@ -8,7 +8,7 @@ final class PevScreenThemeTests: XCTestCase {
     func testRideMapSpeedMetricUsesTypedValueOrExplicitUnavailableCopy() {
         XCTAssertEqual(
             RideMapSummaryView.speedText(for: SpeedReadout(millimetersPerSecond: nil)),
-            "N/A"
+            localizedAppText("ride_map.speed_unavailable")
         )
         XCTAssertEqual(
             RideMapSummaryView.speedText(for: SpeedReadout(millimetersPerSecond: 12_070)),

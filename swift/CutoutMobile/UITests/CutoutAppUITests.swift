@@ -212,8 +212,7 @@ final class CutoutAppUITests: XCTestCase {
     }
 
     func testHomeMapRouteKeepsMapAndStartActionReachable() throws {
-        XCTAssertTrue(pairAvailableDevice(.vesc))
-        let mapButton = app.buttons["dashboard.nav.map"]
+        let mapButton = app.buttons["device-picker.open-map"]
         XCTAssertTrue(mapButton.waitForExistence(timeout: 8), app.debugDescription)
         XCTAssertTrue(mapButton.isHittable)
         mapButton.tap()
@@ -221,9 +220,15 @@ final class CutoutAppUITests: XCTestCase {
         let mapScreen = app.descendants(matching: .any)["ride-map.screen"]
         XCTAssertTrue(mapScreen.waitForExistence(timeout: 8), app.debugDescription)
         XCTAssertTrue(app.descendants(matching: .any)["ride-map.map"].waitForExistence(timeout: 5))
-        XCTAssertTrue(app.segmentedControls.firstMatch.waitForExistence(timeout: 5), app.debugDescription)
-        XCTAssertTrue(app.buttons["ride-map.start"].waitForExistence(timeout: 5), app.debugDescription)
-        XCTAssertGreaterThanOrEqual(app.buttons["ride-map.start"].frame.height, 44)
+        let modePicker = mapScreen.descendants(matching: .any)["ride-map.mode-picker"]
+        XCTAssertTrue(modePicker.waitForExistence(timeout: 5), app.debugDescription)
+        let startButton = app.buttons["ride-map.start"]
+        XCTAssertTrue(startButton.waitForExistence(timeout: 5), app.debugDescription)
+        XCTAssertTrue(startButton.isEnabled)
+        XCTAssertTrue(startButton.isHittable)
+        XCTAssertGreaterThanOrEqual(startButton.frame.height, 44)
+        startButton.tap()
+        XCTAssertTrue(app.buttons["ride-map.pause"].waitForExistence(timeout: 5), app.debugDescription)
     }
 
     func testCaptureAnnotationUsesOneStatefulAccessibleAction() {
@@ -3651,7 +3656,7 @@ private enum ConnectedDeviceFamily: Equatable {
     var unavailableTabNames: [String] {
         switch self {
         case .euc: ["map", "tune"]
-        case .vesc: ["map", "logs"]
+        case .vesc: ["logs"]
         }
     }
 
