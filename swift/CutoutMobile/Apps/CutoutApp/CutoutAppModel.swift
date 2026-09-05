@@ -18,6 +18,23 @@ private enum RideSessionRestorationState {
 @MainActor
 @Observable
 final class CutoutAppModel {
+
+    private nonisolated static func runCancellableDetached<Success: Sendable>(
+        priority: TaskPriority,
+        operation: @escaping @Sendable () throws -> Success
+    ) async throws -> Success {
+        let task = Task.detached(priority: priority) {
+            try Task.checkCancellation()
+            let result = try operation()
+            try Task.checkCancellation()
+            return result
+        }
+        return try await withTaskCancellationHandler(operation: {
+            try await task.value
+        }, onCancel: {
+            task.cancel()
+        })
+    }
     enum RideMapMode: String {
         case live
         case history
@@ -346,9 +363,9 @@ final class CutoutAppModel {
         let restorationGeneration = rideMapLiveProjectionGeneration
         rideMapRestoreTask = Task { [weak self] in
             do {
-                let result = try await Task.detached(priority: .userInitiated) {
+                let result = try await Self.runCancellableDetached(priority: .userInitiated) {
                     try state.projectPoints(budget: previewLimit)
-                }.value
+                }
                 guard !Task.isCancelled, let self else { return }
                 guard Self.shouldApplyRestoredLiveProjection(
                     restorationGeneration: restorationGeneration,
@@ -504,7 +521,7 @@ final class CutoutAppModel {
         let existingSelectedID = selectedRideMapHistoryID
         rideMapHistoryLoadTask = Task { [weak self] in
             do {
-                let result = try await Task.detached(priority: .userInitiated) {
+                let result = try await Self.runCancellableDetached(priority: .userInitiated) {
                     let page = try state.storedHistoryPage(
                         cursor: nil,
                         limit: Self.rideMapLimits.historyPageLimit,
@@ -522,7 +539,7 @@ final class CutoutAppModel {
                         summaries.insert(requestedRide, at: insertionIndex)
                     }
                     return (summaries, page.nextCursor, vehicleOptions)
-                }.value
+                }
                 guard !Task.isCancelled, let self else { return }
                 self.rideMapHistoryLoadTask = nil
                 self.rideMapHistoryLoading = false
@@ -684,13 +701,13 @@ final class CutoutAppModel {
         let filter = rideMapHistoryFilter
         rideMapHistoryPageTask = Task { [weak self] in
             do {
-                let page = try await Task.detached(priority: .userInitiated) {
+                let page = try await Self.runCancellableDetached(priority: .userInitiated) {
                     try state.storedHistoryPage(
                         cursor: cursor,
                         limit: Self.rideMapLimits.historyPageLimit,
                         filter: filter
                     )
-                }.value
+                }
                 guard !Task.isCancelled, let self else { return }
                 self.rideMapHistory = Self.appendingUniqueHistory(
                     existing: self.rideMapHistory,
@@ -804,14 +821,14 @@ final class CutoutAppModel {
         rideMapHistoryViewportTask = Task { [weak self] in
             do {
                 let result = try await withTaskCancellationHandler(operation: {
-                    try await Task.detached(priority: .userInitiated) {
+                    try await Self.runCancellableDetached(priority: .userInitiated) {
                         try state.projectStoredPoints(
                             rideID: selectedRideMapHistoryID,
                             budget: budget,
                             viewport: viewport,
                             cancellation: cancellation
                         )
-                    }.value
+                    }
                 }, onCancel: {
                     cancellation.cancel()
                 })
@@ -895,13 +912,13 @@ final class CutoutAppModel {
         rideMapHistorySelectionTask = Task { [weak self] in
             do {
                 let result = try await withTaskCancellationHandler(operation: {
-                    try await Task.detached(priority: .userInitiated) {
+                    try await Self.runCancellableDetached(priority: .userInitiated) {
                         try state.projectStoredPoints(
                             rideID: rideID,
                             budget: budget,
                             cancellation: cancellation
                         )
-                    }.value
+                    }
                 }, onCancel: {
                     cancellation.cancel()
                 })
@@ -1013,13 +1030,13 @@ final class CutoutAppModel {
         let budget = MobileRideMapHistoryContextBudget.overview
         rideMapHistoryContextTask = Task { [weak self] in
             do {
-                let projection = try await Task.detached(priority: .userInitiated) {
+                let projection = try await Self.runCancellableDetached(priority: .userInitiated) {
                     try state.projectStoredHistoryContext(
                         filter: filter,
                         selectedRideID: rideID,
                         budget: budget
                     )
-                }.value
+                }
                 guard !Task.isCancelled, let self,
                       self.selectedRideMapHistoryID == rideID
                 else { return }
@@ -1096,9 +1113,9 @@ final class CutoutAppModel {
                 let cancellation = MobileLiveRideMapProjectionCancellation()
                 self.rideMapLiveProjectionCancellation = cancellation
                 do {
-                    let projection = try await Task.detached(priority: .userInitiated) {
+                    let projection = try await Self.runCancellableDetached(priority: .userInitiated) {
                         try state.projectPoints(budget: budget, cancellation: cancellation)
-                    }.value
+                    }
                     guard self.rideMapLiveProjectionEnabled else {
                         break
                     }

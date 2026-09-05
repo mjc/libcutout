@@ -206,6 +206,8 @@ private struct RideMapNavigationHeader: View {
     let showBackButton: Bool
     let back: (() -> Void)?
 
+    @ScaledMetric(relativeTo: .largeTitle) private var headerFontSize: CGFloat = 32
+
     var body: some View {
         HStack(alignment: .firstTextBaseline, spacing: 12) {
             if showBackButton, let back {
@@ -216,11 +218,11 @@ private struct RideMapNavigationHeader: View {
                 .foregroundStyle(PevColors.yellow)
             }
             Text("CutOut")
-                .font(.system(size: 32, weight: .black))
+                .font(.system(size: headerFontSize, weight: .black))
                 .foregroundStyle(PevColors.yellow)
 
             Text(localizedAppText("navigation.section.map"))
-                .font(.system(size: 32, weight: .bold))
+                .font(.system(size: headerFontSize, weight: .bold))
                 .foregroundStyle(PevColors.primaryText)
 
             Spacer(minLength: 0)
