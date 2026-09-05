@@ -77,6 +77,14 @@
       "comment" : "Button that sends the documented NOSFET Aero trip-meter reset command.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Reset trip meter" } } }
     },
+    "settings.trip_meter.title" : {
+      "comment" : "Section title for the NOSFET Aero trip-meter readback and reset control.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Trip meter" } } }
+    },
+    "settings.trip_meter.distance_title" : {
+      "comment" : "Current protocol-reported trip distance shown above the reset control.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Trip distance" } } }
+    },
     "settings.trip_meter.footer" : {
       "comment" : "Safety guidance for resetting the NOSFET Aero trip meter.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Available on NOSFET Aero while parked or below 500 mm/s." } } }

@@ -181,11 +181,20 @@ struct EucTuneRouteView: View {
 
                 if model.resetTripMeterControlAvailable {
                     Section {
+                        EucSettingReadbackRow(
+                            id: "tripDistance",
+                            title: localizedAppText("settings.trip_meter.distance_title"),
+                            value: EucSettingReadbackPresentation.tripDistance(
+                                model.displayState.telemetry?.tripDistance?.value
+                            )
+                        )
                         Button(localizedAppText("settings.trip_meter.reset"), role: .destructive) {
                             showingTripResetConfirmation = true
                         }
                         .disabled(model.phase != .live)
                         .accessibilityIdentifier("settings.control.resetTripMeter")
+                    } header: {
+                        Text(localizedAppText("settings.trip_meter.title"))
                     } footer: {
                         Text(localizedAppText("settings.trip_meter.footer"))
                     }
@@ -832,6 +841,19 @@ enum EucSettingReadbackPresentation {
         case .notCharging:
             return localizedAppText("settings.charge_mode.not_charging")
         }
+    }
+
+    static func tripDistance(_ millimetres: UInt64?) -> String {
+        guard let millimetres else {
+            return localizedAppText("settings.readback.unavailable")
+        }
+        let unit = RideUnits.distanceUnit(forSpeedUnit: RideUnits.speedUnit)
+        let value = RideUnits.distanceText(
+            millimetres: millimetres,
+            unit: unit,
+            fractionDigits: 1
+        )
+        return "\(value) \(unit)"
     }
 
     private static func availabilityText(_ availability: ReadbackAvailability) -> String {
