@@ -45,7 +45,7 @@ pub struct RegisteredModelDefinition {
     /// Notification data channel expected by the constructed session.
     pub data_channel: GattChannel,
 
-    pub(crate) construct: fn() -> RegisteredReadOnlySession,
+    pub(crate) construct: fn() -> RegisteredEucSession,
 }
 
 impl RegisteredModelDefinition {
@@ -56,7 +56,7 @@ impl RegisteredModelDefinition {
         parser_key: ParserKey,
         session_key: SessionKey,
         data_channel: GattChannel,
-        construct: fn() -> RegisteredReadOnlySession,
+        construct: fn() -> RegisteredEucSession,
     ) -> Self {
         Self {
             registry,
@@ -100,13 +100,13 @@ pub struct SessionRegistration {
     /// Notification data channel expected by the constructed session.
     pub data_channel: GattChannel,
 
-    construct: fn() -> RegisteredReadOnlySession,
+    construct: fn() -> RegisteredEucSession,
 }
 
 impl SessionRegistration {
     /// Constructs the registered read-only session.
     #[must_use]
-    pub fn construct(self) -> RegisteredReadOnlySession {
+    pub fn construct(self) -> RegisteredEucSession {
         (self.construct)()
     }
 }
@@ -119,7 +119,7 @@ include!(concat!(env!("OUT_DIR"), "/registry_models.rs"));
 /// explicitly allow-listed benign controls, currently headlight changes.
 #[allow(clippy::large_enum_variant)]
 #[derive(Clone, Debug)]
-pub enum RegisteredReadOnlySession {
+pub enum RegisteredEucSession {
     /// NOSFET Aero telemetry session with allow-listed benign controls.
     NosfetAero(BenignControlSession<NosfetAeroModel, false>),
 
@@ -127,7 +127,7 @@ pub enum RegisteredReadOnlySession {
     BegodeFalcon(BenignControlSession<BegodeFalconModel, true>),
 }
 
-impl ProtocolSession for RegisteredReadOnlySession {
+impl ProtocolSession for RegisteredEucSession {
     fn handle(&mut self, input: SessionInput<'_>, output: &mut Vec<SessionOutput>) {
         match self {
             Self::NosfetAero(session) => session.handle(input, output),
@@ -136,22 +136,20 @@ impl ProtocolSession for RegisteredReadOnlySession {
     }
 }
 
-pub(super) fn nosfet_aero_read_only_session() -> RegisteredReadOnlySession {
-    RegisteredReadOnlySession::NosfetAero(BenignControlSession::<NosfetAeroModel, false>::default())
+pub(super) fn nosfet_aero_session() -> RegisteredEucSession {
+    RegisteredEucSession::NosfetAero(BenignControlSession::<NosfetAeroModel, false>::default())
 }
 
-pub(super) fn begode_falcon_read_only_session() -> RegisteredReadOnlySession {
-    RegisteredReadOnlySession::BegodeFalcon(
-        BenignControlSession::<BegodeFalconModel, true>::default(),
-    )
+pub(super) fn begode_falcon_session() -> RegisteredEucSession {
+    RegisteredEucSession::BegodeFalcon(BenignControlSession::<BegodeFalconModel, true>::default())
 }
 
 /// Constructs a registered Begode Falcon read-only session with explicit pack-voltage evidence.
 #[must_use]
-pub fn begode_falcon_read_only_session_with_voltage_profile(
+pub fn begode_falcon_session_with_voltage_profile(
     profile: BegodePackVoltageProfile,
-) -> RegisteredReadOnlySession {
-    RegisteredReadOnlySession::BegodeFalcon(
+) -> RegisteredEucSession {
+    RegisteredEucSession::BegodeFalcon(
         BenignControlSession::<BegodeFalconModel, true>::with_decoder(
             BegodeNotificationDecoder::with_pack_voltage_profile(profile),
         ),
@@ -180,7 +178,7 @@ mod tests {
         BEGODE_DATA_CHANNEL, BEGODE_FALCON_REGISTRY_ENTRY, BEGODE_FALCON_SESSION_KEY,
         BEGODE_SERVICE_CHANNEL, BegodeFalconModel, BegodePackVoltageProfile, MODEL_CATALOG,
         MODEL_REGISTRY, NOSFET_AERO_REGISTRY_ENTRY, NOSFET_AERO_SESSION_KEY, NosfetAeroModel,
-        RegisteredModelSpec, RegisteredReadOnlySession, VETERAN_DATA_CHANNEL, VETERAN_PARSER_KEY,
+        RegisteredEucSession, RegisteredModelSpec, VETERAN_DATA_CHANNEL, VETERAN_PARSER_KEY,
         begode_falcon_target_voltage_profile, find_session_registration,
     };
 
@@ -228,13 +226,13 @@ mod tests {
         assert_eq!(aero.data_channel, VETERAN_DATA_CHANNEL);
         assert!(matches!(
             aero.construct(),
-            RegisteredReadOnlySession::NosfetAero(_)
+            RegisteredEucSession::NosfetAero(_)
         ));
         assert_eq!(falcon.model.model, "Falcon");
         assert_eq!(falcon.data_channel, BEGODE_DATA_CHANNEL);
         assert!(matches!(
             falcon.construct(),
-            RegisteredReadOnlySession::BegodeFalcon(_)
+            RegisteredEucSession::BegodeFalcon(_)
         ));
         assert!(find_session_registration(SessionKey::new("missing")).is_none());
     }

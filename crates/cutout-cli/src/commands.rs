@@ -43,10 +43,10 @@ use cutout_protocols::{
     BegodeFrameReassembler, BegodePackEvidenceConsistency, BegodePackLayoutEvidence,
     BegodePackLayoutSelection, BegodeVoltageEvidence, BegodeVoltageProfileSelection, MODEL_CATALOG,
     NOSFET_AERO_SESSION_KEY, ReadOnlySession, RefloatReadOnlyRequest, RefloatRealtimeValue,
-    RefloatReply, RefloatStreamDecoder, RefloatStreamResult, RegisteredReadOnlySession,
+    RefloatReply, RefloatStreamDecoder, RefloatStreamResult, RegisteredEucSession,
     VESC_MAX_FRAME_LEN, VESC_NOTIFY_CHANNEL, VESC_WRITE_CHANNEL, VescReadOnlyCodec,
     VescReadOnlyReply, VescReadOnlyRequest, VescReadOnlyStreamDecoder, VescReadOnlyStreamResult,
-    VescStatsMask, begode_falcon_read_only_session_with_voltage_profile, encode_refloat_request,
+    VescStatsMask, begode_falcon_session_with_voltage_profile, encode_refloat_request,
     find_session_registration, select_begode_pack_capacity_from_annotations,
     select_begode_pack_layout_from_annotations, select_begode_pack_voltage_profile,
     select_begode_pack_voltage_profile_from_annotations, validate_begode_pack_evidence,
@@ -498,7 +498,7 @@ fn replay_pevcap_capture(
 }
 
 #[cfg(test)]
-fn falcon_replay_session(capture: &PevcapCapture) -> Result<RegisteredReadOnlySession> {
+fn falcon_replay_session(capture: &PevcapCapture) -> Result<RegisteredEucSession> {
     falcon_replay_session_from_evidence(
         &capture.header,
         &falcon_replay_bms_voltage_evidence(capture),
@@ -508,11 +508,11 @@ fn falcon_replay_session(capture: &PevcapCapture) -> Result<RegisteredReadOnlySe
 fn falcon_replay_session_from_evidence(
     header: &PevcapHeader,
     bms_evidence: &[BegodeVoltageEvidence],
-) -> Result<RegisteredReadOnlySession> {
+) -> Result<RegisteredEucSession> {
     match select_falcon_replay_voltage_profile_from_evidence(header, bms_evidence) {
-        BegodeVoltageProfileSelection::Selected(profile) => Ok(
-            begode_falcon_read_only_session_with_voltage_profile(profile),
-        ),
+        BegodeVoltageProfileSelection::Selected(profile) => {
+            Ok(begode_falcon_session_with_voltage_profile(profile))
+        }
         BegodeVoltageProfileSelection::Missing => {
             bail!("Falcon PEVCAP replay requires explicit Falcon battery voltage evidence")
         }
@@ -1322,7 +1322,7 @@ async fn run_dashboard_live_updates(
 async fn run_dashboard_live_iteration(
     connection: &ConnectedPeripheral,
     tx: &mpsc::Sender<DashboardUpdate>,
-    session: &mut RegisteredReadOnlySession,
+    session: &mut RegisteredEucSession,
     data_channel: GattChannel,
     iteration: u64,
     refresh_battery: bool,
@@ -6122,7 +6122,7 @@ mod tests {
             constructed_rx.recv_timeout(Duration::from_secs(1)).expect(
                 "registered Aero session construction should not block the live update runner"
             ),
-            RegisteredReadOnlySession::NosfetAero(_)
+            RegisteredEucSession::NosfetAero(_)
         ));
     }
 
