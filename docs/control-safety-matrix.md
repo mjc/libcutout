@@ -25,6 +25,10 @@ writes, dangerous actuation, and future firmware writes must be implemented in
 separate session shells so read-only probing cannot accidentally gain write
 behavior.
 
+Live CLI `connect` and `capture` paths also require the selected Aero/Falcon
+profile's registered GATT fingerprint before constructing a protocol session;
+an unrelated BLE peripheral is rejected without a session probe or write.
+
 ## Before Enabling Live Controls
 
 Each model-specific control issue must provide capture-backed request bytes,
