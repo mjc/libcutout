@@ -31,6 +31,9 @@ pub struct AeroSettingsReadback {
     /// Current high-beam state, when the simulator has a value.
     pub high_beam: Option<LightState>,
 
+    /// Current single-frame headlight state, when the simulator has a value.
+    pub headlight: Option<LightState>,
+
     /// Number of accepted trip-meter reset writes.
     pub trip_meter_reset_count: u32,
 }
@@ -46,6 +49,7 @@ impl AeroSettingsReadback {
             angle_adjustment: None,
             pedal_mode: None,
             high_beam: None,
+            headlight: None,
             trip_meter_reset_count: 0,
         }
     }
@@ -72,6 +76,7 @@ impl AeroSettingsReadback {
             angle_adjustment: Some(angle_adjustment),
             pedal_mode: Some(PedalMode::Medium),
             high_beam: Some(LightState::Off),
+            headlight: Some(LightState::Off),
             trip_meter_reset_count: 0,
         }
     }
@@ -235,6 +240,9 @@ impl AeroSettingsSimulator {
             }
             DeviceCommand::SetAeroHighBeam(value) => {
                 self.readback.high_beam = Some(value);
+            }
+            DeviceCommand::SetLights(value) => {
+                self.readback.headlight = Some(value);
             }
             DeviceCommand::SetPedalMode(value) => {
                 self.readback.pedal_mode = Some(value);
@@ -411,5 +419,21 @@ mod tests {
             assert_eq!(write.mode, step.mode);
         }
         assert_eq!(simulator.readback().high_beam, Some(LightState::On));
+    }
+
+    #[test]
+    fn simulator_tracks_single_frame_headlight_writes() {
+        let mut simulator = AeroSettingsSimulator::default();
+        let outputs = simulator.issue(
+            DeviceCommand::SetLights(LightState::On),
+            RideOperatingState::Riding,
+            Some(Speed::from_millimetres_per_second(2_000)),
+            MonotonicTimestamp::new(10),
+        );
+
+        assert!(outputs.iter().any(has_transport_write));
+        assert_eq!(simulator.readback().headlight, Some(LightState::On));
+        assert_eq!(simulator.writes().len(), 1);
+        assert_eq!(simulator.writes()[0].payload.as_slice(), b"SetLightON");
     }
 }
