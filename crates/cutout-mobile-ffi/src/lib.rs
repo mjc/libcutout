@@ -82,6 +82,8 @@ use cutout_protocols::{
     begode_identification_probes, identify_known_model, new_nosfet_aero_benign_control_session,
     try_new_begode_falcon_benign_control_session,
 };
+use cutout_ride_maps as ride_maps;
+use libcutout_persistence as persistence;
 use uuid::Uuid;
 
 uniffi::setup_scaffolding!();
