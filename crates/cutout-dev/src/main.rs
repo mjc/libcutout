@@ -554,6 +554,13 @@ mod tests {
     }
 
     #[test]
+    fn simulator_accepts_the_aero_settings_scenario() {
+        let args = ["simulator", "aero-settings"].map(str::to_owned);
+
+        assert_eq!(parse_cli(&args).unwrap(), DevCommand::AeroSettingsSimulator);
+    }
+
+    #[test]
     fn ios_signing_requires_a_team_and_forwards_bundle_id() {
         assert!(ios_signing_arguments(None, None).is_err());
         assert_eq!(
