@@ -1779,6 +1779,11 @@ impl<
         self.arm = Some(arm);
     }
 
+    /// Clears the current stationary-settings authorization.
+    pub const fn clear_arm(&mut self) {
+        self.arm = None;
+    }
+
     fn handle_tick(&mut self, monotonic_ms: MonotonicTimestamp, output: &mut Vec<SessionOutput>) {
         self.monotonic_ms = monotonic_ms;
         self.read_only
