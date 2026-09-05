@@ -1141,6 +1141,8 @@ public struct SettingsReadback: Equatable, Hashable, Sendable {
             beepMargin: Self.missingReadback(for: availability),
             tiltback: Self.missingReadback(for: availability),
             pedalMode: Self.missingReadback(for: availability),
+            rollAngle: Self.missingReadback(for: availability),
+            speedAlarmMode: Self.missingReadback(for: availability),
             autoShutdownSeconds: Self.missingReadback(for: availability),
             chargeMode: Self.missingReadback(for: availability)
         )
