@@ -6168,8 +6168,9 @@ impl MobilePevcapCaptureBuilder {
         phone_location: Option<MobilePhoneLocationSampleDto>,
         music: Option<MobilePevcapMusicEventDto>,
     ) -> bool {
+        let monotonic_at = monotonic_ms.into_core();
         let mut record = PevcapRecord::inbound_notification(
-            monotonic_ms.into_core(),
+            monotonic_at,
             mobile_gatt_channel(&characteristic),
             mobile_gatt_channel(&service),
             bytes,
@@ -6195,7 +6196,7 @@ impl MobilePevcapCaptureBuilder {
             return false;
         };
         if let Some(music) = music {
-            record = record.with_music(music);
+            record = record.with_music(music.with_monotonic_at(monotonic_at));
         }
         self.send_record(record)
     }
@@ -11398,6 +11399,7 @@ mod tests {
             .expect("music correlation is retained");
         assert_eq!(music.provider, CoreMusicProvider::AppleMusic);
         assert_eq!(music.track_id.as_str(), "library-song-42");
+        assert_eq!(music.monotonic_at, MonotonicTimestamp::new(42));
         assert_eq!(music.track_position_ms, 12_345);
         assert_eq!(
             music.wall_clock_unix_ms.as_milliseconds(),
@@ -11453,6 +11455,14 @@ mod tests {
         let capture = PevcapCapture::decode(&bytes, PevcapEncoding::Jsonl)
             .expect("stream writer output is PEVCAP");
         assert!(capture.records[0].music.is_some());
+        assert_eq!(
+            capture.records[0]
+                .music
+                .as_ref()
+                .expect("music context is correlated")
+                .monotonic_at,
+            MonotonicTimestamp::new(42)
+        );
         assert!(capture.records[1].music.is_none());
         let _ = fs::remove_file(path);
     }
