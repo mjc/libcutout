@@ -1658,7 +1658,7 @@ async fn aero_write(args: AeroWriteArgs) -> Result<()> {
     if !aero_write_was_sent(&report) {
         bail!("Aero settings command was refused; no protocol or transport write was issued");
     }
-    match aero_setting_readback_matches(command, &probe_report.settings, &report.settings) {
+    match aero_setting_readback_matches(command, &report.settings) {
         Some(true) => {
             info!(setting = ?args.setting, readback_confirmed = true, "Aero settings write completed")
         }
@@ -1706,7 +1706,6 @@ fn aero_protocol_model_id_matches(report: &SessionBridgeReport) -> bool {
 
 fn aero_setting_readback_matches(
     command: DeviceCommand,
-    before: &[SettingsReadback],
     after: &[SettingsReadback],
 ) -> Option<bool> {
     let (field_id, expected_value) = match command {
@@ -1731,10 +1730,7 @@ fn aero_setting_readback_matches(
                 .map(|entry| entry.field.value)
         })
     };
-    Some(
-        latest(before).is_some_and(|value| value != expected_value)
-            && latest(after) == Some(expected_value),
-    )
+    Some(latest(after) == Some(expected_value))
 }
 
 fn aero_write_was_sent(report: &SessionBridgeReport) -> bool {
@@ -6221,7 +6217,6 @@ mod tests {
                 DeviceCommand::SetAeroTiltbackSpeed(
                     AeroSpeedSetting::new(53).expect("53 km/h fits"),
                 ),
-                &before,
                 &readbacks,
             ),
             Some(true)
@@ -6229,7 +6224,6 @@ mod tests {
         assert_eq!(
             aero_setting_readback_matches(
                 DeviceCommand::SetAeroAlarmSpeed(AeroSpeedSetting::new(54).expect("54 km/h fits"),),
-                &before,
                 &readbacks,
             ),
             Some(false)
@@ -6237,10 +6231,19 @@ mod tests {
         assert_eq!(
             aero_setting_readback_matches(
                 DeviceCommand::SetAeroPwmPercent(AeroPwmPercent::new(64).expect("64 percent fits"),),
-                &[],
                 &readbacks,
             ),
             None
+        );
+
+        assert_eq!(
+            aero_setting_readback_matches(
+                DeviceCommand::SetAeroTiltbackSpeed(
+                    AeroSpeedSetting::new(54).expect("54 km/h fits"),
+                ),
+                &before,
+            ),
+            Some(true)
         );
     }
 
