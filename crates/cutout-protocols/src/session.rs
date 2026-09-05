@@ -1770,6 +1770,7 @@ impl<
 
     /// Installs a short-lived authorization issued from stationary evidence.
     pub const fn arm(&mut self, arm: cutout_core::StationarySettingsArm) {
+        self.monotonic_ms = arm.issued_at_ms();
         self.arm = Some(arm);
     }
 

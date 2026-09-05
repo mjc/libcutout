@@ -782,6 +782,7 @@ impl DangerousActuationPolicy {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct StationarySettingsArm {
     model: &'static str,
+    issued_at_ms: MonotonicTimestamp,
     expires_at_ms: MonotonicTimestamp,
 }
 
@@ -790,6 +791,12 @@ impl StationarySettingsArm {
     #[must_use]
     pub const fn model(self) -> &'static str {
         self.model
+    }
+
+    /// Returns the monotonic timestamp at which this token was issued.
+    #[must_use]
+    pub const fn issued_at_ms(self) -> MonotonicTimestamp {
+        self.issued_at_ms
     }
 
     /// Returns the monotonic expiry timestamp for this token.
@@ -827,6 +834,7 @@ impl StationarySettingsPolicy {
             RideOperatingState::Parked | RideOperatingState::Standing => {
                 Some(StationarySettingsArm {
                     model: self.model,
+                    issued_at_ms: monotonic_ms,
                     expires_at_ms: monotonic_ms.saturating_add_duration(self.arm_duration),
                 })
             }
@@ -852,6 +860,7 @@ impl StationarySettingsPolicy {
                 <= max_speed.as_millimetres_per_second().unsigned_abs())
             .then_some(StationarySettingsArm {
                 model: self.model,
+                issued_at_ms: monotonic_ms,
                 expires_at_ms: monotonic_ms.saturating_add_duration(self.arm_duration),
             })
         })
