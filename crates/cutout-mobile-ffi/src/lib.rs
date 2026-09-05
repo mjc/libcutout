@@ -30,7 +30,7 @@ use cutout_core::{
     ChargeEstimateState, ChargeEstimateUnavailableReason, ChargeFlow, ChargeMode, ChargeModeDto,
     ChargeModeReadingDto, ChargeProfileIdentity, ChargeSessionIdentity, ChargeTimeEstimate,
     CommandKindDto, ControlRefusalReason as CoreControlRefusalReason, ControlRefusalReasonDto,
-    CutoutSessionState, DeviceCommand as CoreDeviceCommand, DeviceCommandDto,
+    CutoutSessionState, DeviceCommand as CoreDeviceCommand, DeviceCommandDto, DeviceEvent,
     DiscoveryCandidateSnapshot, DiscoveryCandidateSupport as CoreDiscoveryCandidateSupport,
     DiscoveryConnectionRoute as CoreDiscoveryConnectionRoute,
     DiscoveryElectricUnicycleModel as CoreDiscoveryElectricUnicycleModel,
@@ -57,7 +57,7 @@ use cutout_core::{
     RideSessionMarkerError as CoreRideSessionMarkerError, RideSessionPhase as CoreRideSessionPhase,
     RideStopReasonDto, RideWarningDto, RollAngle as CoreRollAngle,
     SETTING_WRITE_CONFIRMATION_TIMEOUT, SemanticEventCountDto, SeriesCount, SessionInputDto,
-    SessionOutputDto, SettingState as CoreSettingState,
+    SessionOutput, SessionOutputDto, SettingState as CoreSettingState,
     SettingValueSource as CoreSettingValueSource, SettingsEntry, SettingsEntryDto,
     SettingsReadback, SettingsReadbackAvailability, SettingsReadbackAvailabilityDto,
     SettingsReadbackDto, Speed as CoreSpeed, SpeedAlarmMode as CoreSpeedAlarmMode, SpeedReadingDto,
@@ -11155,18 +11155,27 @@ impl AeroSettingsSimulator {
         speed: Option<Speed>,
         monotonic_ms: MobileMonotonicMillisDto,
     ) -> Vec<MobileSessionOutputDto> {
-        let command: CoreDeviceCommand = DeviceCommandDto::from(command).into();
+        self.issue_checked(command, operating_state, speed, monotonic_ms)
+            .outputs
+    }
+
+    /// Issues one typed command and preserves any typed refusal diagnostic.
+    pub fn issue_checked(
+        &self,
+        command: MobileCommandDto,
+        operating_state: RideOperatingState,
+        speed: Option<Speed>,
+        monotonic_ms: MobileMonotonicMillisDto,
+    ) -> MobileSessionStepResultDto {
+        let core_command: CoreDeviceCommand = DeviceCommandDto::from(command).into();
         let speed = speed.map(|speed| CoreSpeed::from_millimetres_per_second(speed.value));
-        self.lock_inner()
-            .issue(
-                command,
-                simulator_operating_state(operating_state),
-                speed,
-                monotonic_ms.into_core(),
-            )
-            .into_iter()
-            .map(|output| MobileSessionOutputDto::from(SessionOutputDto::from(output)))
-            .collect()
+        let outputs = self.lock_inner().issue(
+            core_command,
+            simulator_operating_state(operating_state),
+            speed,
+            monotonic_ms.into_core(),
+        );
+        mobile_simulator_step_result(outputs, command)
     }
 
     /// Advances any delayed simulator output and returns live-session-shaped outputs.
@@ -11197,6 +11206,30 @@ fn simulator_operating_state(state: RideOperatingState) -> CoreRideOperatingStat
         RideOperatingState::Standing => CoreRideOperatingState::Standing,
         RideOperatingState::Riding => CoreRideOperatingState::Riding,
         RideOperatingState::Charging => CoreRideOperatingState::Charging,
+    }
+}
+
+fn mobile_simulator_step_result(
+    outputs: Vec<SessionOutput>,
+    command: MobileCommandDto,
+) -> MobileSessionStepResultDto {
+    let error = outputs.iter().find_map(|output| match output {
+        SessionOutput::Event(DeviceEvent::ControlRefusal(refusal)) => {
+            Some(MobileSessionStepErrorDto {
+                kind: MobileSessionStepErrorKindDto::CommandRefused,
+                command: Some(command),
+                reason: Some(refusal.reason.into()),
+            })
+        }
+        _ => None,
+    });
+
+    MobileSessionStepResultDto {
+        outputs: outputs
+            .into_iter()
+            .map(|output| MobileSessionOutputDto::from(SessionOutputDto::from(output)))
+            .collect(),
+        error,
     }
 }
 
