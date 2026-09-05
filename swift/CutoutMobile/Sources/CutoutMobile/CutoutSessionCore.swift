@@ -396,8 +396,15 @@ public final class CutoutSessionCore: NSObject {
     }
 
 #if DEBUG
-    public convenience init(testScript: CutoutSessionTestScript) {
-        self.init(clock: MonotonicClock(), testScript: testScript)
+    public convenience init(
+        testScript: CutoutSessionTestScript,
+        rideMapState: MobileRideMapState? = nil
+    ) {
+        self.init(
+            clock: MonotonicClock(),
+            testScript: testScript,
+            rideMapState: rideMapState
+        )
     }
 
     init(

@@ -64,10 +64,15 @@ final class PhoneLocationReadbackTests: XCTestCase {
             courseDegrees: 90,
             courseAccuracyDegrees: 3
         )
+        let state = MobilePhoneLocationState()
 
-        XCTAssertEqual(sample.verticalAccuracyMeters, 6)
-        XCTAssertEqual(sample.speedAccuracyMetersPerSecond, 0.2)
-        XCTAssertEqual(sample.courseAccuracyDegrees, 3)
+        _ = state.ingest(sample: sample)
+        let readback = state.currentSnapshot().latestSample
+
+        XCTAssertEqual(readback?.horizontalAccuracyMeters, 4)
+        XCTAssertEqual(readback?.verticalAccuracyMeters, 6)
+        XCTAssertEqual(readback?.speedAccuracyMetersPerSecond, 0.2)
+        XCTAssertEqual(readback?.courseAccuracyDegrees, 3)
     }
 
     private func snapshot(sampleTime: UInt64, speed: Int32?) -> MobilePhoneLocationSnapshotDto {
