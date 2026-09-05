@@ -235,6 +235,8 @@ struct ContentView: View {
                 selectedGroupIndex: destination.selectedBmsGroupIndex,
                 navigate: navigate
             )
+        case .eucTune:
+            EucTuneRouteView(model: model)
         case .vescRide:
             VescRideRouteView(model: model)
         case .vescDebug:
@@ -268,6 +270,8 @@ struct ContentView: View {
             localizedAppText("navigation.section.ride")
         case .eucPack:
             localizedAppText("navigation.section.pack")
+        case .eucTune:
+            localizedAppText("navigation.section.tune")
         case .vescDebug:
             localizedAppText("navigation.section.debug")
         case .capture:

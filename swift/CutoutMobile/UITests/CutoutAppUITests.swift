@@ -717,6 +717,42 @@ final class CutoutAppUITests: XCTestCase {
         try assertRidePublishesDynamicTelemetryAfterRouteMounts(.euc)
     }
 
+    func testEucTuneShowsValidatedControlsAndCapabilityStates() throws {
+        XCTAssertTrue(pairAvailableDevice(.euc))
+        guard connectedScreen(timeout: 20) != nil else {
+            XCTFail("The deterministic EUC fixture did not open its Ride screen")
+            return
+        }
+        defer { disconnectIfConnected() }
+
+        let tuneTab = app.tabBars.buttons["dashboard.nav.tune"]
+        XCTAssertTrue(tuneTab.waitForExistence(timeout: 5))
+        XCTAssertTrue(tuneTab.isHittable)
+        tuneTab.tap()
+
+        XCTAssertTrue(
+            app.descendants(matching: .any)["settings.screen.eucTune"]
+                .waitForExistence(timeout: 5)
+        )
+
+        let headlight = app.switches["High beam"]
+        XCTAssertTrue(headlight.exists)
+        XCTAssertTrue(headlight.isEnabled)
+
+        XCTAssertEqual(
+            app.descendants(matching: .any)["settings.capability.pedalMode"].label,
+            "Pedal mode, Needs validation"
+        )
+        XCTAssertEqual(
+            app.descendants(matching: .any)["settings.capability.accelerationAssist"].label,
+            "Acceleration assist, Not supported"
+        )
+        XCTAssertEqual(
+            app.descendants(matching: .any)["settings.capability.taillight"].label,
+            "Taillight, Not supported"
+        )
+    }
+
     private func assertRidePublishesDynamicTelemetryAfterRouteMounts(_ family: ConnectedDeviceFamily) throws {
         XCTAssertTrue(pairAvailableDevice(family))
         guard connectedScreen(timeout: 20) != nil else {
@@ -1306,7 +1342,13 @@ final class CutoutAppUITests: XCTestCase {
         }
         let speed = app.descendants(matching: .any)["ride.hero.speed"]
         XCTAssertTrue(speed.waitForExistence(timeout: 5))
-        XCTAssertFalse((speed.value as? String)?.isEmpty ?? true)
+        let liveSpeed = XCTNSPredicateExpectation(
+            predicate: NSPredicate { _, _ in
+                (speed.value as? String)?.localizedCaseInsensitiveContains(expectation.speed) == true
+            },
+            object: speed
+        )
+        XCTAssertEqual(XCTWaiter.wait(for: [liveSpeed], timeout: 10), .completed)
 
         XCUIDevice.shared.press(.home)
         let springboard = XCUIApplication(bundleIdentifier: "com.apple.springboard")
@@ -1315,8 +1357,13 @@ final class CutoutAppUITests: XCTestCase {
         let stateName = expectation.stateName
         let compactSpeed = springboard.descendants(matching: .any)["Speed"]
         XCTAssertTrue(compactSpeed.waitForExistence(timeout: 5), springboard.debugDescription)
-        XCTAssertTrue(
-            (compactSpeed.value as? String)?.localizedCaseInsensitiveContains(expectation.speed) == true,
+        let compactUpdate = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "value CONTAINS[c] %@", expectation.speed),
+            object: compactSpeed
+        )
+        XCTAssertEqual(
+            XCTWaiter.wait(for: [compactUpdate], timeout: 12),
+            .completed,
             compactSpeed.debugDescription
         )
         if let compactPwm = expectation.compactPwm {
@@ -3648,14 +3695,14 @@ private enum ConnectedDeviceFamily: Equatable {
 
     var tabNames: [String] {
         switch self {
-        case .euc: ["ride", "pack"]
+        case .euc: ["ride", "pack", "tune"]
         case .vesc: ["ride", "debug", "map"]
         }
     }
 
     var unavailableTabNames: [String] {
         switch self {
-        case .euc: ["map", "tune"]
+        case .euc: ["map"]
         case .vesc: ["logs"]
         }
     }

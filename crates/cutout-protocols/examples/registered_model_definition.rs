@@ -4,8 +4,8 @@ use cutout_core::{
     ParserKey, ProtocolFamily, SessionKey, VerificationStatus,
 };
 use cutout_protocols::{
-    BEGODE_DATA_CHANNEL, BEGODE_SERVICE_CHANNEL, BegodeFalconModel, MODEL_CATALOG, ReadOnlySession,
-    RegisteredModelDefinition, RegisteredReadOnlySession,
+    BEGODE_DATA_CHANNEL, BEGODE_SERVICE_CHANNEL, BegodeFalconModel, BenignControlSession,
+    MODEL_CATALOG, RegisteredEucSession, RegisteredModelDefinition,
 };
 
 const FAKE_PARSER_KEY: ParserKey = ParserKey::new("example-structured-parser");
@@ -35,8 +35,8 @@ const FAKE_AUTHORING: CompleteModelAuthoring = ModelAuthoring::new()
 
 static FAKE_MODEL: ModelRegistryEntry = FAKE_AUTHORING.registry_entry();
 
-fn fake_session() -> RegisteredReadOnlySession {
-    RegisteredReadOnlySession::BegodeFalcon(ReadOnlySession::<BegodeFalconModel, true>::default())
+fn fake_session() -> RegisteredEucSession {
+    RegisteredEucSession::BegodeFalcon(BenignControlSession::<BegodeFalconModel, true>::default())
 }
 
 const FAKE_DEFINITION: RegisteredModelDefinition = RegisteredModelDefinition::new(
@@ -66,7 +66,7 @@ fn main() {
     assert_eq!(registration.model.model, "Structured Fixture Wheel");
     assert!(matches!(
         registration.construct(),
-        RegisteredReadOnlySession::BegodeFalcon(_)
+        RegisteredEucSession::BegodeFalcon(_)
     ));
     println!(
         "structured model definition ready: {} / {}",

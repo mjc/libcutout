@@ -65,12 +65,14 @@ mod refloat_codec;
 mod registry;
 pub use registry::{
     BEGODE_FALCON_REGISTRY_ENTRY, BEGODE_FALCON_SESSION_KEY, BEGODE_PARSER_KEY, MODEL_CATALOG,
-    MODEL_REGISTRY, NOSFET_AERO_REGISTRY_ENTRY, NOSFET_AERO_SESSION_KEY, RegisteredModelDefinition,
-    RegisteredReadOnlySession, SESSION_REGISTRATIONS, SessionRegistration, VETERAN_PARSER_KEY,
-    begode_falcon_read_only_session_with_voltage_profile, find_session_registration,
+    MODEL_REGISTRY, NOSFET_AERO_REGISTRY_ENTRY, NOSFET_AERO_SESSION_KEY, RegisteredEucSession,
+    RegisteredModelDefinition, SESSION_REGISTRATIONS, SessionRegistration, VETERAN_PARSER_KEY,
+    begode_falcon_session_with_voltage_profile, find_session_registration,
 };
 mod request_encoder;
 mod session;
+mod simulator;
+pub use simulator::{AeroSettingsReadback, AeroSettingsSimulator, AeroSimulatorWrite};
 mod util;
 mod vesc_codec;
 mod veteran_bms;
@@ -84,19 +86,21 @@ pub use refloat_codec::{
     RefloatStreamResult, VESC_COMM_CUSTOM_APP_DATA, encode_refloat_request,
 };
 pub use request_encoder::{
-    AeroRequestEncoder, EncodedIdentificationProbe, EncodedRequest, FalconRequestEncoder,
-    RequestDisposition, VescCanTarget, VescRequestEncoder, begode_identification_probes,
+    AeroControlEncoder, AeroRequestEncoder, EncodedControl, EncodedControlSequence,
+    EncodedControlStep, EncodedIdentificationProbe, EncodedRequest, FalconControlEncoder,
+    FalconRequestEncoder, RequestDisposition, VescCanTarget, VescRequestEncoder,
+    begode_identification_probes,
 };
 #[cfg(feature = "dangerous-controls")]
 pub use session::DangerousControlSession;
 pub use session::{
-    BegodeFalconModel, BegodeNotificationDecoder, BenignControlOperation,
+    BegodeFalconModel, BegodeNotificationDecoder, BenignControlOperation, BenignControlSession,
     DangerousActuationOperation, Manufacturer, NoopNotificationDecoder, NosfetAeroModel,
     ProtocolModelSpec, ProtocolOperation, ReadOnlyModelSpec, ReadOnlyNotificationDecoder,
     ReadOnlyOperation, ReadOnlySession, RegisteredModelSpec, SettingsWriteOperation,
-    SupportsBenignControls, SupportsDangerousActuation, SupportsReadRequests,
-    SupportsSettingsWrites, VESC_RAW_ABSOLUTE_TACHOMETER_FIELD_ID, VESC_RAW_CONTROLLER_ID_FIELD_ID,
-    VESC_RAW_CURRENT_FAULT_CODE_FIELD_ID, VESC_RAW_ERPM_FIELD_ID,
+    StationarySettingsWriteSession, SupportsBenignControls, SupportsDangerousActuation,
+    SupportsReadRequests, SupportsSettingsWrites, VESC_RAW_ABSOLUTE_TACHOMETER_FIELD_ID,
+    VESC_RAW_CONTROLLER_ID_FIELD_ID, VESC_RAW_CURRENT_FAULT_CODE_FIELD_ID, VESC_RAW_ERPM_FIELD_ID,
     VESC_RAW_STATS_COUNT_TIME_FIELD_ID, VESC_RAW_STATS_CURRENT_AVG_FIELD_ID,
     VESC_RAW_STATS_POWER_AVG_FIELD_ID, VESC_RAW_STATS_SPEED_AVG_FIELD_ID, VESC_RAW_STATUS_FIELD_ID,
     VESC_RAW_TACHOMETER_FIELD_ID, VescGenericModel, VescNotificationDecoder,

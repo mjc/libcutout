@@ -18,6 +18,19 @@ protocol CutoutSessionDriving: AnyObject {
     var onProtocolIdentityCandidateChange: ((DevicePickerDiscoveryCandidate?) -> Void)? { get set }
     var onBluetoothRestorationResolved: ((String?) -> Void)? { get set }
     var protocolIdentityCandidate: DevicePickerDiscoveryCandidate? { get }
+    var electricUnicycleModel: ElectricUnicycleModel? { get }
+    var settingsCapabilities: EucSettingsCapabilities? { get }
+    var headlightState: LightSettingState? { get }
+    var aeroHighBeamState: LightSettingState? { get }
+    var aeroTiltbackSpeedState: AeroSpeedSettingState? { get }
+    var aeroPwmPercentState: AeroPwmSettingState? { get }
+    var aeroAlarmSpeedState: AeroSpeedSettingState? { get }
+    var aeroAngleAdjustmentState: AeroAngleAdjustmentSettingState? { get }
+    var pedalModeState: PedalModeSettingState? { get }
+    var rollAngleState: RollAngleSettingState? { get }
+    var speedAlarmModeState: SpeedAlarmModeSettingState? { get }
+    var accelerationAssistState: AccelerationAssistSettingState? { get }
+    var taillightState: LightSettingState? { get }
 
     func start()
     func pair(platformIdentifier: String) -> Bool
@@ -28,6 +41,19 @@ protocol CutoutSessionDriving: AnyObject {
     func annotateCapture(key: String, value: String)
     func flushCapture() async -> Bool
     func disconnectAndScan()
+    func setLights(_ state: LightState) -> SettingCommandResult
+    func setAeroHighBeam(_ state: LightState) -> SettingCommandResult
+    func setPedalMode(_ mode: PedalMode.Kind) -> SettingCommandResult
+    func setRollAngle(_ angle: RollAngle.Kind) -> SettingCommandResult
+    func setSpeedAlarmMode(_ mode: SpeedAlarmMode.Kind) -> SettingCommandResult
+    func setBegodeMaxSpeed(_ speed: BegodeMaxSpeed) -> SettingCommandResult
+    func setBegodeBeeperVolume(_ volume: BegodeBeeperVolume) -> SettingCommandResult
+    func setBegodeLedMode(_ mode: BegodeLedMode) -> SettingCommandResult
+    func resetTripMeter() -> SettingCommandResult
+    func setAeroTiltbackSpeed(_ speed: AeroSpeedSetting) -> SettingCommandResult
+    func setAeroPwmPercent(_ percent: AeroPwmPercent) -> SettingCommandResult
+    func setAeroAlarmSpeed(_ speed: AeroSpeedSetting) -> SettingCommandResult
+    func setAeroAngleAdjustment(_ angle: AeroAngleAdjustment) -> SettingCommandResult
     func now() -> MonotonicMilliseconds
 
     func resetRideMapLocationAdmission()

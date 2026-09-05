@@ -213,11 +213,13 @@ final class LiveActivityRideLifecycleCoordinatorTests: XCTestCase {
         )
         await coordinator.appDidEnterBackground(
             requestID: 2,
+            atMs: 200,
             snapshot: snapshot,
             captureFlush: { await capture.flush() }
         )
         await coordinator.appDidEnterBackground(
             requestID: 3,
+            atMs: 300,
             snapshot: snapshot,
             captureFlush: { await capture.flush() }
         )
@@ -229,6 +231,7 @@ final class LiveActivityRideLifecycleCoordinatorTests: XCTestCase {
         await coordinator.appDidBecomeActive(requestID: 4, snapshot: snapshot)
         await coordinator.appDidEnterBackground(
             requestID: 5,
+            atMs: 500,
             snapshot: snapshot,
             captureFlush: { await capture.flush() }
         )
@@ -236,6 +239,32 @@ final class LiveActivityRideLifecycleCoordinatorTests: XCTestCase {
         let secondBackgroundFlushCount = await capture.count()
         XCTAssertEqual(sessionState.rideSessionSnapshot().appPresence, .background)
         XCTAssertEqual(secondBackgroundFlushCount, 2)
+    }
+
+    func testBackgroundTransitionPublishesTheLatestTelemetrySnapshot() async {
+        let manager = RecordingLiveActivityRideLifecycleManager()
+        let coordinator = LiveActivityRideLifecycleCoordinator(manager: manager)
+        let unavailable = LiveActivityRideSnapshot(
+            identity: .device("Connected ride"),
+            rideState: EucRideScreenState(phase: .live, displayState: RideDisplayState())
+        )
+        let available = liveSnapshot(label: "Connected ride", speedMph: 17.9)
+
+        await coordinator.reconcile(
+            requestID: 1,
+            platformIdentifier: "vesc-platform-id",
+            snapshot: unavailable,
+            shouldBeActive: true
+        )
+        await coordinator.appDidEnterBackground(
+            requestID: 2,
+            atMs: 200,
+            snapshot: available,
+            captureFlush: { true }
+        )
+
+        let events = await manager.recordedEvents()
+        XCTAssertEqual(events, [.start(unavailable), .update(available)])
     }
 
     func testReconnectExhaustionEndsOnceWithTheTypedRustReason() async {

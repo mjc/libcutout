@@ -17,15 +17,21 @@ use std::{
 };
 
 use cutout_core::{
-    ActivityProjectionState as CoreActivityProjectionState, AngleReadingDto,
+    AccelerationAssistState as CoreAccelerationAssistState, AccelerationAssistStateDto,
+    ActivityProjectionState as CoreActivityProjectionState,
+    AeroAngleAdjustment as CoreAeroAngleAdjustment, AeroPwmPercent as CoreAeroPwmPercent,
+    AeroSpeedSetting as CoreAeroSpeedSetting, AngleReadingDto,
     BatteryCurrent as CoreBatteryCurrent, BatteryCurrentReadingDto, BatteryInfoDto,
     BatteryLevel as CoreBatteryLevel, BatteryLevelBasis, BatteryLevelReadingDto,
-    BatteryPageKindDto, BatteryReadbackAvailabilityDto, BatteryReadbackDto, Capacity,
-    ChargeEstimateError, ChargeEstimateInput, ChargeEstimateResetReason, ChargeEstimateState,
-    ChargeEstimateUnavailableReason, ChargeFlow, ChargeMode, ChargeModeDto, ChargeModeReadingDto,
-    ChargeProfileIdentity, ChargeSessionIdentity, ChargeTimeEstimate, CommandKindDto,
-    ControlRefusalReasonDto, CutoutSessionState, DeviceCommandDto, DiscoveryCandidateSnapshot,
-    DiscoveryCandidateSupport as CoreDiscoveryCandidateSupport,
+    BatteryPageKindDto, BatteryReadbackAvailabilityDto, BatteryReadbackDto,
+    BegodeBeeperVolume as CoreBegodeBeeperVolume, BegodeLedModeSetting as CoreBegodeLedModeSetting,
+    BegodeMaxSpeed as CoreBegodeMaxSpeed, BluetoothServiceUuid as CoreBluetoothServiceUuid,
+    Capacity, ChargeEstimateError, ChargeEstimateInput, ChargeEstimateResetReason,
+    ChargeEstimateState, ChargeEstimateUnavailableReason, ChargeFlow, ChargeMode, ChargeModeDto,
+    ChargeModeReadingDto, ChargeProfileIdentity, ChargeSessionIdentity, ChargeTimeEstimate,
+    CommandKindDto, ControlRefusalReason as CoreControlRefusalReason, ControlRefusalReasonDto,
+    CutoutSessionState, DeviceCommand as CoreDeviceCommand, DeviceCommandDto, DeviceEvent,
+    DiscoveryCandidateSnapshot, DiscoveryCandidateSupport as CoreDiscoveryCandidateSupport,
     DiscoveryConnectionRoute as CoreDiscoveryConnectionRoute,
     DiscoveryElectricUnicycleModel as CoreDiscoveryElectricUnicycleModel,
     DiscoveryManufacturerDataSummary as CoreDiscoveryManufacturerDataSummary,
@@ -34,44 +40,47 @@ use cutout_core::{
     FaultHistoryAvailabilityDto, FaultHistoryEntry, FaultHistoryEntryDto, FaultHistoryReadback,
     FaultHistoryReadbackDto, FootpadContactStateDto, FootpadTelemetryDto, GattChannel,
     GattFingerprint, GattRoles, IgnoredNotificationEvidenceDto, IgnoredNotificationReasonDto,
-    Measured, MonotonicMillisDto, MonotonicTimestamp, NotificationByteLenDto,
-    NotificationEvidenceDto, NotificationIngestOutcomeDto, ParserDiagnosticCountDto,
-    ParserDiagnosticsDto, ParserDroppedBytesDto, ParserErrorDto, ParserFrameLenDto,
-    ParserGapEvidenceDto, PayloadBodyLenDto, PevcapEncoding as CorePevcapEncoding, PevcapHeader,
-    PevcapLocationSample, PevcapPhoneLocation, PevcapRecord, PevcapResolvedIdentity,
-    PhaseCurrentReadingDto, PowerReadingDto, ProtocolFamily, ProtocolFamilyDto, ProtocolTag,
-    RIDE_SESSION_STALE_AFTER, RawFieldValue, RawFieldValueDto, RawTelemetryReadback,
-    RawTelemetryReadbackDto, ReadOnlyOutputPayload, ReservedPayloadEvidenceDto,
-    RideOperatingModeDto, RideOperatingStateDto,
-    RideSessionAppPresence as CoreRideSessionAppPresence,
+    LightState as CoreLightState, LightStateDto, Measured, MonotonicMillisDto, MonotonicTimestamp,
+    NotificationByteLenDto, NotificationEvidenceDto, NotificationIngestOutcomeDto,
+    ParserDiagnosticCountDto, ParserDiagnosticsDto, ParserDroppedBytesDto, ParserErrorDto,
+    ParserFrameLenDto, ParserGapEvidenceDto, PayloadBodyLenDto, PedalMode as CorePedalMode,
+    PevcapEncoding as CorePevcapEncoding, PevcapHeader, PevcapLocationSample, PevcapPhoneLocation,
+    PevcapRecord, PevcapResolvedIdentity, PhaseCurrentReadingDto, PowerReadingDto, ProtocolFamily,
+    ProtocolFamilyDto, ProtocolTag, RIDE_SESSION_STALE_AFTER, RawFieldValue, RawFieldValueDto,
+    RawTelemetryReadback, RawTelemetryReadbackDto, ReadOnlyOutputPayload,
+    ReservedPayloadEvidenceDto, RideOperatingModeDto, RideOperatingState as CoreRideOperatingState,
+    RideOperatingStateDto, RideSessionAppPresence as CoreRideSessionAppPresence,
     RideSessionDecision as CoreRideSessionDecision, RideSessionEffect as CoreRideSessionEffect,
     RideSessionEndReason as CoreRideSessionEndReason,
     RideSessionIdentity as CoreRideSessionIdentity, RideSessionInput as CoreRideSessionInput,
     RideSessionLifecycle as CoreRideSessionLifecycle, RideSessionMarker as CoreRideSessionMarker,
     RideSessionMarkerError as CoreRideSessionMarkerError, RideSessionPhase as CoreRideSessionPhase,
-    RideStopReasonDto, RideWarningDto, SemanticEventCountDto, SeriesCount, SessionInputDto,
-    SessionOutputDto, SettingsEntry, SettingsEntryDto, SettingsReadback,
-    SettingsReadbackAvailability, SettingsReadbackAvailabilityDto, SettingsReadbackDto,
-    Speed as CoreSpeed, SpeedReadingDto, TelemetryFreshness, TelemetrySnapshotDto,
-    TemperatureReadingDto, TransportActionDto, TransportWriteLimit, TransportWriteLimitDto,
-    UsablePackCapacity, ValueQuality, ValueQuality as CoreValueQuality, ValueQualityDto,
-    ValueSource, ValueSource as CoreValueSource, ValueSourceDto, VerificationStatus,
-    VerificationStatusDto, VerifiedValue, Voltage as CoreVoltage, VoltageReadingDto,
-    VoltageSagEstimate, VoltageSagEstimator, VoltageSagInput, VoltageSagModel,
-    WallClockUnixTimestamp, WriteMode,
+    RideStopReasonDto, RideWarningDto, RollAngle as CoreRollAngle,
+    SETTING_WRITE_CONFIRMATION_TIMEOUT, SemanticEventCountDto, SeriesCount, SessionInputDto,
+    SessionOutput, SessionOutputDto, SettingState as CoreSettingState,
+    SettingValueSource as CoreSettingValueSource, SettingsEntry, SettingsEntryDto,
+    SettingsReadback, SettingsReadbackAvailability, SettingsReadbackAvailabilityDto,
+    SettingsReadbackDto, Speed as CoreSpeed, SpeedAlarmMode as CoreSpeedAlarmMode, SpeedReadingDto,
+    TelemetryFreshness, TelemetrySnapshotDto, TemperatureReadingDto, TransportActionDto,
+    TransportWriteLimit, TransportWriteLimitDto, UsablePackCapacity, ValueQuality,
+    ValueQuality as CoreValueQuality, ValueQualityDto, ValueSource, ValueSource as CoreValueSource,
+    ValueSourceDto, VerificationStatus, VerificationStatusDto, VerifiedValue,
+    Voltage as CoreVoltage, VoltageReadingDto, VoltageSagEstimate, VoltageSagEstimator,
+    VoltageSagInput, VoltageSagModel, WallClockUnixTimestamp, WriteMode,
 };
 use cutout_protocols::{
-    BEGODE_DATA_CHANNEL, BEGODE_FIELD_TILTBACK_SPEED_KMH, ConcreteAeroReadOnlySession,
-    ConcreteFalconProfileDto, ConcreteFalconReadOnlySession, ConcreteSessionErrorDto,
-    ConcreteSessionStepResultDto, DeviceDetectionEvent, DeviceDetectionResolution,
-    DeviceDetectionSession, DeviceFamily, IdentityBannerEvidence, PendingProbe,
-    ProtocolFamilyClassification, ProtocolFamilyState, ProtocolModelIdentityEvidence,
-    StagedIdentityInput, StagedIdentityOutcome, VETERAN_FIELD_PEDALS_MODE,
-    VETERAN_FIELD_SPEED_ALERT_DECI_KMH, VETERAN_FIELD_SPEED_TILTBACK_DECI_KMH,
-    VescBatteryType as CoreVescBatteryType, VescBoardProfile as CoreVescBoardProfile,
-    VescReadOnlySession as CoreVescReadOnlySession, begode_identification_probes,
-    identify_known_model, new_nosfet_aero_read_only_session,
-    try_new_begode_falcon_read_only_session,
+    AeroSettingsReadback, AeroSettingsSimulator as CoreAeroSettingsSimulator, BEGODE_DATA_CHANNEL,
+    BEGODE_FIELD_LED_AND_LIGHT_MODE, BEGODE_FIELD_SETTINGS_BITS, BEGODE_FIELD_TILTBACK_SPEED_KMH,
+    ConcreteAeroBenignControlSession, ConcreteFalconBenignControlSession, ConcreteFalconProfileDto,
+    ConcreteSessionErrorDto, ConcreteSessionStepResultDto, DeviceDetectionEvent,
+    DeviceDetectionResolution, DeviceDetectionSession, DeviceFamily, IdentityBannerEvidence,
+    PendingProbe, ProtocolFamilyClassification, ProtocolFamilyState, ProtocolModelIdentityEvidence,
+    StagedIdentityInput, StagedIdentityOutcome, VETERAN_FIELD_AUTO_SHUTDOWN_TIME_REMAINING_SECONDS,
+    VETERAN_FIELD_CHARGE_MODE, VETERAN_FIELD_PEDALS_MODE, VETERAN_FIELD_SPEED_ALERT_DECI_KMH,
+    VETERAN_FIELD_SPEED_TILTBACK_DECI_KMH, VescBatteryType as CoreVescBatteryType,
+    VescBoardProfile as CoreVescBoardProfile, VescReadOnlySession as CoreVescReadOnlySession,
+    begode_identification_probes, identify_known_model, new_nosfet_aero_benign_control_session,
+    try_new_begode_falcon_benign_control_session,
 };
 use cutout_ride_maps as ride_maps;
 use libcutout_persistence as persistence;
@@ -279,6 +288,13 @@ pub struct DiscoveryManufacturerDataSummary {
     pub payload_len: u64,
 }
 
+/// Normalized 128-bit Bluetooth service UUID supplied by the mobile BLE stack.
+#[derive(Clone, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct DiscoveryServiceUuid {
+    /// UUID bytes in network order.
+    pub bytes: Vec<u8>,
+}
+
 /// Mobile discovery observation to feed into Rust-owned session state.
 #[derive(Clone, Debug, Eq, PartialEq, uniffi::Record)]
 pub struct DiscoveryObservation {
@@ -288,8 +304,8 @@ pub struct DiscoveryObservation {
     /// Raw advertised-name bytes from the mobile BLE stack.
     pub advertised_name: Option<Vec<u8>>,
 
-    /// Advertised 16-bit service UUID values relevant to picker routing.
-    pub advertised_service_uuids: Vec<u16>,
+    /// Normalized advertised service UUIDs used as protocol evidence.
+    pub advertised_service_uuids: Vec<DiscoveryServiceUuid>,
 
     /// Manufacturer data summaries without opaque payload bytes.
     pub manufacturer_data: Vec<DiscoveryManufacturerDataSummary>,
@@ -310,8 +326,8 @@ pub struct DiscoveryObservationSnapshot {
     /// UTF-8 advertised-name view, when valid.
     pub advertised_name_text: Option<String>,
 
-    /// Advertised 16-bit service UUID values relevant to picker routing.
-    pub advertised_service_uuids: Vec<u16>,
+    /// Normalized advertised service UUIDs used as protocol evidence.
+    pub advertised_service_uuids: Vec<DiscoveryServiceUuid>,
 
     /// Manufacturer data summaries without opaque payload bytes.
     pub manufacturer_data: Vec<DiscoveryManufacturerDataSummary>,
@@ -739,7 +755,11 @@ impl DiscoveryObservation {
         CoreDiscoveryObservation {
             platform_identifier: self.platform_identifier,
             advertised_name: self.advertised_name,
-            advertised_service_uuids: self.advertised_service_uuids,
+            advertised_service_uuids: self
+                .advertised_service_uuids
+                .into_iter()
+                .filter_map(|uuid| CoreBluetoothServiceUuid::try_from(uuid.bytes).ok())
+                .collect(),
             manufacturer_data: self
                 .manufacturer_data
                 .into_iter()
@@ -774,7 +794,13 @@ impl From<&CoreDiscoveryObservation> for DiscoveryObservationSnapshot {
             platform_identifier: observation.platform_identifier.clone(),
             advertised_name: observation.advertised_name.clone(),
             advertised_name_text: observation.advertised_name_text().map(str::to_owned),
-            advertised_service_uuids: observation.advertised_service_uuids.clone(),
+            advertised_service_uuids: observation
+                .advertised_service_uuids
+                .iter()
+                .map(|uuid| DiscoveryServiceUuid {
+                    bytes: uuid.as_bytes().to_vec(),
+                })
+                .collect(),
             manufacturer_data: observation
                 .manufacturer_data
                 .iter()
@@ -1344,57 +1370,40 @@ impl CutoutSessionStateHandle {
 pub fn mobile_discovery_candidate_from_advertisement(
     platform_identifier: String,
     local_name: Option<String>,
-    advertised_service_uuids: Vec<u16>,
+    advertised_service_uuids: Vec<DiscoveryServiceUuid>,
 ) -> DiscoveryCandidate {
     let display_name = local_name.unwrap_or_else(|| "Unknown Bluetooth device".to_owned());
-    let lower_name = display_name.to_ascii_lowercase();
-    if advertised_service_uuids.contains(&0xffe0) {
-        return match mobile_electric_unicycle_model_hint(&lower_name) {
-            Some(model) => DiscoveryCandidate {
-                platform_identifier,
-                display_name,
-                product_category: "Electric unicycle".to_owned(),
-                evidence: "advertisement hint".to_owned(),
-                detail: format!("{model:?} provisional route"),
-                is_picker_candidate: true,
-                support: DiscoveryCandidateSupport::ProvisionalRoute,
-                recommended_action: DiscoveryCandidateSupport::ProvisionalRoute
-                    .recommended_action(),
-                section: DiscoveryCandidateSupport::ProvisionalRoute.picker_section(),
-                connection_route: Some(DiscoveryConnectionRoute::ElectricUnicycle),
-                electric_unicycle_model: Some(model),
-                disabled_reason: None,
-            },
-            None => DiscoveryCandidate {
-                platform_identifier,
-                display_name,
-                product_category: "Electric unicycle".to_owned(),
-                evidence: "FFE0/FFE1 transport hint".to_owned(),
-                detail: "Read-only probe recommended".to_owned(),
-                is_picker_candidate: true,
-                support: DiscoveryCandidateSupport::ProbeRecommended,
-                recommended_action: DiscoveryCandidateSupport::ProbeRecommended
-                    .recommended_action(),
-                section: DiscoveryCandidateSupport::ProbeRecommended.picker_section(),
-                connection_route: None,
-                electric_unicycle_model: None,
-                disabled_reason: Some("Read-only probe recommended".to_owned()),
-            },
+    let advertised_service_uuids = advertised_service_uuids
+        .into_iter()
+        .filter_map(|uuid| CoreBluetoothServiceUuid::try_from(uuid.bytes).ok())
+        .collect::<Vec<_>>();
+    if advertised_service_uuids.contains(&CoreBluetoothServiceUuid::EUC_SERIAL_FFE0) {
+        return DiscoveryCandidate {
+            platform_identifier,
+            display_name,
+            product_category: "Electric unicycle".to_owned(),
+            evidence: "FFE0/FFE1 transport hint".to_owned(),
+            detail: "Read-only protocol probe recommended".to_owned(),
+            is_picker_candidate: true,
+            support: DiscoveryCandidateSupport::ProbeRecommended,
+            recommended_action: DiscoveryCandidateSupport::ProbeRecommended.recommended_action(),
+            section: DiscoveryCandidateSupport::ProbeRecommended.picker_section(),
+            connection_route: None,
+            electric_unicycle_model: None,
+            disabled_reason: Some("Read-only protocol probe recommended".to_owned()),
         };
     }
 
-    if advertised_service_uuids.contains(&0xfff0)
-        || lower_name.contains("vesc")
-        || lower_name.contains("focer")
-        || lower_name.contains("onewheel")
-        || lower_name.contains("floatwheel")
-    {
+    if advertised_service_uuids.iter().any(|uuid| {
+        *uuid == CoreBluetoothServiceUuid::VESC_SERIAL_FFF0
+            || *uuid == CoreBluetoothServiceUuid::VESC_NORDIC_UART
+    }) {
         return DiscoveryCandidate {
             platform_identifier,
             display_name,
             product_category: "VESC Onewheel".to_owned(),
-            evidence: "VESC advertisement hint".to_owned(),
-            detail: "VESC read-only route".to_owned(),
+            evidence: "FFF0 transport hint".to_owned(),
+            detail: "VESC protocol route".to_owned(),
             is_picker_candidate: true,
             support: DiscoveryCandidateSupport::ProvisionalRoute,
             recommended_action: DiscoveryCandidateSupport::ProvisionalRoute.recommended_action(),
@@ -1506,38 +1515,6 @@ pub fn mobile_conflicting_discovery_candidate(
         connection_route: None,
         electric_unicycle_model: None,
         disabled_reason: Some("Conflicting identity evidence".to_owned()),
-    }
-}
-
-/// Resolve a provisional EUC session model hint from a user-visible device label.
-#[must_use]
-#[allow(
-    clippy::needless_pass_by_value,
-    reason = "UniFFI exports owned strings"
-)]
-#[uniffi::export]
-pub fn mobile_electric_unicycle_model_hint_from_device_kind(
-    device_kind: String,
-) -> Option<DiscoveryElectricUnicycleModel> {
-    mobile_electric_unicycle_model_hint(&device_kind.to_ascii_lowercase())
-}
-
-fn mobile_electric_unicycle_model_hint(lower_name: &str) -> Option<DiscoveryElectricUnicycleModel> {
-    match lower_name {
-        name if ["falcon", "begode", "gotway"]
-            .into_iter()
-            .any(|needle| name.contains(needle)) =>
-        {
-            Some(DiscoveryElectricUnicycleModel::Falcon)
-        }
-        name if ["aero", "nosfet", "veteran"]
-            .into_iter()
-            .any(|needle| name.contains(needle))
-            || name.starts_with("nf") =>
-        {
-            Some(DiscoveryElectricUnicycleModel::Aero)
-        }
-        _ => None,
     }
 }
 
@@ -2001,8 +1978,752 @@ pub enum MobileCommandDto {
     /// Request current settings without changing device state.
     RequestSettings,
 
+    /// Reset the NOSFET Aero trip meter; stationary-only.
+    ResetTripMeter,
+
+    /// Set NOSFET/Veteran tilt-back speed in whole km/h.
+    SetAeroTiltbackSpeed(MobileAeroSpeedSettingDto),
+
+    /// Set NOSFET/Veteran PWT (PWM tilt-back alarm) percentage.
+    SetAeroPwmPercent(MobileAeroPwmPercentDto),
+
+    /// Set NOSFET/Veteran speed alarm in whole km/h.
+    SetAeroAlarmSpeed(MobileAeroSpeedSettingDto),
+
+    /// Set NOSFET/Veteran ANG (vertical angle) adjustment in tenths of a degree.
+    SetAeroAngleAdjustment(MobileAeroAngleAdjustmentDto),
+
+    /// Set the documented NOSFET/Veteran high beam; stationary-only.
+    SetAeroHighBeam(MobileLightStateDto),
+
+    /// Set the device lights.
+    SetLights(MobileLightStateDto),
+
+    /// Set the documented pedal response; unverified models refuse this before transport.
+    SetPedalMode(MobilePedalModeKindDto),
+
+    /// Set the documented Falcon roll-angle sensitivity; stationary-only.
+    SetRollAngle(MobileRollAngleKindDto),
+
+    /// Set the documented Begode speed-alarm mode; stationary-only.
+    SetSpeedAlarmMode(MobileSpeedAlarmModeKindDto),
+
+    /// Set Begode max speed through the timed `W` submenu.
+    SetBegodeMaxSpeed(MobileBegodeMaxSpeedDto),
+
+    /// Set Begode beeper volume through the timed `W` submenu.
+    SetBegodeBeeperVolume(MobileBegodeBeeperVolumeDto),
+
+    /// Set Begode LED mode through the timed `W` submenu.
+    SetBegodeLedMode(MobileBegodeLedModeDto),
+
+    /// Enable or disable acceleration assist; unsupported models refuse this before transport.
+    SetAccelerationAssist(MobileAccelerationAssistStateDto),
+
+    /// Set the taillight independently; unsupported models refuse this before transport.
+    SetTaillight(MobileLightStateDto),
+
     /// Sound a horn or alert.
     SoundHorn,
+}
+
+/// NOSFET/Veteran speed setting in whole km/h.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct MobileAeroSpeedSettingDto {
+    /// Whole kilometres per hour, in the wheel's 1..=99 range.
+    pub kilometres_per_hour: u8,
+}
+
+impl From<CoreAeroSpeedSetting> for MobileAeroSpeedSettingDto {
+    fn from(setting: CoreAeroSpeedSetting) -> Self {
+        Self {
+            kilometres_per_hour: setting.kilometres_per_hour(),
+        }
+    }
+}
+
+/// NOSFET/Veteran PWT (PWM tilt-back alarm) percentage.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct MobileAeroPwmPercentDto {
+    /// PWM percentage, from 0 through 100.
+    pub percent: u8,
+}
+
+/// NOSFET/Veteran ANG (vertical angle) adjustment.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct MobileAeroAngleAdjustmentDto {
+    /// Signed tenths of a degree, from -100 through 100.
+    pub tenths_of_degree: i8,
+}
+
+impl From<CoreAeroPwmPercent> for MobileAeroPwmPercentDto {
+    fn from(setting: CoreAeroPwmPercent) -> Self {
+        Self {
+            percent: setting.percent(),
+        }
+    }
+}
+
+impl From<CoreAeroAngleAdjustment> for MobileAeroAngleAdjustmentDto {
+    fn from(setting: CoreAeroAngleAdjustment) -> Self {
+        Self {
+            tenths_of_degree: setting.tenths_of_degree(),
+        }
+    }
+}
+
+/// Mobile DTO light state.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Enum)]
+pub enum MobileLightStateDto {
+    /// Lights off.
+    Off,
+
+    /// Lights on.
+    On,
+
+    /// Begode strobe/running-light mode.
+    Strobe,
+}
+
+/// Mobile DTO acceleration-assist state.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Enum)]
+pub enum MobileAccelerationAssistStateDto {
+    /// Acceleration assist is disabled.
+    Disabled,
+
+    /// Acceleration assist is enabled.
+    Enabled,
+}
+
+impl From<MobileAccelerationAssistStateDto> for AccelerationAssistStateDto {
+    fn from(state: MobileAccelerationAssistStateDto) -> Self {
+        match state {
+            MobileAccelerationAssistStateDto::Disabled => Self::Disabled,
+            MobileAccelerationAssistStateDto::Enabled => Self::Enabled,
+        }
+    }
+}
+
+impl From<MobileAccelerationAssistStateDto> for CoreAccelerationAssistState {
+    fn from(state: MobileAccelerationAssistStateDto) -> Self {
+        match state {
+            MobileAccelerationAssistStateDto::Disabled => Self::Disabled,
+            MobileAccelerationAssistStateDto::Enabled => Self::Enabled,
+        }
+    }
+}
+
+impl From<CoreAccelerationAssistState> for MobileAccelerationAssistStateDto {
+    fn from(state: CoreAccelerationAssistState) -> Self {
+        match state {
+            CoreAccelerationAssistState::Disabled => Self::Disabled,
+            CoreAccelerationAssistState::Enabled => Self::Enabled,
+        }
+    }
+}
+
+/// Documented pedal stiffness mode.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Enum)]
+pub enum MobilePedalModeKindDto {
+    /// Firm pedal response.
+    Hard,
+
+    /// Mid-range pedal response.
+    Medium,
+
+    /// Soft pedal response.
+    Soft,
+}
+
+impl From<CorePedalMode> for MobilePedalModeKindDto {
+    fn from(mode: CorePedalMode) -> Self {
+        match mode {
+            CorePedalMode::Hard => Self::Hard,
+            CorePedalMode::Medium => Self::Medium,
+            CorePedalMode::Soft => Self::Soft,
+        }
+    }
+}
+
+impl From<MobilePedalModeKindDto> for CorePedalMode {
+    fn from(mode: MobilePedalModeKindDto) -> Self {
+        match mode {
+            MobilePedalModeKindDto::Hard => Self::Hard,
+            MobilePedalModeKindDto::Medium => Self::Medium,
+            MobilePedalModeKindDto::Soft => Self::Soft,
+        }
+    }
+}
+
+/// Documented Falcon roll-angle sensitivity.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Enum)]
+pub enum MobileRollAngleKindDto {
+    /// Low roll-angle sensitivity.
+    Low,
+
+    /// Medium roll-angle sensitivity.
+    Medium,
+
+    /// High roll-angle sensitivity.
+    High,
+}
+
+impl From<CoreRollAngle> for MobileRollAngleKindDto {
+    fn from(angle: CoreRollAngle) -> Self {
+        match angle {
+            CoreRollAngle::Low => Self::Low,
+            CoreRollAngle::Medium => Self::Medium,
+            CoreRollAngle::High => Self::High,
+        }
+    }
+}
+
+impl From<MobileRollAngleKindDto> for CoreRollAngle {
+    fn from(angle: MobileRollAngleKindDto) -> Self {
+        match angle {
+            MobileRollAngleKindDto::Low => Self::Low,
+            MobileRollAngleKindDto::Medium => Self::Medium,
+            MobileRollAngleKindDto::High => Self::High,
+        }
+    }
+}
+
+/// Documented Begode speed-alarm mode.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Enum)]
+pub enum MobileSpeedAlarmModeKindDto {
+    /// Both speed alarms are enabled.
+    Both,
+
+    /// Only the first-stage speed alarm is enabled.
+    StageOneOnly,
+
+    /// Speed alarms are disabled.
+    Off,
+
+    /// Firmware-controlled PWM tiltback mode.
+    PwmTiltback,
+}
+
+/// Begode max-speed input for the timed `W` submenu.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct MobileBegodeMaxSpeedDto {
+    /// Whole kilometres per hour, limited by the two-digit protocol field.
+    pub kilometres_per_hour: u8,
+}
+
+/// Begode beeper-volume input for the timed `W` submenu.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct MobileBegodeBeeperVolumeDto {
+    /// Protocol volume level, 1 through 9.
+    pub level: u8,
+}
+
+/// Begode LED-mode input for the timed `W` submenu.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct MobileBegodeLedModeDto {
+    /// Protocol LED mode, 0 through 9.
+    pub mode: u8,
+}
+
+impl From<CoreSpeedAlarmMode> for MobileSpeedAlarmModeKindDto {
+    fn from(mode: CoreSpeedAlarmMode) -> Self {
+        match mode {
+            CoreSpeedAlarmMode::Both => Self::Both,
+            CoreSpeedAlarmMode::StageOneOnly => Self::StageOneOnly,
+            CoreSpeedAlarmMode::Off => Self::Off,
+            CoreSpeedAlarmMode::PwmTiltback => Self::PwmTiltback,
+        }
+    }
+}
+
+impl From<MobileSpeedAlarmModeKindDto> for CoreSpeedAlarmMode {
+    fn from(mode: MobileSpeedAlarmModeKindDto) -> Self {
+        match mode {
+            MobileSpeedAlarmModeKindDto::Both => Self::Both,
+            MobileSpeedAlarmModeKindDto::StageOneOnly => Self::StageOneOnly,
+            MobileSpeedAlarmModeKindDto::Off => Self::Off,
+            MobileSpeedAlarmModeKindDto::PwmTiltback => Self::PwmTiltback,
+        }
+    }
+}
+
+/// Validation state for a setting write exposed to mobile consumers.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Enum)]
+pub enum MobileSettingWriteSupportDto {
+    /// Available for an explicit user-initiated write through the guarded session.
+    Supported,
+
+    /// An encoder exists, but validation evidence is incomplete.
+    Unverified,
+
+    /// No safe write is available for the model.
+    Unsupported,
+}
+
+/// Product-shaped write capabilities for an electric-unicycle session.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct MobileEucSettingsCapabilitiesDto {
+    /// Pedal-mode/settings write support.
+    pub pedal_mode: MobileSettingWriteSupportDto,
+
+    /// Falcon roll-angle sensitivity write support.
+    pub roll_angle: MobileSettingWriteSupportDto,
+
+    /// Begode speed-alarm mode write support.
+    pub speed_alarm_mode: MobileSettingWriteSupportDto,
+
+    /// Begode max-speed write support.
+    pub begode_max_speed: MobileSettingWriteSupportDto,
+
+    /// Begode beeper-volume write support.
+    pub begode_beeper_volume: MobileSettingWriteSupportDto,
+
+    /// Begode LED-mode write support.
+    pub begode_led_mode: MobileSettingWriteSupportDto,
+
+    /// Acceleration-assist/behavior write support.
+    pub acceleration_assist: MobileSettingWriteSupportDto,
+
+    /// Headlight or validated high-beam write support.
+    pub headlight: MobileSettingWriteSupportDto,
+
+    /// NOSFET/Veteran high-beam write support.
+    pub aero_high_beam: MobileSettingWriteSupportDto,
+
+    /// Separate taillight write support.
+    pub taillight: MobileSettingWriteSupportDto,
+
+    /// NOSFET Aero trip-meter reset support.
+    pub reset_trip_meter: MobileSettingWriteSupportDto,
+
+    /// NOSFET/Veteran tilt-back speed write support.
+    pub aero_tiltback_speed: MobileSettingWriteSupportDto,
+
+    /// NOSFET/Veteran PWT write support.
+    pub aero_pwm_percent: MobileSettingWriteSupportDto,
+
+    /// NOSFET/Veteran speed-alarm write support.
+    pub aero_alarm_speed: MobileSettingWriteSupportDto,
+
+    /// NOSFET/Veteran ANG write support.
+    pub aero_angle_adjustment: MobileSettingWriteSupportDto,
+}
+
+impl MobileEucSettingsCapabilitiesDto {
+    const fn aero() -> Self {
+        Self {
+            pedal_mode: MobileSettingWriteSupportDto::Supported,
+            roll_angle: MobileSettingWriteSupportDto::Unsupported,
+            speed_alarm_mode: MobileSettingWriteSupportDto::Unsupported,
+            begode_max_speed: MobileSettingWriteSupportDto::Unsupported,
+            begode_beeper_volume: MobileSettingWriteSupportDto::Unsupported,
+            begode_led_mode: MobileSettingWriteSupportDto::Unsupported,
+            acceleration_assist: MobileSettingWriteSupportDto::Unsupported,
+            headlight: MobileSettingWriteSupportDto::Supported,
+            aero_high_beam: MobileSettingWriteSupportDto::Supported,
+            taillight: MobileSettingWriteSupportDto::Unsupported,
+            reset_trip_meter: MobileSettingWriteSupportDto::Supported,
+            aero_tiltback_speed: MobileSettingWriteSupportDto::Supported,
+            aero_pwm_percent: MobileSettingWriteSupportDto::Supported,
+            aero_alarm_speed: MobileSettingWriteSupportDto::Supported,
+            aero_angle_adjustment: MobileSettingWriteSupportDto::Supported,
+        }
+    }
+
+    const fn falcon() -> Self {
+        Self {
+            pedal_mode: MobileSettingWriteSupportDto::Supported,
+            roll_angle: MobileSettingWriteSupportDto::Supported,
+            speed_alarm_mode: MobileSettingWriteSupportDto::Supported,
+            begode_max_speed: MobileSettingWriteSupportDto::Supported,
+            begode_beeper_volume: MobileSettingWriteSupportDto::Supported,
+            begode_led_mode: MobileSettingWriteSupportDto::Supported,
+            acceleration_assist: MobileSettingWriteSupportDto::Unsupported,
+            headlight: MobileSettingWriteSupportDto::Supported,
+            aero_high_beam: MobileSettingWriteSupportDto::Unsupported,
+            taillight: MobileSettingWriteSupportDto::Unsupported,
+            reset_trip_meter: MobileSettingWriteSupportDto::Unsupported,
+            aero_tiltback_speed: MobileSettingWriteSupportDto::Unsupported,
+            aero_pwm_percent: MobileSettingWriteSupportDto::Unsupported,
+            aero_alarm_speed: MobileSettingWriteSupportDto::Unsupported,
+            aero_angle_adjustment: MobileSettingWriteSupportDto::Unsupported,
+        }
+    }
+}
+
+/// Returns Rust-owned setting capabilities for a detected EUC model.
+#[uniffi::export]
+#[must_use]
+pub const fn mobile_euc_settings_capabilities(
+    model: DiscoveryElectricUnicycleModel,
+) -> MobileEucSettingsCapabilitiesDto {
+    match model {
+        DiscoveryElectricUnicycleModel::Aero => MobileEucSettingsCapabilitiesDto::aero(),
+        DiscoveryElectricUnicycleModel::Falcon => MobileEucSettingsCapabilitiesDto::falcon(),
+    }
+}
+
+/// Lifecycle phase for a typed mobile setting write.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Enum)]
+pub enum MobileSettingStateKindDto {
+    /// No current value or write request is known.
+    Unknown,
+
+    /// A current value is available without a pending write.
+    Current,
+
+    /// A write was accepted and awaits matching readback.
+    Pending,
+
+    /// Readback confirmed the requested value.
+    Confirmed,
+
+    /// The write was refused before transport.
+    Refused,
+
+    /// No matching readback arrived before timeout.
+    TimedOut,
+
+    /// Transport or session failure prevented completion.
+    Failed,
+}
+
+/// Provenance for the current value in a mobile setting state.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Enum)]
+pub enum MobileSettingValueSourceDto {
+    /// Value was observed in live device telemetry or readback.
+    LiveReadback,
+
+    /// Value came from a capture or replay fixture.
+    CaptureReplay,
+
+    /// Value was supplied by a user request and is not device-confirmed.
+    UserRequest,
+
+    /// Value provenance is unknown.
+    Unknown,
+}
+
+/// Typed headlight state exposed by a mobile EUC session.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct MobileLightSettingStateDto {
+    /// Current lifecycle phase.
+    pub kind: MobileSettingStateKindDto,
+
+    /// Most recent current light value, when known.
+    pub current: Option<MobileLightStateDto>,
+
+    /// Requested light value, when a write is pending or terminal.
+    pub requested: Option<MobileLightStateDto>,
+
+    /// Provenance for the current value.
+    pub source: MobileSettingValueSourceDto,
+
+    /// Monotonic time at which the write was accepted.
+    pub submitted_at_ms: Option<u64>,
+
+    /// Monotonic time at which matching readback arrived.
+    pub confirmed_at_ms: Option<u64>,
+
+    /// Typed refusal reason, when the write was refused.
+    pub refusal_reason: Option<MobileControlRefusalReasonDto>,
+}
+
+/// Typed NOSFET/Veteran speed-setting lifecycle state.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct MobileAeroSpeedSettingStateDto {
+    /// Current lifecycle phase.
+    pub kind: MobileSettingStateKindDto,
+
+    /// Most recent current speed, when known.
+    pub current: Option<MobileAeroSpeedSettingDto>,
+
+    /// Requested speed, when a write is pending or terminal.
+    pub requested: Option<MobileAeroSpeedSettingDto>,
+
+    /// Provenance for the current value.
+    pub source: MobileSettingValueSourceDto,
+
+    /// Monotonic time at which the write was accepted.
+    pub submitted_at_ms: Option<u64>,
+
+    /// Monotonic time at which matching readback arrived.
+    pub confirmed_at_ms: Option<u64>,
+
+    /// Typed refusal reason, when the write was refused.
+    pub refusal_reason: Option<MobileControlRefusalReasonDto>,
+}
+
+impl MobileAeroSpeedSettingStateDto {
+    fn unknown() -> Self {
+        Self {
+            kind: MobileSettingStateKindDto::Unknown,
+            current: None,
+            requested: None,
+            source: MobileSettingValueSourceDto::Unknown,
+            submitted_at_ms: None,
+            confirmed_at_ms: None,
+            refusal_reason: None,
+        }
+    }
+}
+
+/// Typed NOSFET/Veteran PWM-warning lifecycle state.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct MobileAeroPwmSettingStateDto {
+    /// Current lifecycle phase.
+    pub kind: MobileSettingStateKindDto,
+
+    /// Most recent current PWT percentage, when known.
+    pub current: Option<MobileAeroPwmPercentDto>,
+
+    /// Requested PWT percentage, when a write is pending or terminal.
+    pub requested: Option<MobileAeroPwmPercentDto>,
+
+    /// Provenance for the current value.
+    pub source: MobileSettingValueSourceDto,
+
+    /// Monotonic time at which the write was accepted.
+    pub submitted_at_ms: Option<u64>,
+
+    /// Monotonic time at which matching readback arrived.
+    pub confirmed_at_ms: Option<u64>,
+
+    /// Typed refusal reason, when the write was refused.
+    pub refusal_reason: Option<MobileControlRefusalReasonDto>,
+}
+
+impl MobileAeroPwmSettingStateDto {
+    fn unknown() -> Self {
+        Self {
+            kind: MobileSettingStateKindDto::Unknown,
+            current: None,
+            requested: None,
+            source: MobileSettingValueSourceDto::Unknown,
+            submitted_at_ms: None,
+            confirmed_at_ms: None,
+            refusal_reason: None,
+        }
+    }
+}
+
+/// Typed NOSFET/Veteran angle-adjustment lifecycle state.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct MobileAeroAngleAdjustmentStateDto {
+    /// Current lifecycle phase.
+    pub kind: MobileSettingStateKindDto,
+
+    /// Most recent current angle adjustment, when known.
+    pub current: Option<MobileAeroAngleAdjustmentDto>,
+
+    /// Requested angle adjustment, when a write is pending or terminal.
+    pub requested: Option<MobileAeroAngleAdjustmentDto>,
+
+    /// Provenance for the current value.
+    pub source: MobileSettingValueSourceDto,
+
+    /// Monotonic time at which the write was accepted.
+    pub submitted_at_ms: Option<u64>,
+
+    /// Monotonic time at which matching readback arrived.
+    pub confirmed_at_ms: Option<u64>,
+
+    /// Typed refusal reason, when the write was refused.
+    pub refusal_reason: Option<MobileControlRefusalReasonDto>,
+}
+
+impl MobileAeroAngleAdjustmentStateDto {
+    fn unknown() -> Self {
+        Self {
+            kind: MobileSettingStateKindDto::Unknown,
+            current: None,
+            requested: None,
+            source: MobileSettingValueSourceDto::Unknown,
+            submitted_at_ms: None,
+            confirmed_at_ms: None,
+            refusal_reason: None,
+        }
+    }
+}
+
+impl MobileLightSettingStateDto {
+    fn unknown() -> Self {
+        Self {
+            kind: MobileSettingStateKindDto::Unknown,
+            current: None,
+            requested: None,
+            source: MobileSettingValueSourceDto::Unknown,
+            submitted_at_ms: None,
+            confirmed_at_ms: None,
+            refusal_reason: None,
+        }
+    }
+}
+
+/// Typed pedal-mode lifecycle state exposed by a mobile EUC session.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct MobilePedalModeSettingStateDto {
+    /// Current lifecycle phase.
+    pub kind: MobileSettingStateKindDto,
+
+    /// Most recent current pedal mode, when known.
+    pub current: Option<MobilePedalModeKindDto>,
+
+    /// Requested pedal mode, when a write is pending or terminal.
+    pub requested: Option<MobilePedalModeKindDto>,
+
+    /// Provenance for the current value.
+    pub source: MobileSettingValueSourceDto,
+
+    /// Monotonic time at which the write was accepted.
+    pub submitted_at_ms: Option<u64>,
+
+    /// Monotonic time at which matching readback arrived.
+    pub confirmed_at_ms: Option<u64>,
+
+    /// Typed refusal reason, when the write was refused.
+    pub refusal_reason: Option<MobileControlRefusalReasonDto>,
+}
+
+impl MobilePedalModeSettingStateDto {
+    fn unknown() -> Self {
+        Self {
+            kind: MobileSettingStateKindDto::Unknown,
+            current: None,
+            requested: None,
+            source: MobileSettingValueSourceDto::Unknown,
+            submitted_at_ms: None,
+            confirmed_at_ms: None,
+            refusal_reason: None,
+        }
+    }
+}
+
+/// Typed Falcon roll-angle lifecycle state exposed by a mobile EUC session.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct MobileRollAngleSettingStateDto {
+    /// Current lifecycle phase.
+    pub kind: MobileSettingStateKindDto,
+
+    /// Most recent current roll-angle sensitivity, when known.
+    pub current: Option<MobileRollAngleKindDto>,
+
+    /// Requested roll-angle sensitivity, when a write is pending or terminal.
+    pub requested: Option<MobileRollAngleKindDto>,
+
+    /// Provenance for the current value.
+    pub source: MobileSettingValueSourceDto,
+
+    /// Monotonic time at which the write was accepted.
+    pub submitted_at_ms: Option<u64>,
+
+    /// Monotonic time at which matching readback arrived.
+    pub confirmed_at_ms: Option<u64>,
+
+    /// Typed refusal reason, when the write was refused.
+    pub refusal_reason: Option<MobileControlRefusalReasonDto>,
+}
+
+impl MobileRollAngleSettingStateDto {
+    fn unknown() -> Self {
+        Self {
+            kind: MobileSettingStateKindDto::Unknown,
+            current: None,
+            requested: None,
+            source: MobileSettingValueSourceDto::Unknown,
+            submitted_at_ms: None,
+            confirmed_at_ms: None,
+            refusal_reason: None,
+        }
+    }
+}
+
+/// Typed Begode speed-alarm lifecycle state exposed by a mobile EUC session.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct MobileSpeedAlarmModeSettingStateDto {
+    /// Current lifecycle phase.
+    pub kind: MobileSettingStateKindDto,
+
+    /// Most recent current speed-alarm mode, when known.
+    pub current: Option<MobileSpeedAlarmModeKindDto>,
+
+    /// Requested speed-alarm mode, when a write is pending or terminal.
+    pub requested: Option<MobileSpeedAlarmModeKindDto>,
+
+    /// Provenance for the current value.
+    pub source: MobileSettingValueSourceDto,
+
+    /// Monotonic time at which the write was accepted.
+    pub submitted_at_ms: Option<u64>,
+
+    /// Monotonic time at which matching readback arrived.
+    pub confirmed_at_ms: Option<u64>,
+
+    /// Typed refusal reason, when the write was refused.
+    pub refusal_reason: Option<MobileControlRefusalReasonDto>,
+}
+
+impl MobileSpeedAlarmModeSettingStateDto {
+    fn unknown() -> Self {
+        Self {
+            kind: MobileSettingStateKindDto::Unknown,
+            current: None,
+            requested: None,
+            source: MobileSettingValueSourceDto::Unknown,
+            submitted_at_ms: None,
+            confirmed_at_ms: None,
+            refusal_reason: None,
+        }
+    }
+}
+
+/// Typed acceleration-assist lifecycle state exposed by a mobile EUC session.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct MobileAccelerationAssistSettingStateDto {
+    /// Current lifecycle phase.
+    pub kind: MobileSettingStateKindDto,
+
+    /// Most recent current assist state, when known.
+    pub current: Option<MobileAccelerationAssistStateDto>,
+
+    /// Requested assist state, when a write is pending or terminal.
+    pub requested: Option<MobileAccelerationAssistStateDto>,
+
+    /// Provenance for the current value.
+    pub source: MobileSettingValueSourceDto,
+
+    /// Monotonic time at which the write was accepted.
+    pub submitted_at_ms: Option<u64>,
+
+    /// Monotonic time at which matching readback arrived.
+    pub confirmed_at_ms: Option<u64>,
+
+    /// Typed refusal reason, when the write was refused.
+    pub refusal_reason: Option<MobileControlRefusalReasonDto>,
+}
+
+impl MobileAccelerationAssistSettingStateDto {
+    fn unknown() -> Self {
+        Self {
+            kind: MobileSettingStateKindDto::Unknown,
+            current: None,
+            requested: None,
+            source: MobileSettingValueSourceDto::Unknown,
+            submitted_at_ms: None,
+            confirmed_at_ms: None,
+            refusal_reason: None,
+        }
+    }
+}
+
+impl From<MobileLightStateDto> for LightStateDto {
+    fn from(state: MobileLightStateDto) -> Self {
+        match state {
+            MobileLightStateDto::Off => Self::Off,
+            MobileLightStateDto::On => Self::On,
+            MobileLightStateDto::Strobe => Self::Strobe,
+        }
+    }
 }
 
 /// Mobile DTO input kind.
@@ -2430,6 +3151,31 @@ pub enum MobileSessionStepErrorKindDto {
     UnsupportedFalconProfile,
 }
 
+/// Typed reason a mobile control request was refused.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Enum)]
+pub enum MobileControlRefusalReasonDto {
+    /// Command safety classification does not allow this control path.
+    WrongSafetyClass,
+
+    /// The required arming token was not supplied.
+    MissingArm,
+
+    /// The arming token belongs to another model.
+    WrongModel,
+
+    /// The arming token has expired.
+    ExpiredArm,
+
+    /// The requested value exceeds the configured current limit.
+    CurrentLimitExceeded,
+
+    /// The command is unsupported by this model or session.
+    UnsupportedCommand,
+
+    /// A previous timed settings sequence is still in progress.
+    Busy,
+}
+
 /// Mobile session step error DTO.
 #[derive(Clone, Debug, Eq, PartialEq, uniffi::Record)]
 pub struct MobileSessionStepErrorDto {
@@ -2440,7 +3186,7 @@ pub struct MobileSessionStepErrorDto {
     pub command: Option<MobileCommandDto>,
 
     /// Refusal reason, if any.
-    pub reason: Option<String>,
+    pub reason: Option<MobileControlRefusalReasonDto>,
 }
 
 /// Mobile result of one session step.
@@ -2451,6 +3197,844 @@ pub struct MobileSessionStepResultDto {
 
     /// Stable error from the step, if any.
     pub error: Option<MobileSessionStepErrorDto>,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct MobileSettingTracker<Value> {
+    state: CoreSettingState<Value>,
+}
+
+impl<Value> Default for MobileSettingTracker<Value>
+where
+    Value: Copy + Eq,
+{
+    fn default() -> Self {
+        Self {
+            state: CoreSettingState::unknown(),
+        }
+    }
+}
+
+impl<Value> MobileSettingTracker<Value>
+where
+    Value: Copy + Eq,
+{
+    fn observe_step(&mut self, kind: MobileSessionInputKindDto, now: MonotonicTimestamp) {
+        if kind == MobileSessionInputKindDto::LinkDown {
+            self.state = CoreSettingState::unknown();
+        }
+
+        if kind == MobileSessionInputKindDto::Tick {
+            self.state
+                .timeout_if_elapsed(now, SETTING_WRITE_CONFIRMATION_TIMEOUT);
+        }
+    }
+
+    fn observe_write(
+        &mut self,
+        requested: Value,
+        submitted_at: MonotonicTimestamp,
+        result: &MobileSessionStepResultDto,
+    ) {
+        observe_setting_write(&mut self.state, requested, submitted_at, result);
+    }
+
+    fn observe_readback(&mut self, value: Value, observed_at: MonotonicTimestamp) {
+        let _ = self
+            .state
+            .observe(value, CoreSettingValueSource::LiveReadback, observed_at);
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+struct MobileEucSettingTrackers {
+    headlight: MobileSettingTracker<CoreLightState>,
+    aero_high_beam: MobileSettingTracker<CoreLightState>,
+    aero_tiltback_speed: MobileSettingTracker<CoreAeroSpeedSetting>,
+    aero_pwm_percent: MobileSettingTracker<CoreAeroPwmPercent>,
+    aero_alarm_speed: MobileSettingTracker<CoreAeroSpeedSetting>,
+    aero_angle_adjustment: MobileSettingTracker<CoreAeroAngleAdjustment>,
+    pedal_mode: MobileSettingTracker<CorePedalMode>,
+    roll_angle: MobileSettingTracker<CoreRollAngle>,
+    speed_alarm_mode: MobileSettingTracker<CoreSpeedAlarmMode>,
+    acceleration_assist: MobileSettingTracker<CoreAccelerationAssistState>,
+    taillight: MobileSettingTracker<CoreLightState>,
+}
+
+impl MobileEucSettingTrackers {
+    fn observe_step(&mut self, input: &MobileSessionInputDto, result: &MobileSessionStepResultDto) {
+        let now = input.monotonic_ms.into_core();
+        self.headlight.observe_step(input.kind, now);
+        self.aero_high_beam.observe_step(input.kind, now);
+        self.aero_tiltback_speed.observe_step(input.kind, now);
+        self.aero_pwm_percent.observe_step(input.kind, now);
+        self.aero_alarm_speed.observe_step(input.kind, now);
+        self.aero_angle_adjustment.observe_step(input.kind, now);
+        self.pedal_mode.observe_step(input.kind, now);
+        self.roll_angle.observe_step(input.kind, now);
+        self.speed_alarm_mode.observe_step(input.kind, now);
+        self.acceleration_assist.observe_step(input.kind, now);
+        self.taillight.observe_step(input.kind, now);
+
+        self.observe_command(input.command, now, result);
+        for output in &result.outputs {
+            if let Some(readback) = output.settings_readback.as_ref() {
+                self.observe_readback(readback, now);
+            }
+        }
+    }
+
+    fn observe_command(
+        &mut self,
+        command: Option<MobileCommandDto>,
+        now: MonotonicTimestamp,
+        result: &MobileSessionStepResultDto,
+    ) {
+        match command {
+            Some(MobileCommandDto::SetLights(requested)) => {
+                self.headlight.observe_write(requested.into(), now, result);
+            }
+            Some(MobileCommandDto::SetAeroHighBeam(requested)) => {
+                self.aero_high_beam
+                    .observe_write(requested.into(), now, result);
+            }
+            Some(MobileCommandDto::SetAeroTiltbackSpeed(requested)) => {
+                if let Some(requested) = CoreAeroSpeedSetting::new(requested.kilometres_per_hour) {
+                    self.aero_tiltback_speed
+                        .observe_write(requested, now, result);
+                }
+            }
+            Some(MobileCommandDto::SetAeroPwmPercent(requested)) => {
+                if let Some(requested) = CoreAeroPwmPercent::new(requested.percent) {
+                    self.aero_pwm_percent.observe_write(requested, now, result);
+                }
+            }
+            Some(MobileCommandDto::SetAeroAlarmSpeed(requested)) => {
+                if let Some(requested) = CoreAeroSpeedSetting::new(requested.kilometres_per_hour) {
+                    self.aero_alarm_speed.observe_write(requested, now, result);
+                }
+            }
+            Some(MobileCommandDto::SetAeroAngleAdjustment(requested)) => {
+                if let Some(requested) = CoreAeroAngleAdjustment::new(requested.tenths_of_degree) {
+                    self.aero_angle_adjustment
+                        .observe_write(requested, now, result);
+                }
+            }
+            Some(MobileCommandDto::SetPedalMode(requested)) => {
+                self.pedal_mode.observe_write(requested.into(), now, result);
+            }
+            Some(MobileCommandDto::SetRollAngle(requested)) => {
+                self.roll_angle.observe_write(requested.into(), now, result);
+            }
+            Some(MobileCommandDto::SetSpeedAlarmMode(requested)) => {
+                self.speed_alarm_mode
+                    .observe_write(requested.into(), now, result);
+            }
+            Some(MobileCommandDto::SetAccelerationAssist(requested)) => {
+                self.acceleration_assist
+                    .observe_write(requested.into(), now, result);
+            }
+            Some(MobileCommandDto::SetTaillight(requested)) => {
+                self.taillight.observe_write(requested.into(), now, result);
+            }
+            _ => {}
+        }
+    }
+
+    fn observe_readback(&mut self, readback: &MobileSettingsReadbackDto, now: MonotonicTimestamp) {
+        if let Some(light_state) = readback.euc_garage.light_state {
+            self.headlight.observe_readback(light_state.into(), now);
+        }
+        if let Some(entry) =
+            settings_entry(&readback.entries, VETERAN_FIELD_SPEED_TILTBACK_DECI_KMH)
+                .and_then(aero_speed_setting_from_entry)
+        {
+            self.aero_tiltback_speed.observe_readback(entry, now);
+        }
+        if let Some(entry) = settings_entry(&readback.entries, VETERAN_FIELD_SPEED_ALERT_DECI_KMH)
+            .and_then(aero_speed_setting_from_entry)
+        {
+            self.aero_alarm_speed.observe_readback(entry, now);
+        }
+        if let Some(pedal_mode) = readback
+            .euc_garage
+            .pedal_mode
+            .as_ref()
+            .and_then(|pedal_mode| pedal_mode.mode.map(CorePedalMode::from))
+        {
+            self.pedal_mode.observe_readback(pedal_mode, now);
+        }
+        if let Some(roll_angle) = readback
+            .euc_garage
+            .roll_angle
+            .as_ref()
+            .and_then(|roll_angle| roll_angle.angle.map(CoreRollAngle::from))
+        {
+            self.roll_angle.observe_readback(roll_angle, now);
+        }
+        if let Some(speed_alarm_mode) = readback
+            .euc_garage
+            .speed_alarm_mode
+            .as_ref()
+            .and_then(|mode| mode.mode.map(CoreSpeedAlarmMode::from))
+        {
+            self.speed_alarm_mode
+                .observe_readback(speed_alarm_mode, now);
+        }
+    }
+
+    fn headlight(&self) -> MobileLightSettingStateDto {
+        mobile_light_setting_state(self.headlight.state)
+    }
+
+    fn aero_high_beam(&self) -> MobileLightSettingStateDto {
+        mobile_light_setting_state(self.aero_high_beam.state)
+    }
+
+    fn aero_tiltback_speed(&self) -> MobileAeroSpeedSettingStateDto {
+        mobile_aero_speed_setting_state(self.aero_tiltback_speed.state)
+    }
+
+    fn aero_pwm_percent(&self) -> MobileAeroPwmSettingStateDto {
+        mobile_aero_pwm_setting_state(self.aero_pwm_percent.state)
+    }
+
+    fn aero_alarm_speed(&self) -> MobileAeroSpeedSettingStateDto {
+        mobile_aero_speed_setting_state(self.aero_alarm_speed.state)
+    }
+
+    fn aero_angle_adjustment(&self) -> MobileAeroAngleAdjustmentStateDto {
+        mobile_aero_angle_setting_state(self.aero_angle_adjustment.state)
+    }
+
+    fn pedal_mode(&self) -> MobilePedalModeSettingStateDto {
+        mobile_pedal_mode_setting_state(self.pedal_mode.state)
+    }
+
+    fn roll_angle(&self) -> MobileRollAngleSettingStateDto {
+        mobile_roll_angle_setting_state(self.roll_angle.state)
+    }
+
+    fn speed_alarm_mode(&self) -> MobileSpeedAlarmModeSettingStateDto {
+        mobile_speed_alarm_mode_setting_state(self.speed_alarm_mode.state)
+    }
+
+    fn acceleration_assist(&self) -> MobileAccelerationAssistSettingStateDto {
+        mobile_acceleration_assist_setting_state(self.acceleration_assist.state)
+    }
+
+    fn taillight(&self) -> MobileLightSettingStateDto {
+        mobile_light_setting_state(self.taillight.state)
+    }
+}
+
+fn observe_setting_write<Value>(
+    state: &mut CoreSettingState<Value>,
+    requested: Value,
+    submitted_at: MonotonicTimestamp,
+    result: &MobileSessionStepResultDto,
+) where
+    Value: Copy + Eq,
+{
+    match result.error.as_ref() {
+        None => state.submit(requested, submitted_at),
+        Some(error) if error.kind == MobileSessionStepErrorKindDto::CommandRefused => {
+            state.submit(requested, submitted_at);
+            if let Some(reason) = error.reason {
+                state.refuse(reason.into());
+            } else {
+                state.fail();
+            }
+        }
+        Some(_) => state.fail(),
+    }
+}
+
+fn mobile_aero_speed_setting_state(
+    state: CoreSettingState<CoreAeroSpeedSetting>,
+) -> MobileAeroSpeedSettingStateDto {
+    let mut snapshot = MobileAeroSpeedSettingStateDto::unknown();
+    match state {
+        CoreSettingState::Unknown => {}
+        CoreSettingState::Current(value) => {
+            snapshot.kind = MobileSettingStateKindDto::Current;
+            snapshot.current = Some(value.value.into());
+            snapshot.source = value.source.into();
+        }
+        CoreSettingState::Pending {
+            current,
+            requested,
+            submitted_at,
+        } => {
+            snapshot.kind = MobileSettingStateKindDto::Pending;
+            snapshot.current = current.map(|value| value.value.into());
+            snapshot.source = current
+                .map_or(CoreSettingValueSource::Unknown, |value| value.source)
+                .into();
+            snapshot.requested = Some(requested.into());
+            snapshot.submitted_at_ms = Some(submitted_at.as_milliseconds());
+        }
+        CoreSettingState::Confirmed {
+            value,
+            confirmed_at,
+        } => {
+            snapshot.kind = MobileSettingStateKindDto::Confirmed;
+            snapshot.current = Some(value.value.into());
+            snapshot.source = value.source.into();
+            snapshot.confirmed_at_ms = Some(confirmed_at.as_milliseconds());
+        }
+        CoreSettingState::Refused {
+            current,
+            requested,
+            reason,
+        } => {
+            snapshot.kind = MobileSettingStateKindDto::Refused;
+            snapshot.current = current.map(|value| value.value.into());
+            snapshot.source = current
+                .map_or(CoreSettingValueSource::Unknown, |value| value.source)
+                .into();
+            snapshot.requested = requested.map(Into::into);
+            snapshot.refusal_reason = Some(reason.into());
+        }
+        CoreSettingState::TimedOut { current, requested } => {
+            snapshot.kind = MobileSettingStateKindDto::TimedOut;
+            snapshot.current = current.map(|value| value.value.into());
+            snapshot.source = current
+                .map_or(CoreSettingValueSource::Unknown, |value| value.source)
+                .into();
+            snapshot.requested = Some(requested.into());
+        }
+        CoreSettingState::Failed { current, requested } => {
+            snapshot.kind = MobileSettingStateKindDto::Failed;
+            snapshot.current = current.map(|value| value.value.into());
+            snapshot.source = current
+                .map_or(CoreSettingValueSource::Unknown, |value| value.source)
+                .into();
+            snapshot.requested = requested.map(Into::into);
+        }
+    }
+    snapshot
+}
+
+fn mobile_aero_pwm_setting_state(
+    state: CoreSettingState<CoreAeroPwmPercent>,
+) -> MobileAeroPwmSettingStateDto {
+    let mut snapshot = MobileAeroPwmSettingStateDto::unknown();
+    match state {
+        CoreSettingState::Unknown => {}
+        CoreSettingState::Current(value) => {
+            snapshot.kind = MobileSettingStateKindDto::Current;
+            snapshot.current = Some(value.value.into());
+            snapshot.source = value.source.into();
+        }
+        CoreSettingState::Pending {
+            current,
+            requested,
+            submitted_at,
+        } => {
+            snapshot.kind = MobileSettingStateKindDto::Pending;
+            snapshot.current = current.map(|value| value.value.into());
+            snapshot.source = current
+                .map_or(CoreSettingValueSource::Unknown, |value| value.source)
+                .into();
+            snapshot.requested = Some(requested.into());
+            snapshot.submitted_at_ms = Some(submitted_at.as_milliseconds());
+        }
+        CoreSettingState::Confirmed {
+            value,
+            confirmed_at,
+        } => {
+            snapshot.kind = MobileSettingStateKindDto::Confirmed;
+            snapshot.current = Some(value.value.into());
+            snapshot.source = value.source.into();
+            snapshot.confirmed_at_ms = Some(confirmed_at.as_milliseconds());
+        }
+        CoreSettingState::Refused {
+            current,
+            requested,
+            reason,
+        } => {
+            snapshot.kind = MobileSettingStateKindDto::Refused;
+            snapshot.current = current.map(|value| value.value.into());
+            snapshot.source = current
+                .map_or(CoreSettingValueSource::Unknown, |value| value.source)
+                .into();
+            snapshot.requested = requested.map(Into::into);
+            snapshot.refusal_reason = Some(reason.into());
+        }
+        CoreSettingState::TimedOut { current, requested } => {
+            snapshot.kind = MobileSettingStateKindDto::TimedOut;
+            snapshot.current = current.map(|value| value.value.into());
+            snapshot.source = current
+                .map_or(CoreSettingValueSource::Unknown, |value| value.source)
+                .into();
+            snapshot.requested = Some(requested.into());
+        }
+        CoreSettingState::Failed { current, requested } => {
+            snapshot.kind = MobileSettingStateKindDto::Failed;
+            snapshot.current = current.map(|value| value.value.into());
+            snapshot.source = current
+                .map_or(CoreSettingValueSource::Unknown, |value| value.source)
+                .into();
+            snapshot.requested = requested.map(Into::into);
+        }
+    }
+    snapshot
+}
+
+fn mobile_aero_angle_setting_state(
+    state: CoreSettingState<CoreAeroAngleAdjustment>,
+) -> MobileAeroAngleAdjustmentStateDto {
+    let mut snapshot = MobileAeroAngleAdjustmentStateDto::unknown();
+    match state {
+        CoreSettingState::Unknown => {}
+        CoreSettingState::Current(value) => {
+            snapshot.kind = MobileSettingStateKindDto::Current;
+            snapshot.current = Some(value.value.into());
+            snapshot.source = value.source.into();
+        }
+        CoreSettingState::Pending {
+            current,
+            requested,
+            submitted_at,
+        } => {
+            snapshot.kind = MobileSettingStateKindDto::Pending;
+            snapshot.current = current.map(|value| value.value.into());
+            snapshot.source = current
+                .map_or(CoreSettingValueSource::Unknown, |value| value.source)
+                .into();
+            snapshot.requested = Some(requested.into());
+            snapshot.submitted_at_ms = Some(submitted_at.as_milliseconds());
+        }
+        CoreSettingState::Confirmed {
+            value,
+            confirmed_at,
+        } => {
+            snapshot.kind = MobileSettingStateKindDto::Confirmed;
+            snapshot.current = Some(value.value.into());
+            snapshot.source = value.source.into();
+            snapshot.confirmed_at_ms = Some(confirmed_at.as_milliseconds());
+        }
+        CoreSettingState::Refused {
+            current,
+            requested,
+            reason,
+        } => {
+            snapshot.kind = MobileSettingStateKindDto::Refused;
+            snapshot.current = current.map(|value| value.value.into());
+            snapshot.source = current
+                .map_or(CoreSettingValueSource::Unknown, |value| value.source)
+                .into();
+            snapshot.requested = requested.map(Into::into);
+            snapshot.refusal_reason = Some(reason.into());
+        }
+        CoreSettingState::TimedOut { current, requested } => {
+            snapshot.kind = MobileSettingStateKindDto::TimedOut;
+            snapshot.current = current.map(|value| value.value.into());
+            snapshot.source = current
+                .map_or(CoreSettingValueSource::Unknown, |value| value.source)
+                .into();
+            snapshot.requested = Some(requested.into());
+        }
+        CoreSettingState::Failed { current, requested } => {
+            snapshot.kind = MobileSettingStateKindDto::Failed;
+            snapshot.current = current.map(|value| value.value.into());
+            snapshot.source = current
+                .map_or(CoreSettingValueSource::Unknown, |value| value.source)
+                .into();
+            snapshot.requested = requested.map(Into::into);
+        }
+    }
+    snapshot
+}
+
+fn mobile_light_setting_state(
+    state: CoreSettingState<CoreLightState>,
+) -> MobileLightSettingStateDto {
+    let mut snapshot = MobileLightSettingStateDto::unknown();
+    match state {
+        CoreSettingState::Unknown => {}
+        CoreSettingState::Current(value) => {
+            snapshot.kind = MobileSettingStateKindDto::Current;
+            snapshot.current = Some(value.value.into());
+            snapshot.source = value.source.into();
+        }
+        CoreSettingState::Pending {
+            current,
+            requested,
+            submitted_at,
+        } => {
+            snapshot.kind = MobileSettingStateKindDto::Pending;
+            snapshot.current = current.map(|value| value.value.into());
+            snapshot.source = current
+                .map_or(CoreSettingValueSource::Unknown, |value| value.source)
+                .into();
+            snapshot.requested = Some(requested.into());
+            snapshot.submitted_at_ms = Some(submitted_at.as_milliseconds());
+        }
+        CoreSettingState::Confirmed {
+            value,
+            confirmed_at,
+        } => {
+            snapshot.kind = MobileSettingStateKindDto::Confirmed;
+            snapshot.current = Some(value.value.into());
+            snapshot.source = value.source.into();
+            snapshot.confirmed_at_ms = Some(confirmed_at.as_milliseconds());
+        }
+        CoreSettingState::Refused {
+            current,
+            requested,
+            reason,
+        } => {
+            snapshot.kind = MobileSettingStateKindDto::Refused;
+            snapshot.current = current.map(|value| value.value.into());
+            snapshot.source = current
+                .map_or(CoreSettingValueSource::Unknown, |value| value.source)
+                .into();
+            snapshot.requested = requested.map(Into::into);
+            snapshot.refusal_reason = Some(reason.into());
+        }
+        CoreSettingState::TimedOut { current, requested } => {
+            snapshot.kind = MobileSettingStateKindDto::TimedOut;
+            snapshot.current = current.map(|value| value.value.into());
+            snapshot.source = current
+                .map_or(CoreSettingValueSource::Unknown, |value| value.source)
+                .into();
+            snapshot.requested = Some(requested.into());
+        }
+        CoreSettingState::Failed { current, requested } => {
+            snapshot.kind = MobileSettingStateKindDto::Failed;
+            snapshot.current = current.map(|value| value.value.into());
+            snapshot.source = current
+                .map_or(CoreSettingValueSource::Unknown, |value| value.source)
+                .into();
+            snapshot.requested = requested.map(Into::into);
+        }
+    }
+    snapshot
+}
+
+fn mobile_pedal_mode_setting_state(
+    state: CoreSettingState<CorePedalMode>,
+) -> MobilePedalModeSettingStateDto {
+    let mut snapshot = MobilePedalModeSettingStateDto::unknown();
+    match state {
+        CoreSettingState::Unknown => {}
+        CoreSettingState::Current(value) => {
+            snapshot.kind = MobileSettingStateKindDto::Current;
+            snapshot.current = Some(value.value.into());
+            snapshot.source = value.source.into();
+        }
+        CoreSettingState::Pending {
+            current,
+            requested,
+            submitted_at,
+        } => {
+            snapshot.kind = MobileSettingStateKindDto::Pending;
+            snapshot.current = current.map(|value| value.value.into());
+            snapshot.source = current
+                .map_or(CoreSettingValueSource::Unknown, |value| value.source)
+                .into();
+            snapshot.requested = Some(requested.into());
+            snapshot.submitted_at_ms = Some(submitted_at.as_milliseconds());
+        }
+        CoreSettingState::Confirmed {
+            value,
+            confirmed_at,
+        } => {
+            snapshot.kind = MobileSettingStateKindDto::Confirmed;
+            snapshot.current = Some(value.value.into());
+            snapshot.source = value.source.into();
+            snapshot.confirmed_at_ms = Some(confirmed_at.as_milliseconds());
+        }
+        CoreSettingState::Refused {
+            current,
+            requested,
+            reason,
+        } => {
+            snapshot.kind = MobileSettingStateKindDto::Refused;
+            snapshot.current = current.map(|value| value.value.into());
+            snapshot.source = current
+                .map_or(CoreSettingValueSource::Unknown, |value| value.source)
+                .into();
+            snapshot.requested = requested.map(Into::into);
+            snapshot.refusal_reason = Some(reason.into());
+        }
+        CoreSettingState::TimedOut { current, requested } => {
+            snapshot.kind = MobileSettingStateKindDto::TimedOut;
+            snapshot.current = current.map(|value| value.value.into());
+            snapshot.source = current
+                .map_or(CoreSettingValueSource::Unknown, |value| value.source)
+                .into();
+            snapshot.requested = Some(requested.into());
+        }
+        CoreSettingState::Failed { current, requested } => {
+            snapshot.kind = MobileSettingStateKindDto::Failed;
+            snapshot.current = current.map(|value| value.value.into());
+            snapshot.source = current
+                .map_or(CoreSettingValueSource::Unknown, |value| value.source)
+                .into();
+            snapshot.requested = requested.map(Into::into);
+        }
+    }
+    snapshot
+}
+
+fn mobile_roll_angle_setting_state(
+    state: CoreSettingState<CoreRollAngle>,
+) -> MobileRollAngleSettingStateDto {
+    let mut snapshot = MobileRollAngleSettingStateDto::unknown();
+    match state {
+        CoreSettingState::Unknown => {}
+        CoreSettingState::Current(value) => {
+            snapshot.kind = MobileSettingStateKindDto::Current;
+            snapshot.current = Some(value.value.into());
+            snapshot.source = value.source.into();
+        }
+        CoreSettingState::Pending {
+            current,
+            requested,
+            submitted_at,
+        } => {
+            snapshot.kind = MobileSettingStateKindDto::Pending;
+            snapshot.current = current.map(|value| value.value.into());
+            snapshot.source = current
+                .map_or(CoreSettingValueSource::Unknown, |value| value.source)
+                .into();
+            snapshot.requested = Some(requested.into());
+            snapshot.submitted_at_ms = Some(submitted_at.as_milliseconds());
+        }
+        CoreSettingState::Confirmed {
+            value,
+            confirmed_at,
+        } => {
+            snapshot.kind = MobileSettingStateKindDto::Confirmed;
+            snapshot.current = Some(value.value.into());
+            snapshot.source = value.source.into();
+            snapshot.confirmed_at_ms = Some(confirmed_at.as_milliseconds());
+        }
+        CoreSettingState::Refused {
+            current,
+            requested,
+            reason,
+        } => {
+            snapshot.kind = MobileSettingStateKindDto::Refused;
+            snapshot.current = current.map(|value| value.value.into());
+            snapshot.source = current
+                .map_or(CoreSettingValueSource::Unknown, |value| value.source)
+                .into();
+            snapshot.requested = requested.map(Into::into);
+            snapshot.refusal_reason = Some(reason.into());
+        }
+        CoreSettingState::TimedOut { current, requested } => {
+            snapshot.kind = MobileSettingStateKindDto::TimedOut;
+            snapshot.current = current.map(|value| value.value.into());
+            snapshot.source = current
+                .map_or(CoreSettingValueSource::Unknown, |value| value.source)
+                .into();
+            snapshot.requested = Some(requested.into());
+        }
+        CoreSettingState::Failed { current, requested } => {
+            snapshot.kind = MobileSettingStateKindDto::Failed;
+            snapshot.current = current.map(|value| value.value.into());
+            snapshot.source = current
+                .map_or(CoreSettingValueSource::Unknown, |value| value.source)
+                .into();
+            snapshot.requested = requested.map(Into::into);
+        }
+    }
+    snapshot
+}
+
+fn mobile_speed_alarm_mode_setting_state(
+    state: CoreSettingState<CoreSpeedAlarmMode>,
+) -> MobileSpeedAlarmModeSettingStateDto {
+    let mut snapshot = MobileSpeedAlarmModeSettingStateDto::unknown();
+    match state {
+        CoreSettingState::Unknown => {}
+        CoreSettingState::Current(value) => {
+            snapshot.kind = MobileSettingStateKindDto::Current;
+            snapshot.current = Some(value.value.into());
+            snapshot.source = value.source.into();
+        }
+        CoreSettingState::Pending {
+            current,
+            requested,
+            submitted_at,
+        } => {
+            snapshot.kind = MobileSettingStateKindDto::Pending;
+            snapshot.current = current.map(|value| value.value.into());
+            snapshot.source = current
+                .map_or(CoreSettingValueSource::Unknown, |value| value.source)
+                .into();
+            snapshot.requested = Some(requested.into());
+            snapshot.submitted_at_ms = Some(submitted_at.as_milliseconds());
+        }
+        CoreSettingState::Confirmed {
+            value,
+            confirmed_at,
+        } => {
+            snapshot.kind = MobileSettingStateKindDto::Confirmed;
+            snapshot.current = Some(value.value.into());
+            snapshot.source = value.source.into();
+            snapshot.confirmed_at_ms = Some(confirmed_at.as_milliseconds());
+        }
+        CoreSettingState::Refused {
+            current,
+            requested,
+            reason,
+        } => {
+            snapshot.kind = MobileSettingStateKindDto::Refused;
+            snapshot.current = current.map(|value| value.value.into());
+            snapshot.source = current
+                .map_or(CoreSettingValueSource::Unknown, |value| value.source)
+                .into();
+            snapshot.requested = requested.map(Into::into);
+            snapshot.refusal_reason = Some(reason.into());
+        }
+        CoreSettingState::TimedOut { current, requested } => {
+            snapshot.kind = MobileSettingStateKindDto::TimedOut;
+            snapshot.current = current.map(|value| value.value.into());
+            snapshot.source = current
+                .map_or(CoreSettingValueSource::Unknown, |value| value.source)
+                .into();
+            snapshot.requested = Some(requested.into());
+        }
+        CoreSettingState::Failed { current, requested } => {
+            snapshot.kind = MobileSettingStateKindDto::Failed;
+            snapshot.current = current.map(|value| value.value.into());
+            snapshot.source = current
+                .map_or(CoreSettingValueSource::Unknown, |value| value.source)
+                .into();
+            snapshot.requested = requested.map(Into::into);
+        }
+    }
+    snapshot
+}
+
+fn mobile_acceleration_assist_setting_state(
+    state: CoreSettingState<CoreAccelerationAssistState>,
+) -> MobileAccelerationAssistSettingStateDto {
+    let mut snapshot = MobileAccelerationAssistSettingStateDto::unknown();
+    match state {
+        CoreSettingState::Unknown => {}
+        CoreSettingState::Current(value) => {
+            snapshot.kind = MobileSettingStateKindDto::Current;
+            snapshot.current = Some(value.value.into());
+            snapshot.source = value.source.into();
+        }
+        CoreSettingState::Pending {
+            current,
+            requested,
+            submitted_at,
+        } => {
+            snapshot.kind = MobileSettingStateKindDto::Pending;
+            snapshot.current = current.map(|value| value.value.into());
+            snapshot.source = current
+                .map_or(CoreSettingValueSource::Unknown, |value| value.source)
+                .into();
+            snapshot.requested = Some(requested.into());
+            snapshot.submitted_at_ms = Some(submitted_at.as_milliseconds());
+        }
+        CoreSettingState::Confirmed {
+            value,
+            confirmed_at,
+        } => {
+            snapshot.kind = MobileSettingStateKindDto::Confirmed;
+            snapshot.current = Some(value.value.into());
+            snapshot.source = value.source.into();
+            snapshot.confirmed_at_ms = Some(confirmed_at.as_milliseconds());
+        }
+        CoreSettingState::Refused {
+            current,
+            requested,
+            reason,
+        } => {
+            snapshot.kind = MobileSettingStateKindDto::Refused;
+            snapshot.current = current.map(|value| value.value.into());
+            snapshot.source = current
+                .map_or(CoreSettingValueSource::Unknown, |value| value.source)
+                .into();
+            snapshot.requested = requested.map(Into::into);
+            snapshot.refusal_reason = Some(reason.into());
+        }
+        CoreSettingState::TimedOut { current, requested } => {
+            snapshot.kind = MobileSettingStateKindDto::TimedOut;
+            snapshot.current = current.map(|value| value.value.into());
+            snapshot.source = current
+                .map_or(CoreSettingValueSource::Unknown, |value| value.source)
+                .into();
+            snapshot.requested = Some(requested.into());
+        }
+        CoreSettingState::Failed { current, requested } => {
+            snapshot.kind = MobileSettingStateKindDto::Failed;
+            snapshot.current = current.map(|value| value.value.into());
+            snapshot.source = current
+                .map_or(CoreSettingValueSource::Unknown, |value| value.source)
+                .into();
+            snapshot.requested = requested.map(Into::into);
+        }
+    }
+    snapshot
+}
+
+impl From<CoreSettingValueSource> for MobileSettingValueSourceDto {
+    fn from(source: CoreSettingValueSource) -> Self {
+        match source {
+            CoreSettingValueSource::LiveReadback => Self::LiveReadback,
+            CoreSettingValueSource::CaptureReplay => Self::CaptureReplay,
+            CoreSettingValueSource::UserRequest => Self::UserRequest,
+            CoreSettingValueSource::Unknown => Self::Unknown,
+        }
+    }
+}
+
+impl From<MobileLightStateDto> for CoreLightState {
+    fn from(state: MobileLightStateDto) -> Self {
+        match state {
+            MobileLightStateDto::Off => Self::Off,
+            MobileLightStateDto::On => Self::On,
+            MobileLightStateDto::Strobe => Self::Strobe,
+        }
+    }
+}
+
+impl From<CoreLightState> for MobileLightStateDto {
+    fn from(state: CoreLightState) -> Self {
+        match state {
+            CoreLightState::Off => Self::Off,
+            CoreLightState::On => Self::On,
+            CoreLightState::Strobe => Self::Strobe,
+        }
+    }
+}
+
+impl From<MobileControlRefusalReasonDto> for CoreControlRefusalReason {
+    fn from(reason: MobileControlRefusalReasonDto) -> Self {
+        match reason {
+            MobileControlRefusalReasonDto::WrongSafetyClass => Self::WrongSafetyClass,
+            MobileControlRefusalReasonDto::MissingArm => Self::MissingArm,
+            MobileControlRefusalReasonDto::WrongModel => Self::WrongModel,
+            MobileControlRefusalReasonDto::ExpiredArm => Self::ExpiredArm,
+            MobileControlRefusalReasonDto::CurrentLimitExceeded => Self::CurrentLimitExceeded,
+            MobileControlRefusalReasonDto::UnsupportedCommand => Self::UnsupportedCommand,
+            MobileControlRefusalReasonDto::Busy => Self::Busy,
+        }
+    }
+}
+
+impl From<CoreControlRefusalReason> for MobileControlRefusalReasonDto {
+    fn from(reason: CoreControlRefusalReason) -> Self {
+        match reason {
+            CoreControlRefusalReason::WrongSafetyClass => Self::WrongSafetyClass,
+            CoreControlRefusalReason::MissingArm => Self::MissingArm,
+            CoreControlRefusalReason::WrongModel => Self::WrongModel,
+            CoreControlRefusalReason::ExpiredArm => Self::ExpiredArm,
+            CoreControlRefusalReason::CurrentLimitExceeded => Self::CurrentLimitExceeded,
+            CoreControlRefusalReason::UnsupportedCommand => Self::UnsupportedCommand,
+            CoreControlRefusalReason::Busy => Self::Busy,
+        }
+    }
 }
 
 /// Fixed-unit duration used by the charging estimator boundary.
@@ -2851,6 +4435,9 @@ pub struct MobileTelemetrySnapshotDto {
 
     /// Reported distance.
     pub distance: Option<DistanceReading>,
+
+    /// Reported trip distance when the active protocol exposes it separately.
+    pub trip_distance: Option<DistanceReading>,
 
     /// Limp-home/range estimate when modeled by the product contract.
     pub limp_home_range: Option<DistanceReading>,
@@ -7806,13 +9393,51 @@ pub struct MobileEucGarageSettingsDto {
 
     /// Pedal mode setting, when understood.
     pub pedal_mode: Option<MobilePedalModeDto>,
+
+    /// Falcon roll-angle sensitivity, when understood.
+    pub roll_angle: Option<MobileRollAngleDto>,
+
+    /// Begode speed-alarm mode, when understood.
+    pub speed_alarm_mode: Option<MobileSpeedAlarmModeDto>,
+
+    /// Light state reported by wheel telemetry, when the protocol provides it.
+    pub light_state: Option<MobileLightStateDto>,
+
+    /// Auto-shutdown time remaining, in reported seconds.
+    pub auto_shutdown_seconds: Option<u64>,
+
+    /// Charge mode reported by wheel telemetry.
+    pub charge_mode: Option<MobileChargeModeReadingDto>,
 }
 
 /// Read-only pedal mode projection for mobile UI.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Record)]
 pub struct MobilePedalModeDto {
-    /// Unnormalized raw Veteran pedal mode value.
+    /// Protocol-native raw pedal-mode value.
     pub raw_mode: Option<u16>,
+
+    /// Documented mode when the protocol-native value has a known mapping.
+    pub mode: Option<MobilePedalModeKindDto>,
+}
+
+/// Read-only Falcon roll-angle projection for mobile UI.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct MobileRollAngleDto {
+    /// Protocol-native raw roll-angle value.
+    pub raw_angle: Option<u16>,
+
+    /// Documented roll-angle sensitivity when the value has a known mapping.
+    pub angle: Option<MobileRollAngleKindDto>,
+}
+
+/// Read-only Begode speed-alarm projection for mobile UI.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct MobileSpeedAlarmModeDto {
+    /// Protocol-native raw speed-alarm mode value.
+    pub raw_mode: Option<u16>,
+
+    /// Documented speed-alarm mode when the value has a known mapping.
+    pub mode: Option<MobileSpeedAlarmModeKindDto>,
 }
 
 /// Bounded read-only settings response for mobile UI.
@@ -9040,6 +10665,11 @@ impl MobileEucGarageSettingsDto {
                 beep_margin: None,
                 tiltback: None,
                 pedal_mode: None,
+                roll_angle: None,
+                speed_alarm_mode: None,
+                light_state: None,
+                auto_shutdown_seconds: None,
+                charge_mode: None,
             };
         }
 
@@ -9058,9 +10688,44 @@ impl MobileEucGarageSettingsDto {
             .or_else(|| settings_speed(entries, BEGODE_FIELD_TILTBACK_SPEED_KMH, speed_from_kmh)),
             pedal_mode: settings_entry(entries, VETERAN_FIELD_PEDALS_MODE)
                 .and_then(|entry| u16::try_from(entry.field.value).ok())
-                .map(|raw_mode| MobilePedalModeDto {
-                    raw_mode: Some(raw_mode),
+                .map(|raw_mode| {
+                    mobile_pedal_mode(raw_mode, CorePedalMode::from_veteran_raw(raw_mode))
+                })
+                .or_else(|| {
+                    settings_entry(entries, BEGODE_FIELD_SETTINGS_BITS)
+                        .and_then(|entry| u16::try_from(entry.field.value).ok())
+                        .map(begode_pedal_mode)
                 }),
+            roll_angle: settings_entry(entries, BEGODE_FIELD_SETTINGS_BITS)
+                .and_then(|entry| u16::try_from(entry.field.value).ok())
+                .map(begode_roll_angle),
+            speed_alarm_mode: settings_entry(entries, BEGODE_FIELD_SETTINGS_BITS)
+                .and_then(|entry| u16::try_from(entry.field.value).ok())
+                .map(begode_speed_alarm_mode),
+            light_state: settings_entry(entries, BEGODE_FIELD_LED_AND_LIGHT_MODE)
+                .and_then(|entry| u16::try_from(entry.field.value).ok())
+                .and_then(|value| match value & 0x03 {
+                    0 => Some(MobileLightStateDto::Off),
+                    1 => Some(MobileLightStateDto::On),
+                    _ => None,
+                }),
+            auto_shutdown_seconds: settings_entry(
+                entries,
+                VETERAN_FIELD_AUTO_SHUTDOWN_TIME_REMAINING_SECONDS,
+            )
+            .and_then(|entry| u64::try_from(entry.field.value).ok()),
+            charge_mode: settings_entry(entries, VETERAN_FIELD_CHARGE_MODE).map(|entry| {
+                MobileChargeModeReadingDto {
+                    value: if entry.field.value == 0 {
+                        MobileChargeModeDto::NotCharging
+                    } else {
+                        MobileChargeModeDto::Charging
+                    },
+                    source: entry.source,
+                    quality: entry.quality,
+                    verification: entry.verification,
+                }
+            }),
         }
     }
 }
@@ -9073,6 +10738,45 @@ fn settings_entry(
         .iter()
         .copied()
         .find(|entry| entry.field.id == field_id)
+}
+
+fn aero_speed_setting_from_entry(entry: MobileSettingsEntryDto) -> Option<CoreAeroSpeedSetting> {
+    let deci_kmh = u8::try_from(entry.field.value).ok()?;
+    (deci_kmh % 10 == 0).then_some(())?;
+    CoreAeroSpeedSetting::new(deci_kmh / 10)
+}
+
+fn begode_pedal_mode(settings_bits: u16) -> MobilePedalModeDto {
+    let raw_mode = (settings_bits >> 13) & 0x03;
+    mobile_pedal_mode(
+        raw_mode,
+        CorePedalMode::from_begode_settings_bits(settings_bits),
+    )
+}
+
+fn begode_roll_angle(settings_bits: u16) -> MobileRollAngleDto {
+    let raw_angle = (settings_bits >> 7) & 0x03;
+    MobileRollAngleDto {
+        raw_angle: Some(raw_angle),
+        angle: CoreRollAngle::from_begode_settings_bits(settings_bits)
+            .map(MobileRollAngleKindDto::from),
+    }
+}
+
+fn begode_speed_alarm_mode(settings_bits: u16) -> MobileSpeedAlarmModeDto {
+    let raw_mode = (settings_bits >> 10) & 0x03;
+    MobileSpeedAlarmModeDto {
+        raw_mode: Some(raw_mode),
+        mode: CoreSpeedAlarmMode::from_begode_settings_bits(settings_bits)
+            .map(MobileSpeedAlarmModeKindDto::from),
+    }
+}
+
+fn mobile_pedal_mode(raw_mode: u16, mode: Option<CorePedalMode>) -> MobilePedalModeDto {
+    MobilePedalModeDto {
+        raw_mode: Some(raw_mode),
+        mode: mode.map(MobilePedalModeKindDto::from),
+    }
 }
 
 fn settings_speed(
@@ -9379,27 +11083,185 @@ fn mobile_gatt_channel(channel: &[u8]) -> GattChannel {
     GattChannel::from_bytes(mobile_channel_bytes(channel))
 }
 
-/// Mobile-facing wrapper for a NOSFET Aero read-only session.
+/// Typed readback returned by the Rust-owned Aero settings simulator.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct MobileAeroSettingsSimulatorReadbackDto {
+    /// Current TLT speed.
+    pub tiltback_speed: Option<MobileAeroSpeedSettingDto>,
+
+    /// Current PWT percentage.
+    pub pwm_percent: Option<MobileAeroPwmPercentDto>,
+
+    /// Current ALM speed.
+    pub alarm_speed: Option<MobileAeroSpeedSettingDto>,
+
+    /// Current ANG adjustment.
+    pub angle_adjustment: Option<MobileAeroAngleAdjustmentDto>,
+
+    /// Current pedal mode.
+    pub pedal_mode: Option<MobilePedalModeKindDto>,
+
+    /// Current high-beam state.
+    pub high_beam: Option<MobileLightStateDto>,
+
+    /// Current single-frame headlight state.
+    pub headlight: Option<MobileLightStateDto>,
+
+    /// Number of accepted trip-meter reset writes.
+    pub trip_meter_reset_count: u32,
+}
+
+impl From<AeroSettingsReadback> for MobileAeroSettingsSimulatorReadbackDto {
+    fn from(readback: AeroSettingsReadback) -> Self {
+        Self {
+            tiltback_speed: readback.tiltback_speed.map(Into::into),
+            pwm_percent: readback.pwm_percent.map(Into::into),
+            alarm_speed: readback.alarm_speed.map(Into::into),
+            angle_adjustment: readback.angle_adjustment.map(Into::into),
+            pedal_mode: readback.pedal_mode.map(Into::into),
+            high_beam: readback.high_beam.map(Into::into),
+            headlight: readback.headlight.map(Into::into),
+            trip_meter_reset_count: readback.trip_meter_reset_count,
+        }
+    }
+}
+
+/// Rust-owned, no-Bluetooth Aero settings simulator for mobile integration tests.
+///
+/// This is a thin FFI facade over [`cutout_protocols::AeroSettingsSimulator`].
+/// It intentionally exposes typed commands, typed readback, and the same mobile
+/// output DTOs as a live session; it does not expose a raw transport API.
 #[derive(Debug, uniffi::Object)]
-pub struct AeroReadOnlySession {
-    inner: Mutex<ConcreteAeroReadOnlySession>,
+pub struct AeroSettingsSimulator {
+    inner: Mutex<CoreAeroSettingsSimulator>,
 }
 
 #[uniffi::export]
-impl AeroReadOnlySession {
-    /// Creates a NOSFET Aero read-only session.
+impl AeroSettingsSimulator {
+    /// Creates a stationary NOSFET Aero simulator.
     #[uniffi::constructor]
     #[must_use]
     pub fn new() -> Arc<Self> {
         Arc::new(Self {
-            inner: Mutex::new(new_nosfet_aero_read_only_session()),
+            inner: Mutex::new(CoreAeroSettingsSimulator::default()),
+        })
+    }
+
+    /// Issues one typed command and returns the live-session-shaped outputs.
+    pub fn issue(
+        &self,
+        command: MobileCommandDto,
+        operating_state: RideOperatingState,
+        speed: Option<Speed>,
+        monotonic_ms: MobileMonotonicMillisDto,
+    ) -> Vec<MobileSessionOutputDto> {
+        self.issue_checked(command, operating_state, speed, monotonic_ms)
+            .outputs
+    }
+
+    /// Issues one typed command and preserves any typed refusal diagnostic.
+    pub fn issue_checked(
+        &self,
+        command: MobileCommandDto,
+        operating_state: RideOperatingState,
+        speed: Option<Speed>,
+        monotonic_ms: MobileMonotonicMillisDto,
+    ) -> MobileSessionStepResultDto {
+        let core_command: CoreDeviceCommand = DeviceCommandDto::from(command).into();
+        let speed = speed.map(|speed| CoreSpeed::from_millimetres_per_second(speed.value));
+        let outputs = self.lock_inner().issue(
+            core_command,
+            simulator_operating_state(operating_state),
+            speed,
+            monotonic_ms.into_core(),
+        );
+        mobile_simulator_step_result(outputs, command)
+    }
+
+    /// Advances any delayed simulator output and returns live-session-shaped outputs.
+    pub fn tick(&self, monotonic_ms: MobileMonotonicMillisDto) -> Vec<MobileSessionOutputDto> {
+        self.lock_inner()
+            .tick(monotonic_ms.into_core())
+            .into_iter()
+            .map(|output| MobileSessionOutputDto::from(SessionOutputDto::from(output)))
+            .collect()
+    }
+
+    /// Returns the current typed simulator readback.
+    pub fn readback(&self) -> MobileAeroSettingsSimulatorReadbackDto {
+        self.lock_inner().readback().into()
+    }
+}
+
+impl AeroSettingsSimulator {
+    fn lock_inner(&self) -> MutexGuard<'_, CoreAeroSettingsSimulator> {
+        self.inner.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+}
+
+fn simulator_operating_state(state: RideOperatingState) -> CoreRideOperatingState {
+    match state {
+        RideOperatingState::Unknown => CoreRideOperatingState::Unknown,
+        RideOperatingState::Parked => CoreRideOperatingState::Parked,
+        RideOperatingState::Standing => CoreRideOperatingState::Standing,
+        RideOperatingState::Riding => CoreRideOperatingState::Riding,
+        RideOperatingState::Charging => CoreRideOperatingState::Charging,
+    }
+}
+
+fn mobile_simulator_step_result(
+    outputs: Vec<SessionOutput>,
+    command: MobileCommandDto,
+) -> MobileSessionStepResultDto {
+    let error = outputs.iter().find_map(|output| match output {
+        SessionOutput::Event(DeviceEvent::ControlRefusal(refusal)) => {
+            Some(MobileSessionStepErrorDto {
+                kind: MobileSessionStepErrorKindDto::CommandRefused,
+                command: Some(command),
+                reason: Some(refusal.reason.into()),
+            })
+        }
+        _ => None,
+    });
+
+    MobileSessionStepResultDto {
+        outputs: outputs
+            .into_iter()
+            .map(|output| MobileSessionOutputDto::from(SessionOutputDto::from(output)))
+            .collect(),
+        error,
+    }
+}
+
+/// Mobile-facing NOSFET Aero telemetry wrapper with allow-listed light control.
+#[derive(Debug, uniffi::Object)]
+pub struct AeroBenignControlSession {
+    inner: Mutex<ConcreteAeroBenignControlSession>,
+    settings: Mutex<MobileEucSettingTrackers>,
+}
+
+#[uniffi::export]
+impl AeroBenignControlSession {
+    /// Creates a NOSFET Aero telemetry session with allow-listed headlight control.
+    #[uniffi::constructor]
+    #[must_use]
+    pub fn new() -> Arc<Self> {
+        Arc::new(Self {
+            inner: Mutex::new(new_nosfet_aero_benign_control_session()),
+            settings: Mutex::new(MobileEucSettingTrackers::default()),
         })
     }
 
     /// Drives one input and returns owned outputs plus any stable error DTO.
     pub fn ingest_checked(&self, input: MobileSessionInputDto) -> MobileSessionStepResultDto {
+        let tracked_input = input.clone();
         let input = SessionInputDto::from(input);
-        mobile_aero_session_step_result(self.lock_inner().ingest_checked(&input))
+        let result = preserve_refused_command(
+            mobile_aero_session_step_result(self.lock_inner().ingest_checked(&input)),
+            tracked_input.command,
+        );
+        self.lock_settings().observe_step(&tracked_input, &result);
+        result
     }
 
     /// Drains owned output DTOs accumulated since the previous drain.
@@ -9420,18 +11282,101 @@ impl AeroReadOnlySession {
     pub fn diagnostics(&self) -> MobileParserDiagnosticsDto {
         self.lock_inner().diagnostics().into()
     }
-}
 
-impl AeroReadOnlySession {
-    fn lock_inner(&self) -> MutexGuard<'_, ConcreteAeroReadOnlySession> {
-        self.inner.lock().unwrap_or_else(PoisonError::into_inner)
+    /// Returns the capture-backed EUC setting write capabilities.
+    pub fn settings_capabilities(&self) -> MobileEucSettingsCapabilitiesDto {
+        MobileEucSettingsCapabilitiesDto::aero()
+    }
+
+    /// Arms settings writes only when the latest Rust-owned ride state is stationary.
+    pub fn arm_settings_writes(
+        &self,
+        state: RideOperatingState,
+        monotonic_ms: MobileMonotonicMillisDto,
+    ) -> bool {
+        let speed_mm_per_second = self
+            .lock_inner()
+            .current_snapshot()
+            .speed
+            .map(|speed| speed.value);
+        self.lock_inner().arm_settings_writes(
+            mobile_ride_operating_state_dto(state),
+            speed_mm_per_second,
+            monotonic_ms.milliseconds,
+        )
+    }
+
+    /// Returns the Rust-owned headlight write lifecycle state.
+    pub fn headlight_state(&self) -> MobileLightSettingStateDto {
+        self.lock_settings().headlight()
+    }
+
+    /// Returns the Rust-owned Aero high-beam write lifecycle state.
+    pub fn aero_high_beam_state(&self) -> MobileLightSettingStateDto {
+        self.lock_settings().aero_high_beam()
+    }
+
+    /// Returns the Rust-owned Aero tilt-back speed lifecycle state.
+    pub fn aero_tiltback_speed_state(&self) -> MobileAeroSpeedSettingStateDto {
+        self.lock_settings().aero_tiltback_speed()
+    }
+
+    /// Returns the Rust-owned Aero PWM-warning lifecycle state.
+    pub fn aero_pwm_percent_state(&self) -> MobileAeroPwmSettingStateDto {
+        self.lock_settings().aero_pwm_percent()
+    }
+
+    /// Returns the Rust-owned Aero alarm-speed lifecycle state.
+    pub fn aero_alarm_speed_state(&self) -> MobileAeroSpeedSettingStateDto {
+        self.lock_settings().aero_alarm_speed()
+    }
+
+    /// Returns the Rust-owned Aero angle-adjustment lifecycle state.
+    pub fn aero_angle_adjustment_state(&self) -> MobileAeroAngleAdjustmentStateDto {
+        self.lock_settings().aero_angle_adjustment()
+    }
+
+    /// Returns the Rust-owned pedal-mode setting lifecycle state.
+    pub fn pedal_mode_state(&self) -> MobilePedalModeSettingStateDto {
+        self.lock_settings().pedal_mode()
+    }
+
+    /// Returns the Rust-owned roll-angle setting lifecycle state.
+    pub fn roll_angle_state(&self) -> MobileRollAngleSettingStateDto {
+        self.lock_settings().roll_angle()
+    }
+
+    /// Returns the Rust-owned speed-alarm setting lifecycle state.
+    pub fn speed_alarm_mode_state(&self) -> MobileSpeedAlarmModeSettingStateDto {
+        self.lock_settings().speed_alarm_mode()
+    }
+
+    /// Returns the Rust-owned acceleration-assist setting lifecycle state.
+    pub fn acceleration_assist_state(&self) -> MobileAccelerationAssistSettingStateDto {
+        self.lock_settings().acceleration_assist()
+    }
+
+    /// Returns the Rust-owned taillight setting lifecycle state.
+    pub fn taillight_state(&self) -> MobileLightSettingStateDto {
+        self.lock_settings().taillight()
     }
 }
 
-impl Default for AeroReadOnlySession {
+impl AeroBenignControlSession {
+    fn lock_inner(&self) -> MutexGuard<'_, ConcreteAeroBenignControlSession> {
+        self.inner.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    fn lock_settings(&self) -> MutexGuard<'_, MobileEucSettingTrackers> {
+        self.settings.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+}
+
+impl Default for AeroBenignControlSession {
     fn default() -> Self {
         Self {
-            inner: Mutex::new(new_nosfet_aero_read_only_session()),
+            inner: Mutex::new(new_nosfet_aero_benign_control_session()),
+            settings: Mutex::new(MobileEucSettingTrackers::default()),
         }
     }
 }
@@ -9481,6 +11426,63 @@ impl From<MobileCommandDto> for DeviceCommandDto {
             MobileCommandDto::RequestDiagnostics => Self::RequestDiagnostics,
             MobileCommandDto::RequestFaultHistory => Self::RequestFaultHistory,
             MobileCommandDto::RequestSettings => Self::RequestSettings,
+            MobileCommandDto::ResetTripMeter => Self::ResetTripMeter,
+            MobileCommandDto::SetAeroTiltbackSpeed(speed) => {
+                CoreAeroSpeedSetting::new(speed.kilometres_per_hour).map_or(
+                    DeviceCommandDto::RequestSettings,
+                    DeviceCommandDto::SetAeroTiltbackSpeed,
+                )
+            }
+            MobileCommandDto::SetAeroPwmPercent(percent) => {
+                CoreAeroPwmPercent::new(percent.percent).map_or(
+                    DeviceCommandDto::RequestSettings,
+                    DeviceCommandDto::SetAeroPwmPercent,
+                )
+            }
+            MobileCommandDto::SetAeroAlarmSpeed(speed) => {
+                CoreAeroSpeedSetting::new(speed.kilometres_per_hour).map_or(
+                    DeviceCommandDto::RequestSettings,
+                    DeviceCommandDto::SetAeroAlarmSpeed,
+                )
+            }
+            MobileCommandDto::SetAeroAngleAdjustment(angle) => {
+                CoreAeroAngleAdjustment::new(angle.tenths_of_degree).map_or(
+                    DeviceCommandDto::RequestSettings,
+                    DeviceCommandDto::SetAeroAngleAdjustment,
+                )
+            }
+            MobileCommandDto::SetAeroHighBeam(state) => Self::SetAeroHighBeam(state.into()),
+            MobileCommandDto::SetLights(state) => Self::SetLights(state.into()),
+            MobileCommandDto::SetPedalMode(mode) => {
+                Self::SetPedalMode(CorePedalMode::from(mode).into())
+            }
+            MobileCommandDto::SetRollAngle(angle) => {
+                Self::SetRollAngle(CoreRollAngle::from(angle).into())
+            }
+            MobileCommandDto::SetSpeedAlarmMode(mode) => {
+                Self::SetSpeedAlarmMode(CoreSpeedAlarmMode::from(mode).into())
+            }
+            MobileCommandDto::SetBegodeMaxSpeed(speed) => {
+                CoreBegodeMaxSpeed::new(speed.kilometres_per_hour).map_or(
+                    DeviceCommandDto::RequestSettings,
+                    DeviceCommandDto::SetBegodeMaxSpeed,
+                )
+            }
+            MobileCommandDto::SetBegodeBeeperVolume(volume) => {
+                CoreBegodeBeeperVolume::new(volume.level).map_or(
+                    DeviceCommandDto::RequestSettings,
+                    DeviceCommandDto::SetBegodeBeeperVolume,
+                )
+            }
+            MobileCommandDto::SetBegodeLedMode(mode) => CoreBegodeLedModeSetting::new(mode.mode)
+                .map_or(
+                    DeviceCommandDto::RequestSettings,
+                    DeviceCommandDto::SetBegodeLedMode,
+                ),
+            MobileCommandDto::SetAccelerationAssist(state) => {
+                Self::SetAccelerationAssist(state.into())
+            }
+            MobileCommandDto::SetTaillight(state) => Self::SetTaillight(state.into()),
             MobileCommandDto::SoundHorn => Self::SoundHorn,
         }
     }
@@ -9495,8 +11497,23 @@ fn mobile_command_from_command_kind(command: CommandKindDto) -> Option<MobileCom
         CommandKindDto::RequestDiagnostics => Some(MobileCommandDto::RequestDiagnostics),
         CommandKindDto::RequestFaultHistory => Some(MobileCommandDto::RequestFaultHistory),
         CommandKindDto::RequestSettings => Some(MobileCommandDto::RequestSettings),
+        CommandKindDto::ResetTripMeter => Some(MobileCommandDto::ResetTripMeter),
         CommandKindDto::SoundHorn => Some(MobileCommandDto::SoundHorn),
-        CommandKindDto::SetLights | CommandKindDto::SetRawMotorCurrent => None,
+        CommandKindDto::SetAeroTiltbackSpeed
+        | CommandKindDto::SetAeroPwmPercent
+        | CommandKindDto::SetAeroAlarmSpeed
+        | CommandKindDto::SetAeroAngleAdjustment
+        | CommandKindDto::SetAeroHighBeam
+        | CommandKindDto::SetAccelerationAssist
+        | CommandKindDto::SetLights
+        | CommandKindDto::SetPedalMode
+        | CommandKindDto::SetRollAngle
+        | CommandKindDto::SetSpeedAlarmMode
+        | CommandKindDto::SetBegodeMaxSpeed
+        | CommandKindDto::SetBegodeBeeperVolume
+        | CommandKindDto::SetBegodeLedMode
+        | CommandKindDto::SetTaillight
+        | CommandKindDto::SetRawMotorCurrent => None,
     }
 }
 
@@ -9737,6 +11754,16 @@ fn ride_operating_state(
     }
 }
 
+fn mobile_ride_operating_state_dto(state: RideOperatingState) -> RideOperatingStateDto {
+    match state {
+        RideOperatingState::Unknown => RideOperatingStateDto::Unknown,
+        RideOperatingState::Parked => RideOperatingStateDto::Parked,
+        RideOperatingState::Standing => RideOperatingStateDto::Standing,
+        RideOperatingState::Riding => RideOperatingStateDto::Riding,
+        RideOperatingState::Charging => RideOperatingStateDto::Charging,
+    }
+}
+
 impl From<NotificationEvidenceDto> for MobileNotificationEvidenceDto {
     fn from(evidence: NotificationEvidenceDto) -> Self {
         Self {
@@ -9862,6 +11889,21 @@ impl From<ConcreteSessionStepResultDto> for MobileSessionStepResultDto {
     }
 }
 
+fn preserve_refused_command(
+    mut result: MobileSessionStepResultDto,
+    command: Option<MobileCommandDto>,
+) -> MobileSessionStepResultDto {
+    if let Some(MobileSessionStepErrorDto {
+        kind: MobileSessionStepErrorKindDto::CommandRefused,
+        command: error_command @ None,
+        ..
+    }) = &mut result.error
+    {
+        *error_command = command;
+    }
+    result
+}
+
 fn mobile_aero_session_step_result(
     result: ConcreteSessionStepResultDto,
 ) -> MobileSessionStepResultDto {
@@ -9898,13 +11940,27 @@ impl From<ConcreteSessionErrorDto> for MobileSessionStepErrorDto {
             ConcreteSessionErrorDto::CommandRefused { refusal } => Self {
                 kind: MobileSessionStepErrorKindDto::CommandRefused,
                 command: mobile_command_from_command_kind(refusal.command),
-                reason: Some(control_refusal_reason_text(refusal.reason).to_owned()),
+                reason: Some(refusal.reason.into()),
             },
             ConcreteSessionErrorDto::UnsupportedFalconProfile { .. } => Self {
                 kind: MobileSessionStepErrorKindDto::UnsupportedFalconProfile,
                 command: None,
                 reason: None,
             },
+        }
+    }
+}
+
+impl From<ControlRefusalReasonDto> for MobileControlRefusalReasonDto {
+    fn from(reason: ControlRefusalReasonDto) -> Self {
+        match reason {
+            ControlRefusalReasonDto::WrongSafetyClass => Self::WrongSafetyClass,
+            ControlRefusalReasonDto::MissingArm => Self::MissingArm,
+            ControlRefusalReasonDto::WrongModel => Self::WrongModel,
+            ControlRefusalReasonDto::ExpiredArm => Self::ExpiredArm,
+            ControlRefusalReasonDto::CurrentLimitExceeded => Self::CurrentLimitExceeded,
+            ControlRefusalReasonDto::UnsupportedCommand => Self::UnsupportedCommand,
+            ControlRefusalReasonDto::Busy => Self::Busy,
         }
     }
 }
@@ -9939,6 +11995,7 @@ impl From<TelemetrySnapshotDto> for MobileTelemetrySnapshotDto {
             battery_temperature: snapshot.battery_temperature.map(Into::into),
             pwm: snapshot.pwm.map(Into::into),
             distance: snapshot.distance.map(Into::into),
+            trip_distance: snapshot.trip_distance.map(Into::into),
             limp_home_range: None,
             pitch: snapshot.pitch.map(Into::into),
             balance_angle: snapshot.balance_angle.map(Into::into),
@@ -10675,26 +12732,16 @@ impl From<ConcreteSessionErrorDto> for MobileSessionConstructorError {
     }
 }
 
-fn control_refusal_reason_text(reason: ControlRefusalReasonDto) -> &'static str {
-    match reason {
-        ControlRefusalReasonDto::WrongSafetyClass => "wrong_safety_class",
-        ControlRefusalReasonDto::MissingArm => "missing_arm",
-        ControlRefusalReasonDto::WrongModel => "wrong_model",
-        ControlRefusalReasonDto::ExpiredArm => "expired_arm",
-        ControlRefusalReasonDto::CurrentLimitExceeded => "current_limit_exceeded",
-        ControlRefusalReasonDto::UnsupportedCommand => "unsupported_command",
-    }
-}
-
-/// Mobile-facing wrapper for a Begode Falcon read-only session.
+/// Mobile-facing Begode Falcon telemetry wrapper with allow-listed light control.
 #[derive(Debug, uniffi::Object)]
-pub struct FalconReadOnlySession {
-    inner: Mutex<ConcreteFalconReadOnlySession>,
+pub struct FalconBenignControlSession {
+    inner: Mutex<ConcreteFalconBenignControlSession>,
+    settings: Mutex<MobileEucSettingTrackers>,
 }
 
 #[uniffi::export]
-impl FalconReadOnlySession {
-    /// Creates a Begode Falcon read-only session with the default profile.
+impl FalconBenignControlSession {
+    /// Creates a Begode Falcon telemetry session with allow-listed headlight control.
     ///
     /// # Errors
     ///
@@ -10705,7 +12752,7 @@ impl FalconReadOnlySession {
         Self::with_profile(MobileFalconProfileDto::Default)
     }
 
-    /// Creates a Begode Falcon read-only session with an explicit profile.
+    /// Creates a Begode Falcon telemetry session with an explicit profile.
     ///
     /// # Errors
     ///
@@ -10716,14 +12763,23 @@ impl FalconReadOnlySession {
         profile: MobileFalconProfileDto,
     ) -> Result<Arc<Self>, MobileSessionConstructorError> {
         Ok(Arc::new(Self {
-            inner: Mutex::new(try_new_begode_falcon_read_only_session(profile.into())?),
+            inner: Mutex::new(try_new_begode_falcon_benign_control_session(
+                profile.into(),
+            )?),
+            settings: Mutex::new(MobileEucSettingTrackers::default()),
         }))
     }
 
     /// Drives one input and returns owned outputs plus any stable error DTO.
     pub fn ingest_checked(&self, input: MobileSessionInputDto) -> MobileSessionStepResultDto {
+        let tracked_input = input.clone();
         let input = SessionInputDto::from(input);
-        MobileSessionStepResultDto::from(self.lock_inner().ingest_checked(&input))
+        let result = preserve_refused_command(
+            MobileSessionStepResultDto::from(self.lock_inner().ingest_checked(&input)),
+            tracked_input.command,
+        );
+        self.lock_settings().observe_step(&tracked_input, &result);
+        result
     }
 
     /// Drains owned output DTOs accumulated since the previous drain.
@@ -10744,11 +12800,93 @@ impl FalconReadOnlySession {
     pub fn diagnostics(&self) -> MobileParserDiagnosticsDto {
         self.lock_inner().diagnostics().into()
     }
+
+    /// Returns the EUC setting write capabilities and their validation state.
+    pub fn settings_capabilities(&self) -> MobileEucSettingsCapabilitiesDto {
+        MobileEucSettingsCapabilitiesDto::falcon()
+    }
+
+    /// Arms settings writes only when the latest Rust-owned ride state is stationary.
+    pub fn arm_settings_writes(
+        &self,
+        state: RideOperatingState,
+        monotonic_ms: MobileMonotonicMillisDto,
+    ) -> bool {
+        let speed_mm_per_second = self
+            .lock_inner()
+            .current_snapshot()
+            .speed
+            .map(|speed| speed.value);
+        self.lock_inner().arm_settings_writes(
+            mobile_ride_operating_state_dto(state),
+            speed_mm_per_second,
+            monotonic_ms.milliseconds,
+        )
+    }
+
+    /// Returns the Rust-owned headlight write lifecycle state.
+    pub fn headlight_state(&self) -> MobileLightSettingStateDto {
+        self.lock_settings().headlight()
+    }
+
+    /// Returns the Rust-owned Aero high-beam write lifecycle state.
+    pub fn aero_high_beam_state(&self) -> MobileLightSettingStateDto {
+        self.lock_settings().aero_high_beam()
+    }
+
+    /// Returns the Rust-owned Aero tilt-back speed lifecycle state.
+    pub fn aero_tiltback_speed_state(&self) -> MobileAeroSpeedSettingStateDto {
+        self.lock_settings().aero_tiltback_speed()
+    }
+
+    /// Returns the Rust-owned Aero PWM-warning lifecycle state.
+    pub fn aero_pwm_percent_state(&self) -> MobileAeroPwmSettingStateDto {
+        self.lock_settings().aero_pwm_percent()
+    }
+
+    /// Returns the Rust-owned Aero alarm-speed lifecycle state.
+    pub fn aero_alarm_speed_state(&self) -> MobileAeroSpeedSettingStateDto {
+        self.lock_settings().aero_alarm_speed()
+    }
+
+    /// Returns the Rust-owned Aero angle-adjustment lifecycle state.
+    pub fn aero_angle_adjustment_state(&self) -> MobileAeroAngleAdjustmentStateDto {
+        self.lock_settings().aero_angle_adjustment()
+    }
+
+    /// Returns the Rust-owned pedal-mode setting lifecycle state.
+    pub fn pedal_mode_state(&self) -> MobilePedalModeSettingStateDto {
+        self.lock_settings().pedal_mode()
+    }
+
+    /// Returns the Rust-owned roll-angle setting lifecycle state.
+    pub fn roll_angle_state(&self) -> MobileRollAngleSettingStateDto {
+        self.lock_settings().roll_angle()
+    }
+
+    /// Returns the Rust-owned speed-alarm setting lifecycle state.
+    pub fn speed_alarm_mode_state(&self) -> MobileSpeedAlarmModeSettingStateDto {
+        self.lock_settings().speed_alarm_mode()
+    }
+
+    /// Returns the Rust-owned acceleration-assist setting lifecycle state.
+    pub fn acceleration_assist_state(&self) -> MobileAccelerationAssistSettingStateDto {
+        self.lock_settings().acceleration_assist()
+    }
+
+    /// Returns the Rust-owned taillight setting lifecycle state.
+    pub fn taillight_state(&self) -> MobileLightSettingStateDto {
+        self.lock_settings().taillight()
+    }
 }
 
-impl FalconReadOnlySession {
-    fn lock_inner(&self) -> MutexGuard<'_, ConcreteFalconReadOnlySession> {
+impl FalconBenignControlSession {
+    fn lock_inner(&self) -> MutexGuard<'_, ConcreteFalconBenignControlSession> {
         self.inner.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    fn lock_settings(&self) -> MutexGuard<'_, MobileEucSettingTrackers> {
+        self.settings.lock().unwrap_or_else(PoisonError::into_inner)
     }
 }
 
@@ -10928,6 +13066,11 @@ mod tests {
         }
     }
 
+    fn discovery_service(uuid: CoreBluetoothServiceUuid) -> DiscoveryServiceUuid {
+        DiscoveryServiceUuid {
+            bytes: uuid.as_bytes().to_vec(),
+        }
+    }
     fn synthetic_veteran_frame_with_model_id(model_id: u16) -> [u8; 42] {
         let mut bytes = [0_u8; 42];
         bytes[0..4].copy_from_slice(&[0xdc, 0x5a, 0x5c, 38]);
@@ -11226,28 +13369,25 @@ mod tests {
         let candidate = mobile_discovery_candidate_from_advertisement(
             "ios-local-aero".to_owned(),
             Some("NOSFET Aero".to_owned()),
-            vec![0xffe0],
+            vec![discovery_service(CoreBluetoothServiceUuid::EUC_SERIAL_FFE0)],
         );
 
         assert_eq!(candidate.platform_identifier, "ios-local-aero");
         assert_eq!(candidate.display_name, "NOSFET Aero");
         assert_eq!(candidate.product_category, "Electric unicycle");
-        assert_eq!(candidate.evidence, "advertisement hint");
-        assert_eq!(candidate.detail, "Aero provisional route");
+        assert_eq!(candidate.evidence, "FFE0/FFE1 transport hint");
+        assert_eq!(candidate.detail, "Read-only protocol probe recommended");
         assert!(candidate.is_picker_candidate);
         assert_eq!(
             candidate.support,
-            DiscoveryCandidateSupport::ProvisionalRoute
+            DiscoveryCandidateSupport::ProbeRecommended
         );
+        assert_eq!(candidate.connection_route, None);
+        assert_eq!(candidate.electric_unicycle_model, None);
         assert_eq!(
-            candidate.connection_route,
-            Some(DiscoveryConnectionRoute::ElectricUnicycle)
+            candidate.disabled_reason,
+            Some("Read-only protocol probe recommended".to_owned())
         );
-        assert_eq!(
-            candidate.electric_unicycle_model,
-            Some(DiscoveryElectricUnicycleModel::Aero)
-        );
-        assert_eq!(candidate.disabled_reason, None);
     }
 
     #[test]
@@ -11442,65 +13582,47 @@ mod tests {
     }
 
     #[test]
-    fn mobile_discovery_candidate_routes_generic_gotway_name_provisionally() {
+    fn mobile_discovery_candidate_recommends_protocol_probe_for_generic_ffe0() {
         let candidate = mobile_discovery_candidate_from_advertisement(
             "ios-local-begode".to_owned(),
             Some("GotWay_002441".to_owned()),
-            vec![0xffe0],
+            vec![discovery_service(CoreBluetoothServiceUuid::EUC_SERIAL_FFE0)],
         );
 
         assert!(candidate.is_picker_candidate);
         assert_eq!(
             candidate.support,
-            DiscoveryCandidateSupport::ProvisionalRoute
+            DiscoveryCandidateSupport::ProbeRecommended
         );
+        assert_eq!(candidate.connection_route, None);
+        assert_eq!(candidate.electric_unicycle_model, None);
         assert_eq!(
-            candidate.connection_route,
-            Some(DiscoveryConnectionRoute::ElectricUnicycle)
+            candidate.disabled_reason,
+            Some("Read-only protocol probe recommended".to_owned())
         );
-        assert_eq!(
-            candidate.electric_unicycle_model,
-            Some(DiscoveryElectricUnicycleModel::Falcon)
-        );
-        assert_eq!(candidate.disabled_reason, None);
-        assert_eq!(candidate.detail, "Falcon provisional route");
+        assert_eq!(candidate.detail, "Read-only protocol probe recommended");
     }
 
     #[test]
-    fn mobile_device_kind_hint_routes_typed_falcon_label() {
-        assert_eq!(
-            mobile_electric_unicycle_model_hint_from_device_kind("EUC falcon".to_owned()),
-            Some(DiscoveryElectricUnicycleModel::Falcon)
-        );
-        assert_eq!(
-            mobile_electric_unicycle_model_hint_from_device_kind("scooter foo bar".to_owned()),
-            None
-        );
-    }
-
-    #[test]
-    fn mobile_discovery_candidate_routes_nf_name_provisionally() {
+    fn mobile_discovery_candidate_ignores_nf_name_until_protocol_identity() {
         let candidate = mobile_discovery_candidate_from_advertisement(
             "ios-local-aero".to_owned(),
             Some("NF2557".to_owned()),
-            vec![0xffe0],
+            vec![discovery_service(CoreBluetoothServiceUuid::EUC_SERIAL_FFE0)],
         );
 
         assert!(candidate.is_picker_candidate);
         assert_eq!(
             candidate.support,
-            DiscoveryCandidateSupport::ProvisionalRoute
+            DiscoveryCandidateSupport::ProbeRecommended
         );
+        assert_eq!(candidate.connection_route, None);
+        assert_eq!(candidate.electric_unicycle_model, None);
         assert_eq!(
-            candidate.connection_route,
-            Some(DiscoveryConnectionRoute::ElectricUnicycle)
+            candidate.disabled_reason,
+            Some("Read-only protocol probe recommended".to_owned())
         );
-        assert_eq!(
-            candidate.electric_unicycle_model,
-            Some(DiscoveryElectricUnicycleModel::Aero)
-        );
-        assert_eq!(candidate.disabled_reason, None);
-        assert_eq!(candidate.detail, "Aero provisional route");
+        assert_eq!(candidate.detail, "Read-only protocol probe recommended");
     }
 
     #[test]
@@ -11521,7 +13643,9 @@ mod tests {
         let snapshot = session.observe_discovery(DiscoveryObservation {
             platform_identifier: "ios-local-falcon".to_owned(),
             advertised_name: Some(b"Begode Falcon".to_vec()),
-            advertised_service_uuids: vec![0xffe0],
+            advertised_service_uuids: vec![discovery_service(
+                CoreBluetoothServiceUuid::EUC_SERIAL_FFE0,
+            )],
             manufacturer_data: vec![DiscoveryManufacturerDataSummary {
                 company_identifier: 0x004c,
                 payload_len: 6,
@@ -11535,10 +13659,7 @@ mod tests {
             Some("Begode Falcon".to_owned())
         );
         assert_eq!(snapshot.picker_candidates.len(), 1);
-        assert_eq!(
-            snapshot.picker_candidates[0].electric_unicycle_model,
-            Some(DiscoveryElectricUnicycleModel::Falcon)
-        );
+        assert_eq!(snapshot.picker_candidates[0].electric_unicycle_model, None);
 
         let selected = session.select_discovered_platform("ios-local-falcon".to_owned());
         assert_eq!(
@@ -11591,21 +13712,23 @@ mod tests {
     }
 
     #[test]
-    fn mobile_identification_probe_reports_no_probe_needed_for_selected_aero() {
+    fn mobile_identification_probe_runs_for_selected_ffe0_candidate() {
         let session = CutoutSessionStateHandle::new();
         let _ = session.observe_discovery(DiscoveryObservation {
             platform_identifier: "ios-local-aero".to_owned(),
             advertised_name: Some(b"NF2557".to_vec()),
-            advertised_service_uuids: vec![0xffe0],
+            advertised_service_uuids: vec![discovery_service(
+                CoreBluetoothServiceUuid::EUC_SERIAL_FFE0,
+            )],
             manufacturer_data: vec![],
             rssi_dbm: Some(-48),
         });
         let _ = session.select_discovered_platform("ios-local-aero".to_owned());
 
-        assert_eq!(
+        assert!(matches!(
             session.begin_identification_probe_at(1_000),
-            MobileIdentificationProbeOutcomeDto::NoProbeNeeded
-        );
+            MobileIdentificationProbeOutcomeDto::Writes { .. }
+        ));
     }
 
     #[test]
@@ -11614,7 +13737,9 @@ mod tests {
         let _ = session.observe_discovery(DiscoveryObservation {
             platform_identifier: "ios-local-unknown-euc".to_owned(),
             advertised_name: Some(b"Unknown EUC".to_vec()),
-            advertised_service_uuids: vec![0xffe0],
+            advertised_service_uuids: vec![discovery_service(
+                CoreBluetoothServiceUuid::EUC_SERIAL_FFE0,
+            )],
             manufacturer_data: vec![],
             rssi_dbm: Some(-48),
         });
@@ -11632,7 +13757,9 @@ mod tests {
         let _ = session.observe_discovery(DiscoveryObservation {
             platform_identifier: "ios-local-vesc".to_owned(),
             advertised_name: Some(b"Little FOCer".to_vec()),
-            advertised_service_uuids: vec![0xfff0],
+            advertised_service_uuids: vec![discovery_service(
+                CoreBluetoothServiceUuid::VESC_NORDIC_UART,
+            )],
             manufacturer_data: vec![],
             rssi_dbm: Some(-48),
         });
@@ -12207,6 +14334,11 @@ mod tests {
                 beep_margin: None,
                 tiltback: None,
                 pedal_mode: None,
+                roll_angle: None,
+                speed_alarm_mode: None,
+                light_state: None,
+                auto_shutdown_seconds: None,
+                charge_mode: None,
             }
         );
     }
@@ -12299,8 +14431,67 @@ mod tests {
                 }),
                 pedal_mode: Some(MobilePedalModeDto {
                     raw_mode: Some(1_920),
+                    mode: None,
                 }),
+                roll_angle: None,
+                speed_alarm_mode: None,
+                light_state: None,
+                auto_shutdown_seconds: None,
+                charge_mode: None,
             }
+        );
+    }
+
+    #[test]
+    fn mobile_settings_readback_projects_veteran_auto_shutdown_and_charge_mode() {
+        let readback = SettingsReadback::available([
+            Some(SettingsEntry {
+                field: RawFieldValue::new(VETERAN_FIELD_AUTO_SHUTDOWN_TIME_REMAINING_SECONDS, 900),
+                source: ValueSource::Reported,
+                quality: ValueQuality::Known,
+                verification: VerificationStatus::HardwareVerified,
+            }),
+            Some(SettingsEntry {
+                field: RawFieldValue::new(VETERAN_FIELD_CHARGE_MODE, 1),
+                source: ValueSource::Reported,
+                quality: ValueQuality::Known,
+                verification: VerificationStatus::HardwareVerified,
+            }),
+            None,
+            None,
+        ]);
+
+        let mobile = MobileSettingsReadbackDto::from(readback);
+
+        assert_eq!(mobile.euc_garage.auto_shutdown_seconds, Some(900));
+        assert_eq!(
+            mobile.euc_garage.charge_mode.map(|reading| reading.value),
+            Some(MobileChargeModeDto::Charging)
+        );
+    }
+
+    #[test]
+    fn mobile_settings_readback_decodes_documented_veteran_pedal_mode() {
+        let readback = SettingsReadback::available([
+            Some(SettingsEntry {
+                field: RawFieldValue::new(VETERAN_FIELD_PEDALS_MODE, 1),
+                source: ValueSource::Reported,
+                quality: ValueQuality::Known,
+                verification: VerificationStatus::SourceVerified,
+            }),
+            None,
+            None,
+            None,
+        ]);
+
+        let mobile = MobileSettingsReadbackDto::from(readback);
+
+        assert_eq!(
+            mobile.euc_garage.pedal_mode,
+            Some(MobilePedalModeDto {
+                raw_mode: Some(1),
+                mode: Some(MobilePedalModeKindDto::Medium),
+            })
         );
     }
 
@@ -12332,7 +14523,127 @@ mod tests {
                     verification: MobileVerificationStatusDto::SourceVerified,
                 }),
                 pedal_mode: None,
+                roll_angle: None,
+                speed_alarm_mode: None,
+                light_state: None,
+                auto_shutdown_seconds: None,
+                charge_mode: None,
             }
+        );
+    }
+
+    #[test]
+    fn mobile_settings_readback_decodes_documented_begode_pedal_mode() {
+        let readback = SettingsReadback::available([
+            Some(SettingsEntry {
+                field: RawFieldValue::new(BEGODE_FIELD_SETTINGS_BITS, 0x4000),
+                source: ValueSource::Reported,
+                quality: ValueQuality::Known,
+                verification: VerificationStatus::SourceVerified,
+            }),
+            None,
+            None,
+            None,
+        ]);
+
+        let mobile = MobileSettingsReadbackDto::from(readback);
+
+        assert_eq!(
+            mobile.euc_garage.pedal_mode,
+            Some(MobilePedalModeDto {
+                raw_mode: Some(2),
+                mode: Some(MobilePedalModeKindDto::Hard),
+            })
+        );
+    }
+
+    #[test]
+    fn mobile_settings_readback_decodes_documented_begode_roll_angle() {
+        let settings_bits = 2_i64 << 7;
+        let readback = SettingsReadback::available([
+            Some(SettingsEntry {
+                field: RawFieldValue::new(BEGODE_FIELD_SETTINGS_BITS, settings_bits),
+                source: ValueSource::Reported,
+                quality: ValueQuality::Known,
+                verification: VerificationStatus::SourceVerified,
+            }),
+            None,
+            None,
+            None,
+        ]);
+
+        let mobile = MobileSettingsReadbackDto::from(readback);
+
+        assert_eq!(
+            mobile.euc_garage.roll_angle,
+            Some(MobileRollAngleDto {
+                raw_angle: Some(2),
+                angle: Some(MobileRollAngleKindDto::High),
+            })
+        );
+    }
+
+    #[test]
+    fn mobile_settings_readback_decodes_documented_begode_speed_alarm_mode() {
+        let settings_bits = 1_i64 << 10;
+        let readback = SettingsReadback::available([
+            Some(SettingsEntry {
+                field: RawFieldValue::new(BEGODE_FIELD_SETTINGS_BITS, settings_bits),
+                source: ValueSource::Reported,
+                quality: ValueQuality::Known,
+                verification: VerificationStatus::SourceVerified,
+            }),
+            None,
+            None,
+            None,
+        ]);
+
+        let mobile = MobileSettingsReadbackDto::from(readback);
+
+        assert_eq!(
+            mobile.euc_garage.speed_alarm_mode,
+            Some(MobileSpeedAlarmModeDto {
+                raw_mode: Some(1),
+                mode: Some(MobileSpeedAlarmModeKindDto::StageOneOnly),
+            })
+        );
+    }
+
+    #[test]
+    fn mobile_settings_readback_projects_begode_light_state() {
+        let readback = SettingsReadback::available([
+            Some(SettingsEntry {
+                field: RawFieldValue::new(BEGODE_FIELD_LED_AND_LIGHT_MODE, 0x0301),
+                source: ValueSource::Reported,
+                quality: ValueQuality::Known,
+                verification: VerificationStatus::SourceVerified,
+            }),
+            None,
+            None,
+            None,
+        ]);
+
+        let mobile = MobileSettingsReadbackDto::from(readback);
+
+        assert_eq!(mobile.euc_garage.light_state, Some(MobileLightStateDto::On));
+
+        let strobe = SettingsReadback::available([
+            Some(SettingsEntry {
+                field: RawFieldValue::new(BEGODE_FIELD_LED_AND_LIGHT_MODE, 0x0302),
+                source: ValueSource::Reported,
+                quality: ValueQuality::Known,
+                verification: VerificationStatus::SourceVerified,
+            }),
+            None,
+            None,
+            None,
+        ]);
+
+        assert_eq!(
+            MobileSettingsReadbackDto::from(strobe)
+                .euc_garage
+                .light_state,
+            None
         );
     }
 
@@ -12369,6 +14680,11 @@ mod tests {
                 beep_margin: None,
                 tiltback: None,
                 pedal_mode: None,
+                roll_angle: None,
+                speed_alarm_mode: None,
+                light_state: None,
+                auto_shutdown_seconds: None,
+                charge_mode: None,
             }
         );
         assert_eq!(mobile.entries.len(), 3);
@@ -12387,6 +14703,11 @@ mod tests {
                     beep_margin: None,
                     tiltback: None,
                     pedal_mode: None,
+                    roll_angle: None,
+                    speed_alarm_mode: None,
+                    light_state: None,
+                    auto_shutdown_seconds: None,
+                    charge_mode: None,
                 },
                 entries: Vec::new(),
             }
@@ -12420,6 +14741,11 @@ mod tests {
                 beep_margin: None,
                 tiltback: None,
                 pedal_mode: None,
+                roll_angle: None,
+                speed_alarm_mode: None,
+                light_state: None,
+                auto_shutdown_seconds: None,
+                charge_mode: None,
             }
         );
     }
@@ -12583,6 +14909,11 @@ mod tests {
                     beep_margin: None,
                     tiltback: None,
                     pedal_mode: None,
+                    roll_angle: None,
+                    speed_alarm_mode: None,
+                    light_state: None,
+                    auto_shutdown_seconds: None,
+                    charge_mode: None,
                 },
                 entries: vec![MobileSettingsEntryDto {
                     field: MobileRawFieldValueDto {
@@ -12935,13 +15266,13 @@ mod tests {
         let candidate = mobile_discovery_candidate_from_advertisement(
             "ios-local-unknown-euc".to_owned(),
             Some("EUC-unknown".to_owned()),
-            vec![0xffe0],
+            vec![discovery_service(CoreBluetoothServiceUuid::EUC_SERIAL_FFE0)],
         );
 
         assert!(candidate.is_picker_candidate);
         assert_eq!(candidate.product_category, "Electric unicycle");
         assert_eq!(candidate.evidence, "FFE0/FFE1 transport hint");
-        assert_eq!(candidate.detail, "Read-only probe recommended");
+        assert_eq!(candidate.detail, "Read-only protocol probe recommended");
         assert_eq!(
             candidate.support,
             DiscoveryCandidateSupport::ProbeRecommended
@@ -12955,7 +15286,7 @@ mod tests {
         assert_eq!(candidate.electric_unicycle_model, None);
         assert_eq!(
             candidate.disabled_reason,
-            Some("Read-only probe recommended".to_owned())
+            Some("Read-only protocol probe recommended".to_owned())
         );
     }
 
@@ -12964,7 +15295,9 @@ mod tests {
         let candidate = mobile_discovery_candidate_from_advertisement(
             "ios-local-unknown".to_owned(),
             Some("Little FOCer".to_owned()),
-            vec![0xfff0],
+            vec![discovery_service(
+                CoreBluetoothServiceUuid::VESC_NORDIC_UART,
+            )],
         );
 
         assert!(candidate.is_picker_candidate);
@@ -13561,14 +15894,64 @@ mod tests {
 
     #[test]
     fn aero_wrapper_constructs_and_exposes_diagnostics() {
-        let session = AeroReadOnlySession::new();
+        let session = AeroBenignControlSession::new();
 
         assert_eq!(session.diagnostics().malformed_frames, mobile_diag_count(0));
     }
 
     #[test]
+    fn aero_settings_simulator_is_reusable_through_mobile_ffi() {
+        let simulator = AeroSettingsSimulator::new();
+        let outputs = simulator.issue(
+            MobileCommandDto::SetAeroTiltbackSpeed(MobileAeroSpeedSettingDto {
+                kilometres_per_hour: 42,
+            }),
+            RideOperatingState::Parked,
+            None,
+            ms(10),
+        );
+
+        assert!(outputs.iter().any(|output| {
+            output.kind == MobileSessionOutputKindDto::Write && output.bytes.starts_with(b"LdAp")
+        }));
+        assert_eq!(
+            simulator.readback().tiltback_speed,
+            Some(MobileAeroSpeedSettingDto {
+                kilometres_per_hour: 42,
+            })
+        );
+    }
+
+    #[test]
+    fn aero_settings_simulator_preserves_typed_refusal_through_mobile_ffi() {
+        let simulator = AeroSettingsSimulator::new();
+        let command = MobileCommandDto::SetAeroPwmPercent(MobileAeroPwmPercentDto { percent: 71 });
+        let result = simulator.issue_checked(
+            command,
+            RideOperatingState::Riding,
+            Some(Speed { value: 501 }),
+            ms(10),
+        );
+
+        assert_eq!(
+            result.error,
+            Some(MobileSessionStepErrorDto {
+                kind: MobileSessionStepErrorKindDto::CommandRefused,
+                command: Some(command),
+                reason: Some(MobileControlRefusalReasonDto::MissingArm),
+            })
+        );
+        assert!(
+            result
+                .outputs
+                .iter()
+                .all(|output| output.kind != MobileSessionOutputKindDto::Write)
+        );
+    }
+
+    #[test]
     fn falcon_wrapper_surfaces_unsupported_command_error() {
-        let session = FalconReadOnlySession::new().expect("default profile should construct");
+        let session = FalconBenignControlSession::new().expect("default profile should construct");
 
         let result = session.ingest_checked(MobileSessionInputDto {
             kind: MobileSessionInputKindDto::Command,
@@ -13583,14 +15966,576 @@ mod tests {
             result.error,
             Some(MobileSessionStepErrorDto {
                 kind: MobileSessionStepErrorKindDto::CommandRefused,
+                reason: Some(MobileControlRefusalReasonDto::UnsupportedCommand),
                 ..
             })
         ));
     }
 
     #[test]
+    fn aero_wrapper_writes_documented_pedal_mode_after_stationary_arm() {
+        let session = AeroBenignControlSession::new();
+        assert!(session.arm_settings_writes(RideOperatingState::Parked, ms(0)));
+
+        let result = session.ingest_checked(MobileSessionInputDto {
+            kind: MobileSessionInputKindDto::Command,
+            monotonic_ms: ms(0),
+            max_write_len: None,
+            channel: Vec::new(),
+            bytes: Vec::new(),
+            command: Some(MobileCommandDto::SetPedalMode(MobilePedalModeKindDto::Hard)),
+        });
+
+        assert_eq!(result.error, None);
+        assert!(result.outputs.iter().any(|output| {
+            output.kind == MobileSessionOutputKindDto::Write && output.bytes == b"SETh"
+        }));
+    }
+
+    #[test]
+    fn aero_wrapper_tracks_tiltback_write_until_readback() {
+        let session = AeroBenignControlSession::new();
+        assert!(session.arm_settings_writes(RideOperatingState::Parked, ms(0)));
+
+        let result = session.ingest_checked(MobileSessionInputDto {
+            kind: MobileSessionInputKindDto::Command,
+            monotonic_ms: ms(0),
+            max_write_len: None,
+            channel: Vec::new(),
+            bytes: Vec::new(),
+            command: Some(MobileCommandDto::SetAeroTiltbackSpeed(
+                MobileAeroSpeedSettingDto {
+                    kilometres_per_hour: 21,
+                },
+            )),
+        });
+
+        assert_eq!(result.error, None);
+        assert!(result.outputs.iter().any(|output| {
+            output.kind == MobileSessionOutputKindDto::Write && output.bytes.starts_with(b"LdAp")
+        }));
+        assert_eq!(
+            session.aero_tiltback_speed_state().requested,
+            Some(MobileAeroSpeedSettingDto {
+                kilometres_per_hour: 21,
+            })
+        );
+    }
+
+    #[test]
+    fn aero_wrapper_tracks_high_beam_write() {
+        let session = AeroBenignControlSession::new();
+        assert!(session.arm_settings_writes(RideOperatingState::Parked, ms(0)));
+
+        let result = session.ingest_checked(MobileSessionInputDto {
+            kind: MobileSessionInputKindDto::Command,
+            monotonic_ms: ms(0),
+            max_write_len: None,
+            channel: Vec::new(),
+            bytes: Vec::new(),
+            command: Some(MobileCommandDto::SetAeroHighBeam(MobileLightStateDto::On)),
+        });
+
+        assert_eq!(result.error, None);
+        assert!(result.outputs.iter().any(|output| {
+            output.kind == MobileSessionOutputKindDto::Write && output.bytes.starts_with(b"LkAp")
+        }));
+        assert_eq!(
+            session.aero_high_beam_state().requested,
+            Some(MobileLightStateDto::On)
+        );
+    }
+
+    #[test]
+    fn aero_speed_tracker_confirms_tiltback_from_typed_readback() {
+        let mut trackers = MobileEucSettingTrackers::default();
+        let input = MobileSessionInputDto {
+            kind: MobileSessionInputKindDto::Command,
+            monotonic_ms: ms(10),
+            max_write_len: None,
+            channel: Vec::new(),
+            bytes: Vec::new(),
+            command: Some(MobileCommandDto::SetAeroTiltbackSpeed(
+                MobileAeroSpeedSettingDto {
+                    kilometres_per_hour: 21,
+                },
+            )),
+        };
+        let result = MobileSessionStepResultDto {
+            outputs: vec![MobileSessionOutputDto {
+                kind: MobileSessionOutputKindDto::SettingsReadback,
+                channel: Vec::new(),
+                bytes: Vec::new(),
+                ingest: None,
+                settings_readback: Some(MobileSettingsReadbackDto::from(
+                    SettingsReadback::available([
+                        Some(SettingsEntry {
+                            field: RawFieldValue::new(VETERAN_FIELD_SPEED_TILTBACK_DECI_KMH, 210),
+                            source: ValueSource::Reported,
+                            quality: ValueQuality::Known,
+                            verification: VerificationStatus::HardwareVerified,
+                        }),
+                        None,
+                        None,
+                        None,
+                    ]),
+                )),
+                fault_history_readback: None,
+                bms_snapshot: None,
+                raw_telemetry: None,
+                veteran_protocol_model_id: Some(43),
+            }],
+            error: None,
+        };
+
+        trackers.observe_step(&input, &result);
+
+        let state = trackers.aero_tiltback_speed();
+        assert_eq!(state.kind, MobileSettingStateKindDto::Confirmed);
+        assert_eq!(
+            state.current,
+            Some(MobileAeroSpeedSettingDto {
+                kilometres_per_hour: 21,
+            })
+        );
+        assert_eq!(state.confirmed_at_ms, Some(10));
+    }
+
+    #[test]
+    fn aero_wrapper_tracks_pwm_and_angle_writes() {
+        let session = AeroBenignControlSession::new();
+        assert!(session.arm_settings_writes(RideOperatingState::Parked, ms(0)));
+
+        for command in [
+            MobileCommandDto::SetAeroPwmPercent(MobileAeroPwmPercentDto { percent: 64 }),
+            MobileCommandDto::SetAeroAngleAdjustment(MobileAeroAngleAdjustmentDto {
+                tenths_of_degree: -36,
+            }),
+        ] {
+            let result = session.ingest_checked(MobileSessionInputDto {
+                kind: MobileSessionInputKindDto::Command,
+                monotonic_ms: ms(0),
+                max_write_len: None,
+                channel: Vec::new(),
+                bytes: Vec::new(),
+                command: Some(command),
+            });
+            assert_eq!(result.error, None);
+            assert!(
+                result
+                    .outputs
+                    .iter()
+                    .any(|output| output.kind == MobileSessionOutputKindDto::Write)
+            );
+        }
+
+        assert_eq!(
+            session.aero_pwm_percent_state().requested,
+            Some(MobileAeroPwmPercentDto { percent: 64 })
+        );
+        assert_eq!(
+            session.aero_angle_adjustment_state().requested,
+            Some(MobileAeroAngleAdjustmentDto {
+                tenths_of_degree: -36,
+            })
+        );
+    }
+
+    #[test]
+    fn falcon_wrapper_writes_documented_roll_angle_after_stationary_arm() {
+        let session = FalconBenignControlSession::new().expect("default profile should construct");
+        assert!(session.arm_settings_writes(RideOperatingState::Parked, ms(0)));
+
+        let result = session.ingest_checked(MobileSessionInputDto {
+            kind: MobileSessionInputKindDto::Command,
+            monotonic_ms: ms(0),
+            max_write_len: None,
+            channel: Vec::new(),
+            bytes: Vec::new(),
+            command: Some(MobileCommandDto::SetRollAngle(MobileRollAngleKindDto::High)),
+        });
+
+        assert_eq!(result.error, None);
+        assert!(result.outputs.iter().any(|output| {
+            output.kind == MobileSessionOutputKindDto::Write && output.bytes == b"<"
+        }));
+        assert_eq!(
+            session.roll_angle_state().requested,
+            Some(MobileRollAngleKindDto::High)
+        );
+    }
+
+    #[test]
+    fn falcon_wrapper_writes_documented_speed_alarm_mode_after_stationary_arm() {
+        let session = FalconBenignControlSession::new().expect("default profile should construct");
+        assert!(session.arm_settings_writes(RideOperatingState::Parked, ms(0)));
+
+        let result = session.ingest_checked(MobileSessionInputDto {
+            kind: MobileSessionInputKindDto::Command,
+            monotonic_ms: ms(0),
+            max_write_len: None,
+            channel: Vec::new(),
+            bytes: Vec::new(),
+            command: Some(MobileCommandDto::SetSpeedAlarmMode(
+                MobileSpeedAlarmModeKindDto::StageOneOnly,
+            )),
+        });
+
+        assert_eq!(result.error, None);
+        assert!(result.outputs.iter().any(|output| {
+            output.kind == MobileSessionOutputKindDto::Write && output.bytes == b"u"
+        }));
+        assert_eq!(
+            session.speed_alarm_mode_state().requested,
+            Some(MobileSpeedAlarmModeKindDto::StageOneOnly)
+        );
+    }
+
+    #[test]
+    fn falcon_wrapper_schedules_typed_w_setting_sequence() {
+        let session = FalconBenignControlSession::new().expect("default profile should construct");
+        assert!(session.arm_settings_writes(RideOperatingState::Parked, ms(0)));
+
+        let result = session.ingest_checked(MobileSessionInputDto {
+            kind: MobileSessionInputKindDto::Command,
+            monotonic_ms: ms(0),
+            max_write_len: None,
+            channel: Vec::new(),
+            bytes: Vec::new(),
+            command: Some(MobileCommandDto::SetBegodeMaxSpeed(
+                MobileBegodeMaxSpeedDto {
+                    kilometres_per_hour: 30,
+                },
+            )),
+        });
+        assert_eq!(result.error, None);
+        assert!(result.outputs.iter().any(|output| {
+            output.kind == MobileSessionOutputKindDto::Write && output.bytes == b"W"
+        }));
+
+        let result = session.ingest_checked(MobileSessionInputDto {
+            kind: MobileSessionInputKindDto::Tick,
+            monotonic_ms: ms(100),
+            max_write_len: None,
+            channel: Vec::new(),
+            bytes: Vec::new(),
+            command: None,
+        });
+        assert!(result.outputs.iter().any(|output| {
+            output.kind == MobileSessionOutputKindDto::Write && output.bytes == b"Y"
+        }));
+    }
+
+    #[test]
+    fn falcon_wrapper_refuses_ambiguous_speed_alarm_off_command() {
+        let session = FalconBenignControlSession::new().expect("default profile should construct");
+        assert!(session.arm_settings_writes(RideOperatingState::Parked, ms(0)));
+
+        let result = session.ingest_checked(MobileSessionInputDto {
+            kind: MobileSessionInputKindDto::Command,
+            monotonic_ms: ms(0),
+            max_write_len: None,
+            channel: Vec::new(),
+            bytes: Vec::new(),
+            command: Some(MobileCommandDto::SetSpeedAlarmMode(
+                MobileSpeedAlarmModeKindDto::Off,
+            )),
+        });
+
+        assert!(matches!(
+            result.error,
+            Some(MobileSessionStepErrorDto {
+                kind: MobileSessionStepErrorKindDto::CommandRefused,
+                reason: Some(MobileControlRefusalReasonDto::UnsupportedCommand),
+                ..
+            })
+        ));
+        assert!(
+            result
+                .outputs
+                .iter()
+                .all(|output| output.kind != MobileSessionOutputKindDto::Write)
+        );
+    }
+
+    #[test]
+    fn mobile_wrapper_refuses_unverified_acceleration_assist_and_taillight_without_writes() {
+        let session = AeroBenignControlSession::new();
+        let commands = [
+            MobileCommandDto::SetAccelerationAssist(MobileAccelerationAssistStateDto::Enabled),
+            MobileCommandDto::SetTaillight(MobileLightStateDto::On),
+        ];
+
+        for command in commands {
+            let result = session.ingest_checked(MobileSessionInputDto {
+                kind: MobileSessionInputKindDto::Command,
+                monotonic_ms: ms(0),
+                max_write_len: None,
+                channel: Vec::new(),
+                bytes: Vec::new(),
+                command: Some(command),
+            });
+
+            assert_eq!(
+                result.error,
+                Some(MobileSessionStepErrorDto {
+                    kind: MobileSessionStepErrorKindDto::CommandRefused,
+                    command: Some(command),
+                    reason: Some(MobileControlRefusalReasonDto::UnsupportedCommand),
+                })
+            );
+            assert!(
+                result
+                    .outputs
+                    .iter()
+                    .all(|output| output.kind != MobileSessionOutputKindDto::Write)
+            );
+        }
+    }
+
+    #[test]
+    fn aero_wrapper_reports_typed_acceleration_assist_refusal_state() {
+        let session = AeroBenignControlSession::new();
+
+        let _ = session.ingest_checked(MobileSessionInputDto {
+            kind: MobileSessionInputKindDto::Command,
+            monotonic_ms: ms(7),
+            max_write_len: None,
+            channel: Vec::new(),
+            bytes: Vec::new(),
+            command: Some(MobileCommandDto::SetAccelerationAssist(
+                MobileAccelerationAssistStateDto::Enabled,
+            )),
+        });
+
+        let state = session.acceleration_assist_state();
+        assert_eq!(state.kind, MobileSettingStateKindDto::Refused);
+        assert_eq!(
+            state.requested,
+            Some(MobileAccelerationAssistStateDto::Enabled)
+        );
+        assert_eq!(
+            state.refusal_reason,
+            Some(MobileControlRefusalReasonDto::UnsupportedCommand)
+        );
+    }
+
+    #[test]
+    fn aero_wrapper_reports_typed_taillight_refusal_state() {
+        let session = AeroBenignControlSession::new();
+
+        let _ = session.ingest_checked(MobileSessionInputDto {
+            kind: MobileSessionInputKindDto::Command,
+            monotonic_ms: ms(7),
+            max_write_len: None,
+            channel: Vec::new(),
+            bytes: Vec::new(),
+            command: Some(MobileCommandDto::SetTaillight(MobileLightStateDto::On)),
+        });
+
+        let state = session.taillight_state();
+        assert_eq!(state.kind, MobileSettingStateKindDto::Refused);
+        assert_eq!(state.requested, Some(MobileLightStateDto::On));
+        assert_eq!(
+            state.refusal_reason,
+            Some(MobileControlRefusalReasonDto::UnsupportedCommand)
+        );
+    }
+
+    #[test]
+    fn aero_wrapper_reports_missing_arm_for_pedal_mode() {
+        let session = AeroBenignControlSession::new();
+
+        let _ = session.ingest_checked(MobileSessionInputDto {
+            kind: MobileSessionInputKindDto::Command,
+            monotonic_ms: ms(7),
+            max_write_len: None,
+            channel: Vec::new(),
+            bytes: Vec::new(),
+            command: Some(MobileCommandDto::SetPedalMode(MobilePedalModeKindDto::Hard)),
+        });
+
+        let state = session.pedal_mode_state();
+        assert_eq!(state.kind, MobileSettingStateKindDto::Refused);
+        assert_eq!(state.requested, Some(MobilePedalModeKindDto::Hard));
+        assert_eq!(
+            state.refusal_reason,
+            Some(MobileControlRefusalReasonDto::MissingArm)
+        );
+    }
+
+    #[test]
+    fn aero_and_falcon_wrappers_write_lights_after_stationary_arm() {
+        let aero = AeroBenignControlSession::new();
+        let falcon = FalconBenignControlSession::new().expect("default profile should construct");
+        assert!(aero.arm_settings_writes(RideOperatingState::Parked, ms(0)));
+        assert!(falcon.arm_settings_writes(RideOperatingState::Parked, ms(0)));
+
+        let command_input = |state| MobileSessionInputDto {
+            kind: MobileSessionInputKindDto::Command,
+            monotonic_ms: ms(0),
+            max_write_len: None,
+            channel: Vec::new(),
+            bytes: Vec::new(),
+            command: Some(MobileCommandDto::SetLights(state)),
+        };
+
+        let aero_result = aero.ingest_checked(command_input(MobileLightStateDto::On));
+        let falcon_result = falcon.ingest_checked(command_input(MobileLightStateDto::Off));
+
+        assert_eq!(aero_result.error, None);
+        assert!(aero_result.outputs.iter().any(|output| {
+            output.kind == MobileSessionOutputKindDto::Write && output.bytes == b"SetLightON"
+        }));
+        assert_eq!(falcon_result.error, None);
+        assert!(falcon_result.outputs.iter().any(|output| {
+            output.kind == MobileSessionOutputKindDto::Write && output.bytes == b"E"
+        }));
+    }
+
+    #[test]
+    fn mobile_light_state_tracks_accepted_write_until_matching_readback() {
+        let session = AeroBenignControlSession::new();
+
+        assert_eq!(
+            session.headlight_state(),
+            MobileLightSettingStateDto::unknown()
+        );
+
+        let result = session.ingest_checked(MobileSessionInputDto {
+            kind: MobileSessionInputKindDto::Command,
+            monotonic_ms: ms(10),
+            max_write_len: None,
+            channel: Vec::new(),
+            bytes: Vec::new(),
+            command: Some(MobileCommandDto::SetLights(MobileLightStateDto::On)),
+        });
+        assert_eq!(result.error, None);
+        assert_eq!(
+            session.headlight_state().kind,
+            MobileSettingStateKindDto::Pending
+        );
+
+        let state = session.headlight_state();
+        assert_eq!(state.current, None);
+        assert_eq!(state.requested, Some(MobileLightStateDto::On));
+        assert_eq!(state.submitted_at_ms, Some(10));
+    }
+
+    #[test]
+    fn mobile_light_state_times_out_on_tick() {
+        let session = AeroBenignControlSession::new();
+
+        let _ = session.ingest_checked(MobileSessionInputDto {
+            kind: MobileSessionInputKindDto::Command,
+            monotonic_ms: ms(10),
+            max_write_len: None,
+            channel: Vec::new(),
+            bytes: Vec::new(),
+            command: Some(MobileCommandDto::SetLights(MobileLightStateDto::On)),
+        });
+        assert_eq!(
+            session.headlight_state().kind,
+            MobileSettingStateKindDto::Pending
+        );
+
+        let _ = session.ingest_checked(MobileSessionInputDto {
+            kind: MobileSessionInputKindDto::Tick,
+            monotonic_ms: ms(2_010),
+            max_write_len: None,
+            channel: Vec::new(),
+            bytes: Vec::new(),
+            command: None,
+        });
+
+        let state = session.headlight_state();
+        assert_eq!(state.kind, MobileSettingStateKindDto::TimedOut);
+        assert_eq!(state.requested, Some(MobileLightStateDto::On));
+    }
+
+    #[test]
+    fn mobile_pedal_state_times_out_on_tick() {
+        let mut trackers = MobileEucSettingTrackers::default();
+        let accepted = MobileSessionStepResultDto {
+            outputs: Vec::new(),
+            error: None,
+        };
+
+        trackers.observe_step(
+            &MobileSessionInputDto {
+                kind: MobileSessionInputKindDto::Command,
+                monotonic_ms: ms(10),
+                max_write_len: None,
+                channel: Vec::new(),
+                bytes: Vec::new(),
+                command: Some(MobileCommandDto::SetPedalMode(MobilePedalModeKindDto::Hard)),
+            },
+            &accepted,
+        );
+        assert_eq!(
+            trackers.pedal_mode().kind,
+            MobileSettingStateKindDto::Pending
+        );
+
+        trackers.observe_step(
+            &MobileSessionInputDto {
+                kind: MobileSessionInputKindDto::Tick,
+                monotonic_ms: ms(2_010),
+                max_write_len: None,
+                channel: Vec::new(),
+                bytes: Vec::new(),
+                command: None,
+            },
+            &accepted,
+        );
+
+        let state = trackers.pedal_mode();
+        assert_eq!(state.kind, MobileSettingStateKindDto::TimedOut);
+        assert_eq!(state.requested, Some(MobilePedalModeKindDto::Hard));
+    }
+
+    #[test]
+    fn euc_settings_capabilities_expose_guarded_write_support() {
+        let aero = AeroBenignControlSession::new();
+        let falcon = FalconBenignControlSession::new().expect("default profile should construct");
+
+        assert_eq!(
+            aero.settings_capabilities().headlight,
+            MobileSettingWriteSupportDto::Supported
+        );
+        assert_eq!(
+            falcon.settings_capabilities().headlight,
+            MobileSettingWriteSupportDto::Supported
+        );
+        assert_eq!(
+            aero.settings_capabilities().taillight,
+            MobileSettingWriteSupportDto::Unsupported
+        );
+        assert_eq!(
+            aero.settings_capabilities().pedal_mode,
+            MobileSettingWriteSupportDto::Supported
+        );
+        assert_eq!(
+            falcon.settings_capabilities().pedal_mode,
+            MobileSettingWriteSupportDto::Supported
+        );
+        assert_eq!(
+            aero.settings_capabilities().acceleration_assist,
+            MobileSettingWriteSupportDto::Unsupported
+        );
+        assert_eq!(
+            mobile_euc_settings_capabilities(DiscoveryElectricUnicycleModel::Aero),
+            aero.settings_capabilities()
+        );
+        assert_eq!(
+            mobile_euc_settings_capabilities(DiscoveryElectricUnicycleModel::Falcon),
+            falcon.settings_capabilities()
+        );
+    }
+
+    #[test]
     fn falcon_wrapper_rejects_unsupported_profile() {
-        let result = FalconReadOnlySession::with_profile(MobileFalconProfileDto::Unsupported);
+        let result = FalconBenignControlSession::with_profile(MobileFalconProfileDto::Unsupported);
 
         assert!(matches!(
             result,
@@ -13600,7 +16545,7 @@ mod tests {
 
     #[test]
     fn aero_wrapper_accepts_owned_notification_input() {
-        let session = AeroReadOnlySession::new();
+        let session = AeroBenignControlSession::new();
         let link_result = session.ingest_checked(MobileSessionInputDto {
             kind: MobileSessionInputKindDto::LinkUp,
             monotonic_ms: ms(1),
@@ -14313,6 +17258,7 @@ mod tests {
             battery_temperature: None,
             pwm: None,
             distance: None,
+            trip_distance: None,
             limp_home_range: None,
             pitch: None,
             balance_angle: None,
@@ -14573,7 +17519,6 @@ mod tests {
         let estimate = result.estimate.expect("stable samples produce an estimate");
         assert_eq!(estimate.voltage_sag, None);
     }
-
     #[test]
     fn spatial_pages_round_trip_mobile_cursors_and_antimeridian_bounds() {
         let _guard = RIDE_DATABASE_TEST_LOCK

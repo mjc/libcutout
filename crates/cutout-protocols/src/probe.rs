@@ -36,7 +36,21 @@ impl AeroProbe {
             CommandKind::RequestFaultHistory => Some(Self::FaultHistory),
             CommandKind::RequestSettings => Some(Self::Settings),
             CommandKind::RequestDiagnostics
+            | CommandKind::ResetTripMeter
+            | CommandKind::SetAeroTiltbackSpeed
+            | CommandKind::SetAeroPwmPercent
+            | CommandKind::SetAeroAlarmSpeed
+            | CommandKind::SetAeroAngleAdjustment
+            | CommandKind::SetAeroHighBeam
+            | CommandKind::SetAccelerationAssist
             | CommandKind::SetLights
+            | CommandKind::SetPedalMode
+            | CommandKind::SetRollAngle
+            | CommandKind::SetSpeedAlarmMode
+            | CommandKind::SetBegodeMaxSpeed
+            | CommandKind::SetBegodeBeeperVolume
+            | CommandKind::SetBegodeLedMode
+            | CommandKind::SetTaillight
             | CommandKind::SoundHorn
             | CommandKind::SetRawMotorCurrent => None,
         }
@@ -84,7 +98,21 @@ impl FalconProbe {
             CommandKind::RequestDiagnostics
             | CommandKind::RequestFaultHistory
             | CommandKind::RequestSettings
+            | CommandKind::ResetTripMeter
+            | CommandKind::SetAeroTiltbackSpeed
+            | CommandKind::SetAeroPwmPercent
+            | CommandKind::SetAeroAlarmSpeed
+            | CommandKind::SetAeroAngleAdjustment
+            | CommandKind::SetAeroHighBeam
+            | CommandKind::SetAccelerationAssist
             | CommandKind::SetLights
+            | CommandKind::SetPedalMode
+            | CommandKind::SetRollAngle
+            | CommandKind::SetSpeedAlarmMode
+            | CommandKind::SetBegodeMaxSpeed
+            | CommandKind::SetBegodeBeeperVolume
+            | CommandKind::SetBegodeLedMode
+            | CommandKind::SetTaillight
             | CommandKind::SoundHorn
             | CommandKind::SetRawMotorCurrent => None,
         }

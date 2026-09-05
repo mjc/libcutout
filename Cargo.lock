@@ -556,6 +556,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "cutout-dev"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "cutout-core",
+ "cutout-protocols",
+ "serde_json",
+ "sha2",
+]
+
+[[package]]
 name = "cutout-mobile-ffi"
 version = "0.1.0"
 dependencies = [

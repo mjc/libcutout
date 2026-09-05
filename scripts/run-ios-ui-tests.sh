@@ -3,7 +3,7 @@ set -euo pipefail
 
 usage() {
   echo "Usage: scripts/run-ios-ui-tests.sh [--clean] [--build-only] [--smoke] [--verbose] [--enumerate-tests output.json] [--timeout seconds] [--appearance light|dark] [--increase-contrast enabled|disabled] [--content-size size] [xcodebuild options]"
-  echo "  --smoke    Run seven production-root checks in their compatible simulator-settings groups."
+  echo "  --smoke    Run eight production-root checks in their compatible simulator-settings groups."
   echo "  --verbose  Show full xcodebuild output instead of the bounded default."
   echo "  --enumerate-tests writes Xcode's compiled test graph without executing tests."
   echo "  --timeout sets the outer deadline for this build-and-test invocation."
@@ -29,16 +29,15 @@ if [[ "$smoke_requested" == true ]]; then
   exec "$script_directory/run-ios-ui-test-matrix.sh" --smoke
 fi
 
-source "$script_directory/swift-package-common.sh"
-
-root="$(cutout_repo_root)"
-cd "$root"
-
 if [[ "$(uname -s)" != Darwin || "$(uname -m)" != arm64 ]]; then
   echo "CutoutApp iOS UI tests require Apple Silicon Darwin" >&2
   exit 1
 fi
 
+source "$script_directory/swift-package-common.sh"
+
+root="$(cutout_repo_root)"
+cd "$root"
 cutout_ensure_swift_ffi_build_input "$root"
 
 cutout_use_xcode_developer_dir

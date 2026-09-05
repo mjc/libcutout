@@ -10,7 +10,7 @@ device is considered fully specced.
 ## Sources Checked
 
 - `eried/eucplanet`
-  - Clone used for audit: `.tmp/protocol-sources/eucplanet`.
+  - Clone used for audit: `.protocol-references/eucplanet`.
   - License: MIT.
   - Relevant files:
     - `docs/protocols/veteran.md`
@@ -22,7 +22,7 @@ device is considered fully specced.
     docs explicitly describe themselves as original prose and MIT-licensed.
 
 - `Wheellog/Wheellog.Android`
-  - Clone used for audit: `.tmp/protocol-sources/Wheellog.Android`.
+  - Clone used for audit: `.protocol-references/Wheellog.Android`.
   - License: GPL-3.0.
   - Relevant files:
     - `app/src/main/java/com/cooper/wheellog/utils/VeteranAdapter.java`
@@ -33,7 +33,7 @@ device is considered fully specced.
     implementation code into this repo.
 
 - `Pickelhaupt/EUC-Dash-ESP32`
-  - Clone used for audit: `.tmp/protocol-sources/EUC-Dash-ESP32`.
+  - Clone used for audit: `.protocol-references/EUC-Dash-ESP32`.
   - License: GPL-3.0.
   - Relevant files:
     - `src/hardware/Gotway.cpp`
@@ -104,16 +104,45 @@ device is considered fully specced.
   for temperature conversion. `CF` and `BF` firmware imply the frame `0x00`
   hardware-PWM field is authoritative; stock `GW` and `JN` do not.
 
-## Backlog Implications
+## Aero settings terminology
 
-- The next Aero implementation slice should parse captured notifications before
-  inventing read request bytes. The device is already streaming telemetry
-  unsolicited once subscribed.
-- Add a protocol classifier/reassembler for Veteran/Aero and Begode magic bytes.
-- Add an Aero telemetry fixture from the existing live capture and prove the
-  parser decodes at least family, frame length, model id, voltage, firmware
-  version, and basic telemetry fields.
-- Keep control commands out of scope until the read-only parser and hardware
-  verification loop are stable.
-- GPL repositories can be used as evidence and for behavioral cross-checks, but
-  Rust code should be written from MIT docs, live captures, and our own tests.
+The [NOSFET support page](https://www.nosfet.com/support) links the AERO
+manual, whose setting names are the protocol-facing labels used here:
+
+- `TLT`: tilt-back speed.
+- `PWT`: PWM tilt-back alarm percentage.
+- `ALM`: alarm speed.
+- `ANG`: vertical angle adjustment.
+
+The manual also lists `ANG %` (acceleration assist) and `ANG TLT` (gyro
+re-centering duration). Those are separate settings and must not be inferred
+from the `ANG` write. The Rust `AeroAngleAdjustment` type therefore describes
+`ANG` as a vertical-angle value; it does not claim to decode pedal mode.
+
+On the live NF2557/Aero capture (firmware 43.2.54), the repeated settings
+readback currently proves raw fields `0x0018=550`, `0x001a=540`, and
+`0x001e=1920`. The first two are the observed alarm and tilt-back values;
+`0x001e` remains raw until a controlled capture proves its meaning. A
+reversible `TLT` write has completed a 54 -> 53 -> 54 readback round trip;
+an `ALM` write that did not produce a matching readback is reported as failed
+closed.
+
+## Current implementation and remaining proof
+
+The Rust tree now contains the protocol classifier/reassemblers and captured
+Aero fixtures described above. `VeteranFrameReassembler` and the Begode frame
+parser classify notification streams by wire magic; the Aero session fixture
+decodes frame length, model id, firmware, voltage, and the fixed-header
+telemetry fields. The registered session and CLI write path require the
+protocol GATT fingerprint plus model id `43` before arming any write.
+
+The remaining settings boundary is evidence, not an encoder gap: a setting
+without a typed readback and controlled device observation stays provisional.
+The CLI therefore reports transport acceptance separately and only calls the
+typed speed writes successful after a preflight-to-post-write readback
+transition. PWT, ANG, lights, pedal mode, and trip reset remain explicitly
+write-only or unconfirmed until the matching NF2557 effect/readback/rollback
+capture exists.
+
+GPL repositories remain behavioral cross-checks only; the Rust implementation
+is based on the MIT documentation, our captures, and tests.

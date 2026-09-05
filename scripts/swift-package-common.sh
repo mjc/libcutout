@@ -20,51 +20,6 @@ cutout_ios_development_team() {
   printf '%s\n' "${CUTOUT_IOS_DEVELOPMENT_TEAM:-2RH32Y5HM5}"
 }
 
-cutout_swift_ffi_package_dir() {
-  printf '%s\n' "$1/target/swift-ffi/CutoutMobileFFI"
-}
-
-cutout_swift_ffi_lock_path() {
-  printf '%s\n' "$(dirname "$(cutout_swift_ffi_package_dir "$1")")/.generation.lock"
-}
-
-cutout_acquire_swift_ffi_lock() {
-  local root lock owner current started timeout
-  root="$1"
-  lock="$(cutout_swift_ffi_lock_path "$root")"
-  mkdir -p "$(dirname "$lock")"
-  timeout="${CUTOUT_SWIFT_FFI_LOCK_TIMEOUT_SECONDS:-120}"
-  if [[ ! "$timeout" =~ ^[1-9][0-9]*$ ]]; then
-    echo "CUTOUT_SWIFT_FFI_LOCK_TIMEOUT_SECONDS must be a positive integer" >&2
-    return 2
-  fi
-  started="$SECONDS"
-  while ! ln -s "$$" "$lock" 2>/dev/null; do
-    owner="$(readlink "$lock" 2>/dev/null || true)"
-    if [[ -z "$owner" || ! "$owner" =~ ^[0-9]+$ ]]; then
-      echo "refusing malformed Swift FFI generation lock: $lock" >&2
-      return 1
-    fi
-    if ! kill -0 "$owner" 2>/dev/null; then
-      current="$(readlink "$lock" 2>/dev/null || true)"
-      [[ "$current" == "$owner" ]] && rm -f -- "$lock"
-      continue
-    fi
-    if (( SECONDS - started >= timeout )); then
-      echo "timed out waiting for Swift FFI generation lock: $lock (owner $owner)" >&2
-      return 1
-    fi
-    sleep 0.1
-  done
-}
-
-cutout_release_swift_ffi_lock() {
-  local lock owner
-  lock="$(cutout_swift_ffi_lock_path "$1")"
-  owner="$(readlink "$lock" 2>/dev/null || true)"
-  [[ "$owner" == "$$" ]] && rm -f -- "$lock"
-}
-
 cutout_replace_generated_directory() {
   local target parent name backup_root backup status
   target="$1"
@@ -97,208 +52,10 @@ cutout_replace_generated_directory() {
   return "$status"
 }
 
-cutout_atomic_replace_generated_directory() {
-  local source target parent
-  source="$1"
-  target="$2"
-  parent="$(dirname "$target")"
-  if [[ "$source" != /* || "$target" != /* || "$source" == "/" || "$target" == "/" || ! -d "$parent" || ! -d "$source" ]]; then
-    echo "refusing unsafe generated-directory replacement: $source -> $target" >&2
-    return 2
-  fi
-  if [[ -e "$target" && ! -d "$target" && ! -L "$target" ]]; then
-    echo "refusing non-directory generated-directory target: $target" >&2
-    return 2
-  fi
-
-  if [[ ! -e "$target" && ! -L "$target" ]]; then
-    mv "$source" "$target"
-    return
-  fi
-
-  python3 - "$source" "$target" <<'PY'
-import ctypes
-import os
-import platform
-import shutil
-import sys
-
-source, target = (os.fsencode(value) for value in sys.argv[1:])
-libc = ctypes.CDLL(None, use_errno=True)
-rename_swap = 2
-
-if sys.platform == "darwin":
-    swap = libc.renamex_np
-    swap.argtypes = [ctypes.c_char_p, ctypes.c_char_p, ctypes.c_uint]
-    swap.restype = ctypes.c_int
-    result = swap(source, target, rename_swap)
-elif sys.platform == "linux":
-    syscall_numbers = {"x86_64": 316, "aarch64": 276, "arm64": 276, "armv7l": 382, "riscv64": 276}
-    try:
-        syscall_number = syscall_numbers[platform.machine()]
-    except KeyError as error:
-        raise OSError(f"unsupported Linux architecture for atomic directory replacement: {platform.machine()}") from error
-    syscall = libc.syscall
-    syscall.argtypes = [ctypes.c_long, ctypes.c_int, ctypes.c_char_p, ctypes.c_int, ctypes.c_char_p, ctypes.c_uint]
-    syscall.restype = ctypes.c_long
-    result = syscall(syscall_number, -100, source, -100, target, rename_swap)
-else:
-    raise OSError(f"unsupported host for atomic directory replacement: {sys.platform}")
-
-if result != 0:
-    error = ctypes.get_errno()
-    raise OSError(error, os.strerror(error))
-
-old_target = os.fsdecode(source)
-if os.path.islink(old_target):
-    os.unlink(old_target)
-else:
-    shutil.rmtree(old_target)
-PY
-}
-
-cutout_swift_ffi_source_fingerprint() {
+cutout_ensure_swift_ffi_build_input() {
   local root
   root="$1"
-
-  (
-    cd "$root"
-    {
-      printf '%s\n' \
-        Cargo.lock Cargo.toml rust-toolchain.toml flake.lock flake.nix \
-        scripts/regenerate-swift-ffi.sh
-      find crates -type f \( \
-        -name Cargo.toml -o -name build.rs -o -name '*.udl' -o -name uniffi.toml \
-        -o -path '*/src/*' -o -path '*/registry/*' \
-      \) -print
-      printf '%s\n' scripts/swift-package-common.sh
-    } \
-      | LC_ALL=C sort -u \
-      | while IFS= read -r file; do
-          printf '%s  ' "$file"
-          sha256sum "$file"
-        done
-  ) | sha256sum | cut -d ' ' -f 1
-}
-
-cutout_require_current_swift_ffi() {
-  local root stamp expected actual
-  root="$1"
-  stamp="$(cutout_swift_ffi_package_dir "$root")/.cutout-source.sha256"
-
-  if [[ -f "$stamp" ]]; then
-    expected="$(tr -d '[:space:]' <"$stamp")"
-  else
-    expected=""
-  fi
-  actual="$(cutout_swift_ffi_source_fingerprint "$root")"
-  if [[ "$expected" == "$actual" ]]; then
-    return
-  fi
-
-  echo "Swift FFI artifact is missing or stale for the current Rust sources." >&2
-  echo "Run: nix develop -c ./scripts/regenerate-swift-ffi.sh" >&2
-  return 1
-}
-
-cutout_validate_swift_ffi_build_input() {
-  local root package
-  local -a required
-  root="$1"
-  package="$(cutout_swift_ffi_package_dir "$root")"
-  required=(
-    "$package/Package.swift"
-    "$package/Sources/CutoutMobileFFI/cutout_mobile_ffi.swift"
-    "$package/cutout_mobile_ffiFFI.xcframework/Info.plist"
-    "$package/cutout_mobile_ffiFFI.xcframework/ios-arm64/libcutout_mobile_ffi.a"
-    "$package/cutout_mobile_ffiFFI.xcframework/ios-arm64/Headers/cutout_mobile_ffiFFI/cutout_mobile_ffiFFI.h"
-    "$package/cutout_mobile_ffiFFI.xcframework/ios-arm64/Headers/cutout_mobile_ffiFFI/module.modulemap"
-    "$package/cutout_mobile_ffiFFI.xcframework/ios-arm64_x86_64-simulator/libcutout_mobile_ffi.a"
-    "$package/cutout_mobile_ffiFFI.xcframework/ios-arm64_x86_64-simulator/Headers/cutout_mobile_ffiFFI/cutout_mobile_ffiFFI.h"
-    "$package/cutout_mobile_ffiFFI.xcframework/ios-arm64_x86_64-simulator/Headers/cutout_mobile_ffiFFI/module.modulemap"
-    "$package/cutout_mobile_ffiFFI.xcframework/macos-arm64_x86_64/libcutout_mobile_ffi.a"
-    "$package/cutout_mobile_ffiFFI.xcframework/macos-arm64_x86_64/Headers/cutout_mobile_ffiFFI/cutout_mobile_ffiFFI.h"
-    "$package/cutout_mobile_ffiFFI.xcframework/macos-arm64_x86_64/Headers/cutout_mobile_ffiFFI/module.modulemap"
-  )
-
-  if ! cutout_require_current_swift_ffi "$root"; then
-    return 1
-  fi
-  for input in "${required[@]}"; do
-    if [[ ! -s "$input" ]]; then
-      echo "missing Swift FFI build input: $input" >&2
-      echo "Run: nix develop -c ./scripts/regenerate-swift-ffi.sh" >&2
-      return 1
-    fi
-  done
-
-  if ! grep -Eq 'Package[[:space:]]*\(' "$package/Package.swift"; then
-    echo "invalid Swift FFI Package.swift: $package/Package.swift" >&2
-    echo "Run: nix develop -c ./scripts/regenerate-swift-ffi.sh" >&2
-    return 1
-  fi
-  if ! python3 - "$package/cutout_mobile_ffiFFI.xcframework/Info.plist" <<'PY'
-import plistlib
-import sys
-
-try:
-    with open(sys.argv[1], "rb") as source:
-        plist = plistlib.load(source)
-except (OSError, plistlib.InvalidFileException) as error:
-    print(f"invalid Swift FFI XCFramework Info.plist: {error}", file=sys.stderr)
-    raise SystemExit(1)
-
-if not isinstance(plist.get("AvailableLibraries"), list):
-    print("invalid Swift FFI XCFramework Info.plist: missing AvailableLibraries", file=sys.stderr)
-    raise SystemExit(1)
-PY
-  then
-    echo "Run: nix develop -c ./scripts/regenerate-swift-ffi.sh" >&2
-    return 1
-  fi
-
-  if [[ "$(uname -s)" == Darwin ]]; then
-    if ! /usr/bin/lipo "${required[3]}" -verify_arch arm64 >/dev/null 2>&1 \
-      || ! /usr/bin/lipo "${required[6]}" -verify_arch arm64 >/dev/null 2>&1 \
-      || ! /usr/bin/lipo "${required[6]}" -verify_arch x86_64 >/dev/null 2>&1 \
-      || ! /usr/bin/lipo "${required[9]}" -verify_arch arm64 >/dev/null 2>&1 \
-      || ! /usr/bin/lipo "${required[9]}" -verify_arch x86_64 >/dev/null 2>&1
-    then
-      echo "Swift FFI XCFramework contains a missing or wrong-architecture slice." >&2
-      echo "Run: nix develop -c ./scripts/regenerate-swift-ffi.sh" >&2
-      return 1
-    fi
-  fi
-}
-
-cutout_require_swift_ffi_build_input() {
-  cutout_validate_swift_ffi_build_input "$@"
-}
-
-cutout_ensure_swift_ffi_build_input() {
-  local root generator status
-  root="$1"
-  generator="${2:-$root/scripts/regenerate-swift-ffi.sh}"
-  cutout_acquire_swift_ffi_lock "$root" || return
-  if cutout_validate_swift_ffi_build_input "$root" 2>/dev/null; then
-    cutout_release_swift_ffi_lock "$root"
-    return 0
-  fi
-  if CUTOUT_SWIFT_FFI_LOCK_HELD=1 "$generator"; then
-    :
-  else
-    status=$?
-    cutout_release_swift_ffi_lock "$root"
-    return "$status"
-  fi
-  if cutout_validate_swift_ffi_build_input "$root"; then
-    :
-  else
-    status=$?
-    cutout_release_swift_ffi_lock "$root"
-    return "$status"
-  fi
-  cutout_release_swift_ffi_lock "$root"
+  (cd "$root" && cargo run --quiet -p cutout-dev -- swift-ffi)
 }
 
 cutout_create_ios_ui_test_result_bundle() {
@@ -397,7 +154,7 @@ cutout_build_ios_app_bundle() {
   product="$derived_data/Build/Products/$configuration-iphoneos/CutoutApp.app"
 
   cutout_use_xcode_developer_dir
-  cutout_ensure_swift_ffi_build_input "$root"
+  cutout_ensure_swift_ffi_build_input "$root" || return
 
   rm -rf "$product"
 
@@ -434,7 +191,7 @@ cutout_build_ios_device_app_bundle() {
   bundle_id="${CUTOUT_IOS_APP_BUNDLE_ID:-}"
 
   cutout_use_xcode_developer_dir
-  cutout_ensure_swift_ffi_build_input "$root"
+  cutout_ensure_swift_ffi_build_input "$root" || return
 
   rm -rf "$product"
 
@@ -475,7 +232,7 @@ cutout_archive_ios_release_testing_app() {
   local -a auth_args=()
 
   root="$(cutout_repo_root)"
-  cutout_ensure_swift_ffi_build_input "$root"
+  cutout_ensure_swift_ffi_build_input "$root" || return
   project="${CUTOUT_IOS_APP_PROJECT:-swift/CutoutMobile/CutoutApp.xcodeproj}"
   scheme="${CUTOUT_IOS_APP_SCHEME:-CutoutApp}"
   archive_path="${CUTOUT_IOS_AD_HOC_ARCHIVE_PATH:-$root/target/xcode-ad-hoc/CutoutApp.xcarchive}"

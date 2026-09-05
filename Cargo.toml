@@ -9,6 +9,7 @@ members = [
     "crates/cutout-btle",
     "crates/cutout-cli",
     "crates/cutout-uniffi-bindgen",
+    "crates/cutout-dev",
 ]
 default-members = [
     "crates/cutout-core",

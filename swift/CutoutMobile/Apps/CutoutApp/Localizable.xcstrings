@@ -13,6 +13,298 @@
       "comment" : "App command menu that contains navigation destinations.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Navigate" } } }
     },
+    "app.command.cancel" : {
+      "comment" : "Generic cancel action label.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Cancel" } } }
+    },
+    "navigation.section.tune" : {
+      "comment" : "Title for the EUC settings and tuning section.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Tune" } } }
+    },
+    "settings.headlight.title" : {
+      "comment" : "Label for the EUC headlight setting.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Headlight" } } }
+    },
+    "settings.headlight.unavailable" : {
+      "comment" : "Explains why the headlight control is disabled without a supported wheel.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Headlight is unavailable until a supported wheel is connected." } } }
+    },
+    "settings.headlight.unverified" : {
+      "comment" : "Explains why a recognized wheel model remains disabled until its light command is validated.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Headlight control is unavailable until this wheel model is validated." } } }
+    },
+    "settings.headlight.help" : {
+      "comment" : "Explains when the headlight command is sent.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Changes are sent immediately to the connected wheel." } } }
+    },
+    "settings.headlight.failed" : {
+      "comment" : "Shown when the headlight command could not be sent.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Headlight command failed." } } }
+    },
+    "settings.headlight.refused" : {
+      "comment" : "Shown when the wheel refuses a headlight command before transport.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Wheel refused the headlight command." } } }
+    },
+    "settings.headlight.waiting" : {
+      "comment" : "Shown while waiting for wheel telemetry to confirm a headlight command.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Waiting for wheel confirmation." } } }
+    },
+    "settings.headlight.timed_out" : {
+      "comment" : "Shown when the wheel does not confirm a headlight command before the timeout.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Wheel did not confirm the headlight command." } } }
+    },
+    "settings.headlight.confirmed" : {
+      "comment" : "Shown when wheel telemetry confirms the requested headlight state.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Confirmed by wheel telemetry." } } }
+    },
+    "settings.headlight.confirmed_ago" : {
+      "comment" : "Shown when wheel telemetry confirmed the requested headlight state, with elapsed whole seconds.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Confirmed by wheel telemetry %llds ago." } } }
+    },
+    "settings.high_beam.title" : {
+      "comment" : "Label for a wheel protocol that controls the high beam.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "High beam" } } }
+    },
+    "settings.high_beam.sent_unconfirmed" : {
+      "comment" : "Explains that a high-beam command was sent but cannot be confirmed from telemetry.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Command sent. This wheel does not report high-beam state." } } }
+    },
+    "settings.lights.title" : {
+      "comment" : "Section title for EUC light settings.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Lights" } } }
+    },
+    "settings.trip_meter.reset" : {
+      "comment" : "Button that sends the documented NOSFET Aero trip-meter reset command.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Reset trip meter" } } }
+    },
+    "settings.trip_meter.title" : {
+      "comment" : "Section title for the NOSFET Aero trip-meter readback and reset control.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Trip meter" } } }
+    },
+    "settings.trip_meter.distance_title" : {
+      "comment" : "Current protocol-reported trip distance shown above the reset control.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Trip distance" } } }
+    },
+    "settings.trip_meter.footer" : {
+      "comment" : "Safety guidance for resetting the NOSFET Aero trip meter.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Available on NOSFET Aero while parked or below 500 mm/s." } } }
+    },
+    "settings.trip_meter.confirm_title" : {
+      "comment" : "Confirmation title shown before resetting the NOSFET Aero trip meter.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Reset the trip meter?" } } }
+    },
+    "settings.aero.title" : {
+      "comment" : "Section title for captured NOSFET Aero binary settings writes.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Aero controls" } } }
+    },
+    "settings.aero.footer" : {
+      "comment" : "Safety note for NOSFET Aero settings writes.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Writes are available only while parked; verify each change on the wheel." } } }
+    },
+    "settings.aero.send" : {
+      "comment" : "Button that sends a selected NOSFET Aero setting.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Send" } } }
+    },
+    "settings.aero.tiltback.title" : {
+      "comment" : "NOSFET Aero tilt-back speed setting.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Tilt-back" } } }
+    },
+    "settings.aero.pwm.title" : {
+      "comment" : "NOSFET Aero PWT (PWM tilt-back alarm) setting.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "PWT (PWM tilt-back)" } } }
+    },
+    "settings.aero.alarm.title" : {
+      "comment" : "NOSFET Aero alarm speed setting.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Alarm speed" } } }
+    },
+    "settings.aero.angle.title" : {
+      "comment" : "NOSFET Aero ANG (vertical angle) adjustment setting.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "ANG (vertical angle)" } } }
+    },
+    "settings.capabilities.title" : {
+      "comment" : "Section title for settings that are not currently editable.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Other settings" } } }
+    },
+    "settings.capabilities.footer" : {
+      "comment" : "Explains why only validated settings can be changed.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Only settings with validated wheel commands can be changed." } } }
+    },
+    "settings.capabilities.supported" : {
+      "comment" : "Status for a setting with a validated write command.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Supported" } } }
+    },
+    "settings.readback.title" : {
+      "comment" : "Section title for values reported by the connected wheel.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Current values" } } }
+    },
+    "settings.readback.footer" : {
+      "comment" : "Explains that these settings are read-only until their write commands are validated.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Values reported by the wheel. Editing remains disabled until commands are validated." } } }
+    },
+    "settings.readback.unavailable" : {
+      "comment" : "Status for a setting that the wheel did not report.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Unavailable" } } }
+    },
+    "settings.readback.unsupported" : {
+      "comment" : "Status for a setting unsupported by the connected wheel.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Not supported" } } }
+    },
+    "settings.beep_margin.title" : {
+      "comment" : "Label for the EUC beep-margin setting readback.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Beep margin" } } }
+    },
+    "settings.tiltback.title" : {
+      "comment" : "Label for the EUC tiltback setting readback.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Tiltback" } } }
+    },
+    "settings.auto_shutdown.title" : {
+      "comment" : "Label for the EUC auto-shutdown time readback.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Auto-shutdown" } } }
+    },
+    "settings.charge_mode.title" : {
+      "comment" : "Label for the EUC charge mode readback.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Charge mode" } } }
+    },
+    "settings.charge_mode.charging" : {
+      "comment" : "Value for an EUC that reports active charging.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Charging" } } }
+    },
+    "settings.charge_mode.not_charging" : {
+      "comment" : "Value for an EUC that reports no active charging.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Not charging" } } }
+    },
+    "settings.seconds.value" : {
+      "comment" : "Value for a settings duration reported in seconds.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "%lld s" } } }
+    },
+    "settings.capabilities.unverified" : {
+      "comment" : "Status for a setting whose command still needs wheel validation.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Needs validation" } } }
+    },
+    "settings.capabilities.unsupported" : {
+      "comment" : "Status for a setting without a validated command.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Not supported" } } }
+    },
+    "settings.state.pending" : {
+      "comment" : "Status for a setting command awaiting completion.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Pending" } } }
+    },
+    "settings.state.confirmed" : {
+      "comment" : "Status for a setting command confirmed by the device.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Confirmed" } } }
+    },
+    "settings.state.confirmed_ago" : {
+      "comment" : "Status for a setting command confirmed by the device, with elapsed whole seconds.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Confirmed %llds ago" } } }
+    },
+    "settings.state.refused" : {
+      "comment" : "Status for a setting command refused before transport.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Refused" } } }
+    },
+    "settings.state.timed_out" : {
+      "comment" : "Status for a setting command that was not confirmed in time.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Timed out" } } }
+    },
+    "settings.state.failed" : {
+      "comment" : "Status for a setting command that failed.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Failed" } } }
+    },
+    "settings.pedal_mode.title" : {
+      "comment" : "Label for the EUC pedal mode setting.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Pedal mode" } } }
+    },
+    "settings.pedal_mode.footer" : {
+      "comment" : "Safety guidance for the pedal mode write control.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Change only while parked or at 500 mm/s or less." } } }
+    },
+    "settings.pedal_mode.hard" : {
+      "comment" : "Hard pedal mode picker value.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Hard" } } }
+    },
+    "settings.pedal_mode.medium" : {
+      "comment" : "Medium pedal mode picker value.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Medium" } } }
+    },
+    "settings.pedal_mode.soft" : {
+      "comment" : "Soft pedal mode picker value.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Soft" } } }
+    },
+    "settings.roll_angle.title" : {
+      "comment" : "Label for the Falcon roll-angle sensitivity setting.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Roll angle" } } }
+    },
+    "settings.roll_angle.footer" : {
+      "comment" : "Safety guidance for the Falcon roll-angle write control.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Change only while parked." } } }
+    },
+    "settings.roll_angle.low" : {
+      "comment" : "Low roll-angle sensitivity picker value.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Low" } } }
+    },
+    "settings.roll_angle.medium" : {
+      "comment" : "Medium roll-angle sensitivity picker value.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Medium" } } }
+    },
+    "settings.roll_angle.high" : {
+      "comment" : "High roll-angle sensitivity picker value.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "High" } } }
+    },
+    "settings.speed_alarm_mode.title" : {
+      "comment" : "Label for the Begode speed-alarm mode setting.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Speed alarms" } } }
+    },
+    "settings.speed_alarm_mode.footer" : {
+      "comment" : "Safety guidance for the speed-alarm mode write control.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Change only while parked or at 500 mm/s or less." } } }
+    },
+    "settings.speed_alarm_mode.both" : {
+      "comment" : "Both speed alarms picker value.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Both alarms" } } }
+    },
+    "settings.speed_alarm_mode.stage_one_only" : {
+      "comment" : "Stage-one-only speed alarm picker value.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Stage 1 only" } } }
+    },
+    "settings.speed_alarm_mode.off" : {
+      "comment" : "Off speed alarm readback value.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Off" } } }
+    },
+    "settings.speed_alarm_mode.pwm_tiltback" : {
+      "comment" : "PWM tiltback speed alarm readback value.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "PWM tiltback" } } }
+    },
+    "settings.begode_max_speed.title" : {
+      "comment" : "Label for the Begode max-speed write control.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Max speed" } } }
+    },
+    "settings.begode_max_speed.footer" : {
+      "comment" : "Safety guidance for the Begode max-speed write control.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Change only while parked or at 500 mm/s or less." } } }
+    },
+    "settings.begode_beeper_volume.title" : {
+      "comment" : "Label for the Begode beeper-volume write control.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Beeper volume" } } }
+    },
+    "settings.begode_beeper_volume.footer" : {
+      "comment" : "Safety guidance for the Begode beeper-volume write control.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Change only while parked or at 500 mm/s or less." } } }
+    },
+    "settings.begode_led_mode.title" : {
+      "comment" : "Label for the Begode LED-mode write control.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "LED mode" } } }
+    },
+    "settings.begode_led_mode.footer" : {
+      "comment" : "Safety guidance for the Begode LED-mode write control.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Change only while parked or at 500 mm/s or less." } } }
+    },
+    "settings.acceleration_assist.title" : {
+      "comment" : "Label for the EUC acceleration assist setting.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Acceleration assist" } } }
+    },
+    "settings.taillight.title" : {
+      "comment" : "Label for the EUC taillight setting.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Taillight" } } }
+    },
     "accessibility.bms_alert.critical" : {
       "comment" : "VoiceOver announcement for a critical BMS alert.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Critical battery warning. Check BMS details." } } }

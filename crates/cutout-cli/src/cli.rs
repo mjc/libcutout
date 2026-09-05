@@ -8,21 +8,22 @@ use uuid::Uuid;
 const DEFAULT_SCAN_SECONDS: u64 = 5;
 const CLI_LONG_ABOUT: &str = "\
 Cutout is a cautious Bluetooth Low Energy utility for inspecting nearby PEV
-controllers and collecting read-only Aero/Veteran-family protocol evidence.
+controllers and collecting Aero/Veteran-family protocol evidence.
 
 The CLI currently focuses on discovery, endpoint inspection, and fixture
-capture. Commands may connect to hardware, but the protocol session used here
-is read-only.";
+capture. The explicitly confirmed `aero-write` command is the only mutating
+path and requires a stationary safety confirmation.";
 const CLI_AFTER_LONG_HELP: &str = "\
 Examples:
   cutout scan --seconds 10
-  cutout connect --name-contains Aero
-  cutout connect --address AA:BB:CC:DD:EE:FF --seconds 8
+  cutout connect --id <platform-id> --profile aero
+  cutout connect --address AA:BB:CC:DD:EE:FF --seconds 8 --profile aero
   cutout subscribe-raw --name-contains NF2557 --characteristic 0000ffe1-0000-1000-8000-00805f9b34fb
-  cutout capture --name-contains NF2557 --seconds 20
+  cutout capture --id <platform-id> --seconds 20 --profile aero
   cutout pevcap convert --input session.pevcap.jsonl --input-format jsonl --output session.pevcap --output-format binary
   cutout validation
   cutout vesc-probe --name-contains \"VESC BLE UART\"
+  cutout aero-write --id <platform-id> --profile aero --setting headlight --value off --confirm-stationary
   cutout dashboard --demo --device \"Aero NF2557\"
 
 Target selection:
@@ -42,9 +43,9 @@ summary of the discovered service/characteristic tree.
 
 If writable and notification-capable endpoints are discovered, Cutout also
 runs a read-only probe session against the selected endpoints and prints bridge
-counters. Profile auto currently keeps the existing Aero/Veteran path; use
---profile falcon with --probe identity --probe firmware for explicit Falcon
-verification.";
+counters. Live connect requires an explicit protocol profile (`--profile aero`
+or `--profile falcon`); advertised names never select a protocol. Add --probe
+settings to request the protocol settings readback.";
 const SUBSCRIBE_RAW_LONG_ABOUT: &str = "\
 Scan for a peripheral, connect, discover GATT, subscribe to a notify/indicate
 characteristic, and print raw notification chunks with timestamps.
@@ -55,9 +56,9 @@ characteristic in the discovered GATT tree is used.";
 const CAPTURE_LONG_ABOUT: &str = "\
 Connect to a selected read-only protocol profile and print capture records
 suitable for fixture work. Records include link metadata, subscribe/write
-actions, inbound notifications, provisional write bytes, and bridge counters. For explicit
-Falcon verification, use --profile falcon with --probe identity --probe
-firmware. Profile auto currently keeps the existing Aero/Veteran path.
+actions, inbound notifications, provisional write bytes, and bridge counters.
+Live capture requires an explicit protocol profile (`--profile aero` or
+`--profile falcon`); advertised names never select a protocol.
 
 Capture output may include device identifiers and raw notification payloads.
 Review it before sharing logs publicly.";
@@ -90,8 +91,9 @@ Open a read-only Ratatui dashboard backed by the Termina terminal backend.
 The dashboard is intended as a live inspection surface for discovery, device
 selection, telemetry samples, and recent events while the profile model grows.
 Use --demo for fixture-backed data. Without --demo, --device selects a live
-Bluetooth device by advertised name substring and the dashboard opens only
-after the device connects.
+Bluetooth target by advertised name substring and `--profile aero` or
+`--profile falcon` selects the protocol session after connection. The name is
+never used as protocol identity.
 
 This command does not modify the device. It is a visualization and monitoring
 surface for the data Cutout already knows how to collect.";
@@ -103,6 +105,13 @@ prints the decoded session summary. Refloat package probes use the VESC custom
 app data path and stay read-only.
 
 No actuator commands are exposed.";
+const AERO_WRITE_LONG_ABOUT: &str = "\
+Issue one typed, stationary-gated NOSFET Aero settings write after connecting
+to a selected peripheral. The target is selected by its platform identifier or
+Bluetooth address; advertised names are never used for protocol identity.
+
+This command requires --confirm-stationary and is limited to the capture-backed
+Aero settings surface.";
 
 /// Parsed command-line arguments for the `cutout` binary.
 #[derive(Debug, Parser)]
@@ -150,6 +159,10 @@ pub(crate) enum Command {
     /// Probe a VESC BLE UART target directly.
     #[command(long_about = VESC_PROBE_LONG_ABOUT)]
     VescProbe(VescProbeArgs),
+
+    /// Issue one typed, stationary-gated NOSFET Aero settings write.
+    #[command(name = "aero-write", long_about = AERO_WRITE_LONG_ABOUT)]
+    AeroWrite(AeroWriteArgs),
 }
 
 impl Cli {
@@ -184,7 +197,9 @@ pub(crate) struct TargetedScanArgs {
     #[command(flatten)]
     pub(crate) scan: ScanArgs,
 
-    /// Read-only protocol profile to run after connecting.
+    /// Protocol profile to run after connecting. Live connect and capture
+    /// require an explicit `aero` or `falcon` value; `auto` is retained for
+    /// commands that can resolve identity from protocol evidence.
     #[arg(long, value_enum, default_value_t = SessionProfile::Auto)]
     pub(crate) profile: SessionProfile,
 
@@ -224,6 +239,47 @@ pub(crate) struct VescProbeArgs {
     /// Emit raw notification bytes as JSONL records.
     #[arg(long = "raw-notifications-jsonl")]
     pub(crate) raw_notifications_jsonl: bool,
+}
+
+#[derive(Clone, Debug, Args, PartialEq, Eq)]
+pub(crate) struct AeroWriteArgs {
+    #[command(flatten)]
+    pub(crate) target: TargetArgs,
+
+    #[command(flatten)]
+    pub(crate) scan: ScanArgs,
+
+    /// Explicitly selected protocol profile; `auto` is refused for writes.
+    #[arg(long, value_enum, default_value_t = SessionProfile::Auto)]
+    pub(crate) profile: SessionProfile,
+
+    /// Typed Aero setting to change.
+    #[arg(long, value_enum)]
+    pub(crate) setting: AeroSetting,
+
+    /// Typed value for the selected setting (`reset` for trip-reset).
+    #[arg(long, value_name = "VALUE")]
+    pub(crate) value: String,
+
+    /// Confirm the wheel is powered on and stationary before issuing the write.
+    #[arg(long)]
+    pub(crate) confirm_stationary: bool,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
+pub(crate) enum AeroSetting {
+    Headlight,
+    HighBeam,
+    Pedal,
+    #[value(alias = "tlt")]
+    TiltbackSpeed,
+    #[value(alias = "pwt")]
+    Pwm,
+    #[value(alias = "alm")]
+    AlarmSpeed,
+    #[value(alias = "ang")]
+    Angle,
+    TripReset,
 }
 
 impl VescProbeArgs {
@@ -454,6 +510,7 @@ pub(crate) enum ReadProbe {
     Firmware,
     Telemetry,
     Battery,
+    Settings,
     Diagnostics,
     FaultHistory,
 }
@@ -560,6 +617,10 @@ pub(crate) struct DashboardArgs {
     #[arg(long = "device", value_name = "NAME")]
     pub(crate) device: Option<String>,
 
+    /// Explicit protocol profile required for a live dashboard session.
+    #[arg(long, value_enum, default_value_t = SessionProfile::Auto)]
+    pub(crate) profile: SessionProfile,
+
     #[command(flatten)]
     pub(crate) scan: ScanArgs,
 }
@@ -599,16 +660,16 @@ impl From<TargetArgs> for ConnectionTarget {
 mod tests {
     use std::path::PathBuf;
 
-    use clap::{CommandFactory, Parser, error::ErrorKind};
+    use clap::{CommandFactory, Parser, ValueEnum, error::ErrorKind};
     use cutout_btle::MaxReconnectLinks;
     use uuid::Uuid;
 
     use super::{
-        CaptureArgs, CaptureDistributionArg, CaptureEvidenceArg, CaptureLabelArg,
-        CapturePrivacyArg, Cli, Command, DEFAULT_SCAN_SECONDS, DashboardArgs, PevcapArgs,
-        PevcapCommand, PevcapConvertArgs, PevcapFormat, PevcapReplayArgs, PevcapReplayProfile,
-        RawSubscribeArgs, ReadProbe, ScanArgs, SessionProfile, TargetArgs, TargetedScanArgs,
-        VescProbe, VescProbeArgs,
+        AeroSetting, AeroWriteArgs, CaptureArgs, CaptureDistributionArg, CaptureEvidenceArg,
+        CaptureLabelArg, CapturePrivacyArg, Cli, Command, DEFAULT_SCAN_SECONDS, DashboardArgs,
+        PevcapArgs, PevcapCommand, PevcapConvertArgs, PevcapFormat, PevcapReplayArgs,
+        PevcapReplayProfile, RawSubscribeArgs, ReadProbe, ScanArgs, SessionProfile, TargetArgs,
+        TargetedScanArgs, VescProbe, VescProbeArgs,
     };
 
     fn assert_contains_all(haystack: &str, needles: &[&str]) {
@@ -1215,6 +1276,27 @@ mod tests {
     }
 
     #[test]
+    fn parses_capture_command_with_settings_probe() {
+        let cli = Cli::try_parse_from([
+            "cutout",
+            "capture",
+            "--address",
+            "AA:BB:CC:DD:EE:FF",
+            "--profile",
+            "aero",
+            "--probe",
+            "settings",
+        ])
+        .expect("parser accepts the protocol settings probe");
+
+        let Command::Capture(args) = cli.command else {
+            panic!("expected capture command");
+        };
+        assert_eq!(args.target.profile, SessionProfile::Aero);
+        assert_eq!(args.target.probes, vec![ReadProbe::Settings]);
+    }
+
+    #[test]
     fn parses_capture_command_with_pevcap_output() {
         let cli = Cli::try_parse_from([
             "cutout",
@@ -1340,6 +1422,7 @@ mod tests {
                 pevcap: None,
                 pevcap_format: PevcapFormat::Jsonl,
                 device: None,
+                profile: SessionProfile::Auto,
                 scan: ScanArgs {
                     seconds: DEFAULT_SCAN_SECONDS,
                 },
@@ -1359,6 +1442,7 @@ mod tests {
                 pevcap: None,
                 pevcap_format: PevcapFormat::Jsonl,
                 device: Some("Aero NF2557".to_owned()),
+                profile: SessionProfile::Auto,
                 scan: ScanArgs {
                     seconds: DEFAULT_SCAN_SECONDS,
                 },
@@ -1385,6 +1469,7 @@ mod tests {
                 pevcap: None,
                 pevcap_format: PevcapFormat::Jsonl,
                 device: Some("NF2557".to_owned()),
+                profile: SessionProfile::Auto,
                 scan: ScanArgs { seconds: 12 },
             })
         );
@@ -1409,6 +1494,7 @@ mod tests {
                 pevcap: Some(PathBuf::from("aero.pevcap")),
                 pevcap_format: PevcapFormat::Binary,
                 device: None,
+                profile: SessionProfile::Auto,
                 scan: ScanArgs {
                     seconds: DEFAULT_SCAN_SECONDS,
                 },
@@ -1784,9 +1870,10 @@ mod tests {
             &help,
             &[
                 "read-only",
-                "Commands may connect to hardware",
+                "only mutating",
+                "stationary safety confirmation",
                 "Examples:",
-                "cutout capture --name-contains NF2557 --seconds 20",
+                "cutout capture --id <platform-id> --seconds 20 --profile aero",
                 "--name-contains matches a case-sensitive substring",
             ],
         );
@@ -1814,13 +1901,14 @@ mod tests {
             &help,
             &[
                 "cutout scan --seconds 10",
-                "cutout connect --name-contains Aero",
+                "cutout connect --id <platform-id> --profile aero",
                 "cutout connect --address AA:BB:CC:DD:EE:FF --seconds 8",
                 "cutout subscribe-raw --name-contains NF2557",
-                "cutout capture --name-contains NF2557 --seconds 20",
+                "cutout capture --id <platform-id> --seconds 20 --profile aero",
                 "cutout pevcap convert --input session.pevcap.jsonl",
                 "cutout validation",
                 "cutout vesc-probe --name-contains \"VESC BLE UART\"",
+                "cutout aero-write --id <platform-id>",
                 "cutout dashboard",
             ],
         );
@@ -1844,9 +1932,60 @@ mod tests {
                 "validation",
                 "pevcap",
                 "dashboard",
-                "vesc-probe"
+                "vesc-probe",
+                "aero-write"
             ]
         );
+    }
+
+    #[test]
+    fn parses_aero_write_with_protocol_target_and_stationary_confirmation() {
+        let cli = Cli::try_parse_from([
+            "cutout",
+            "aero-write",
+            "--id",
+            "platform-peripheral-id",
+            "--profile",
+            "aero",
+            "--setting",
+            "headlight",
+            "--value",
+            "off",
+            "--confirm-stationary",
+        ])
+        .expect("parser accepts typed Aero write");
+
+        assert_eq!(
+            cli.command,
+            Command::AeroWrite(AeroWriteArgs {
+                target: TargetArgs {
+                    address: None,
+                    identifier: Some("platform-peripheral-id".to_owned()),
+                    name_contains: None,
+                },
+                scan: ScanArgs {
+                    seconds: DEFAULT_SCAN_SECONDS,
+                },
+                profile: SessionProfile::Aero,
+                setting: AeroSetting::Headlight,
+                value: "off".to_owned(),
+                confirm_stationary: true,
+            })
+        );
+    }
+
+    #[test]
+    fn parses_protocol_native_aero_setting_aliases() {
+        assert_eq!(
+            AeroSetting::from_str("tlt", true),
+            Ok(AeroSetting::TiltbackSpeed)
+        );
+        assert_eq!(AeroSetting::from_str("pwt", true), Ok(AeroSetting::Pwm));
+        assert_eq!(
+            AeroSetting::from_str("alm", true),
+            Ok(AeroSetting::AlarmSpeed)
+        );
+        assert_eq!(AeroSetting::from_str("ang", true), Ok(AeroSetting::Angle));
     }
 
     #[test]
@@ -1917,10 +2056,9 @@ mod tests {
             &[
                 "discover its GATT services",
                 "service/characteristic tree",
-                "--profile falcon",
-                "--probe identity",
-                "--probe firmware",
-                "auto currently keeps the existing Aero/Veteran path",
+                "Live connect requires an explicit protocol profile",
+                "advertised names never select a protocol",
+                "settings to request the protocol settings readback",
                 "prints bridge",
                 "counters",
                 "--address <ADDR>",
@@ -1967,12 +2105,9 @@ mod tests {
             &help,
             &[
                 "explicit",
-                "Falcon verification",
+                "Live capture requires an explicit protocol profile",
                 "--profile falcon",
-                "--probe identity",
-                "--probe",
-                "firmware",
-                "auto currently keeps the existing Aero/Veteran path",
+                "advertised names never select a protocol",
             ],
         );
     }
@@ -2057,7 +2192,8 @@ mod tests {
             &[
                 "Ratatui dashboard",
                 "Termina terminal backend",
-                "dashboard opens only",
+                "selects the protocol session after connection",
+                "never used as protocol identity",
                 "visualization and monitoring",
                 "does not modify the device",
             ],

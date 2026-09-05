@@ -3,6 +3,34 @@ import XCTest
 import CutoutMobile
 
 final class CutoutAppRouteTests: XCTestCase {
+    func testAeroSettingsFormUsesCurrentValuesWhenAvailable() {
+        let values = AeroSettingsFormValues(
+            tiltback: AeroSpeedSetting(kilometresPerHour: 31),
+            pwm: AeroPwmPercent(percent: 74),
+            alarm: AeroSpeedSetting(kilometresPerHour: 42),
+            angle: AeroAngleAdjustment(tenthsOfDegree: -12)
+        )
+
+        XCTAssertEqual(values.tiltbackSpeed, 31)
+        XCTAssertEqual(values.pwmPercent, 74)
+        XCTAssertEqual(values.alarmSpeed, 42)
+        XCTAssertEqual(values.angleTenths, -12)
+    }
+
+    func testAeroSettingsFormKeepsSafeDefaultsWhenValuesAreUnavailable() {
+        let values = AeroSettingsFormValues(
+            tiltback: nil,
+            pwm: nil,
+            alarm: nil,
+            angle: nil
+        )
+
+        XCTAssertEqual(values.tiltbackSpeed, 20)
+        XCTAssertEqual(values.pwmPercent, 60)
+        XCTAssertEqual(values.alarmSpeed, 20)
+        XCTAssertEqual(values.angleTenths, 0)
+    }
+
     func testScreenRoutesMatchTopLevelSections() {
         XCTAssertEqual(CutoutAppRoute.route(for: .eucRide), .eucRide)
         XCTAssertEqual(CutoutAppRoute.route(for: .vescRide), .vescRide)
@@ -71,6 +99,45 @@ final class CutoutAppRouteTests: XCTestCase {
         XCTAssertEqual(localizedAppText("app.command.no_connected_device"), "No connected device")
         XCTAssertEqual(localizedAppText("app.command.disconnect"), "Disconnect")
         XCTAssertEqual(localizedAppText("app.command.navigate"), "Navigate")
+        XCTAssertEqual(localizedAppText("navigation.section.tune"), "Tune")
+        XCTAssertEqual(localizedAppText("settings.lights.title"), "Lights")
+        XCTAssertEqual(localizedAppText("settings.headlight.title"), "Headlight")
+        XCTAssertEqual(localizedAppText("settings.high_beam.title"), "High beam")
+        XCTAssertEqual(localizedAppText("settings.capabilities.title"), "Other settings")
+        XCTAssertEqual(localizedAppText("settings.capabilities.unverified"), "Needs validation")
+        XCTAssertEqual(localizedAppText("settings.capabilities.unsupported"), "Not supported")
+        XCTAssertEqual(localizedAppText("settings.state.pending"), "Pending")
+        XCTAssertEqual(localizedAppText("settings.state.confirmed"), "Confirmed")
+        XCTAssertEqual(localizedAppText("settings.state.confirmed_ago", Int64(2)), "Confirmed 2s ago")
+        XCTAssertEqual(localizedAppText("settings.state.refused"), "Refused")
+        XCTAssertEqual(localizedAppText("settings.state.timed_out"), "Timed out")
+        XCTAssertEqual(localizedAppText("settings.state.failed"), "Failed")
+        XCTAssertEqual(localizedAppText("settings.pedal_mode.title"), "Pedal mode")
+        XCTAssertEqual(localizedAppText("settings.roll_angle.title"), "Roll angle")
+        XCTAssertEqual(localizedAppText("settings.roll_angle.footer"), "Change only while parked.")
+        XCTAssertEqual(localizedAppText("settings.roll_angle.high"), "High")
+        XCTAssertEqual(localizedAppText("settings.acceleration_assist.title"), "Acceleration assist")
+        XCTAssertEqual(localizedAppText("settings.taillight.title"), "Taillight")
+        XCTAssertEqual(
+            localizedAppText("settings.headlight.help"),
+            "Changes are sent immediately to the connected wheel."
+        )
+        XCTAssertEqual(
+            localizedAppText("settings.headlight.waiting"),
+            "Waiting for wheel confirmation."
+        )
+        XCTAssertEqual(
+            localizedAppText("settings.headlight.confirmed"),
+            "Confirmed by wheel telemetry."
+        )
+        XCTAssertEqual(
+            localizedAppText("settings.headlight.confirmed_ago", Int64(2)),
+            "Confirmed by wheel telemetry 2s ago."
+        )
+        XCTAssertEqual(
+            localizedAppText("settings.high_beam.sent_unconfirmed"),
+            "Command sent. This wheel does not report high-beam state."
+        )
         XCTAssertEqual(
             localizedAppText("bms.no_data.pack_estimate_accessibility_value", "71", "Derived from voltage curve"),
             "71%. Derived from voltage curve"
@@ -89,6 +156,116 @@ final class CutoutAppRouteTests: XCTestCase {
         )
     }
 
+    func testSettingReadbackPresentationKeepsKnownValuesAndUnknownStatesDistinct() {
+        XCTAssertEqual(
+            EucSettingReadbackPresentation.speed(.available(Speed(value: 11_666))),
+            "26.1 mph"
+        )
+        XCTAssertEqual(
+            EucSettingReadbackPresentation.pedalMode(.available(.rawMode(3))),
+            "Raw 3"
+        )
+        XCTAssertEqual(
+            EucSettingReadbackPresentation.pedalMode(.available(.documented(.medium))),
+            "Medium"
+        )
+        XCTAssertEqual(
+            EucSettingReadbackPresentation.pedalMode(
+                PedalModeSettingState(kind: .current, current: .hard),
+                fallback: .available(.documented(.soft))
+            ),
+            "Hard"
+        )
+        XCTAssertEqual(
+            EucSettingReadbackPresentation.rollAngle(
+                RollAngleSettingState(kind: .pending, requested: .high),
+                fallback: .available(.documented(.low))
+            ),
+            "Low"
+        )
+        XCTAssertEqual(
+            EucSettingReadbackPresentation.rollAngle(
+                RollAngleSettingState(kind: .refused, requested: .high),
+                fallback: .available(.documented(.low))
+            ),
+            "Low"
+        )
+        XCTAssertEqual(
+            EucSettingReadbackPresentation.rollAngle(
+                RollAngleSettingState(kind: .timedOut, requested: .high),
+                fallback: .available(.documented(.low))
+            ),
+            "Low"
+        )
+        XCTAssertEqual(
+            EucSettingReadbackPresentation.rollAngle(
+                RollAngleSettingState(kind: .failed, requested: .high),
+                fallback: .available(.documented(.low))
+            ),
+            "Low"
+        )
+        XCTAssertEqual(
+            EucSettingReadbackPresentation.speed(.unavailable),
+            "Unavailable"
+        )
+        XCTAssertEqual(
+            EucSettingReadbackPresentation.pedalMode(.unsupported),
+            "Not supported"
+        )
+        XCTAssertEqual(
+            EucSettingReadbackPresentation.seconds(.available(900)),
+            "900 s"
+        )
+        XCTAssertEqual(
+            EucSettingReadbackPresentation.chargeMode(.available(.charging)),
+            "Charging"
+        )
+        XCTAssertEqual(
+            EucSettingReadbackPresentation.tripDistance(1_609_344),
+            "1.0 mi"
+        )
+        XCTAssertEqual(
+            EucSettingReadbackPresentation.tripDistance(nil),
+            "Unavailable"
+        )
+    }
+
+    func testSettingCapabilityPresentationPrefersLifecycleStatusWhenActionable() {
+        XCTAssertEqual(
+            EucSettingCapabilityPresentation.statusText(support: .unverified, state: .pending),
+            "Pending"
+        )
+        XCTAssertEqual(
+            EucSettingCapabilityPresentation.statusText(support: .unsupported, state: .refused),
+            "Refused"
+        )
+        XCTAssertEqual(
+            EucSettingCapabilityPresentation.statusText(
+                support: .supported,
+                state: .confirmed,
+                confirmedAt: MonotonicMilliseconds(1_000),
+                now: MonotonicMilliseconds(3_999)
+            ),
+            "Confirmed 2s ago"
+        )
+        XCTAssertEqual(
+            EucSettingCapabilityPresentation.statusText(support: .supported, state: .timedOut),
+            "Timed out"
+        )
+        XCTAssertEqual(
+            EucSettingCapabilityPresentation.statusText(support: .supported, state: .failed),
+            "Failed"
+        )
+        XCTAssertEqual(
+            EucSettingCapabilityPresentation.statusText(support: .unverified, state: .unknown),
+            "Needs validation"
+        )
+        XCTAssertEqual(
+            EucSettingCapabilityPresentation.statusText(support: .unsupported, state: nil),
+            "Not supported"
+        )
+    }
+
     func testEucPackRouteRejectsNonPackScreens() {
         XCTAssertNil(EucPackScreen(screenID: .vescRide))
         XCTAssertNil(EucPackScreen(screenID: .vescDebug))
@@ -99,6 +276,7 @@ final class CutoutAppRouteTests: XCTestCase {
         let routes: Set<CutoutAppRoute> = [
             .devicePicker,
             .eucRide,
+            .eucTune,
             .eucPack(.bmsOverview),
             .eucPack(.bmsCellMap6S),
             .eucPack(.bmsCellMap40S),
@@ -111,7 +289,7 @@ final class CutoutAppRouteTests: XCTestCase {
             .capture,
         ]
 
-        XCTAssertEqual(routes.count, 12)
+        XCTAssertEqual(routes.count, 13)
     }
 
     func testBmsDetailRouteStaysSelectedOnlyWhileItsGroupExists() {
@@ -131,6 +309,7 @@ final class CutoutAppRouteTests: XCTestCase {
     func testNavigationPathKeepsPickerAtRootAndReplacesConnectedDestinations() {
         XCTAssertEqual(CutoutAppRoute.navigationPath(for: .devicePicker), [])
         XCTAssertEqual(CutoutAppRoute.navigationPath(for: .eucRide), [.eucRide])
+        XCTAssertEqual(CutoutAppRoute.navigationPath(for: .eucTune), [.eucTune])
         XCTAssertEqual(CutoutAppRoute.navigationPath(for: .eucPack(.bmsOverview)), [.eucPack(.bmsOverview)])
         XCTAssertEqual(CutoutAppRoute.navigationPath(for: .vescDebug), [.vescDebug])
         XCTAssertEqual(CutoutAppRoute.navigationPath(for: .capture), [.capture])
@@ -169,6 +348,13 @@ final class CutoutAppRouteTests: XCTestCase {
                 .navigationTabs(for: .vescOnewheel)
                 .first(where: { $0.id == .debug })?.isSelected == true
         )
+        XCTAssertEqual(
+            CutoutAppRoute.eucTune
+                .navigationTabs(for: .electricUnicycle)
+                .filter(\.isSelected)
+                .map(\.id),
+            [.tune]
+        )
         XCTAssertEqual(CutoutAppRoute.route(forNavigationTarget: .vescRide), .vescRide)
         XCTAssertEqual(CutoutAppRoute.route(forNavigationTarget: .screen(.bmsOverview)), .eucPack(.bmsOverview))
         XCTAssertEqual(CutoutNavigationCommands.shortcut(for: .ride), "1")
@@ -182,11 +368,11 @@ final class CutoutAppRouteTests: XCTestCase {
     func testNativeNavigationOmitsUnavailableDestinations() {
         XCTAssertEqual(
             CutoutAppRoute.eucRide.availableNavigationTabs(for: .electricUnicycle).map(\.id),
-            [.ride, .pack, .map]
+            [.ride, .pack, .map, .tune]
         )
         XCTAssertEqual(
             CutoutAppRoute.eucPack(.bmsOverview).availableNavigationTabs(for: .electricUnicycle).map(\.id),
-            [.ride, .pack, .map]
+            [.ride, .pack, .map, .tune]
         )
         XCTAssertEqual(
             CutoutAppRoute.vescRide.availableNavigationTabs(for: .vescOnewheel).map(\.id),
@@ -225,10 +411,14 @@ final class CutoutAppRouteTests: XCTestCase {
         let vescTabs = CutoutAppRoute.rideMapDetail(rideID: "ride-1")
             .availableNavigationTabs(for: .vescOnewheel)
 
-        XCTAssertEqual(eucTabs.map(\.id), [.ride, .pack, .map])
+        XCTAssertEqual(eucTabs.map(\.id), [.ride, .pack, .map, .tune])
         XCTAssertEqual(vescTabs.map(\.id), [.ride, .debug, .map])
         XCTAssertEqual(eucTabs.first(where: { $0.isSelected })?.id, .map)
         XCTAssertEqual(vescTabs.first(where: { $0.isSelected })?.id, .map)
+        XCTAssertEqual(
+            CutoutAppRoute.eucTune.availableNavigationTabs(for: .electricUnicycle).map(\.id),
+            [.ride, .pack, .map, .tune]
+        )
     }
 
     func testNestedPackRouteSurvivesSharedTabRendering() {
@@ -237,6 +427,8 @@ final class CutoutAppRouteTests: XCTestCase {
 
         XCTAssertEqual(nestedPackRoute.destination(for: tabs[0]), .eucRide)
         XCTAssertEqual(nestedPackRoute.destination(for: tabs[1]), nestedPackRoute)
+        XCTAssertEqual(nestedPackRoute.destination(for: tabs[2]), .rideMap)
+        XCTAssertEqual(nestedPackRoute.destination(for: tabs[3]), .eucTune)
         XCTAssertEqual(
             CutoutAppRoute.vescDebug.destination(
                 for: CutoutAppRoute.vescDebug.availableNavigationTabs(for: .vescOnewheel)[1]

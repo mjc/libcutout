@@ -15,6 +15,52 @@ private enum RideSessionRestorationState {
     case recovering
 }
 
+enum HeadlightCommandStatus: Equatable {
+    case idle
+    case failed
+    case refused
+    case waitingForConfirmation
+    case timedOut
+    case confirmed
+    case sentWithoutConfirmation
+}
+
+private extension LightSettingState {
+    var lightState: LightState? {
+        switch kind {
+        case .pending:
+            current
+        case .unknown, .current, .confirmed, .refused, .timedOut, .failed:
+            current
+        }
+    }
+
+    func commandStatus(
+        for model: ElectricUnicycleModel?,
+        at now: MonotonicMilliseconds,
+        timeout: MonotonicMilliseconds
+    ) -> HeadlightCommandStatus {
+        switch kind {
+        case .unknown, .current:
+            return .idle
+        case .pending:
+            guard model != .aero else { return .sentWithoutConfirmation }
+            guard let submittedAt else { return .waitingForConfirmation }
+            return now.elapsed(since: submittedAt).rawValue >= timeout.rawValue
+                ? .timedOut
+                : .waitingForConfirmation
+        case .confirmed:
+            return .confirmed
+        case .refused:
+            return .refused
+        case .timedOut:
+            return .timedOut
+        case .failed:
+            return .failed
+        }
+    }
+}
+
 @MainActor
 @Observable
 final class CutoutAppModel {
@@ -118,6 +164,116 @@ final class CutoutAppModel {
     private(set) var activeCaptureLabels = Set<CaptureQuickLabel>()
     private(set) var recordOnlyDeviceKind: String?
     private(set) var hasSavedDevice = false
+    var headlightOn: Bool {
+        displayedHeadlightState == .on
+    }
+
+    var headlightCommandStatus: HeadlightCommandStatus {
+        if let effectiveHeadlightState {
+            return effectiveHeadlightState.commandStatus(
+                for: core.electricUnicycleModel,
+                at: core.now(),
+                timeout: Self.headlightConfirmationTimeout
+            )
+        }
+        return .idle
+    }
+
+    var headlightControlAvailable: Bool {
+        headlightWriteSupport == .supported
+    }
+
+    var settingsCapabilities: EucSettingsCapabilities? {
+        core.settingsCapabilities
+    }
+
+    var aeroTiltbackSpeedState: AeroSpeedSettingState? {
+        core.aeroTiltbackSpeedState
+    }
+
+    var aeroPwmPercentState: AeroPwmSettingState? {
+        core.aeroPwmPercentState
+    }
+
+    var aeroAlarmSpeedState: AeroSpeedSettingState? {
+        core.aeroAlarmSpeedState
+    }
+
+    var aeroAngleAdjustmentState: AeroAngleAdjustmentSettingState? {
+        core.aeroAngleAdjustmentState
+    }
+
+    var aeroHighBeamState: LightSettingState? {
+        core.aeroHighBeamState
+    }
+
+    var pedalModeState: PedalModeSettingState? {
+        core.pedalModeState
+    }
+
+    var rollAngleState: RollAngleSettingState? {
+        core.rollAngleState
+    }
+
+    var speedAlarmModeState: SpeedAlarmModeSettingState? {
+        core.speedAlarmModeState
+    }
+
+    var pedalModeControlAvailable: Bool {
+        core.settingsCapabilities?.pedalMode == .supported
+    }
+
+    var rollAngleControlAvailable: Bool {
+        core.settingsCapabilities?.rollAngle == .supported
+    }
+
+    var speedAlarmModeControlAvailable: Bool {
+        core.settingsCapabilities?.speedAlarmMode == .supported
+    }
+
+    var begodeMaxSpeedControlAvailable: Bool {
+        core.settingsCapabilities?.begodeMaxSpeed == .supported
+    }
+
+    var begodeBeeperVolumeControlAvailable: Bool {
+        core.settingsCapabilities?.begodeBeeperVolume == .supported
+    }
+
+    var begodeLedModeControlAvailable: Bool {
+        core.settingsCapabilities?.begodeLedMode == .supported
+    }
+
+    var resetTripMeterControlAvailable: Bool {
+        core.settingsCapabilities?.resetTripMeter == .supported
+    }
+
+    var aeroTiltbackSpeedControlAvailable: Bool {
+        core.settingsCapabilities?.aeroTiltbackSpeed == .supported
+    }
+
+    var aeroPwmPercentControlAvailable: Bool {
+        core.settingsCapabilities?.aeroPwmPercent == .supported
+    }
+
+    var aeroAlarmSpeedControlAvailable: Bool {
+        core.settingsCapabilities?.aeroAlarmSpeed == .supported
+    }
+
+    var aeroAngleAdjustmentControlAvailable: Bool {
+        core.settingsCapabilities?.aeroAngleAdjustment == .supported
+    }
+
+    var aeroHighBeamControlAvailable: Bool {
+        core.settingsCapabilities?.aeroHighBeam == .supported
+    }
+
+    var accelerationAssistState: AccelerationAssistSettingState? {
+        core.accelerationAssistState
+    }
+
+    var taillightState: LightSettingState? {
+        core.taillightState
+    }
 
     var selectedRideTitle: String? {
         connectionState.selection?.title
@@ -224,6 +380,44 @@ final class CutoutAppModel {
         connectionState.statusText ?? phase.displayText
     }
 
+    var headlightControlTitle: String {
+        localizedAppText(core.electricUnicycleModel == .aero
+            ? "settings.high_beam.title"
+            : "settings.headlight.title")
+    }
+
+    var headlightStatusText: String {
+        if !headlightControlAvailable, headlightCommandStatus == .idle {
+            if headlightWriteSupport == .unverified {
+                return localizedAppText("settings.headlight.unverified")
+            }
+            return localizedAppText("settings.headlight.unavailable")
+        }
+        return switch headlightCommandStatus {
+        case .idle:
+            localizedAppText("settings.headlight.help")
+        case .failed:
+            localizedAppText("settings.headlight.failed")
+        case .refused:
+            localizedAppText("settings.headlight.refused")
+        case .waitingForConfirmation:
+            localizedAppText("settings.headlight.waiting")
+        case .timedOut:
+            localizedAppText("settings.headlight.timed_out")
+        case .confirmed:
+            if let confirmedAt = effectiveHeadlightState?.confirmedAt {
+                localizedAppText(
+                    "settings.headlight.confirmed_ago",
+                    Int64(currentMonotonicTime.elapsed(since: confirmedAt).rawValue / 1_000)
+                )
+            } else {
+                localizedAppText("settings.headlight.confirmed")
+            }
+        case .sentWithoutConfirmation:
+            localizedAppText("settings.high_beam.sent_unconfirmed")
+        }
+    }
+
     private let core: any CutoutSessionDriving
     private let liveActivityCoordinator: LiveActivityRideLifecycleCoordinator
     private let selectedDeviceStore: DevicePickerSelectionStore
@@ -236,6 +430,7 @@ final class CutoutAppModel {
     private var captureFileName: String?
     private var captureNotificationCount = 0
     private var captureLabel: String?
+    private var fallbackHeadlightState: LightSettingState?
     private var hasStarted = false
     private var permitsStoredDeviceAutoPairing = true
     private var rideSessionRestorationState = RideSessionRestorationState.complete
@@ -257,6 +452,23 @@ final class CutoutAppModel {
     private var rideMapLiveProjectionGeneration: UInt64 = 0
     private var rideMapLiveProjectionEnabled = false
     private static let liveActivityUpdateIntervalMilliseconds: UInt64 = 1_000
+    private static let headlightConfirmationTimeout = MonotonicMilliseconds(2_000)
+
+    private var headlightWriteSupport: SettingWriteSupport? {
+        usesAeroHighBeam
+            ? core.settingsCapabilities?.aeroHighBeam
+            : core.settingsCapabilities?.headlight
+    }
+
+    private var coreHeadlightState: LightSettingState? {
+        usesAeroHighBeam
+            ? (core.aeroHighBeamState ?? core.headlightState)
+            : core.headlightState
+    }
+
+    private var usesAeroHighBeam: Bool {
+        core.electricUnicycleModel == .aero
+    }
 
     convenience init() {
         #if DEBUG
@@ -328,7 +540,7 @@ final class CutoutAppModel {
             self?.handleScanStateChange(scanState)
         }
         self.core.onSettingsReadbackChange = { [weak self] settingsReadback in
-            self?.settingsReadback = settingsReadback
+            self?.handleSettingsReadback(settingsReadback)
         }
         self.core.onFaultHistoryReadbackChange = { [weak self] faultHistoryReadback in
             self?.faultHistoryReadback = faultHistoryReadback
@@ -1200,6 +1412,163 @@ final class CutoutAppModel {
         }
     }
 
+    @discardableResult
+    func setHeadlight(_ enabled: Bool) -> SettingCommandResult {
+        let state = enabled ? LightState.on : .off
+        guard headlightWriteSupport == .supported else {
+            fallbackHeadlightState = LightSettingState(
+                kind: .failed,
+                current: displayedHeadlightState
+            )
+            return .failed
+        }
+        let result = usesAeroHighBeam
+            ? core.setAeroHighBeam(state)
+            : core.setLights(state)
+        return applyHeadlightSubmission(result, for: state)
+    }
+
+    @discardableResult
+    func setPedalMode(_ mode: PedalMode.Kind) -> SettingCommandResult {
+        guard pedalModeControlAvailable else { return .failed }
+        return core.setPedalMode(mode)
+    }
+
+    @discardableResult
+    func setRollAngle(_ angle: RollAngle.Kind) -> SettingCommandResult {
+        guard rollAngleControlAvailable else { return .failed }
+        return core.setRollAngle(angle)
+    }
+
+    @discardableResult
+    func setSpeedAlarmMode(_ mode: SpeedAlarmMode.Kind) -> SettingCommandResult {
+        guard speedAlarmModeControlAvailable else { return .failed }
+        return core.setSpeedAlarmMode(mode)
+    }
+
+    @discardableResult
+    func setBegodeMaxSpeed(_ speed: BegodeMaxSpeed) -> SettingCommandResult {
+        guard begodeMaxSpeedControlAvailable else { return .failed }
+        return core.setBegodeMaxSpeed(speed)
+    }
+
+    @discardableResult
+    func setBegodeBeeperVolume(_ volume: BegodeBeeperVolume) -> SettingCommandResult {
+        guard begodeBeeperVolumeControlAvailable else { return .failed }
+        return core.setBegodeBeeperVolume(volume)
+    }
+
+    @discardableResult
+    func setBegodeLedMode(_ mode: BegodeLedMode) -> SettingCommandResult {
+        guard begodeLedModeControlAvailable else { return .failed }
+        return core.setBegodeLedMode(mode)
+    }
+
+    func resetTripMeter() -> SettingCommandResult {
+        guard resetTripMeterControlAvailable else { return .failed }
+        return core.resetTripMeter()
+    }
+
+    func setAeroTiltbackSpeed(_ speed: AeroSpeedSetting) -> SettingCommandResult {
+        guard aeroTiltbackSpeedControlAvailable else { return .failed }
+        return core.setAeroTiltbackSpeed(speed)
+    }
+
+    func setAeroPwmPercent(_ percent: AeroPwmPercent) -> SettingCommandResult {
+        guard aeroPwmPercentControlAvailable else { return .failed }
+        return core.setAeroPwmPercent(percent)
+    }
+
+    func setAeroAlarmSpeed(_ speed: AeroSpeedSetting) -> SettingCommandResult {
+        guard aeroAlarmSpeedControlAvailable else { return .failed }
+        return core.setAeroAlarmSpeed(speed)
+    }
+
+    func setAeroAngleAdjustment(_ angle: AeroAngleAdjustment) -> SettingCommandResult {
+        guard aeroAngleAdjustmentControlAvailable else { return .failed }
+        return core.setAeroAngleAdjustment(angle)
+    }
+
+    private func applyHeadlightSubmission(
+        _ result: SettingCommandResult,
+        for state: LightState
+    ) -> SettingCommandResult {
+        switch result {
+        case .accepted:
+            recordHeadlightCommand(state, sentAt: core.now())
+            return .accepted
+        case let .refused(reason):
+            fallbackHeadlightState = LightSettingState(
+                kind: .refused,
+                current: displayedHeadlightState,
+                requested: state,
+                source: .userRequest,
+                refusalReason: reason
+            )
+            return .refused(reason)
+        case .failed:
+            fallbackHeadlightState = LightSettingState(
+                kind: .failed,
+                current: displayedHeadlightState,
+                requested: state,
+                source: .userRequest
+            )
+            return .failed
+        }
+    }
+
+    private func recordHeadlightCommand(_ state: LightState, sentAt: MonotonicMilliseconds) {
+        guard coreHeadlightState == nil else { return }
+        fallbackHeadlightState = LightSettingState(
+            kind: .pending,
+            current: displayedHeadlightState,
+            requested: state,
+            source: .userRequest,
+            submittedAt: sentAt
+        )
+    }
+    private var effectiveHeadlightState: LightSettingState? {
+        coreHeadlightState ?? fallbackHeadlightState
+    }
+
+    private var displayedHeadlightState: LightState? {
+        guard let state = effectiveHeadlightState else { return nil }
+        if state.kind == .pending, usesAeroHighBeam {
+            return state.requested
+        }
+        return state.lightState
+    }
+
+    private func updateFallbackHeadlightState(from readback: SettingsReadback?) {
+        guard !usesAeroHighBeam else { return }
+        guard coreHeadlightState == nil else { return }
+        guard let reportedState = readback?.eucGarageSettings.lightState else {
+            if fallbackHeadlightState?.kind == .pending {
+                fallbackHeadlightState = LightSettingState(
+                    kind: .failed,
+                    current: fallbackHeadlightState?.lightState
+                )
+            }
+            return
+        }
+        if let requestedState = fallbackHeadlightState?.requested,
+           fallbackHeadlightState?.kind == .pending,
+           requestedState != reportedState
+        {
+            return
+        }
+        fallbackHeadlightState = LightSettingState(
+            kind: .confirmed,
+            current: reportedState,
+            source: .liveReadback,
+            confirmedAt: core.now()
+        )
+    }
+
+    private func handleSettingsReadback(_ readback: SettingsReadback?) {
+        settingsReadback = readback
+        updateFallbackHeadlightState(from: readback)
+    }
     func pair(platformIdentifier: String) -> Bool {
         switch connectionState {
         case .connecting, .retrying, .connected:
@@ -1224,6 +1593,7 @@ final class CutoutAppModel {
             title: selectedRow.title,
             route: route
         )
+        resetHeadlightState()
         liveActivityError = nil
         connectionState = .connecting(selection, phase: .discoveringServices)
         permitsStoredDeviceAutoPairing = true
@@ -1278,7 +1648,6 @@ final class CutoutAppModel {
             .replacingOccurrences(of: "\r", with: " ")
             .replacingOccurrences(of: "=", with: " ")
         let annotations = ["device_kind=\(annotationKind)"]
-        let modelHint = CutoutModelHint(deviceKind: annotationKind)
         let previousCapture = (
             status: captureStatus,
             progress: captureProgress,
@@ -1290,18 +1659,11 @@ final class CutoutAppModel {
             deviceKind: recordOnlyDeviceKind
         )
         resetCaptureSession()
-        let didStart = switch modelHint {
-        case .falcon:
-            core.pair(platformIdentifier: platformIdentifier, model: .falcon)
-        case .aero:
-            core.pair(platformIdentifier: platformIdentifier, model: .aero)
-        case .unknown:
-            core.recordOnly(
-                platformIdentifier: platformIdentifier,
-                note: "unsupported picker row",
-                annotations: annotations
-            )
-        }
+        let didStart = core.recordOnly(
+            platformIdentifier: platformIdentifier,
+            note: "unsupported picker row",
+            annotations: annotations
+        )
         guard didStart else {
             captureStatus = previousCapture.status
             captureProgress = previousCapture.progress
@@ -1315,15 +1677,10 @@ final class CutoutAppModel {
         }
 
         permitsStoredDeviceAutoPairing = false
-        if modelHint != .unknown {
-            core.annotateCapture(key: "device_kind", value: annotationKind)
-        }
-        isRecordOnlyCapture = modelHint == .unknown
+        isRecordOnlyCapture = true
         recordOnlyDeviceKind = annotationKind
-        if modelHint == .unknown {
-            liveActivityIdentity = nil
-            liveActivityGlyph = .electricUnicycle
-        }
+        liveActivityIdentity = nil
+        liveActivityGlyph = .electricUnicycle
         syncLiveActivity()
         return true
     }
@@ -1401,9 +1758,11 @@ final class CutoutAppModel {
         }
         liveActivityRequestID += 1
         let requestID = liveActivityRequestID
+        let atMs = core.now().rawValue
         Task { [weak self, liveActivityCoordinator] in
             await liveActivityCoordinator.appDidEnterBackground(
                 requestID: requestID,
+                atMs: atMs,
                 snapshot: snapshot,
                 captureFlush: { [weak self] in
                     await self?.flushCapture() ?? false
@@ -1463,7 +1822,12 @@ final class CutoutAppModel {
         liveActivityIdentity = nil
         liveActivityGlyph = .electricUnicycle
         permitsStoredDeviceAutoPairing = false
+        resetHeadlightState()
         core.disconnectAndScan()
+    }
+
+    private func resetHeadlightState() {
+        fallbackHeadlightState = nil
     }
 
     func forgetSavedDevice() {
@@ -1659,12 +2023,21 @@ final class CutoutAppModel {
             guard let self else { return }
             rideSessionRestorationState = .complete
             liveActivityError = error
-            if case .adopted = recoveryResult,
-               error == nil,
-               core.rideSessionStateHandle.rideSessionSnapshot().phase == .active
-            {
-                lastLiveActivitySnapshot = snapshot
-                lastLiveActivityUpdate = snapshot == nil ? nil : core.now()
+            switch recoveryResult {
+            case .adopted:
+                if error == nil,
+                   core.rideSessionStateHandle.rideSessionSnapshot().phase == .active
+                {
+                    lastLiveActivitySnapshot = snapshot
+                    lastLiveActivityUpdate = snapshot == nil ? nil : core.now()
+                }
+            case .ended, .noPersistedRide:
+                if restoredPlatformIdentifier == nil,
+                   let scanState = devicePickerScanState
+                {
+                    permitsStoredDeviceAutoPairing = true
+                    handleScanStateChange(scanState)
+                }
             }
             syncLiveActivity()
         }
