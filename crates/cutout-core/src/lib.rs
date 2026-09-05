@@ -2288,7 +2288,7 @@ impl RegistryHashBuilder {
     }
 }
 
-const ALL_COMMAND_KINDS: [CommandKind; 10] = [
+const ALL_COMMAND_KINDS: [CommandKind; 24] = [
     CommandKind::RequestIdentity,
     CommandKind::RequestTelemetry,
     CommandKind::RequestFirmwareInfo,
@@ -2296,7 +2296,21 @@ const ALL_COMMAND_KINDS: [CommandKind; 10] = [
     CommandKind::RequestDiagnostics,
     CommandKind::RequestFaultHistory,
     CommandKind::RequestSettings,
+    CommandKind::ResetTripMeter,
+    CommandKind::SetAeroTiltbackSpeed,
+    CommandKind::SetAeroPwmPercent,
+    CommandKind::SetAeroAlarmSpeed,
+    CommandKind::SetAeroAngleAdjustment,
+    CommandKind::SetAeroHighBeam,
     CommandKind::SetLights,
+    CommandKind::SetPedalMode,
+    CommandKind::SetRollAngle,
+    CommandKind::SetSpeedAlarmMode,
+    CommandKind::SetBegodeMaxSpeed,
+    CommandKind::SetBegodeBeeperVolume,
+    CommandKind::SetBegodeLedMode,
+    CommandKind::SetAccelerationAssist,
+    CommandKind::SetTaillight,
     CommandKind::SoundHorn,
     CommandKind::SetRawMotorCurrent,
 ];
