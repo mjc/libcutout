@@ -1621,7 +1621,7 @@ async fn aero_write(args: AeroWriteArgs) -> Result<()> {
         &connection.summary,
         endpoints,
         NotificationWindow::from_secs(args.scan.seconds()),
-        &[DeviceCommand::RequestFirmwareInfo],
+        &AERO_WRITE_PREFLIGHT_COMMANDS,
     )
     .await?;
     if !aero_protocol_model_id_matches(&probe_report) {
@@ -1671,6 +1671,11 @@ async fn aero_write(args: AeroWriteArgs) -> Result<()> {
     }
     Ok(())
 }
+
+const AERO_WRITE_PREFLIGHT_COMMANDS: [DeviceCommand; 2] = [
+    DeviceCommand::RequestFirmwareInfo,
+    DeviceCommand::RequestSettings,
+];
 
 fn aero_protocol_fingerprint_matches(summary: &cutout_btle::ConnectionSummary) -> bool {
     NOSFET_AERO_REGISTRY_ENTRY.gatt.iter().any(|expected| {
@@ -3772,6 +3777,17 @@ mod tests {
 
         report.firmware.as_mut().expect("firmware").firmware_major = Some(Measured::reported(42));
         assert!(!aero_protocol_model_id_matches(&report));
+    }
+
+    #[test]
+    fn aero_write_preflight_requests_firmware_and_settings() {
+        assert_eq!(
+            AERO_WRITE_PREFLIGHT_COMMANDS,
+            [
+                DeviceCommand::RequestFirmwareInfo,
+                DeviceCommand::RequestSettings
+            ]
+        );
     }
 
     const fn diag_count(value: u64) -> ParserDiagnosticCount {
