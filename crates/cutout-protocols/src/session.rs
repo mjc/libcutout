@@ -4512,6 +4512,7 @@ mod tests {
         .arm(RideOperatingState::Standing, MonotonicTimestamp::new(10))
         .expect("standing state arms settings writes");
         session.arm(arm);
+        assert_eq!(session.monotonic_ms, MonotonicTimestamp::new(10));
         session.handle(
             SessionInput::Tick {
                 monotonic_ms: MonotonicTimestamp::new(10),
