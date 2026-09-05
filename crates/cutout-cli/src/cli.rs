@@ -44,7 +44,7 @@ If writable and notification-capable endpoints are discovered, Cutout also
 runs a read-only probe session against the selected endpoints and prints bridge
 counters. Profile auto currently keeps the existing Aero/Veteran path; use
 --profile falcon with --probe identity --probe firmware for explicit Falcon
-verification.";
+verification. Add --probe settings to request the protocol settings readback.";
 const SUBSCRIBE_RAW_LONG_ABOUT: &str = "\
 Scan for a peripheral, connect, discover GATT, subscribe to a notify/indicate
 characteristic, and print raw notification chunks with timestamps.
@@ -57,7 +57,8 @@ Connect to a selected read-only protocol profile and print capture records
 suitable for fixture work. Records include link metadata, subscribe/write
 actions, inbound notifications, provisional write bytes, and bridge counters. For explicit
 Falcon verification, use --profile falcon with --probe identity --probe
-firmware. Profile auto currently keeps the existing Aero/Veteran path.
+firmware. Add --probe settings to request the protocol settings readback.
+Profile auto currently keeps the existing Aero/Veteran path.
 
 Capture output may include device identifiers and raw notification payloads.
 Review it before sharing logs publicly.";
@@ -454,6 +455,7 @@ pub(crate) enum ReadProbe {
     Firmware,
     Telemetry,
     Battery,
+    Settings,
     Diagnostics,
     FaultHistory,
 }
@@ -1212,6 +1214,27 @@ mod tests {
                 pevcap_format: PevcapFormat::Jsonl,
             })
         );
+    }
+
+    #[test]
+    fn parses_capture_command_with_settings_probe() {
+        let cli = Cli::try_parse_from([
+            "cutout",
+            "capture",
+            "--address",
+            "AA:BB:CC:DD:EE:FF",
+            "--profile",
+            "aero",
+            "--probe",
+            "settings",
+        ])
+        .expect("parser accepts the protocol settings probe");
+
+        let Command::Capture(args) = cli.command else {
+            panic!("expected capture command");
+        };
+        assert_eq!(args.target.profile, SessionProfile::Aero);
+        assert_eq!(args.target.probes, vec![ReadProbe::Settings]);
     }
 
     #[test]

@@ -1878,6 +1878,7 @@ const fn read_probe_command(probe: ReadProbe) -> DeviceCommand {
         ReadProbe::Firmware => DeviceCommand::RequestFirmwareInfo,
         ReadProbe::Telemetry => DeviceCommand::RequestTelemetry,
         ReadProbe::Battery => DeviceCommand::RequestBatteryInfo,
+        ReadProbe::Settings => DeviceCommand::RequestSettings,
         ReadProbe::Diagnostics => DeviceCommand::RequestDiagnostics,
         ReadProbe::FaultHistory => DeviceCommand::RequestFaultHistory,
     }
@@ -5916,6 +5917,7 @@ mod tests {
                 ReadProbe::Firmware,
                 ReadProbe::Telemetry,
                 ReadProbe::Battery,
+                ReadProbe::Settings,
                 ReadProbe::Diagnostics,
                 ReadProbe::FaultHistory,
             ]),
@@ -5924,6 +5926,7 @@ mod tests {
                 DeviceCommand::RequestFirmwareInfo,
                 DeviceCommand::RequestTelemetry,
                 DeviceCommand::RequestBatteryInfo,
+                DeviceCommand::RequestSettings,
                 DeviceCommand::RequestDiagnostics,
                 DeviceCommand::RequestFaultHistory,
             ]
