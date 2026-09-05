@@ -104,6 +104,15 @@ enum CutoutAppRoute: Hashable {
         }
     }
 
+    var preservesNavigationOnConnectionLoss: Bool {
+        switch self {
+        case .rideMap, .rideMapDetail:
+            true
+        default:
+            false
+        }
+    }
+
     private var routeTabs: [PevScreenTab] {
         switch self {
         case .devicePicker, .capture, .rideMap, .rideMapDetail:

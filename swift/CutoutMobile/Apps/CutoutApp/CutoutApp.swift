@@ -45,6 +45,7 @@ struct CutoutApp: App {
                 navigationTabs: navigationTabs,
                 currentRoute: currentRoute,
                 navigationPath: $navigationPath,
+                canDisconnect: model.selectedConnectionRoute != nil,
                 disconnect: model.disconnectTransport
             )
         }
@@ -81,6 +82,7 @@ struct CutoutNavigationCommands: Commands {
     let navigationTabs: [PevScreenTab]
     let currentRoute: CutoutAppRoute
     @Binding var navigationPath: [CutoutAppRoute]
+    let canDisconnect: Bool
     let disconnect: () -> Void
 
     nonisolated static func shortcut(for tabID: PevScreenTabID) -> Character {
@@ -92,6 +94,13 @@ struct CutoutNavigationCommands: Commands {
         case .debug: "5"
         case .logs: "6"
         }
+    }
+
+    nonisolated static func canDisconnect(
+        currentRoute: CutoutAppRoute,
+        hasConnection: Bool
+    ) -> Bool {
+        currentRoute != .devicePicker && hasConnection
     }
 
     var body: some Commands {
@@ -119,7 +128,7 @@ struct CutoutNavigationCommands: Commands {
                 navigationPath = CutoutAppRoute.navigationPath(for: .devicePicker)
             }
             .keyboardShortcut("d", modifiers: [.command, .shift])
-            .disabled(currentRoute == .devicePicker)
+            .disabled(!Self.canDisconnect(currentRoute: currentRoute, hasConnection: canDisconnect))
         }
     }
 }

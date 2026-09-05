@@ -208,6 +208,18 @@ final class CutoutAppRouteTests: XCTestCase {
         XCTAssertEqual(tabs[0].destinationTarget, .rideMap)
     }
 
+    func testConnectionLossKeepsStandaloneMapNavigation() {
+        XCTAssertTrue(CutoutAppRoute.rideMap.preservesNavigationOnConnectionLoss)
+        XCTAssertTrue(CutoutAppRoute.rideMapDetail(rideID: "ride-1").preservesNavigationOnConnectionLoss)
+        XCTAssertFalse(CutoutAppRoute.eucRide.preservesNavigationOnConnectionLoss)
+    }
+
+    func testDisconnectCommandRequiresAConnection() {
+        XCTAssertFalse(CutoutNavigationCommands.canDisconnect(currentRoute: .rideMap, hasConnection: false))
+        XCTAssertTrue(CutoutNavigationCommands.canDisconnect(currentRoute: .rideMap, hasConnection: true))
+        XCTAssertFalse(CutoutNavigationCommands.canDisconnect(currentRoute: .devicePicker, hasConnection: true))
+    }
+
     func testConnectedMapRoutesUseTheDeviceFamilyAndSelectMap() {
         let eucTabs = CutoutAppRoute.rideMap.availableNavigationTabs(for: .electricUnicycle)
         let vescTabs = CutoutAppRoute.rideMapDetail(rideID: "ride-1")

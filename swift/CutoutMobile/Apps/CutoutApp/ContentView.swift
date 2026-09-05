@@ -63,8 +63,10 @@ struct ContentView: View {
                 AccessibilityNotification.Announcement(announcement).post()
             }
             switch state.navigationIntent(isRecordOnlyCapture: model.isRecordOnlyCapture) {
-            case .returnToPicker:
+            case .returnToPicker where !route.preservesNavigationOnConnectionLoss:
                 navigate(to: .devicePicker)
+            case .returnToPicker:
+                break
             case let .openRide(connectionRoute) where route == .devicePicker:
                 navigate(to: CutoutAppRoute.route(for: connectionRoute))
             case .stay, .openRide:
@@ -142,11 +144,10 @@ struct ContentView: View {
                 ForEach(availableTabs) { tab in
                     if let tabRoute = destination.destination(for: tab) {
                         Tab(value: tab.id) {
-                            if isRideMapDestination(tabRoute) {
-                                mapDestinationContent(for: tabRoute)
-                            } else {
-                                connectedDestination(for: tabRoute)
-                            }
+                            destinationSurface(
+                                for: tabRoute,
+                                usesConnectedShell: true
+                            )
                         } label: {
                             Label(tab.title, systemImage: tab.id.systemImage)
                         }
@@ -182,12 +183,6 @@ struct ContentView: View {
         destination == .rideMap && isConnected
     }
 
-    private func connectedDestination(for destination: CutoutAppRoute) -> some View {
-        destinationSurface(for: destination, usesConnectedShell: true) {
-            routedContent(for: destination)
-        }
-    }
-
     /// Shared map presentation shell for connected tabs and the home-route entry.
     /// The only intentional difference between those paths is the surrounding tab or
     /// navigation chrome; Map content, safe-area ownership, and accessibility context
@@ -200,16 +195,13 @@ struct ContentView: View {
                 for: destination,
                 isConnected: model.selectedConnectionRoute != nil
             )
-        ) {
-            routedContent(for: destination)
-        }
+        )
     }
 
     @ViewBuilder
-    private func destinationSurface<Content: View>(
+    private func destinationSurface(
         for destination: CutoutAppRoute,
-        usesConnectedShell: Bool,
-        @ViewBuilder content: () -> Content
+        usesConnectedShell: Bool
     ) -> some View {
         ZStack {
             PevColors.pageBackground
@@ -219,10 +211,10 @@ struct ContentView: View {
                     sectionTitle: appSectionTitle(for: destination),
                     disconnect: disconnectAndReturnToPicker
                 ) {
-                    content()
+                    routedContent(for: destination)
                 }
             } else {
-                content()
+                routedContent(for: destination)
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
