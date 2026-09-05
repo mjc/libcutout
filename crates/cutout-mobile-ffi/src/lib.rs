@@ -18526,8 +18526,6 @@ mod tests {
 
         assert!(decisions.is_empty());
     }
-||||||| parent of c8ad8cf8 (Expose Rust-owned light state through mobile FFI)
-
     #[test]
     fn spatial_pages_round_trip_mobile_cursors_and_antimeridian_bounds() {
         let _guard = RIDE_DATABASE_TEST_LOCK
