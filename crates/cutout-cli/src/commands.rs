@@ -45,7 +45,8 @@ use cutout_protocols::{
     NOSFET_AERO_REGISTRY_ENTRY, NOSFET_AERO_SESSION_KEY, ProtocolModelSpec, ReadOnlySession,
     RefloatReadOnlyRequest, RefloatRealtimeValue, RefloatReply, RefloatStreamDecoder,
     RefloatStreamResult, RegisteredEucSession, StationarySettingsWriteSession, VESC_MAX_FRAME_LEN,
-    VESC_NOTIFY_CHANNEL, VESC_WRITE_CHANNEL, VETERAN_DATA_CHANNEL, VescReadOnlyCodec,
+    VESC_NOTIFY_CHANNEL, VESC_WRITE_CHANNEL, VETERAN_DATA_CHANNEL,
+    VETERAN_FIELD_SPEED_ALERT_DECI_KMH, VETERAN_FIELD_SPEED_TILTBACK_DECI_KMH, VescReadOnlyCodec,
     VescReadOnlyReply, VescReadOnlyRequest, VescReadOnlyStreamDecoder, VescReadOnlyStreamResult,
     VescStatsMask, begode_falcon_session_with_voltage_profile, encode_refloat_request,
     find_session_registration, select_begode_pack_capacity_from_annotations,
@@ -1652,7 +1653,19 @@ async fn aero_write(args: AeroWriteArgs) -> Result<()> {
     )
     .await?;
     print_session_report(&report);
-    info!(setting = ?args.setting, "Aero settings write completed");
+    match aero_setting_readback_matches(command, &report.settings) {
+        Some(true) => {
+            info!(setting = ?args.setting, readback_confirmed = true, "Aero settings write completed")
+        }
+        Some(false) => bail!(
+            "Aero settings write emitted a protocol write but the device did not report the requested setting value"
+        ),
+        None => info!(
+            setting = ?args.setting,
+            readback_confirmed = false,
+            "Aero settings write emitted; no typed readback exists for this setting"
+        ),
+    }
     Ok(())
 }
 
@@ -1679,6 +1692,31 @@ fn aero_protocol_model_id_matches(report: &SessionBridgeReport) -> bool {
         .firmware
         .and_then(|firmware| firmware.firmware_major)
         .is_some_and(|observed| observed.value == expected.value)
+}
+
+fn aero_setting_readback_matches(
+    command: DeviceCommand,
+    readbacks: &[SettingsReadback],
+) -> Option<bool> {
+    let (field_id, expected_value) = match command {
+        DeviceCommand::SetAeroAlarmSpeed(speed) => (
+            VETERAN_FIELD_SPEED_ALERT_DECI_KMH,
+            i64::from(speed.kilometres_per_hour()) * 10,
+        ),
+        DeviceCommand::SetAeroTiltbackSpeed(speed) => (
+            VETERAN_FIELD_SPEED_TILTBACK_DECI_KMH,
+            i64::from(speed.kilometres_per_hour()) * 10,
+        ),
+        _ => return None,
+    };
+
+    Some(readbacks.iter().any(|readback| {
+        readback
+            .entries()
+            .into_iter()
+            .flatten()
+            .any(|entry| entry.field.id == field_id && entry.field.value == expected_value)
+    }))
 }
 
 fn parse_aero_write_command(setting: AeroSetting, value: &str) -> Result<DeviceCommand> {
@@ -6199,6 +6237,46 @@ mod tests {
                 "settings raw_001e=1920",
                 "settings availability=unsupported",
             ]
+        );
+    }
+
+    #[test]
+    fn aero_setting_readback_matches_typed_speed_fields() {
+        let entry = |id, value| cutout_core::SettingsEntry {
+            field: cutout_core::RawFieldValue::new(id, value),
+            source: ValueSource::Reported,
+            quality: ValueQuality::Known,
+            verification: VerificationStatus::HardwareVerified,
+        };
+        let readbacks = [SettingsReadback::available([
+            Some(entry(0x0018, 550)),
+            Some(entry(0x001a, 530)),
+            None,
+            None,
+        ])];
+
+        assert_eq!(
+            aero_setting_readback_matches(
+                DeviceCommand::SetAeroTiltbackSpeed(
+                    AeroSpeedSetting::new(53).expect("53 km/h fits"),
+                ),
+                &readbacks,
+            ),
+            Some(true)
+        );
+        assert_eq!(
+            aero_setting_readback_matches(
+                DeviceCommand::SetAeroAlarmSpeed(AeroSpeedSetting::new(54).expect("54 km/h fits"),),
+                &readbacks,
+            ),
+            Some(false)
+        );
+        assert_eq!(
+            aero_setting_readback_matches(
+                DeviceCommand::SetAeroPwmPercent(AeroPwmPercent::new(64).expect("64 percent fits"),),
+                &readbacks,
+            ),
+            None
         );
     }
 
