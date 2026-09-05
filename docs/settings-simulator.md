@@ -19,3 +19,13 @@ physical effect, firmware acknowledgement, or rollback behavior. Device-proof
 work must record those observations separately for the protocol-confirmed
 model and firmware, then compare the captured write and readback with this
 simulator transcript.
+
+The same simulator is available through the Rust-owned mobile FFI as
+`AeroSettingsSimulator`. It accepts the existing typed mobile command DTOs and
+returns the existing mobile session output DTOs; the only simulator-specific
+value is its typed readback record. `AeroSettingsSimulatorTests` exercises that
+facade from Swift without Bluetooth hardware:
+
+```text
+nix develop -c swift test --package-path swift/CutoutMobile --filter AeroSettingsSimulatorTests
+```
