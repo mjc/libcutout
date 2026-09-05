@@ -71,6 +71,8 @@ pub use registry::{
 };
 mod request_encoder;
 mod session;
+mod simulator;
+pub use simulator::{AeroSettingsReadback, AeroSettingsSimulator, AeroSimulatorWrite};
 mod util;
 mod vesc_codec;
 mod veteran_bms;
