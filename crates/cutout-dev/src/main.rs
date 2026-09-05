@@ -110,10 +110,10 @@ fn run_aero_settings_simulator() -> Result<()> {
         DeviceCommand::ResetTripMeter,
     ];
     let mut simulator = AeroSettingsSimulator::default();
-    println!("model={:?}", AeroSettingsSimulator::registry_entry().model);
+    println!("model={}", AeroSettingsSimulator::registry_entry().model);
     println!(
-        "gatt_fingerprints={}",
-        AeroSettingsSimulator::gatt_fingerprints().len()
+        "gatt_fingerprints={:?}",
+        AeroSettingsSimulator::gatt_fingerprints()
     );
 
     for (index, command) in commands.into_iter().enumerate() {
