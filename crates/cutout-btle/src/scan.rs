@@ -101,14 +101,7 @@ async fn first_adapter() -> Result<Adapter, BtleError> {
 async fn collect_observations(adapter: &Adapter) -> Result<Vec<PeripheralObservation>, BtleError> {
     let mut observations = Vec::new();
     for peripheral in backend_call("list peripherals", adapter.peripherals()).await? {
-        if let Some(properties) =
-            backend_call("read peripheral properties", peripheral.properties()).await?
-        {
-            observations.push(PeripheralObservation::from_peripheral(
-                &peripheral,
-                properties,
-            ));
-        }
+        observations.push(observation_from_peripheral(&peripheral).await?);
     }
     Ok(observations)
 }
@@ -131,12 +124,7 @@ async fn find_peripheral(
     target: &ConnectionTarget,
 ) -> Result<btleplug::platform::Peripheral, BtleError> {
     for peripheral in backend_call("list peripherals", adapter.peripherals()).await? {
-        let Some(properties) =
-            backend_call("read peripheral properties", peripheral.properties()).await?
-        else {
-            continue;
-        };
-        let observation = PeripheralObservation::from_peripheral(&peripheral, properties);
+        let observation = observation_from_peripheral(&peripheral).await?;
         if target.matches(&observation) {
             return Ok(peripheral);
         }
