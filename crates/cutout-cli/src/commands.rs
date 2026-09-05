@@ -1653,6 +1653,9 @@ async fn aero_write(args: AeroWriteArgs) -> Result<()> {
     )
     .await?;
     print_session_report(&report);
+    if !aero_write_was_sent(&report) {
+        bail!("Aero settings command was refused; no protocol or transport write was issued");
+    }
     match aero_setting_readback_matches(command, &probe_report.settings, &report.settings) {
         Some(true) => {
             info!(setting = ?args.setting, readback_confirmed = true, "Aero settings write completed")
@@ -1725,6 +1728,10 @@ fn aero_setting_readback_matches(
         latest(before).is_some_and(|value| value != expected_value)
             && latest(after) == Some(expected_value),
     )
+}
+
+fn aero_write_was_sent(report: &SessionBridgeReport) -> bool {
+    report.protocol_writes.get() > 0 && report.writes.get() > 0
 }
 
 fn parse_aero_write_command(setting: AeroSetting, value: &str) -> Result<DeviceCommand> {
@@ -6295,6 +6302,18 @@ mod tests {
             ),
             None
         );
+    }
+
+    #[test]
+    fn aero_write_report_requires_protocol_and_transport_writes() {
+        let mut report = SessionBridgeReport::default();
+        assert!(!aero_write_was_sent(&report));
+
+        report.protocol_writes = ProtocolWriteCount::from_events(1);
+        assert!(!aero_write_was_sent(&report));
+
+        report.writes = TransportWriteCount::from_events(1);
+        assert!(aero_write_was_sent(&report));
     }
 
     #[test]
