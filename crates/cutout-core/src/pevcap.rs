@@ -2516,6 +2516,7 @@ impl PevcapMusicProviderJson {
 struct PevcapMusicEventJson {
     provider: PevcapMusicProviderJson,
     track_id: String,
+    #[serde(default)]
     monotonic_at_ms: u64,
     track_position_ms: u64,
     wall_clock_unix_ms: u64,
@@ -4038,6 +4039,17 @@ mod tests {
             record.try_into_record(),
             Err(PevcapRecordError::InvalidMusicTrackId)
         ));
+    }
+
+    #[cfg(feature = "serde")]
+    #[test]
+    fn pevcap_music_metadata_legacy_json_defaults_monotonic_timestamp() {
+        let event: PevcapMusicEventJson = serde_json::from_str(
+            r#"{"provider":"apple_music","track_id":"legacy-track","track_position_ms":0,"wall_clock_unix_ms":1,"clock_uncertainty_milliseconds":0}"#,
+        )
+        .expect("legacy music metadata remains decodable");
+
+        assert_eq!(event.monotonic_at_ms, 0);
     }
 
     #[cfg(feature = "serde")]
