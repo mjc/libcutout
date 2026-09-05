@@ -854,6 +854,9 @@ impl StationarySettingsPolicy {
         monotonic_ms: MonotonicTimestamp,
     ) -> Option<StationarySettingsArm> {
         self.arm(state, monotonic_ms).or_else(|| {
+            if !matches!(state, RideOperatingState::Riding) {
+                return None;
+            }
             let speed = speed?;
             let max_speed = max_speed?;
             (speed.as_millimetres_per_second().unsigned_abs()
@@ -10503,6 +10506,8 @@ mod tests {
             model: "NOSFET Aero",
             arm_duration: Duration::from_milliseconds(100),
         };
+        let low_speed = Speed::from_millimetres_per_second(500);
+        let max_speed = Speed::from_millimetres_per_second(500);
 
         assert!(
             policy
@@ -10527,6 +10532,36 @@ mod tests {
         assert!(
             policy
                 .arm(crate::RideOperatingState::Parked, ms(10))
+                .is_some()
+        );
+        assert!(
+            policy
+                .arm_with_speed(
+                    crate::RideOperatingState::Unknown,
+                    Some(low_speed),
+                    Some(max_speed),
+                    ms(10)
+                )
+                .is_none()
+        );
+        assert!(
+            policy
+                .arm_with_speed(
+                    crate::RideOperatingState::Charging,
+                    Some(low_speed),
+                    Some(max_speed),
+                    ms(10)
+                )
+                .is_none()
+        );
+        assert!(
+            policy
+                .arm_with_speed(
+                    crate::RideOperatingState::Riding,
+                    Some(low_speed),
+                    Some(max_speed),
+                    ms(10)
+                )
                 .is_some()
         );
     }
