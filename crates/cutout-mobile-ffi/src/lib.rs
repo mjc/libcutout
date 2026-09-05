@@ -30,8 +30,8 @@ use cutout_core::{
     ChargeEstimateState, ChargeEstimateUnavailableReason, ChargeFlow, ChargeMode, ChargeModeDto,
     ChargeModeReadingDto, ChargeProfileIdentity, ChargeSessionIdentity, ChargeTimeEstimate,
     CommandKindDto, ControlRefusalReason as CoreControlRefusalReason, ControlRefusalReasonDto,
-    CutoutSessionState, DeviceCommandDto, DiscoveryCandidateSnapshot,
-    DiscoveryCandidateSupport as CoreDiscoveryCandidateSupport,
+    CutoutSessionState, DeviceCommand as CoreDeviceCommand, DeviceCommandDto,
+    DiscoveryCandidateSnapshot, DiscoveryCandidateSupport as CoreDiscoveryCandidateSupport,
     DiscoveryConnectionRoute as CoreDiscoveryConnectionRoute,
     DiscoveryElectricUnicycleModel as CoreDiscoveryElectricUnicycleModel,
     DiscoveryManufacturerDataSummary as CoreDiscoveryManufacturerDataSummary,
@@ -48,8 +48,8 @@ use cutout_core::{
     PevcapRecord, PevcapResolvedIdentity, PhaseCurrentReadingDto, PowerReadingDto, ProtocolFamily,
     ProtocolFamilyDto, ProtocolTag, RIDE_SESSION_STALE_AFTER, RawFieldValue, RawFieldValueDto,
     RawTelemetryReadback, RawTelemetryReadbackDto, ReadOnlyOutputPayload,
-    ReservedPayloadEvidenceDto, RideOperatingModeDto, RideOperatingStateDto,
-    RideSessionAppPresence as CoreRideSessionAppPresence,
+    ReservedPayloadEvidenceDto, RideOperatingModeDto, RideOperatingState as CoreRideOperatingState,
+    RideOperatingStateDto, RideSessionAppPresence as CoreRideSessionAppPresence,
     RideSessionDecision as CoreRideSessionDecision, RideSessionEffect as CoreRideSessionEffect,
     RideSessionEndReason as CoreRideSessionEndReason,
     RideSessionIdentity as CoreRideSessionIdentity, RideSessionInput as CoreRideSessionInput,
@@ -69,12 +69,12 @@ use cutout_core::{
     VoltageSagInput, VoltageSagModel, WallClockUnixTimestamp, WriteMode,
 };
 use cutout_protocols::{
-    BEGODE_DATA_CHANNEL, BEGODE_FIELD_LED_AND_LIGHT_MODE, BEGODE_FIELD_SETTINGS_BITS,
-    BEGODE_FIELD_TILTBACK_SPEED_KMH, ConcreteAeroBenignControlSession,
-    ConcreteFalconBenignControlSession, ConcreteFalconProfileDto, ConcreteSessionErrorDto,
-    ConcreteSessionStepResultDto, DeviceDetectionEvent, DeviceDetectionResolution,
-    DeviceDetectionSession, DeviceFamily, IdentityBannerEvidence, PendingProbe,
-    ProtocolFamilyClassification, ProtocolFamilyState, ProtocolModelIdentityEvidence,
+    AeroSettingsReadback, AeroSettingsSimulator as CoreAeroSettingsSimulator, BEGODE_DATA_CHANNEL,
+    BEGODE_FIELD_LED_AND_LIGHT_MODE, BEGODE_FIELD_SETTINGS_BITS, BEGODE_FIELD_TILTBACK_SPEED_KMH,
+    ConcreteAeroBenignControlSession, ConcreteFalconBenignControlSession, ConcreteFalconProfileDto,
+    ConcreteSessionErrorDto, ConcreteSessionStepResultDto, DeviceDetectionEvent,
+    DeviceDetectionResolution, DeviceDetectionSession, DeviceFamily, IdentityBannerEvidence,
+    PendingProbe, ProtocolFamilyClassification, ProtocolFamilyState, ProtocolModelIdentityEvidence,
     StagedIdentityInput, StagedIdentityOutcome, VETERAN_FIELD_AUTO_SHUTDOWN_TIME_REMAINING_SECONDS,
     VETERAN_FIELD_CHARGE_MODE, VETERAN_FIELD_PEDALS_MODE, VETERAN_FIELD_SPEED_ALERT_DECI_KMH,
     VETERAN_FIELD_SPEED_TILTBACK_DECI_KMH, VescBatteryType as CoreVescBatteryType,
@@ -11083,6 +11083,123 @@ fn mobile_gatt_channel(channel: &[u8]) -> GattChannel {
     GattChannel::from_bytes(mobile_channel_bytes(channel))
 }
 
+/// Typed readback returned by the Rust-owned Aero settings simulator.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct MobileAeroSettingsSimulatorReadbackDto {
+    /// Current TLT speed.
+    pub tiltback_speed: Option<MobileAeroSpeedSettingDto>,
+
+    /// Current PWT percentage.
+    pub pwm_percent: Option<MobileAeroPwmPercentDto>,
+
+    /// Current ALM speed.
+    pub alarm_speed: Option<MobileAeroSpeedSettingDto>,
+
+    /// Current ANG adjustment.
+    pub angle_adjustment: Option<MobileAeroAngleAdjustmentDto>,
+
+    /// Current pedal mode.
+    pub pedal_mode: Option<MobilePedalModeKindDto>,
+
+    /// Current high-beam state.
+    pub high_beam: Option<MobileLightStateDto>,
+
+    /// Current single-frame headlight state.
+    pub headlight: Option<MobileLightStateDto>,
+
+    /// Number of accepted trip-meter reset writes.
+    pub trip_meter_reset_count: u32,
+}
+
+impl From<AeroSettingsReadback> for MobileAeroSettingsSimulatorReadbackDto {
+    fn from(readback: AeroSettingsReadback) -> Self {
+        Self {
+            tiltback_speed: readback.tiltback_speed.map(Into::into),
+            pwm_percent: readback.pwm_percent.map(Into::into),
+            alarm_speed: readback.alarm_speed.map(Into::into),
+            angle_adjustment: readback.angle_adjustment.map(Into::into),
+            pedal_mode: readback.pedal_mode.map(Into::into),
+            high_beam: readback.high_beam.map(Into::into),
+            headlight: readback.headlight.map(Into::into),
+            trip_meter_reset_count: readback.trip_meter_reset_count,
+        }
+    }
+}
+
+/// Rust-owned, no-Bluetooth Aero settings simulator for mobile integration tests.
+///
+/// This is a thin FFI facade over [`cutout_protocols::AeroSettingsSimulator`].
+/// It intentionally exposes typed commands, typed readback, and the same mobile
+/// output DTOs as a live session; it does not expose a raw transport API.
+#[derive(Debug, uniffi::Object)]
+pub struct AeroSettingsSimulator {
+    inner: Mutex<CoreAeroSettingsSimulator>,
+}
+
+#[uniffi::export]
+impl AeroSettingsSimulator {
+    /// Creates a stationary NOSFET Aero simulator.
+    #[uniffi::constructor]
+    #[must_use]
+    pub fn new() -> Arc<Self> {
+        Arc::new(Self {
+            inner: Mutex::new(CoreAeroSettingsSimulator::default()),
+        })
+    }
+
+    /// Issues one typed command and returns the live-session-shaped outputs.
+    pub fn issue(
+        &self,
+        command: MobileCommandDto,
+        operating_state: RideOperatingState,
+        speed: Option<Speed>,
+        monotonic_ms: MobileMonotonicMillisDto,
+    ) -> Vec<MobileSessionOutputDto> {
+        let command: CoreDeviceCommand = DeviceCommandDto::from(command).into();
+        let speed = speed.map(|speed| CoreSpeed::from_millimetres_per_second(speed.value));
+        self.lock_inner()
+            .issue(
+                command,
+                simulator_operating_state(operating_state),
+                speed,
+                monotonic_ms.into_core(),
+            )
+            .into_iter()
+            .map(|output| MobileSessionOutputDto::from(SessionOutputDto::from(output)))
+            .collect()
+    }
+
+    /// Advances any delayed simulator output and returns live-session-shaped outputs.
+    pub fn tick(&self, monotonic_ms: MobileMonotonicMillisDto) -> Vec<MobileSessionOutputDto> {
+        self.lock_inner()
+            .tick(monotonic_ms.into_core())
+            .into_iter()
+            .map(|output| MobileSessionOutputDto::from(SessionOutputDto::from(output)))
+            .collect()
+    }
+
+    /// Returns the current typed simulator readback.
+    pub fn readback(&self) -> MobileAeroSettingsSimulatorReadbackDto {
+        self.lock_inner().readback().into()
+    }
+}
+
+impl AeroSettingsSimulator {
+    fn lock_inner(&self) -> MutexGuard<'_, CoreAeroSettingsSimulator> {
+        self.inner.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+}
+
+fn simulator_operating_state(state: RideOperatingState) -> CoreRideOperatingState {
+    match state {
+        RideOperatingState::Unknown => CoreRideOperatingState::Unknown,
+        RideOperatingState::Parked => CoreRideOperatingState::Parked,
+        RideOperatingState::Standing => CoreRideOperatingState::Standing,
+        RideOperatingState::Riding => CoreRideOperatingState::Riding,
+        RideOperatingState::Charging => CoreRideOperatingState::Charging,
+    }
+}
+
 /// Mobile-facing NOSFET Aero telemetry wrapper with allow-listed light control.
 #[derive(Debug, uniffi::Object)]
 pub struct AeroBenignControlSession {
@@ -15762,8 +15879,7 @@ mod tests {
         );
 
         assert!(outputs.iter().any(|output| {
-            output.kind == MobileSessionOutputKindDto::Write
-                && output.bytes.starts_with(b"LdAp")
+            output.kind == MobileSessionOutputKindDto::Write && output.bytes.starts_with(b"LdAp")
         }));
         assert_eq!(
             simulator.readback().tiltback_speed,
