@@ -185,6 +185,33 @@ final class CutoutAppModelTests: XCTestCase {
     }
 
     @MainActor
+    func testAeroTuneWritesUseTheSupportedCapabilities() {
+        let driver = SessionDriverSpy(rows: [])
+        driver.electricUnicycleModel = .aero
+        let model = CutoutAppModel(core: driver)
+        let tiltback = AeroSpeedSetting(kilometresPerHour: 53)!
+        let pwm = AeroPwmPercent(percent: 64)!
+        let alarm = AeroSpeedSetting(kilometresPerHour: 56)!
+        let angle = AeroAngleAdjustment(tenthsOfDegree: -12)!
+
+        XCTAssertTrue(model.aeroTiltbackSpeedControlAvailable)
+        XCTAssertTrue(model.aeroPwmPercentControlAvailable)
+        XCTAssertTrue(model.aeroAlarmSpeedControlAvailable)
+        XCTAssertTrue(model.aeroAngleAdjustmentControlAvailable)
+        XCTAssertTrue(model.resetTripMeterControlAvailable)
+        XCTAssertEqual(model.setAeroTiltbackSpeed(tiltback), .accepted)
+        XCTAssertEqual(model.setAeroPwmPercent(pwm), .accepted)
+        XCTAssertEqual(model.setAeroAlarmSpeed(alarm), .accepted)
+        XCTAssertEqual(model.setAeroAngleAdjustment(angle), .accepted)
+        XCTAssertEqual(model.resetTripMeter(), .accepted)
+        XCTAssertEqual(driver.aeroTiltbackSpeeds, [tiltback])
+        XCTAssertEqual(driver.aeroPwmPercents, [pwm])
+        XCTAssertEqual(driver.aeroAlarmSpeeds, [alarm])
+        XCTAssertEqual(driver.aeroAngleAdjustments, [angle])
+        XCTAssertEqual(driver.tripMeterResetCount, 1)
+    }
+
+    @MainActor
     func testRollAngleWriteUsesTheSupportedCapability() {
         let driver = SessionDriverSpy(rows: [])
         driver.electricUnicycleModel = .falcon
@@ -3003,6 +3030,11 @@ private final class SessionDriverSpy: CutoutSessionDriving {
     private(set) var headlightStates = [LightState]()
     private(set) var aeroHighBeamStates = [LightState]()
     private(set) var pedalModes = [PedalMode.Kind]()
+    private(set) var aeroTiltbackSpeeds = [AeroSpeedSetting]()
+    private(set) var aeroPwmPercents = [AeroPwmPercent]()
+    private(set) var aeroAlarmSpeeds = [AeroSpeedSetting]()
+    private(set) var aeroAngleAdjustments = [AeroAngleAdjustment]()
+    private(set) var tripMeterResetCount = 0
     private(set) var rollAngles = [RollAngle.Kind]()
     private(set) var speedAlarmModes = [SpeedAlarmMode.Kind]()
     private(set) var begodeMaxSpeeds = [BegodeMaxSpeed]()
@@ -3102,14 +3134,29 @@ private final class SessionDriverSpy: CutoutSessionDriving {
         pedalModes.append(mode)
         return .accepted
     }
-    func resetTripMeter() -> SettingCommandResult { .accepted }
-    func setAeroTiltbackSpeed(_ speed: AeroSpeedSetting) -> SettingCommandResult { .accepted }
+    func resetTripMeter() -> SettingCommandResult {
+        tripMeterResetCount += 1
+        return .accepted
+    }
+    func setAeroTiltbackSpeed(_ speed: AeroSpeedSetting) -> SettingCommandResult {
+        aeroTiltbackSpeeds.append(speed)
+        return .accepted
+    }
 
-    func setAeroPwmPercent(_ percent: AeroPwmPercent) -> SettingCommandResult { .accepted }
+    func setAeroPwmPercent(_ percent: AeroPwmPercent) -> SettingCommandResult {
+        aeroPwmPercents.append(percent)
+        return .accepted
+    }
 
-    func setAeroAlarmSpeed(_ speed: AeroSpeedSetting) -> SettingCommandResult { .accepted }
+    func setAeroAlarmSpeed(_ speed: AeroSpeedSetting) -> SettingCommandResult {
+        aeroAlarmSpeeds.append(speed)
+        return .accepted
+    }
 
-    func setAeroAngleAdjustment(_ angle: AeroAngleAdjustment) -> SettingCommandResult { .accepted }
+    func setAeroAngleAdjustment(_ angle: AeroAngleAdjustment) -> SettingCommandResult {
+        aeroAngleAdjustments.append(angle)
+        return .accepted
+    }
     func setRollAngle(_ angle: RollAngle.Kind) -> SettingCommandResult {
         rollAngles.append(angle)
         return .accepted
