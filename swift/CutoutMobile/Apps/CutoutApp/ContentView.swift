@@ -183,21 +183,8 @@ struct ContentView: View {
     }
 
     private func connectedDestination(for destination: CutoutAppRoute) -> some View {
-        ZStack {
-            PevColors.pageBackground
-                .ignoresSafeArea()
-
-            Group {
-                PevAppShell(
-                    sectionTitle: appSectionTitle(for: destination),
-                    disconnect: disconnectAndReturnToPicker
-                ) {
-                    routedContent(for: destination)
-                }
-            }
-            .accessibilityElement(children: .contain)
-            .accessibilityLabel(appSectionTitle(for: destination))
-            .accessibilityFocused($focusedRoute, equals: destination)
+        destinationSurface(for: destination, usesConnectedShell: true) {
+            routedContent(for: destination)
         }
     }
 
@@ -207,21 +194,35 @@ struct ContentView: View {
     /// stay in one place.
     @ViewBuilder
     private func mapDestinationContent(for destination: CutoutAppRoute) -> some View {
+        destinationSurface(
+            for: destination,
+            usesConnectedShell: Self.usesConnectedMapShell(
+                for: destination,
+                isConnected: model.selectedConnectionRoute != nil
+            )
+        ) {
+            routedContent(for: destination)
+        }
+    }
+
+    @ViewBuilder
+    private func destinationSurface<Content: View>(
+        for destination: CutoutAppRoute,
+        usesConnectedShell: Bool,
+        @ViewBuilder content: () -> Content
+    ) -> some View {
         ZStack {
             PevColors.pageBackground
                 .ignoresSafeArea()
-            if Self.usesConnectedMapShell(
-                for: destination,
-                isConnected: model.selectedConnectionRoute != nil
-            ) {
+            if usesConnectedShell {
                 PevAppShell(
                     sectionTitle: appSectionTitle(for: destination),
                     disconnect: disconnectAndReturnToPicker
                 ) {
-                    routedContent(for: destination)
+                    content()
                 }
             } else {
-                routedContent(for: destination)
+                content()
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)

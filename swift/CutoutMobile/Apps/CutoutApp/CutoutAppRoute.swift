@@ -104,7 +104,7 @@ enum CutoutAppRoute: Hashable {
         }
     }
 
-    var navigationTabs: [PevScreenTab] {
+    private var routeTabs: [PevScreenTab] {
         switch self {
         case .devicePicker, .capture, .rideMap, .rideMapDetail:
             []
@@ -119,19 +119,20 @@ enum CutoutAppRoute: Hashable {
         }
     }
 
-    var availableNavigationTabs: [PevScreenTab] {
-        navigationTabs.filter { $0.isEnabled && $0.destinationTarget != nil }
-    }
-
-    func availableNavigationTabs(for connectionRoute: DevicePickerConnectionRoute?) -> [PevScreenTab] {
+    func navigationTabs(for connectionRoute: DevicePickerConnectionRoute?) -> [PevScreenTab] {
         switch self {
         case .rideMap, .rideMapDetail:
-            guard let connectionRoute else { return [] }
+            guard let connectionRoute else {
+                return [PevScreenTab(
+                    id: .map,
+                    title: pevLocalizedText("tab.map"),
+                    isSelected: true,
+                    destinationTarget: .rideMap
+                )]
+            }
             let tabs = switch connectionRoute {
-            case .electricUnicycle:
-                PevRideTabs.eucRideTabs()
-            case .vescOnewheel:
-                PevRideTabs.vescRideTabs()
+            case .electricUnicycle: PevRideTabs.eucRideTabs()
+            case .vescOnewheel: PevRideTabs.vescRideTabs()
             }
             return tabs.map { tab in
                 PevScreenTab(
@@ -142,10 +143,14 @@ enum CutoutAppRoute: Hashable {
                     destinationTarget: tab.destinationTarget,
                     disabledReason: tab.disabledReason
                 )
-            }.filter { $0.isEnabled && $0.destinationTarget != nil }
+            }
         default:
-            return availableNavigationTabs
+            return routeTabs
         }
+    }
+
+    func availableNavigationTabs(for connectionRoute: DevicePickerConnectionRoute?) -> [PevScreenTab] {
+        navigationTabs(for: connectionRoute).filter { $0.isEnabled && $0.destinationTarget != nil }
     }
 
     func destination(for tab: PevScreenTab) -> CutoutAppRoute? {
