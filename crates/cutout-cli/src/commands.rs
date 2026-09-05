@@ -28,10 +28,10 @@ use cutout_core::{
     BatteryReadback, BatteryReadbackAvailability, CaptureDistribution, CaptureEvidence,
     CapturePrivacy, CaptureSessionLabel, CatalogModelResolution, CommandKind, DeviceCommand,
     DeviceEvent, DiagnosticError, DiagnosticErrorKind, DiagnosticSnapshot, FirmwareInfo,
-    GattChannel, HostSession, LightState, Measured, ModelCatalog, MonotonicTimestamp,
-    NotificationByteLen, ParserDiagnostics, PedalMode, PevcapCapture, PevcapDirection,
-    PevcapEncoding, PevcapHeader, PevcapReader, PevcapRecord, PevcapReplayMode, PevcapReplayStats,
-    PevcapResolvedIdentity, ProtocolFamily, ProtocolSession, ReadOnlyResponse,
+    GattChannel, GattFingerprint, HostSession, LightState, Measured, ModelCatalog,
+    MonotonicTimestamp, NotificationByteLen, ParserDiagnostics, PedalMode, PevcapCapture,
+    PevcapDirection, PevcapEncoding, PevcapHeader, PevcapReader, PevcapRecord, PevcapReplayMode,
+    PevcapReplayStats, PevcapResolvedIdentity, ProtocolFamily, ProtocolSession, ReadOnlyResponse,
     ReplayChunkComparison, RideOperatingState, SessionInput, SessionKey, SessionOutput,
     SettingsReadback, SettingsReadbackAvailability, StationarySettingsPolicy, TelemetrySnapshot,
     TransportAction, TransportWriteLimit, ValueQuality, ValueSource, VerificationStatus,
@@ -1563,6 +1563,11 @@ async fn connect(args: TargetedScanArgs, mode: SessionMode) -> Result<()> {
     let read_only_jsonl = args.read_only_jsonl();
     let connection =
         connect_and_discover(&args.into_target(), ScanWindow::from_secs(seconds)).await?;
+    if !live_profile_gatt_compatible(requested_profile, &connection.summary) {
+        bail!(
+            "connected peripheral GATT fingerprint does not match the requested protocol profile; no session started"
+        );
+    }
     let resolution = selected_session_resolution(requested_profile)?;
 
     info!("{}", connection.summary);
@@ -1680,7 +1685,29 @@ const AERO_WRITE_PREFLIGHT_COMMANDS: [DeviceCommand; 2] = [
 ];
 
 fn aero_protocol_fingerprint_matches(summary: &cutout_btle::ConnectionSummary) -> bool {
-    NOSFET_AERO_REGISTRY_ENTRY.gatt.iter().any(|expected| {
+    registry_gatt_fingerprint_matches(NOSFET_AERO_REGISTRY_ENTRY.gatt, summary)
+}
+
+fn falcon_protocol_fingerprint_matches(summary: &cutout_btle::ConnectionSummary) -> bool {
+    registry_gatt_fingerprint_matches(BEGODE_FALCON_REGISTRY_ENTRY.gatt, summary)
+}
+
+fn live_profile_gatt_compatible(
+    profile: SessionProfile,
+    summary: &cutout_btle::ConnectionSummary,
+) -> bool {
+    match profile {
+        SessionProfile::Aero => aero_protocol_fingerprint_matches(summary),
+        SessionProfile::Falcon => falcon_protocol_fingerprint_matches(summary),
+        SessionProfile::Auto => false,
+    }
+}
+
+fn registry_gatt_fingerprint_matches(
+    expected_fingerprints: &[GattFingerprint],
+    summary: &cutout_btle::ConnectionSummary,
+) -> bool {
+    expected_fingerprints.iter().any(|expected| {
         summary.iter_gatt_fingerprints().any(|observed| {
             observed.service == expected.service
                 && observed.characteristic == expected.characteristic
@@ -2404,7 +2431,7 @@ fn pevcap_identity_from_protocol_report(
     let resolution =
         cutout_protocols::identify_known_model(&cutout_protocols::StagedIdentityInput {
             advertised_name: None,
-            gatt: core::iter::empty::<cutout_core::GattFingerprint>(),
+            gatt: core::iter::empty::<GattFingerprint>(),
             stream_family: cutout_protocols::ProtocolFamilyClassification::Pending,
             banner_model: cutout_protocols::IdentityBannerEvidence::Missing,
             protocol_model: cutout_protocols::ProtocolModelIdentityEvidence::model_id(
@@ -3742,6 +3769,28 @@ mod tests {
         wrong.services[0].characteristics[0].uuid =
             Uuid::from_u128(0x0000_ffe2_0000_1000_8000_0080_5f9b_34fb);
         assert!(!aero_protocol_fingerprint_matches(&wrong));
+    }
+
+    #[test]
+    fn live_profile_requires_compatible_gatt_fingerprint() {
+        let aero = aero_connection_summary();
+        let falcon = falcon_connection_summary();
+        let mut wrong = aero.clone();
+        wrong.services[0].characteristics[0].uuid =
+            Uuid::from_u128(0x0000_ffe2_0000_1000_8000_0080_5f9b_34fb);
+
+        assert!(live_profile_gatt_compatible(SessionProfile::Aero, &aero));
+        assert!(!live_profile_gatt_compatible(SessionProfile::Aero, &falcon));
+        assert!(live_profile_gatt_compatible(
+            SessionProfile::Falcon,
+            &falcon
+        ));
+        assert!(live_profile_gatt_compatible(SessionProfile::Falcon, &aero));
+        assert!(!live_profile_gatt_compatible(SessionProfile::Aero, &wrong));
+        assert!(!live_profile_gatt_compatible(
+            SessionProfile::Falcon,
+            &wrong
+        ));
     }
 
     #[test]
