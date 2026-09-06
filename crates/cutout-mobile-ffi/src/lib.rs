@@ -6397,6 +6397,8 @@ impl MobileRideMapCoreInner {
         self.admission_recorder = staged_recorder;
         self.active_ride_id = Some(id);
         self.settled_ride_id = None;
+        self.music_history_policy = CoreMusicHistoryPolicy::Disabled;
+        self.music_timeline = cutout_core::MusicTimeline::new();
         self.pending_location_writes.clear();
         Ok(self.snapshot(MobileRideLifecycleStateDto::Active))
     }
@@ -16387,5 +16389,15 @@ mod tests {
         let events = state.current_music_events().expect("active timeline");
         assert_eq!(events.len(), 1);
         assert_eq!(events[0].title.as_deref(), Some("Song"));
+        state.stop_at(3_000).expect("ride stops");
+        state.save().expect("stopped ride saves");
+        state
+            .start_gps_only(4_000, None)
+            .expect("next ride starts with a fresh timeline");
+        assert!(
+            state
+                .current_music_events()
+                .is_some_and(|events| events.is_empty())
+        );
     }
 }

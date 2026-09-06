@@ -760,6 +760,42 @@ public final class MobileRideMapState: @unchecked Sendable {
         try withCore { map(try $0.observeTelemetry(atMs: atMs)) }
     }
 
+    /// Sets the active ride's bounded music-history retention policy.
+    public func setMusicHistoryPolicy(_ policy: MobileMusicHistoryPolicyDto) throws {
+        try withCore { try $0.setMusicHistoryPolicy(policy: policy) }
+    }
+
+    /// Records one low-rate provider transition for the active ride.
+    public func recordMusicEvent(
+        snapshot: MobileMusicSnapshotDto,
+        kind: MobileMusicRideEventKindDto,
+        monotonicAtMs: UInt64,
+        wallClockAtMs: UInt64,
+        clockUncertaintyMs: UInt64
+    ) throws -> MobileMusicTimelineOutcomeDto {
+        try withCore {
+            try $0.recordMusicEvent(
+                snapshot: snapshot,
+                kind: kind,
+                monotonicAtMs: monotonicAtMs,
+                wallClockAtMs: wallClockAtMs,
+                clockUncertaintyMs: clockUncertaintyMs
+            )
+        }
+    }
+
+    /// Returns the active ride's bounded in-memory music timeline.
+    public func currentMusicEvents() -> [MobileMusicRideEventDto] {
+        core?.currentMusicEvents() ?? []
+    }
+
+    /// Returns a bounded stored music timeline for one ride.
+    public func storedMusicEvents(rideID: String) throws -> [MobileMusicRideEventDto] {
+        try withCore {
+            try $0.storedMusicEvents(rideId: MobileRideIdDto(value: rideID))
+        }
+    }
+
     public func ingestLocation(
         monotonicMs: UInt64,
         wallClockUnixMs: UInt64,
