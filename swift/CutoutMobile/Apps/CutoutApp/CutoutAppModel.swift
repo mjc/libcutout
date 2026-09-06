@@ -273,6 +273,13 @@ final class CutoutAppModel {
     private var rideMapLiveProjectionEnabled = false
     private static let liveActivityUpdateIntervalMilliseconds: UInt64 = 1_000
 
+    isolated deinit {
+        musicMonitorTask?.cancel()
+#if canImport(MediaPlayer) && os(iOS)
+        appleMusicProvider.stopMonitoring()
+#endif
+    }
+
     convenience init() {
         #if DEBUG
         let permitsStoredDeviceAutoPairing = Self.uiTestFixture == nil
