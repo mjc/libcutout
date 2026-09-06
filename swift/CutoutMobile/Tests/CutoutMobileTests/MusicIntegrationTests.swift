@@ -206,7 +206,7 @@ final class MusicIntegrationTests: XCTestCase {
             ),
             capabilities: MobileMusicCapabilitiesDto(
                 previous: false,
-                play: false,
+                play: true,
                 pause: true,
                 next: false,
                 openProvider: true
