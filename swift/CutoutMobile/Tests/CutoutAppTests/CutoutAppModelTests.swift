@@ -80,6 +80,22 @@ final class CutoutAppModelTests: XCTestCase {
     }
 #endif
 
+    @MainActor
+    func testMusicHistoryDefaultIsLoadedForFutureRides() throws {
+        let suiteName = "CutoutAppMusicHistoryTests-\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let policyStore = MusicHistoryPolicyStore(defaults: defaults)
+        policyStore.set(.opaqueItem)
+
+        let model = CutoutAppModel(
+            core: SessionDriverSpy(rows: []),
+            musicHistoryPolicyStore: policyStore
+        )
+
+        XCTAssertEqual(model.musicHistoryPolicy, .opaqueItem)
+    }
+
     private func clear(
         _ store: RideSessionMarkerStore,
         file: StaticString = #filePath,
