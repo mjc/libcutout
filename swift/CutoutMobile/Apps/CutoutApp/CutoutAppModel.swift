@@ -519,23 +519,10 @@ final class CutoutAppModel {
     }
 
     private func unavailableMusicObservation(observedAtMs: UInt64) -> MusicProviderObservation {
-        MusicProviderObservation(
-            snapshot: MobileMusicSnapshotDto(
-                provider: selectedMusicProvider,
-                sessionId: "music-unavailable",
-                state: .unavailable,
-                item: nil,
-                positionMilliseconds: nil,
-                durationMilliseconds: nil,
-                observedAtMs: observedAtMs,
-                capabilities: MobileMusicCapabilitiesDto(
-                    previous: false,
-                    play: false,
-                    pause: false,
-                    next: false,
-                    openProvider: false
-                )
-            )
+        MusicProviderObservation.unavailable(
+            provider: selectedMusicProvider,
+            sessionId: "music-unavailable",
+            observedAtMs: observedAtMs
         )
     }
 

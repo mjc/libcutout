@@ -259,6 +259,32 @@ public struct MusicProviderObservation: Equatable, Sendable {
         self.snapshot = snapshot
         artwork = artworkData.flatMap(MusicArtwork.init(data:))
     }
+
+    public static func unavailable(
+        provider: MobileMusicProviderDto,
+        sessionId: String,
+        observedAtMs: UInt64,
+        openProvider: Bool = false
+    ) -> Self {
+        Self(
+            snapshot: MobileMusicSnapshotDto(
+                provider: provider,
+                sessionId: sessionId,
+                state: .unavailable,
+                item: nil,
+                positionMilliseconds: nil,
+                durationMilliseconds: nil,
+                observedAtMs: observedAtMs,
+                capabilities: MobileMusicCapabilitiesDto(
+                    previous: false,
+                    play: false,
+                    pause: false,
+                    next: false,
+                    openProvider: openProvider
+                )
+            )
+        )
+    }
 }
 
 /// The Rust-owned ride association is the only path for music metadata to enter a ride.
@@ -1006,21 +1032,11 @@ public struct SpotifyProviderAdapter: Sendable {
     }
 
     public func unavailableSnapshot(observedAtMs: UInt64) -> MobileMusicSnapshotDto {
-        MobileMusicSnapshotDto(
+        MusicProviderObservation.unavailable(
             provider: .spotify,
             sessionId: "spotify-unavailable",
-            state: .unavailable,
-            item: nil,
-            positionMilliseconds: nil,
-            durationMilliseconds: nil,
             observedAtMs: observedAtMs,
-            capabilities: MobileMusicCapabilitiesDto(
-                previous: false,
-                play: false,
-                pause: false,
-                next: false,
-                openProvider: true
-            )
-        )
+            openProvider: true
+        ).snapshot
     }
 }
