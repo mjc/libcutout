@@ -1280,6 +1280,12 @@ pub enum StorageError {
         /// Conflicting zero-based ride-local sequence.
         sequence: u64,
     },
+    /// A newly appended event moved the monotonic timeline backwards.
+    #[error("ride music event sequence {sequence} is out of order")]
+    MusicEventOutOfOrder {
+        /// Out-of-order zero-based ride-local sequence.
+        sequence: u64,
+    },
     /// The requested lifecycle transition is invalid.
     #[error("invalid ride lifecycle transition: {0}")]
     Transition(#[from] TransitionError),
@@ -2061,8 +2067,8 @@ impl RideDatabase {
     /// # Errors
     ///
     /// Returns [`StorageError::NotFound`], [`StorageError::MusicTimelineFull`],
-    /// [`StorageError::MusicSequenceConflict`], or a typed storage error when the worker cannot
-    /// commit the event.
+    /// [`StorageError::MusicSequenceConflict`], [`StorageError::MusicEventOutOfOrder`], or a
+    /// typed storage error when the worker cannot commit the event.
     pub fn save_music_event(
         &self,
         ride_id: RideId,
@@ -4833,6 +4839,21 @@ fn save_music_event(
         return Err(StorageError::InvalidStoredValue {
             field: "music sequence",
             value: sequence.to_string(),
+        });
+    }
+    let previous_monotonic = transaction
+        .query_row(
+            "SELECT monotonic_at_ms FROM ride_music_event
+             WHERE ride_id = ?1 ORDER BY sequence DESC LIMIT 1",
+            [ride_id.uuid().to_string()],
+            |row| row.get::<_, u64>(0),
+        )
+        .optional()?;
+    if let Some(previous_monotonic) = previous_monotonic
+        && event.monotonic_at().as_milliseconds() < previous_monotonic
+    {
+        return Err(StorageError::MusicEventOutOfOrder {
+            sequence: u64::try_from(sequence).unwrap_or(u64::MAX),
         });
     }
     if sequence == i64::try_from(cutout_core::MAX_MUSIC_TIMELINE_EVENTS).unwrap_or(i64::MAX)

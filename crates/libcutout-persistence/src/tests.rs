@@ -3527,6 +3527,37 @@ fn music_event_sequence_conflicts_are_not_silently_ignored() {
 }
 
 #[test]
+fn music_event_timestamps_must_remain_monotonic() {
+    let _guard = test_guard();
+    let database = RideDatabase::open(std::path::Path::new(":memory:")).unwrap();
+    let ride = database
+        .create_started_live_ride(1_700_000_000_000, 100, None)
+        .unwrap();
+    database
+        .save_music_event(ride, MusicHistoryPolicy::OpaqueItem, 0, music_event())
+        .unwrap();
+
+    let out_of_order = MusicRideEvent::new(
+        MusicProvider::AppleMusic,
+        Some("later-track".to_owned()),
+        None,
+        None,
+        MusicRideEventKind::ItemChanged,
+        MusicEventTiming {
+            monotonic_at: MonotonicTimestamp::new(109),
+            wall_clock_at: WallClockUnixTimestamp::new(1_700_000_000_109),
+            clock_uncertainty_milliseconds: 5,
+        },
+    )
+    .unwrap();
+    assert!(matches!(
+        database.save_music_event(ride, MusicHistoryPolicy::OpaqueItem, 1, out_of_order),
+        Err(StorageError::MusicEventOutOfOrder { sequence: 1 })
+    ));
+    database.shutdown().unwrap();
+}
+
+#[test]
 fn lowering_music_history_policy_redacts_existing_display_metadata() {
     let _guard = test_guard();
     let database = RideDatabase::open(std::path::Path::new(":memory:")).unwrap();

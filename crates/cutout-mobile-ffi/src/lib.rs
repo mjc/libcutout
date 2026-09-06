@@ -4324,7 +4324,8 @@ fn map_ride_database_error(error: persistence::StorageError) -> MobileRideDataba
             MobileRideDatabaseError::StorageFailure
         }
         persistence::StorageError::MusicTimelineFull
-        | persistence::StorageError::MusicSequenceConflict { .. } => {
+        | persistence::StorageError::MusicSequenceConflict { .. }
+        | persistence::StorageError::MusicEventOutOfOrder { .. } => {
             MobileRideDatabaseError::StorageFailure
         }
     }
