@@ -46,4 +46,56 @@ final class MusicIntegrationTests: XCTestCase {
         XCTAssertEqual(nowPlaying.playPauseCommand, .pause)
         XCTAssertTrue(nowPlaying.supports(.next))
     }
+
+    @MainActor
+    func testCoordinatorClassifiesAcceptedItemSkipSeparatelyFromItemChange() throws {
+        let state = MobileRideMapState()
+        _ = try state.startGpsOnly(atMs: 1_000, lastConnectedVehicle: nil)
+        try state.setMusicHistoryPolicy(.humanReadable)
+        let coordinator = MusicIntegrationCoordinator(rideMapState: state)
+
+        func observation(trackID: String, observedAtMs: UInt64) -> MusicProviderObservation {
+            MusicProviderObservation(
+                snapshot: MobileMusicSnapshotDto(
+                    provider: .appleMusic,
+                    sessionId: "session",
+                    state: .playing,
+                    item: MobileMusicItemDto(
+                        identifier: trackID,
+                        title: trackID,
+                        artist: "Artist"
+                    ),
+                    positionMilliseconds: nil,
+                    durationMilliseconds: nil,
+                    observedAtMs: observedAtMs,
+                    capabilities: MobileMusicCapabilitiesDto(
+                        previous: true,
+                        play: false,
+                        pause: true,
+                        next: true,
+                        openProvider: true
+                    )
+                )
+            )
+        }
+
+        XCTAssertEqual(
+            try coordinator.ingest(
+                observation: observation(trackID: "track-1", observedAtMs: 1_100),
+                wallClockAtMs: 1_700_000_000_100,
+                clockUncertaintyMs: 5
+            ),
+            .recorded
+        )
+        XCTAssertEqual(
+            try coordinator.ingest(
+                observation: observation(trackID: "track-2", observedAtMs: 1_200),
+                wallClockAtMs: 1_700_000_000_200,
+                clockUncertaintyMs: 5,
+                transitionHint: .skip
+            ),
+            .recorded
+        )
+        XCTAssertEqual(coordinator.recordedEvents.map(\.kind), [.itemChanged, .skip])
+    }
 }
