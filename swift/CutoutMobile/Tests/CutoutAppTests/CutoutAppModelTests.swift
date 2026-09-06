@@ -137,6 +137,38 @@ final class CutoutAppModelTests: XCTestCase {
         XCTAssertTrue(driver.rideMapState.currentMusicEvents().isEmpty)
     }
 
+    @MainActor
+    func testRestoringPlayerAfterHiddenProviderSwitchDoesNotShowPreviousProvider() {
+        let model = CutoutAppModel(core: SessionDriverSpy(rows: []))
+        model.restoreMusicPlayer()
+
+        let snapshot = MobileMusicSnapshotDto(
+            provider: .appleMusic,
+            sessionId: "session",
+            state: .playing,
+            item: MobileMusicItemDto(identifier: "track-1", title: "Song", artist: "Artist"),
+            positionMilliseconds: nil,
+            durationMilliseconds: nil,
+            observedAtMs: 1,
+            capabilities: MobileMusicCapabilitiesDto(
+                previous: false,
+                play: false,
+                pause: true,
+                next: true,
+                openProvider: true
+            )
+        )
+        _ = model.ingestMusicObservation(MusicProviderObservation(snapshot: snapshot))
+        model.dismissMusicPlayer()
+        model.selectMusicProvider(.spotify)
+
+        model.restoreMusicPlayer()
+
+        XCTAssertEqual(model.musicNowPlaying?.provider, .spotify)
+        XCTAssertEqual(model.musicNowPlaying?.state, .unavailable)
+        XCTAssertNil(model.musicNowPlaying?.item)
+    }
+
     private func clear(
         _ store: RideSessionMarkerStore,
         file: StaticString = #filePath,
