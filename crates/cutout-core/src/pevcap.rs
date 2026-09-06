@@ -3295,9 +3295,6 @@ struct PevcapMusicEventJson {
     /// Added after the initial music-correlation format; retained only for legacy decoding.
     #[serde(default)]
     monotonic_at_ms: u64,
-    /// Legacy progress data is accepted while decoding old captures but never written.
-    #[serde(default, rename = "track_position_ms", skip_serializing)]
-    _legacy_track_position_ms: Option<u64>,
     wall_clock_unix_ms: u64,
     clock_uncertainty_milliseconds: u64,
     ride_sequence: Option<u64>,
@@ -3310,7 +3307,6 @@ impl From<&PevcapMusicEvent> for PevcapMusicEventJson {
             provider: event.provider.into(),
             track_id: event.track_id.as_str().to_owned(),
             monotonic_at_ms: event.monotonic_at.get(),
-            _legacy_track_position_ms: None,
             wall_clock_unix_ms: event.wall_clock_unix_ms.get(),
             clock_uncertainty_milliseconds: event.clock_uncertainty_milliseconds,
             ride_sequence: event.ride_sequence,
