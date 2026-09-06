@@ -50,6 +50,11 @@ fn music_test_database(name: &str) -> (RideDatabase, std::path::PathBuf) {
     (database, path)
 }
 
+fn close_music_test_database(database: RideDatabase, path: std::path::PathBuf) {
+    database.shutdown().expect("music test database shuts down");
+    let _ = std::fs::remove_file(path);
+}
+
 fn test_guard() -> std::sync::MutexGuard<'static, ()> {
     TEST_LOCK
         .lock()
@@ -3497,8 +3502,7 @@ fn music_history_round_trips_and_can_be_deleted_without_deleting_ride() {
     database.delete_music_history(ride).unwrap();
     assert!(database.music_events(ride).unwrap().is_empty());
     assert!(database.find_ride(ride).unwrap().is_some());
-    database.shutdown().unwrap();
-    let _ = std::fs::remove_file(path);
+    close_music_test_database(database, path);
 }
 
 #[test]
@@ -3534,8 +3538,7 @@ fn music_event_sequence_conflicts_are_not_silently_ignored() {
         database.save_music_event(ride, MusicHistoryPolicy::OpaqueItem, 0, conflicting),
         Err(StorageError::MusicSequenceConflict { sequence: 0 })
     ));
-    database.shutdown().unwrap();
-    let _ = std::fs::remove_file(path);
+    close_music_test_database(database, path);
 }
 
 #[test]
@@ -3566,8 +3569,7 @@ fn music_event_timestamps_must_remain_monotonic() {
         database.save_music_event(ride, MusicHistoryPolicy::OpaqueItem, 1, out_of_order),
         Err(StorageError::MusicEventOutOfOrder { sequence: 1 })
     ));
-    database.shutdown().unwrap();
-    let _ = std::fs::remove_file(path);
+    close_music_test_database(database, path);
 }
 
 #[test]
@@ -3608,6 +3610,5 @@ fn lowering_music_history_policy_redacts_existing_display_metadata() {
     );
     assert_eq!(redacted[0].title(), None);
     assert_eq!(redacted[0].artist(), None);
-    database.shutdown().unwrap();
-    let _ = std::fs::remove_file(path);
+    close_music_test_database(database, path);
 }
