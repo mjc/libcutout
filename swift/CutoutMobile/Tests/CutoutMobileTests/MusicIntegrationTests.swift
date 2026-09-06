@@ -385,7 +385,7 @@ final class MusicIntegrationTests: XCTestCase {
             ),
             capabilities: MobileMusicCapabilitiesDto(
                 previous: false,
-                play: false,
+                play: true,
                 pause: true,
                 next: false,
                 openProvider: true
@@ -393,6 +393,18 @@ final class MusicIntegrationTests: XCTestCase {
         )
 
         XCTAssertEqual(nowPlaying.availableTransportCommands, [.pause])
+        XCTAssertFalse(nowPlaying.isCommandAvailable(.play))
+        XCTAssertTrue(nowPlaying.isCommandAvailable(.pause))
+        XCTAssertTrue(nowPlaying.isCommandAvailable(.openProvider))
+    }
+
+    func testMusicTimeConversionRejectsInvalidProviderValues() {
+        XCTAssertEqual(MusicTimeConversion.milliseconds(1.5), 1_500)
+        XCTAssertNil(MusicTimeConversion.milliseconds(-1))
+        XCTAssertNil(MusicTimeConversion.milliseconds(.nan))
+        XCTAssertNil(MusicTimeConversion.milliseconds(.infinity))
+        XCTAssertNil(MusicTimeConversion.milliseconds(.greatestFiniteMagnitude))
+        XCTAssertNil(MusicTimeConversion.milliseconds(Double(UInt64.max) / 1_000))
     }
 
     func testMusicTimelineIDsUseTheRustEventSequence() {
