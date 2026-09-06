@@ -40,6 +40,16 @@ fn music_event() -> MusicRideEvent {
     .expect("music event is valid")
 }
 
+fn music_test_database(name: &str) -> (RideDatabase, std::path::PathBuf) {
+    let path = std::env::temp_dir().join(format!(
+        "libcutout-music-{name}-{}.sqlite",
+        std::process::id()
+    ));
+    let _ = std::fs::remove_file(&path);
+    let database = RideDatabase::open(&path).expect("music test database opens");
+    (database, path)
+}
+
 fn test_guard() -> std::sync::MutexGuard<'static, ()> {
     TEST_LOCK
         .lock()
@@ -3473,7 +3483,7 @@ fn history_query_preserves_typed_timestamp_and_vehicle_identity() {
 #[test]
 fn music_history_round_trips_and_can_be_deleted_without_deleting_ride() {
     let _guard = test_guard();
-    let database = RideDatabase::open(std::path::Path::new(":memory:")).unwrap();
+    let (database, path) = music_test_database("history");
     let ride = database
         .create_started_live_ride(1_700_000_000_000, 100, None)
         .unwrap();
@@ -3488,12 +3498,13 @@ fn music_history_round_trips_and_can_be_deleted_without_deleting_ride() {
     assert!(database.music_events(ride).unwrap().is_empty());
     assert!(database.find_ride(ride).unwrap().is_some());
     database.shutdown().unwrap();
+    let _ = std::fs::remove_file(path);
 }
 
 #[test]
 fn music_event_sequence_conflicts_are_not_silently_ignored() {
     let _guard = test_guard();
-    let database = RideDatabase::open(std::path::Path::new(":memory:")).unwrap();
+    let (database, path) = music_test_database("sequence-conflict");
     let ride = database
         .create_started_live_ride(1_700_000_000_000, 100, None)
         .unwrap();
@@ -3524,12 +3535,13 @@ fn music_event_sequence_conflicts_are_not_silently_ignored() {
         Err(StorageError::MusicSequenceConflict { sequence: 0 })
     ));
     database.shutdown().unwrap();
+    let _ = std::fs::remove_file(path);
 }
 
 #[test]
 fn music_event_timestamps_must_remain_monotonic() {
     let _guard = test_guard();
-    let database = RideDatabase::open(std::path::Path::new(":memory:")).unwrap();
+    let (database, path) = music_test_database("timestamp-order");
     let ride = database
         .create_started_live_ride(1_700_000_000_000, 100, None)
         .unwrap();
@@ -3555,12 +3567,13 @@ fn music_event_timestamps_must_remain_monotonic() {
         Err(StorageError::MusicEventOutOfOrder { sequence: 1 })
     ));
     database.shutdown().unwrap();
+    let _ = std::fs::remove_file(path);
 }
 
 #[test]
 fn lowering_music_history_policy_redacts_existing_display_metadata() {
     let _guard = test_guard();
-    let database = RideDatabase::open(std::path::Path::new(":memory:")).unwrap();
+    let (database, path) = music_test_database("policy-redaction");
     let ride = database
         .create_started_live_ride(1_700_000_000_000, 100, None)
         .unwrap();
@@ -3596,4 +3609,5 @@ fn lowering_music_history_policy_redacts_existing_display_metadata() {
     assert_eq!(redacted[0].title(), None);
     assert_eq!(redacted[0].artist(), None);
     database.shutdown().unwrap();
+    let _ = std::fs::remove_file(path);
 }
