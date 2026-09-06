@@ -310,6 +310,25 @@ pub enum MusicHistoryPolicy {
     HumanReadable,
 }
 
+/// Durable state of the music-history record associated with one ride.
+///
+/// A missing row is distinct from an explicit disabled choice, and a deletion
+/// leaves a tombstone so callers do not mistake forgotten history for a ride
+/// that was never associated with music.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum MusicHistoryState {
+    /// No music-history choice has been recorded for the ride.
+    Missing,
+    /// The user explicitly disabled music-history retention.
+    Disabled,
+    /// Only opaque identifiers remain after display metadata was redacted.
+    Redacted,
+    /// Bounded human-readable metadata is retained.
+    HumanReadable,
+    /// Music history was explicitly deleted while the ride was preserved.
+    Deleted,
+}
+
 /// A low-rate music transition accepted into one ride timeline.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct MusicRideEvent {

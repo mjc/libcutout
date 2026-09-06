@@ -6,6 +6,7 @@ use super::{
     device_name, export_ride_json, find_ride, finish_pevcap_import,
     list_ride_history_vehicle_options, list_rides, load_summary, load_summary_with_duration,
     map_points_in_bounds, migrate_device_name, music_events, music_history_policy,
+    music_history_state,
     newest_recoverable_ride, pevcap_import_receipt, project_history_context, project_route_points,
     rebuild_spatial_indexes, remember_selected_device, remove_voltage_sag_model,
     ride_session_marker, route_points, save_device_name, save_music_event,
@@ -211,6 +212,9 @@ impl DatabaseWorker<'_> {
             }
             Command::MusicHistoryPolicy { ride_id, reply } => {
                 let _ = reply.send(music_history_policy(connection, ride_id));
+            }
+            Command::MusicHistoryState { ride_id, reply } => {
+                let _ = reply.send(music_history_state(connection, ride_id));
             }
             Command::SaveVoltageSagModel {
                 device_identity,

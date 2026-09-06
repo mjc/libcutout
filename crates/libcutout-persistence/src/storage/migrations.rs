@@ -1,13 +1,15 @@
 use super::{MapPointId, SpatialRowId, StorageError};
 use rusqlite::{Connection, OptionalExtension, params};
 
-const CURRENT_SCHEMA_VERSION: i64 = 16;
+const CURRENT_SCHEMA_VERSION: i64 = 17;
 const APPLICATION_ID: i64 = 0x4355_544f;
 
 const MUSIC_SCHEMA_SQL: &str = "
 CREATE TABLE IF NOT EXISTS ride_music_history (
     ride_id TEXT PRIMARY KEY NOT NULL REFERENCES rides(id) ON DELETE CASCADE,
-    policy TEXT NOT NULL CHECK (policy IN ('disabled', 'opaque_item', 'human_readable'))
+    policy TEXT NOT NULL CHECK (policy IN ('disabled', 'opaque_item', 'human_readable')),
+    state TEXT NOT NULL DEFAULT 'disabled'
+        CHECK (state IN ('disabled', 'opaque_item', 'human_readable', 'deleted'))
 );
 CREATE TABLE IF NOT EXISTS ride_music_event (
     ride_id TEXT NOT NULL REFERENCES rides(id) ON DELETE CASCADE,
@@ -58,6 +60,7 @@ pub(super) fn migrate(connection: &mut Connection) -> Result<(), StorageError> {
         13 => migrate_v13_to_current(connection)?,
         14 => migrate_v14_to_current(connection)?,
         15 => migrate_v15_to_current(connection)?,
+        16 => migrate_v16_to_current(connection)?,
         CURRENT_SCHEMA_VERSION => {
             if application_id != APPLICATION_ID {
                 return Err(StorageError::InvalidDatabaseIdentity);
@@ -827,6 +830,26 @@ fn migrate_v15_to_current(connection: &mut Connection) -> Result<(), StorageErro
     verify_legacy_schema(connection)?;
     let transaction = connection.transaction()?;
     transaction.execute_batch(MUSIC_SCHEMA_SQL)?;
+    transaction.execute_batch(&current_schema_pragmas())?;
+    transaction.commit()?;
+    Ok(())
+}
+
+fn migrate_v16_to_current(connection: &mut Connection) -> Result<(), StorageError> {
+    verify_legacy_schema(connection)?;
+    let transaction = connection.transaction()?;
+    transaction.execute_batch(
+        "ALTER TABLE ride_music_history
+             ADD COLUMN state TEXT NOT NULL DEFAULT 'disabled'
+             CHECK (state IN ('disabled', 'opaque_item', 'human_readable', 'deleted'));
+         UPDATE ride_music_history
+         SET state = CASE policy
+             WHEN 'opaque_item' THEN 'opaque_item'
+             WHEN 'human_readable' THEN 'human_readable'
+             ELSE 'disabled'
+         END;
+         ",
+    )?;
     transaction.execute_batch(&current_schema_pragmas())?;
     transaction.commit()?;
     Ok(())
