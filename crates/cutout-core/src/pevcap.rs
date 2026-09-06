@@ -1481,8 +1481,6 @@ pub struct PevcapMusicEvent {
     pub track_id: MusicIdentifier,
     /// Monotonic timestamp when the provider observation was received.
     pub monotonic_at: MonotonicTimestamp,
-    /// Provider-reported position at the observation boundary.
-    pub track_position_ms: u64,
     /// Wall-clock timestamp of the provider observation.
     pub wall_clock_unix_ms: WallClockUnixTimestamp,
     /// Uncertainty of the wall-clock observation in milliseconds.
@@ -1501,7 +1499,6 @@ impl PevcapMusicEvent {
     pub fn new(
         provider: MusicProvider,
         track_id: impl Into<String>,
-        track_position_ms: u64,
         monotonic_at: MonotonicTimestamp,
         wall_clock_unix_ms: WallClockUnixTimestamp,
         clock_uncertainty_milliseconds: u64,
@@ -1511,7 +1508,6 @@ impl PevcapMusicEvent {
             provider,
             track_id: MusicIdentifier::new(track_id)?,
             monotonic_at,
-            track_position_ms,
             wall_clock_unix_ms,
             clock_uncertainty_milliseconds,
             ride_sequence,
@@ -3296,10 +3292,12 @@ impl PevcapMusicProviderJson {
 struct PevcapMusicEventJson {
     provider: PevcapMusicProviderJson,
     track_id: String,
-    /// Added after the initial music-correlation format; legacy records default to zero.
+    /// Added after the initial music-correlation format; retained only for legacy decoding.
     #[serde(default)]
     monotonic_at_ms: u64,
-    track_position_ms: u64,
+    /// Legacy progress data is accepted while decoding old captures but never written.
+    #[serde(default, rename = "track_position_ms", skip_serializing)]
+    _legacy_track_position_ms: Option<u64>,
     wall_clock_unix_ms: u64,
     clock_uncertainty_milliseconds: u64,
     ride_sequence: Option<u64>,
@@ -3312,7 +3310,7 @@ impl From<&PevcapMusicEvent> for PevcapMusicEventJson {
             provider: event.provider.into(),
             track_id: event.track_id.as_str().to_owned(),
             monotonic_at_ms: event.monotonic_at.get(),
-            track_position_ms: event.track_position_ms,
+            _legacy_track_position_ms: None,
             wall_clock_unix_ms: event.wall_clock_unix_ms.get(),
             clock_uncertainty_milliseconds: event.clock_uncertainty_milliseconds,
             ride_sequence: event.ride_sequence,
@@ -3326,7 +3324,6 @@ impl PevcapMusicEventJson {
         PevcapMusicEvent::new(
             self.provider.into_provider(),
             self.track_id,
-            self.track_position_ms,
             MonotonicTimestamp::new(self.monotonic_at_ms),
             WallClockUnixTimestamp::from_milliseconds(self.wall_clock_unix_ms),
             self.clock_uncertainty_milliseconds,
@@ -3694,7 +3691,6 @@ mod tests {
         let event = PevcapMusicEvent::new(
             MusicProvider::AppleMusic,
             "library-track-42",
-            12_345,
             ms(17),
             wc(1_700_000_000_042),
             75,
@@ -3712,6 +3708,7 @@ mod tests {
         assert_eq!(music.track_id.as_str(), "library-track-42");
         assert_eq!(music.monotonic_at, ms(17));
         assert_eq!(music.wall_clock_unix_ms, wc(1_700_000_000_042));
+        assert!(!encoded.contains("track_position_ms"));
     }
 
     #[cfg(feature = "serde")]

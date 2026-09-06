@@ -3148,8 +3148,6 @@ pub struct MobilePevcapMusicEventDto {
     pub track_id: String,
     /// Monotonic timestamp of the provider observation.
     pub monotonic_at_ms: u64,
-    /// Provider-reported position at the observation boundary.
-    pub track_position_ms: u64,
     /// Wall-clock timestamp of the provider observation.
     pub wall_clock_unix_ms: u64,
     /// Clock uncertainty for the wall-clock sample in milliseconds.
@@ -3165,7 +3163,6 @@ impl TryFrom<MobilePevcapMusicEventDto> for PevcapMusicEvent {
         Self::new(
             event.provider.into(),
             event.track_id,
-            event.track_position_ms,
             MonotonicTimestamp::new(event.monotonic_at_ms),
             WallClockUnixTimestamp::from_milliseconds(event.wall_clock_unix_ms),
             event.clock_uncertainty_ms,
@@ -14699,7 +14696,6 @@ mod tests {
             provider: MobileMusicProviderDto::AppleMusic,
             track_id: "library-song-42".into(),
             monotonic_at_ms: 17,
-            track_position_ms: 12_345,
             wall_clock_unix_ms: 1_700_000_000_042,
             clock_uncertainty_ms: 75,
             ride_sequence: Some(9),
