@@ -52,6 +52,20 @@ final class MusicIntegrationTests: XCTestCase {
         XCTAssertNil(tracker.pendingHint)
     }
 
+    func testMusicMonitorGenerationInvalidatesOlderTasks() {
+        var generation = MusicMonitorGeneration()
+        let first = generation.begin()
+
+        XCTAssertTrue(generation.owns(first))
+
+        generation.invalidate()
+
+        XCTAssertFalse(generation.owns(first))
+        let second = generation.begin()
+        XCTAssertTrue(generation.owns(second))
+        XCTAssertFalse(generation.owns(first))
+    }
+
     private func nowPlaying(trackID: String) -> MusicNowPlaying {
         MusicNowPlaying(
             provider: .appleMusic,
