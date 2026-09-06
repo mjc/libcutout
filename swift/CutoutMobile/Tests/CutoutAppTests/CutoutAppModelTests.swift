@@ -2684,6 +2684,7 @@ private final class SessionDriverSpy: CutoutSessionDriving {
         captureAnnotations.append(label)
     }
     func annotateCapture(key _: String, value _: String) {}
+    func updateMusicCaptureObservation(_: MobilePevcapMusicEventDto?) {}
     func flushCapture() async -> Bool {
         flushCaptureCount += 1
         return flushSucceeds

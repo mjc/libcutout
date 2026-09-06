@@ -2,6 +2,35 @@ import CutoutMobile
 import Foundation
 import SwiftUI
 
+struct AppMusicCompactPlayerModifier: ViewModifier {
+    let model: CutoutAppModel
+
+    func body(content: Content) -> some View {
+        content.musicCompactPlayer(
+            nowPlaying: model.musicNowPlaying,
+            timeline: model.musicTimelineEvents,
+            selectedProvider: model.selectedMusicProvider,
+            isHidden: model.isMusicPlayerHidden,
+            historyPolicy: model.musicHistoryPolicy,
+            onCommand: { command in
+                Task { @MainActor in
+                    _ = await model.handleMusicCommand(command)
+                }
+            },
+            onDismiss: model.dismissMusicPlayer,
+            onRestore: model.restoreMusicPlayer,
+            onSelectProvider: model.selectMusicProvider,
+            onSetHistoryPolicy: model.setMusicHistoryPolicy
+        )
+    }
+}
+
+extension View {
+    func appMusicCompactPlayer(model: CutoutAppModel) -> some View {
+        modifier(AppMusicCompactPlayerModifier(model: model))
+    }
+}
+
 struct DevicePickerRouteView: View {
     let model: CutoutAppModel
     let pair: (DevicePickerRow) -> Void
@@ -53,6 +82,7 @@ struct EucRideRouteView: View {
             .accessibilityElement(children: .contain)
             .accessibilityIdentifier("dashboard.screen.eucRide")
         }
+        .appMusicCompactPlayer(model: model)
     }
 }
 
@@ -133,6 +163,7 @@ struct VescRideRouteView: View {
             .accessibilityElement(children: .contain)
             .accessibilityIdentifier("dashboard.screen.vescRide")
         }
+        .appMusicCompactPlayer(model: model)
     }
 }
 

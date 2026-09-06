@@ -20,8 +20,14 @@
 	<string>$(CURRENT_PROJECT_VERSION)</string>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
+	<key>LSApplicationQueriesSchemes</key>
+	<array>
+		<string>spotify</string>
+	</array>
 	<key>NSBluetoothAlwaysUsageDescription</key>
 	<string>CutOut uses Bluetooth to read live vehicle telemetry.</string>
+	<key>NSAppleMusicUsageDescription</key>
+	<string>CutOut reads Apple Music playback metadata and controls when you choose to show music controls.</string>
 	<key>NSLocationWhenInUseUsageDescription</key>
 	<string>CutOut records ride location, altitude, speed, and direction with vehicle telemetry.</string>
 	<key>NSLocationAlwaysUsageDescription</key>
