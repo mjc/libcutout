@@ -4320,10 +4320,8 @@ fn map_ride_database_error(error: persistence::StorageError) -> MobileRideDataba
         | persistence::StorageError::PevcapImport(_)
         | persistence::StorageError::SystemClock(_)
         | persistence::StorageError::SpatialCapabilityUnavailable
-        | persistence::StorageError::SpatialSchemaInitialization(_) => {
-            MobileRideDatabaseError::StorageFailure
-        }
-        persistence::StorageError::MusicTimelineFull
+        | persistence::StorageError::SpatialSchemaInitialization(_)
+        | persistence::StorageError::MusicTimelineFull
         | persistence::StorageError::MusicSequenceConflict { .. }
         | persistence::StorageError::MusicEventOutOfOrder { .. } => {
             MobileRideDatabaseError::StorageFailure
