@@ -329,6 +329,10 @@ public struct MusicNowPlaying: Equatable, Sendable {
         return components.joined(separator: ", ")
     }
 
+    public var artworkAccessibilityLabel: String {
+        pevLocalizedText("music.artwork", title)
+    }
+
     public var playPauseCommand: MobileMusicCommandDto? {
         switch state {
         case .playing where capabilities.pause: .pause
@@ -798,7 +802,7 @@ public struct MusicCompactPlayer: View {
                 .scaledToFill()
                 .frame(width: 34, height: 34)
                 .clipShape(RoundedRectangle(cornerRadius: 6))
-                .accessibilityHidden(true)
+                .accessibilityLabel(nowPlaying.artworkAccessibilityLabel)
         } else {
             Image(systemName: "music.note")
                 .accessibilityHidden(true)
@@ -810,7 +814,7 @@ public struct MusicCompactPlayer: View {
                 .scaledToFill()
                 .frame(width: 34, height: 34)
                 .clipShape(RoundedRectangle(cornerRadius: 6))
-                .accessibilityHidden(true)
+                .accessibilityLabel(nowPlaying.artworkAccessibilityLabel)
         } else {
             Image(systemName: "music.note")
                 .accessibilityHidden(true)
