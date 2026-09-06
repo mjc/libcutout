@@ -511,7 +511,8 @@ final class CutoutAppModel {
                     pevcapMusicObservation(
                         from: observation,
                         wallClockAtMs: wallClockAtMs,
-                        clockUncertaintyMs: clockUncertaintyMs
+                        clockUncertaintyMs: clockUncertaintyMs,
+                        rideSequence: musicCoordinator.recordedEvents.last?.sequence
                     )
                 )
             } else if outcome == .disabled {
@@ -557,7 +558,8 @@ final class CutoutAppModel {
     private func pevcapMusicObservation(
         from observation: MusicProviderObservation,
         wallClockAtMs: UInt64,
-        clockUncertaintyMs: UInt64
+        clockUncertaintyMs: UInt64,
+        rideSequence: UInt64?
     ) -> MobilePevcapMusicEventDto? {
         guard musicHistoryPolicy != .disabled,
               let item = observation.snapshot.item
@@ -570,7 +572,7 @@ final class CutoutAppModel {
             monotonicAtMs: observation.snapshot.observedAtMs,
             wallClockUnixMs: wallClockAtMs,
             clockUncertaintyMs: clockUncertaintyMs,
-            rideSequence: nil
+            rideSequence: rideSequence
         )
     }
 
