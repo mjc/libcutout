@@ -177,6 +177,7 @@ struct RideMapRouteView: View {
             initialHistoryID: initialHistoryID,
             rides: model.rideMapHistory,
             displayPoints: model.rideMapHistoryDetailDisplayPoints,
+            musicTimeline: model.rideMapHistoryDetailMusicTimeline,
             cameraRegion: model.rideMapHistoryDetailCameraRegion,
             endpointMetadata: model.rideMapHistoryDetailEndpointMetadata,
             segments: model.rideMapHistoryDetailSegments,

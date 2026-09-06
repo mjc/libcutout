@@ -1,4 +1,5 @@
 import CutoutMobile
+import CutoutMobileFFI
 import MapKit
 import SwiftUI
 
@@ -124,6 +125,7 @@ struct RideMapHistoryDetailSummary: View {
     let segments: [MobileRideMapSegmentDisplayMetadata]
     let segmentsOmittedByBudget: Bool
     let canonicalBackgroundGapCount: UInt64
+    let musicTimeline: [MobileMusicRideEventDto]
     let state: RideMapHistoryRouteState
     let loadRoutePreview: () -> Void
     let shareText: String
@@ -188,6 +190,14 @@ struct RideMapHistoryDetailSummary: View {
                     ),
                     telemetryState: telemetryState
                 )
+                if musicTimeline.isEmpty == false {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text(localizedAppText("music.timeline.title"))
+                            .font(.headline.weight(.semibold))
+                        MusicTimelineRows(events: musicTimeline)
+                    }
+                    .accessibilityIdentifier("ride-map.detail-music-timeline")
+                }
                 if pointsTruncated {
                     Text(localizedAppText("ride_map.history_truncated_count", displayPointCount))
                         .font(.caption)
