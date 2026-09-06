@@ -733,6 +733,7 @@ final class CutoutAppModel {
 
     @discardableResult
     func startGpsOnlyRide() -> Bool {
+        let nextRideMusicPolicy = musicHistoryPolicyStore.policy
         core.resetRideMapLocationAdmission()
         let started = applyRideMapCommand(resetPoints: true) {
             try core.startRideMapGpsOnly(
@@ -743,7 +744,15 @@ final class CutoutAppModel {
         guard started else { return false }
         // Apply the user's default to the fresh Rust-owned ride timeline.
         core.updateMusicCaptureObservation(nil)
-        try? musicCoordinator.setHistoryPolicy(musicHistoryPolicy)
+        do {
+            try musicCoordinator.setHistoryPolicy(nextRideMusicPolicy)
+            musicHistoryPolicy = nextRideMusicPolicy
+        } catch {
+            // A fresh ride starts disabled; keep the Swift projection aligned if
+            // durable policy application is unavailable.
+            musicHistoryPolicy = core.rideMapStateHandle?.currentMusicHistoryPolicy() ?? .disabled
+            musicCoordinator.restoreHistoryPolicy(musicHistoryPolicy)
+        }
         musicTimelineEvents = musicCoordinator.recordedEvents
         return true
     }

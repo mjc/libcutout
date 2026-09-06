@@ -115,6 +115,33 @@ final class CutoutAppModelTests: XCTestCase {
     }
 
     @MainActor
+    func testNewRideUsesPersistedMusicDefaultAfterRestoringAnotherRide() throws {
+        let state = MobileRideMapState()
+        _ = try state.startGpsOnly(atMs: 1_000, lastConnectedVehicle: nil)
+        try state.setMusicHistoryPolicy(.humanReadable)
+
+        let driver = SessionDriverSpy(
+            rows: [],
+            rideMapState: state,
+            preserveExistingRide: true
+        )
+        let suiteName = "CutoutAppMusicHistoryRestoreTests-\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let model = CutoutAppModel(
+            core: driver,
+            musicHistoryPolicyStore: MusicHistoryPolicyStore(defaults: defaults)
+        )
+
+        XCTAssertEqual(model.musicHistoryPolicy, .humanReadable)
+        XCTAssertTrue(model.stopRideMap())
+        XCTAssertTrue(model.saveRideMap())
+        XCTAssertTrue(model.startGpsOnlyRide())
+        XCTAssertEqual(model.musicHistoryPolicy, .disabled)
+        XCTAssertEqual(state.currentMusicHistoryPolicy(), .disabled)
+    }
+
+    @MainActor
     func testForgetActiveMusicHistoryClearsLivePolicyAndTimeline() throws {
         let driver = SessionDriverSpy(rows: [])
         let model = CutoutAppModel(core: driver)
@@ -2831,7 +2858,9 @@ private final class SessionDriverSpy: CutoutSessionDriving {
         flushSucceeds: Bool = true,
         restoredPlatformIdentifier: String? = nil,
         notifyBluetoothRestorationOnStart: Bool = true,
-        rideMapUnavailable: Bool = false
+        rideMapUnavailable: Bool = false,
+        rideMapState: MobileRideMapState? = nil,
+        preserveExistingRide: Bool = false
     ) {
         scanState = DevicePickerScanState(status: .scanning, rows: rows)
         self.pairingSucceeds = pairingSucceeds
@@ -2839,12 +2868,13 @@ private final class SessionDriverSpy: CutoutSessionDriving {
         self.restoredPlatformIdentifier = restoredPlatformIdentifier
         self.notifyBluetoothRestorationOnStart = notifyBluetoothRestorationOnStart
         self.rideMapUnavailable = rideMapUnavailable
-        let state = RustPersistenceStore.shared.map(MobileRideMapState.init(database:))
+        let state = rideMapState
+            ?? RustPersistenceStore.shared.map(MobileRideMapState.init(database:))
             ?? MobileRideMapState()
-        if state.currentSnapshot() != nil {
+        if !preserveExistingRide, state.currentSnapshot() != nil {
             _ = try? state.discard()
         }
-        rideMapState = state
+        self.rideMapState = state
     }
 
     func start() {
