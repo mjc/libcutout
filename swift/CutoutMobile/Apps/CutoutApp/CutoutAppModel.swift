@@ -235,6 +235,7 @@ final class CutoutAppModel {
     private let selectedDeviceStore: DevicePickerSelectionStore
     private let rideSessionMarkerStore: RideSessionMarkerStore
     private let musicPlayerVisibilityStore: MusicPlayerVisibilityStore
+    private let musicHistoryPolicyStore: MusicHistoryPolicyStore
     private let musicCoordinator: MusicIntegrationCoordinator
     private let spotifyMusicProvider = SpotifyProviderAdapter()
 #if canImport(MediaPlayer) && os(iOS)
@@ -282,7 +283,8 @@ final class CutoutAppModel {
             permitsStoredDeviceAutoPairing: permitsStoredDeviceAutoPairing,
             selectedDeviceStore: DevicePickerSelectionStore(),
             rideSessionMarkerStore: RideSessionMarkerStore(),
-            liveActivityManager: LiveActivityRideActivityKitManager()
+            liveActivityManager: LiveActivityRideActivityKitManager(),
+            musicHistoryPolicyStore: MusicHistoryPolicyStore()
         )
     }
 
@@ -290,14 +292,16 @@ final class CutoutAppModel {
         core: any CutoutSessionDriving,
         selectedDeviceStore: DevicePickerSelectionStore = DevicePickerSelectionStore(),
         rideSessionMarkerStore: RideSessionMarkerStore = RideSessionMarkerStore(),
-        liveActivityManager: any LiveActivityRideLifecycleManaging = LiveActivityRideActivityKitManager()
+        liveActivityManager: any LiveActivityRideLifecycleManaging = LiveActivityRideActivityKitManager(),
+        musicHistoryPolicyStore: MusicHistoryPolicyStore = MusicHistoryPolicyStore()
     ) {
         self.init(
             core: core,
             permitsStoredDeviceAutoPairing: true,
             selectedDeviceStore: selectedDeviceStore,
             rideSessionMarkerStore: rideSessionMarkerStore,
-            liveActivityManager: liveActivityManager
+            liveActivityManager: liveActivityManager,
+            musicHistoryPolicyStore: musicHistoryPolicyStore
         )
     }
 
@@ -306,7 +310,8 @@ final class CutoutAppModel {
         permitsStoredDeviceAutoPairing: Bool,
         selectedDeviceStore: DevicePickerSelectionStore,
         rideSessionMarkerStore: RideSessionMarkerStore,
-        liveActivityManager: any LiveActivityRideLifecycleManaging
+        liveActivityManager: any LiveActivityRideLifecycleManaging,
+        musicHistoryPolicyStore: MusicHistoryPolicyStore
     ) {
         self.permitsStoredDeviceAutoPairing = permitsStoredDeviceAutoPairing
         self.core = core
@@ -321,6 +326,8 @@ final class CutoutAppModel {
         self.rideSessionMarkerStore = rideSessionMarkerStore
         self.musicPlayerVisibilityStore = MusicPlayerVisibilityStore()
         self.isMusicPlayerHidden = musicPlayerVisibilityStore.isHidden
+        self.musicHistoryPolicyStore = musicHistoryPolicyStore
+        self.musicHistoryPolicy = musicHistoryPolicyStore.policy
         self.musicCoordinator = MusicIntegrationCoordinator(rideMapState: core.rideMapStateHandle)
         self.musicTimelineEvents = musicCoordinator.recordedEvents
         hasSavedDevice = selectedDeviceStore.platformIdentifier != nil
@@ -476,6 +483,7 @@ final class CutoutAppModel {
         let previous = musicHistoryPolicy
         do {
             try musicCoordinator.setHistoryPolicy(policy)
+            musicHistoryPolicyStore.set(policy)
             musicHistoryPolicy = policy
             if policy == .disabled {
                 core.updateMusicCaptureObservation(nil)
@@ -484,6 +492,7 @@ final class CutoutAppModel {
             return true
         } catch MobileRideMapError.noActiveRide {
             // Keep the choice as the default for the next ride.
+            musicHistoryPolicyStore.set(policy)
             musicHistoryPolicy = policy
             if policy == .disabled {
                 core.updateMusicCaptureObservation(nil)
@@ -540,7 +549,9 @@ final class CutoutAppModel {
     private func restoreRideMapState() {
         guard let state = core.rideMapStateHandle else { return }
         rideMapSnapshot = state.currentSnapshot()
-        musicHistoryPolicy = state.currentMusicHistoryPolicy()
+        if rideMapSnapshot != nil {
+            musicHistoryPolicy = state.currentMusicHistoryPolicy()
+        }
         musicCoordinator.restoreHistoryPolicy(musicHistoryPolicy)
         musicTimelineEvents = musicCoordinator.recordedEvents
         rideMapLiveTelemetryState = rideMapSnapshot?.associatedVehicle == nil
