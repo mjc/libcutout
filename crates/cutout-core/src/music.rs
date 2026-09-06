@@ -430,6 +430,12 @@ impl MusicRideEvent {
         self.artist.as_deref()
     }
 
+    /// Removes human-readable metadata while retaining the opaque event data.
+    pub fn redact_display_metadata(&mut self) {
+        self.title = None;
+        self.artist = None;
+    }
+
     /// Returns the provider.
     #[must_use]
     pub const fn provider(&self) -> MusicProvider {
@@ -518,8 +524,7 @@ impl MusicTimeline {
     /// Removes human-readable metadata while retaining the bounded timeline.
     pub fn redact_display_metadata(&mut self) {
         for event in &mut self.events {
-            event.title = None;
-            event.artist = None;
+            event.redact_display_metadata();
         }
     }
 }

@@ -3491,6 +3491,42 @@ fn music_history_round_trips_and_can_be_deleted_without_deleting_ride() {
 }
 
 #[test]
+fn music_event_sequence_conflicts_are_not_silently_ignored() {
+    let _guard = test_guard();
+    let database = RideDatabase::open(std::path::Path::new(":memory:")).unwrap();
+    let ride = database
+        .create_started_live_ride(1_700_000_000_000, 100, None)
+        .unwrap();
+    let first = music_event();
+    database
+        .save_music_event(ride, MusicHistoryPolicy::OpaqueItem, 0, first.clone())
+        .unwrap();
+
+    database
+        .save_music_event(ride, MusicHistoryPolicy::OpaqueItem, 0, first)
+        .expect("retrying the same sequence and event is idempotent");
+
+    let conflicting = MusicRideEvent::new(
+        MusicProvider::AppleMusic,
+        Some("other-track".to_owned()),
+        None,
+        None,
+        MusicRideEventKind::Pause,
+        MusicEventTiming {
+            monotonic_at: MonotonicTimestamp::new(120),
+            wall_clock_at: WallClockUnixTimestamp::new(1_700_000_000_120),
+            clock_uncertainty_milliseconds: 5,
+        },
+    )
+    .unwrap();
+    assert!(matches!(
+        database.save_music_event(ride, MusicHistoryPolicy::OpaqueItem, 0, conflicting),
+        Err(StorageError::MusicSequenceConflict { sequence: 0 })
+    ));
+    database.shutdown().unwrap();
+}
+
+#[test]
 fn lowering_music_history_policy_redacts_existing_display_metadata() {
     let _guard = test_guard();
     let database = RideDatabase::open(std::path::Path::new(":memory:")).unwrap();

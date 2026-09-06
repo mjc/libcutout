@@ -1274,6 +1274,12 @@ pub enum StorageError {
     /// The bounded music timeline cannot accept another event.
     #[error("ride music timeline is full")]
     MusicTimelineFull,
+    /// A sequence was reused for different music event data.
+    #[error("ride music sequence {sequence} conflicts with existing event")]
+    MusicSequenceConflict {
+        /// Conflicting zero-based ride-local sequence.
+        sequence: u64,
+    },
     /// The requested lifecycle transition is invalid.
     #[error("invalid ride lifecycle transition: {0}")]
     Transition(#[from] TransitionError),
@@ -2054,8 +2060,9 @@ impl RideDatabase {
     ///
     /// # Errors
     ///
-    /// Returns [`StorageError::NotFound`], [`StorageError::MusicTimelineFull`], or a typed
-    /// storage error when the worker cannot commit the event.
+    /// Returns [`StorageError::NotFound`], [`StorageError::MusicTimelineFull`],
+    /// [`StorageError::MusicSequenceConflict`], or a typed storage error when the worker cannot
+    /// commit the event.
     pub fn save_music_event(
         &self,
         ride_id: RideId,
@@ -4800,7 +4807,29 @@ fn save_music_event(
         [ride_id.uuid().to_string()],
         |row| row.get(0),
     )?;
-    if sequence > count {
+    let existing = transaction
+        .query_row(
+            "SELECT provider, item_identifier, title, artist, kind,
+                    monotonic_at_ms, wall_clock_at_ms, clock_uncertainty_milliseconds
+             FROM ride_music_event WHERE ride_id = ?1 AND sequence = ?2",
+            params![ride_id.uuid().to_string(), sequence],
+            decode_music_event,
+        )
+        .optional()?;
+    if let Some(existing) = existing {
+        let mut expected = event.clone();
+        if policy == MusicHistoryPolicy::OpaqueItem {
+            expected.redact_display_metadata();
+        }
+        if existing == expected {
+            transaction.commit()?;
+            return Ok(());
+        }
+        return Err(StorageError::MusicSequenceConflict {
+            sequence: u64::try_from(sequence).unwrap_or(u64::MAX),
+        });
+    }
+    if sequence != count {
         return Err(StorageError::InvalidStoredValue {
             field: "music sequence",
             value: sequence.to_string(),
@@ -4821,7 +4850,7 @@ fn save_music_event(
         .then(|| event.artist())
         .flatten();
     transaction.execute(
-        "INSERT OR IGNORE INTO ride_music_event
+        "INSERT INTO ride_music_event
             (ride_id, sequence, provider, item_identifier, title, artist, kind,
              monotonic_at_ms, wall_clock_at_ms, clock_uncertainty_milliseconds)
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
