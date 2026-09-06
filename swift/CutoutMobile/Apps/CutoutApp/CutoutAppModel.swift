@@ -458,8 +458,7 @@ final class CutoutAppModel {
         clockUncertaintyMs: UInt64
     ) -> MobilePevcapMusicEventDto? {
         guard musicHistoryPolicy != .disabled,
-              let item = observation.snapshot.item,
-              let position = observation.snapshot.positionMilliseconds
+              let item = observation.snapshot.item
         else {
             return nil
         }
@@ -467,7 +466,6 @@ final class CutoutAppModel {
             provider: observation.snapshot.provider,
             trackId: item.identifier,
             monotonicAtMs: observation.snapshot.observedAtMs,
-            trackPositionMs: position,
             wallClockUnixMs: wallClockAtMs,
             clockUncertaintyMs: clockUncertaintyMs,
             rideSequence: nil
