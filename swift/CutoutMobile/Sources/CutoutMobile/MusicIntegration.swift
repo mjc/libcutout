@@ -43,6 +43,54 @@ public enum MusicTransitionHint: Equatable, Sendable {
     case skip
 }
 
+/// Holds a transport hint until the provider reports the resulting state.
+///
+/// System-player notifications can arrive after the immediate post-command
+/// poll, so clearing the hint after one unchanged snapshot would misclassify
+/// an accepted skip as an unsolicited item change.
+public struct MusicTransitionHintTracker: Sendable {
+    public private(set) var pendingHint: MusicTransitionHint?
+
+    public init() {}
+
+    public var hint: MusicTransitionHint? { pendingHint }
+
+    public mutating func issue(_ hint: MusicTransitionHint?) {
+        pendingHint = hint
+    }
+
+    public mutating func resolve(
+        previous: MusicNowPlaying?,
+        current: MusicNowPlaying?,
+        appliedHint: MusicTransitionHint?
+    ) {
+        guard pendingHint == .skip, appliedHint == .skip else { return }
+        guard let current else {
+            pendingHint = nil
+            return
+        }
+        if MusicTransitionHintTracker.isProviderFailure(current.state) {
+            pendingHint = nil
+            return
+        }
+        guard let previous, current.item != nil else { return }
+        if previous.provider != current.provider
+            || previous.item?.identifier != current.item?.identifier
+        {
+            pendingHint = nil
+        }
+    }
+
+    private static func isProviderFailure(_ state: MobileMusicPlaybackStateDto) -> Bool {
+        switch state {
+        case .unauthorized, .unavailable, .disconnected, .stale:
+            true
+        default:
+            false
+        }
+    }
+}
+
 
 public extension MobileMusicProviderDto {
     static var allCases: [Self] { [.appleMusic, .spotify] }

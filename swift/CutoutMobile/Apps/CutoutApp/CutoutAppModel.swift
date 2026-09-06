@@ -265,7 +265,7 @@ final class CutoutAppModel {
     private var rideMapHistoryContextTask: Task<Void, Never>?
     private var rideMapRestoreTask: Task<Void, Never>?
     private var musicMonitorTask: Task<Void, Never>?
-    private var pendingMusicTransitionHint: MusicTransitionHint?
+    private var musicTransitionHintTracker = MusicTransitionHintTracker()
     private var rideMapLiveProjectionTask: Task<Void, Never>?
     private var rideMapDurationTask: Task<Void, Never>?
     private var rideMapLiveProjectionCancellation: MobileLiveRideMapProjectionCancellation?
@@ -387,12 +387,11 @@ final class CutoutAppModel {
             outcome = await appleMusicProvider.perform(command)
         }
         if outcome == .accepted {
-            pendingMusicTransitionHint = switch command {
+            musicTransitionHintTracker.issue(switch command {
             case .previous, .next: .skip
             default: nil
-            }
-            refreshMusicSnapshot(transitionHint: pendingMusicTransitionHint)
-            pendingMusicTransitionHint = nil
+            })
+            refreshMusicSnapshot()
         }
         return outcome
 #else
@@ -404,6 +403,7 @@ final class CutoutAppModel {
         musicPlayerVisibilityStore.setHidden(true)
         isMusicPlayerHidden = true
         musicNowPlaying = nil
+        musicTransitionHintTracker.issue(nil)
     }
 
     func restoreMusicPlayer() {
@@ -414,6 +414,7 @@ final class CutoutAppModel {
 
     func selectMusicProvider(_ provider: MobileMusicProviderDto) {
         selectedMusicProvider = provider
+        musicTransitionHintTracker.issue(nil)
         if !isMusicPlayerHidden {
             refreshMusicSnapshot()
         }
@@ -429,7 +430,10 @@ final class CutoutAppModel {
         } else {
             appleMusicProvider.observation(observedAtMs: observedAtMs)
         }
-        _ = ingestMusicObservation(observation, transitionHint: transitionHint)
+        _ = ingestMusicObservation(
+            observation,
+            transitionHint: transitionHint ?? musicTransitionHintTracker.hint
+        )
 #endif
     }
 
@@ -441,6 +445,7 @@ final class CutoutAppModel {
         transitionHint: MusicTransitionHint? = nil
     ) -> Bool {
         let wallClockAtMs = wallClockAtMs ?? UInt64(Date().timeIntervalSince1970 * 1_000)
+        let previousNowPlaying = musicCoordinator.nowPlaying
         do {
             let outcome = try musicCoordinator.ingest(
                 observation: observation,
@@ -459,10 +464,20 @@ final class CutoutAppModel {
             } else if outcome == .disabled {
                 core.updateMusicCaptureObservation(nil)
             }
+            musicTransitionHintTracker.resolve(
+                previous: previousNowPlaying,
+                current: musicCoordinator.nowPlaying,
+                appliedHint: transitionHint
+            )
             musicTimelineEvents = musicCoordinator.recordedEvents
             musicNowPlaying = isMusicPlayerHidden ? nil : musicCoordinator.nowPlaying
             return true
         } catch {
+            musicTransitionHintTracker.resolve(
+                previous: previousNowPlaying,
+                current: musicCoordinator.nowPlaying,
+                appliedHint: transitionHint
+            )
             musicTimelineEvents = musicCoordinator.recordedEvents
             musicNowPlaying = isMusicPlayerHidden ? nil : musicCoordinator.nowPlaying
             return false
