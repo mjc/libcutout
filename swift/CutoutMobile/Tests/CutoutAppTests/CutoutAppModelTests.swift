@@ -185,6 +185,40 @@ final class CutoutAppModelTests: XCTestCase {
     }
 
     @MainActor
+    func testForgetStoppedMusicHistoryUsesHistoricalDeletionPath() throws {
+        let driver = SessionDriverSpy(rows: [])
+        let model = CutoutAppModel(core: driver)
+        XCTAssertTrue(model.startGpsOnlyRide())
+        XCTAssertTrue(model.setMusicHistoryPolicy(.humanReadable))
+
+        let snapshot = MobileMusicSnapshotDto(
+            provider: .appleMusic,
+            sessionId: "session",
+            state: .playing,
+            item: MobileMusicItemDto(identifier: "track-1", title: "Song", artist: "Artist"),
+            positionMilliseconds: nil,
+            durationMilliseconds: nil,
+            observedAtMs: 1,
+            capabilities: MobileMusicCapabilitiesDto(
+                previous: false,
+                play: false,
+                pause: true,
+                next: true,
+                openProvider: true
+            )
+        )
+        XCTAssertTrue(model.ingestMusicObservation(MusicProviderObservation(snapshot: snapshot)))
+        let rideID = try XCTUnwrap(model.rideMapSnapshot?.rideID)
+        XCTAssertTrue(model.stopRideMap())
+        XCTAssertEqual(model.rideMapSnapshot?.state, .stopped)
+
+        XCTAssertTrue(model.forgetMusicHistory(for: rideID))
+
+        XCTAssertTrue(driver.rideMapState.currentMusicEvents().isEmpty)
+        XCTAssertNotNil(driver.rideMapState.currentSnapshot())
+    }
+
+    @MainActor
     func testLoweringActiveMusicPolicyRedactsVisibleTimeline() {
         let driver = SessionDriverSpy(rows: [])
         let model = CutoutAppModel(core: driver)
