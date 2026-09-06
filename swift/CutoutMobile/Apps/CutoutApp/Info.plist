@@ -24,6 +24,23 @@
 	<array>
 		<string>spotify</string>
 	</array>
+	<key>SpotifyClientID</key>
+	<string>$(SPOTIFY_CLIENT_ID)</string>
+	<key>SpotifyRedirectURI</key>
+	<string>cutout-spotify://spotify-login-callback</string>
+	<key>CFBundleURLTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleTypeRole</key>
+			<string>Editor</string>
+			<key>CFBundleURLName</key>
+			<string>io.cutout.cutoutapp.spotify</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>cutout-spotify</string>
+			</array>
+		</dict>
+	</array>
 	<key>NSBluetoothAlwaysUsageDescription</key>
 	<string>CutOut uses Bluetooth to read live vehicle telemetry.</string>
 	<key>NSAppleMusicUsageDescription</key>

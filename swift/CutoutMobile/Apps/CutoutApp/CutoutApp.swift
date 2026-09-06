@@ -27,6 +27,9 @@ struct CutoutApp: App {
                 .task {
                     model.start()
                 }
+                .onOpenURL { url in
+                    _ = model.handleMusicURL(url)
+                }
                 .onChange(of: scenePhase) {
                     switch scenePhase {
                     case .active:

@@ -474,6 +474,11 @@ final class CutoutAppModel {
             beginMusicMonitoring()
         case .appleMusicSystemPlayer:
             break
+        case .spotifyAppRemote where previousProvider != provider:
+            musicMonitorSceneState.request()
+            beginMusicMonitoring()
+        case .spotifyAppRemote:
+            break
         }
     }
 
@@ -486,6 +491,8 @@ final class CutoutAppModel {
         switch selectedMusicProvider.monitoringMode {
         case .appleMusicSystemPlayer:
             observation = appleMusicProvider.observation(observedAtMs: observedAtMs)
+        case .spotifyAppRemote:
+            observation = spotifyMusicProvider.observation(observedAtMs: observedAtMs)
         case .unavailable:
             observation = MusicProviderObservation(
                 snapshot: spotifyMusicProvider.unavailableSnapshot(observedAtMs: observedAtMs)
@@ -616,10 +623,31 @@ final class CutoutAppModel {
 #if canImport(MediaPlayer) && os(iOS)
         guard musicMonitorGeneration.owns(generation) else { return }
         defer { finishMusicMonitoring(generation: generation) }
-        guard selectedMusicProvider.monitoringMode == .appleMusicSystemPlayer else {
+        guard selectedMusicProvider.monitoringMode != .unavailable else {
             refreshMusicSnapshot()
             return
         }
+#if canImport(SpotifyiOS) && os(iOS)
+        if selectedMusicProvider.monitoringMode == .spotifyAppRemote {
+            spotifyMusicProvider.startMonitoring { [weak self] observation in
+                guard let self else { return }
+                _ = self.ingestMusicObservation(
+                    observation,
+                    transitionHint: self.musicTransitionHintTracker.hint
+                )
+            }
+            while !Task.isCancelled && musicMonitorGeneration.owns(generation) {
+                refreshMusicSnapshot()
+                do {
+                    try await Task.sleep(for: .seconds(1))
+                } catch {
+                    return
+                }
+            }
+            return
+        }
+#endif
+        guard selectedMusicProvider.monitoringMode == .appleMusicSystemPlayer else { return }
         guard await appleMusicProvider.requestAuthorization() else {
             guard !Task.isCancelled, musicMonitorGeneration.owns(generation) else { return }
             _ = ingestMusicObservation(MusicProviderObservation(
@@ -664,6 +692,21 @@ final class CutoutAppModel {
         musicMonitorTask = nil
 #if canImport(MediaPlayer) && os(iOS)
         appleMusicProvider.stopMonitoring()
+#endif
+#if canImport(SpotifyiOS) && os(iOS)
+        spotifyMusicProvider.stopMonitoring()
+#endif
+    }
+
+    /// Forwards a Spotify App Remote authorization callback from the scene.
+    @discardableResult
+    func handleMusicURL(_ url: URL) -> Bool {
+#if canImport(SpotifyiOS) && os(iOS)
+        guard selectedMusicProvider == .spotify else { return false }
+        return spotifyMusicProvider.handleCallback(url)
+#else
+        _ = url
+        return false
 #endif
     }
 

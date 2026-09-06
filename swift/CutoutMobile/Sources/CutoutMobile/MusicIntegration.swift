@@ -21,11 +21,12 @@ public enum MusicTransitionHint: Equatable, Sendable {
 
 /// Describes the provider lifecycle that the app can currently monitor.
 ///
-/// Spotify remains an explicit handoff/unavailable path until its App Remote
-/// credentials and on-device lifecycle are proven; it must not fall through
-/// to the Apple Music system-player monitor.
+/// Spotify uses App Remote when the iOS SDK and app credentials are present;
+/// otherwise it remains a truthful handoff/unavailable state. It must never
+/// fall through to the Apple Music system-player monitor.
 public enum MusicProviderMonitoringMode: Equatable, Sendable {
     case appleMusicSystemPlayer
+    case spotifyAppRemote
     case unavailable
 }
 
@@ -106,7 +107,7 @@ public extension MobileMusicProviderDto {
     var monitoringMode: MusicProviderMonitoringMode {
         switch self {
         case .appleMusic: .appleMusicSystemPlayer
-        case .spotify: .unavailable
+        case .spotify: .spotifyAppRemote
         }
     }
 
