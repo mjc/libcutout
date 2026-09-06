@@ -86,6 +86,7 @@ final class CutoutAppModel {
     private(set) var rideMapHistoryPointsTruncated = false
     private(set) var rideMapHistorySegmentsOmittedByBudget = false
     private(set) var rideMapHistoryDetailDisplayPoints = [MobileRideMapRouteDisplayPoint]()
+    private(set) var rideMapHistoryDetailMusicTimeline = [MobileMusicRideEventDto]()
     private(set) var rideMapHistoryDetailCameraRegion: MobileRideMapCameraRegion?
     private(set) var rideMapHistoryDetailEndpointMetadata = MobileRideMapRouteEndpointMetadata.empty
     private(set) var rideMapHistoryDetailSegments = [MobileRideMapSegmentDisplayMetadata]()
@@ -686,6 +687,7 @@ final class CutoutAppModel {
         rideMapHistoryLoading = true
         rideMapHistoryRouteLoading = false
         rideMapHistoryDetailRouteLoading = false
+        rideMapHistoryDetailMusicTimeline.removeAll(keepingCapacity: true)
         rideMapHistoryQueryDateAfterMilliseconds = historyDateAfterMilliseconds
         if let rideMapStorageError {
             rideMapHistoryLoading = false
@@ -1093,39 +1095,43 @@ final class CutoutAppModel {
             do {
                 let result = try await withTaskCancellationHandler(operation: {
                     try await Self.runCancellableDetached(priority: .userInitiated) {
-                        try state.projectStoredPoints(
+                        let projection = try state.projectStoredPoints(
                             rideID: rideID,
                             budget: budget,
                             cancellation: cancellation
                         )
+                        let musicTimeline = (try? state.storedMusicEvents(rideID: rideID)) ?? []
+                        return (projection, musicTimeline)
                     }
                 }, onCancel: {
                     cancellation.cancel()
                 })
                 guard !Task.isCancelled, let self else { return }
+                let (projection, musicTimeline) = result
                 self.rideMapHistoryRouteError = nil
                 self.rideMapHistoryDetailRouteError = nil
                 self.replaceRideMapHistoryDisplayPoints(
-                    result.points,
-                    cameraRegion: result.cameraRegion,
-                    endpointMetadata: result.endpointMetadata,
-                    segments: result.segments,
-                    backgroundGapCount: result.backgroundGapCount,
-                    truncated: result.pointsOmittedByBudget,
-                    segmentsOmittedByBudget: result.segmentsOmittedByBudget
+                    projection.points,
+                    cameraRegion: projection.cameraRegion,
+                    endpointMetadata: projection.endpointMetadata,
+                    segments: projection.segments,
+                    backgroundGapCount: projection.backgroundGapCount,
+                    truncated: projection.pointsOmittedByBudget,
+                    segmentsOmittedByBudget: projection.segmentsOmittedByBudget
                 )
-                self.rideMapHistoryDetailSourcePointsOmittedByBudget = result.pointsOmittedByBudget
-                self.rideMapHistoryDetailSourceSegmentsOmittedByBudget = result.segmentsOmittedByBudget
+                self.rideMapHistoryDetailSourcePointsOmittedByBudget = projection.pointsOmittedByBudget
+                self.rideMapHistoryDetailSourceSegmentsOmittedByBudget = projection.segmentsOmittedByBudget
+                self.rideMapHistoryDetailMusicTimeline = musicTimeline
                 self.replaceRideMapHistoryDetailDisplayPoints(
-                    result.points,
-                    cameraRegion: result.cameraRegion,
-                    endpointMetadata: result.endpointMetadata,
-                    segments: result.segments,
-                    backgroundGapCount: result.backgroundGapCount,
-                    truncated: result.pointsOmittedByBudget,
+                    projection.points,
+                    cameraRegion: projection.cameraRegion,
+                    endpointMetadata: projection.endpointMetadata,
+                    segments: projection.segments,
+                    backgroundGapCount: projection.backgroundGapCount,
+                    truncated: projection.pointsOmittedByBudget,
                     segmentsOmittedByBudget: Self.detailSegmentsAreOmitted(
                         sourceSegmentsOmittedByBudget: self.rideMapHistoryDetailSourceSegmentsOmittedByBudget,
-                        viewportSegmentsOmittedByBudget: result.segmentsOmittedByBudget
+                        viewportSegmentsOmittedByBudget: projection.segmentsOmittedByBudget
                     )
                 )
                 self.rideMapHistoryRouteLoading = false
@@ -1137,6 +1143,7 @@ final class CutoutAppModel {
                 self.rideMapHistoryRouteLoading = false
                 self.rideMapHistoryDetailRouteError = self.rideMapHistoryRouteError
                 self.rideMapHistoryDetailRouteLoading = false
+                self.rideMapHistoryDetailMusicTimeline.removeAll(keepingCapacity: true)
                 self.replaceRideMapHistoryDetailDisplayPoints([], truncated: false)
             }
         }
@@ -1193,6 +1200,7 @@ final class CutoutAppModel {
         rideMapHistoryContextProjection = nil
         rideMapHistoryContextRoutes.removeAll(keepingCapacity: true)
         replaceRideMapHistoryDisplayPoints([], truncated: false)
+        rideMapHistoryDetailMusicTimeline.removeAll(keepingCapacity: true)
         rideMapHistoryDetailSourcePointsOmittedByBudget = false
         rideMapHistoryDetailSourceSegmentsOmittedByBudget = false
         replaceRideMapHistoryDetailDisplayPoints([], truncated: false)
