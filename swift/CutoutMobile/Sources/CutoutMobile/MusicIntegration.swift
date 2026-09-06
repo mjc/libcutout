@@ -370,6 +370,16 @@ public struct MusicNowPlaying: Equatable, Sendable {
         }
     }
 
+    /// Whether the command is both provider-supported and valid for this state.
+    public func isCommandAvailable(_ command: MobileMusicCommandDto) -> Bool {
+        switch command {
+        case .openProvider:
+            capabilities.openProvider
+        case .play, .pause, .previous, .next:
+            availableTransportCommands.contains(command)
+        }
+    }
+
     public func supports(_ command: MobileMusicCommandDto) -> Bool {
         capabilities.supports(command)
     }

@@ -214,6 +214,9 @@ final class MusicIntegrationTests: XCTestCase {
         )
 
         XCTAssertEqual(nowPlaying.availableTransportCommands, [.pause])
+        XCTAssertFalse(nowPlaying.isCommandAvailable(.play))
+        XCTAssertTrue(nowPlaying.isCommandAvailable(.pause))
+        XCTAssertTrue(nowPlaying.isCommandAvailable(.openProvider))
     }
 
     func testMusicTimelineIDsUseTheRustEventSequence() {
