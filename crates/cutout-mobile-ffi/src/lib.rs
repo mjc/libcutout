@@ -6142,15 +6142,6 @@ struct PendingMapLocationWrite {
 impl MobileRideMapCoreInner {
     fn apply_music_history_policy(&mut self, policy: CoreMusicHistoryPolicy) {
         self.music_history_policy = policy;
-        match policy {
-            CoreMusicHistoryPolicy::Disabled => {
-                self.music_timeline = cutout_core::MusicTimeline::new();
-            }
-            CoreMusicHistoryPolicy::OpaqueItem => {
-                self.music_timeline.redact_display_metadata();
-            }
-            CoreMusicHistoryPolicy::HumanReadable => {}
-        }
     }
 
     fn reset_music_history(&mut self) {
@@ -15258,6 +15249,71 @@ mod tests {
         assert_eq!(capture.music_events.len(), 2);
         assert_eq!(capture.music_events[0].track_id.as_str(), "track-1");
         assert_eq!(capture.music_events[1].track_id.as_str(), "track-2");
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn explicit_music_context_replaces_pending_context() {
+        let path = std::env::temp_dir().join(format!(
+            "cutout-mobile-writer-music-override-{}-{}.jsonl",
+            std::process::id(),
+            thread::current().name().unwrap_or("test")
+        ));
+        let _ = fs::remove_file(&path);
+        let builder = MobilePevcapCaptureBuilder::new(
+            wc(1_700_000_000_000),
+            "ios-corebluetooth".into(),
+            None,
+        );
+        assert!(builder.set_music_context(Some(MobilePevcapMusicEventDto {
+            provider: MobileMusicProviderDto::AppleMusic,
+            track_id: "pending-song".into(),
+            monotonic_at_ms: 17,
+            wall_clock_unix_ms: 1_700_000_000_017,
+            clock_uncertainty_ms: 75,
+            ride_sequence: Some(1),
+        })));
+        assert!(builder.start_writer(path.to_string_lossy().into_owned()));
+        assert!(builder.record_notification_with_context_and_music(
+            ms(42),
+            vec![0; 16],
+            vec![1; 16],
+            vec![0xde, 0xad],
+            None,
+            None,
+            Some(MobilePevcapMusicEventDto {
+                provider: MobileMusicProviderDto::AppleMusic,
+                track_id: "explicit-song".into(),
+                monotonic_at_ms: 18,
+                wall_clock_unix_ms: 1_700_000_000_018,
+                clock_uncertainty_ms: 75,
+                ride_sequence: Some(2),
+            }),
+        ));
+        assert!(builder.record_notification_with_context(
+            ms(43),
+            vec![0; 16],
+            vec![1; 16],
+            vec![0xbe, 0xef],
+            None,
+            None,
+        ));
+        assert!(builder.finish_writer());
+
+        let bytes = fs::read(&path).expect("music capture exists");
+        let capture =
+            PevcapCapture::decode(&bytes, PevcapEncoding::Jsonl).expect("music capture decodes");
+        assert_eq!(capture.records.len(), 2);
+        assert_eq!(
+            capture.records[0]
+                .music
+                .as_ref()
+                .expect("explicit context is attached")
+                .track_id
+                .as_str(),
+            "explicit-song"
+        );
+        assert!(capture.records[1].music.is_none());
         let _ = fs::remove_file(path);
     }
 

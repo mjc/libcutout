@@ -4495,6 +4495,7 @@ fn lowering_music_history_policy_redacts_existing_display_metadata() {
             monotonic_at: MonotonicTimestamp::new(110),
             wall_clock_at: WallClockUnixTimestamp::new(1_700_000_000_110),
             clock_uncertainty_milliseconds: 5,
+            observed_at: Some(MonotonicTimestamp::new(110)),
         },
     )
     .unwrap();
@@ -4511,7 +4512,7 @@ fn lowering_music_history_policy_redacts_existing_display_metadata() {
     assert_eq!(
         redacted[0]
             .item_identifier()
-            .map(cutout_core::MusicIdentifier::as_str),
+            .map(|identifier| identifier.as_str()),
         Some("opaque-track")
     );
     assert_eq!(redacted[0].title(), None);
