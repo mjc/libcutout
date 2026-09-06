@@ -4973,6 +4973,10 @@ impl RideDatabaseHandle {
     /// Saves the user's bounded music-history retention choice for one ride.
     ///
     /// Disabling history also deletes previously retained music events.
+    ///
+    /// # Errors
+    ///
+    /// Returns a typed database error when the ride identifier or durable write is invalid.
     #[allow(
         clippy::needless_pass_by_value,
         reason = "UniFFI owns boundary identifiers"
@@ -4989,6 +4993,10 @@ impl RideDatabaseHandle {
     }
 
     /// Deletes all music metadata for one ride while preserving the ride itself.
+    ///
+    /// # Errors
+    ///
+    /// Returns a typed database error when the ride identifier or durable delete is invalid.
     #[allow(
         clippy::needless_pass_by_value,
         reason = "UniFFI owns boundary identifiers"
@@ -5004,6 +5012,10 @@ impl RideDatabaseHandle {
     }
 
     /// Persists one privacy-filtered music transition for a ride.
+    ///
+    /// # Errors
+    ///
+    /// Returns a typed database error when the ride identifier, event, or durable write is invalid.
     #[allow(clippy::needless_pass_by_value, reason = "UniFFI owns boundary values")]
     pub fn save_music_event(
         &self,
@@ -5020,6 +5032,10 @@ impl RideDatabaseHandle {
     }
 
     /// Loads one ride's bounded music timeline in sequence order.
+    ///
+    /// # Errors
+    ///
+    /// Returns a typed database error when the ride identifier, worker, or stored timeline is invalid.
     #[allow(
         clippy::needless_pass_by_value,
         reason = "UniFFI owns boundary identifiers"
@@ -6744,6 +6760,10 @@ impl MobileRideMapCore {
     /// Sets the bounded music-history policy for the active ride.
     ///
     /// Disabling the policy clears the in-memory and durable music timeline.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when no active ride exists, the ride is not recording, or durable storage rejects the policy.
     #[allow(clippy::needless_pass_by_value)]
     pub fn set_music_history_policy(
         &self,
@@ -6777,6 +6797,10 @@ impl MobileRideMapCore {
     }
 
     /// Records one low-rate provider transition for the active ride.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when no active ride exists, the event is invalid, or durable storage rejects it.
     #[allow(clippy::needless_pass_by_value)]
     pub fn record_music_event(
         &self,
@@ -6837,6 +6861,10 @@ impl MobileRideMapCore {
     }
 
     /// Returns the bounded stored music timeline for one ride.
+    ///
+    /// # Errors
+    ///
+    /// Returns a typed error when the ride identifier or durable timeline query is invalid.
     #[allow(clippy::needless_pass_by_value)]
     pub fn stored_music_events(
         &self,
