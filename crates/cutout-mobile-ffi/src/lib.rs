@@ -16668,37 +16668,9 @@ mod tests {
                 .expect("opted-in event is recorded"),
             MobileMusicTimelineOutcomeDto::Recorded
         );
-        let mut paused = snapshot;
-        paused.state = MobileMusicPlaybackStateDto::Paused;
-        paused.observed_at_ms = 2_001;
-        paused.capabilities = MobileMusicCapabilitiesDto {
-            previous: false,
-            play: true,
-            pause: false,
-            next: true,
-            open_provider: true,
-        };
-        assert_eq!(
-            state
-                .record_music_event(
-                    paused,
-                    MobileMusicRideEventKindDto::Pause,
-                    2_001,
-                    1_700_000_000_001,
-                    5,
-                )
-                .expect("second opted-in event is recorded"),
-            MobileMusicTimelineOutcomeDto::Recorded
-        );
         let events = state.current_music_events().expect("active timeline");
-        assert_eq!(events.len(), 2);
-        assert_eq!(
-            events
-                .iter()
-                .map(|event| event.sequence)
-                .collect::<Vec<_>>(),
-            [0, 1]
-        );
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].sequence, 0);
         assert_eq!(events[0].title.as_deref(), Some("Song"));
         state.stop_at(3_000).expect("ride stops");
         state.save().expect("stopped ride saves");
@@ -16763,5 +16735,63 @@ mod tests {
         assert_eq!(events[0].item_identifier.as_deref(), Some("track-1"));
         assert_eq!(events[0].title, None);
         assert_eq!(events[0].artist, None);
+    }
+
+    #[test]
+    fn music_event_dtos_expose_ordered_sequences() {
+        let state = MobileRideMapCore::new();
+        state.start_gps_only(1_000, None).expect("ride starts");
+        state
+            .set_music_history_policy(MobileMusicHistoryPolicyDto::OpaqueItem)
+            .expect("policy can be enabled while recording");
+        for (state_value, kind, timestamp) in [
+            (
+                MobileMusicPlaybackStateDto::Playing,
+                MobileMusicRideEventKindDto::Play,
+                2_000,
+            ),
+            (
+                MobileMusicPlaybackStateDto::Paused,
+                MobileMusicRideEventKindDto::Pause,
+                2_001,
+            ),
+        ] {
+            state
+                .record_music_event(
+                    MobileMusicSnapshotDto {
+                        provider: MobileMusicProviderDto::AppleMusic,
+                        session_id: "session".to_owned(),
+                        state: state_value,
+                        item: Some(MobileMusicItemDto {
+                            identifier: "track-1".to_owned(),
+                            title: Some("Song".to_owned()),
+                            artist: Some("Artist".to_owned()),
+                        }),
+                        position_milliseconds: None,
+                        duration_milliseconds: None,
+                        observed_at_ms: timestamp,
+                        capabilities: MobileMusicCapabilitiesDto {
+                            previous: false,
+                            play: state_value == MobileMusicPlaybackStateDto::Paused,
+                            pause: state_value == MobileMusicPlaybackStateDto::Playing,
+                            next: true,
+                            open_provider: true,
+                        },
+                    },
+                    kind,
+                    timestamp,
+                    1_700_000_000_000 + timestamp,
+                    5,
+                )
+                .expect("music event is recorded");
+        }
+        let events = state.current_music_events().expect("active timeline");
+        assert_eq!(
+            events
+                .iter()
+                .map(|event| event.sequence)
+                .collect::<Vec<_>>(),
+            [0, 1]
+        );
     }
 }
