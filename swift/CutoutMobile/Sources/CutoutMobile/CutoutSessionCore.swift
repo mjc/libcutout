@@ -322,6 +322,12 @@ public final class CutoutSessionCore: NSObject {
     public private(set) var phoneLocationSnapshot = MobilePhoneLocationSnapshotDto(latestSample: nil, gpsSpeed: nil)
     public private(set) var protocolIdentityCandidate: DevicePickerDiscoveryCandidate?
 
+#if DEBUG
+    var musicCaptureObservationForTesting: MobilePevcapMusicEventDto? {
+        musicCaptureContext.current
+    }
+#endif
+
     public var onDisplayStateChange: ((RideDisplayState) -> Void)?
     public var onPhaseChange: ((SessionConnectionPhase) -> Void)?
     public var onReconnectScheduled: ((SessionConnectionRetry) -> Void)?
@@ -887,6 +893,9 @@ public final class CutoutSessionCore: NSObject {
 #endif
         suppressReconnect = true
         cancelPendingReconnect()
+        // A teardown must not carry a pending provider observation into the
+        // next capture, including the synthetic/debug writer path below.
+        musicCaptureContext.reset()
 #if DEBUG
         if testScript != nil, isRecordOnly, captureBuilder != nil {
             finishCaptureAfterLinkDown()
@@ -1627,6 +1636,7 @@ public final class CutoutSessionCore: NSObject {
         extraAnnotations.forEach { _ = builder.addAnnotation(annotation: sanitizedPevcapAnnotation($0)) }
         captureBuilder = builder
         guard builder.startWriter(path: url.path) else {
+            musicCaptureContext.reset()
             record("capture_error=writer_start_failed")
             captureBuilder = nil
             captureFileURL = nil

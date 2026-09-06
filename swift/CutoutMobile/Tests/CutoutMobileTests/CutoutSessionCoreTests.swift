@@ -620,6 +620,56 @@ final class CutoutSessionCoreTests: XCTestCase {
         core.disconnectAndScan()
     }
 
+    func testCaptureMusicContextClearsBetweenWriters() {
+        var context = CaptureMusicContext()
+        let observation = MobilePevcapMusicEventDto(
+            provider: .appleMusic,
+            trackId: "track-1",
+            monotonicAtMs: 10,
+            wallClockUnixMs: 1_700_000_000_010,
+            clockUncertaintyMs: 5,
+            rideSequence: nil
+        )
+
+        context.update(observation)
+        XCTAssertEqual(context.current, observation)
+
+        context.reset()
+
+        XCTAssertNil(context.current)
+    }
+
+    func testSyntheticCaptureTeardownClearsMusicContext() async {
+        let finished = expectation(description: "synthetic capture finishes")
+        let core = CutoutSessionCore(testScript: CutoutSessionTestScript(
+            candidate: scriptedVescCandidate,
+            telemetry: nil,
+            flushCaptureSucceeds: false,
+            connectionDelayMilliseconds: 0
+        ))
+        core.onCaptureEvent = { event in
+            if case .finished = event {
+                finished.fulfill()
+            }
+        }
+        let observation = MobilePevcapMusicEventDto(
+            provider: .appleMusic,
+            trackId: "synthetic-track",
+            monotonicAtMs: 10,
+            wallClockUnixMs: 1_700_000_000_010,
+            clockUncertaintyMs: 5,
+            rideSequence: 7
+        )
+
+        core.updateMusicCaptureObservation(observation)
+        XCTAssertTrue(core.recordOnly(platformIdentifier: scriptedVescCandidate.platformIdentifier))
+        XCTAssertEqual(core.musicCaptureObservationForTesting, observation)
+
+        core.disconnectAndScan()
+        await fulfillment(of: [finished], timeout: 1)
+
+        XCTAssertNil(core.musicCaptureObservationForTesting)
+    }
     func testObservedAdvertisementsReplaceDuplicatePeripheralRows() {
         let core = CutoutSessionCore()
 
