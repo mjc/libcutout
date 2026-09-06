@@ -595,10 +595,7 @@ final class CutoutAppModel {
 
     private func finishMusicMonitoring(generation: UInt64) {
         guard musicMonitorGeneration.owns(generation) else { return }
-#if canImport(MediaPlayer) && os(iOS)
-        appleMusicProvider.stopMonitoring()
-#endif
-        musicMonitorTask = nil
+        stopMusicMonitoring()
     }
 
     private func unavailableMusicObservation(observedAtMs: UInt64) -> MusicProviderObservation {
