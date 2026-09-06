@@ -36,6 +36,7 @@ use cutout_core::{
     GattFingerprint, GattRoles, IgnoredNotificationEvidenceDto, IgnoredNotificationReasonDto,
     Measured, MonotonicMillisDto, MonotonicTimestamp, MusicCapabilities as CoreMusicCapabilities,
     MusicCommand as CoreMusicCommand, MusicHistoryPolicy as CoreMusicHistoryPolicy,
+    MusicHistoryState as CoreMusicHistoryState,
     MusicItem as CoreMusicItem, MusicPlaybackPosition as CoreMusicPlaybackPosition,
     MusicPlaybackState as CoreMusicPlaybackState, MusicProvider as CoreMusicProvider,
     MusicRideEvent as CoreMusicRideEvent, MusicRideEventKind as CoreMusicRideEventKind,
@@ -3086,6 +3087,33 @@ pub enum MobileMusicHistoryPolicyDto {
     HumanReadable,
 }
 
+/// Durable state of a ride's music-history record.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Enum)]
+pub enum MobileMusicHistoryStateDto {
+    /// The ride has no music-history record yet.
+    Missing,
+    /// Music history was explicitly disabled.
+    Disabled,
+    /// Display metadata was redacted while opaque identifiers remain.
+    Redacted,
+    /// Bounded human-readable metadata is retained.
+    HumanReadable,
+    /// Music history was explicitly deleted while the ride was preserved.
+    Deleted,
+}
+
+impl From<CoreMusicHistoryState> for MobileMusicHistoryStateDto {
+    fn from(state: CoreMusicHistoryState) -> Self {
+        match state {
+            CoreMusicHistoryState::Missing => Self::Missing,
+            CoreMusicHistoryState::Disabled => Self::Disabled,
+            CoreMusicHistoryState::Redacted => Self::Redacted,
+            CoreMusicHistoryState::HumanReadable => Self::HumanReadable,
+            CoreMusicHistoryState::Deleted => Self::Deleted,
+        }
+    }
+}
+
 /// Low-rate transition retained with an opted-in ride.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Enum)]
 pub enum MobileMusicRideEventKindDto {
@@ -5070,6 +5098,29 @@ impl RideDatabaseHandle {
         self.inner
             .music_events(ride_id)
             .map(mobile_music_event_dtos)
+            .map_err(map_ride_database_error)
+    }
+
+    /// Loads the durable state of one ride's music-history record.
+    ///
+    /// The state distinguishes an unassociated ride, an explicit disabled choice,
+    /// redacted metadata, human-readable metadata, and explicit deletion.
+    ///
+    /// # Errors
+    ///
+    /// Returns a typed database error when the ride identifier, worker, or stored state is invalid.
+    #[allow(
+        clippy::needless_pass_by_value,
+        reason = "UniFFI owns boundary identifiers"
+    )]
+    pub fn music_history_state(
+        &self,
+        ride_id: MobileRideIdDto,
+    ) -> Result<MobileMusicHistoryStateDto, MobileRideDatabaseError> {
+        let ride_id = parse_mobile_ride_id(&ride_id)?;
+        self.inner
+            .music_history_state(ride_id)
+            .map(Into::into)
             .map_err(map_ride_database_error)
     }
 
