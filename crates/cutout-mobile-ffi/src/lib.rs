@@ -4323,7 +4323,10 @@ fn map_ride_database_error(error: persistence::StorageError) -> MobileRideDataba
         | persistence::StorageError::SpatialSchemaInitialization(_) => {
             MobileRideDatabaseError::StorageFailure
         }
-        persistence::StorageError::MusicTimelineFull => MobileRideDatabaseError::StorageFailure,
+        persistence::StorageError::MusicTimelineFull
+        | persistence::StorageError::MusicSequenceConflict { .. } => {
+            MobileRideDatabaseError::StorageFailure
+        }
     }
 }
 
