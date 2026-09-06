@@ -279,6 +279,10 @@ final class CutoutAppModel {
     private var rideMapLiveProjectionEnabled = false
     private static let liveActivityUpdateIntervalMilliseconds: UInt64 = 1_000
 
+    isolated deinit {
+        stopMusicMonitoring()
+    }
+
     convenience init() {
         #if DEBUG
         let permitsStoredDeviceAutoPairing = Self.uiTestFixture == nil
@@ -421,7 +425,7 @@ final class CutoutAppModel {
     func restoreMusicPlayer() {
         musicPlayerVisibilityStore.setHidden(false)
         isMusicPlayerHidden = false
-        musicNowPlaying = musicCoordinator.nowPlaying
+        musicNowPlaying = projectedMusicNowPlaying()
         connectMusic()
     }
 
@@ -430,6 +434,11 @@ final class CutoutAppModel {
         selectedMusicProvider = provider
         musicProviderSelectionStore.set(provider)
         musicTransitionHintTracker.clear()
+#if canImport(MediaPlayer) && os(iOS)
+        if provider.monitoringMode == .unavailable {
+            stopMusicMonitoring()
+        }
+#endif
         if !isMusicPlayerHidden {
             connectMusic()
         }
@@ -440,10 +449,14 @@ final class CutoutAppModel {
     ) {
 #if canImport(MediaPlayer) && os(iOS)
         let observedAtMs = core.now().rawValue
-        let observation = if selectedMusicProvider == .spotify {
-            MusicProviderObservation(snapshot: spotifyMusicProvider.unavailableSnapshot(observedAtMs: observedAtMs))
-        } else {
-            appleMusicProvider.observation(observedAtMs: observedAtMs)
+        let observation: MusicProviderObservation
+        switch selectedMusicProvider.monitoringMode {
+        case .appleMusicSystemPlayer:
+            observation = appleMusicProvider.observation(observedAtMs: observedAtMs)
+        case .unavailable:
+            observation = MusicProviderObservation(
+                snapshot: spotifyMusicProvider.unavailableSnapshot(observedAtMs: observedAtMs)
+            )
         }
         _ = ingestMusicObservation(
             observation,
@@ -517,7 +530,17 @@ final class CutoutAppModel {
             currentObservedAtMs: currentObservedAtMs
         )
         musicTimelineEvents = musicCoordinator.recordedEvents
-        musicNowPlaying = isMusicPlayerHidden ? nil : musicCoordinator.nowPlaying
+        musicNowPlaying = projectedMusicNowPlaying()
+    }
+
+    private func projectedMusicNowPlaying() -> MusicNowPlaying? {
+        guard !isMusicPlayerHidden, let current = musicCoordinator.nowPlaying else {
+            return nil
+        }
+        guard current.provider != selectedMusicProvider else { return current }
+        return MusicNowPlaying(
+            observation: unavailableMusicObservation(observedAtMs: core.now().rawValue)
+        )
     }
 
     private func pevcapMusicObservation(
@@ -595,53 +618,61 @@ final class CutoutAppModel {
         core.updateMusicCapturePolicy(policy)
     }
 
-    private func monitorMusic(
-        provider: MobileMusicProviderDto,
-        generation: UInt64
-    ) async {
 #if canImport(MediaPlayer) && os(iOS)
-        guard selectedMusicProvider == provider else { return }
-        guard provider == .appleMusic else {
-            guard !Task.isCancelled,
-                  generation == musicMonitorGeneration,
-                  selectedMusicProvider == provider
+    @MainActor
+    private static func monitorMusic(
+        provider: MobileMusicProviderDto,
+        generation: UInt64,
+        appleMusicProvider: AppleMusicProviderAdapter,
+        isCurrent: @escaping @MainActor () -> Bool,
+        currentGeneration: @escaping @MainActor () -> UInt64?,
+        observedAtMs: @escaping @MainActor () -> UInt64?,
+        record: @escaping @MainActor (MusicProviderObservation) -> Void,
+        refresh: @escaping @MainActor () -> Void
+    ) async {
+        guard isCurrent() else { return }
+        guard provider.monitoringMode == .appleMusicSystemPlayer else {
+            guard !Task.isCancelled, isCurrent(), let observedAtMs = observedAtMs()
             else { return }
-            _ = ingestMusicObservation(
-                unavailableMusicObservation(observedAtMs: core.now().rawValue)
+            record(
+                MusicProviderObservation.unavailable(
+                    provider: provider,
+                    sessionId: "music-unavailable",
+                    observedAtMs: observedAtMs
+                )
             )
             return
         }
         guard await appleMusicProvider.requestAuthorization() else {
-            guard !Task.isCancelled,
-                  generation == musicMonitorGeneration,
-                  selectedMusicProvider == provider
+            guard !Task.isCancelled, isCurrent(), let observedAtMs = observedAtMs()
             else { return }
-            _ = ingestMusicObservation(MusicProviderObservation(
-                snapshot: appleMusicProvider.unauthorizedSnapshot(observedAtMs: core.now().rawValue)
+            record(MusicProviderObservation(
+                snapshot: appleMusicProvider.unauthorizedSnapshot(observedAtMs: observedAtMs)
             ))
             return
         }
-        guard !Task.isCancelled,
-              generation == musicMonitorGeneration,
-              selectedMusicProvider == provider
-        else { return }
-        appleMusicProvider.startMonitoring { [weak self] in
-            self?.refreshMusicSnapshot()
+        guard !Task.isCancelled, isCurrent() else { return }
+        appleMusicProvider.startMonitoring(onChange: refresh)
+        defer {
+            guard let currentGeneration = currentGeneration() else {
+                appleMusicProvider.stopMonitoring()
+                return
+            }
+            if generation == currentGeneration {
+                appleMusicProvider.stopMonitoring()
+            }
         }
-        defer { appleMusicProvider.stopMonitoring() }
         while !Task.isCancelled {
-            guard generation == musicMonitorGeneration,
-                  selectedMusicProvider == provider
-            else { return }
-            refreshMusicSnapshot()
+            guard isCurrent() else { return }
+            refresh()
             do {
                 try await Task.sleep(for: .seconds(1))
             } catch {
                 return
             }
         }
-#endif
     }
+#endif
 
     private func unavailableMusicObservation(observedAtMs: UInt64) -> MusicProviderObservation {
         MusicProviderObservation.unavailable(
@@ -651,14 +682,45 @@ final class CutoutAppModel {
         )
     }
 
-    func connectMusic() {
-#if os(iOS)
+    private func stopMusicMonitoring() {
         musicMonitorTask?.cancel()
+        musicMonitorTask = nil
+#if canImport(MediaPlayer) && os(iOS)
+        appleMusicProvider.stopMonitoring()
+#endif
+    }
+
+    func connectMusic() {
+#if os(iOS) && canImport(MediaPlayer)
+        stopMusicMonitoring()
         musicMonitorGeneration &+= 1
         let generation = musicMonitorGeneration
         let provider = selectedMusicProvider
-        musicMonitorTask = Task { [weak self] in
-            await self?.monitorMusic(provider: provider, generation: generation)
+        let appleMusicProvider = self.appleMusicProvider
+        musicMonitorTask = Task { [weak self, appleMusicProvider] in
+            await Self.monitorMusic(
+                provider: provider,
+                generation: generation,
+                appleMusicProvider: appleMusicProvider,
+                isCurrent: { [weak self] in
+                    guard let self else { return false }
+                    return self.musicMonitorGeneration == generation
+                        && self.selectedMusicProvider == provider
+                },
+                currentGeneration: { [weak self] in
+                    self?.musicMonitorGeneration
+                },
+                observedAtMs: { [weak self] in
+                    self?.core.now().rawValue
+                },
+                record: { [weak self] observation in
+                    guard let self else { return }
+                    _ = self.ingestMusicObservation(observation)
+                },
+                refresh: { [weak self] in
+                    self?.refreshMusicSnapshot()
+                }
+            )
         }
 #else
         _ = ingestMusicObservation(unavailableMusicObservation(observedAtMs: core.now().rawValue))
