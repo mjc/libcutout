@@ -30,6 +30,12 @@ private enum MusicObservationValidator {
 
     static func accepts(_ snapshot: MobileMusicSnapshotDto) -> Bool {
         guard acceptsRequired(snapshot.sessionId, maxBytes: identifierMaxBytes) else { return false }
+        if let position = snapshot.positionMilliseconds,
+           let duration = snapshot.durationMilliseconds,
+           position > duration
+        {
+            return false
+        }
         guard let item = snapshot.item else { return true }
         guard acceptsRequired(item.identifier, maxBytes: identifierMaxBytes) else { return false }
         return acceptsOptional(item.title, maxBytes: displayTextMaxBytes)

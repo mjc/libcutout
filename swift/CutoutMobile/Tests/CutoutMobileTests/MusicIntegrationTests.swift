@@ -279,6 +279,33 @@ final class MusicIntegrationTests: XCTestCase {
         XCTAssertNil(coordinator.nowPlaying)
     }
 
+    @MainActor
+    func testCoordinatorRejectsImpossiblePlaybackPositionBeforeProjectingIt() throws {
+        let state = MobileRideMapState()
+        _ = try state.startGpsOnly(atMs: 1_000, lastConnectedVehicle: nil)
+        try state.setMusicHistoryPolicy(.humanReadable)
+        let coordinator = MusicIntegrationCoordinator(rideMapState: state)
+        let invalid = MobileMusicSnapshotDto(
+            provider: .appleMusic,
+            sessionId: "session",
+            state: .playing,
+            item: MobileMusicItemDto(identifier: "track-1", title: "Song", artist: "Artist"),
+            positionMilliseconds: 101,
+            durationMilliseconds: 100,
+            observedAtMs: 1_100,
+            capabilities: .init(previous: true, play: false, pause: true, next: true, openProvider: true)
+        )
+
+        XCTAssertNil(
+            try coordinator.ingest(
+                snapshot: invalid,
+                wallClockAtMs: 1_700_000_000_100,
+                clockUncertaintyMs: 5
+            )
+        )
+        XCTAssertNil(coordinator.nowPlaying)
+    }
+
     func testNowPlayingExposesOnlySupportedTransportCommands() {
         let nowPlaying = MusicNowPlaying(
             provider: .appleMusic,
