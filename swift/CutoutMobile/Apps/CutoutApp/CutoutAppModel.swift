@@ -40,6 +40,7 @@ struct MusicMonitorSceneState: Equatable {
 
 struct MusicHistoryQueryResult: Equatable, Sendable {
     let events: [MobileMusicRideEventDto]
+    let state: MobileMusicHistoryStateDto?
     let error: MobileRideMapError?
 }
 
@@ -115,6 +116,7 @@ final class CutoutAppModel {
     private(set) var rideMapHistorySegmentsOmittedByBudget = false
     private(set) var rideMapHistoryDetailDisplayPoints = [MobileRideMapRouteDisplayPoint]()
     private(set) var rideMapHistoryDetailMusicTimeline = [MobileMusicRideEventDto]()
+    private(set) var rideMapHistoryDetailMusicState: MobileMusicHistoryStateDto?
     private(set) var rideMapHistoryDetailMusicError: MobileRideMapError?
     private(set) var rideMapHistoryDetailCameraRegion: MobileRideMapCameraRegion?
     private(set) var rideMapHistoryDetailEndpointMetadata = MobileRideMapRouteEndpointMetadata.empty
@@ -1209,9 +1211,30 @@ final class CutoutAppModel {
     ) -> MusicHistoryQueryResult {
         switch result {
         case let .success(events):
-            MusicHistoryQueryResult(events: events, error: nil)
+            MusicHistoryQueryResult(events: events, state: nil, error: nil)
         case let .failure(error):
-            MusicHistoryQueryResult(events: [], error: error)
+            MusicHistoryQueryResult(events: [], state: nil, error: error)
+        }
+    }
+
+    nonisolated static func musicHistoryQueryResult(
+        _ eventsResult: Result<[MobileMusicRideEventDto], MobileRideMapError>,
+        state stateResult: Result<MobileMusicHistoryStateDto, MobileRideMapError>
+    ) -> MusicHistoryQueryResult {
+        if case let .failure(error) = stateResult {
+            return MusicHistoryQueryResult(events: [], state: nil, error: error)
+        }
+        let state: MobileMusicHistoryStateDto?
+        if case let .success(value) = stateResult {
+            state = value
+        } else {
+            state = nil
+        }
+        switch eventsResult {
+        case let .success(events):
+            return MusicHistoryQueryResult(events: events, state: state, error: nil)
+        case let .failure(error):
+            return MusicHistoryQueryResult(events: [], state: state, error: error)
         }
     }
 
@@ -1348,9 +1371,23 @@ final class CutoutAppModel {
                         } catch {
                             musicTimelineResult = .failure(Self.mapRideMapError(error))
                         }
+                        let musicHistoryStateResult: Result<
+                            MobileMusicHistoryStateDto,
+                            MobileRideMapError
+                        >
+                        do {
+                            musicHistoryStateResult = .success(
+                                try state.storedMusicHistoryState(rideID: rideID)
+                            )
+                        } catch {
+                            musicHistoryStateResult = .failure(Self.mapRideMapError(error))
+                        }
                         return (
                             projection,
-                            Self.musicHistoryQueryResult(musicTimelineResult)
+                            Self.musicHistoryQueryResult(
+                                musicTimelineResult,
+                                state: musicHistoryStateResult
+                            )
                         )
                     }
                 }, onCancel: {
@@ -1372,6 +1409,7 @@ final class CutoutAppModel {
                 self.rideMapHistoryDetailSourcePointsOmittedByBudget = projection.pointsOmittedByBudget
                 self.rideMapHistoryDetailSourceSegmentsOmittedByBudget = projection.segmentsOmittedByBudget
                 self.rideMapHistoryDetailMusicTimeline = musicHistory.events
+                self.rideMapHistoryDetailMusicState = musicHistory.state
                 self.rideMapHistoryDetailMusicError = musicHistory.error
                 self.replaceRideMapHistoryDetailDisplayPoints(
                     projection.points,
@@ -1459,6 +1497,7 @@ final class CutoutAppModel {
 
     private func clearRideMapHistoryMusic() {
         rideMapHistoryDetailMusicTimeline.removeAll(keepingCapacity: true)
+        rideMapHistoryDetailMusicState = nil
         rideMapHistoryDetailMusicError = nil
     }
 

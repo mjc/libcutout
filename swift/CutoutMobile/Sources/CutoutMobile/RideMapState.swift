@@ -817,6 +817,16 @@ public final class MobileRideMapState: @unchecked Sendable {
         }
     }
 
+    /// Returns the durable state of a ride's music-history record.
+    ///
+    /// Unlike an empty event list, the state can distinguish history that was
+    /// never associated, explicitly disabled, redacted, or explicitly deleted.
+    public func storedMusicHistoryState(rideID: String) throws -> MobileMusicHistoryStateDto {
+        try withDatabase { database in
+            try database.musicHistoryState(rideId: MobileRideIdDto(value: rideID))
+        }
+    }
+
     /// Deletes a ride's music metadata while preserving the ride and its route.
     public func deleteMusicHistory(rideID: String) throws {
         if let snapshot = core?.currentSnapshot(atMs: Self.monotonicMillisecondsNow()), snapshot.rideId == rideID {

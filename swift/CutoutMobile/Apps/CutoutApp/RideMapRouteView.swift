@@ -178,6 +178,7 @@ struct RideMapRouteView: View {
             rides: model.rideMapHistory,
             displayPoints: model.rideMapHistoryDetailDisplayPoints,
             musicTimeline: model.rideMapHistoryDetailMusicTimeline,
+            musicHistoryState: model.rideMapHistoryDetailMusicState,
             musicError: model.rideMapHistoryDetailMusicError,
             cameraRegion: model.rideMapHistoryDetailCameraRegion,
             endpointMetadata: model.rideMapHistoryDetailEndpointMetadata,

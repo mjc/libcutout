@@ -3,6 +3,37 @@ import CutoutMobileFFI
 import MapKit
 import SwiftUI
 
+private extension MobileMusicHistoryStateDto {
+    var detailTitle: String {
+        switch self {
+        case .missing:
+            localizedAppText("music.history.state.missing")
+        case .disabled:
+            localizedAppText("music.history.state.disabled")
+        case .redacted:
+            localizedAppText("music.history.state.redacted")
+        case .humanReadable:
+            localizedAppText("music.history.state.human_readable")
+        case .deleted:
+            localizedAppText("music.history.state.deleted")
+        }
+    }
+
+    var detailSymbol: String {
+        switch self {
+        case .missing: "minus.circle"
+        case .disabled: "nosign"
+        case .redacted: "eye.slash"
+        case .humanReadable: "music.note"
+        case .deleted: "trash"
+        }
+    }
+
+    func showsDetailStatus(timelineIsEmpty: Bool) -> Bool {
+        self != .humanReadable || timelineIsEmpty
+    }
+}
+
 struct RideMapHistoryDetailHeader: View {
     let close: () -> Void
 
@@ -126,6 +157,7 @@ struct RideMapHistoryDetailSummary: View {
     let segmentsOmittedByBudget: Bool
     let canonicalBackgroundGapCount: UInt64
     let musicTimeline: [MobileMusicRideEventDto]
+    let musicHistoryState: MobileMusicHistoryStateDto?
     let musicError: MobileRideMapError?
     let forgetMusicHistory: () -> Bool
     let state: RideMapHistoryRouteState
@@ -203,40 +235,53 @@ struct RideMapHistoryDetailSummary: View {
                     .foregroundStyle(.orange)
                     .accessibilityValue(Text(String(describing: musicError)))
                     .accessibilityIdentifier("ride-map.detail-music-history-unavailable")
-                } else if musicTimeline.isEmpty == false {
-                    VStack(alignment: .leading, spacing: 8) {
-                        HStack(alignment: .firstTextBaseline) {
-                            Text(localizedAppText("music.timeline.title"))
-                                .font(.headline.weight(.semibold))
-                            Spacer()
+                } else {
+                    if let musicHistoryState,
+                       musicHistoryState.showsDetailStatus(timelineIsEmpty: musicTimeline.isEmpty)
+                    {
+                        Label(
+                            musicHistoryState.detailTitle,
+                            systemImage: musicHistoryState.detailSymbol
+                        )
+                        .font(.caption)
+                        .foregroundStyle(PevColors.muted)
+                        .accessibilityIdentifier("ride-map.detail-music-history-state")
+                    }
+                    if musicTimeline.isEmpty == false {
+                        VStack(alignment: .leading, spacing: 8) {
+                            HStack(alignment: .firstTextBaseline) {
+                                Text(localizedAppText("music.timeline.title"))
+                                    .font(.headline.weight(.semibold))
+                                Spacer()
+                                Button(localizedAppText("music.history.forget"), role: .destructive) {
+                                    isMusicHistoryForgetConfirmationPresented = true
+                                }
+                                .font(.caption.weight(.semibold))
+                                .accessibilityIdentifier("ride-map.detail-forget-music-history")
+                            }
+                            MusicTimelineRows(events: musicTimeline)
+                        }
+                        .accessibilityIdentifier("ride-map.detail-music-timeline")
+                        .confirmationDialog(
+                            localizedAppText("music.history.forget.title"),
+                            isPresented: $isMusicHistoryForgetConfirmationPresented,
+                            titleVisibility: .visible
+                        ) {
                             Button(localizedAppText("music.history.forget"), role: .destructive) {
-                                isMusicHistoryForgetConfirmationPresented = true
+                                if forgetMusicHistory() == false {
+                                    isMusicHistoryForgetErrorPresented = true
+                                }
                             }
-                            .font(.caption.weight(.semibold))
-                            .accessibilityIdentifier("ride-map.detail-forget-music-history")
+                            Button(localizedAppText("common.cancel"), role: .cancel) {}
+                        } message: {
+                            Text(localizedAppText("music.history.forget.message"))
                         }
-                        MusicTimelineRows(events: musicTimeline)
-                    }
-                    .accessibilityIdentifier("ride-map.detail-music-timeline")
-                    .confirmationDialog(
-                        localizedAppText("music.history.forget.title"),
-                        isPresented: $isMusicHistoryForgetConfirmationPresented,
-                        titleVisibility: .visible
-                    ) {
-                        Button(localizedAppText("music.history.forget"), role: .destructive) {
-                            if forgetMusicHistory() == false {
-                                isMusicHistoryForgetErrorPresented = true
-                            }
+                        .alert(
+                            localizedAppText("music.history.forget.error"),
+                            isPresented: $isMusicHistoryForgetErrorPresented
+                        ) {
+                            Button(localizedAppText("common.cancel"), role: .cancel) {}
                         }
-                        Button(localizedAppText("common.cancel"), role: .cancel) {}
-                    } message: {
-                        Text(localizedAppText("music.history.forget.message"))
-                    }
-                    .alert(
-                        localizedAppText("music.history.forget.error"),
-                        isPresented: $isMusicHistoryForgetErrorPresented
-                    ) {
-                        Button(localizedAppText("common.cancel"), role: .cancel) {}
                     }
                 }
                 if pointsTruncated {

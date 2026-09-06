@@ -1,7 +1,6 @@
 use cutout_core::{
     MusicEventTiming, MusicHistoryPolicy, MusicHistoryState, MusicProvider, MusicRideEvent,
-    MusicRideEventKind,
-    PevcapEncoding, PevcapEvent, PevcapPhoneLocation, PevcapReader,
+    MusicRideEventKind, PevcapEncoding, PevcapEvent, PevcapPhoneLocation, PevcapReader,
 };
 use cutout_ride_maps::{
     AverageSpeedMillimetresPerSecond, Coordinate, LocationAdmission, LocationSample,
@@ -2132,10 +2131,7 @@ impl RideDatabase {
     ///
     /// Returns [`StorageError::NotFound`] when the ride does not exist or a storage error when
     /// the persisted state cannot be decoded.
-    pub fn music_history_state(
-        &self,
-        ride_id: RideId,
-    ) -> Result<MusicHistoryState, StorageError> {
+    pub fn music_history_state(&self, ride_id: RideId) -> Result<MusicHistoryState, StorageError> {
         self.request(move |reply| Command::MusicHistoryState { ride_id, reply })
     }
     /// Stores the display name associated with a platform-local device identifier.

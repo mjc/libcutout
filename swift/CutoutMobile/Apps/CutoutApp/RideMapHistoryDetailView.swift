@@ -8,6 +8,7 @@ struct RideMapHistoryDetailView: View {
     let rides: [MobileRideMapHistorySummaryDto]
     let displayPoints: [MobileRideMapRouteDisplayPoint]
     let musicTimeline: [MobileMusicRideEventDto]
+    let musicHistoryState: MobileMusicHistoryStateDto?
     let musicError: MobileRideMapError?
     /// Rust's bounded projection supplies the camera; the default keeps older route-shell
     /// callers source-compatible until they pass the projection metadata through.
@@ -161,6 +162,7 @@ struct RideMapHistoryDetailView: View {
                                 segmentsOmittedByBudget: segmentsOmittedByBudget,
                                 canonicalBackgroundGapCount: canonicalBackgroundGapCount,
                                 musicTimeline: musicTimeline,
+                                musicHistoryState: musicHistoryState,
                                 musicError: musicError,
                                 forgetMusicHistory: {
                                     guard let activeHistoryID else { return false }
