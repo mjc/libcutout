@@ -6931,6 +6931,11 @@ impl MobileRideMapCore {
     /// This is available for terminal rides that remain selected until the user saves or
     /// discards them; active and paused rides normally use the policy setter so their capture
     /// context is updated by the app coordinator.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when no current ride exists, storage is unavailable, or the ride
+    /// identifier cannot be parsed.
     pub fn delete_current_music_history(&self) -> Result<(), MobileRideMapCoreErrorDto> {
         let mut state = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
         let Some(ride_id) = state.active_ride_id.clone() else {
