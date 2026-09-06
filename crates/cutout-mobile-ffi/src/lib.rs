@@ -9485,10 +9485,10 @@ impl MobilePevcapCaptureBuilder {
         &self,
         music: Option<MobilePevcapMusicEventDto>,
     ) -> Result<Option<PevcapMusicEvent>, ()> {
-        match music {
-            Some(music) => PevcapMusicEvent::try_from(music).map(Some).map_err(|_| ()),
-            None => Ok(self.take_music_context()),
-        }
+        let pending = self.take_music_context();
+        music.map_or(Ok(pending), |music| {
+            PevcapMusicEvent::try_from(music).map(Some).map_err(|_| ())
+        })
     }
 
     fn metadata(&self) -> CaptureMetadata {
