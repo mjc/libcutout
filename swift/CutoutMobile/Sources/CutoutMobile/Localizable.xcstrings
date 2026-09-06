@@ -869,6 +869,142 @@
       "comment" : "Label for a segment with an unknown start reason.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Unknown segment reason" } } }
     },
+    "music.done" : {
+      "comment" : "Dismisses the expanded music player.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Done" } } }
+    },
+    "music.expand" : {
+      "comment" : "Opens the expanded music player.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Music details" } } }
+    },
+    "music.hide" : {
+      "comment" : "Hides the compact music player.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Hide music player" } } }
+    },
+    "music.history.disabled" : {
+      "comment" : "History policy that records no music events.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Don't save music history" } } }
+    },
+    "music.history.disabled.explanation" : {
+      "comment" : "Explanation for the disabled music history policy.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Music stays in the player and is not added to rides." } } }
+    },
+    "music.history.human_readable" : {
+      "comment" : "History policy that saves readable music metadata.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Save readable history" } } }
+    },
+    "music.history.human_readable.explanation" : {
+      "comment" : "Explanation for readable music history.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Save provider, title, artist, and playback events with the ride." } } }
+    },
+    "music.history.opaque_item" : {
+      "comment" : "History policy that saves provider item identifiers only.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Save item IDs only" } } }
+    },
+    "music.history.opaque_item.explanation" : {
+      "comment" : "Explanation for opaque music history.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Save provider and item IDs without readable track metadata." } } }
+    },
+    "music.history.title" : {
+      "comment" : "Music history privacy setting title.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Ride music history" } } }
+    },
+    "music.next" : {
+      "comment" : "Skips to the next track.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Next track" } } }
+    },
+    "music.not_playing" : {
+      "comment" : "Placeholder when no track is playing.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Not playing" } } }
+    },
+    "music.open_provider" : {
+      "comment" : "Opens the selected music provider.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Open music app" } } }
+    },
+    "music.pause" : {
+      "comment" : "Pauses the current track.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Pause" } } }
+    },
+    "music.play" : {
+      "comment" : "Starts the current track.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Play" } } }
+    },
+    "music.previous" : {
+      "comment" : "Returns to the previous track.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Previous track" } } }
+    },
+    "music.provider.apple_music" : {
+      "comment" : "Apple Music provider name.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Apple Music" } } }
+    },
+    "music.provider.select" : {
+      "comment" : "Music provider selection label.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Music provider" } } }
+    },
+    "music.provider.spotify" : {
+      "comment" : "Spotify provider name.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Spotify" } } }
+    },
+    "music.restore" : {
+      "comment" : "Restores the hidden compact music player.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Show music player" } } }
+    },
+    "music.state.authorization_required" : {
+      "comment" : "Music provider requires authorization.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Authorization required" } } }
+    },
+    "music.state.buffering" : {
+      "comment" : "Music provider is buffering.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Buffering" } } }
+    },
+    "music.state.disconnected" : {
+      "comment" : "Music provider disconnected.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Music disconnected" } } }
+    },
+    "music.state.interrupted" : {
+      "comment" : "Music playback was interrupted.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Playback interrupted" } } }
+    },
+    "music.state.stale" : {
+      "comment" : "Music provider data is stale.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Music status is stale" } } }
+    },
+    "music.state.stopped" : {
+      "comment" : "Music playback is stopped.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Stopped" } } }
+    },
+    "music.state.unavailable" : {
+      "comment" : "Music provider is unavailable.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Music unavailable" } } }
+    },
+    "music.timeline.item_changed" : {
+      "comment" : "Ride timeline event for a changed track.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Track changed" } } }
+    },
+    "music.timeline.pause" : {
+      "comment" : "Ride timeline event for pausing music.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Paused" } } }
+    },
+    "music.timeline.play" : {
+      "comment" : "Ride timeline event for starting music.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Playing" } } }
+    },
+    "music.timeline.provider_disconnected" : {
+      "comment" : "Ride timeline event for a disconnected music provider.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Provider disconnected" } } }
+    },
+    "music.timeline.skip" : {
+      "comment" : "Ride timeline event for skipping tracks.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Skipped" } } }
+    },
+    "music.timeline.title" : {
+      "comment" : "Ride music timeline section title.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Music timeline" } } }
+    },
+    "music.timeline.unknown_item" : {
+      "comment" : "Fallback for a music event without an item title.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Unknown track" } } }
+    },
     "tab.reason.map_unavailable" : {
       "comment" : "Reason shown when the Map tab is disabled.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Map is not available yet." } } }
