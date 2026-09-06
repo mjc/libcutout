@@ -4841,21 +4841,7 @@ fn save_music_event(
             value: sequence.to_string(),
         });
     }
-    let previous_monotonic = transaction
-        .query_row(
-            "SELECT monotonic_at_ms FROM ride_music_event
-             WHERE ride_id = ?1 ORDER BY sequence DESC LIMIT 1",
-            [ride_id.uuid().to_string()],
-            |row| row.get::<_, u64>(0),
-        )
-        .optional()?;
-    if let Some(previous_monotonic) = previous_monotonic
-        && event.monotonic_at().as_milliseconds() < previous_monotonic
-    {
-        return Err(StorageError::MusicEventOutOfOrder {
-            sequence: u64::try_from(sequence).unwrap_or(u64::MAX),
-        });
-    }
+    ensure_music_event_monotonic(&transaction, ride_id, sequence, event)?;
     if sequence == i64::try_from(cutout_core::MAX_MUSIC_TIMELINE_EVENTS).unwrap_or(i64::MAX)
         && sequence == count
     {
@@ -4889,6 +4875,30 @@ fn save_music_event(
         ],
     )?;
     transaction.commit()?;
+    Ok(())
+}
+
+fn ensure_music_event_monotonic(
+    transaction: &Transaction<'_>,
+    ride_id: RideId,
+    sequence: i64,
+    event: &MusicRideEvent,
+) -> Result<(), StorageError> {
+    let previous_monotonic = transaction
+        .query_row(
+            "SELECT monotonic_at_ms FROM ride_music_event
+             WHERE ride_id = ?1 ORDER BY sequence DESC LIMIT 1",
+            [ride_id.uuid().to_string()],
+            |row| row.get::<_, u64>(0),
+        )
+        .optional()?;
+    if let Some(previous_monotonic) = previous_monotonic
+        && event.monotonic_at().as_milliseconds() < previous_monotonic
+    {
+        return Err(StorageError::MusicEventOutOfOrder {
+            sequence: u64::try_from(sequence).unwrap_or(u64::MAX),
+        });
+    }
     Ok(())
 }
 
