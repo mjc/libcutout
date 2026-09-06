@@ -553,6 +553,19 @@ final class CutoutAppModelTests: XCTestCase {
     }
 
     @MainActor
+    func testMusicHistoryQueryFailureRemainsDistinctFromAnEmptyTimeline() {
+        let result = CutoutAppModel.musicHistoryQueryResult(
+            .failure(.storageError("Rust ride database is unavailable"))
+        )
+
+        XCTAssertTrue(result.events.isEmpty)
+        XCTAssertEqual(
+            result.error,
+            .storageError("Rust ride database is unavailable")
+        )
+    }
+
+    @MainActor
     func testRideMapLifecycleControlsUpdateRecordingState() {
         let driver = SessionDriverSpy(rows: [])
         let model = CutoutAppModel(core: driver)
