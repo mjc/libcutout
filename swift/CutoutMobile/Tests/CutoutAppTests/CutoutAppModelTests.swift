@@ -198,6 +198,7 @@ final class CutoutAppModelTests: XCTestCase {
         XCTAssertTrue(model.musicTimelineEvents.isEmpty)
         XCTAssertEqual(driver.rideMapState.currentMusicHistoryPolicy(), .disabled)
         XCTAssertTrue(driver.rideMapState.currentMusicEvents().isEmpty)
+        XCTAssertNil(driver.musicCaptureObservation)
     }
 
     @MainActor
