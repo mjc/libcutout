@@ -32,6 +32,15 @@ final class MusicIntegrationTests: XCTestCase {
         XCTAssertNil(tracker.pendingHint)
     }
 
+    func testTransitionHintCanBeClearedWithoutIssuingAnEmptyCommand() {
+        var tracker = MusicTransitionHintTracker()
+        tracker.issue(.skip)
+
+        tracker.clear()
+
+        XCTAssertNil(tracker.pendingHint)
+    }
+
     private func nowPlaying(trackID: String) -> MusicNowPlaying {
         MusicNowPlaying(
             provider: .appleMusic,
