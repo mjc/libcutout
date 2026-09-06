@@ -518,11 +518,23 @@ final class CutoutAppModel {
 #endif
     }
 
+    private func unavailableMusicObservation(observedAtMs: UInt64) -> MusicProviderObservation {
+        MusicProviderObservation.unavailable(
+            provider: selectedMusicProvider,
+            sessionId: "music-unavailable",
+            observedAtMs: observedAtMs
+        )
+    }
+
     func connectMusic() {
+#if os(iOS)
         musicMonitorTask?.cancel()
         musicMonitorTask = Task { [weak self] in
             await self?.monitorMusic()
         }
+#else
+        _ = ingestMusicObservation(unavailableMusicObservation(observedAtMs: core.now().rawValue))
+#endif
     }
 
     private func restoreRideMapState() {
@@ -976,6 +988,25 @@ final class CutoutAppModel {
             rideID,
             requestedPointLimit: Int(Self.rideMapLimits.historyContextPerRouteBudget)
         )
+    }
+
+    /// Removes only the selected ride's persisted music metadata.
+    @discardableResult
+    func forgetMusicHistory(for rideID: String) -> Bool {
+        guard let state = core.rideMapStateHandle else {
+            rideMapHistoryError = .storageError("Rust ride database is unavailable")
+            return false
+        }
+        do {
+            try state.deleteMusicHistory(rideID: rideID)
+            if selectedRideMapHistoryID == rideID {
+                rideMapHistoryDetailMusicTimeline.removeAll(keepingCapacity: true)
+            }
+            return true
+        } catch {
+            rideMapHistoryError = Self.mapRideMapError(error)
+            return false
+        }
     }
 
     static func detailPointsAreTruncated(
