@@ -6140,6 +6140,23 @@ struct PendingMapLocationWrite {
 }
 
 impl MobileRideMapCoreInner {
+    fn apply_music_history_policy(&mut self, policy: CoreMusicHistoryPolicy) {
+        self.music_history_policy = policy;
+        match policy {
+            CoreMusicHistoryPolicy::Disabled => {
+                self.music_timeline = cutout_core::MusicTimeline::new();
+            }
+            CoreMusicHistoryPolicy::OpaqueItem => {
+                self.music_timeline.redact_display_metadata();
+            }
+            CoreMusicHistoryPolicy::HumanReadable => {}
+        }
+    }
+
+    fn reset_music_history(&mut self) {
+        self.apply_music_history_policy(CoreMusicHistoryPolicy::Disabled);
+    }
+
     fn transition_state(
         &mut self,
         event: MobileRideEventDto,
@@ -6557,7 +6574,7 @@ impl MobileRideMapCoreInner {
         self.admission_recorder = staged_recorder;
         self.active_ride_id = Some(id);
         self.settled_ride_id = None;
-        self.music_history_policy = CoreMusicHistoryPolicy::Disabled;
+        self.reset_music_history();
         self.music_restore_failed = false;
         self.pending_location_writes.clear();
         Ok(self.snapshot(MobileRideLifecycleStateDto::Active))
@@ -6916,7 +6933,7 @@ impl MobileRideMapCore {
             .inner
             .save_music_history_policy(ride_id, policy)
             .map_err(map_storage_core_error)?;
-        state.music_history_policy = policy;
+        state.apply_music_history_policy(policy);
         state.music_restore_failed = false;
         Ok(())
     }
@@ -17289,5 +17306,53 @@ mod tests {
             Err(MobileRideMapCoreErrorDto::Storage(message))
                 if message == "Rust ride database is unavailable"
         ));
+    }
+
+    #[test]
+    fn lowering_music_policy_redacts_the_active_timeline() {
+        let state = MobileRideMapCore::new();
+        state.start_gps_only(1_000, None).expect("ride starts");
+        state
+            .set_music_history_policy(MobileMusicHistoryPolicyDto::HumanReadable)
+            .expect("policy can be enabled while recording");
+        let snapshot = MobileMusicSnapshotDto {
+            provider: MobileMusicProviderDto::AppleMusic,
+            session_id: "session".to_owned(),
+            state: MobileMusicPlaybackStateDto::Playing,
+            item: Some(MobileMusicItemDto {
+                identifier: "track-1".to_owned(),
+                title: Some("Song".to_owned()),
+                artist: Some("Artist".to_owned()),
+            }),
+            position_milliseconds: None,
+            duration_milliseconds: None,
+            observed_at_ms: 2_000,
+            capabilities: MobileMusicCapabilitiesDto {
+                previous: false,
+                play: false,
+                pause: true,
+                next: true,
+                open_provider: true,
+            },
+        };
+
+        state
+            .record_music_event(
+                snapshot,
+                MobileMusicRideEventKindDto::Play,
+                2_000,
+                1_700_000_000_000,
+                5,
+            )
+            .expect("opted-in event is recorded");
+        state
+            .set_music_history_policy(MobileMusicHistoryPolicyDto::OpaqueItem)
+            .expect("opaque policy can redact while recording");
+
+        let events = state.current_music_events().expect("active timeline");
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].item_identifier.as_deref(), Some("track-1"));
+        assert_eq!(events[0].title, None);
+        assert_eq!(events[0].artist, None);
     }
 }

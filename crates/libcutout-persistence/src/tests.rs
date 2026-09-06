@@ -4239,7 +4239,6 @@ fn music_history_round_trips_and_can_be_deleted_without_deleting_ride() {
     database.shutdown().unwrap();
     let _ = std::fs::remove_file(path);
 }
-
 #[test]
 fn music_history_policy_downgrade_redacts_existing_display_metadata() {
     let _guard = test_guard();
@@ -4478,4 +4477,44 @@ fn music_event_timestamps_must_fit_sqlite_integer() {
 
     database.shutdown().unwrap();
     let _ = std::fs::remove_file(path);
+}
+#[test]
+fn lowering_music_history_policy_redacts_existing_display_metadata() {
+    let _guard = test_guard();
+    let database = RideDatabase::open(std::path::Path::new(":memory:")).unwrap();
+    let ride = database
+        .create_started_live_ride(1_700_000_000_000, 100, None)
+        .unwrap();
+    let event = MusicRideEvent::new(
+        MusicProvider::AppleMusic,
+        Some("opaque-track".to_owned()),
+        Some("Song".to_owned()),
+        Some("Artist".to_owned()),
+        MusicRideEventKind::ItemChanged,
+        MusicEventTiming {
+            monotonic_at: MonotonicTimestamp::new(110),
+            wall_clock_at: WallClockUnixTimestamp::new(1_700_000_000_110),
+            clock_uncertainty_milliseconds: 5,
+        },
+    )
+    .unwrap();
+
+    database
+        .save_music_event(ride, MusicHistoryPolicy::HumanReadable, 0, event)
+        .unwrap();
+    database
+        .save_music_history_policy(ride, MusicHistoryPolicy::OpaqueItem)
+        .unwrap();
+
+    let redacted = database.music_events(ride).unwrap();
+    assert_eq!(redacted.len(), 1);
+    assert_eq!(
+        redacted[0]
+            .item_identifier()
+            .map(cutout_core::MusicIdentifier::as_str),
+        Some("opaque-track")
+    );
+    assert_eq!(redacted[0].title(), None);
+    assert_eq!(redacted[0].artist(), None);
+    database.shutdown().unwrap();
 }
