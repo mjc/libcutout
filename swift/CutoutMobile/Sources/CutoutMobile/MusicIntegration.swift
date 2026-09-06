@@ -189,6 +189,13 @@ public struct MusicHistoryPolicyStore {
 
 /// Provider-neutral music state used by the compact ride/map player.
 public struct MusicNowPlaying: Equatable, Sendable {
+    private static let transportCommands: [MobileMusicCommandDto] = [
+        .previous,
+        .play,
+        .pause,
+        .next,
+    ]
+
     public let provider: MobileMusicProviderDto
     public let state: MobileMusicPlaybackStateDto
     public let item: MobileMusicItemDto?
@@ -281,17 +288,12 @@ public struct MusicNowPlaying: Equatable, Sendable {
     }
 
     public var availableTransportCommands: [MobileMusicCommandDto] {
-        var commands = [MobileMusicCommandDto]()
-        if capabilities.previous {
-            commands.append(.previous)
+        Self.transportCommands.filter { command in
+            if command == .play || command == .pause {
+                return command == playPauseCommand
+            }
+            return supports(command)
         }
-        if let playPauseCommand {
-            commands.append(playPauseCommand)
-        }
-        if capabilities.next {
-            commands.append(.next)
-        }
-        return commands
     }
 
     public func supports(_ command: MobileMusicCommandDto) -> Bool {
