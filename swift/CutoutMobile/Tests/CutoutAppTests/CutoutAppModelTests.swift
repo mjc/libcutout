@@ -139,7 +139,8 @@ final class CutoutAppModelTests: XCTestCase {
 
     @MainActor
     func testLoweringActiveMusicPolicyRedactsVisibleTimeline() {
-        let model = CutoutAppModel(core: SessionDriverSpy(rows: []))
+        let driver = SessionDriverSpy(rows: [])
+        let model = CutoutAppModel(core: driver)
         XCTAssertTrue(model.startGpsOnlyRide())
         XCTAssertTrue(model.setMusicHistoryPolicy(.humanReadable))
 
@@ -165,6 +166,7 @@ final class CutoutAppModelTests: XCTestCase {
         XCTAssertTrue(model.setMusicHistoryPolicy(.opaqueItem))
 
         XCTAssertEqual(model.musicTimelineEvents.count, 1)
+        XCTAssertNil(driver.rideMapState.currentMusicEvents().first?.title)
         XCTAssertNil(model.musicTimelineEvents.first?.title)
         XCTAssertNil(model.musicTimelineEvents.first?.artist)
     }
