@@ -414,7 +414,14 @@ final class CutoutAppModel {
     @discardableResult
     func handleMusicCommand(_ command: MobileMusicCommandDto) async -> MusicCommandOutcome {
         guard let nowPlaying = musicNowPlaying else { return .unavailable }
-        guard nowPlaying.supports(command) else { return .refused }
+        let commandIsAvailable: Bool
+        switch command {
+        case .play, .pause, .previous, .next:
+            commandIsAvailable = nowPlaying.availableTransportCommands.contains(command)
+        case .openProvider:
+            commandIsAvailable = nowPlaying.capabilities.openProvider
+        }
+        guard commandIsAvailable else { return .refused }
 #if canImport(MediaPlayer) && os(iOS)
         let skipHintID: UInt64? = switch command {
         case .previous, .next:
