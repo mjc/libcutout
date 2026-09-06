@@ -3577,10 +3577,15 @@ fn ride_export_includes_privacy_filtered_music_history() {
         "libcutout-music-export-{}.json",
         uuid::Uuid::new_v4()
     ));
+    let read_export = || {
+        let export: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&export_path).unwrap()).unwrap();
+        std::fs::remove_file(&export_path).unwrap();
+        export
+    };
 
     database.export_ride_json(ride, &export_path).unwrap();
-    let export: serde_json::Value =
-        serde_json::from_str(&std::fs::read_to_string(&export_path).unwrap()).unwrap();
+    let export = read_export();
     assert_eq!(export["schema_version"], 2);
     assert_eq!(export["music_history"]["state"], "human_readable");
     assert_eq!(export["music_history"]["events"][0]["sequence"], 0);
@@ -3591,22 +3596,27 @@ fn ride_export_includes_privacy_filtered_music_history() {
         .save_music_history_policy(ride, MusicHistoryPolicy::OpaqueItem)
         .unwrap();
     database.export_ride_json(ride, &export_path).unwrap();
-    let export: serde_json::Value =
-        serde_json::from_str(&std::fs::read_to_string(&export_path).unwrap()).unwrap();
+    let export = read_export();
     assert_eq!(export["music_history"]["state"], "redacted");
-    assert_eq!(export["music_history"]["events"][0]["item_identifier"], "opaque-track");
+    assert_eq!(
+        export["music_history"]["events"][0]["item_identifier"],
+        "opaque-track"
+    );
     assert!(export["music_history"]["events"][0]["title"].is_null());
     assert!(export["music_history"]["events"][0]["artist"].is_null());
 
     database.delete_music_history(ride).unwrap();
     database.export_ride_json(ride, &export_path).unwrap();
-    let export: serde_json::Value =
-        serde_json::from_str(&std::fs::read_to_string(&export_path).unwrap()).unwrap();
+    let export = read_export();
     assert_eq!(export["music_history"]["state"], "deleted");
-    assert!(export["music_history"]["events"].as_array().unwrap().is_empty());
+    assert!(
+        export["music_history"]["events"]
+            .as_array()
+            .unwrap()
+            .is_empty()
+    );
 
     close_music_test_database(database, path);
-    let _ = std::fs::remove_file(export_path);
 }
 
 #[test]
