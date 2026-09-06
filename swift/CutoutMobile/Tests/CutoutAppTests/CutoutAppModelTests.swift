@@ -207,6 +207,61 @@ final class CutoutAppModelTests: XCTestCase {
     }
 
     @MainActor
+    func testSavedRideReloadsPersistedMusicTimelineInHistoryDetail() async throws {
+        let driver = SessionDriverSpy(rows: [])
+        let state = driver.rideMapState
+        _ = try state.startGpsOnly(atMs: 100, lastConnectedVehicle: nil)
+        _ = await Self.settle(state, try state.ingestLocation(
+            monotonicMs: 100,
+            wallClockUnixMs: 1_700_000_000_100,
+            latitudeDegrees: 39.7000,
+            longitudeDegrees: -104.9000,
+            horizontalAccuracyMeters: 5
+        ))
+        try state.setMusicHistoryPolicy(.humanReadable)
+        let snapshot = MobileMusicSnapshotDto(
+            provider: .appleMusic,
+            sessionId: "session",
+            state: .playing,
+            item: MobileMusicItemDto(identifier: "track-1", title: "Song", artist: "Artist"),
+            positionMilliseconds: nil,
+            durationMilliseconds: nil,
+            observedAtMs: 200,
+            capabilities: MobileMusicCapabilitiesDto(
+                previous: false,
+                play: false,
+                pause: true,
+                next: true,
+                openProvider: true
+            )
+        )
+        XCTAssertEqual(
+            try state.recordMusicEvent(
+                snapshot: snapshot,
+                kind: .play,
+                monotonicAtMs: 200,
+                wallClockAtMs: 1_700_000_000_200,
+                clockUncertaintyMs: 5
+            ),
+            .recorded
+        )
+        _ = try state.stop(atMs: 300)
+        let ride = try state.save()
+
+        let model = CutoutAppModel(core: driver)
+        model.setRideMapHistoryDateFilter(.allTime)
+        model.loadRideMapHistory(selecting: ride.rideID)
+        await Self.waitUntil("saved ride music timeline", maxTurns: 100_000) {
+            model.selectedRideMapHistoryID == ride.rideID
+                && model.rideMapHistoryDetailMusicTimeline.count == 1
+                && !model.rideMapHistoryDetailRouteLoading
+        }
+
+        XCTAssertEqual(model.rideMapHistoryDetailMusicTimeline.first?.title, "Song")
+        XCTAssertEqual(model.rideMapHistoryDetailMusicTimeline.first?.kind, .play)
+    }
+
+    @MainActor
     func testRestoringPlayerAfterHiddenProviderSwitchDoesNotShowPreviousProvider() {
         let model = CutoutAppModel(core: SessionDriverSpy(rows: []))
         model.restoreMusicPlayer()
