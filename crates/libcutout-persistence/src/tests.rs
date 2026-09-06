@@ -3506,6 +3506,51 @@ fn music_history_round_trips_and_can_be_deleted_without_deleting_ride() {
 }
 
 #[test]
+fn music_history_state_distinguishes_missing_disabled_redacted_and_deleted() {
+    let _guard = test_guard();
+    let (database, path) = music_test_database("history-state");
+    let ride = database
+        .create_started_live_ride(1_700_000_000_000, 100, None)
+        .unwrap();
+
+    assert_eq!(
+        database.music_history_state(ride).unwrap(),
+        cutout_core::MusicHistoryState::Missing
+    );
+
+    database
+        .save_music_history_policy(ride, MusicHistoryPolicy::Disabled)
+        .unwrap();
+    assert_eq!(
+        database.music_history_state(ride).unwrap(),
+        cutout_core::MusicHistoryState::Disabled
+    );
+
+    database
+        .save_music_event(ride, MusicHistoryPolicy::HumanReadable, 0, music_event())
+        .unwrap();
+    assert_eq!(
+        database.music_history_state(ride).unwrap(),
+        cutout_core::MusicHistoryState::HumanReadable
+    );
+
+    database
+        .save_music_history_policy(ride, MusicHistoryPolicy::OpaqueItem)
+        .unwrap();
+    assert_eq!(
+        database.music_history_state(ride).unwrap(),
+        cutout_core::MusicHistoryState::Redacted
+    );
+
+    database.delete_music_history(ride).unwrap();
+    assert_eq!(
+        database.music_history_state(ride).unwrap(),
+        cutout_core::MusicHistoryState::Deleted
+    );
+    close_music_test_database(database, path);
+}
+
+#[test]
 fn music_event_sequence_conflicts_are_not_silently_ignored() {
     let _guard = test_guard();
     let (database, path) = music_test_database("sequence-conflict");
