@@ -36,6 +36,65 @@ public enum MusicCommandOutcome: Equatable, Sendable {
     case unavailable
 }
 
+/// A provider command can explain a subsequent item change without replacing
+/// the Rust-owned event kind contract.
+public enum MusicTransitionHint: Equatable, Sendable {
+    /// The provider accepted a previous/next transport command.
+    case skip
+}
+
+/// Holds a transport hint until the provider reports the resulting state.
+///
+/// System-player notifications can arrive after the immediate post-command
+/// poll, so clearing the hint after one unchanged snapshot would misclassify
+/// an accepted skip as an unsolicited item change.
+public struct MusicTransitionHintTracker: Sendable {
+    public private(set) var pendingHint: MusicTransitionHint?
+
+    public init() {}
+
+    public var hint: MusicTransitionHint? { pendingHint }
+
+    public mutating func issue(_ hint: MusicTransitionHint) {
+        pendingHint = hint
+    }
+
+    public mutating func clear() {
+        pendingHint = nil
+    }
+
+    public mutating func resolve(
+        previous: MusicNowPlaying?,
+        current: MusicNowPlaying?,
+        appliedHint: MusicTransitionHint?
+    ) {
+        guard pendingHint == .skip, appliedHint == .skip else { return }
+        guard let current else {
+            pendingHint = nil
+            return
+        }
+        if MusicTransitionHintTracker.isProviderFailure(current.state) {
+            pendingHint = nil
+            return
+        }
+        guard let previous, current.item != nil else { return }
+        if previous.provider != current.provider
+            || previous.item?.identifier != current.item?.identifier
+        {
+            pendingHint = nil
+        }
+    }
+
+    private static func isProviderFailure(_ state: MobileMusicPlaybackStateDto) -> Bool {
+        switch state {
+        case .unauthorized, .unavailable, .disconnected, .stale:
+            true
+        default:
+            false
+        }
+    }
+}
+
 
 public extension MobileMusicProviderDto {
     static var allCases: [Self] { [.appleMusic, .spotify] }
@@ -345,13 +404,15 @@ public final class MusicIntegrationCoordinator {
     public func ingest(
         snapshot: MobileMusicSnapshotDto,
         wallClockAtMs: UInt64,
-        clockUncertaintyMs: UInt64
+        clockUncertaintyMs: UInt64,
+        transitionHint: MusicTransitionHint? = nil
     ) throws -> MobileMusicTimelineOutcomeDto? {
         try ingest(
             snapshot: snapshot,
             artwork: nil,
             wallClockAtMs: wallClockAtMs,
-            clockUncertaintyMs: clockUncertaintyMs
+            clockUncertaintyMs: clockUncertaintyMs,
+            transitionHint: transitionHint
         )
     }
 
@@ -359,13 +420,18 @@ public final class MusicIntegrationCoordinator {
         snapshot: MobileMusicSnapshotDto,
         artwork: MusicArtwork?,
         wallClockAtMs: UInt64,
-        clockUncertaintyMs: UInt64
+        clockUncertaintyMs: UInt64,
+        transitionHint: MusicTransitionHint?
     ) throws -> MobileMusicTimelineOutcomeDto? {
         resetCorrelationIfRideChanged()
         guard accept(snapshot) else { return nil }
         let previous = lastPersistedNowPlaying
         update(snapshot: snapshot, artwork: artwork)
-        guard let kind = Self.transitionKind(from: previous, to: nowPlaying) else {
+        guard let kind = Self.transitionKind(
+            from: previous,
+            to: nowPlaying,
+            hint: transitionHint
+        ) else {
             return nil
         }
         do {
@@ -398,13 +464,15 @@ public final class MusicIntegrationCoordinator {
     public func ingest(
         observation: MusicProviderObservation,
         wallClockAtMs: UInt64,
-        clockUncertaintyMs: UInt64
+        clockUncertaintyMs: UInt64,
+        transitionHint: MusicTransitionHint? = nil
     ) throws -> MobileMusicTimelineOutcomeDto? {
         try ingest(
             snapshot: observation.snapshot,
             artwork: observation.artwork,
             wallClockAtMs: wallClockAtMs,
-            clockUncertaintyMs: clockUncertaintyMs
+            clockUncertaintyMs: clockUncertaintyMs,
+            transitionHint: transitionHint
         )
     }
 
@@ -480,7 +548,8 @@ public final class MusicIntegrationCoordinator {
 
     private static func transitionKind(
         from previous: MusicNowPlaying?,
-        to current: MusicNowPlaying?
+        to current: MusicNowPlaying?,
+        hint: MusicTransitionHint?
     ) -> MobileMusicRideEventKindDto? {
         guard let current else { return .providerDisconnected }
         guard let previous else { return current.item == nil ? nil : .itemChanged }
@@ -489,7 +558,13 @@ public final class MusicIntegrationCoordinator {
                 ? nil
                 : .providerDisconnected
         }
-        if previous.provider != current.provider || previous.item?.identifier != current.item?.identifier {
+        if previous.provider != current.provider {
+            return .itemChanged
+        }
+        if previous.item?.identifier != current.item?.identifier {
+            if hint == .skip, previous.item != nil, current.item != nil {
+                return .skip
+            }
             return .itemChanged
         }
         switch (previous.state, current.state) {

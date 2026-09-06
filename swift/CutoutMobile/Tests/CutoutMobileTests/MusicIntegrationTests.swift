@@ -17,6 +17,39 @@ final class MusicIntegrationTests: XCTestCase {
         }
     }
 
+    func testTransitionHintRemainsPendingUntilTheItemChanges() {
+        var tracker = MusicTransitionHintTracker()
+        tracker.issue(.skip)
+
+        let unchanged = nowPlaying(trackID: "track-1")
+        XCTAssertEqual(tracker.pendingHint, .skip)
+        XCTAssertEqual(tracker.hint, .skip)
+        tracker.resolve(previous: unchanged, current: unchanged, appliedHint: .skip)
+        XCTAssertEqual(tracker.pendingHint, .skip)
+
+        let changed = nowPlaying(trackID: "track-2")
+        tracker.resolve(previous: unchanged, current: changed, appliedHint: .skip)
+        XCTAssertNil(tracker.pendingHint)
+    }
+
+    func testTransitionHintCanBeClearedWithoutIssuingAnEmptyCommand() {
+        var tracker = MusicTransitionHintTracker()
+        tracker.issue(.skip)
+
+        tracker.clear()
+
+        XCTAssertNil(tracker.pendingHint)
+    }
+
+    private func nowPlaying(trackID: String) -> MusicNowPlaying {
+        MusicNowPlaying(
+            provider: .appleMusic,
+            state: .playing,
+            item: MobileMusicItemDto(identifier: trackID, title: trackID, artist: "Artist"),
+            capabilities: .init(previous: true, play: false, pause: true, next: true, openProvider: true)
+        )
+    }
+
     func testNowPlayingProjectsPlayPauseAndMetadata() {
         let snapshot = MobileMusicSnapshotDto(
             provider: .appleMusic,
@@ -45,5 +78,57 @@ final class MusicIntegrationTests: XCTestCase {
         XCTAssertEqual(nowPlaying.artist, "Artist")
         XCTAssertEqual(nowPlaying.playPauseCommand, .pause)
         XCTAssertTrue(nowPlaying.supports(.next))
+    }
+
+    @MainActor
+    func testCoordinatorClassifiesAcceptedItemSkipSeparatelyFromItemChange() throws {
+        let state = MobileRideMapState()
+        _ = try state.startGpsOnly(atMs: 1_000, lastConnectedVehicle: nil)
+        try state.setMusicHistoryPolicy(.humanReadable)
+        let coordinator = MusicIntegrationCoordinator(rideMapState: state)
+
+        func observation(trackID: String, observedAtMs: UInt64) -> MusicProviderObservation {
+            MusicProviderObservation(
+                snapshot: MobileMusicSnapshotDto(
+                    provider: .appleMusic,
+                    sessionId: "session",
+                    state: .playing,
+                    item: MobileMusicItemDto(
+                        identifier: trackID,
+                        title: trackID,
+                        artist: "Artist"
+                    ),
+                    positionMilliseconds: nil,
+                    durationMilliseconds: nil,
+                    observedAtMs: observedAtMs,
+                    capabilities: MobileMusicCapabilitiesDto(
+                        previous: true,
+                        play: false,
+                        pause: true,
+                        next: true,
+                        openProvider: true
+                    )
+                )
+            )
+        }
+
+        XCTAssertEqual(
+            try coordinator.ingest(
+                observation: observation(trackID: "track-1", observedAtMs: 1_100),
+                wallClockAtMs: 1_700_000_000_100,
+                clockUncertaintyMs: 5
+            ),
+            .recorded
+        )
+        XCTAssertEqual(
+            try coordinator.ingest(
+                observation: observation(trackID: "track-2", observedAtMs: 1_200),
+                wallClockAtMs: 1_700_000_000_200,
+                clockUncertaintyMs: 5,
+                transitionHint: .skip
+            ),
+            .recorded
+        )
+        XCTAssertEqual(coordinator.recordedEvents.map(\.kind), [.itemChanged, .skip])
     }
 }
