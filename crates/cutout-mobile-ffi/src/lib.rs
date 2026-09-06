@@ -3534,6 +3534,12 @@ pub enum MobileRideMapCoreErrorDto {
     Storage(String),
 }
 
+impl MobileRideMapCoreErrorDto {
+    fn storage_unavailable() -> Self {
+        Self::Storage("Rust ride database is unavailable".to_owned())
+    }
+}
+
 /// Telemetry provenance projected onto a live route point.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Enum)]
 pub enum MobileRideMapCoreTelemetryStateDto {
@@ -6917,9 +6923,7 @@ impl MobileRideMapCore {
             .database
             .clone()
         else {
-            return Err(MobileRideMapCoreErrorDto::Storage(
-                "Rust ride database is unavailable".to_owned(),
-            ));
+            return Err(MobileRideMapCoreErrorDto::storage_unavailable());
         };
         database
             .inner
@@ -6944,9 +6948,7 @@ impl MobileRideMapCore {
             return Err(MobileRideMapCoreErrorDto::NoActiveRide);
         };
         let Some(database) = state.database.clone() else {
-            return Err(MobileRideMapCoreErrorDto::Storage(
-                "Rust ride database is unavailable".to_owned(),
-            ));
+            return Err(MobileRideMapCoreErrorDto::storage_unavailable());
         };
         database
             .inner
@@ -16807,9 +16809,7 @@ mod tests {
 
         assert_eq!(
             error,
-            MobileRideMapCoreErrorDto::Storage(
-                "Rust ride database is unavailable".to_owned()
-            )
+            MobileRideMapCoreErrorDto::Storage("Rust ride database is unavailable".to_owned())
         );
     }
 
