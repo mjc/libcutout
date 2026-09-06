@@ -3,6 +3,17 @@ import CutoutMobileFFI
 @testable import CutoutMobile
 
 final class MusicIntegrationTests: XCTestCase {
+    func testProviderMonitoringModeMatchesSupportedLifecycle() {
+        XCTAssertEqual(
+            MobileMusicProviderDto.appleMusic.monitoringMode,
+            .appleMusicSystemPlayer
+        )
+        XCTAssertEqual(
+            MobileMusicProviderDto.spotify.monitoringMode,
+            .unavailable
+        )
+    }
+
     func testMusicHistoryPolicyStoreDefaultsToDisabledAndRoundTrips() throws {
         let suiteName = "MusicHistoryPolicyStoreTests-\(UUID().uuidString)"
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
