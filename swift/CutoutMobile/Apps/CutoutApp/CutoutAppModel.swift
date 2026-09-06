@@ -387,10 +387,11 @@ final class CutoutAppModel {
             outcome = await appleMusicProvider.perform(command)
         }
         if outcome == .accepted {
-            musicTransitionHintTracker.issue(switch command {
+            let transitionHint: MusicTransitionHint? = switch command {
             case .previous, .next: .skip
             default: nil
-            })
+            }
+            musicTransitionHintTracker.issue(transitionHint)
             refreshMusicSnapshot()
         }
         return outcome
@@ -464,24 +465,31 @@ final class CutoutAppModel {
             } else if outcome == .disabled {
                 core.updateMusicCaptureObservation(nil)
             }
-            musicTransitionHintTracker.resolve(
-                previous: previousNowPlaying,
-                current: musicCoordinator.nowPlaying,
+            finishMusicObservation(
+                previousNowPlaying: previousNowPlaying,
                 appliedHint: transitionHint
             )
-            musicTimelineEvents = musicCoordinator.recordedEvents
-            musicNowPlaying = isMusicPlayerHidden ? nil : musicCoordinator.nowPlaying
             return true
         } catch {
-            musicTransitionHintTracker.resolve(
-                previous: previousNowPlaying,
-                current: musicCoordinator.nowPlaying,
+            finishMusicObservation(
+                previousNowPlaying: previousNowPlaying,
                 appliedHint: transitionHint
             )
-            musicTimelineEvents = musicCoordinator.recordedEvents
-            musicNowPlaying = isMusicPlayerHidden ? nil : musicCoordinator.nowPlaying
             return false
         }
+    }
+
+    private func finishMusicObservation(
+        previousNowPlaying: MusicNowPlaying?,
+        appliedHint: MusicTransitionHint?
+    ) {
+        musicTransitionHintTracker.resolve(
+            previous: previousNowPlaying,
+            current: musicCoordinator.nowPlaying,
+            appliedHint: appliedHint
+        )
+        musicTimelineEvents = musicCoordinator.recordedEvents
+        musicNowPlaying = isMusicPlayerHidden ? nil : musicCoordinator.nowPlaying
     }
 
     private func pevcapMusicObservation(
