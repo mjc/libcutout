@@ -225,6 +225,7 @@ final class MusicIntegrationTests: XCTestCase {
         XCTAssertNil(MusicTimeConversion.milliseconds(.nan))
         XCTAssertNil(MusicTimeConversion.milliseconds(.infinity))
         XCTAssertNil(MusicTimeConversion.milliseconds(.greatestFiniteMagnitude))
+        XCTAssertNil(MusicTimeConversion.milliseconds(Double(UInt64.max) / 1_000))
     }
 
     func testMusicTimelineIDsUseTheRustEventSequence() {

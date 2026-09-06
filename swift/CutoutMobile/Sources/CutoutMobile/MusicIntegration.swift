@@ -534,7 +534,7 @@ enum MusicTimeConversion {
     static func milliseconds(_ seconds: TimeInterval) -> UInt64? {
         guard seconds.isFinite, seconds >= 0 else { return nil }
         let milliseconds = seconds * 1_000
-        guard milliseconds <= Double(UInt64.max) else { return nil }
+        guard milliseconds < Double(UInt64.max) else { return nil }
         return UInt64(milliseconds)
     }
 }
