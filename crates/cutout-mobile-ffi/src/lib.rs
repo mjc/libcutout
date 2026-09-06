@@ -6854,6 +6854,12 @@ impl MobileRideMapCore {
         let Some(ride_id) = state.active_ride_id.clone() else {
             return Err(MobileRideMapCoreErrorDto::NoActiveRide);
         };
+        if !matches!(
+            state.recorder.state(),
+            Some(ride_maps::RideLifecycleState::Active | ride_maps::RideLifecycleState::Paused)
+        ) {
+            return Err(MobileRideMapCoreErrorDto::InvalidTransition);
+        }
         let Some(event) = CoreMusicRideEvent::from_snapshot(
             &snapshot,
             kind.into(),
@@ -16752,6 +16758,53 @@ mod tests {
         assert_eq!(
             state.current_music_history_policy(),
             MobileMusicHistoryPolicyDto::Disabled
+        );
+        assert!(
+            state
+                .current_music_events()
+                .is_some_and(|events| events.is_empty())
+        );
+    }
+
+    #[test]
+    fn music_transition_is_rejected_after_ride_stops() {
+        let state = MobileRideMapCore::new();
+        state.start_gps_only(1_000, None).expect("ride starts");
+        state
+            .set_music_history_policy(MobileMusicHistoryPolicyDto::OpaqueItem)
+            .expect("policy can be enabled while recording");
+        state.stop_at(2_000).expect("ride stops");
+
+        let result = state.record_music_event(
+            MobileMusicSnapshotDto {
+                provider: MobileMusicProviderDto::AppleMusic,
+                session_id: "session".to_owned(),
+                state: MobileMusicPlaybackStateDto::Playing,
+                item: Some(MobileMusicItemDto {
+                    identifier: "track-1".to_owned(),
+                    title: Some("Song".to_owned()),
+                    artist: Some("Artist".to_owned()),
+                }),
+                position_milliseconds: None,
+                duration_milliseconds: None,
+                observed_at_ms: 3_000,
+                capabilities: MobileMusicCapabilitiesDto {
+                    previous: false,
+                    play: false,
+                    pause: true,
+                    next: true,
+                    open_provider: true,
+                },
+            },
+            MobileMusicRideEventKindDto::Play,
+            3_000,
+            1_700_000_000_000,
+            5,
+        );
+
+        assert_eq!(
+            result,
+            Err(MobileRideMapCoreErrorDto::InvalidTransition)
         );
         assert!(
             state
