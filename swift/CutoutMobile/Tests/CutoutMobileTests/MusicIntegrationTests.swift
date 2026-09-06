@@ -87,6 +87,20 @@ final class MusicIntegrationTests: XCTestCase {
         )
         XCTAssertEqual(tracker.next(for: paused), paused.accessibilitySummary)
         XCTAssertNil(tracker.next(for: paused))
+
+        let pausedWithDifferentCapabilities = MusicNowPlaying(
+            provider: .appleMusic,
+            state: .paused,
+            item: paused.item,
+            capabilities: .init(
+                previous: false,
+                play: true,
+                pause: false,
+                next: false,
+                openProvider: true
+            )
+        )
+        XCTAssertNil(tracker.next(for: pausedWithDifferentCapabilities))
     }
 
     func testArtworkCacheReusesOnlyBoundedArtworkForTheSameItem() {

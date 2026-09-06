@@ -358,12 +358,29 @@ public struct MusicNowPlaying: Equatable, Sendable {
 }
 
 /// Deduplicates VoiceOver announcements while the provider is polled.
+private struct MusicAccessibilityAnnouncementKey: Equatable {
+    let provider: MobileMusicProviderDto
+    let state: MobileMusicPlaybackStateDto
+    let itemIdentifier: String?
+    let title: String?
+    let artist: String?
+
+    init(_ nowPlaying: MusicNowPlaying) {
+        provider = nowPlaying.provider
+        state = nowPlaying.state
+        itemIdentifier = nowPlaying.item?.identifier
+        title = nowPlaying.item?.title
+        artist = nowPlaying.item?.artist
+    }
+}
+
 struct MusicAccessibilityAnnouncementTracker {
-    private var lastAnnounced: MusicNowPlaying?
+    private var lastAnnounced: MusicAccessibilityAnnouncementKey?
 
     mutating func next(for nowPlaying: MusicNowPlaying) -> String? {
-        guard lastAnnounced != nowPlaying else { return nil }
-        lastAnnounced = nowPlaying
+        let key = MusicAccessibilityAnnouncementKey(nowPlaying)
+        guard lastAnnounced != key else { return nil }
+        lastAnnounced = key
         return nowPlaying.accessibilitySummary
     }
 }
