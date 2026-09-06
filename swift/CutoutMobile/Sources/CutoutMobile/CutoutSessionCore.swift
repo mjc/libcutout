@@ -88,11 +88,11 @@ public enum CaptureEvent: Equatable, Sendable {
 struct CaptureMusicContext: Equatable {
     private(set) var current: MobilePevcapMusicEventDto?
 
-    mutating func replace(_ observation: MobilePevcapMusicEventDto?) {
+    mutating func update(_ observation: MobilePevcapMusicEventDto?) {
         current = observation
     }
 
-    mutating func clear() {
+    mutating func reset() {
         current = nil
     }
 }
@@ -1541,7 +1541,7 @@ public final class CutoutSessionCore: NSObject {
     /// Retains one bounded music observation for the next captured BLE frame.
     /// The Rust writer consumes it once, keeping capture metadata low-rate.
     public func updateMusicCaptureObservation(_ observation: MobilePevcapMusicEventDto?) {
-        musicCaptureContext.replace(observation)
+        musicCaptureContext.update(observation)
         _ = captureBuilder?.setMusicContext(music: observation)
     }
 
@@ -1650,7 +1650,7 @@ public final class CutoutSessionCore: NSObject {
         publishesResult: Bool = false,
         priorWriteSucceeded: Bool = true
     ) {
-        musicCaptureContext.clear()
+        musicCaptureContext.reset()
         guard let builder = captureBuilder else { return }
         let completedCaptureURL = captureFileURL
         captureBuilder = nil
