@@ -6917,7 +6917,9 @@ impl MobileRideMapCore {
             .database
             .clone()
         else {
-            return Ok(Vec::new());
+            return Err(MobileRideMapCoreErrorDto::Storage(
+                "Rust ride database is unavailable".to_owned(),
+            ));
         };
         database
             .inner
