@@ -3450,7 +3450,10 @@ fn music_event_text_constraints_measure_utf8_bytes() {
         [&title],
     );
 
-    assert!(result.is_err(), "music text bounds must use UTF-8 byte length");
+    assert!(
+        result.is_err(),
+        "music text bounds must use UTF-8 byte length"
+    );
 }
 
 #[test]
