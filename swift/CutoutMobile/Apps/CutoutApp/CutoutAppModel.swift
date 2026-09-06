@@ -516,7 +516,7 @@ final class CutoutAppModel {
                     )
                 )
             } else if outcome == .disabled {
-                core.updateMusicCaptureObservation(nil)
+                clearMusicCaptureContext()
             }
             finishMusicObservation(
                 previousNowPlaying: previousNowPlaying,
@@ -582,7 +582,7 @@ final class CutoutAppModel {
             try musicCoordinator.setHistoryPolicy(policy)
             rememberMusicHistoryPolicy(policy)
             if policy == .disabled {
-                core.updateMusicCaptureObservation(nil)
+                clearMusicCaptureContext()
             }
             musicTimelineEvents = musicCoordinator.recordedEvents
             return true
@@ -590,7 +590,7 @@ final class CutoutAppModel {
             // Keep the choice as the default for the next ride.
             rememberMusicHistoryPolicy(policy)
             if policy == .disabled {
-                core.updateMusicCaptureObservation(nil)
+                clearMusicCaptureContext()
             }
             return true
         } catch {
@@ -743,7 +743,7 @@ final class CutoutAppModel {
         }
         guard started else { return false }
         // Apply the user's default to the fresh Rust-owned ride timeline.
-        core.updateMusicCaptureObservation(nil)
+        clearMusicCaptureContext()
         do {
             try musicCoordinator.setHistoryPolicy(nextRideMusicPolicy)
             musicHistoryPolicy = nextRideMusicPolicy
@@ -778,6 +778,7 @@ final class CutoutAppModel {
         }
         if stopped {
             invalidateLiveProjection(clearPoints: false)
+            clearMusicCaptureContext()
         }
         return stopped
     }
@@ -815,7 +816,7 @@ final class CutoutAppModel {
             return false
         }
         invalidateLiveProjection(clearPoints: false)
-        core.updateMusicCaptureObservation(nil)
+        clearMusicCaptureContext()
         musicTimelineEvents = musicCoordinator.recordedEvents
         loadRideMapHistory()
         return true
@@ -827,7 +828,7 @@ final class CutoutAppModel {
             return false
         }
         invalidateLiveProjection(clearPoints: true)
-        core.updateMusicCaptureObservation(nil)
+        clearMusicCaptureContext()
         musicTimelineEvents = musicCoordinator.recordedEvents
         clearRideMapHistoryRouteProjection()
         rideMapHistoryRouteLoading = false
@@ -1154,7 +1155,7 @@ final class CutoutAppModel {
                     musicHistoryPolicy = .disabled
                     musicCoordinator.restoreHistoryPolicy(.disabled)
                     musicTransitionHintTracker.clear()
-                    core.updateMusicCaptureObservation(nil)
+                    clearMusicCaptureContext()
                     musicTimelineEvents = musicCoordinator.recordedEvents
                 }
             }
@@ -1175,8 +1176,12 @@ final class CutoutAppModel {
         musicHistoryPolicy = .disabled
         musicCoordinator.restoreHistoryPolicy(.disabled)
         musicTransitionHintTracker.clear()
-        core.updateMusicCaptureObservation(nil)
+        clearMusicCaptureContext()
         musicTimelineEvents = musicCoordinator.recordedEvents
+    }
+
+    private func clearMusicCaptureContext() {
+        core.updateMusicCaptureObservation(nil)
     }
 
     static func detailPointsAreTruncated(
