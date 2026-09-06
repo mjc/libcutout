@@ -124,6 +124,29 @@ public extension MobileMusicProviderDto {
     }
 }
 
+/// Identifies the currently owning music-monitor task.
+///
+/// A cancelled task may finish after a replacement task starts. The generation
+/// keeps that stale task from tearing down the replacement provider observer.
+public struct MusicMonitorGeneration: Sendable, Equatable {
+    public private(set) var current: UInt64 = 0
+
+    public init() {}
+
+    public mutating func begin() -> UInt64 {
+        current &+= 1
+        return current
+    }
+
+    public mutating func invalidate() {
+        current &+= 1
+    }
+
+    public func owns(_ generation: UInt64) -> Bool {
+        generation == current
+    }
+}
+
 private extension MobileMusicCapabilitiesDto {
     func supports(_ command: MobileMusicCommandDto) -> Bool {
         switch command {

@@ -265,6 +265,7 @@ final class CutoutAppModel {
     private var rideMapHistoryContextTask: Task<Void, Never>?
     private var rideMapRestoreTask: Task<Void, Never>?
     private var musicMonitorTask: Task<Void, Never>?
+    private var musicMonitorGeneration = MusicMonitorGeneration()
     private var musicTransitionHintTracker = MusicTransitionHintTracker()
     private var rideMapLiveProjectionTask: Task<Void, Never>?
     private var rideMapDurationTask: Task<Void, Never>?
@@ -564,8 +565,10 @@ final class CutoutAppModel {
         musicHistoryPolicy = policy
     }
 
-    private func monitorMusic() async {
+    private func monitorMusic(generation: UInt64) async {
 #if canImport(MediaPlayer) && os(iOS)
+        guard musicMonitorGeneration.owns(generation) else { return }
+        defer { finishMusicMonitoring(generation: generation) }
         guard selectedMusicProvider.monitoringMode == .appleMusicSystemPlayer else {
             refreshMusicSnapshot()
             return
@@ -579,8 +582,7 @@ final class CutoutAppModel {
         appleMusicProvider.startMonitoring { [weak self] in
             self?.refreshMusicSnapshot()
         }
-        defer { appleMusicProvider.stopMonitoring() }
-        while !Task.isCancelled {
+        while !Task.isCancelled && musicMonitorGeneration.owns(generation) {
             refreshMusicSnapshot()
             do {
                 try await Task.sleep(for: .seconds(1))
@@ -589,6 +591,14 @@ final class CutoutAppModel {
             }
         }
 #endif
+    }
+
+    private func finishMusicMonitoring(generation: UInt64) {
+        guard musicMonitorGeneration.owns(generation) else { return }
+#if canImport(MediaPlayer) && os(iOS)
+        appleMusicProvider.stopMonitoring()
+#endif
+        musicMonitorTask = nil
     }
 
     private func unavailableMusicObservation(observedAtMs: UInt64) -> MusicProviderObservation {
@@ -600,6 +610,7 @@ final class CutoutAppModel {
     }
 
     private func stopMusicMonitoring() {
+        musicMonitorGeneration.invalidate()
         musicMonitorTask?.cancel()
         musicMonitorTask = nil
 #if canImport(MediaPlayer) && os(iOS)
@@ -610,8 +621,9 @@ final class CutoutAppModel {
     func connectMusic() {
 #if os(iOS)
         stopMusicMonitoring()
+        let generation = musicMonitorGeneration.begin()
         musicMonitorTask = Task { [weak self] in
-            await self?.monitorMusic()
+            await self?.monitorMusic(generation: generation)
         }
 #else
         _ = ingestMusicObservation(unavailableMusicObservation(observedAtMs: core.now().rawValue))
