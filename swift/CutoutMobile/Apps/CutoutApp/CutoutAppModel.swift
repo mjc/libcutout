@@ -420,7 +420,7 @@ final class CutoutAppModel {
     }
 
     func refreshMusicSnapshot(
-        transitionHint: MobileMusicRideEventKindDto? = nil
+        transitionHint: MusicTransitionHint? = nil
     ) {
 #if canImport(MediaPlayer) && os(iOS)
         let observedAtMs = core.now().rawValue
