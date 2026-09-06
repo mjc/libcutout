@@ -17,10 +17,10 @@ use crate::VerificationStatus;
 use crate::VescControllerId;
 use crate::{
     DEFAULT_REPLAY_OUTPUT_LIMIT, DeviceEvent, GattChannel, GattFingerprint, HostSession, LinkInfo,
-    MonotonicTimestamp, NotificationChunkLen, ProtocolFamily, ProtocolSession,
-    RawTelemetryReadback, ReplayChunkComparison, RequestTarget, SemanticEventCount, SessionInput,
-    SessionOutput, SessionOutputError, TransportWriteLimit, VerifiedValue, WallClockUnixTimestamp,
-    WriteMode, drain_semantic_events_checked,
+    MonotonicTimestamp, MusicIdentifier, MusicProvider, MusicValidationError, NotificationChunkLen,
+    ProtocolFamily, ProtocolSession, RawTelemetryReadback, ReplayChunkComparison, RequestTarget,
+    SemanticEventCount, SessionInput, SessionOutput, SessionOutputError, TransportWriteLimit,
+    VerifiedValue, WallClockUnixTimestamp, WriteMode, drain_semantic_events_checked,
 };
 
 /// PEVCAP file format magic bytes.
@@ -1462,8 +1462,61 @@ pub struct PevcapRecord {
     /// Typed protocol-native telemetry decoded from the same inbound notification.
     pub telemetry: Option<RawTelemetryReadback>,
 
+    /// Optional music observation correlated with this capture frame.
+    pub music: Option<PevcapMusicEvent>,
+
     /// Latest phone location sample when this BLE record was received.
     pub phone_location: Option<PevcapPhoneLocation>,
+}
+
+/// Bounded music metadata correlated with one PEVCAP frame.
+///
+/// This stores provider/item identity and separate observation timestamps only;
+/// it never carries audio, artwork, or analysis data.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PevcapMusicEvent {
+    /// Provider that supplied the item identifier.
+    pub provider: MusicProvider,
+    /// Opaque provider track identifier.
+    pub track_id: MusicIdentifier,
+    /// Monotonic timestamp when the provider observation was received.
+    pub monotonic_at: MonotonicTimestamp,
+    /// Provider-reported position at the observation boundary.
+    pub track_position_ms: u64,
+    /// Wall-clock timestamp of the provider observation.
+    pub wall_clock_unix_ms: WallClockUnixTimestamp,
+    /// Uncertainty of the wall-clock observation in milliseconds.
+    pub clock_uncertainty_milliseconds: u64,
+    /// Optional ride-local sequence used for deterministic correlation.
+    pub ride_sequence: Option<u64>,
+}
+
+impl PevcapMusicEvent {
+    /// Creates a bounded music correlation event.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`MusicValidationError`] when the track identifier is blank or
+    /// exceeds the platform boundary.
+    pub fn new(
+        provider: MusicProvider,
+        track_id: impl Into<String>,
+        track_position_ms: u64,
+        monotonic_at: MonotonicTimestamp,
+        wall_clock_unix_ms: WallClockUnixTimestamp,
+        clock_uncertainty_milliseconds: u64,
+        ride_sequence: Option<u64>,
+    ) -> Result<Self, MusicValidationError> {
+        Ok(Self {
+            provider,
+            track_id: MusicIdentifier::new(track_id)?,
+            monotonic_at,
+            track_position_ms,
+            wall_clock_unix_ms,
+            clock_uncertainty_milliseconds,
+            ride_sequence,
+        })
+    }
 }
 
 /// Full-precision Core Location sample correlated with a PEVCAP record.
@@ -1683,6 +1736,13 @@ impl PevcapRecord {
         self.phone_location = Some(location);
         self
     }
+
+    /// Attaches bounded music metadata to this capture frame.
+    #[must_use]
+    pub fn with_music(mut self, music: PevcapMusicEvent) -> Self {
+        self.music = Some(music);
+        self
+    }
     /// Creates a link-up lifecycle record.
     #[must_use]
     pub fn link_up(
@@ -1699,6 +1759,7 @@ impl PevcapRecord {
             target: None,
             bytes: Bytes::new(),
             telemetry: None,
+            music: None,
             phone_location: None,
         }
     }
@@ -1716,6 +1777,7 @@ impl PevcapRecord {
             target: None,
             bytes: Bytes::new(),
             telemetry: None,
+            music: None,
             phone_location: None,
         }
     }
@@ -1738,6 +1800,7 @@ impl PevcapRecord {
             target: None,
             bytes: bytes.into(),
             telemetry: None,
+            music: None,
             phone_location: None,
         }
     }
@@ -1775,6 +1838,7 @@ impl PevcapRecord {
             target: None,
             bytes: bytes.into(),
             telemetry: None,
+            music: None,
             phone_location: None,
         }
     }
@@ -2751,6 +2815,14 @@ pub enum PevcapRecordError {
     #[error("non-outbound PEVCAP record carried request target metadata")]
     UnexpectedTarget,
 
+    /// A non-inbound record carried music correlation metadata.
+    #[error("non-inbound PEVCAP record carried music metadata")]
+    UnexpectedMusic,
+
+    /// Music metadata failed bounded identifier validation.
+    #[error("invalid PEVCAP music metadata")]
+    InvalidMusic,
+
     /// A link lifecycle record carried payload bytes.
     #[error("link lifecycle PEVCAP record carried payload bytes")]
     UnexpectedLinkBytes,
@@ -3183,7 +3255,81 @@ struct PevcapRecordJson {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     telemetry: Option<RawTelemetryReadback>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    music: Option<PevcapMusicEventJson>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     phone_location: Option<PevcapPhoneLocation>,
+}
+
+#[cfg(feature = "serde")]
+#[derive(Clone, Copy, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+enum PevcapMusicProviderJson {
+    AppleMusic,
+    Spotify,
+}
+
+#[cfg(feature = "serde")]
+impl From<MusicProvider> for PevcapMusicProviderJson {
+    fn from(provider: MusicProvider) -> Self {
+        match provider {
+            MusicProvider::AppleMusic => Self::AppleMusic,
+            MusicProvider::Spotify => Self::Spotify,
+        }
+    }
+}
+
+#[cfg(feature = "serde")]
+impl PevcapMusicProviderJson {
+    const fn into_provider(self) -> MusicProvider {
+        match self {
+            Self::AppleMusic => MusicProvider::AppleMusic,
+            Self::Spotify => MusicProvider::Spotify,
+        }
+    }
+}
+
+#[cfg(feature = "serde")]
+#[derive(Deserialize, Serialize)]
+struct PevcapMusicEventJson {
+    provider: PevcapMusicProviderJson,
+    track_id: String,
+    /// Added after the initial music-correlation format; legacy records default to zero.
+    #[serde(default)]
+    monotonic_at_ms: u64,
+    track_position_ms: u64,
+    wall_clock_unix_ms: u64,
+    clock_uncertainty_milliseconds: u64,
+    ride_sequence: Option<u64>,
+}
+
+#[cfg(feature = "serde")]
+impl From<&PevcapMusicEvent> for PevcapMusicEventJson {
+    fn from(event: &PevcapMusicEvent) -> Self {
+        Self {
+            provider: event.provider.into(),
+            track_id: event.track_id.as_str().to_owned(),
+            monotonic_at_ms: event.monotonic_at.get(),
+            track_position_ms: event.track_position_ms,
+            wall_clock_unix_ms: event.wall_clock_unix_ms.get(),
+            clock_uncertainty_milliseconds: event.clock_uncertainty_milliseconds,
+            ride_sequence: event.ride_sequence,
+        }
+    }
+}
+
+#[cfg(feature = "serde")]
+impl PevcapMusicEventJson {
+    fn try_into_event(self) -> Result<PevcapMusicEvent, MusicValidationError> {
+        PevcapMusicEvent::new(
+            self.provider.into_provider(),
+            self.track_id,
+            self.track_position_ms,
+            MonotonicTimestamp::new(self.monotonic_at_ms),
+            WallClockUnixTimestamp::from_milliseconds(self.wall_clock_unix_ms),
+            self.clock_uncertainty_milliseconds,
+            self.ride_sequence,
+        )
+    }
 }
 
 #[cfg(feature = "serde")]
@@ -3234,6 +3380,7 @@ impl From<&PevcapRecord> for PevcapRecordJson {
             target: record.target.map(PevcapRequestTargetJson::from),
             bytes: record.bytes.clone(),
             telemetry: record.telemetry.clone(),
+            music: record.music.as_ref().map(PevcapMusicEventJson::from),
             phone_location: record.phone_location,
         }
     }
@@ -3243,6 +3390,11 @@ impl From<&PevcapRecord> for PevcapRecordJson {
 impl PevcapRecordJson {
     fn try_into_record(self) -> Result<PevcapRecord, PevcapRecordError> {
         self.validate()?;
+        let music = self
+            .music
+            .map(PevcapMusicEventJson::try_into_event)
+            .transpose()
+            .map_err(|_| PevcapRecordError::InvalidMusic)?;
         Ok(PevcapRecord {
             monotonic_ms: MonotonicTimestamp::new(self.monotonic_ms),
             direction: self.direction.into_direction(),
@@ -3253,6 +3405,7 @@ impl PevcapRecordJson {
             target: self.target.map(PevcapRequestTargetJson::into_target),
             bytes: self.bytes,
             telemetry: self.telemetry,
+            music,
             phone_location: self.phone_location,
         })
     }
@@ -3268,6 +3421,9 @@ impl PevcapRecordJson {
                 }
                 if self.target.is_some() {
                     return Err(PevcapRecordError::UnexpectedTarget);
+                }
+                if self.music.is_some() {
+                    return Err(PevcapRecordError::UnexpectedMusic);
                 }
                 if !self.bytes.is_empty() {
                     return Err(PevcapRecordError::UnexpectedLinkBytes);
@@ -3301,6 +3457,9 @@ impl PevcapRecordJson {
                 }
                 if self.link_max_write_len.is_some() {
                     return Err(PevcapRecordError::UnexpectedLinkMaxWriteLen);
+                }
+                if self.music.is_some() {
+                    return Err(PevcapRecordError::UnexpectedMusic);
                 }
             }
         }
@@ -3523,6 +3682,43 @@ mod tests {
             PevcapFormatVersion::current(),
             PevcapFormatVersion { major: 1, minor: 1 }
         );
+    }
+
+    #[cfg(feature = "serde")]
+    #[test]
+    fn pevcap_music_metadata_round_trips_with_separate_observation_timestamp() {
+        let mut capture = sample_pevcap_capture();
+        let event = PevcapMusicEvent::new(
+            MusicProvider::AppleMusic,
+            "library-track-42",
+            12_345,
+            ms(17),
+            wc(1_700_000_000_042),
+            75,
+            Some(9),
+        )
+        .expect("music metadata validates");
+        capture.records[1] = capture.records[1].clone().with_music(event);
+
+        let encoded = capture.to_jsonl().expect("capture serializes");
+        let decoded = PevcapCapture::from_jsonl(&encoded).expect("capture decodes");
+        let music = decoded.records[1]
+            .music
+            .as_ref()
+            .expect("music correlation is retained");
+        assert_eq!(music.track_id.as_str(), "library-track-42");
+        assert_eq!(music.monotonic_at, ms(17));
+        assert_eq!(music.wall_clock_unix_ms, wc(1_700_000_000_042));
+    }
+
+    #[cfg(feature = "serde")]
+    #[test]
+    fn pevcap_music_metadata_legacy_json_defaults_observation_timestamp() {
+        let event: PevcapMusicEventJson = serde_json::from_str(
+            r#"{"provider":"apple_music","track_id":"legacy-track","track_position_ms":0,"wall_clock_unix_ms":1,"clock_uncertainty_milliseconds":0}"#,
+        )
+        .expect("legacy music metadata remains decodable");
+        assert_eq!(event.monotonic_at_ms, 0);
     }
 
     #[test]

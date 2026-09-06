@@ -424,11 +424,22 @@ final class CutoutAppModel {
     ) -> Bool {
         let wallClockAtMs = wallClockAtMs ?? UInt64(Date().timeIntervalSince1970 * 1_000)
         do {
-            _ = try musicCoordinator.ingest(
+            let outcome = try musicCoordinator.ingest(
                 observation: observation,
                 wallClockAtMs: wallClockAtMs,
                 clockUncertaintyMs: clockUncertaintyMs
             )
+            if outcome == .recorded {
+                core.updateMusicCaptureObservation(
+                    pevcapMusicObservation(
+                        from: observation,
+                        wallClockAtMs: wallClockAtMs,
+                        clockUncertaintyMs: clockUncertaintyMs
+                    )
+                )
+            } else if outcome == .disabled {
+                core.updateMusicCaptureObservation(nil)
+            }
             musicTimelineEvents = musicCoordinator.recordedEvents
             musicNowPlaying = isMusicPlayerHidden ? nil : musicCoordinator.nowPlaying
             return true
@@ -439,16 +450,44 @@ final class CutoutAppModel {
         }
     }
 
+    private func pevcapMusicObservation(
+        from observation: MusicProviderObservation,
+        wallClockAtMs: UInt64,
+        clockUncertaintyMs: UInt64
+    ) -> MobilePevcapMusicEventDto? {
+        guard musicHistoryPolicy != .disabled,
+              let item = observation.snapshot.item,
+              let position = observation.snapshot.positionMilliseconds
+        else {
+            return nil
+        }
+        return MobilePevcapMusicEventDto(
+            provider: observation.snapshot.provider,
+            trackId: item.identifier,
+            monotonicAtMs: observation.snapshot.observedAtMs,
+            trackPositionMs: position,
+            wallClockUnixMs: wallClockAtMs,
+            clockUncertaintyMs: clockUncertaintyMs,
+            rideSequence: nil
+        )
+    }
+
     func setMusicHistoryPolicy(_ policy: MobileMusicHistoryPolicyDto) -> Bool {
         let previous = musicHistoryPolicy
         do {
             try musicCoordinator.setHistoryPolicy(policy)
             musicHistoryPolicy = policy
+            if policy == .disabled {
+                core.updateMusicCaptureObservation(nil)
+            }
             musicTimelineEvents = musicCoordinator.recordedEvents
             return true
         } catch MobileRideMapError.noActiveRide {
             // Keep the choice as the default for the next ride.
             musicHistoryPolicy = policy
+            if policy == .disabled {
+                core.updateMusicCaptureObservation(nil)
+            }
             return true
         } catch {
             musicHistoryPolicy = previous
@@ -540,6 +579,7 @@ final class CutoutAppModel {
         }
         guard started else { return false }
         // Apply the user's default to the fresh Rust-owned ride timeline.
+        core.updateMusicCaptureObservation(nil)
         try? musicCoordinator.setHistoryPolicy(musicHistoryPolicy)
         musicTimelineEvents = musicCoordinator.recordedEvents
         return true
@@ -603,6 +643,7 @@ final class CutoutAppModel {
             return false
         }
         invalidateLiveProjection(clearPoints: false)
+        core.updateMusicCaptureObservation(nil)
         musicTimelineEvents = musicCoordinator.recordedEvents
         loadRideMapHistory()
         return true
@@ -614,6 +655,7 @@ final class CutoutAppModel {
             return false
         }
         invalidateLiveProjection(clearPoints: true)
+        core.updateMusicCaptureObservation(nil)
         musicTimelineEvents = musicCoordinator.recordedEvents
         clearRideMapHistoryRouteProjection()
         rideMapHistoryRouteLoading = false

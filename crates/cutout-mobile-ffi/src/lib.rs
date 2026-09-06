@@ -43,11 +43,11 @@ use cutout_core::{
     NotificationByteLenDto, NotificationEvidenceDto, NotificationIngestOutcomeDto,
     ParserDiagnosticCountDto, ParserDiagnosticsDto, ParserDroppedBytesDto, ParserErrorDto,
     ParserFrameLenDto, ParserGapEvidenceDto, PayloadBodyLenDto,
-    PevcapEncoding as CorePevcapEncoding, PevcapHeader, PevcapLocationSample, PevcapPhoneLocation,
-    PevcapRecord, PevcapResolvedIdentity, PhaseCurrentReadingDto, PowerReadingDto, ProtocolFamily,
-    ProtocolFamilyDto, ProtocolTag, RIDE_SESSION_STALE_AFTER, RawFieldValue, RawFieldValueDto,
-    RawTelemetryReadback, RawTelemetryReadbackDto, ReadOnlyOutputPayload,
-    ReservedPayloadEvidenceDto, RideOperatingModeDto, RideOperatingStateDto,
+    PevcapEncoding as CorePevcapEncoding, PevcapHeader, PevcapLocationSample, PevcapMusicEvent,
+    PevcapPhoneLocation, PevcapRecord, PevcapResolvedIdentity, PhaseCurrentReadingDto,
+    PowerReadingDto, ProtocolFamily, ProtocolFamilyDto, ProtocolTag, RIDE_SESSION_STALE_AFTER,
+    RawFieldValue, RawFieldValueDto, RawTelemetryReadback, RawTelemetryReadbackDto,
+    ReadOnlyOutputPayload, ReservedPayloadEvidenceDto, RideOperatingModeDto, RideOperatingStateDto,
     RideSessionAppPresence as CoreRideSessionAppPresence,
     RideSessionDecision as CoreRideSessionDecision, RideSessionEffect as CoreRideSessionEffect,
     RideSessionEndReason as CoreRideSessionEndReason,
@@ -3137,6 +3137,42 @@ pub struct MobileMusicRideEventDto {
     pub wall_clock_at_ms: u64,
     /// Host clock uncertainty.
     pub clock_uncertainty_ms: u64,
+}
+
+/// Music observation attached to one PEVCAP notification frame.
+#[derive(Clone, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct MobilePevcapMusicEventDto {
+    /// Provider that supplied the opaque track identifier.
+    pub provider: MobileMusicProviderDto,
+    /// Opaque provider track identifier.
+    pub track_id: String,
+    /// Monotonic timestamp of the provider observation.
+    pub monotonic_at_ms: u64,
+    /// Provider-reported position at the observation boundary.
+    pub track_position_ms: u64,
+    /// Wall-clock timestamp of the provider observation.
+    pub wall_clock_unix_ms: u64,
+    /// Clock uncertainty for the wall-clock sample in milliseconds.
+    pub clock_uncertainty_ms: u64,
+    /// Optional ride-local sequence number for deterministic correlation.
+    pub ride_sequence: Option<u64>,
+}
+
+impl TryFrom<MobilePevcapMusicEventDto> for PevcapMusicEvent {
+    type Error = String;
+
+    fn try_from(event: MobilePevcapMusicEventDto) -> Result<Self, Self::Error> {
+        Self::new(
+            event.provider.into(),
+            event.track_id,
+            event.track_position_ms,
+            MonotonicTimestamp::new(event.monotonic_at_ms),
+            WallClockUnixTimestamp::from_milliseconds(event.wall_clock_unix_ms),
+            event.clock_uncertainty_ms,
+            event.ride_sequence,
+        )
+        .map_err(|error| error.to_string())
+    }
 }
 
 impl From<MobileMusicProviderDto> for CoreMusicProvider {
@@ -9107,6 +9143,7 @@ pub struct MobilePevcapCaptureBuilder {
     annotations: Mutex<Vec<String>>,
     writer: Mutex<Option<CaptureWriter>>,
     writer_state: Mutex<Option<Arc<CaptureWriterState>>>,
+    music_context: Mutex<Option<PevcapMusicEvent>>,
 }
 
 #[uniffi::export]
@@ -9129,6 +9166,7 @@ impl MobilePevcapCaptureBuilder {
             annotations: Mutex::new(Vec::new()),
             writer: Mutex::new(None),
             writer_state: Mutex::new(None),
+            music_context: Mutex::new(None),
         })
     }
 
@@ -9226,6 +9264,18 @@ impl MobilePevcapCaptureBuilder {
         writer.is_none_or(|writer| writer.finish().is_ok())
     }
 
+    /// Sets the optional current music observation used for the next notification.
+    pub fn set_music_context(&self, music: Option<MobilePevcapMusicEventDto>) -> bool {
+        let Ok(music) = music.map(PevcapMusicEvent::try_from).transpose() else {
+            return false;
+        };
+        *self
+            .music_context
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner) = music;
+        true
+    }
+
     /// Returns bounded writer queue instrumentation.
     #[must_use]
     pub fn writer_status(&self) -> MobileCaptureWriterStatusDto {
@@ -9307,6 +9357,29 @@ impl MobilePevcapCaptureBuilder {
         telemetry: Option<MobileRawTelemetryReadbackDto>,
         phone_location: Option<MobilePhoneLocationSampleDto>,
     ) -> bool {
+        self.record_notification_with_context_and_music(
+            monotonic_ms,
+            characteristic,
+            service,
+            bytes,
+            telemetry,
+            phone_location,
+            None,
+        )
+    }
+
+    /// Records an inbound notification with optional music correlation metadata.
+    #[allow(clippy::needless_pass_by_value, clippy::too_many_arguments)]
+    pub fn record_notification_with_context_and_music(
+        &self,
+        monotonic_ms: MobileMonotonicMillisDto,
+        characteristic: Vec<u8>,
+        service: Vec<u8>,
+        bytes: Vec<u8>,
+        telemetry: Option<MobileRawTelemetryReadbackDto>,
+        phone_location: Option<MobilePhoneLocationSampleDto>,
+        music: Option<MobilePevcapMusicEventDto>,
+    ) -> bool {
         let mut record = PevcapRecord::inbound_notification(
             monotonic_ms.into_core(),
             mobile_gatt_channel(&characteristic),
@@ -9318,6 +9391,12 @@ impl MobilePevcapCaptureBuilder {
         }
         if let Some(location) = phone_location.and_then(MobilePhoneLocationSampleDto::canonical) {
             record = record.with_phone_location(location.pevcap_location());
+        }
+        let Ok(music) = self.resolve_music_context(music) else {
+            return false;
+        };
+        if let Some(music) = music {
+            record = record.with_music(music);
         }
         self.send_record(record)
     }
@@ -9350,6 +9429,23 @@ impl MobilePevcapCaptureBuilder {
 }
 
 impl MobilePevcapCaptureBuilder {
+    fn take_music_context(&self) -> Option<PevcapMusicEvent> {
+        self.music_context
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .take()
+    }
+
+    fn resolve_music_context(
+        &self,
+        music: Option<MobilePevcapMusicEventDto>,
+    ) -> Result<Option<PevcapMusicEvent>, ()> {
+        match music {
+            Some(music) => PevcapMusicEvent::try_from(music).map(Some).map_err(|_| ()),
+            None => Ok(self.take_music_context()),
+        }
+    }
+
     fn metadata(&self) -> CaptureMetadata {
         CaptureMetadata {
             advertised_services: self
@@ -14548,6 +14644,62 @@ mod tests {
                 .iter()
                 .any(|annotation| annotation == "route=vesc")
         );
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn mobile_capture_builder_attaches_music_context_once() {
+        let path = std::env::temp_dir().join(format!(
+            "cutout-mobile-writer-music-{}-{}.jsonl",
+            std::process::id(),
+            thread::current().name().unwrap_or("test")
+        ));
+        let _ = fs::remove_file(&path);
+        let builder = MobilePevcapCaptureBuilder::new(
+            wc(1_700_000_000_000),
+            "ios-corebluetooth".into(),
+            None,
+        );
+        assert!(builder.set_music_context(Some(MobilePevcapMusicEventDto {
+            provider: MobileMusicProviderDto::AppleMusic,
+            track_id: "library-song-42".into(),
+            monotonic_at_ms: 17,
+            track_position_ms: 12_345,
+            wall_clock_unix_ms: 1_700_000_000_042,
+            clock_uncertainty_ms: 75,
+            ride_sequence: Some(9),
+        })));
+        assert!(builder.start_writer(path.to_string_lossy().into_owned()));
+        assert!(builder.record_notification_with_context(
+            ms(42),
+            vec![0; 16],
+            vec![1; 16],
+            vec![0xde, 0xad],
+            None,
+            None,
+        ));
+        assert!(builder.record_notification_with_context(
+            ms(43),
+            vec![0; 16],
+            vec![1; 16],
+            vec![0xbe, 0xef],
+            None,
+            None,
+        ));
+        assert!(builder.finish_writer());
+
+        let bytes = fs::read(&path).expect("music capture exists");
+        let capture =
+            PevcapCapture::decode(&bytes, PevcapEncoding::Jsonl).expect("music capture decodes");
+        assert_eq!(capture.records.len(), 2);
+        let music = capture.records[0]
+            .music
+            .as_ref()
+            .expect("first frame carries music context");
+        assert_eq!(music.track_id.as_str(), "library-song-42");
+        assert_eq!(music.monotonic_at, MonotonicTimestamp::new(17));
+        assert_eq!(capture.records[0].monotonic_ms, MonotonicTimestamp::new(42));
+        assert!(capture.records[1].music.is_none());
         let _ = fs::remove_file(path);
     }
 
