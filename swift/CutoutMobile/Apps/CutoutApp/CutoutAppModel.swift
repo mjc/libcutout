@@ -459,9 +459,11 @@ final class CutoutAppModel {
         musicNowPlaying = projectedMusicNowPlaying()
         musicProviderSelectionStore.set(provider)
         musicTransitionHintTracker.clear()
-#if canImport(MediaPlayer) && os(iOS)
         if provider.monitoringMode == .unavailable {
             musicMonitorSceneState.cancel()
+        }
+#if canImport(MediaPlayer) && os(iOS)
+        if provider.monitoringMode == .unavailable {
             stopMusicMonitoring()
         }
 #endif
@@ -722,8 +724,7 @@ final class CutoutAppModel {
 #endif
     }
 
-    func connectMusic() {
-        musicMonitorSceneState.request()
+    private func beginMusicMonitoring() {
         guard musicMonitorSceneState.isSceneActive else { return }
 #if os(iOS) && canImport(MediaPlayer)
         stopMusicMonitoring()
@@ -758,6 +759,11 @@ final class CutoutAppModel {
 #else
         _ = ingestMusicObservation(unavailableMusicObservation(observedAtMs: core.now().rawValue))
 #endif
+    }
+
+    func connectMusic() {
+        musicMonitorSceneState.request()
+        beginMusicMonitoring()
     }
 
     private func restoreRideMapState() {
@@ -1987,7 +1993,7 @@ final class CutoutAppModel {
 
     func appDidBecomeActive() {
         if musicMonitorSceneState.resumeIfNeeded() {
-            connectMusic()
+            beginMusicMonitoring()
         }
         guard let snapshot = currentLiveActivitySnapshot() else { return }
         liveActivityRequestID += 1
