@@ -219,6 +219,14 @@ final class MusicIntegrationTests: XCTestCase {
         XCTAssertTrue(nowPlaying.isCommandAvailable(.openProvider))
     }
 
+    func testMusicTimeConversionRejectsInvalidProviderValues() {
+        XCTAssertEqual(MusicTimeConversion.milliseconds(1.5), 1_500)
+        XCTAssertNil(MusicTimeConversion.milliseconds(-1))
+        XCTAssertNil(MusicTimeConversion.milliseconds(.nan))
+        XCTAssertNil(MusicTimeConversion.milliseconds(.infinity))
+        XCTAssertNil(MusicTimeConversion.milliseconds(.greatestFiniteMagnitude))
+    }
+
     func testMusicTimelineIDsUseTheRustEventSequence() {
         func event(sequence: UInt64) -> MobileMusicRideEventDto {
             MobileMusicRideEventDto(

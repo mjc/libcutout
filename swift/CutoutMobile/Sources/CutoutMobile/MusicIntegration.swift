@@ -529,6 +529,16 @@ public struct MusicProviderObservation: Equatable, Sendable {
     }
 }
 
+/// Converts provider seconds into bounded milliseconds without trapping.
+enum MusicTimeConversion {
+    static func milliseconds(_ seconds: TimeInterval) -> UInt64? {
+        guard seconds.isFinite, seconds >= 0 else { return nil }
+        let milliseconds = seconds * 1_000
+        guard milliseconds <= Double(UInt64.max) else { return nil }
+        return UInt64(milliseconds)
+    }
+}
+
 /// The Rust-owned ride association is the only path for music metadata to enter a ride.
 @MainActor
 public final class MusicIntegrationCoordinator {
@@ -1253,10 +1263,10 @@ public final class AppleMusicProviderAdapter {
         case .stopped: .stopped
         default: .unavailable
         }
-        let position = player.currentPlaybackTime >= 0
-            ? UInt64(player.currentPlaybackTime * 1_000)
-            : nil
-        let duration = player.nowPlayingItem.map { UInt64(max(0, $0.playbackDuration) * 1_000) }
+        let position = MusicTimeConversion.milliseconds(player.currentPlaybackTime)
+        let duration = player.nowPlayingItem.flatMap {
+            MusicTimeConversion.milliseconds($0.playbackDuration)
+        }
         return MobileMusicSnapshotDto(
             provider: .appleMusic,
             sessionId: "system-music-player",
