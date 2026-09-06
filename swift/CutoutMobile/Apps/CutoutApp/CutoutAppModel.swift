@@ -417,6 +417,12 @@ final class CutoutAppModel {
     func selectMusicProvider(_ provider: MobileMusicProviderDto) {
         selectedMusicProvider = provider
         musicTransitionHintTracker.clear()
+#if canImport(MediaPlayer) && os(iOS)
+        if provider.monitoringMode == .unavailable {
+            musicMonitorTask?.cancel()
+            musicMonitorTask = nil
+        }
+#endif
         if !isMusicPlayerHidden {
             refreshMusicSnapshot()
         }
