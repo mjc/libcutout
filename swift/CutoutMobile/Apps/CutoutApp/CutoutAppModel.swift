@@ -521,6 +521,8 @@ final class CutoutAppModel {
     private func restoreRideMapState() {
         guard let state = core.rideMapStateHandle else { return }
         rideMapSnapshot = state.currentSnapshot()
+        musicHistoryPolicy = state.currentMusicHistoryPolicy()
+        musicCoordinator.restoreHistoryPolicy(musicHistoryPolicy)
         musicTimelineEvents = musicCoordinator.recordedEvents
         rideMapLiveTelemetryState = rideMapSnapshot?.associatedVehicle == nil
             ? .gpsOnly

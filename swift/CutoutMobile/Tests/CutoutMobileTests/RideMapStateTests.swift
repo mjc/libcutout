@@ -3,6 +3,20 @@ import CutoutMobileFFI
 @testable import CutoutMobile
 
 final class RideMapStateTests: XCTestCase {
+    func testMusicHistoryPolicyIsProjectedFromRustAndResetsForNewRide() throws {
+        let state = MobileRideMapState()
+
+        XCTAssertEqual(state.currentMusicHistoryPolicy(), .disabled)
+        _ = try state.startGpsOnly(atMs: 1_000, lastConnectedVehicle: nil)
+        try state.setMusicHistoryPolicy(.humanReadable)
+        XCTAssertEqual(state.currentMusicHistoryPolicy(), .humanReadable)
+
+        _ = try state.stop(atMs: 2_000)
+        _ = try state.save()
+        _ = try state.startGpsOnly(atMs: 3_000, lastConnectedVehicle: nil)
+        XCTAssertEqual(state.currentMusicHistoryPolicy(), .disabled)
+    }
+
     func testHistoryContextOverviewBudgetIsBounded() {
         XCTAssertEqual(
             MobileRideMapHistoryContextBudget.overview,
