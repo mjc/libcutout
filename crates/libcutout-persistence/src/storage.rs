@@ -3629,18 +3629,81 @@ fn export_ride_json(
         )
         .optional()?
         .ok_or(StorageError::NotFound)?;
-    let json = format!(
-        "{{\"schema_version\":1,\"ride_id\":\"{}\",\"source\":\"{}\",\"state\":\"{}\",\"created_at_ms\":{},\"updated_at_ms\":{},\"point_count\":{},\"distance_mm\":{}}}",
-        ride_id.uuid(),
-        source,
-        state,
-        created_at_ms,
-        updated_at_ms,
-        point_count,
-        distance_mm
-    );
+    let music_history = export_music_history(connection, ride_id)?;
+    let json = serde_json::json!({
+        "schema_version": 2,
+        "ride_id": ride_id.uuid().to_string(),
+        "source": source,
+        "state": state,
+        "created_at_ms": created_at_ms,
+        "updated_at_ms": updated_at_ms,
+        "point_count": point_count,
+        "distance_mm": distance_mm,
+        "music_history": music_history,
+    })
+    .to_string();
     fs::write(destination, json)?;
     Ok(())
+}
+
+fn export_music_history(
+    connection: &Connection,
+    ride_id: RideId,
+) -> Result<serde_json::Value, StorageError> {
+    let state = music_history_state(connection, ride_id)?;
+    let events = match state {
+        MusicHistoryState::HumanReadable | MusicHistoryState::Redacted => {
+            let mut statement = connection.prepare(
+                "SELECT sequence, provider, item_identifier, title, artist, kind,
+                        monotonic_at_ms, wall_clock_at_ms, clock_uncertainty_milliseconds
+                 FROM ride_music_event WHERE ride_id = ?1 ORDER BY sequence",
+            )?;
+            statement
+                .query_map([ride_id.uuid().to_string()], |row| {
+                    let item_identifier = row.get::<_, Option<String>>(2)?;
+                    let display_metadata = state == MusicHistoryState::HumanReadable;
+                    let title = if display_metadata {
+                        row.get::<_, Option<String>>(3)?
+                    } else {
+                        None
+                    };
+                    let artist = if display_metadata {
+                        row.get::<_, Option<String>>(4)?
+                    } else {
+                        None
+                    };
+                    Ok(serde_json::json!({
+                        "sequence": row.get::<_, u64>(0)?,
+                        "provider": row.get::<_, String>(1)?,
+                        "item_identifier": item_identifier,
+                        "title": title,
+                        "artist": artist,
+                        "kind": row.get::<_, String>(5)?,
+                        "monotonic_at_ms": row.get::<_, u64>(6)?,
+                        "wall_clock_at_ms": row.get::<_, u64>(7)?,
+                        "clock_uncertainty_milliseconds": row.get::<_, u64>(8)?,
+                    }))
+                })?
+                .collect::<Result<Vec<_>, _>>()?
+        }
+        MusicHistoryState::Missing | MusicHistoryState::Disabled | MusicHistoryState::Deleted => {
+            Vec::new()
+        }
+    };
+    Ok(serde_json::json!({
+        "state": export_music_history_state_name(state),
+        "events": events,
+    }))
+}
+
+fn export_music_history_state_name(state: MusicHistoryState) -> &'static str {
+    match state {
+        MusicHistoryState::Missing => "missing",
+        MusicHistoryState::Disabled => "disabled",
+        MusicHistoryState::Redacted => "redacted",
+        MusicHistoryState::HumanReadable => "human_readable",
+        MusicHistoryState::Deleted => "deleted",
+    }
 }
 
 fn create_ride(
