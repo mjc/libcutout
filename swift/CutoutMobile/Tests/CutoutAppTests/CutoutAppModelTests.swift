@@ -328,6 +328,40 @@ final class CutoutAppModelTests: XCTestCase {
         XCTAssertNil(model.musicNowPlaying?.item)
     }
 
+    @MainActor
+    func testBackgroundMusicProjectionBecomesStaleWithoutRecordingAnEvent() throws {
+        let state = MobileRideMapState()
+        _ = try state.startGpsOnly(atMs: 1_000, lastConnectedVehicle: nil)
+        let model = CutoutAppModel(
+            core: SessionDriverSpy(rows: [], rideMapState: state, preserveExistingRide: true)
+        )
+        model.restoreMusicPlayer()
+
+        let snapshot = MobileMusicSnapshotDto(
+            provider: .appleMusic,
+            sessionId: "session",
+            state: .playing,
+            item: MobileMusicItemDto(identifier: "track-1", title: "Song", artist: "Artist"),
+            positionMilliseconds: nil,
+            durationMilliseconds: nil,
+            observedAtMs: 1,
+            capabilities: .init(previous: true, play: false, pause: true, next: true, openProvider: true)
+        )
+        XCTAssertTrue(
+            model.ingestMusicObservation(
+                MusicProviderObservation(snapshot: snapshot),
+                wallClockAtMs: 1_700_000_000_000,
+                clockUncertaintyMs: 5
+            )
+        )
+        XCTAssertEqual(model.musicNowPlaying?.state, .playing)
+
+        model.appDidEnterBackground()
+
+        XCTAssertEqual(model.musicNowPlaying?.state, .stale)
+        XCTAssertTrue(model.musicTimelineEvents.isEmpty)
+    }
+
     private func clear(
         _ store: RideSessionMarkerStore,
         file: StaticString = #filePath,

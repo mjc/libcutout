@@ -195,6 +195,21 @@ final class MusicIntegrationTests: XCTestCase {
         XCTAssertTrue(nowPlaying.supports(.next))
     }
 
+    func testStaleProjectionPreservesMetadataButDisablesTransport() {
+        let playing = nowPlaying(trackID: "track-1")
+
+        let stale = playing.staleProjection
+
+        XCTAssertEqual(stale.state, .stale)
+        XCTAssertEqual(stale.item, playing.item)
+        XCTAssertEqual(stale.artwork, playing.artwork)
+        XCTAssertTrue(stale.isCommandAvailable(.openProvider))
+        XCTAssertFalse(stale.isCommandAvailable(.previous))
+        XCTAssertFalse(stale.isCommandAvailable(.pause))
+        XCTAssertFalse(stale.isCommandAvailable(.next))
+        XCTAssertTrue(stale.availableTransportCommands.isEmpty)
+    }
+
     @MainActor
     func testCoordinatorRejectsOversizedProviderMetadataBeforeProjectingIt() throws {
         let state = MobileRideMapState()
