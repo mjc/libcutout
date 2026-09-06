@@ -78,6 +78,39 @@ public struct MusicPlayerVisibilityStore {
     }
 }
 
+/// Persists the user's default ride-music history choice for future rides.
+///
+/// The active ride's policy remains Rust-owned; this store is only the app
+/// preference used when no ride is open yet.
+public struct MusicHistoryPolicyStore {
+    private static let key = "io.cutout.music.history-policy.default"
+    private let defaults: UserDefaults
+
+    public init(defaults: UserDefaults = .standard) {
+        self.defaults = defaults
+    }
+
+    public var policy: MobileMusicHistoryPolicyDto {
+        switch defaults.string(forKey: Self.key) {
+        case "opaque_item": .opaqueItem
+        case "human_readable": .humanReadable
+        default: .disabled
+        }
+    }
+
+    public func set(_ policy: MobileMusicHistoryPolicyDto) {
+        defaults.set(Self.storageValue(for: policy), forKey: Self.key)
+    }
+
+    private static func storageValue(for policy: MobileMusicHistoryPolicyDto) -> String {
+        switch policy {
+        case .disabled: "disabled"
+        case .opaqueItem: "opaque_item"
+        case .humanReadable: "human_readable"
+        }
+    }
+}
+
 /// Provider-neutral music state used by the compact ride/map player.
 public struct MusicNowPlaying: Equatable, Sendable {
     public let provider: MobileMusicProviderDto
