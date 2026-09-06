@@ -215,10 +215,19 @@ public final class AppleMusicProviderAdapter {
 public final class SpotifyProviderAdapter: NSObject, @preconcurrency SPTAppRemoteDelegate, @preconcurrency SPTAppRemotePlayerStateDelegate {
     public static let providerURL = URL(string: "spotify://")!
     private static let defaultRedirectURI = "cutout-spotify://spotify-login-callback"
+    private static let accessTokenKey = "io.cutout.music.spotify.access-token"
 
     private let configuration: SPTConfiguration?
     private var appRemote: SPTAppRemote?
-    private var accessToken: String?
+    private var accessToken: String? {
+        didSet {
+            if let accessToken {
+                UserDefaults.standard.set(accessToken, forKey: Self.accessTokenKey)
+            } else {
+                UserDefaults.standard.removeObject(forKey: Self.accessTokenKey)
+            }
+        }
+    }
     private var playerState: SPTAppRemotePlayerState?
     private var onChange: (@MainActor (MusicProviderObservation) -> Void)?
     private var lifecycleState: MobileMusicPlaybackStateDto = .disconnected
@@ -237,6 +246,7 @@ public final class SpotifyProviderAdapter: NSObject, @preconcurrency SPTAppRemot
         } else {
             configuration = nil
         }
+        accessToken = UserDefaults.standard.string(forKey: Self.accessTokenKey)
         super.init()
     }
 
@@ -366,6 +376,12 @@ public final class SpotifyProviderAdapter: NSObject, @preconcurrency SPTAppRemot
                 self.emitChange()
             }
         })
+        appRemote.playerAPI?.getPlayerState { [weak self] result, error in
+            guard error == nil, let playerState = result as? SPTAppRemotePlayerState else {
+                return
+            }
+            self?.playerStateDidChange(playerState)
+        }
         emitChange()
     }
 

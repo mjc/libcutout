@@ -42,6 +42,20 @@ final class MusicIntegrationTests: XCTestCase {
         }
     }
 
+    func testMusicProviderSelectionStoreDefaultsToAppleMusicAndRoundTrips() throws {
+        let suiteName = "MusicProviderSelectionStoreTests-\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        let store = MusicProviderSelectionStore(defaults: defaults)
+
+        XCTAssertEqual(store.provider, .appleMusic)
+        store.set(.spotify)
+        XCTAssertEqual(store.provider, .spotify)
+        store.set(.appleMusic)
+        XCTAssertEqual(store.provider, .appleMusic)
+    }
+
     func testTransitionHintRemainsPendingUntilTheItemChanges() {
         var tracker = MusicTransitionHintTracker()
         tracker.issue(.skip)

@@ -229,6 +229,24 @@ public extension MobileMusicProviderDto {
     }
 }
 
+/// Persists the provider selected for the compact music player.
+public struct MusicProviderSelectionStore {
+    private static let key = "io.cutout.music.provider.selected"
+    private let defaults: UserDefaults
+
+    public init(defaults: UserDefaults = .standard) {
+        self.defaults = defaults
+    }
+
+    public var provider: MobileMusicProviderDto {
+        defaults.string(forKey: Self.key) == "spotify" ? .spotify : .appleMusic
+    }
+
+    public func set(_ provider: MobileMusicProviderDto) {
+        defaults.set(provider == .spotify ? "spotify" : "apple_music", forKey: Self.key)
+    }
+}
+
 /// Identifies the currently owning music-monitor task.
 ///
 /// A cancelled task may finish after a replacement task starts. The generation

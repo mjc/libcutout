@@ -159,6 +159,27 @@ final class CutoutAppModelTests: XCTestCase {
     }
 
     @MainActor
+    func testSelectedMusicProviderPersistsAcrossModelLaunches() throws {
+        let suiteName = "CutoutAppMusicProviderSelectionTests-\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let providerStore = MusicProviderSelectionStore(defaults: defaults)
+
+        let firstModel = CutoutAppModel(
+            core: SessionDriverSpy(rows: []),
+            musicProviderSelectionStore: providerStore
+        )
+        firstModel.selectMusicProvider(.spotify)
+
+        let secondModel = CutoutAppModel(
+            core: SessionDriverSpy(rows: []),
+            musicProviderSelectionStore: providerStore
+        )
+
+        XCTAssertEqual(secondModel.selectedMusicProvider, .spotify)
+    }
+
+    @MainActor
     func testMusicHistoryPolicyCanBeChangedAfterRideStops() throws {
         let state = MobileRideMapState()
         _ = try state.startGpsOnly(atMs: 1_000, lastConnectedVehicle: nil)

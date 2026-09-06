@@ -327,7 +327,8 @@ final class CutoutAppModel {
             selectedDeviceStore: DevicePickerSelectionStore(),
             rideSessionMarkerStore: RideSessionMarkerStore(),
             liveActivityManager: LiveActivityRideActivityKitManager(),
-            musicHistoryPolicyStore: MusicHistoryPolicyStore()
+            musicHistoryPolicyStore: MusicHistoryPolicyStore(),
+            musicProviderSelectionStore: MusicProviderSelectionStore()
         )
     }
 
@@ -336,7 +337,8 @@ final class CutoutAppModel {
         selectedDeviceStore: DevicePickerSelectionStore = DevicePickerSelectionStore(),
         rideSessionMarkerStore: RideSessionMarkerStore = RideSessionMarkerStore(),
         liveActivityManager: any LiveActivityRideLifecycleManaging = LiveActivityRideActivityKitManager(),
-        musicHistoryPolicyStore: MusicHistoryPolicyStore = MusicHistoryPolicyStore()
+        musicHistoryPolicyStore: MusicHistoryPolicyStore = MusicHistoryPolicyStore(),
+        musicProviderSelectionStore: MusicProviderSelectionStore = MusicProviderSelectionStore()
     ) {
         self.init(
             core: core,
@@ -344,7 +346,8 @@ final class CutoutAppModel {
             selectedDeviceStore: selectedDeviceStore,
             rideSessionMarkerStore: rideSessionMarkerStore,
             liveActivityManager: liveActivityManager,
-            musicHistoryPolicyStore: musicHistoryPolicyStore
+            musicHistoryPolicyStore: musicHistoryPolicyStore,
+            musicProviderSelectionStore: musicProviderSelectionStore
         )
     }
 
@@ -354,7 +357,8 @@ final class CutoutAppModel {
         selectedDeviceStore: DevicePickerSelectionStore,
         rideSessionMarkerStore: RideSessionMarkerStore,
         liveActivityManager: any LiveActivityRideLifecycleManaging,
-        musicHistoryPolicyStore: MusicHistoryPolicyStore
+        musicHistoryPolicyStore: MusicHistoryPolicyStore,
+        musicProviderSelectionStore: MusicProviderSelectionStore
     ) {
         self.permitsStoredDeviceAutoPairing = permitsStoredDeviceAutoPairing
         self.core = core
@@ -369,7 +373,7 @@ final class CutoutAppModel {
         self.rideSessionMarkerStore = rideSessionMarkerStore
         self.musicPlayerVisibilityStore = MusicPlayerVisibilityStore()
         self.isMusicPlayerHidden = musicPlayerVisibilityStore.isHidden
-        self.musicProviderSelectionStore = MusicProviderSelectionStore()
+        self.musicProviderSelectionStore = musicProviderSelectionStore
         self.selectedMusicProvider = musicProviderSelectionStore.provider
         self.musicHistoryPolicyStore = musicHistoryPolicyStore
         self.musicHistoryPolicy = musicHistoryPolicyStore.policy
