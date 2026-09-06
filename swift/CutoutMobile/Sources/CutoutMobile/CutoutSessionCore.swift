@@ -1711,6 +1711,7 @@ public final class CutoutSessionCore: NSObject {
         publishesResult: Bool = false,
         priorWriteSucceeded: Bool = true
     ) {
+        musicCaptureContext.reset()
         guard let builder = captureBuilder else { return }
         let completedCaptureURL = captureFileURL
         captureBuilder = nil

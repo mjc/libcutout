@@ -474,6 +474,9 @@ final class CutoutAppModel {
         switch provider.monitoringMode {
         case .unavailable:
             musicMonitorSceneState.cancel()
+        }
+#if canImport(MediaPlayer) && os(iOS)
+        if provider.monitoringMode == .unavailable {
             stopMusicMonitoring()
         case .appleMusicSystemPlayer where previousProvider != provider:
             musicMonitorSceneState.request()
@@ -777,6 +780,11 @@ final class CutoutAppModel {
         beginMusicMonitoring()
     }
 
+    private func finishMusicMonitoring(generation: UInt64) {
+        guard musicMonitorGeneration.owns(generation) else { return }
+        stopMusicMonitoring()
+    }
+
     private func unavailableMusicObservation(observedAtMs: UInt64) -> MusicProviderObservation {
         MusicProviderObservation.unavailable(
             provider: selectedMusicProvider,
@@ -785,15 +793,31 @@ final class CutoutAppModel {
         )
     }
 
-    func connectMusic() {
-#if os(iOS)
+    private func stopMusicMonitoring() {
+        musicMonitorGeneration.invalidate()
         musicMonitorTask?.cancel()
+        musicMonitorTask = nil
+#if canImport(MediaPlayer) && os(iOS)
+        appleMusicProvider.stopMonitoring()
+#endif
+    }
+
+    private func beginMusicMonitoring() {
+        guard musicMonitorSceneState.isSceneActive else { return }
+#if os(iOS)
+        stopMusicMonitoring()
+        let generation = musicMonitorGeneration.begin()
         musicMonitorTask = Task { [weak self] in
-            await self?.monitorMusic()
+            await self?.monitorMusic(generation: generation)
         }
 #else
         _ = ingestMusicObservation(unavailableMusicObservation(observedAtMs: core.now().rawValue))
 #endif
+    }
+
+    func connectMusic() {
+        musicMonitorSceneState.request()
+        beginMusicMonitoring()
     }
 
     private func restoreRideMapState() {

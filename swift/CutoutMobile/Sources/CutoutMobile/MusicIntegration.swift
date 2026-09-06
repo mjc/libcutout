@@ -1504,6 +1504,10 @@ public final class AppleMusicProviderAdapter {
         }?.data
     }
 
+    private var currentItemIdentifier: String? {
+        player.nowPlayingItem.map { String($0.persistentID) }
+    }
+
     private func loadArtwork() -> MusicArtwork? {
 #if canImport(UIKit) && os(iOS)
         guard let artwork = player.nowPlayingItem?.artwork,
