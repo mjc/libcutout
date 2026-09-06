@@ -79,6 +79,18 @@ final class MusicIntegrationTests: XCTestCase {
         XCTAssertNil(tracker.pendingHint)
     }
 
+    func testTransitionHintExpiresAfterBoundedUnchangedObservations() {
+        var tracker = MusicTransitionHintTracker()
+        tracker.issue(.skip)
+
+        let unchanged = nowPlaying(trackID: "track-1")
+        for _ in 0..<5 {
+            tracker.resolve(previous: unchanged, current: unchanged, appliedHint: .skip)
+        }
+
+        XCTAssertNil(tracker.pendingHint)
+    }
+
     @MainActor
     func testProviderResetDropsCorrelationWithoutWritingAnEvent() throws {
         let state = MobileRideMapState()

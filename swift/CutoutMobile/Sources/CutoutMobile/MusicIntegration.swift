@@ -89,10 +89,11 @@ public enum MusicProviderMonitoringMode: Equatable, Sendable {
 /// Holds a transport hint until the provider reports the resulting state.
 ///
 /// System-player notifications can arrive after the immediate post-command
-/// poll, so clearing the hint after one unchanged snapshot would misclassify
-/// an accepted skip as an unsolicited item change.
+/// poll, so the hint survives several unchanged snapshots but expires when the
+/// provider never reports a resulting item change.
 public struct MusicTransitionHintTracker: Sendable {
     private static let maxAgeMilliseconds: UInt64 = 5_000
+    private static let maximumUnchangedObservations = 5
     private struct PendingHint: Sendable {
         let id: UInt64
         let hint: MusicTransitionHint
@@ -101,6 +102,7 @@ public struct MusicTransitionHintTracker: Sendable {
 
     private var pendingHints = [PendingHint]()
     private var nextID: UInt64 = 0
+    private var remainingUnchangedObservations: Int?
 
     public var pendingHint: MusicTransitionHint? { pendingHints.first?.hint }
 
@@ -115,6 +117,7 @@ public struct MusicTransitionHintTracker: Sendable {
         let id = nextID
         nextID &+= 1
         pendingHints.append(PendingHint(id: id, hint: hint, issuedAtMs: issuedAtMs))
+        remainingUnchangedObservations = Self.maximumUnchangedObservations
         return id
     }
 
@@ -125,15 +128,22 @@ public struct MusicTransitionHintTracker: Sendable {
             else { return false }
             return monotonicMs - issuedAtMs > Self.maxAgeMilliseconds
         }
+        if pendingHints.isEmpty {
+            remainingUnchangedObservations = nil
+        }
         return pendingHints.first?.hint
     }
 
     public mutating func clear() {
         pendingHints.removeAll(keepingCapacity: true)
+        remainingUnchangedObservations = nil
     }
 
     public mutating func clear(id: UInt64) {
         pendingHints.removeAll { $0.id == id }
+        remainingUnchangedObservations = pendingHints.isEmpty
+            ? nil
+            : Self.maximumUnchangedObservations
     }
 
     public mutating func resolve(
@@ -149,27 +159,44 @@ public struct MusicTransitionHintTracker: Sendable {
            let currentObservedAtMs,
            currentObservedAtMs >= issuedAtMs,
            currentObservedAtMs - issuedAtMs > Self.maxAgeMilliseconds {
-            pendingHints.removeFirst()
+            removeFirstPending()
             return
         }
         guard let current else {
-            pendingHints.removeFirst()
+            removeFirstPending()
             return
         }
         if MusicTransitionHintTracker.isTerminalState(current.state) {
-            pendingHints.removeFirst()
+            removeFirstPending()
             return
         }
-        guard current.item != nil else {
-            pendingHints.removeFirst()
+        guard let previous, current.item != nil else {
+            consumeUnchangedObservation()
             return
         }
-        guard let previous else { return }
         if previous.provider != current.provider
             || previous.item?.identifier != current.item?.identifier
         {
-            pendingHints.removeFirst()
+            removeFirstPending()
+        } else {
+            consumeUnchangedObservation()
         }
+    }
+
+    private mutating func removeFirstPending() {
+        pendingHints.removeFirst()
+        remainingUnchangedObservations = pendingHints.isEmpty
+            ? nil
+            : Self.maximumUnchangedObservations
+    }
+
+    private mutating func consumeUnchangedObservation() {
+        let remaining = remainingUnchangedObservations ?? Self.maximumUnchangedObservations
+        guard remaining > 1 else {
+            clear()
+            return
+        }
+        remainingUnchangedObservations = remaining - 1
     }
 
     private static func isTerminalState(_ state: MobileMusicPlaybackStateDto) -> Bool {
