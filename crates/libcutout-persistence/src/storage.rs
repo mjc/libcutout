@@ -2095,6 +2095,14 @@ impl RideDatabase {
     pub fn music_events(&self, ride_id: RideId) -> Result<Vec<MusicRideEvent>, StorageError> {
         self.request(move |reply| Command::MusicEvents { ride_id, reply })
     }
+
+    /// Loads the persisted music-history policy for one ride.
+    pub fn music_history_policy(
+        &self,
+        ride_id: RideId,
+    ) -> Result<MusicHistoryPolicy, StorageError> {
+        self.request(move |reply| Command::MusicHistoryPolicy { ride_id, reply })
+    }
     /// Stores the display name associated with a platform-local device identifier.
     ///
     /// # Errors
@@ -3157,6 +3165,10 @@ enum Command {
     MusicEvents {
         ride_id: RideId,
         reply: Reply<Vec<MusicRideEvent>>,
+    },
+    MusicHistoryPolicy {
+        ride_id: RideId,
+        reply: Reply<MusicHistoryPolicy>,
     },
     SaveVoltageSagModel {
         device_identity: String,
@@ -4876,6 +4888,24 @@ fn music_events(
         .map_err(StorageError::from)
 }
 
+fn music_history_policy(
+    connection: &Connection,
+    ride_id: RideId,
+) -> Result<MusicHistoryPolicy, StorageError> {
+    ensure_ride_exists(connection, ride_id)?;
+    let value = connection
+        .query_row(
+            "SELECT policy FROM ride_music_history WHERE ride_id = ?1",
+            [ride_id.uuid().to_string()],
+            |row| row.get::<_, String>(0),
+        )
+        .optional()?;
+    value
+        .map(|value| parse_policy(&value))
+        .transpose()
+        .map(|policy| policy.unwrap_or(MusicHistoryPolicy::Disabled))
+}
+
 fn ensure_ride_exists(connection: &Connection, ride_id: RideId) -> Result<(), StorageError> {
     let exists: bool = connection.query_row(
         "SELECT EXISTS(SELECT 1 FROM rides WHERE id = ?1)",
@@ -4890,6 +4920,18 @@ fn policy_name(policy: MusicHistoryPolicy) -> &'static str {
         MusicHistoryPolicy::Disabled => "disabled",
         MusicHistoryPolicy::OpaqueItem => "opaque_item",
         MusicHistoryPolicy::HumanReadable => "human_readable",
+    }
+}
+
+fn parse_policy(value: &str) -> Result<MusicHistoryPolicy, StorageError> {
+    match value {
+        "disabled" => Ok(MusicHistoryPolicy::Disabled),
+        "opaque_item" => Ok(MusicHistoryPolicy::OpaqueItem),
+        "human_readable" => Ok(MusicHistoryPolicy::HumanReadable),
+        other => Err(StorageError::InvalidStoredValue {
+            field: "music history policy",
+            value: other.to_owned(),
+        }),
     }
 }
 
