@@ -38,6 +38,11 @@ struct MusicMonitorSceneState: Equatable {
     }
 }
 
+struct MusicHistoryQueryResult: Equatable, Sendable {
+    let events: [MobileMusicRideEventDto]
+    let error: MobileRideMapError?
+}
+
 @MainActor
 @Observable
 final class CutoutAppModel {
@@ -1417,7 +1422,7 @@ final class CutoutAppModel {
                 }
             }
             if selectedRideMapHistoryID == rideID {
-                rideMapHistoryDetailMusicTimeline.removeAll(keepingCapacity: true)
+                clearRideMapHistoryMusic()
             }
             return true
         } catch {
@@ -1541,6 +1546,7 @@ final class CutoutAppModel {
             rideMapHistoryRouteError = nil
             rideMapHistoryDetailRouteLoading = false
             rideMapHistoryDetailRouteError = nil
+            clearRideMapHistoryMusic()
             return
         }
         rideMapHistorySelectionTask?.cancel()
@@ -1560,6 +1566,7 @@ final class CutoutAppModel {
         selectedRideMapHistoryID = rideID
         rideMapHistoryRouteError = nil
         rideMapHistoryDetailRouteError = nil
+        clearRideMapHistoryMusic()
         rideMapHistoryRouteLoading = true
         rideMapHistoryDetailRouteLoading = true
         guard let state = core.rideMapStateHandle else {
@@ -1567,6 +1574,7 @@ final class CutoutAppModel {
             rideMapHistoryDetailRouteLoading = false
             rideMapHistoryRouteError = .storageError("Rust ride database is unavailable")
             rideMapHistoryDetailRouteError = rideMapHistoryRouteError
+            rideMapHistoryDetailMusicError = rideMapHistoryRouteError
             return
         }
         let cancellation = MobileRideMapProjectionCancellation()
@@ -1654,7 +1662,7 @@ final class CutoutAppModel {
         }
     }
 
-    private static func mapRideMapError(_ error: Error) -> MobileRideMapError {
+    nonisolated private static func mapRideMapError(_ error: Error) -> MobileRideMapError {
         if let error = error as? MobileRideMapError {
             return error
         }
@@ -1711,6 +1719,11 @@ final class CutoutAppModel {
         rideMapHistoryDetailSourcePointsOmittedByBudget = false
         rideMapHistoryDetailSourceSegmentsOmittedByBudget = false
         replaceRideMapHistoryDetailDisplayPoints([], truncated: false)
+    }
+
+    private func clearRideMapHistoryMusic() {
+        rideMapHistoryDetailMusicTimeline.removeAll(keepingCapacity: true)
+        rideMapHistoryDetailMusicError = nil
     }
 
     /// Loads the bounded surrounding-route context for the selected history ride. Rust performs

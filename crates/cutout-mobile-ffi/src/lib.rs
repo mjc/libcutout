@@ -7194,9 +7194,7 @@ impl MobileRideMapCore {
             return Err(MobileRideMapCoreErrorDto::NoActiveRide);
         };
         let Some(database) = state.database.clone() else {
-            return Err(MobileRideMapCoreErrorDto::Storage(
-                "Rust ride database is unavailable".to_owned(),
-            ));
+            return Err(MobileRideMapCoreErrorDto::storage_unavailable());
         };
         database
             .inner
@@ -17554,9 +17552,7 @@ mod tests {
 
         assert_eq!(
             error,
-            MobileRideMapCoreErrorDto::Storage(
-                "Rust ride database is unavailable".to_owned()
-            )
+            MobileRideMapCoreErrorDto::Storage("Rust ride database is unavailable".to_owned())
         );
     }
 
