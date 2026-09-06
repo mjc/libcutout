@@ -724,6 +724,7 @@ public struct MusicCompactPlayerInset: ViewModifier {
     public let isHidden: Bool
     public let historyPolicy: MobileMusicHistoryPolicyDto
     public let onCommand: (MobileMusicCommandDto) -> Void
+    public let onConnect: () -> Void
     public let onDismiss: () -> Void
     public let onRestore: () -> Void
     public let onSelectProvider: (MobileMusicProviderDto) -> Void
@@ -752,6 +753,15 @@ public struct MusicCompactPlayerInset: ViewModifier {
                 }
                 .buttonStyle(.bordered)
                 .accessibilityIdentifier("music.restore")
+            } else {
+                Button(action: onConnect) {
+                    Label(
+                        pevLocalizedText("music.connect"),
+                        systemImage: "music.note"
+                    )
+                }
+                .buttonStyle(.bordered)
+                .accessibilityIdentifier("music.connect")
             }
         }
     }
@@ -765,6 +775,7 @@ public extension View {
         isHidden: Bool,
         historyPolicy: MobileMusicHistoryPolicyDto,
         onCommand: @escaping (MobileMusicCommandDto) -> Void,
+        onConnect: @escaping () -> Void,
         onDismiss: @escaping () -> Void,
         onRestore: @escaping () -> Void,
         onSelectProvider: @escaping (MobileMusicProviderDto) -> Void,
@@ -777,6 +788,7 @@ public extension View {
             isHidden: isHidden,
             historyPolicy: historyPolicy,
             onCommand: onCommand,
+            onConnect: onConnect,
             onDismiss: onDismiss,
             onRestore: onRestore,
             onSelectProvider: onSelectProvider,

@@ -869,6 +869,10 @@
       "comment" : "Label for a segment with an unknown start reason.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Unknown segment reason" } } }
     },
+    "music.connect" : {
+      "comment" : "Starts music provider authorization and monitoring from the explicit setup action.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Set up music" } } }
+    },
     "music.done" : {
       "comment" : "Dismisses the expanded music player.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Done" } } }
