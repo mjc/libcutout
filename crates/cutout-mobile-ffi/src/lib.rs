@@ -6805,10 +6805,14 @@ impl MobileRideMapCore {
             )
             .map_err(map_storage_core_error)?;
         state.music_history_policy = policy;
-        if policy == CoreMusicHistoryPolicy::Disabled {
-            state.music_timeline = cutout_core::MusicTimeline::new();
-        } else if policy == CoreMusicHistoryPolicy::OpaqueItem {
-            state.music_timeline.redact_display_metadata();
+        match policy {
+            CoreMusicHistoryPolicy::Disabled => {
+                state.music_timeline = cutout_core::MusicTimeline::new();
+            }
+            CoreMusicHistoryPolicy::OpaqueItem => {
+                state.music_timeline.redact_display_metadata();
+            }
+            CoreMusicHistoryPolicy::HumanReadable => {}
         }
         Ok(())
     }
