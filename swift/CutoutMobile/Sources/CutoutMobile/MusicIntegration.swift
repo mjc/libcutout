@@ -447,6 +447,7 @@ private extension MobileMusicRideEventKindDto {
 public extension MobileMusicRideEventDto {
     var timelineID: String {
         [
+            String(sequence),
             provider.timelineIDComponent,
             String(monotonicAtMs),
             String(wallClockAtMs),
