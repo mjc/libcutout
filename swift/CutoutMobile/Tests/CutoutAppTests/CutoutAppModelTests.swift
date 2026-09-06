@@ -173,6 +173,37 @@ final class CutoutAppModelTests: XCTestCase {
     }
 
     @MainActor
+    func testMusicHistoryPreferenceSavesWithoutRideDatabase() throws {
+        let suiteName = "MusicHistoryWithoutDatabase-\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let store = MusicHistoryPolicyStore(defaults: defaults)
+        let model = CutoutAppModel(
+            core: SessionDriverSpy(rows: [], rideMapUnavailable: true),
+            musicHistoryPolicyStore: store
+        )
+        for policy in [MobileMusicHistoryPolicyDto.opaqueItem, .humanReadable] {
+            XCTAssertTrue(model.setMusicHistoryPolicy(policy))
+            XCTAssertEqual(model.musicHistoryPolicy, policy)
+            XCTAssertEqual(store.policy, policy)
+            let relaunched = CutoutAppModel(
+                core: SessionDriverSpy(rows: [], rideMapUnavailable: true),
+                musicHistoryPolicyStore: MusicHistoryPolicyStore(defaults: defaults)
+            )
+            XCTAssertEqual(relaunched.musicHistoryPolicy, policy)
+        }
+    }
+
+    @MainActor
+    func testProductionSessionHasRustRideDatabase() throws {
+        guard RustPersistenceStore.shared != nil else {
+            throw XCTSkip("Platform persistence unavailable; production wiring is covered on device")
+        }
+        let core = CutoutSessionCore()
+        XCTAssertNotNil(core.rideMapStateHandle)
+    }
+
+    @MainActor
     func testSelectedMusicProviderPersistsAcrossModelLaunches() throws {
         let suiteName = "CutoutAppMusicProviderSelectionTests-\(UUID().uuidString)"
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))

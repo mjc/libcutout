@@ -1,5 +1,45 @@
 import XCTest
 
+/// Runs against the installed app and its real preferences/provider session.
+@MainActor
+final class MusicPreferencesDeviceUITests: XCTestCase {
+    func testReadableHistorySelectionSurvivesSheetReopen() {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.terminate()
+        app.launch()
+        let details = app.buttons["Music details"]
+        if !app.navigationBars["Music details"].exists {
+            XCTAssertTrue(details.waitForExistence(timeout: 20), app.debugDescription)
+            details.tap()
+        }
+        let picker = app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "Ride music history")).firstMatch
+        XCTAssertTrue(picker.waitForExistence(timeout: 5), app.debugDescription)
+        picker.tap()
+        app.buttons["Save readable history"].tap()
+        XCTAssertTrue(app.staticTexts["Save provider, title, artist, and playback events with the ride."].waitForExistence(timeout: 5), app.debugDescription)
+        picker.tap()
+        app.buttons["Save item IDs only"].tap()
+        XCTAssertTrue(app.staticTexts["Save provider and item IDs without readable track metadata."].waitForExistence(timeout: 5), app.debugDescription)
+        app.navigationBars["Music details"].buttons["Done"].tap()
+        details.tap()
+        XCTAssertTrue(app.staticTexts["Save provider and item IDs without readable track metadata."].waitForExistence(timeout: 5), app.debugDescription)
+        picker.tap()
+        app.buttons["Save readable history"].tap()
+        XCTAssertTrue(app.staticTexts["Save provider, title, artist, and playback events with the ride."].waitForExistence(timeout: 5), app.debugDescription)
+        app.navigationBars["Music details"].buttons["Done"].tap()
+        details.tap()
+        XCTAssertTrue(app.staticTexts["Save provider, title, artist, and playback events with the ride."].waitForExistence(timeout: 5), app.debugDescription)
+        app.navigationBars["Music details"].buttons["Done"].tap()
+        app.terminate()
+        app.launch()
+        XCTAssertTrue(details.waitForExistence(timeout: 30), app.debugDescription)
+        details.tap()
+        XCTAssertTrue(app.staticTexts["Save provider, title, artist, and playback events with the ride."].waitForExistence(timeout: 5), app.debugDescription)
+        app.navigationBars["Music details"].buttons["Done"].tap()
+    }
+}
+
 @MainActor
 final class CutoutAppUITests: XCTestCase {
     private var app: XCUIApplication!

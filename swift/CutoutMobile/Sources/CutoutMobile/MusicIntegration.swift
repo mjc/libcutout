@@ -774,7 +774,9 @@ public final class MusicIntegrationCoordinator {
 
     public func setHistoryPolicy(_ policy: MobileMusicHistoryPolicyDto) throws {
         guard let rideMapState else {
-            throw MobileRideMapError.storageError("Rust ride database is unavailable")
+            // A future-ride preference is still valid without a current ride store.
+            adoptHistoryPolicy(policy)
+            return
         }
         try rideMapState.setMusicHistoryPolicy(policy)
         adoptHistoryPolicy(policy)

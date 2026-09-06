@@ -650,6 +650,9 @@ final class CutoutAppModel {
     }
 
     func setMusicHistoryPolicy(_ policy: MobileMusicHistoryPolicyDto) -> Bool {
+#if DEBUG
+        print("music_history_request policy=\(policy) has_ride_store=\(core.rideMapStateHandle != nil)")
+#endif
         let previous = musicHistoryPolicy
         do {
             try musicCoordinator.setHistoryPolicy(policy)
@@ -672,6 +675,9 @@ final class CutoutAppModel {
             }
             return true
         } catch {
+#if DEBUG
+            print("music_history_rejected error=\(error)")
+#endif
             musicHistoryPolicy = previous
             return false
         }
