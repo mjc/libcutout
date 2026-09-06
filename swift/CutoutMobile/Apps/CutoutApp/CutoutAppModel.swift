@@ -265,6 +265,7 @@ final class CutoutAppModel {
     private var rideMapHistoryContextTask: Task<Void, Never>?
     private var rideMapRestoreTask: Task<Void, Never>?
     private var musicMonitorTask: Task<Void, Never>?
+    private var pendingMusicTransitionHint: MobileMusicRideEventKindDto?
     private var rideMapLiveProjectionTask: Task<Void, Never>?
     private var rideMapDurationTask: Task<Void, Never>?
     private var rideMapLiveProjectionCancellation: MobileLiveRideMapProjectionCancellation?
@@ -386,7 +387,12 @@ final class CutoutAppModel {
             outcome = await appleMusicProvider.perform(command)
         }
         if outcome == .accepted {
-            refreshMusicSnapshot()
+            pendingMusicTransitionHint = switch command {
+            case .previous, .next: .skip
+            default: nil
+            }
+            refreshMusicSnapshot(transitionHint: pendingMusicTransitionHint)
+            pendingMusicTransitionHint = nil
         }
         return outcome
 #else
@@ -413,7 +419,9 @@ final class CutoutAppModel {
         }
     }
 
-    func refreshMusicSnapshot() {
+    func refreshMusicSnapshot(
+        transitionHint: MobileMusicRideEventKindDto? = nil
+    ) {
 #if canImport(MediaPlayer) && os(iOS)
         let observedAtMs = core.now().rawValue
         let observation = if selectedMusicProvider == .spotify {
@@ -421,7 +429,7 @@ final class CutoutAppModel {
         } else {
             appleMusicProvider.observation(observedAtMs: observedAtMs)
         }
-        _ = ingestMusicObservation(observation)
+        _ = ingestMusicObservation(observation, transitionHint: transitionHint)
 #endif
     }
 
@@ -429,14 +437,16 @@ final class CutoutAppModel {
     func ingestMusicObservation(
         _ observation: MusicProviderObservation,
         wallClockAtMs: UInt64? = nil,
-        clockUncertaintyMs: UInt64 = 1_000
+        clockUncertaintyMs: UInt64 = 1_000,
+        transitionHint: MobileMusicRideEventKindDto? = nil
     ) -> Bool {
         let wallClockAtMs = wallClockAtMs ?? UInt64(Date().timeIntervalSince1970 * 1_000)
         do {
             let outcome = try musicCoordinator.ingest(
                 observation: observation,
                 wallClockAtMs: wallClockAtMs,
-                clockUncertaintyMs: clockUncertaintyMs
+                clockUncertaintyMs: clockUncertaintyMs,
+                transitionHint: transitionHint
             )
             if outcome == .recorded {
                 core.updateMusicCaptureObservation(
