@@ -7178,6 +7178,34 @@ impl MobileRideMapCore {
             .map_err(map_storage_core_error)
     }
 
+    /// Deletes music metadata for the current ride, including its in-memory timeline.
+    ///
+    /// This is available for terminal rides that remain selected until the user saves or
+    /// discards them; active and paused rides normally use the policy setter so their capture
+    /// context is updated by the app coordinator.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when no current ride exists, storage is unavailable, or the ride
+    /// identifier cannot be parsed.
+    pub fn delete_current_music_history(&self) -> Result<(), MobileRideMapCoreErrorDto> {
+        let mut state = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
+        let Some(ride_id) = state.active_ride_id.clone() else {
+            return Err(MobileRideMapCoreErrorDto::NoActiveRide);
+        };
+        let Some(database) = state.database.clone() else {
+            return Err(MobileRideMapCoreErrorDto::Storage(
+                "Rust ride database is unavailable".to_owned(),
+            ));
+        };
+        database
+            .inner
+            .delete_music_history(parse_mobile_ride_id(&ride_id).map_err(map_core_error)?)
+            .map_err(map_storage_core_error)?;
+        state.reset_music_history();
+        Ok(())
+    }
+
     /// Associates a connected vehicle with the active recording.
     ///
     /// # Errors
@@ -17512,6 +17540,24 @@ mod tests {
             Err(MobileRideMapCoreErrorDto::Storage(message))
                 if message == "Rust ride database is unavailable"
         ));
+    }
+
+    #[test]
+    fn stored_music_events_report_unavailable_storage() {
+        let state = MobileRideMapCore::new();
+
+        let error = state
+            .stored_music_events(MobileRideIdDto {
+                value: Uuid::new_v4().to_string(),
+            })
+            .expect_err("music history must not look empty when storage is unavailable");
+
+        assert_eq!(
+            error,
+            MobileRideMapCoreErrorDto::Storage(
+                "Rust ride database is unavailable".to_owned()
+            )
+        );
     }
 
     #[test]
