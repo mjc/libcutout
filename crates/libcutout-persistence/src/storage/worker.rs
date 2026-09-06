@@ -2,15 +2,15 @@ use super::{
     Command, SegmentStartReasonInput, SpatialSchemaState, abort_pevcap_import, append_location,
     append_location_with_result, append_pevcap_location_batch, append_trail_segment, backup,
     begin_pevcap_import, clear_ride_session_marker, clear_selected_device, create_map_point,
-    create_ride, create_started_live_ride, create_started_ride, create_trail, device_name,
-    export_ride_json, find_ride, finish_pevcap_import, list_ride_history_vehicle_options,
-    list_rides, load_summary, load_summary_with_duration, map_points_in_bounds,
-    migrate_device_name, newest_recoverable_ride, pevcap_import_receipt, project_history_context,
-    project_route_points, rebuild_spatial_indexes, remember_selected_device,
-    remove_voltage_sag_model, ride_session_marker, route_points, save_device_name,
-    save_ride_session_marker, save_selected_device, save_voltage_sag_model, selected_device,
-    sqlite_capabilities, trail_segments_in_bounds, transition_ride, update_ride_map_metadata,
-    voltage_sag_model,
+    create_ride, create_started_live_ride, create_started_ride, create_trail, delete_music_history,
+    device_name, export_ride_json, find_ride, finish_pevcap_import,
+    list_ride_history_vehicle_options, list_rides, load_summary, load_summary_with_duration,
+    map_points_in_bounds, migrate_device_name, music_events, newest_recoverable_ride,
+    pevcap_import_receipt, project_history_context, project_route_points, rebuild_spatial_indexes,
+    remember_selected_device, remove_voltage_sag_model, ride_session_marker, route_points,
+    save_device_name, save_music_event, save_music_history_policy, save_ride_session_marker,
+    save_selected_device, save_voltage_sag_model, selected_device, sqlite_capabilities,
+    trail_segments_in_bounds, transition_ride, update_ride_map_metadata, voltage_sag_model,
 };
 use rusqlite::Connection;
 use std::ops::ControlFlow;
@@ -183,6 +183,30 @@ impl DatabaseWorker<'_> {
             }
             Command::ClearSelectedDevice { reply } => {
                 let _ = reply.send(clear_selected_device(connection));
+            }
+            Command::SaveMusicHistoryPolicy {
+                ride_id,
+                policy,
+                reply,
+            } => {
+                let _ = reply.send(save_music_history_policy(connection, ride_id, policy));
+            }
+            Command::SaveMusicEvent {
+                ride_id,
+                policy,
+                sequence,
+                event,
+                reply,
+            } => {
+                let _ = reply.send(save_music_event(
+                    connection, ride_id, policy, sequence, &event,
+                ));
+            }
+            Command::DeleteMusicHistory { ride_id, reply } => {
+                let _ = reply.send(delete_music_history(connection, ride_id));
+            }
+            Command::MusicEvents { ride_id, reply } => {
+                let _ = reply.send(music_events(connection, ride_id));
             }
             Command::SaveVoltageSagModel {
                 device_identity,
