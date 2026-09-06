@@ -601,11 +601,16 @@ final class CutoutAppModel {
             return
         }
         guard await appleMusicProvider.requestAuthorization() else {
+            guard !Task.isCancelled, musicMonitorGeneration.owns(generation) else { return }
             _ = ingestMusicObservation(MusicProviderObservation(
                 snapshot: appleMusicProvider.unauthorizedSnapshot(observedAtMs: core.now().rawValue)
             ))
             return
         }
+        guard !Task.isCancelled,
+              musicMonitorGeneration.owns(generation),
+              selectedMusicProvider.monitoringMode == .appleMusicSystemPlayer
+        else { return }
         appleMusicProvider.startMonitoring { [weak self] in
             self?.refreshMusicSnapshot()
         }
