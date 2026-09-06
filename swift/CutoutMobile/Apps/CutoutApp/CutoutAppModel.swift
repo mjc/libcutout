@@ -274,10 +274,7 @@ final class CutoutAppModel {
     private static let liveActivityUpdateIntervalMilliseconds: UInt64 = 1_000
 
     isolated deinit {
-        musicMonitorTask?.cancel()
-#if canImport(MediaPlayer) && os(iOS)
-        appleMusicProvider.stopMonitoring()
-#endif
+        stopMusicMonitoring()
     }
 
     convenience init() {
@@ -426,8 +423,7 @@ final class CutoutAppModel {
         musicTransitionHintTracker.clear()
 #if canImport(MediaPlayer) && os(iOS)
         if provider.monitoringMode == .unavailable {
-            musicMonitorTask?.cancel()
-            musicMonitorTask = nil
+            stopMusicMonitoring()
         }
 #endif
         if !isMusicPlayerHidden {
@@ -603,9 +599,17 @@ final class CutoutAppModel {
         )
     }
 
+    private func stopMusicMonitoring() {
+        musicMonitorTask?.cancel()
+        musicMonitorTask = nil
+#if canImport(MediaPlayer) && os(iOS)
+        appleMusicProvider.stopMonitoring()
+#endif
+    }
+
     func connectMusic() {
 #if os(iOS)
-        musicMonitorTask?.cancel()
+        stopMusicMonitoring()
         musicMonitorTask = Task { [weak self] in
             await self?.monitorMusic()
         }
