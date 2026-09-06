@@ -354,10 +354,18 @@ final class CutoutAppModelTests: XCTestCase {
         XCTAssertEqual(model.rideMapHistoryDetailMusicTimeline.first?.title, "Song")
         XCTAssertEqual(model.rideMapHistoryDetailMusicTimeline.first?.kind, .play)
         XCTAssertEqual(try state.storedMusicEvents(rideID: ride.rideID).first?.sequence, 0)
+        XCTAssertEqual(
+            try state.storedMusicHistoryState(rideID: ride.rideID),
+            .humanReadable
+        )
 
         XCTAssertTrue(model.forgetMusicHistory(for: ride.rideID))
         XCTAssertTrue(model.rideMapHistoryDetailMusicTimeline.isEmpty)
         XCTAssertTrue(try state.storedMusicEvents(rideID: ride.rideID).isEmpty)
+        XCTAssertEqual(
+            try state.storedMusicHistoryState(rideID: ride.rideID),
+            .deleted
+        )
         XCTAssertNotNil(try state.storedHistoryRide(rideID: ride.rideID))
     }
 
@@ -563,6 +571,18 @@ final class CutoutAppModelTests: XCTestCase {
             result.error,
             .storageError("Rust ride database is unavailable")
         )
+    }
+
+    @MainActor
+    func testMusicHistoryQueryPreservesDurableStateAlongsideEvents() {
+        let result = CutoutAppModel.musicHistoryQueryResult(
+            .success([]),
+            state: .success(.redacted)
+        )
+
+        XCTAssertEqual(result.state, .redacted)
+        XCTAssertTrue(result.events.isEmpty)
+        XCTAssertNil(result.error)
     }
 
     @MainActor
