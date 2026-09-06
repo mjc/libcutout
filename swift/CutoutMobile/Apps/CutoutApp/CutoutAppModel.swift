@@ -895,6 +895,7 @@ final class CutoutAppModel {
 
     @discardableResult
     func startGpsOnlyRide() -> Bool {
+        let nextRideMusicPolicy = musicHistoryPolicyStore.policy
         core.resetRideMapLocationAdmission()
         let started = applyRideMapCommand(resetPoints: true) {
             try core.startRideMapGpsOnly(
@@ -2076,6 +2077,9 @@ final class CutoutAppModel {
     func appDidEnterBackground() {
         musicMonitorSceneState.suspend()
         stopMusicMonitoring()
+        if let nowPlaying = musicCoordinator.nowPlaying {
+            musicNowPlaying = nowPlaying.staleProjection
+        }
         guard let snapshot = currentLiveActivitySnapshot() else {
             guard isRecordOnlyCapture else { return }
             Task { [weak self] in _ = await self?.flushCapture() }

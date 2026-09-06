@@ -43,6 +43,21 @@ fn music_event() -> MusicRideEvent {
     .expect("music event is valid")
 }
 
+fn music_test_database(name: &str) -> (RideDatabase, std::path::PathBuf) {
+    let path = std::env::temp_dir().join(format!(
+        "libcutout-music-{name}-{}.sqlite",
+        std::process::id()
+    ));
+    let _ = std::fs::remove_file(&path);
+    let database = RideDatabase::open(&path).expect("music test database opens");
+    (database, path)
+}
+
+fn close_music_test_database(database: RideDatabase, path: std::path::PathBuf) {
+    database.shutdown().expect("music test database shuts down");
+    let _ = std::fs::remove_file(path);
+}
+
 fn test_guard() -> std::sync::MutexGuard<'static, ()> {
     TEST_LOCK
         .lock()
@@ -4262,8 +4277,7 @@ fn music_history_round_trips_and_can_be_deleted_without_deleting_ride() {
     database.delete_music_history(ride).unwrap();
     assert!(database.music_events(ride).unwrap().is_empty());
     assert!(database.find_ride(ride).unwrap().is_some());
-    database.shutdown().unwrap();
-    let _ = std::fs::remove_file(path);
+    close_music_test_database(database, path);
 }
 #[test]
 fn music_history_policy_downgrade_redacts_existing_display_metadata() {
@@ -4393,8 +4407,7 @@ fn music_event_sequence_conflict_is_rejected() {
         error,
         StorageError::MusicSequenceConflict { sequence: 0 }
     ));
-    database.shutdown().unwrap();
-    let _ = std::fs::remove_file(path);
+    close_music_test_database(database, path);
 }
 
 #[test]
@@ -4439,8 +4452,7 @@ fn music_event_sequence_requires_contiguous_order_and_monotonic_time() {
         error,
         StorageError::MusicEventOutOfOrder { sequence: 1 }
     ));
-    database.shutdown().unwrap();
-    let _ = std::fs::remove_file(path);
+    close_music_test_database(database, path);
 }
 
 #[test]
@@ -4507,7 +4519,7 @@ fn music_event_timestamps_must_fit_sqlite_integer() {
 #[test]
 fn lowering_music_history_policy_redacts_existing_display_metadata() {
     let _guard = test_guard();
-    let database = RideDatabase::open(std::path::Path::new(":memory:")).unwrap();
+    let (database, path) = music_test_database("policy-redaction");
     let ride = database
         .create_started_live_ride(1_700_000_000_000, 100, None)
         .unwrap();
@@ -4542,5 +4554,5 @@ fn lowering_music_history_policy_redacts_existing_display_metadata() {
     );
     assert_eq!(redacted[0].title(), None);
     assert_eq!(redacted[0].artist(), None);
-    database.shutdown().unwrap();
+    close_music_test_database(database, path);
 }

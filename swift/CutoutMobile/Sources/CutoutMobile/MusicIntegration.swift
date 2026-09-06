@@ -483,6 +483,25 @@ public struct MusicNowPlaying: Equatable, Sendable {
         return pevLocalizedText("music.artwork", artworkName)
     }
 
+    /// Projects a monitoring gap without recording a synthetic ride event.
+    /// Provider handoff remains available, but transport commands are disabled
+    /// until a fresh provider observation arrives.
+    public var staleProjection: Self {
+        Self(
+            provider: provider,
+            state: .stale,
+            item: item,
+            artwork: artwork,
+            capabilities: .init(
+                previous: false,
+                play: false,
+                pause: false,
+                next: false,
+                openProvider: capabilities.openProvider
+            )
+        )
+    }
+
     public var playPauseCommand: MobileMusicCommandDto? {
         switch state {
         case .playing where capabilities.pause: .pause
@@ -821,6 +840,9 @@ public final class MusicIntegrationCoordinator {
         clockUncertaintyMs: UInt64
     ) throws -> MobileMusicTimelineOutcomeDto {
         resetCorrelationIfRideChanged()
+        guard MusicObservationValidator.accepts(snapshot) else {
+            throw MobileRideMapError.storageError("invalid music observation")
+        }
         guard accept(snapshot) else { return .outOfOrder }
         update(snapshot: snapshot)
         guard let rideMapState else {

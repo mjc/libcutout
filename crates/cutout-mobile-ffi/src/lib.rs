@@ -6622,6 +6622,13 @@ fn map_ride_lifecycle_state(state: MobileRideLifecycleStateDto) -> ride_maps::Ri
     }
 }
 
+fn music_history_is_recordable(state: Option<ride_maps::RideLifecycleState>) -> bool {
+    matches!(
+        state,
+        Some(ride_maps::RideLifecycleState::Active | ride_maps::RideLifecycleState::Paused)
+    )
+}
+
 fn map_ride_telemetry_state(
     state: MobileRideMapCoreTelemetryStateDto,
 ) -> Result<ride_maps::RouteTelemetryState, &'static str> {
@@ -17505,6 +17512,50 @@ mod tests {
             Err(MobileRideMapCoreErrorDto::Storage(message))
                 if message == "Rust ride database is unavailable"
         ));
+    }
+
+    #[test]
+    fn music_transition_is_rejected_after_ride_stops() {
+        let state = MobileRideMapCore::new();
+        state.start_gps_only(1_000, None).expect("ride starts");
+        state
+            .set_music_history_policy(MobileMusicHistoryPolicyDto::OpaqueItem)
+            .expect("policy can be enabled while recording");
+        state.stop_at(2_000).expect("ride stops");
+
+        let result = state.record_music_event(
+            MobileMusicSnapshotDto {
+                provider: MobileMusicProviderDto::AppleMusic,
+                session_id: "session".to_owned(),
+                state: MobileMusicPlaybackStateDto::Playing,
+                item: Some(MobileMusicItemDto {
+                    identifier: "track-1".to_owned(),
+                    title: Some("Song".to_owned()),
+                    artist: Some("Artist".to_owned()),
+                }),
+                position_milliseconds: None,
+                duration_milliseconds: None,
+                observed_at_ms: 3_000,
+                capabilities: MobileMusicCapabilitiesDto {
+                    previous: false,
+                    play: false,
+                    pause: true,
+                    next: true,
+                    open_provider: true,
+                },
+            },
+            MobileMusicRideEventKindDto::Play,
+            3_000,
+            1_700_000_000_000,
+            5,
+        );
+
+        assert_eq!(result, Err(MobileRideMapCoreErrorDto::InvalidTransition));
+        assert!(
+            state
+                .current_music_events()
+                .is_some_and(|events| events.is_empty())
+        );
     }
 
     #[test]
