@@ -6554,6 +6554,13 @@ impl MobileRideMapCore {
             .map(|(_, active)| state.snapshot_at(active.into(), at_ms))
     }
 
+    /// Returns the Rust-owned music-history policy for the active ride.
+    #[must_use]
+    pub fn current_music_history_policy(&self) -> MobileMusicHistoryPolicyDto {
+        let state = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
+        state.music_history_policy.into()
+    }
+
     /// Returns a storage error encountered while restoring the previous ride projection.
     #[must_use]
     pub fn initialization_error(&self) -> Option<MobileRideMapCoreErrorDto> {
@@ -16518,6 +16525,10 @@ mod tests {
     fn music_transition_is_recorded_only_after_opt_in() {
         let state = MobileRideMapCore::new();
         state.start_gps_only(1_000, None).expect("ride starts");
+        assert_eq!(
+            state.current_music_history_policy(),
+            MobileMusicHistoryPolicyDto::Disabled
+        );
         let snapshot = MobileMusicSnapshotDto {
             provider: MobileMusicProviderDto::AppleMusic,
             session_id: "session".to_owned(),
@@ -16555,6 +16566,10 @@ mod tests {
             .set_music_history_policy(MobileMusicHistoryPolicyDto::HumanReadable)
             .expect("policy can be enabled while recording");
         assert_eq!(
+            state.current_music_history_policy(),
+            MobileMusicHistoryPolicyDto::HumanReadable
+        );
+        assert_eq!(
             state
                 .record_music_event(
                     snapshot,
@@ -16574,6 +16589,10 @@ mod tests {
         state
             .start_gps_only(4_000, None)
             .expect("next ride starts with a fresh timeline");
+        assert_eq!(
+            state.current_music_history_policy(),
+            MobileMusicHistoryPolicyDto::Disabled
+        );
         assert!(
             state
                 .current_music_events()
