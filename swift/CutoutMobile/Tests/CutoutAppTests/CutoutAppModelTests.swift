@@ -219,6 +219,37 @@ final class CutoutAppModelTests: XCTestCase {
     }
 
     @MainActor
+    func testStoppingRideClearsPendingMusicCaptureContext() {
+        let driver = SessionDriverSpy(rows: [])
+        let model = CutoutAppModel(core: driver)
+        XCTAssertTrue(model.startGpsOnlyRide())
+        XCTAssertTrue(model.setMusicHistoryPolicy(.opaqueItem))
+
+        let snapshot = MobileMusicSnapshotDto(
+            provider: .appleMusic,
+            sessionId: "session",
+            state: .playing,
+            item: MobileMusicItemDto(identifier: "track-1", title: "Song", artist: "Artist"),
+            positionMilliseconds: nil,
+            durationMilliseconds: nil,
+            observedAtMs: 1,
+            capabilities: MobileMusicCapabilitiesDto(
+                previous: false,
+                play: false,
+                pause: true,
+                next: true,
+                openProvider: true
+            )
+        )
+        XCTAssertTrue(model.ingestMusicObservation(MusicProviderObservation(snapshot: snapshot)))
+        XCTAssertNotNil(driver.musicCaptureObservation)
+
+        XCTAssertTrue(model.stopRideMap())
+
+        XCTAssertNil(driver.musicCaptureObservation)
+    }
+
+    @MainActor
     func testLoweringActiveMusicPolicyRedactsVisibleTimeline() {
         let driver = SessionDriverSpy(rows: [])
         let model = CutoutAppModel(core: driver)
