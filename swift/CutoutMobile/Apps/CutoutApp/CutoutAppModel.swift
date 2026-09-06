@@ -1042,14 +1042,7 @@ final class CutoutAppModel {
         }
         do {
             if rideMapSnapshot?.rideID == rideID {
-                // Route active-ride deletion through the Rust state owner so
-                // its in-memory timeline and durable policy change together.
-                try state.setMusicHistoryPolicy(.disabled)
-                musicHistoryPolicy = .disabled
-                musicCoordinator.restoreHistoryPolicy(.disabled)
-                musicTransitionHintTracker.clear()
-                core.updateMusicCaptureObservation(nil)
-                musicTimelineEvents = musicCoordinator.recordedEvents
+                try clearActiveMusicHistory(using: state)
             } else {
                 try state.deleteMusicHistory(rideID: rideID)
             }
@@ -1061,6 +1054,17 @@ final class CutoutAppModel {
             rideMapHistoryError = Self.mapRideMapError(error)
             return false
         }
+    }
+
+    private func clearActiveMusicHistory(using state: MobileRideMapState) throws {
+        // Route active-ride deletion through the Rust state owner so its
+        // in-memory timeline and durable policy change together.
+        try state.setMusicHistoryPolicy(.disabled)
+        musicHistoryPolicy = .disabled
+        musicCoordinator.restoreHistoryPolicy(.disabled)
+        musicTransitionHintTracker.clear()
+        core.updateMusicCaptureObservation(nil)
+        musicTimelineEvents = musicCoordinator.recordedEvents
     }
 
     static func detailPointsAreTruncated(
