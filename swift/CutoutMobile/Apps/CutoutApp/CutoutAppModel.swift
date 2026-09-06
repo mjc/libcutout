@@ -433,10 +433,14 @@ final class CutoutAppModel {
     ) {
 #if canImport(MediaPlayer) && os(iOS)
         let observedAtMs = core.now().rawValue
-        let observation = if selectedMusicProvider == .spotify {
-            MusicProviderObservation(snapshot: spotifyMusicProvider.unavailableSnapshot(observedAtMs: observedAtMs))
-        } else {
-            appleMusicProvider.observation(observedAtMs: observedAtMs)
+        let observation: MusicProviderObservation
+        switch selectedMusicProvider.monitoringMode {
+        case .appleMusicSystemPlayer:
+            observation = appleMusicProvider.observation(observedAtMs: observedAtMs)
+        case .unavailable:
+            observation = MusicProviderObservation(
+                snapshot: spotifyMusicProvider.unavailableSnapshot(observedAtMs: observedAtMs)
+            )
         }
         _ = ingestMusicObservation(
             observation,
