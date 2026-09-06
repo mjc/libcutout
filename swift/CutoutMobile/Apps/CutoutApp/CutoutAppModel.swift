@@ -486,6 +486,22 @@ final class CutoutAppModel {
         }
     }
 
+    private func updateMusicMonitoring(
+        from previousProvider: MobileMusicProviderDto,
+        to provider: MobileMusicProviderDto
+    ) {
+        switch provider.monitoringMode {
+        case .unavailable:
+            musicMonitorSceneState.cancel()
+            stopMusicMonitoring()
+        case .appleMusicSystemPlayer where previousProvider != provider:
+            musicMonitorSceneState.request()
+            beginMusicMonitoring()
+        case .appleMusicSystemPlayer:
+            break
+        }
+    }
+
     func refreshMusicSnapshot(
         transitionHint: MusicTransitionHint? = nil
     ) {

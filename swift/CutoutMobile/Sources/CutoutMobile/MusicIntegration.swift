@@ -202,6 +202,7 @@ public struct MusicTransitionHintTracker: Sendable {
 
     public mutating func clear() {
         pendingHint = nil
+        remainingUnchangedObservations = nil
     }
 
     public mutating func resolve(
@@ -803,8 +804,13 @@ public final class MusicIntegrationCoordinator {
 
     /// Adopts a policy restored by Rust without issuing a second persistence write.
     public func restoreHistoryPolicy(_ policy: MobileMusicHistoryPolicyDto) {
+        adoptHistoryPolicy(policy)
+    }
+
+    private func adoptHistoryPolicy(_ policy: MobileMusicHistoryPolicyDto) {
+        let previousPolicy = historyPolicy
         historyPolicy = policy
-        lastPersistedNowPlaying = nil
+        rebasePersistedState(from: previousPolicy, to: policy)
     }
 
     public func record(
