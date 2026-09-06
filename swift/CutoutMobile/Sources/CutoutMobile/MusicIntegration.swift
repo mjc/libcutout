@@ -584,6 +584,7 @@ public final class MusicIntegrationCoordinator {
         transitionHint: MusicTransitionHint?
     ) throws -> MobileMusicTimelineOutcomeDto? {
         resetCorrelationIfRideChanged()
+        guard Self.isValid(snapshot: snapshot) else { return nil }
         guard accept(snapshot) else { return nil }
         let previous = lastPersistedNowPlaying
         update(snapshot: snapshot, artwork: artwork)
@@ -728,6 +729,24 @@ public final class MusicIntegrationCoordinator {
         guard snapshot.observedAtMs > lastObservedAtMs else { return false }
         lastObservedAtByProvider[snapshot.provider] = snapshot.observedAtMs
         return true
+    }
+
+    private static func isValid(snapshot: MobileMusicSnapshotDto) -> Bool {
+        guard isValidRequiredText(snapshot.sessionId, maxBytes: 256) else { return false }
+        guard let item = snapshot.item else { return true }
+        guard isValidRequiredText(item.identifier, maxBytes: 256) else { return false }
+        return isValidOptionalText(item.title, maxBytes: 512)
+            && isValidOptionalText(item.artist, maxBytes: 512)
+    }
+
+    private static func isValidRequiredText(_ value: String, maxBytes: Int) -> Bool {
+        value.utf8.count <= maxBytes
+            && value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
+    }
+
+    private static func isValidOptionalText(_ value: String?, maxBytes: Int) -> Bool {
+        guard let value else { return true }
+        return isValidRequiredText(value, maxBytes: maxBytes)
     }
 
     private static func transitionKind(

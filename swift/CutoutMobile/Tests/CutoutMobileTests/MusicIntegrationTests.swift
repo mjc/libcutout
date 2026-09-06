@@ -195,6 +195,57 @@ final class MusicIntegrationTests: XCTestCase {
         XCTAssertTrue(nowPlaying.supports(.next))
     }
 
+    @MainActor
+    func testCoordinatorRejectsOversizedProviderMetadataBeforeProjectingIt() throws {
+        let state = MobileRideMapState()
+        _ = try state.startGpsOnly(atMs: 1_000, lastConnectedVehicle: nil)
+        try state.setMusicHistoryPolicy(.humanReadable)
+        let coordinator = MusicIntegrationCoordinator(rideMapState: state)
+
+        let valid = MobileMusicSnapshotDto(
+            provider: .appleMusic,
+            sessionId: "session",
+            state: .playing,
+            item: MobileMusicItemDto(identifier: "track-1", title: "Song", artist: "Artist"),
+            positionMilliseconds: nil,
+            durationMilliseconds: nil,
+            observedAtMs: 1_100,
+            capabilities: .init(previous: true, play: false, pause: true, next: true, openProvider: true)
+        )
+        XCTAssertEqual(
+            try coordinator.ingest(
+                snapshot: valid,
+                wallClockAtMs: 1_700_000_000_100,
+                clockUncertaintyMs: 5
+            ),
+            .recorded
+        )
+
+        let invalid = MobileMusicSnapshotDto(
+            provider: .appleMusic,
+            sessionId: "session",
+            state: .playing,
+            item: MobileMusicItemDto(
+                identifier: "track-2",
+                title: String(repeating: "é", count: 257),
+                artist: "Artist"
+            ),
+            positionMilliseconds: nil,
+            durationMilliseconds: nil,
+            observedAtMs: 1_200,
+            capabilities: valid.capabilities
+        )
+        XCTAssertNil(
+            try coordinator.ingest(
+                snapshot: invalid,
+                wallClockAtMs: 1_700_000_000_200,
+                clockUncertaintyMs: 5
+            )
+        )
+        XCTAssertEqual(coordinator.nowPlaying?.item?.identifier, "track-1")
+        XCTAssertEqual(coordinator.nowPlaying?.item?.title, "Song")
+    }
+
     func testNowPlayingExposesOnlySupportedTransportCommands() {
         let nowPlaying = MusicNowPlaying(
             provider: .appleMusic,
