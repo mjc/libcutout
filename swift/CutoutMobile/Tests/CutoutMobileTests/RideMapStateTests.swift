@@ -260,6 +260,11 @@ final class RideMapStateTests: XCTestCase {
         ) { error in
             XCTAssertEqual(error as? MobileRideMapError, .storageError("database unavailable"))
         }
+        XCTAssertThrowsError(
+            try state.deleteMusicHistory(rideID: "missing")
+        ) { error in
+            XCTAssertEqual(error as? MobileRideMapError, .storageError("database unavailable"))
+        }
     }
 
     func testMapStateReportsTypedAdmissionReasons() throws {
