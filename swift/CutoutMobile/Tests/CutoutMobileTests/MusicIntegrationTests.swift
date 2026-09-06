@@ -14,6 +14,20 @@ final class MusicIntegrationTests: XCTestCase {
         )
     }
 
+    @MainActor
+    func testSpotifyTransportStaysUnavailableUntilAppRemoteIsProven() async {
+        let adapter = SpotifyProviderAdapter()
+
+        let outcomes = await [
+            adapter.perform(.previous),
+            adapter.perform(.play),
+            adapter.perform(.pause),
+            adapter.perform(.next),
+        ]
+
+        XCTAssertEqual(outcomes, [.unavailable, .unavailable, .unavailable, .unavailable])
+    }
+
     func testMusicHistoryPolicyStoreDefaultsToDisabledAndRoundTrips() throws {
         let suiteName = "MusicHistoryPolicyStoreTests-\(UUID().uuidString)"
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
