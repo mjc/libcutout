@@ -345,13 +345,15 @@ public final class MusicIntegrationCoordinator {
     public func ingest(
         snapshot: MobileMusicSnapshotDto,
         wallClockAtMs: UInt64,
-        clockUncertaintyMs: UInt64
+        clockUncertaintyMs: UInt64,
+        transitionHint: MobileMusicRideEventKindDto? = nil
     ) throws -> MobileMusicTimelineOutcomeDto? {
         try ingest(
             snapshot: snapshot,
             artwork: nil,
             wallClockAtMs: wallClockAtMs,
-            clockUncertaintyMs: clockUncertaintyMs
+            clockUncertaintyMs: clockUncertaintyMs,
+            transitionHint: transitionHint
         )
     }
 
@@ -359,13 +361,18 @@ public final class MusicIntegrationCoordinator {
         snapshot: MobileMusicSnapshotDto,
         artwork: MusicArtwork?,
         wallClockAtMs: UInt64,
-        clockUncertaintyMs: UInt64
+        clockUncertaintyMs: UInt64,
+        transitionHint: MobileMusicRideEventKindDto?
     ) throws -> MobileMusicTimelineOutcomeDto? {
         resetCorrelationIfRideChanged()
         guard accept(snapshot) else { return nil }
         let previous = lastPersistedNowPlaying
         update(snapshot: snapshot, artwork: artwork)
-        guard let kind = Self.transitionKind(from: previous, to: nowPlaying) else {
+        guard let kind = Self.transitionKind(
+            from: previous,
+            to: nowPlaying,
+            hint: transitionHint
+        ) else {
             return nil
         }
         do {
@@ -398,13 +405,15 @@ public final class MusicIntegrationCoordinator {
     public func ingest(
         observation: MusicProviderObservation,
         wallClockAtMs: UInt64,
-        clockUncertaintyMs: UInt64
+        clockUncertaintyMs: UInt64,
+        transitionHint: MobileMusicRideEventKindDto? = nil
     ) throws -> MobileMusicTimelineOutcomeDto? {
         try ingest(
             snapshot: observation.snapshot,
             artwork: observation.artwork,
             wallClockAtMs: wallClockAtMs,
-            clockUncertaintyMs: clockUncertaintyMs
+            clockUncertaintyMs: clockUncertaintyMs,
+            transitionHint: transitionHint
         )
     }
 
@@ -480,7 +489,8 @@ public final class MusicIntegrationCoordinator {
 
     private static func transitionKind(
         from previous: MusicNowPlaying?,
-        to current: MusicNowPlaying?
+        to current: MusicNowPlaying?,
+        hint: MobileMusicRideEventKindDto?
     ) -> MobileMusicRideEventKindDto? {
         guard let current else { return .providerDisconnected }
         guard let previous else { return current.item == nil ? nil : .itemChanged }
@@ -489,7 +499,13 @@ public final class MusicIntegrationCoordinator {
                 ? nil
                 : .providerDisconnected
         }
-        if previous.provider != current.provider || previous.item?.identifier != current.item?.identifier {
+        if previous.provider != current.provider {
+            return .itemChanged
+        }
+        if previous.item?.identifier != current.item?.identifier {
+            if hint == .skip, previous.item != nil, current.item != nil {
+                return .skip
+            }
             return .itemChanged
         }
         switch (previous.state, current.state) {
