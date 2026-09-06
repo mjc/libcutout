@@ -3,6 +3,13 @@ import CutoutMobileFFI
 import MapKit
 import SwiftUI
 
+extension MobileRideMapError {
+    /// Keeps storage details out of the spoken music-history failure state.
+    var musicHistoryAccessibilityText: String {
+        localizedAppText("music.history.unavailable")
+    }
+}
+
 private extension MobileMusicHistoryStateDto {
     var detailTitle: String {
         switch self {
@@ -29,8 +36,29 @@ private extension MobileMusicHistoryStateDto {
         }
     }
 
-    func showsDetailStatus(timelineIsEmpty: Bool) -> Bool {
-        self != .humanReadable || timelineIsEmpty
+}
+
+enum MusicHistoryPresentation: Equatable {
+    case unavailable(MobileRideMapError)
+    case status(MobileMusicHistoryStateDto)
+    case timeline([MobileMusicRideEventDto])
+
+    init(
+        events: [MobileMusicRideEventDto],
+        state: MobileMusicHistoryStateDto?,
+        error: MobileRideMapError?
+    ) {
+        if let error {
+            self = .unavailable(error)
+        } else if let state, state == .humanReadable, !events.isEmpty {
+            self = .timeline(events)
+        } else if let state {
+            self = .status(state)
+        } else if events.isEmpty {
+            self = .status(.missing)
+        } else {
+            self = .timeline(events)
+        }
     }
 }
 
@@ -259,7 +287,6 @@ struct RideMapHistoryDetailSummary: View {
                                 isMusicHistoryForgetErrorPresented = true
                             }
                         }
-                    }
                 }
                 if pointsTruncated {
                     Text(localizedAppText("ride_map.history_truncated_count", displayPointCount))
