@@ -66,6 +66,33 @@ final class MusicIntegrationTests: XCTestCase {
         XCTAssertFalse(generation.owns(first))
     }
 
+    func testArtworkCacheReusesOnlyBoundedArtworkForTheSameItem() {
+        var cache = MusicArtworkCache()
+        var loadCount = 0
+        let artwork = MusicArtwork(data: Data([1, 2, 3]))
+
+        let first = cache.artwork(for: "track-1") {
+            loadCount += 1
+            return artwork
+        }
+        let second = cache.artwork(for: "track-1") {
+            loadCount += 1
+            return artwork
+        }
+
+        XCTAssertEqual(first, artwork)
+        XCTAssertEqual(second, artwork)
+        XCTAssertEqual(loadCount, 1)
+
+        _ = cache.artwork(for: "track-2") {
+            loadCount += 1
+            return nil
+        }
+        XCTAssertEqual(loadCount, 2)
+        XCTAssertNil(cache.artwork(for: nil) { loadCount += 1; return artwork })
+        XCTAssertEqual(loadCount, 2)
+    }
+
     private func nowPlaying(trackID: String) -> MusicNowPlaying {
         MusicNowPlaying(
             provider: .appleMusic,
