@@ -1,4 +1,5 @@
 import CutoutMobile
+import CutoutMobileFFI
 import MapKit
 import SwiftUI
 
@@ -6,6 +7,7 @@ struct RideMapHistoryDetailView: View {
     let initialHistoryID: String?
     let rides: [MobileRideMapHistorySummaryDto]
     let displayPoints: [MobileRideMapRouteDisplayPoint]
+    let musicTimeline: [MobileMusicRideEventDto]
     /// Rust's bounded projection supplies the camera; the default keeps older route-shell
     /// callers source-compatible until they pass the projection metadata through.
     var cameraRegion: MobileRideMapCameraRegion? = nil
@@ -156,6 +158,7 @@ struct RideMapHistoryDetailView: View {
                                 segments: segments,
                                 segmentsOmittedByBudget: segmentsOmittedByBudget,
                                 canonicalBackgroundGapCount: canonicalBackgroundGapCount,
+                                musicTimeline: musicTimeline,
                                 state: routeState,
                                 loadRoutePreview: loadRoutePreview,
                                 shareText: shareText(for: ride),
