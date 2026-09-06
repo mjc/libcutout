@@ -3169,7 +3169,7 @@ impl From<persistence::MusicHistory> for MobileMusicHistoryDto {
                 }
                 persistence::MusicHistoryStatus::Deleted => MobileMusicHistoryStatusDto::Deleted,
             },
-            events: history.events.iter().map(Into::into).collect(),
+            events: mobile_music_event_dtos(history.events),
         }
     }
 }
@@ -3177,6 +3177,8 @@ impl From<persistence::MusicHistory> for MobileMusicHistoryDto {
 /// One retained ride music transition.
 #[derive(Clone, Debug, Eq, PartialEq, uniffi::Record)]
 pub struct MobileMusicRideEventDto {
+    /// Zero-based ride-local event sequence.
+    pub sequence: u64,
     /// Provider identity.
     pub provider: MobileMusicProviderDto,
     /// Opaque provider item identifier, if retained.
@@ -3381,6 +3383,7 @@ impl TryFrom<MobileMusicSnapshotDto> for CoreMusicSnapshot {
 impl From<&CoreMusicRideEvent> for MobileMusicRideEventDto {
     fn from(event: &CoreMusicRideEvent) -> Self {
         Self {
+            sequence: 0,
             provider: event.provider().into(),
             item_identifier: event
                 .item_identifier()
@@ -3403,6 +3406,20 @@ impl From<&CoreMusicRideEvent> for MobileMusicRideEventDto {
             clock_uncertainty_ms: event.clock_uncertainty_milliseconds(),
         }
     }
+}
+
+fn mobile_music_event_dtos(
+    events: impl IntoIterator<Item = CoreMusicRideEvent>,
+) -> Vec<MobileMusicRideEventDto> {
+    events
+        .into_iter()
+        .enumerate()
+        .map(|(sequence, event)| {
+            let mut dto = MobileMusicRideEventDto::from(&event);
+            dto.sequence = u64::try_from(sequence).unwrap_or(u64::MAX);
+            dto
+        })
+        .collect()
 }
 
 /// Rust-owned phone location state. Swift only gathers and forwards Core Location values.
@@ -5158,7 +5175,7 @@ impl RideDatabaseHandle {
         let ride_id = parse_mobile_ride_id(&ride_id)?;
         self.inner
             .music_history(ride_id)
-            .map(|history| history.events.iter().map(Into::into).collect())
+            .map(|history| mobile_music_event_dtos(history.events))
             .map_err(map_ride_database_error)
     }
 
@@ -7071,7 +7088,7 @@ impl MobileRideMapCore {
         database
             .inner
             .music_history(ride_id)
-            .map(|history| history.events.iter().map(Into::into).collect())
+            .map(|history| mobile_music_event_dtos(history.events))
             .map_err(map_storage_core_error)
     }
 
@@ -7124,7 +7141,6 @@ impl MobileRideMapCore {
         database
             .inner
             .save_music_history_policy(ride_id, CoreMusicHistoryPolicy::OpaqueItem)
-            .map_err(map_storage_core_error)
     }
 
     /// Associates a connected vehicle with the active recording.
@@ -17227,8 +17243,37 @@ mod tests {
                 .expect("opted-in event is recorded"),
             MobileMusicTimelineOutcomeDto::Recorded
         );
+        let mut paused = snapshot;
+        paused.state = MobileMusicPlaybackStateDto::Paused;
+        paused.observed_at_ms = 2_001;
+        paused.capabilities = MobileMusicCapabilitiesDto {
+            previous: false,
+            play: true,
+            pause: false,
+            next: true,
+            open_provider: true,
+        };
+        assert_eq!(
+            state
+                .record_music_event(
+                    paused,
+                    MobileMusicRideEventKindDto::Pause,
+                    2_001,
+                    1_700_000_000_001,
+                    5,
+                )
+                .expect("second opted-in event is recorded"),
+            MobileMusicTimelineOutcomeDto::Recorded
+        );
         let events = state.current_music_events().expect("active timeline");
-        assert_eq!(events.len(), 1);
+        assert_eq!(events.len(), 2);
+        assert_eq!(
+            events
+                .iter()
+                .map(|event| event.sequence)
+                .collect::<Vec<_>>(),
+            [0, 1]
+        );
         assert_eq!(events[0].title.as_deref(), Some("Song"));
         let mut stale_snapshot = snapshot.clone();
         stale_snapshot.observed_at_ms = 1_000;
@@ -17419,6 +17464,7 @@ mod tests {
 
         let events = state.current_music_events().expect("active timeline");
         assert_eq!(events.len(), 1);
+        assert_eq!(events[0].sequence, 0);
         assert_eq!(events[0].item_identifier.as_deref(), Some("track-1"));
         assert_eq!(events[0].title, None);
         assert_eq!(events[0].artist, None);
