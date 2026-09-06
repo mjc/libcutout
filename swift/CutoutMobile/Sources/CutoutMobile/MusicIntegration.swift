@@ -280,6 +280,20 @@ public struct MusicNowPlaying: Equatable, Sendable {
         }
     }
 
+    public var availableTransportCommands: [MobileMusicCommandDto] {
+        var commands = [MobileMusicCommandDto]()
+        if capabilities.previous {
+            commands.append(.previous)
+        }
+        if let playPauseCommand {
+            commands.append(playPauseCommand)
+        }
+        if capabilities.next {
+            commands.append(.next)
+        }
+        return commands
+    }
+
     public func supports(_ command: MobileMusicCommandDto) -> Bool {
         capabilities.supports(command)
     }
@@ -654,11 +668,12 @@ public struct MusicCompactPlayer: View {
                     .foregroundStyle(.secondary)
             }
             Spacer(minLength: 4)
-            Button { onCommand(.previous) } label: {
-                Image(systemName: "backward.fill")
+            if nowPlaying.supports(.previous) {
+                Button { onCommand(.previous) } label: {
+                    Image(systemName: "backward.fill")
+                }
+                .accessibilityLabel(pevLocalizedText("music.previous"))
             }
-            .accessibilityLabel(pevLocalizedText("music.previous"))
-            .disabled(!nowPlaying.capabilities.previous)
             if let command = nowPlaying.playPauseCommand {
                 Button { onCommand(command) } label: {
                     Image(systemName: command == .pause ? "pause.fill" : "play.fill")
@@ -667,11 +682,12 @@ public struct MusicCompactPlayer: View {
                     pevLocalizedText(command == .pause ? "music.pause" : "music.play")
                 )
             }
-            Button { onCommand(.next) } label: {
-                Image(systemName: "forward.fill")
+            if nowPlaying.supports(.next) {
+                Button { onCommand(.next) } label: {
+                    Image(systemName: "forward.fill")
+                }
+                .accessibilityLabel(pevLocalizedText("music.next"))
             }
-            .accessibilityLabel(pevLocalizedText("music.next"))
-            .disabled(!nowPlaying.capabilities.next)
             if nowPlaying.capabilities.openProvider {
                 Button { onCommand(.openProvider) } label: {
                     Image(systemName: "arrow.up.forward.app")
