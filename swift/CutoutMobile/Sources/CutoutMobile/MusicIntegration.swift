@@ -89,10 +89,12 @@ public enum MusicProviderMonitoringMode: Equatable, Sendable {
 /// Holds a transport hint until the provider reports the resulting state.
 ///
 /// System-player notifications can arrive after the immediate post-command
-/// poll, so clearing the hint after one unchanged snapshot would misclassify
-/// an accepted skip as an unsolicited item change.
+/// poll, so the hint survives several unchanged snapshots but expires when the
+/// provider never reports a resulting item change.
 public struct MusicTransitionHintTracker: Sendable {
+    private static let maximumUnchangedObservations = 5
     public private(set) var pendingHint: MusicTransitionHint?
+    private var remainingUnchangedObservations: Int?
 
     public init() {}
 
@@ -100,10 +102,12 @@ public struct MusicTransitionHintTracker: Sendable {
 
     public mutating func issue(_ hint: MusicTransitionHint) {
         pendingHint = hint
+        remainingUnchangedObservations = Self.maximumUnchangedObservations
     }
 
     public mutating func clear() {
         pendingHint = nil
+        remainingUnchangedObservations = nil
     }
 
     public mutating func resolve(
@@ -113,19 +117,33 @@ public struct MusicTransitionHintTracker: Sendable {
     ) {
         guard pendingHint == .skip, appliedHint == .skip else { return }
         guard let current else {
-            pendingHint = nil
+            clear()
             return
         }
         if MusicTransitionHintTracker.isProviderFailure(current.state) {
-            pendingHint = nil
+            clear()
             return
         }
-        guard let previous, current.item != nil else { return }
+        guard let previous, current.item != nil else {
+            consumeUnchangedObservation()
+            return
+        }
         if previous.provider != current.provider
             || previous.item?.identifier != current.item?.identifier
         {
-            pendingHint = nil
+            clear()
+        } else {
+            consumeUnchangedObservation()
         }
+    }
+
+    private mutating func consumeUnchangedObservation() {
+        guard let remainingUnchangedObservations else { return }
+        guard remainingUnchangedObservations > 1 else {
+            clear()
+            return
+        }
+        self.remainingUnchangedObservations = remainingUnchangedObservations - 1
     }
 
     private static func isProviderFailure(_ state: MobileMusicPlaybackStateDto) -> Bool {
