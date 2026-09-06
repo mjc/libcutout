@@ -605,6 +605,25 @@ final class CutoutSessionCoreTests: XCTestCase {
         core.disconnectAndScan()
     }
 
+    func testCaptureMusicContextClearsBetweenWriters() {
+        var context = CaptureMusicContext()
+        let observation = MobilePevcapMusicEventDto(
+            provider: .appleMusic,
+            trackId: "track-1",
+            monotonicAtMs: 10,
+            wallClockUnixMs: 1_700_000_000_010,
+            clockUncertaintyMs: 5,
+            rideSequence: nil
+        )
+
+        context.replace(observation)
+        XCTAssertEqual(context.current, observation)
+
+        context.clear()
+
+        XCTAssertNil(context.current)
+    }
+
     func testObservedAdvertisementsReplaceDuplicatePeripheralRows() {
         let core = CutoutSessionCore()
 
