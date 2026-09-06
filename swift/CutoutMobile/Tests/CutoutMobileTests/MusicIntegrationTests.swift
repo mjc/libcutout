@@ -91,6 +91,27 @@ final class MusicIntegrationTests: XCTestCase {
         XCTAssertTrue(nowPlaying.supports(.next))
     }
 
+    func testNowPlayingExposesOnlySupportedTransportCommands() {
+        let nowPlaying = MusicNowPlaying(
+            provider: .appleMusic,
+            state: .playing,
+            item: MobileMusicItemDto(
+                identifier: "track-1",
+                title: "Song",
+                artist: "Artist"
+            ),
+            capabilities: MobileMusicCapabilitiesDto(
+                previous: false,
+                play: false,
+                pause: true,
+                next: false,
+                openProvider: true
+            )
+        )
+
+        XCTAssertEqual(nowPlaying.availableTransportCommands, [.pause])
+    }
+
     func testNowPlayingProvidesLocalizedArtworkAccessibilityLabel() {
         let nowPlaying = MusicNowPlaying(
             provider: .appleMusic,
