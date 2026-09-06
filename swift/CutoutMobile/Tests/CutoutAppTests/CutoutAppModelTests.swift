@@ -187,6 +187,40 @@ final class CutoutAppModelTests: XCTestCase {
     }
 
     @MainActor
+    func testLoweringActiveMusicPolicyRedactsVisibleTimeline() {
+        let driver = SessionDriverSpy(rows: [])
+        let model = CutoutAppModel(core: driver)
+        XCTAssertTrue(model.startGpsOnlyRide())
+        XCTAssertTrue(model.setMusicHistoryPolicy(.humanReadable))
+
+        let snapshot = MobileMusicSnapshotDto(
+            provider: .appleMusic,
+            sessionId: "session",
+            state: .playing,
+            item: MobileMusicItemDto(identifier: "track-1", title: "Song", artist: "Artist"),
+            positionMilliseconds: nil,
+            durationMilliseconds: nil,
+            observedAtMs: 1,
+            capabilities: MobileMusicCapabilitiesDto(
+                previous: false,
+                play: false,
+                pause: true,
+                next: true,
+                openProvider: true
+            )
+        )
+        XCTAssertTrue(model.ingestMusicObservation(MusicProviderObservation(snapshot: snapshot)))
+        XCTAssertEqual(model.musicTimelineEvents.first?.title, "Song")
+
+        XCTAssertTrue(model.setMusicHistoryPolicy(.opaqueItem))
+
+        XCTAssertEqual(model.musicTimelineEvents.count, 1)
+        XCTAssertNil(driver.rideMapState.currentMusicEvents().first?.title)
+        XCTAssertNil(model.musicTimelineEvents.first?.title)
+        XCTAssertNil(model.musicTimelineEvents.first?.artist)
+    }
+
+    @MainActor
     func testRestoringPlayerAfterHiddenProviderSwitchDoesNotShowPreviousProvider() {
         let model = CutoutAppModel(core: SessionDriverSpy(rows: []))
         model.restoreMusicPlayer()
