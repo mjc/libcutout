@@ -96,6 +96,47 @@ final class CutoutAppModelTests: XCTestCase {
         XCTAssertEqual(model.musicHistoryPolicy, .opaqueItem)
     }
 
+    @MainActor
+    func testForgetActiveMusicHistoryClearsLivePolicyAndTimeline() throws {
+        let driver = SessionDriverSpy(rows: [])
+        let model = CutoutAppModel(core: driver)
+        XCTAssertTrue(model.startGpsOnlyRide())
+        XCTAssertTrue(model.setMusicHistoryPolicy(.humanReadable))
+
+        let snapshot = MobileMusicSnapshotDto(
+            provider: .appleMusic,
+            sessionId: "session",
+            state: .playing,
+            item: MobileMusicItemDto(identifier: "track-1", title: "Song", artist: "Artist"),
+            positionMilliseconds: nil,
+            durationMilliseconds: nil,
+            observedAtMs: 1,
+            capabilities: MobileMusicCapabilitiesDto(
+                previous: false,
+                play: false,
+                pause: true,
+                next: true,
+                openProvider: true
+            )
+        )
+        XCTAssertTrue(
+            model.ingestMusicObservation(
+                MusicProviderObservation(snapshot: snapshot),
+                wallClockAtMs: 1_700_000_000_000,
+                clockUncertaintyMs: 5
+            )
+        )
+        let rideID = try XCTUnwrap(model.rideMapSnapshot?.rideID)
+        XCTAssertFalse(model.musicTimelineEvents.isEmpty)
+
+        XCTAssertTrue(model.forgetMusicHistory(for: rideID))
+
+        XCTAssertEqual(model.musicHistoryPolicy, .disabled)
+        XCTAssertTrue(model.musicTimelineEvents.isEmpty)
+        XCTAssertEqual(driver.rideMapState.currentMusicHistoryPolicy(), .disabled)
+        XCTAssertTrue(driver.rideMapState.currentMusicEvents().isEmpty)
+    }
+
     private func clear(
         _ store: RideSessionMarkerStore,
         file: StaticString = #filePath,
