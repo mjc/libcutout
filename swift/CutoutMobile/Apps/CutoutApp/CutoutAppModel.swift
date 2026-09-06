@@ -411,15 +411,7 @@ final class CutoutAppModel {
     func restoreMusicPlayer() {
         musicPlayerVisibilityStore.setHidden(false)
         isMusicPlayerHidden = false
-        guard let current = musicCoordinator.nowPlaying else {
-            musicNowPlaying = nil
-            return
-        }
-        musicNowPlaying = current.provider == selectedMusicProvider
-            ? current
-            : MusicNowPlaying(
-                observation: unavailableMusicObservation(observedAtMs: core.now().rawValue)
-            )
+        musicNowPlaying = projectedMusicNowPlaying()
     }
 
     func selectMusicProvider(_ provider: MobileMusicProviderDto) {
@@ -504,7 +496,17 @@ final class CutoutAppModel {
             appliedHint: appliedHint
         )
         musicTimelineEvents = musicCoordinator.recordedEvents
-        musicNowPlaying = isMusicPlayerHidden ? nil : musicCoordinator.nowPlaying
+        musicNowPlaying = projectedMusicNowPlaying()
+    }
+
+    private func projectedMusicNowPlaying() -> MusicNowPlaying? {
+        guard !isMusicPlayerHidden, let current = musicCoordinator.nowPlaying else {
+            return nil
+        }
+        guard current.provider != selectedMusicProvider else { return current }
+        return MusicNowPlaying(
+            observation: unavailableMusicObservation(observedAtMs: core.now().rawValue)
+        )
     }
 
     private func pevcapMusicObservation(
