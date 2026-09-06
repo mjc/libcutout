@@ -454,6 +454,7 @@ final class CutoutAppModel {
     }
 
     func selectMusicProvider(_ provider: MobileMusicProviderDto) {
+        let previousProvider = selectedMusicProvider
         musicCoordinator.resetProviderCorrelation()
         selectedMusicProvider = provider
         musicNowPlaying = projectedMusicNowPlaying()
@@ -467,6 +468,10 @@ final class CutoutAppModel {
             stopMusicMonitoring()
         }
 #endif
+        if previousProvider != provider, provider.monitoringMode == .appleMusicSystemPlayer {
+            musicMonitorSceneState.request()
+            beginMusicMonitoring()
+        }
         if !isMusicPlayerHidden {
             connectMusic()
         }
