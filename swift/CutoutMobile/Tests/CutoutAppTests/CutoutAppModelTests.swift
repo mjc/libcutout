@@ -187,6 +187,23 @@ final class CutoutAppModelTests: XCTestCase {
         XCTAssertNil(driver.rideMapState.currentMusicEvents().first?.title)
         XCTAssertNil(model.musicTimelineEvents.first?.title)
         XCTAssertNil(model.musicTimelineEvents.first?.artist)
+
+        let sameTrackAtALaterObservation = MobileMusicSnapshotDto(
+            provider: snapshot.provider,
+            sessionId: snapshot.sessionId,
+            state: snapshot.state,
+            item: snapshot.item,
+            positionMilliseconds: snapshot.positionMilliseconds,
+            durationMilliseconds: snapshot.durationMilliseconds,
+            observedAtMs: 2,
+            capabilities: snapshot.capabilities
+        )
+        XCTAssertTrue(
+            model.ingestMusicObservation(
+                MusicProviderObservation(snapshot: sameTrackAtALaterObservation)
+            )
+        )
+        XCTAssertEqual(model.musicTimelineEvents.count, 1)
     }
 
     @MainActor
