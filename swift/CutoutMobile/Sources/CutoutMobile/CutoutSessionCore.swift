@@ -362,6 +362,7 @@ public final class CutoutSessionCore: NSObject {
     private var captureStartedAt: MonotonicMilliseconds?
     private var captureNotificationCount: UInt64 = 0
     private var captureBuilder: MobilePevcapCaptureBuilder?
+    private var latestMusicCaptureObservation: MobilePevcapMusicEventDto?
     private var captureFileURL: URL?
     private var bmsPages: [BmsPageKey: BmsSnapshot] = [:]
     private let deviceDetectionSession: DeviceDetectionSession
@@ -1525,6 +1526,13 @@ public final class CutoutSessionCore: NSObject {
         publishOnMain { self.onCaptureEvent?(event) }
     }
 
+    /// Retains one bounded music observation for the next captured BLE frame.
+    /// The Rust writer consumes it once, keeping capture metadata low-rate.
+    public func updateMusicCaptureObservation(_ observation: MobilePevcapMusicEventDto?) {
+        latestMusicCaptureObservation = observation
+        _ = captureBuilder?.setMusicContext(music: observation)
+    }
+
     private func captureFrame(
         direction: String,
         characteristic: CBUUID,
@@ -1593,6 +1601,7 @@ public final class CutoutSessionCore: NSObject {
         ].forEach { _ = builder.addAnnotation(annotation: $0) }
         extraAnnotations.forEach { _ = builder.addAnnotation(annotation: sanitizedPevcapAnnotation($0)) }
         captureBuilder = builder
+        _ = builder.setMusicContext(music: latestMusicCaptureObservation)
         guard builder.startWriter(path: url.path) else {
             record("capture_error=writer_start_failed")
             captureBuilder = nil
