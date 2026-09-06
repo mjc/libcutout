@@ -1041,7 +1041,18 @@ final class CutoutAppModel {
             return false
         }
         do {
-            try state.deleteMusicHistory(rideID: rideID)
+            if rideMapSnapshot?.rideID == rideID {
+                // Route active-ride deletion through the Rust state owner so
+                // its in-memory timeline and durable policy change together.
+                try state.setMusicHistoryPolicy(.disabled)
+                musicHistoryPolicy = .disabled
+                musicCoordinator.restoreHistoryPolicy(.disabled)
+                musicTransitionHintTracker.clear()
+                core.updateMusicCaptureObservation(nil)
+                musicTimelineEvents = musicCoordinator.recordedEvents
+            } else {
+                try state.deleteMusicHistory(rideID: rideID)
+            }
             if selectedRideMapHistoryID == rideID {
                 rideMapHistoryDetailMusicTimeline.removeAll(keepingCapacity: true)
             }
