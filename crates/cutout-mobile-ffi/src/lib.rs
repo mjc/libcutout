@@ -16595,4 +16595,52 @@ mod tests {
                 .is_some_and(|events| events.is_empty())
         );
     }
+
+    #[test]
+    fn lowering_music_policy_redacts_the_active_timeline() {
+        let state = MobileRideMapCore::new();
+        state.start_gps_only(1_000, None).expect("ride starts");
+        state
+            .set_music_history_policy(MobileMusicHistoryPolicyDto::HumanReadable)
+            .expect("policy can be enabled while recording");
+        let snapshot = MobileMusicSnapshotDto {
+            provider: MobileMusicProviderDto::AppleMusic,
+            session_id: "session".to_owned(),
+            state: MobileMusicPlaybackStateDto::Playing,
+            item: Some(MobileMusicItemDto {
+                identifier: "track-1".to_owned(),
+                title: Some("Song".to_owned()),
+                artist: Some("Artist".to_owned()),
+            }),
+            position_milliseconds: None,
+            duration_milliseconds: None,
+            observed_at_ms: 2_000,
+            capabilities: MobileMusicCapabilitiesDto {
+                previous: false,
+                play: false,
+                pause: true,
+                next: true,
+                open_provider: true,
+            },
+        };
+
+        state
+            .record_music_event(
+                snapshot,
+                MobileMusicRideEventKindDto::Play,
+                2_000,
+                1_700_000_000_000,
+                5,
+            )
+            .expect("opted-in event is recorded");
+        state
+            .set_music_history_policy(MobileMusicHistoryPolicyDto::OpaqueItem)
+            .expect("opaque policy can redact while recording");
+
+        let events = state.current_music_events().expect("active timeline");
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].item_identifier.as_deref(), Some("track-1"));
+        assert_eq!(events[0].title, None);
+        assert_eq!(events[0].artist, None);
+    }
 }
