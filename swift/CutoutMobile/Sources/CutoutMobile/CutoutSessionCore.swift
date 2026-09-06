@@ -85,6 +85,18 @@ public enum CaptureEvent: Equatable, Sendable {
     case failed
 }
 
+struct CaptureMusicContext: Equatable {
+    private(set) var current: MobilePevcapMusicEventDto?
+
+    mutating func replace(_ observation: MobilePevcapMusicEventDto?) {
+        current = observation
+    }
+
+    mutating func clear() {
+        current = nil
+    }
+}
+
 struct ConnectionReconnectPolicy {
     static let maximumAttempts = 3
 
@@ -362,7 +374,7 @@ public final class CutoutSessionCore: NSObject {
     private var captureStartedAt: MonotonicMilliseconds?
     private var captureNotificationCount: UInt64 = 0
     private var captureBuilder: MobilePevcapCaptureBuilder?
-    private var latestMusicCaptureObservation: MobilePevcapMusicEventDto?
+    private var musicCaptureContext = CaptureMusicContext()
     private var captureFileURL: URL?
     private var bmsPages: [BmsPageKey: BmsSnapshot] = [:]
     private let deviceDetectionSession: DeviceDetectionSession
@@ -1529,7 +1541,7 @@ public final class CutoutSessionCore: NSObject {
     /// Retains one bounded music observation for the next captured BLE frame.
     /// The Rust writer consumes it once, keeping capture metadata low-rate.
     public func updateMusicCaptureObservation(_ observation: MobilePevcapMusicEventDto?) {
-        latestMusicCaptureObservation = observation
+        musicCaptureContext.replace(observation)
         _ = captureBuilder?.setMusicContext(music: observation)
     }
 
@@ -1601,7 +1613,7 @@ public final class CutoutSessionCore: NSObject {
         ].forEach { _ = builder.addAnnotation(annotation: $0) }
         extraAnnotations.forEach { _ = builder.addAnnotation(annotation: sanitizedPevcapAnnotation($0)) }
         captureBuilder = builder
-        _ = builder.setMusicContext(music: latestMusicCaptureObservation)
+        _ = builder.setMusicContext(music: musicCaptureContext.current)
         guard builder.startWriter(path: url.path) else {
             record("capture_error=writer_start_failed")
             captureBuilder = nil
@@ -1638,6 +1650,7 @@ public final class CutoutSessionCore: NSObject {
         publishesResult: Bool = false,
         priorWriteSucceeded: Bool = true
     ) {
+        musicCaptureContext.clear()
         guard let builder = captureBuilder else { return }
         let completedCaptureURL = captureFileURL
         captureBuilder = nil
