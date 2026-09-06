@@ -669,17 +669,17 @@ public final class MusicIntegrationCoordinator {
         guard let rideMapState else {
             throw MobileRideMapError.storageError("Rust ride database is unavailable")
         }
+        let previousPolicy = historyPolicy
         try rideMapState.setMusicHistoryPolicy(policy)
         historyPolicy = policy
-        lastPersistedNowPlayingByProvider.removeAll(keepingCapacity: true)
-        lastRecordedSequence = nil
+        rebasePersistedState(from: previousPolicy, to: policy)
     }
 
     /// Adopts a policy restored by Rust without issuing a second persistence write.
     public func restoreHistoryPolicy(_ policy: MobileMusicHistoryPolicyDto) {
+        let previousPolicy = historyPolicy
         historyPolicy = policy
-        lastPersistedNowPlayingByProvider.removeAll(keepingCapacity: true)
-        lastRecordedSequence = nil
+        rebasePersistedState(from: previousPolicy, to: policy)
     }
 
     /// Drops provider-local observations before a deliberate provider switch.
@@ -735,6 +735,28 @@ public final class MusicIntegrationCoordinator {
                 lastPersistedNowPlayingByProvider[nowPlaying.provider] = nowPlaying
             }
         case .outOfOrder, .rideNotOpen, .full:
+            break
+        }
+    }
+
+    private func rebasePersistedState(
+        from previousPolicy: MobileMusicHistoryPolicyDto,
+        to policy: MobileMusicHistoryPolicyDto
+    ) {
+        switch (previousPolicy, policy) {
+        case (.disabled, .opaqueItem), (.disabled, .humanReadable):
+            // Enabling history should capture the current item on the next
+            // accepted observation, even if it was already playing.
+            lastPersistedNowPlayingByProvider.removeAll(keepingCapacity: true)
+        case (_, .disabled):
+            // Keep the current player as the baseline while history is off so
+            // a later re-enable can deliberately start a new association.
+            if let nowPlaying {
+                lastPersistedNowPlayingByProvider[nowPlaying.provider] = nowPlaying
+            }
+        default:
+            // Redaction and display-policy changes are not music transitions.
+            // Preserve the baseline so the next poll cannot duplicate one.
             break
         }
     }
