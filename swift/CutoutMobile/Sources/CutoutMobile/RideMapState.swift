@@ -765,6 +765,11 @@ public final class MobileRideMapState: @unchecked Sendable {
         try withCore { try $0.setMusicHistoryPolicy(policy: policy) }
     }
 
+    /// Returns the Rust-owned music-history policy restored for the active ride.
+    public func currentMusicHistoryPolicy() -> MobileMusicHistoryPolicyDto {
+        core?.currentMusicHistoryPolicy() ?? .disabled
+    }
+
     /// Records one low-rate provider transition for the active ride.
     public func recordMusicEvent(
         snapshot: MobileMusicSnapshotDto,

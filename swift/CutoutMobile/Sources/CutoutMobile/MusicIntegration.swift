@@ -358,6 +358,12 @@ public final class MusicIntegrationCoordinator {
         lastPersistedNowPlaying = nil
     }
 
+    /// Adopts a policy restored by Rust without issuing a second persistence write.
+    public func restoreHistoryPolicy(_ policy: MobileMusicHistoryPolicyDto) {
+        historyPolicy = policy
+        lastPersistedNowPlaying = nil
+    }
+
     public func record(
         snapshot: MobileMusicSnapshotDto,
         kind: MobileMusicRideEventKindDto,
