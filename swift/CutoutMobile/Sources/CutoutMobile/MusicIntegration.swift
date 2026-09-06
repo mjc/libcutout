@@ -687,6 +687,9 @@ public final class MusicIntegrationCoordinator {
         clockUncertaintyMs: UInt64
     ) throws -> MobileMusicTimelineOutcomeDto {
         resetCorrelationIfRideChanged()
+        guard MusicObservationValidator.accepts(snapshot) else {
+            throw MobileRideMapError.storageError("invalid music observation")
+        }
         guard accept(snapshot) else { return .outOfOrder }
         update(snapshot: snapshot)
         guard let rideMapState else {
