@@ -188,6 +188,7 @@ final class CutoutAppModelTests: XCTestCase {
                 clockUncertaintyMs: 5
             )
         )
+        XCTAssertEqual(driver.musicCaptureObservation?.rideSequence, 0)
         let rideID = try XCTUnwrap(model.rideMapSnapshot?.rideID)
         XCTAssertFalse(model.musicTimelineEvents.isEmpty)
 
@@ -2955,6 +2956,7 @@ private final class SessionDriverSpy: CutoutSessionDriving {
     private(set) var probedPlatformIdentifiers = [String]()
     private(set) var recordedPlatformIdentifiers = [String]()
     private(set) var captureAnnotations = [String]()
+    private(set) var musicCaptureObservation: MobilePevcapMusicEventDto?
     private(set) var flushCaptureCount = 0
     private(set) var disconnectCount = 0
     private(set) var resetRideMapLocationAdmissionCount = 0
@@ -3012,7 +3014,9 @@ private final class SessionDriverSpy: CutoutSessionDriving {
     }
     func annotateCapture(key _: String, value _: String) {}
     func updateMusicCapturePolicy(_: MobileMusicHistoryPolicyDto) {}
-    func updateMusicCaptureObservation(_: MobilePevcapMusicEventDto?) {}
+    func updateMusicCaptureObservation(_ observation: MobilePevcapMusicEventDto?) {
+        musicCaptureObservation = observation
+    }
     func flushCapture() async -> Bool {
         flushCaptureCount += 1
         return flushSucceeds
