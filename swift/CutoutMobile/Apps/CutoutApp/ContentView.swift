@@ -90,9 +90,6 @@ struct ContentView: View {
                 AccessibilityNotification.Announcement(error.accessibilityAnnouncement).post()
             }
         }
-        .task {
-            await model.monitorMusic()
-        }
     }
 
     private func pair(_ row: DevicePickerRow) {

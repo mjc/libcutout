@@ -263,6 +263,7 @@ final class CutoutAppModel {
     private var rideMapHistoryViewportCancellation: MobileRideMapProjectionCancellation?
     private var rideMapHistoryContextTask: Task<Void, Never>?
     private var rideMapRestoreTask: Task<Void, Never>?
+    private var musicMonitorTask: Task<Void, Never>?
     private var rideMapLiveProjectionTask: Task<Void, Never>?
     private var rideMapDurationTask: Task<Void, Never>?
     private var rideMapLiveProjectionCancellation: MobileLiveRideMapProjectionCancellation?
@@ -496,7 +497,7 @@ final class CutoutAppModel {
         }
     }
 
-    func monitorMusic() async {
+    private func monitorMusic() async {
 #if canImport(MediaPlayer) && os(iOS)
         guard await appleMusicProvider.requestAuthorization() else {
             _ = ingestMusicObservation(MusicProviderObservation(
@@ -517,6 +518,13 @@ final class CutoutAppModel {
             }
         }
 #endif
+    }
+
+    func connectMusic() {
+        musicMonitorTask?.cancel()
+        musicMonitorTask = Task { [weak self] in
+            await self?.monitorMusic()
+        }
     }
 
     private func restoreRideMapState() {

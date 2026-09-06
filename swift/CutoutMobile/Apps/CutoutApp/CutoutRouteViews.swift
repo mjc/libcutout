@@ -17,6 +17,7 @@ struct AppMusicCompactPlayerModifier: ViewModifier {
                     _ = await model.handleMusicCommand(command)
                 }
             },
+            onConnect: model.connectMusic,
             onDismiss: model.dismissMusicPlayer,
             onRestore: model.restoreMusicPlayer,
             onSelectProvider: model.selectMusicProvider,
