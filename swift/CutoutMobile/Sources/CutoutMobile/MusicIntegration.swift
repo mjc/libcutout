@@ -24,6 +24,39 @@ public struct MusicArtwork: Equatable, Sendable {
     }
 }
 
+/// Keeps one positive artwork result so polling does not repeatedly decode the
+/// same provider image. The value is already bounded by `MusicArtwork`.
+struct MusicArtworkCache: Sendable {
+    private var itemIdentifier: String?
+    private var cachedArtwork: MusicArtwork?
+
+    mutating func artwork(
+        for itemIdentifier: String?,
+        load: () -> MusicArtwork?
+    ) -> MusicArtwork? {
+        guard let itemIdentifier else {
+            clear()
+            return nil
+        }
+        if self.itemIdentifier == itemIdentifier, let cachedArtwork {
+            return cachedArtwork
+        }
+        let artwork = load()
+        if let artwork {
+            self.itemIdentifier = itemIdentifier
+            cachedArtwork = artwork
+        } else {
+            clear()
+        }
+        return artwork
+    }
+
+    private mutating func clear() {
+        itemIdentifier = nil
+        cachedArtwork = nil
+    }
+}
+
 /// Result of dispatching one provider transport command.
 public enum MusicCommandOutcome: Equatable, Sendable {
     /// The provider adapter accepted the command for dispatch.
@@ -1008,6 +1041,7 @@ public final class AppleMusicProviderAdapter {
     private let systemPlayer = SystemMusicPlayer.shared
 #endif
     private var notificationTokens = [NSObjectProtocol]()
+    private var artworkCache = MusicArtworkCache()
 
     public init() {}
 
@@ -1158,11 +1192,17 @@ public final class AppleMusicProviderAdapter {
     public func observation(observedAtMs: UInt64) -> MusicProviderObservation {
         MusicProviderObservation(
             snapshot: snapshot(observedAtMs: observedAtMs),
-            artworkData: artworkData()
+            artworkData: artworkData()?.data
         )
     }
 
     private func artworkData() -> Data? {
+        artworkCache.artwork(for: player.nowPlayingItem.map { String($0.persistentID) }) {
+            loadArtwork()
+        }?.data
+    }
+
+    private func loadArtwork() -> MusicArtwork? {
 #if canImport(UIKit) && os(iOS)
         guard
             let artwork = player.nowPlayingItem?.artwork,
@@ -1170,7 +1210,7 @@ public final class AppleMusicProviderAdapter {
         else {
             return nil
         }
-        return image.jpegData(compressionQuality: 0.8)
+        return image.jpegData(compressionQuality: 0.8).flatMap(MusicArtwork.init(data:))
 #else
         nil
 #endif
