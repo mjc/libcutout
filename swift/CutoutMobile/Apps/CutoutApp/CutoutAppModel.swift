@@ -447,20 +447,25 @@ final class CutoutAppModel {
         let previousProvider = selectedMusicProvider
         selectedMusicProvider = provider
         musicTransitionHintTracker.clear()
-        if provider.monitoringMode == .unavailable {
-            musicMonitorSceneState.cancel()
-        }
-#if canImport(MediaPlayer) && os(iOS)
-        if provider.monitoringMode == .unavailable {
-            stopMusicMonitoring()
-        }
-#endif
-        if previousProvider != provider, provider.monitoringMode == .appleMusicSystemPlayer {
-            musicMonitorSceneState.request()
-            beginMusicMonitoring()
-        }
+        updateMusicMonitoring(from: previousProvider, to: provider)
         if !isMusicPlayerHidden {
             refreshMusicSnapshot()
+        }
+    }
+
+    private func updateMusicMonitoring(
+        from previousProvider: MobileMusicProviderDto,
+        to provider: MobileMusicProviderDto
+    ) {
+        switch provider.monitoringMode {
+        case .unavailable:
+            musicMonitorSceneState.cancel()
+            stopMusicMonitoring()
+        case .appleMusicSystemPlayer where previousProvider != provider:
+            musicMonitorSceneState.request()
+            beginMusicMonitoring()
+        case .appleMusicSystemPlayer:
+            break
         }
     }
 
