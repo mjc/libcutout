@@ -808,7 +808,7 @@ public struct MusicCompactPlayer: View {
                     .foregroundStyle(.secondary)
             }
             Spacer(minLength: 4)
-            if nowPlaying.supports(.previous) {
+            if nowPlaying.isCommandAvailable(.previous) {
                 Button { onCommand(.previous) } label: {
                     Image(systemName: "backward.fill")
                 }
@@ -822,13 +822,13 @@ public struct MusicCompactPlayer: View {
                     pevLocalizedText(command == .pause ? "music.pause" : "music.play")
                 )
             }
-            if nowPlaying.supports(.next) {
+            if nowPlaying.isCommandAvailable(.next) {
                 Button { onCommand(.next) } label: {
                     Image(systemName: "forward.fill")
                 }
                 .accessibilityLabel(pevLocalizedText("music.next"))
             }
-            if nowPlaying.capabilities.openProvider {
+            if nowPlaying.isCommandAvailable(.openProvider) {
                 Button { onCommand(.openProvider) } label: {
                     Image(systemName: "arrow.up.forward.app")
                 }
