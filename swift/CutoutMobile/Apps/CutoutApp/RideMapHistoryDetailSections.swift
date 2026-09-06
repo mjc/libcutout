@@ -3,6 +3,13 @@ import CutoutMobileFFI
 import MapKit
 import SwiftUI
 
+extension MobileRideMapError {
+    /// Keeps storage details out of the spoken music-history failure state.
+    var musicHistoryAccessibilityText: String {
+        localizedAppText("music.history.unavailable")
+    }
+}
+
 private extension MobileMusicHistoryStateDto {
     var detailTitle: String {
         switch self {
@@ -233,7 +240,7 @@ struct RideMapHistoryDetailSummary: View {
                     )
                     .font(.caption)
                     .foregroundStyle(.orange)
-                    .accessibilityValue(Text(String(describing: musicError)))
+                    .accessibilityValue(Text(musicError.musicHistoryAccessibilityText))
                     .accessibilityIdentifier("ride-map.detail-music-history-unavailable")
                 } else {
                     if let musicHistoryState,
