@@ -387,11 +387,12 @@ final class CutoutAppModel {
             outcome = await appleMusicProvider.perform(command)
         }
         if outcome == .accepted {
-            let transitionHint: MusicTransitionHint? = switch command {
-            case .previous, .next: .skip
-            default: nil
+            switch command {
+            case .previous, .next:
+                musicTransitionHintTracker.issue(.skip)
+            default:
+                break
             }
-            musicTransitionHintTracker.issue(transitionHint)
             refreshMusicSnapshot()
         }
         return outcome
@@ -404,7 +405,7 @@ final class CutoutAppModel {
         musicPlayerVisibilityStore.setHidden(true)
         isMusicPlayerHidden = true
         musicNowPlaying = nil
-        musicTransitionHintTracker.issue(nil)
+        musicTransitionHintTracker.clear()
     }
 
     func restoreMusicPlayer() {
@@ -415,7 +416,7 @@ final class CutoutAppModel {
 
     func selectMusicProvider(_ provider: MobileMusicProviderDto) {
         selectedMusicProvider = provider
-        musicTransitionHintTracker.issue(nil)
+        musicTransitionHintTracker.clear()
         if !isMusicPlayerHidden {
             refreshMusicSnapshot()
         }

@@ -55,8 +55,12 @@ public struct MusicTransitionHintTracker: Sendable {
 
     public var hint: MusicTransitionHint? { pendingHint }
 
-    public mutating func issue(_ hint: MusicTransitionHint?) {
+    public mutating func issue(_ hint: MusicTransitionHint) {
         pendingHint = hint
+    }
+
+    public mutating func clear() {
+        pendingHint = nil
     }
 
     public mutating func resolve(
