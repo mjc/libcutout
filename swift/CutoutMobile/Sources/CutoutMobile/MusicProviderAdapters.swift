@@ -282,6 +282,22 @@ public final class SpotifyProviderAdapter: NSObject, @preconcurrency SPTAppRemot
         lifecycleState = .disconnected
     }
 
+    /// Polls the current Spotify player state so a track that was already
+    /// playing before App Remote connected is reflected without waiting for a
+    /// change notification.
+    public func refreshPlayerState() {
+        guard let playerAPI = appRemote?.playerAPI else { return }
+        playerAPI.getPlayerState { [weak self] result, error in
+            guard let self else { return }
+            if let playerState = result as? SPTAppRemotePlayerState, error == nil {
+                self.playerStateDidChange(playerState)
+            } else if error != nil {
+                self.lifecycleState = .disconnected
+                self.emitChange()
+            }
+        }
+    }
+
     /// Handles the redirect URL returned by Spotify after App Remote auth.
     @discardableResult
     public func handleCallback(_ url: URL) -> Bool {
@@ -377,10 +393,13 @@ public final class SpotifyProviderAdapter: NSObject, @preconcurrency SPTAppRemot
             }
         })
         appRemote.playerAPI?.getPlayerState { [weak self] result, error in
+            guard let self else { return }
             guard error == nil, let playerState = result as? SPTAppRemotePlayerState else {
+                self.lifecycleState = .disconnected
+                self.emitChange()
                 return
             }
-            self?.playerStateDidChange(playerState)
+            self.playerStateDidChange(playerState)
         }
         emitChange()
     }
@@ -417,6 +436,8 @@ public struct SpotifyProviderAdapter: Sendable {
     public static let providerURL = URL(string: "spotify://")!
 
     public init() {}
+
+    public func refreshPlayerState() {}
 
     @MainActor
     public func perform(_ command: MobileMusicCommandDto) async -> MusicCommandOutcome {

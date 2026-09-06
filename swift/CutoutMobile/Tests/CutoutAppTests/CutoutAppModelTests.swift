@@ -60,17 +60,31 @@ final class CutoutAppModelTests: XCTestCase {
         super.setUp()
         clear(RideSessionMarkerStore())
         clear(DevicePickerSelectionStore())
+<<<<<<< HEAD
         MusicProviderSelectionStore().set(.appleMusic)
         MusicPlayerVisibilityStore().setHidden(false)
         MusicHistoryPolicyStore().set(.disabled)
+||||||| parent of 704ce8cb (Restore music monitoring across launches)
+=======
+        MusicProviderSelectionStore().set(.appleMusic)
+        MusicMonitoringPreferenceStore().setEnabled(false)
+        MusicHistoryPolicyStore().set(.disabled)
+>>>>>>> 704ce8cb (Restore music monitoring across launches)
     }
 
     override func tearDown() {
         clear(RideSessionMarkerStore())
         clear(DevicePickerSelectionStore())
+<<<<<<< HEAD
         MusicProviderSelectionStore().set(.appleMusic)
         MusicPlayerVisibilityStore().setHidden(false)
         MusicHistoryPolicyStore().set(.disabled)
+||||||| parent of 704ce8cb (Restore music monitoring across launches)
+=======
+        MusicProviderSelectionStore().set(.appleMusic)
+        MusicMonitoringPreferenceStore().setEnabled(false)
+        MusicHistoryPolicyStore().set(.disabled)
+>>>>>>> 704ce8cb (Restore music monitoring across launches)
         super.tearDown()
     }
 
@@ -177,6 +191,22 @@ final class CutoutAppModelTests: XCTestCase {
         )
 
         XCTAssertEqual(secondModel.selectedMusicProvider, .spotify)
+    }
+
+    @MainActor
+    func testConnectMusicPersistsMonitoringIntent() throws {
+        let suiteName = "CutoutAppMusicMonitoringTests-\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let monitoringStore = MusicMonitoringPreferenceStore(defaults: defaults)
+        let model = CutoutAppModel(
+            core: SessionDriverSpy(rows: []),
+            musicMonitoringPreferenceStore: monitoringStore
+        )
+
+        XCTAssertFalse(monitoringStore.isEnabled)
+        model.connectMusic()
+        XCTAssertTrue(monitoringStore.isEnabled)
     }
 
     @MainActor

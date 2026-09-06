@@ -247,6 +247,26 @@ public struct MusicProviderSelectionStore {
     }
 }
 
+/// Persists whether the user asked the app to monitor the selected music provider.
+/// The provider session itself remains owned by the platform adapter; this is
+/// only the durable setup intent used to restore monitoring on the next launch.
+public struct MusicMonitoringPreferenceStore {
+    private static let key = "io.cutout.music.monitoring.enabled"
+    private let defaults: UserDefaults
+
+    public init(defaults: UserDefaults = .standard) {
+        self.defaults = defaults
+    }
+
+    public var isEnabled: Bool {
+        defaults.bool(forKey: Self.key)
+    }
+
+    public func setEnabled(_ enabled: Bool) {
+        defaults.set(enabled, forKey: Self.key)
+    }
+}
+
 /// Identifies the currently owning music-monitor task.
 ///
 /// A cancelled task may finish after a replacement task starts. The generation

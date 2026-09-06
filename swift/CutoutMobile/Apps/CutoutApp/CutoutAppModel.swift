@@ -271,6 +271,7 @@ final class CutoutAppModel {
     private let musicPlayerVisibilityStore: MusicPlayerVisibilityStore
     private let musicProviderSelectionStore: MusicProviderSelectionStore
     private let musicHistoryPolicyStore: MusicHistoryPolicyStore
+    private let musicMonitoringPreferenceStore: MusicMonitoringPreferenceStore
     private let musicCoordinator: MusicIntegrationCoordinator
     private let spotifyMusicProvider = SpotifyProviderAdapter()
 #if canImport(MediaPlayer) && os(iOS)
@@ -328,7 +329,8 @@ final class CutoutAppModel {
             rideSessionMarkerStore: RideSessionMarkerStore(),
             liveActivityManager: LiveActivityRideActivityKitManager(),
             musicHistoryPolicyStore: MusicHistoryPolicyStore(),
-            musicProviderSelectionStore: MusicProviderSelectionStore()
+            musicProviderSelectionStore: MusicProviderSelectionStore(),
+            musicMonitoringPreferenceStore: MusicMonitoringPreferenceStore()
         )
     }
 
@@ -338,7 +340,8 @@ final class CutoutAppModel {
         rideSessionMarkerStore: RideSessionMarkerStore = RideSessionMarkerStore(),
         liveActivityManager: any LiveActivityRideLifecycleManaging = LiveActivityRideActivityKitManager(),
         musicHistoryPolicyStore: MusicHistoryPolicyStore = MusicHistoryPolicyStore(),
-        musicProviderSelectionStore: MusicProviderSelectionStore = MusicProviderSelectionStore()
+        musicProviderSelectionStore: MusicProviderSelectionStore = MusicProviderSelectionStore(),
+        musicMonitoringPreferenceStore: MusicMonitoringPreferenceStore = MusicMonitoringPreferenceStore()
     ) {
         self.init(
             core: core,
@@ -347,7 +350,8 @@ final class CutoutAppModel {
             rideSessionMarkerStore: rideSessionMarkerStore,
             liveActivityManager: liveActivityManager,
             musicHistoryPolicyStore: musicHistoryPolicyStore,
-            musicProviderSelectionStore: musicProviderSelectionStore
+            musicProviderSelectionStore: musicProviderSelectionStore,
+            musicMonitoringPreferenceStore: musicMonitoringPreferenceStore
         )
     }
 
@@ -358,7 +362,8 @@ final class CutoutAppModel {
         rideSessionMarkerStore: RideSessionMarkerStore,
         liveActivityManager: any LiveActivityRideLifecycleManaging,
         musicHistoryPolicyStore: MusicHistoryPolicyStore,
-        musicProviderSelectionStore: MusicProviderSelectionStore
+        musicProviderSelectionStore: MusicProviderSelectionStore,
+        musicMonitoringPreferenceStore: MusicMonitoringPreferenceStore
     ) {
         self.permitsStoredDeviceAutoPairing = permitsStoredDeviceAutoPairing
         self.core = core
@@ -374,6 +379,7 @@ final class CutoutAppModel {
         self.musicPlayerVisibilityStore = MusicPlayerVisibilityStore()
         self.isMusicPlayerHidden = musicPlayerVisibilityStore.isHidden
         self.musicProviderSelectionStore = musicProviderSelectionStore
+        self.musicMonitoringPreferenceStore = musicMonitoringPreferenceStore
         self.selectedMusicProvider = musicProviderSelectionStore.provider
         self.musicHistoryPolicyStore = musicHistoryPolicyStore
         self.musicHistoryPolicy = musicHistoryPolicyStore.policy
@@ -704,6 +710,7 @@ final class CutoutAppModel {
             }
             while !Task.isCancelled && isCurrent() {
                 refresh()
+                spotifyMusicProvider.refreshPlayerState()
                 do {
                     try await Task.sleep(for: .seconds(1))
                 } catch {
@@ -833,6 +840,7 @@ final class CutoutAppModel {
     }
 
     func connectMusic() {
+        musicMonitoringPreferenceStore.setEnabled(true)
         musicMonitorSceneState.request()
         beginMusicMonitoring()
     }
@@ -891,7 +899,9 @@ final class CutoutAppModel {
         restorationMarkerAtLaunch = rideSessionMarkerStore.marker
         rideSessionRestorationState = .awaitingBluetooth
         core.start()
-        connectMusic()
+        guard musicMonitoringPreferenceStore.isEnabled else { return }
+        musicMonitorSceneState.request()
+        beginMusicMonitoring()
     }
 
     @discardableResult

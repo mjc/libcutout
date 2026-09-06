@@ -56,6 +56,20 @@ final class MusicIntegrationTests: XCTestCase {
         XCTAssertEqual(store.provider, .appleMusic)
     }
 
+    func testMusicMonitoringPreferenceStoreDefaultsOffAndRoundTrips() throws {
+        let suiteName = "MusicMonitoringPreferenceStoreTests-\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        let store = MusicMonitoringPreferenceStore(defaults: defaults)
+
+        XCTAssertFalse(store.isEnabled)
+        store.setEnabled(true)
+        XCTAssertTrue(store.isEnabled)
+        store.setEnabled(false)
+        XCTAssertFalse(store.isEnabled)
+    }
+
     func testTransitionHintRemainsPendingUntilTheItemChanges() {
         var tracker = MusicTransitionHintTracker()
         tracker.issue(.skip)
