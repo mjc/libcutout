@@ -10,7 +10,7 @@ final class MusicIntegrationTests: XCTestCase {
         )
         XCTAssertEqual(
             MobileMusicProviderDto.spotify.monitoringMode,
-            .unavailable
+            .spotifyAppRemote
         )
     }
 
