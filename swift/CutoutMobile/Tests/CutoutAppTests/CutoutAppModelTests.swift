@@ -159,6 +159,28 @@ final class CutoutAppModelTests: XCTestCase {
     }
 
     @MainActor
+    func testMusicHistoryPolicyCanBeChangedAfterRideStops() throws {
+        let state = MobileRideMapState()
+        _ = try state.startGpsOnly(atMs: 1_000, lastConnectedVehicle: nil)
+        try state.setMusicHistoryPolicy(.humanReadable)
+
+        let suiteName = "CutoutAppMusicHistoryStoppedRideTests-\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let policyStore = MusicHistoryPolicyStore(defaults: defaults)
+        let model = CutoutAppModel(
+            core: SessionDriverSpy(rows: [], rideMapState: state, preserveExistingRide: true),
+            musicHistoryPolicyStore: policyStore
+        )
+
+        XCTAssertTrue(model.stopRideMap())
+        XCTAssertTrue(model.setMusicHistoryPolicy(.opaqueItem))
+        XCTAssertEqual(model.musicHistoryPolicy, .opaqueItem)
+        XCTAssertEqual(policyStore.policy, .opaqueItem)
+        XCTAssertEqual(state.currentMusicHistoryPolicy(), .humanReadable)
+    }
+
+    @MainActor
     func testNewRideUsesPersistedMusicDefaultAfterRestoringAnotherRide() throws {
         let state = MobileRideMapState()
         _ = try state.startGpsOnly(atMs: 1_000, lastConnectedVehicle: nil)

@@ -649,8 +649,10 @@ final class CutoutAppModel {
             }
             musicTimelineEvents = musicCoordinator.recordedEvents
             return true
-        } catch MobileRideMapError.noActiveRide {
-            // Keep the choice as the default for the next ride.
+        } catch let error as MobileRideMapError
+            where error == .noActiveRide || error == .invalidTransition
+        {
+            // Keep the choice as the default when no recordable ride can accept it.
             rememberMusicHistoryPolicy(policy)
             musicCoordinator.restoreHistoryPolicy(policy)
             musicHistoryUnavailable = false
