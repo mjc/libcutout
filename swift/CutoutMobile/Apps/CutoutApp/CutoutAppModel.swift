@@ -106,6 +106,11 @@ final class CutoutAppModel {
     private(set) var rideMapLastDecision: MobileRideMapDecisionDto?
     var rideMapMode = RideMapMode.live
     private(set) var rideMapHistoryLoading = false
+    private(set) var musicNowPlaying: MusicNowPlaying?
+    private(set) var musicTimelineEvents = [MobileMusicRideEventDto]()
+    private(set) var selectedMusicProvider = MobileMusicProviderDto.appleMusic
+    private(set) var isMusicPlayerHidden: Bool
+    private(set) var musicHistoryPolicy = MobileMusicHistoryPolicyDto.disabled
 
     /// Compatibility projection for callers that only display the live map.
     /// New route presentations should use the explicitly scoped error properties.
@@ -228,6 +233,12 @@ final class CutoutAppModel {
     private let liveActivityCoordinator: LiveActivityRideLifecycleCoordinator
     private let selectedDeviceStore: DevicePickerSelectionStore
     private let rideSessionMarkerStore: RideSessionMarkerStore
+    private let musicPlayerVisibilityStore: MusicPlayerVisibilityStore
+    private let musicCoordinator: MusicIntegrationCoordinator
+    private let spotifyMusicProvider = SpotifyProviderAdapter()
+#if canImport(MediaPlayer) && os(iOS)
+    private let appleMusicProvider = AppleMusicProviderAdapter()
+#endif
     private var liveActivityIdentity: LiveActivityRideIdentity?
     private var liveActivityGlyph = LiveActivityRideGlyph.electricUnicycle
     private var lastLiveActivitySnapshot: LiveActivityRideSnapshot?
@@ -306,6 +317,10 @@ final class CutoutAppModel {
         )
         self.selectedDeviceStore = selectedDeviceStore
         self.rideSessionMarkerStore = rideSessionMarkerStore
+        self.musicPlayerVisibilityStore = MusicPlayerVisibilityStore()
+        self.isMusicPlayerHidden = musicPlayerVisibilityStore.isHidden
+        self.musicCoordinator = MusicIntegrationCoordinator(rideMapState: core.rideMapStateHandle)
+        self.musicTimelineEvents = musicCoordinator.recordedEvents
         hasSavedDevice = selectedDeviceStore.platformIdentifier != nil
         if let identity = selectedDeviceStore.platformIdentifier,
            let name = selectedDeviceStore.displayName(for: identity)
@@ -350,9 +365,124 @@ final class CutoutAppModel {
         }
     }
 
+    @discardableResult
+    func handleMusicCommand(_ command: MobileMusicCommandDto) async -> MusicCommandOutcome {
+        guard let nowPlaying = musicNowPlaying else { return .unavailable }
+        guard nowPlaying.supports(command) else { return .refused }
+#if canImport(MediaPlayer) && os(iOS)
+        let outcome: MusicCommandOutcome
+        if nowPlaying.provider == .spotify {
+            outcome = await spotifyMusicProvider.perform(command)
+        } else {
+            outcome = await appleMusicProvider.perform(command)
+        }
+        if outcome == .accepted {
+            refreshMusicSnapshot()
+        }
+        return outcome
+#else
+        return .unavailable
+#endif
+    }
+
+    func dismissMusicPlayer() {
+        musicPlayerVisibilityStore.setHidden(true)
+        isMusicPlayerHidden = true
+        musicNowPlaying = nil
+    }
+
+    func restoreMusicPlayer() {
+        musicPlayerVisibilityStore.setHidden(false)
+        isMusicPlayerHidden = false
+        musicNowPlaying = musicCoordinator.nowPlaying
+    }
+
+    func selectMusicProvider(_ provider: MobileMusicProviderDto) {
+        selectedMusicProvider = provider
+        if !isMusicPlayerHidden {
+            refreshMusicSnapshot()
+        }
+    }
+
+    func refreshMusicSnapshot() {
+#if canImport(MediaPlayer) && os(iOS)
+        let observedAtMs = core.now().rawValue
+        let observation = if selectedMusicProvider == .spotify {
+            MusicProviderObservation(snapshot: spotifyMusicProvider.unavailableSnapshot(observedAtMs: observedAtMs))
+        } else {
+            appleMusicProvider.observation(observedAtMs: observedAtMs)
+        }
+        _ = ingestMusicObservation(observation)
+#endif
+    }
+
+    @discardableResult
+    func ingestMusicObservation(
+        _ observation: MusicProviderObservation,
+        wallClockAtMs: UInt64? = nil,
+        clockUncertaintyMs: UInt64 = 1_000
+    ) -> Bool {
+        let wallClockAtMs = wallClockAtMs ?? UInt64(Date().timeIntervalSince1970 * 1_000)
+        do {
+            _ = try musicCoordinator.ingest(
+                observation: observation,
+                wallClockAtMs: wallClockAtMs,
+                clockUncertaintyMs: clockUncertaintyMs
+            )
+            musicTimelineEvents = musicCoordinator.recordedEvents
+            musicNowPlaying = isMusicPlayerHidden ? nil : musicCoordinator.nowPlaying
+            return true
+        } catch {
+            musicTimelineEvents = musicCoordinator.recordedEvents
+            musicNowPlaying = isMusicPlayerHidden ? nil : musicCoordinator.nowPlaying
+            return false
+        }
+    }
+
+    func setMusicHistoryPolicy(_ policy: MobileMusicHistoryPolicyDto) -> Bool {
+        let previous = musicHistoryPolicy
+        do {
+            try musicCoordinator.setHistoryPolicy(policy)
+            musicHistoryPolicy = policy
+            musicTimelineEvents = musicCoordinator.recordedEvents
+            return true
+        } catch MobileRideMapError.noActiveRide {
+            // Keep the choice as the default for the next ride.
+            musicHistoryPolicy = policy
+            return true
+        } catch {
+            musicHistoryPolicy = previous
+            return false
+        }
+    }
+
+    func monitorMusic() async {
+#if canImport(MediaPlayer) && os(iOS)
+        guard await appleMusicProvider.requestAuthorization() else {
+            _ = ingestMusicObservation(MusicProviderObservation(
+                snapshot: appleMusicProvider.unauthorizedSnapshot(observedAtMs: core.now().rawValue)
+            ))
+            return
+        }
+        appleMusicProvider.startMonitoring { [weak self] in
+            self?.refreshMusicSnapshot()
+        }
+        defer { appleMusicProvider.stopMonitoring() }
+        while !Task.isCancelled {
+            refreshMusicSnapshot()
+            do {
+                try await Task.sleep(for: .seconds(1))
+            } catch {
+                return
+            }
+        }
+#endif
+    }
+
     private func restoreRideMapState() {
         guard let state = core.rideMapStateHandle else { return }
         rideMapSnapshot = state.currentSnapshot()
+        musicTimelineEvents = musicCoordinator.recordedEvents
         rideMapLiveTelemetryState = rideMapSnapshot?.associatedVehicle == nil
             ? .gpsOnly
             : .associatedNoTelemetry
@@ -408,7 +538,11 @@ final class CutoutAppModel {
                 lastConnectedVehicle: selectedDeviceStore.platformIdentifier
             )
         }
-        return started
+        guard started else { return false }
+        // Apply the user's default to the fresh Rust-owned ride timeline.
+        try? musicCoordinator.setHistoryPolicy(musicHistoryPolicy)
+        musicTimelineEvents = musicCoordinator.recordedEvents
+        return true
     }
 
     @discardableResult
@@ -469,6 +603,7 @@ final class CutoutAppModel {
             return false
         }
         invalidateLiveProjection(clearPoints: false)
+        musicTimelineEvents = musicCoordinator.recordedEvents
         loadRideMapHistory()
         return true
     }
@@ -479,6 +614,7 @@ final class CutoutAppModel {
             return false
         }
         invalidateLiveProjection(clearPoints: true)
+        musicTimelineEvents = musicCoordinator.recordedEvents
         clearRideMapHistoryRouteProjection()
         rideMapHistoryRouteLoading = false
         rideMapHistoryDetailRouteError = nil
