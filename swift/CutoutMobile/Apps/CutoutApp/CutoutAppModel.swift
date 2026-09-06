@@ -483,8 +483,7 @@ final class CutoutAppModel {
         let previous = musicHistoryPolicy
         do {
             try musicCoordinator.setHistoryPolicy(policy)
-            musicHistoryPolicyStore.set(policy)
-            musicHistoryPolicy = policy
+            rememberMusicHistoryPolicy(policy)
             if policy == .disabled {
                 core.updateMusicCaptureObservation(nil)
             }
@@ -492,8 +491,7 @@ final class CutoutAppModel {
             return true
         } catch MobileRideMapError.noActiveRide {
             // Keep the choice as the default for the next ride.
-            musicHistoryPolicyStore.set(policy)
-            musicHistoryPolicy = policy
+            rememberMusicHistoryPolicy(policy)
             if policy == .disabled {
                 core.updateMusicCaptureObservation(nil)
             }
@@ -502,6 +500,11 @@ final class CutoutAppModel {
             musicHistoryPolicy = previous
             return false
         }
+    }
+
+    private func rememberMusicHistoryPolicy(_ policy: MobileMusicHistoryPolicyDto) {
+        musicHistoryPolicyStore.set(policy)
+        musicHistoryPolicy = policy
     }
 
     private func monitorMusic() async {
