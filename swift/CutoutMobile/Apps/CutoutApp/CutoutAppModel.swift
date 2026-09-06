@@ -518,11 +518,36 @@ final class CutoutAppModel {
 #endif
     }
 
+    private func unavailableMusicObservation(observedAtMs: UInt64) -> MusicProviderObservation {
+        MusicProviderObservation(
+            snapshot: MobileMusicSnapshotDto(
+                provider: selectedMusicProvider,
+                sessionId: "music-unavailable",
+                state: .unavailable,
+                item: nil,
+                positionMilliseconds: nil,
+                durationMilliseconds: nil,
+                observedAtMs: observedAtMs,
+                capabilities: MobileMusicCapabilitiesDto(
+                    previous: false,
+                    play: false,
+                    pause: false,
+                    next: false,
+                    openProvider: false
+                )
+            )
+        )
+    }
+
     func connectMusic() {
+#if os(iOS)
         musicMonitorTask?.cancel()
         musicMonitorTask = Task { [weak self] in
             await self?.monitorMusic()
         }
+#else
+        _ = ingestMusicObservation(unavailableMusicObservation(observedAtMs: core.now().rawValue))
+#endif
     }
 
     private func restoreRideMapState() {
