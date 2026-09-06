@@ -40,6 +40,7 @@ struct MusicMonitorSceneState: Equatable {
 
 struct MusicHistoryQueryResult: Equatable, Sendable {
     let events: [MobileMusicRideEventDto]
+    let state: MobileMusicHistoryStateDto?
     let error: MobileRideMapError?
 }
 
@@ -1723,6 +1724,7 @@ final class CutoutAppModel {
 
     private func clearRideMapHistoryMusic() {
         rideMapHistoryDetailMusicTimeline.removeAll(keepingCapacity: true)
+        rideMapHistoryDetailMusicState = nil
         rideMapHistoryDetailMusicError = nil
     }
 

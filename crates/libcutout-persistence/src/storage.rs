@@ -13,7 +13,7 @@ use cutout_ride_maps::{
     route_camera_region, route_segment_display_metadata,
 };
 use hex::encode as hex_encode;
-use rusqlite::{Connection, ErrorCode, OptionalExtension, params};
+use rusqlite::{Connection, ErrorCode, OptionalExtension, Transaction, params};
 use sha2::{Digest, Sha256};
 use std::{
     collections::HashMap,
@@ -2221,6 +2221,19 @@ impl RideDatabase {
     ) -> Result<MusicHistoryPolicy, StorageError> {
         self.request(move |reply| Command::MusicHistoryPolicy { ride_id, reply })
     }
+
+    /// Loads the durable music-history state for one ride.
+    ///
+    /// A ride without a history row is [`MusicHistoryState::Missing`]. Explicit
+    /// deletion is represented by [`MusicHistoryState::Deleted`].
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StorageError::NotFound`] when the ride does not exist or a storage error when
+    /// the persisted state cannot be decoded.
+    pub fn music_history_state(&self, ride_id: RideId) -> Result<MusicHistoryState, StorageError> {
+        self.request(move |reply| Command::MusicHistoryState { ride_id, reply })
+    }
     /// Stores the display name associated with a platform-local device identifier.
     ///
     /// # Errors
@@ -3376,6 +3389,10 @@ enum Command {
     MusicHistoryPolicy {
         ride_id: RideId,
         reply: Reply<MusicHistoryPolicy>,
+    },
+    MusicHistoryState {
+        ride_id: RideId,
+        reply: Reply<MusicHistoryState>,
     },
     SaveVoltageSagModel {
         device_identity: String,
@@ -5582,6 +5599,24 @@ fn music_history_policy(
     }
 }
 
+fn music_history_state(
+    connection: &Connection,
+    ride_id: RideId,
+) -> Result<MusicHistoryState, StorageError> {
+    ensure_ride_exists(connection, ride_id)?;
+    let value = connection
+        .query_row(
+            "SELECT state FROM ride_music_history WHERE ride_id = ?1",
+            [ride_id.uuid().to_string()],
+            |row| row.get::<_, String>(0),
+        )
+        .optional()?;
+    value
+        .map(|value| parse_music_history_state(&value))
+        .transpose()
+        .map(|state| state.unwrap_or(MusicHistoryState::Missing))
+}
+
 fn ensure_ride_exists(connection: &Connection, ride_id: RideId) -> Result<(), StorageError> {
     let exists: bool = connection.query_row(
         "SELECT EXISTS(SELECT 1 FROM rides WHERE id = ?1)",
@@ -5605,6 +5640,27 @@ fn policy_name(policy: MusicHistoryPolicy) -> &'static str {
         MusicHistoryPolicy::Disabled => "disabled",
         MusicHistoryPolicy::OpaqueItem => "opaque_item",
         MusicHistoryPolicy::HumanReadable => "human_readable",
+    }
+}
+
+fn history_state_name(policy: MusicHistoryPolicy) -> &'static str {
+    match policy {
+        MusicHistoryPolicy::Disabled => "disabled",
+        MusicHistoryPolicy::OpaqueItem => "opaque_item",
+        MusicHistoryPolicy::HumanReadable => "human_readable",
+    }
+}
+
+fn parse_music_history_state(value: &str) -> Result<MusicHistoryState, StorageError> {
+    match value {
+        "disabled" => Ok(MusicHistoryState::Disabled),
+        "opaque_item" => Ok(MusicHistoryState::Redacted),
+        "human_readable" => Ok(MusicHistoryState::HumanReadable),
+        "deleted" => Ok(MusicHistoryState::Deleted),
+        other => Err(StorageError::InvalidStoredValue {
+            field: "music history state",
+            value: other.to_owned(),
+        }),
     }
 }
 

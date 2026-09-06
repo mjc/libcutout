@@ -258,6 +258,9 @@ impl DatabaseWorker<'_> {
             Command::MusicHistoryPolicy { ride_id, reply } => {
                 let _ = reply.send(music_history_policy(connection, ride_id));
             }
+            Command::MusicHistoryState { ride_id, reply } => {
+                let _ = reply.send(music_history_state(connection, ride_id));
+            }
             Command::SaveVoltageSagModel {
                 device_identity,
                 model,

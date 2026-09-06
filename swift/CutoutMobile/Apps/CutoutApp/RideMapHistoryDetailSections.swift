@@ -3,6 +3,37 @@ import CutoutMobileFFI
 import MapKit
 import SwiftUI
 
+private extension MobileMusicHistoryStateDto {
+    var detailTitle: String {
+        switch self {
+        case .missing:
+            localizedAppText("music.history.state.missing")
+        case .disabled:
+            localizedAppText("music.history.state.disabled")
+        case .redacted:
+            localizedAppText("music.history.state.redacted")
+        case .humanReadable:
+            localizedAppText("music.history.state.human_readable")
+        case .deleted:
+            localizedAppText("music.history.state.deleted")
+        }
+    }
+
+    var detailSymbol: String {
+        switch self {
+        case .missing: "minus.circle"
+        case .disabled: "nosign"
+        case .redacted: "eye.slash"
+        case .humanReadable: "music.note"
+        case .deleted: "trash"
+        }
+    }
+
+    func showsDetailStatus(timelineIsEmpty: Bool) -> Bool {
+        self != .humanReadable || timelineIsEmpty
+    }
+}
+
 struct RideMapHistoryDetailHeader: View {
     let close: () -> Void
 
@@ -201,10 +232,13 @@ struct RideMapHistoryDetailSummary: View {
                                 .font(.headline.weight(.semibold))
                             Spacer()
                             Button(localizedAppText("music.history.forget"), role: .destructive) {
-                                isMusicHistoryForgetConfirmationPresented = true
+                                if forgetMusicHistory() == false {
+                                    isMusicHistoryForgetErrorPresented = true
+                                }
                             }
-                            .font(.caption.weight(.semibold))
-                            .accessibilityIdentifier("ride-map.detail-forget-music-history")
+                            Button(localizedAppText("common.cancel"), role: .cancel) {}
+                        } message: {
+                            Text(localizedAppText("music.history.forget.message"))
                         }
                         if musicTimeline.isEmpty {
                             Text(localizedAppText("music.timeline.unavailable"))
@@ -225,15 +259,6 @@ struct RideMapHistoryDetailSummary: View {
                                 isMusicHistoryForgetErrorPresented = true
                             }
                         }
-                        Button(localizedAppText("common.cancel"), role: .cancel) {}
-                    } message: {
-                        Text(localizedAppText("music.history.forget.message"))
-                    }
-                    .alert(
-                        localizedAppText("music.history.forget.error"),
-                        isPresented: $isMusicHistoryForgetErrorPresented
-                    ) {
-                        Button(localizedAppText("common.cancel"), role: .cancel) {}
                     }
                 }
                 if pointsTruncated {

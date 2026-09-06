@@ -7,7 +7,9 @@ const APPLICATION_ID: i64 = 0x4355_544f;
 const MUSIC_SCHEMA_SQL: &str = "
 CREATE TABLE IF NOT EXISTS ride_music_history (
     ride_id TEXT PRIMARY KEY NOT NULL REFERENCES rides(id) ON DELETE CASCADE,
-    policy TEXT NOT NULL CHECK (policy IN ('disabled', 'opaque_item', 'human_readable'))
+    policy TEXT NOT NULL CHECK (policy IN ('disabled', 'opaque_item', 'human_readable')),
+    state TEXT NOT NULL DEFAULT 'disabled'
+        CHECK (state IN ('disabled', 'opaque_item', 'human_readable', 'deleted'))
 );
 CREATE TABLE IF NOT EXISTS ride_music_event (
     ride_id TEXT NOT NULL REFERENCES rides(id) ON DELETE CASCADE,
@@ -1015,6 +1017,26 @@ fn migrate_v18_to_current(connection: &mut Connection) -> Result<(), StorageErro
     if !captures_exists {
         transaction.execute_batch(super::capture_data::SCHEMA)?;
     }
+    transaction.execute_batch(&current_schema_pragmas())?;
+    transaction.commit()?;
+    Ok(())
+}
+
+fn migrate_v16_to_current(connection: &mut Connection) -> Result<(), StorageError> {
+    verify_legacy_schema(connection)?;
+    let transaction = connection.transaction()?;
+    transaction.execute_batch(
+        "ALTER TABLE ride_music_history
+             ADD COLUMN state TEXT NOT NULL DEFAULT 'disabled'
+             CHECK (state IN ('disabled', 'opaque_item', 'human_readable', 'deleted'));
+         UPDATE ride_music_history
+         SET state = CASE policy
+             WHEN 'opaque_item' THEN 'opaque_item'
+             WHEN 'human_readable' THEN 'human_readable'
+             ELSE 'disabled'
+         END;
+         ",
+    )?;
     transaction.execute_batch(&current_schema_pragmas())?;
     transaction.commit()?;
     Ok(())

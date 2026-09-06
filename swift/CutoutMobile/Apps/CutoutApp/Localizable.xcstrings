@@ -913,6 +913,26 @@
       "comment" : "Historical ride detail state when persisted music metadata cannot be loaded.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Music history unavailable" } } }
     },
+    "music.history.state.missing" : {
+      "comment" : "Historical ride detail state when no music-history choice was recorded.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "No music history recorded" } } }
+    },
+    "music.history.state.disabled" : {
+      "comment" : "Historical ride detail state when music history was explicitly disabled.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Music history disabled" } } }
+    },
+    "music.history.state.redacted" : {
+      "comment" : "Historical ride detail state when readable music metadata was redacted.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Music metadata redacted" } } }
+    },
+    "music.history.state.human_readable" : {
+      "comment" : "Historical ride detail state when readable music metadata is retained but the timeline is empty.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Music history recorded" } } }
+    },
+    "music.history.state.deleted" : {
+      "comment" : "Historical ride detail state after music metadata was explicitly deleted.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Music history deleted" } } }
+    },
     "ride_map.detail_back" : {
       "comment" : "Navigation control returning from historical ride detail.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Back" } } }
