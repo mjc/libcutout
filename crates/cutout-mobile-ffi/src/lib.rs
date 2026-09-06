@@ -16794,6 +16794,24 @@ mod tests {
     }
 
     #[test]
+    fn stored_music_events_report_unavailable_storage() {
+        let state = MobileRideMapCore::new();
+
+        let error = state
+            .stored_music_events(MobileRideIdDto {
+                value: Uuid::new_v4().to_string(),
+            })
+            .expect_err("music history must not look empty when storage is unavailable");
+
+        assert_eq!(
+            error,
+            MobileRideMapCoreErrorDto::Storage(
+                "Rust ride database is unavailable".to_owned()
+            )
+        );
+    }
+
+    #[test]
     fn music_transition_is_rejected_after_ride_stops() {
         let state = MobileRideMapCore::new();
         state.start_gps_only(1_000, None).expect("ride starts");
