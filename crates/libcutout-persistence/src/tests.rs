@@ -3429,6 +3429,31 @@ fn fresh_ride_points_enforce_segment_foreign_keys() {
 }
 
 #[test]
+fn music_event_text_constraints_measure_utf8_bytes() {
+    let _guard = test_guard();
+    let connection = Connection::open_in_memory().unwrap();
+    crate::storage::create_current_schema(&connection).unwrap();
+    connection
+        .execute(
+            "INSERT INTO rides
+                (id, source, state, created_at_ms, updated_at_ms, point_count, distance_mm)
+             VALUES ('ride', 'live', 'active', 0, 0, 0, 0)",
+            [],
+        )
+        .unwrap();
+    let title = "é".repeat(257);
+    let result = connection.execute(
+        "INSERT INTO ride_music_event
+            (ride_id, sequence, provider, item_identifier, title, artist, kind,
+             monotonic_at_ms, wall_clock_at_ms, clock_uncertainty_milliseconds)
+         VALUES ('ride', 0, 'apple_music', 'track', ?1, NULL, 'play', 0, 0, 0)",
+        [&title],
+    );
+
+    assert!(result.is_err(), "music text bounds must use UTF-8 byte length");
+}
+
+#[test]
 fn history_query_preserves_typed_timestamp_and_vehicle_identity() {
     let query = RideHistoryQuery::new(Some(15), Some(" device-a "), None);
 
