@@ -204,6 +204,24 @@ final class MusicIntegrationTests: XCTestCase {
         XCTAssertEqual(nowPlaying.availableTransportCommands, [.pause])
     }
 
+    func testMusicTimelineIDsUseTheRustEventSequence() {
+        func event(sequence: UInt64) -> MobileMusicRideEventDto {
+            MobileMusicRideEventDto(
+                sequence: sequence,
+                provider: .appleMusic,
+                itemIdentifier: "track-1",
+                title: "Song",
+                artist: "Artist",
+                kind: .play,
+                monotonicAtMs: 1_000,
+                wallClockAtMs: 1_700_000_000_000,
+                clockUncertaintyMs: 5
+            )
+        }
+
+        XCTAssertNotEqual(event(sequence: 0).timelineID, event(sequence: 1).timelineID)
+    }
+
     func testNowPlayingProvidesLocalizedArtworkAccessibilityLabel() {
         let nowPlaying = MusicNowPlaying(
             provider: .appleMusic,
