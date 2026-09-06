@@ -229,8 +229,13 @@ public final class SpotifyProviderAdapter: NSObject, @preconcurrency SPTAppRemot
         }
     }
     private var playerState: SPTAppRemotePlayerState?
-    private var onChange: (@MainActor (MusicProviderObservation) -> Void)?
+    private var onChange: (@MainActor () -> Void)?
     private var lifecycleState: MobileMusicPlaybackStateDto = .disconnected
+    private var monitoringGeneration: UInt64 = 0
+    private var playerStateRequestPending = false
+#if DEBUG
+    private var lastObservationDiagnostic: String?
+#endif
 
     public override init() {
         let clientID = Bundle.main.object(forInfoDictionaryKey: "SpotifyClientID") as? String
@@ -250,24 +255,28 @@ public final class SpotifyProviderAdapter: NSObject, @preconcurrency SPTAppRemot
         super.init()
     }
 
-    public func startMonitoring(onChange: @escaping @MainActor (MusicProviderObservation) -> Void) {
+    public func startMonitoring(onChange: @escaping @MainActor () -> Void) {
+        stopMonitoring()
         self.onChange = onChange
         guard let configuration else {
             lifecycleState = .unavailable
             emitChange()
             return
         }
-        let appRemote = self.appRemote ?? SPTAppRemote(configuration: configuration, logLevel: .error)
+        let appRemote = SPTAppRemote(configuration: configuration, logLevel: .error)
         self.appRemote = appRemote
         appRemote.delegate = self
+        lifecycleState = .buffering
+        emitChange()
         if let accessToken {
             appRemote.connectionParameters.accessToken = accessToken
             appRemote.connect()
         } else {
+            let generation = monitoringGeneration
             appRemote.authorizeAndPlayURI("") { [weak self] installed in
                 guard !installed else { return }
                 Task { @MainActor [weak self] in
-                    guard let self else { return }
+                    guard let self, self.monitoringGeneration == generation else { return }
                     self.lifecycleState = .unavailable
                     self.emitChange()
                 }
@@ -276,8 +285,13 @@ public final class SpotifyProviderAdapter: NSObject, @preconcurrency SPTAppRemot
     }
 
     public func stopMonitoring() {
-        appRemote?.disconnect()
+        monitoringGeneration &+= 1
         onChange = nil
+        appRemote?.playerAPI?.delegate = nil
+        appRemote?.delegate = nil
+        appRemote?.disconnect()
+        appRemote = nil
+        playerStateRequestPending = false
         playerState = nil
         lifecycleState = .disconnected
     }
@@ -286,13 +300,18 @@ public final class SpotifyProviderAdapter: NSObject, @preconcurrency SPTAppRemot
     /// playing before App Remote connected is reflected without waiting for a
     /// change notification.
     public func refreshPlayerState() {
-        guard let playerAPI = appRemote?.playerAPI else { return }
+        guard appRemote?.isConnected == true,
+              !playerStateRequestPending,
+              let playerAPI = appRemote?.playerAPI else { return }
+        playerStateRequestPending = true
+        let generation = monitoringGeneration
         playerAPI.getPlayerState { [weak self] result, error in
-            guard let self else { return }
+            guard let self, self.monitoringGeneration == generation else { return }
+            self.playerStateRequestPending = false
             if let playerState = result as? SPTAppRemotePlayerState, error == nil {
                 self.playerStateDidChange(playerState)
             } else if error != nil {
-                self.lifecycleState = .disconnected
+                self.lifecycleState = .stale
                 self.emitChange()
             }
         }
@@ -301,13 +320,18 @@ public final class SpotifyProviderAdapter: NSObject, @preconcurrency SPTAppRemot
     /// Handles the redirect URL returned by Spotify after App Remote auth.
     @discardableResult
     public func handleCallback(_ url: URL) -> Bool {
-        guard let appRemote else { return false }
+        guard let configuration,
+              url.scheme == configuration.redirectURL.scheme,
+              url.host == configuration.redirectURL.host,
+              url.path == configuration.redirectURL.path else { return false }
+        // The URL can arrive before the scene resumes monitoring after handoff.
+        let appRemote = self.appRemote ?? SPTAppRemote(configuration: configuration, logLevel: .error)
         let parameters = appRemote.authorizationParameters(from: url)
         guard let parameters else { return false }
-        if let token = parameters[SPTAppRemoteAccessTokenKey] {
+        if let token = parameters[SPTAppRemoteAccessTokenKey], !token.isEmpty {
             accessToken = token
             appRemote.connectionParameters.accessToken = token
-            appRemote.connect()
+            if onChange != nil { appRemote.connect() }
             return true
         }
         lifecycleState = .unauthorized
@@ -347,8 +371,8 @@ public final class SpotifyProviderAdapter: NSObject, @preconcurrency SPTAppRemot
             item: playerState.map {
                 MobileMusicItemDto(
                     identifier: $0.track.uri,
-                    title: $0.track.name,
-                    artist: $0.track.artist.name
+                    title: MusicObservationValidator.optionalDisplayText($0.track.name),
+                    artist: MusicObservationValidator.optionalDisplayText($0.track.artist.name)
                 )
             },
             positionMilliseconds: playerState.flatMap { UInt64(exactly: max(0, $0.playbackPosition)) },
@@ -383,24 +407,20 @@ public final class SpotifyProviderAdapter: NSObject, @preconcurrency SPTAppRemot
     }
 
     public func appRemoteDidEstablishConnection(_ appRemote: SPTAppRemote) {
-        lifecycleState = .paused
+        guard appRemote === self.appRemote, onChange != nil else { return }
+        lifecycleState = .buffering
         appRemote.playerAPI?.delegate = self
-        appRemote.playerAPI?.subscribe(toPlayerState: { [weak self] _, error in
-            guard let self else { return }
+        let generation = monitoringGeneration
+        appRemote.playerAPI?.subscribe(toPlayerState: { [weak self] result, error in
+            guard let self, self.monitoringGeneration == generation else { return }
             if error != nil {
-                self.lifecycleState = .disconnected
+                self.lifecycleState = .stale
                 self.emitChange()
+            } else if let state = result as? SPTAppRemotePlayerState {
+                self.playerStateDidChange(state)
             }
         })
-        appRemote.playerAPI?.getPlayerState { [weak self] result, error in
-            guard let self else { return }
-            guard error == nil, let playerState = result as? SPTAppRemotePlayerState else {
-                self.lifecycleState = .disconnected
-                self.emitChange()
-                return
-            }
-            self.playerStateDidChange(playerState)
-        }
+        refreshPlayerState()
         emitChange()
     }
 
@@ -408,23 +428,44 @@ public final class SpotifyProviderAdapter: NSObject, @preconcurrency SPTAppRemot
         _ appRemote: SPTAppRemote,
         didFailConnectionAttemptWithError error: Error?
     ) {
+        guard appRemote === self.appRemote, onChange != nil else { return }
         lifecycleState = error == nil ? .unavailable : .disconnected
+#if DEBUG
+        if let error = error as NSError? {
+            print("spotify_connection_failed domain=\(error.domain) code=\(error.code)")
+        }
+#endif
         emitChange()
     }
 
     public func appRemote(_ appRemote: SPTAppRemote, didDisconnectWithError error: Error?) {
+        guard appRemote === self.appRemote, onChange != nil else { return }
         lifecycleState = error == nil ? .disconnected : .stale
         emitChange()
     }
 
     public func playerStateDidChange(_ playerState: SPTAppRemotePlayerState) {
+        guard onChange != nil else { return }
+#if DEBUG
+        if self.playerState?.track.uri != playerState.track.uri {
+            print("spotify_player_state uri_bytes=\(playerState.track.uri.utf8.count) title_bytes=\(playerState.track.name.utf8.count) artist_bytes=\(playerState.track.artist.name.utf8.count) position=\(playerState.playbackPosition) duration=\(playerState.track.duration)")
+        }
+#endif
         self.playerState = playerState
         lifecycleState = playerState.isPaused ? .paused : .playing
         emitChange()
     }
 
     private func emitChange() {
-        onChange?(MusicProviderObservation(snapshot: observation(observedAtMs: UInt64(Date().timeIntervalSince1970 * 1_000)).snapshot))
+#if DEBUG
+        let snapshot = observation(observedAtMs: 0).snapshot
+        let diagnostic = "spotify_observation state=\(lifecycleState) has_item=\(snapshot.item != nil) valid=\(MusicObservationValidator.accepts(snapshot)) monitoring=\(onChange != nil)"
+        if lastObservationDiagnostic != diagnostic {
+            lastObservationDiagnostic = diagnostic
+            print(diagnostic)
+        }
+#endif
+        onChange?()
     }
 }
 

@@ -478,6 +478,7 @@ final class CutoutAppModel {
         selectedMusicProvider = provider
         musicNowPlaying = projectedMusicNowPlaying()
         musicProviderSelectionStore.set(provider)
+        musicMonitoringPreferenceStore.setEnabled(true)
         musicTransitionHintTracker.clear()
         updateMusicMonitoring(from: previousProvider, to: provider)
         if !isMusicPlayerHidden {
@@ -699,9 +700,10 @@ final class CutoutAppModel {
         guard isCurrent() else { return }
 #if canImport(SpotifyiOS) && os(iOS)
         if provider.monitoringMode == .spotifyAppRemote {
-            spotifyMusicProvider.startMonitoring { observation in
-                guard !Task.isCancelled, isCurrent() else { return }
-                record(observation)
+            spotifyMusicProvider.startMonitoring { [weak self] in
+                guard let self, self.musicMonitorGeneration.owns(generation) else { return }
+                // Both SDK callbacks and polling must use the session's monotonic clock.
+                self.refreshMusicSnapshot()
             }
             defer {
                 if currentGeneration() == generation {
@@ -709,8 +711,8 @@ final class CutoutAppModel {
                 }
             }
             while !Task.isCancelled && isCurrent() {
-                refresh()
                 spotifyMusicProvider.refreshPlayerState()
+                refresh()
                 do {
                     try await Task.sleep(for: .seconds(1))
                 } catch {

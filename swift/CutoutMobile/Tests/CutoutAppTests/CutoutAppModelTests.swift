@@ -209,6 +209,33 @@ final class CutoutAppModelTests: XCTestCase {
         XCTAssertTrue(monitoringStore.isEnabled)
     }
 
+#if !os(iOS)
+    @MainActor
+    func testMusicSetupRestoresMonitoringForSelectedProviderOnNextLaunch() throws {
+        let suiteName = "MusicRelaunch-\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let providerStore = MusicProviderSelectionStore(defaults: defaults)
+        let monitoringStore = MusicMonitoringPreferenceStore(defaults: defaults)
+        let first = CutoutAppModel(
+            core: SessionDriverSpy(rows: []),
+            musicProviderSelectionStore: providerStore,
+            musicMonitoringPreferenceStore: monitoringStore
+        )
+        first.selectMusicProvider(.spotify)
+        let relaunched = CutoutAppModel(
+            core: SessionDriverSpy(rows: []),
+            musicProviderSelectionStore: providerStore,
+            musicMonitoringPreferenceStore: monitoringStore
+        )
+        relaunched.restoreMusicPlayer()
+        XCTAssertNil(relaunched.musicNowPlaying)
+        relaunched.start()
+        XCTAssertEqual(relaunched.musicNowPlaying?.provider, .spotify)
+        XCTAssertEqual(relaunched.musicNowPlaying?.state, .unavailable)
+    }
+#endif
+
     @MainActor
     func testMusicHistoryPolicyCanBeChangedAfterRideStops() throws {
         let state = MobileRideMapState()

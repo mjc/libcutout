@@ -3,6 +3,41 @@ import CutoutMobileFFI
 @testable import CutoutMobile
 
 final class MusicIntegrationTests: XCTestCase {
+    @MainActor
+    func testSpotifyEpisodeWithoutArtistStillUpdatesPlayingTitle() throws {
+        let coordinator = MusicIntegrationCoordinator(rideMapState: nil)
+        let snapshot = MobileMusicSnapshotDto(
+            provider: .spotify,
+            sessionId: "spotify-app-remote",
+            state: .playing,
+            item: .init(
+                identifier: "spotify:episode:example",
+                title: MusicObservationValidator.optionalDisplayText("Episode title"),
+                artist: MusicObservationValidator.optionalDisplayText("")
+            ),
+            positionMilliseconds: 1_777_678,
+            durationMilliseconds: 3_783_235,
+            observedAtMs: 100,
+            capabilities: .init(previous: false, play: false, pause: true, next: true, openProvider: true)
+        )
+        _ = try coordinator.ingest(snapshot: snapshot, wallClockAtMs: 1_700_000_000_000, clockUncertaintyMs: 1)
+        XCTAssertEqual(coordinator.nowPlaying?.title, "Episode title")
+        XCTAssertEqual(coordinator.nowPlaying?.state, .playing)
+        XCTAssertEqual(coordinator.nowPlaying?.playPauseCommand, .pause)
+        XCTAssertNil(coordinator.nowPlaying?.item?.artist)
+        XCTAssertNil(MusicObservationValidator.optionalDisplayText("  \n"))
+    }
+
+    func testMissingSpotifyMetadataDoesNotHideConnectionStatus() {
+        let disconnected = MusicNowPlaying(provider: .spotify, state: .disconnected)
+        XCTAssertEqual(disconnected.title, disconnected.statusText)
+        let playing = MusicNowPlaying(
+            provider: .spotify, state: .playing,
+            item: .init(identifier: "spotify:track:example", title: nil, artist: nil)
+        )
+        XCTAssertEqual(playing.title, playing.providerName)
+    }
+
     func testProviderMonitoringModeMatchesSupportedLifecycle() {
         XCTAssertEqual(
             MobileMusicProviderDto.appleMusic.monitoringMode,
