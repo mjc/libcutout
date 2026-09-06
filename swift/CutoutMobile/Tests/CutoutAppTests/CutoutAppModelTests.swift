@@ -260,6 +260,7 @@ final class CutoutAppModelTests: XCTestCase {
 
         XCTAssertEqual(model.rideMapHistoryDetailMusicTimeline.first?.title, "Song")
         XCTAssertEqual(model.rideMapHistoryDetailMusicTimeline.first?.kind, .play)
+        XCTAssertEqual(try state.storedMusicEvents(rideID: ride.rideID).first?.sequence, 0)
 
         XCTAssertTrue(model.forgetMusicHistory(for: ride.rideID))
         XCTAssertTrue(model.rideMapHistoryDetailMusicTimeline.isEmpty)
