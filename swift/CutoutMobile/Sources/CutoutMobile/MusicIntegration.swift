@@ -601,14 +601,16 @@ public final class MusicIntegrationCoordinator {
         guard let rideMapState else {
             throw MobileRideMapError.storageError("Rust ride database is unavailable")
         }
-        let previousPolicy = historyPolicy
         try rideMapState.setMusicHistoryPolicy(policy)
-        historyPolicy = policy
-        rebasePersistedState(from: previousPolicy, to: policy)
+        adoptHistoryPolicy(policy)
     }
 
     /// Adopts a policy restored by Rust without issuing a second persistence write.
     public func restoreHistoryPolicy(_ policy: MobileMusicHistoryPolicyDto) {
+        adoptHistoryPolicy(policy)
+    }
+
+    private func adoptHistoryPolicy(_ policy: MobileMusicHistoryPolicyDto) {
         let previousPolicy = historyPolicy
         historyPolicy = policy
         rebasePersistedState(from: previousPolicy, to: policy)
