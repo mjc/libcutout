@@ -68,6 +68,18 @@ final class CutoutAppModelTests: XCTestCase {
         super.tearDown()
     }
 
+#if !os(iOS)
+    @MainActor
+    func testMusicSetupShowsUnavailableOnUnsupportedPlatform() {
+        let model = CutoutAppModel(core: SessionDriverSpy(rows: []))
+
+        model.connectMusic()
+
+        XCTAssertEqual(model.musicNowPlaying?.state, .unavailable)
+        XCTAssertEqual(model.musicNowPlaying?.provider, .appleMusic)
+    }
+#endif
+
     private func clear(
         _ store: RideSessionMarkerStore,
         file: StaticString = #filePath,
