@@ -1144,10 +1144,20 @@ final class CutoutAppModel {
             return false
         }
         do {
-            if rideMapSnapshot?.rideID == rideID {
+            if rideMapSnapshot?.rideID == rideID,
+               let rideState = rideMapSnapshot?.state,
+               rideState == .active || rideState == .paused
+            {
                 try clearActiveMusicHistory(using: state)
             } else {
                 try state.deleteMusicHistory(rideID: rideID)
+                if rideMapSnapshot?.rideID == rideID {
+                    musicHistoryPolicy = .disabled
+                    musicCoordinator.restoreHistoryPolicy(.disabled)
+                    musicTransitionHintTracker.clear()
+                    core.updateMusicCaptureObservation(nil)
+                    musicTimelineEvents = musicCoordinator.recordedEvents
+                }
             }
             if selectedRideMapHistoryID == rideID {
                 rideMapHistoryDetailMusicTimeline.removeAll(keepingCapacity: true)

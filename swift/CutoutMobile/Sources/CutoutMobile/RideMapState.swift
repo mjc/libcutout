@@ -814,8 +814,12 @@ public final class MobileRideMapState: @unchecked Sendable {
 
     /// Deletes a ride's music metadata while preserving the ride and its route.
     public func deleteMusicHistory(rideID: String) throws {
-        try withDatabase { database in
-            try database.deleteMusicHistory(rideId: MobileRideIdDto(value: rideID))
+        if let snapshot = core?.currentSnapshot(atMs: Self.monotonicMillisecondsNow()), snapshot.rideId == rideID {
+            try withCore { try $0.deleteCurrentMusicHistory() }
+        } else {
+            try withDatabase { database in
+                try database.deleteMusicHistory(rideId: MobileRideIdDto(value: rideID))
+            }
         }
     }
 

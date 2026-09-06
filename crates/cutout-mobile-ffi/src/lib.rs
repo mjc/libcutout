@@ -6926,6 +6926,29 @@ impl MobileRideMapCore {
             .map_err(map_storage_core_error)
     }
 
+    /// Deletes music metadata for the current ride, including its in-memory timeline.
+    ///
+    /// This is available for terminal rides that remain selected until the user saves or
+    /// discards them; active and paused rides normally use the policy setter so their capture
+    /// context is updated by the app coordinator.
+    pub fn delete_current_music_history(&self) -> Result<(), MobileRideMapCoreErrorDto> {
+        let mut state = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
+        let Some(ride_id) = state.active_ride_id.clone() else {
+            return Err(MobileRideMapCoreErrorDto::NoActiveRide);
+        };
+        let Some(database) = state.database.clone() else {
+            return Err(MobileRideMapCoreErrorDto::Storage(
+                "Rust ride database is unavailable".to_owned(),
+            ));
+        };
+        database
+            .inner
+            .delete_music_history(parse_mobile_ride_id(&ride_id).map_err(map_core_error)?)
+            .map_err(map_storage_core_error)?;
+        state.reset_music_history();
+        Ok(())
+    }
+
     /// Associates a connected vehicle with the active recording.
     ///
     /// # Errors
