@@ -588,12 +588,13 @@ final class CutoutAppModelTests: XCTestCase {
     @MainActor
     func testMusicHistoryErrorAccessibilityTextDoesNotExposeStorageDetails() {
         let error = MobileRideMapError.storageError("private database path")
+        let accessibilityText = error.musicHistoryAccessibilityText
 
         XCTAssertEqual(
-            error.musicHistoryAccessibilityText,
+            accessibilityText,
             localizedAppText("music.history.unavailable")
         )
-        XCTAssertFalse(error.musicHistoryAccessibilityText.contains("private database path"))
+        XCTAssertFalse(accessibilityText.contains("private database path"))
     }
 
     @MainActor
