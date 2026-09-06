@@ -3492,7 +3492,10 @@ fn lowering_music_history_policy_redacts_existing_display_metadata() {
 
     let redacted = database.music_events(ride).unwrap();
     assert_eq!(redacted.len(), 1);
-    assert_eq!(redacted[0].item_identifier().map(|id| id.as_str()), Some("opaque-track"));
+    assert_eq!(
+        redacted[0].item_identifier().map(|id| id.as_str()),
+        Some("opaque-track")
+    );
     assert_eq!(redacted[0].title(), None);
     assert_eq!(redacted[0].artist(), None);
     database.shutdown().unwrap();

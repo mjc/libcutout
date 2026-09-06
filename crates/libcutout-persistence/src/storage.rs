@@ -12,7 +12,7 @@ use cutout_ride_maps::{
     route_camera_region, route_segment_display_metadata,
 };
 use hex::encode as hex_encode;
-use rusqlite::{Connection, ErrorCode, OptionalExtension, params};
+use rusqlite::{Connection, ErrorCode, OptionalExtension, Transaction, params};
 use sha2::{Digest, Sha256};
 use std::{
     fs::{self, File, OpenOptions},
@@ -4776,25 +4776,7 @@ fn save_music_history_policy(
 ) -> Result<(), StorageError> {
     let transaction = connection.transaction()?;
     ensure_ride_exists(&transaction, ride_id)?;
-    transaction.execute(
-        "INSERT INTO ride_music_history (ride_id, policy)
-         VALUES (?1, ?2)
-         ON CONFLICT(ride_id) DO UPDATE SET policy = excluded.policy",
-        params![ride_id.uuid().to_string(), policy_name(policy)],
-    )?;
-    if policy == MusicHistoryPolicy::Disabled {
-        transaction.execute(
-            "DELETE FROM ride_music_event WHERE ride_id = ?1",
-            [ride_id.uuid().to_string()],
-        )?;
-    } else if policy == MusicHistoryPolicy::OpaqueItem {
-        transaction.execute(
-            "UPDATE ride_music_event
-             SET title = NULL, artist = NULL
-             WHERE ride_id = ?1",
-            [ride_id.uuid().to_string()],
-        )?;
-    }
+    apply_music_history_policy(&transaction, ride_id, policy)?;
     transaction.commit()?;
     Ok(())
 }
@@ -4808,17 +4790,8 @@ fn save_music_event(
 ) -> Result<(), StorageError> {
     let transaction = connection.transaction()?;
     ensure_ride_exists(&transaction, ride_id)?;
-    transaction.execute(
-        "INSERT INTO ride_music_history (ride_id, policy)
-         VALUES (?1, ?2)
-         ON CONFLICT(ride_id) DO UPDATE SET policy = excluded.policy",
-        params![ride_id.uuid().to_string(), policy_name(policy)],
-    )?;
+    apply_music_history_policy(&transaction, ride_id, policy)?;
     if policy == MusicHistoryPolicy::Disabled {
-        transaction.execute(
-            "DELETE FROM ride_music_event WHERE ride_id = ?1",
-            [ride_id.uuid().to_string()],
-        )?;
         transaction.commit()?;
         return Ok(());
     }
@@ -4866,6 +4839,35 @@ fn save_music_event(
         ],
     )?;
     transaction.commit()?;
+    Ok(())
+}
+
+fn apply_music_history_policy(
+    transaction: &Transaction<'_>,
+    ride_id: RideId,
+    policy: MusicHistoryPolicy,
+) -> Result<(), StorageError> {
+    let ride_id = ride_id.uuid().to_string();
+    transaction.execute(
+        "INSERT INTO ride_music_history (ride_id, policy)
+         VALUES (?1, ?2)
+         ON CONFLICT(ride_id) DO UPDATE SET policy = excluded.policy",
+        params![ride_id, policy_name(policy)],
+    )?;
+    match policy {
+        MusicHistoryPolicy::Disabled => {
+            transaction.execute("DELETE FROM ride_music_event WHERE ride_id = ?1", [ride_id])?;
+        }
+        MusicHistoryPolicy::OpaqueItem => {
+            transaction.execute(
+                "UPDATE ride_music_event
+                 SET title = NULL, artist = NULL
+                 WHERE ride_id = ?1",
+                [ride_id],
+            )?;
+        }
+        MusicHistoryPolicy::HumanReadable => {}
+    }
     Ok(())
 }
 
