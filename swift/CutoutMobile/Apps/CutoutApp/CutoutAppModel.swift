@@ -1145,8 +1145,7 @@ final class CutoutAppModel {
         }
         do {
             if rideMapSnapshot?.rideID == rideID,
-               let rideState = rideMapSnapshot?.state,
-               rideState == .active || rideState == .paused
+               rideMapSnapshot?.state.isOpen == true
             {
                 try clearActiveMusicHistory(using: state)
             } else {

@@ -61,6 +61,11 @@ public enum MobileRideMapStateDto: Equatable, Hashable, Sendable {
     case discarded
     case saved
     case imported
+
+    /// Whether the ride still accepts live metadata updates.
+    public var isOpen: Bool {
+        self == .active || self == .paused
+    }
 }
 
 public enum MobileRideMapTelemetryStateDto: Equatable, Hashable, Sendable {
