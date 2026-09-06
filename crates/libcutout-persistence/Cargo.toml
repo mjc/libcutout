@@ -16,5 +16,6 @@ cutout-ride-maps = { path = "../cutout-ride-maps", version = "0.1.0" }
 hex.workspace = true
 rusqlite.workspace = true
 sha2.workspace = true
+serde_json.workspace = true
 thiserror.workspace = true
 uuid.workspace = true

@@ -3551,6 +3551,65 @@ fn music_history_state_distinguishes_missing_disabled_redacted_and_deleted() {
 }
 
 #[test]
+fn ride_export_includes_privacy_filtered_music_history() {
+    let _guard = test_guard();
+    let (database, path) = music_test_database("export-music");
+    let ride = database
+        .create_started_live_ride(1_700_000_000_000, 100, None)
+        .unwrap();
+    let event = MusicRideEvent::new(
+        MusicProvider::AppleMusic,
+        Some("opaque-track".to_owned()),
+        Some("Song".to_owned()),
+        Some("Artist".to_owned()),
+        MusicRideEventKind::ItemChanged,
+        MusicEventTiming {
+            monotonic_at: MonotonicTimestamp::new(110),
+            wall_clock_at: WallClockUnixTimestamp::new(1_700_000_000_110),
+            clock_uncertainty_milliseconds: 5,
+        },
+    )
+    .unwrap();
+    database
+        .save_music_event(ride, MusicHistoryPolicy::HumanReadable, 0, event)
+        .unwrap();
+    let export_path = std::env::temp_dir().join(format!(
+        "libcutout-music-export-{}.json",
+        uuid::Uuid::new_v4()
+    ));
+
+    database.export_ride_json(ride, &export_path).unwrap();
+    let export: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&export_path).unwrap()).unwrap();
+    assert_eq!(export["schema_version"], 2);
+    assert_eq!(export["music_history"]["state"], "human_readable");
+    assert_eq!(export["music_history"]["events"][0]["sequence"], 0);
+    assert_eq!(export["music_history"]["events"][0]["title"], "Song");
+    assert_eq!(export["music_history"]["events"][0]["artist"], "Artist");
+
+    database
+        .save_music_history_policy(ride, MusicHistoryPolicy::OpaqueItem)
+        .unwrap();
+    database.export_ride_json(ride, &export_path).unwrap();
+    let export: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&export_path).unwrap()).unwrap();
+    assert_eq!(export["music_history"]["state"], "redacted");
+    assert_eq!(export["music_history"]["events"][0]["item_identifier"], "opaque-track");
+    assert!(export["music_history"]["events"][0]["title"].is_null());
+    assert!(export["music_history"]["events"][0]["artist"].is_null());
+
+    database.delete_music_history(ride).unwrap();
+    database.export_ride_json(ride, &export_path).unwrap();
+    let export: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&export_path).unwrap()).unwrap();
+    assert_eq!(export["music_history"]["state"], "deleted");
+    assert!(export["music_history"]["events"].as_array().unwrap().is_empty());
+
+    close_music_test_database(database, path);
+    let _ = std::fs::remove_file(export_path);
+}
+
+#[test]
 fn music_event_sequence_conflicts_are_not_silently_ignored() {
     let _guard = test_guard();
     let (database, path) = music_test_database("sequence-conflict");
