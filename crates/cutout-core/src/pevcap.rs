@@ -2820,8 +2820,11 @@ pub enum PevcapRecordError {
     UnexpectedMusic,
 
     /// Music metadata failed bounded identifier validation.
-    #[error("invalid PEVCAP music metadata")]
-    InvalidMusic,
+    #[error("invalid PEVCAP music metadata: {source}")]
+    InvalidMusic {
+        /// The bounded music validation failure.
+        source: MusicValidationError,
+    },
 
     /// A link lifecycle record carried payload bytes.
     #[error("link lifecycle PEVCAP record carried payload bytes")]
@@ -3394,7 +3397,7 @@ impl PevcapRecordJson {
             .music
             .map(PevcapMusicEventJson::try_into_event)
             .transpose()
-            .map_err(|_| PevcapRecordError::InvalidMusic)?;
+            .map_err(|source| PevcapRecordError::InvalidMusic { source })?;
         Ok(PevcapRecord {
             monotonic_ms: MonotonicTimestamp::new(self.monotonic_ms),
             direction: self.direction.into_direction(),
