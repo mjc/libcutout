@@ -85,6 +85,22 @@ public enum CaptureEvent: Equatable, Sendable {
     case failed
 }
 
+struct CaptureMusicContext: Equatable {
+    private(set) var current: MobilePevcapMusicEventDto?
+
+    mutating func update(_ observation: MobilePevcapMusicEventDto?) {
+        current = observation
+    }
+
+    mutating func take() -> MobilePevcapMusicEventDto? {
+        defer { current = nil }
+        return current
+    }
+
+    mutating func reset() {
+        current = nil
+    }
+}
 struct ConnectionReconnectPolicy {
     static let maximumAttempts = 3
 
@@ -1635,8 +1651,8 @@ public final class CutoutSessionCore: NSObject {
         ].forEach { _ = builder.addAnnotation(annotation: $0) }
         extraAnnotations.forEach { _ = builder.addAnnotation(annotation: sanitizedPevcapAnnotation($0)) }
         captureBuilder = builder
+        _ = builder.setMusicContext(music: musicCaptureContext.take())
         guard builder.startWriter(path: url.path) else {
-            musicCaptureContext.reset()
             record("capture_error=writer_start_failed")
             captureBuilder = nil
             captureFileURL = nil

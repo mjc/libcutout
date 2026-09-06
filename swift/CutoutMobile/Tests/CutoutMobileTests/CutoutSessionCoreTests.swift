@@ -598,6 +598,15 @@ final class CutoutSessionCoreTests: XCTestCase {
                 started.fulfill()
             }
         }
+        let observation = MobilePevcapMusicEventDto(
+            provider: .appleMusic,
+            trackId: "writer-track",
+            monotonicAtMs: 10,
+            wallClockUnixMs: 1_700_000_000_010,
+            clockUncertaintyMs: 5,
+            rideSequence: 7
+        )
+        core.updateMusicCaptureObservation(observation)
 
         XCTAssertTrue(core.recordOnly(
             platformIdentifier: scriptedVescCandidate.platformIdentifier,
@@ -605,6 +614,7 @@ final class CutoutSessionCoreTests: XCTestCase {
             annotations: ["durability=background"]
         ))
         await fulfillment(of: [started], timeout: 1)
+        XCTAssertNil(core.musicCaptureObservationForTesting)
         let url = try XCTUnwrap(captureURL)
         defer { try? FileManager.default.removeItem(at: url) }
 
@@ -633,6 +643,9 @@ final class CutoutSessionCoreTests: XCTestCase {
 
         context.update(observation)
         XCTAssertEqual(context.current, observation)
+
+        XCTAssertEqual(context.take(), observation)
+        XCTAssertNil(context.current)
 
         context.reset()
 
