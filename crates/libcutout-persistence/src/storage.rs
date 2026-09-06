@@ -1,4 +1,7 @@
-use cutout_core::{PevcapEncoding, PevcapEvent, PevcapPhoneLocation, PevcapReader};
+use cutout_core::{
+    MusicEventTiming, MusicHistoryPolicy, MusicProvider, MusicRideEvent, MusicRideEventKind,
+    PevcapEncoding, PevcapEvent, PevcapPhoneLocation, PevcapReader,
+};
 use cutout_ride_maps::{
     AverageSpeedMillimetresPerSecond, Coordinate, LocationAdmission, LocationSample,
     LocationSource, RideEvent, RideLifecycleState, RideMapPoint, RideMapRecorder, RideMapSegmentId,
@@ -1268,6 +1271,9 @@ pub enum StorageError {
     /// The requested ride does not exist.
     #[error("ride was not found")]
     NotFound,
+    /// The bounded music timeline cannot accept another event.
+    #[error("ride music timeline is full")]
+    MusicTimelineFull,
     /// The requested lifecycle transition is invalid.
     #[error("invalid ride lifecycle transition: {0}")]
     Transition(#[from] TransitionError),
@@ -2019,6 +2025,75 @@ impl RideDatabase {
     /// Returns [`StorageError`] when the worker cannot commit the deletion.
     pub fn clear_selected_device(&self) -> Result<(), StorageError> {
         self.request(|reply| Command::ClearSelectedDevice { reply })
+    }
+
+    /// Stores the opt-in music-history policy for one ride.
+    ///
+    /// Disabling history also removes any previously stored music events.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StorageError::NotFound`] when the ride does not exist or a storage error when
+    /// the worker cannot commit the policy.
+    pub fn save_music_history_policy(
+        &self,
+        ride_id: RideId,
+        policy: MusicHistoryPolicy,
+    ) -> Result<(), StorageError> {
+        self.request(move |reply| Command::SaveMusicHistoryPolicy {
+            ride_id,
+            policy,
+            reply,
+        })
+    }
+
+    /// Persists one already privacy-filtered music transition.
+    ///
+    /// Events are appended in contiguous sequence order and bounded by the portable music
+    /// timeline capacity. A repeated sequence is idempotent.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StorageError::NotFound`], [`StorageError::MusicTimelineFull`], or a typed
+    /// storage error when the worker cannot commit the event.
+    pub fn save_music_event(
+        &self,
+        ride_id: RideId,
+        policy: MusicHistoryPolicy,
+        sequence: u64,
+        event: MusicRideEvent,
+    ) -> Result<(), StorageError> {
+        let sequence = i64::try_from(sequence).map_err(|_| StorageError::InvalidStoredValue {
+            field: "music sequence",
+            value: sequence.to_string(),
+        })?;
+        self.request(move |reply| Command::SaveMusicEvent {
+            ride_id,
+            policy,
+            sequence,
+            event,
+            reply,
+        })
+    }
+
+    /// Deletes all music metadata for one ride while preserving the ride itself.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StorageError::NotFound`] when the ride does not exist or a storage error when
+    /// the worker cannot commit the deletion.
+    pub fn delete_music_history(&self, ride_id: RideId) -> Result<(), StorageError> {
+        self.request(move |reply| Command::DeleteMusicHistory { ride_id, reply })
+    }
+
+    /// Loads the bounded music timeline for one ride in sequence order.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StorageError::NotFound`] when the ride does not exist or a typed storage error
+    /// when persisted music metadata cannot be decoded.
+    pub fn music_events(&self, ride_id: RideId) -> Result<Vec<MusicRideEvent>, StorageError> {
+        self.request(move |reply| Command::MusicEvents { ride_id, reply })
     }
     /// Stores the display name associated with a platform-local device identifier.
     ///
@@ -3062,6 +3137,26 @@ enum Command {
     },
     ClearSelectedDevice {
         reply: Reply<()>,
+    },
+    SaveMusicHistoryPolicy {
+        ride_id: RideId,
+        policy: MusicHistoryPolicy,
+        reply: Reply<()>,
+    },
+    SaveMusicEvent {
+        ride_id: RideId,
+        policy: MusicHistoryPolicy,
+        sequence: i64,
+        event: MusicRideEvent,
+        reply: Reply<()>,
+    },
+    DeleteMusicHistory {
+        ride_id: RideId,
+        reply: Reply<()>,
+    },
+    MusicEvents {
+        ride_id: RideId,
+        reply: Reply<Vec<MusicRideEvent>>,
     },
     SaveVoltageSagModel {
         device_identity: String,
@@ -4655,6 +4750,221 @@ fn selected_device(connection: &Connection) -> Result<Option<String>, StorageErr
         )
         .optional()
         .map_err(StorageError::from)
+}
+
+fn save_music_history_policy(
+    connection: &mut Connection,
+    ride_id: RideId,
+    policy: MusicHistoryPolicy,
+) -> Result<(), StorageError> {
+    let transaction = connection.transaction()?;
+    ensure_ride_exists(&transaction, ride_id)?;
+    transaction.execute(
+        "INSERT INTO ride_music_history (ride_id, policy)
+         VALUES (?1, ?2)
+         ON CONFLICT(ride_id) DO UPDATE SET policy = excluded.policy",
+        params![ride_id.uuid().to_string(), policy_name(policy)],
+    )?;
+    if policy == MusicHistoryPolicy::Disabled {
+        transaction.execute(
+            "DELETE FROM ride_music_event WHERE ride_id = ?1",
+            [ride_id.uuid().to_string()],
+        )?;
+    }
+    transaction.commit()?;
+    Ok(())
+}
+
+fn save_music_event(
+    connection: &mut Connection,
+    ride_id: RideId,
+    policy: MusicHistoryPolicy,
+    sequence: i64,
+    event: &MusicRideEvent,
+) -> Result<(), StorageError> {
+    let transaction = connection.transaction()?;
+    ensure_ride_exists(&transaction, ride_id)?;
+    transaction.execute(
+        "INSERT INTO ride_music_history (ride_id, policy)
+         VALUES (?1, ?2)
+         ON CONFLICT(ride_id) DO UPDATE SET policy = excluded.policy",
+        params![ride_id.uuid().to_string(), policy_name(policy)],
+    )?;
+    if policy == MusicHistoryPolicy::Disabled {
+        transaction.execute(
+            "DELETE FROM ride_music_event WHERE ride_id = ?1",
+            [ride_id.uuid().to_string()],
+        )?;
+        transaction.commit()?;
+        return Ok(());
+    }
+    let count: i64 = transaction.query_row(
+        "SELECT COUNT(*) FROM ride_music_event WHERE ride_id = ?1",
+        [ride_id.uuid().to_string()],
+        |row| row.get(0),
+    )?;
+    if sequence > count {
+        return Err(StorageError::InvalidStoredValue {
+            field: "music sequence",
+            value: sequence.to_string(),
+        });
+    }
+    if sequence == i64::try_from(cutout_core::MAX_MUSIC_TIMELINE_EVENTS).unwrap_or(i64::MAX)
+        && sequence == count
+    {
+        return Err(StorageError::MusicTimelineFull);
+    }
+    let item_identifier = event.item_identifier().map(|value| value.as_str());
+    let title = (policy == MusicHistoryPolicy::HumanReadable)
+        .then(|| event.title())
+        .flatten();
+    let artist = (policy == MusicHistoryPolicy::HumanReadable)
+        .then(|| event.artist())
+        .flatten();
+    transaction.execute(
+        "INSERT OR IGNORE INTO ride_music_event
+            (ride_id, sequence, provider, item_identifier, title, artist, kind,
+             monotonic_at_ms, wall_clock_at_ms, clock_uncertainty_milliseconds)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+        params![
+            ride_id.uuid().to_string(),
+            sequence,
+            provider_name(event.provider()),
+            item_identifier,
+            title,
+            artist,
+            event_kind_name(event.kind()),
+            event.monotonic_at().as_milliseconds(),
+            event.wall_clock_at().as_milliseconds(),
+            event.clock_uncertainty_milliseconds(),
+        ],
+    )?;
+    transaction.commit()?;
+    Ok(())
+}
+
+fn delete_music_history(connection: &mut Connection, ride_id: RideId) -> Result<(), StorageError> {
+    let transaction = connection.transaction()?;
+    ensure_ride_exists(&transaction, ride_id)?;
+    transaction.execute(
+        "DELETE FROM ride_music_event WHERE ride_id = ?1",
+        [ride_id.uuid().to_string()],
+    )?;
+    transaction.execute(
+        "INSERT INTO ride_music_history (ride_id, policy)
+         VALUES (?1, 'disabled')
+         ON CONFLICT(ride_id) DO UPDATE SET policy = 'disabled'",
+        [ride_id.uuid().to_string()],
+    )?;
+    transaction.commit()?;
+    Ok(())
+}
+
+fn music_events(
+    connection: &Connection,
+    ride_id: RideId,
+) -> Result<Vec<MusicRideEvent>, StorageError> {
+    ensure_ride_exists(connection, ride_id)?;
+    let mut statement = connection.prepare(
+        "SELECT provider, item_identifier, title, artist, kind, monotonic_at_ms,
+                wall_clock_at_ms, clock_uncertainty_milliseconds
+         FROM ride_music_event WHERE ride_id = ?1 ORDER BY sequence",
+    )?;
+    statement
+        .query_map([ride_id.uuid().to_string()], decode_music_event)?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(StorageError::from)
+}
+
+fn ensure_ride_exists(connection: &Connection, ride_id: RideId) -> Result<(), StorageError> {
+    let exists: bool = connection.query_row(
+        "SELECT EXISTS(SELECT 1 FROM rides WHERE id = ?1)",
+        [ride_id.uuid().to_string()],
+        |row| row.get(0),
+    )?;
+    exists.then_some(()).ok_or(StorageError::NotFound)
+}
+
+fn policy_name(policy: MusicHistoryPolicy) -> &'static str {
+    match policy {
+        MusicHistoryPolicy::Disabled => "disabled",
+        MusicHistoryPolicy::OpaqueItem => "opaque_item",
+        MusicHistoryPolicy::HumanReadable => "human_readable",
+    }
+}
+
+fn provider_name(provider: MusicProvider) -> &'static str {
+    match provider {
+        MusicProvider::AppleMusic => "apple_music",
+        MusicProvider::Spotify => "spotify",
+    }
+}
+
+fn parse_provider(value: &str) -> Result<MusicProvider, String> {
+    match value {
+        "apple_music" => Ok(MusicProvider::AppleMusic),
+        "spotify" => Ok(MusicProvider::Spotify),
+        other => Err(format!("invalid music provider: {other}")),
+    }
+}
+
+fn event_kind_name(kind: MusicRideEventKind) -> &'static str {
+    match kind {
+        MusicRideEventKind::Play => "play",
+        MusicRideEventKind::Pause => "pause",
+        MusicRideEventKind::Skip => "skip",
+        MusicRideEventKind::ItemChanged => "item_changed",
+        MusicRideEventKind::ProviderDisconnected => "provider_disconnected",
+    }
+}
+
+fn parse_event_kind(value: &str) -> Result<MusicRideEventKind, String> {
+    match value {
+        "play" => Ok(MusicRideEventKind::Play),
+        "pause" => Ok(MusicRideEventKind::Pause),
+        "skip" => Ok(MusicRideEventKind::Skip),
+        "item_changed" => Ok(MusicRideEventKind::ItemChanged),
+        "provider_disconnected" => Ok(MusicRideEventKind::ProviderDisconnected),
+        other => Err(format!("invalid music event kind: {other}")),
+    }
+}
+
+fn music_conversion_error<T: std::fmt::Display>(column: usize, error: T) -> rusqlite::Error {
+    rusqlite::Error::FromSqlConversionFailure(
+        column,
+        rusqlite::types::Type::Text,
+        Box::new(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            error.to_string(),
+        )),
+    )
+}
+
+fn decode_music_event(row: &rusqlite::Row<'_>) -> Result<MusicRideEvent, rusqlite::Error> {
+    let provider = row.get::<_, String>(0)?;
+    let item_identifier = row.get::<_, Option<String>>(1)?;
+    let title = row.get::<_, Option<String>>(2)?;
+    let artist = row.get::<_, Option<String>>(3)?;
+    let kind = row.get::<_, String>(4)?;
+    let monotonic_ms =
+        u64::try_from(row.get::<_, i64>(5)?).map_err(|error| music_conversion_error(5, error))?;
+    let wall_clock_ms =
+        u64::try_from(row.get::<_, i64>(6)?).map_err(|error| music_conversion_error(6, error))?;
+    let clock_uncertainty_ms =
+        u64::try_from(row.get::<_, i64>(7)?).map_err(|error| music_conversion_error(7, error))?;
+    MusicRideEvent::new(
+        parse_provider(&provider).map_err(|error| music_conversion_error(0, error))?,
+        item_identifier,
+        title,
+        artist,
+        parse_event_kind(&kind).map_err(|error| music_conversion_error(4, error))?,
+        MusicEventTiming {
+            monotonic_at: cutout_core::MonotonicTimestamp::from_milliseconds(monotonic_ms),
+            wall_clock_at: cutout_core::WallClockUnixTimestamp::from_milliseconds(wall_clock_ms),
+            clock_uncertainty_milliseconds: clock_uncertainty_ms,
+        },
+    )
+    .map_err(|error| music_conversion_error(1, error))
 }
 
 fn remember_selected_device(

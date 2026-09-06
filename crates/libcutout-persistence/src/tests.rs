@@ -2,7 +2,8 @@ use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
 use cutout_core::{
-    MonotonicTimestamp, PevcapCapture, PevcapEncoding, PevcapHeader, PevcapLocationSample,
+    MonotonicTimestamp, MusicEventTiming, MusicHistoryPolicy, MusicProvider, MusicRideEvent,
+    MusicRideEventKind, PevcapCapture, PevcapEncoding, PevcapHeader, PevcapLocationSample,
     PevcapPhoneLocation, PevcapRecord, WallClockUnixTimestamp,
 };
 use cutout_ride_maps::{
@@ -22,6 +23,22 @@ use super::{
 };
 
 static TEST_LOCK: Mutex<()> = Mutex::new(());
+
+fn music_event() -> MusicRideEvent {
+    MusicRideEvent::new(
+        MusicProvider::AppleMusic,
+        Some("opaque-track".to_owned()),
+        None,
+        None,
+        MusicRideEventKind::ItemChanged,
+        MusicEventTiming {
+            monotonic_at: MonotonicTimestamp::new(110),
+            wall_clock_at: WallClockUnixTimestamp::new(1_700_000_000_110),
+            clock_uncertainty_milliseconds: 5,
+        },
+    )
+    .expect("music event is valid")
+}
 
 fn test_guard() -> std::sync::MutexGuard<'static, ()> {
     TEST_LOCK
@@ -2113,7 +2130,7 @@ fn legacy_schema_versions_migrate_to_the_current_schema() {
         let current_version: i64 = connection
             .pragma_query_value(None, "user_version", |row| row.get(0))
             .unwrap();
-        assert_eq!(current_version, 15);
+        assert_eq!(current_version, 16);
         drop(connection);
 
         let reopened = RideDatabase::open(&path).unwrap();
@@ -2517,7 +2534,7 @@ fn schema_v13_spatial_rows_migrate_without_integer_domain_ids() {
     let version: i64 = connection
         .pragma_query_value(None, "user_version", |row| row.get(0))
         .unwrap();
-    assert_eq!(version, 15);
+    assert_eq!(version, 16);
     let rtree_id: i64 = connection
         .query_row(
             "SELECT rtree_id FROM trail_segment_spatial_keys",
@@ -2581,7 +2598,7 @@ fn schema_v12_singleton_rows_migrate_to_uuid_keys_without_data_loss() {
     let version: i64 = connection
         .pragma_query_value(None, "user_version", |row| row.get(0))
         .unwrap();
-    assert_eq!(version, 15);
+    assert_eq!(version, 16);
     let selected_key_length: u64 = connection
         .query_row(
             "SELECT length(singleton_key) FROM selected_device",
@@ -3097,7 +3114,7 @@ fn version_eight_migration_adds_monotonic_ride_start_column() {
             |row| row.get(0),
         )
         .unwrap();
-    assert_eq!(version, 15);
+    assert_eq!(version, 16);
     assert!(has_monotonic_start);
 
     let _ = std::fs::remove_file(path);
@@ -3423,4 +3440,24 @@ fn history_query_preserves_typed_timestamp_and_vehicle_identity() {
         query.vehicle_identity(),
         Some(&VehicleIdentity::new("device-a").unwrap())
     );
+}
+
+#[test]
+fn music_history_round_trips_and_can_be_deleted_without_deleting_ride() {
+    let _guard = test_guard();
+    let database = RideDatabase::open(std::path::Path::new(":memory:")).unwrap();
+    let ride = database
+        .create_started_live_ride(1_700_000_000_000, 100, None)
+        .unwrap();
+    let event = music_event();
+
+    database
+        .save_music_event(ride, MusicHistoryPolicy::OpaqueItem, 0, event.clone())
+        .unwrap();
+    assert_eq!(database.music_events(ride).unwrap(), vec![event]);
+
+    database.delete_music_history(ride).unwrap();
+    assert!(database.music_events(ride).unwrap().is_empty());
+    assert!(database.find_ride(ride).unwrap().is_some());
+    database.shutdown().unwrap();
 }
