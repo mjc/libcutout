@@ -92,6 +92,11 @@ struct CaptureMusicContext: Equatable {
         current = observation
     }
 
+    mutating func take() -> MobilePevcapMusicEventDto? {
+        defer { current = nil }
+        return current
+    }
+
     mutating func reset() {
         current = nil
     }
@@ -1622,9 +1627,8 @@ public final class CutoutSessionCore: NSObject {
         ].forEach { _ = builder.addAnnotation(annotation: $0) }
         extraAnnotations.forEach { _ = builder.addAnnotation(annotation: sanitizedPevcapAnnotation($0)) }
         captureBuilder = builder
-        _ = builder.setMusicContext(music: musicCaptureContext.current)
+        _ = builder.setMusicContext(music: musicCaptureContext.take())
         guard builder.startWriter(path: url.path) else {
-            musicCaptureContext.reset()
             record("capture_error=writer_start_failed")
             captureBuilder = nil
             captureFileURL = nil
