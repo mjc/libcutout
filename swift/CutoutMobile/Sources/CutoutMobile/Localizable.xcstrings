@@ -893,6 +893,22 @@
       "comment" : "Explanation for the disabled music history policy.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Music stays in the player and is not added to rides." } } }
     },
+    "music.history.forget" : {
+      "comment" : "Removes music metadata from a saved ride without deleting the ride.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Forget music history" } } }
+    },
+    "music.history.forget.error" : {
+      "comment" : "Error shown when saved-ride music history cannot be removed.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Music history could not be removed" } } }
+    },
+    "music.history.forget.message" : {
+      "comment" : "Confirmation message for removing saved-ride music metadata.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "This removes only music metadata. The ride and route stay saved." } } }
+    },
+    "music.history.forget.title" : {
+      "comment" : "Confirmation title for removing saved-ride music metadata.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Forget music history?" } } }
+    },
     "music.history.human_readable" : {
       "comment" : "History policy that saves readable music metadata.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Save readable history" } } }

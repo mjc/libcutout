@@ -973,6 +973,25 @@ final class CutoutAppModel {
         selectRideMapHistory(rideID, requestedPointLimit: Int(Self.rideMapLimits.liveTailPointLimit))
     }
 
+    /// Removes only the selected ride's persisted music metadata.
+    @discardableResult
+    func forgetMusicHistory(for rideID: String) -> Bool {
+        guard let state = core.rideMapStateHandle else {
+            rideMapHistoryError = .storageError("Rust ride database is unavailable")
+            return false
+        }
+        do {
+            try state.deleteMusicHistory(rideID: rideID)
+            if selectedRideMapHistoryID == rideID {
+                rideMapHistoryDetailMusicTimeline.removeAll(keepingCapacity: true)
+            }
+            return true
+        } catch {
+            rideMapHistoryError = Self.mapRideMapError(error)
+            return false
+        }
+    }
+
     static func detailPointsAreTruncated(
         sourcePointsOmittedByBudget: Bool,
         viewportPointsOmittedByBudget: Bool

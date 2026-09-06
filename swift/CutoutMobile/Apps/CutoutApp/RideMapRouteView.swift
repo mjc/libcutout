@@ -193,6 +193,7 @@ struct RideMapRouteView: View {
             load: { model.loadRideMapHistory(selecting: initialHistoryID) },
             retry: { model.loadRideMapHistory(selecting: initialHistoryID) },
             loadRoutePreview: { model.loadRoutePreviewMapHistory() },
+            forgetMusicHistory: { model.forgetMusicHistory(for: $0) },
             vehicleName: model.rideMapVehicleName(for:),
             cameraDidChange: { region in
                 model.projectRideMapHistoryDetailViewport(RideMapCanvasView.geoBounds(for: region))
