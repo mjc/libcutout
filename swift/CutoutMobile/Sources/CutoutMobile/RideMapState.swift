@@ -705,6 +705,17 @@ public final class MobileRideMapState: @unchecked Sendable {
         }
     }
 
+    private func withDatabase<T>(_ operation: (RideDatabaseHandle) throws -> T) throws -> T {
+        guard let database else {
+            throw storageUnavailableError ?? .storageError("Rust ride database is unavailable")
+        }
+        do {
+            return try operation(database)
+        } catch {
+            throw map(error)
+        }
+    }
+
     public func currentSnapshot() -> MobileRideMapSnapshotDto? {
         core?.currentSnapshot(atMs: Self.monotonicMillisecondsNow()).map(mapSnapshot)
     }
@@ -955,10 +966,7 @@ public final class MobileRideMapState: @unchecked Sendable {
         privacy: MobileRideMapRoutePrivacyPolicy = .precise,
         cancellation: MobileRideMapProjectionCancellation? = nil
     ) throws -> MobileRideMapRouteProjection {
-        guard let database else {
-            throw storageUnavailableError ?? .storageError("Rust ride database is unavailable")
-        }
-        do {
+        try withDatabase { database in
             let options = MobileRideMapRouteProjectionOptionsDto(
                 viewport: viewport,
                 budget: budget,
@@ -971,8 +979,6 @@ public final class MobileRideMapState: @unchecked Sendable {
                 cancellation: projectionCancellation.ffi
             )
             return map(projection)
-        } catch {
-            throw map(error)
         }
     }
 
@@ -981,30 +987,20 @@ public final class MobileRideMapState: @unchecked Sendable {
     }
 
     public func storedHistoryVehicleOptions() throws -> [MobileRideMapHistoryVehicleOptionDto] {
-        guard let database else {
-            throw storageUnavailableError ?? .storageError("Rust ride database is unavailable")
-        }
-        do {
+        try withDatabase { database in
             return try database.listRideHistoryVehicleOptions().map {
                 MobileRideMapHistoryVehicleOptionDto(
                     platformIdentifier: $0.platformIdentifier,
                     displayName: $0.displayName
                 )
             }
-        } catch {
-            throw map(error)
         }
     }
 
     public func storedHistoryRide(rideID: String) throws -> MobileRideMapHistorySummaryDto? {
-        guard let database else {
-            throw storageUnavailableError ?? .storageError("Rust ride database is unavailable")
-        }
-        do {
+        try withDatabase { database in
             let ride = try database.findRide(rideId: MobileRideIdDto(value: rideID))
             return ride.map(mapHistorySummary)
-        } catch {
-            throw map(error)
         }
     }
 
@@ -1013,10 +1009,7 @@ public final class MobileRideMapState: @unchecked Sendable {
         limit: UInt32,
         filter: MobileRideHistoryFilterDto? = nil
     ) throws -> MobileRideMapHistoryPageDto {
-        guard let database else {
-            throw storageUnavailableError ?? .storageError("Rust ride database is unavailable")
-        }
-        do {
+        try withDatabase { database in
             let filter = filter ?? MobileRideHistoryFilterDto(
                 createdAfterMilliseconds: nil,
                 vehicleIdentity: nil,
@@ -1028,8 +1021,6 @@ public final class MobileRideMapState: @unchecked Sendable {
                 summaries: summaries,
                 nextCursor: page.nextCursor
             )
-        } catch {
-            throw map(error)
         }
     }
 
@@ -1042,10 +1033,7 @@ public final class MobileRideMapState: @unchecked Sendable {
         viewport: MobileGeoBoundsDto? = nil,
         privacy: MobileRideMapRoutePrivacyPolicy = .precise
     ) throws -> MobileRideMapHistoryContextProjection {
-        guard let database else {
-            throw storageUnavailableError ?? .storageError("Rust ride database is unavailable")
-        }
-        do {
+        try withDatabase { database in
             let ffiBudget = MobileRideHistoryContextBudgetDto(
                 historyPageLimit: budget.historyPageLimit,
                 maxRoutes: budget.maxRoutes,
@@ -1060,8 +1048,6 @@ public final class MobileRideMapState: @unchecked Sendable {
                 privacy: Self.ffiPrivacyPolicy(privacy)
             )
             return map(try database.projectHistoryContext(options: options))
-        } catch {
-            throw map(error)
         }
     }
 
@@ -1095,10 +1081,7 @@ public final class MobileRideMapState: @unchecked Sendable {
     }
 
     public func storedPointsAfter(rideId: String, afterCursor: UInt64?, limit: UInt32) throws -> MobileRideMapPointBatchDto {
-        guard let database else {
-            throw storageUnavailableError ?? .storageError("Rust ride database is unavailable")
-        }
-        do {
+        try withDatabase { database in
             let page = try database.routePoints(
                 rideId: MobileRideIdDto(value: rideId),
                 cursor: afterCursor.map(MobileRoutePointCursorDto.init(sequence:)),
@@ -1109,8 +1092,6 @@ public final class MobileRideMapState: @unchecked Sendable {
                 nextCursor: page.nextCursor?.sequence,
                 hasMore: page.nextCursor != nil
             )
-        } catch {
-            throw map(error)
         }
     }
 

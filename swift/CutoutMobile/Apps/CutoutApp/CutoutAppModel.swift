@@ -444,6 +444,7 @@ final class CutoutAppModel {
         musicPlayerVisibilityStore.setHidden(true)
         isMusicPlayerHidden = true
         musicNowPlaying = nil
+        musicTransitionHintTracker.clear()
     }
 
     func restoreMusicPlayer() {
@@ -774,6 +775,25 @@ final class CutoutAppModel {
     func connectMusic() {
         musicMonitorSceneState.request()
         beginMusicMonitoring()
+    }
+
+    private func unavailableMusicObservation(observedAtMs: UInt64) -> MusicProviderObservation {
+        MusicProviderObservation.unavailable(
+            provider: selectedMusicProvider,
+            sessionId: "music-unavailable",
+            observedAtMs: observedAtMs
+        )
+    }
+
+    func connectMusic() {
+#if os(iOS)
+        musicMonitorTask?.cancel()
+        musicMonitorTask = Task { [weak self] in
+            await self?.monitorMusic()
+        }
+#else
+        _ = ingestMusicObservation(unavailableMusicObservation(observedAtMs: core.now().rawValue))
+#endif
     }
 
     private func restoreRideMapState() {
@@ -1326,6 +1346,40 @@ final class CutoutAppModel {
         try state.setMusicHistoryPolicy(.disabled)
         musicHistoryPolicy = .disabled
         musicHistoryUnavailable = false
+        musicCoordinator.restoreHistoryPolicy(.disabled)
+        musicTransitionHintTracker.clear()
+        core.updateMusicCaptureObservation(nil)
+        musicTimelineEvents = musicCoordinator.recordedEvents
+    }
+
+    /// Removes only the selected ride's persisted music metadata.
+    @discardableResult
+    func forgetMusicHistory(for rideID: String) -> Bool {
+        guard let state = core.rideMapStateHandle else {
+            rideMapHistoryError = .storageError("Rust ride database is unavailable")
+            return false
+        }
+        do {
+            if rideMapSnapshot?.rideID == rideID {
+                try clearActiveMusicHistory(using: state)
+            } else {
+                try state.deleteMusicHistory(rideID: rideID)
+            }
+            if selectedRideMapHistoryID == rideID {
+                rideMapHistoryDetailMusicTimeline.removeAll(keepingCapacity: true)
+            }
+            return true
+        } catch {
+            rideMapHistoryError = Self.mapRideMapError(error)
+            return false
+        }
+    }
+
+    private func clearActiveMusicHistory(using state: MobileRideMapState) throws {
+        // Route active-ride deletion through the Rust state owner so its
+        // in-memory timeline and durable policy change together.
+        try state.setMusicHistoryPolicy(.disabled)
+        musicHistoryPolicy = .disabled
         musicCoordinator.restoreHistoryPolicy(.disabled)
         musicTransitionHintTracker.clear()
         core.updateMusicCaptureObservation(nil)

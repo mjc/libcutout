@@ -200,6 +200,10 @@ public struct MusicTransitionHintTracker: Sendable {
         remainingUnchangedObservations = pendingHints.isEmpty ? nil : Self.maximumUnchangedObservations
     }
 
+    public mutating func clear() {
+        pendingHint = nil
+    }
+
     public mutating func resolve(
         previous: MusicNowPlaying?,
         current: MusicNowPlaying?,
@@ -795,6 +799,12 @@ public final class MusicIntegrationCoordinator {
         lastCorrelationRideID = rideMapState?.currentSnapshot()?.rideID
         nowPlaying = nil
         lastRecordedSequence = nil
+    }
+
+    /// Adopts a policy restored by Rust without issuing a second persistence write.
+    public func restoreHistoryPolicy(_ policy: MobileMusicHistoryPolicyDto) {
+        historyPolicy = policy
+        lastPersistedNowPlaying = nil
     }
 
     public func record(

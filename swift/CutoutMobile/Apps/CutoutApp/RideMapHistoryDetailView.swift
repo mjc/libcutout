@@ -51,6 +51,7 @@ struct RideMapHistoryDetailView: View {
     let load: () -> Void
     let retry: () -> Void
     let loadRoutePreview: () -> Void
+    let forgetMusicHistory: (String) -> Bool
     let vehicleName: (String?) -> String?
     let cameraDidChange: (MKCoordinateRegion) -> Void
     @Binding var mapPosition: MapCameraPosition
