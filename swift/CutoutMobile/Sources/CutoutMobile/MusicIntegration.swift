@@ -43,6 +43,16 @@ public enum MusicTransitionHint: Equatable, Sendable {
     case skip
 }
 
+/// Describes the provider lifecycle that the app can currently monitor.
+///
+/// Spotify remains an explicit handoff/unavailable path until its App Remote
+/// credentials and on-device lifecycle are proven; it must not fall through
+/// to the Apple Music system-player monitor.
+public enum MusicProviderMonitoringMode: Equatable, Sendable {
+    case appleMusicSystemPlayer
+    case unavailable
+}
+
 /// Holds a transport hint until the provider reports the resulting state.
 ///
 /// System-player notifications can arrive after the immediate post-command
@@ -98,6 +108,13 @@ public struct MusicTransitionHintTracker: Sendable {
 
 public extension MobileMusicProviderDto {
     static var allCases: [Self] { [.appleMusic, .spotify] }
+
+    var monitoringMode: MusicProviderMonitoringMode {
+        switch self {
+        case .appleMusic: .appleMusicSystemPlayer
+        case .spotify: .unavailable
+        }
+    }
 
     var title: String {
         switch self {
