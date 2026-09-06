@@ -91,6 +91,20 @@ final class MusicIntegrationTests: XCTestCase {
         XCTAssertTrue(nowPlaying.supports(.next))
     }
 
+    func testNowPlayingProvidesLocalizedArtworkAccessibilityLabel() {
+        let nowPlaying = MusicNowPlaying(
+            provider: .appleMusic,
+            state: .playing,
+            item: MobileMusicItemDto(
+                identifier: "track-1",
+                title: "Song",
+                artist: "Artist"
+            )
+        )
+
+        XCTAssertEqual(nowPlaying.artworkAccessibilityLabel, "Artwork for Song")
+    }
+
     @MainActor
     func testCoordinatorClassifiesAcceptedItemSkipSeparatelyFromItemChange() throws {
         let state = MobileRideMapState()
