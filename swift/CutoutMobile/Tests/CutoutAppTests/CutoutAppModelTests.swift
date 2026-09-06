@@ -80,6 +80,24 @@ final class CutoutAppModelTests: XCTestCase {
     }
 #endif
 
+    func testMusicMonitorSceneStateResumesOnlyRequestedMonitor() {
+        var state = MusicMonitorSceneState()
+
+        XCTAssertFalse(state.resumeIfNeeded())
+
+        state.suspend()
+        XCTAssertFalse(state.resumeIfNeeded())
+
+        state.request()
+        state.suspend()
+        XCTAssertTrue(state.resumeIfNeeded())
+        XCTAssertFalse(state.resumeIfNeeded())
+
+        state.cancel()
+        state.suspend()
+        XCTAssertFalse(state.resumeIfNeeded())
+    }
+
     @MainActor
     func testMusicHistoryDefaultIsLoadedForFutureRides() throws {
         let suiteName = "CutoutAppMusicHistoryTests-\(UUID().uuidString)"
