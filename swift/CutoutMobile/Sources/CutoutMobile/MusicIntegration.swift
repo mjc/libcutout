@@ -36,6 +36,13 @@ public enum MusicCommandOutcome: Equatable, Sendable {
     case unavailable
 }
 
+/// A provider command can explain a subsequent item change without replacing
+/// the Rust-owned event kind contract.
+public enum MusicTransitionHint: Equatable, Sendable {
+    /// The provider accepted a previous/next transport command.
+    case skip
+}
+
 
 public extension MobileMusicProviderDto {
     static var allCases: [Self] { [.appleMusic, .spotify] }
@@ -346,7 +353,7 @@ public final class MusicIntegrationCoordinator {
         snapshot: MobileMusicSnapshotDto,
         wallClockAtMs: UInt64,
         clockUncertaintyMs: UInt64,
-        transitionHint: MobileMusicRideEventKindDto? = nil
+        transitionHint: MusicTransitionHint? = nil
     ) throws -> MobileMusicTimelineOutcomeDto? {
         try ingest(
             snapshot: snapshot,
@@ -362,7 +369,7 @@ public final class MusicIntegrationCoordinator {
         artwork: MusicArtwork?,
         wallClockAtMs: UInt64,
         clockUncertaintyMs: UInt64,
-        transitionHint: MobileMusicRideEventKindDto?
+        transitionHint: MusicTransitionHint?
     ) throws -> MobileMusicTimelineOutcomeDto? {
         resetCorrelationIfRideChanged()
         guard accept(snapshot) else { return nil }
@@ -406,7 +413,7 @@ public final class MusicIntegrationCoordinator {
         observation: MusicProviderObservation,
         wallClockAtMs: UInt64,
         clockUncertaintyMs: UInt64,
-        transitionHint: MobileMusicRideEventKindDto? = nil
+        transitionHint: MusicTransitionHint? = nil
     ) throws -> MobileMusicTimelineOutcomeDto? {
         try ingest(
             snapshot: observation.snapshot,
@@ -490,7 +497,7 @@ public final class MusicIntegrationCoordinator {
     private static func transitionKind(
         from previous: MusicNowPlaying?,
         to current: MusicNowPlaying?,
-        hint: MobileMusicRideEventKindDto?
+        hint: MusicTransitionHint?
     ) -> MobileMusicRideEventKindDto? {
         guard let current else { return .providerDisconnected }
         guard let previous else { return current.item == nil ? nil : .itemChanged }

@@ -265,7 +265,7 @@ final class CutoutAppModel {
     private var rideMapHistoryContextTask: Task<Void, Never>?
     private var rideMapRestoreTask: Task<Void, Never>?
     private var musicMonitorTask: Task<Void, Never>?
-    private var pendingMusicTransitionHint: MobileMusicRideEventKindDto?
+    private var pendingMusicTransitionHint: MusicTransitionHint?
     private var rideMapLiveProjectionTask: Task<Void, Never>?
     private var rideMapDurationTask: Task<Void, Never>?
     private var rideMapLiveProjectionCancellation: MobileLiveRideMapProjectionCancellation?
@@ -438,7 +438,7 @@ final class CutoutAppModel {
         _ observation: MusicProviderObservation,
         wallClockAtMs: UInt64? = nil,
         clockUncertaintyMs: UInt64 = 1_000,
-        transitionHint: MobileMusicRideEventKindDto? = nil
+        transitionHint: MusicTransitionHint? = nil
     ) -> Bool {
         let wallClockAtMs = wallClockAtMs ?? UInt64(Date().timeIntervalSince1970 * 1_000)
         do {
