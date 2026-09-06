@@ -909,6 +909,10 @@
       "comment" : "Selected historical ride detail state when the route cannot be loaded.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Ride unavailable" } } }
     },
+    "music.history.unavailable" : {
+      "comment" : "Historical ride detail state when persisted music metadata cannot be loaded.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Music history unavailable" } } }
+    },
     "ride_map.detail_back" : {
       "comment" : "Navigation control returning from historical ride detail.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Back" } } }

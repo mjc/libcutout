@@ -126,6 +126,7 @@ struct RideMapHistoryDetailSummary: View {
     let segmentsOmittedByBudget: Bool
     let canonicalBackgroundGapCount: UInt64
     let musicTimeline: [MobileMusicRideEventDto]
+    let musicError: MobileRideMapError?
     let forgetMusicHistory: () -> Bool
     let state: RideMapHistoryRouteState
     let loadRoutePreview: () -> Void
@@ -193,7 +194,16 @@ struct RideMapHistoryDetailSummary: View {
                     ),
                     telemetryState: telemetryState
                 )
-                if musicTimeline.isEmpty == false {
+                if let musicError {
+                    Label(
+                        localizedAppText("music.history.unavailable"),
+                        systemImage: "exclamationmark.triangle"
+                    )
+                    .font(.caption)
+                    .foregroundStyle(.orange)
+                    .accessibilityValue(Text(String(describing: musicError)))
+                    .accessibilityIdentifier("ride-map.detail-music-history-unavailable")
+                } else if musicTimeline.isEmpty == false {
                     VStack(alignment: .leading, spacing: 8) {
                         HStack(alignment: .firstTextBaseline) {
                             Text(localizedAppText("music.timeline.title"))
