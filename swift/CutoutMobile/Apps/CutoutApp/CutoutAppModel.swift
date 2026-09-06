@@ -543,6 +543,10 @@ final class CutoutAppModel {
 
     private func monitorMusic() async {
 #if canImport(MediaPlayer) && os(iOS)
+        guard selectedMusicProvider.monitoringMode == .appleMusicSystemPlayer else {
+            refreshMusicSnapshot()
+            return
+        }
         guard await appleMusicProvider.requestAuthorization() else {
             _ = ingestMusicObservation(MusicProviderObservation(
                 snapshot: appleMusicProvider.unauthorizedSnapshot(observedAtMs: core.now().rawValue)
