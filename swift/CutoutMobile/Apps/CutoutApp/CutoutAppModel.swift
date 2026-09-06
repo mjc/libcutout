@@ -270,7 +270,7 @@ final class CutoutAppModel {
     private var rideMapHistoryContextTask: Task<Void, Never>?
     private var rideMapRestoreTask: Task<Void, Never>?
     private var musicMonitorTask: Task<Void, Never>?
-    private var musicMonitorGeneration: UInt64 = 0
+    private var musicMonitorGeneration = MusicMonitorGeneration()
     private var musicTransitionHintTracker = MusicTransitionHintTracker()
     private var rideMapLiveProjectionTask: Task<Void, Never>?
     private var rideMapDurationTask: Task<Void, Never>?
@@ -675,6 +675,14 @@ final class CutoutAppModel {
     }
 #endif
 
+    private func finishMusicMonitoring(generation: UInt64) {
+        guard musicMonitorGeneration.owns(generation) else { return }
+#if canImport(MediaPlayer) && os(iOS)
+        appleMusicProvider.stopMonitoring()
+#endif
+        musicMonitorTask = nil
+    }
+
     private func unavailableMusicObservation(observedAtMs: UInt64) -> MusicProviderObservation {
         MusicProviderObservation.unavailable(
             provider: selectedMusicProvider,
@@ -684,6 +692,7 @@ final class CutoutAppModel {
     }
 
     private func stopMusicMonitoring() {
+        musicMonitorGeneration.invalidate()
         musicMonitorTask?.cancel()
         musicMonitorTask = nil
 #if canImport(MediaPlayer) && os(iOS)
@@ -694,8 +703,7 @@ final class CutoutAppModel {
     func connectMusic() {
 #if os(iOS) && canImport(MediaPlayer)
         stopMusicMonitoring()
-        musicMonitorGeneration &+= 1
-        let generation = musicMonitorGeneration
+        let generation = musicMonitorGeneration.begin()
         let provider = selectedMusicProvider
         let appleMusicProvider = self.appleMusicProvider
         musicMonitorTask = Task { [weak self, appleMusicProvider] in
@@ -705,11 +713,11 @@ final class CutoutAppModel {
                 appleMusicProvider: appleMusicProvider,
                 isCurrent: { [weak self] in
                     guard let self else { return false }
-                    return self.musicMonitorGeneration == generation
+                    return self.musicMonitorGeneration.owns(generation)
                         && self.selectedMusicProvider == provider
                 },
                 currentGeneration: { [weak self] in
-                    self?.musicMonitorGeneration
+                    self?.musicMonitorGeneration.current
                 },
                 observedAtMs: { [weak self] in
                     self?.core.now().rawValue
