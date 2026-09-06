@@ -2097,6 +2097,11 @@ impl RideDatabase {
     }
 
     /// Loads the persisted music-history policy for one ride.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StorageError::NotFound`] when the ride does not exist or a storage error when
+    /// the persisted policy cannot be decoded.
     pub fn music_history_policy(
         &self,
         ride_id: RideId,
@@ -4826,7 +4831,9 @@ fn save_music_event(
     {
         return Err(StorageError::MusicTimelineFull);
     }
-    let item_identifier = event.item_identifier().map(|value| value.as_str());
+    let item_identifier = event
+        .item_identifier()
+        .map(cutout_core::MusicIdentifier::as_str);
     let title = (policy == MusicHistoryPolicy::HumanReadable)
         .then(|| event.title())
         .flatten();
