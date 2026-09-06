@@ -1039,6 +1039,9 @@ public struct MusicExpandedPlayer: View {
                     selectedPolicy = historyPolicy
                 }
             }
+            .onChange(of: historyPolicy) { _, policy in
+                selectedPolicy = policy
+            }
         }
     }
 }
