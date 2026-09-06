@@ -6503,6 +6503,13 @@ fn map_ride_lifecycle_state(state: MobileRideLifecycleStateDto) -> ride_maps::Ri
     }
 }
 
+fn music_history_is_recordable(state: Option<ride_maps::RideLifecycleState>) -> bool {
+    matches!(
+        state,
+        Some(ride_maps::RideLifecycleState::Active | ride_maps::RideLifecycleState::Paused)
+    )
+}
+
 fn map_ride_telemetry_state(
     state: MobileRideMapCoreTelemetryStateDto,
 ) -> Result<ride_maps::RouteTelemetryState, &'static str> {
@@ -6814,10 +6821,7 @@ impl MobileRideMapCore {
         let Some(ride_id) = state.active_ride_id.clone() else {
             return Err(MobileRideMapCoreErrorDto::NoActiveRide);
         };
-        if !matches!(
-            state.recorder.state(),
-            Some(ride_maps::RideLifecycleState::Active | ride_maps::RideLifecycleState::Paused)
-        ) {
+        if !music_history_is_recordable(state.recorder.state()) {
             return Err(MobileRideMapCoreErrorDto::InvalidTransition);
         }
         let policy = CoreMusicHistoryPolicy::from(policy);
@@ -6854,10 +6858,7 @@ impl MobileRideMapCore {
         let Some(ride_id) = state.active_ride_id.clone() else {
             return Err(MobileRideMapCoreErrorDto::NoActiveRide);
         };
-        if !matches!(
-            state.recorder.state(),
-            Some(ride_maps::RideLifecycleState::Active | ride_maps::RideLifecycleState::Paused)
-        ) {
+        if !music_history_is_recordable(state.recorder.state()) {
             return Err(MobileRideMapCoreErrorDto::InvalidTransition);
         }
         let Some(event) = CoreMusicRideEvent::from_snapshot(
@@ -16802,10 +16803,7 @@ mod tests {
             5,
         );
 
-        assert_eq!(
-            result,
-            Err(MobileRideMapCoreErrorDto::InvalidTransition)
-        );
+        assert_eq!(result, Err(MobileRideMapCoreErrorDto::InvalidTransition));
         assert!(
             state
                 .current_music_events()
