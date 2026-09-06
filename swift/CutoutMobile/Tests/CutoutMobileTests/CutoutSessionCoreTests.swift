@@ -616,10 +616,10 @@ final class CutoutSessionCoreTests: XCTestCase {
             rideSequence: nil
         )
 
-        context.replace(observation)
+        context.update(observation)
         XCTAssertEqual(context.current, observation)
 
-        context.clear()
+        context.reset()
 
         XCTAssertNil(context.current)
     }
