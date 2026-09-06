@@ -1192,7 +1192,7 @@ public final class AppleMusicProviderAdapter {
     public func observation(observedAtMs: UInt64) -> MusicProviderObservation {
         MusicProviderObservation(
             snapshot: snapshot(observedAtMs: observedAtMs),
-            artworkData: artworkData()?.data
+            artworkData: artworkData()
         )
     }
 
