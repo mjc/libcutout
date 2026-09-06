@@ -4787,6 +4787,13 @@ fn save_music_history_policy(
             "DELETE FROM ride_music_event WHERE ride_id = ?1",
             [ride_id.uuid().to_string()],
         )?;
+    } else if policy == MusicHistoryPolicy::OpaqueItem {
+        transaction.execute(
+            "UPDATE ride_music_event
+             SET title = NULL, artist = NULL
+             WHERE ride_id = ?1",
+            [ride_id.uuid().to_string()],
+        )?;
     }
     transaction.commit()?;
     Ok(())
