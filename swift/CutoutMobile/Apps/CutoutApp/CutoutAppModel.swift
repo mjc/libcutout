@@ -863,8 +863,7 @@ final class CutoutAppModel {
         rideMapHistoryLoading = true
         rideMapHistoryRouteLoading = false
         rideMapHistoryDetailRouteLoading = false
-        rideMapHistoryDetailMusicTimeline.removeAll(keepingCapacity: true)
-        rideMapHistoryDetailMusicError = nil
+        clearRideMapHistoryMusic()
         rideMapHistoryQueryDateAfterMilliseconds = historyDateAfterMilliseconds
         if let rideMapStorageError {
             rideMapHistoryLoading = false
@@ -1167,8 +1166,7 @@ final class CutoutAppModel {
                 }
             }
             if selectedRideMapHistoryID == rideID {
-                rideMapHistoryDetailMusicTimeline.removeAll(keepingCapacity: true)
-                rideMapHistoryDetailMusicError = nil
+                clearRideMapHistoryMusic()
             }
             return true
         } catch {
@@ -1293,7 +1291,7 @@ final class CutoutAppModel {
             rideMapHistoryRouteError = nil
             rideMapHistoryDetailRouteLoading = false
             rideMapHistoryDetailRouteError = nil
-            rideMapHistoryDetailMusicError = nil
+            clearRideMapHistoryMusic()
             return
         }
         rideMapHistorySelectionTask?.cancel()
@@ -1311,7 +1309,7 @@ final class CutoutAppModel {
         selectedRideMapHistoryID = rideID
         rideMapHistoryRouteError = nil
         rideMapHistoryDetailRouteError = nil
-        rideMapHistoryDetailMusicError = nil
+        clearRideMapHistoryMusic()
         rideMapHistoryRouteLoading = true
         rideMapHistoryDetailRouteLoading = true
         guard let state = core.rideMapStateHandle else {
@@ -1396,8 +1394,7 @@ final class CutoutAppModel {
                 self.rideMapHistoryRouteLoading = false
                 self.rideMapHistoryDetailRouteError = self.rideMapHistoryRouteError
                 self.rideMapHistoryDetailRouteLoading = false
-                self.rideMapHistoryDetailMusicTimeline.removeAll(keepingCapacity: true)
-                self.rideMapHistoryDetailMusicError = nil
+                self.clearRideMapHistoryMusic()
                 self.replaceRideMapHistoryDetailDisplayPoints([], truncated: false)
             }
         }
@@ -1454,11 +1451,15 @@ final class CutoutAppModel {
         rideMapHistoryContextProjection = nil
         rideMapHistoryContextRoutes.removeAll(keepingCapacity: true)
         replaceRideMapHistoryDisplayPoints([], truncated: false)
-        rideMapHistoryDetailMusicTimeline.removeAll(keepingCapacity: true)
-        rideMapHistoryDetailMusicError = nil
+        clearRideMapHistoryMusic()
         rideMapHistoryDetailSourcePointsOmittedByBudget = false
         rideMapHistoryDetailSourceSegmentsOmittedByBudget = false
         replaceRideMapHistoryDetailDisplayPoints([], truncated: false)
+    }
+
+    private func clearRideMapHistoryMusic() {
+        rideMapHistoryDetailMusicTimeline.removeAll(keepingCapacity: true)
+        rideMapHistoryDetailMusicError = nil
     }
 
     /// Loads the bounded surrounding-route context for the selected history ride. Rust performs
