@@ -6036,6 +6036,23 @@ struct PendingMapLocationWrite {
 }
 
 impl MobileRideMapCoreInner {
+    fn apply_music_history_policy(&mut self, policy: CoreMusicHistoryPolicy) {
+        self.music_history_policy = policy;
+        match policy {
+            CoreMusicHistoryPolicy::Disabled => {
+                self.music_timeline = cutout_core::MusicTimeline::new();
+            }
+            CoreMusicHistoryPolicy::OpaqueItem => {
+                self.music_timeline.redact_display_metadata();
+            }
+            CoreMusicHistoryPolicy::HumanReadable => {}
+        }
+    }
+
+    fn reset_music_history(&mut self) {
+        self.apply_music_history_policy(CoreMusicHistoryPolicy::Disabled);
+    }
+
     fn transition_state(
         &mut self,
         event: MobileRideEventDto,
@@ -6456,8 +6473,7 @@ impl MobileRideMapCoreInner {
         self.admission_recorder = staged_recorder;
         self.active_ride_id = Some(id);
         self.settled_ride_id = None;
-        self.music_history_policy = CoreMusicHistoryPolicy::Disabled;
-        self.music_timeline = cutout_core::MusicTimeline::new();
+        self.reset_music_history();
         self.pending_location_writes.clear();
         Ok(self.snapshot(MobileRideLifecycleStateDto::Active))
     }
@@ -6804,16 +6820,7 @@ impl MobileRideMapCore {
                 policy,
             )
             .map_err(map_storage_core_error)?;
-        state.music_history_policy = policy;
-        match policy {
-            CoreMusicHistoryPolicy::Disabled => {
-                state.music_timeline = cutout_core::MusicTimeline::new();
-            }
-            CoreMusicHistoryPolicy::OpaqueItem => {
-                state.music_timeline.redact_display_metadata();
-            }
-            CoreMusicHistoryPolicy::HumanReadable => {}
-        }
+        state.apply_music_history_policy(policy);
         Ok(())
     }
 
