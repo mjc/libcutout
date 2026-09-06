@@ -126,11 +126,14 @@ struct RideMapHistoryDetailSummary: View {
     let segmentsOmittedByBudget: Bool
     let canonicalBackgroundGapCount: UInt64
     let musicTimeline: [MobileMusicRideEventDto]
+    let forgetMusicHistory: () -> Bool
     let state: RideMapHistoryRouteState
     let loadRoutePreview: () -> Void
     let shareText: String
     @Binding var mapPosition: MapCameraPosition
     @Binding var isApplyingCamera: Bool
+    @State private var isMusicHistoryForgetConfirmationPresented = false
+    @State private var isMusicHistoryForgetErrorPresented = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -192,11 +195,39 @@ struct RideMapHistoryDetailSummary: View {
                 )
                 if musicTimeline.isEmpty == false {
                     VStack(alignment: .leading, spacing: 8) {
-                        Text(localizedAppText("music.timeline.title"))
-                            .font(.headline.weight(.semibold))
+                        HStack(alignment: .firstTextBaseline) {
+                            Text(localizedAppText("music.timeline.title"))
+                                .font(.headline.weight(.semibold))
+                            Spacer()
+                            Button(localizedAppText("music.history.forget"), role: .destructive) {
+                                isMusicHistoryForgetConfirmationPresented = true
+                            }
+                            .font(.caption.weight(.semibold))
+                            .accessibilityIdentifier("ride-map.detail-forget-music-history")
+                        }
                         MusicTimelineRows(events: musicTimeline)
                     }
                     .accessibilityIdentifier("ride-map.detail-music-timeline")
+                    .confirmationDialog(
+                        localizedAppText("music.history.forget.title"),
+                        isPresented: $isMusicHistoryForgetConfirmationPresented,
+                        titleVisibility: .visible
+                    ) {
+                        Button(localizedAppText("music.history.forget"), role: .destructive) {
+                            if forgetMusicHistory() == false {
+                                isMusicHistoryForgetErrorPresented = true
+                            }
+                        }
+                        Button(localizedAppText("common.cancel"), role: .cancel) {}
+                    } message: {
+                        Text(localizedAppText("music.history.forget.message"))
+                    }
+                    .alert(
+                        localizedAppText("music.history.forget.error"),
+                        isPresented: $isMusicHistoryForgetErrorPresented
+                    ) {
+                        Button(localizedAppText("common.cancel"), role: .cancel) {}
+                    }
                 }
                 if pointsTruncated {
                     Text(localizedAppText("ride_map.history_truncated_count", displayPointCount))
