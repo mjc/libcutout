@@ -66,6 +66,29 @@ final class MusicIntegrationTests: XCTestCase {
         XCTAssertFalse(generation.owns(first))
     }
 
+    func testMusicAccessibilityAnnouncementsDeduplicateProjectedState() {
+        var tracker = MusicAccessibilityAnnouncementTracker()
+        let playing = nowPlaying(trackID: "track-1")
+
+        XCTAssertEqual(tracker.next(for: playing), playing.accessibilitySummary)
+        XCTAssertNil(tracker.next(for: playing))
+
+        let paused = MusicNowPlaying(
+            provider: .appleMusic,
+            state: .paused,
+            item: playing.item,
+            capabilities: .init(
+                previous: true,
+                play: true,
+                pause: false,
+                next: true,
+                openProvider: true
+            )
+        )
+        XCTAssertEqual(tracker.next(for: paused), paused.accessibilitySummary)
+        XCTAssertNil(tracker.next(for: paused))
+    }
+
     func testArtworkCacheReusesOnlyBoundedArtworkForTheSameItem() {
         var cache = MusicArtworkCache()
         var loadCount = 0

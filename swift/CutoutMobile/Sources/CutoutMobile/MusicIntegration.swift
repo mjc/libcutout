@@ -357,6 +357,17 @@ public struct MusicNowPlaying: Equatable, Sendable {
     }
 }
 
+/// Deduplicates VoiceOver announcements while the provider is polled.
+struct MusicAccessibilityAnnouncementTracker {
+    private var lastAnnounced: MusicNowPlaying?
+
+    mutating func next(for nowPlaying: MusicNowPlaying) -> String? {
+        guard lastAnnounced != nowPlaying else { return nil }
+        lastAnnounced = nowPlaying
+        return nowPlaying.accessibilitySummary
+    }
+}
+
 public extension MobileMusicHistoryPolicyDto {
     static var allCases: [Self] { [.disabled, .opaqueItem, .humanReadable] }
 
@@ -692,6 +703,7 @@ public struct MusicCompactPlayer: View {
     public let onSelectProvider: (MobileMusicProviderDto) -> Void
     public let onSetHistoryPolicy: (MobileMusicHistoryPolicyDto) -> Bool
     @State private var isExpanded = false
+    @State private var accessibilityAnnouncementTracker = MusicAccessibilityAnnouncementTracker()
 
     public init(
         nowPlaying: MusicNowPlaying,
@@ -766,6 +778,12 @@ public struct MusicCompactPlayer: View {
         .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 16))
         .accessibilityElement(children: .contain)
         .accessibilityLabel(nowPlaying.accessibilitySummary)
+        .onChange(of: nowPlaying) { _, nowPlaying in
+            guard let announcement = accessibilityAnnouncementTracker.next(for: nowPlaying) else {
+                return
+            }
+            AccessibilityNotification.Announcement(announcement).post()
+        }
         .sheet(isPresented: $isExpanded) {
             MusicExpandedPlayer(
                 nowPlaying: nowPlaying,
