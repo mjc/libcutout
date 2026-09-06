@@ -514,6 +514,14 @@ impl MusicTimeline {
     pub fn events(&self) -> &[MusicRideEvent] {
         &self.events
     }
+
+    /// Removes human-readable metadata while retaining the bounded timeline.
+    pub fn redact_display_metadata(&mut self) {
+        for event in &mut self.events {
+            event.title = None;
+            event.artist = None;
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug)]
