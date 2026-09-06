@@ -1197,9 +1197,13 @@ public final class AppleMusicProviderAdapter {
     }
 
     private func artworkData() -> Data? {
-        artworkCache.artwork(for: player.nowPlayingItem.map { String($0.persistentID) }) {
+        artworkCache.artwork(for: currentItemIdentifier) {
             loadArtwork()
         }?.data
+    }
+
+    private var currentItemIdentifier: String? {
+        player.nowPlayingItem.map { String($0.persistentID) }
     }
 
     private func loadArtwork() -> MusicArtwork? {
