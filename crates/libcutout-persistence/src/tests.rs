@@ -1741,9 +1741,14 @@ fn database_preflights_confirms_and_deduplicates_managed_pevcap_artifacts() {
         .preflight_pevcap(&artifact_path, PevcapEncoding::Jsonl)
         .unwrap();
     assert_eq!(
-        format!("{:?}", duplicate_preview.outcome()),
-        "AlreadyImported"
+        duplicate_preview.outcome(),
+        PevcapImportOutcome::AlreadyImported
     );
+    let duplicate_confirmation = database
+        .confirm_pevcap_import(&duplicate_preview, 1_700_000_000_001)
+        .unwrap();
+    assert!(duplicate_confirmation.duplicate);
+    assert_eq!(duplicate_confirmation.ride_id, first.ride_id);
     assert!(matches!(
         database.append_location(
             ride_id,
@@ -2115,6 +2120,20 @@ fn capture_only_pevcap_import_does_not_publish_an_empty_ride() {
             .rides()
             .is_empty()
     );
+    let duplicate_preview = database
+        .preflight_pevcap(&artifact_path, PevcapEncoding::Jsonl)
+        .unwrap();
+    assert_eq!(
+        duplicate_preview.outcome(),
+        PevcapImportOutcome::AlreadyImported
+    );
+    assert!(duplicate_preview.warnings().is_empty());
+    let duplicate_receipt = database
+        .confirm_pevcap_import(&duplicate_preview, 1_700_000_000_001)
+        .unwrap();
+    assert!(duplicate_receipt.duplicate);
+    assert_eq!(duplicate_receipt.ride_id, None);
+    assert_eq!(duplicate_receipt.outcome, PevcapImportOutcome::CaptureOnly);
     database.shutdown().unwrap();
     let _ = std::fs::remove_file(&receipt.managed_artifact_path);
     let _ = std::fs::remove_dir(receipt.managed_artifact_path.parent().unwrap());

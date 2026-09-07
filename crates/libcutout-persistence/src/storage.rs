@@ -4410,22 +4410,23 @@ fn validate_existing_pevcap_confirmation(
         preview.artifact_digest(),
         preview.artifact_size(),
     )?;
-    if receipt.artifact_digest != preview.artifact_digest
-        || receipt.record_count != preview.record_count
-        || receipt.location_count != preview.location_count
-        || receipt.outcome != preview.outcome
-    {
-        return Err(StorageError::PevcapPreviewChanged);
-    }
     let managed_preview = preflight_pevcap(&receipt.managed_artifact_path, preview.encoding())
         .map_err(|_| StorageError::PevcapPreviewChanged)?;
-    if managed_preview.artifact_digest != preview.artifact_digest
+    if receipt.artifact_digest != managed_preview.artifact_digest
+        || receipt.record_count != managed_preview.record_count
+        || receipt.location_count != managed_preview.location_count
+        || receipt.outcome != managed_preview.outcome
+        || managed_preview.artifact_digest != preview.artifact_digest
         || managed_preview.artifact_size != preview.artifact_size
         || managed_preview.record_count != preview.record_count
         || managed_preview.location_count != preview.location_count
         || managed_preview.duration_milliseconds != preview.duration_milliseconds
-        || managed_preview.outcome != preview.outcome
-        || managed_preview.warnings != preview.warnings
+    {
+        return Err(StorageError::PevcapPreviewChanged);
+    }
+    if preview.outcome != PevcapImportOutcome::AlreadyImported
+        && (managed_preview.outcome != preview.outcome
+            || managed_preview.warnings != preview.warnings)
     {
         return Err(StorageError::PevcapPreviewChanged);
     }
