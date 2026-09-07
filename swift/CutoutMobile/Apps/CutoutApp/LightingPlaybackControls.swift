@@ -1,3 +1,4 @@
+import Foundation
 import CutoutMobile
 import CutoutMobileFFI
 import SwiftUI
@@ -751,6 +752,12 @@ private struct WeekdayMaskPicker: View {
     let identifier: String
     private let labels = ["M", "T", "W", "T", "F", "S", "S"]
 
+    private var weekdayNames: [String] {
+        let symbols = Calendar.current.weekdaySymbols
+        guard symbols.count == 7 else { return labels.map { "weekday \($0)" } }
+        return Array(symbols.dropFirst()) + [symbols[0]]
+    }
+
     var body: some View {
         HStack(spacing: 6) {
             ForEach(0..<labels.count, id: \.self) { index in
@@ -768,7 +775,7 @@ private struct WeekdayMaskPicker: View {
                         )
                 }
                 .buttonStyle(.plain)
-                .accessibilityLabel("weekday \(index + 1)")
+                .accessibilityLabel(weekdayNames[index])
                 .accessibilityValue(days & bit == 0 ? "off" : "on")
                 .accessibilityIdentifier("lighting.schedule.\(identifier).day.\(index + 1)")
             }
