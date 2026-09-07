@@ -929,14 +929,17 @@ impl RideMapRecorder {
             (Some(RideLifecycleState::Active), RideLifecycleState::Paused) => {
                 self.paused_at_milliseconds = Some(at_milliseconds);
             }
-            (Some(RideLifecycleState::Paused), RideLifecycleState::Active) => {
-                if let Some(paused_at) = self.paused_at_milliseconds.take() {
-                    self.paused_duration_milliseconds = self
-                        .paused_duration_milliseconds
-                        .saturating_add(RideDurationMilliseconds::new(
-                            at_milliseconds.saturating_sub(paused_at),
-                        ));
-                }
+            (
+                Some(RideLifecycleState::Paused | RideLifecycleState::Interrupted),
+                RideLifecycleState::Active,
+            ) => {
+                let excluded_duration = self.paused_at_milliseconds.take().map_or_else(
+                    || at_milliseconds.saturating_sub(self.last_monotonic_milliseconds),
+                    |paused_at| at_milliseconds.saturating_sub(paused_at),
+                );
+                self.paused_duration_milliseconds = self
+                    .paused_duration_milliseconds
+                    .saturating_add(RideDurationMilliseconds::new(excluded_duration));
             }
             (
                 Some(RideLifecycleState::Active | RideLifecycleState::Paused),
@@ -947,8 +950,10 @@ impl RideMapRecorder {
             }
             _ => {}
         }
-        if self.state == Some(RideLifecycleState::Paused)
-            && state == RideLifecycleState::Active
+        if matches!(
+            self.state,
+            Some(RideLifecycleState::Paused | RideLifecycleState::Interrupted)
+        ) && state == RideLifecycleState::Active
             && !self.segment_started
         {
             self.segment_id = self.segment_id.next();
@@ -1259,6 +1264,29 @@ mod tests {
         assert_eq!(
             recorder.points()[1].segment_start_reason(),
             RideSegmentStartReason::Resume
+        );
+    }
+
+    #[test]
+    fn interrupted_resume_excludes_the_interruption_gap_and_starts_a_segment() {
+        let mut recorder = RideMapRecorder::new();
+        recorder.start(monotonic(1_000), None).expect("starts");
+        assert!(recorder.record_sample(sample(2_000, 40.0)));
+        recorder.apply_transition_at(RideLifecycleState::Interrupted, monotonic(3_000));
+        recorder.apply_transition_at(RideLifecycleState::Active, monotonic(8_000));
+
+        assert_eq!(
+            recorder.duration_milliseconds_at(monotonic(9_000)).as_u64(),
+            3_000
+        );
+        assert_eq!(recorder.current_segment_id().value(), 1);
+        assert!(recorder.record_sample(sample(9_001, 40.000_001)));
+        assert_eq!(
+            recorder
+                .points()
+                .last()
+                .map(|point| point.segment_start_reason()),
+            Some(RideSegmentStartReason::Resume)
         );
     }
 

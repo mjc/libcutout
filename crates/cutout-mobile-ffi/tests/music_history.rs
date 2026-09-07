@@ -65,6 +65,20 @@ fn snapshot(observed_at_ms: u64) -> MobileMusicSnapshotDto {
     }
 }
 
+fn raw_event(monotonic_at_ms: u64) -> MobileMusicRideEventDto {
+    MobileMusicRideEventDto {
+        provider: MobileMusicProviderDto::Spotify,
+        item_identifier: Some("track".into()),
+        title: Some("Title".into()),
+        artist: Some("Artist".into()),
+        kind: MobileMusicRideEventKindDto::Play,
+        observed_at_ms: Some(monotonic_at_ms),
+        monotonic_at_ms,
+        wall_clock_at_ms: 1_700_000_000_000 + monotonic_at_ms,
+        clock_uncertainty_ms: 5,
+    }
+}
+
 fn record(
     core: &MobileRideMapCore,
     observed: u64,
@@ -254,6 +268,16 @@ fn stale_core_cannot_write_after_durable_ride_stop() {
 }
 
 #[test]
+fn pre_ride_observation_is_rejected_even_when_event_is_delayed() {
+    let fixture = setup();
+    assert_eq!(
+        record(&fixture.core, 500, 2_000, MobileMusicRideEventKindDto::Skip).unwrap(),
+        MobileMusicTimelineOutcomeDto::OutOfOrder
+    );
+    assert!(fixture.core.current_music_events().unwrap().is_empty());
+}
+
+#[test]
 fn malformed_duplicate_cannot_poison_observation_watermark() {
     let fixture = setup();
     record(
@@ -294,7 +318,10 @@ fn corrupt_optional_music_does_not_disable_ride_recovery() {
     ));
     let database = open_ride_database(path.to_string_lossy().into_owned()).unwrap();
     let core = MobileRideMapCore::with_database(database.clone());
-    core.start_gps_only(1_000, None).unwrap();
+    let started = core.start_gps_only(1_000, None).unwrap();
+    let ride_id = MobileRideIdDto {
+        value: started.ride_id.clone(),
+    };
     core.set_music_history_policy(MobileMusicHistoryPolicyDto::HumanReadable)
         .unwrap();
     core.record_music_event(
@@ -325,6 +352,19 @@ fn corrupt_optional_music_does_not_disable_ride_recovery() {
         restored.current_music_history().unwrap().status,
         MobileMusicHistoryStatusDto::Unavailable
     );
+    reopened.delete_music_history(ride_id.clone()).unwrap();
+    assert_eq!(
+        restored.current_music_history().unwrap().status,
+        MobileMusicHistoryStatusDto::Deleted
+    );
+    restored.resume_at(5_000).unwrap();
+    restored
+        .set_music_history_policy(MobileMusicHistoryPolicyDto::HumanReadable)
+        .unwrap();
+    assert_eq!(
+        record(&restored, 6_000, 6_000, MobileMusicRideEventKindDto::Play,).unwrap(),
+        MobileMusicTimelineOutcomeDto::Recorded
+    );
     reopened.shutdown().unwrap();
     std::fs::remove_file(path).unwrap();
     drop(guard);
@@ -351,6 +391,53 @@ fn stale_core_cannot_change_policy_after_durable_ride_stop() {
     assert_eq!(
         fixture.db.music_events(fixture.id.clone()).unwrap().len(),
         1
+    );
+}
+
+#[test]
+fn exported_music_writer_rejects_stopped_rides() {
+    let fixture = setup();
+    fixture.core.stop_at(3_000).unwrap();
+    assert_eq!(
+        fixture.db.save_music_event(
+            fixture.id.clone(),
+            MobileMusicHistoryPolicyDto::HumanReadable,
+            0,
+            raw_event(3_000),
+        ),
+        Err(MobileRideDatabaseError::InvalidRideState)
+    );
+    assert!(
+        fixture
+            .db
+            .music_events(fixture.id.clone())
+            .unwrap()
+            .is_empty()
+    );
+}
+
+#[test]
+fn exported_music_writer_does_not_opt_in_missing_policy() {
+    let fixture = setup_policy(None);
+    fixture
+        .db
+        .save_music_event(
+            fixture.id.clone(),
+            MobileMusicHistoryPolicyDto::HumanReadable,
+            0,
+            raw_event(2_000),
+        )
+        .unwrap();
+    assert_eq!(
+        fixture.db.music_history(fixture.id.clone()).unwrap().status,
+        MobileMusicHistoryStatusDto::Missing
+    );
+    assert!(
+        fixture
+            .db
+            .music_events(fixture.id.clone())
+            .unwrap()
+            .is_empty()
     );
 }
 

@@ -1127,6 +1127,61 @@ fn lifecycle_timing_is_persisted_across_pause_and_reopen() {
 }
 
 #[test]
+fn interrupted_ride_can_resume_without_counting_downtime() {
+    let _guard = test_guard();
+    let path = std::env::temp_dir().join(format!(
+        "libcutout-persistence-interrupted-resume-{}.sqlite",
+        uuid::Uuid::new_v4()
+    ));
+    let database = RideDatabase::open(&path).unwrap();
+    let ride = database
+        .create_ride_with_monotonic_start(RideSource::Live, 1_700_000_000_000, Some(1_000))
+        .unwrap();
+    database
+        .transition_at(ride, RideEvent::Start, 1_000)
+        .unwrap();
+    database
+        .transition_at(ride, RideEvent::Interrupt, 3_000)
+        .unwrap();
+    assert_eq!(
+        database
+            .find_ride(ride)
+            .unwrap()
+            .unwrap()
+            .duration_milliseconds(),
+        2_000
+    );
+    database
+        .transition_at(ride, RideEvent::Resume, 8_000)
+        .unwrap();
+    let resumed = database.find_ride(ride).unwrap().unwrap();
+    assert_eq!(resumed.state(), RideLifecycleState::Active);
+    assert_eq!(resumed.duration_milliseconds(), 2_000);
+    database
+        .append_location(
+            ride,
+            LocationSample::new(
+                Coordinate::from_degrees(40.0, -105.0).unwrap(),
+                9_000,
+                1_700_000_009_000,
+                None,
+                LocationSource::Live,
+            ),
+        )
+        .unwrap();
+    assert_eq!(
+        database
+            .find_ride(ride)
+            .unwrap()
+            .unwrap()
+            .duration_milliseconds(),
+        3_000
+    );
+    database.shutdown().unwrap();
+    let _ = std::fs::remove_file(path);
+}
+
+#[test]
 fn ride_history_separates_wall_clock_order_from_monotonic_duration() {
     let _guard = test_guard();
     let path = std::env::temp_dir().join(format!(
@@ -3679,6 +3734,44 @@ fn music_history_policy_downgrade_redacts_existing_display_metadata() {
         )
         .expect_err("a stale readable policy must not override opaque storage");
     assert!(matches!(conflict, StorageError::MusicPolicyConflict));
+    database.shutdown().unwrap();
+    let _ = std::fs::remove_file(path);
+}
+
+#[test]
+fn music_history_allows_post_ride_redaction_without_reopening_writes() {
+    let _guard = test_guard();
+    let path = music_test_path();
+    let database = RideDatabase::open(&path).unwrap();
+    let ride = database
+        .create_started_live_ride(1_700_000_000_000, 100, None)
+        .unwrap();
+    let event = MusicRideEvent::new(
+        MusicProvider::Spotify,
+        Some("spotify:local:Private+Artist:Private+Album:Private+Title:180".to_owned()),
+        Some("Private title".to_owned()),
+        Some("Private artist".to_owned()),
+        MusicRideEventKind::Play,
+        MusicEventTiming {
+            observed_at: None,
+            monotonic_at: MonotonicTimestamp::new(110),
+            wall_clock_at: WallClockUnixTimestamp::new(1_700_000_000_110),
+            clock_uncertainty_milliseconds: 5,
+        },
+    )
+    .unwrap();
+    database
+        .save_music_event(ride, MusicHistoryPolicy::HumanReadable, 0, event)
+        .unwrap();
+    database.transition(ride, RideEvent::Stop).unwrap();
+    database
+        .save_music_history_policy(ride, MusicHistoryPolicy::OpaqueItem)
+        .unwrap();
+    let stored = database.music_events(ride).unwrap();
+    assert_eq!(stored.len(), 1);
+    assert_eq!(stored[0].item_identifier(), None);
+    assert_eq!(stored[0].title(), None);
+    assert_eq!(stored[0].artist(), None);
     database.shutdown().unwrap();
     let _ = std::fs::remove_file(path);
 }

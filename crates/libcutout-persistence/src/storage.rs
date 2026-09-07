@@ -4908,10 +4908,15 @@ fn music_observation_out_of_order(
         .map(|at| music_sqlite_integer(at.as_milliseconds(), "music observation timestamp"))
         .transpose()?;
     let last_observed = music_last_observed_at(connection, ride_id)?;
+    let before_ride_start = match (started_at, observed) {
+        (Some(start), Some(observed)) => observed < i64::try_from(start).unwrap_or(i64::MAX),
+        (Some(start), None) => event.monotonic_at().as_milliseconds() < start,
+        _ => false,
+    };
     Ok(observed
         .zip(last_observed)
         .is_some_and(|(at, last)| at < last)
-        || started_at.is_some_and(|start| event.monotonic_at().as_milliseconds() < start))
+        || before_ride_start)
 }
 
 fn update_music_observation(
@@ -4997,10 +5002,19 @@ fn save_music_history_policy(
 ) -> Result<(), StorageError> {
     let transaction = connection.transaction()?;
     let lifecycle = load_ride_write_state(&transaction, ride_id)?.lifecycle();
-    if !matches!(
+    let live_lifecycle = matches!(
         lifecycle,
         RideLifecycleState::Active | RideLifecycleState::Paused
-    ) {
+    );
+    let historical_redaction = policy == MusicHistoryPolicy::OpaqueItem
+        && matches!(
+            lifecycle,
+            RideLifecycleState::Stopped
+                | RideLifecycleState::Interrupted
+                | RideLifecycleState::Saved
+                | RideLifecycleState::Discarded
+        );
+    if !live_lifecycle && !historical_redaction {
         return Err(StorageError::InvalidRideState(lifecycle));
     }
     apply_music_history_policy(&transaction, ride_id, policy)?;
@@ -5027,7 +5041,13 @@ fn apply_music_history_policy(
         )?;
     } else if policy == MusicHistoryPolicy::OpaqueItem {
         transaction.execute(
-            "UPDATE ride_music_event SET title = NULL, artist = NULL WHERE ride_id = ?1",
+            "UPDATE ride_music_event
+             SET item_identifier = CASE
+                     WHEN provider = 'spotify' AND item_identifier LIKE 'spotify:local:%'
+                     THEN NULL ELSE item_identifier END,
+                 title = NULL,
+                 artist = NULL
+             WHERE ride_id = ?1",
             [ride_id.uuid().to_string()],
         )?;
     }
@@ -5042,6 +5062,13 @@ fn save_music_event(
     event: &MusicRideEvent,
 ) -> Result<(), StorageError> {
     let transaction = connection.transaction()?;
+    let lifecycle = load_ride_write_state(&transaction, ride_id)?.lifecycle();
+    if !matches!(
+        lifecycle,
+        RideLifecycleState::Active | RideLifecycleState::Paused
+    ) {
+        return Err(StorageError::InvalidRideState(lifecycle));
+    }
     insert_music_event(&transaction, ride_id, policy, sequence, event)?;
     transaction.commit()?;
     Ok(())

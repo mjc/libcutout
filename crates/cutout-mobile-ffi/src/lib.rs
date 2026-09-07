@@ -5099,6 +5099,18 @@ impl RideDatabaseHandle {
     ) -> Result<(), MobileRideDatabaseError> {
         let ride_id = parse_mobile_ride_id(&ride_id)?;
         let event = core_music_event(event)?;
+        let history = self
+            .inner
+            .music_history(ride_id)
+            .map_err(map_ride_database_error)?;
+        if matches!(
+            history.status,
+            persistence::MusicHistoryStatus::Missing
+                | persistence::MusicHistoryStatus::Disabled
+                | persistence::MusicHistoryStatus::Deleted
+        ) {
+            return Ok(());
+        }
         self.inner
             .save_music_event(ride_id, policy.into(), sequence, event)
             .map_err(map_ride_database_error)
@@ -6751,11 +6763,12 @@ impl MobileRideMapCore {
         self.transition_at(MobileRideEventDto::Pause, at_ms)
     }
 
-    /// Resumes the paused ride.
+    /// Resumes the paused or interrupted ride.
     ///
     /// # Errors
     ///
-    /// Returns an error when no paused ride exists or durable storage rejects the transition.
+    /// Returns an error when no paused or interrupted ride exists or durable storage rejects the
+    /// transition.
     pub fn resume(
         &self,
         at_ms: u64,
@@ -6767,7 +6780,7 @@ impl MobileRideMapCore {
     ///
     /// # Errors
     ///
-    /// Returns an error when no paused ride exists or the transition is invalid.
+    /// Returns an error when no paused or interrupted ride exists or the transition is invalid.
     pub fn resume_at(
         &self,
         at_ms: u64,
@@ -6848,8 +6861,7 @@ impl MobileRideMapCore {
         &self,
         policy: MobileMusicHistoryPolicyDto,
     ) -> Result<(), MobileRideMapCoreErrorDto> {
-        let state = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
-        state.check_music_restore()?;
+        let mut state = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
         let Some(ride_id) = state.active_ride_id.clone() else {
             return Err(MobileRideMapCoreErrorDto::NoActiveRide);
         };
@@ -6860,17 +6872,23 @@ impl MobileRideMapCore {
             return Err(MobileRideMapCoreErrorDto::InvalidTransition);
         }
         let policy = CoreMusicHistoryPolicy::from(policy);
-        let Some(database) = state.database.as_ref() else {
+        let Some(database) = state.database.clone() else {
             return Err(MobileRideMapCoreErrorDto::storage_unavailable());
         };
+        let ride_id = parse_mobile_ride_id(&ride_id).map_err(map_core_error)?;
         database
             .inner
-            .save_music_history_policy(
-                parse_mobile_ride_id(&ride_id).map_err(map_core_error)?,
-                policy,
-            )
+            .save_music_history_policy(ride_id, policy)
             .map_err(map_storage_core_error)?;
-        Ok(())
+        match database.inner.music_history(ride_id) {
+            Ok(_) => {
+                state.music_restore_failed = false;
+                Ok(())
+            }
+            Err(_) => Err(MobileRideMapCoreErrorDto::Storage(
+                "music history restore failed".to_owned(),
+            )),
+        }
     }
 
     /// Records one low-rate provider transition for the active ride.
@@ -6941,19 +6959,24 @@ impl MobileRideMapCore {
     /// Returns authoritative active history, distinguishing unavailable storage from empty history.
     #[must_use]
     pub fn current_music_history(&self) -> Option<MobileMusicHistoryDto> {
-        let state = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
+        let mut state = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
         let ride_id = state.active_ride_id.as_ref()?;
-        Some(
-            state
-                .database
-                .as_ref()
-                .filter(|_| !state.music_restore_failed)
-                .and_then(|database| database.music_history(ride_id.clone()).ok())
-                .unwrap_or(MobileMusicHistoryDto {
-                    status: MobileMusicHistoryStatusDto::Unavailable,
-                    events: Vec::new(),
-                }),
-        )
+        let Some(database) = state.database.as_ref() else {
+            return Some(MobileMusicHistoryDto {
+                status: MobileMusicHistoryStatusDto::Unavailable,
+                events: Vec::new(),
+            });
+        };
+        match database.music_history(ride_id.clone()) {
+            Ok(history) => {
+                state.music_restore_failed = false;
+                Some(history)
+            }
+            Err(_) => Some(MobileMusicHistoryDto {
+                status: MobileMusicHistoryStatusDto::Unavailable,
+                events: Vec::new(),
+            }),
+        }
     }
 
     /// Returns the bounded stored music timeline for one ride.
@@ -16512,9 +16535,8 @@ mod tests {
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
             .music_restore_failed = true;
-        let policy_error = core
-            .set_music_history_policy(MobileMusicHistoryPolicyDto::OpaqueItem)
-            .expect_err("failed restoration is not a user policy");
+        core.set_music_history_policy(MobileMusicHistoryPolicyDto::OpaqueItem)
+            .expect("privacy-reducing policy repairs a failed restore");
         assert_eq!(
             core.record_music_event(
                 test_music_snapshot(),
@@ -16523,11 +16545,11 @@ mod tests {
                 1_700_000_002_000,
                 5
             ),
-            Err(policy_error),
+            Ok(MobileMusicTimelineOutcomeDto::Recorded),
         );
         assert_eq!(
             core.current_music_history().expect("active ride").status,
-            MobileMusicHistoryStatusDto::Unavailable
+            MobileMusicHistoryStatusDto::Redacted
         );
         assert_eq!(
             core.current_snapshot(2_000)

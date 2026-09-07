@@ -88,6 +88,15 @@ mod tests {
     }
 
     #[test]
+    fn interrupted_ride_can_be_resumed() {
+        let state = RideLifecycleState::Draft
+            .apply(RideEvent::Start)
+            .and_then(|state| state.apply(RideEvent::Interrupt))
+            .and_then(|state| state.apply(RideEvent::Resume));
+        assert_eq!(state, Ok(RideLifecycleState::Active));
+    }
+
+    #[test]
     fn location_admission_deduplicates_repeated_samples() {
         let coordinate = Coordinate::from_degrees(40.0, -105.0).unwrap();
         let sample = LocationSample::new(

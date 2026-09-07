@@ -154,11 +154,15 @@ impl RideWriteState {
                 (RideLifecycleState::Active, RideLifecycleState::Paused) => {
                     paused_at_ms = Some(at);
                 }
-                (RideLifecycleState::Paused, RideLifecycleState::Active) => {
-                    if let Some(paused_at) = paused_at_ms.take() {
-                        paused_duration_ms =
-                            paused_duration_ms.saturating_add(at.saturating_sub(paused_at));
-                    }
+                (
+                    RideLifecycleState::Paused | RideLifecycleState::Interrupted,
+                    RideLifecycleState::Active,
+                ) => {
+                    let excluded_duration = paused_at_ms.take().map_or_else(
+                        || at.saturating_sub(self.monotonic_last_event_ms.unwrap_or(at)),
+                        |paused_at| at.saturating_sub(paused_at),
+                    );
+                    paused_duration_ms = paused_duration_ms.saturating_add(excluded_duration);
                 }
                 (
                     RideLifecycleState::Active | RideLifecycleState::Paused,
@@ -452,5 +456,36 @@ mod tests {
 
         assert_eq!(transition.paused_at_milliseconds(), Some(5_000));
         assert_eq!(transition.monotonic_last_event_milliseconds(), Some(5_000));
+    }
+
+    #[test]
+    fn interrupted_resume_excludes_the_interruption_gap() {
+        let state = RideWriteState::from_parts(&RideWriteStateParts {
+            source: RideSource::Live,
+            lifecycle: RideLifecycleState::Interrupted,
+            monotonic_created_at_ms: Some(1_000),
+            monotonic_last_event_ms: Some(3_000),
+            latest_observed_monotonic_ms: None,
+            paused_at_ms: None,
+            paused_duration_ms: 0,
+            completed_duration_ms: 2_000,
+            updated_at_ms: 20,
+        });
+
+        let transition = state
+            .transition_at(RideEvent::Resume, 30, Some(8_000))
+            .unwrap();
+        assert_eq!(transition.lifecycle(), RideLifecycleState::Active);
+        assert_eq!(transition.paused_duration_milliseconds(), 5_000);
+        assert_eq!(
+            active_duration_at(
+                transition.monotonic_created_at_milliseconds(),
+                9_000,
+                false,
+                transition.paused_at_milliseconds(),
+                transition.paused_duration_milliseconds(),
+            ),
+            3_000
+        );
     }
 }

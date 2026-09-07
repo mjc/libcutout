@@ -398,9 +398,14 @@ impl MusicRideEvent {
         let item = snapshot.item();
         let (item_identifier, title, artist) = match policy {
             MusicHistoryPolicy::Disabled => return None,
-            MusicHistoryPolicy::OpaqueItem => {
-                (item.map(|item| item.identifier().clone()), None, None)
-            }
+            MusicHistoryPolicy::OpaqueItem => (
+                item.filter(|item| {
+                    !metadata_bearing_identifier(snapshot.provider(), item.identifier())
+                })
+                .map(|item| item.identifier().clone()),
+                None,
+                None,
+            ),
             MusicHistoryPolicy::HumanReadable => (
                 item.map(|item| item.identifier().clone()),
                 item.and_then(|item| item.title().map(str::to_owned)),
@@ -462,6 +467,11 @@ impl MusicRideEvent {
     /// Returns whether two events describe the same provider transition.
     #[must_use]
     pub fn same_transition_as(&self, other: &Self) -> bool {
+        if matches!(self.kind, MusicRideEventKind::Skip)
+            || matches!(other.kind, MusicRideEventKind::Skip)
+        {
+            return false;
+        }
         self.provider == other.provider
             && self.item_identifier == other.item_identifier
             && self.title == other.title
@@ -469,10 +479,17 @@ impl MusicRideEvent {
             && self.kind == other.kind
     }
 
-    /// Removes human-readable metadata while retaining the opaque item identity.
+    /// Removes human-readable metadata and any provider identifier that embeds it.
     pub fn redact_display_metadata(&mut self) {
         self.title = None;
         self.artist = None;
+        if self
+            .item_identifier
+            .as_ref()
+            .is_some_and(|identifier| metadata_bearing_identifier(self.provider, identifier))
+        {
+            self.item_identifier = None;
+        }
     }
 
     /// Returns the provider.
@@ -676,6 +693,10 @@ fn validate_optional_text(
         .transpose()
 }
 
+fn metadata_bearing_identifier(provider: MusicProvider, identifier: &MusicIdentifier) -> bool {
+    matches!(provider, MusicProvider::Spotify) && identifier.as_str().starts_with("spotify:local:")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -725,6 +746,38 @@ mod tests {
             opaque.item_identifier().map(MusicIdentifier::as_str),
             Some("track-1")
         );
+        assert_eq!(opaque.title(), None);
+        assert_eq!(opaque.artist(), None);
+    }
+
+    #[test]
+    fn opaque_policy_drops_spotify_local_identifier_metadata() {
+        let item = MusicItem::new(
+            "spotify:local:Private+Artist:Private+Album:Private+Title:180",
+            Some("Private title".to_owned()),
+            Some("Private artist".to_owned()),
+        )
+        .expect("valid local item");
+        let snapshot = MusicSnapshot::new(
+            MusicProvider::Spotify,
+            "session",
+            MusicPlaybackState::Playing,
+            Some(item),
+            MusicPlaybackPosition::default(),
+            MonotonicTimestamp::new(10),
+            MusicCapabilities::new(),
+        )
+        .expect("valid music fixture");
+        let opaque = MusicRideEvent::from_snapshot(
+            &snapshot,
+            MusicRideEventKind::Play,
+            MonotonicTimestamp::new(10),
+            WallClockUnixTimestamp::new(100),
+            2,
+            MusicHistoryPolicy::OpaqueItem,
+        )
+        .expect("opaque policy records an event");
+        assert_eq!(opaque.item_identifier(), None);
         assert_eq!(opaque.title(), None);
         assert_eq!(opaque.artist(), None);
     }
@@ -800,6 +853,32 @@ mod tests {
         assert_eq!(timeline.append(first), MusicTimelineOutcome::Recorded);
         assert_eq!(timeline.append(second), MusicTimelineOutcome::Duplicate);
         assert_eq!(timeline.events().len(), 1);
+    }
+
+    #[test]
+    fn timeline_retains_distinct_skip_occurrences_without_metadata() {
+        let first = MusicRideEvent::from_snapshot(
+            &snapshot(None),
+            MusicRideEventKind::Skip,
+            MonotonicTimestamp::new(10),
+            WallClockUnixTimestamp::new(100),
+            2,
+            MusicHistoryPolicy::OpaqueItem,
+        )
+        .expect("valid event");
+        let second = MusicRideEvent::from_snapshot(
+            &snapshot(None),
+            MusicRideEventKind::Skip,
+            MonotonicTimestamp::new(20),
+            WallClockUnixTimestamp::new(110),
+            2,
+            MusicHistoryPolicy::OpaqueItem,
+        )
+        .expect("valid event");
+        let mut timeline = MusicTimeline::new();
+        assert_eq!(timeline.append(first), MusicTimelineOutcome::Recorded);
+        assert_eq!(timeline.append(second), MusicTimelineOutcome::Recorded);
+        assert_eq!(timeline.events().len(), 2);
     }
 
     #[test]
