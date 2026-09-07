@@ -337,17 +337,19 @@ private struct LightingPresetsCard: View {
                         .accessibilityIdentifier("lighting.preset.\(preset.name)")
                     }
                 }
-                HStack {
-                    TextField("Preset name", text: $presetName)
-                        .textFieldStyle(.roundedBorder)
-                        .focused($isPresetNameFocused)
-                        .submitLabel(.done)
-                        .onSubmit { isPresetNameFocused = false }
-                    Button("Save", action: save)
-                        .buttonStyle(.borderedProminent)
-                        .disabled(!model.canSavePreset || presetName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                        .accessibilityIdentifier("lighting.preset.save")
-                }
+            }
+            .contentShape(Rectangle())
+            .onTapGesture { isPresetNameFocused = false }
+            HStack {
+                TextField("Preset name", text: $presetName)
+                    .textFieldStyle(.roundedBorder)
+                    .focused($isPresetNameFocused)
+                    .submitLabel(.done)
+                    .onSubmit { isPresetNameFocused = false }
+                Button("Save", action: save)
+                    .buttonStyle(.borderedProminent)
+                    .disabled(!model.canSavePreset || presetName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    .accessibilityIdentifier("lighting.preset.save")
             }
         }
     }
