@@ -508,6 +508,27 @@ impl MusicTimeline {
         Self { events: Vec::new() }
     }
 
+    /// Restores the exact durable event sequence without semantic coalescing.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`MusicTimelineRestoreError`] when stored rows exceed capacity
+    /// or move backwards in monotonic time.
+    pub fn from_stored_events(
+        events: Vec<MusicRideEvent>,
+    ) -> Result<Self, MusicTimelineRestoreError> {
+        if events.len() > MAX_MUSIC_TIMELINE_EVENTS {
+            return Err(MusicTimelineRestoreError::Full);
+        }
+        if events
+            .windows(2)
+            .any(|pair| pair[1].monotonic_at() < pair[0].monotonic_at())
+        {
+            return Err(MusicTimelineRestoreError::OutOfOrder);
+        }
+        Ok(Self { events })
+    }
+
     /// Appends one event while enforcing order, deduplication, and capacity.
     pub fn append(&mut self, event: MusicRideEvent) -> MusicTimelineOutcome {
         if let Some(previous) = self.events.last() {
@@ -537,6 +558,17 @@ impl MusicTimeline {
             .iter_mut()
             .for_each(MusicRideEvent::redact_display_metadata);
     }
+}
+
+/// Failure while rebuilding a timeline from durable rows.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Error)]
+pub enum MusicTimelineRestoreError {
+    /// Stored rows exceed the bounded timeline capacity.
+    #[error("stored music timeline is full")]
+    Full,
+    /// Stored rows are not ordered by monotonic time.
+    #[error("stored music timeline is out of order")]
+    OutOfOrder,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -715,5 +747,21 @@ mod tests {
         assert_eq!(timeline.append(first), MusicTimelineOutcome::Recorded);
         assert_eq!(timeline.append(second), MusicTimelineOutcome::Duplicate);
         assert_eq!(timeline.events().len(), 1);
+    }
+
+    #[test]
+    fn timeline_restore_preserves_duplicate_durable_rows() {
+        let event = MusicRideEvent::from_snapshot(
+            &snapshot(None),
+            MusicRideEventKind::Play,
+            MonotonicTimestamp::new(10),
+            WallClockUnixTimestamp::new(100),
+            2,
+            MusicHistoryPolicy::OpaqueItem,
+        )
+        .expect("valid event");
+        let restored = MusicTimeline::from_stored_events(vec![event.clone(), event])
+            .expect("durable sequence is authoritative");
+        assert_eq!(restored.events().len(), 2);
     }
 }

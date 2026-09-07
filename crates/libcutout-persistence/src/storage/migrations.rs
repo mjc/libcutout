@@ -813,9 +813,9 @@ fn migrate_v14_to_current(connection: &mut Connection) -> Result<(), StorageErro
            AND ride_segments.segment_id = counts.segment_id;
          ",
     )?;
-    transaction.execute_batch(&current_schema_pragmas())?;
+    transaction.execute_batch("PRAGMA user_version = 15;")?;
     transaction.commit()?;
-    Ok(())
+    migrate_v15_to_current(connection)
 }
 
 fn migrate_v15_to_current(connection: &mut Connection) -> Result<(), StorageError> {

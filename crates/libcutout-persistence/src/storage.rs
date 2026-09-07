@@ -1,6 +1,6 @@
 use cutout_core::{
     MusicEventTiming, MusicHistoryPolicy, MusicProvider, MusicRideEvent, MusicRideEventKind,
-    PevcapEncoding, PevcapEvent, PevcapPhoneLocation, PevcapReader,
+    MusicValidationError, PevcapEncoding, PevcapEvent, PevcapPhoneLocation, PevcapReader,
 };
 use cutout_ride_maps::{
     AverageSpeedMillimetresPerSecond, Coordinate, LocationAdmission, LocationSample,
@@ -1286,6 +1286,9 @@ pub enum StorageError {
         /// Out-of-order sequence number.
         sequence: i64,
     },
+    /// A music event attempted to use a different policy than the stored ride policy.
+    #[error("music history policy conflicts with stored policy")]
+    MusicPolicyConflict,
     /// The requested lifecycle transition is invalid.
     #[error("invalid ride lifecycle transition: {0}")]
     Transition(#[from] TransitionError),
@@ -4827,7 +4830,7 @@ fn save_music_event(
 ) -> Result<(), StorageError> {
     let transaction = connection.transaction()?;
     ensure_ride_exists(&transaction, ride_id)?;
-    apply_music_history_policy(&transaction, ride_id, policy)?;
+    let policy = music_event_policy(&transaction, ride_id, policy)?;
     if policy == MusicHistoryPolicy::Disabled {
         transaction.commit()?;
         return Ok(());
@@ -4914,6 +4917,30 @@ fn save_music_event(
     )?;
     transaction.commit()?;
     Ok(())
+}
+
+fn music_event_policy(
+    transaction: &rusqlite::Transaction<'_>,
+    ride_id: RideId,
+    requested: MusicHistoryPolicy,
+) -> Result<MusicHistoryPolicy, StorageError> {
+    let stored = transaction
+        .query_row(
+            "SELECT policy FROM ride_music_history WHERE ride_id = ?1",
+            [ride_id.uuid().to_string()],
+            |row| row.get::<_, String>(0),
+        )
+        .optional()?
+        .map(|value| parse_policy(&value))
+        .transpose()?;
+    match stored {
+        Some(policy) if policy != requested => Err(StorageError::MusicPolicyConflict),
+        Some(policy) => Ok(policy),
+        None => {
+            apply_music_history_policy(transaction, ride_id, requested)?;
+            Ok(requested)
+        }
+    }
 }
 
 fn delete_music_history(connection: &mut Connection, ride_id: RideId) -> Result<(), StorageError> {
@@ -5067,7 +5094,19 @@ fn decode_music_event(row: &rusqlite::Row<'_>) -> Result<MusicRideEvent, rusqlit
             clock_uncertainty_milliseconds: clock_uncertainty_ms,
         },
     )
-    .map_err(|error| music_conversion_error(1, error))
+    .map_err(|error| {
+        let column = match error {
+            MusicValidationError::Blank(field) | MusicValidationError::TooLong(field) => {
+                match field {
+                    "title" => 2,
+                    "artist" => 3,
+                    _ => 1,
+                }
+            }
+            MusicValidationError::PositionAfterDuration => 5,
+        };
+        music_conversion_error(column, error)
+    })
 }
 
 fn remember_selected_device(

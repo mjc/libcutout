@@ -4281,9 +4281,8 @@ fn map_ride_database_error(error: persistence::StorageError) -> MobileRideDataba
         }
         persistence::StorageError::MusicTimelineFull
         | persistence::StorageError::MusicSequenceConflict { .. }
-        | persistence::StorageError::MusicEventOutOfOrder { .. } => {
-            MobileRideDatabaseError::StorageFailure
-        }
+        | persistence::StorageError::MusicEventOutOfOrder { .. }
+        | persistence::StorageError::MusicPolicyConflict => MobileRideDatabaseError::StorageFailure,
     }
 }
 
@@ -5973,6 +5972,7 @@ struct MobileRideMapCoreInner {
     admission_recorder: ride_maps::RideMapRecorder,
     music_history_policy: CoreMusicHistoryPolicy,
     music_timeline: cutout_core::MusicTimeline,
+    music_last_observed_at: Option<MonotonicTimestamp>,
     pending_location_writes: VecDeque<PendingMapLocationWrite>,
     initialization_error: Option<MobileRideMapCoreErrorDto>,
 }
@@ -6123,6 +6123,7 @@ impl MobileRideMapCoreInner {
             admission_recorder: ride_maps::RideMapRecorder::new(),
             music_history_policy: CoreMusicHistoryPolicy::Disabled,
             music_timeline: cutout_core::MusicTimeline::new(),
+            music_last_observed_at: None,
             pending_location_writes: VecDeque::new(),
             initialization_error: None,
         };
@@ -6253,13 +6254,17 @@ impl MobileRideMapCoreInner {
             .inner
             .music_history_policy(ride_id)
             .map_err(map_storage_core_error)?;
-        for event in database
+        let events = database
             .inner
             .music_events(ride_id)
-            .map_err(map_storage_core_error)?
-        {
-            let _ = self.music_timeline.append(event);
-        }
+            .map_err(map_storage_core_error)?;
+        self.music_timeline = cutout_core::MusicTimeline::from_stored_events(events)
+            .map_err(|error| MobileRideMapCoreErrorDto::Storage(error.to_string()))?;
+        self.music_last_observed_at = self
+            .music_timeline
+            .events()
+            .last()
+            .map(|event| event.monotonic_at());
         Ok(())
     }
 
@@ -6409,6 +6414,7 @@ impl MobileRideMapCoreInner {
         self.settled_ride_id = None;
         self.music_history_policy = CoreMusicHistoryPolicy::Disabled;
         self.music_timeline = cutout_core::MusicTimeline::new();
+        self.music_last_observed_at = None;
         self.pending_location_writes.clear();
         Ok(self.snapshot(MobileRideLifecycleStateDto::Active))
     }
@@ -6769,6 +6775,33 @@ impl MobileRideMapCore {
         let Some(ride_id) = state.active_ride_id.clone() else {
             return Err(MobileRideMapCoreErrorDto::NoActiveRide);
         };
+        if !matches!(
+            state.recorder.state(),
+            Some(ride_maps::RideLifecycleState::Active | ride_maps::RideLifecycleState::Paused)
+        ) {
+            return Err(MobileRideMapCoreErrorDto::InvalidTransition);
+        }
+        let durable_policy = if state.music_history_policy == CoreMusicHistoryPolicy::Disabled {
+            CoreMusicHistoryPolicy::Disabled
+        } else {
+            let ride_id = parse_mobile_ride_id(&ride_id).map_err(map_core_error)?;
+            let Some(database) = state.database.as_ref() else {
+                return Err(MobileRideMapCoreErrorDto::storage_unavailable());
+            };
+            database
+                .inner
+                .music_history_policy(ride_id)
+                .map_err(map_storage_core_error)?
+        };
+        if durable_policy != state.music_history_policy {
+            state.music_history_policy = durable_policy;
+            if durable_policy == CoreMusicHistoryPolicy::Disabled {
+                state.music_timeline = cutout_core::MusicTimeline::new();
+                state.music_last_observed_at = None;
+            } else if durable_policy == CoreMusicHistoryPolicy::OpaqueItem {
+                state.music_timeline.redact_display_metadata();
+            }
+        }
         let Some(event) = CoreMusicRideEvent::from_snapshot(
             &snapshot,
             kind.into(),
@@ -6779,6 +6812,13 @@ impl MobileRideMapCore {
         ) else {
             return Ok(MobileMusicTimelineOutcomeDto::Disabled);
         };
+        if state
+            .music_last_observed_at
+            .is_some_and(|previous| snapshot.observed_at() < previous)
+            || snapshot.observed_at() > MonotonicTimestamp::from_milliseconds(monotonic_at_ms)
+        {
+            return Ok(MobileMusicTimelineOutcomeDto::OutOfOrder);
+        }
         let sequence = state.music_timeline.events().len();
         let previous = state.music_timeline.clone();
         let outcome = state.music_timeline.append(event.clone());
@@ -6798,6 +6838,7 @@ impl MobileRideMapCore {
                 return Err(map_storage_core_error(error));
             }
         }
+        state.music_last_observed_at = Some(snapshot.observed_at());
         Ok(outcome.into())
     }
 
@@ -16396,7 +16437,7 @@ mod tests {
         assert_eq!(
             state
                 .record_music_event(
-                    snapshot,
+                    snapshot.clone(),
                     MobileMusicRideEventKindDto::Play,
                     2_000,
                     1_700_000_000_000,
@@ -16408,6 +16449,20 @@ mod tests {
         let events = state.current_music_events().expect("active timeline");
         assert_eq!(events.len(), 1);
         assert_eq!(events[0].title.as_deref(), Some("Song"));
+        let mut stale_snapshot = snapshot.clone();
+        stale_snapshot.observed_at_ms = 1_000;
+        assert_eq!(
+            state
+                .record_music_event(
+                    stale_snapshot,
+                    MobileMusicRideEventKindDto::ItemChanged,
+                    3_000,
+                    1_700_000_003_000,
+                    5,
+                )
+                .expect("stale observations are a typed no-op"),
+            MobileMusicTimelineOutcomeDto::OutOfOrder
+        );
         state
             .set_music_history_policy(MobileMusicHistoryPolicyDto::OpaqueItem)
             .expect("policy downgrade persists");
@@ -16415,6 +16470,16 @@ mod tests {
         assert_eq!(events[0].title, None);
         assert_eq!(events[0].artist, None);
         state.stop_at(3_000).expect("ride stops");
+        assert!(matches!(
+            state.record_music_event(
+                snapshot,
+                MobileMusicRideEventKindDto::ItemChanged,
+                3_100,
+                1_700_000_003_100,
+                5,
+            ),
+            Err(MobileRideMapCoreErrorDto::InvalidTransition)
+        ));
         state.save().expect("stopped ride saves");
         state
             .start_gps_only(4_000, None)

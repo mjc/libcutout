@@ -46,6 +46,10 @@ fn test_guard() -> std::sync::MutexGuard<'static, ()> {
         .unwrap_or_else(std::sync::PoisonError::into_inner)
 }
 
+fn music_test_path() -> std::path::PathBuf {
+    std::env::temp_dir().join(format!("libcutout-music-{}.sqlite", uuid::Uuid::new_v4()))
+}
+
 fn pevcap_header() -> PevcapHeader {
     PevcapHeader::new(
         WallClockUnixTimestamp::new(1_700_000_000_000),
@@ -2131,6 +2135,15 @@ fn legacy_schema_versions_migrate_to_the_current_schema() {
             .pragma_query_value(None, "user_version", |row| row.get(0))
             .unwrap();
         assert_eq!(current_version, 16);
+        let music_tables: i64 = connection
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_schema
+                 WHERE type = 'table' AND name IN ('ride_music_history', 'ride_music_event')",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(music_tables, 2);
         drop(connection);
 
         let reopened = RideDatabase::open(&path).unwrap();
@@ -3445,7 +3458,8 @@ fn history_query_preserves_typed_timestamp_and_vehicle_identity() {
 #[test]
 fn music_history_round_trips_and_can_be_deleted_without_deleting_ride() {
     let _guard = test_guard();
-    let database = RideDatabase::open(std::path::Path::new(":memory:")).unwrap();
+    let path = music_test_path();
+    let database = RideDatabase::open(&path).unwrap();
     let ride = database
         .create_started_live_ride(1_700_000_000_000, 100, None)
         .unwrap();
@@ -3460,12 +3474,14 @@ fn music_history_round_trips_and_can_be_deleted_without_deleting_ride() {
     assert!(database.music_events(ride).unwrap().is_empty());
     assert!(database.find_ride(ride).unwrap().is_some());
     database.shutdown().unwrap();
+    let _ = std::fs::remove_file(path);
 }
 
 #[test]
 fn music_history_policy_downgrade_redacts_existing_display_metadata() {
     let _guard = test_guard();
-    let database = RideDatabase::open(std::path::Path::new(":memory:")).unwrap();
+    let path = music_test_path();
+    let database = RideDatabase::open(&path).unwrap();
     let ride = database
         .create_started_live_ride(1_700_000_000_000, 100, None)
         .unwrap();
@@ -3492,13 +3508,36 @@ fn music_history_policy_downgrade_redacts_existing_display_metadata() {
     assert_eq!(stored.len(), 1);
     assert_eq!(stored[0].title(), None);
     assert_eq!(stored[0].artist(), None);
+    let conflict = database
+        .save_music_event(
+            ride,
+            MusicHistoryPolicy::HumanReadable,
+            1,
+            MusicRideEvent::new(
+                MusicProvider::Spotify,
+                Some("track-2".to_owned()),
+                Some("Should not persist".to_owned()),
+                None,
+                MusicRideEventKind::ItemChanged,
+                MusicEventTiming {
+                    monotonic_at: MonotonicTimestamp::new(120),
+                    wall_clock_at: WallClockUnixTimestamp::new(1_700_000_000_120),
+                    clock_uncertainty_milliseconds: 5,
+                },
+            )
+            .unwrap(),
+        )
+        .expect_err("a stale readable policy must not override opaque storage");
+    assert!(matches!(conflict, StorageError::MusicPolicyConflict));
     database.shutdown().unwrap();
+    let _ = std::fs::remove_file(path);
 }
 
 #[test]
 fn music_event_sequence_conflict_is_rejected() {
     let _guard = test_guard();
-    let database = RideDatabase::open(std::path::Path::new(":memory:")).unwrap();
+    let path = music_test_path();
+    let database = RideDatabase::open(&path).unwrap();
     let ride = database
         .create_started_live_ride(1_700_000_000_000, 100, None)
         .unwrap();
@@ -3526,12 +3565,14 @@ fn music_event_sequence_conflict_is_rejected() {
         StorageError::MusicSequenceConflict { sequence: 0 }
     ));
     database.shutdown().unwrap();
+    let _ = std::fs::remove_file(path);
 }
 
 #[test]
 fn music_event_sequence_requires_contiguous_order_and_monotonic_time() {
     let _guard = test_guard();
-    let database = RideDatabase::open(std::path::Path::new(":memory:")).unwrap();
+    let path = music_test_path();
+    let database = RideDatabase::open(&path).unwrap();
     let ride = database
         .create_started_live_ride(1_700_000_000_000, 100, None)
         .unwrap();
@@ -3569,4 +3610,5 @@ fn music_event_sequence_requires_contiguous_order_and_monotonic_time() {
         StorageError::MusicEventOutOfOrder { sequence: 1 }
     ));
     database.shutdown().unwrap();
+    let _ = std::fs::remove_file(path);
 }
