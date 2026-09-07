@@ -272,6 +272,13 @@ struct LightingPlaybackControls: View {
         VStack(alignment: .leading, spacing: 16) {
             if page == .effects {
                 Label("Patterns", systemImage: "sparkles").font(.headline)
+                Picker("Pattern group", selection: $group) {
+                    ForEach(LightingPatternCatalog.groups, id: \.name) { group in
+                        Text(group.name).tag(group.name)
+                    }
+                }
+                .pickerStyle(.menu)
+                .accessibilityIdentifier("lighting.pattern-group")
                 Text("Quick picks")
                     .font(.subheadline.weight(.semibold))
                     .foregroundStyle(PevColors.muted)
@@ -282,13 +289,6 @@ struct LightingPlaybackControls: View {
                     .font(.subheadline.weight(.semibold))
                     .foregroundStyle(PevColors.muted)
                 effectGrid(ids: patternIDs, symbolForID: { _ in "sparkles" })
-                Picker("Pattern group", selection: $group) {
-                    ForEach(LightingPatternCatalog.groups, id: \.name) { group in
-                        Text(group.name).tag(group.name)
-                    }
-                }
-                .pickerStyle(.menu)
-                .accessibilityIdentifier("lighting.pattern-group")
                 Picker("Pattern", selection: $pattern) {
                     ForEach(patternIDs, id: \.self) { id in
                         Text("\(id) · \(LightingPatternCatalog.name(for: id))").tag(id)
