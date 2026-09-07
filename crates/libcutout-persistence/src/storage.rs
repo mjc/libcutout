@@ -4488,12 +4488,12 @@ fn validate_existing_pevcap_confirmation(
         || managed_preview.record_count != preview.record_count
         || managed_preview.location_count != preview.location_count
         || managed_preview.duration_milliseconds != preview.duration_milliseconds
+        || managed_preview.warnings != preview.warnings
     {
         return Err(StorageError::PevcapPreviewChanged);
     }
     if preview.outcome != PevcapImportOutcome::AlreadyImported
-        && (managed_preview.outcome != preview.outcome
-            || managed_preview.warnings != preview.warnings)
+        && managed_preview.outcome != preview.outcome
     {
         return Err(StorageError::PevcapPreviewChanged);
     }

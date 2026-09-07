@@ -1745,6 +1745,7 @@ fn database_preflights_confirms_and_deduplicates_managed_pevcap_artifacts() {
         duplicate_preview.outcome(),
         PevcapImportOutcome::AlreadyImported
     );
+    assert_duplicate_preview_variants_rejected(&database, &duplicate_preview);
     std::fs::write(&artifact_path, b"changed").unwrap();
     assert!(matches!(
         database.confirm_pevcap_import(&duplicate_preview, 1_700_000_000_001),
@@ -2277,6 +2278,19 @@ fn capture_only_pevcap_import_does_not_publish_an_empty_ride() {
         duplicate_preview.warnings(),
         &[PevcapImportWarning::NoRouteLocations]
     );
+    let without_warnings = pevcap_preview_variant(
+        &duplicate_preview,
+        duplicate_preview.artifact_size(),
+        duplicate_preview.record_count(),
+        duplicate_preview.location_count(),
+        duplicate_preview.duration_milliseconds(),
+        duplicate_preview.outcome(),
+        vec![],
+    );
+    assert!(matches!(
+        database.confirm_pevcap_import(&without_warnings, 1_700_000_000_001),
+        Err(StorageError::PevcapPreviewChanged)
+    ));
     let duplicate_receipt = database
         .confirm_pevcap_import(&duplicate_preview, 1_700_000_000_001)
         .unwrap();
