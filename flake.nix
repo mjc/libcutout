@@ -130,6 +130,9 @@
         in
         {
           default = (if pkgs.stdenv.isDarwin then pkgs.mkShellNoCC else pkgs.mkShell) {
+            nativeBuildInputs = pkgs.lib.optionals pkgs.stdenv.isLinux [
+              pkgs.rustPlatform.bindgenHook
+            ];
             packages = [
               devRust
               cutoutCargoFuzz
@@ -143,6 +146,9 @@
             ]
             ++ pkgs.lib.optionals pkgs.stdenv.isDarwin [
               pkgs.cargo-swift
+            ]
+            ++ pkgs.lib.optionals pkgs.stdenv.isLinux [
+              pkgs.valgrind
             ]
             ++ [
               pkgs.nixfmt
