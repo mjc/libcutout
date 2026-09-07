@@ -5103,23 +5103,22 @@ fn apply_music_history_policy(
             "DELETE FROM ride_music_event WHERE ride_id = ?1",
             [ride_id.uuid().to_string()],
         )?;
-    } else if matches!(
-        existing_policy
-            .as_ref()
-            .and_then(|(value, deleted)| { (!deleted).then(|| parse_policy(value).ok()) }),
-        Some(Some(MusicHistoryPolicy::OpaqueItem))
-    ) && policy == MusicHistoryPolicy::HumanReadable
-    {
-        // Opaque history must never become readable merely because a user opts in later. Drop
-        // all fields that were not validly retained under the prior policy.
-        transaction.execute(
-            "UPDATE ride_music_event SET item_identifier = CASE
-                 WHEN provider = 'spotify' AND item_identifier LIKE 'spotify:local:%' THEN NULL
-                 ELSE item_identifier END,
-                 title = NULL, artist = NULL
-             WHERE ride_id = ?1",
-            [ride_id.uuid().to_string()],
-        )?;
+    } else if let Some((value, deleted)) = existing_policy.as_ref() {
+        if !deleted
+            && parse_policy(value)? == MusicHistoryPolicy::OpaqueItem
+            && policy == MusicHistoryPolicy::HumanReadable
+        {
+            // Opaque history must never become readable merely because a user opts in later. Drop
+            // all fields that were not validly retained under the prior policy.
+            transaction.execute(
+                "UPDATE ride_music_event SET item_identifier = CASE
+                     WHEN provider = 'spotify' AND item_identifier LIKE 'spotify:local:%' THEN NULL
+                     ELSE item_identifier END,
+                     title = NULL, artist = NULL
+                 WHERE ride_id = ?1",
+                [ride_id.uuid().to_string()],
+            )?;
+        }
     }
     transaction.execute(
         "INSERT INTO ride_music_history (ride_id, policy)
