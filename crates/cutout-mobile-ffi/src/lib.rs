@@ -34,20 +34,15 @@ use cutout_core::{
     FaultHistoryAvailabilityDto, FaultHistoryEntry, FaultHistoryEntryDto, FaultHistoryReadback,
     FaultHistoryReadbackDto, FootpadContactStateDto, FootpadTelemetryDto, GattChannel,
     GattFingerprint, GattRoles, IgnoredNotificationEvidenceDto, IgnoredNotificationReasonDto,
-    Measured, MonotonicMillisDto, MonotonicTimestamp, MusicCapabilities as CoreMusicCapabilities,
-    MusicCommand as CoreMusicCommand, MusicHistoryPolicy as CoreMusicHistoryPolicy,
-    MusicItem as CoreMusicItem, MusicPlaybackPosition as CoreMusicPlaybackPosition,
-    MusicPlaybackState as CoreMusicPlaybackState, MusicProvider as CoreMusicProvider,
-    MusicRideEvent as CoreMusicRideEvent, MusicRideEventKind as CoreMusicRideEventKind,
-    MusicSnapshot as CoreMusicSnapshot, MusicTimelineOutcome as CoreMusicTimelineOutcome,
-    NotificationByteLenDto, NotificationEvidenceDto, NotificationIngestOutcomeDto,
-    ParserDiagnosticCountDto, ParserDiagnosticsDto, ParserDroppedBytesDto, ParserErrorDto,
-    ParserFrameLenDto, ParserGapEvidenceDto, PayloadBodyLenDto,
-    PevcapEncoding as CorePevcapEncoding, PevcapHeader, PevcapLocationSample, PevcapPhoneLocation,
-    PevcapRecord, PevcapResolvedIdentity, PhaseCurrentReadingDto, PowerReadingDto, ProtocolFamily,
-    ProtocolFamilyDto, ProtocolTag, RIDE_SESSION_STALE_AFTER, RawFieldValue, RawFieldValueDto,
-    RawTelemetryReadback, RawTelemetryReadbackDto, ReadOnlyOutputPayload,
-    ReservedPayloadEvidenceDto, RideOperatingModeDto, RideOperatingStateDto,
+    Measured, MonotonicMillisDto, MonotonicTimestamp, NotificationByteLenDto,
+    NotificationEvidenceDto, NotificationIngestOutcomeDto, ParserDiagnosticCountDto,
+    ParserDiagnosticsDto, ParserDroppedBytesDto, ParserErrorDto, ParserFrameLenDto,
+    ParserGapEvidenceDto, PayloadBodyLenDto, PevcapEncoding as CorePevcapEncoding, PevcapHeader,
+    PevcapLocationSample, PevcapPhoneLocation, PevcapRecord, PevcapResolvedIdentity,
+    PhaseCurrentReadingDto, PowerReadingDto, ProtocolFamily, ProtocolFamilyDto, ProtocolTag,
+    RIDE_SESSION_STALE_AFTER, RawFieldValue, RawFieldValueDto, RawTelemetryReadback,
+    RawTelemetryReadbackDto, ReadOnlyOutputPayload, ReservedPayloadEvidenceDto,
+    RideOperatingModeDto, RideOperatingStateDto,
     RideSessionAppPresence as CoreRideSessionAppPresence,
     RideSessionDecision as CoreRideSessionDecision, RideSessionEffect as CoreRideSessionEffect,
     RideSessionEndReason as CoreRideSessionEndReason,
@@ -64,6 +59,14 @@ use cutout_core::{
     VerificationStatusDto, VerifiedValue, Voltage as CoreVoltage, VoltageReadingDto,
     VoltageSagEstimate, VoltageSagEstimator, VoltageSagInput, VoltageSagModel,
     WallClockUnixTimestamp, WriteMode,
+};
+use cutout_music::{
+    MusicCapabilities as CoreMusicCapabilities, MusicCommand as CoreMusicCommand,
+    MusicHistoryPolicy as CoreMusicHistoryPolicy, MusicItem as CoreMusicItem,
+    MusicPlaybackPosition as CoreMusicPlaybackPosition,
+    MusicPlaybackState as CoreMusicPlaybackState, MusicProvider as CoreMusicProvider,
+    MusicRideEvent as CoreMusicRideEvent, MusicRideEventKind as CoreMusicRideEventKind,
+    MusicSnapshot as CoreMusicSnapshot, MusicTimelineOutcome as CoreMusicTimelineOutcome,
 };
 use cutout_protocols::{
     BEGODE_DATA_CHANNEL, BEGODE_FIELD_TILTBACK_SPEED_KMH, ConcreteAeroReadOnlySession,
@@ -4791,7 +4794,7 @@ fn core_music_event(
         event.title,
         event.artist,
         event.kind.into(),
-        cutout_core::MusicEventTiming {
+        cutout_music::MusicEventTiming {
             observed_at: event
                 .observed_at_ms
                 .map(MonotonicTimestamp::from_milliseconds),

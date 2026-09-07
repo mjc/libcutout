@@ -1,6 +1,18 @@
-use thiserror::Error;
+#![forbid(unsafe_code)]
+#![deny(rustdoc::broken_intra_doc_links)]
+#![warn(missing_docs)]
+#![cfg_attr(
+    not(test),
+    deny(clippy::expect_used, clippy::panic, clippy::unwrap_used)
+)]
 
-use crate::{MonotonicTimestamp, WallClockUnixTimestamp};
+//! Provider-neutral music playback, privacy, and ride-timeline contracts.
+//!
+//! Persistence and platform adapters consume this domain model. Shared clock
+//! types come from `cutout-core`; this crate does not perform I/O.
+
+use cutout_core::{MonotonicTimestamp, WallClockUnixTimestamp};
+use thiserror::Error;
 
 /// Maximum provider/session identifier bytes accepted at the platform boundary.
 pub const MAX_MUSIC_IDENTIFIER_BYTES: usize = 256;

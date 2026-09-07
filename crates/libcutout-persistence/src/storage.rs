@@ -1,7 +1,7 @@
-use cutout_core::{
+use cutout_core::{PevcapEncoding, PevcapEvent, PevcapPhoneLocation, PevcapReader};
+use cutout_music::{
     MusicEventTiming, MusicHistoryPolicy, MusicProvider, MusicRideEvent, MusicRideEventKind,
-    MusicTimeline, MusicTimelineOutcome, MusicValidationError, PevcapEncoding, PevcapEvent,
-    PevcapPhoneLocation, PevcapReader,
+    MusicTimeline, MusicTimelineOutcome, MusicValidationError,
 };
 use cutout_ride_maps::{
     AverageSpeedMillimetresPerSecond, Coordinate, LocationAdmission, LocationSample,
@@ -5077,7 +5077,7 @@ fn insert_music_event(
         [ride_id.uuid().to_string()],
         |row| row.get(0),
     )?;
-    if count >= i64::try_from(cutout_core::MAX_MUSIC_TIMELINE_EVENTS).unwrap_or(i64::MAX) {
+    if count >= i64::try_from(cutout_music::MAX_MUSIC_TIMELINE_EVENTS).unwrap_or(i64::MAX) {
         return Err(StorageError::MusicTimelineFull);
     }
     if sequence != count {
@@ -5106,7 +5106,7 @@ fn insert_music_event(
     }
     let item_identifier = event
         .item_identifier()
-        .map(cutout_core::MusicIdentifier::as_str);
+        .map(cutout_music::MusicIdentifier::as_str);
     let title = (policy == MusicHistoryPolicy::HumanReadable)
         .then(|| event.title())
         .flatten();
@@ -5228,12 +5228,12 @@ fn music_events(
         .query_map(
             params![
                 ride_id.uuid().to_string(),
-                cutout_core::MAX_MUSIC_TIMELINE_EVENTS + 1
+                cutout_music::MAX_MUSIC_TIMELINE_EVENTS + 1
             ],
             decode_music_event,
         )?
         .collect::<Result<Vec<_>, _>>()?;
-    if events.len() > cutout_core::MAX_MUSIC_TIMELINE_EVENTS {
+    if events.len() > cutout_music::MAX_MUSIC_TIMELINE_EVENTS {
         return Err(StorageError::MusicTimelineFull);
     }
     for (index, pair) in events.windows(2).enumerate() {

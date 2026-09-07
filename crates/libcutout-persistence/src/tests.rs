@@ -2,9 +2,11 @@ use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
 use cutout_core::{
-    MonotonicTimestamp, MusicEventTiming, MusicHistoryPolicy, MusicProvider, MusicRideEvent,
-    MusicRideEventKind, PevcapCapture, PevcapEncoding, PevcapHeader, PevcapLocationSample,
+    MonotonicTimestamp, PevcapCapture, PevcapEncoding, PevcapHeader, PevcapLocationSample,
     PevcapPhoneLocation, PevcapRecord, WallClockUnixTimestamp,
+};
+use cutout_music::{
+    MusicEventTiming, MusicHistoryPolicy, MusicProvider, MusicRideEvent, MusicRideEventKind,
 };
 use cutout_ride_maps::{
     Coordinate, LocationAdmission, LocationSample, LocationSource, RideEvent, RouteDisplayBudget,
