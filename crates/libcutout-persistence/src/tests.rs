@@ -142,6 +142,33 @@ fn music_history_rejects_reads_and_writes_when_over_capacity() {
 }
 
 #[test]
+fn music_schema_bounds_utf8_text_by_bytes() {
+    let _guard = test_guard();
+    let path = music_test_path();
+    let database = RideDatabase::open(&path).unwrap();
+    let ride = database
+        .create_started_live_ride(1_700_000_000_000, 100, None)
+        .unwrap();
+    database.shutdown().unwrap();
+
+    let connection = Connection::open(&path).unwrap();
+    let title = "é".repeat(257);
+    let result = connection.execute(
+        "INSERT INTO ride_music_event
+            (ride_id, sequence, provider, title, kind, monotonic_at_ms,
+             wall_clock_at_ms, clock_uncertainty_milliseconds)
+         VALUES (?1, 0, 'spotify', ?2, 'play', 110, 1700000000110, 5)",
+        rusqlite::params![ride.uuid().to_string(), title],
+    );
+    assert!(
+        result.is_err(),
+        "music text bounds must use UTF-8 byte length"
+    );
+    drop(connection);
+    let _ = std::fs::remove_file(path);
+}
+
+#[test]
 fn music_v16_migration_rejects_foreign_database_without_mutating_it() {
     let _guard = test_guard();
     let path = music_test_path();

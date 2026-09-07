@@ -309,9 +309,12 @@ fn corrupt_optional_music_does_not_disable_ride_recovery() {
     drop(core);
     drop(database);
     let connection = rusqlite::Connection::open(&path).unwrap();
-    let invalid_title = "é".repeat(300);
+    let invalid_identifier = " ";
     connection
-        .execute("UPDATE ride_music_event SET title = ?1", [invalid_title])
+        .execute(
+            "UPDATE ride_music_event SET item_identifier = ?1",
+            [invalid_identifier],
+        )
         .unwrap();
     drop(connection);
     let reopened = open_ride_database(path.to_string_lossy().into_owned()).unwrap();
