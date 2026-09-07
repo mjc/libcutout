@@ -15,6 +15,8 @@ The same upstream integration documents a MELK initialization handshake: send
 `7e 07 83`, wait one second, then send `7e 04 04`. Production performs this
 one-time sequence after FFF3 discovery and before admitting user commands; it is
 initialization, not command confirmation.
+At the pinned upstream commit, `models.json` has no `MELK-OC21` entry. Its closest `MELK-OA21` entry selects the `EFFECTS_STRIPX` catalog (228 symbolic entries), while the separate OA21 reference list used by the UI supplies verified wire names only for IDs 1–212. The shared effect frame shape is useful protocol evidence, but it is not enough to assign the remaining names or claim those modes on OC21.
+
 
 Power, solid RGB, and brightness were physically confirmed before this extension.
 On 2026-09-06 the user reported that the first ten pattern entries and the four
