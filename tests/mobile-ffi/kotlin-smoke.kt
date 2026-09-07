@@ -1,4 +1,14 @@
-import uniffi.cutout_mobile_ffi.CutoutSessionStateHandle
+import java.io.File
+import uniffi.cutout_mobile_ffi.AeroBenignControlSession
+import uniffi.cutout_mobile_ffi.FalconBenignControlSession
+import uniffi.cutout_mobile_ffi.MobileCommandDto
+import uniffi.cutout_mobile_ffi.MobileCameraPreviewFileSink
+import uniffi.cutout_mobile_ffi.MobileCameraVideoFrameDto
+import uniffi.cutout_mobile_ffi.MobileNovatekMediaPathException
+import uniffi.cutout_mobile_ffi.mobileNovatekMediaDownloadTarget
+import uniffi.cutout_mobile_ffi.MobileFalconProfileDto
+import uniffi.cutout_mobile_ffi.MobileGattFingerprintDto
+import uniffi.cutout_mobile_ffi.MobileGattRoleDto
 import uniffi.cutout_mobile_ffi.MobileMonotonicMillisDto
 import uniffi.cutout_mobile_ffi.MobileSessionInputDto
 import uniffi.cutout_mobile_ffi.MobileSessionInputKindDto
@@ -37,6 +47,32 @@ fun main() {
         check(state.settingsDescriptors().connection.token == token)
         check(state.settingsSnapshot().connection.token == token)
         check(state.settings().connection.token == token)
+    }
+
+    val cameraFile = File.createTempFile("cutout-camera-ffi-smoke", ".h264")
+    MobileCameraPreviewFileSink.create(cameraFile.path).use { sink ->
+        sink.writeFrame(
+            MobileCameraVideoFrameDto(
+                data = byteArrayOf(0, 0, 0, 2, 0x65, 0x88.toByte()),
+                loss = 0U,
+                isRandomAccessPoint = true,
+                timestamp = 90_000L,
+                clockRateHz = 90_000U,
+            ),
+        )
+        sink.finish()
+    }
+    check(cameraFile.readBytes().contentEquals(byteArrayOf(0, 0, 0, 1, 0x65, 0x88.toByte())))
+    check(cameraFile.delete())
+
+    check(
+        mobileNovatekMediaDownloadTarget("A:\\Novatek\\Movie\\clip.TS") ==
+            "/Novatek/Movie/clip.TS",
+    )
+    try {
+        mobileNovatekMediaDownloadTarget("A:\\Novatek\\Movie\\..\\clip.TS")
+        error("unsafe Novatek media paths should throw")
+    } catch (_: MobileNovatekMediaPathException.InvalidPath) {
     }
 }
 
