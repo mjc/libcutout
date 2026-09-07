@@ -4934,6 +4934,13 @@ fn record_music_event(
     event: &MusicRideEvent,
 ) -> Result<MusicTimelineOutcome, StorageError> {
     let transaction = connection.transaction()?;
+    let lifecycle = load_ride_write_state(&transaction, ride_id)?.lifecycle();
+    if !matches!(
+        lifecycle,
+        RideLifecycleState::Active | RideLifecycleState::Paused
+    ) {
+        return Err(StorageError::InvalidRideState(lifecycle));
+    }
     let policy = music_history_policy(&transaction, ride_id)?;
     if policy == MusicHistoryPolicy::Disabled {
         return Ok(MusicTimelineOutcome::Disabled);
@@ -4942,10 +4949,8 @@ fn record_music_event(
     if policy == MusicHistoryPolicy::OpaqueItem {
         event.redact_display_metadata();
     }
-    let observed = event
-        .observed_at()
-        .map(|at| music_sqlite_integer(at.as_milliseconds(), "music observation timestamp"))
-        .transpose()?;
+    let timestamps = music_event_sql_timestamps(&event)?;
+    let observed = timestamps.observed_at;
     if music_observation_out_of_order(&transaction, ride_id, &event)? {
         return Ok(MusicTimelineOutcome::OutOfOrder);
     }
@@ -5081,18 +5086,10 @@ fn insert_music_event(
             expected: count,
         });
     }
-    let monotonic_ms = music_sqlite_integer(
-        event.monotonic_at().as_milliseconds(),
-        "music monotonic timestamp",
-    )?;
-    let wall_clock_ms = music_sqlite_integer(
-        event.wall_clock_at().as_milliseconds(),
-        "music wall clock timestamp",
-    )?;
-    let clock_uncertainty_ms = music_sqlite_integer(
-        event.clock_uncertainty_milliseconds(),
-        "music clock uncertainty",
-    )?;
+    let timestamps = music_event_sql_timestamps(event)?;
+    let monotonic_ms = timestamps.monotonic;
+    let wall_clock_ms = timestamps.wall_clock;
+    let clock_uncertainty_ms = timestamps.uncertainty;
     let previous_monotonic_ms: Option<i64> = transaction
         .query_row(
             "SELECT monotonic_at_ms FROM ride_music_event WHERE ride_id = ?1
@@ -5101,10 +5098,7 @@ fn insert_music_event(
             |row| row.get(0),
         )
         .optional()?;
-    let observed_at_ms = event
-        .observed_at()
-        .map(|at| music_sqlite_integer(at.as_milliseconds(), "music observation timestamp"))
-        .transpose()?;
+    let observed_at_ms = timestamps.observed_at;
     if music_observation_out_of_order(transaction, ride_id, event)?
         || previous_monotonic_ms.is_some_and(|previous| monotonic_ms < previous)
     {
@@ -5140,6 +5134,36 @@ fn insert_music_event(
     )?;
     update_music_observation(transaction, ride_id, observed_at_ms)?;
     Ok(())
+}
+
+struct MusicEventSqlTimestamps {
+    monotonic: i64,
+    wall_clock: i64,
+    uncertainty: i64,
+    observed_at: Option<i64>,
+}
+
+fn music_event_sql_timestamps(
+    event: &MusicRideEvent,
+) -> Result<MusicEventSqlTimestamps, StorageError> {
+    Ok(MusicEventSqlTimestamps {
+        monotonic: music_sqlite_integer(
+            event.monotonic_at().as_milliseconds(),
+            "music monotonic timestamp",
+        )?,
+        wall_clock: music_sqlite_integer(
+            event.wall_clock_at().as_milliseconds(),
+            "music wall clock timestamp",
+        )?,
+        uncertainty: music_sqlite_integer(
+            event.clock_uncertainty_milliseconds(),
+            "music clock uncertainty",
+        )?,
+        observed_at: event
+            .observed_at()
+            .map(|at| music_sqlite_integer(at.as_milliseconds(), "music observation timestamp"))
+            .transpose()?,
+    })
 }
 
 fn music_sqlite_integer(value: u64, field: &'static str) -> Result<i64, StorageError> {

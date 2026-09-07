@@ -229,6 +229,61 @@ fn duplicate_observation_watermark_survives_core_recreation() {
 }
 
 #[test]
+fn stale_core_cannot_write_after_durable_ride_stop() {
+    let fixture = setup();
+    let controller = MobileRideMapCore::with_database(fixture.db.clone());
+    controller.stop_at(2_500).unwrap();
+    assert_eq!(
+        fixture
+            .db
+            .find_ride(fixture.id.clone())
+            .unwrap()
+            .unwrap()
+            .state,
+        MobileRideLifecycleStateDto::Stopped
+    );
+    assert_eq!(
+        record(
+            &fixture.core,
+            3_000,
+            3_000,
+            MobileMusicRideEventKindDto::Play
+        ),
+        Err(MobileRideMapCoreErrorDto::InvalidTransition)
+    );
+}
+
+#[test]
+fn malformed_duplicate_cannot_poison_observation_watermark() {
+    let fixture = setup();
+    record(
+        &fixture.core,
+        2_000,
+        2_000,
+        MobileMusicRideEventKindDto::Play,
+    )
+    .unwrap();
+    let malformed = fixture.core.record_music_event(
+        snapshot(2_500),
+        MobileMusicRideEventKindDto::Play,
+        u64::MAX,
+        u64::MAX,
+        u64::MAX,
+    );
+    assert!(malformed.is_err());
+    assert_eq!(
+        record(
+            &fixture.core,
+            2_200,
+            4_000,
+            MobileMusicRideEventKindDto::Pause,
+        )
+        .unwrap(),
+        MobileMusicTimelineOutcomeDto::Recorded
+    );
+}
+
+#[test]
 fn failed_durable_event_does_not_consume_sequence_or_observation() {
     let fixture = setup();
     let result = fixture.core.record_music_event(

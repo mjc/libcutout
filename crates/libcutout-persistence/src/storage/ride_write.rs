@@ -41,6 +41,10 @@ pub(super) struct RideWriteState {
 }
 
 impl RideWriteState {
+    pub(super) const fn lifecycle(&self) -> RideLifecycleState {
+        self.lifecycle
+    }
+
     #[cfg(test)]
     pub(super) const fn with_duration(
         source: RideSource,

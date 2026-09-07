@@ -6369,10 +6369,10 @@ impl MobileRideMapCoreInner {
             return Err(MobileRideMapCoreErrorDto::NoActiveRide);
         };
         let ride_id = parse_mobile_ride_id(active_id).map_err(map_core_error)?;
-        database
-            .inner
-            .music_history(ride_id)
-            .map_err(map_storage_core_error)?;
+        if database.inner.music_history(ride_id).is_err() {
+            // Music metadata is optional: retain the recovered ride and report history as unavailable.
+            self.music_restore_failed = true;
+        }
         Ok(())
     }
 
