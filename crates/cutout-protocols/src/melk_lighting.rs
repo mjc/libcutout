@@ -1,6 +1,9 @@
 //! Candidate ELK-BLEDOM/MELK protocol support for the `MELK-OC21` controller.
 
-use cutout_core::{GattChannel, RgbLightingCommand, TransportAction, WriteMode, WritePayload};
+use cutout_core::{
+    GattChannel, LightingPlayback, MelkControl, RgbLightingCommand, RgbLightingRequestedState,
+    TransportAction, WriteMode, WritePayload,
+};
 
 /// Candidate ELK-BLEDOM/MELK command encoder.
 ///
@@ -168,6 +171,53 @@ impl MelkLightingProfile {
         }
     }
 
+    /// Plans the ordered writes needed to restore one requested controller state.
+    ///
+    /// Microphone mode is disabled before solid/effect playback and enabled last for music.
+    /// Brightness is applied before power so restoring an off state cannot finish lit.
+    #[must_use]
+    pub fn plan_state(state: RgbLightingRequestedState) -> Vec<TransportAction> {
+        let mut actions = match state.playback() {
+            LightingPlayback::Solid => vec![
+                Self::write_control_action(MelkControl::Microphone(false)),
+                Self::write_action(RgbLightingCommand::SetSolidColor(state.color())),
+            ],
+            LightingPlayback::Effect { pattern, speed } => vec![
+                Self::write_control_action(MelkControl::Microphone(false)),
+                Self::write_control_action(MelkControl::Pattern(pattern)),
+                Self::write_control_action(MelkControl::Speed(speed)),
+            ],
+            LightingPlayback::Music {
+                effect,
+                sensitivity,
+            } => vec![
+                Self::write_control_action(MelkControl::Sensitivity(sensitivity)),
+                Self::write_control_action(MelkControl::MusicEffect(effect)),
+                Self::write_control_action(MelkControl::Microphone(true)),
+            ],
+        };
+        actions.push(Self::write_action(RgbLightingCommand::SetBrightness(
+            state.brightness(),
+        )));
+        actions.push(Self::write_action(RgbLightingCommand::SetPower(
+            state.power(),
+        )));
+        actions
+    }
+
+    fn write_control_action(command: MelkControl) -> TransportAction {
+        let frame = Self::encode_control(command);
+        let Ok(bytes) = WritePayload::try_from_slice(&frame) else {
+            unreachable!("fixed MELK frames fit the bounded transport payload");
+        };
+        let policy = Self::write_policy();
+        TransportAction::Write {
+            channel: policy.channel,
+            bytes,
+            mode: policy.mode,
+        }
+    }
+
     /// Wraps a candidate frame as a bounded no-response write action.
     #[must_use]
     pub fn write_action(command: RgbLightingCommand) -> TransportAction {
@@ -191,9 +241,39 @@ mod tests {
         MelkLightingProfile,
     };
     use cutout_core::{
-        LightingBrightness, LightingPowerState, RgbColor, RgbLightingCommand, TransportAction,
-        WriteMode,
+        LightingBrightness, LightingPlayback, LightingPowerState, RgbColor, RgbLightingCommand,
+        RgbLightingRequestedState, TransportAction, WriteMode,
     };
+
+    fn payload(action: &TransportAction) -> &[u8] {
+        match action {
+            TransportAction::Write { bytes, .. } => bytes.as_slice(),
+            _ => panic!("MELK state plans contain only writes"),
+        }
+    }
+
+    #[test]
+    fn plans_effect_state_in_protocol_order() {
+        let brightness = LightingBrightness::try_from_percent(42).expect("bounded brightness");
+        let state = RgbLightingRequestedState::new(
+            LightingPowerState::Off,
+            RgbColor::new(1, 2, 3),
+            brightness,
+        )
+        .with_playback(LightingPlayback::Effect {
+            pattern: 16.try_into().expect("bounded pattern"),
+            speed: 200,
+        });
+
+        let actions = MelkLightingProfile::plan_state(state);
+
+        assert_eq!(actions.len(), 5);
+        assert_eq!(payload(&actions[0]), [0x7e, 4, 7, 0, 255, 255, 255, 0, 0xef]);
+        assert_eq!(payload(&actions[1]), [0x7e, 5, 3, 16, 6, 255, 255, 0, 0xef]);
+        assert_eq!(payload(&actions[2]), [0x7e, 4, 2, 200, 255, 255, 255, 0, 0xef]);
+        assert_eq!(payload(&actions[3]), [0x7e, 4, 1, 42, 255, 0, 255, 0, 0xef]);
+        assert_eq!(payload(&actions[4]), [0x7e, 0, 4, 0, 0, 0, 255, 0, 0xef]);
+    }
 
     #[test]
     fn encodes_extended_melk_controls_and_bounds() {
