@@ -638,6 +638,145 @@ impl VeteranTelemetry {
         })
     }
 
+    /// Decodes source-backed controls from the Aero settings page.
+    /// NOSFET Android 1.1.3 excludes the CRC and treats 0x80 as unavailable.
+    pub(crate) fn to_aero_settings_page_response(
+        self,
+        frame: &VeteranFrame,
+    ) -> Option<ReadOnlyResponse> {
+        if self.firmware.model_id.get() != 43 {
+            return None;
+        }
+        let bytes = frame.as_slice();
+        let body = bytes.get(..bytes.len().checked_sub(4)?)?;
+        if body.get(46) == Some(&2) {
+            let value = *body.get(47)?;
+            return Some(ReadOnlyResponse::Settings(SettingsReadback::available([
+                (35..=75).contains(&value).then_some(SettingsEntry {
+                    field: RawFieldValue::new(
+                        AERO_FIELD_LATERAL_TILT_LIMIT_DEGREES,
+                        i64::from(value),
+                    ),
+                    source: ValueSource::Reported,
+                    quality: ValueQuality::Known,
+                    verification: VerificationStatus::SourceVerified,
+                }),
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+            ])));
+        }
+        if body.get(46) != Some(&8) {
+            return None;
+        }
+        let percent_entry = |offset, field_id| {
+            let value = *body.get(offset)?;
+            (value <= 100).then_some(SettingsEntry {
+                field: RawFieldValue::new(field_id, i64::from(value)),
+                source: ValueSource::Reported,
+                quality: ValueQuality::Known,
+                verification: VerificationStatus::SourceVerified,
+            })
+        };
+        let pwm_entry = |offset, field_id| {
+            let value = *body.get(offset)?;
+            (value <= 100 || value == 200).then_some(SettingsEntry {
+                field: RawFieldValue::new(field_id, i64::from(value)),
+                source: ValueSource::Reported,
+                quality: ValueQuality::Known,
+                verification: VerificationStatus::SourceVerified,
+            })
+        };
+        let toggle_entry = |offset, field_id| {
+            let value = *body.get(offset)?;
+            (value <= 1).then_some(SettingsEntry {
+                field: RawFieldValue::new(field_id, i64::from(value)),
+                source: ValueSource::Reported,
+                quality: ValueQuality::Known,
+                verification: VerificationStatus::SourceVerified,
+            })
+        };
+        let gyro_state_entry = |offset, field_id| {
+            let value = *body.get(offset)?;
+            (value <= 2).then_some(SettingsEntry {
+                field: RawFieldValue::new(field_id, i64::from(value)),
+                source: ValueSource::Reported,
+                quality: ValueQuality::Known,
+                verification: VerificationStatus::SourceVerified,
+            })
+        };
+        let signed_entry = |offset, field_id| {
+            let value = i8::from_ne_bytes([*body.get(offset)?]);
+            (value.unsigned_abs() <= 15).then_some(SettingsEntry {
+                field: RawFieldValue::new(field_id, i64::from(value)),
+                source: ValueSource::Reported,
+                quality: ValueQuality::Known,
+                verification: VerificationStatus::SourceVerified,
+            })
+        };
+        let brake_entry = |offset, field_id| {
+            let value = *body.get(offset)?;
+            (90..=125).contains(&value).then_some(SettingsEntry {
+                field: RawFieldValue::new(field_id, i64::from(value)),
+                source: ValueSource::Reported,
+                quality: ValueQuality::Known,
+                verification: VerificationStatus::SourceVerified,
+            })
+        };
+        let max_charge_entry = |offset, field_id| {
+            let value = *body.get(offset)?;
+            (value <= 70).then_some(SettingsEntry {
+                field: RawFieldValue::new(field_id, i64::from(value)),
+                source: ValueSource::Reported,
+                quality: ValueQuality::Known,
+                verification: VerificationStatus::SourceVerified,
+            })
+        };
+        Some(ReadOnlyResponse::Settings(SettingsReadback::available([
+            percent_entry(50, AERO_FIELD_PEDAL_HARDNESS_PERCENT),
+            pwm_entry(53, AERO_FIELD_PWM_PERCENT),
+            percent_entry(55, AERO_FIELD_DISPLAY_BACKLIGHT_PERCENT),
+            gyro_state_entry(56, AERO_FIELD_GYRO_CALIBRATION_STATE),
+            toggle_entry(57, AERO_FIELD_TRANSPORT_MODE),
+            body.get(58)
+                .copied()
+                .and_then(cutout_core::AeroWheelUnits::from_display_mode)
+                .map(|units| SettingsEntry {
+                    field: RawFieldValue::new(
+                        AERO_FIELD_WHEEL_UNITS,
+                        i64::from(units.display_mode()),
+                    ),
+                    source: ValueSource::Reported,
+                    quality: ValueQuality::Known,
+                    verification: VerificationStatus::SourceVerified,
+                }),
+            signed_entry(59, AERO_FIELD_VOLTAGE_CORRECTION_TENTHS_PERCENT),
+            toggle_entry(60, AERO_FIELD_LOW_BATTERY_MODE),
+            toggle_entry(61, AERO_FIELD_HIGH_SPEED_MODE),
+            percent_entry(63, AERO_FIELD_BEEPER_VOLUME_PERCENT),
+            max_charge_entry(64, AERO_FIELD_MAX_CHARGE_VOLTAGE_RAW),
+            percent_entry(66, AERO_FIELD_DYNAMIC_ASSIST_PERCENT),
+            percent_entry(68, AERO_FIELD_PEDAL_DIP_COMPENSATION_PERCENT),
+            brake_entry(65, AERO_FIELD_BRAKE_OVERPRESSURE_ALARM_PERCENT),
+            None,
+            None,
+            None,
+            None,
+        ])))
+    }
+
     /// Converts decoded fixed-header settings fields into generic readback slots.
     #[must_use]
     pub fn to_settings_responses(self) -> [ReadOnlyResponse; 2] {
@@ -672,6 +811,51 @@ impl VeteranTelemetry {
         ]
     }
 }
+
+/// Aero page-8 pedal hardness, in percent. High byte identifies the page.
+pub const AERO_FIELD_PEDAL_HARDNESS_PERCENT: u16 = 0x0832;
+
+/// Aero selector-2 fall-protection/lateral-cutoff angle, in degrees.
+pub const AERO_FIELD_LATERAL_TILT_LIMIT_DEGREES: u16 = 0x022f;
+
+/// Aero page-8 PWM tilt-back threshold, in percent.
+pub const AERO_FIELD_PWM_PERCENT: u16 = 0x0835;
+
+/// Aero page-8 wheel display units: zero metric, one imperial.
+pub const AERO_FIELD_WHEEL_UNITS: u16 = 0x083a;
+
+/// Aero page-8 display backlight brightness, in percent.
+pub const AERO_FIELD_DISPLAY_BACKLIGHT_PERCENT: u16 = 0x0837;
+
+/// Aero page-8 transportation-mode toggle.
+pub const AERO_FIELD_TRANSPORT_MODE: u16 = 0x0839;
+
+/// Aero page-8 gyro calibration state: zero idle, one waiting, two complete.
+pub const AERO_FIELD_GYRO_CALIBRATION_STATE: u16 = 0x0838;
+
+/// Aero page-8 signed voltage correction, in tenths of a percent.
+pub const AERO_FIELD_VOLTAGE_CORRECTION_TENTHS_PERCENT: u16 = 0x083b;
+
+/// Aero page-8 low-battery-mode toggle.
+pub const AERO_FIELD_LOW_BATTERY_MODE: u16 = 0x083c;
+
+/// Aero page-8 high-speed-mode toggle.
+pub const AERO_FIELD_HIGH_SPEED_MODE: u16 = 0x083d;
+
+/// Aero page-8 beeper volume, in percent.
+pub const AERO_FIELD_BEEPER_VOLUME_PERCENT: u16 = 0x083f;
+
+/// Aero page-8 maximum-charge voltage raw MxV value (official range 0..=70).
+pub const AERO_FIELD_MAX_CHARGE_VOLTAGE_RAW: u16 = 0x0840;
+
+/// Aero page-8 dynamic assist, in percent.
+pub const AERO_FIELD_DYNAMIC_ASSIST_PERCENT: u16 = 0x0842;
+
+/// Aero page-8 pedal-dip compensation, in percent.
+pub const AERO_FIELD_PEDAL_DIP_COMPENSATION_PERCENT: u16 = 0x0844;
+
+/// Aero page-8 brake overpressure alarm threshold, in percent.
+pub const AERO_FIELD_BRAKE_OVERPRESSURE_ALARM_PERCENT: u16 = 0x0841;
 
 /// Veteran fixed-header raw field id for firmware version.
 pub const VETERAN_FIELD_FIRMWARE_VERSION: u16 = 0x001c;
@@ -1444,6 +1628,161 @@ mod tests {
     }
 
     #[test]
+    fn aero_settings_page_excludes_crc_sentinels_and_other_models() {
+        let mut bytes = [0x80; 58];
+        bytes[..4].copy_from_slice(&[0xdc, 0x5a, 0x5c, 54]);
+        bytes[46] = 8;
+        bytes[50] = 100;
+        bytes[53] = 0;
+        let mut telemetry = VeteranTelemetry::decode(&live_aero_frame()).unwrap();
+        for (hardness, pwm, expected_count) in
+            [(100, 0, 2), (101, 100, 1), (128, 128, 0), (255, 255, 0)]
+        {
+            bytes[50] = hardness;
+            bytes[53] = pwm;
+            let frame = VeteranFrame::try_from_slice(&bytes).unwrap();
+            let Some(ReadOnlyResponse::Settings(readback)) =
+                telemetry.to_aero_settings_page_response(&frame)
+            else {
+                panic!("settings page");
+            };
+            assert_eq!(
+                readback.entries().into_iter().flatten().count(),
+                expected_count
+            );
+        }
+        // Byte 50 is now the first CRC byte; it must not become a setting.
+        bytes[3] = 50;
+        bytes[50] = 50;
+        let frame = VeteranFrame::try_from_slice(&bytes[..54]).unwrap();
+        let Some(ReadOnlyResponse::Settings(readback)) =
+            telemetry.to_aero_settings_page_response(&frame)
+        else {
+            panic!("settings page");
+        };
+        assert!(readback.entries().into_iter().all(|entry| entry.is_none()));
+        bytes[46] = 7;
+        let frame = VeteranFrame::try_from_slice(&bytes[..54]).unwrap();
+        assert_eq!(telemetry.to_aero_settings_page_response(&frame), None);
+        bytes[46] = 8;
+        telemetry.firmware.model_id = VeteranModelId::new(42);
+        let frame = VeteranFrame::try_from_slice(&bytes[..54]).unwrap();
+        assert_eq!(telemetry.to_aero_settings_page_response(&frame), None);
+    }
+
+    #[test]
+    fn aero_page_eight_reports_pedal_hardness_and_pwm() {
+        let frame = VeteranFrame::try_from_slice(&hex_literal::hex!(
+            "dc5a5c4729f2000000170000ab6c001700000be9\
+             045a00000226021ca8f607801b25000080c80000\
+             808080808080080000803200364f371e00000100\
+             808028062e7964800080801540e23a"
+        ))
+        .unwrap();
+        let telemetry = VeteranTelemetry::decode(&frame).unwrap();
+        let ReadOnlyResponse::Settings(readback) = telemetry
+            .to_aero_settings_page_response(&frame)
+            .expect("captured settings page")
+        else {
+            panic!("expected settings");
+        };
+        let entries: Vec<_> = readback.entries().into_iter().flatten().collect();
+        assert_eq!(
+            entries.iter().map(|entry| entry.field).collect::<Vec<_>>(),
+            vec![
+                RawFieldValue::new(AERO_FIELD_PEDAL_HARDNESS_PERCENT, 50),
+                RawFieldValue::new(AERO_FIELD_PWM_PERCENT, 79),
+                RawFieldValue::new(AERO_FIELD_DISPLAY_BACKLIGHT_PERCENT, 30),
+                RawFieldValue::new(AERO_FIELD_GYRO_CALIBRATION_STATE, 0),
+                RawFieldValue::new(AERO_FIELD_TRANSPORT_MODE, 0),
+                RawFieldValue::new(AERO_FIELD_WHEEL_UNITS, 1),
+                RawFieldValue::new(AERO_FIELD_VOLTAGE_CORRECTION_TENTHS_PERCENT, 0),
+                RawFieldValue::new(AERO_FIELD_BEEPER_VOLUME_PERCENT, 6),
+                RawFieldValue::new(AERO_FIELD_MAX_CHARGE_VOLTAGE_RAW, 46),
+                RawFieldValue::new(AERO_FIELD_DYNAMIC_ASSIST_PERCENT, 100),
+                RawFieldValue::new(AERO_FIELD_PEDAL_DIP_COMPENSATION_PERCENT, 0),
+                RawFieldValue::new(AERO_FIELD_BRAKE_OVERPRESSURE_ALARM_PERCENT, 121),
+            ]
+        );
+        assert!(
+            entries
+                .iter()
+                .all(|entry| entry.verification == VerificationStatus::SourceVerified)
+        );
+    }
+
+    #[test]
+    fn aero_page_eight_reports_gyro_calibration_state() {
+        let mut bytes = hex_literal::hex!(
+            "dc5a5c4729f2000000170000ab6c001700000be9\
+             045a00000226021ca8f607801b25000080c80000\
+             808080808080080000803200364f371e00000100\
+             808028062e7964800080801540e23a"
+        );
+        bytes[56] = 2;
+        let frame = VeteranFrame::try_from_slice(&bytes).unwrap();
+        let telemetry = VeteranTelemetry::decode(&frame).unwrap();
+        let ReadOnlyResponse::Settings(readback) = telemetry
+            .to_aero_settings_page_response(&frame)
+            .expect("captured settings page")
+        else {
+            panic!("expected settings");
+        };
+        assert!(readback.entries().into_iter().flatten().any(|entry| {
+            entry.field == RawFieldValue::new(AERO_FIELD_GYRO_CALIBRATION_STATE, 2)
+        }));
+    }
+
+    #[test]
+    fn aero_selector_two_reports_lateral_tilt_limit() {
+        let mut bytes = hex_literal::hex!(
+            "dc5a5c4729f2000000170000ab6c001700000be9\
+             045a00000226021ca8f607801b25000080c80000\
+             808080808080080000803200364f371e00000100\
+             808028062e7964800080801540e23a"
+        );
+        bytes[46] = 2;
+        bytes[47] = 64;
+        let frame = VeteranFrame::try_from_slice(&bytes).unwrap();
+        let telemetry = VeteranTelemetry::decode(&frame).unwrap();
+        let ReadOnlyResponse::Settings(readback) = telemetry
+            .to_aero_settings_page_response(&frame)
+            .expect("selector-2 settings page")
+        else {
+            panic!("expected settings");
+        };
+        assert!(readback.entries().into_iter().flatten().any(|entry| {
+            entry.field == RawFieldValue::new(AERO_FIELD_LATERAL_TILT_LIMIT_DEGREES, 64)
+        }));
+    }
+
+    #[test]
+    fn aero_page_eight_reports_explicit_pwm_off() {
+        let mut bytes = hex_literal::hex!(
+            "dc5a5c4729f2000000170000ab6c001700000be9\
+             045a00000226021ca8f607801b25000080c80000\
+             808080808080080000803200364f371e00000100\
+             808028062e7964800080801540e23a"
+        );
+        bytes[53] = 200;
+        let frame = VeteranFrame::try_from_slice(&bytes).unwrap();
+        let telemetry = VeteranTelemetry::decode(&frame).unwrap();
+        let ReadOnlyResponse::Settings(readback) = telemetry
+            .to_aero_settings_page_response(&frame)
+            .expect("settings page")
+        else {
+            panic!("expected settings");
+        };
+        assert!(
+            readback
+                .entries()
+                .into_iter()
+                .flatten()
+                .any(|entry| { entry.field == RawFieldValue::new(AERO_FIELD_PWM_PERCENT, 200) })
+        );
+    }
+
+    #[test]
     fn veteran_telemetry_maps_fixed_header_settings_to_read_only_response() {
         let telemetry = VeteranTelemetry::decode(&live_aero_frame()).expect("telemetry decodes");
         let responses = telemetry.to_settings_responses();
@@ -1452,7 +1791,7 @@ mod tests {
             .into_iter()
             .flat_map(|response| match response {
                 ReadOnlyResponse::Settings(settings) => settings.entries(),
-                _ => [None, None, None, None],
+                _ => [None; 17],
             })
             .flatten()
             .map(|entry| entry.field)

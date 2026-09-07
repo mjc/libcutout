@@ -39,6 +39,22 @@ impl AeroProbe {
             | CommandKind::ResetTripMeter
             | CommandKind::SetAeroTiltbackSpeed
             | CommandKind::SetAeroPwmPercent
+            | CommandKind::SetAeroPwmOff
+            | CommandKind::SetAeroGyroCalibration
+            | CommandKind::SetAeroRidingMode
+            | CommandKind::SetAeroBrakeOverpressureAlarm
+            | CommandKind::SetAeroPedalHardness
+            | CommandKind::SetAeroDisplayBacklight
+            | CommandKind::SetAeroBeeperVolume
+            | CommandKind::SetAeroDynamicAssist
+            | CommandKind::SetAeroPedalDipCompensation
+            | CommandKind::SetAeroLateralTiltLimit
+            | CommandKind::SetAeroVoltageCorrection
+            | CommandKind::SetAeroMaxChargeVoltageRaw
+            | CommandKind::SetAeroWheelUnits
+            | CommandKind::SetAeroHighSpeedMode
+            | CommandKind::SetAeroLowBatteryMode
+            | CommandKind::SetAeroTransportMode
             | CommandKind::SetAeroAlarmSpeed
             | CommandKind::SetAeroAngleAdjustment
             | CommandKind::SetAeroHighBeam
@@ -101,6 +117,22 @@ impl FalconProbe {
             | CommandKind::ResetTripMeter
             | CommandKind::SetAeroTiltbackSpeed
             | CommandKind::SetAeroPwmPercent
+            | CommandKind::SetAeroPwmOff
+            | CommandKind::SetAeroGyroCalibration
+            | CommandKind::SetAeroRidingMode
+            | CommandKind::SetAeroBrakeOverpressureAlarm
+            | CommandKind::SetAeroPedalHardness
+            | CommandKind::SetAeroDisplayBacklight
+            | CommandKind::SetAeroBeeperVolume
+            | CommandKind::SetAeroDynamicAssist
+            | CommandKind::SetAeroPedalDipCompensation
+            | CommandKind::SetAeroLateralTiltLimit
+            | CommandKind::SetAeroVoltageCorrection
+            | CommandKind::SetAeroMaxChargeVoltageRaw
+            | CommandKind::SetAeroWheelUnits
+            | CommandKind::SetAeroHighSpeedMode
+            | CommandKind::SetAeroLowBatteryMode
+            | CommandKind::SetAeroTransportMode
             | CommandKind::SetAeroAlarmSpeed
             | CommandKind::SetAeroAngleAdjustment
             | CommandKind::SetAeroHighBeam

@@ -187,8 +187,8 @@ where
 
     /// Applies a readback, confirming a matching pending request or becoming current.
     ///
-    /// A mismatched readback never overwrites a pending request. The return value is true
-    /// only when the readback confirmed that request.
+    /// A mismatched readback refreshes the pending request's current value. The return value
+    /// is true only when the readback confirmed that request.
     pub fn observe(
         &mut self,
         value: Value,
@@ -201,8 +201,16 @@ where
         if self.terminal_readback_matches(value) {
             return false;
         }
-        if !matches!(self, Self::Pending { .. }) {
-            *self = Self::Current(SettingValue { value, source });
+        match self {
+            Self::Pending {
+                current,
+                submitted_at,
+                ..
+            } if observed_at >= *submitted_at => {
+                *current = Some(SettingValue { value, source });
+            }
+            Self::Pending { .. } => {}
+            _ => *self = Self::Current(SettingValue { value, source }),
         }
         false
     }
@@ -288,8 +296,8 @@ where
 
     fn terminal_readback_matches(self, value: Value) -> bool {
         match self {
-            Self::Confirmed { value: current, .. } => current.value == value,
-            Self::Refused {
+            Self::Confirmed { value: current, .. }
+            | Self::Refused {
                 current: Some(current),
                 ..
             }
@@ -310,11 +318,10 @@ where
         }
     }
 }
-
 #[cfg(test)]
 mod tests {
-    use super::{SettingCommandStatus, SettingState};
-    use crate::{LightState, MonotonicTimestamp};
+    use super::*;
+    use crate::LightState;
 
     #[test]
     fn command_status_is_owned_by_rust_setting_state() {
@@ -337,5 +344,30 @@ mod tests {
             state.command_status(MonotonicTimestamp::new(2_010), false),
             SettingCommandStatus::SentWithoutConfirmation
         );
+    }
+
+    #[test]
+    fn pending_readback_refreshes_current_without_replacing_request() {
+        let mut state = SettingState::current(20_u8, SettingValueSource::LiveReadback);
+        state.submit(53, MonotonicTimestamp::new(10));
+        assert!(!state.observe(
+            54,
+            SettingValueSource::LiveReadback,
+            MonotonicTimestamp::new(20)
+        ));
+        assert_eq!(state.current_value(), Some(54));
+        assert_eq!(state.requested_value(), Some(53));
+        assert!(!state.observe(
+            19,
+            SettingValueSource::LiveReadback,
+            MonotonicTimestamp::new(9)
+        ));
+        assert_eq!(state.current_value(), Some(54));
+        assert!(state.timeout_if_elapsed(
+            MonotonicTimestamp::new(2_010),
+            SETTING_WRITE_CONFIRMATION_TIMEOUT
+        ));
+        assert_eq!(state.current_value(), Some(54));
+        assert_eq!(state.requested_value(), Some(53));
     }
 }

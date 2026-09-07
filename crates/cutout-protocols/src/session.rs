@@ -1370,14 +1370,17 @@ fn push_veteran_frame(
     match VeteranTelemetry::decode(frame) {
         Ok(telemetry) => {
             let settings_responses = telemetry.to_settings_responses();
-            let settings_count = SemanticEventCount::from_events(settings_responses.len());
+            let aero_settings = telemetry.to_aero_settings_page_response(frame);
+            let settings_count = SemanticEventCount::from_events(
+                settings_responses.len() + usize::from(aero_settings.is_some()),
+            );
             output.push(SessionOutput::Event(DeviceEvent::Telemetry(
                 telemetry.to_delta(monotonic_ms),
             )));
             output.push(SessionOutput::Event(DeviceEvent::ReadOnlyResponse(
                 telemetry.to_firmware_response(),
             )));
-            for response in settings_responses {
+            for response in settings_responses.into_iter().chain(aero_settings) {
                 output.push(SessionOutput::Event(DeviceEvent::ReadOnlyResponse(
                     response,
                 )));
@@ -1633,6 +1636,22 @@ impl SupportsSettingsWrites for NosfetAeroModel {
         CommandKind::ResetTripMeter,
         CommandKind::SetAeroTiltbackSpeed,
         CommandKind::SetAeroPwmPercent,
+        CommandKind::SetAeroPwmOff,
+        CommandKind::SetAeroGyroCalibration,
+        CommandKind::SetAeroRidingMode,
+        CommandKind::SetAeroBrakeOverpressureAlarm,
+        CommandKind::SetAeroPedalHardness,
+        CommandKind::SetAeroDisplayBacklight,
+        CommandKind::SetAeroBeeperVolume,
+        CommandKind::SetAeroDynamicAssist,
+        CommandKind::SetAeroPedalDipCompensation,
+        CommandKind::SetAeroLateralTiltLimit,
+        CommandKind::SetAeroVoltageCorrection,
+        CommandKind::SetAeroMaxChargeVoltageRaw,
+        CommandKind::SetAeroWheelUnits,
+        CommandKind::SetAeroHighSpeedMode,
+        CommandKind::SetAeroLowBatteryMode,
+        CommandKind::SetAeroTransportMode,
         CommandKind::SetAeroAlarmSpeed,
         CommandKind::SetAeroAngleAdjustment,
         CommandKind::SetAeroHighBeam,
@@ -1850,6 +1869,22 @@ fn unavailable_readback_response(kind: CommandKind) -> Option<ReadOnlyResponse> 
         | CommandKind::ResetTripMeter
         | CommandKind::SetAeroTiltbackSpeed
         | CommandKind::SetAeroPwmPercent
+        | CommandKind::SetAeroPwmOff
+        | CommandKind::SetAeroGyroCalibration
+        | CommandKind::SetAeroRidingMode
+        | CommandKind::SetAeroBrakeOverpressureAlarm
+        | CommandKind::SetAeroPedalHardness
+        | CommandKind::SetAeroDisplayBacklight
+        | CommandKind::SetAeroBeeperVolume
+        | CommandKind::SetAeroDynamicAssist
+        | CommandKind::SetAeroPedalDipCompensation
+        | CommandKind::SetAeroLateralTiltLimit
+        | CommandKind::SetAeroVoltageCorrection
+        | CommandKind::SetAeroMaxChargeVoltageRaw
+        | CommandKind::SetAeroWheelUnits
+        | CommandKind::SetAeroHighSpeedMode
+        | CommandKind::SetAeroLowBatteryMode
+        | CommandKind::SetAeroTransportMode
         | CommandKind::SetAeroAlarmSpeed
         | CommandKind::SetAeroAngleAdjustment
         | CommandKind::SetAeroHighBeam
@@ -2012,6 +2047,12 @@ fn handle_benign_control<M: ReadOnlyModelSpec + SupportsBenignControls>(
     )));
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct PendingSettingsSequence {
+    remaining: ArrayVec<EncodedControlStep, 4>,
+    next_at: MonotonicTimestamp,
+    expires_at: MonotonicTimestamp,
+}
 impl<M: ReadOnlyModelSpec + SupportsBenignControls, const ACCEPT_ANY_NOTIFICATION: bool> fmt::Debug
     for BenignControlSession<M, ACCEPT_ANY_NOTIFICATION>
 {
@@ -2124,6 +2165,7 @@ pub struct StationarySettingsWriteSession<
     arm: Option<cutout_core::StationarySettingsArm>,
     monotonic_ms: MonotonicTimestamp,
     pending_sequence: Option<PendingSettingsSequence>,
+    latest_settings_speed: Option<(cutout_core::Speed, MonotonicTimestamp)>,
 }
 
 impl<
@@ -2151,6 +2193,7 @@ where
             arm: self.arm,
             monotonic_ms: self.monotonic_ms,
             pending_sequence: self.pending_sequence.clone(),
+            latest_settings_speed: self.latest_settings_speed,
         }
     }
 }
@@ -2166,6 +2209,7 @@ impl<
             arm: None,
             monotonic_ms: MonotonicTimestamp::new(0),
             pending_sequence: None,
+            latest_settings_speed: None,
         }
     }
 }
@@ -2183,6 +2227,7 @@ impl<
             arm: None,
             monotonic_ms: MonotonicTimestamp::new(0),
             pending_sequence: None,
+            latest_settings_speed: None,
         }
     }
 
@@ -2195,8 +2240,15 @@ impl<
     }
 
     /// Installs a short-lived authorization issued from stationary evidence.
-    pub const fn arm(&mut self, arm: cutout_core::StationarySettingsArm) {
+    pub fn arm(&mut self, arm: cutout_core::StationarySettingsArm) {
         self.monotonic_ms = arm.issued_at_ms();
+        if self
+            .pending_sequence
+            .as_ref()
+            .is_some_and(|pending| self.monotonic_ms > pending.expires_at)
+        {
+            self.pending_sequence = None;
+        }
         self.arm = Some(arm);
     }
 
@@ -2205,8 +2257,56 @@ impl<
         self.monotonic_ms = monotonic_ms;
     }
 
+    /// Clears the current stationary-settings authorization.
+    pub fn clear_arm(&mut self) {
+        self.arm = None;
+        self.pending_sequence = None;
+    }
+
+    pub(crate) fn fresh_settings_speed(
+        &self,
+        now: MonotonicTimestamp,
+    ) -> Option<cutout_core::Speed> {
+        let (speed, observed_at) = self.latest_settings_speed?;
+        (now >= observed_at
+            && now.saturating_duration_since(observed_at) <= cutout_core::Duration::from_seconds(2))
+        .then_some(speed)
+    }
+
+    fn observe_settings_telemetry(&mut self, outputs: &[SessionOutput]) {
+        for output in outputs {
+            let SessionOutput::Event(DeviceEvent::Telemetry(delta)) = output else {
+                continue;
+            };
+            if let Some(speed) = delta.speed {
+                if self
+                    .latest_settings_speed
+                    .is_none_or(|(_, at)| delta.at_ms >= at)
+                {
+                    self.latest_settings_speed = Some((speed.value, delta.at_ms));
+                    let maximum = M::MAX_SETTINGS_SPEED
+                        .map_or(0, cutout_core::Speed::as_millimetres_per_second);
+                    if speed.value.as_millimetres_per_second().unsigned_abs()
+                        > maximum.unsigned_abs()
+                    {
+                        self.clear_arm();
+                    }
+                }
+            }
+            if delta.charge_mode.is_some_and(|mode| mode.value.is_active())
+                || delta.operating_state == Some(cutout_core::RideOperatingState::Charging)
+            {
+                self.clear_arm();
+            }
+        }
+    }
+
     fn handle_tick(&mut self, monotonic_ms: MonotonicTimestamp, output: &mut Vec<SessionOutput>) {
         self.monotonic_ms = monotonic_ms;
+        if self.latest_settings_speed.is_some() && self.fresh_settings_speed(monotonic_ms).is_none()
+        {
+            self.clear_arm();
+        }
         self.read_only
             .handle(SessionInput::Tick { monotonic_ms }, output);
         let due = self
@@ -2214,6 +2314,17 @@ impl<
             .as_ref()
             .is_some_and(|pending| monotonic_ms >= pending.next_at);
         if !due {
+            return;
+        }
+        if self
+            .arm
+            .is_none_or(|arm| !arm.is_valid_for(M::MODEL, monotonic_ms))
+            || self
+                .pending_sequence
+                .as_ref()
+                .is_some_and(|pending| monotonic_ms > pending.expires_at)
+        {
+            self.pending_sequence = None;
             return;
         }
 
@@ -2295,12 +2406,16 @@ impl<
             let mut remaining = ArrayVec::new();
             remaining.extend(steps);
             let next_delay = remaining.first().map(|next| next.delay_ms);
-            self.pending_sequence = next_delay.map(|next_delay| PendingSettingsSequence {
-                remaining,
-                next_at: self
-                    .monotonic_ms
-                    .saturating_add_duration(cutout_core::Duration::from_milliseconds(next_delay)),
-            });
+            self.pending_sequence =
+                next_delay
+                    .zip(self.arm)
+                    .map(|(next_delay, arm)| PendingSettingsSequence {
+                        remaining,
+                        next_at: self.monotonic_ms.saturating_add_duration(
+                            cutout_core::Duration::from_milliseconds(next_delay),
+                        ),
+                        expires_at: arm.expires_at_ms(),
+                    });
             output.push(SessionOutput::Transport(TransportAction::Write {
                 channel: M::WRITE_CHANNEL,
                 bytes: first.payload,
@@ -2338,9 +2453,9 @@ impl<
             SessionInput::Tick { monotonic_ms } => {
                 self.handle_tick(monotonic_ms, output);
             }
-            SessionInput::LinkDown => {
-                self.arm = None;
-                self.pending_sequence = None;
+            SessionInput::LinkDown | SessionInput::LinkUp(_) => {
+                self.clear_arm();
+                self.latest_settings_speed = None;
                 self.read_only.handle(input, output);
             }
             SessionInput::Command(command)
@@ -2353,7 +2468,11 @@ impl<
             {
                 handle_benign_control::<M>(command, output);
             }
-            input => self.read_only.handle(input, output),
+            input => {
+                let start = output.len();
+                self.read_only.handle(input, output);
+                self.observe_settings_telemetry(output.get(start..).unwrap_or_default());
+            }
         }
     }
 }
@@ -4441,7 +4560,7 @@ mod tests {
         );
 
         let responses = read_only_response_events(&output);
-        assert_eq!(responses.len(), 4);
+        assert_eq!(responses.len(), 5);
 
         let ReadOnlyResponse::Firmware(firmware) = responses[0] else {
             panic!("expected firmware response");
@@ -4454,7 +4573,7 @@ mod tests {
             .iter()
             .flat_map(|response| match response {
                 ReadOnlyResponse::Settings(settings) => settings.entries(),
-                _ => [None, None, None, None],
+                _ => [None; 17],
             })
             .flatten()
             .map(|entry| entry.field)
@@ -5163,11 +5282,13 @@ mod tests {
             ),
             (
                 DeviceCommand::SetAeroPwmPercent(
-                    cutout_core::AeroPwmPercent::new(64).expect("64 percent fits"),
+                    cutout_core::AeroPwmPercent::new(64)
+                        .expect("64 percent fits")
+                        .into(),
                 ),
                 *b"LdAp",
                 13,
-                64,
+                36,
             ),
             (
                 DeviceCommand::SetAeroAlarmSpeed(
@@ -5213,7 +5334,7 @@ mod tests {
     }
 
     #[test]
-    fn aero_stationary_settings_session_schedules_high_beam_pair() {
+    fn aero_stationary_settings_session_schedules_single_high_beam_write() {
         let mut session = StationarySettingsWriteSession::<NosfetAeroModel, false>::default();
         let mut output = Vec::new();
         session.arm(
@@ -5249,10 +5370,9 @@ mod tests {
             },
             &mut output,
         );
-        assert!(output.iter().any(|item| matches!(
+        assert!(output.iter().all(|item| !matches!(
             item,
-            SessionOutput::Transport(TransportAction::Write { bytes, .. })
-                if bytes.as_slice().starts_with(b"LdAp")
+            SessionOutput::Transport(TransportAction::Write { .. })
         )));
     }
 
@@ -5406,6 +5526,146 @@ mod tests {
                     if bytes.as_slice() == expected
             )));
         }
+    }
+
+    #[test]
+    fn expired_stationary_arm_cancels_pending_sequence_without_writing() {
+        let mut session = StationarySettingsWriteSession::<BegodeFalconModel, true>::default();
+        let mut output = Vec::new();
+        session.arm(
+            StationarySettingsPolicy {
+                model: BegodeFalconModel::MODEL,
+                arm_duration: Duration::from_milliseconds(100),
+            }
+            .arm(RideOperatingState::Parked, ms(10))
+            .expect("parked state arms settings writes"),
+        );
+        session.handle(
+            SessionInput::Tick {
+                monotonic_ms: ms(10),
+            },
+            &mut output,
+        );
+        output.clear();
+
+        session.handle(
+            SessionInput::Command(DeviceCommand::SetBegodeMaxSpeed(
+                BegodeMaxSpeed::new(30).expect("30 km/h is encodable"),
+            )),
+            &mut output,
+        );
+        output.clear();
+
+        session.handle(
+            SessionInput::Tick {
+                monotonic_ms: ms(111),
+            },
+            &mut output,
+        );
+        assert!(output.iter().all(|item| !matches!(
+            item,
+            SessionOutput::Transport(TransportAction::Write { .. })
+        )));
+
+        output.clear();
+        session.handle(
+            SessionInput::Tick {
+                monotonic_ms: ms(1_000),
+            },
+            &mut output,
+        );
+        assert!(output.iter().all(|item| !matches!(
+            item,
+            SessionOutput::Transport(TransportAction::Write { .. })
+        )));
+    }
+
+    #[test]
+    fn renewing_an_arm_does_not_extend_a_pending_sequence_deadline() {
+        let mut session = StationarySettingsWriteSession::<NosfetAeroModel, false>::default();
+        let mut outputs = Vec::new();
+        let policy = StationarySettingsPolicy {
+            model: NosfetAeroModel::MODEL,
+            arm_duration: Duration::from_milliseconds(100),
+        };
+        session.arm(
+            policy
+                .arm(RideOperatingState::Parked, ms(10))
+                .expect("stationary"),
+        );
+        session.handle(
+            SessionInput::Command(DeviceCommand::SetAeroHighBeam(cutout_core::LightState::On)),
+            &mut outputs,
+        );
+        session.arm(
+            policy
+                .arm(RideOperatingState::Parked, ms(50))
+                .expect("stationary"),
+        );
+        outputs.clear();
+        session.handle(
+            SessionInput::Tick {
+                monotonic_ms: ms(111),
+            },
+            &mut outputs,
+        );
+        assert!(outputs.iter().all(|output| !matches!(
+            output,
+            SessionOutput::Transport(TransportAction::Write { .. })
+        )));
+    }
+
+    #[test]
+    fn moving_telemetry_cancels_pending_settings_frames() {
+        let mut session = StationarySettingsWriteSession::<NosfetAeroModel, false>::default();
+        let mut outputs = Vec::new();
+        session.handle(
+            SessionInput::LinkUp(LinkInfo {
+                monotonic_ms: ms(1),
+                max_write_len: Some(write_len(185)),
+            }),
+            &mut outputs,
+        );
+        session.arm(
+            NosfetAeroModel::arm_settings_write(RideOperatingState::Parked, None, ms(10))
+                .expect("stationary"),
+        );
+        session.handle(
+            SessionInput::Command(DeviceCommand::SetAeroHighBeam(cutout_core::LightState::On)),
+            &mut outputs,
+        );
+        let mut frame = live_aero_frame();
+        frame[6..8].copy_from_slice(&20_u16.to_be_bytes());
+        let length = usize::from(frame[3]);
+        let crc = crc32fast::hash(&frame[..length]);
+        frame[length..].copy_from_slice(&crc.to_be_bytes());
+        session.handle(
+            SessionInput::Notification {
+                channel: VETERAN_DATA_CHANNEL,
+                bytes: &frame,
+                monotonic_ms: ms(11),
+            },
+            &mut outputs,
+        );
+        outputs.clear();
+        session.handle(
+            SessionInput::Tick {
+                monotonic_ms: ms(12),
+            },
+            &mut outputs,
+        );
+        assert!(outputs.iter().all(|output| !matches!(
+            output,
+            SessionOutput::Transport(TransportAction::Write { .. })
+        )));
+        outputs.clear();
+        session.handle(
+            SessionInput::Command(DeviceCommand::ResetTripMeter),
+            &mut outputs,
+        );
+        assert!(
+            matches!(outputs.as_slice(), [SessionOutput::Event(DeviceEvent::ControlRefusal(refusal))] if refusal.reason == ControlRefusalReason::MissingArm)
+        );
     }
 
     #[test]

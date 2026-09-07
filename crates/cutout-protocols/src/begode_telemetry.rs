@@ -1412,7 +1412,7 @@ mod tests {
         };
 
         assert_eq!(
-            settings.entries(),
+            &settings.entries()[..4],
             [
                 Some(settings_entry(BEGODE_FIELD_SETTINGS_BITS, 0)),
                 Some(settings_entry(BEGODE_FIELD_POWER_OFF_TIMER_MINUTES, 15)),

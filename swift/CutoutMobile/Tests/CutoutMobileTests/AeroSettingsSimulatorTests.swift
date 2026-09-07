@@ -21,6 +21,21 @@ final class AeroSettingsSimulatorTests: XCTestCase {
         let commands: [MobileCommandDto] = [
             .setAeroTiltbackSpeed(MobileAeroSpeedSettingDto(kilometresPerHour: 42)),
             .setAeroPwmPercent(MobileAeroPwmPercentDto(percent: 64)),
+            .setAeroDisplayBacklight(MobileAeroDisplayBacklightDto(percent: 80)),
+            .setAeroBeeperVolume(MobileAeroBeeperVolumeDto(percent: 40)),
+            .setAeroDynamicAssist(MobileAeroDynamicAssistDto(percent: 35)),
+            .setAeroPedalDipCompensation(MobileAeroPedalDipCompensationDto(percent: 25)),
+            .setAeroLateralTiltLimit(MobileAeroLateralTiltLimitDto(degrees: 55)),
+            .setAeroVoltageCorrection(MobileAeroVoltageCorrectionDto(tenthsOfPercent: -5)),
+            .setAeroMaxChargeVoltageRaw(MobileAeroMaxChargeVoltageRawDto(raw: 46)),
+            .setAeroWheelUnits(.imperial),
+            .setAeroHighSpeedMode(MobileAeroToggleDto(enabled: true)),
+            .setAeroLowBatteryMode(MobileAeroToggleDto(enabled: false)),
+            .setAeroTransportMode(MobileAeroToggleDto(enabled: true)),
+            .setAeroGyroCalibration,
+            .setAeroRidingMode(.hard),
+            .setAeroBrakeOverpressureAlarm(MobileAeroBrakeOverpressureAlarmDto(percent: 110)),
+            .setAeroPedalHardness(MobileAeroPedalHardnessDto(percent: 75)),
             .setAeroAlarmSpeed(MobileAeroSpeedSettingDto(kilometresPerHour: 56)),
             .setAeroAngleAdjustment(MobileAeroAngleAdjustmentDto(tenthsOfDegree: -12)),
             .setPedalMode(.hard),
@@ -38,11 +53,25 @@ final class AeroSettingsSimulatorTests: XCTestCase {
             )
             XCTAssertTrue(outputs.contains { $0.kind == .write }, "missing write for \(command)")
         }
-        _ = simulator.tick(monotonicMs: MobileMonotonicMillisDto(milliseconds: 17))
+        _ = simulator.tick(monotonicMs: MobileMonotonicMillisDto(milliseconds: UInt64(10 + commands.count)))
 
         let readback = simulator.readback()
         XCTAssertEqual(readback.tiltbackSpeed?.kilometresPerHour, 42)
         XCTAssertEqual(readback.pwmPercent?.percent, 64)
+        XCTAssertEqual(readback.displayBacklight?.percent, 80)
+        XCTAssertEqual(readback.beeperVolume?.percent, 40)
+        XCTAssertEqual(readback.dynamicAssist?.percent, 35)
+        XCTAssertEqual(readback.pedalDipCompensation?.percent, 25)
+        XCTAssertEqual(readback.lateralTiltLimit?.degrees, 55)
+        XCTAssertEqual(readback.voltageCorrection?.tenthsOfPercent, -5)
+        XCTAssertEqual(readback.maxChargeVoltageRaw?.raw, 46)
+        XCTAssertEqual(readback.wheelUnits, .imperial)
+        XCTAssertEqual(readback.highSpeedMode?.enabled, true)
+        XCTAssertEqual(readback.lowBatteryMode?.enabled, false)
+        XCTAssertEqual(readback.transportMode?.enabled, true)
+        XCTAssertEqual(readback.gyroCalibrationState, .waiting)
+        XCTAssertEqual(readback.brakeOverpressureAlarm?.percent, 110)
+        XCTAssertEqual(readback.pedalHardness?.percent, 75)
         XCTAssertEqual(readback.alarmSpeed?.kilometresPerHour, 56)
         XCTAssertEqual(readback.angleAdjustment?.tenthsOfDegree, -12)
         XCTAssertEqual(readback.pedalMode, .hard)
@@ -81,7 +110,7 @@ final class AeroSettingsSimulatorTests: XCTestCase {
         let simulator = AeroSettingsSimulator()
 
         let outputs = simulator.issue(
-            command: .setAeroPwmPercent(MobileAeroPwmPercentDto(percent: 71)),
+            command: .setAeroPwmPercent(MobileAeroPwmPercentDto(percent: 60)),
             operatingState: .riding,
             speed: Speed(value: 501),
             monotonicMs: MobileMonotonicMillisDto(milliseconds: 10)
@@ -95,7 +124,7 @@ final class AeroSettingsSimulatorTests: XCTestCase {
         let simulator = AeroSettingsSimulator()
 
         let result = simulator.issueChecked(
-            command: .setAeroPwmPercent(MobileAeroPwmPercentDto(percent: 71)),
+            command: .setAeroPwmPercent(MobileAeroPwmPercentDto(percent: 60)),
             operatingState: .riding,
             speed: Speed(value: 501),
             monotonicMs: MobileMonotonicMillisDto(milliseconds: 10)

@@ -4,14 +4,15 @@ use std::{
     ffi::OsStr,
     fmt::Write,
     fs,
+    io::Write as _,
     path::{Path, PathBuf},
     process::{Command, ExitStatus},
 };
 
 use anyhow::{Context, Result, bail, ensure};
 use cutout_core::{
-    AeroAngleAdjustment, AeroPwmPercent, AeroSpeedSetting, DeviceCommand, LightState,
-    MonotonicTimestamp, PedalMode, RideOperatingState,
+    AeroAngleAdjustment, AeroPedalHardness, AeroPwmPercent, AeroPwmSetting, AeroSpeedSetting,
+    DeviceCommand, LightState, MonotonicTimestamp, PedalMode, RideOperatingState,
 };
 use cutout_protocols::AeroSettingsSimulator;
 use serde_json::Value;
@@ -41,7 +42,6 @@ impl SwiftFfiLock {
                     path.display()
                 )
             })?;
-        use std::io::Write as _;
         writeln!(lock, "{}", std::process::id())?;
         Ok(Self { path })
     }
@@ -95,9 +95,9 @@ fn run_aero_settings_simulator() -> Result<()> {
         DeviceCommand::SetAeroTiltbackSpeed(
             AeroSpeedSetting::new(53).context("53 km/h is a valid Aero tiltback speed")?,
         ),
-        DeviceCommand::SetAeroPwmPercent(
+        DeviceCommand::SetAeroPwmPercent(AeroPwmSetting::Margin(
             AeroPwmPercent::new(64).context("64% is a valid Aero PWM setting")?,
-        ),
+        )),
         DeviceCommand::SetAeroAlarmSpeed(
             AeroSpeedSetting::new(56).context("56 km/h is a valid Aero alarm speed")?,
         ),
@@ -105,6 +105,9 @@ fn run_aero_settings_simulator() -> Result<()> {
             AeroAngleAdjustment::new(-12).context("-1.2 degrees is a valid Aero angle")?,
         ),
         DeviceCommand::SetPedalMode(PedalMode::Hard),
+        DeviceCommand::SetAeroPedalHardness(
+            AeroPedalHardness::new(64).context("64% is a source-documented MD hardness")?,
+        ),
         DeviceCommand::SetAeroHighBeam(LightState::On),
         DeviceCommand::SetLights(LightState::On),
         DeviceCommand::ResetTripMeter,
@@ -404,30 +407,22 @@ fn source_fingerprint(root: &Path) -> Result<String> {
         PathBuf::from("Cargo.lock"),
         PathBuf::from("Cargo.toml"),
         PathBuf::from("rust-toolchain.toml"),
-        PathBuf::from("crates/cutout-core/Cargo.toml"),
-        PathBuf::from("crates/cutout-music/Cargo.toml"),
-        PathBuf::from("crates/cutout-mobile-ffi/Cargo.toml"),
-        PathBuf::from("crates/cutout-ride-maps/Cargo.toml"),
-        PathBuf::from("crates/cutout-protocols/Cargo.toml"),
-        PathBuf::from("crates/libcutout-persistence/Cargo.toml"),
     ]);
-    for directory in [
-        "crates/cutout-core/src",
-        "crates/cutout-music/src",
-        "crates/cutout-mobile-ffi/src",
-        "crates/cutout-ride-maps/src",
-        "crates/cutout-protocols/src",
-        "crates/cutout-protocols/registry",
-        "crates/libcutout-persistence/src",
-    ] {
-        collect_files(root, Path::new(directory), &mut files)?;
-    }
-    for optional in [
-        "crates/cutout-protocols/build.rs",
-        "crates/cutout-mobile-ffi/uniffi.toml",
-    ] {
-        if root.join(optional).is_file() {
-            files.insert(optional.into());
+    // Include workspace sources, including transitive FFI dependencies and the
+    // generator itself. Generated packages and build artifacts are not inputs.
+    for entry in fs::read_dir(root.join("crates"))? {
+        let path = entry?.path();
+        if !path.join("Cargo.toml").is_file() {
+            continue;
+        }
+        let relative = path.strip_prefix(root)?;
+        for directory in ["src", "registry"] {
+            collect_files(root, &relative.join(directory), &mut files)?;
+        }
+        for name in ["Cargo.toml", "build.rs", "uniffi.toml"] {
+            if path.join(name).is_file() {
+                files.insert(relative.join(name));
+            }
         }
     }
 
@@ -679,11 +674,11 @@ mod tests {
         let _ = fs::remove_dir_all(&root);
         for directory in [
             "crates/cutout-core/src",
-            "crates/cutout-music/src",
             "crates/cutout-mobile-ffi/src",
-            "crates/cutout-ride-maps/src",
             "crates/cutout-protocols/src",
+            "crates/cutout-ride-maps/src",
             "crates/libcutout-persistence/src",
+            "crates/cutout-uniffi-bindgen/src",
         ] {
             fs::create_dir_all(root.join(directory)).unwrap();
         }
@@ -692,22 +687,32 @@ mod tests {
             "Cargo.toml",
             "rust-toolchain.toml",
             "crates/cutout-core/Cargo.toml",
-            "crates/cutout-music/Cargo.toml",
             "crates/cutout-mobile-ffi/Cargo.toml",
-            "crates/cutout-ride-maps/Cargo.toml",
             "crates/cutout-protocols/Cargo.toml",
+            "crates/cutout-ride-maps/Cargo.toml",
             "crates/libcutout-persistence/Cargo.toml",
+            "crates/cutout-uniffi-bindgen/Cargo.toml",
             "crates/cutout-core/src/lib.rs",
-            "crates/cutout-music/src/lib.rs",
         ] {
             fs::write(root.join(file), "original\n").unwrap();
         }
 
+        for file in [
+            "crates/cutout-core/src/lib.rs",
+            "crates/cutout-ride-maps/src/lib.rs",
+            "crates/libcutout-persistence/src/lib.rs",
+            "crates/cutout-uniffi-bindgen/src/main.rs",
+            "crates/libcutout-persistence/build.rs",
+        ] {
+            let before = source_fingerprint(&root).unwrap();
+            fs::write(root.join(file), "changed\n").unwrap();
+            assert_ne!(before, source_fingerprint(&root).unwrap(), "{file}");
+        }
         let before = source_fingerprint(&root).unwrap();
-        fs::write(root.join("crates/cutout-music/src/lib.rs"), "changed\n").unwrap();
-        let after = source_fingerprint(&root).unwrap();
+        let artifact = root.join("crates/cutout-mobile-ffi/generated");
+        fs::create_dir_all(&artifact).unwrap();
+        fs::write(artifact.join("lib.a"), "generated").unwrap();
+        assert_eq!(before, source_fingerprint(&root).unwrap());
         fs::remove_dir_all(root).unwrap();
-
-        assert_ne!(before, after);
     }
 }

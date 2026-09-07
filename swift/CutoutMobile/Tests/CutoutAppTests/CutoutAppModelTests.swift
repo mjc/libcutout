@@ -451,6 +451,130 @@ final class CutoutAppModelTests: XCTestCase {
     }
 
     @MainActor
+    func testAdditionalAeroControlsRequireValidationAndSubmitTypedValues() {
+        let driver = SessionDriverSpy(rows: [])
+        driver.electricUnicycleModel = .aero
+        let model = CutoutAppModel(core: driver)
+        let displayBacklight = AeroDisplayBacklight(percent: 75)!
+        let beeperVolume = AeroBeeperVolume(percent: 75)!
+        let dynamicAssist = AeroDynamicAssist(percent: 75)!
+        let pedalDipCompensation = AeroPedalDipCompensation(percent: 75)!
+        let lateralTiltLimit = AeroLateralTiltLimit(degrees: 55)!
+        let voltageCorrection = AeroVoltageCorrection(tenthsOfPercent: -5)!
+        let maxChargeVoltageRaw = AeroMaxChargeVoltageRaw(raw: 46)!
+        XCTAssertFalse(model.aeroDisplayBacklightControlAvailable)
+        XCTAssertEqual(model.setAeroDisplayBacklight(displayBacklight), .failed)
+        XCTAssertTrue(driver.aeroDisplayBacklightValues.isEmpty)
+        XCTAssertFalse(model.aeroBeeperVolumeControlAvailable)
+        XCTAssertEqual(model.setAeroBeeperVolume(beeperVolume), .failed)
+        XCTAssertTrue(driver.aeroBeeperVolumeValues.isEmpty)
+        XCTAssertFalse(model.aeroDynamicAssistControlAvailable)
+        XCTAssertEqual(model.setAeroDynamicAssist(dynamicAssist), .failed)
+        XCTAssertTrue(driver.aeroDynamicAssistValues.isEmpty)
+        XCTAssertFalse(model.aeroPedalDipCompensationControlAvailable)
+        XCTAssertEqual(model.setAeroPedalDipCompensation(pedalDipCompensation), .failed)
+        XCTAssertTrue(driver.aeroPedalDipCompensationValues.isEmpty)
+        XCTAssertFalse(model.aeroLateralTiltLimitControlAvailable)
+        XCTAssertEqual(model.setAeroLateralTiltLimit(lateralTiltLimit), .failed)
+        XCTAssertTrue(driver.aeroLateralTiltLimitValues.isEmpty)
+        XCTAssertFalse(model.aeroVoltageCorrectionControlAvailable)
+        XCTAssertEqual(model.setAeroVoltageCorrection(voltageCorrection), .failed)
+        XCTAssertTrue(driver.aeroVoltageCorrectionValues.isEmpty)
+        XCTAssertFalse(model.aeroMaxChargeVoltageRawControlAvailable)
+        XCTAssertEqual(model.setAeroMaxChargeVoltageRaw(maxChargeVoltageRaw), .failed)
+        XCTAssertTrue(driver.aeroMaxChargeVoltageRawValues.isEmpty)
+        XCTAssertFalse(model.aeroWheelUnitsControlAvailable)
+        XCTAssertEqual(model.setAeroWheelUnits(.imperial), .failed)
+        XCTAssertTrue(driver.aeroWheelUnitsValues.isEmpty)
+
+        driver.settingsCapabilitiesOverride = EucSettingsCapabilities(
+            validationMode: true,
+            pedalMode: .unverified,
+            accelerationAssist: .unsupported,
+            headlight: .supported,
+            taillight: .unsupported,
+            aeroDisplayBacklight: .unverified,
+            aeroWheelUnits: .unverified,
+            aeroBeeperVolume: .unverified,
+            aeroDynamicAssist: .unverified,
+            aeroPedalDipCompensation: .unverified,
+            aeroLateralTiltLimit: .unverified,
+            aeroVoltageCorrection: .unverified,
+            aeroMaxChargeVoltageRaw: .unverified
+        )
+        XCTAssertTrue(model.aeroDisplayBacklightControlAvailable)
+        XCTAssertEqual(model.setAeroDisplayBacklight(displayBacklight), .accepted)
+        XCTAssertEqual(driver.aeroDisplayBacklightValues, [displayBacklight])
+        XCTAssertTrue(model.aeroBeeperVolumeControlAvailable)
+        XCTAssertEqual(model.setAeroBeeperVolume(beeperVolume), .accepted)
+        XCTAssertEqual(driver.aeroBeeperVolumeValues, [beeperVolume])
+        XCTAssertTrue(model.aeroDynamicAssistControlAvailable)
+        XCTAssertEqual(model.setAeroDynamicAssist(dynamicAssist), .accepted)
+        XCTAssertEqual(driver.aeroDynamicAssistValues, [dynamicAssist])
+        XCTAssertTrue(model.aeroPedalDipCompensationControlAvailable)
+        XCTAssertEqual(model.setAeroPedalDipCompensation(pedalDipCompensation), .accepted)
+        XCTAssertEqual(driver.aeroPedalDipCompensationValues, [pedalDipCompensation])
+        XCTAssertTrue(model.aeroLateralTiltLimitControlAvailable)
+        XCTAssertEqual(model.setAeroLateralTiltLimit(lateralTiltLimit), .accepted)
+        XCTAssertEqual(driver.aeroLateralTiltLimitValues, [lateralTiltLimit])
+        XCTAssertTrue(model.aeroVoltageCorrectionControlAvailable)
+        XCTAssertEqual(model.setAeroVoltageCorrection(voltageCorrection), .accepted)
+        XCTAssertEqual(driver.aeroVoltageCorrectionValues, [voltageCorrection])
+        XCTAssertTrue(model.aeroMaxChargeVoltageRawControlAvailable)
+        XCTAssertEqual(model.setAeroMaxChargeVoltageRaw(maxChargeVoltageRaw), .accepted)
+        XCTAssertEqual(driver.aeroMaxChargeVoltageRawValues, [maxChargeVoltageRaw])
+        XCTAssertTrue(model.aeroWheelUnitsControlAvailable)
+        XCTAssertEqual(model.setAeroWheelUnits(.imperial), .accepted)
+        XCTAssertEqual(driver.aeroWheelUnitsValues, [.imperial])
+        XCTAssertEqual(model.settingsCapabilities?.aeroVoltageCorrection, .unverified)
+        XCTAssertEqual(model.settingsCapabilities?.aeroMaxChargeVoltageRaw, .unverified)
+    }
+
+
+    @MainActor
+    func testValidationModeAllowsAeroTestingWithoutClaimingVerifiedSupport() {
+        let driver = SessionDriverSpy(rows: [])
+        driver.electricUnicycleModel = .aero
+        driver.settingsCapabilitiesOverride = EucSettingsCapabilities(
+            validationMode: true,
+            resetTripMeter: .unverified,
+            pedalMode: .unverified,
+            accelerationAssist: .unsupported,
+            headlight: .supported,
+            aeroHighBeam: .supported,
+            taillight: .unsupported,
+            aeroTiltbackSpeed: .unverified,
+            aeroPwmPercent: .unverified,
+            aeroPedalHardness: .unverified,
+            aeroAlarmSpeed: .unverified,
+            aeroAngleAdjustment: .unverified
+        )
+        let model = CutoutAppModel(core: driver)
+
+        XCTAssertTrue(model.pedalModeControlAvailable)
+        XCTAssertTrue(model.resetTripMeterControlAvailable)
+        XCTAssertTrue(model.aeroTiltbackSpeedControlAvailable)
+        XCTAssertTrue(model.aeroPwmPercentControlAvailable)
+        XCTAssertTrue(model.aeroPedalHardnessControlAvailable)
+        XCTAssertTrue(model.aeroAlarmSpeedControlAvailable)
+        XCTAssertTrue(model.aeroAngleAdjustmentControlAvailable)
+        XCTAssertFalse(model.rollAngleControlAvailable)
+        XCTAssertEqual(model.settingsCapabilities?.aeroPwmPercent, .unverified)
+        XCTAssertEqual(model.setAeroPwmPercent(AeroPwmPercent(percent: 64)!), .accepted)
+        XCTAssertEqual(driver.aeroPwmPercents, [AeroPwmPercent(percent: 64)!])
+        XCTAssertEqual(model.setAeroPedalHardness(AeroPedalHardness(percent: 75)!), .accepted)
+        XCTAssertEqual(driver.aeroPedalHardnesses, [AeroPedalHardness(percent: 75)!])
+
+        driver.tripMeterResetCommandResult = .refused(.missingArm)
+        driver.tripMeterResetState = TripMeterResetState(kind: .refused, refusalReason: .missingArm)
+        XCTAssertEqual(model.resetTripMeter(), .refused(.missingArm))
+        XCTAssertEqual(driver.tripMeterResetCount, 1)
+        XCTAssertEqual(model.tripMeterResetState, driver.tripMeterResetState)
+        driver.tripMeterResetState = TripMeterResetState(kind: .timedOut)
+        XCTAssertEqual(model.tripMeterResetState?.kind, .timedOut)
+    }
+
+    @MainActor
     func testBegodeWSettingWritesUseTheSupportedCapabilities() {
         let driver = SessionDriverSpy(rows: [])
         driver.electricUnicycleModel = .falcon
@@ -3365,6 +3489,31 @@ private final class SessionDriverSpy: CutoutSessionDriving {
         set { headlightCommandStatusOverride = newValue }
     }
     private var headlightCommandStatusOverride: LightCommandStatus?
+    var tripMeterResetState: TripMeterResetState?
+    var tripMeterResetCommandResult: SettingCommandResult = .accepted
+    var aeroHighBeamState: LightSettingState?
+    var aeroTiltbackSpeedState: AeroSpeedSettingState?
+    var aeroPwmPercentState: AeroPwmSettingState?
+    var aeroPedalHardnessState: AeroPedalHardnessSettingState?
+    var aeroDisplayBacklightState: AeroDisplayBacklightSettingState?
+    private(set) var aeroDisplayBacklightValues = [AeroDisplayBacklight]()
+    var aeroBeeperVolumeState: AeroBeeperVolumeSettingState?
+    private(set) var aeroBeeperVolumeValues = [AeroBeeperVolume]()
+    var aeroDynamicAssistState: AeroDynamicAssistSettingState?
+    private(set) var aeroDynamicAssistValues = [AeroDynamicAssist]()
+    var aeroPedalDipCompensationState: AeroPedalDipCompensationSettingState?
+    private(set) var aeroPedalDipCompensationValues = [AeroPedalDipCompensation]()
+    var aeroLateralTiltLimitState: AeroLateralTiltLimitSettingState?
+    private(set) var aeroLateralTiltLimitValues = [AeroLateralTiltLimit]()
+    var aeroVoltageCorrectionState: AeroVoltageCorrectionSettingState?
+    private(set) var aeroVoltageCorrectionValues = [AeroVoltageCorrection]()
+    var aeroMaxChargeVoltageRawState: AeroMaxChargeVoltageRawSettingState?
+    private(set) var aeroMaxChargeVoltageRawValues = [AeroMaxChargeVoltageRaw]()
+    var aeroWheelUnitsState: AeroWheelUnitsSettingState?
+    private(set) var aeroWheelUnitsValues = [AeroWheelUnits]()
+    private(set) var aeroPedalHardnesses = [AeroPedalHardness]()
+    var aeroAlarmSpeedState: AeroSpeedSettingState?
+    var aeroAngleAdjustmentState: AeroAngleAdjustmentSettingState?
     var pedalModeState: PedalModeSettingState?
     var rollAngleState: RollAngleSettingState?
     var speedAlarmModeState: SpeedAlarmModeSettingState?
@@ -3529,6 +3678,74 @@ private final class SessionDriverSpy: CutoutSessionDriving {
         pedalModes.append(mode)
         return .accepted
     }
+    func resetTripMeter() -> SettingCommandResult {
+        tripMeterResetCount += 1
+        return tripMeterResetCommandResult
+    }
+    func setAeroTiltbackSpeed(_ speed: AeroSpeedSetting) -> SettingCommandResult {
+        aeroTiltbackSpeeds.append(speed)
+        return .accepted
+    }
+
+    func setAeroPwmPercent(_ percent: AeroPwmPercent) -> SettingCommandResult {
+        aeroPwmPercents.append(percent)
+        return .accepted
+    }
+
+    func setAeroAlarmSpeed(_ speed: AeroSpeedSetting) -> SettingCommandResult {
+        aeroAlarmSpeeds.append(speed)
+        return .accepted
+    }
+
+    func setAeroAngleAdjustment(_ angle: AeroAngleAdjustment) -> SettingCommandResult {
+        aeroAngleAdjustments.append(angle)
+        return .accepted
+    }
+    func setAeroPedalHardness(_ hardness: AeroPedalHardness) -> SettingCommandResult {
+        aeroPedalHardnesses.append(hardness)
+        return .accepted
+    }
+
+    func setAeroDisplayBacklight(_ value: AeroDisplayBacklight) -> SettingCommandResult {
+        aeroDisplayBacklightValues.append(value)
+        return .accepted
+    }
+
+    func setAeroBeeperVolume(_ value: AeroBeeperVolume) -> SettingCommandResult {
+        aeroBeeperVolumeValues.append(value)
+        return .accepted
+    }
+
+    func setAeroDynamicAssist(_ value: AeroDynamicAssist) -> SettingCommandResult {
+        aeroDynamicAssistValues.append(value)
+        return .accepted
+    }
+
+    func setAeroPedalDipCompensation(_ value: AeroPedalDipCompensation) -> SettingCommandResult {
+        aeroPedalDipCompensationValues.append(value)
+        return .accepted
+    }
+
+    func setAeroLateralTiltLimit(_ value: AeroLateralTiltLimit) -> SettingCommandResult {
+        aeroLateralTiltLimitValues.append(value)
+        return .accepted
+    }
+
+    func setAeroVoltageCorrection(_ value: AeroVoltageCorrection) -> SettingCommandResult {
+        aeroVoltageCorrectionValues.append(value)
+        return .accepted
+    }
+
+    func setAeroMaxChargeVoltageRaw(_ value: AeroMaxChargeVoltageRaw) -> SettingCommandResult {
+        aeroMaxChargeVoltageRawValues.append(value)
+        return .accepted
+    }
+
+    func setAeroWheelUnits(_ value: AeroWheelUnits) -> SettingCommandResult {
+        aeroWheelUnitsValues.append(value)
+        return .accepted
+    }
+
     func setRollAngle(_ angle: RollAngle.Kind) -> SettingCommandResult {
         rollAngles.append(angle)
         return .accepted

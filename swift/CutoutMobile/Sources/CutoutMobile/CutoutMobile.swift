@@ -1351,6 +1351,28 @@ public enum SettingValueSource: Equatable, Hashable, Sendable {
     }
 }
 
+public struct TripMeterResetState: Equatable, Hashable, Sendable {
+    public let kind: SettingStateKind
+    public let refusalReason: CommandRefusalReason?
+    public let submittedAt: MonotonicMilliseconds?
+
+    public init(
+        kind: SettingStateKind,
+        refusalReason: CommandRefusalReason? = nil,
+        submittedAt: MonotonicMilliseconds? = nil
+    ) {
+        self.kind = kind
+        self.refusalReason = refusalReason
+        self.submittedAt = submittedAt
+    }
+
+    fileprivate init(_ dto: MobileTripMeterResetStateDto) {
+        self.kind = SettingStateKind(dto.kind)
+        self.refusalReason = dto.refusalReason.map(CommandRefusalReason.init)
+        self.submittedAt = dto.submittedAtMs.map(MonotonicMilliseconds.init)
+    }
+}
+
 public struct LightSettingState: Equatable, Hashable, Sendable {
     public let kind: SettingStateKind
     public let current: LightState?
@@ -1409,10 +1431,79 @@ public struct AeroSpeedSettingState: Equatable, Hashable, Sendable {
     }
 }
 
+/// Shared boolean state for Aero safety modes.
+public struct AeroToggleSettingState: Equatable, Hashable, Sendable {
+    public let kind: SettingStateKind
+    public let current: Bool?
+    public let requested: Bool?
+    public let source: SettingValueSource
+    public let submittedAt: MonotonicMilliseconds?
+    public let confirmedAt: MonotonicMilliseconds?
+    public let refusalReason: CommandRefusalReason?
+
+    fileprivate init(_ dto: MobileAeroHighSpeedModeStateDto) {
+        self.init(kind: dto.kind, current: dto.current, requested: dto.requested,
+                  source: dto.source, submittedAtMs: dto.submittedAtMs,
+                  confirmedAtMs: dto.confirmedAtMs, refusalReason: dto.refusalReason)
+    }
+
+    fileprivate init(_ dto: MobileAeroLowBatteryModeStateDto) {
+        self.init(kind: dto.kind, current: dto.current, requested: dto.requested,
+                  source: dto.source, submittedAtMs: dto.submittedAtMs,
+                  confirmedAtMs: dto.confirmedAtMs, refusalReason: dto.refusalReason)
+    }
+
+    fileprivate init(_ dto: MobileAeroTransportModeStateDto) {
+        self.init(kind: dto.kind, current: dto.current, requested: dto.requested,
+                  source: dto.source, submittedAtMs: dto.submittedAtMs,
+                  confirmedAtMs: dto.confirmedAtMs, refusalReason: dto.refusalReason)
+    }
+
+    private init(
+        kind: MobileSettingStateKindDto,
+        current: MobileAeroToggleDto?,
+        requested: MobileAeroToggleDto?,
+        source: MobileSettingValueSourceDto,
+        submittedAtMs: UInt64?,
+        confirmedAtMs: UInt64?,
+        refusalReason: MobileControlRefusalReasonDto?
+    ) {
+        self.kind = SettingStateKind(kind)
+        self.current = current?.enabled
+        self.requested = requested?.enabled
+        self.source = SettingValueSource(source)
+        self.submittedAt = submittedAtMs.map(MonotonicMilliseconds.init)
+        self.confirmedAt = confirmedAtMs.map(MonotonicMilliseconds.init)
+        self.refusalReason = refusalReason.map(CommandRefusalReason.init)
+    }
+}
+
+public struct AeroPedalHardnessSettingState: Equatable, Hashable, Sendable {
+    public let kind: SettingStateKind
+    public let current: AeroPedalHardness?
+    public let requested: AeroPedalHardness?
+    public let source: SettingValueSource
+    public let submittedAt: MonotonicMilliseconds?
+    public let confirmedAt: MonotonicMilliseconds?
+    public let refusalReason: CommandRefusalReason?
+
+    fileprivate init(_ dto: MobileAeroPedalHardnessStateDto) {
+        self.kind = SettingStateKind(dto.kind)
+        self.current = dto.current.map(AeroPedalHardness.init)
+        self.requested = dto.requested.map(AeroPedalHardness.init)
+        self.source = SettingValueSource(dto.source)
+        self.submittedAt = dto.submittedAtMs.map(MonotonicMilliseconds.init)
+        self.confirmedAt = dto.confirmedAtMs.map(MonotonicMilliseconds.init)
+        self.refusalReason = dto.refusalReason.map(CommandRefusalReason.init)
+    }
+}
+
 public struct AeroPwmSettingState: Equatable, Hashable, Sendable {
     public let kind: SettingStateKind
     public let current: AeroPwmPercent?
+    public let currentIsOff: Bool
     public let requested: AeroPwmPercent?
+    public let requestedIsOff: Bool
     public let source: SettingValueSource
     public let submittedAt: MonotonicMilliseconds?
     public let confirmedAt: MonotonicMilliseconds?
@@ -1421,7 +1512,130 @@ public struct AeroPwmSettingState: Equatable, Hashable, Sendable {
     fileprivate init(_ dto: MobileAeroPwmSettingStateDto) {
         self.kind = SettingStateKind(dto.kind)
         self.current = dto.current.map(AeroPwmPercent.init)
+        self.currentIsOff = dto.currentOff
         self.requested = dto.requested.map(AeroPwmPercent.init)
+        self.requestedIsOff = dto.requestedOff
+        self.source = SettingValueSource(dto.source)
+        self.submittedAt = dto.submittedAtMs.map(MonotonicMilliseconds.init)
+        self.confirmedAt = dto.confirmedAtMs.map(MonotonicMilliseconds.init)
+        self.refusalReason = dto.refusalReason.map(CommandRefusalReason.init)
+    }
+}
+
+public enum AeroGyroCalibrationState: Equatable, Hashable, Sendable {
+    case idle
+    case waiting
+    case complete
+
+    fileprivate init(_ dto: MobileAeroGyroCalibrationStateDto) {
+        switch dto {
+        case .idle: self = .idle
+        case .waiting: self = .waiting
+        case .complete: self = .complete
+        }
+    }
+}
+
+public struct AeroGyroCalibrationSettingState: Equatable, Hashable, Sendable {
+    public let kind: SettingStateKind
+    public let current: AeroGyroCalibrationState?
+    public let requested: AeroGyroCalibrationState?
+    public let source: SettingValueSource
+    public let submittedAt: MonotonicMilliseconds?
+    public let confirmedAt: MonotonicMilliseconds?
+    public let refusalReason: CommandRefusalReason?
+
+    fileprivate init(_ dto: MobileAeroGyroCalibrationSettingStateDto) {
+        self.kind = SettingStateKind(dto.kind)
+        self.current = dto.current.map(AeroGyroCalibrationState.init)
+        self.requested = dto.requested.map(AeroGyroCalibrationState.init)
+        self.source = SettingValueSource(dto.source)
+        self.submittedAt = dto.submittedAtMs.map(MonotonicMilliseconds.init)
+        self.confirmedAt = dto.confirmedAtMs.map(MonotonicMilliseconds.init)
+        self.refusalReason = dto.refusalReason.map(CommandRefusalReason.init)
+    }
+}
+
+public enum AeroRidingMode: CaseIterable, Equatable, Hashable, Sendable {
+    case hard
+    case medium
+    case soft
+
+    fileprivate init(_ dto: MobileAeroRidingModeDto) {
+        switch dto {
+        case .hard: self = .hard
+        case .medium: self = .medium
+        case .soft: self = .soft
+        }
+    }
+
+    fileprivate init(_ dto: MobileAeroRidingModeStateDto) {
+        switch dto {
+        case .hard: self = .hard
+        case .medium: self = .medium
+        case .soft: self = .soft
+        }
+    }
+
+    fileprivate var dto: MobileAeroRidingModeDto {
+        switch self {
+        case .hard: .hard
+        case .medium: .medium
+        case .soft: .soft
+        }
+    }
+}
+
+public struct AeroRidingModeSettingState: Equatable, Hashable, Sendable {
+    public let kind: SettingStateKind
+    public let current: AeroRidingMode?
+    public let requested: AeroRidingMode?
+    public let source: SettingValueSource
+    public let submittedAt: MonotonicMilliseconds?
+    public let confirmedAt: MonotonicMilliseconds?
+    public let refusalReason: CommandRefusalReason?
+
+    fileprivate init(_ dto: MobileAeroRidingModeSettingStateDto) {
+        self.kind = SettingStateKind(dto.kind)
+        self.current = dto.current.map(AeroRidingMode.init)
+        self.requested = dto.requested.map(AeroRidingMode.init)
+        self.source = SettingValueSource(dto.source)
+        self.submittedAt = dto.submittedAtMs.map(MonotonicMilliseconds.init)
+        self.confirmedAt = dto.confirmedAtMs.map(MonotonicMilliseconds.init)
+        self.refusalReason = dto.refusalReason.map(CommandRefusalReason.init)
+    }
+}
+
+public struct AeroBrakeOverpressureAlarm: Equatable, Hashable, Sendable {
+    public let percent: UInt8
+
+    public init?(percent: UInt8) {
+        guard (90...125).contains(Int(percent)) else { return nil }
+        self.percent = percent
+    }
+
+    fileprivate init(_ dto: MobileAeroBrakeOverpressureAlarmDto) {
+        self.percent = dto.percent
+    }
+
+    fileprivate var dto: MobileAeroBrakeOverpressureAlarmDto {
+        MobileAeroBrakeOverpressureAlarmDto(percent: percent)
+    }
+}
+
+public struct AeroBrakeOverpressureAlarmSettingState: Equatable, Hashable, Sendable {
+    public let kind: SettingStateKind
+    public let current: AeroBrakeOverpressureAlarm?
+    public let requested: AeroBrakeOverpressureAlarm?
+    public let source: SettingValueSource
+    public let submittedAt: MonotonicMilliseconds?
+    public let confirmedAt: MonotonicMilliseconds?
+    public let refusalReason: CommandRefusalReason?
+
+    fileprivate init(_ dto: MobileAeroBrakeOverpressureAlarmStateDto) {
+        self.kind = SettingStateKind(dto.kind)
+        self.current = dto.current.map(AeroBrakeOverpressureAlarm.init)
+        self.requested = dto.requested.map(AeroBrakeOverpressureAlarm.init)
         self.source = SettingValueSource(dto.source)
         self.submittedAt = dto.submittedAtMs.map(MonotonicMilliseconds.init)
         self.confirmedAt = dto.confirmedAtMs.map(MonotonicMilliseconds.init)
@@ -1673,12 +1887,12 @@ public struct BegodeLedMode: Equatable, Hashable, Sendable {
     }
 }
 
-/// NOSFET/Veteran speed setting in the captured 1...99 km/h wire range.
+/// NOSFET/Veteran speed setting in the documented 10...200 km/h wire range.
 public struct AeroSpeedSetting: Equatable, Hashable, Sendable {
     public let kilometresPerHour: UInt8
 
     public init?(kilometresPerHour: UInt8) {
-        guard (1...99).contains(Int(kilometresPerHour)) else { return nil }
+        guard (10...200).contains(Int(kilometresPerHour)) else { return nil }
         self.kilometresPerHour = kilometresPerHour
     }
 
@@ -1688,6 +1902,335 @@ public struct AeroSpeedSetting: Equatable, Hashable, Sendable {
 
     fileprivate var dto: MobileAeroSpeedSettingDto {
         MobileAeroSpeedSettingDto(kilometresPerHour: kilometresPerHour)
+    }
+}
+
+/// Boolean Aero safety-mode setting.
+public struct AeroToggle: Equatable, Hashable, Sendable {
+    public let enabled: Bool
+
+    public init(enabled: Bool) { self.enabled = enabled }
+
+    fileprivate init(_ dto: MobileAeroToggleDto) { self.enabled = dto.enabled }
+
+    fileprivate var dto: MobileAeroToggleDto { MobileAeroToggleDto(enabled: enabled) }
+}
+
+/// NOSFET/Veteran MD pedal hardness percentage.
+public struct AeroPedalHardness: Equatable, Hashable, Sendable {
+    public let percent: UInt8
+
+    public init?(percent: UInt8) {
+        guard percent <= 100 else { return nil }
+        self.percent = percent
+    }
+
+    fileprivate init(_ dto: MobileAeroPedalHardnessDto) {
+        self.percent = dto.percent
+    }
+
+    fileprivate var dto: MobileAeroPedalHardnessDto {
+        MobileAeroPedalHardnessDto(percent: percent)
+    }
+}
+
+public enum AeroWheelUnits: CaseIterable, Equatable, Hashable, Sendable {
+    case metric
+    case imperial
+
+    fileprivate init(_ dto: MobileAeroWheelUnitsDto) {
+        switch dto {
+        case .metric: self = .metric
+        case .imperial: self = .imperial
+        }
+    }
+
+    fileprivate var dto: MobileAeroWheelUnitsDto {
+        switch self {
+        case .metric: .metric
+        case .imperial: .imperial
+        }
+    }
+}
+
+public struct AeroWheelUnitsSettingState: Equatable, Hashable, Sendable {
+    public let kind: SettingStateKind
+    public let current: AeroWheelUnits?
+    public let requested: AeroWheelUnits?
+    public let source: SettingValueSource
+    public let submittedAt: MonotonicMilliseconds?
+    public let confirmedAt: MonotonicMilliseconds?
+    public let refusalReason: CommandRefusalReason?
+
+    fileprivate init(_ dto: MobileAeroWheelUnitsStateDto) {
+        self.kind = SettingStateKind(dto.kind)
+        self.current = dto.current.map(AeroWheelUnits.init)
+        self.requested = dto.requested.map(AeroWheelUnits.init)
+        self.source = SettingValueSource(dto.source)
+        self.submittedAt = dto.submittedAtMs.map(MonotonicMilliseconds.init)
+        self.confirmedAt = dto.confirmedAtMs.map(MonotonicMilliseconds.init)
+        self.refusalReason = dto.refusalReason.map(CommandRefusalReason.init)
+    }
+}
+
+
+public struct AeroDisplayBacklight: Equatable, Hashable, Sendable {
+    public let percent: UInt8
+
+    public init?(percent: UInt8) {
+        guard (0...100).contains(percent) else { return nil }
+        self.percent = percent
+    }
+
+    fileprivate init(_ dto: MobileAeroDisplayBacklightDto) {
+        self.percent = dto.percent
+    }
+
+    fileprivate var dto: MobileAeroDisplayBacklightDto {
+        MobileAeroDisplayBacklightDto(percent: percent)
+    }
+}
+
+public struct AeroDisplayBacklightSettingState: Equatable, Hashable, Sendable {
+    public let kind: SettingStateKind
+    public let current: AeroDisplayBacklight?
+    public let requested: AeroDisplayBacklight?
+    public let source: SettingValueSource
+    public let submittedAt: MonotonicMilliseconds?
+    public let confirmedAt: MonotonicMilliseconds?
+    public let refusalReason: CommandRefusalReason?
+
+    fileprivate init(_ dto: MobileAeroDisplayBacklightStateDto) {
+        self.kind = SettingStateKind(dto.kind)
+        self.current = dto.current.map(AeroDisplayBacklight.init)
+        self.requested = dto.requested.map(AeroDisplayBacklight.init)
+        self.source = SettingValueSource(dto.source)
+        self.submittedAt = dto.submittedAtMs.map(MonotonicMilliseconds.init)
+        self.confirmedAt = dto.confirmedAtMs.map(MonotonicMilliseconds.init)
+        self.refusalReason = dto.refusalReason.map(CommandRefusalReason.init)
+    }
+}
+
+public struct AeroBeeperVolume: Equatable, Hashable, Sendable {
+    public let percent: UInt8
+
+    public init?(percent: UInt8) {
+        guard (0...100).contains(percent) else { return nil }
+        self.percent = percent
+    }
+
+    fileprivate init(_ dto: MobileAeroBeeperVolumeDto) {
+        self.percent = dto.percent
+    }
+
+    fileprivate var dto: MobileAeroBeeperVolumeDto {
+        MobileAeroBeeperVolumeDto(percent: percent)
+    }
+}
+
+public struct AeroBeeperVolumeSettingState: Equatable, Hashable, Sendable {
+    public let kind: SettingStateKind
+    public let current: AeroBeeperVolume?
+    public let requested: AeroBeeperVolume?
+    public let source: SettingValueSource
+    public let submittedAt: MonotonicMilliseconds?
+    public let confirmedAt: MonotonicMilliseconds?
+    public let refusalReason: CommandRefusalReason?
+
+    fileprivate init(_ dto: MobileAeroBeeperVolumeStateDto) {
+        self.kind = SettingStateKind(dto.kind)
+        self.current = dto.current.map(AeroBeeperVolume.init)
+        self.requested = dto.requested.map(AeroBeeperVolume.init)
+        self.source = SettingValueSource(dto.source)
+        self.submittedAt = dto.submittedAtMs.map(MonotonicMilliseconds.init)
+        self.confirmedAt = dto.confirmedAtMs.map(MonotonicMilliseconds.init)
+        self.refusalReason = dto.refusalReason.map(CommandRefusalReason.init)
+    }
+}
+
+public struct AeroDynamicAssist: Equatable, Hashable, Sendable {
+    public let percent: UInt8
+
+    public init?(percent: UInt8) {
+        guard (0...100).contains(percent) else { return nil }
+        self.percent = percent
+    }
+
+    fileprivate init(_ dto: MobileAeroDynamicAssistDto) {
+        self.percent = dto.percent
+    }
+
+    fileprivate var dto: MobileAeroDynamicAssistDto {
+        MobileAeroDynamicAssistDto(percent: percent)
+    }
+}
+
+public struct AeroDynamicAssistSettingState: Equatable, Hashable, Sendable {
+    public let kind: SettingStateKind
+    public let current: AeroDynamicAssist?
+    public let requested: AeroDynamicAssist?
+    public let source: SettingValueSource
+    public let submittedAt: MonotonicMilliseconds?
+    public let confirmedAt: MonotonicMilliseconds?
+    public let refusalReason: CommandRefusalReason?
+
+    fileprivate init(_ dto: MobileAeroDynamicAssistStateDto) {
+        self.kind = SettingStateKind(dto.kind)
+        self.current = dto.current.map(AeroDynamicAssist.init)
+        self.requested = dto.requested.map(AeroDynamicAssist.init)
+        self.source = SettingValueSource(dto.source)
+        self.submittedAt = dto.submittedAtMs.map(MonotonicMilliseconds.init)
+        self.confirmedAt = dto.confirmedAtMs.map(MonotonicMilliseconds.init)
+        self.refusalReason = dto.refusalReason.map(CommandRefusalReason.init)
+    }
+}
+
+public struct AeroPedalDipCompensation: Equatable, Hashable, Sendable {
+    public let percent: UInt8
+
+    public init?(percent: UInt8) {
+        guard (0...100).contains(percent) else { return nil }
+        self.percent = percent
+    }
+
+    fileprivate init(_ dto: MobileAeroPedalDipCompensationDto) {
+        self.percent = dto.percent
+    }
+
+    fileprivate var dto: MobileAeroPedalDipCompensationDto {
+        MobileAeroPedalDipCompensationDto(percent: percent)
+    }
+}
+
+public struct AeroPedalDipCompensationSettingState: Equatable, Hashable, Sendable {
+    public let kind: SettingStateKind
+    public let current: AeroPedalDipCompensation?
+    public let requested: AeroPedalDipCompensation?
+    public let source: SettingValueSource
+    public let submittedAt: MonotonicMilliseconds?
+    public let confirmedAt: MonotonicMilliseconds?
+    public let refusalReason: CommandRefusalReason?
+
+    fileprivate init(_ dto: MobileAeroPedalDipCompensationStateDto) {
+        self.kind = SettingStateKind(dto.kind)
+        self.current = dto.current.map(AeroPedalDipCompensation.init)
+        self.requested = dto.requested.map(AeroPedalDipCompensation.init)
+        self.source = SettingValueSource(dto.source)
+        self.submittedAt = dto.submittedAtMs.map(MonotonicMilliseconds.init)
+        self.confirmedAt = dto.confirmedAtMs.map(MonotonicMilliseconds.init)
+        self.refusalReason = dto.refusalReason.map(CommandRefusalReason.init)
+    }
+}
+
+public struct AeroLateralTiltLimit: Equatable, Hashable, Sendable {
+    public let degrees: UInt8
+
+    public init?(degrees: UInt8) {
+        guard (35...75).contains(degrees) else { return nil }
+        self.degrees = degrees
+    }
+
+    fileprivate init(_ dto: MobileAeroLateralTiltLimitDto) {
+        self.degrees = dto.degrees
+    }
+
+    fileprivate var dto: MobileAeroLateralTiltLimitDto {
+        MobileAeroLateralTiltLimitDto(degrees: degrees)
+    }
+}
+
+public struct AeroLateralTiltLimitSettingState: Equatable, Hashable, Sendable {
+    public let kind: SettingStateKind
+    public let current: AeroLateralTiltLimit?
+    public let requested: AeroLateralTiltLimit?
+    public let source: SettingValueSource
+    public let submittedAt: MonotonicMilliseconds?
+    public let confirmedAt: MonotonicMilliseconds?
+    public let refusalReason: CommandRefusalReason?
+
+    fileprivate init(_ dto: MobileAeroLateralTiltLimitStateDto) {
+        self.kind = SettingStateKind(dto.kind)
+        self.current = dto.current.map(AeroLateralTiltLimit.init)
+        self.requested = dto.requested.map(AeroLateralTiltLimit.init)
+        self.source = SettingValueSource(dto.source)
+        self.submittedAt = dto.submittedAtMs.map(MonotonicMilliseconds.init)
+        self.confirmedAt = dto.confirmedAtMs.map(MonotonicMilliseconds.init)
+        self.refusalReason = dto.refusalReason.map(CommandRefusalReason.init)
+    }
+}
+
+public struct AeroVoltageCorrection: Equatable, Hashable, Sendable {
+    public let tenthsOfPercent: Int8
+
+    public init?(tenthsOfPercent: Int8) {
+        guard (-15...15).contains(tenthsOfPercent) else { return nil }
+        self.tenthsOfPercent = tenthsOfPercent
+    }
+
+    fileprivate init(_ dto: MobileAeroVoltageCorrectionDto) {
+        self.tenthsOfPercent = dto.tenthsOfPercent
+    }
+
+    fileprivate var dto: MobileAeroVoltageCorrectionDto {
+        MobileAeroVoltageCorrectionDto(tenthsOfPercent: tenthsOfPercent)
+    }
+}
+
+public struct AeroVoltageCorrectionSettingState: Equatable, Hashable, Sendable {
+    public let kind: SettingStateKind
+    public let current: AeroVoltageCorrection?
+    public let requested: AeroVoltageCorrection?
+    public let source: SettingValueSource
+    public let submittedAt: MonotonicMilliseconds?
+    public let confirmedAt: MonotonicMilliseconds?
+    public let refusalReason: CommandRefusalReason?
+
+    fileprivate init(_ dto: MobileAeroVoltageCorrectionStateDto) {
+        self.kind = SettingStateKind(dto.kind)
+        self.current = dto.current.map(AeroVoltageCorrection.init)
+        self.requested = dto.requested.map(AeroVoltageCorrection.init)
+        self.source = SettingValueSource(dto.source)
+        self.submittedAt = dto.submittedAtMs.map(MonotonicMilliseconds.init)
+        self.confirmedAt = dto.confirmedAtMs.map(MonotonicMilliseconds.init)
+        self.refusalReason = dto.refusalReason.map(CommandRefusalReason.init)
+    }
+}
+
+/// Official NOSFET MxV maximum-charge value from the page-8 raw control.
+public struct AeroMaxChargeVoltageRaw: Equatable, Hashable, Sendable {
+    public let raw: UInt8
+
+    public init?(raw: UInt8) {
+        guard raw <= 70 else { return nil }
+        self.raw = raw
+    }
+
+    fileprivate init(_ dto: MobileAeroMaxChargeVoltageRawDto) {
+        self.raw = dto.raw
+    }
+
+    fileprivate var dto: MobileAeroMaxChargeVoltageRawDto {
+        MobileAeroMaxChargeVoltageRawDto(raw: raw)
+    }
+}
+
+public struct AeroMaxChargeVoltageRawSettingState: Equatable, Hashable, Sendable {
+    public let kind: SettingStateKind
+    public let current: AeroMaxChargeVoltageRaw?
+    public let requested: AeroMaxChargeVoltageRaw?
+    public let source: SettingValueSource
+    public let submittedAt: MonotonicMilliseconds?
+    public let confirmedAt: MonotonicMilliseconds?
+    public let refusalReason: CommandRefusalReason?
+
+    fileprivate init(_ dto: MobileAeroMaxChargeVoltageRawStateDto) {
+        self.kind = SettingStateKind(dto.kind)
+        self.current = dto.current.map(AeroMaxChargeVoltageRaw.init)
+        self.requested = dto.requested.map(AeroMaxChargeVoltageRaw.init)
+        self.source = SettingValueSource(dto.source)
+        self.submittedAt = dto.submittedAtMs.map(MonotonicMilliseconds.init)
+        self.confirmedAt = dto.confirmedAtMs.map(MonotonicMilliseconds.init)
+        self.refusalReason = dto.refusalReason.map(CommandRefusalReason.init)
     }
 }
 
@@ -1714,7 +2257,7 @@ public struct AeroAngleAdjustment: Equatable, Hashable, Sendable {
     public let tenthsOfDegree: Int8
 
     public init?(tenthsOfDegree: Int8) {
-        guard (-100...100).contains(Int(tenthsOfDegree)) else { return nil }
+        guard (-80...80).contains(Int(tenthsOfDegree)) else { return nil }
         self.tenthsOfDegree = tenthsOfDegree
     }
 
@@ -1727,7 +2270,9 @@ public struct AeroAngleAdjustment: Equatable, Hashable, Sendable {
     }
 }
 
+
 public struct EucSettingsCapabilities: Equatable, Hashable, Sendable {
+    public let validationMode: Bool
     public let resetTripMeter: SettingWriteSupport
     public let pedalMode: SettingWriteSupport
     public let rollAngle: SettingWriteSupport
@@ -1741,10 +2286,26 @@ public struct EucSettingsCapabilities: Equatable, Hashable, Sendable {
     public let begodeLedMode: SettingWriteSupport
     public let aeroTiltbackSpeed: SettingWriteSupport
     public let aeroPwmPercent: SettingWriteSupport
+    public let aeroGyroCalibration: SettingWriteSupport
+    public let aeroRidingMode: SettingWriteSupport
+    public let aeroBrakeOverpressureAlarm: SettingWriteSupport
+    public let aeroPedalHardness: SettingWriteSupport
+    public let aeroDisplayBacklight: SettingWriteSupport
+    public let aeroWheelUnits: SettingWriteSupport
+    public let aeroBeeperVolume: SettingWriteSupport
+    public let aeroDynamicAssist: SettingWriteSupport
+    public let aeroPedalDipCompensation: SettingWriteSupport
+    public let aeroLateralTiltLimit: SettingWriteSupport
+    public let aeroVoltageCorrection: SettingWriteSupport
+    public let aeroMaxChargeVoltageRaw: SettingWriteSupport
+    public let aeroHighSpeedMode: SettingWriteSupport
+    public let aeroLowBatteryMode: SettingWriteSupport
+    public let aeroTransportMode: SettingWriteSupport
     public let aeroAlarmSpeed: SettingWriteSupport
     public let aeroAngleAdjustment: SettingWriteSupport
 
     public init(
+        validationMode: Bool = false,
         resetTripMeter: SettingWriteSupport = .unsupported,
         pedalMode: SettingWriteSupport,
         rollAngle: SettingWriteSupport = .unsupported,
@@ -1758,9 +2319,25 @@ public struct EucSettingsCapabilities: Equatable, Hashable, Sendable {
         begodeLedMode: SettingWriteSupport = .unsupported,
         aeroTiltbackSpeed: SettingWriteSupport = .unsupported,
         aeroPwmPercent: SettingWriteSupport = .unsupported,
+        aeroGyroCalibration: SettingWriteSupport = .unsupported,
+        aeroRidingMode: SettingWriteSupport = .unsupported,
+        aeroBrakeOverpressureAlarm: SettingWriteSupport = .unsupported,
+        aeroPedalHardness: SettingWriteSupport = .unsupported,
+        aeroDisplayBacklight: SettingWriteSupport = .unsupported,
+        aeroWheelUnits: SettingWriteSupport = .unsupported,
+        aeroBeeperVolume: SettingWriteSupport = .unsupported,
+        aeroDynamicAssist: SettingWriteSupport = .unsupported,
+        aeroPedalDipCompensation: SettingWriteSupport = .unsupported,
+        aeroLateralTiltLimit: SettingWriteSupport = .unsupported,
+        aeroVoltageCorrection: SettingWriteSupport = .unsupported,
+        aeroMaxChargeVoltageRaw: SettingWriteSupport = .unsupported,
+        aeroHighSpeedMode: SettingWriteSupport = .unsupported,
+        aeroLowBatteryMode: SettingWriteSupport = .unsupported,
+        aeroTransportMode: SettingWriteSupport = .unsupported,
         aeroAlarmSpeed: SettingWriteSupport = .unsupported,
         aeroAngleAdjustment: SettingWriteSupport = .unsupported
     ) {
+        self.validationMode = validationMode
         self.resetTripMeter = resetTripMeter
         self.pedalMode = pedalMode
         self.rollAngle = rollAngle
@@ -1774,11 +2351,27 @@ public struct EucSettingsCapabilities: Equatable, Hashable, Sendable {
         self.begodeLedMode = begodeLedMode
         self.aeroTiltbackSpeed = aeroTiltbackSpeed
         self.aeroPwmPercent = aeroPwmPercent
+        self.aeroGyroCalibration = aeroGyroCalibration
+        self.aeroRidingMode = aeroRidingMode
+        self.aeroBrakeOverpressureAlarm = aeroBrakeOverpressureAlarm
+        self.aeroPedalHardness = aeroPedalHardness
+        self.aeroDisplayBacklight = aeroDisplayBacklight
+        self.aeroWheelUnits = aeroWheelUnits
+        self.aeroBeeperVolume = aeroBeeperVolume
+        self.aeroDynamicAssist = aeroDynamicAssist
+        self.aeroPedalDipCompensation = aeroPedalDipCompensation
+        self.aeroLateralTiltLimit = aeroLateralTiltLimit
+        self.aeroVoltageCorrection = aeroVoltageCorrection
+        self.aeroMaxChargeVoltageRaw = aeroMaxChargeVoltageRaw
+        self.aeroHighSpeedMode = aeroHighSpeedMode
+        self.aeroLowBatteryMode = aeroLowBatteryMode
+        self.aeroTransportMode = aeroTransportMode
         self.aeroAlarmSpeed = aeroAlarmSpeed
         self.aeroAngleAdjustment = aeroAngleAdjustment
     }
 
     fileprivate init(_ dto: MobileEucSettingsCapabilitiesDto) {
+        self.validationMode = dto.validationMode
         self.resetTripMeter = SettingWriteSupport(dto.resetTripMeter)
         self.pedalMode = SettingWriteSupport(dto.pedalMode)
         self.rollAngle = SettingWriteSupport(dto.rollAngle)
@@ -1792,8 +2385,28 @@ public struct EucSettingsCapabilities: Equatable, Hashable, Sendable {
         self.begodeLedMode = SettingWriteSupport(dto.begodeLedMode)
         self.aeroTiltbackSpeed = SettingWriteSupport(dto.aeroTiltbackSpeed)
         self.aeroPwmPercent = SettingWriteSupport(dto.aeroPwmPercent)
+        self.aeroGyroCalibration = SettingWriteSupport(dto.aeroGyroCalibration)
+        self.aeroRidingMode = SettingWriteSupport(dto.aeroRidingMode)
+        self.aeroBrakeOverpressureAlarm = SettingWriteSupport(dto.aeroBrakeOverpressureAlarm)
+        self.aeroPedalHardness = SettingWriteSupport(dto.aeroPedalHardness)
+        self.aeroDisplayBacklight = SettingWriteSupport(dto.aeroDisplayBacklight)
+        self.aeroWheelUnits = SettingWriteSupport(dto.aeroWheelUnits)
+        self.aeroBeeperVolume = SettingWriteSupport(dto.aeroBeeperVolume)
+        self.aeroDynamicAssist = SettingWriteSupport(dto.aeroDynamicAssist)
+        self.aeroPedalDipCompensation = SettingWriteSupport(dto.aeroPedalDipCompensation)
+        self.aeroLateralTiltLimit = SettingWriteSupport(dto.aeroLateralTiltLimit)
+        self.aeroVoltageCorrection = SettingWriteSupport(dto.aeroVoltageCorrection)
+        self.aeroMaxChargeVoltageRaw = SettingWriteSupport(dto.aeroMaxChargeVoltageRaw)
+        self.aeroHighSpeedMode = SettingWriteSupport(dto.aeroHighSpeedMode)
+        self.aeroLowBatteryMode = SettingWriteSupport(dto.aeroLowBatteryMode)
+        self.aeroTransportMode = SettingWriteSupport(dto.aeroTransportMode)
         self.aeroAlarmSpeed = SettingWriteSupport(dto.aeroAlarmSpeed)
         self.aeroAngleAdjustment = SettingWriteSupport(dto.aeroAngleAdjustment)
+    }
+
+    public func canSubmit(_ setting: KeyPath<Self, SettingWriteSupport>) -> Bool {
+        let support = self[keyPath: setting]
+        return support == .supported || (validationMode && support == .unverified)
     }
 }
 
@@ -1820,6 +2433,22 @@ public enum DeviceCommand: Equatable, Hashable, Sendable {
     case resetTripMeter
     case setAeroTiltbackSpeed(AeroSpeedSetting)
     case setAeroPwmPercent(AeroPwmPercent)
+    case setAeroPwmOff
+    case setAeroGyroCalibration
+    case setAeroRidingMode(AeroRidingMode)
+    case setAeroBrakeOverpressureAlarm(AeroBrakeOverpressureAlarm)
+    case setAeroPedalHardness(AeroPedalHardness)
+    case setAeroDisplayBacklight(AeroDisplayBacklight)
+    case setAeroWheelUnits(AeroWheelUnits)
+    case setAeroBeeperVolume(AeroBeeperVolume)
+    case setAeroDynamicAssist(AeroDynamicAssist)
+    case setAeroPedalDipCompensation(AeroPedalDipCompensation)
+    case setAeroLateralTiltLimit(AeroLateralTiltLimit)
+    case setAeroVoltageCorrection(AeroVoltageCorrection)
+    case setAeroMaxChargeVoltageRaw(AeroMaxChargeVoltageRaw)
+    case setAeroHighSpeedMode(AeroToggle)
+    case setAeroLowBatteryMode(AeroToggle)
+    case setAeroTransportMode(AeroToggle)
     case setAeroAlarmSpeed(AeroSpeedSetting)
     case setAeroAngleAdjustment(AeroAngleAdjustment)
     case setAeroHighBeam(LightState)
@@ -1856,6 +2485,38 @@ public enum DeviceCommand: Equatable, Hashable, Sendable {
             self = .setAeroTiltbackSpeed(AeroSpeedSetting(speed))
         case .setAeroPwmPercent(let percent):
             self = .setAeroPwmPercent(AeroPwmPercent(percent))
+        case .setAeroPwmOff:
+            self = .setAeroPwmOff
+        case .setAeroGyroCalibration:
+            self = .setAeroGyroCalibration
+        case .setAeroRidingMode(let mode):
+            self = .setAeroRidingMode(AeroRidingMode(mode))
+        case .setAeroBrakeOverpressureAlarm(let value):
+            self = .setAeroBrakeOverpressureAlarm(AeroBrakeOverpressureAlarm(value))
+        case .setAeroPedalHardness(let hardness):
+            self = .setAeroPedalHardness(AeroPedalHardness(hardness))
+        case .setAeroDisplayBacklight(let value):
+            self = .setAeroDisplayBacklight(AeroDisplayBacklight(value))
+        case .setAeroWheelUnits(let value):
+            self = .setAeroWheelUnits(AeroWheelUnits(value))
+        case .setAeroBeeperVolume(let value):
+            self = .setAeroBeeperVolume(AeroBeeperVolume(value))
+        case .setAeroDynamicAssist(let value):
+            self = .setAeroDynamicAssist(AeroDynamicAssist(value))
+        case .setAeroPedalDipCompensation(let value):
+            self = .setAeroPedalDipCompensation(AeroPedalDipCompensation(value))
+        case .setAeroLateralTiltLimit(let value):
+            self = .setAeroLateralTiltLimit(AeroLateralTiltLimit(value))
+        case .setAeroVoltageCorrection(let value):
+            self = .setAeroVoltageCorrection(AeroVoltageCorrection(value))
+        case .setAeroMaxChargeVoltageRaw(let value):
+            self = .setAeroMaxChargeVoltageRaw(AeroMaxChargeVoltageRaw(value))
+        case .setAeroHighSpeedMode(let value):
+            self = .setAeroHighSpeedMode(AeroToggle(value))
+        case .setAeroLowBatteryMode(let value):
+            self = .setAeroLowBatteryMode(AeroToggle(value))
+        case .setAeroTransportMode(let value):
+            self = .setAeroTransportMode(AeroToggle(value))
         case .setAeroAlarmSpeed(let speed):
             self = .setAeroAlarmSpeed(AeroSpeedSetting(speed))
         case .setAeroAngleAdjustment(let angle):
@@ -1907,6 +2568,38 @@ public enum DeviceCommand: Equatable, Hashable, Sendable {
             .setAeroTiltbackSpeed(speed.dto)
         case .setAeroPwmPercent(let percent):
             .setAeroPwmPercent(percent.dto)
+        case .setAeroPwmOff:
+            .setAeroPwmOff
+        case .setAeroGyroCalibration:
+            .setAeroGyroCalibration
+        case .setAeroRidingMode(let mode):
+            .setAeroRidingMode(mode.dto)
+        case .setAeroBrakeOverpressureAlarm(let value):
+            .setAeroBrakeOverpressureAlarm(value.dto)
+        case .setAeroPedalHardness(let hardness):
+            .setAeroPedalHardness(hardness.dto)
+        case .setAeroDisplayBacklight(let value):
+            .setAeroDisplayBacklight(value.dto)
+        case .setAeroWheelUnits(let value):
+            .setAeroWheelUnits(value.dto)
+        case .setAeroBeeperVolume(let value):
+            .setAeroBeeperVolume(value.dto)
+        case .setAeroDynamicAssist(let value):
+            .setAeroDynamicAssist(value.dto)
+        case .setAeroPedalDipCompensation(let value):
+            .setAeroPedalDipCompensation(value.dto)
+        case .setAeroLateralTiltLimit(let value):
+            .setAeroLateralTiltLimit(value.dto)
+        case .setAeroVoltageCorrection(let value):
+            .setAeroVoltageCorrection(value.dto)
+        case .setAeroMaxChargeVoltageRaw(let value):
+            .setAeroMaxChargeVoltageRaw(value.dto)
+        case .setAeroHighSpeedMode(let value):
+            .setAeroHighSpeedMode(value.dto)
+        case .setAeroLowBatteryMode(let value):
+            .setAeroLowBatteryMode(value.dto)
+        case .setAeroTransportMode(let value):
+            .setAeroTransportMode(value.dto)
         case .setAeroAlarmSpeed(let speed):
             .setAeroAlarmSpeed(speed.dto)
         case .setAeroAngleAdjustment(let angle):
@@ -5618,6 +6311,15 @@ public final class ElectricUnicycleSession: @unchecked Sendable {
         }
     }
 
+    public var tripMeterResetState: TripMeterResetState {
+        switch inner {
+        case .aero(let session):
+            TripMeterResetState(session.tripMeterResetState())
+        case .falcon(let session):
+            TripMeterResetState(session.tripMeterResetState())
+        }
+    }
+
     public var headlightState: LightSettingState {
         switch inner {
         case .aero(let session):
@@ -5651,6 +6353,151 @@ public final class ElectricUnicycleSession: @unchecked Sendable {
             PedalModeSettingState(session.pedalModeState())
         case .falcon(let session):
             PedalModeSettingState(session.pedalModeState())
+        }
+    }
+
+    public var aeroGyroCalibrationState: AeroGyroCalibrationSettingState {
+        switch inner {
+        case .aero(let session):
+            AeroGyroCalibrationSettingState(session.aeroGyroCalibrationState())
+        case .falcon(let session):
+            AeroGyroCalibrationSettingState(session.aeroGyroCalibrationState())
+        }
+    }
+
+    public var aeroRidingModeState: AeroRidingModeSettingState {
+        switch inner {
+        case .aero(let session):
+            AeroRidingModeSettingState(session.aeroRidingModeState())
+        case .falcon(let session):
+            AeroRidingModeSettingState(session.aeroRidingModeState())
+        }
+    }
+
+    public var aeroBrakeOverpressureAlarmState: AeroBrakeOverpressureAlarmSettingState {
+        switch inner {
+        case .aero(let session):
+            AeroBrakeOverpressureAlarmSettingState(session.aeroBrakeOverpressureAlarmState())
+        case .falcon(let session):
+            AeroBrakeOverpressureAlarmSettingState(session.aeroBrakeOverpressureAlarmState())
+        }
+    }
+
+    public var aeroPedalHardnessState: AeroPedalHardnessSettingState {
+        switch inner {
+        case .aero(let session):
+            AeroPedalHardnessSettingState(session.aeroPedalHardnessState())
+        case .falcon(let session):
+            AeroPedalHardnessSettingState(session.aeroPedalHardnessState())
+        }
+    }
+
+    public var aeroDisplayBacklightState: AeroDisplayBacklightSettingState {
+        switch inner {
+        case .aero(let session):
+            AeroDisplayBacklightSettingState(session.aeroDisplayBacklightState())
+        case .falcon(let session):
+            AeroDisplayBacklightSettingState(session.aeroDisplayBacklightState())
+        }
+    }
+
+    public var aeroWheelUnitsState: AeroWheelUnitsSettingState {
+        switch inner {
+        case .aero(let session): AeroWheelUnitsSettingState(session.aeroWheelUnitsState())
+        case .falcon(let session): AeroWheelUnitsSettingState(session.aeroWheelUnitsState())
+        }
+    }
+
+    public var aeroBeeperVolumeState: AeroBeeperVolumeSettingState {
+        switch inner {
+        case .aero(let session):
+            AeroBeeperVolumeSettingState(session.aeroBeeperVolumeState())
+        case .falcon(let session):
+            AeroBeeperVolumeSettingState(session.aeroBeeperVolumeState())
+        }
+    }
+
+    public var aeroDynamicAssistState: AeroDynamicAssistSettingState {
+        switch inner {
+        case .aero(let session):
+            AeroDynamicAssistSettingState(session.aeroDynamicAssistState())
+        case .falcon(let session):
+            AeroDynamicAssistSettingState(session.aeroDynamicAssistState())
+        }
+    }
+
+    public var aeroPedalDipCompensationState: AeroPedalDipCompensationSettingState {
+        switch inner {
+        case .aero(let session):
+            AeroPedalDipCompensationSettingState(session.aeroPedalDipCompensationState())
+        case .falcon(let session):
+            AeroPedalDipCompensationSettingState(session.aeroPedalDipCompensationState())
+        }
+    }
+
+    public var aeroLateralTiltLimitState: AeroLateralTiltLimitSettingState {
+        switch inner {
+        case .aero(let session):
+            AeroLateralTiltLimitSettingState(session.aeroLateralTiltLimitState())
+        case .falcon(let session):
+            AeroLateralTiltLimitSettingState(session.aeroLateralTiltLimitState())
+        }
+    }
+
+    public var aeroVoltageCorrectionState: AeroVoltageCorrectionSettingState {
+        switch inner {
+        case .aero(let session):
+            AeroVoltageCorrectionSettingState(session.aeroVoltageCorrectionState())
+        case .falcon(let session):
+            AeroVoltageCorrectionSettingState(session.aeroVoltageCorrectionState())
+        }
+    }
+
+    public var aeroMaxChargeVoltageRawState: AeroMaxChargeVoltageRawSettingState {
+        switch inner {
+        case .aero(let session):
+            AeroMaxChargeVoltageRawSettingState(session.aeroMaxChargeVoltageRawState())
+        case .falcon(let session):
+            AeroMaxChargeVoltageRawSettingState(session.aeroMaxChargeVoltageRawState())
+        }
+    }
+
+    public var aeroHighSpeedModeState: AeroToggleSettingState {
+        switch inner {
+        case .aero(let session): AeroToggleSettingState(session.aeroHighSpeedModeState())
+        case .falcon(let session): AeroToggleSettingState(session.aeroHighSpeedModeState())
+        }
+    }
+
+    public var aeroLowBatteryModeState: AeroToggleSettingState {
+        switch inner {
+        case .aero(let session): AeroToggleSettingState(session.aeroLowBatteryModeState())
+        case .falcon(let session): AeroToggleSettingState(session.aeroLowBatteryModeState())
+        }
+    }
+
+    public var aeroTransportModeState: AeroToggleSettingState {
+        switch inner {
+        case .aero(let session): AeroToggleSettingState(session.aeroTransportModeState())
+        case .falcon(let session): AeroToggleSettingState(session.aeroTransportModeState())
+        }
+    }
+
+    public var aeroAlarmSpeedState: AeroSpeedSettingState {
+        switch inner {
+        case .aero(let session):
+            AeroSpeedSettingState(session.aeroAlarmSpeedState())
+        case .falcon(let session):
+            AeroSpeedSettingState(session.aeroAlarmSpeedState())
+        }
+    }
+
+    public var aeroAngleAdjustmentState: AeroAngleAdjustmentSettingState {
+        switch inner {
+        case .aero(let session):
+            AeroAngleAdjustmentSettingState(session.aeroAngleAdjustmentState())
+        case .falcon(let session):
+            AeroAngleAdjustmentSettingState(session.aeroAngleAdjustmentState())
         }
     }
 
@@ -6221,6 +7068,15 @@ public enum CoreBluetoothSession: Sendable {
         }
     }
 
+    public var tripMeterResetState: TripMeterResetState? {
+        switch self {
+        case .electricUnicycle(let session):
+            session.tripMeterResetState
+        case .vescOnewheel:
+            nil
+        }
+    }
+
     public var headlightState: LightSettingState? {
         switch self {
         case .electricUnicycle(let session):
@@ -6261,6 +7117,151 @@ public enum CoreBluetoothSession: Sendable {
         switch self {
         case .electricUnicycle(let session):
             session.rollAngleState
+        case .vescOnewheel:
+            nil
+        }
+    }
+
+    public var aeroGyroCalibrationState: AeroGyroCalibrationSettingState? {
+        switch self {
+        case .electricUnicycle(let session):
+            session.aeroGyroCalibrationState
+        case .vescOnewheel:
+            nil
+        }
+    }
+
+    public var aeroRidingModeState: AeroRidingModeSettingState? {
+        switch self {
+        case .electricUnicycle(let session):
+            session.aeroRidingModeState
+        case .vescOnewheel:
+            nil
+        }
+    }
+
+    public var aeroBrakeOverpressureAlarmState: AeroBrakeOverpressureAlarmSettingState? {
+        switch self {
+        case .electricUnicycle(let session):
+            session.aeroBrakeOverpressureAlarmState
+        case .vescOnewheel:
+            nil
+        }
+    }
+
+    public var aeroPedalHardnessState: AeroPedalHardnessSettingState? {
+        switch self {
+        case .electricUnicycle(let session):
+            session.aeroPedalHardnessState
+        case .vescOnewheel:
+            nil
+        }
+    }
+
+    public var aeroDisplayBacklightState: AeroDisplayBacklightSettingState? {
+        switch self {
+        case .electricUnicycle(let session):
+            session.aeroDisplayBacklightState
+        case .vescOnewheel:
+            nil
+        }
+    }
+
+    public var aeroWheelUnitsState: AeroWheelUnitsSettingState? {
+        switch self {
+        case .electricUnicycle(let session): session.aeroWheelUnitsState
+        case .vescOnewheel: nil
+        }
+    }
+
+    public var aeroBeeperVolumeState: AeroBeeperVolumeSettingState? {
+        switch self {
+        case .electricUnicycle(let session):
+            session.aeroBeeperVolumeState
+        case .vescOnewheel:
+            nil
+        }
+    }
+
+    public var aeroDynamicAssistState: AeroDynamicAssistSettingState? {
+        switch self {
+        case .electricUnicycle(let session):
+            session.aeroDynamicAssistState
+        case .vescOnewheel:
+            nil
+        }
+    }
+
+    public var aeroPedalDipCompensationState: AeroPedalDipCompensationSettingState? {
+        switch self {
+        case .electricUnicycle(let session):
+            session.aeroPedalDipCompensationState
+        case .vescOnewheel:
+            nil
+        }
+    }
+
+    public var aeroLateralTiltLimitState: AeroLateralTiltLimitSettingState? {
+        switch self {
+        case .electricUnicycle(let session):
+            session.aeroLateralTiltLimitState
+        case .vescOnewheel:
+            nil
+        }
+    }
+
+    public var aeroVoltageCorrectionState: AeroVoltageCorrectionSettingState? {
+        switch self {
+        case .electricUnicycle(let session):
+            session.aeroVoltageCorrectionState
+        case .vescOnewheel:
+            nil
+        }
+    }
+
+    public var aeroMaxChargeVoltageRawState: AeroMaxChargeVoltageRawSettingState? {
+        switch self {
+        case .electricUnicycle(let session):
+            session.aeroMaxChargeVoltageRawState
+        case .vescOnewheel:
+            nil
+        }
+    }
+
+    public var aeroHighSpeedModeState: AeroToggleSettingState? {
+        switch self {
+        case .electricUnicycle(let session): session.aeroHighSpeedModeState
+        case .vescOnewheel: nil
+        }
+    }
+
+    public var aeroLowBatteryModeState: AeroToggleSettingState? {
+        switch self {
+        case .electricUnicycle(let session): session.aeroLowBatteryModeState
+        case .vescOnewheel: nil
+        }
+    }
+
+    public var aeroTransportModeState: AeroToggleSettingState? {
+        switch self {
+        case .electricUnicycle(let session): session.aeroTransportModeState
+        case .vescOnewheel: nil
+        }
+    }
+
+    public var aeroAlarmSpeedState: AeroSpeedSettingState? {
+        switch self {
+        case .electricUnicycle(let session):
+            session.aeroAlarmSpeedState
+        case .vescOnewheel:
+            nil
+        }
+    }
+
+    public var aeroAngleAdjustmentState: AeroAngleAdjustmentSettingState? {
+        switch self {
+        case .electricUnicycle(let session):
+            session.aeroAngleAdjustmentState
         case .vescOnewheel:
             nil
         }
@@ -6498,6 +7499,10 @@ public final class CoreBluetoothSessionRunner: @unchecked Sendable {
         session.settingsCapabilities
     }
 
+    public var tripMeterResetState: TripMeterResetState? {
+        session.tripMeterResetState
+    }
+
     @discardableResult
     public func armSettingsWrites(at monotonicMilliseconds: MonotonicMilliseconds) -> Bool {
         session.armSettingsWrites(at: monotonicMilliseconds)
@@ -6513,6 +7518,74 @@ public final class CoreBluetoothSessionRunner: @unchecked Sendable {
 
     public func failHeadlightCommand() {
         session.failHeadlightCommand()
+    }
+
+    public var aeroGyroCalibrationState: AeroGyroCalibrationSettingState? {
+        session.aeroGyroCalibrationState
+    }
+
+    public var aeroRidingModeState: AeroRidingModeSettingState? {
+        session.aeroRidingModeState
+    }
+
+    public var aeroBrakeOverpressureAlarmState: AeroBrakeOverpressureAlarmSettingState? {
+        session.aeroBrakeOverpressureAlarmState
+    }
+
+    public var aeroPedalHardnessState: AeroPedalHardnessSettingState? {
+        session.aeroPedalHardnessState
+    }
+
+    public var aeroDisplayBacklightState: AeroDisplayBacklightSettingState? {
+        session.aeroDisplayBacklightState
+    }
+
+    public var aeroWheelUnitsState: AeroWheelUnitsSettingState? {
+        session.aeroWheelUnitsState
+    }
+
+    public var aeroBeeperVolumeState: AeroBeeperVolumeSettingState? {
+        session.aeroBeeperVolumeState
+    }
+
+    public var aeroDynamicAssistState: AeroDynamicAssistSettingState? {
+        session.aeroDynamicAssistState
+    }
+
+    public var aeroPedalDipCompensationState: AeroPedalDipCompensationSettingState? {
+        session.aeroPedalDipCompensationState
+    }
+
+    public var aeroLateralTiltLimitState: AeroLateralTiltLimitSettingState? {
+        session.aeroLateralTiltLimitState
+    }
+
+    public var aeroVoltageCorrectionState: AeroVoltageCorrectionSettingState? {
+        session.aeroVoltageCorrectionState
+    }
+
+    public var aeroMaxChargeVoltageRawState: AeroMaxChargeVoltageRawSettingState? {
+        session.aeroMaxChargeVoltageRawState
+    }
+
+    public var aeroHighSpeedModeState: AeroToggleSettingState? {
+        session.aeroHighSpeedModeState
+    }
+
+    public var aeroLowBatteryModeState: AeroToggleSettingState? {
+        session.aeroLowBatteryModeState
+    }
+
+    public var aeroTransportModeState: AeroToggleSettingState? {
+        session.aeroTransportModeState
+    }
+
+    public var aeroAlarmSpeedState: AeroSpeedSettingState? {
+        session.aeroAlarmSpeedState
+    }
+
+    public var aeroAngleAdjustmentState: AeroAngleAdjustmentSettingState? {
+        session.aeroAngleAdjustmentState
     }
 
     public var pedalModeState: PedalModeSettingState? {
@@ -6783,6 +7856,10 @@ public final class CoreBluetoothLiveSessionOwner: @unchecked Sendable {
         runner.settingsCapabilities
     }
 
+    public var tripMeterResetState: TripMeterResetState? {
+        runner.tripMeterResetState
+    }
+
     @discardableResult
     public func armSettingsWrites(at monotonicMilliseconds: MonotonicMilliseconds) -> Bool {
         runner.armSettingsWrites(at: monotonicMilliseconds)
@@ -6798,6 +7875,81 @@ public final class CoreBluetoothLiveSessionOwner: @unchecked Sendable {
 
     public func failHeadlightCommand() {
         runner.failHeadlightCommand()
+    }
+    public var aeroTiltbackSpeedState: AeroSpeedSettingState? {
+        runner.aeroTiltbackSpeedState
+    }
+
+    public var aeroPwmPercentState: AeroPwmSettingState? {
+        runner.aeroPwmPercentState
+    }
+
+    public var aeroGyroCalibrationState: AeroGyroCalibrationSettingState? {
+        runner.aeroGyroCalibrationState
+    }
+
+    public var aeroRidingModeState: AeroRidingModeSettingState? {
+        runner.aeroRidingModeState
+    }
+
+    public var aeroBrakeOverpressureAlarmState: AeroBrakeOverpressureAlarmSettingState? {
+        runner.aeroBrakeOverpressureAlarmState
+    }
+
+    public var aeroPedalHardnessState: AeroPedalHardnessSettingState? {
+        runner.aeroPedalHardnessState
+    }
+
+    public var aeroDisplayBacklightState: AeroDisplayBacklightSettingState? {
+        runner.aeroDisplayBacklightState
+    }
+
+    public var aeroWheelUnitsState: AeroWheelUnitsSettingState? {
+        runner.aeroWheelUnitsState
+    }
+
+    public var aeroBeeperVolumeState: AeroBeeperVolumeSettingState? {
+        runner.aeroBeeperVolumeState
+    }
+
+    public var aeroDynamicAssistState: AeroDynamicAssistSettingState? {
+        runner.aeroDynamicAssistState
+    }
+
+    public var aeroPedalDipCompensationState: AeroPedalDipCompensationSettingState? {
+        runner.aeroPedalDipCompensationState
+    }
+
+    public var aeroLateralTiltLimitState: AeroLateralTiltLimitSettingState? {
+        runner.aeroLateralTiltLimitState
+    }
+
+    public var aeroVoltageCorrectionState: AeroVoltageCorrectionSettingState? {
+        runner.aeroVoltageCorrectionState
+    }
+
+    public var aeroMaxChargeVoltageRawState: AeroMaxChargeVoltageRawSettingState? {
+        runner.aeroMaxChargeVoltageRawState
+    }
+
+    public var aeroHighSpeedModeState: AeroToggleSettingState? {
+        runner.aeroHighSpeedModeState
+    }
+
+    public var aeroLowBatteryModeState: AeroToggleSettingState? {
+        runner.aeroLowBatteryModeState
+    }
+
+    public var aeroTransportModeState: AeroToggleSettingState? {
+        runner.aeroTransportModeState
+    }
+
+    public var aeroAlarmSpeedState: AeroSpeedSettingState? {
+        runner.aeroAlarmSpeedState
+    }
+
+    public var aeroAngleAdjustmentState: AeroAngleAdjustmentSettingState? {
+        runner.aeroAngleAdjustmentState
     }
 
     public var pedalModeState: PedalModeSettingState? {
@@ -6822,22 +7974,6 @@ public final class CoreBluetoothLiveSessionOwner: @unchecked Sendable {
 
     public var aeroHighBeamState: LightSettingState? {
         runner.aeroHighBeamState
-    }
-
-    public var aeroTiltbackSpeedState: AeroSpeedSettingState? {
-        runner.aeroTiltbackSpeedState
-    }
-
-    public var aeroPwmPercentState: AeroPwmSettingState? {
-        runner.aeroPwmPercentState
-    }
-
-    public var aeroAlarmSpeedState: AeroSpeedSettingState? {
-        runner.aeroAlarmSpeedState
-    }
-
-    public var aeroAngleAdjustmentState: AeroAngleAdjustmentSettingState? {
-        runner.aeroAngleAdjustmentState
     }
 
     /// Configures the Rust-owned charge estimate profile for this connection.

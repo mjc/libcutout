@@ -3,16 +3,24 @@ import XCTest
 import CutoutMobile
 
 final class CutoutAppRouteTests: XCTestCase {
+    func testAeroNumericControlsShowProtocolUnits() {
+        XCTAssertEqual(EucNumericSettingUnit.percent.text(75), "75%")
+        XCTAssertEqual(EucNumericSettingUnit.degrees.text(55), "55°")
+        XCTAssertEqual(EucNumericSettingUnit.tenthsOfPercent.text(-5), "-0.5%")
+    }
+
     func testAeroSettingsFormUsesCurrentValuesWhenAvailable() {
         let values = AeroSettingsFormValues(
             tiltback: AeroSpeedSetting(kilometresPerHour: 31),
             pwm: AeroPwmPercent(percent: 74),
+            pedalHardness: AeroPedalHardness(percent: 75),
             alarm: AeroSpeedSetting(kilometresPerHour: 42),
             angle: AeroAngleAdjustment(tenthsOfDegree: -12)
         )
 
         XCTAssertEqual(values.tiltbackSpeed, 31)
         XCTAssertEqual(values.pwmPercent, 74)
+        XCTAssertEqual(values.pedalHardnessPercent, 75)
         XCTAssertEqual(values.alarmSpeed, 42)
         XCTAssertEqual(values.angleTenths, -12)
     }
@@ -106,6 +114,7 @@ final class CutoutAppRouteTests: XCTestCase {
         XCTAssertEqual(localizedAppText("settings.capabilities.title"), "Other settings")
         XCTAssertEqual(localizedAppText("settings.capabilities.unverified"), "Needs validation")
         XCTAssertEqual(localizedAppText("settings.capabilities.unsupported"), "Not supported")
+        XCTAssertEqual(localizedAppText("settings.aero.max_charge_raw.title"), "Max charge (raw)")
         XCTAssertEqual(localizedAppText("settings.state.pending"), "Pending")
         XCTAssertEqual(localizedAppText("settings.state.confirmed"), "Confirmed")
         XCTAssertEqual(localizedAppText("settings.state.confirmed_ago", Int64(2)), "Confirmed 2s ago")
@@ -291,6 +300,31 @@ final class CutoutAppRouteTests: XCTestCase {
         XCTAssertEqual(
             EucSettingCapabilityPresentation.statusText(support: .unsupported, state: nil),
             "Not supported"
+        )
+    }
+
+    func testTripResetFeedbackPreservesPendingRefusalAndTimeout() {
+        XCTAssertNil(EucTripMeterResetPresentation.statusText(nil))
+        XCTAssertNil(EucTripMeterResetPresentation.statusText(TripMeterResetState(kind: .unknown)))
+        XCTAssertEqual(
+            EucTripMeterResetPresentation.statusText(TripMeterResetState(kind: .pending)),
+            "Reset sent. Waiting for the wheel to confirm."
+        )
+        XCTAssertEqual(
+            EucTripMeterResetPresentation.statusText(TripMeterResetState(kind: .refused, refusalReason: .missingArm)),
+            "Trip reset was refused. Stop the wheel and wait for fresh telemetry before trying again."
+        )
+        XCTAssertEqual(
+            EucTripMeterResetPresentation.statusText(TripMeterResetState(kind: .refused, refusalReason: .busy)),
+            "Another setting is still being sent. Wait before resetting the trip meter."
+        )
+        XCTAssertEqual(
+            EucTripMeterResetPresentation.statusText(TripMeterResetState(kind: .timedOut)),
+            "The wheel did not confirm the trip reset. Check its trip distance before trying again."
+        )
+        XCTAssertEqual(
+            EucTripMeterResetPresentation.statusText(TripMeterResetState(kind: .confirmed)),
+            "Trip reset confirmed by the wheel."
         )
     }
 

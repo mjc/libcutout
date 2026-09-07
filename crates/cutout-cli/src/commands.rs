@@ -24,11 +24,11 @@ use cutout_btle::{
     scan_peripherals,
 };
 use cutout_core::{
-    AeroAngleAdjustment, AeroPwmPercent, AeroSpeedSetting, BatteryPageKind, BatteryPagePayload,
-    BatteryReadback, BatteryReadbackAvailability, CaptureDistribution, CaptureEvidence,
-    CapturePrivacy, CaptureSessionLabel, CatalogModelResolution, CommandKind, DeviceCommand,
-    DeviceEvent, DiagnosticError, DiagnosticErrorKind, DiagnosticSnapshot, FirmwareInfo,
-    GattChannel, GattFingerprint, HostSession, LightState, Measured, ModelCatalog,
+    AeroAngleAdjustment, AeroPedalHardness, AeroPwmPercent, AeroSpeedSetting, BatteryPageKind,
+    BatteryPagePayload, BatteryReadback, BatteryReadbackAvailability, CaptureDistribution,
+    CaptureEvidence, CapturePrivacy, CaptureSessionLabel, CatalogModelResolution, CommandKind,
+    DeviceCommand, DeviceEvent, DiagnosticError, DiagnosticErrorKind, DiagnosticSnapshot,
+    FirmwareInfo, GattChannel, GattFingerprint, HostSession, LightState, Measured, ModelCatalog,
     MonotonicTimestamp, NotificationByteLen, ParserDiagnostics, PedalMode, PevcapCapture,
     PevcapDirection, PevcapEncoding, PevcapHeader, PevcapReader, PevcapRecord, PevcapReplayMode,
     PevcapReplayStats, PevcapResolvedIdentity, ProtocolFamily, ProtocolSession, ReadOnlyResponse,
@@ -1742,7 +1742,7 @@ async fn aero_write(args: AeroWriteArgs) -> Result<()> {
     }
     match aero_setting_readback_matches(command, &report.settings) {
         Some(true) => {
-            info!(setting = ?args.setting, readback_confirmed = true, "Aero settings write completed")
+            info!(setting = ?args.setting, readback_confirmed = true, "Aero settings write completed");
         }
         Some(false) => bail!(
             "Aero settings write emitted a protocol write but the device did not report the requested setting value"
@@ -1855,9 +1855,18 @@ fn parse_aero_write_command(setting: AeroSetting, value: &str) -> Result<DeviceC
             AeroSpeedSetting::new(value.parse().context("tiltback speed must be 1..=99")?)
                 .context("tiltback speed must be 1..=99")?,
         )),
+        AeroSetting::PedalHardness => Ok(DeviceCommand::SetAeroPedalHardness(
+            AeroPedalHardness::new(
+                value
+                    .parse()
+                    .context("MD hardness must be 0..=100 percent")?,
+            )
+            .context("MD hardness must be 0..=100 percent")?,
+        )),
         AeroSetting::Pwm => Ok(DeviceCommand::SetAeroPwmPercent(
             AeroPwmPercent::new(value.parse().context("PWM must be 0..=100")?)
-                .context("PWM must be 0..=100")?,
+                .context("PWM must be 0..=70")?
+                .into(),
         )),
         AeroSetting::AlarmSpeed => Ok(DeviceCommand::SetAeroAlarmSpeed(
             AeroSpeedSetting::new(value.parse().context("alarm speed must be 1..=99")?)
@@ -3504,6 +3513,22 @@ const fn command_kind_name(kind: CommandKind) -> &'static str {
         CommandKind::ResetTripMeter => "reset_trip_meter",
         CommandKind::SetAeroTiltbackSpeed => "set_aero_tiltback_speed",
         CommandKind::SetAeroPwmPercent => "set_aero_pwm_percent",
+        CommandKind::SetAeroPwmOff => "set_aero_pwm_off",
+        CommandKind::SetAeroGyroCalibration => "set_aero_gyro_calibration",
+        CommandKind::SetAeroRidingMode => "set_aero_riding_mode",
+        CommandKind::SetAeroBrakeOverpressureAlarm => "set_aero_brake_overpressure_alarm",
+        CommandKind::SetAeroPedalHardness => "set_aero_pedal_hardness",
+        CommandKind::SetAeroDisplayBacklight => "set_aero_display_backlight",
+        CommandKind::SetAeroBeeperVolume => "set_aero_beeper_volume",
+        CommandKind::SetAeroDynamicAssist => "set_aero_dynamic_assist",
+        CommandKind::SetAeroPedalDipCompensation => "set_aero_pedal_dip_compensation",
+        CommandKind::SetAeroLateralTiltLimit => "set_aero_lateral_tilt_limit",
+        CommandKind::SetAeroVoltageCorrection => "set_aero_voltage_correction",
+        CommandKind::SetAeroMaxChargeVoltageRaw => "set_aero_max_charge_voltage_raw",
+        CommandKind::SetAeroWheelUnits => "set_aero_wheel_units",
+        CommandKind::SetAeroHighSpeedMode => "set_aero_high_speed_mode",
+        CommandKind::SetAeroLowBatteryMode => "set_aero_low_battery_mode",
+        CommandKind::SetAeroTransportMode => "set_aero_transport_mode",
         CommandKind::SetAeroAlarmSpeed => "set_aero_alarm_speed",
         CommandKind::SetAeroAngleAdjustment => "set_aero_angle_adjustment",
         CommandKind::SetAeroHighBeam => "set_aero_high_beam",
@@ -3872,7 +3897,7 @@ mod tests {
             CommandKind::SetAeroTiltbackSpeed
         );
         assert_eq!(
-            parse_aero_write_command(AeroSetting::Pwm, "74")
+            parse_aero_write_command(AeroSetting::Pwm, "64")
                 .expect("PWM parses")
                 .kind(),
             CommandKind::SetAeroPwmPercent
@@ -3888,6 +3913,17 @@ mod tests {
             DeviceCommand::ResetTripMeter
         );
         assert!(parse_aero_write_command(AeroSetting::Pwm, "101").is_err());
+        for value in ["0", "30", "64", "100"] {
+            assert_eq!(
+                parse_aero_write_command(AeroSetting::PedalHardness, value).unwrap(),
+                DeviceCommand::SetAeroPedalHardness(
+                    AeroPedalHardness::new(value.parse().unwrap()).unwrap()
+                )
+            );
+        }
+        for value in ["101", "-1", "hard"] {
+            assert!(parse_aero_write_command(AeroSetting::PedalHardness, value).is_err());
+        }
         assert!(parse_aero_write_command(AeroSetting::TripReset, "on").is_err());
     }
 
@@ -6066,7 +6102,7 @@ mod tests {
         assert_eq!(report.telemetry, ReplayTelemetryCount::new(591));
         assert_eq!(
             report.read_only_responses,
-            ReplayReadOnlyResponseCount::new(2_335)
+            ReplayReadOnlyResponseCount::new(2_364)
         );
         assert_eq!(report.diagnostics, ReplayDiagnosticCount::default());
         assert!(report.chunk_one_byte_matches);
@@ -6410,7 +6446,9 @@ mod tests {
         );
         assert_eq!(
             aero_setting_readback_matches(
-                DeviceCommand::SetAeroPwmPercent(AeroPwmPercent::new(64).expect("64 percent fits"),),
+                DeviceCommand::SetAeroPwmPercent(cutout_core::AeroPwmSetting::Margin(
+                    AeroPwmPercent::new(64).expect("64 percent fits"),
+                )),
                 &readbacks,
             ),
             None
@@ -6714,6 +6752,11 @@ mod tests {
             (CommandKind::ResetTripMeter, "reset_trip_meter"),
             (CommandKind::SetAeroTiltbackSpeed, "set_aero_tiltback_speed"),
             (CommandKind::SetAeroPwmPercent, "set_aero_pwm_percent"),
+            (
+                CommandKind::SetAeroGyroCalibration,
+                "set_aero_gyro_calibration",
+            ),
+            (CommandKind::SetAeroPedalHardness, "set_aero_pedal_hardness"),
             (CommandKind::SetAeroAlarmSpeed, "set_aero_alarm_speed"),
             (
                 CommandKind::SetAeroAngleAdjustment,

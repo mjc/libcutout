@@ -4128,7 +4128,7 @@ fn index_to_f64(value: usize) -> f64 {
 
 #[cfg(test)]
 mod tests {
-    use std::{fmt::Write as _, io::Cursor};
+    use std::io::Cursor;
 
     use super::*;
     use cutout_btle::{
@@ -6304,10 +6304,10 @@ mod tests {
     fn arrow_escape_sequences_emit_tab_navigation() {
         let (tx, rx) = mpsc::channel();
 
-        handle_escape_sequence(&mut Cursor::new([b'[', b'C']), &tx);
+        handle_escape_sequence(&mut Cursor::new(*b"[C"), &tx);
         assert_eq!(rx.try_recv(), Ok(DashboardInput::NextTab));
 
-        handle_escape_sequence(&mut Cursor::new([b'[', b'D']), &tx);
+        handle_escape_sequence(&mut Cursor::new(*b"[D"), &tx);
         assert_eq!(rx.try_recv(), Ok(DashboardInput::PreviousTab));
     }
 

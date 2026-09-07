@@ -352,6 +352,9 @@ public final class CutoutSessionCore: NSObject {
     public var settingsCapabilities: EucSettingsCapabilities? {
         onBleQueue { liveOwner?.settingsCapabilities }
     }
+    public var tripMeterResetState: TripMeterResetState? {
+        onBleQueue { liveOwner?.tripMeterResetState }
+    }
     public var headlightState: LightSettingState? {
         onBleQueue { liveOwner?.headlightState }
     }
@@ -387,6 +390,45 @@ public final class CutoutSessionCore: NSObject {
     }
     public var aeroPwmPercentState: AeroPwmSettingState? {
         onBleQueue { liveOwner?.aeroPwmPercentState }
+    }
+    public var aeroGyroCalibrationState: AeroGyroCalibrationSettingState? {
+        onBleQueue { liveOwner?.aeroGyroCalibrationState }
+    }
+    public var aeroPedalHardnessState: AeroPedalHardnessSettingState? {
+        onBleQueue { liveOwner?.aeroPedalHardnessState }
+    }
+    public var aeroDisplayBacklightState: AeroDisplayBacklightSettingState? {
+        onBleQueue { liveOwner?.aeroDisplayBacklightState }
+    }
+    public var aeroWheelUnitsState: AeroWheelUnitsSettingState? {
+        onBleQueue { liveOwner?.aeroWheelUnitsState }
+    }
+    public var aeroBeeperVolumeState: AeroBeeperVolumeSettingState? {
+        onBleQueue { liveOwner?.aeroBeeperVolumeState }
+    }
+    public var aeroDynamicAssistState: AeroDynamicAssistSettingState? {
+        onBleQueue { liveOwner?.aeroDynamicAssistState }
+    }
+    public var aeroPedalDipCompensationState: AeroPedalDipCompensationSettingState? {
+        onBleQueue { liveOwner?.aeroPedalDipCompensationState }
+    }
+    public var aeroLateralTiltLimitState: AeroLateralTiltLimitSettingState? {
+        onBleQueue { liveOwner?.aeroLateralTiltLimitState }
+    }
+    public var aeroVoltageCorrectionState: AeroVoltageCorrectionSettingState? {
+        onBleQueue { liveOwner?.aeroVoltageCorrectionState }
+    }
+    public var aeroMaxChargeVoltageRawState: AeroMaxChargeVoltageRawSettingState? {
+        onBleQueue { liveOwner?.aeroMaxChargeVoltageRawState }
+    }
+    public var aeroHighSpeedModeState: AeroToggleSettingState? {
+        onBleQueue { liveOwner?.aeroHighSpeedModeState }
+    }
+    public var aeroLowBatteryModeState: AeroToggleSettingState? {
+        onBleQueue { liveOwner?.aeroLowBatteryModeState }
+    }
+    public var aeroTransportModeState: AeroToggleSettingState? {
+        onBleQueue { liveOwner?.aeroTransportModeState }
     }
     public var aeroAlarmSpeedState: AeroSpeedSettingState? {
         onBleQueue { liveOwner?.aeroAlarmSpeedState }
@@ -818,6 +860,94 @@ public final class CutoutSessionCore: NSObject {
     @discardableResult
     public func setAeroPwmPercent(_ percent: AeroPwmPercent) -> SettingCommandResult {
         setStationarySetting("set_aero_pwm_percent", command: .setAeroPwmPercent(percent))
+    }
+
+    @discardableResult
+    public func setAeroPwmOff() -> SettingCommandResult {
+        setStationarySetting("set_aero_pwm_off", command: .setAeroPwmOff)
+    }
+
+    @discardableResult
+    public func setAeroGyroCalibration() -> SettingCommandResult {
+        setStationarySetting("set_aero_gyro_calibration", command: .setAeroGyroCalibration)
+    }
+
+    @discardableResult
+    public func setAeroRidingMode(_ mode: AeroRidingMode) -> SettingCommandResult {
+        setStationarySetting("set_aero_riding_mode", command: .setAeroRidingMode(mode))
+    }
+
+    @discardableResult
+    public func setAeroBrakeOverpressureAlarm(
+        _ value: AeroBrakeOverpressureAlarm
+    ) -> SettingCommandResult {
+        setStationarySetting(
+            "set_aero_brake_overpressure_alarm",
+            command: .setAeroBrakeOverpressureAlarm(value)
+        )
+    }
+
+    @discardableResult
+    public func setAeroPedalHardness(_ hardness: AeroPedalHardness) -> SettingCommandResult {
+        setStationarySetting("set_aero_pedal_hardness", command: .setAeroPedalHardness(hardness))
+    }
+
+    @discardableResult
+    public func setAeroDisplayBacklight(_ value: AeroDisplayBacklight) -> SettingCommandResult {
+        setStationarySetting("set_aero_display_backlight", command: .setAeroDisplayBacklight(value))
+    }
+
+    @discardableResult
+    public func setAeroWheelUnits(_ value: AeroWheelUnits) -> SettingCommandResult {
+        setStationarySetting("set_aero_wheel_units", command: .setAeroWheelUnits(value))
+    }
+
+    @discardableResult
+    public func setAeroBeeperVolume(_ value: AeroBeeperVolume) -> SettingCommandResult {
+        setStationarySetting("set_aero_beeper_volume", command: .setAeroBeeperVolume(value))
+    }
+
+    @discardableResult
+    public func setAeroDynamicAssist(_ value: AeroDynamicAssist) -> SettingCommandResult {
+        setStationarySetting("set_aero_dynamic_assist", command: .setAeroDynamicAssist(value))
+    }
+
+    @discardableResult
+    public func setAeroPedalDipCompensation(_ value: AeroPedalDipCompensation) -> SettingCommandResult {
+        setStationarySetting("set_aero_pedal_dip_compensation", command: .setAeroPedalDipCompensation(value))
+    }
+
+    @discardableResult
+    public func setAeroLateralTiltLimit(_ value: AeroLateralTiltLimit) -> SettingCommandResult {
+        setStationarySetting("set_aero_lateral_tilt_limit", command: .setAeroLateralTiltLimit(value))
+    }
+
+    @discardableResult
+    public func setAeroVoltageCorrection(_ value: AeroVoltageCorrection) -> SettingCommandResult {
+        setStationarySetting("set_aero_voltage_correction", command: .setAeroVoltageCorrection(value))
+    }
+
+    @discardableResult
+    public func setAeroMaxChargeVoltageRaw(_ value: AeroMaxChargeVoltageRaw) -> SettingCommandResult {
+        setStationarySetting(
+            "set_aero_max_charge_voltage_raw",
+            command: .setAeroMaxChargeVoltageRaw(value)
+        )
+    }
+
+    @discardableResult
+    public func setAeroHighSpeedMode(_ value: AeroToggle) -> SettingCommandResult {
+        setStationarySetting("set_aero_high_speed_mode", command: .setAeroHighSpeedMode(value))
+    }
+
+    @discardableResult
+    public func setAeroLowBatteryMode(_ value: AeroToggle) -> SettingCommandResult {
+        setStationarySetting("set_aero_low_battery_mode", command: .setAeroLowBatteryMode(value))
+    }
+
+    @discardableResult
+    public func setAeroTransportMode(_ value: AeroToggle) -> SettingCommandResult {
+        setStationarySetting("set_aero_transport_mode", command: .setAeroTransportMode(value))
     }
 
     @discardableResult

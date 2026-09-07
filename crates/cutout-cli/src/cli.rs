@@ -277,6 +277,8 @@ pub(crate) enum AeroSetting {
     Headlight,
     HighBeam,
     Pedal,
+    #[value(alias = "md")]
+    PedalHardness,
     #[value(alias = "tlt")]
     TiltbackSpeed,
     #[value(alias = "pwt")]
@@ -2043,6 +2045,10 @@ mod tests {
             Ok(AeroSetting::AlarmSpeed)
         );
         assert_eq!(AeroSetting::from_str("ang", true), Ok(AeroSetting::Angle));
+        assert_eq!(
+            AeroSetting::from_str("md", true),
+            Ok(AeroSetting::PedalHardness)
+        );
     }
 
     #[test]
