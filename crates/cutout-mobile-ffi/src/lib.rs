@@ -3484,6 +3484,12 @@ pub enum MobileRideMapCoreErrorDto {
     Storage(String),
 }
 
+impl MobileRideMapCoreErrorDto {
+    fn storage_unavailable() -> Self {
+        Self::Storage("Rust ride database is unavailable".to_owned())
+    }
+}
+
 /// Telemetry provenance projected onto a live route point.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Enum)]
 pub enum MobileRideMapCoreTelemetryStateDto {
@@ -4273,7 +4279,11 @@ fn map_ride_database_error(error: persistence::StorageError) -> MobileRideDataba
         | persistence::StorageError::SpatialSchemaInitialization(_) => {
             MobileRideDatabaseError::StorageFailure
         }
-        persistence::StorageError::MusicTimelineFull => MobileRideDatabaseError::StorageFailure,
+        persistence::StorageError::MusicTimelineFull
+        | persistence::StorageError::MusicSequenceConflict { .. }
+        | persistence::StorageError::MusicEventOutOfOrder { .. } => {
+            MobileRideDatabaseError::StorageFailure
+        }
     }
 }
 
@@ -6724,18 +6734,21 @@ impl MobileRideMapCore {
             return Err(MobileRideMapCoreErrorDto::InvalidTransition);
         }
         let policy = CoreMusicHistoryPolicy::from(policy);
-        if let Some(database) = state.database.as_ref() {
-            database
-                .inner
-                .save_music_history_policy(
-                    parse_mobile_ride_id(&ride_id).map_err(map_core_error)?,
-                    policy,
-                )
-                .map_err(map_storage_core_error)?;
-        }
+        let Some(database) = state.database.as_ref() else {
+            return Err(MobileRideMapCoreErrorDto::storage_unavailable());
+        };
+        database
+            .inner
+            .save_music_history_policy(
+                parse_mobile_ride_id(&ride_id).map_err(map_core_error)?,
+                policy,
+            )
+            .map_err(map_storage_core_error)?;
         state.music_history_policy = policy;
         if policy == CoreMusicHistoryPolicy::Disabled {
             state.music_timeline = cutout_core::MusicTimeline::new();
+        } else if policy == CoreMusicHistoryPolicy::OpaqueItem {
+            state.music_timeline.redact_display_metadata();
         }
         Ok(())
     }
@@ -6770,17 +6783,19 @@ impl MobileRideMapCore {
         let previous = state.music_timeline.clone();
         let outcome = state.music_timeline.append(event.clone());
         if outcome == CoreMusicTimelineOutcome::Recorded {
-            if let Some(database) = state.database.as_ref() {
-                let ride_id = parse_mobile_ride_id(&ride_id).map_err(map_core_error)?;
-                if let Err(error) = database.inner.save_music_event(
-                    ride_id,
-                    state.music_history_policy,
-                    u64::try_from(sequence).unwrap_or(u64::MAX),
-                    event,
-                ) {
-                    state.music_timeline = previous;
-                    return Err(map_storage_core_error(error));
-                }
+            let Some(database) = state.database.as_ref() else {
+                state.music_timeline = previous;
+                return Err(MobileRideMapCoreErrorDto::storage_unavailable());
+            };
+            let ride_id = parse_mobile_ride_id(&ride_id).map_err(map_core_error)?;
+            if let Err(error) = database.inner.save_music_event(
+                ride_id,
+                state.music_history_policy,
+                u64::try_from(sequence).unwrap_or(u64::MAX),
+                event,
+            ) {
+                state.music_timeline = previous;
+                return Err(map_storage_core_error(error));
             }
         }
         Ok(outcome.into())
@@ -6814,7 +6829,7 @@ impl MobileRideMapCore {
             .database
             .clone()
         else {
-            return Ok(Vec::new());
+            return Err(MobileRideMapCoreErrorDto::storage_unavailable());
         };
         database
             .inner
@@ -16336,7 +16351,11 @@ mod tests {
 
     #[test]
     fn music_transition_is_recorded_only_after_opt_in() {
-        let state = MobileRideMapCore::new();
+        let path =
+            std::env::temp_dir().join(format!("libcutout-mobile-music-{}.sqlite", Uuid::new_v4()));
+        let database =
+            open_ride_database(path.to_string_lossy().into_owned()).expect("database opens");
+        let state = MobileRideMapCore::with_database(database.clone());
         state.start_gps_only(1_000, None).expect("ride starts");
         let snapshot = MobileMusicSnapshotDto {
             provider: MobileMusicProviderDto::AppleMusic,
@@ -16389,6 +16408,12 @@ mod tests {
         let events = state.current_music_events().expect("active timeline");
         assert_eq!(events.len(), 1);
         assert_eq!(events[0].title.as_deref(), Some("Song"));
+        state
+            .set_music_history_policy(MobileMusicHistoryPolicyDto::OpaqueItem)
+            .expect("policy downgrade persists");
+        let events = state.current_music_events().expect("active timeline");
+        assert_eq!(events[0].title, None);
+        assert_eq!(events[0].artist, None);
         state.stop_at(3_000).expect("ride stops");
         state.save().expect("stopped ride saves");
         state
@@ -16399,5 +16424,25 @@ mod tests {
                 .current_music_events()
                 .is_some_and(|events| events.is_empty())
         );
+        database.shutdown().expect("database shuts down");
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn music_persistence_requires_database() {
+        let state = MobileRideMapCore::new();
+        state.start_gps_only(1_000, None).expect("ride starts");
+        assert!(matches!(
+            state.set_music_history_policy(MobileMusicHistoryPolicyDto::OpaqueItem),
+            Err(MobileRideMapCoreErrorDto::Storage(message))
+                if message == "Rust ride database is unavailable"
+        ));
+        assert!(matches!(
+            state.stored_music_events(MobileRideIdDto {
+                value: "00000000-0000-0000-0000-000000000000".to_owned(),
+            }),
+            Err(MobileRideMapCoreErrorDto::Storage(message))
+                if message == "Rust ride database is unavailable"
+        ));
     }
 }

@@ -1274,6 +1274,18 @@ pub enum StorageError {
     /// The bounded music timeline cannot accept another event.
     #[error("ride music timeline is full")]
     MusicTimelineFull,
+    /// A music event reused a sequence for different data.
+    #[error("music event sequence {sequence} conflicts with stored data")]
+    MusicSequenceConflict {
+        /// Conflicting sequence number.
+        sequence: i64,
+    },
+    /// A music event's monotonic timestamp moved backwards.
+    #[error("music event sequence {sequence} is out of order")]
+    MusicEventOutOfOrder {
+        /// Out-of-order sequence number.
+        sequence: i64,
+    },
     /// The requested lifecycle transition is invalid.
     #[error("invalid ride lifecycle transition: {0}")]
     Transition(#[from] TransitionError),
@@ -4776,6 +4788,16 @@ fn save_music_history_policy(
 ) -> Result<(), StorageError> {
     let transaction = connection.transaction()?;
     ensure_ride_exists(&transaction, ride_id)?;
+    apply_music_history_policy(&transaction, ride_id, policy)?;
+    transaction.commit()?;
+    Ok(())
+}
+
+fn apply_music_history_policy(
+    transaction: &rusqlite::Transaction<'_>,
+    ride_id: RideId,
+    policy: MusicHistoryPolicy,
+) -> Result<(), StorageError> {
     transaction.execute(
         "INSERT INTO ride_music_history (ride_id, policy)
          VALUES (?1, ?2)
@@ -4787,8 +4809,12 @@ fn save_music_history_policy(
             "DELETE FROM ride_music_event WHERE ride_id = ?1",
             [ride_id.uuid().to_string()],
         )?;
+    } else if policy == MusicHistoryPolicy::OpaqueItem {
+        transaction.execute(
+            "UPDATE ride_music_event SET title = NULL, artist = NULL WHERE ride_id = ?1",
+            [ride_id.uuid().to_string()],
+        )?;
     }
-    transaction.commit()?;
     Ok(())
 }
 
@@ -4801,26 +4827,37 @@ fn save_music_event(
 ) -> Result<(), StorageError> {
     let transaction = connection.transaction()?;
     ensure_ride_exists(&transaction, ride_id)?;
-    transaction.execute(
-        "INSERT INTO ride_music_history (ride_id, policy)
-         VALUES (?1, ?2)
-         ON CONFLICT(ride_id) DO UPDATE SET policy = excluded.policy",
-        params![ride_id.uuid().to_string(), policy_name(policy)],
-    )?;
+    apply_music_history_policy(&transaction, ride_id, policy)?;
     if policy == MusicHistoryPolicy::Disabled {
-        transaction.execute(
-            "DELETE FROM ride_music_event WHERE ride_id = ?1",
-            [ride_id.uuid().to_string()],
-        )?;
         transaction.commit()?;
         return Ok(());
+    }
+    let existing = transaction
+        .query_row(
+            "SELECT provider, item_identifier, title, artist, kind, monotonic_at_ms,
+                    wall_clock_at_ms, clock_uncertainty_milliseconds
+             FROM ride_music_event WHERE ride_id = ?1 AND sequence = ?2",
+            params![ride_id.uuid().to_string(), sequence],
+            decode_music_event,
+        )
+        .optional()?;
+    if let Some(existing) = existing {
+        let mut expected = event.clone();
+        if policy == MusicHistoryPolicy::OpaqueItem {
+            expected.redact_display_metadata();
+        }
+        if existing == expected {
+            transaction.commit()?;
+            return Ok(());
+        }
+        return Err(StorageError::MusicSequenceConflict { sequence });
     }
     let count: i64 = transaction.query_row(
         "SELECT COUNT(*) FROM ride_music_event WHERE ride_id = ?1",
         [ride_id.uuid().to_string()],
         |row| row.get(0),
     )?;
-    if sequence > count {
+    if sequence != count {
         return Err(StorageError::InvalidStoredValue {
             field: "music sequence",
             value: sequence.to_string(),
@@ -4830,6 +4867,23 @@ fn save_music_event(
         && sequence == count
     {
         return Err(StorageError::MusicTimelineFull);
+    }
+    let monotonic_ms = i64::try_from(event.monotonic_at().as_milliseconds()).map_err(|_| {
+        StorageError::InvalidStoredValue {
+            field: "music monotonic timestamp",
+            value: event.monotonic_at().as_milliseconds().to_string(),
+        }
+    })?;
+    let previous_monotonic_ms: Option<i64> = transaction
+        .query_row(
+            "SELECT monotonic_at_ms FROM ride_music_event WHERE ride_id = ?1
+             ORDER BY sequence DESC LIMIT 1",
+            [ride_id.uuid().to_string()],
+            |row| row.get(0),
+        )
+        .optional()?;
+    if previous_monotonic_ms.is_some_and(|previous| monotonic_ms < previous) {
+        return Err(StorageError::MusicEventOutOfOrder { sequence });
     }
     let item_identifier = event
         .item_identifier()
@@ -4841,7 +4895,7 @@ fn save_music_event(
         .then(|| event.artist())
         .flatten();
     transaction.execute(
-        "INSERT OR IGNORE INTO ride_music_event
+        "INSERT INTO ride_music_event
             (ride_id, sequence, provider, item_identifier, title, artist, kind,
              monotonic_at_ms, wall_clock_at_ms, clock_uncertainty_milliseconds)
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
@@ -4853,7 +4907,7 @@ fn save_music_event(
             title,
             artist,
             event_kind_name(event.kind()),
-            event.monotonic_at().as_milliseconds(),
+            monotonic_ms,
             event.wall_clock_at().as_milliseconds(),
             event.clock_uncertainty_milliseconds(),
         ],

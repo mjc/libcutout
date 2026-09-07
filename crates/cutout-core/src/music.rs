@@ -430,6 +430,22 @@ impl MusicRideEvent {
         self.artist.as_deref()
     }
 
+    /// Returns whether two events describe the same provider transition.
+    #[must_use]
+    pub fn same_transition_as(&self, other: &Self) -> bool {
+        self.provider == other.provider
+            && self.item_identifier == other.item_identifier
+            && self.title == other.title
+            && self.artist == other.artist
+            && self.kind == other.kind
+    }
+
+    /// Removes human-readable metadata while retaining the opaque item identity.
+    pub fn redact_display_metadata(&mut self) {
+        self.title = None;
+        self.artist = None;
+    }
+
     /// Returns the provider.
     #[must_use]
     pub const fn provider(&self) -> MusicProvider {
@@ -498,7 +514,7 @@ impl MusicTimeline {
             if event.monotonic_at() < previous.monotonic_at() {
                 return MusicTimelineOutcome::OutOfOrder;
             }
-            if event == *previous {
+            if event.same_transition_as(previous) {
                 return MusicTimelineOutcome::Duplicate;
             }
         }
@@ -513,6 +529,13 @@ impl MusicTimeline {
     #[must_use]
     pub fn events(&self) -> &[MusicRideEvent] {
         &self.events
+    }
+
+    /// Removes human-readable metadata from every retained event.
+    pub fn redact_display_metadata(&mut self) {
+        self.events
+            .iter_mut()
+            .for_each(MusicRideEvent::redact_display_metadata);
     }
 }
 
@@ -665,6 +688,32 @@ mod tests {
         )
         .expect("valid event");
         assert_eq!(timeline.append(old), MusicTimelineOutcome::OutOfOrder);
+        assert_eq!(timeline.events().len(), 1);
+    }
+
+    #[test]
+    fn timeline_coalesces_same_transition_with_newer_timing() {
+        let first = MusicRideEvent::from_snapshot(
+            &snapshot(None),
+            MusicRideEventKind::Play,
+            MonotonicTimestamp::new(10),
+            WallClockUnixTimestamp::new(100),
+            2,
+            MusicHistoryPolicy::OpaqueItem,
+        )
+        .expect("valid event");
+        let second = MusicRideEvent::from_snapshot(
+            &snapshot(None),
+            MusicRideEventKind::Play,
+            MonotonicTimestamp::new(20),
+            WallClockUnixTimestamp::new(110),
+            3,
+            MusicHistoryPolicy::OpaqueItem,
+        )
+        .expect("valid event");
+        let mut timeline = MusicTimeline::new();
+        assert_eq!(timeline.append(first), MusicTimelineOutcome::Recorded);
+        assert_eq!(timeline.append(second), MusicTimelineOutcome::Duplicate);
         assert_eq!(timeline.events().len(), 1);
     }
 }
