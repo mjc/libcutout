@@ -4879,12 +4879,18 @@ fn save_music_event(
     {
         return Err(StorageError::MusicTimelineFull);
     }
-    let monotonic_ms = i64::try_from(event.monotonic_at().as_milliseconds()).map_err(|_| {
-        StorageError::InvalidStoredValue {
-            field: "music monotonic timestamp",
-            value: event.monotonic_at().as_milliseconds().to_string(),
-        }
-    })?;
+    let monotonic_ms = music_sqlite_integer(
+        event.monotonic_at().as_milliseconds(),
+        "music monotonic timestamp",
+    )?;
+    let wall_clock_ms = music_sqlite_integer(
+        event.wall_clock_at().as_milliseconds(),
+        "music wall clock timestamp",
+    )?;
+    let clock_uncertainty_ms = music_sqlite_integer(
+        event.clock_uncertainty_milliseconds(),
+        "music clock uncertainty",
+    )?;
     let previous_monotonic_ms: Option<i64> = transaction
         .query_row(
             "SELECT monotonic_at_ms FROM ride_music_event WHERE ride_id = ?1
@@ -4919,12 +4925,19 @@ fn save_music_event(
             artist,
             event_kind_name(event.kind()),
             monotonic_ms,
-            event.wall_clock_at().as_milliseconds(),
-            event.clock_uncertainty_milliseconds(),
+            wall_clock_ms,
+            clock_uncertainty_ms,
         ],
     )?;
     transaction.commit()?;
     Ok(())
+}
+
+fn music_sqlite_integer(value: u64, field: &'static str) -> Result<i64, StorageError> {
+    i64::try_from(value).map_err(|_| StorageError::InvalidStoredValue {
+        field,
+        value: value.to_string(),
+    })
 }
 
 fn music_event_policy(

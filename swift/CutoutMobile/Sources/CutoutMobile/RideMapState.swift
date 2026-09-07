@@ -1290,6 +1290,7 @@ public final class MobileRideMapState: @unchecked Sendable {
             case .NotFound: return .rideNotFound
             case .InvalidTransition, .InvalidRideState: return .invalidTransition
             case .Cancelled: return .cancelled
+            case let .InvalidMusicInput(message): return .invalidMusicInput(message)
             default: return .storageError(String(describing: error))
             }
         }

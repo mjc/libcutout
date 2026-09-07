@@ -4224,6 +4224,9 @@ pub enum MobileRideDatabaseError {
     /// The bounded music timeline is full.
     #[error("ride music timeline is full")]
     MusicTimelineFull,
+    /// A music event failed Rust-owned input validation.
+    #[error("invalid music input: {0}")]
+    InvalidMusicInput(String),
     /// A music event reused a sequence for different data.
     #[error("music event sequence {sequence} conflicts with stored data")]
     MusicSequenceConflict { sequence: i64 },
@@ -4748,7 +4751,7 @@ fn core_music_event(
             clock_uncertainty_milliseconds: event.clock_uncertainty_ms,
         },
     )
-    .map_err(|_| MobileRideDatabaseError::StorageFailure)
+    .map_err(|error| MobileRideDatabaseError::InvalidMusicInput(error.to_string()))
 }
 
 /// Rust-owned synchronous ride database handle for mobile clients.
@@ -6510,7 +6513,12 @@ fn millimetres_to_meters(value: u64) -> f64 {
 
 #[allow(clippy::missing_errors_doc)]
 fn map_ride_map_error(error: &MobileRideDatabaseError) -> MobileRideMapCoreErrorDto {
-    MobileRideMapCoreErrorDto::Storage(error.to_string())
+    match error {
+        MobileRideDatabaseError::InvalidMusicInput(message) => {
+            MobileRideMapCoreErrorDto::InvalidMusicInput(message.clone())
+        }
+        _ => MobileRideMapCoreErrorDto::Storage(error.to_string()),
+    }
 }
 
 #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
@@ -6813,6 +6821,7 @@ impl MobileRideMapCore {
         state.music_history_policy = policy;
         if policy == CoreMusicHistoryPolicy::Disabled {
             state.music_timeline = cutout_core::MusicTimeline::new();
+            state.music_last_observed_at = None;
         } else if policy == CoreMusicHistoryPolicy::OpaqueItem {
             state.music_timeline.redact_display_metadata();
         }
@@ -6888,11 +6897,10 @@ impl MobileRideMapCore {
             return Ok(MobileMusicTimelineOutcomeDto::OutOfOrder);
         }
         let sequence = state.music_timeline.events().len();
-        let previous = state.music_timeline.clone();
         let outcome = state.music_timeline.append(event.clone());
         if outcome == CoreMusicTimelineOutcome::Recorded {
             let Some(database) = state.database.as_ref() else {
-                state.music_timeline = previous;
+                let _ = state.music_timeline.pop_last();
                 return Err(MobileRideMapCoreErrorDto::storage_unavailable());
             };
             let ride_id = parse_mobile_ride_id(&ride_id).map_err(map_core_error)?;
@@ -6902,7 +6910,7 @@ impl MobileRideMapCore {
                 u64::try_from(sequence).unwrap_or(u64::MAX),
                 event,
             ) {
-                state.music_timeline = previous;
+                let _ = state.music_timeline.pop_last();
                 return Err(map_storage_core_error(error));
             }
         }
@@ -16548,6 +16556,24 @@ mod tests {
         let events = state.current_music_events().expect("active timeline");
         assert_eq!(events[0].title, None);
         assert_eq!(events[0].artist, None);
+        state
+            .set_music_history_policy(MobileMusicHistoryPolicyDto::Disabled)
+            .expect("policy can be disabled while recording");
+        state
+            .set_music_history_policy(MobileMusicHistoryPolicyDto::HumanReadable)
+            .expect("policy can be re-enabled while recording");
+        assert_eq!(
+            state
+                .record_music_event(
+                    snapshot.clone(),
+                    MobileMusicRideEventKindDto::ItemChanged,
+                    3_000,
+                    1_700_000_003_000,
+                    5,
+                )
+                .expect("the reset watermark accepts the next event"),
+            MobileMusicTimelineOutcomeDto::Recorded
+        );
         state.stop_at(3_000).expect("ride stops");
         assert!(matches!(
             state.record_music_event(
@@ -16570,6 +16596,26 @@ mod tests {
         );
         database.shutdown().expect("database shuts down");
         let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn invalid_music_event_input_is_typed() {
+        let error = core_music_event(MobileMusicRideEventDto {
+            provider: MobileMusicProviderDto::Spotify,
+            item_identifier: Some(" ".to_owned()),
+            title: None,
+            artist: None,
+            kind: MobileMusicRideEventKindDto::Play,
+            monotonic_at_ms: 10,
+            wall_clock_at_ms: 1_700_000_000_010,
+            clock_uncertainty_ms: 5,
+        })
+        .expect_err("blank item identifiers are invalid input");
+        assert!(matches!(
+            error,
+            MobileRideDatabaseError::InvalidMusicInput(message)
+                if message.contains("music identifier is blank")
+        ));
     }
 
     #[test]

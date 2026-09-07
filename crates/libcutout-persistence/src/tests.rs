@@ -3612,3 +3612,63 @@ fn music_event_sequence_requires_contiguous_order_and_monotonic_time() {
     database.shutdown().unwrap();
     let _ = std::fs::remove_file(path);
 }
+
+#[test]
+fn music_event_timestamps_must_fit_sqlite_integer() {
+    let _guard = test_guard();
+    let path = music_test_path();
+    let database = RideDatabase::open(&path).unwrap();
+    let ride = database
+        .create_started_live_ride(1_700_000_000_000, 100, None)
+        .unwrap();
+
+    let wall_clock_overflow = MusicRideEvent::new(
+        MusicProvider::AppleMusic,
+        Some("track-wall-clock".to_owned()),
+        None,
+        None,
+        MusicRideEventKind::Play,
+        MusicEventTiming {
+            monotonic_at: MonotonicTimestamp::new(110),
+            wall_clock_at: WallClockUnixTimestamp::new(u64::MAX),
+            clock_uncertainty_milliseconds: 5,
+        },
+    )
+    .unwrap();
+    assert!(matches!(
+        database.save_music_event(ride, MusicHistoryPolicy::OpaqueItem, 0, wall_clock_overflow,),
+        Err(StorageError::InvalidStoredValue {
+            field: "music wall clock timestamp",
+            ..
+        })
+    ));
+
+    let uncertainty_overflow = MusicRideEvent::new(
+        MusicProvider::AppleMusic,
+        Some("track-uncertainty".to_owned()),
+        None,
+        None,
+        MusicRideEventKind::Play,
+        MusicEventTiming {
+            monotonic_at: MonotonicTimestamp::new(110),
+            wall_clock_at: WallClockUnixTimestamp::new(1_700_000_000_110),
+            clock_uncertainty_milliseconds: u64::MAX,
+        },
+    )
+    .unwrap();
+    assert!(matches!(
+        database.save_music_event(
+            ride,
+            MusicHistoryPolicy::OpaqueItem,
+            0,
+            uncertainty_overflow,
+        ),
+        Err(StorageError::InvalidStoredValue {
+            field: "music clock uncertainty",
+            ..
+        })
+    ));
+
+    database.shutdown().unwrap();
+    let _ = std::fs::remove_file(path);
+}

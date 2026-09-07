@@ -546,6 +546,11 @@ impl MusicTimeline {
         MusicTimelineOutcome::Recorded
     }
 
+    /// Removes the newest event when its durable commit must be rolled back.
+    pub fn pop_last(&mut self) -> Option<MusicRideEvent> {
+        self.events.pop()
+    }
+
     /// Returns the retained events in monotonic order.
     #[must_use]
     pub fn events(&self) -> &[MusicRideEvent] {
