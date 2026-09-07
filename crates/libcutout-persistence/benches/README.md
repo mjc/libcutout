@@ -1,6 +1,26 @@
-# Load ride microbenchmark
+# Load ride microbenchmarks
 
-This Gungraun benchmark measures instruction counts for `find_ride` (metadata,
+The Divan benchmark measures wall-clock ride loads per second. The Gungraun
+benchmark measures deterministic instruction counts. Both exercise `find_ride`
+(metadata, summary, duration, segment count) plus `project_route_points` through
+the public SQLite worker. Projection uses the mobile history detail limit of
+16,384 points, precise coordinates, and no viewport. They do not measure
+Swift/FFI conversion, rendering, or phone latency.
+
+## Divan throughput
+
+Use `--items-count=1` so Divan reports whole ride loads per second. Fixture
+setup, snapshotting, the initial correctness load, and shutdown are outside the
+timed loop. Divan measures the same warmed SQLite worker request that mobile
+history uses.
+
+```sh
+nix develop -c cargo bench -p libcutout-persistence --bench load_ride_ips -- --items-count=1
+```
+
+## Gungraun instruction counts
+
+Gungraun measures instruction counts for `find_ride` (metadata,
 summary, duration, segment count) plus `project_route_points` (route, camera,
 endpoints, segment metadata) through the public SQLite worker. Projection uses
 the mobile history detail limit of 16,384 points, precise coordinates, and no
@@ -42,6 +62,8 @@ long; no qualifying ride is a hard failure, never a synthetic fallback. Private
 databases and GPS fixtures must not be committed.
 
 ```sh
+CUTOUT_BENCH_DATABASE=/path/to/ride.sqlite nix develop -c cargo bench \
+  -p libcutout-persistence --bench load_ride_ips -- --items-count=1
 CUTOUT_BENCH_DATABASE=/path/to/ride.sqlite nix develop -c cargo bench \
   -p libcutout-persistence --bench load_ride -- --save-baseline=imported_before --nocapture
 CUTOUT_BENCH_DATABASE=/path/to/ride.sqlite nix develop -c cargo bench \

@@ -21,6 +21,7 @@ thiserror.workspace = true
 uuid.workspace = true
 
 [dev-dependencies]
+divan = "=0.1.21"
 gungraun = "=0.18.2"
 rusqlite = { workspace = true, features = ["backup"] }
 tempfile = "3"
@@ -30,4 +31,8 @@ gungraun = { version = "=0.18.2", features = ["client_requests"] }
 
 [[bench]]
 name = "load_ride"
+harness = false
+
+[[bench]]
+name = "load_ride_ips"
 harness = false
