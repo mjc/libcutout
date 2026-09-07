@@ -132,8 +132,8 @@ impl MelkLightingProfile {
     /// Encodes bounded effect, microphone, clock, and scheduler commands from the reference.
     /// Hardware output remains separately observed; no status-query write is sent.
     #[must_use]
-    pub const fn encode_control(command: cutout_core::MelkControl) -> [u8; MELK_FRAME_LEN] {
-        use cutout_core::{LightingPowerState, MelkControl};
+    pub const fn encode_control(command: MelkControl) -> [u8; MELK_FRAME_LEN] {
+        use cutout_core::LightingPowerState;
         match command {
             MelkControl::Pattern(pattern) => [0x7e, 5, 3, pattern.value(), 6, 0xff, 0xff, 0, 0xef],
             MelkControl::Speed(speed) => [0x7e, 4, 2, speed, 0xff, 0xff, 0xff, 0, 0xef],
@@ -179,21 +179,21 @@ impl MelkLightingProfile {
     pub fn plan_state(state: RgbLightingRequestedState) -> Vec<TransportAction> {
         let mut actions = match state.playback() {
             LightingPlayback::Solid => vec![
-                Self::write_control_action(MelkControl::Microphone(false)),
+                Self::control_action(MelkControl::Microphone(false)),
                 Self::write_action(RgbLightingCommand::SetSolidColor(state.color())),
             ],
             LightingPlayback::Effect { pattern, speed } => vec![
-                Self::write_control_action(MelkControl::Microphone(false)),
-                Self::write_control_action(MelkControl::Pattern(pattern)),
-                Self::write_control_action(MelkControl::Speed(speed)),
+                Self::control_action(MelkControl::Microphone(false)),
+                Self::control_action(MelkControl::Pattern(pattern)),
+                Self::control_action(MelkControl::Speed(speed)),
             ],
             LightingPlayback::Music {
                 effect,
                 sensitivity,
             } => vec![
-                Self::write_control_action(MelkControl::Sensitivity(sensitivity)),
-                Self::write_control_action(MelkControl::MusicEffect(effect)),
-                Self::write_control_action(MelkControl::Microphone(true)),
+                Self::control_action(MelkControl::Sensitivity(sensitivity)),
+                Self::control_action(MelkControl::MusicEffect(effect)),
+                Self::control_action(MelkControl::Microphone(true)),
             ],
         };
         actions.push(Self::write_action(RgbLightingCommand::SetBrightness(
@@ -205,23 +205,19 @@ impl MelkLightingProfile {
         actions
     }
 
-    fn write_control_action(command: MelkControl) -> TransportAction {
-        let frame = Self::encode_control(command);
-        let Ok(bytes) = WritePayload::try_from_slice(&frame) else {
-            unreachable!("fixed MELK frames fit the bounded transport payload");
-        };
-        let policy = Self::write_policy();
-        TransportAction::Write {
-            channel: policy.channel,
-            bytes,
-            mode: policy.mode,
-        }
+    /// Wraps an advanced MELK control as a bounded no-response write action.
+    #[must_use]
+    pub fn control_action(command: MelkControl) -> TransportAction {
+        Self::write_frame(Self::encode_control(command))
     }
 
-    /// Wraps a candidate frame as a bounded no-response write action.
+    /// Wraps a basic lighting command as a bounded no-response write action.
     #[must_use]
     pub fn write_action(command: RgbLightingCommand) -> TransportAction {
-        let frame = Self::encode(command);
+        Self::write_frame(Self::encode(command))
+    }
+
+    fn write_frame(frame: [u8; MELK_FRAME_LEN]) -> TransportAction {
         let Ok(bytes) = WritePayload::try_from_slice(&frame) else {
             unreachable!("fixed MELK frames fit the bounded transport payload");
         };
@@ -268,9 +264,15 @@ mod tests {
         let actions = MelkLightingProfile::plan_state(state);
 
         assert_eq!(actions.len(), 5);
-        assert_eq!(payload(&actions[0]), [0x7e, 4, 7, 0, 255, 255, 255, 0, 0xef]);
+        assert_eq!(
+            payload(&actions[0]),
+            [0x7e, 4, 7, 0, 255, 255, 255, 0, 0xef]
+        );
         assert_eq!(payload(&actions[1]), [0x7e, 5, 3, 16, 6, 255, 255, 0, 0xef]);
-        assert_eq!(payload(&actions[2]), [0x7e, 4, 2, 200, 255, 255, 255, 0, 0xef]);
+        assert_eq!(
+            payload(&actions[2]),
+            [0x7e, 4, 2, 200, 255, 255, 255, 0, 0xef]
+        );
         assert_eq!(payload(&actions[3]), [0x7e, 4, 1, 42, 255, 0, 255, 0, 0xef]);
         assert_eq!(payload(&actions[4]), [0x7e, 0, 4, 0, 0, 0, 255, 0, 0xef]);
     }

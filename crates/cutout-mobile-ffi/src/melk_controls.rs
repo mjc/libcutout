@@ -2,7 +2,7 @@
 
 use crate::{
     MobileMelkLightingProfile, MobileMelkLightingRestoreStateDto, MobileMelkLightingWriteDto,
-    MobileMelkLightingWriteModeDto, MobileRgbLightingRecordError,
+    MobileRgbLightingRecordError,
 };
 use cutout_core::{LightingPlayback, MelkClock, MelkControl, MelkSchedule};
 use cutout_protocols::MelkLightingProfile;
@@ -97,17 +97,6 @@ pub struct MobileMelkClockDto {
     pub weekday: u8,
 }
 
-fn control_write(command: MelkControl) -> MobileMelkLightingWriteDto {
-    let policy = MelkLightingProfile::write_policy();
-    MobileMelkLightingWriteDto {
-        characteristic: policy.channel.as_bytes().to_vec(),
-        payload: MelkLightingProfile::encode_control(command).to_vec(),
-        mode: MobileMelkLightingWriteModeDto::WithoutResponse,
-        confirmation_characteristic: policy.confirmation_channel.as_bytes().to_vec(),
-        minimum_interval_ms: policy.minimum_interval_ms,
-    }
-}
-
 fn power(on: bool) -> cutout_core::LightingPowerState {
     if on {
         cutout_core::LightingPowerState::On
@@ -128,37 +117,16 @@ impl MobileMelkLightingProfile {
         state: MobileMelkLightingRestoreStateDto,
     ) -> Result<Vec<MobileMelkLightingWriteDto>, MobileRgbLightingRecordError> {
         let typed = cutout_core::RgbLightingRequestedState::try_from(state)?;
-        let mut writes = match typed.playback() {
-            LightingPlayback::Solid => vec![
-                control_write(MelkControl::Microphone(false)),
-                self.set_solid_color(state.red, state.green, state.blue),
-            ],
-            LightingPlayback::Effect { pattern, speed } => vec![
-                control_write(MelkControl::Microphone(false)),
-                control_write(MelkControl::Pattern(pattern)),
-                self.set_effect_speed(speed),
-            ],
-            LightingPlayback::Music {
-                effect,
-                sensitivity,
-            } => vec![
-                control_write(MelkControl::Sensitivity(sensitivity)),
-                control_write(MelkControl::MusicEffect(effect)),
-                control_write(MelkControl::Microphone(true)),
-            ],
-        };
-        writes.push(
-            self.set_brightness(state.brightness)
-                .map_err(|_| MobileRgbLightingRecordError::InvalidState)?,
-        );
-        writes.push(self.set_power(state.power_on));
-        Ok(writes)
+        Ok(MelkLightingProfile::plan_state(typed)
+            .into_iter()
+            .map(crate::mobile_melk_transport_action)
+            .collect())
     }
 
     /// Updates only the native effect speed, without restarting the pattern or changing power.
     #[must_use]
     pub fn set_effect_speed(&self, speed: u8) -> MobileMelkLightingWriteDto {
-        control_write(MelkControl::Speed(speed))
+        crate::mobile_melk_control(MelkControl::Speed(speed))
     }
 
     /// Plans local clock sync followed by one scheduler-slot update.
@@ -180,10 +148,13 @@ impl MobileMelkLightingProfile {
         .map_err(|_| MobileRgbLightingRecordError::InvalidState)?;
         let clock = MelkClock::new(clock.hour, clock.minute, clock.second, clock.weekday)
             .map_err(|_| MobileRgbLightingRecordError::InvalidState)?;
-        Ok(vec![
-            control_write(MelkControl::Clock(clock)),
-            control_write(MelkControl::Schedule(schedule)),
-        ])
+        Ok([
+            MelkLightingProfile::control_action(MelkControl::Clock(clock)),
+            MelkLightingProfile::control_action(MelkControl::Schedule(schedule)),
+        ]
+        .into_iter()
+        .map(crate::mobile_melk_transport_action)
+        .collect())
     }
 }
 

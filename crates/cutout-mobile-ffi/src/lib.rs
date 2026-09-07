@@ -11317,12 +11317,12 @@ fn mobile_gatt_channel(channel: &[u8]) -> GattChannel {
     GattChannel::from_bytes(mobile_channel_bytes(channel))
 }
 
-fn mobile_melk_write(command: RgbLightingCommand) -> MobileMelkLightingWriteDto {
+fn mobile_melk_transport_action(action: TransportAction) -> MobileMelkLightingWriteDto {
     let TransportAction::Write {
         channel,
         bytes,
         mode,
-    } = MelkLightingProfile::write_action(command)
+    } = action
     else {
         unreachable!("MELK lighting commands always produce writes")
     };
@@ -11334,6 +11334,14 @@ fn mobile_melk_write(command: RgbLightingCommand) -> MobileMelkLightingWriteDto 
         confirmation_characteristic: policy.confirmation_channel.as_bytes().to_vec(),
         minimum_interval_ms: policy.minimum_interval_ms,
     }
+}
+
+fn mobile_melk_write(command: RgbLightingCommand) -> MobileMelkLightingWriteDto {
+    mobile_melk_transport_action(MelkLightingProfile::write_action(command))
+}
+
+fn mobile_melk_control(command: cutout_core::MelkControl) -> MobileMelkLightingWriteDto {
+    mobile_melk_transport_action(MelkLightingProfile::control_action(command))
 }
 
 fn mobile_melk_write_mode(mode: WriteMode) -> MobileMelkLightingWriteModeDto {
