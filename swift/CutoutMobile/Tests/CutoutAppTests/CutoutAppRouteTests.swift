@@ -701,7 +701,9 @@ final class CutoutAppRouteTests: XCTestCase {
                 name: "Govee_H607C_D635",
                 inventory: CoreBluetoothGattInventory(services: [] as [CoreBluetoothGattService])
             )
-        )
+        ) { error in
+            XCTAssertEqual(error as? MelkLightingProtocolError, .missingService)
+        }
     }
 
     func testRememberedMELKTargetAcceptsOnlyTheSamePlatformIdentity() {

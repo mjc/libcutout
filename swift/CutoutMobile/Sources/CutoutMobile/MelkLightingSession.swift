@@ -585,9 +585,14 @@ public final class MelkLightingPeripheralSession: NSObject, CBCentralManagerDele
                 transition(to: .failed(error.map(String.init(describing:)) ?? "service discovery failed"))
                 return
             }
-            peripheral.services?
-                .filter { $0.uuid == MelkLightingCommandProfile.service.coreBluetoothUuid }
-                .forEach { peripheral.discoverCharacteristics(nil, for: $0) }
+            guard let service = peripheral.services?.first(where: {
+                $0.uuid == MelkLightingCommandProfile.service.coreBluetoothUuid
+            }) else {
+                transition(to: .failed("missing FFF0 service"))
+                record("gatt=missing FFF0 service")
+                return
+            }
+            peripheral.discoverCharacteristics(nil, for: service)
         }
     }
 
