@@ -532,6 +532,7 @@ dependencies = [
  "cutout-core",
  "cutout-protocols",
  "hex-literal",
+ "libcutout-persistence",
  "ratatui",
  "serde_json",
  "signal-hook",

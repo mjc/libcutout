@@ -51,12 +51,13 @@ use cutout_protocols::{
     select_begode_pack_layout_from_annotations, select_begode_pack_voltage_profile,
     select_begode_pack_voltage_profile_from_annotations, validate_begode_pack_evidence,
 };
+use libcutout_persistence::RideDatabase;
 use tracing::{debug, info};
 
 use crate::cli::{
     CaptureArgs, Cli, Command, DashboardArgs, PevcapArgs, PevcapCommand, PevcapConvertArgs,
-    PevcapFormat, PevcapReplayProfile, RawSubscribeArgs, ReadProbe, SessionProfile,
-    TargetedScanArgs, VescProbe, VescProbeArgs,
+    PevcapFormat, PevcapImportArgs, PevcapReplayProfile, RawSubscribeArgs, ReadProbe,
+    SessionProfile, TargetedScanArgs, VescProbe, VescProbeArgs,
 };
 use crate::dashboard::{
     DashboardCaptureProvenance, DashboardState, DashboardUpdate, firmware_summary_string,
@@ -92,9 +93,44 @@ pub async fn run(cli: Cli) -> Result<()> {
 fn pevcap(args: PevcapArgs) -> Result<()> {
     match args.command {
         PevcapCommand::Convert(args) => pevcap_convert(&args)?,
+        PevcapCommand::Import(args) => pevcap_import(&args)?,
         PevcapCommand::Replay(args) => pevcap_replay(&args)?,
     }
 
+    Ok(())
+}
+
+fn pevcap_import(args: &PevcapImportArgs) -> Result<()> {
+    let database = RideDatabase::open(&args.database)
+        .with_context(|| format!("open ride history database {}", args.database.display()))?;
+    let preview = database.preflight_pevcap(&args.input, pevcap_encoding(args.input_format))?;
+    info!(
+        input = %preview.source_path().display(),
+        digest = %preview.artifact_digest(),
+        bytes = preview.artifact_size(),
+        records = preview.record_count(),
+        locations = preview.location_count(),
+        duration_milliseconds = preview.duration_milliseconds(),
+        outcome = ?preview.outcome(),
+        warnings = preview.warnings().len(),
+        confirmed = args.confirm,
+        "PEVCAP preflight"
+    );
+    if !args.confirm {
+        return Ok(());
+    }
+
+    let receipt = database.confirm_pevcap_import(&preview, capture_wall_clock_unix_ms().get())?;
+    info!(
+        digest = %receipt.artifact_digest,
+        managed_artifact = %receipt.managed_artifact_path.display(),
+        ride_id = ?receipt.ride_id,
+        duplicate = receipt.duplicate,
+        outcome = ?receipt.outcome,
+        records = receipt.record_count,
+        locations = receipt.location_count,
+        "PEVCAP import committed"
+    );
     Ok(())
 }
 

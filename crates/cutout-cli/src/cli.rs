@@ -85,6 +85,12 @@ By default the command auto-selects the replay profile from persisted PEVCAP
 identity metadata. Use --profile to override that metadata for verification.
 Use --diagnostics-jsonl to emit stable diagnostic snapshot records for replay
 tooling.";
+const PEVCAP_IMPORT_LONG_ABOUT: &str = "\
+Preflight a PEVCAP capture against Rust-owned ride history storage.
+
+Without --confirm, this command only reports bounded facts and never commits
+an import.
+Pass --confirm after reviewing the preview to copy and commit the capture.";
 const DASHBOARD_LONG_ABOUT: &str = "\
 Open a read-only Ratatui dashboard backed by the Termina terminal backend.
 The dashboard is intended as a live inspection surface for discovery, device
@@ -480,6 +486,10 @@ pub(crate) enum PevcapCommand {
     #[command(long_about = PEVCAP_CONVERT_LONG_ABOUT)]
     Convert(PevcapConvertArgs),
 
+    /// Preflight and optionally import a capture into Rust-owned ride history.
+    #[command(long_about = PEVCAP_IMPORT_LONG_ABOUT)]
+    Import(PevcapImportArgs),
+
     /// Replay a capture through a selected read-only session.
     #[command(long_about = PEVCAP_REPLAY_LONG_ABOUT)]
     Replay(PevcapReplayArgs),
@@ -502,6 +512,25 @@ pub(crate) struct PevcapConvertArgs {
     /// Output capture format.
     #[arg(long = "output-format", value_enum)]
     pub(crate) output_format: PevcapFormat,
+}
+
+#[derive(Clone, Debug, Args, PartialEq, Eq)]
+pub(crate) struct PevcapImportArgs {
+    /// SQLite database path.
+    #[arg(long, value_name = "PATH")]
+    pub(crate) database: PathBuf,
+
+    /// Input capture path.
+    #[arg(long, value_name = "PATH")]
+    pub(crate) input: PathBuf,
+
+    /// Input capture format.
+    #[arg(long = "input-format", value_enum)]
+    pub(crate) input_format: PevcapFormat,
+
+    /// Commit the reviewed preview instead of only printing it.
+    #[arg(long)]
+    pub(crate) confirm: bool,
 }
 
 #[derive(Clone, Debug, Args, PartialEq, Eq)]
@@ -1450,6 +1479,24 @@ mod tests {
                     output_format: PevcapFormat::Binary,
                 })
             })
+        );
+    }
+
+    #[test]
+    fn parses_pevcap_import_command() {
+        assert!(
+            Cli::try_parse_from([
+                "cutout",
+                "pevcap",
+                "import",
+                "--database",
+                "rides.sqlite3",
+                "--input",
+                "session.pevcap.jsonl",
+                "--input-format",
+                "jsonl",
+            ])
+            .is_ok()
         );
     }
 
