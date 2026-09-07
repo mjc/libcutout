@@ -100,6 +100,8 @@ fn pevcap(args: PevcapArgs) -> Result<()> {
     Ok(())
 }
 
+/// Reports bounded preview facts; only explicit confirmation publishes capture data.
+/// Opening the database may initialize, migrate, or recover its existing state.
 fn pevcap_import(args: &PevcapImportArgs) -> Result<()> {
     let database = RideDatabase::open(&args.database)
         .with_context(|| format!("open ride history database {}", args.database.display()))?;

@@ -2349,6 +2349,8 @@ impl RideDatabase {
     }
 
     /// Validates a PEVCAP artifact and returns the bounded facts a user must confirm.
+    /// No capture or ride is published. An existing receipt changes only the proposed
+    /// outcome to [`PevcapImportOutcome::AlreadyImported`]; warnings remain available.
     ///
     /// # Errors
     ///
@@ -2376,8 +2378,13 @@ impl RideDatabase {
         worker::drop_next_pevcap_finish_response_for_test();
     }
 
-    /// Confirms a reviewed PEVCAP preview, copies it into managed storage, and commits bounded
-    /// location batches without monopolizing the database worker.
+    /// Confirms a reviewed PEVCAP preview using bounded byte and location batches.
+    /// Original bytes, the receipt, and any derived ride become visible together;
+    /// GPS-free captures do not create an empty ride. Managed source copies are also retained.
+    ///
+    /// Reconfirmation preserves the receipt and ride identity and backfills older
+    /// file-only receipts into SQLite. It still requires a valid source and managed copy.
+    /// `created_at_ms` is Unix milliseconds used for a new import, not its capture timestamp.
     ///
     /// # Errors
     ///
@@ -4455,6 +4462,8 @@ fn validate_managed_pevcap_artifact(
     Ok(())
 }
 
+/// Checks duplicate receipt facts against the managed artifact and reviewed preview.
+/// `AlreadyImported` is a preview classification, never a persisted capture outcome.
 fn validate_existing_pevcap_confirmation(
     database_path: &Path,
     receipt: &PevcapImportReceipt,

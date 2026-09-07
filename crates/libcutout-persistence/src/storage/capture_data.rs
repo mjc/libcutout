@@ -1,3 +1,5 @@
+//! Bounded original-byte storage, hidden until a complete capture has a durable receipt.
+
 use super::{Command, PevcapImportPreview, RideDatabase, StorageError};
 use cutout_core::PevcapEncoding;
 use rusqlite::{Connection, OptionalExtension, params};
@@ -10,6 +12,7 @@ const CHUNK_BYTES: usize = 64 * 1024;
 pub(super) struct CaptureChunk(Vec<u8>);
 
 impl CaptureChunk {
+    /// Reads at most one worker-sized chunk; EOF produces no write command.
     fn read(source: &mut impl Read) -> std::io::Result<Option<Self>> {
         let mut bytes = vec![0; CHUNK_BYTES];
         let count = source.read(&mut bytes)?;
@@ -18,6 +21,7 @@ impl CaptureChunk {
     }
 }
 
+/// Staged captures remain unlinked until complete; receipt deletion removes their bytes.
 pub(super) const SCHEMA: &str = "
     CREATE TABLE pevcap_captures (
         artifact_digest TEXT PRIMARY KEY NOT NULL CHECK (length(artifact_digest) = 64),
@@ -36,12 +40,14 @@ pub(super) const SCHEMA: &str = "
     ) WITHOUT ROWID;
 ";
 
+/// Distinguishes idempotent reuse from ownership of a new staged capture.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) enum CaptureStart {
     Stored,
     Started,
 }
 
+/// Checks publication, not merely the presence of staged bytes.
 pub(super) fn is_stored(connection: &Connection, digest: &str) -> Result<bool, StorageError> {
     Ok(connection.query_row(
         "SELECT EXISTS(SELECT 1 FROM pevcap_captures WHERE receipt_digest = ?1)",
@@ -50,6 +56,8 @@ pub(super) fn is_stored(connection: &Connection, digest: &str) -> Result<bool, S
     )?)
 }
 
+/// Claims a staged capture for existing import work or receipt backfill.
+/// A competing partial write is rejected; published data is reused unchanged.
 pub(super) fn begin(
     connection: &Connection,
     digest: &str,
@@ -83,6 +91,8 @@ pub(super) fn begin(
     Ok(CaptureStart::Started)
 }
 
+/// Atomically appends the next chunk and advances its byte/sequence counters.
+/// Rejects gaps, repeated sequences, and writes exceeding the reviewed byte length.
 pub(super) fn append(
     connection: &mut Connection,
     digest: &str,
@@ -108,6 +118,8 @@ pub(super) fn append(
     Ok(())
 }
 
+/// Links complete bytes to an existing receipt, making bounded reads visible.
+/// New imports call this inside the transaction that publishes their receipt.
 pub(super) fn publish(connection: &Connection, digest: &str) -> Result<(), StorageError> {
     let published = connection.execute(
         "UPDATE pevcap_captures SET receipt_digest = artifact_digest
@@ -120,6 +132,7 @@ pub(super) fn publish(connection: &Connection, digest: &str) -> Result<(), Stora
     Ok(())
 }
 
+/// Removes unpublished bytes without touching any successfully published capture.
 pub(super) fn abort(connection: &Connection, digest: &str) -> Result<(), StorageError> {
     connection.execute(
         "DELETE FROM pevcap_captures WHERE artifact_digest = ?1 AND receipt_digest IS NULL",
@@ -128,6 +141,7 @@ pub(super) fn abort(connection: &Connection, digest: &str) -> Result<(), Storage
     Ok(())
 }
 
+/// Reads one published chunk; absent, incomplete, and exhausted captures return `None`.
 pub(super) fn chunk(
     connection: &Connection,
     digest: &str,
@@ -144,6 +158,9 @@ pub(super) fn chunk(
         .optional()?)
 }
 
+/// Streams and checks original bytes against the reviewed length and digest.
+/// New bytes remain unpublished for the caller to commit; failures attempt cleanup,
+/// and already-published captures are left unchanged.
 pub(super) fn store(
     database: &RideDatabase,
     preview: &PevcapImportPreview,
