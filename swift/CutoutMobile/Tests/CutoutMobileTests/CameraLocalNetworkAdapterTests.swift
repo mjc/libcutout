@@ -47,7 +47,7 @@ final class CameraLocalNetworkAdapterTests: XCTestCase {
         adapter.apply(readOnlyEvidence: CameraReadOnlyEvidence(snapshot))
 
         XCTAssertEqual(adapter.presentation.connection, .connected)
-        XCTAssertEqual(adapter.presentation.profileName, "Novatek R3 Pro")
+        XCTAssertEqual(adapter.presentation.profileName, "FreedConn R3 Pro · Novatek")
         XCTAssertEqual(adapter.presentation.storage, .present)
         XCTAssertEqual(adapter.presentation.preview, .stopped)
         XCTAssertEqual(adapter.presentation.recording, .unknown)
@@ -85,6 +85,63 @@ final class CameraLocalNetworkAdapterTests: XCTestCase {
         XCTAssertEqual(adapter.presentation.storage, .present)
         XCTAssertEqual(adapter.presentation.preview, .stopped)
         XCTAssertEqual(adapter.presentation.recording, .unknown)
+    }
+
+    @MainActor
+    func testReadOnlyLoaderAcceptsAnEmptyMediaListing() async throws {
+        let responses: [String: Data] = [
+            "3012": Data("<Function><Cmd>3012</Cmd><Status>0</Status><String>R3V1.1_20240411</String></Function>".utf8),
+            "2019": Data("<LIST><MovieLiveViewLink>rtsp://192.168.1.254/xxx.mov</MovieLiveViewLink><PhotoLiveViewLink>rtsp://192.168.1.254/xxx.mov</PhotoLiveViewLink></LIST>".utf8),
+            "3014": Data("<Function><Cmd>2016</Cmd><Status>0</Status></Function>".utf8),
+            "3024": Data("<Function><Cmd>3024</Cmd><Status>0</Status><Value>1</Value></Function>".utf8),
+            "3015": Data("<LIST></LIST>".utf8),
+        ]
+
+        let evidence = try await CameraLocalNetworkAdapter().loadReadOnlyEvidence(
+            address: "192.168.1.254",
+            port: 80
+        ) { url in
+            let command = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems?.first {
+                $0.name == "cmd"
+            }?.value
+            return responses[command!]!
+        }
+
+        XCTAssertTrue(evidence.media.isEmpty)
+    }
+
+    @MainActor
+    func testReadOnlyLoaderRejectsNonR3FirmwareBeforeClaimingProfile() async {
+        let responses: [String: Data] = [
+            "3012": Data("<Function><Cmd>3012</Cmd><Status>0</Status><String>R4V2.0_20250101</String></Function>".utf8),
+            "2019": Data("<LIST><MovieLiveViewLink>rtsp://192.168.1.254/xxx.mov</MovieLiveViewLink><PhotoLiveViewLink>rtsp://192.168.1.254/xxx.mov</PhotoLiveViewLink></LIST>".utf8),
+            "3014": Data("<Function><Cmd>2016</Cmd><Status>0</Status></Function>".utf8),
+            "3024": Data("<Function><Cmd>3024</Cmd><Status>0</Status><Value>1</Value></Function>".utf8),
+            "3015": Data("<LIST></LIST>".utf8),
+        ]
+        let adapter = CameraLocalNetworkAdapter()
+
+        do {
+            _ = try await adapter.loadReadOnlyEvidence(
+                address: "192.168.1.254",
+                port: 80
+            ) { url in
+                let command = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems?.first {
+                    $0.name == "cmd"
+                }?.value
+                return responses[command!]!
+            }
+            XCTFail("non-R3 firmware must not be labeled as the R3 Pro profile")
+        } catch let error as CameraReadOnlyRequestError {
+            XCTAssertEqual(error, .unsupportedProfile)
+        } catch {
+            XCTFail("unexpected error: \(error)")
+        }
+        XCTAssertNil(adapter.readOnlyEvidence)
+        XCTAssertEqual(adapter.presentation.connection, .unsupported)
+        XCTAssertEqual(adapter.presentation.preview, .stopped)
+        XCTAssertEqual(adapter.presentation.recording, .unknown)
+        XCTAssertEqual(adapter.presentation.storage, .unknown)
     }
 
     @MainActor
@@ -212,6 +269,71 @@ final class CameraLocalNetworkAdapterTests: XCTestCase {
     }
 
     @MainActor
+    func testMediaThumbnailUsesSourceBackedTargetWithoutMovingImageTypesAcrossFFI() async throws {
+        let media = CameraMediaEvidence(
+            name: "clip.TS",
+            path: #"A:\Novatek\Movie\clip.TS"#,
+            sizeBytes: 4,
+            timecode: 7,
+            time: "2025/01/01 00:00:00",
+            attributes: 32
+        )
+        let requestedURL = DownloadURLCapture()
+
+        let thumbnail = try await CameraLocalNetworkAdapter().fetchMediaThumbnail(
+            address: "192.168.1.254",
+            port: 80,
+            media: media
+        ) { url in
+            await requestedURL.record(url)
+            return Data([0xff, 0xd8, 0xff])
+        }
+
+        let actualURL = await requestedURL.value()
+        XCTAssertEqual(actualURL?.path, "/Novatek/Movie/clip.TS")
+        XCTAssertEqual(actualURL?.query, "custom=1&cmd=4001")
+        XCTAssertEqual(thumbnail, Data([0xff, 0xd8, 0xff]))
+    }
+
+    @MainActor
+    func testMediaDownloadRejectsFetchedSizeThatDisagreesWithCameraEvidence() async {
+        let media = CameraMediaEvidence(
+            name: "clip.TS",
+            path: #"A:\Novatek\Movie\clip.TS"#,
+            sizeBytes: 5,
+            timecode: 7,
+            time: "2025/01/01 00:00:00",
+            attributes: 32
+        )
+        let source = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("cutout-camera-size-mismatch-\(UUID().uuidString).tmp")
+        let destination = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("cutout-camera-size-mismatch-\(UUID().uuidString).TS")
+        try? Data([1, 2, 3, 4]).write(to: source)
+        defer {
+            try? FileManager.default.removeItem(at: source)
+            try? FileManager.default.removeItem(at: destination)
+        }
+
+        do {
+            try await CameraLocalNetworkAdapter().downloadMedia(
+                address: "192.168.1.254",
+                port: 80,
+                media: media,
+                to: destination
+            ) { _ in source }
+            XCTFail("a downloaded file with the wrong size must not be installed")
+        } catch let error as CameraMediaDownloadError {
+            XCTAssertEqual(error, .sizeMismatch(expected: 5, actual: 4))
+        } catch {
+            XCTFail("unexpected error: \(error)")
+        }
+
+        XCTAssertFalse(FileManager.default.fileExists(atPath: destination.path))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: source.path))
+    }
+
+    @MainActor
     func testMediaDownloadRejectsUnsafeCameraPathBeforeFetching() async {
         let media = CameraMediaEvidence(
             name: "clip.TS",
@@ -239,6 +361,138 @@ final class CameraLocalNetworkAdapterTests: XCTestCase {
             XCTAssertFalse(FileManager.default.fileExists(atPath: destination.path))
         }
     }
+
+    @MainActor
+    func testOnboardRecordingRequestUsesExplicitStartAndStopTargetsWithoutInference() async throws {
+        let adapter = CameraLocalNetworkAdapter()
+        let capture = RecordingRequestCapture()
+
+        let startOutcome = try await adapter.requestOnboardRecording(
+            address: "192.168.1.254",
+            port: 80,
+            start: true
+        ) { url in
+            await capture.record(url)
+            return Data("<Function><Cmd>2001</Cmd><Status>0</Status></Function>".utf8)
+        }
+        let stopOutcome = try await adapter.requestOnboardRecording(
+            address: "192.168.1.254",
+            port: 80,
+            start: false
+        ) { url in
+            await capture.record(url)
+            return Data("<Function><Cmd>2001</Cmd></Function>".utf8)
+        }
+
+        let values = await capture.values()
+        XCTAssertEqual(values, [
+            "/?custom=1&cmd=2001&str=1",
+            "/?custom=1&cmd=2001&str=0",
+        ])
+        XCTAssertEqual(startOutcome, .acknowledged)
+        XCTAssertEqual(stopOutcome, .unknown)
+        XCTAssertEqual(adapter.presentation.recording, .unknown)
+    }
+
+    @MainActor
+    func testCameraCommandOutcomesDistinguishRefusalTimeoutAndFailure() async throws {
+        let adapter = CameraLocalNetworkAdapter()
+
+        let refused = try await adapter.requestStillCapture(
+            address: "192.168.1.254",
+            port: 80
+        ) { _ in
+            Data("<Function><Cmd>1001</Cmd><Status>7</Status></Function>".utf8)
+        }
+        XCTAssertEqual(refused, .refused)
+
+        let timedOut = try await adapter.requestStillCapture(
+            address: "192.168.1.254",
+            port: 80
+        ) { _ in
+            throw URLError(.timedOut)
+        }
+        XCTAssertEqual(timedOut, .timedOut)
+
+        let failed = try await adapter.requestStillCapture(
+            address: "192.168.1.254",
+            port: 80
+        ) { _ in
+            throw CameraTestError.transport
+        }
+        XCTAssertEqual(failed, .failed)
+    }
+
+    @MainActor
+    func testCameraCommandRejectsASecondRequestWhileTheFirstIsInFlight() async throws {
+        let adapter = CameraLocalNetworkAdapter()
+        let gate = CameraCommandGate()
+        let first = Task { @MainActor in
+            try await adapter.requestStillCapture(
+                address: "192.168.1.254",
+                port: 80
+            ) { _ in
+                await gate.wait()
+            }
+        }
+
+        while await gate.started() == false {
+            await Task.yield()
+        }
+
+        do {
+            _ = try await adapter.requestOnboardRecording(
+                address: "192.168.1.254",
+                port: 80,
+                start: true
+            ) { _ in
+                XCTFail("a second command must not reach the transport")
+                return Data()
+            }
+            XCTFail("a second command must be rejected while one is in flight")
+        } catch let error as CameraCommandRequestError {
+            XCTAssertEqual(error, .inFlight)
+        }
+
+        await gate.release(
+            Data("<Function><Cmd>1001</Cmd><Status>0</Status></Function>".utf8)
+        )
+        let firstOutcome = try await first.value
+        XCTAssertEqual(firstOutcome, .acknowledged)
+    }
+
+    @MainActor
+    func testOnboardRecordingRequestRejectsPublicOriginBeforeFetching() async {
+        do {
+            let _ = try await CameraLocalNetworkAdapter().requestOnboardRecording(
+                address: "8.8.8.8",
+                port: 80,
+                start: true
+            ) { _ in
+                XCTFail("public origins must not reach the recording fetcher")
+                return Data()
+            }
+            XCTFail("public origins should be rejected")
+        } catch {
+            XCTAssertTrue(error is MobileNovatekOriginError)
+        }
+    }
+
+    @MainActor
+    func testStillCaptureRequestUsesExplicitTargetWithoutClaimingMediaReadback() async throws {
+        let capture = RecordingRequestCapture()
+
+        let _ = try await CameraLocalNetworkAdapter().requestStillCapture(
+            address: "192.168.1.254",
+            port: 80
+        ) { url in
+            await capture.record(url)
+            return Data()
+        }
+
+        let values = await capture.values()
+        XCTAssertEqual(values, ["/?custom=1&cmd=1001"])
+    }
 }
 
 private actor DownloadURLCapture {
@@ -250,5 +504,50 @@ private actor DownloadURLCapture {
 
     func value() -> URL? {
         recordedURL
+    }
+}
+
+private actor RecordingRequestCapture {
+    private var urls: [URL] = []
+
+    func record(_ url: URL) {
+        urls.append(url)
+    }
+
+    func values() -> [String] {
+        urls.map(\.pathAndQuery)
+    }
+}
+
+private actor CameraCommandGate {
+    private var didStart = false
+    private var continuation: CheckedContinuation<Data, Never>?
+
+    func wait() async -> Data {
+        didStart = true
+        return await withCheckedContinuation { continuation = $0 }
+    }
+
+    func started() -> Bool {
+        didStart
+    }
+
+    func release(_ response: Data) {
+        continuation?.resume(returning: response)
+        continuation = nil
+    }
+}
+
+private enum CameraTestError: Error {
+    case transport
+}
+
+private extension URL {
+    var pathAndQuery: String {
+        var components = URLComponents(url: self, resolvingAgainstBaseURL: false)
+        components?.scheme = nil
+        components?.host = nil
+        components?.port = nil
+        return components?.string ?? absoluteString
     }
 }

@@ -2375,6 +2375,35 @@ final class CutoutAppModelTests: XCTestCase {
     }
 
     @MainActor
+    func testCameraMediaReferenceIsAssociatedOnlyWithAnActiveRideCapture() {
+        let model = CutoutAppModel()
+        let media = CameraMediaEvidence(
+            name: "clip.TS",
+            path: #"A:\Novatek\Movie\clip.TS"#,
+            sizeBytes: 42,
+            timecode: 7,
+            time: "2025/01/01 00:00:00",
+            attributes: 32
+        )
+        let localURL = URL(fileURLWithPath: "/tmp/clip.TS")
+
+        model.recordCameraMediaReference(media: media, localURL: localURL)
+        XCTAssertTrue(model.cameraMediaReferences.isEmpty)
+
+        model.applyCaptureEvent(.started(fileURL: URL(fileURLWithPath: "/tmp/ride.jsonl")))
+        model.recordCameraMediaReference(media: media, localURL: localURL)
+        model.recordCameraMediaReference(media: media, localURL: localURL)
+
+        XCTAssertEqual(model.cameraMediaReferences.count, 1)
+        XCTAssertEqual(model.cameraMediaReferences[0].rideCaptureFileName, "ride.jsonl")
+        XCTAssertEqual(model.cameraMediaReferences[0].clockUncertainty, .unknown)
+
+        model.applyCaptureEvent(.finished(fileURL: URL(fileURLWithPath: "/tmp/ride.jsonl")))
+        model.recordCameraMediaReference(media: media, localURL: localURL)
+        XCTAssertEqual(model.cameraMediaReferences.count, 1)
+    }
+
+    @MainActor
     func testCaptureProgressPreservesWriterHealthAndFileMetadata() {
         let model = CutoutAppModel()
         let fileURL = URL(fileURLWithPath: "/tmp/ride.cutout")

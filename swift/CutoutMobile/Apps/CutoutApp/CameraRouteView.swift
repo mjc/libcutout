@@ -1,7 +1,15 @@
 import CutoutMobile
 import SwiftUI
 
+#if canImport(UIKit)
+import UIKit
+#elseif canImport(AppKit)
+import AppKit
+#endif
+
 struct CameraRouteContainerView: View {
+    let annotateCapture: ((String, String) -> Void)?
+    let recordMediaReference: ((CameraMediaEvidence, URL) -> Void)?
     @State private var adapter = CameraLocalNetworkAdapter()
     @State private var previewRenderer = CameraPreviewRenderer()
     @State private var address = "192.168.1.254"
@@ -11,7 +19,24 @@ struct CameraRouteContainerView: View {
     @State private var savedFileURL: URL?
     @State private var downloadedMediaURL: URL?
     @State private var downloadingMediaPath: String?
+    @State private var mediaDownloadTask: Task<Void, Never>?
     @State private var mediaErrorKey: String?
+    @State private var thumbnailTask: Task<Void, Never>?
+    @State private var thumbnailDataByPath: [String: Data] = [:]
+    @State private var thumbnailPathInFlight: String?
+    @State private var thumbnailErrorKey: String?
+    @State private var recordingRequestKey: String?
+    @State private var isRequestingRecording = false
+    @State private var stillRequestKey: String?
+    @State private var isRequestingStill = false
+
+    init(
+        annotateCapture: ((String, String) -> Void)? = nil,
+        recordMediaReference: ((CameraMediaEvidence, URL) -> Void)? = nil
+    ) {
+        self.annotateCapture = annotateCapture
+        self.recordMediaReference = recordMediaReference
+    }
 
     var body: some View {
         CameraRouteView(
@@ -25,10 +50,24 @@ struct CameraRouteContainerView: View {
             downloadedMediaURL: downloadedMediaURL,
             downloadingMediaPath: downloadingMediaPath,
             mediaErrorKey: mediaErrorKey,
+            cancelDownload: cancelMediaDownload,
+            thumbnailDataByPath: thumbnailDataByPath,
+            thumbnailPathInFlight: thumbnailPathInFlight,
+            thumbnailErrorKey: thumbnailErrorKey,
+            supportsMediaThumbnails: adapter.readOnlyEvidence?.supportsMediaThumbnails ?? false,
+            fetchThumbnail: fetchThumbnail,
+            recordingRequestKey: recordingRequestKey,
+            isRequestingRecording: isRequestingRecording,
+            supportsOnboardRecording: adapter.readOnlyEvidence?.supportsOnboardRecording ?? false,
+            stillRequestKey: stillRequestKey,
+            isRequestingStill: isRequestingStill,
+            supportsStillCapture: adapter.readOnlyEvidence?.supportsStillCapture ?? false,
             savedFileURL: savedFileURL,
             previewRenderer: previewRenderer,
             loadEvidence: readCamera,
             downloadMedia: downloadMedia,
+            requestRecording: requestRecording,
+            requestStillCapture: requestStillCapture,
             startPreview: { startPreview(saveTo: nil) },
             savePreview: { startPreview(saveTo: previewOutputURL()) },
             stopPreview: adapter.stopPreview
@@ -40,6 +79,8 @@ struct CameraRouteContainerView: View {
                 adapter.start()
             }
             .onDisappear {
+                mediaDownloadTask?.cancel()
+                thumbnailTask?.cancel()
                 adapter.stop()
                 adapter.setPreviewFrameHandler(nil)
                 previewRenderer.reset()
@@ -57,7 +98,11 @@ struct CameraRouteContainerView: View {
         Task { @MainActor in
             defer { isReading = false }
             do {
-                _ = try await adapter.loadReadOnlyEvidence(address: address, port: portNumber)
+                let evidence = try await adapter.loadReadOnlyEvidence(address: address, port: portNumber)
+                annotateCapture?("camera_profile", "novatek_r3_pro")
+                annotateCapture?("camera_firmware", evidence.firmwareVersion)
+            } catch CameraReadOnlyRequestError.unsupportedProfile {
+                readErrorKey = "camera.error.unsupported_profile"
             } catch {
                 readErrorKey = "camera.error.read_failed"
             }
@@ -72,6 +117,7 @@ struct CameraRouteContainerView: View {
                 if let url {
                     try await adapter.startPreview(uri: uri, saveTo: url)
                     savedFileURL = url
+                    annotateCapture?("camera_preview_file", url.lastPathComponent)
                 } else {
                     try await adapter.startPreview(uri: uri)
                 }
@@ -88,10 +134,14 @@ struct CameraRouteContainerView: View {
         }
 
         let destination = mediaOutputURL(for: media)
+        mediaDownloadTask?.cancel()
         downloadingMediaPath = media.path
         mediaErrorKey = nil
-        Task { @MainActor in
-            defer { downloadingMediaPath = nil }
+        mediaDownloadTask = Task { @MainActor in
+            defer {
+                downloadingMediaPath = nil
+                mediaDownloadTask = nil
+            }
             do {
                 try await adapter.downloadMedia(
                     address: address,
@@ -100,8 +150,117 @@ struct CameraRouteContainerView: View {
                     to: destination
                 )
                 downloadedMediaURL = destination
+                annotateCapture?("camera_media_file", media.name)
+                recordMediaReference?(media, destination)
+            } catch is CancellationError {
+                // Cancellation is an expected user action, not a transfer error.
             } catch {
                 mediaErrorKey = "camera.error.media_download_failed"
+            }
+        }
+    }
+
+    private func cancelMediaDownload() {
+        mediaDownloadTask?.cancel()
+        mediaDownloadTask = nil
+        downloadingMediaPath = nil
+    }
+
+    private func fetchThumbnail(_ media: CameraMediaEvidence) {
+        guard let portNumber = UInt16(port) else {
+            thumbnailErrorKey = "camera.error.invalid_port"
+            return
+        }
+
+        thumbnailTask?.cancel()
+        thumbnailPathInFlight = media.path
+        thumbnailErrorKey = nil
+        thumbnailTask = Task { @MainActor in
+            defer {
+                thumbnailPathInFlight = nil
+                thumbnailTask = nil
+            }
+            do {
+                let data = try await adapter.fetchMediaThumbnail(
+                    address: address,
+                    port: portNumber,
+                    media: media
+                )
+                guard !data.isEmpty else {
+                    thumbnailErrorKey = "camera.error.thumbnail_empty"
+                    return
+                }
+                thumbnailDataByPath[media.path] = data
+            } catch is CancellationError {
+                // Cancellation is an expected user action.
+            } catch {
+                thumbnailErrorKey = "camera.error.thumbnail_failed"
+            }
+        }
+    }
+
+    private func requestRecording(start: Bool) {
+        guard let portNumber = UInt16(port) else {
+            recordingRequestKey = "camera.error.invalid_port"
+            return
+        }
+
+        isRequestingRecording = true
+        recordingRequestKey = nil
+        Task { @MainActor in
+            defer { isRequestingRecording = false }
+            do {
+                let outcome = try await adapter.requestOnboardRecording(
+                    address: address,
+                    port: portNumber,
+                    start: start
+                )
+                recordingRequestKey = cameraCommandOutcomeKey(
+                    outcome,
+                    acknowledged: start
+                        ? "camera.recording.request_start_sent"
+                        : "camera.recording.request_stop_sent"
+                )
+                annotateCapture?(
+                    "camera_recording_request",
+                    "\(start ? "start" : "stop"):\(outcome.annotationValue)"
+                )
+            } catch is CancellationError {
+                // Cancellation is an expected lifecycle event.
+            } catch is CameraCommandRequestError {
+                recordingRequestKey = "camera.command.busy"
+            } catch {
+                recordingRequestKey = "camera.error.recording_request_failed"
+            }
+        }
+    }
+
+    private func requestStillCapture() {
+        guard let portNumber = UInt16(port) else {
+            stillRequestKey = "camera.error.invalid_port"
+            return
+        }
+
+        isRequestingStill = true
+        stillRequestKey = nil
+        Task { @MainActor in
+            defer { isRequestingStill = false }
+            do {
+                let outcome = try await adapter.requestStillCapture(
+                    address: address,
+                    port: portNumber
+                )
+                stillRequestKey = cameraCommandOutcomeKey(
+                    outcome,
+                    acknowledged: "camera.still.request_sent"
+                )
+                annotateCapture?("camera_still_request", outcome.annotationValue)
+            } catch is CancellationError {
+                // Cancellation is an expected lifecycle event.
+            } catch is CameraCommandRequestError {
+                stillRequestKey = "camera.command.busy"
+            } catch {
+                stillRequestKey = "camera.error.still_request_failed"
             }
         }
     }
@@ -123,6 +282,36 @@ struct CameraRouteContainerView: View {
     }
 }
 
+private func cameraCommandOutcomeKey(
+    _ outcome: CameraCommandOutcome,
+    acknowledged: String
+) -> String {
+    switch outcome {
+    case .acknowledged:
+        acknowledged
+    case .refused:
+        "camera.command.refused"
+    case .timedOut:
+        "camera.command.timed_out"
+    case .unknown:
+        "camera.command.unknown"
+    case .failed:
+        "camera.command.failed"
+    }
+}
+
+private extension CameraCommandOutcome {
+    var annotationValue: String {
+        switch self {
+        case .acknowledged: "acknowledged"
+        case .refused: "refused"
+        case .timedOut: "timed_out"
+        case .unknown: "unknown"
+        case .failed: "failed"
+        }
+    }
+}
+
 struct CameraRouteView: View {
     let presentation: CameraPresentation
     let readOnlyEvidence: CameraReadOnlyEvidence?
@@ -135,10 +324,24 @@ struct CameraRouteView: View {
     let downloadedMediaURL: URL?
     let downloadingMediaPath: String?
     let mediaErrorKey: String?
+    let cancelDownload: (() -> Void)?
+    let thumbnailDataByPath: [String: Data]
+    let thumbnailPathInFlight: String?
+    let thumbnailErrorKey: String?
+    let supportsMediaThumbnails: Bool
+    let fetchThumbnail: ((CameraMediaEvidence) -> Void)?
+    let recordingRequestKey: String?
+    let isRequestingRecording: Bool
+    let supportsOnboardRecording: Bool
+    let stillRequestKey: String?
+    let isRequestingStill: Bool
+    let supportsStillCapture: Bool
     let savedFileURL: URL?
     let previewRenderer: CameraPreviewRenderer?
     let loadEvidence: (() -> Void)?
     let downloadMedia: ((CameraMediaEvidence) -> Void)?
+    let requestRecording: ((Bool) -> Void)?
+    let requestStillCapture: (() -> Void)?
     let startPreview: (() -> Void)?
     let savePreview: (() -> Void)?
     let stopPreview: (() -> Void)?
@@ -154,10 +357,24 @@ struct CameraRouteView: View {
         downloadedMediaURL: URL? = nil,
         downloadingMediaPath: String? = nil,
         mediaErrorKey: String? = nil,
+        cancelDownload: (() -> Void)? = nil,
+        thumbnailDataByPath: [String: Data] = [:],
+        thumbnailPathInFlight: String? = nil,
+        thumbnailErrorKey: String? = nil,
+        supportsMediaThumbnails: Bool = false,
+        fetchThumbnail: ((CameraMediaEvidence) -> Void)? = nil,
+        recordingRequestKey: String? = nil,
+        isRequestingRecording: Bool = false,
+        supportsOnboardRecording: Bool = false,
+        stillRequestKey: String? = nil,
+        isRequestingStill: Bool = false,
+        supportsStillCapture: Bool = false,
         savedFileURL: URL? = nil,
         previewRenderer: CameraPreviewRenderer? = nil,
         loadEvidence: (() -> Void)? = nil,
         downloadMedia: ((CameraMediaEvidence) -> Void)? = nil,
+        requestRecording: ((Bool) -> Void)? = nil,
+        requestStillCapture: (() -> Void)? = nil,
         startPreview: (() -> Void)? = nil,
         savePreview: (() -> Void)? = nil,
         stopPreview: (() -> Void)? = nil
@@ -173,10 +390,24 @@ struct CameraRouteView: View {
         self.downloadedMediaURL = downloadedMediaURL
         self.downloadingMediaPath = downloadingMediaPath
         self.mediaErrorKey = mediaErrorKey
+        self.cancelDownload = cancelDownload
+        self.thumbnailDataByPath = thumbnailDataByPath
+        self.thumbnailPathInFlight = thumbnailPathInFlight
+        self.thumbnailErrorKey = thumbnailErrorKey
+        self.supportsMediaThumbnails = supportsMediaThumbnails
+        self.fetchThumbnail = fetchThumbnail
+        self.recordingRequestKey = recordingRequestKey
+        self.isRequestingRecording = isRequestingRecording
+        self.supportsOnboardRecording = supportsOnboardRecording
+        self.stillRequestKey = stillRequestKey
+        self.isRequestingStill = isRequestingStill
+        self.supportsStillCapture = supportsStillCapture
         self.savedFileURL = savedFileURL
         self.previewRenderer = previewRenderer
         self.loadEvidence = loadEvidence
         self.downloadMedia = downloadMedia
+        self.requestRecording = requestRecording
+        self.requestStillCapture = requestStillCapture
         self.startPreview = startPreview
         self.savePreview = savePreview
         self.stopPreview = stopPreview
@@ -202,7 +433,7 @@ struct CameraRouteView: View {
 
     @ViewBuilder
     private var cameraCards: some View {
-        CameraStatusCard(
+                        CameraStatusCard(
             presentation: presentation,
             readOnlyEvidence: readOnlyEvidence,
             movieRTSPURI: movieRTSPURI,
@@ -213,14 +444,29 @@ struct CameraRouteView: View {
             downloadedMediaURL: downloadedMediaURL,
             downloadingMediaPath: downloadingMediaPath,
             mediaErrorKey: mediaErrorKey,
+            cancelDownload: cancelDownload,
+            thumbnailDataByPath: thumbnailDataByPath,
+            thumbnailPathInFlight: thumbnailPathInFlight,
+            thumbnailErrorKey: thumbnailErrorKey,
+            supportsMediaThumbnails: supportsMediaThumbnails,
+            fetchThumbnail: fetchThumbnail,
             loadEvidence: loadEvidence,
             downloadMedia: downloadMedia
         )
         CameraTruthCard(
             presentation: presentation,
+            readOnlyEvidence: readOnlyEvidence,
             savedFileURL: savedFileURL,
             previewRenderer: previewRenderer,
             hasPreviewSource: hasPreviewSource,
+            recordingRequestKey: recordingRequestKey,
+            isRequestingRecording: isRequestingRecording,
+            supportsOnboardRecording: supportsOnboardRecording,
+            stillRequestKey: stillRequestKey,
+            isRequestingStill: isRequestingStill,
+            supportsStillCapture: supportsStillCapture,
+            requestRecording: requestRecording,
+            requestStillCapture: requestStillCapture,
             startPreview: startPreview,
             savePreview: savePreview,
             stopPreview: stopPreview
@@ -239,6 +485,12 @@ private struct CameraStatusCard: View {
     let downloadedMediaURL: URL?
     let downloadingMediaPath: String?
     let mediaErrorKey: String?
+    let cancelDownload: (() -> Void)?
+    let thumbnailDataByPath: [String: Data]
+    let thumbnailPathInFlight: String?
+    let thumbnailErrorKey: String?
+    let supportsMediaThumbnails: Bool
+    let fetchThumbnail: ((CameraMediaEvidence) -> Void)?
     let loadEvidence: (() -> Void)?
     let downloadMedia: ((CameraMediaEvidence) -> Void)?
 
@@ -291,8 +543,20 @@ private struct CameraStatusCard: View {
                             }
                             Spacer(minLength: 8)
                             if downloadingMediaPath == media.path {
-                                ProgressView()
-                                    .controlSize(.small)
+                                HStack(spacing: 8) {
+                                    ProgressView()
+                                        .controlSize(.small)
+                                    if let cancelDownload {
+                                        Button(action: cancelDownload) {
+                                            Label(
+                                                localizedAppText("camera.evidence.media_cancel"),
+                                                systemImage: "xmark.circle"
+                                            )
+                                        }
+                                        .buttonStyle(.bordered)
+                                        .accessibilityIdentifier("camera.media.cancel.\(media.name)")
+                                    }
+                                }
                             } else if let downloadMedia {
                                 Button(action: { downloadMedia(media) }) {
                                     Label(
@@ -304,10 +568,43 @@ private struct CameraStatusCard: View {
                                 .accessibilityIdentifier("camera.media.download.\(media.name)")
                             }
                         }
-                        if downloadedMediaURL?.lastPathComponent.hasSuffix("-" + media.name) == true {
-                            Text(localizedAppText("camera.evidence.media_saved"))
-                                .font(.caption)
-                                .foregroundStyle(PevColors.muted)
+                        if let downloadedMediaURL,
+                           downloadedMediaURL.lastPathComponent.hasSuffix("-" + media.name) {
+                            HStack(spacing: 12) {
+                                Text(localizedAppText("camera.evidence.media_saved"))
+                                    .font(.caption)
+                                    .foregroundStyle(PevColors.muted)
+                                ShareLink(item: downloadedMediaURL) {
+                                    Label(
+                                        localizedAppText("camera.evidence.media_export"),
+                                        systemImage: "square.and.arrow.up"
+                                    )
+                                }
+                                .buttonStyle(.bordered)
+                                .accessibilityIdentifier("camera.media.export.\(media.name)")
+                            }
+                        }
+                        if supportsMediaThumbnails, let fetchThumbnail {
+                            HStack(spacing: 10) {
+                                if let data = thumbnailDataByPath[media.path] {
+                                    CameraThumbnailView(data: data)
+                                        .accessibilityLabel(localizedAppText("camera.evidence.thumbnail"))
+                                }
+                                if thumbnailPathInFlight == media.path {
+                                    ProgressView()
+                                        .controlSize(.small)
+                                } else {
+                                    Button(action: { fetchThumbnail(media) }) {
+                                        Label(
+                                            localizedAppText("camera.evidence.thumbnail_request"),
+                                            systemImage: "photo"
+                                        )
+                                    }
+                                    .buttonStyle(.bordered)
+                                    .disabled(thumbnailPathInFlight != nil)
+                                    .accessibilityIdentifier("camera.media.thumbnail.\(media.name)")
+                                }
+                            }
                         }
                     }
                     Text(localizedAppText("camera.evidence.media_local_only"))
@@ -320,6 +617,11 @@ private struct CameraStatusCard: View {
                 }
                 if let mediaErrorKey {
                     Text(localizedAppText(mediaErrorKey))
+                        .font(.footnote)
+                        .foregroundStyle(.red)
+                }
+                if let thumbnailErrorKey {
+                    Text(localizedAppText(thumbnailErrorKey))
                         .font(.footnote)
                         .foregroundStyle(.red)
                 }
@@ -391,11 +693,50 @@ private struct CameraStatusCard: View {
     }
 }
 
+private struct CameraThumbnailView: View {
+    let data: Data
+
+    var body: some View {
+#if canImport(UIKit)
+        if let image = UIImage(data: data) {
+            Image(uiImage: image)
+                .resizable()
+                .scaledToFit()
+                .frame(maxWidth: 160, maxHeight: 100)
+                .clipShape(RoundedRectangle(cornerRadius: 8))
+        } else {
+            Image(systemName: "photo")
+        }
+#elseif canImport(AppKit)
+        if let image = NSImage(data: data) {
+            Image(nsImage: image)
+                .resizable()
+                .scaledToFit()
+                .frame(maxWidth: 160, maxHeight: 100)
+                .clipShape(RoundedRectangle(cornerRadius: 8))
+        } else {
+            Image(systemName: "photo")
+        }
+#else
+        Image(systemName: "photo")
+#endif
+    }
+}
+
 private struct CameraTruthCard: View {
     let presentation: CameraPresentation
+    let readOnlyEvidence: CameraReadOnlyEvidence?
     let savedFileURL: URL?
     let previewRenderer: CameraPreviewRenderer?
     let hasPreviewSource: Bool
+    let recordingRequestKey: String?
+    let isRequestingRecording: Bool
+    let supportsOnboardRecording: Bool
+    let stillRequestKey: String?
+    let isRequestingStill: Bool
+    let supportsStillCapture: Bool
+    let requestRecording: ((Bool) -> Void)?
+    let requestStillCapture: (() -> Void)?
     let startPreview: (() -> Void)?
     let savePreview: (() -> Void)?
     let stopPreview: (() -> Void)?
@@ -424,6 +765,70 @@ private struct CameraTruthCard: View {
             Text(localizedAppText("camera.privacy.local_only"))
                 .font(.footnote)
                 .foregroundStyle(PevColors.muted)
+
+            if readOnlyEvidence != nil {
+                Label(localizedAppText("camera.connection.bluetooth_warning"), systemImage: "exclamationmark.triangle")
+                    .font(.footnote.weight(.semibold))
+                    .foregroundStyle(.orange)
+                    .accessibilityElement(children: .combine)
+            }
+
+            if let requestRecording, presentation.connection == .connected {
+                Divider()
+                if supportsOnboardRecording {
+                    HStack {
+                        Button(action: { requestRecording(true) }) {
+                            Label(
+                                localizedAppText(isRequestingRecording ? "camera.recording.requesting" : "camera.recording.request_start"),
+                                systemImage: isRequestingRecording ? "arrow.triangle.2.circlepath" : "record.circle"
+                            )
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .disabled(isRequestingRecording || isRequestingStill)
+                        .accessibilityIdentifier("camera.recording.request-start")
+                        Button(action: { requestRecording(false) }) {
+                            Label(localizedAppText("camera.recording.request_stop"), systemImage: "stop.circle")
+                        }
+                        .buttonStyle(.bordered)
+                        .disabled(isRequestingRecording || isRequestingStill)
+                        .accessibilityIdentifier("camera.recording.request-stop")
+                    }
+                    Text(localizedAppText("camera.recording.request_detail"))
+                        .font(.footnote)
+                        .foregroundStyle(PevColors.muted)
+                    if let recordingRequestKey {
+                        Text(localizedAppText(recordingRequestKey))
+                            .font(.footnote)
+                            .foregroundStyle(PevColors.muted)
+                    }
+                } else {
+                    Text(localizedAppText("camera.recording.unavailable"))
+                        .font(.footnote)
+                        .foregroundStyle(PevColors.muted)
+                }
+                if let requestStillCapture {
+                    if supportsStillCapture {
+                        Button(action: requestStillCapture) {
+                            Label(
+                                localizedAppText(isRequestingStill ? "camera.still.requesting" : "camera.still.request"),
+                                systemImage: isRequestingStill ? "arrow.triangle.2.circlepath" : "camera.shutter.button"
+                            )
+                        }
+                        .buttonStyle(.bordered)
+                        .disabled(isRequestingStill || isRequestingRecording)
+                        .accessibilityIdentifier("camera.still.request")
+                        if let stillRequestKey {
+                            Text(localizedAppText(stillRequestKey))
+                                .font(.footnote)
+                                .foregroundStyle(PevColors.muted)
+                        }
+                    } else {
+                        Text(localizedAppText("camera.still.unavailable"))
+                            .font(.footnote)
+                            .foregroundStyle(PevColors.muted)
+                    }
+                }
+            }
 
             if let previewRenderer, showsPreviewSurface {
                 CameraPreviewSurface(renderer: previewRenderer)

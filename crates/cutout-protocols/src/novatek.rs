@@ -165,6 +165,16 @@ impl NovatekFirmwareVersion {
     }
 }
 
+/// Returns whether a firmware string belongs to the verified R3 Pro family.
+///
+/// The model prefix is the only stable identity available in the captured
+/// command `3012` response; callers must not infer an R3 Pro from generic
+/// Novatek response shapes alone.
+#[must_use]
+pub fn is_r3_pro_firmware(version: &str) -> bool {
+    version.starts_with("R3V")
+}
+
 /// RTSP URI returned by a Novatek live-view response.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct NovatekRtspUri(ArrayString<NOVATEK_MAX_RTSP_URI_BYTES>);
@@ -228,6 +238,20 @@ impl NovatekCommandStatus {
     }
 }
 
+/// Outcome represented by a Novatek command response.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum NovatekCommandOutcome {
+    /// The response reported status zero.
+    Acknowledged,
+    /// The response reported a nonzero status.
+    Refused {
+        /// Camera-reported refusal status.
+        status: u16,
+    },
+    /// The bounded response did not contain a status.
+    Unknown,
+}
+
 /// Bounded command/status configuration returned by Novatek command `3014`.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct NovatekConfiguration {
@@ -280,12 +304,33 @@ impl NovatekMediaDownloadTarget {
     }
 }
 
+const NOVATEK_MEDIA_THUMBNAIL_QUERY: &str = "?custom=1&cmd=4001";
+const NOVATEK_MAX_MEDIA_THUMBNAIL_TARGET_BYTES: usize =
+    NOVATEK_MAX_MEDIA_PATH_BYTES + NOVATEK_MEDIA_THUMBNAIL_QUERY.len();
+
+/// Validated HTTP target for a thumbnail served by the camera.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct NovatekMediaThumbnailTarget(ArrayString<NOVATEK_MAX_MEDIA_THUMBNAIL_TARGET_BYTES>);
+
+impl NovatekMediaThumbnailTarget {
+    /// Returns the relative HTTP target for the camera thumbnail.
+    #[must_use]
+    pub fn as_str(&self) -> &str {
+        self.0.as_str()
+    }
+}
+
 /// Maps a camera-reported `A:\Novatek\...` path to a safe HTTP target.
 ///
 /// The mapping follows the reference Novatek API: the drive prefix is removed
 /// and Windows separators become URL path separators. Only the camera's
 /// Novatek volume is accepted; components that could alter URL semantics are
 /// rejected before a platform adapter constructs an origin-specific URL.
+///
+/// # Errors
+///
+/// Returns [`NovatekMediaPathError`] when the camera path is not an exact,
+/// bounded Novatek media path.
 pub fn media_download_target(
     path: &str,
 ) -> Result<NovatekMediaDownloadTarget, NovatekMediaPathError> {
@@ -329,6 +374,30 @@ pub fn media_download_target(
             })?;
     }
     Ok(NovatekMediaDownloadTarget(target))
+}
+
+/// Maps a camera-reported media path to the source-backed thumbnail target.
+///
+/// The reference API requests command `4001` at the media path itself. Path
+/// validation is shared with ordinary media downloads before the command is
+/// appended.
+///
+/// # Errors
+///
+/// Returns [`NovatekMediaPathError`] when the camera path is not an exact,
+/// bounded Novatek media path.
+pub fn media_thumbnail_target(
+    path: &str,
+) -> Result<NovatekMediaThumbnailTarget, NovatekMediaPathError> {
+    let target = media_download_target(path)?;
+    let mut thumbnail = ArrayString::new();
+    thumbnail
+        .try_push_str(target.as_str())
+        .and_then(|()| thumbnail.try_push_str(NOVATEK_MEDIA_THUMBNAIL_QUERY))
+        .map_err(|_| NovatekMediaPathError::ValueTooLong {
+            max: NOVATEK_MAX_MEDIA_THUMBNAIL_TARGET_BYTES,
+        })?;
+    Ok(NovatekMediaThumbnailTarget(thumbnail))
 }
 
 impl NovatekMediaEntry {
@@ -485,6 +554,31 @@ pub fn parse_storage_response(
     }
 }
 
+/// Parses a bounded Novatek command response into a transport outcome.
+///
+/// A response without a status remains [`NovatekCommandOutcome::Unknown`]; it
+/// is not treated as an acknowledgement. The command-specific caller remains
+/// responsible for deciding whether the command was permitted by capability
+/// evidence before sending it.
+///
+/// # Errors
+///
+/// Returns [`NovatekResponseError`] when the response is oversized, not UTF-8,
+/// or contains a malformed status value.
+pub fn parse_command_response(
+    response: &[u8],
+) -> Result<NovatekCommandOutcome, NovatekResponseError> {
+    let xml = bounded_xml(response)?;
+    match parse_status(xml) {
+        Ok(0) => Ok(NovatekCommandOutcome::Acknowledged),
+        Ok(status) => Ok(NovatekCommandOutcome::Refused { status }),
+        Err(NovatekResponseError::MissingTag { tag: "Status" }) => {
+            Ok(NovatekCommandOutcome::Unknown)
+        }
+        Err(error) => Err(error),
+    }
+}
+
 /// Parses the bounded XML response for Novatek command `3014`.
 ///
 /// # Errors
@@ -568,6 +662,9 @@ pub fn parse_media_list_response(
     response: &[u8],
 ) -> Result<NovatekMediaList, NovatekResponseError> {
     let xml = bounded_xml_with_limit(response, NOVATEK_MAX_MEDIA_RESPONSE_BYTES)?;
+    if !xml.contains("<LIST>") || !xml.contains("</LIST>") {
+        return Err(NovatekResponseError::MissingTag { tag: "LIST" });
+    }
     let mut cursor = 0;
     let mut entries = Vec::with_capacity(64);
 
@@ -593,9 +690,6 @@ pub fn parse_media_list_response(
         cursor = file_end + "</File>".len();
     }
 
-    if entries.is_empty() {
-        return Err(NovatekResponseError::MissingTag { tag: "File" });
-    }
     Ok(NovatekMediaList { entries })
 }
 
@@ -799,6 +893,44 @@ impl NovatekReadCommand {
     }
 }
 
+/// Explicit onboard-recording request reported by the reference Novatek API.
+///
+/// This only encodes a user-requested command. It does not establish that the
+/// camera accepted the request or that recording state changed.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum NovatekRecordingCommand {
+    /// Request that the camera start onboard recording.
+    Start,
+    /// Request that the camera stop onboard recording.
+    Stop,
+}
+
+/// Explicit still-capture request reported by the reference Novatek API.
+///
+/// This only encodes a user-requested command. It does not establish that the
+/// camera accepted the request or that a new media entry exists.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct NovatekStillCaptureCommand;
+
+impl NovatekStillCaptureCommand {
+    /// Returns the fixed relative target for this still-capture request.
+    #[must_use]
+    pub const fn request_target(self) -> &'static str {
+        "/?custom=1&cmd=1001"
+    }
+}
+
+impl NovatekRecordingCommand {
+    /// Returns the fixed relative target for this recording request.
+    #[must_use]
+    pub const fn request_target(self) -> &'static str {
+        match self {
+            Self::Start => "/?custom=1&cmd=2001&str=1",
+            Self::Stop => "/?custom=1&cmd=2001&str=0",
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -820,6 +952,42 @@ mod tests {
     }
 
     #[test]
+    fn recording_commands_encode_fixed_user_requested_targets() {
+        assert_eq!(
+            NovatekRecordingCommand::Start.request_target(),
+            "/?custom=1&cmd=2001&str=1"
+        );
+        assert_eq!(
+            NovatekRecordingCommand::Stop.request_target(),
+            "/?custom=1&cmd=2001&str=0"
+        );
+    }
+
+    #[test]
+    fn still_capture_command_encodes_fixed_user_requested_target() {
+        assert_eq!(
+            NovatekStillCaptureCommand.request_target(),
+            "/?custom=1&cmd=1001"
+        );
+    }
+
+    #[test]
+    fn command_response_classifies_acknowledged_refused_and_unknown() {
+        assert_eq!(
+            parse_command_response(br"<Function><Cmd>2001</Cmd><Status>0</Status></Function>"),
+            Ok(NovatekCommandOutcome::Acknowledged)
+        );
+        assert_eq!(
+            parse_command_response(br"<Function><Cmd>2001</Cmd><Status>7</Status></Function>"),
+            Ok(NovatekCommandOutcome::Refused { status: 7 })
+        );
+        assert_eq!(
+            parse_command_response(br"<Function><Cmd>2001</Cmd></Function>"),
+            Ok(NovatekCommandOutcome::Unknown)
+        );
+    }
+
+    #[test]
     fn firmware_response_returns_the_reported_version() {
         let response = br#"<?xml version="1.0" encoding="UTF-8" ?>
 <Function>
@@ -831,6 +999,13 @@ mod tests {
         let firmware = parse_firmware_response(response).expect("fixture is valid");
 
         assert_eq!(firmware.as_str(), "R3V1.1_20240411");
+    }
+
+    #[test]
+    fn firmware_family_check_does_not_generalize_to_other_versions() {
+        assert!(is_r3_pro_firmware("R3V1.1_20240411"));
+        assert!(!is_r3_pro_firmware("R4V2.0_20250101"));
+        assert!(!is_r3_pro_firmware("R3-not-a-firmware-version"));
     }
 
     #[test]
@@ -918,6 +1093,14 @@ mod tests {
     }
 
     #[test]
+    fn empty_media_list_is_valid_read_only_evidence() {
+        let media = parse_media_list_response(br"<LIST></LIST>")
+            .expect("an empty camera card listing is valid");
+
+        assert!(media.entries().is_empty());
+    }
+
+    #[test]
     fn media_list_response_returns_bounded_file_metadata() {
         let response = br"<LIST>
 <ALLFile><File>
@@ -967,6 +1150,13 @@ mod tests {
             .expect("captured camera path is downloadable");
 
         assert_eq!(target.as_str(), "/Novatek/Movie/clip.TS");
+    }
+
+    #[test]
+    fn media_path_maps_to_source_backed_thumbnail_target() {
+        let target = media_thumbnail_target(r"A:\Novatek\Movie\clip.TS")
+            .expect("camera media path is valid");
+        assert_eq!(target.as_str(), "/Novatek/Movie/clip.TS?custom=1&cmd=4001");
     }
 
     #[test]

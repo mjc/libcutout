@@ -151,6 +151,18 @@ final class CutoutAppRouteTests: XCTestCase {
             "Requests are submitted immediately to the connected wheel."
         )
         XCTAssertEqual(
+            localizedAppText("camera.connection.bluetooth_warning"),
+            "Camera Wi-Fi may interfere with Bluetooth audio. Ride telemetry continues independently."
+        )
+        XCTAssertEqual(
+            localizedAppText("camera.command.timed_out"),
+            "Camera request timed out; result is unknown."
+        )
+        XCTAssertEqual(
+            localizedAppText("camera.error.unsupported_profile"),
+            "Camera firmware is not the verified R3 Pro profile."
+        )
+        XCTAssertEqual(
             localizedAppText("bms.no_data.pack_estimate_accessibility_value", "71", "Derived from voltage curve"),
             "71%. Derived from voltage curve"
         )

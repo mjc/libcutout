@@ -264,7 +264,10 @@ struct ContentView: View {
         case .capture:
             CaptureRouteView(model: model, finishCapture: finishCaptureAndReturnToPicker)
         case .camera:
-            CameraRouteContainerView()
+            CameraRouteContainerView(
+                annotateCapture: model.annotateCapture(key:value:),
+                recordMediaReference: model.recordCameraMediaReference(media:localURL:)
+            )
         case .rideMap:
             RideMapRouteView(model: model, presentation: rideMapPresentation, { rideID in
                 model.rideMapMode = .history

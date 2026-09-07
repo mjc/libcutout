@@ -47,4 +47,80 @@ final class CameraPresentationTests: XCTestCase {
 
         XCTAssertEqual(evidence.mediaCount, 1)
     }
+
+    func testReadOnlyEvidenceOnlyAdvertisesOnboardRecordingForCommand2001StatusZero() {
+        let supported = CameraReadOnlyEvidence(
+            firmwareVersion: "FW-1.0",
+            movieRTSPURI: "rtsp://192.168.1.254/live",
+            photoRTSPURI: "rtsp://192.168.1.254/photo",
+            configuration: [
+                CameraCommandStatusEvidence(commandID: 2001, status: 0),
+                CameraCommandStatusEvidence(commandID: 2002, status: 11)
+            ],
+            storagePresent: true,
+            media: []
+        )
+        let unavailable = CameraReadOnlyEvidence(
+            firmwareVersion: "FW-1.0",
+            movieRTSPURI: "rtsp://192.168.1.254/live",
+            photoRTSPURI: "rtsp://192.168.1.254/photo",
+            configuration: [CameraCommandStatusEvidence(commandID: 2001, status: 1)],
+            storagePresent: true,
+            media: []
+        )
+
+        XCTAssertTrue(supported.supportsOnboardRecording)
+        XCTAssertFalse(unavailable.supportsOnboardRecording)
+    }
+
+    func testReadOnlyEvidenceOnlyAdvertisesStillCaptureForCommand1001StatusZero() {
+        let supported = CameraReadOnlyEvidence(
+            firmwareVersion: "FW-1.0",
+            movieRTSPURI: "rtsp://192.168.1.254/live",
+            photoRTSPURI: "rtsp://192.168.1.254/photo",
+            configuration: [CameraCommandStatusEvidence(commandID: 1001, status: 0)],
+            storagePresent: true,
+            media: []
+        )
+        let unavailable = CameraReadOnlyEvidence(
+            firmwareVersion: "FW-1.0",
+            movieRTSPURI: "rtsp://192.168.1.254/live",
+            photoRTSPURI: "rtsp://192.168.1.254/photo",
+            configuration: [CameraCommandStatusEvidence(commandID: 1001, status: 1)],
+            storagePresent: true,
+            media: []
+        )
+
+        XCTAssertTrue(supported.supportsStillCapture)
+        XCTAssertFalse(unavailable.supportsStillCapture)
+    }
+
+    func testReadOnlyEvidenceOnlyAdvertisesMediaThumbnailsForCommand4001StatusZero() {
+        let evidence = CameraReadOnlyEvidence(
+            firmwareVersion: "FW-1.0",
+            movieRTSPURI: "rtsp://192.168.1.254/live",
+            photoRTSPURI: "rtsp://192.168.1.254/photo",
+            configuration: [CameraCommandStatusEvidence(commandID: 4001, status: 0)],
+            storagePresent: true,
+            media: []
+        )
+
+        XCTAssertTrue(evidence.supportsMediaThumbnails)
+    }
+
+    func testCameraMediaReferenceKeepsRideAssociationAndClockUncertaintyExplicit() {
+        let reference = CameraMediaReference(
+            cameraPath: #"A:\Novatek\Movie\clip.TS"#,
+            localURL: URL(fileURLWithPath: "/tmp/clip.TS"),
+            sizeBytes: 42,
+            cameraTimecode: 7,
+            cameraTime: "2025/01/01 00:00:00",
+            rideCaptureFileName: "ride.jsonl",
+            clockUncertainty: .unknown
+        )
+
+        XCTAssertEqual(reference.cameraPath, #"A:\Novatek\Movie\clip.TS"#)
+        XCTAssertEqual(reference.rideCaptureFileName, "ride.jsonl")
+        XCTAssertEqual(reference.clockUncertainty, .unknown)
+    }
 }

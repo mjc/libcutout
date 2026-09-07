@@ -65,11 +65,13 @@ pub use melk_lighting::{
 };
 mod novatek;
 pub use novatek::{
-    NOVATEK_MAX_MEDIA_RESPONSE_BYTES, NOVATEK_MAX_RESPONSE_BYTES, NovatekCommandStatus,
-    NovatekConfiguration, NovatekFirmwareVersion, NovatekHttpOrigin, NovatekLiveViewLinks,
-    NovatekMediaDownloadTarget, NovatekMediaEntry, NovatekMediaList, NovatekMediaPathError,
-    NovatekOriginError, NovatekReadCommand, NovatekReadOnlySnapshot, NovatekResponseError,
-    NovatekRtspUri, NovatekStoragePresence, media_download_target, parse_configuration_response,
+    NOVATEK_MAX_MEDIA_RESPONSE_BYTES, NOVATEK_MAX_RESPONSE_BYTES, NovatekCommandOutcome,
+    NovatekCommandStatus, NovatekConfiguration, NovatekFirmwareVersion, NovatekHttpOrigin,
+    NovatekLiveViewLinks, NovatekMediaDownloadTarget, NovatekMediaEntry, NovatekMediaList,
+    NovatekMediaPathError, NovatekMediaThumbnailTarget, NovatekOriginError, NovatekReadCommand,
+    NovatekReadOnlySnapshot, NovatekRecordingCommand, NovatekResponseError, NovatekRtspUri,
+    NovatekStillCaptureCommand, NovatekStoragePresence, is_r3_pro_firmware, media_download_target,
+    media_thumbnail_target, parse_command_response, parse_configuration_response,
     parse_firmware_response, parse_live_view_response, parse_media_list_response,
     parse_read_only_snapshot, parse_storage_response,
 };
