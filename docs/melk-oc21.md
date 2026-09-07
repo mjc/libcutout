@@ -70,9 +70,11 @@ the official app.
   Schema version 2 reads version 1 records as solid RGB.
 - Optional reconnect restore uses the last confirmed settings for the same
   accessory identity. Requested state is not a claim of physical confirmation.
-- Manual clock scheduling is not exposed until sunrise/sunset times can be
-  calculated from the phone's current location and timezone; the controller's
-  timer slots have no readback.
+- Manual clock scheduling is exposed as two controller-local on/off slots with
+  weekday repetition and local-hour/minute controls. Saving sends a clock sync
+  followed by the selected slot; opening the editor never writes. The controller
+  has no timer readback, so the editor retains drafts rather than claiming the
+  current device schedule.
 - Music uses the accessory microphone, with no phone recording or audio permission.
 - Unknown zone, pixel-count, calibration, and status-query commands are not sent.
   The reference does not establish these capabilities for this exact controller.

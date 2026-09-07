@@ -414,19 +414,142 @@ struct LightingPlaybackControls: View {
     }
 }
 
-/// The controller owns two timer slots. Opening this editor never changes either slot.
+/// The controller owns two timer slots: one for turning on and one for turning off.
 struct LightingScheduleControls: View {
+    let model: LightingRouteModel
+    @State private var isExpanded = false
+    @State private var onTime = Self.defaultTime(hour: 18)
+    @State private var offTime = Self.defaultTime(hour: 23)
+    @State private var onDays: UInt8 = 0x7f
+    @State private var offDays: UInt8 = 0x7f
+    @State private var onEnabled = false
+    @State private var offEnabled = false
+    @State private var feedback: String?
+
     var body: some View {
-        DisclosureGroup {
-            Text("Manual clock timers are hidden until sunrise/sunset times can be calculated from a current location.")
-                .font(.footnote)
-                .foregroundStyle(PevColors.muted)
-                .padding(.top, 12)
+        DisclosureGroup(isExpanded: $isExpanded) {
+            VStack(alignment: .leading, spacing: 16) {
+                Text("Manual local-time timers run on the controller. Sunrise/sunset automation and timer readback are not available for this profile.")
+                    .font(.footnote)
+                    .foregroundStyle(PevColors.muted)
+
+                timerRow(
+                    title: "Turn on",
+                    powerOn: true,
+                    time: $onTime,
+                    days: $onDays,
+                    enabled: $onEnabled
+                )
+                Divider()
+                timerRow(
+                    title: "Turn off",
+                    powerOn: false,
+                    time: $offTime,
+                    days: $offDays,
+                    enabled: $offEnabled
+                )
+
+                if let feedback {
+                    Label(feedback, systemImage: "checkmark.circle")
+                        .font(.footnote)
+                        .foregroundStyle(PevColors.green)
+                }
+            }
+            .padding(.top, 12)
         } label: {
             Label("Schedule", systemImage: "clock").font(.headline)
         }
         .padding(16)
         .background(PevDashboardCardBackground(cornerRadius: 20))
         .accessibilityIdentifier("lighting.schedule")
+    }
+
+    @ViewBuilder
+    private func timerRow(
+        title: String,
+        powerOn: Bool,
+        time: Binding<Date>,
+        days: Binding<UInt8>,
+        enabled: Binding<Bool>
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                Label(title, systemImage: powerOn ? "lightbulb.fill" : "lightbulb.slash")
+                    .font(.subheadline.weight(.semibold))
+                Spacer()
+                Toggle("Enabled", isOn: enabled)
+                    .labelsHidden()
+                    .tint(PevColors.cyan)
+                    .accessibilityLabel("\(title) timer enabled")
+            }
+            DatePicker(
+                "\(title) time",
+                selection: time,
+                displayedComponents: .hourAndMinute
+            )
+            .datePickerStyle(.compact)
+            .accessibilityIdentifier("lighting.schedule.\(powerOn ? "on" : "off").time")
+
+            WeekdayMaskPicker(days: days, identifier: powerOn ? "on" : "off")
+            Button("Save \(title.lowercased()) timer") {
+                save(powerOn: powerOn, time: time.wrappedValue, days: days.wrappedValue, enabled: enabled.wrappedValue)
+            }
+            .buttonStyle(.bordered)
+            .disabled(!model.isReady)
+            .accessibilityIdentifier("lighting.schedule.\(powerOn ? "on" : "off").save")
+        }
+    }
+
+    private func save(powerOn: Bool, time: Date, days: UInt8, enabled: Bool) {
+        let components = Calendar.current.dateComponents([.hour, .minute], from: time)
+        guard let hour = components.hour, let minute = components.minute else { return }
+        let schedule = MobileMelkScheduleDto(
+            powerOn: powerOn,
+            hour: UInt8(hour),
+            minute: UInt8(minute),
+            days: days,
+            enabled: enabled
+        )
+        guard model.setSchedule(schedule) else {
+            feedback = nil
+            return
+        }
+        feedback = "\(powerOn ? "Turn-on" : "Turn-off") timer requested"
+    }
+
+    private static func defaultTime(hour: Int) -> Date {
+        Calendar.current.date(from: DateComponents(hour: hour, minute: 0)) ?? Date()
+    }
+}
+
+private struct WeekdayMaskPicker: View {
+    @Binding var days: UInt8
+    let identifier: String
+    private let labels = ["M", "T", "W", "T", "F", "S", "S"]
+
+    var body: some View {
+        HStack(spacing: 6) {
+            ForEach(0..<labels.count, id: \.self) { index in
+                let bit = UInt8(1 << index)
+                Button {
+                    days ^= bit
+                } label: {
+                    Text(labels[index])
+                        .font(.caption.weight(.semibold))
+                        .frame(width: 30, height: 30)
+                        .foregroundStyle(days & bit == 0 ? PevColors.muted : PevColors.primaryText)
+                        .background(
+                            (days & bit == 0 ? PevColors.cardStroke : PevColors.cyan).opacity(0.25),
+                            in: Circle()
+                        )
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("weekday \(index + 1)")
+                .accessibilityValue(days & bit == 0 ? "off" : "on")
+                .accessibilityIdentifier("lighting.schedule.\(identifier).day.\(index + 1)")
+            }
+        }
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("Repeat days")
     }
 }

@@ -1061,6 +1061,7 @@ final class CutoutAppRouteTests: XCTestCase {
         let schedule = MobileMelkScheduleDto(powerOn: false, hour: 23, minute: 15, days: 31, enabled: true)
         XCTAssertTrue(model.setSchedule(schedule))
         XCTAssertEqual(fake.scheduleRequests, [schedule])
+        XCTAssertEqual(model.commandStatus, .requested)
         XCTAssertEqual(model.requestedPlayback, .solid)
         XCTAssertTrue(fake.stateRequests.isEmpty)
     }

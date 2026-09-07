@@ -37,7 +37,7 @@ struct LightingRouteView: View {
                     hue: $hue,
                     saturation: $saturation
                 )
-                LightingScheduleControls()
+                LightingScheduleControls(model: model)
                 LightingErrorBanner(error: model.controlError)
             }
             .padding(.horizontal, 20)
@@ -304,7 +304,7 @@ private struct LightingPresetsCard: View {
 
     var body: some View {
         LightingCard {
-            Label("Presets", systemImage: "square.stack.3d.up.fill").font(.headline)
+            Label("Scenes & presets", systemImage: "square.stack.3d.up.fill").font(.headline)
             VStack(alignment: .leading, spacing: 10) {
                 HStack(spacing: 12) {
                     quickColorPreset("Red", color: .red, red: 255, green: 0, blue: 0)
@@ -312,18 +312,23 @@ private struct LightingPresetsCard: View {
                     quickColorPreset("Night", color: .black, red: 16, green: 20, blue: 32)
                 }
                 if model.presets.isEmpty {
-                    Text("Save your color, effect, or music settings as a named look.")
+                    Text("Save your color, effect, or music settings as a named scene.")
                         .font(.footnote)
                         .foregroundStyle(PevColors.muted)
                 } else {
                     ForEach(model.presets, id: \.name) { preset in
                         Button(action: { apply(preset) }) {
-                            HStack {
-                                Text(preset.name)
-                                Spacer()
-                                Text("\(preset.requested.brightness)%")
-                                    .monospacedDigit()
-                                    .foregroundStyle(.secondary)
+                            VStack(alignment: .leading, spacing: 3) {
+                                HStack {
+                                    Text(preset.name)
+                                    Spacer()
+                                    Text("\(preset.requested.brightness)%")
+                                        .monospacedDigit()
+                                        .foregroundStyle(.secondary)
+                                }
+                                Text(sceneSummary(for: preset.requested))
+                                    .font(.caption)
+                                    .foregroundStyle(PevColors.muted)
                             }
                         }
                         .buttonStyle(.bordered)
@@ -343,6 +348,17 @@ private struct LightingPresetsCard: View {
                         .accessibilityIdentifier("lighting.preset.save")
                 }
             }
+        }
+    }
+
+    private func sceneSummary(for requested: MobileMelkLightingRestoreStateDto) -> String {
+        switch requested.playback {
+        case let .effect(pattern, speed):
+            return "\(LightingPatternCatalog.name(for: Int(pattern))) · speed \(speed)"
+        case let .music(_, sensitivity):
+            return "Controller music · sensitivity \(sensitivity)%"
+        case .solid, nil:
+            return "Solid RGB · \(requested.brightness)%"
         }
     }
 

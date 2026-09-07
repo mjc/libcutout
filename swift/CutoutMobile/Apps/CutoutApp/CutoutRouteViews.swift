@@ -462,6 +462,7 @@ final class LightingRouteModel {
             return false
         }
         controlError = nil
+        commandStatus = .requested
         return true
     }
 
