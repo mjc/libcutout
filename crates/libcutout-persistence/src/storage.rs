@@ -2095,10 +2095,13 @@ impl RideDatabase {
         self.request(move |reply| Command::MusicHistory { ride_id, reply })
     }
 
-    /// Persists one already privacy-filtered music transition.
+    /// Persists one already privacy-filtered music transition for import or restore.
     ///
-    /// Events are appended in contiguous sequence order and bounded by the portable music
-    /// timeline capacity. A repeated sequence is idempotent.
+    /// This is the privileged raw writer: unlike [`Self::record_music_event`], an explicit
+    /// policy may create a missing retention row. Provider callbacks should use the live writer
+    /// so lifecycle and opt-in admission remain authoritative. Events are appended in contiguous
+    /// sequence order and bounded by the portable music timeline capacity. A repeated sequence
+    /// is idempotent.
     ///
     /// # Errors
     ///
@@ -5017,6 +5020,25 @@ fn save_music_history_policy(
     if !live_lifecycle && !historical_redaction {
         return Err(StorageError::InvalidRideState(lifecycle));
     }
+    if historical_redaction {
+        let existing = transaction
+            .query_row(
+                "SELECT policy, deleted FROM ride_music_history WHERE ride_id = ?1",
+                [ride_id.uuid().to_string()],
+                |row| Ok((row.get::<_, String>(0)?, row.get::<_, bool>(1)?)),
+            )
+            .optional()?;
+        let monotonic_redaction = existing.is_some_and(|(stored, deleted)| {
+            !deleted
+                && matches!(
+                    parse_policy(&stored),
+                    Ok(MusicHistoryPolicy::HumanReadable | MusicHistoryPolicy::OpaqueItem)
+                )
+        });
+        if !monotonic_redaction {
+            return Err(StorageError::MusicPolicyConflict);
+        }
+    }
     apply_music_history_policy(&transaction, ride_id, policy)?;
     transaction.commit()?;
     Ok(())
@@ -5254,7 +5276,7 @@ fn music_events(
     ensure_ride_exists(connection, ride_id)?;
     let mut statement = connection.prepare(
         "SELECT provider, item_identifier, title, artist, kind, monotonic_at_ms,
-                wall_clock_at_ms, clock_uncertainty_milliseconds, observed_at_ms
+                wall_clock_at_ms, clock_uncertainty_milliseconds, observed_at_ms, sequence
          FROM ride_music_event WHERE ride_id = ?1 ORDER BY sequence LIMIT ?2",
     )?;
     let events = statement
@@ -5263,20 +5285,32 @@ fn music_events(
                 ride_id.uuid().to_string(),
                 cutout_music::MAX_MUSIC_TIMELINE_EVENTS + 1
             ],
-            decode_music_event,
+            |row| {
+                let sequence = row.get::<_, i64>(9)?;
+                Ok((sequence, decode_music_event(row)?))
+            },
         )?
         .collect::<Result<Vec<_>, _>>()?;
     if events.len() > cutout_music::MAX_MUSIC_TIMELINE_EVENTS {
         return Err(StorageError::MusicTimelineFull);
     }
+    for (index, (sequence, _)) in events.iter().enumerate() {
+        let expected = i64::try_from(index).unwrap_or(i64::MAX);
+        if *sequence != expected {
+            return Err(StorageError::MusicSequenceGap {
+                sequence: *sequence,
+                expected,
+            });
+        }
+    }
     for (index, pair) in events.windows(2).enumerate() {
-        if pair[1].monotonic_at() < pair[0].monotonic_at() {
+        if pair[1].1.monotonic_at() < pair[0].1.monotonic_at() {
             return Err(StorageError::MusicEventOutOfOrder {
                 sequence: i64::try_from(index + 1).unwrap_or(i64::MAX),
             });
         }
     }
-    Ok(events)
+    Ok(events.into_iter().map(|(_, event)| event).collect())
 }
 
 fn music_history_policy(

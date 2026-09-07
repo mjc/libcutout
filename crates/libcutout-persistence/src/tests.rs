@@ -169,6 +169,100 @@ fn music_schema_bounds_utf8_text_by_bytes() {
 }
 
 #[test]
+fn music_v16_migration_rebuilds_utf8_text_bounds() {
+    let _guard = test_guard();
+    let path = music_test_path();
+    let database = RideDatabase::open(&path).unwrap();
+    let ride = database
+        .create_started_live_ride(1_700_000_000_000, 100, None)
+        .unwrap();
+    database.shutdown().unwrap();
+
+    let connection = Connection::open(&path).unwrap();
+    connection
+        .execute_batch(
+            "ALTER TABLE ride_music_event RENAME TO ride_music_event_current;
+             CREATE TABLE ride_music_event (
+                 ride_id TEXT NOT NULL REFERENCES rides(id) ON DELETE CASCADE,
+                 sequence INTEGER NOT NULL CHECK (sequence >= 0),
+                 provider TEXT NOT NULL CHECK (provider IN ('apple_music', 'spotify')),
+                 item_identifier TEXT CHECK (item_identifier IS NULL OR length(item_identifier) BETWEEN 1 AND 256),
+                 title TEXT CHECK (title IS NULL OR length(title) BETWEEN 1 AND 512),
+                 artist TEXT CHECK (artist IS NULL OR length(artist) BETWEEN 1 AND 512),
+                 kind TEXT NOT NULL CHECK (kind IN ('play', 'pause', 'skip', 'item_changed', 'provider_disconnected')),
+                 monotonic_at_ms INTEGER NOT NULL CHECK (monotonic_at_ms >= 0),
+                 wall_clock_at_ms INTEGER NOT NULL CHECK (wall_clock_at_ms >= 0),
+                 clock_uncertainty_milliseconds INTEGER NOT NULL CHECK (clock_uncertainty_milliseconds >= 0),
+                 PRIMARY KEY (ride_id, sequence)
+             );
+             DROP TABLE ride_music_event_current;
+             ALTER TABLE ride_music_history DROP COLUMN last_observed_at_ms;
+             ALTER TABLE ride_music_history DROP COLUMN deleted;
+             PRAGMA user_version = 16;",
+        )
+        .unwrap();
+    drop(connection);
+
+    let database = RideDatabase::open(&path).unwrap();
+    database.shutdown().unwrap();
+    let connection = Connection::open(&path).unwrap();
+    let title = "é".repeat(257);
+    let result = connection.execute(
+        "INSERT INTO ride_music_event
+            (ride_id, sequence, provider, title, kind, monotonic_at_ms,
+             wall_clock_at_ms, clock_uncertainty_milliseconds)
+         VALUES (?1, 0, 'spotify', ?2, 'play', 110, 1700000000110, 5)",
+        rusqlite::params![ride.uuid().to_string(), title],
+    );
+    assert!(
+        result.is_err(),
+        "upgraded v16 schema must enforce byte bounds"
+    );
+    drop(connection);
+    let _ = std::fs::remove_file(path);
+}
+
+#[test]
+fn music_history_rejects_sequence_gaps_on_read() {
+    let _guard = test_guard();
+    let path = music_test_path();
+    let database = RideDatabase::open(&path).unwrap();
+    let ride = database
+        .create_started_live_ride(1_700_000_000_000, 100, None)
+        .unwrap();
+    for sequence in 0..3 {
+        database
+            .save_music_event(
+                ride,
+                MusicHistoryPolicy::OpaqueItem,
+                sequence,
+                music_event(),
+            )
+            .unwrap();
+    }
+    database.shutdown().unwrap();
+    let connection = Connection::open(&path).unwrap();
+    connection
+        .execute(
+            "DELETE FROM ride_music_event WHERE ride_id = ?1 AND sequence = 1",
+            [ride.uuid().to_string()],
+        )
+        .unwrap();
+    drop(connection);
+
+    let database = RideDatabase::open(&path).unwrap();
+    assert!(matches!(
+        database.music_history(ride),
+        Err(StorageError::MusicSequenceGap {
+            sequence: 2,
+            expected: 1
+        })
+    ));
+    database.shutdown().unwrap();
+    let _ = std::fs::remove_file(path);
+}
+
+#[test]
 fn music_v16_migration_rejects_foreign_database_without_mutating_it() {
     let _guard = test_guard();
     let path = music_test_path();

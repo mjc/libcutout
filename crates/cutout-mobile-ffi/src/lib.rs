@@ -6872,6 +6872,11 @@ impl MobileRideMapCore {
             return Err(MobileRideMapCoreErrorDto::InvalidTransition);
         }
         let policy = CoreMusicHistoryPolicy::from(policy);
+        if state.music_restore_failed && policy == CoreMusicHistoryPolicy::HumanReadable {
+            return Err(MobileRideMapCoreErrorDto::Storage(
+                "music history restore failed".to_owned(),
+            ));
+        }
         let Some(database) = state.database.clone() else {
             return Err(MobileRideMapCoreErrorDto::storage_unavailable());
         };
@@ -16530,11 +16535,33 @@ mod tests {
         core.start_gps_only(1_000, None).expect("ride starts");
         core.set_music_history_policy(MobileMusicHistoryPolicyDto::HumanReadable)
             .expect("enable history");
+        core.set_music_history_policy(MobileMusicHistoryPolicyDto::OpaqueItem)
+            .expect("redact history");
         // Model a failed history restore after the active ride itself was recovered.
         core.inner
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
             .music_restore_failed = true;
+        assert!(matches!(
+            core.set_music_history_policy(MobileMusicHistoryPolicyDto::HumanReadable),
+            Err(MobileRideMapCoreErrorDto::Storage(message))
+                if message == "music history restore failed"
+        ));
+        assert_eq!(
+            database
+                .inner
+                .music_history_policy(
+                    parse_mobile_ride_id(&MobileRideIdDto {
+                        value: core
+                            .current_snapshot(1_000)
+                            .expect("ride remains available")
+                            .ride_id,
+                    })
+                    .expect("ride identifier")
+                )
+                .expect("policy remains readable"),
+            CoreMusicHistoryPolicy::OpaqueItem
+        );
         core.set_music_history_policy(MobileMusicHistoryPolicyDto::OpaqueItem)
             .expect("privacy-reducing policy repairs a failed restore");
         assert_eq!(

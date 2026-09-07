@@ -442,6 +442,24 @@ fn exported_music_writer_does_not_opt_in_missing_policy() {
 }
 
 #[test]
+fn historical_redaction_does_not_opt_in_an_interrupted_ride() {
+    let fixture = setup_policy(Some(MobileMusicHistoryPolicyDto::Disabled));
+    fixture
+        .db
+        .transition(fixture.id.clone(), MobileRideEventDto::Interrupt, 2_000)
+        .unwrap();
+    let result = fixture.db.save_music_history_policy(
+        fixture.id.clone(),
+        MobileMusicHistoryPolicyDto::OpaqueItem,
+    );
+    assert!(result.is_err(), "historical opt-in must be rejected: {result:?}");
+    assert_eq!(
+        fixture.db.music_history(fixture.id.clone()).unwrap().status,
+        MobileMusicHistoryStatusDto::Disabled
+    );
+}
+
+#[test]
 fn failed_durable_event_does_not_consume_sequence_or_observation() {
     let fixture = setup();
     let result = fixture.core.record_music_event(

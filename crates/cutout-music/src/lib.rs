@@ -467,9 +467,7 @@ impl MusicRideEvent {
     /// Returns whether two events describe the same provider transition.
     #[must_use]
     pub fn same_transition_as(&self, other: &Self) -> bool {
-        if matches!(self.kind, MusicRideEventKind::Skip)
-            || matches!(other.kind, MusicRideEventKind::Skip)
-        {
+        if self.kind.is_occurrence() || other.kind.is_occurrence() {
             return false;
         }
         self.provider == other.provider
@@ -524,6 +522,15 @@ pub enum MusicRideEventKind {
     ItemChanged,
     /// The provider connection ended.
     ProviderDisconnected,
+}
+
+impl MusicRideEventKind {
+    const fn is_occurrence(self) -> bool {
+        matches!(
+            self,
+            Self::Skip | Self::ItemChanged | Self::ProviderDisconnected
+        )
+    }
 }
 
 /// Result of attempting to append one event to a timeline.
@@ -869,6 +876,32 @@ mod tests {
         let second = MusicRideEvent::from_snapshot(
             &snapshot(None),
             MusicRideEventKind::Skip,
+            MonotonicTimestamp::new(20),
+            WallClockUnixTimestamp::new(110),
+            2,
+            MusicHistoryPolicy::OpaqueItem,
+        )
+        .expect("valid event");
+        let mut timeline = MusicTimeline::new();
+        assert_eq!(timeline.append(first), MusicTimelineOutcome::Recorded);
+        assert_eq!(timeline.append(second), MusicTimelineOutcome::Recorded);
+        assert_eq!(timeline.events().len(), 2);
+    }
+
+    #[test]
+    fn timeline_retains_distinct_item_changes_after_opaque_redaction() {
+        let first = MusicRideEvent::from_snapshot(
+            &snapshot(None),
+            MusicRideEventKind::ItemChanged,
+            MonotonicTimestamp::new(10),
+            WallClockUnixTimestamp::new(100),
+            2,
+            MusicHistoryPolicy::OpaqueItem,
+        )
+        .expect("valid event");
+        let second = MusicRideEvent::from_snapshot(
+            &snapshot(None),
+            MusicRideEventKind::ItemChanged,
             MonotonicTimestamp::new(20),
             WallClockUnixTimestamp::new(110),
             2,
