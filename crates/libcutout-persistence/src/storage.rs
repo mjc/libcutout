@@ -3226,7 +3226,7 @@ enum Command {
     AppendCaptureData {
         digest: String,
         sequence: u64,
-        bytes: Vec<u8>,
+        chunk: capture_data::CaptureChunk,
         reply: Reply<()>,
     },
     PublishCaptureData {

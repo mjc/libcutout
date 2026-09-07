@@ -76,11 +76,11 @@ impl DatabaseWorker<'_> {
             Command::AppendCaptureData {
                 digest,
                 sequence,
-                bytes,
+                chunk,
                 reply,
             } => {
                 let _ = reply.send(super::capture_data::append(
-                    connection, &digest, sequence, &bytes,
+                    connection, &digest, sequence, &chunk,
                 ));
             }
             Command::PublishCaptureData { digest, reply } => {

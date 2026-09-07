@@ -6,6 +6,18 @@ use std::{fs::File, io::Read, path::Path};
 
 const CHUNK_BYTES: usize = 64 * 1024;
 
+/// A nonempty chunk that cannot exceed the database command's byte budget.
+pub(super) struct CaptureChunk(Vec<u8>);
+
+impl CaptureChunk {
+    fn read(source: &mut impl Read) -> std::io::Result<Option<Self>> {
+        let mut bytes = vec![0; CHUNK_BYTES];
+        let count = source.read(&mut bytes)?;
+        bytes.truncate(count);
+        Ok((count != 0).then_some(Self(bytes)))
+    }
+}
+
 pub(super) const SCHEMA: &str = "
     CREATE TABLE pevcap_captures (
         artifact_digest TEXT PRIMARY KEY NOT NULL CHECK (length(artifact_digest) = 64),
@@ -75,8 +87,9 @@ pub(super) fn append(
     connection: &mut Connection,
     digest: &str,
     sequence: u64,
-    bytes: &[u8],
+    chunk: &CaptureChunk,
 ) -> Result<(), StorageError> {
+    let bytes = &chunk.0;
     let transaction = connection.transaction()?;
     let advanced = transaction.execute(
         "UPDATE pevcap_captures SET written_bytes = written_bytes + ?1,
@@ -150,22 +163,16 @@ pub(super) fn store(
         let mut digest = Sha256::new();
         let mut sequence = 0_u64;
         let mut total = 0_u64;
-        loop {
-            let mut bytes = vec![0; CHUNK_BYTES];
-            let count = source.read(&mut bytes)?;
-            if count == 0 {
-                break;
-            }
-            bytes.truncate(count);
-            total += count as u64;
+        while let Some(chunk) = CaptureChunk::read(&mut source)? {
+            total += chunk.0.len() as u64;
             if total > preview.artifact_size {
                 return Err(StorageError::PevcapPreviewChanged);
             }
-            digest.update(&bytes);
+            digest.update(&chunk.0);
             database.request(|reply| Command::AppendCaptureData {
                 digest: preview.artifact_digest.clone(),
                 sequence,
-                bytes,
+                chunk,
                 reply,
             })?;
             sequence += 1;
@@ -184,4 +191,51 @@ pub(super) fn store(
         });
     }
     result
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn capture_chunks_bound_the_worker_message_and_exclude_eof() {
+        let bytes = vec![42; CHUNK_BYTES + 1];
+        let mut source = bytes.as_slice();
+        assert_eq!(
+            CaptureChunk::read(&mut source).unwrap().unwrap().0.len(),
+            CHUNK_BYTES
+        );
+        assert_eq!(CaptureChunk::read(&mut source).unwrap().unwrap().0, [42]);
+        assert!(CaptureChunk::read(&mut source).unwrap().is_none());
+    }
+
+    #[test]
+    fn unpublished_capture_chunks_are_hidden_and_abort_rolls_back_data() {
+        let mut connection = Connection::open_in_memory().unwrap();
+        connection
+            .execute_batch("PRAGMA foreign_keys = ON;")
+            .unwrap();
+        super::super::migrations::create_current_schema(&connection).unwrap();
+        let digest = "a".repeat(64);
+        connection.execute("INSERT INTO pevcap_import_work (artifact_digest, artifact_path) VALUES (?1, '/unused')", [&digest]).unwrap();
+        assert_eq!(
+            begin(&connection, &digest, PevcapEncoding::Binary, 2).unwrap(),
+            CaptureStart::Started
+        );
+        let payload = CaptureChunk::read(&mut [1_u8, 2].as_slice())
+            .unwrap()
+            .unwrap();
+        assert!(append(&mut connection, &digest, 1, &payload).is_err());
+        append(&mut connection, &digest, 0, &payload).unwrap();
+        assert!(append(&mut connection, &digest, 0, &payload).is_err());
+        assert!(chunk(&connection, &digest, 0).unwrap().is_none());
+        assert!(publish(&connection, &digest).is_err());
+        abort(&connection, &digest).unwrap();
+        let remaining: u64 = connection
+            .query_row("SELECT count(*) FROM pevcap_capture_chunks", [], |row| {
+                row.get(0)
+            })
+            .unwrap();
+        assert_eq!(remaining, 0);
+    }
 }
