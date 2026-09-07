@@ -5,11 +5,11 @@ use super::{
     create_ride, create_started_live_ride, create_started_ride, create_trail, delete_music_history,
     device_name, export_ride_json, find_ride, finish_pevcap_import,
     list_ride_history_vehicle_options, list_rides, load_summary, load_summary_with_duration,
-    map_points_in_bounds, migrate_device_name, music_events, music_history_policy,
+    map_points_in_bounds, migrate_device_name, music_events, music_history, music_history_policy,
     newest_recoverable_ride, pevcap_import_receipt, project_history_context, project_route_points,
-    rebuild_spatial_indexes, remember_selected_device, remove_voltage_sag_model,
-    ride_session_marker, route_points, save_device_name, save_music_event,
-    save_music_history_policy, save_ride_session_marker, save_selected_device,
+    rebuild_spatial_indexes, record_music_event, remember_selected_device,
+    remove_voltage_sag_model, ride_session_marker, route_points, save_device_name,
+    save_music_event, save_music_history_policy, save_ride_session_marker, save_selected_device,
     save_voltage_sag_model, selected_device, sqlite_capabilities, trail_segments_in_bounds,
     transition_ride, update_ride_map_metadata, voltage_sag_model,
 };
@@ -184,6 +184,16 @@ impl DatabaseWorker<'_> {
             }
             Command::ClearSelectedDevice { reply } => {
                 let _ = reply.send(clear_selected_device(connection));
+            }
+            Command::RecordMusicEvent {
+                ride_id,
+                event,
+                reply,
+            } => {
+                let _ = reply.send(record_music_event(connection, ride_id, &event));
+            }
+            Command::MusicHistory { ride_id, reply } => {
+                let _ = reply.send(music_history(connection, ride_id));
             }
             Command::SaveMusicHistoryPolicy {
                 ride_id,

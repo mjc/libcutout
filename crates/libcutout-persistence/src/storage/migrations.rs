@@ -1,7 +1,7 @@
 use super::{MapPointId, SpatialRowId, StorageError};
 use rusqlite::{Connection, OptionalExtension, params};
 
-const CURRENT_SCHEMA_VERSION: i64 = 16;
+const CURRENT_SCHEMA_VERSION: i64 = 17;
 const APPLICATION_ID: i64 = 0x4355_544f;
 fn current_schema_pragmas() -> String {
     format!(
@@ -36,6 +36,7 @@ pub(super) fn migrate(connection: &mut Connection) -> Result<(), StorageError> {
         13 => migrate_v13_to_current(connection)?,
         14 => migrate_v14_to_current(connection)?,
         15 => migrate_v15_to_current(connection)?,
+        16 => migrate_v16_to_current(connection)?,
         CURRENT_SCHEMA_VERSION => {
             if application_id != APPLICATION_ID {
                 return Err(StorageError::InvalidDatabaseIdentity);
@@ -167,7 +168,9 @@ pub(crate) fn create_current_schema(connection: &Connection) -> Result<(), Stora
         );
         CREATE TABLE ride_music_history (
             ride_id TEXT PRIMARY KEY NOT NULL REFERENCES rides(id) ON DELETE CASCADE,
-            policy TEXT NOT NULL CHECK (policy IN ('disabled', 'opaque_item', 'human_readable'))
+            policy TEXT NOT NULL CHECK (policy IN ('disabled', 'opaque_item', 'human_readable')),
+            deleted INTEGER NOT NULL DEFAULT 0 CHECK (deleted IN (0, 1)),
+            last_observed_at_ms INTEGER CHECK (last_observed_at_ms IS NULL OR last_observed_at_ms >= 0)
         );
         CREATE TABLE ride_music_event (
             ride_id TEXT NOT NULL REFERENCES rides(id) ON DELETE CASCADE,
@@ -180,6 +183,7 @@ pub(crate) fn create_current_schema(connection: &Connection) -> Result<(), Stora
             monotonic_at_ms INTEGER NOT NULL CHECK (monotonic_at_ms >= 0),
             wall_clock_at_ms INTEGER NOT NULL CHECK (wall_clock_at_ms >= 0),
             clock_uncertainty_milliseconds INTEGER NOT NULL CHECK (clock_uncertainty_milliseconds >= 0),
+            observed_at_ms INTEGER CHECK (observed_at_ms IS NULL OR observed_at_ms BETWEEN 0 AND monotonic_at_ms),
             PRIMARY KEY (ride_id, sequence)
         );
         CREATE TABLE selected_device (
@@ -840,6 +844,36 @@ fn migrate_v15_to_current(connection: &mut Connection) -> Result<(), StorageErro
          );
          ",
     )?;
+    transaction.execute_batch("PRAGMA user_version = 16;")?;
+    transaction.commit()?;
+    migrate_v16_to_current(connection)
+}
+
+fn migrate_v16_to_current(connection: &mut Connection) -> Result<(), StorageError> {
+    let transaction = connection.transaction()?;
+    for (table, column, definition) in [
+        (
+            "ride_music_history",
+            "deleted",
+            "INTEGER NOT NULL DEFAULT 0 CHECK (deleted IN (0, 1))",
+        ),
+        (
+            "ride_music_history",
+            "last_observed_at_ms",
+            "INTEGER CHECK (last_observed_at_ms IS NULL OR last_observed_at_ms >= 0)",
+        ),
+        (
+            "ride_music_event",
+            "observed_at_ms",
+            "INTEGER CHECK (observed_at_ms IS NULL OR observed_at_ms BETWEEN 0 AND monotonic_at_ms)",
+        ),
+    ] {
+        if !table_has_column(&transaction, table, column)? {
+            transaction.execute_batch(&format!(
+                "ALTER TABLE {table} ADD COLUMN {column} {definition};"
+            ))?;
+        }
+    }
     transaction.execute_batch(&current_schema_pragmas())?;
     transaction.commit()?;
     Ok(())

@@ -318,6 +318,7 @@ pub struct MusicRideEvent {
     title: Option<String>,
     artist: Option<String>,
     kind: MusicRideEventKind,
+    observed_at: Option<MonotonicTimestamp>,
     monotonic_at: MonotonicTimestamp,
     wall_clock_at: WallClockUnixTimestamp,
     clock_uncertainty_milliseconds: u64,
@@ -326,6 +327,8 @@ pub struct MusicRideEvent {
 /// Clock values associated with one ride music transition.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct MusicEventTiming {
+    /// Original provider observation time; absent for legacy/imported events.
+    pub observed_at: Option<MonotonicTimestamp>,
     /// Host monotonic event time.
     pub monotonic_at: MonotonicTimestamp,
     /// Wall-clock event time.
@@ -348,7 +351,14 @@ impl MusicRideEvent {
         kind: MusicRideEventKind,
         timing: MusicEventTiming,
     ) -> Result<Self, MusicValidationError> {
+        if timing
+            .observed_at
+            .is_some_and(|observed| observed > timing.monotonic_at)
+        {
+            return Err(MusicValidationError::ObservationAfterEvent);
+        }
         Ok(Self {
+            observed_at: timing.observed_at,
             provider,
             item_identifier: item_identifier.map(MusicIdentifier::new).transpose()?,
             title: validate_optional_text(title, MusicTextField::Title)?,
@@ -370,7 +380,7 @@ impl MusicRideEvent {
         clock_uncertainty_milliseconds: u64,
         policy: MusicHistoryPolicy,
     ) -> Option<Self> {
-        if policy == MusicHistoryPolicy::Disabled {
+        if policy == MusicHistoryPolicy::Disabled || snapshot.state() == MusicPlaybackState::Stale {
             return None;
         }
         let item = snapshot.item();
@@ -392,6 +402,7 @@ impl MusicRideEvent {
             artist,
             kind,
             MusicEventTiming {
+                observed_at: Some(snapshot.observed_at()),
                 monotonic_at,
                 wall_clock_at,
                 clock_uncertainty_milliseconds,
@@ -404,6 +415,12 @@ impl MusicRideEvent {
     #[must_use]
     pub const fn kind(&self) -> MusicRideEventKind {
         self.kind
+    }
+
+    /// Returns the original observation time without fabricating one for legacy data.
+    #[must_use]
+    pub const fn observed_at(&self) -> Option<MonotonicTimestamp> {
+        self.observed_at
     }
 
     /// Returns the monotonic event time.
@@ -531,7 +548,21 @@ impl MusicTimeline {
 
     /// Appends one event while enforcing order, deduplication, and capacity.
     pub fn append(&mut self, event: MusicRideEvent) -> MusicTimelineOutcome {
-        if let Some(previous) = self.events.last() {
+        let outcome = Self::admission(self.events.last(), self.events.len(), &event);
+        if outcome == MusicTimelineOutcome::Recorded {
+            self.events.push(event);
+        }
+        outcome
+    }
+
+    /// Decides admission from the bounded timeline's tail without copying its history.
+    #[must_use]
+    pub fn admission(
+        previous: Option<&MusicRideEvent>,
+        count: usize,
+        event: &MusicRideEvent,
+    ) -> MusicTimelineOutcome {
+        if let Some(previous) = previous {
             if event.monotonic_at() < previous.monotonic_at() {
                 return MusicTimelineOutcome::OutOfOrder;
             }
@@ -539,10 +570,9 @@ impl MusicTimeline {
                 return MusicTimelineOutcome::Duplicate;
             }
         }
-        if self.events.len() == MAX_MUSIC_TIMELINE_EVENTS {
+        if count >= MAX_MUSIC_TIMELINE_EVENTS {
             return MusicTimelineOutcome::Full;
         }
-        self.events.push(event);
         MusicTimelineOutcome::Recorded
     }
 
@@ -605,6 +635,9 @@ pub enum MusicValidationError {
     /// Playback position exceeded its known duration.
     #[error("music position is after duration")]
     PositionAfterDuration,
+    /// Observation time cannot follow its associated event.
+    #[error("music observation is after event")]
+    ObservationAfterEvent,
 }
 
 fn validate_text(
@@ -716,8 +749,10 @@ mod tests {
             MusicTimelineOutcome::Recorded
         );
         assert_eq!(timeline.append(event), MusicTimelineOutcome::Duplicate);
+        let mut old_snapshot = snapshot(None);
+        old_snapshot.observed_at = MonotonicTimestamp::new(9);
         let old = MusicRideEvent::from_snapshot(
-            &snapshot(None),
+            &old_snapshot,
             MusicRideEventKind::Pause,
             MonotonicTimestamp::new(9),
             WallClockUnixTimestamp::new(99),

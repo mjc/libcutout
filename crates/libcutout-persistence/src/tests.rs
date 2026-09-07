@@ -32,6 +32,7 @@ fn music_event() -> MusicRideEvent {
         None,
         MusicRideEventKind::ItemChanged,
         MusicEventTiming {
+            observed_at: None,
             monotonic_at: MonotonicTimestamp::new(110),
             wall_clock_at: WallClockUnixTimestamp::new(1_700_000_000_110),
             clock_uncertainty_milliseconds: 5,
@@ -48,6 +49,75 @@ fn test_guard() -> std::sync::MutexGuard<'static, ()> {
 
 fn music_test_path() -> std::path::PathBuf {
     std::env::temp_dir().join(format!("libcutout-music-{}.sqlite", uuid::Uuid::new_v4()))
+}
+
+#[test]
+fn music_v16_migration_preserves_events_without_fabricating_observation_times() {
+    let _guard = test_guard();
+    let path = music_test_path();
+    let database = RideDatabase::open(&path).unwrap();
+    let ride = database
+        .create_started_live_ride(1_700_000_000_000, 100, None)
+        .unwrap();
+    let event = music_event();
+    database
+        .save_music_event(ride, MusicHistoryPolicy::OpaqueItem, 0, event.clone())
+        .unwrap();
+    database.shutdown().unwrap();
+    let connection = Connection::open(&path).unwrap();
+    connection
+        .execute_batch(
+            "ALTER TABLE ride_music_event DROP COLUMN observed_at_ms;
+         ALTER TABLE ride_music_history DROP COLUMN last_observed_at_ms;
+         ALTER TABLE ride_music_history DROP COLUMN deleted;
+         PRAGMA user_version = 16;",
+        )
+        .unwrap();
+    drop(connection);
+    let database = RideDatabase::open(&path).unwrap();
+    assert_eq!(database.music_events(ride).unwrap(), vec![event]);
+    assert_eq!(
+        database.music_history(ride).unwrap().status,
+        crate::MusicHistoryStatus::Redacted
+    );
+    database.delete_music_history(ride).unwrap();
+    database.shutdown().unwrap();
+    let database = RideDatabase::open(&path).unwrap();
+    assert_eq!(
+        database.music_history(ride).unwrap().status,
+        crate::MusicHistoryStatus::Deleted
+    );
+    assert!(database.music_events(ride).unwrap().is_empty());
+    database.shutdown().unwrap();
+    let _ = std::fs::remove_file(path);
+}
+
+#[test]
+fn music_read_rejects_over_capacity_history_before_returning_it() {
+    let _guard = test_guard();
+    let path = music_test_path();
+    let database = RideDatabase::open(&path).unwrap();
+    let ride = database
+        .create_started_live_ride(1_700_000_000_000, 100, None)
+        .unwrap();
+    database
+        .save_music_event(ride, MusicHistoryPolicy::OpaqueItem, 0, music_event())
+        .unwrap();
+    let connection = Connection::open(&path).unwrap();
+    connection.execute(
+        "WITH RECURSIVE numbers(n) AS (SELECT 1 UNION ALL SELECT n + 1 FROM numbers WHERE n < 512)
+         INSERT INTO ride_music_event
+             (ride_id, sequence, provider, kind, monotonic_at_ms, wall_clock_at_ms, clock_uncertainty_milliseconds)
+         SELECT ?1, n, 'apple_music', 'play', 110 + n, 1700000000110 + n, 5 FROM numbers",
+        [ride.uuid().to_string()],
+    ).unwrap();
+    assert!(matches!(
+        database.music_events(ride),
+        Err(StorageError::MusicTimelineFull)
+    ));
+    drop(connection);
+    database.shutdown().unwrap();
+    let _ = std::fs::remove_file(path);
 }
 
 fn pevcap_header() -> PevcapHeader {
@@ -2134,7 +2204,7 @@ fn legacy_schema_versions_migrate_to_the_current_schema() {
         let current_version: i64 = connection
             .pragma_query_value(None, "user_version", |row| row.get(0))
             .unwrap();
-        assert_eq!(current_version, 16);
+        assert_eq!(current_version, 17);
         let music_tables: i64 = connection
             .query_row(
                 "SELECT COUNT(*) FROM sqlite_schema
@@ -2547,7 +2617,7 @@ fn schema_v13_spatial_rows_migrate_without_integer_domain_ids() {
     let version: i64 = connection
         .pragma_query_value(None, "user_version", |row| row.get(0))
         .unwrap();
-    assert_eq!(version, 16);
+    assert_eq!(version, 17);
     let rtree_id: i64 = connection
         .query_row(
             "SELECT rtree_id FROM trail_segment_spatial_keys",
@@ -2611,7 +2681,7 @@ fn schema_v12_singleton_rows_migrate_to_uuid_keys_without_data_loss() {
     let version: i64 = connection
         .pragma_query_value(None, "user_version", |row| row.get(0))
         .unwrap();
-    assert_eq!(version, 16);
+    assert_eq!(version, 17);
     let selected_key_length: u64 = connection
         .query_row(
             "SELECT length(singleton_key) FROM selected_device",
@@ -3127,7 +3197,7 @@ fn version_eight_migration_adds_monotonic_ride_start_column() {
             |row| row.get(0),
         )
         .unwrap();
-    assert_eq!(version, 16);
+    assert_eq!(version, 17);
     assert!(has_monotonic_start);
 
     let _ = std::fs::remove_file(path);
@@ -3492,6 +3562,7 @@ fn music_history_policy_downgrade_redacts_existing_display_metadata() {
         Some("Artist".to_owned()),
         MusicRideEventKind::Play,
         MusicEventTiming {
+            observed_at: None,
             monotonic_at: MonotonicTimestamp::new(110),
             wall_clock_at: WallClockUnixTimestamp::new(1_700_000_000_110),
             clock_uncertainty_milliseconds: 5,
@@ -3520,6 +3591,7 @@ fn music_history_policy_downgrade_redacts_existing_display_metadata() {
                 None,
                 MusicRideEventKind::ItemChanged,
                 MusicEventTiming {
+                    observed_at: None,
                     monotonic_at: MonotonicTimestamp::new(120),
                     wall_clock_at: WallClockUnixTimestamp::new(1_700_000_000_120),
                     clock_uncertainty_milliseconds: 5,
@@ -3551,6 +3623,7 @@ fn music_event_sequence_conflict_is_rejected() {
         None,
         MusicRideEventKind::Pause,
         MusicEventTiming {
+            observed_at: None,
             monotonic_at: MonotonicTimestamp::new(120),
             wall_clock_at: WallClockUnixTimestamp::new(1_700_000_000_120),
             clock_uncertainty_milliseconds: 5,
@@ -3596,6 +3669,7 @@ fn music_event_sequence_requires_contiguous_order_and_monotonic_time() {
         None,
         MusicRideEventKind::Pause,
         MusicEventTiming {
+            observed_at: None,
             monotonic_at: MonotonicTimestamp::new(100),
             wall_clock_at: WallClockUnixTimestamp::new(1_700_000_000_100),
             clock_uncertainty_milliseconds: 5,
@@ -3629,6 +3703,7 @@ fn music_event_timestamps_must_fit_sqlite_integer() {
         None,
         MusicRideEventKind::Play,
         MusicEventTiming {
+            observed_at: None,
             monotonic_at: MonotonicTimestamp::new(110),
             wall_clock_at: WallClockUnixTimestamp::new(u64::MAX),
             clock_uncertainty_milliseconds: 5,
@@ -3650,6 +3725,7 @@ fn music_event_timestamps_must_fit_sqlite_integer() {
         None,
         MusicRideEventKind::Play,
         MusicEventTiming {
+            observed_at: None,
             monotonic_at: MonotonicTimestamp::new(110),
             wall_clock_at: WallClockUnixTimestamp::new(1_700_000_000_110),
             clock_uncertainty_milliseconds: u64::MAX,

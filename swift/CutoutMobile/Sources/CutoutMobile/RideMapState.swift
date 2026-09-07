@@ -785,7 +785,13 @@ public final class MobileRideMapState: @unchecked Sendable {
         }
     }
 
-    /// Returns the active ride's bounded in-memory music timeline.
+    /// Returns the active ride's authoritative music retention and availability state.
+    public func currentMusicHistory() -> MobileMusicHistoryDto? {
+        if let core { return core.currentMusicHistory() }
+        return MobileMusicHistoryDto(status: .unavailable, events: [])
+    }
+
+    /// Returns the active ride's authoritative bounded music timeline.
     public func currentMusicEvents() -> [MobileMusicRideEventDto] {
         core?.currentMusicEvents() ?? []
     }
