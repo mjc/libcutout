@@ -127,6 +127,18 @@
             export PATH="${nightlyRust}/bin:${pkgs.cargo-fuzz}/bin:$PATH"
             exec cargo fuzz "$@"
           '';
+          kotlinxCoroutines = pkgs.stdenvNoCC.mkDerivation {
+            pname = "kotlinx-coroutines-core-jvm";
+            version = "1.10.2";
+            src = pkgs.fetchurl {
+              url = "https://repo1.maven.org/maven2/org/jetbrains/kotlinx/kotlinx-coroutines-core-jvm/1.10.2/kotlinx-coroutines-core-jvm-1.10.2.jar";
+              hash = "sha256-XKF1s43zMf1kFVs1zYyuElH6nuNpcJs21C4KKIzM4/0=";
+            };
+            dontUnpack = true;
+            installPhase = ''
+              install -Dm444 "$src" "$out/share/java/kotlinx-coroutines-core-jvm.jar"
+            '';
+          };
         in
         {
           default = (if pkgs.stdenv.isDarwin then pkgs.mkShellNoCC else pkgs.mkShell) {
@@ -142,6 +154,7 @@
               pkgs.cargo-nextest
               pkgs.jna
               pkgs.kotlin
+              kotlinxCoroutines
               pkgs.python3Packages.pillow
             ]
             ++ pkgs.lib.optionals pkgs.stdenv.isDarwin [

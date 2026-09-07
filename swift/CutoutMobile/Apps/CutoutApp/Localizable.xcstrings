@@ -2156,9 +2156,29 @@
       "comment" : "Label for the number of media records returned by the read-only camera listing.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Media records" } } }
     },
+    "camera.evidence.media_title" : {
+      "comment" : "Heading for camera media entries returned by the read-only listing.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Camera files" } } }
+    },
+    "camera.evidence.media_download" : {
+      "comment" : "Button that downloads one camera media file to local storage.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Download" } } }
+    },
+    "camera.evidence.media_saved" : {
+      "comment" : "Detail shown after a camera media file is saved locally.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Saved locally" } } }
+    },
+    "camera.evidence.media_local_only" : {
+      "comment" : "Detail clarifying that camera media downloads stay on the device.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Downloads stay on-device; no cloud upload." } } }
+    },
     "camera.evidence.metadata_only" : {
-      "comment" : "Detail clarifying that camera media records are metadata only until transfer is implemented.",
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Read-only metadata; media transfer is not enabled." } } }
+      "comment" : "Detail clarifying that an empty camera media listing carries no file transfer evidence.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Read-only metadata; no media files were reported." } } }
+    },
+    "camera.error.media_download_failed" : {
+      "comment" : "Camera error shown when a local media download fails.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Camera file could not be saved locally." } } }
     },
     "camera.connection.not_configured" : {
       "comment" : "Camera connection state before a local-network adapter is configured.",

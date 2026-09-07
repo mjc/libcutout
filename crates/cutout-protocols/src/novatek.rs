@@ -18,6 +18,7 @@ const NOVATEK_MAX_MEDIA_ENTRIES: usize = 2_048;
 const NOVATEK_MAX_MEDIA_NAME_BYTES: usize = 128;
 const NOVATEK_MAX_MEDIA_PATH_BYTES: usize = 256;
 const NOVATEK_MAX_MEDIA_TIME_BYTES: usize = 32;
+const NOVATEK_MEDIA_PATH_PREFIX: &str = r"A:\Novatek\";
 
 /// Error returned when a bounded Novatek XML response is malformed.
 #[derive(Clone, Copy, Debug, Eq, Error, PartialEq)]
@@ -91,6 +92,24 @@ pub enum NovatekOriginError {
     /// TCP port zero cannot be used as a camera origin.
     #[error("Novatek origin has an invalid TCP port")]
     InvalidPort,
+}
+
+/// Error returned when a camera-reported media path cannot become a safe HTTP
+/// download target.
+#[derive(Clone, Copy, Debug, Eq, Error, PartialEq)]
+pub enum NovatekMediaPathError {
+    /// The path was not rooted at the camera's `A:\Novatek\` volume.
+    #[error("Novatek media path is not camera-rooted")]
+    InvalidRoot,
+    /// The path contained a traversal, URL delimiter, or empty component.
+    #[error("Novatek media path contains an unsafe component")]
+    UnsafeComponent,
+    /// The mapped HTTP target exceeded the protocol's fixed bound.
+    #[error("Novatek media path exceeds {max} bytes")]
+    ValueTooLong {
+        /// Maximum target size.
+        max: usize,
+    },
 }
 
 /// Validated local IPv4 origin for Novatek HTTP control.
@@ -247,6 +266,69 @@ pub struct NovatekMediaEntry {
     timecode: u64,
     time: ArrayString<NOVATEK_MAX_MEDIA_TIME_BYTES>,
     attributes: u32,
+}
+
+/// Validated HTTP path for a file served by the camera's embedded web server.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct NovatekMediaDownloadTarget(ArrayString<NOVATEK_MAX_MEDIA_PATH_BYTES>);
+
+impl NovatekMediaDownloadTarget {
+    /// Returns the relative HTTP target for the camera file.
+    #[must_use]
+    pub fn as_str(&self) -> &str {
+        self.0.as_str()
+    }
+}
+
+/// Maps a camera-reported `A:\Novatek\...` path to a safe HTTP target.
+///
+/// The mapping follows the reference Novatek API: the drive prefix is removed
+/// and Windows separators become URL path separators. Only the camera's
+/// Novatek volume is accepted; components that could alter URL semantics are
+/// rejected before a platform adapter constructs an origin-specific URL.
+pub fn media_download_target(
+    path: &str,
+) -> Result<NovatekMediaDownloadTarget, NovatekMediaPathError> {
+    let Some(relative) = path.strip_prefix(NOVATEK_MEDIA_PATH_PREFIX) else {
+        return Err(NovatekMediaPathError::InvalidRoot);
+    };
+    if relative.is_empty() {
+        return Err(NovatekMediaPathError::UnsafeComponent);
+    }
+
+    let mut target = ArrayString::new();
+    target
+        .try_push_str("/Novatek/")
+        .map_err(|_| NovatekMediaPathError::ValueTooLong {
+            max: NOVATEK_MAX_MEDIA_PATH_BYTES,
+        })?;
+    for (index, component) in relative.split('\\').enumerate() {
+        if component.is_empty()
+            || component == "."
+            || component == ".."
+            || component.chars().any(|character| {
+                character.is_ascii_control()
+                    || character.is_ascii_whitespace()
+                    || matches!(character, '?' | '#' | '%')
+            })
+            || component.contains('/')
+        {
+            return Err(NovatekMediaPathError::UnsafeComponent);
+        }
+        if index > 0 {
+            target
+                .try_push('/')
+                .map_err(|_| NovatekMediaPathError::ValueTooLong {
+                    max: NOVATEK_MAX_MEDIA_PATH_BYTES,
+                })?;
+        }
+        target
+            .try_push_str(component)
+            .map_err(|_| NovatekMediaPathError::ValueTooLong {
+                max: NOVATEK_MAX_MEDIA_PATH_BYTES,
+            })?;
+    }
+    Ok(NovatekMediaDownloadTarget(target))
 }
 
 impl NovatekMediaEntry {
@@ -877,6 +959,28 @@ mod tests {
             parse_media_list_response(response),
             Err(NovatekResponseError::InvalidMediaValue { tag: "FPATH" })
         );
+    }
+
+    #[test]
+    fn media_path_maps_camera_drive_to_http_target() {
+        let target = media_download_target(r"A:\Novatek\Movie\clip.TS")
+            .expect("captured camera path is downloadable");
+
+        assert_eq!(target.as_str(), "/Novatek/Movie/clip.TS");
+    }
+
+    #[test]
+    fn media_path_rejects_unsafe_or_non_camera_paths() {
+        for path in [
+            r"/Novatek/Movie/clip.TS",
+            r"A:\Novatek\Movie\..\clip.TS",
+            r"A:\Novatek\Movie\clip?raw.TS",
+        ] {
+            assert!(
+                media_download_target(path).is_err(),
+                "path should be rejected: {path}"
+            );
+        }
     }
 
     #[test]

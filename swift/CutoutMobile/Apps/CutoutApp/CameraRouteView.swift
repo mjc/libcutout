@@ -3,11 +3,15 @@ import SwiftUI
 
 struct CameraRouteContainerView: View {
     @State private var adapter = CameraLocalNetworkAdapter()
+    @State private var previewRenderer = CameraPreviewRenderer()
     @State private var address = "192.168.1.254"
     @State private var port = "80"
     @State private var isReading = false
     @State private var readErrorKey: String?
     @State private var savedFileURL: URL?
+    @State private var downloadedMediaURL: URL?
+    @State private var downloadingMediaPath: String?
+    @State private var mediaErrorKey: String?
 
     var body: some View {
         CameraRouteView(
@@ -18,17 +22,27 @@ struct CameraRouteContainerView: View {
             port: $port,
             isReading: isReading,
             readErrorKey: readErrorKey,
+            downloadedMediaURL: downloadedMediaURL,
+            downloadingMediaPath: downloadingMediaPath,
+            mediaErrorKey: mediaErrorKey,
             savedFileURL: savedFileURL,
+            previewRenderer: previewRenderer,
             loadEvidence: readCamera,
+            downloadMedia: downloadMedia,
             startPreview: { startPreview(saveTo: nil) },
             savePreview: { startPreview(saveTo: previewOutputURL()) },
             stopPreview: adapter.stopPreview
         )
             .task {
+                adapter.setPreviewFrameHandler { frame in
+                    try await previewRenderer.enqueue(frame)
+                }
                 adapter.start()
             }
             .onDisappear {
                 adapter.stop()
+                adapter.setPreviewFrameHandler(nil)
+                previewRenderer.reset()
             }
     }
 
@@ -67,11 +81,44 @@ struct CameraRouteContainerView: View {
         }
     }
 
+    private func downloadMedia(_ media: CameraMediaEvidence) {
+        guard let portNumber = UInt16(port) else {
+            mediaErrorKey = "camera.error.invalid_port"
+            return
+        }
+
+        let destination = mediaOutputURL(for: media)
+        downloadingMediaPath = media.path
+        mediaErrorKey = nil
+        Task { @MainActor in
+            defer { downloadingMediaPath = nil }
+            do {
+                try await adapter.downloadMedia(
+                    address: address,
+                    port: portNumber,
+                    media: media,
+                    to: destination
+                )
+                downloadedMediaURL = destination
+            } catch {
+                mediaErrorKey = "camera.error.media_download_failed"
+            }
+        }
+    }
+
     private func previewOutputURL() -> URL {
         let directory = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first
             ?? FileManager.default.temporaryDirectory
         return directory.appendingPathComponent(
             "camera-preview-" + UUID().uuidString + ".h264"
+        )
+    }
+
+    private func mediaOutputURL(for media: CameraMediaEvidence) -> URL {
+        let directory = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first
+            ?? FileManager.default.temporaryDirectory
+        return directory.appendingPathComponent(
+            "camera-media-" + UUID().uuidString + "-" + media.name
         )
     }
 }
@@ -85,8 +132,13 @@ struct CameraRouteView: View {
     @Binding var port: String
     let isReading: Bool
     let readErrorKey: String?
+    let downloadedMediaURL: URL?
+    let downloadingMediaPath: String?
+    let mediaErrorKey: String?
     let savedFileURL: URL?
+    let previewRenderer: CameraPreviewRenderer?
     let loadEvidence: (() -> Void)?
+    let downloadMedia: ((CameraMediaEvidence) -> Void)?
     let startPreview: (() -> Void)?
     let savePreview: (() -> Void)?
     let stopPreview: (() -> Void)?
@@ -99,8 +151,13 @@ struct CameraRouteView: View {
         port: Binding<String> = .constant("80"),
         isReading: Bool = false,
         readErrorKey: String? = nil,
+        downloadedMediaURL: URL? = nil,
+        downloadingMediaPath: String? = nil,
+        mediaErrorKey: String? = nil,
         savedFileURL: URL? = nil,
+        previewRenderer: CameraPreviewRenderer? = nil,
         loadEvidence: (() -> Void)? = nil,
+        downloadMedia: ((CameraMediaEvidence) -> Void)? = nil,
         startPreview: (() -> Void)? = nil,
         savePreview: (() -> Void)? = nil,
         stopPreview: (() -> Void)? = nil
@@ -113,8 +170,13 @@ struct CameraRouteView: View {
         self._port = port
         self.isReading = isReading
         self.readErrorKey = readErrorKey
+        self.downloadedMediaURL = downloadedMediaURL
+        self.downloadingMediaPath = downloadingMediaPath
+        self.mediaErrorKey = mediaErrorKey
         self.savedFileURL = savedFileURL
+        self.previewRenderer = previewRenderer
         self.loadEvidence = loadEvidence
+        self.downloadMedia = downloadMedia
         self.startPreview = startPreview
         self.savePreview = savePreview
         self.stopPreview = stopPreview
@@ -148,11 +210,16 @@ struct CameraRouteView: View {
             port: $port,
             isReading: isReading,
             readErrorKey: readErrorKey,
-            loadEvidence: loadEvidence
+            downloadedMediaURL: downloadedMediaURL,
+            downloadingMediaPath: downloadingMediaPath,
+            mediaErrorKey: mediaErrorKey,
+            loadEvidence: loadEvidence,
+            downloadMedia: downloadMedia
         )
         CameraTruthCard(
             presentation: presentation,
             savedFileURL: savedFileURL,
+            previewRenderer: previewRenderer,
             hasPreviewSource: hasPreviewSource,
             startPreview: startPreview,
             savePreview: savePreview,
@@ -169,7 +236,11 @@ private struct CameraStatusCard: View {
     @Binding var port: String
     let isReading: Bool
     let readErrorKey: String?
+    let downloadedMediaURL: URL?
+    let downloadingMediaPath: String?
+    let mediaErrorKey: String?
     let loadEvidence: (() -> Void)?
+    let downloadMedia: ((CameraMediaEvidence) -> Void)?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -204,9 +275,54 @@ private struct CameraStatusCard: View {
                     value: String(readOnlyEvidence.mediaCount),
                     systemImage: "film.stack"
                 )
-                Text(localizedAppText("camera.evidence.metadata_only"))
-                    .font(.footnote)
-                    .foregroundStyle(PevColors.muted)
+                if !readOnlyEvidence.media.isEmpty {
+                    Divider()
+                    Text(localizedAppText("camera.evidence.media_title"))
+                        .font(.subheadline.weight(.semibold))
+                    ForEach(readOnlyEvidence.media, id: \.path) { media in
+                        HStack(alignment: .top, spacing: 10) {
+                            VStack(alignment: .leading, spacing: 3) {
+                                Text(media.name)
+                                    .font(.subheadline.monospaced())
+                                    .lineLimit(1)
+                                Text(media.time)
+                                    .font(.caption)
+                                    .foregroundStyle(PevColors.muted)
+                            }
+                            Spacer(minLength: 8)
+                            if downloadingMediaPath == media.path {
+                                ProgressView()
+                                    .controlSize(.small)
+                            } else if let downloadMedia {
+                                Button(action: { downloadMedia(media) }) {
+                                    Label(
+                                        localizedAppText("camera.evidence.media_download"),
+                                        systemImage: "arrow.down.circle"
+                                    )
+                                }
+                                .buttonStyle(.bordered)
+                                .accessibilityIdentifier("camera.media.download.\(media.name)")
+                            }
+                        }
+                        if downloadedMediaURL?.lastPathComponent.hasSuffix("-" + media.name) == true {
+                            Text(localizedAppText("camera.evidence.media_saved"))
+                                .font(.caption)
+                                .foregroundStyle(PevColors.muted)
+                        }
+                    }
+                    Text(localizedAppText("camera.evidence.media_local_only"))
+                        .font(.footnote)
+                        .foregroundStyle(PevColors.muted)
+                } else {
+                    Text(localizedAppText("camera.evidence.metadata_only"))
+                        .font(.footnote)
+                        .foregroundStyle(PevColors.muted)
+                }
+                if let mediaErrorKey {
+                    Text(localizedAppText(mediaErrorKey))
+                        .font(.footnote)
+                        .foregroundStyle(.red)
+                }
             }
 
             if let loadEvidence {
@@ -278,6 +394,7 @@ private struct CameraStatusCard: View {
 private struct CameraTruthCard: View {
     let presentation: CameraPresentation
     let savedFileURL: URL?
+    let previewRenderer: CameraPreviewRenderer?
     let hasPreviewSource: Bool
     let startPreview: (() -> Void)?
     let savePreview: (() -> Void)?
@@ -307,6 +424,11 @@ private struct CameraTruthCard: View {
             Text(localizedAppText("camera.privacy.local_only"))
                 .font(.footnote)
                 .foregroundStyle(PevColors.muted)
+
+            if let previewRenderer, showsPreviewSurface {
+                CameraPreviewSurface(renderer: previewRenderer)
+                    .accessibilityIdentifier("camera.preview.surface")
+            }
 
             if hasPreviewSource, let startPreview, let savePreview {
                 Divider()
@@ -375,6 +497,15 @@ private struct CameraTruthCard: View {
         case .present: localizedAppText("camera.storage.present")
         case .missing: localizedAppText("camera.storage.missing")
         case .error: localizedAppText("camera.storage.error")
+        }
+    }
+
+    private var showsPreviewSurface: Bool {
+        switch presentation.preview {
+        case .stopped, .unavailable:
+            false
+        case .buffering, .live, .stale, .interrupted:
+            true
         }
     }
 }

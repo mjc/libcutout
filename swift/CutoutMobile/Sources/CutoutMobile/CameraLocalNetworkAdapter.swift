@@ -17,6 +17,24 @@ public enum CameraReadOnlyRequestError: Error, Equatable, Sendable {
 /// Injectable transport used by the read-only camera loader and its tests.
 public typealias CameraReadOnlyFetcher = @Sendable (URL) async throws -> Data
 
+/// Failure while downloading one camera-reported media file.
+public enum CameraMediaDownloadError: Error, Equatable, Sendable {
+    case invalidPath
+    case invalidURL
+    case destinationExists
+    case moveFailed
+}
+
+/// Fetches a streamed temporary file for a camera media URL.
+public typealias CameraMediaDownloadFetcher = @Sendable (URL) async throws -> URL
+
+/// Receives encoded preview frames for a platform-native renderer.
+///
+/// A throwing handler reports that the consumer could not use the frame. The
+/// adapter treats that as an interrupted preview instead of claiming that a
+/// transport-delivered but undisplayable stream is live.
+public typealias CameraPreviewFrameHandler = @MainActor @Sendable (MobileCameraVideoFrameDto) async throws -> Void
+
 /// Maps Apple path evidence to a conservative camera connection state.
 public func cameraConnectionPresentation(
     pathStatus: CameraLocalNetworkPathStatus,
@@ -42,6 +60,7 @@ public final class CameraLocalNetworkAdapter {
     private var previewSession: MobileCameraPreviewSession?
     private var previewFileSink: MobileCameraPreviewFileSink?
     private var previewTask: Task<Void, Never>?
+    private var previewFrameHandler: CameraPreviewFrameHandler?
     private let monitorQueue = DispatchQueue(label: "org.cutout.camera-local-network")
 
     public init(
@@ -51,6 +70,7 @@ public final class CameraLocalNetworkAdapter {
         self.presentation = presentation
         self.readOnlyEvidence = nil
         self.sessionState = sessionState
+        self.previewFrameHandler = nil
     }
 
     /// Starts observing the Wi-Fi path without adding a timeout or scanner.
@@ -107,8 +127,9 @@ public final class CameraLocalNetworkAdapter {
     /// Negotiates a local RTSP session and begins consuming encoded frames.
     ///
     /// The Retina session performs URI and local-origin validation before this
-    /// adapter publishes buffering state. Frame bytes remain owned by the
-    /// transport until a future decoder or file sink consumes them.
+    /// adapter publishes buffering state. Encoded frame bytes are offered to
+    /// the installed handler and optional file sink without changing state
+    /// ownership.
     public func startPreview(uri: String) async throws {
         try await startPreview(uri: uri, destination: nil)
     }
@@ -138,6 +159,7 @@ public final class CameraLocalNetworkAdapter {
                     guard let frame = try await session.nextVideoFrame() else { break }
                     try fileSink?.writeFrame(frame: frame)
                     guard let self else { break }
+                    try await self.previewFrameHandler?(frame)
                     self.recordPreviewFrame()
                 }
                 if !Task.isCancelled {
@@ -154,6 +176,14 @@ public final class CameraLocalNetworkAdapter {
     /// Records that the RTSP transport delivered an encoded video frame.
     public func recordPreviewFrame() {
         reducePreviewEvent(.frameReceived)
+    }
+
+    /// Installs the consumer for encoded frames delivered by the preview.
+    ///
+    /// The adapter does not decode frames itself, allowing the app to choose
+    /// a native renderer or a file-only consumer without changing transport.
+    public func setPreviewFrameHandler(_ handler: CameraPreviewFrameHandler?) {
+        previewFrameHandler = handler
     }
 
     /// Records an unexpected preview interruption without changing recording truth.
@@ -220,6 +250,60 @@ public final class CameraLocalNetworkAdapter {
     ) async throws -> CameraReadOnlyEvidence {
         try await loadReadOnlyEvidence(address: address, port: port) { url in
             try await URLSession.shared.data(from: url).0
+        }
+    }
+
+    /// Downloads one media entry to a new local file without adding a timeout.
+    ///
+    /// The camera path is converted by Rust before the caller-owned local
+    /// origin is applied. The destination must not already exist; this keeps a
+    /// failed or cancelled transfer from replacing an existing capture.
+    public func downloadMedia(
+        address: String,
+        port: UInt16,
+        media: CameraMediaEvidence,
+        to destination: URL,
+        fetch: @escaping CameraMediaDownloadFetcher
+    ) async throws {
+        let origin = try mobileValidateNovatekHttpOrigin(address: address, port: port)
+        let target: String
+        do {
+            target = try mobileNovatekMediaDownloadTarget(path: media.path)
+        } catch {
+            throw CameraMediaDownloadError.invalidPath
+        }
+        guard let url = URL(string: "http://\(origin.address):\(origin.port)\(target)") else {
+            throw CameraMediaDownloadError.invalidURL
+        }
+        guard !FileManager.default.fileExists(atPath: destination.path) else {
+            throw CameraMediaDownloadError.destinationExists
+        }
+
+        let temporaryURL = try await fetch(url)
+        do {
+            try FileManager.default.moveItem(at: temporaryURL, to: destination)
+        } catch {
+            throw CameraMediaDownloadError.moveFailed
+        }
+    }
+
+    /// Downloads one media entry with Apple's streaming URL-loading stack.
+    ///
+    /// URL loading owns cancellation and transfer lifetime; no application
+    /// timeout is installed for this potentially large SD-card file.
+    public func downloadMedia(
+        address: String,
+        port: UInt16,
+        media: CameraMediaEvidence,
+        to destination: URL
+    ) async throws {
+        try await downloadMedia(
+            address: address,
+            port: port,
+            media: media,
+            to: destination
+        ) { url in
+            try await URLSession.shared.download(from: url).0
         }
     }
 
