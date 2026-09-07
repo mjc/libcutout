@@ -48,8 +48,11 @@ is no implemented timer readback: the editor presents drafts, not controller sta
 The UI uses wire IDs 1–212 from the [MELK OA21 reference catalog](https://gist.github.com/clienthax/5b3cc5fa68f7c4c943f2252eaa21d804).
 These are reference names, not a claim that OC21 renders every mode identically.
 The catalog contains duplicate names at different wire IDs; those IDs are
-preserved, not collapsed by parsing names as unique dictionary keys. ID 0 and
-213–220 remain explicitly unmapped rather than borrowing unrelated model names.
+preserved, not collapsed by parsing names as unique dictionary keys. The UI gives
+ID 0 and 213–220 generic STRIPX reference labels marked “(reference)” so every
+wire ID has a human-readable name; these entries remain unverified and disabled
+until exact OC21 capture.
+
 The production picker groups the reference IDs into Basic, Curtain, Trans, Water,
 Flow, Tail, Run, Run Back, and Unmapped. The grouping covers each ID 0–220 exactly
 once, while the names remain reference data pending exact OC21 matching. The

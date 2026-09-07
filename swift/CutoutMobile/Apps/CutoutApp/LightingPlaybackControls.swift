@@ -34,13 +34,28 @@ enum LightingPatternCatalog {
     ]
 
     static func name(for id: Int) -> String {
-        guard id > 0, id < names.count else { return "Unmapped effect \(id)" }
+        guard id > 0, id < names.count else {
+            return referenceNames[id] ?? "Unmapped effect \(id)"
+        }
         return names[id]
     }
 
     static func isMapped(_ id: Int) -> Bool {
         (1...212).contains(id)
     }
+
+    /// Generic STRIPX labels from the pinned upstream catalog; not OC21 verification.
+    private static let referenceNames: [Int: String] = [
+        0: "Rainbow Up (reference)",
+        213: "Fade 73 (reference)",
+        214: "Fade 74 (reference)",
+        215: "Fade 75 (reference)",
+        216: "Fade 76 (reference)",
+        217: "Fade 77 (reference)",
+        218: "Fade 78 (reference)",
+        219: "Fade Bar (reference)",
+        220: "Music Flow Flash (reference)",
+    ]
 
     private static let names: [String] = [
         "", // 0
