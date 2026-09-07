@@ -467,14 +467,19 @@ impl MusicRideEvent {
     /// Returns whether two events describe the same provider transition.
     #[must_use]
     pub fn same_transition_as(&self, other: &Self) -> bool {
-        if self.kind.is_occurrence() || other.kind.is_occurrence() {
-            return false;
-        }
-        self.provider == other.provider
+        let same_content = self.provider == other.provider
             && self.item_identifier == other.item_identifier
             && self.title == other.title
             && self.artist == other.artist
-            && self.kind == other.kind
+            && self.kind == other.kind;
+        if self.kind.is_occurrence() || other.kind.is_occurrence() {
+            return same_content
+                && self.observed_at == other.observed_at
+                && self.monotonic_at == other.monotonic_at
+                && self.wall_clock_at == other.wall_clock_at
+                && self.clock_uncertainty_milliseconds == other.clock_uncertainty_milliseconds;
+        }
+        same_content
     }
 
     /// Removes human-readable metadata and any provider identifier that embeds it.
@@ -912,6 +917,25 @@ mod tests {
         assert_eq!(timeline.append(first), MusicTimelineOutcome::Recorded);
         assert_eq!(timeline.append(second), MusicTimelineOutcome::Recorded);
         assert_eq!(timeline.events().len(), 2);
+    }
+
+    #[test]
+    fn timeline_deduplicates_exact_occurrence_replays() {
+        let event = MusicRideEvent::from_snapshot(
+            &snapshot(None),
+            MusicRideEventKind::ItemChanged,
+            MonotonicTimestamp::new(10),
+            WallClockUnixTimestamp::new(100),
+            2,
+            MusicHistoryPolicy::OpaqueItem,
+        )
+        .expect("valid event");
+        let mut timeline = MusicTimeline::new();
+        assert_eq!(
+            timeline.append(event.clone()),
+            MusicTimelineOutcome::Recorded
+        );
+        assert_eq!(timeline.append(event), MusicTimelineOutcome::Duplicate);
     }
 
     #[test]

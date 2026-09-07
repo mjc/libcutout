@@ -116,6 +116,11 @@ impl RideWriteState {
         occurred_at_ms: u64,
         monotonic_at_ms: Option<u64>,
     ) -> Result<RideTransition, TransitionError> {
+        if self.resume_crosses_monotonic_epoch(event, monotonic_at_ms) {
+            // Raw uptime values from a new boot are not comparable to the interrupted ride's
+            // persisted epoch. Refuse the transition instead of clamping into a false timeline.
+            return Err(TransitionError::Invalid);
+        }
         let lifecycle = self.lifecycle.apply(event)?;
         let mut monotonic_created_at_ms = self.monotonic_created_at_ms;
         let mut monotonic_last_event_ms = self.monotonic_last_event_ms;
@@ -209,6 +214,24 @@ impl RideWriteState {
             completed_duration_ms,
             updated_at_ms: self.updated_at_ms.max(occurred_at_ms),
         })
+    }
+
+    fn resume_crosses_monotonic_epoch(
+        self,
+        event: RideEvent,
+        monotonic_at_ms: Option<u64>,
+    ) -> bool {
+        self.lifecycle == RideLifecycleState::Interrupted
+            && event == RideEvent::Resume
+            && monotonic_at_ms.is_some_and(|at| {
+                let floor = self
+                    .monotonic_last_event_ms
+                    .into_iter()
+                    .chain(self.latest_observed_monotonic_ms)
+                    .max()
+                    .or(self.monotonic_created_at_ms);
+                floor.is_some_and(|floor| at < floor)
+            })
     }
 
     pub(super) fn decide_location(
@@ -487,5 +510,24 @@ mod tests {
             ),
             3_000
         );
+    }
+
+    #[test]
+    fn interrupted_resume_rejects_a_lower_monotonic_epoch() {
+        let state = RideWriteState::from_parts(&RideWriteStateParts {
+            source: RideSource::Live,
+            lifecycle: RideLifecycleState::Interrupted,
+            monotonic_created_at_ms: Some(1_000),
+            monotonic_last_event_ms: Some(9_000),
+            latest_observed_monotonic_ms: None,
+            paused_at_ms: None,
+            paused_duration_ms: 0,
+            completed_duration_ms: 8_000,
+            updated_at_ms: 20,
+        });
+        assert!(matches!(
+            state.transition_at(RideEvent::Resume, 30, Some(500)),
+            Err(TransitionError::Invalid)
+        ));
     }
 }

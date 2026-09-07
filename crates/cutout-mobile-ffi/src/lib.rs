@@ -4785,6 +4785,7 @@ fn mobile_ride_location_dto(location: ride_maps::LocationSample) -> MobileRideLo
     }
 }
 
+#[cfg(test)]
 fn core_music_event(
     event: MobileMusicRideEventDto,
 ) -> Result<CoreMusicRideEvent, MobileRideDatabaseError> {
@@ -5084,38 +5085,6 @@ impl RideDatabaseHandle {
             .map_err(map_ride_database_error)
     }
 
-    /// Persists one privacy-filtered music transition for a ride.
-    ///
-    /// # Errors
-    ///
-    /// Returns a typed database error when the ride, event, policy, worker, or stored history is invalid.
-    #[allow(clippy::needless_pass_by_value, reason = "UniFFI owns boundary values")]
-    pub fn save_music_event(
-        &self,
-        ride_id: MobileRideIdDto,
-        policy: MobileMusicHistoryPolicyDto,
-        sequence: u64,
-        event: MobileMusicRideEventDto,
-    ) -> Result<(), MobileRideDatabaseError> {
-        let ride_id = parse_mobile_ride_id(&ride_id)?;
-        let event = core_music_event(event)?;
-        let history = self
-            .inner
-            .music_history(ride_id)
-            .map_err(map_ride_database_error)?;
-        if matches!(
-            history.status,
-            persistence::MusicHistoryStatus::Missing
-                | persistence::MusicHistoryStatus::Disabled
-                | persistence::MusicHistoryStatus::Deleted
-        ) {
-            return Ok(());
-        }
-        self.inner
-            .save_music_event(ride_id, policy.into(), sequence, event)
-            .map_err(map_ride_database_error)
-    }
-
     /// Loads one ride's bounded music timeline in sequence order.
     ///
     /// # Errors
@@ -5131,8 +5100,8 @@ impl RideDatabaseHandle {
     ) -> Result<Vec<MobileMusicRideEventDto>, MobileRideDatabaseError> {
         let ride_id = parse_mobile_ride_id(&ride_id)?;
         self.inner
-            .music_events(ride_id)
-            .map(|events| events.iter().map(Into::into).collect())
+            .music_history(ride_id)
+            .map(|history| history.events.iter().map(Into::into).collect())
             .map_err(map_ride_database_error)
     }
 
@@ -6972,15 +6941,15 @@ impl MobileRideMapCore {
                 events: Vec::new(),
             });
         };
-        match database.music_history(ride_id.clone()) {
-            Ok(history) => {
-                state.music_restore_failed = false;
-                Some(history)
-            }
-            Err(_) => Some(MobileMusicHistoryDto {
+        if let Ok(history) = database.music_history(ride_id.clone()) {
+            state.music_restore_failed = false;
+            Some(history)
+        } else {
+            state.music_restore_failed = true;
+            Some(MobileMusicHistoryDto {
                 status: MobileMusicHistoryStatusDto::Unavailable,
                 events: Vec::new(),
-            }),
+            })
         }
     }
 
@@ -7006,8 +6975,8 @@ impl MobileRideMapCore {
         };
         database
             .inner
-            .music_events(ride_id)
-            .map(|events| events.iter().map(Into::into).collect())
+            .music_history(ride_id)
+            .map(|history| history.events.iter().map(Into::into).collect())
             .map_err(map_storage_core_error)
     }
 

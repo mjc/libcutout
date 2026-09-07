@@ -2107,7 +2107,11 @@ impl RideDatabase {
     ///
     /// Returns [`StorageError::NotFound`], [`StorageError::MusicTimelineFull`], or a typed
     /// storage error when the worker cannot commit the event.
-    pub fn save_music_event(
+    #[allow(
+        dead_code,
+        reason = "crate-local import contract is covered by persistence tests"
+    )]
+    pub(crate) fn save_music_event(
         &self,
         ride_id: RideId,
         policy: MusicHistoryPolicy,
@@ -2143,7 +2147,14 @@ impl RideDatabase {
     ///
     /// Returns [`StorageError::NotFound`] when the ride does not exist or a typed storage error
     /// when persisted music metadata cannot be decoded.
-    pub fn music_events(&self, ride_id: RideId) -> Result<Vec<MusicRideEvent>, StorageError> {
+    #[allow(
+        dead_code,
+        reason = "crate-local raw projection is covered by persistence tests"
+    )]
+    pub(crate) fn music_events(
+        &self,
+        ride_id: RideId,
+    ) -> Result<Vec<MusicRideEvent>, StorageError> {
         self.request(move |reply| Command::MusicEvents { ride_id, reply })
     }
 
@@ -3216,6 +3227,10 @@ enum Command {
         policy: MusicHistoryPolicy,
         reply: Reply<()>,
     },
+    #[allow(
+        dead_code,
+        reason = "crate-local import contract is covered by persistence tests"
+    )]
     SaveMusicEvent {
         ride_id: RideId,
         policy: MusicHistoryPolicy,
@@ -3227,6 +3242,10 @@ enum Command {
         ride_id: RideId,
         reply: Reply<()>,
     },
+    #[allow(
+        dead_code,
+        reason = "crate-local raw projection is covered by persistence tests"
+    )]
     MusicEvents {
         ride_id: RideId,
         reply: Reply<Vec<MusicRideEvent>>,
@@ -4879,6 +4898,17 @@ fn music_history(connection: &Connection, ride_id: RideId) -> Result<MusicHistor
             music_events(connection, ride_id)?
         }
     };
+    let events = if status == MusicHistoryStatus::Redacted {
+        events
+            .into_iter()
+            .map(|mut event| {
+                event.redact_display_metadata();
+                event
+            })
+            .collect()
+    } else {
+        events
+    };
     Ok(MusicHistory { status, events })
 }
 
@@ -4953,6 +4983,8 @@ fn record_music_event(
     if policy == MusicHistoryPolicy::Disabled {
         return Ok(MusicTimelineOutcome::Disabled);
     }
+    // Keep live writes closed while the existing durable prefix is unreadable or non-contiguous.
+    let _ = music_events(&transaction, ride_id)?;
     let mut event = event.clone();
     if policy == MusicHistoryPolicy::OpaqueItem {
         event.redact_display_metadata();
@@ -5040,6 +5072,9 @@ fn save_music_history_policy(
         }
     }
     apply_music_history_policy(&transaction, ride_id, policy)?;
+    // Validate the post-policy projection before committing so callers never observe a failed
+    // policy update with a durable policy mutation.
+    let _ = music_history(&transaction, ride_id)?;
     transaction.commit()?;
     Ok(())
 }

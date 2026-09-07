@@ -871,7 +871,15 @@ fn migrate_v16_to_current(connection: &mut Connection) -> Result<(), StorageErro
          INSERT INTO ride_music_event
              (ride_id, sequence, provider, item_identifier, title, artist, kind,
               monotonic_at_ms, wall_clock_at_ms, clock_uncertainty_milliseconds)
-         SELECT ride_id, sequence, provider, item_identifier, title, artist, kind,
+         SELECT ride_id, sequence, provider,
+                CASE WHEN item_identifier IS NULL
+                          OR length(CAST(item_identifier AS BLOB)) BETWEEN 1 AND 256
+                     THEN item_identifier END,
+                CASE WHEN title IS NULL OR length(CAST(title AS BLOB)) BETWEEN 1 AND 512
+                     THEN title END,
+                CASE WHEN artist IS NULL OR length(CAST(artist AS BLOB)) BETWEEN 1 AND 512
+                     THEN artist END,
+                kind,
                 monotonic_at_ms, wall_clock_at_ms, clock_uncertainty_milliseconds
            FROM ride_music_event_v16;
          DROP TABLE ride_music_event_v16;",

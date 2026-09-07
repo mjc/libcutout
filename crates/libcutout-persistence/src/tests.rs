@@ -194,8 +194,28 @@ fn music_v16_migration_rebuilds_utf8_text_bounds() {
                  wall_clock_at_ms INTEGER NOT NULL CHECK (wall_clock_at_ms >= 0),
                  clock_uncertainty_milliseconds INTEGER NOT NULL CHECK (clock_uncertainty_milliseconds >= 0),
                  PRIMARY KEY (ride_id, sequence)
-             );
-             DROP TABLE ride_music_event_current;
+             );",
+        )
+        .unwrap();
+    let legacy_title = "é".repeat(300);
+    connection
+        .execute(
+            "INSERT INTO ride_music_history (ride_id, policy) VALUES (?1, 'human_readable')",
+            [ride.uuid().to_string()],
+        )
+        .unwrap();
+    connection
+        .execute(
+            "INSERT INTO ride_music_event
+                (ride_id, sequence, provider, title, kind, monotonic_at_ms,
+                 wall_clock_at_ms, clock_uncertainty_milliseconds)
+             VALUES (?1, 0, 'spotify', ?2, 'play', 110, 1700000000110, 5)",
+            rusqlite::params![ride.uuid().to_string(), legacy_title],
+        )
+        .unwrap();
+    connection
+        .execute_batch(
+            "DROP TABLE ride_music_event_current;
              ALTER TABLE ride_music_history DROP COLUMN last_observed_at_ms;
              ALTER TABLE ride_music_history DROP COLUMN deleted;
              PRAGMA user_version = 16;",
@@ -204,6 +224,10 @@ fn music_v16_migration_rebuilds_utf8_text_bounds() {
     drop(connection);
 
     let database = RideDatabase::open(&path).unwrap();
+    let history = database.music_history(ride).unwrap();
+    assert_eq!(history.status, crate::MusicHistoryStatus::Available);
+    assert_eq!(history.events.len(), 1);
+    assert_eq!(history.events[0].title(), None);
     database.shutdown().unwrap();
     let connection = Connection::open(&path).unwrap();
     let title = "é".repeat(257);
@@ -211,7 +235,7 @@ fn music_v16_migration_rebuilds_utf8_text_bounds() {
         "INSERT INTO ride_music_event
             (ride_id, sequence, provider, title, kind, monotonic_at_ms,
              wall_clock_at_ms, clock_uncertainty_milliseconds)
-         VALUES (?1, 0, 'spotify', ?2, 'play', 110, 1700000000110, 5)",
+         VALUES (?1, 1, 'spotify', ?2, 'play', 110, 1700000000110, 5)",
         rusqlite::params![ride.uuid().to_string(), title],
     );
     assert!(
@@ -258,6 +282,136 @@ fn music_history_rejects_sequence_gaps_on_read() {
             expected: 1
         })
     ));
+    database.shutdown().unwrap();
+    let _ = std::fs::remove_file(path);
+}
+
+#[test]
+fn redacted_history_masks_inconsistent_durable_metadata_on_read() {
+    let _guard = test_guard();
+    let path = music_test_path();
+    let database = RideDatabase::open(&path).unwrap();
+    let ride = database
+        .create_started_live_ride(1_700_000_000_000, 100, None)
+        .unwrap();
+    let event = MusicRideEvent::new(
+        MusicProvider::Spotify,
+        Some("track-1".to_owned()),
+        Some("Private title".to_owned()),
+        Some("Private artist".to_owned()),
+        MusicRideEventKind::Play,
+        MusicEventTiming {
+            observed_at: None,
+            monotonic_at: MonotonicTimestamp::new(110),
+            wall_clock_at: WallClockUnixTimestamp::new(1_700_000_000_110),
+            clock_uncertainty_milliseconds: 5,
+        },
+    )
+    .unwrap();
+    database
+        .save_music_event(ride, MusicHistoryPolicy::HumanReadable, 0, event)
+        .unwrap();
+    database
+        .save_music_history_policy(ride, MusicHistoryPolicy::OpaqueItem)
+        .unwrap();
+    database.shutdown().unwrap();
+    let connection = Connection::open(&path).unwrap();
+    connection
+        .execute(
+            "UPDATE ride_music_event SET title = 'Private title', artist = 'Private artist'
+             WHERE ride_id = ?1",
+            [ride.uuid().to_string()],
+        )
+        .unwrap();
+    drop(connection);
+    let database = RideDatabase::open(&path).unwrap();
+    let history = database.music_history(ride).unwrap();
+    assert_eq!(history.status, crate::MusicHistoryStatus::Redacted);
+    assert_eq!(history.events.len(), 1);
+    assert_eq!(
+        history.events[0]
+            .item_identifier()
+            .map(cutout_music::MusicIdentifier::as_str),
+        Some("track-1")
+    );
+    assert_eq!(history.events[0].title(), None);
+    assert_eq!(history.events[0].artist(), None);
+    database.shutdown().unwrap();
+    let _ = std::fs::remove_file(path);
+}
+
+#[test]
+fn live_music_write_rejects_an_invalid_durable_prefix() {
+    let _guard = test_guard();
+    let path = music_test_path();
+    let database = RideDatabase::open(&path).unwrap();
+    let ride = database
+        .create_started_live_ride(1_700_000_000_000, 100, None)
+        .unwrap();
+    for sequence in 0..3 {
+        database
+            .save_music_event(
+                ride,
+                MusicHistoryPolicy::HumanReadable,
+                sequence,
+                music_event(),
+            )
+            .unwrap();
+    }
+    database.shutdown().unwrap();
+    let connection = Connection::open(&path).unwrap();
+    connection
+        .execute(
+            "UPDATE ride_music_event SET monotonic_at_ms = 50
+             WHERE ride_id = ?1 AND sequence = 1",
+            [ride.uuid().to_string()],
+        )
+        .unwrap();
+    drop(connection);
+    let database = RideDatabase::open(&path).unwrap();
+    database
+        .transition_at(ride, RideEvent::Resume, 120)
+        .unwrap();
+    let result = database.record_music_event(ride, music_event());
+    assert!(
+        matches!(result, Err(StorageError::MusicEventOutOfOrder { .. })),
+        "unexpected result: {result:?}"
+    );
+    database.shutdown().unwrap();
+    let _ = std::fs::remove_file(path);
+}
+
+#[test]
+fn failed_policy_validation_does_not_commit_a_privacy_upgrade() {
+    let _guard = test_guard();
+    let path = music_test_path();
+    let database = RideDatabase::open(&path).unwrap();
+    let ride = database
+        .create_started_live_ride(1_700_000_000_000, 100, None)
+        .unwrap();
+    database
+        .save_music_event(ride, MusicHistoryPolicy::OpaqueItem, 0, music_event())
+        .unwrap();
+    database.shutdown().unwrap();
+    let connection = Connection::open(&path).unwrap();
+    connection
+        .execute(
+            "UPDATE ride_music_event SET item_identifier = ' '
+             WHERE ride_id = ?1",
+            [ride.uuid().to_string()],
+        )
+        .unwrap();
+    drop(connection);
+    let database = RideDatabase::open(&path).unwrap();
+    assert!(
+        database
+            .save_music_history_policy(ride, MusicHistoryPolicy::HumanReadable)
+            .is_err()
+    );
+    assert_eq!(
+        database.music_history_policy(ride).unwrap(),
+        MusicHistoryPolicy::OpaqueItem
+    );
     database.shutdown().unwrap();
     let _ = std::fs::remove_file(path);
 }

@@ -65,20 +65,6 @@ fn snapshot(observed_at_ms: u64) -> MobileMusicSnapshotDto {
     }
 }
 
-fn raw_event(monotonic_at_ms: u64) -> MobileMusicRideEventDto {
-    MobileMusicRideEventDto {
-        provider: MobileMusicProviderDto::Spotify,
-        item_identifier: Some("track".into()),
-        title: Some("Title".into()),
-        artist: Some("Artist".into()),
-        kind: MobileMusicRideEventKindDto::Play,
-        observed_at_ms: Some(monotonic_at_ms),
-        monotonic_at_ms,
-        wall_clock_at_ms: 1_700_000_000_000 + monotonic_at_ms,
-        clock_uncertainty_ms: 5,
-    }
-}
-
 fn record(
     core: &MobileRideMapCore,
     observed: u64,
@@ -395,64 +381,19 @@ fn stale_core_cannot_change_policy_after_durable_ride_stop() {
 }
 
 #[test]
-fn exported_music_writer_rejects_stopped_rides() {
-    let fixture = setup();
-    fixture.core.stop_at(3_000).unwrap();
-    assert_eq!(
-        fixture.db.save_music_event(
-            fixture.id.clone(),
-            MobileMusicHistoryPolicyDto::HumanReadable,
-            0,
-            raw_event(3_000),
-        ),
-        Err(MobileRideDatabaseError::InvalidRideState)
-    );
-    assert!(
-        fixture
-            .db
-            .music_events(fixture.id.clone())
-            .unwrap()
-            .is_empty()
-    );
-}
-
-#[test]
-fn exported_music_writer_does_not_opt_in_missing_policy() {
-    let fixture = setup_policy(None);
-    fixture
-        .db
-        .save_music_event(
-            fixture.id.clone(),
-            MobileMusicHistoryPolicyDto::HumanReadable,
-            0,
-            raw_event(2_000),
-        )
-        .unwrap();
-    assert_eq!(
-        fixture.db.music_history(fixture.id.clone()).unwrap().status,
-        MobileMusicHistoryStatusDto::Missing
-    );
-    assert!(
-        fixture
-            .db
-            .music_events(fixture.id.clone())
-            .unwrap()
-            .is_empty()
-    );
-}
-
-#[test]
 fn historical_redaction_does_not_opt_in_an_interrupted_ride() {
     let fixture = setup_policy(Some(MobileMusicHistoryPolicyDto::Disabled));
     fixture
         .db
         .transition(fixture.id.clone(), MobileRideEventDto::Interrupt, 2_000)
         .unwrap();
-    let result = fixture.db.save_music_history_policy(
-        fixture.id.clone(),
-        MobileMusicHistoryPolicyDto::OpaqueItem,
+    let result = fixture
+        .db
+        .save_music_history_policy(fixture.id.clone(), MobileMusicHistoryPolicyDto::OpaqueItem);
+    assert!(
+        result.is_err(),
+        "historical opt-in must be rejected: {result:?}"
     );
-    assert!(result.is_err(), "historical opt-in must be rejected: {result:?}");
     assert_eq!(
         fixture.db.music_history(fixture.id.clone()).unwrap().status,
         MobileMusicHistoryStatusDto::Disabled
