@@ -357,6 +357,7 @@ struct LightingPlaybackControls: View {
             }
             .buttonStyle(.borderedProminent)
             .tint(page == .effects ? .purple : .pink)
+            .disabled(page == .effects && !canSendPattern(pattern))
             .accessibilityIdentifier("lighting.play-mode")
             if page == .music {
                 Button("Stop music mode") { model.stopMusic() }
