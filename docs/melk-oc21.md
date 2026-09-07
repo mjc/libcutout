@@ -72,7 +72,7 @@ the official app.
 - MELK readiness is gated on both the FFF4 notification subscription and the
   documented two-frame initialization handshake. Reconnect and failure paths
   cancel any delayed second frame before clearing the session.
-- Color drag retains the existing 30 Hz preview path. Complete playback changes
+- Color drag retains the existing 30 Hz preview path; queued superseded solid-color frames are coalesced so the newest drag value is preserved under BLE backpressure. Complete playback changes
   are validated in Rust and admitted together to a bounded Bluetooth write queue.
   CoreBluetooth backpressure pauses draining; disconnect discards pending writes.
 - Effects and controller-microphone music modes are saved with named presets.
