@@ -1789,6 +1789,14 @@ impl MobileMelkLightingProfile {
             .map(|_| Arc::new(Self))
             .ok_or(MobileMelkLightingError::InvalidGattEvidence)
     }
+    /// Returns the MELK login sequence required by some firmware revisions.
+    #[must_use]
+    pub fn initialization(&self) -> Vec<MobileMelkLightingWriteDto> {
+        MelkLightingProfile::initialization_actions()
+            .into_iter()
+            .map(mobile_melk_transport_action)
+            .collect()
+    }
 
     /// Creates an on/off command write.
     #[must_use]
@@ -1892,6 +1900,23 @@ mod melk_lighting_tests {
         assert_eq!(write.mode, MobileMelkLightingWriteModeDto::WithoutResponse);
         assert_eq!(write.minimum_interval_ms, None);
         assert_eq!(write.payload, [0x7e, 0x00, 0x04, 0x01, 0, 0, 0, 0, 0xef]);
+    }
+    #[test]
+    fn initialization_writes_use_the_melk_write_channel() {
+        let writes = observed_profile().initialization();
+        assert_eq!(writes.len(), 2);
+        assert_eq!(writes[0].payload, [0x7e, 0x07, 0x83]);
+        assert_eq!(writes[1].payload, [0x7e, 0x04, 0x04]);
+        assert!(
+            writes
+                .iter()
+                .all(|write| write.characteristic == MELK_WRITE_CHANNEL.as_bytes())
+        );
+        assert!(
+            writes
+                .iter()
+                .all(|write| write.mode == MobileMelkLightingWriteModeDto::WithoutResponse)
+        );
     }
 
     #[test]

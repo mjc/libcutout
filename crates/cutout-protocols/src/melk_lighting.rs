@@ -216,6 +216,30 @@ impl MelkLightingProfile {
     pub fn write_action(command: RgbLightingCommand) -> TransportAction {
         Self::write_frame(Self::encode(command))
     }
+    /// Returns the MELK initialization sequence required by some firmware revisions.
+    ///
+    /// The public ELK-BLEDOM integration documents these two login frames for MELK devices.
+    /// They are sent once after the FFF3 write characteristic is discovered and before user
+    /// commands are admitted.
+    #[must_use]
+    pub fn initialization_actions() -> [TransportAction; 2] {
+        [
+            Self::write_bytes(&[0x7e, 0x07, 0x83]),
+            Self::write_bytes(&[0x7e, 0x04, 0x04]),
+        ]
+    }
+
+    fn write_bytes(bytes: &[u8]) -> TransportAction {
+        let Ok(bytes) = WritePayload::try_from_slice(bytes) else {
+            unreachable!("fixed MELK initialization frames fit the bounded transport payload");
+        };
+        let policy = Self::write_policy();
+        TransportAction::Write {
+            channel: policy.channel,
+            bytes,
+            mode: policy.mode,
+        }
+    }
 
     fn write_frame(frame: [u8; MELK_FRAME_LEN]) -> TransportAction {
         let Ok(bytes) = WritePayload::try_from_slice(&frame) else {
@@ -390,6 +414,20 @@ mod tests {
         );
         assert_eq!(bytes.len(), MELK_FRAME_LEN);
         assert!(bytes.is_inline());
+    }
+
+    #[test]
+    fn initialization_actions_emit_the_documented_login_sequence() {
+        let actions = MelkLightingProfile::initialization_actions();
+        assert_eq!(payload(&actions[0]), [0x7e, 0x07, 0x83]);
+        assert_eq!(payload(&actions[1]), [0x7e, 0x04, 0x04]);
+        for action in actions {
+            let TransportAction::Write { channel, mode, .. } = action else {
+                panic!("initialization must produce writes");
+            };
+            assert_eq!(channel, MELK_WRITE_CHANNEL);
+            assert_eq!(mode, WriteMode::WithoutResponse);
+        }
     }
 
     #[test]

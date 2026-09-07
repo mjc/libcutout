@@ -11,6 +11,10 @@ specifically `models.json`, `definitions.json`, `model.py`, and `elkbledom.py`.
 The user's nRF Connect inventory establishes FFF0 service, FFF3 read/write
 without response, and FFF4 notify. The advertisement does not include FFF0:
 scan without a service filter, then check identity and discovered GATT roles.
+The same upstream integration documents a MELK initialization handshake: send
+`7e 07 83`, wait one second, then send `7e 04 04`. Production performs this
+one-time sequence after FFF3 discovery and before admitting user commands; it is
+initialization, not command confirmation.
 
 Power, solid RGB, and brightness were physically confirmed before this extension.
 On 2026-09-06 the user reported that the first ten pattern entries and the four
@@ -63,6 +67,9 @@ the official app.
 
 - Lighting is accessible from Ride or directly from the device picker. Its
   independent central remains separate from EUC/VESC telemetry.
+- MELK readiness is gated on both the FFF4 notification subscription and the
+  documented two-frame initialization handshake. Reconnect and failure paths
+  cancel any delayed second frame before clearing the session.
 - Color drag retains the existing 30 Hz preview path. Complete playback changes
   are validated in Rust and admitted together to a bounded Bluetooth write queue.
   CoreBluetooth backpressure pauses draining; disconnect discards pending writes.

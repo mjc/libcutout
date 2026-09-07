@@ -688,6 +688,11 @@ final class CutoutAppRouteTests: XCTestCase {
         ))
         XCTAssertEqual(plan.confirmationChannel, notify)
         XCTAssertEqual(harness.subscription, .subscribe(channel: notify))
+        let initialization = try harness.initialization()
+        XCTAssertEqual(initialization.map(\.operation), [
+            .writeWithoutResponse(channel: write, bytes: Data([0x7e, 0x07, 0x83])),
+            .writeWithoutResponse(channel: write, bytes: Data([0x7e, 0x04, 0x04]))
+        ])
     }
 
     func testMELKProfileRejectsUnverifiedIdentityAndCharacteristicRoles() {

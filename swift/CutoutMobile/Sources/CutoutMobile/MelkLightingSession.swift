@@ -127,6 +127,10 @@ struct MelkLightingCommandProfile: Sendable {
         }
         subscription = .subscribe(channel: notifyCharacteristic.uuid)
     }
+    func initialization() throws -> [MelkLightingWritePlan] {
+        try profile.initialization().map { try plan($0) }
+    }
+
 
     func setPower(_ on: Bool) throws -> MelkLightingWritePlan {
         try plan(profile.setPower(on: on))
@@ -255,6 +259,9 @@ public final class MelkLightingPeripheralSession: NSObject, CBCentralManagerDele
     private var targetPolicy = MelkLightingTargetPolicy(preferredPlatformIdentifier: nil)
     private var reconnectEnabled = true
     private var pendingWrites: [MelkLightingWritePlan] = []
+    private var pendingInitialization: [MelkLightingWritePlan] = []
+    private var initializationTask: DispatchWorkItem?
+    private var notificationReady = false
 
     public private(set) var connectionState: MelkLightingPeripheralState = .idle
     public private(set) var peripheralName: String?
@@ -306,6 +313,7 @@ public final class MelkLightingPeripheralSession: NSObject, CBCentralManagerDele
         onQueue {
             reconnectEnabled = false
             reconnectController.cancel()
+            resetInitialization()
             if commandEvidence.status == .requested {
                 commandEvidence.unconfirmed()
             }
@@ -603,6 +611,9 @@ public final class MelkLightingPeripheralSession: NSObject, CBCentralManagerDele
                 )
                 harness = candidate
                 sink = CoreBluetoothPeripheralOperationSink(peripheral: peripheral)
+                pendingInitialization = try candidate.initialization()
+                notificationReady = false
+                drainInitialization()
                 if case let .subscribe(channel) = candidate.subscription {
                     sink?.subscribe(channel: channel)
                 }
@@ -627,8 +638,8 @@ public final class MelkLightingPeripheralSession: NSObject, CBCentralManagerDele
                 transition(to: .failed(error.map(String.init(describing:)) ?? "FFF4 notify unavailable"))
                 return
             }
-            transition(to: .ready)
-            record("notify_state=true")
+            notificationReady = true
+            finishReadyIfPossible()
         }
     }
 
@@ -664,6 +675,53 @@ public final class MelkLightingPeripheralSession: NSObject, CBCentralManagerDele
         return true
     }
 
+    private func drainInitialization() {
+        guard connectionState == .discovering,
+              initializationTask == nil,
+              let peripheral,
+              let sink,
+              !pendingInitialization.isEmpty,
+              peripheral.canSendWriteWithoutResponse else {
+            return
+        }
+        let plan = pendingInitialization.removeFirst()
+        guard case let .writeWithoutResponse(channel, bytes) = plan.operation else {
+            resetInitialization()
+            transition(to: .failed("invalid MELK initialization write"))
+            return
+        }
+        sink.writeWithoutResponse(channel: channel, bytes: bytes)
+        record("initialization=\(bytes.map { String(format: "%02x", $0) }.joined())")
+        guard !pendingInitialization.isEmpty else {
+            finishReadyIfPossible()
+            return
+        }
+
+        let task = DispatchWorkItem { [weak self, weak peripheral] in
+            guard let self, let peripheral else { return }
+            self.onQueue {
+                guard self.peripheral === peripheral,
+                      self.connectionState == .discovering else {
+                    return
+                }
+                self.initializationTask = nil
+                self.drainInitialization()
+            }
+        }
+        initializationTask = task
+        queue.asyncAfter(deadline: .now() + 1, execute: task)
+    }
+
+    private func finishReadyIfPossible() {
+        guard notificationReady,
+              pendingInitialization.isEmpty,
+              initializationTask == nil else {
+            return
+        }
+        transition(to: .ready)
+        record("notify_state=true")
+    }
+
     private func drainWrites() {
         guard connectionState == .ready, let peripheral, let sink else { return }
         while peripheral.canSendWriteWithoutResponse, !pendingWrites.isEmpty {
@@ -678,6 +736,7 @@ public final class MelkLightingPeripheralSession: NSObject, CBCentralManagerDele
     public func peripheralIsReady(toSendWriteWithoutResponse peripheral: CBPeripheral) {
         onQueue {
             guard peripheral === self.peripheral else { return }
+            drainInitialization()
             drainWrites()
         }
     }
@@ -715,9 +774,19 @@ public final class MelkLightingPeripheralSession: NSObject, CBCentralManagerDele
     }
 
     private func transition(to state: MelkLightingPeripheralState) {
-        if state != .ready { pendingWrites.removeAll() }
+        if state != .ready {
+            pendingWrites.removeAll()
+            resetInitialization()
+        }
         connectionState = state
         onStateChange?(state)
+    }
+
+    private func resetInitialization() {
+        initializationTask?.cancel()
+        initializationTask = nil
+        pendingInitialization.removeAll(keepingCapacity: true)
+        notificationReady = false
     }
 
     private func record(_ message: String) {
