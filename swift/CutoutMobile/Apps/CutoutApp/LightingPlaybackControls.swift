@@ -6,6 +6,7 @@ enum LightingControlPage: String, CaseIterable {
     case color
     case effects
     case music
+    case schedule
 
     var title: String {
         localizedAppText("lighting.page.\(rawValue)")

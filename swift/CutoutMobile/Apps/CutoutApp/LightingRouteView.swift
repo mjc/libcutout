@@ -26,18 +26,22 @@ struct LightingRouteView: View {
                     hue: $hue,
                     saturation: $saturation
                 )
-                LightingBrightnessControl(
-                    brightness: $brightness,
-                    isEnabled: model.isReady,
-                    onCommit: commitBrightness
-                )
-                LightingPresetsCard(
-                    model: model,
-                    isEnabled: model.isReady,
-                    hue: $hue,
-                    saturation: $saturation
-                )
-                LightingScheduleControls(model: model)
+                if page != .schedule {
+                    LightingBrightnessControl(
+                        brightness: $brightness,
+                        isEnabled: model.isReady,
+                        onCommit: commitBrightness
+                    )
+                    LightingPresetsCard(
+                        model: model,
+                        isEnabled: model.isReady,
+                        hue: $hue,
+                        saturation: $saturation
+                    )
+                }
+                if page == .schedule {
+                    LightingScheduleControls(model: model)
+                }
                 LightingErrorBanner(error: model.controlError)
             }
             .padding(.horizontal, 20)
@@ -110,13 +114,18 @@ private struct LightingControlSurface: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
-            if page == .color {
+            switch page {
+            case .color:
                 LightingColorControls(model: model, hue: $hue, saturation: $saturation)
-            } else {
+            case .effects, .music:
                 LightingCard {
                     LightingPowerToggle(model: model)
                 }
                 LightingPlaybackControls(model: model, page: page)
+            case .schedule:
+                LightingCard {
+                    LightingPowerToggle(model: model)
+                }
             }
         }
     }

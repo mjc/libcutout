@@ -61,6 +61,10 @@
       "comment" : "Lighting controls page label.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Music" } } }
     },
+    "lighting.page.schedule" : {
+      "comment" : "Lighting controls page label.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Schedule" } } }
+    },
     "lighting.title" : {
       "comment" : "Lighting screen title.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Lighting" } } }

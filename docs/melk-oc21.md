@@ -76,6 +76,7 @@ the official app.
 
 - Lighting is accessible from Ride or directly from the device picker. Its
   independent central remains separate from EUC/VESC telemetry.
+  Schedules are presented as their own Lighting page alongside Color, Effects, and Music.
 - MELK readiness is gated on both the FFF4 notification subscription and the
   documented two-frame initialization handshake. Reconnect and failure paths
   cancel any delayed second frame before clearing the session.

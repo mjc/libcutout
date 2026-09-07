@@ -1015,6 +1015,10 @@ final class CutoutAppRouteTests: XCTestCase {
         XCTAssertEqual(model.requestedPlayback, .music(effect: 2, sensitivity: 75))
     }
 
+    func testLightingControlPagesResolveFromTheAppCatalog() {
+        XCTAssertEqual(LightingControlPage.allCases.map(\.title), ["Color", "Effects", "Music", "Schedule"])
+    }
+
     func testLightingPatternNamesKeepWireIDsAndUnmappedModesExplicit() {
         let groups = LightingPatternCatalog.groups
         XCTAssertEqual(groups.flatMap(\.ids).sorted(), Array(0...220))
