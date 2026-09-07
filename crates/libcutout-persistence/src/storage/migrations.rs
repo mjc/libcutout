@@ -1,7 +1,7 @@
 use super::{MapPointId, SpatialRowId, StorageError};
 use rusqlite::{Connection, OptionalExtension, params};
 
-const CURRENT_SCHEMA_VERSION: i64 = 15;
+const CURRENT_SCHEMA_VERSION: i64 = 18;
 const APPLICATION_ID: i64 = 0x4355_544f;
 fn current_schema_pragmas() -> String {
     format!(
@@ -35,6 +35,9 @@ pub(super) fn migrate(connection: &mut Connection) -> Result<(), StorageError> {
         12 => migrate_v12_to_current(connection)?,
         13 => migrate_v13_to_current(connection)?,
         14 => migrate_v14_to_current(connection)?,
+        15 => migrate_v15_to_current(connection)?,
+        16 => migrate_v16_to_current(connection)?,
+        17 => migrate_v17_to_current(connection)?,
         CURRENT_SCHEMA_VERSION => {
             if application_id != APPLICATION_ID {
                 return Err(StorageError::InvalidDatabaseIdentity);
@@ -163,6 +166,26 @@ pub(crate) fn create_current_schema(connection: &Connection) -> Result<(), Stora
             PRIMARY KEY (ride_id, sequence),
             UNIQUE (ride_id, monotonic_ms, wall_clock_ms, latitude_e7, longitude_e7),
             FOREIGN KEY (ride_id, segment_id) REFERENCES ride_segments(ride_id, segment_id)
+        );
+        CREATE TABLE ride_music_history (
+            ride_id TEXT PRIMARY KEY NOT NULL REFERENCES rides(id) ON DELETE CASCADE,
+            policy TEXT NOT NULL CHECK (policy IN ('disabled', 'opaque_item', 'human_readable')),
+            deleted INTEGER NOT NULL DEFAULT 0 CHECK (deleted IN (0, 1)),
+            last_observed_at_ms INTEGER CHECK (last_observed_at_ms IS NULL OR last_observed_at_ms >= 0)
+        );
+        CREATE TABLE ride_music_event (
+            ride_id TEXT NOT NULL REFERENCES rides(id) ON DELETE CASCADE,
+            sequence INTEGER NOT NULL CHECK (sequence >= 0),
+            provider TEXT NOT NULL CHECK (provider IN ('apple_music', 'spotify')),
+            item_identifier TEXT CHECK (item_identifier IS NULL OR length(CAST(item_identifier AS BLOB)) BETWEEN 1 AND 256),
+            title TEXT CHECK (title IS NULL OR length(CAST(title AS BLOB)) BETWEEN 1 AND 512),
+            artist TEXT CHECK (artist IS NULL OR length(CAST(artist AS BLOB)) BETWEEN 1 AND 512),
+            kind TEXT NOT NULL CHECK (kind IN ('play', 'pause', 'skip', 'item_changed', 'stopped', 'provider_disconnected')),
+            monotonic_at_ms INTEGER NOT NULL CHECK (monotonic_at_ms >= 0),
+            wall_clock_at_ms INTEGER NOT NULL CHECK (wall_clock_at_ms >= 0),
+            clock_uncertainty_milliseconds INTEGER NOT NULL CHECK (clock_uncertainty_milliseconds >= 0),
+            observed_at_ms INTEGER CHECK (observed_at_ms IS NULL OR observed_at_ms BETWEEN 0 AND monotonic_at_ms),
+            PRIMARY KEY (ride_id, sequence)
         );
         CREATE TABLE selected_device (
             singleton_key BLOB PRIMARY KEY NOT NULL CHECK (length(singleton_key) = 16),
@@ -776,8 +799,8 @@ fn migrate_v13_to_current(connection: &mut Connection) -> Result<(), StorageErro
 fn migrate_v14_to_current(connection: &mut Connection) -> Result<(), StorageError> {
     verify_legacy_schema(connection)?;
     if table_has_column(connection, "ride_segments", "point_count")? {
-        connection.execute_batch(&current_schema_pragmas())?;
-        return Ok(());
+        connection.execute_batch("PRAGMA user_version = 15;")?;
+        return migrate_v15_to_current(connection);
     }
     let transaction = connection.transaction()?;
     transaction.execute_batch(
@@ -793,6 +816,129 @@ fn migrate_v14_to_current(connection: &mut Connection) -> Result<(), StorageErro
          WHERE ride_segments.ride_id = counts.ride_id
            AND ride_segments.segment_id = counts.segment_id;
          ",
+    )?;
+    transaction.execute_batch("PRAGMA user_version = 15;")?;
+    transaction.commit()?;
+    migrate_v15_to_current(connection)
+}
+
+fn migrate_v15_to_current(connection: &mut Connection) -> Result<(), StorageError> {
+    verify_legacy_schema(connection)?;
+    let transaction = connection.transaction()?;
+    transaction.execute_batch(
+        "CREATE TABLE IF NOT EXISTS ride_music_history (
+             ride_id TEXT PRIMARY KEY NOT NULL REFERENCES rides(id) ON DELETE CASCADE,
+             policy TEXT NOT NULL CHECK (policy IN ('disabled', 'opaque_item', 'human_readable'))
+         );
+         CREATE TABLE IF NOT EXISTS ride_music_event (
+             ride_id TEXT NOT NULL REFERENCES rides(id) ON DELETE CASCADE,
+             sequence INTEGER NOT NULL CHECK (sequence >= 0),
+             provider TEXT NOT NULL CHECK (provider IN ('apple_music', 'spotify')),
+             item_identifier TEXT CHECK (item_identifier IS NULL OR length(CAST(item_identifier AS BLOB)) BETWEEN 1 AND 256),
+             title TEXT CHECK (title IS NULL OR length(CAST(title AS BLOB)) BETWEEN 1 AND 512),
+             artist TEXT CHECK (artist IS NULL OR length(CAST(artist AS BLOB)) BETWEEN 1 AND 512),
+             kind TEXT NOT NULL CHECK (kind IN ('play', 'pause', 'skip', 'item_changed', 'stopped', 'provider_disconnected')),
+             monotonic_at_ms INTEGER NOT NULL CHECK (monotonic_at_ms >= 0),
+             wall_clock_at_ms INTEGER NOT NULL CHECK (wall_clock_at_ms >= 0),
+             clock_uncertainty_milliseconds INTEGER NOT NULL CHECK (clock_uncertainty_milliseconds >= 0),
+             PRIMARY KEY (ride_id, sequence)
+         );
+         ",
+    )?;
+    transaction.execute_batch("PRAGMA user_version = 16;")?;
+    transaction.commit()?;
+    migrate_v16_to_current(connection)
+}
+
+fn migrate_v16_to_current(connection: &mut Connection) -> Result<(), StorageError> {
+    verify_legacy_schema(connection)?;
+    let transaction = connection.transaction()?;
+    transaction.execute_batch(
+        "ALTER TABLE ride_music_event RENAME TO ride_music_event_v16;
+         CREATE TABLE ride_music_event (
+             ride_id TEXT NOT NULL REFERENCES rides(id) ON DELETE CASCADE,
+             sequence INTEGER NOT NULL CHECK (sequence >= 0),
+             provider TEXT NOT NULL CHECK (provider IN ('apple_music', 'spotify')),
+             item_identifier TEXT CHECK (item_identifier IS NULL OR length(CAST(item_identifier AS BLOB)) BETWEEN 1 AND 256),
+             title TEXT CHECK (title IS NULL OR length(CAST(title AS BLOB)) BETWEEN 1 AND 512),
+             artist TEXT CHECK (artist IS NULL OR length(CAST(artist AS BLOB)) BETWEEN 1 AND 512),
+             kind TEXT NOT NULL CHECK (kind IN ('play', 'pause', 'skip', 'item_changed', 'stopped', 'provider_disconnected')),
+             monotonic_at_ms INTEGER NOT NULL CHECK (monotonic_at_ms >= 0),
+             wall_clock_at_ms INTEGER NOT NULL CHECK (wall_clock_at_ms >= 0),
+             clock_uncertainty_milliseconds INTEGER NOT NULL CHECK (clock_uncertainty_milliseconds >= 0),
+             observed_at_ms INTEGER CHECK (observed_at_ms IS NULL OR observed_at_ms BETWEEN 0 AND monotonic_at_ms),
+             PRIMARY KEY (ride_id, sequence)
+         );
+         INSERT INTO ride_music_event
+             (ride_id, sequence, provider, item_identifier, title, artist, kind,
+              monotonic_at_ms, wall_clock_at_ms, clock_uncertainty_milliseconds)
+         SELECT ride_id, sequence, provider,
+                CASE WHEN item_identifier IS NULL
+                          OR length(CAST(item_identifier AS BLOB)) BETWEEN 1 AND 256
+                     THEN item_identifier END,
+                CASE WHEN title IS NULL OR length(CAST(title AS BLOB)) BETWEEN 1 AND 512
+                     THEN title END,
+                CASE WHEN artist IS NULL OR length(CAST(artist AS BLOB)) BETWEEN 1 AND 512
+                     THEN artist END,
+                kind,
+                monotonic_at_ms, wall_clock_at_ms, clock_uncertainty_milliseconds
+           FROM ride_music_event_v16;
+         DROP TABLE ride_music_event_v16;",
+    )?;
+    for (table, column, definition) in [
+        (
+            "ride_music_history",
+            "deleted",
+            "INTEGER NOT NULL DEFAULT 0 CHECK (deleted IN (0, 1))",
+        ),
+        (
+            "ride_music_history",
+            "last_observed_at_ms",
+            "INTEGER CHECK (last_observed_at_ms IS NULL OR last_observed_at_ms >= 0)",
+        ),
+        (
+            "ride_music_event",
+            "observed_at_ms",
+            "INTEGER CHECK (observed_at_ms IS NULL OR observed_at_ms BETWEEN 0 AND monotonic_at_ms)",
+        ),
+    ] {
+        if !table_has_column(&transaction, table, column)? {
+            transaction.execute_batch(&format!(
+                "ALTER TABLE {table} ADD COLUMN {column} {definition};"
+            ))?;
+        }
+    }
+    transaction.execute_batch(&current_schema_pragmas())?;
+    transaction.commit()?;
+    Ok(())
+}
+
+fn migrate_v17_to_current(connection: &mut Connection) -> Result<(), StorageError> {
+    verify_legacy_schema(connection)?;
+    let transaction = connection.transaction()?;
+    transaction.execute_batch(
+        "ALTER TABLE ride_music_event RENAME TO ride_music_event_v17;
+         CREATE TABLE ride_music_event (
+             ride_id TEXT NOT NULL REFERENCES rides(id) ON DELETE CASCADE,
+             sequence INTEGER NOT NULL CHECK (sequence >= 0),
+             provider TEXT NOT NULL CHECK (provider IN ('apple_music', 'spotify')),
+             item_identifier TEXT CHECK (item_identifier IS NULL OR length(CAST(item_identifier AS BLOB)) BETWEEN 1 AND 256),
+             title TEXT CHECK (title IS NULL OR length(CAST(title AS BLOB)) BETWEEN 1 AND 512),
+             artist TEXT CHECK (artist IS NULL OR length(CAST(artist AS BLOB)) BETWEEN 1 AND 512),
+             kind TEXT NOT NULL CHECK (kind IN ('play', 'pause', 'skip', 'item_changed', 'stopped', 'provider_disconnected')),
+             monotonic_at_ms INTEGER NOT NULL CHECK (monotonic_at_ms >= 0),
+             wall_clock_at_ms INTEGER NOT NULL CHECK (wall_clock_at_ms >= 0),
+             clock_uncertainty_milliseconds INTEGER NOT NULL CHECK (clock_uncertainty_milliseconds >= 0),
+             observed_at_ms INTEGER CHECK (observed_at_ms IS NULL OR observed_at_ms BETWEEN 0 AND monotonic_at_ms),
+             PRIMARY KEY (ride_id, sequence)
+         );
+         INSERT INTO ride_music_event
+             (ride_id, sequence, provider, item_identifier, title, artist, kind,
+              monotonic_at_ms, wall_clock_at_ms, clock_uncertainty_milliseconds, observed_at_ms)
+         SELECT ride_id, sequence, provider, item_identifier, title, artist, kind,
+                monotonic_at_ms, wall_clock_at_ms, clock_uncertainty_milliseconds, observed_at_ms
+           FROM ride_music_event_v17;
+         DROP TABLE ride_music_event_v17;",
     )?;
     transaction.execute_batch(&current_schema_pragmas())?;
     transaction.commit()?;
@@ -835,6 +981,8 @@ pub(super) fn verify_current_schema(connection: &Connection) -> Result<(), Stora
         "map_points",
         "map_point_spatial_keys",
         "map_points_rtree",
+        "ride_music_history",
+        "ride_music_event",
     ] {
         let exists: bool = connection.query_row(
             "SELECT EXISTS(SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = ?1)",

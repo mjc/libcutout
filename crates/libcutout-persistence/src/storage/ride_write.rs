@@ -41,6 +41,10 @@ pub(super) struct RideWriteState {
 }
 
 impl RideWriteState {
+    pub(super) const fn lifecycle(&self) -> RideLifecycleState {
+        self.lifecycle
+    }
+
     #[cfg(test)]
     pub(super) const fn with_duration(
         source: RideSource,
@@ -112,6 +116,10 @@ impl RideWriteState {
         occurred_at_ms: u64,
         monotonic_at_ms: Option<u64>,
     ) -> Result<RideTransition, TransitionError> {
+        if self.resume_crosses_monotonic_epoch(event, monotonic_at_ms) {
+            // A lower uptime cannot belong to the interrupted ride's monotonic epoch.
+            return Err(TransitionError::Invalid);
+        }
         let lifecycle = self.lifecycle.apply(event)?;
         let mut monotonic_created_at_ms = self.monotonic_created_at_ms;
         let mut monotonic_last_event_ms = self.monotonic_last_event_ms;
@@ -150,11 +158,15 @@ impl RideWriteState {
                 (RideLifecycleState::Active, RideLifecycleState::Paused) => {
                     paused_at_ms = Some(at);
                 }
-                (RideLifecycleState::Paused, RideLifecycleState::Active) => {
-                    if let Some(paused_at) = paused_at_ms.take() {
-                        paused_duration_ms =
-                            paused_duration_ms.saturating_add(at.saturating_sub(paused_at));
-                    }
+                (
+                    RideLifecycleState::Paused | RideLifecycleState::Interrupted,
+                    RideLifecycleState::Active,
+                ) => {
+                    let excluded_duration = paused_at_ms.take().map_or_else(
+                        || at.saturating_sub(self.monotonic_last_event_ms.unwrap_or(at)),
+                        |paused_at| at.saturating_sub(paused_at),
+                    );
+                    paused_duration_ms = paused_duration_ms.saturating_add(excluded_duration);
                 }
                 (
                     RideLifecycleState::Active | RideLifecycleState::Paused,
@@ -201,6 +213,24 @@ impl RideWriteState {
             completed_duration_ms,
             updated_at_ms: self.updated_at_ms.max(occurred_at_ms),
         })
+    }
+
+    fn resume_crosses_monotonic_epoch(
+        self,
+        event: RideEvent,
+        monotonic_at_ms: Option<u64>,
+    ) -> bool {
+        self.lifecycle == RideLifecycleState::Interrupted
+            && event == RideEvent::Resume
+            && monotonic_at_ms.is_none_or(|at| {
+                let floor = self
+                    .monotonic_last_event_ms
+                    .into_iter()
+                    .chain(self.latest_observed_monotonic_ms)
+                    .max()
+                    .or(self.monotonic_created_at_ms);
+                floor.is_some_and(|floor| at < floor)
+            })
     }
 
     pub(super) fn decide_location(
@@ -448,5 +478,74 @@ mod tests {
 
         assert_eq!(transition.paused_at_milliseconds(), Some(5_000));
         assert_eq!(transition.monotonic_last_event_milliseconds(), Some(5_000));
+    }
+
+    #[test]
+    fn interrupted_resume_excludes_the_interruption_gap() {
+        let state = RideWriteState::from_parts(&RideWriteStateParts {
+            source: RideSource::Live,
+            lifecycle: RideLifecycleState::Interrupted,
+            monotonic_created_at_ms: Some(1_000),
+            monotonic_last_event_ms: Some(3_000),
+            latest_observed_monotonic_ms: None,
+            paused_at_ms: None,
+            paused_duration_ms: 0,
+            completed_duration_ms: 2_000,
+            updated_at_ms: 20,
+        });
+
+        let transition = state
+            .transition_at(RideEvent::Resume, 30, Some(8_000))
+            .unwrap();
+        assert_eq!(transition.lifecycle(), RideLifecycleState::Active);
+        assert_eq!(transition.paused_duration_milliseconds(), 5_000);
+        assert_eq!(
+            active_duration_at(
+                transition.monotonic_created_at_milliseconds(),
+                9_000,
+                false,
+                transition.paused_at_milliseconds(),
+                transition.paused_duration_milliseconds(),
+            ),
+            3_000
+        );
+    }
+
+    #[test]
+    fn interrupted_resume_rejects_a_lower_monotonic_epoch() {
+        let state = RideWriteState::from_parts(&RideWriteStateParts {
+            source: RideSource::Live,
+            lifecycle: RideLifecycleState::Interrupted,
+            monotonic_created_at_ms: Some(1_000),
+            monotonic_last_event_ms: Some(9_000),
+            latest_observed_monotonic_ms: None,
+            paused_at_ms: None,
+            paused_duration_ms: 0,
+            completed_duration_ms: 8_000,
+            updated_at_ms: 20,
+        });
+        assert!(matches!(
+            state.transition_at(RideEvent::Resume, 30, Some(500)),
+            Err(TransitionError::Invalid)
+        ));
+    }
+
+    #[test]
+    fn interrupted_resume_requires_monotonic_time() {
+        let state = RideWriteState::from_parts(&RideWriteStateParts {
+            source: RideSource::Live,
+            lifecycle: RideLifecycleState::Interrupted,
+            monotonic_created_at_ms: Some(1_000),
+            monotonic_last_event_ms: Some(3_000),
+            latest_observed_monotonic_ms: None,
+            paused_at_ms: None,
+            paused_duration_ms: 0,
+            completed_duration_ms: 2_000,
+            updated_at_ms: 20,
+        });
+        assert!(matches!(
+            state.transition_at(RideEvent::Resume, 30, None),
+            Err(TransitionError::Invalid)
+        ));
     }
 }

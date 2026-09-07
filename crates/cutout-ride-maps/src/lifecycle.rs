@@ -28,7 +28,7 @@ pub enum RideEvent {
     Start,
     /// Pause an active recording.
     Pause,
-    /// Resume a paused recording.
+    /// Resume a paused or interrupted recording.
     Resume,
     /// Stop a recording cleanly.
     Stop,
@@ -50,7 +50,8 @@ impl RideLifecycleState {
     /// Returns [`TransitionError::Invalid`] when the event is not valid for the current state.
     pub fn apply(self, event: RideEvent) -> Result<Self, TransitionError> {
         let next = match (self, event) {
-            (Self::Draft, RideEvent::Start) | (Self::Paused, RideEvent::Resume) => Self::Active,
+            (Self::Draft, RideEvent::Start)
+            | (Self::Paused | Self::Interrupted, RideEvent::Resume) => Self::Active,
             (Self::Draft, RideEvent::Import) => Self::Imported,
             (Self::Active, RideEvent::Pause) => Self::Paused,
             (Self::Active | Self::Paused, RideEvent::Stop) => Self::Stopped,

@@ -2,6 +2,7 @@
 resolver = "3"
 members = [
     "crates/cutout-core",
+    "crates/cutout-music",
     "crates/cutout-ride-maps",
     "crates/libcutout-persistence",
     "crates/cutout-protocols",
@@ -12,6 +13,7 @@ members = [
 ]
 default-members = [
     "crates/cutout-core",
+    "crates/cutout-music",
     "crates/cutout-protocols",
     "crates/cutout-mobile-ffi",
     "crates/cutout-btle",

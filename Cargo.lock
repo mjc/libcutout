@@ -560,13 +560,23 @@ name = "cutout-mobile-ffi"
 version = "0.1.0"
 dependencies = [
  "cutout-core",
+ "cutout-music",
  "cutout-protocols",
  "cutout-ride-maps",
  "hex-literal",
  "libcutout-persistence",
+ "rusqlite",
  "thiserror 2.0.18",
  "uniffi",
  "uuid",
+]
+
+[[package]]
+name = "cutout-music"
+version = "0.1.0"
+dependencies = [
+ "cutout-core",
+ "thiserror 2.0.18",
 ]
 
 [[package]]
@@ -1143,6 +1153,7 @@ name = "libcutout-persistence"
 version = "0.1.0"
 dependencies = [
  "cutout-core",
+ "cutout-music",
  "cutout-ride-maps",
  "hex",
  "rusqlite",

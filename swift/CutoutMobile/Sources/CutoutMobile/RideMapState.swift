@@ -19,6 +19,7 @@ public enum MobileRideMapError: Error, Equatable, Hashable, Sendable {
     case invalidTransition
     case invalidLocation
     case invalidRouteProjection
+    case invalidMusicInput(String)
     case rideNotFound
     case cancelled
     case storageError(String)
@@ -760,6 +761,66 @@ public final class MobileRideMapState: @unchecked Sendable {
         try withCore { map(try $0.observeTelemetry(atMs: atMs)) }
     }
 
+    /// Sets the active ride's bounded music-history retention policy.
+    public func setMusicHistoryPolicy(_ policy: MobileMusicHistoryPolicyDto) throws {
+        try withCore { try $0.setMusicHistoryPolicy(policy: policy) }
+    }
+
+    /// Records one low-rate provider transition for the active ride.
+    public func recordMusicEvent(
+        snapshot: MobileMusicSnapshotDto,
+        kind: MobileMusicRideEventKindDto,
+        monotonicAtMs: UInt64,
+        wallClockAtMs: UInt64,
+        clockUncertaintyMs: UInt64
+    ) throws -> MobileMusicTimelineOutcomeDto {
+        try withCore {
+            try $0.recordMusicEvent(
+                snapshot: snapshot,
+                kind: kind,
+                monotonicAtMs: monotonicAtMs,
+                wallClockAtMs: wallClockAtMs,
+                clockUncertaintyMs: clockUncertaintyMs
+            )
+        }
+    }
+
+    /// Returns nil when a healthy core has no active ride. A storage initialization failure
+    /// returns an unavailable projection because active-ride state cannot be determined.
+    public func currentMusicHistory() -> MobileMusicHistoryDto? {
+        if let core { return core.currentMusicHistory() }
+        guard storageUnavailableError != nil else { return nil }
+        return MobileMusicHistoryDto(status: .unavailable, events: [])
+    }
+
+    /// Returns the active ride's authoritative bounded music timeline, or an empty array when
+    /// there is no active ride or music storage is unavailable. Use `currentMusicHistory()` when
+    /// callers need to distinguish those states from an empty timeline.
+    public func currentMusicEvents() -> [MobileMusicRideEventDto] {
+        core?.currentMusicEvents() ?? []
+    }
+
+    /// Returns a bounded stored music timeline for one ride.
+    public func storedMusicEvents(rideID: String) throws -> [MobileMusicRideEventDto] {
+        try withCore {
+            try $0.storedMusicEvents(rideId: MobileRideIdDto(value: rideID))
+        }
+    }
+
+    /// Permanently deletes stored music metadata for one ride.
+    public func deleteStoredMusicHistory(rideID: String) throws {
+        try withCore {
+            try $0.deleteStoredMusicHistory(rideId: MobileRideIdDto(value: rideID))
+        }
+    }
+
+    /// Redacts stored music metadata for one ride.
+    public func redactStoredMusicHistory(rideID: String) throws {
+        try withCore {
+            try $0.redactStoredMusicHistory(rideId: MobileRideIdDto(value: rideID))
+        }
+    }
+
     public func ingestLocation(
         monotonicMs: UInt64,
         wallClockUnixMs: UInt64,
@@ -1253,6 +1314,7 @@ public final class MobileRideMapState: @unchecked Sendable {
             case .NotFound: return .rideNotFound
             case .InvalidTransition, .InvalidRideState: return .invalidTransition
             case .Cancelled: return .cancelled
+            case let .InvalidMusicInput(message): return .invalidMusicInput(message)
             default: return .storageError(String(describing: error))
             }
         }
@@ -1267,6 +1329,7 @@ public final class MobileRideMapState: @unchecked Sendable {
         case .InvalidLocation: return .invalidLocation
         case .InvalidRouteProjection: return .invalidRouteProjection
         case .Cancelled: return .cancelled
+        case let .InvalidMusicInput(message): return .invalidMusicInput(message)
         case let .Storage(message): return .storageError(message)
         }
     }

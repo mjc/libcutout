@@ -3,6 +3,37 @@ import CutoutMobileFFI
 @testable import CutoutMobile
 
 final class RideMapStateTests: XCTestCase {
+    func testMusicHistoryProjectsRustRetentionAndObservationTime() throws {
+        let state = MobileRideMapState()
+        XCTAssertNil(state.currentMusicHistory())
+        _ = try state.startGpsOnly(atMs: 1_000, lastConnectedVehicle: nil)
+        XCTAssertEqual(state.currentMusicHistory()?.status, .missing)
+        try state.setMusicHistoryPolicy(.humanReadable)
+        let snapshot = MobileMusicSnapshotDto(
+            provider: .spotify, sessionId: "session", state: .playing,
+            item: MobileMusicItemDto(identifier: "track", title: "Song", artist: "Artist"),
+            positionMilliseconds: 10, durationMilliseconds: 100, observedAtMs: 2_000,
+            capabilities: MobileMusicCapabilitiesDto(previous: false, play: true, pause: true, next: true, openProvider: true)
+        )
+        XCTAssertEqual(try state.recordMusicEvent(snapshot: snapshot, kind: .play,
+            monotonicAtMs: 3_000, wallClockAtMs: 1_700_000_003_000, clockUncertaintyMs: 5), .recorded)
+        XCTAssertEqual(state.currentMusicHistory()?.events.first?.observedAtMs, 2_000)
+        try state.setMusicHistoryPolicy(.opaqueItem)
+        XCTAssertEqual(state.currentMusicHistory()?.status, .redacted)
+        let redactedEvents = state.currentMusicEvents()
+        XCTAssertEqual(redactedEvents.count, 1)
+        XCTAssertEqual(redactedEvents.first?.itemIdentifier, "track")
+        XCTAssertNil(redactedEvents.first?.title)
+        XCTAssertNil(redactedEvents.first?.artist)
+        try state.setMusicHistoryPolicy(.disabled)
+        XCTAssertEqual(state.currentMusicHistory()?.status, .disabled)
+        XCTAssertTrue(state.currentMusicEvents().isEmpty)
+        _ = try state.stop(atMs: 4_000)
+        _ = try state.discard()
+        XCTAssertNil(state.currentMusicHistory())
+    }
+
+
     func testHistoryContextOverviewBudgetIsBounded() {
         XCTAssertEqual(
             MobileRideMapHistoryContextBudget.overview,
@@ -167,6 +198,7 @@ final class RideMapStateTests: XCTestCase {
     func testStorageUnavailableStateCannotCreateAnInMemoryRide() {
         let state = MobileRideMapState(storageUnavailable: "database unavailable")
 
+        XCTAssertEqual(state.currentMusicHistory()?.status, .unavailable)
         XCTAssertEqual(state.initializationError, .storageError("database unavailable"))
         XCTAssertNil(state.currentSnapshot())
         XCTAssertEqual(state.pollLocationWrites(), [.storageError(message: "database unavailable")])
