@@ -585,7 +585,9 @@ public final class MelkLightingPeripheralSession: NSObject, CBCentralManagerDele
                 transition(to: .failed(error.map(String.init(describing:)) ?? "service discovery failed"))
                 return
             }
-            peripheral.services?.forEach { peripheral.discoverCharacteristics(nil, for: $0) }
+            peripheral.services?
+                .filter { $0.uuid == MelkLightingCommandProfile.service.coreBluetoothUuid }
+                .forEach { peripheral.discoverCharacteristics(nil, for: $0) }
         }
     }
 
@@ -595,7 +597,8 @@ public final class MelkLightingPeripheralSession: NSObject, CBCentralManagerDele
         error: Error?
     ) {
         onQueue {
-            guard peripheral === self.peripheral else { return }
+            guard peripheral === self.peripheral,
+                  service.uuid == MelkLightingCommandProfile.service.coreBluetoothUuid else { return }
             guard error == nil else {
                 transition(to: .failed(error.map(String.init(describing:)) ?? "characteristic discovery failed"))
                 return
