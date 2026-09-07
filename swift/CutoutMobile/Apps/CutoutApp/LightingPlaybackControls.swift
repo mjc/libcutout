@@ -469,7 +469,16 @@ struct LightingPlaybackControls: View {
     @State private var sensitivity = 50.0
 
     private let favorites = [1, 16, 22, 75]
-    private let musicNames = ["Energetic", "Rhythm", "Spectrum", "Rolling", "Energetic 2", "Rhythm 2", "Spectrum 2", "Rolling 2"]
+    private let musicNames = [
+        "Music Flow Flash (reference)",
+        "Music Flash (reference)",
+        "Music Rainbow (reference)",
+        "Music Snake (reference)",
+        "Music Rainbow 2 (reference)",
+        "Music Pulse (reference)",
+        "Music Flow (reference)",
+        "Music Pulse 2 (reference)",
+    ]
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
