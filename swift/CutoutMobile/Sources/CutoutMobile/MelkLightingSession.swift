@@ -664,15 +664,36 @@ public final class MelkLightingPeripheralSession: NSObject, CBCentralManagerDele
     private func submit(_ plans: [MelkLightingWritePlan]) -> Bool {
         // Admit a complete state together; never retain unbounded color-drag traffic.
         guard connectionState == .ready, sink != nil, peripheral != nil,
-              !plans.isEmpty, pendingWrites.count + plans.count <= 32,
+              !plans.isEmpty,
               plans.allSatisfy({
                   if case .writeWithoutResponse = $0.operation { return true }
                   return false
               }) else { return false }
+
+        if plans.allSatisfy(Self.isCoalescibleColorWrite) {
+            // A drag produces many superseded colors; keep only the newest one.
+            pendingWrites.removeAll(where: Self.isCoalescibleColorWrite)
+        }
+        guard pendingWrites.count + plans.count <= 32 else { return false }
+
         pendingWrites.append(contentsOf: plans)
         commandEvidence.requested()
         drainWrites()
         return true
+    }
+
+    private static func isCoalescibleColorWrite(_ plan: MelkLightingWritePlan) -> Bool {
+        guard plan.confirmationChannel == MelkLightingCommandProfile.notify,
+              case let .writeWithoutResponse(channel, bytes) = plan.operation,
+              channel == MelkLightingCommandProfile.write,
+              bytes.count == 9 else {
+            return false
+        }
+        return bytes[0] == 0x7e
+            && bytes[1] == 0
+            && bytes[2] == 5
+            && bytes[3] == 3
+            && bytes[8] == 0xef
     }
 
     private func drainInitialization() {
