@@ -52,6 +52,9 @@ struct LightingRouteView: View {
         .onChange(of: model.requestedBrightness) { _, value in
             brightness = Double(value)
         }
+        .onChange(of: model.requestedRed) { updateColorSelection() }
+        .onChange(of: model.requestedGreen) { updateColorSelection() }
+        .onChange(of: model.requestedBlue) { updateColorSelection() }
         .task {
             startLighting()
         }
