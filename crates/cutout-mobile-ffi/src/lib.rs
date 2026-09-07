@@ -6098,6 +6098,15 @@ struct PendingMapLocationWrite {
 }
 
 impl MobileRideMapCoreInner {
+    fn check_music_restore(&self) -> Result<(), MobileRideMapCoreErrorDto> {
+        if self.music_restore_failed {
+            return Err(MobileRideMapCoreErrorDto::Storage(
+                "music history restore failed".to_owned(),
+            ));
+        }
+        Ok(())
+    }
+
     fn transition_state(
         &mut self,
         event: MobileRideEventDto,
@@ -6837,11 +6846,7 @@ impl MobileRideMapCore {
         policy: MobileMusicHistoryPolicyDto,
     ) -> Result<(), MobileRideMapCoreErrorDto> {
         let state = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
-        if state.music_restore_failed {
-            return Err(MobileRideMapCoreErrorDto::Storage(
-                "music history restore failed".to_owned(),
-            ));
-        }
+        state.check_music_restore()?;
         let Some(ride_id) = state.active_ride_id.clone() else {
             return Err(MobileRideMapCoreErrorDto::NoActiveRide);
         };
@@ -6883,9 +6888,7 @@ impl MobileRideMapCore {
         let snapshot = CoreMusicSnapshot::try_from(snapshot)
             .map_err(MobileRideMapCoreErrorDto::InvalidMusicInput)?;
         let state = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
-        if state.music_restore_failed {
-            return Ok(MobileMusicTimelineOutcomeDto::Disabled);
-        }
+        state.check_music_restore()?;
         let Some(ride_id) = state.active_ride_id.clone() else {
             return Err(MobileRideMapCoreErrorDto::NoActiveRide);
         };
@@ -6941,6 +6944,7 @@ impl MobileRideMapCore {
             state
                 .database
                 .as_ref()
+                .filter(|_| !state.music_restore_failed)
                 .and_then(|database| database.music_history(ride_id.clone()).ok())
                 .unwrap_or(MobileMusicHistoryDto {
                     status: MobileMusicHistoryStatusDto::Unavailable,
@@ -16485,6 +16489,51 @@ mod tests {
             .expect("no-active-ride batches are ignored");
 
         assert!(decisions.is_empty());
+    }
+
+    #[test]
+    fn music_restore_failure_is_unavailable_and_does_not_disable_the_ride() {
+        let _guard = RIDE_DATABASE_TEST_LOCK
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        let path =
+            std::env::temp_dir().join(format!("cutout-music-restore-{}.sqlite", Uuid::new_v4()));
+        let database =
+            open_ride_database(path.to_string_lossy().into_owned()).expect("database opens");
+        let core = MobileRideMapCore::with_database(database.clone());
+        core.start_gps_only(1_000, None).expect("ride starts");
+        core.set_music_history_policy(MobileMusicHistoryPolicyDto::HumanReadable)
+            .expect("enable history");
+        // Model a failed history restore after the active ride itself was recovered.
+        core.inner
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .music_restore_failed = true;
+        let policy_error = core
+            .set_music_history_policy(MobileMusicHistoryPolicyDto::OpaqueItem)
+            .expect_err("failed restoration is not a user policy");
+        assert_eq!(
+            core.record_music_event(
+                test_music_snapshot(),
+                MobileMusicRideEventKindDto::Play,
+                2_000,
+                1_700_000_002_000,
+                5
+            ),
+            Err(policy_error),
+        );
+        assert_eq!(
+            core.current_music_history().expect("active ride").status,
+            MobileMusicHistoryStatusDto::Unavailable
+        );
+        assert_eq!(
+            core.current_snapshot(2_000)
+                .expect("ride remains available")
+                .state,
+            MobileRideLifecycleStateDto::Active
+        );
+        database.shutdown().expect("database shuts down");
+        let _ = fs::remove_file(path);
     }
 
     fn test_music_snapshot() -> MobileMusicSnapshotDto {

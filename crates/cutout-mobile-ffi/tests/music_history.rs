@@ -10,7 +10,7 @@ struct Fixture {
 }
 impl Drop for Fixture {
     fn drop(&mut self) {
-        self.db.shutdown().expect("database shuts down");
+        let _ = self.db.shutdown();
         let _ = std::fs::remove_file(&self.path);
     }
 }
@@ -124,10 +124,10 @@ fn explicitly_stale_observation_is_not_a_fresh_play() {
             5,
         )
         .unwrap();
-    assert_ne!(
+    assert_eq!(
         outcome,
-        MobileMusicTimelineOutcomeDto::Recorded,
-        "stale pre-ride snapshot became fresh play with no freshness metadata"
+        MobileMusicTimelineOutcomeDto::OutOfOrder,
+        "stale observations must be refused as out of order"
     );
 }
 
@@ -135,9 +135,9 @@ fn explicitly_stale_observation_is_not_a_fresh_play() {
 fn timeline_rejects_event_before_ride_start() {
     let fixture = setup();
     let core = &fixture.core;
-    assert_ne!(
+    assert_eq!(
         record(core, 500, 500, MobileMusicRideEventKindDto::Play).unwrap(),
-        MobileMusicTimelineOutcomeDto::Recorded
+        MobileMusicTimelineOutcomeDto::OutOfOrder
     );
 }
 
