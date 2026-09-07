@@ -72,6 +72,8 @@ pub use novatek::{
     parse_configuration_response, parse_firmware_response, parse_live_view_response,
     parse_media_list_response, parse_read_only_snapshot, parse_storage_response,
 };
+mod rtsp;
+pub use rtsp::{RetinaH264FileSink, RetinaRtspError, RetinaRtspPreviewSession, RetinaVideoFrame};
 mod probe;
 pub use probe::{AeroProbe, FalconProbe, ProtocolProbe};
 mod parser;

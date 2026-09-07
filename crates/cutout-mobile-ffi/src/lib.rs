@@ -45,6 +45,8 @@ use cutout_core::{
     CommandKindDto, ControlRefusalReason as CoreControlRefusalReason, ControlRefusalReasonDto,
     CutoutSessionState, DeviceCommand as CoreDeviceCommand, DeviceCommandDto, DeviceEvent,
     DiscoveryCandidateSnapshot, DiscoveryCandidateSupport as CoreDiscoveryCandidateSupport,
+    CameraOnboardRecordingState as CoreCameraOnboardRecordingState,
+    CameraPreviewState as CoreCameraPreviewState,
     DiscoveryConnectionRoute as CoreDiscoveryConnectionRoute,
     DiscoveryElectricUnicycleModel as CoreDiscoveryElectricUnicycleModel,
     DiscoveryManufacturerDataSummary as CoreDiscoveryManufacturerDataSummary,
@@ -104,6 +106,8 @@ use cutout_protocols::{
     VescBoardProfile as CoreVescBoardProfile, VescReadOnlySession as CoreVescReadOnlySession,
     begode_identification_probes, identify_known_model, new_nosfet_aero_benign_control_session,
     try_new_begode_falcon_benign_control_session,
+    RetinaH264FileSink, RetinaRtspError, RetinaRtspPreviewSession, RetinaVideoFrame,
+    NovatekHttpOrigin, NovatekOriginError, NovatekReadCommand, NovatekStoragePresence,
 };
 use cutout_ride_maps as ride_maps;
 use libcutout_persistence as persistence;

@@ -2100,9 +2100,65 @@
       "comment" : "Camera setup card title before local-network connection is implemented.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Connect a ride camera" } } }
     },
+    "camera.origin.address" : {
+      "comment" : "Label for the explicit local camera IPv4 address field.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Camera address" } } }
+    },
+    "camera.origin.port" : {
+      "comment" : "Label for the explicit local camera HTTP port field.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "HTTP port" } } }
+    },
+    "camera.origin.read" : {
+      "comment" : "Button that reads the selected camera's read-only evidence.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Read camera status" } } }
+    },
+    "camera.origin.reading" : {
+      "comment" : "Button label while camera read-only evidence is loading.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Reading camera status…" } } }
+    },
+    "camera.preview.start" : {
+      "comment" : "Button that starts the verified camera RTSP preview.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Start preview" } } }
+    },
+    "camera.preview.save" : {
+      "comment" : "Button that starts a verified camera preview and saves raw H.264 bytes.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Save preview" } } }
+    },
+    "camera.preview.stop" : {
+      "comment" : "Button that stops the foreground camera preview.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Stop preview" } } }
+    },
+    "camera.preview.source_ready" : {
+      "comment" : "Detail shown after read-only evidence includes a movie RTSP source.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Verified movie preview source available." } } }
+    },
+    "camera.preview.saved_detail" : {
+      "comment" : "Detail describing the raw H.264 file output format.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Saves a local Annex-B H.264 file; no cloud upload." } } }
+    },
+    "camera.error.invalid_port" : {
+      "comment" : "Camera setup error when the explicit port is not a valid number.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Enter a valid HTTP port." } } }
+    },
+    "camera.error.read_failed" : {
+      "comment" : "Camera setup error when read-only evidence loading fails.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Camera status could not be read." } } }
+    },
     "camera.profile.pending" : {
       "comment" : "Profile identity shown before read-only camera evidence has arrived.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Profile identity pending" } } }
+    },
+    "camera.evidence.firmware" : {
+      "comment" : "Label for the firmware version returned by read-only camera evidence.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Firmware" } } }
+    },
+    "camera.evidence.media_count" : {
+      "comment" : "Label for the number of media records returned by the read-only camera listing.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Media records" } } }
+    },
+    "camera.evidence.metadata_only" : {
+      "comment" : "Detail clarifying that camera media records are metadata only until transfer is implemented.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Read-only metadata; media transfer is not enabled." } } }
     },
     "camera.connection.not_configured" : {
       "comment" : "Camera connection state before a local-network adapter is configured.",
