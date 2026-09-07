@@ -52,6 +52,7 @@ preserved, not collapsed by parsing names as unique dictionary keys. The UI give
 ID 0 and 213–227 generic STRIPX reference labels marked “(reference)” so every
 wire ID has a human-readable name; these entries remain unverified and disabled
 until exact OC21 capture.
+The mobile FFI restore and preset boundary also rejects IDs outside 1–212, so unverified reference entries cannot be sent indirectly through persisted state.
 
 The production picker groups the reference IDs into Basic, Curtain, Trans, Water,
 Flow, Tail, Run, Run Back, and Unmapped. The grouping covers each ID 0–227 exactly

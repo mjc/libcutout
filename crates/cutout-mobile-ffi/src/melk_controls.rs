@@ -14,7 +14,7 @@ pub enum MobileLightingPlaybackDto {
     Solid,
     /// Reference pattern ID and native speed.
     Effect {
-        /// Reference pattern ID (0..=227).
+        /// Verified pattern ID (1..=212).
         pattern: u8,
         /// Native speed (0..=255).
         speed: u8,
@@ -33,10 +33,14 @@ impl TryFrom<MobileLightingPlaybackDto> for LightingPlayback {
     fn try_from(value: MobileLightingPlaybackDto) -> Result<Self, Self::Error> {
         Ok(match value {
             MobileLightingPlaybackDto::Solid => Self::Solid,
-            MobileLightingPlaybackDto::Effect { pattern, speed } => Self::Effect {
-                pattern: pattern.try_into().map_err(|_| Self::Error::InvalidState)?,
-                speed,
-            },
+            MobileLightingPlaybackDto::Effect { pattern, speed } => {
+                let pattern: cutout_core::MelkPattern =
+                    pattern.try_into().map_err(|_| Self::Error::InvalidState)?;
+                if !(1..=212).contains(&pattern.value()) {
+                    return Err(Self::Error::InvalidState);
+                }
+                Self::Effect { pattern, speed }
+            }
             MobileLightingPlaybackDto::Music {
                 effect,
                 sensitivity,
@@ -201,7 +205,7 @@ mod tests {
     }
 
     #[test]
-    fn restore_marker_keeps_playback_and_rejects_invalid_effects() {
+    fn restore_marker_keeps_playback_and_rejects_unverified_effects() {
         let mut state = MobileMelkLightingRestoreStateDto {
             power_on: true,
             red: 1,
@@ -209,7 +213,7 @@ mod tests {
             blue: 3,
             brightness: 50,
             playback: Some(MobileLightingPlaybackDto::Effect {
-                pattern: 227,
+                pattern: 212,
                 speed: 255,
             }),
         };
@@ -219,6 +223,16 @@ mod tests {
             marker.recover("controller".into(), true).requested,
             Some(state)
         );
+        for pattern in [0, 213, 227] {
+            state.playback = Some(MobileLightingPlaybackDto::Effect {
+                pattern,
+                speed: 255,
+            });
+            assert!(matches!(
+                crate::MobileMelkLightingRestoreMarker::new("controller".into(), state),
+                Err(crate::MobileMelkLightingError::InvalidPlayback)
+            ));
+        }
         state.playback = Some(MobileLightingPlaybackDto::Music {
             effect: 8,
             sensitivity: 50,
@@ -249,14 +263,13 @@ mod tests {
             writes.last().unwrap().payload,
             profile().set_power(false).payload
         );
-        state.playback = Some(MobileLightingPlaybackDto::Effect {
-            pattern: 228,
-            speed: 50,
-        });
-        assert_eq!(
-            profile().apply_state(state),
-            Err(MobileRgbLightingRecordError::InvalidState)
-        );
+        for pattern in [0, 213, 227, 228] {
+            state.playback = Some(MobileLightingPlaybackDto::Effect { pattern, speed: 50 });
+            assert_eq!(
+                profile().apply_state(state),
+                Err(MobileRgbLightingRecordError::InvalidState)
+            );
+        }
         state.playback = None;
         let writes = profile().apply_state(state).unwrap();
         assert_eq!(writes[0].payload, [0x7e, 4, 7, 0, 255, 255, 255, 0, 0xef]);
