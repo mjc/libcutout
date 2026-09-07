@@ -100,7 +100,7 @@ struct ContentView: View {
     }
 
     private func selectTarget(_ target: PevNavigationTarget) {
-        navigate(to: route.destination(forNavigationTarget: target))
+        navigate(to: route.destination(forNavigationTarget: target, connectionRoute: model.selectedConnectionRoute))
     }
 
     private func navigate(to route: CutoutAppRoute) {
@@ -129,7 +129,14 @@ struct ContentView: View {
 
     @ViewBuilder
     private func destinationContent(for destination: CutoutAppRoute) -> some View {
-        if destination == .capture {
+        if case .lighting = destination, model.selectedConnectionRoute == nil {
+            LightingRouteView(model: lighting, rideModel: model)
+                .toolbar {
+                    ToolbarItem(placement: .navigation) {
+                        Button("Back", systemImage: "chevron.left") { navigate(to: .devicePicker) }
+                    }
+                }
+        } else if destination == .capture {
             ZStack {
                 PevColors.pageBackground
                     .ignoresSafeArea()
@@ -142,7 +149,7 @@ struct ContentView: View {
         } else {
             let tabs = TabView(selection: tabSelection) {
                 ForEach(availableTabs) { tab in
-                    if let tabRoute = destination.destination(for: tab) {
+                    if let tabRoute = destination.destination(for: tab, connectionRoute: model.selectedConnectionRoute) {
                         Tab(value: tab.id) {
                             destinationSurface(
                                 for: tabRoute,

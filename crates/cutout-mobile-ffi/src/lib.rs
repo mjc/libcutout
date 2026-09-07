@@ -1,5 +1,8 @@
 //! Concrete `UniFFI` mobile binding surface for Cutout.
 
+mod melk_controls;
+pub use melk_controls::*;
+
 use std::{
     collections::VecDeque,
     convert::TryFrom,
@@ -1172,6 +1175,10 @@ pub enum MobileMelkLightingError {
     /// Brightness was outside the protocol's 0..=100 range.
     #[error("invalid MELK brightness percentage")]
     InvalidBrightness,
+
+    /// Playback parameters are outside the supported controller ranges.
+    #[error("invalid MELK playback parameters")]
+    InvalidPlayback,
 }
 
 /// Verified standalone RGB profile persisted by the mobile boundary.
@@ -1327,6 +1334,12 @@ impl TryFrom<MobileMelkLightingRestoreStateDto> for RgbLightingRequestedState {
             },
             RgbColor::new(state.red, state.green, state.blue),
             brightness,
+        )
+        .with_playback(
+            state
+                .playback
+                .unwrap_or(MobileLightingPlaybackDto::Solid)
+                .try_into()?,
         ))
     }
 }
@@ -1339,6 +1352,8 @@ impl From<RgbLightingRequestedState> for MobileMelkLightingRestoreStateDto {
             green: state.color().green(),
             blue: state.color().blue(),
             brightness: state.brightness().as_percent(),
+            playback: (state.playback() != cutout_core::LightingPlayback::Solid)
+                .then(|| state.playback().into()),
         }
     }
 }
@@ -1638,6 +1653,10 @@ pub struct MobileMelkLightingRestoreStateDto {
 
     /// Requested brightness percentage.
     pub brightness: u8,
+
+    /// Controller playback; omitted values preserve legacy solid-color presets.
+    #[uniffi(default = None)]
+    pub playback: Option<MobileLightingPlaybackDto>,
 }
 
 /// Typed result kind for an attempted lighting restore.
@@ -1685,6 +1704,11 @@ impl MobileMelkLightingRestoreMarker {
     ) -> Result<Arc<Self>, MobileMelkLightingError> {
         let brightness = LightingBrightness::try_from_percent(requested.brightness)
             .map_err(|_| MobileMelkLightingError::InvalidBrightness)?;
+        let playback = requested
+            .playback
+            .unwrap_or(MobileLightingPlaybackDto::Solid)
+            .try_into()
+            .map_err(|_| MobileMelkLightingError::InvalidPlayback)?;
         let requested = RgbLightingRequestedState::new(
             if requested.power_on {
                 LightingPowerState::On
@@ -1693,7 +1717,8 @@ impl MobileMelkLightingRestoreMarker {
             },
             RgbColor::new(requested.red, requested.green, requested.blue),
             brightness,
-        );
+        )
+        .with_playback(playback);
         Ok(Arc::new(Self {
             marker: CoreRgbLightingRestoreMarker::new(platform_identifier, requested),
         }))
@@ -1888,6 +1913,7 @@ mod melk_lighting_tests {
                 green: 2,
                 blue: 3,
                 brightness: 42,
+                playback: None,
             },
         )
         .expect("bounded restore state should be accepted");
@@ -1913,6 +1939,7 @@ mod melk_lighting_tests {
                 green: 2,
                 blue: 3,
                 brightness: 42,
+                playback: None,
             })
         );
     }
@@ -1939,6 +1966,7 @@ mod melk_lighting_tests {
             green: 2,
             blue: 3,
             brightness: 42,
+            playback: None,
         };
         record
             .set_requested_state(Some(state))
@@ -1988,6 +2016,7 @@ mod melk_lighting_tests {
             green: 2,
             blue: 3,
             brightness: 101,
+            playback: None,
         };
         assert_eq!(
             record.set_requested_state(Some(invalid)),

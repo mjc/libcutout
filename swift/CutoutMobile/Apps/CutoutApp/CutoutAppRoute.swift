@@ -116,7 +116,7 @@ enum CutoutAppRoute: Hashable {
 
     var preservesNavigationOnConnectionLoss: Bool {
         switch self {
-        case .rideMap, .rideMapDetail:
+        case .rideMap, .rideMapDetail, .lighting:
             true
         default:
             false
@@ -179,14 +179,18 @@ enum CutoutAppRoute: Hashable {
         navigationTabs(for: connectionRoute).filter { $0.isEnabled && $0.destinationTarget != nil }
     }
 
-    func destination(for tab: PevScreenTab) -> CutoutAppRoute? {
+    func destination(for tab: PevScreenTab, connectionRoute: DevicePickerConnectionRoute? = nil) -> CutoutAppRoute? {
         guard let target = tab.destinationTarget else { return nil }
         if tab.id == .pack, case .eucPack = self { return self }
-        return Self.route(forNavigationTarget: target, from: self)
+        return destination(forNavigationTarget: target, connectionRoute: connectionRoute)
     }
 
-    func destination(forNavigationTarget target: PevNavigationTarget) -> CutoutAppRoute {
-        Self.route(forNavigationTarget: target, from: self)
+    func destination(
+        forNavigationTarget target: PevNavigationTarget,
+        connectionRoute: DevicePickerConnectionRoute? = nil
+    ) -> CutoutAppRoute {
+        let source = lightingContext == nil ? Self.route(for: connectionRoute) : self
+        return Self.route(forNavigationTarget: target, from: source)
     }
 
     private var lightingContext: LightingRideContext? {

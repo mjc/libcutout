@@ -91,7 +91,7 @@ final class CutoutAppRouteTests: XCTestCase {
         )
     }
 
-    func testLightingPresetSavingRequiresConfirmedCommandAndIdentity() {
+    func testLightingPresetSavingRequiresRequestedSettingsAndIdentity() {
         XCTAssertTrue(
             lightingPresetSaveEligibility(
                 platformIdentifier: "A1B2C3D4-E5F6-4789-ABCD-0123456789AB",
@@ -104,7 +104,7 @@ final class CutoutAppRouteTests: XCTestCase {
                 commandStatus: .confirmed
             )
         )
-        XCTAssertFalse(
+        XCTAssertTrue(
             lightingPresetSaveEligibility(
                 platformIdentifier: "A1B2C3D4-E5F6-4789-ABCD-0123456789AB",
                 commandStatus: .requested
@@ -113,8 +113,17 @@ final class CutoutAppRouteTests: XCTestCase {
         XCTAssertFalse(
             lightingPresetSaveEligibility(
                 platformIdentifier: "A1B2C3D4-E5F6-4789-ABCD-0123456789AB",
-                commandStatus: .unconfirmed
+                commandStatus: .idle
             )
+        )
+    }
+
+    func testLightingNavigationSurvivesWheelLossAndKeepsMapDeviceFamily() {
+        XCTAssertTrue(CutoutAppRoute.lighting(.euc).preservesNavigationOnConnectionLoss)
+        XCTAssertTrue(CutoutAppRoute.lighting(.vesc).preservesNavigationOnConnectionLoss)
+        XCTAssertEqual(
+            CutoutAppRoute.rideMap.destination(forNavigationTarget: .lighting, connectionRoute: .vescOnewheel),
+            .lighting(.vesc)
         )
     }
 
@@ -672,7 +681,7 @@ final class CutoutAppRouteTests: XCTestCase {
             ])
         )
 
-        let plan = harness.setPower(true)
+        let plan = try harness.setPower(true)
         XCTAssertEqual(plan.operation, .writeWithoutResponse(
             channel: write,
             bytes: Data([0x7e, 0x00, 0x04, 0x01, 0, 0, 0, 0, 0xef])
@@ -879,14 +888,48 @@ final class CutoutAppRouteTests: XCTestCase {
         fake.emitState(.ready)
         await Task.yield()
 
-        XCTAssertEqual(fake.powerRequests, [true])
-        XCTAssertEqual(fake.colorRequests, ["12,34,56"])
-        XCTAssertEqual(fake.brightnessRequests, [78])
+        XCTAssertEqual(fake.stateRequests, [requested])
+        XCTAssertTrue(fake.powerRequests.isEmpty)
         XCTAssertEqual(model.commandStatus, .requested)
     }
 
     @MainActor
-    func testLightingRouteModelStopsRestoreAfterPowerFailure() async throws {
+    func testLightingRouteModelUsesConfirmedPowerForInitialToggle() throws {
+        let suiteName = "CutoutAppRouteTests.lightingPowerState"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defaults.removePersistentDomain(forName: suiteName)
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        let persistence = LightingAccessoryPersistence(defaults: defaults)
+        XCTAssertTrue(persistence.ensureRecord(platformIdentifier: "A1B2C3D4-E5F6-4789-ABCD-0123456789AB"))
+        let confirmedOn = MobileMelkLightingRestoreStateDto(
+            powerOn: true, red: 1, green: 2, blue: 3, brightness: 50
+        )
+        try persistence.confirm(confirmedOn)
+        persistence.setRestoreEnabled(true)
+
+        let model = LightingRouteModel(
+            session: TestLightingSession(),
+            persistence: LightingAccessoryPersistence(defaults: defaults)
+        )
+
+        XCTAssertTrue(model.requestedPowerOn)
+    }
+
+    @MainActor
+    func testLightingRouteModelStopsMusicThroughTheValidatedStatePath() {
+        let fake = TestLightingSession()
+        let model = LightingRouteModel(session: fake)
+
+        model.setPlayback(.music(effect: 1, sensitivity: 50))
+        model.stopMusic()
+
+        XCTAssertEqual(model.requestedPlayback, .solid)
+        XCTAssertEqual(fake.stateRequests.last?.playback, .solid)
+    }
+
+    @MainActor
+    func testLightingRouteModelRejectsRestoreBatchWithoutChangingState() async throws {
         let suiteName = "CutoutAppRouteTests.lightingRestoreFailure"
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
         defaults.removePersistentDomain(forName: suiteName)
@@ -906,7 +949,7 @@ final class CutoutAppRouteTests: XCTestCase {
         persistence.setRestoreEnabled(true)
 
         let fake = TestLightingSession()
-        fake.powerResult = false
+        fake.stateResult = false
         let model = LightingRouteModel(
             session: fake,
             persistence: LightingAccessoryPersistence(defaults: defaults)
@@ -925,10 +968,101 @@ final class CutoutAppRouteTests: XCTestCase {
         fake.emitState(.ready)
         await Task.yield()
 
-        XCTAssertEqual(fake.powerRequests, [true])
+        XCTAssertEqual(fake.stateRequests, [requested])
+        XCTAssertTrue(fake.powerRequests.isEmpty)
         XCTAssertTrue(fake.colorRequests.isEmpty)
         XCTAssertTrue(fake.brightnessRequests.isEmpty)
         XCTAssertEqual(model.commandStatus, .idle)
+    }
+
+    @MainActor
+    func testLightingPlaybackPresetDoesNotRequireManualConfirmation() throws {
+        let suiteName = "CutoutAppRouteTests.playbackPreset"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let persistence = LightingAccessoryPersistence(defaults: defaults)
+        XCTAssertTrue(persistence.ensureRecord(platformIdentifier: "A1B2C3D4-E5F6-4789-ABCD-0123456789AB"))
+        let fake = TestLightingSession()
+        let model = LightingRouteModel(session: fake, persistence: persistence)
+        model.setPlayback(.music(effect: 2, sensitivity: 75))
+        XCTAssertEqual(model.requestedPlayback, .music(effect: 2, sensitivity: 75))
+        XCTAssertEqual(model.commandStatus, .requested)
+        XCTAssertTrue(model.canSavePreset)
+        model.savePreset(named: "Music")
+        let preset = try XCTUnwrap(model.presets.first)
+        XCTAssertEqual(preset.requested.playback, .music(effect: 2, sensitivity: 75))
+        model.setSolidColor(red: 255, green: 0, blue: 0)
+        XCTAssertEqual(fake.stateRequests.last?.playback, .solid)
+        model.applyPreset(preset)
+        XCTAssertEqual(fake.stateRequests.last, preset.requested)
+        fake.stateResult = false
+        model.setPlayback(.effect(pattern: 16, speed: 255))
+        XCTAssertEqual(model.requestedPlayback, .music(effect: 2, sensitivity: 75))
+    }
+
+    func testLightingPatternNamesKeepWireIDsAndUnmappedModesExplicit() {
+        let groups = LightingPatternCatalog.groups
+        XCTAssertEqual(groups.flatMap(\.ids).sorted(), Array(0...220))
+        XCTAssertEqual(groups.first?.name, "Basic")
+        XCTAssertEqual(groups.first?.ids.prefix(3), [1, 2, 212])
+        XCTAssertEqual(groups.first(where: { $0.name == "Curtain" })?.ids, Array(57...76))
+        for id in 1...212 {
+            XCTAssertFalse(LightingPatternCatalog.name(for: id).isEmpty)
+            XCTAssertFalse(LightingPatternCatalog.name(for: id).contains("Unmapped"))
+        }
+        XCTAssertEqual(LightingPatternCatalog.name(for: 1), "Magic Forward")
+        XCTAssertEqual(LightingPatternCatalog.name(for: 16), "6-Color to Cyan Back")
+        XCTAssertEqual(LightingPatternCatalog.name(for: 75), "White Close")
+        XCTAssertEqual(LightingPatternCatalog.name(for: 115), "Green-Dot in Red Running")
+        XCTAssertEqual(LightingPatternCatalog.name(for: 169), "Green-Dot in Red Running")
+        XCTAssertEqual(LightingPatternCatalog.name(for: 212), "7-Color Energy")
+        for id in [0, 213, 220, 255, -1] {
+            XCTAssertEqual(LightingPatternCatalog.name(for: id), "Unmapped effect \(id)")
+        }
+    }
+
+    @MainActor
+    func testLightingSpeedChangesDoNotRestartOrPowerOnAnEffect() throws {
+        let suiteName = "CutoutAppRouteTests.effectSpeed"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let persistence = LightingAccessoryPersistence(defaults: defaults)
+        XCTAssertTrue(persistence.ensureRecord(platformIdentifier: "A1B2C3D4-E5F6-4789-ABCD-0123456789AB"))
+        let fake = TestLightingSession()
+        let model = LightingRouteModel(session: fake, persistence: persistence)
+        model.setEffectSpeed(0)
+        XCTAssertTrue(fake.speedRequests.isEmpty)
+        model.setPlayback(.effect(pattern: 16, speed: 128))
+        model.setPower(false)
+        let batches = fake.stateRequests.count
+        for speed: UInt8 in [0, 255] {
+            model.setEffectSpeed(speed)
+            XCTAssertEqual(model.requestedPlayback, .effect(pattern: 16, speed: speed))
+            XCTAssertEqual(persistence.requestedState?.playback, .effect(pattern: 16, speed: speed))
+        }
+        XCTAssertEqual(fake.speedRequests, [0, 255])
+        XCTAssertEqual(fake.stateRequests.count, batches)
+        XCTAssertEqual(fake.powerRequests, [false])
+        XCTAssertFalse(model.requestedPowerOn)
+        fake.speedResult = false
+        model.setEffectSpeed(100)
+        XCTAssertEqual(model.requestedPlayback, .effect(pattern: 16, speed: 255))
+        XCTAssertNotNil(model.controlError)
+        model.setPlayback(.music(effect: 1, sensitivity: 50))
+        model.setEffectSpeed(0)
+        XCTAssertEqual(fake.speedRequests, [0, 255, 100])
+    }
+
+    @MainActor
+    func testLightingScheduleDoesNotChangePlaybackOrSaveOnOpening() throws {
+        let fake = TestLightingSession()
+        let model = LightingRouteModel(session: fake)
+        XCTAssertTrue(fake.scheduleRequests.isEmpty)
+        let schedule = MobileMelkScheduleDto(powerOn: false, hour: 23, minute: 15, days: 31, enabled: true)
+        XCTAssertTrue(model.setSchedule(schedule))
+        XCTAssertEqual(fake.scheduleRequests, [schedule])
+        XCTAssertEqual(model.requestedPlayback, .solid)
+        XCTAssertTrue(fake.stateRequests.isEmpty)
     }
 
     @MainActor
@@ -962,6 +1096,11 @@ private final class TestLightingSession: MelkLightingPeripheralSessionProtocol {
     var onRecord: ((String) -> Void)?
     var startCalls: [String?] = []
     var stopCalls = 0
+    var speedRequests: [UInt8] = []
+    var speedResult = true
+    var stateResult = true
+    var stateRequests: [MobileMelkLightingRestoreStateDto] = []
+    var scheduleRequests: [MobileMelkScheduleDto] = []
     var powerResult = true
     var colorResult = true
     var brightnessResult = true
@@ -990,6 +1129,21 @@ private final class TestLightingSession: MelkLightingPeripheralSessionProtocol {
     func setBrightness(_ percentage: UInt8) throws -> Bool {
         brightnessRequests.append(percentage)
         return brightnessResult
+    }
+
+    func setEffectSpeed(_ speed: UInt8) -> Bool {
+        speedRequests.append(speed)
+        return speedResult
+    }
+
+    func applyState(_ state: MobileMelkLightingRestoreStateDto) throws -> Bool {
+        stateRequests.append(state)
+        return stateResult
+    }
+
+    func setSchedule(_ schedule: MobileMelkScheduleDto, clock: MobileMelkClockDto) throws -> Bool {
+        scheduleRequests.append(schedule)
+        return stateResult
     }
 
     func markLastCommandConfirmed() {}

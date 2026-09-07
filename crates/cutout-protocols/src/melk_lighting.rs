@@ -126,6 +126,48 @@ impl MelkLightingProfile {
         }
     }
 
+    /// Encodes bounded effect, microphone, clock, and scheduler commands from the reference.
+    /// Hardware output remains separately observed; no status-query write is sent.
+    #[must_use]
+    pub const fn encode_control(command: cutout_core::MelkControl) -> [u8; MELK_FRAME_LEN] {
+        use cutout_core::{LightingPowerState, MelkControl};
+        match command {
+            MelkControl::Pattern(pattern) => [0x7e, 5, 3, pattern.value(), 6, 0xff, 0xff, 0, 0xef],
+            MelkControl::Speed(speed) => [0x7e, 4, 2, speed, 0xff, 0xff, 0xff, 0, 0xef],
+            MelkControl::MusicEffect(effect) => {
+                [0x7e, 5, 3, 0x80 + effect.value(), 4, 0xff, 0xff, 0, 0xef]
+            }
+            MelkControl::Microphone(enabled) => {
+                [0x7e, 4, 7, enabled as u8, 0xff, 0xff, 0xff, 0, 0xef]
+            }
+            MelkControl::Sensitivity(sensitivity) => {
+                [0x7e, 4, 6, sensitivity.value(), 0xff, 0xff, 0xff, 0, 0xef]
+            }
+            MelkControl::Schedule(schedule) => {
+                let (power, hour, minute, days, enabled) = schedule.components();
+                let slot = match power {
+                    LightingPowerState::On => 0,
+                    LightingPowerState::Off => 1,
+                };
+                [
+                    0x7e,
+                    0,
+                    0x82,
+                    hour,
+                    minute,
+                    0,
+                    slot,
+                    days | ((enabled as u8) << 7),
+                    0xef,
+                ]
+            }
+            MelkControl::Clock(clock) => {
+                let (hour, minute, second, weekday) = clock.components();
+                [0x7e, 0, 0x83, hour, minute, second, weekday, 0, 0xef]
+            }
+        }
+    }
+
     /// Wraps a candidate frame as a bounded no-response write action.
     #[must_use]
     pub fn write_action(command: RgbLightingCommand) -> TransportAction {
@@ -152,6 +194,69 @@ mod tests {
         LightingBrightness, LightingPowerState, RgbColor, RgbLightingCommand, TransportAction,
         WriteMode,
     };
+
+    #[test]
+    fn encodes_extended_melk_controls_and_bounds() {
+        use cutout_core::{MelkClock, MelkControl, MelkMusicEffect, MelkPattern, MelkSchedule};
+        let frame = MelkLightingProfile::encode_control;
+        assert_eq!(
+            frame(MelkControl::Pattern(MelkPattern::try_from(220).unwrap())),
+            [0x7e, 0x05, 0x03, 220, 0x06, 0xff, 0xff, 0x00, 0xef]
+        );
+        assert_eq!(
+            frame(MelkControl::Speed(255)),
+            [0x7e, 0x04, 0x02, 255, 0xff, 0xff, 0xff, 0x00, 0xef]
+        );
+        assert_eq!(
+            frame(MelkControl::MusicEffect(
+                MelkMusicEffect::try_from(7).unwrap()
+            )),
+            [0x7e, 0x05, 0x03, 0x87, 0x04, 0xff, 0xff, 0x00, 0xef]
+        );
+        assert_eq!(
+            frame(MelkControl::Microphone(true)),
+            [0x7e, 0x04, 0x07, 1, 0xff, 0xff, 0xff, 0x00, 0xef]
+        );
+        assert_eq!(
+            frame(MelkControl::Microphone(false)),
+            [0x7e, 0x04, 0x07, 0, 0xff, 0xff, 0xff, 0x00, 0xef]
+        );
+        assert_eq!(
+            frame(MelkControl::Sensitivity(42.try_into().unwrap())),
+            [0x7e, 0x04, 0x06, 42, 0xff, 0xff, 0xff, 0x00, 0xef]
+        );
+        assert_eq!(
+            frame(MelkControl::Schedule(
+                MelkSchedule::new(LightingPowerState::On, 6, 30, 0x1f, true).unwrap()
+            )),
+            [0x7e, 0, 0x82, 6, 30, 0, 0, 0x9f, 0xef]
+        );
+        assert_eq!(
+            frame(MelkControl::Schedule(
+                MelkSchedule::new(LightingPowerState::Off, 22, 15, 0x60, false).unwrap()
+            )),
+            [0x7e, 0, 0x82, 22, 15, 0, 1, 0x60, 0xef]
+        );
+        assert_eq!(
+            frame(MelkControl::Clock(MelkClock::new(12, 34, 56, 7).unwrap())),
+            [0x7e, 0, 0x83, 12, 34, 56, 7, 0, 0xef]
+        );
+        assert!(MelkPattern::try_from(221).is_err());
+        assert!(MelkMusicEffect::try_from(8).is_err());
+        assert!(cutout_core::MelkSensitivity::try_from(101).is_err());
+        for (hour, minute, days) in [(24, 0, 0), (0, 60, 0), (0, 0, 128)] {
+            assert!(MelkSchedule::new(LightingPowerState::On, hour, minute, days, true).is_err());
+        }
+        for (hour, minute, second, day) in [
+            (24, 0, 0, 1),
+            (0, 60, 0, 1),
+            (0, 0, 60, 1),
+            (0, 0, 0, 0),
+            (0, 0, 0, 8),
+        ] {
+            assert!(MelkClock::new(hour, minute, second, day).is_err());
+        }
+    }
 
     #[test]
     fn encodes_public_melk_power_frames() {

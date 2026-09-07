@@ -949,11 +949,11 @@ final class CutoutAppUITests: XCTestCase {
         XCTAssertTrue(lighting.waitForExistence(timeout: 5), app.debugDescription)
         for identifier in [
             "lighting.connection-state",
-            "lighting.profile-evidence",
+            "lighting.control-page",
             "lighting.power",
             "lighting.color-wheel",
             "lighting.brightness",
-            "lighting.command-status",
+            "lighting.schedule",
             "lighting.accessory-details",
         ] {
             let element = app.descendants(matching: .any)[identifier]
@@ -962,6 +962,12 @@ final class CutoutAppUITests: XCTestCase {
         XCTAssertTrue(app.buttons["lighting.quick-preset.red"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.buttons["lighting.quick-preset.blue"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.buttons["lighting.quick-preset.night"].waitForExistence(timeout: 5))
+        XCTAssertFalse(app.buttons["lighting.mark-confirmed"].exists)
+        app.segmentedControls["lighting.control-page"].buttons["Effects"].tap()
+        XCTAssertTrue(app.buttons["lighting.play-mode"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.descendants(matching: .any)["lighting.effect-speed"].exists)
+        app.segmentedControls["lighting.control-page"].buttons["Music"].tap()
+        XCTAssertTrue(app.descendants(matching: .any)["lighting.music-sensitivity"].waitForExistence(timeout: 5))
         XCTAssertFalse(app.descendants(matching: .any)["melk.validation"].exists)
     }
 

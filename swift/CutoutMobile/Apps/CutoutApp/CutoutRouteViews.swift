@@ -40,7 +40,7 @@ func lightingPresetSaveEligibility(
     commandStatus: MelkLightingCommandStatus
 ) -> Bool {
     guard let platformIdentifier, !platformIdentifier.isEmpty else { return false }
-    return commandStatus == .confirmed
+    return commandStatus != .idle
 }
 
 func shouldAutoStartLightingSession(platformIdentifier: String?) -> Bool {
@@ -94,16 +94,25 @@ struct DevicePickerRouteView: View {
             }
         )
         .safeAreaInset(edge: .bottom, spacing: 12) {
-            Button {
-                navigate(.rideMap)
-            } label: {
-                Label(localizedAppText("tab.map"), systemImage: "map")
-                    .frame(maxWidth: .infinity, minHeight: 44)
+            HStack {
+                Button {
+                    navigate(.lighting(.euc))
+                } label: {
+                    Label("Lighting", systemImage: "lightbulb.2")
+                        .frame(maxWidth: .infinity, minHeight: 44)
+                }
+                .accessibilityIdentifier("device-picker.open-lighting")
+                Button {
+                    navigate(.rideMap)
+                } label: {
+                    Label(localizedAppText("tab.map"), systemImage: "map")
+                        .frame(maxWidth: .infinity, minHeight: 44)
+                }
+                .accessibilityIdentifier("device-picker.open-map")
             }
             .buttonStyle(.borderedProminent)
             .padding(.horizontal, 24)
             .padding(.bottom, 8)
-            .accessibilityIdentifier("device-picker.open-map")
         }
     }
 }
@@ -266,6 +275,7 @@ final class LightingRouteModel {
     private(set) var presets: [MobileRgbLightingPresetDto] = []
     private(set) var records: [MelkLightingLogEntry] = []
     private(set) var notificationCount = 0
+    private(set) var controlError: String?
     private var isRunning = false
     private var requestedState = MobileMelkLightingRestoreStateDto(
         powerOn: false,
@@ -287,7 +297,9 @@ final class LightingRouteModel {
         accessoryAlias = persistence.alias
         vehicleIdentifier = persistence.vehicleIdentifier
         refreshPresets()
-        if let requested = persistence.requestedState {
+        if let confirmed = persistence.confirmedState {
+            requestedState = confirmed
+        } else if let requested = persistence.requestedState {
             requestedState = requested
         }
         session.onStateChange = { [weak self] state in
@@ -357,7 +369,8 @@ final class LightingRouteModel {
     }
 
     func setSolidColor(red: UInt8, green: UInt8, blue: UInt8) {
-        guard session.setSolidColor(red: red, green: green, blue: blue) else { return }
+        guard sendSolidColor(red: red, green: green, blue: blue) else { return }
+        requestedState.playback = nil
         requestedState.red = red
         requestedState.green = green
         requestedState.blue = blue
@@ -368,7 +381,8 @@ final class LightingRouteModel {
     func previewSolidColor(red: UInt8, green: UInt8, blue: UInt8) {
         let now = ProcessInfo.processInfo.systemUptime
         guard now - lastColorPreviewAt >= 1.0 / 30.0 else { return }
-        guard session.setSolidColor(red: red, green: green, blue: blue) else { return }
+        guard sendSolidColor(red: red, green: green, blue: blue) else { return }
+        requestedState.playback = nil
         lastColorPreviewAt = now
         requestedState.red = red
         requestedState.green = green
@@ -381,6 +395,74 @@ final class LightingRouteModel {
         requestedState.brightness = percentage
         updatePersistedRequestedState()
         commandStatus = .requested
+    }
+
+    var requestedPlayback: MobileLightingPlaybackDto { requestedState.playback ?? .solid }
+
+    private func sendSolidColor(red: UInt8, green: UInt8, blue: UInt8) -> Bool {
+        if requestedPlayback == .solid {
+            return session.setSolidColor(red: red, green: green, blue: blue)
+        }
+        var state = requestedState
+        state.red = red
+        state.green = green
+        state.blue = blue
+        state.playback = .solid
+        return (try? session.applyState(state)) == true
+    }
+
+    func setPlayback(_ playback: MobileLightingPlaybackDto) {
+        var state = requestedState
+        state.playback = playback
+        if playback != .solid { state.powerOn = true }
+        applyState(state)
+    }
+
+    func stopMusic() {
+        guard case .music = requestedPlayback else { return }
+        var state = requestedState
+        state.playback = .solid
+        applyState(state)
+    }
+
+    func setEffectSpeed(_ speed: UInt8) {
+        guard case let .effect(pattern, _) = requestedPlayback else { return }
+        guard session.setEffectSpeed(speed) else {
+            controlError = "Could not send effect speed. Check the connection and try again."
+            return
+        }
+        controlError = nil
+        requestedState.playback = .effect(pattern: pattern, speed: speed)
+        updatePersistedRequestedState()
+        commandStatus = .requested
+    }
+
+    private func applyState(_ state: MobileMelkLightingRestoreStateDto) {
+        guard (try? session.applyState(state)) == true else {
+            controlError = "Could not send lighting settings. Check the connection and try again."
+            return
+        }
+        controlError = nil
+        requestedState = state
+        updatePersistedRequestedState()
+        commandStatus = .requested
+    }
+
+    @discardableResult
+    func setSchedule(_ schedule: MobileMelkScheduleDto, now: Date = Date(), calendar: Calendar = .current) -> Bool {
+        let parts = calendar.dateComponents([.hour, .minute, .second, .weekday], from: now)
+        guard let hour = parts.hour, let minute = parts.minute, let second = parts.second,
+              let weekday = parts.weekday else { return false }
+        let clock = MobileMelkClockDto(
+            hour: UInt8(hour), minute: UInt8(minute), second: UInt8(second),
+            weekday: UInt8((weekday + 5) % 7 + 1)
+        )
+        guard (try? session.setSchedule(schedule, clock: clock)) == true else {
+            controlError = "Could not send the timer. Check the connection and try again."
+            return false
+        }
+        controlError = nil
+        return true
     }
 
     func markConfirmed() {
@@ -415,11 +497,19 @@ final class LightingRouteModel {
 
     var canEditMetadata: Bool { persistence.platformIdentifier != nil }
 
-    func savePreset(named name: String) {
+    @discardableResult
+    func savePreset(named name: String) -> Bool {
         let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard canSavePreset, !trimmed.isEmpty else { return }
-        try? persistence.addPreset(name: trimmed, requested: requestedState)
-        refreshPresets()
+        guard canSavePreset, !trimmed.isEmpty else { return false }
+        do {
+            try persistence.addPreset(name: trimmed, requested: requestedState)
+            refreshPresets()
+            controlError = nil
+            return true
+        } catch {
+            controlError = "Could not save this preset: \(error.localizedDescription)"
+            return false
+        }
     }
 
     func saveAccessoryMetadata(alias: String, vehicleIdentifier: String?) {
@@ -433,13 +523,7 @@ final class LightingRouteModel {
     }
 
     func applyPreset(_ preset: MobileRgbLightingPresetDto) {
-        setPower(preset.requested.powerOn)
-        setSolidColor(
-            red: preset.requested.red,
-            green: preset.requested.green,
-            blue: preset.requested.blue
-        )
-        setBrightness(preset.requested.brightness)
+        applyState(preset.requested)
     }
 
     func setRestoreEnabled(_ enabled: Bool) {
@@ -528,15 +612,7 @@ final class LightingRouteModel {
             return
         }
         restoreAttempted = true
-        guard session.setPower(requested.powerOn) else {
-            restoreAttempted = false
-            return
-        }
-        guard session.setSolidColor(red: requested.red, green: requested.green, blue: requested.blue) else {
-            restoreAttempted = false
-            return
-        }
-        guard (try? session.setBrightness(requested.brightness)) == true else {
+        guard (try? session.applyState(requested)) == true else {
             restoreAttempted = false
             return
         }
@@ -554,6 +630,7 @@ struct MelkLightingLogEntry: Identifiable {
 struct LightingRouteView: View {
     let model: LightingRouteModel
     let rideModel: CutoutAppModel
+    @State private var page: LightingControlPage = .color
     @State private var brightness = 100.0
     @State private var hue = 0.0
     @State private var saturation = 1.0
@@ -572,15 +649,34 @@ struct LightingRouteView: View {
                     .accessibilityHeading(.h1)
 
                 connectionCard
-                controlsCard
+                Picker("Lighting controls", selection: $page) {
+                    ForEach(LightingControlPage.allCases, id: \.self) { page in
+                        Text(page.rawValue).tag(page)
+                    }
+                }
+                .pickerStyle(.segmented)
+                .accessibilityIdentifier("lighting.control-page")
+                if page == .color {
+                    controlsCard
+                } else {
+                    lightingCard { powerControl }
+                    LightingPlaybackControls(model: model, page: page)
+                }
                 brightnessCard
                 presetsCard
-                commandStatusCard
+                LightingScheduleControls()
+                if let error = model.controlError {
+                    Label(error, systemImage: "exclamationmark.triangle")
+                        .font(.footnote).foregroundStyle(PevColors.orange)
+                        .accessibilityIdentifier("lighting.control-error")
+                }
             }
             .padding(.horizontal, 20)
             .padding(.vertical, 16)
         }
         .background(PevColors.pageBackground.ignoresSafeArea())
+        .scrollDismissesKeyboard(.interactively)
+        .onChange(of: model.requestedBrightness) { _, value in brightness = Double(value) }
         .simultaneousGesture(TapGesture().onEnded {
             isPresetNameFocused = false
         })
@@ -624,12 +720,6 @@ struct LightingRouteView: View {
                 .accessibilityIdentifier("lighting.accessory-details")
             }
 
-            Text(model.isReady
-                ? "Verified MELK-OC21 profile · FFF0 service · FFF3 write · FFF4 notify"
-                : "MELK-OC21 profile pending live verification · FFF0 service · FFF3 write · FFF4 notify")
-                .font(.caption.monospaced())
-                .foregroundStyle(PevColors.muted)
-                .accessibilityIdentifier("lighting.profile-evidence")
             Label(
                 "Ride stays \(rideModel.connectionStatusText); lighting uses an independent Bluetooth connection.",
                 systemImage: "figure.roll"
@@ -642,7 +732,7 @@ struct LightingRouteView: View {
     private var connectionSummary: String {
         switch model.connectionState {
         case .ready:
-            model.commandStatus == .confirmed ? "Connected · confirmed" : "Connected · awaiting confirmation"
+            "Connected"
         case .scanning:
             "Scanning for nearby accessories…"
         case .connecting, .discovering:
@@ -652,30 +742,25 @@ struct LightingRouteView: View {
         case .disconnected:
             "Not connected"
         case .failed:
-            "Connection or verification failed"
+            "Connection failed"
         case .idle:
             "Ready to scan"
         }
     }
 
+    private var powerControl: some View {
+        Toggle("Power", isOn: Binding(
+            get: { model.requestedPowerOn }, set: { model.setPower($0) }
+        ))
+        .font(.headline)
+        .tint(PevColors.cyan)
+        .disabled(!controlsEnabled)
+        .accessibilityIdentifier("lighting.power")
+    }
+
     private var controlsCard: some View {
         lightingCard {
-            HStack {
-                Text("Power")
-                    .font(.headline)
-                Spacer()
-                Toggle(
-                    "Power",
-                    isOn: Binding(
-                        get: { model.requestedPowerOn },
-                        set: { model.setPower($0) }
-                    )
-                )
-                .labelsHidden()
-                .tint(PevColors.cyan)
-                .accessibilityIdentifier("lighting.power")
-            }
-            .accessibilityElement(children: .contain)
+            powerControl
 
             VStack(alignment: .leading, spacing: 12) {
                 HStack {
@@ -690,6 +775,7 @@ struct LightingRouteView: View {
                         Image(systemName: "eyedropper")
                     }
                     .buttonStyle(.bordered)
+                    .disabled(!controlsEnabled)
                     .accessibilityLabel("Set white")
                     .accessibilityIdentifier("lighting.color-picker.reset")
                 }
@@ -722,7 +808,7 @@ struct LightingRouteView: View {
                 Image(systemName: "sun.min")
                     .foregroundStyle(PevColors.muted)
                     .accessibilityHidden(true)
-                Slider(value: $brightness, in: 1...100, step: 1) { editing in
+                Slider(value: $brightness, in: 0...100, step: 1) { editing in
                     if !editing, controlsEnabled {
                         model.setBrightness(UInt8(brightness.rounded()))
                     }
@@ -738,31 +824,6 @@ struct LightingRouteView: View {
         }
     }
 
-    private var commandStatusCard: some View {
-        lightingCard {
-            HStack(spacing: 12) {
-                Label("Command status", systemImage: model.commandStatus.symbolName)
-                    .font(.headline)
-                Spacer()
-                Text(model.commandStatus.displayText)
-                    .font(.subheadline.weight(.semibold))
-                    .foregroundStyle(commandStatusColor)
-            }
-            .accessibilityIdentifier("lighting.command-status")
-            Text("A write stays requested until the controller is explicitly observed. No guessed success is shown.")
-                .font(.footnote)
-                .foregroundStyle(PevColors.muted)
-            HStack(spacing: 10) {
-                Button("Mark confirmed") { model.markConfirmed() }
-                    .accessibilityIdentifier("lighting.mark-confirmed")
-                Button("Mark unconfirmed") { model.markUnconfirmed() }
-                    .accessibilityIdentifier("lighting.mark-unconfirmed")
-            }
-            .buttonStyle(.bordered)
-            .disabled(model.commandStatus != .requested)
-        }
-    }
-
     private var presetsCard: some View {
         lightingCard {
             Label("Presets", systemImage: "square.stack.3d.up.fill")
@@ -775,7 +836,7 @@ struct LightingRouteView: View {
                 }
 
                 if model.presets.isEmpty {
-                    Text("Save a confirmed solid color and brightness as a named preset.")
+                    Text("Save your color, effect, or music settings as a named look.")
                         .font(.footnote)
                         .foregroundStyle(PevColors.muted)
                 } else {
@@ -806,8 +867,10 @@ struct LightingRouteView: View {
                         .submitLabel(.done)
                         .onSubmit { isPresetNameFocused = false }
                     Button("Save") {
-                        model.savePreset(named: presetName)
-                        presetName = ""
+                        if model.savePreset(named: presetName) {
+                            presetName = ""
+                            isPresetNameFocused = false
+                        }
                     }
                     .buttonStyle(.borderedProminent)
                     .disabled(!model.canSavePreset || presetName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
@@ -862,19 +925,6 @@ struct LightingRouteView: View {
             PevColors.red
         default:
             PevColors.yellow
-        }
-    }
-
-    private var commandStatusColor: Color {
-        switch model.commandStatus {
-        case .confirmed:
-            PevColors.green
-        case .unconfirmed:
-            PevColors.orange
-        case .requested:
-            PevColors.yellow
-        case .idle:
-            PevColors.muted
         }
     }
 
@@ -1006,7 +1056,6 @@ private struct LightingPairingSheet: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 14) {
                     pairingStatusCard
-                    profileEvidenceCard
                     Button {
                         if model.canReconnect { model.reconnect() } else { model.start() }
                     } label: {
@@ -1018,7 +1067,7 @@ private struct LightingPairingSheet: View {
                     .accessibilityIdentifier("lighting.pairing.connect")
 
                     Toggle(
-                        "Restore last confirmed state",
+                        "Restore last lighting settings",
                         isOn: Binding(
                             get: { model.restoreEnabled },
                             set: { model.setRestoreEnabled($0) }
@@ -1026,12 +1075,11 @@ private struct LightingPairingSheet: View {
                     )
                     .tint(PevColors.cyan)
                     .accessibilityIdentifier("lighting.restore-toggle")
-                    Text("Re-apply the last confirmed state only after the same accessory is verified again.")
+                    Text("Re-apply your last color, effect, brightness, and power setting when this same accessory reconnects.")
                         .font(.footnote)
                         .foregroundStyle(PevColors.muted)
 
                     metadataCard
-                    statusGuideCard
                     warningCard
 
                     if model.canEditMetadata {
@@ -1089,35 +1137,7 @@ private struct LightingPairingSheet: View {
                 Spacer()
                 connectionPill
             }
-            Text("Signal and name are candidate evidence; the live profile is verified after connection.")
-                .font(.footnote)
-                .foregroundStyle(PevColors.muted)
-        }
-    }
-
-    private var profileEvidenceCard: some View {
-        lightingCard {
-            HStack {
-                Label("Verified profile evidence", systemImage: "checkmark.shield")
-                    .font(.headline)
-                Spacer()
-                Text(model.isReady ? "Ready" : "Pending")
-                    .font(.footnote.weight(.semibold))
-                    .foregroundStyle(model.isReady ? PevColors.green : PevColors.yellow)
-            }
-            ForEach(["FFF0 service", "FFF3 write", "FFF4 notify"], id: \.self) { evidence in
-                HStack {
-                    Image(systemName: model.isReady ? "checkmark.circle.fill" : "circle")
-                        .foregroundStyle(model.isReady ? PevColors.cyan : PevColors.muted)
-                    Text(evidence)
-                    Spacer()
-                    Text(model.isReady ? "Verified" : "Not yet")
-                        .font(.caption)
-                        .foregroundStyle(PevColors.muted)
-                }
-                .accessibilityElement(children: .combine)
-            }
-            Text("Profile evidence confirms structure only. Command confirmation is checked after a write.")
+            Text("Lighting stays connected independently of your ride.")
                 .font(.footnote)
                 .foregroundStyle(PevColors.muted)
         }
@@ -1154,43 +1174,14 @@ private struct LightingPairingSheet: View {
         }
     }
 
-    private var statusGuideCard: some View {
-        lightingCard {
-            Text("Status guide")
-                .font(.headline)
-            LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 10) {
-                statusGuide("Ready", color: PevColors.cyan, detail: "Profile verified")
-                statusGuide("Pending confirmation", color: PevColors.yellow, detail: "Checking live response")
-                statusGuide("Unconfirmed", color: PevColors.orange, detail: "Write not proven")
-                statusGuide("Error", color: PevColors.red, detail: "Connection failed")
-            }
-        }
-    }
-
     private var warningCard: some View {
         lightingCard {
             Label("Competing client", systemImage: "exclamationmark.triangle")
                 .foregroundStyle(PevColors.yellow)
-            Text("If LotusLamp X or another app is connected, commands may remain unconfirmed until it releases the controller.")
+            Text("If another app is connected to this controller, disconnect it there before connecting in Cutout.")
                 .font(.footnote)
                 .foregroundStyle(PevColors.muted)
         }
-    }
-
-    private func statusGuide(_ title: String, color: Color, detail: String) -> some View {
-        VStack(spacing: 4) {
-            Image(systemName: "circle")
-                .foregroundStyle(color)
-            Text(title)
-                .font(.caption.weight(.semibold))
-                .multilineTextAlignment(.center)
-            Text(detail)
-                .font(.caption2)
-                .foregroundStyle(PevColors.muted)
-                .multilineTextAlignment(.center)
-        }
-        .frame(maxWidth: .infinity)
-        .accessibilityElement(children: .combine)
     }
 
     private var connectionPill: some View {

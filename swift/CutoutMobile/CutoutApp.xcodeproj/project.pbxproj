@@ -45,6 +45,7 @@
 		30000000000000000000001A /* Apps/CutoutApp/CutoutUITestSessionFixture.swift in Sources */ = {isa = PBXBuildFile; fileRef = 40000000000000000000001A /* Apps/CutoutApp/CutoutUITestSessionFixture.swift */; };
 		30000000000000000000001B /* Apps/CutoutApp/CutoutAppState.swift in Sources */ = {isa = PBXBuildFile; fileRef = 40000000000000000000001B /* Apps/CutoutApp/CutoutAppState.swift */; };
 		30000000000000000000001C /* Apps/CutoutApp/CutoutRouteViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = 40000000000000000000001C /* Apps/CutoutApp/CutoutRouteViews.swift */; };
+		AABBCC000000000000000001 /* Apps/CutoutApp/LightingPlaybackControls.swift in Sources */ = {isa = PBXBuildFile; fileRef = AABBCC000000000000000002 /* Apps/CutoutApp/LightingPlaybackControls.swift */; };
 		300000000000000000000025 /* Apps/CutoutApp/RideMapRouteView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 400000000000000000000025 /* Apps/CutoutApp/RideMapRouteView.swift */; };
 		300000000000000000000026 /* Apps/CutoutApp/RideMapCanvasView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 400000000000000000000026 /* Apps/CutoutApp/RideMapCanvasView.swift */; };
 		300000000000000000000027 /* Apps/CutoutApp/RideMapControlsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 400000000000000000000027 /* Apps/CutoutApp/RideMapControlsView.swift */; };
@@ -132,6 +133,7 @@
 		40000000000000000000001A /* Apps/CutoutApp/CutoutUITestSessionFixture.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Apps/CutoutApp/CutoutUITestSessionFixture.swift; sourceTree = SOURCE_ROOT; };
 		40000000000000000000001B /* Apps/CutoutApp/CutoutAppState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Apps/CutoutApp/CutoutAppState.swift; sourceTree = SOURCE_ROOT; };
 		40000000000000000000001C /* Apps/CutoutApp/CutoutRouteViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Apps/CutoutApp/CutoutRouteViews.swift; sourceTree = SOURCE_ROOT; };
+		AABBCC000000000000000002 /* Apps/CutoutApp/LightingPlaybackControls.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Apps/CutoutApp/LightingPlaybackControls.swift; sourceTree = SOURCE_ROOT; };
 		400000000000000000000025 /* Apps/CutoutApp/RideMapRouteView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Apps/CutoutApp/RideMapRouteView.swift; sourceTree = SOURCE_ROOT; };
 		400000000000000000000026 /* Apps/CutoutApp/RideMapCanvasView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Apps/CutoutApp/RideMapCanvasView.swift; sourceTree = SOURCE_ROOT; };
 		400000000000000000000027 /* Apps/CutoutApp/RideMapControlsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Apps/CutoutApp/RideMapControlsView.swift; sourceTree = SOURCE_ROOT; };
@@ -202,6 +204,7 @@
 				111111111111111111111123 /* Apps/CutoutApp/CutoutAppModel.swift */,
 				40000000000000000000001B /* Apps/CutoutApp/CutoutAppState.swift */,
 				40000000000000000000001C /* Apps/CutoutApp/CutoutRouteViews.swift */,
+				AABBCC000000000000000002 /* Apps/CutoutApp/LightingPlaybackControls.swift */,
 				400000000000000000000025 /* Apps/CutoutApp/RideMapRouteView.swift */,
 				400000000000000000000026 /* Apps/CutoutApp/RideMapCanvasView.swift */,
 				400000000000000000000027 /* Apps/CutoutApp/RideMapControlsView.swift */,
@@ -439,6 +442,7 @@
 				111111111111111111111113 /* Apps/CutoutApp/CutoutAppModel.swift in Sources */,
 				30000000000000000000001B /* Apps/CutoutApp/CutoutAppState.swift in Sources */,
 				30000000000000000000001C /* Apps/CutoutApp/CutoutRouteViews.swift in Sources */,
+				AABBCC000000000000000001 /* Apps/CutoutApp/LightingPlaybackControls.swift in Sources */,
 				300000000000000000000025 /* Apps/CutoutApp/RideMapRouteView.swift in Sources */,
 				300000000000000000000026 /* Apps/CutoutApp/RideMapCanvasView.swift in Sources */,
 				300000000000000000000027 /* Apps/CutoutApp/RideMapControlsView.swift in Sources */,

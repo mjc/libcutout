@@ -26,6 +26,8 @@ mod ride_lifecycle;
 pub use ride_lifecycle::*;
 mod energy_estimate;
 pub use energy_estimate::*;
+mod melk_controls;
+pub use melk_controls::*;
 mod rgb_lighting;
 pub use rgb_lighting::*;
 
@@ -361,6 +363,7 @@ pub struct RgbLightingRequestedState {
     power: LightingPowerState,
     color: RgbColor,
     brightness: LightingBrightness,
+    playback: LightingPlayback,
 }
 
 impl RgbLightingRequestedState {
@@ -375,7 +378,21 @@ impl RgbLightingRequestedState {
             power,
             color,
             brightness,
+            playback: LightingPlayback::Solid,
         }
+    }
+
+    /// Replaces playback while retaining power, RGB, and brightness.
+    #[must_use]
+    pub const fn with_playback(mut self, playback: LightingPlayback) -> Self {
+        self.playback = playback;
+        self
+    }
+
+    /// Returns the requested controller-local playback.
+    #[must_use]
+    pub const fn playback(self) -> LightingPlayback {
+        self.playback
     }
 
     /// Returns the requested power state.

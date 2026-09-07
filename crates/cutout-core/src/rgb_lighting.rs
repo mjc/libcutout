@@ -3,7 +3,7 @@
 use crate::RgbLightingRequestedState;
 
 /// Current version of the persisted standalone RGB accessory record.
-pub const RGB_LIGHTING_RECORD_VERSION: u8 = 1;
+pub const RGB_LIGHTING_RECORD_VERSION: u8 = 2;
 
 /// Maximum UTF-8 bytes accepted for a persisted lighting label or identity.
 pub const RGB_LIGHTING_MAX_TEXT_BYTES: usize = 128;
@@ -367,6 +367,8 @@ struct WireState {
     green: u8,
     blue: u8,
     brightness: u8,
+    #[serde(default)]
+    playback: crate::LightingPlayback,
 }
 
 #[cfg(feature = "serde")]
@@ -427,7 +429,7 @@ impl TryFrom<WireRecord> for RgbLightingAccessoryRecord {
     type Error = RgbLightingRecordError;
 
     fn try_from(wire: WireRecord) -> Result<Self, Self::Error> {
-        if wire.version != RGB_LIGHTING_RECORD_VERSION {
+        if wire.version != 1 && wire.version != RGB_LIGHTING_RECORD_VERSION {
             return Err(RgbLightingRecordError::UnsupportedVersion);
         }
         let profile = RgbLightingProfileKind::from_wire_name(&wire.profile)
@@ -465,6 +467,7 @@ impl From<RgbLightingRequestedState> for WireState {
             green: state.color().green(),
             blue: state.color().blue(),
             brightness: state.brightness().as_percent(),
+            playback: state.playback(),
         }
     }
 }
@@ -484,7 +487,8 @@ impl TryFrom<WireState> for RgbLightingRequestedState {
             },
             crate::RgbColor::new(state.red, state.green, state.blue),
             brightness,
-        ))
+        )
+        .with_playback(state.playback))
     }
 }
 
@@ -545,6 +549,41 @@ mod tests {
     }
 
     #[test]
+    fn playback_presets_round_trip_and_legacy_records_stay_solid() {
+        let mut record =
+            RgbLightingAccessoryRecord::new("melk-1".into(), RgbLightingProfileKind::MelkOc21, 1)
+                .unwrap();
+        for playback in [
+            crate::LightingPlayback::Effect {
+                pattern: 220.try_into().unwrap(),
+                speed: 255,
+            },
+            crate::LightingPlayback::Music {
+                effect: 7.try_into().unwrap(),
+                sensitivity: 100.try_into().unwrap(),
+            },
+        ] {
+            record.set_requested_state(Some(state().with_playback(playback)));
+            let decoded = RgbLightingAccessoryRecord::decode(&record.encode().unwrap()).unwrap();
+            assert_eq!(decoded.requested_state().unwrap().playback(), playback);
+        }
+        let legacy = br#"{"version":1,"platform_identifier":"melk-1","profile":"melk_oc21","profile_version":1,"alias":null,"vehicle_identifier":null,"requested_state":{"power_on":true,"red":1,"green":2,"blue":3,"brightness":42},"confirmed_state":null,"confirmation":"unknown","connection":"unknown","restore_enabled":false,"presets":[]}"#;
+        assert_eq!(
+            RgbLightingAccessoryRecord::decode(legacy)
+                .unwrap()
+                .requested_state()
+                .unwrap()
+                .playback(),
+            crate::LightingPlayback::Solid
+        );
+        let mut wire: serde_json::Value =
+            serde_json::from_slice(&record.encode().unwrap()).unwrap();
+        wire["requested_state"]["playback"] =
+            serde_json::json!({"kind":"music","effect":8,"sensitivity":50});
+        assert!(RgbLightingAccessoryRecord::decode(&serde_json::to_vec(&wire).unwrap()).is_err());
+    }
+
+    #[test]
     fn accessory_record_round_trips_typed_state_and_metadata() {
         let mut record = RgbLightingAccessoryRecord::new(
             "melk-1".to_owned(),
@@ -573,7 +612,7 @@ mod tests {
 
     #[test]
     fn accessory_record_rejects_unknown_version_and_invalid_brightness() {
-        let unknown_version = br#"{"version":2,"platform_identifier":"melk-1","profile":"melk_oc21","profile_version":1,"alias":null,"vehicle_identifier":null,"requested_state":null,"confirmed_state":null,"confirmation":"unknown","connection":"unknown","restore_enabled":false,"presets":[]}"#;
+        let unknown_version = br#"{"version":99,"platform_identifier":"melk-1","profile":"melk_oc21","profile_version":1,"alias":null,"vehicle_identifier":null,"requested_state":null,"confirmed_state":null,"confirmation":"unknown","connection":"unknown","restore_enabled":false,"presets":[]}"#;
         assert_eq!(
             RgbLightingAccessoryRecord::decode(unknown_version),
             Err(RgbLightingRecordError::UnsupportedVersion)
