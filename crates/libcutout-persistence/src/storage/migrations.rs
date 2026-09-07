@@ -855,6 +855,9 @@ fn migrate_v15_to_current(connection: &mut Connection) -> Result<(), StorageErro
 
 fn migrate_v16_to_current(connection: &mut Connection) -> Result<(), StorageError> {
     verify_legacy_schema(connection)?;
+    if !table_exists(connection, "ride_music_event")? {
+        return migrate_pre_music_v16_to_current(connection);
+    }
     let transaction = connection.transaction()?;
     transaction.execute_batch(
         "ALTER TABLE ride_music_event RENAME TO ride_music_event_v16;
@@ -916,6 +919,38 @@ fn migrate_v16_to_current(connection: &mut Connection) -> Result<(), StorageErro
     migrate_v18_to_current(connection)
 }
 
+fn migrate_pre_music_v16_to_current(connection: &mut Connection) -> Result<(), StorageError> {
+    if table_exists(connection, "ride_music_history")? {
+        return Err(StorageError::InvalidDatabaseIdentity);
+    }
+    let transaction = connection.transaction()?;
+    transaction.execute_batch(
+        "CREATE TABLE ride_music_history (
+             ride_id TEXT PRIMARY KEY NOT NULL REFERENCES rides(id) ON DELETE CASCADE,
+             policy TEXT NOT NULL CHECK (policy IN ('disabled', 'opaque_item', 'human_readable')),
+             deleted INTEGER NOT NULL DEFAULT 0 CHECK (deleted IN (0, 1)),
+             last_observed_at_ms INTEGER CHECK (last_observed_at_ms IS NULL OR last_observed_at_ms >= 0)
+         );
+         CREATE TABLE ride_music_event (
+             ride_id TEXT NOT NULL REFERENCES rides(id) ON DELETE CASCADE,
+             sequence INTEGER NOT NULL CHECK (sequence >= 0),
+             provider TEXT NOT NULL CHECK (provider IN ('apple_music', 'spotify')),
+             item_identifier TEXT CHECK (item_identifier IS NULL OR length(CAST(item_identifier AS BLOB)) BETWEEN 1 AND 256),
+             title TEXT CHECK (title IS NULL OR length(CAST(title AS BLOB)) BETWEEN 1 AND 512),
+             artist TEXT CHECK (artist IS NULL OR length(CAST(artist AS BLOB)) BETWEEN 1 AND 512),
+             kind TEXT NOT NULL CHECK (kind IN ('play', 'pause', 'skip', 'item_changed', 'stopped', 'provider_disconnected')),
+             monotonic_at_ms INTEGER NOT NULL CHECK (monotonic_at_ms >= 0),
+             wall_clock_at_ms INTEGER NOT NULL CHECK (wall_clock_at_ms >= 0),
+             clock_uncertainty_milliseconds INTEGER NOT NULL CHECK (clock_uncertainty_milliseconds >= 0),
+             observed_at_ms INTEGER CHECK (observed_at_ms IS NULL OR observed_at_ms BETWEEN 0 AND monotonic_at_ms),
+             PRIMARY KEY (ride_id, sequence)
+         );
+         PRAGMA user_version = 18;",
+    )?;
+    transaction.commit()?;
+    migrate_v18_to_current(connection)
+}
+
 fn migrate_v17_to_current(connection: &mut Connection) -> Result<(), StorageError> {
     verify_legacy_schema(connection)?;
     let transaction = connection.transaction()?;
@@ -949,8 +984,15 @@ fn migrate_v17_to_current(connection: &mut Connection) -> Result<(), StorageErro
 }
 
 fn migrate_v18_to_current(connection: &mut Connection) -> Result<(), StorageError> {
+    let captures_exists = table_exists(connection, "pevcap_captures")?;
+    let chunks_exists = table_exists(connection, "pevcap_capture_chunks")?;
+    if captures_exists != chunks_exists {
+        return Err(StorageError::InvalidDatabaseIdentity);
+    }
     let transaction = connection.transaction()?;
-    transaction.execute_batch(super::capture_data::SCHEMA)?;
+    if !captures_exists {
+        transaction.execute_batch(super::capture_data::SCHEMA)?;
+    }
     transaction.execute_batch(&current_schema_pragmas())?;
     transaction.commit()?;
     Ok(())

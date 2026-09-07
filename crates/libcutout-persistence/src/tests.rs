@@ -95,6 +95,47 @@ fn music_v16_migration_preserves_events_without_fabricating_observation_times() 
 }
 
 #[test]
+fn pre_music_v16_migration_preserves_existing_capture_tables() {
+    let _guard = test_guard();
+    let path = music_test_path();
+    let database = RideDatabase::open(&path).unwrap();
+    database.shutdown().unwrap();
+
+    let connection = Connection::open(&path).unwrap();
+    connection
+        .execute_batch(
+            "DROP TABLE ride_music_event;
+             DROP TABLE ride_music_history;
+             PRAGMA user_version = 16;",
+        )
+        .unwrap();
+    drop(connection);
+
+    let database = RideDatabase::open(&path).unwrap();
+    let connection = Connection::open(&path).unwrap();
+    assert_eq!(
+        connection
+            .query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0))
+            .unwrap(),
+        19
+    );
+    for table in ["pevcap_captures", "pevcap_capture_chunks"] {
+        assert!(
+            connection
+                .query_row(
+                    "SELECT EXISTS(SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = ?1)",
+                    [table],
+                    |row| row.get::<_, bool>(0),
+                )
+                .unwrap()
+        );
+    }
+    drop(connection);
+    database.shutdown().unwrap();
+    let _ = std::fs::remove_file(path);
+}
+
+#[test]
 fn music_history_rejects_reads_and_writes_when_over_capacity() {
     let _guard = test_guard();
     let path = music_test_path();
