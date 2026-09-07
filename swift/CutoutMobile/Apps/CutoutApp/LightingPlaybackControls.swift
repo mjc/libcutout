@@ -272,33 +272,16 @@ struct LightingPlaybackControls: View {
         VStack(alignment: .leading, spacing: 16) {
             if page == .effects {
                 Label("Patterns", systemImage: "sparkles").font(.headline)
-                LazyVGrid(columns: [GridItem(.adaptive(minimum: 125))], spacing: 10) {
-                    ForEach(favorites, id: \.id) { effect in
-                        Button {
-                            pattern = effect.id
-                            selectGroup(for: effect.id)
-                            play()
-                        } label: {
-                            VStack(spacing: 12) {
-                                Image(systemName: effect.symbol)
-                                    .font(.largeTitle)
-                                    .foregroundStyle(LinearGradient(
-                                        colors: [PevColors.cyan, .purple, .pink],
-                                        startPoint: .leading, endPoint: .trailing
-                                    ))
-                                Text(LightingPatternCatalog.name(for: effect.id)).font(.subheadline)
-                                Text("ID \(effect.id)").font(.caption).foregroundStyle(.secondary)
-                            }
-                            .frame(maxWidth: .infinity, minHeight: 86)
-                            .background(.purple.opacity(pattern == effect.id ? 0.22 : 0.08), in: RoundedRectangle(cornerRadius: 14))
-                            .overlay(RoundedRectangle(cornerRadius: 14).stroke(
-                                pattern == effect.id ? Color.purple : PevColors.cardStroke, lineWidth: 1
-                            ))
-                        }
-                        .buttonStyle(.plain)
-                        .accessibilityIdentifier("lighting.effect.\(effect.id)")
-                    }
-                }
+                Text("Quick picks")
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(PevColors.muted)
+                effectGrid(ids: favorites.map(\.id), symbolForID: { id in
+                    favorites.first(where: { $0.id == id })?.symbol ?? "sparkles"
+                })
+                Text("\(group) patterns")
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(PevColors.muted)
+                effectGrid(ids: patternIDs, symbolForID: { _ in "sparkles" })
                 Picker("Pattern group", selection: $group) {
                     ForEach(LightingPatternCatalog.groups, id: \.name) { group in
                         Text(group.name).tag(group.name)
@@ -338,8 +321,12 @@ struct LightingPlaybackControls: View {
                     Text("Faster")
                 }
                 .font(.caption).foregroundStyle(PevColors.muted)
-                Text("Reference names may vary by firmware. Unmapped entries retain their IDs; matching them to this controller is still in progress.")
-                    .font(.caption).foregroundStyle(PevColors.muted)
+                Text("Reference names may vary by firmware.")
+                    .font(.caption)
+                    .foregroundStyle(PevColors.muted)
+                Text("Unmapped entries retain their IDs and are unavailable until this controller is captured.")
+                    .font(.caption)
+                    .foregroundStyle(PevColors.muted)
             } else {
                 Label("Music", systemImage: "waveform").font(.headline)
                 Text("Uses the microphone on your light controller. Your phone does not record audio.")
@@ -399,14 +386,67 @@ struct LightingPlaybackControls: View {
         }
     }
 
+    @ViewBuilder
+    private func effectGrid(ids: [Int], symbolForID: @escaping (Int) -> String) -> some View {
+        LazyVGrid(columns: [GridItem(.adaptive(minimum: 125))], spacing: 10) {
+            ForEach(ids, id: \.self) { id in
+                Button {
+                    pattern = id
+                    selectGroup(for: id)
+                    play()
+                } label: {
+                    VStack(spacing: 10) {
+                        Image(systemName: symbolForID(id))
+                            .font(.title2)
+                            .foregroundStyle(
+                                LinearGradient(
+                                    colors: [PevColors.cyan, .purple, .pink],
+                                    startPoint: .leading,
+                                    endPoint: .trailing
+                                )
+                            )
+                        Text(LightingPatternCatalog.name(for: id))
+                            .font(.subheadline)
+                            .multilineTextAlignment(.center)
+                            .lineLimit(2)
+                        Text("ID \(id)")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    .frame(maxWidth: .infinity, minHeight: 86)
+                    .background(
+                        .purple.opacity(pattern == id ? 0.22 : 0.08),
+                        in: RoundedRectangle(cornerRadius: 14)
+                    )
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 14)
+                            .stroke(
+                                pattern == id ? Color.purple : PevColors.cardStroke,
+                                lineWidth: 1
+                            )
+                    )
+                }
+                .buttonStyle(.plain)
+                .disabled(!canSendPattern(id))
+                .accessibilityValue(canSendPattern(id) ? "available" : "unmapped, unavailable")
+                .accessibilityIdentifier("lighting.effect.\(id)")
+            }
+        }
+    }
+
     private func selectGroup(for id: Int) {
         if let selected = LightingPatternCatalog.groups.first(where: { $0.ids.contains(id) }) {
             group = selected.name
         }
     }
 
+    private func canSendPattern(_ id: Int) -> Bool {
+        (1...212).contains(id)
+    }
+
     private func play() {
         if page == .effects {
+            guard canSendPattern(pattern) else { return }
             model.setPlayback(.effect(pattern: UInt8(pattern), speed: UInt8(speed)))
         } else {
             model.setPlayback(.music(effect: UInt8(musicEffect), sensitivity: UInt8(sensitivity)))
