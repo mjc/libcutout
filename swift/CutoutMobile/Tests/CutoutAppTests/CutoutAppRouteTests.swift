@@ -1006,6 +1006,8 @@ final class CutoutAppRouteTests: XCTestCase {
         XCTAssertEqual(groups.first?.name, "Basic")
         XCTAssertEqual(groups.first?.ids.prefix(3), [1, 2, 212])
         XCTAssertEqual(groups.first(where: { $0.name == "Curtain" })?.ids, Array(57...76))
+        XCTAssertTrue((1...212).allSatisfy { LightingPatternCatalog.isMapped($0) })
+        XCTAssertFalse([0, 213, 220, 255, -1].contains { LightingPatternCatalog.isMapped($0) })
         for id in 1...212 {
             XCTAssertFalse(LightingPatternCatalog.name(for: id).isEmpty)
             XCTAssertFalse(LightingPatternCatalog.name(for: id).contains("Unmapped"))
