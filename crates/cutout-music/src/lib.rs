@@ -383,21 +383,27 @@ impl MusicRideEvent {
     }
 
     /// Builds a privacy-filtered event from a provider observation.
-    #[must_use]
-    pub fn from_snapshot(
+    /// # Errors
+    ///
+    /// Returns [`MusicValidationError::EventKindStateMismatch`] for a transition kind that does
+    /// not match the provider state, or another validation error for invalid timing/text.
+    pub fn try_from_snapshot(
         snapshot: &MusicSnapshot,
         kind: MusicRideEventKind,
         monotonic_at: MonotonicTimestamp,
         wall_clock_at: WallClockUnixTimestamp,
         clock_uncertainty_milliseconds: u64,
         policy: MusicHistoryPolicy,
-    ) -> Option<Self> {
+    ) -> Result<Option<Self>, MusicValidationError> {
         if policy == MusicHistoryPolicy::Disabled || snapshot.state() == MusicPlaybackState::Stale {
-            return None;
+            return Ok(None);
+        }
+        if !kind.valid_for_state(snapshot.state()) {
+            return Err(MusicValidationError::EventKindStateMismatch);
         }
         let item = snapshot.item();
         let (item_identifier, title, artist) = match policy {
-            MusicHistoryPolicy::Disabled => return None,
+            MusicHistoryPolicy::Disabled => return Ok(None),
             MusicHistoryPolicy::OpaqueItem => (
                 item.filter(|item| {
                     !metadata_bearing_identifier(snapshot.provider(), item.identifier())
@@ -425,7 +431,29 @@ impl MusicRideEvent {
                 clock_uncertainty_milliseconds,
             },
         )
+        .map(Some)
+    }
+
+    /// Builds a privacy-filtered event, treating invalid observations as absent.
+    #[must_use]
+    pub fn from_snapshot(
+        snapshot: &MusicSnapshot,
+        kind: MusicRideEventKind,
+        monotonic_at: MonotonicTimestamp,
+        wall_clock_at: WallClockUnixTimestamp,
+        clock_uncertainty_milliseconds: u64,
+        policy: MusicHistoryPolicy,
+    ) -> Option<Self> {
+        Self::try_from_snapshot(
+            snapshot,
+            kind,
+            monotonic_at,
+            wall_clock_at,
+            clock_uncertainty_milliseconds,
+            policy,
+        )
         .ok()
+        .flatten()
     }
 
     /// Returns the event kind.
@@ -469,8 +497,6 @@ impl MusicRideEvent {
     pub fn same_transition_as(&self, other: &Self) -> bool {
         let same_content = self.provider == other.provider
             && self.item_identifier == other.item_identifier
-            && self.title == other.title
-            && self.artist == other.artist
             && self.kind == other.kind;
         if self.kind.is_occurrence() || other.kind.is_occurrence() {
             return same_content
@@ -525,6 +551,8 @@ pub enum MusicRideEventKind {
     Skip,
     /// The current item changed without an explicit skip command.
     ItemChanged,
+    /// Playback stopped or reached the end of the current item.
+    Stopped,
     /// The provider connection ended.
     ProviderDisconnected,
 }
@@ -535,6 +563,27 @@ impl MusicRideEventKind {
             self,
             Self::Skip | Self::ItemChanged | Self::ProviderDisconnected
         )
+    }
+
+    /// Returns whether this transition is valid for the provider state that produced it.
+    #[must_use]
+    pub const fn valid_for_state(self, state: MusicPlaybackState) -> bool {
+        match self {
+            Self::Play | Self::Pause => matches!(
+                state,
+                MusicPlaybackState::Playing
+                    | MusicPlaybackState::Paused
+                    | MusicPlaybackState::Buffering
+            ),
+            Self::Stopped => matches!(state, MusicPlaybackState::Stopped),
+            Self::ProviderDisconnected => matches!(state, MusicPlaybackState::Disconnected),
+            Self::Skip | Self::ItemChanged => matches!(
+                state,
+                MusicPlaybackState::Playing
+                    | MusicPlaybackState::Paused
+                    | MusicPlaybackState::Stopped
+            ),
+        }
     }
 }
 
@@ -679,6 +728,9 @@ pub enum MusicValidationError {
     /// Observation time cannot follow its associated event.
     #[error("music observation is after event")]
     ObservationAfterEvent,
+    /// A transition kind does not match the provider playback state.
+    #[error("music event kind does not match playback state")]
+    EventKindStateMismatch,
 }
 
 fn validate_text(
@@ -706,7 +758,10 @@ fn validate_optional_text(
 }
 
 fn metadata_bearing_identifier(provider: MusicProvider, identifier: &MusicIdentifier) -> bool {
-    matches!(provider, MusicProvider::Spotify) && identifier.as_str().starts_with("spotify:local:")
+    match provider {
+        MusicProvider::AppleMusic => false,
+        MusicProvider::Spotify => identifier.as_str().starts_with("spotify:local:"),
+    }
 }
 
 #[cfg(test)]

@@ -1,7 +1,7 @@
 use super::{MapPointId, SpatialRowId, StorageError};
 use rusqlite::{Connection, OptionalExtension, params};
 
-const CURRENT_SCHEMA_VERSION: i64 = 17;
+const CURRENT_SCHEMA_VERSION: i64 = 18;
 const APPLICATION_ID: i64 = 0x4355_544f;
 fn current_schema_pragmas() -> String {
     format!(
@@ -37,6 +37,7 @@ pub(super) fn migrate(connection: &mut Connection) -> Result<(), StorageError> {
         14 => migrate_v14_to_current(connection)?,
         15 => migrate_v15_to_current(connection)?,
         16 => migrate_v16_to_current(connection)?,
+        17 => migrate_v17_to_current(connection)?,
         CURRENT_SCHEMA_VERSION => {
             if application_id != APPLICATION_ID {
                 return Err(StorageError::InvalidDatabaseIdentity);
@@ -179,7 +180,7 @@ pub(crate) fn create_current_schema(connection: &Connection) -> Result<(), Stora
             item_identifier TEXT CHECK (item_identifier IS NULL OR length(CAST(item_identifier AS BLOB)) BETWEEN 1 AND 256),
             title TEXT CHECK (title IS NULL OR length(CAST(title AS BLOB)) BETWEEN 1 AND 512),
             artist TEXT CHECK (artist IS NULL OR length(CAST(artist AS BLOB)) BETWEEN 1 AND 512),
-            kind TEXT NOT NULL CHECK (kind IN ('play', 'pause', 'skip', 'item_changed', 'provider_disconnected')),
+            kind TEXT NOT NULL CHECK (kind IN ('play', 'pause', 'skip', 'item_changed', 'stopped', 'provider_disconnected')),
             monotonic_at_ms INTEGER NOT NULL CHECK (monotonic_at_ms >= 0),
             wall_clock_at_ms INTEGER NOT NULL CHECK (wall_clock_at_ms >= 0),
             clock_uncertainty_milliseconds INTEGER NOT NULL CHECK (clock_uncertainty_milliseconds >= 0),
@@ -836,7 +837,7 @@ fn migrate_v15_to_current(connection: &mut Connection) -> Result<(), StorageErro
              item_identifier TEXT CHECK (item_identifier IS NULL OR length(CAST(item_identifier AS BLOB)) BETWEEN 1 AND 256),
              title TEXT CHECK (title IS NULL OR length(CAST(title AS BLOB)) BETWEEN 1 AND 512),
              artist TEXT CHECK (artist IS NULL OR length(CAST(artist AS BLOB)) BETWEEN 1 AND 512),
-             kind TEXT NOT NULL CHECK (kind IN ('play', 'pause', 'skip', 'item_changed', 'provider_disconnected')),
+             kind TEXT NOT NULL CHECK (kind IN ('play', 'pause', 'skip', 'item_changed', 'stopped', 'provider_disconnected')),
              monotonic_at_ms INTEGER NOT NULL CHECK (monotonic_at_ms >= 0),
              wall_clock_at_ms INTEGER NOT NULL CHECK (wall_clock_at_ms >= 0),
              clock_uncertainty_milliseconds INTEGER NOT NULL CHECK (clock_uncertainty_milliseconds >= 0),
@@ -861,7 +862,7 @@ fn migrate_v16_to_current(connection: &mut Connection) -> Result<(), StorageErro
              item_identifier TEXT CHECK (item_identifier IS NULL OR length(CAST(item_identifier AS BLOB)) BETWEEN 1 AND 256),
              title TEXT CHECK (title IS NULL OR length(CAST(title AS BLOB)) BETWEEN 1 AND 512),
              artist TEXT CHECK (artist IS NULL OR length(CAST(artist AS BLOB)) BETWEEN 1 AND 512),
-             kind TEXT NOT NULL CHECK (kind IN ('play', 'pause', 'skip', 'item_changed', 'provider_disconnected')),
+             kind TEXT NOT NULL CHECK (kind IN ('play', 'pause', 'skip', 'item_changed', 'stopped', 'provider_disconnected')),
              monotonic_at_ms INTEGER NOT NULL CHECK (monotonic_at_ms >= 0),
              wall_clock_at_ms INTEGER NOT NULL CHECK (wall_clock_at_ms >= 0),
              clock_uncertainty_milliseconds INTEGER NOT NULL CHECK (clock_uncertainty_milliseconds >= 0),
@@ -907,6 +908,38 @@ fn migrate_v16_to_current(connection: &mut Connection) -> Result<(), StorageErro
             ))?;
         }
     }
+    transaction.execute_batch(&current_schema_pragmas())?;
+    transaction.commit()?;
+    Ok(())
+}
+
+fn migrate_v17_to_current(connection: &mut Connection) -> Result<(), StorageError> {
+    verify_legacy_schema(connection)?;
+    let transaction = connection.transaction()?;
+    transaction.execute_batch(
+        "ALTER TABLE ride_music_event RENAME TO ride_music_event_v17;
+         CREATE TABLE ride_music_event (
+             ride_id TEXT NOT NULL REFERENCES rides(id) ON DELETE CASCADE,
+             sequence INTEGER NOT NULL CHECK (sequence >= 0),
+             provider TEXT NOT NULL CHECK (provider IN ('apple_music', 'spotify')),
+             item_identifier TEXT CHECK (item_identifier IS NULL OR length(CAST(item_identifier AS BLOB)) BETWEEN 1 AND 256),
+             title TEXT CHECK (title IS NULL OR length(CAST(title AS BLOB)) BETWEEN 1 AND 512),
+             artist TEXT CHECK (artist IS NULL OR length(CAST(artist AS BLOB)) BETWEEN 1 AND 512),
+             kind TEXT NOT NULL CHECK (kind IN ('play', 'pause', 'skip', 'item_changed', 'stopped', 'provider_disconnected')),
+             monotonic_at_ms INTEGER NOT NULL CHECK (monotonic_at_ms >= 0),
+             wall_clock_at_ms INTEGER NOT NULL CHECK (wall_clock_at_ms >= 0),
+             clock_uncertainty_milliseconds INTEGER NOT NULL CHECK (clock_uncertainty_milliseconds >= 0),
+             observed_at_ms INTEGER CHECK (observed_at_ms IS NULL OR observed_at_ms BETWEEN 0 AND monotonic_at_ms),
+             PRIMARY KEY (ride_id, sequence)
+         );
+         INSERT INTO ride_music_event
+             (ride_id, sequence, provider, item_identifier, title, artist, kind,
+              monotonic_at_ms, wall_clock_at_ms, clock_uncertainty_milliseconds, observed_at_ms)
+         SELECT ride_id, sequence, provider, item_identifier, title, artist, kind,
+                monotonic_at_ms, wall_clock_at_ms, clock_uncertainty_milliseconds, observed_at_ms
+           FROM ride_music_event_v17;
+         DROP TABLE ride_music_event_v17;",
+    )?;
     transaction.execute_batch(&current_schema_pragmas())?;
     transaction.commit()?;
     Ok(())

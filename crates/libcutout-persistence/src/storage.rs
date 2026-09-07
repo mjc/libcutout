@@ -4873,6 +4873,14 @@ pub struct MusicHistory {
 }
 
 fn music_history(connection: &Connection, ride_id: RideId) -> Result<MusicHistory, StorageError> {
+    ensure_visible_ride(connection, ride_id)?;
+    music_history_unfiltered(connection, ride_id)
+}
+
+fn music_history_unfiltered(
+    connection: &Connection,
+    ride_id: RideId,
+) -> Result<MusicHistory, StorageError> {
     ensure_ride_exists(connection, ride_id)?;
     let retention: Option<(String, bool)> = connection
         .query_row(
@@ -4973,10 +4981,7 @@ fn record_music_event(
 ) -> Result<MusicTimelineOutcome, StorageError> {
     let transaction = connection.transaction()?;
     let lifecycle = load_ride_write_state(&transaction, ride_id)?.lifecycle();
-    if !matches!(
-        lifecycle,
-        RideLifecycleState::Active | RideLifecycleState::Paused
-    ) {
+    if lifecycle != RideLifecycleState::Active {
         return Err(StorageError::InvalidRideState(lifecycle));
     }
     let policy = music_history_policy(&transaction, ride_id)?;
@@ -5074,7 +5079,7 @@ fn save_music_history_policy(
     apply_music_history_policy(&transaction, ride_id, policy)?;
     // Validate the post-policy projection before committing so callers never observe a failed
     // policy update with a durable policy mutation.
-    let _ = music_history(&transaction, ride_id)?;
+    let _ = music_history_unfiltered(&transaction, ride_id)?;
     transaction.commit()?;
     Ok(())
 }
@@ -5084,6 +5089,38 @@ fn apply_music_history_policy(
     ride_id: RideId,
     policy: MusicHistoryPolicy,
 ) -> Result<(), StorageError> {
+    let existing_policy = transaction
+        .query_row(
+            "SELECT policy, deleted FROM ride_music_history WHERE ride_id = ?1",
+            [ride_id.uuid().to_string()],
+            |row| Ok((row.get::<_, String>(0)?, row.get::<_, bool>(1)?)),
+        )
+        .optional()?;
+    if existing_policy.is_none() {
+        // A missing retention row is an absence-of-consent boundary. Quarantine any orphaned
+        // event rows before creating a new policy so they cannot reappear on re-enable.
+        transaction.execute(
+            "DELETE FROM ride_music_event WHERE ride_id = ?1",
+            [ride_id.uuid().to_string()],
+        )?;
+    } else if matches!(
+        existing_policy
+            .as_ref()
+            .and_then(|(value, deleted)| { (!deleted).then(|| parse_policy(value).ok()) }),
+        Some(Some(MusicHistoryPolicy::OpaqueItem))
+    ) && policy == MusicHistoryPolicy::HumanReadable
+    {
+        // Opaque history must never become readable merely because a user opts in later. Drop
+        // all fields that were not validly retained under the prior policy.
+        transaction.execute(
+            "UPDATE ride_music_event SET item_identifier = CASE
+                 WHEN provider = 'spotify' AND item_identifier LIKE 'spotify:local:%' THEN NULL
+                 ELSE item_identifier END,
+                 title = NULL, artist = NULL
+             WHERE ride_id = ?1",
+            [ride_id.uuid().to_string()],
+        )?;
+    }
     transaction.execute(
         "INSERT INTO ride_music_history (ride_id, policy)
          VALUES (?1, ?2)
@@ -5100,6 +5137,8 @@ fn apply_music_history_policy(
         transaction.execute(
             "UPDATE ride_music_event
              SET item_identifier = CASE
+                     WHEN item_identifier IS NOT NULL AND trim(item_identifier) = ''
+                          THEN NULL
                      WHEN provider = 'spotify' AND item_identifier LIKE 'spotify:local:%'
                      THEN NULL ELSE item_identifier END,
                  title = NULL,
@@ -5143,6 +5182,13 @@ fn insert_music_event(
     if policy == MusicHistoryPolicy::Disabled {
         return Ok(());
     }
+    // Keep the durable privacy invariant in this primitive as well as in the live writer.
+    // Importers and restore code must not be able to persist metadata-bearing identifiers under
+    // an opaque policy.
+    let mut event = event.clone();
+    if policy == MusicHistoryPolicy::OpaqueItem {
+        event.redact_display_metadata();
+    }
     let existing = transaction
         .query_row(
             "SELECT provider, item_identifier, title, artist, kind, monotonic_at_ms,
@@ -5153,11 +5199,7 @@ fn insert_music_event(
         )
         .optional()?;
     if let Some(existing) = existing {
-        let mut expected = event.clone();
-        if policy == MusicHistoryPolicy::OpaqueItem {
-            expected.redact_display_metadata();
-        }
-        if existing == expected {
+        if existing == event {
             return Ok(());
         }
         return Err(StorageError::MusicSequenceConflict { sequence });
@@ -5176,7 +5218,7 @@ fn insert_music_event(
             expected: count,
         });
     }
-    let timestamps = music_event_sql_timestamps(event)?;
+    let timestamps = music_event_sql_timestamps(&event)?;
     let monotonic_ms = timestamps.monotonic;
     let wall_clock_ms = timestamps.wall_clock;
     let clock_uncertainty_ms = timestamps.uncertainty;
@@ -5189,7 +5231,7 @@ fn insert_music_event(
         )
         .optional()?;
     let observed_at_ms = timestamps.observed_at;
-    if music_observation_out_of_order(transaction, ride_id, event)?
+    if music_observation_out_of_order(transaction, ride_id, &event)?
         || previous_monotonic_ms.is_some_and(|previous| monotonic_ms < previous)
     {
         return Err(StorageError::MusicEventOutOfOrder { sequence });
@@ -5270,12 +5312,18 @@ fn music_event_policy(
 ) -> Result<MusicHistoryPolicy, StorageError> {
     let stored = transaction
         .query_row(
-            "SELECT policy FROM ride_music_history WHERE ride_id = ?1",
+            "SELECT policy, deleted FROM ride_music_history WHERE ride_id = ?1",
             [ride_id.uuid().to_string()],
-            |row| row.get::<_, String>(0),
+            |row| Ok((row.get::<_, String>(0)?, row.get::<_, bool>(1)?)),
         )
         .optional()?
-        .map(|value| parse_policy(&value))
+        .map(|(value, deleted)| {
+            if deleted {
+                Ok(MusicHistoryPolicy::Disabled)
+            } else {
+                parse_policy(&value)
+            }
+        })
         .transpose()?;
     match stored {
         Some(policy) if policy != requested => Err(StorageError::MusicPolicyConflict),
@@ -5344,6 +5392,25 @@ fn music_events(
                 sequence: i64::try_from(index + 1).unwrap_or(i64::MAX),
             });
         }
+        if let (Some(previous), Some(current)) = (pair[0].1.observed_at(), pair[1].1.observed_at())
+            && current < previous
+        {
+            return Err(StorageError::MusicEventOutOfOrder {
+                sequence: i64::try_from(index + 1).unwrap_or(i64::MAX),
+            });
+        }
+    }
+    let max_observed = events
+        .iter()
+        .filter_map(|(_, event)| event.observed_at())
+        .map(cutout_core::MonotonicTimestamp::as_milliseconds)
+        .max();
+    let last_observed = music_last_observed_at(connection, ride_id)?
+        .map(|timestamp| u64::try_from(timestamp).unwrap_or(u64::MAX));
+    if max_observed.is_some_and(|maximum| last_observed.is_none_or(|last| last < maximum)) {
+        return Err(StorageError::MusicEventOutOfOrder {
+            sequence: i64::try_from(events.len().saturating_sub(1)).unwrap_or(i64::MAX),
+        });
     }
     Ok(events.into_iter().map(|(_, event)| event).collect())
 }
@@ -5355,15 +5422,15 @@ fn music_history_policy(
     ensure_ride_exists(connection, ride_id)?;
     let value = connection
         .query_row(
-            "SELECT policy FROM ride_music_history WHERE ride_id = ?1",
+            "SELECT policy, deleted FROM ride_music_history WHERE ride_id = ?1",
             [ride_id.uuid().to_string()],
-            |row| row.get::<_, String>(0),
+            |row| Ok((row.get::<_, String>(0)?, row.get::<_, bool>(1)?)),
         )
         .optional()?;
-    value
-        .map(|value| parse_policy(&value))
-        .transpose()
-        .map(|policy| policy.unwrap_or(MusicHistoryPolicy::Disabled))
+    match value {
+        None | Some((_, true)) => Ok(MusicHistoryPolicy::Disabled),
+        Some((policy, false)) => parse_policy(&policy),
+    }
 }
 
 fn ensure_ride_exists(connection: &Connection, ride_id: RideId) -> Result<(), StorageError> {
@@ -5373,6 +5440,15 @@ fn ensure_ride_exists(connection: &Connection, ride_id: RideId) -> Result<(), St
         |row| row.get(0),
     )?;
     exists.then_some(()).ok_or(StorageError::NotFound)
+}
+
+fn ensure_visible_ride(connection: &Connection, ride_id: RideId) -> Result<(), StorageError> {
+    let visible: bool = connection.query_row(
+        "SELECT EXISTS(SELECT 1 FROM rides WHERE id = ?1 AND state != 'discarded')",
+        [ride_id.uuid().to_string()],
+        |row| row.get(0),
+    )?;
+    visible.then_some(()).ok_or(StorageError::NotFound)
 }
 
 fn policy_name(policy: MusicHistoryPolicy) -> &'static str {
@@ -5416,6 +5492,7 @@ fn event_kind_name(kind: MusicRideEventKind) -> &'static str {
         MusicRideEventKind::Pause => "pause",
         MusicRideEventKind::Skip => "skip",
         MusicRideEventKind::ItemChanged => "item_changed",
+        MusicRideEventKind::Stopped => "stopped",
         MusicRideEventKind::ProviderDisconnected => "provider_disconnected",
     }
 }
@@ -5426,6 +5503,7 @@ fn parse_event_kind(value: &str) -> Result<MusicRideEventKind, String> {
         "pause" => Ok(MusicRideEventKind::Pause),
         "skip" => Ok(MusicRideEventKind::Skip),
         "item_changed" => Ok(MusicRideEventKind::ItemChanged),
+        "stopped" => Ok(MusicRideEventKind::Stopped),
         "provider_disconnected" => Ok(MusicRideEventKind::ProviderDisconnected),
         other => Err(format!("invalid music event kind: {other}")),
     }
@@ -5480,6 +5558,7 @@ fn decode_music_event(row: &rusqlite::Row<'_>) -> Result<MusicRideEvent, rusqlit
             }
             MusicValidationError::PositionAfterDuration => 5,
             MusicValidationError::ObservationAfterEvent => 8,
+            MusicValidationError::EventKindStateMismatch => 4,
         };
         music_conversion_error(column, error)
     })

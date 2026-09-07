@@ -117,8 +117,7 @@ impl RideWriteState {
         monotonic_at_ms: Option<u64>,
     ) -> Result<RideTransition, TransitionError> {
         if self.resume_crosses_monotonic_epoch(event, monotonic_at_ms) {
-            // Raw uptime values from a new boot are not comparable to the interrupted ride's
-            // persisted epoch. Refuse the transition instead of clamping into a false timeline.
+            // A lower uptime cannot belong to the interrupted ride's monotonic epoch.
             return Err(TransitionError::Invalid);
         }
         let lifecycle = self.lifecycle.apply(event)?;
@@ -223,7 +222,7 @@ impl RideWriteState {
     ) -> bool {
         self.lifecycle == RideLifecycleState::Interrupted
             && event == RideEvent::Resume
-            && monotonic_at_ms.is_some_and(|at| {
+            && monotonic_at_ms.is_none_or(|at| {
                 let floor = self
                     .monotonic_last_event_ms
                     .into_iter()
@@ -527,6 +526,25 @@ mod tests {
         });
         assert!(matches!(
             state.transition_at(RideEvent::Resume, 30, Some(500)),
+            Err(TransitionError::Invalid)
+        ));
+    }
+
+    #[test]
+    fn interrupted_resume_requires_monotonic_time() {
+        let state = RideWriteState::from_parts(&RideWriteStateParts {
+            source: RideSource::Live,
+            lifecycle: RideLifecycleState::Interrupted,
+            monotonic_created_at_ms: Some(1_000),
+            monotonic_last_event_ms: Some(3_000),
+            latest_observed_monotonic_ms: None,
+            paused_at_ms: None,
+            paused_duration_ms: 0,
+            completed_duration_ms: 2_000,
+            updated_at_ms: 20,
+        });
+        assert!(matches!(
+            state.transition_at(RideEvent::Resume, 30, None),
             Err(TransitionError::Invalid)
         ));
     }

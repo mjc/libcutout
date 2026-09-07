@@ -807,6 +807,20 @@ public final class MobileRideMapState: @unchecked Sendable {
         }
     }
 
+    /// Permanently deletes stored music metadata for one ride.
+    public func deleteStoredMusicHistory(rideID: String) throws {
+        try withCore {
+            try $0.deleteStoredMusicHistory(rideId: MobileRideIdDto(value: rideID))
+        }
+    }
+
+    /// Redacts stored music metadata for one ride.
+    public func redactStoredMusicHistory(rideID: String) throws {
+        try withCore {
+            try $0.redactStoredMusicHistory(rideId: MobileRideIdDto(value: rideID))
+        }
+    }
+
     public func ingestLocation(
         monotonicMs: UInt64,
         wallClockUnixMs: UInt64,

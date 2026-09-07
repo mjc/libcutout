@@ -955,6 +955,7 @@ impl RideMapRecorder {
             Some(RideLifecycleState::Paused | RideLifecycleState::Interrupted)
         ) && state == RideLifecycleState::Active
             && !self.segment_started
+            && !self.points.is_empty()
         {
             self.segment_id = self.segment_id.next();
             self.segment_started = true;
