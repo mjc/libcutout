@@ -6,6 +6,8 @@ import uniffi.cutout_mobile_ffi.MobileCameraPreviewFileSink
 import uniffi.cutout_mobile_ffi.MobileCameraVideoFrameDto
 import uniffi.cutout_mobile_ffi.MobileNovatekMediaPathException
 import uniffi.cutout_mobile_ffi.mobileNovatekMediaDownloadTarget
+import uniffi.cutout_mobile_ffi.MobileNovatekRecordingCommandDto
+import uniffi.cutout_mobile_ffi.mobileNovatekRecordingCommandTarget
 import uniffi.cutout_mobile_ffi.MobileFalconProfileDto
 import uniffi.cutout_mobile_ffi.MobileGattFingerprintDto
 import uniffi.cutout_mobile_ffi.MobileGattRoleDto
@@ -164,6 +166,15 @@ fun main() {
         error("unsafe Novatek media paths should throw")
     } catch (_: MobileNovatekMediaPathException.InvalidPath) {
     }
+
+    check(
+        mobileNovatekRecordingCommandTarget(MobileNovatekRecordingCommandDto.START) ==
+            "/?custom=1&cmd=2001&str=1",
+    )
+    check(
+        mobileNovatekRecordingCommandTarget(MobileNovatekRecordingCommandDto.STOP) ==
+            "/?custom=1&cmd=2001&str=0",
+    )
 }
 
 fun hexBytes(text: String): ByteArray {

@@ -47,6 +47,7 @@ use cutout_core::{
     DiscoveryCandidateSnapshot, DiscoveryCandidateSupport as CoreDiscoveryCandidateSupport,
     CameraOnboardRecordingState as CoreCameraOnboardRecordingState,
     CameraPreviewState as CoreCameraPreviewState,
+    CameraSourceKind as CoreCameraSourceKind,
     DiscoveryConnectionRoute as CoreDiscoveryConnectionRoute,
     DiscoveryElectricUnicycleModel as CoreDiscoveryElectricUnicycleModel,
     DiscoveryManufacturerDataSummary as CoreDiscoveryManufacturerDataSummary,
@@ -109,7 +110,7 @@ use cutout_protocols::{
     RetinaH264FileSink, RetinaRtspError, RetinaRtspPreviewSession, RetinaVideoFrame,
     NovatekCommandOutcome, NovatekHttpOrigin, NovatekMediaPathError, NovatekOriginError,
     NovatekReadCommand, NovatekRecordingCommand, NovatekStillCaptureCommand,
-    NovatekStoragePresence,
+    NovatekStoragePresence, is_r3_pro_firmware,
 };
 use cutout_ride_maps as ride_maps;
 use libcutout_persistence as persistence;

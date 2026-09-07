@@ -162,6 +162,8 @@ final class CutoutAppModel {
     private(set) var activeCaptureLabels = Set<CaptureQuickLabel>()
     private(set) var recordOnlyDeviceKind: String?
     private(set) var hasSavedDevice = false
+    private(set) var cameraMediaReferences: [CameraMediaReference] = []
+    private static let maximumCameraMediaReferences = 64
     var headlightOn: Bool {
         guard let state = effectiveHeadlightState else { return false }
         return switch headlightCommandStatus {
@@ -465,6 +467,15 @@ final class CutoutAppModel {
 
     var connectionStatusText: String {
         connectionState.statusText ?? phase.displayText
+    }
+
+    func annotateCapture(key: String, value: String) { core.annotateCapture(key: key, value: value) }
+
+    func recordCameraMediaReference(media: CameraMediaEvidence, localURL: URL) {
+        guard captureStatus?.isRecording == true, let captureFileName else { return }
+        guard !cameraMediaReferences.contains(where: { $0.rideCaptureFileName == captureFileName && $0.cameraPath == media.path }) else { return }
+        cameraMediaReferences.append(CameraMediaReference(cameraPath: media.path, localURL: localURL, sizeBytes: media.sizeBytes, cameraTimecode: media.timecode, cameraTime: media.time, rideCaptureFileName: captureFileName, clockUncertainty: .unknown))
+        if cameraMediaReferences.count > Self.maximumCameraMediaReferences { cameraMediaReferences.removeFirst() }
     }
 
     var headlightControlTitle: String {
