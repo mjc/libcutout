@@ -380,6 +380,11 @@ private enum LightingEffectPreviewModel {
     }
 }
 
+private struct LightingEffectPoint: Identifiable {
+    let id: Int
+    let point: CGPoint
+}
+
 private struct LightingEffectPreview: View {
     let patternID: Int
 
@@ -388,12 +393,14 @@ private struct LightingEffectPreview: View {
             let points = LightingEffectPreviewModel.points(for: patternID, in: proxy.size)
             let colors = LightingEffectPreviewModel.colors(for: patternID)
             ZStack {
-                ForEach(Array(points.enumerated()), id: \.offset) { item in
+                ForEach(points.enumerated().map { index, point in
+                    LightingEffectPoint(id: index, point: point)
+                }) { dot in
                     Circle()
-                        .fill(colors[item.offset % colors.count])
+                        .fill(colors[dot.id % colors.count])
                         .frame(width: 6, height: 6)
-                        .shadow(color: colors[item.offset % colors.count], radius: 4)
-                        .position(item.element)
+                        .shadow(color: colors[dot.id % colors.count], radius: 4)
+                        .position(dot.point)
                 }
             }
         }
