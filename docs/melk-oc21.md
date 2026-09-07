@@ -64,6 +64,8 @@ The effect cards include deterministic LED-dot previews derived from each
 pattern's reference group and ID. These thumbnails are illustrative UI
 affordances, not captures of OC21 output; only the documented wire names and
 hardware observations establish controller behavior.
+The eight controller-microphone choices use the pinned catalog's names: Music Flow Flash, Music Flash, Music Rainbow, Music Snake, Music Rainbow 2, Music Pulse, Music Flow, and Music Pulse 2. They are displayed with a “(reference)” suffix because the OC21 has not yet been physically checked for each mode; the protocol's microphone indices remain 0–7.
+
 
 Moving the speed slider right sends a lower native byte: 100% sends 0 and 0%
 sends 255. It spans the same full byte range as the reference. Changing speed
