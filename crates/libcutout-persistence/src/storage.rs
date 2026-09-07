@@ -29,6 +29,7 @@ use std::{
 use thiserror::Error;
 use uuid::Uuid;
 
+mod capture_data;
 mod migrations;
 mod ride_write;
 mod service;
@@ -2393,6 +2394,11 @@ impl RideDatabase {
             reply,
         })? {
             validate_existing_pevcap_confirmation(self.path.as_ref(), &receipt, preview)?;
+            capture_data::store(self, preview, preview.source_path())?;
+            self.request(|reply| Command::PublishCaptureData {
+                digest: preview.artifact_digest.clone(),
+                reply,
+            })?;
             return Ok(receipt);
         }
         let outcome = NewPevcapImportOutcome::try_from(preview.outcome)?;
@@ -2417,6 +2423,11 @@ impl RideDatabase {
             return match begin {
                 PevcapBegin::Duplicate(receipt) => {
                     validate_existing_pevcap_confirmation(self.path.as_ref(), &receipt, preview)?;
+                    capture_data::store(self, preview, preview.source_path())?;
+                    self.request(|reply| Command::PublishCaptureData {
+                        digest: preview.artifact_digest.clone(),
+                        reply,
+                    })?;
                     Ok(receipt)
                 }
                 PevcapBegin::Started { .. } => unreachable!(),
@@ -2424,6 +2435,7 @@ impl RideDatabase {
         };
 
         let result = (|| {
+            capture_data::store(self, preview, &managed.path)?;
             let location_count = if let Some(ride_id) = ride_id {
                 stream_pevcap_location_batches(&managed.path, preview.encoding(), |samples| {
                     self.request(|reply| Command::AppendPevcapLocationBatch {
@@ -2478,6 +2490,24 @@ impl RideDatabase {
             }
         }
         result
+    }
+
+    /// Reads one bounded chunk of an imported capture's original bytes from SQLite.
+    /// Chunks are at most 64 KiB; `None` means absent, incomplete, or end of capture.
+    /// Neither the source nor a managed artifact file is needed.
+    ///
+    /// # Errors
+    /// Returns [`StorageError`] when SQLite or the database worker cannot read the chunk.
+    pub fn pevcap_capture_chunk(
+        &self,
+        digest: &str,
+        sequence: u64,
+    ) -> Result<Option<Vec<u8>>, StorageError> {
+        self.request(|reply| Command::CaptureDataChunk {
+            digest: digest.to_owned(),
+            sequence,
+            reply,
+        })
     }
 
     /// Creates an empty canonical trail definition.
@@ -3187,6 +3217,31 @@ struct ManagedArtifact {
 }
 
 enum Command {
+    BeginCaptureData {
+        digest: String,
+        encoding: PevcapEncoding,
+        artifact_size: u64,
+        reply: Reply<capture_data::CaptureStart>,
+    },
+    AppendCaptureData {
+        digest: String,
+        sequence: u64,
+        bytes: Vec<u8>,
+        reply: Reply<()>,
+    },
+    PublishCaptureData {
+        digest: String,
+        reply: Reply<()>,
+    },
+    AbortCaptureData {
+        digest: String,
+        reply: Reply<()>,
+    },
+    CaptureDataChunk {
+        digest: String,
+        sequence: u64,
+        reply: Reply<Option<Vec<u8>>>,
+    },
     Capabilities {
         reply: Reply<SqliteCapabilities>,
     },
@@ -3605,6 +3660,10 @@ fn recover_abandoned_pevcap_imports(
         [],
     )?;
     transaction.execute("DELETE FROM pevcap_import_work", [])?;
+    transaction.execute(
+        "DELETE FROM pevcap_captures WHERE receipt_digest IS NULL",
+        [],
+    )?;
     transaction.commit()?;
     let mut managed_directory_name = database_path.as_os_str().to_owned();
     managed_directory_name.push(".pevcap-imports");
@@ -4825,6 +4884,7 @@ fn finish_pevcap_import(
             imported_at_ms,
         ],
     )?;
+    capture_data::publish(&transaction, digest)?;
     transaction.execute(
         "DELETE FROM pevcap_import_work WHERE artifact_digest = ?1",
         [digest],
@@ -4847,6 +4907,7 @@ fn abort_pevcap_import(
     ride_id: Option<RideId>,
 ) -> Result<(), StorageError> {
     let transaction = connection.transaction()?;
+    capture_data::abort(&transaction, digest)?;
     transaction.execute(
         "DELETE FROM pevcap_import_work WHERE artifact_digest = ?1",
         [digest],

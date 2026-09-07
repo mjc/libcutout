@@ -1,7 +1,7 @@
 use super::{MapPointId, SpatialRowId, StorageError};
 use rusqlite::{Connection, OptionalExtension, params};
 
-const CURRENT_SCHEMA_VERSION: i64 = 18;
+const CURRENT_SCHEMA_VERSION: i64 = 19;
 const APPLICATION_ID: i64 = 0x4355_544f;
 fn current_schema_pragmas() -> String {
     format!(
@@ -38,6 +38,7 @@ pub(super) fn migrate(connection: &mut Connection) -> Result<(), StorageError> {
         15 => migrate_v15_to_current(connection)?,
         16 => migrate_v16_to_current(connection)?,
         17 => migrate_v17_to_current(connection)?,
+        18 => migrate_v18_to_current(connection)?,
         CURRENT_SCHEMA_VERSION => {
             if application_id != APPLICATION_ID {
                 return Err(StorageError::InvalidDatabaseIdentity);
@@ -262,6 +263,7 @@ pub(crate) fn create_current_schema(connection: &Connection) -> Result<(), Stora
             USING rtree_i32(id, min_lat_e7, max_lat_e7, min_lon_e7, max_lon_e7);
         ",
     )?;
+    connection.execute_batch(super::capture_data::SCHEMA)?;
     Ok(())
 }
 
@@ -464,8 +466,9 @@ fn migrate_v3_to_current(connection: &mut Connection) -> Result<(), StorageError
         DROP TABLE ride_session_marker_legacy;
         ",
     )?;
+    transaction.execute_batch(&current_schema_pragmas())?;
     transaction.commit()?;
-    migrate_v14_to_current(connection)
+    Ok(())
 }
 
 fn migrate_v4_to_current(connection: &mut Connection) -> Result<(), StorageError> {
@@ -908,9 +911,9 @@ fn migrate_v16_to_current(connection: &mut Connection) -> Result<(), StorageErro
             ))?;
         }
     }
-    transaction.execute_batch(&current_schema_pragmas())?;
+    transaction.execute_batch("PRAGMA application_id = 1129665615; PRAGMA user_version = 18;")?;
     transaction.commit()?;
-    Ok(())
+    migrate_v18_to_current(connection)
 }
 
 fn migrate_v17_to_current(connection: &mut Connection) -> Result<(), StorageError> {
@@ -940,6 +943,14 @@ fn migrate_v17_to_current(connection: &mut Connection) -> Result<(), StorageErro
            FROM ride_music_event_v17;
          DROP TABLE ride_music_event_v17;",
     )?;
+    transaction.execute_batch("PRAGMA application_id = 1129665615; PRAGMA user_version = 18;")?;
+    transaction.commit()?;
+    migrate_v18_to_current(connection)
+}
+
+fn migrate_v18_to_current(connection: &mut Connection) -> Result<(), StorageError> {
+    let transaction = connection.transaction()?;
+    transaction.execute_batch(super::capture_data::SCHEMA)?;
     transaction.execute_batch(&current_schema_pragmas())?;
     transaction.commit()?;
     Ok(())
@@ -974,6 +985,8 @@ pub(super) fn verify_current_schema(connection: &Connection) -> Result<(), Stora
         "ride_session_marker",
         "pevcap_imports",
         "pevcap_import_work",
+        "pevcap_captures",
+        "pevcap_capture_chunks",
         "trails",
         "trail_segments",
         "trail_segment_spatial_keys",
