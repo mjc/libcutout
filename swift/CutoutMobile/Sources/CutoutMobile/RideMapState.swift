@@ -19,6 +19,7 @@ public enum MobileRideMapError: Error, Equatable, Hashable, Sendable {
     case invalidTransition
     case invalidLocation
     case invalidRouteProjection
+    case invalidMusicInput(String)
     case rideNotFound
     case cancelled
     case storageError(String)
@@ -1303,6 +1304,7 @@ public final class MobileRideMapState: @unchecked Sendable {
         case .InvalidLocation: return .invalidLocation
         case .InvalidRouteProjection: return .invalidRouteProjection
         case .Cancelled: return .cancelled
+        case let .InvalidMusicInput(message): return .invalidMusicInput(message)
         case let .Storage(message): return .storageError(message)
         }
     }

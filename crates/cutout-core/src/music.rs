@@ -621,6 +621,7 @@ fn validate_optional_text(
     field: MusicTextField,
 ) -> Result<Option<String>, MusicValidationError> {
     value
+        .filter(|value| !value.trim().is_empty())
         .map(|value| validate_text(&value, MAX_MUSIC_DISPLAY_TEXT_BYTES, field).map(|()| value))
         .transpose()
 }
@@ -763,5 +764,13 @@ mod tests {
         let restored = MusicTimeline::from_stored_events(vec![event.clone(), event])
             .expect("durable sequence is authoritative");
         assert_eq!(restored.events().len(), 2);
+    }
+
+    #[test]
+    fn blank_display_text_is_treated_as_absent() {
+        let item = MusicItem::new("track-1", Some("  ".to_owned()), Some(String::new()))
+            .expect("blank optional display fields are absent");
+        assert_eq!(item.title(), None);
+        assert_eq!(item.artist(), None);
     }
 }

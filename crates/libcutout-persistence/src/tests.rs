@@ -3581,9 +3581,9 @@ fn music_event_sequence_requires_contiguous_order_and_monotonic_time() {
         .expect_err("the first sequence must be zero");
     assert!(matches!(
         error,
-        StorageError::InvalidStoredValue {
-            field: "music sequence",
-            ..
+        StorageError::MusicSequenceGap {
+            sequence: 1,
+            expected: 0
         }
     ));
     database

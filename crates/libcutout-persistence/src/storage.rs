@@ -1286,6 +1286,14 @@ pub enum StorageError {
         /// Out-of-order sequence number.
         sequence: i64,
     },
+    /// A music event sequence skipped one or more durable rows.
+    #[error("music event sequence {sequence} expected {expected}")]
+    MusicSequenceGap {
+        /// Sequence supplied by the caller.
+        sequence: i64,
+        /// Next contiguous sequence required by storage.
+        expected: i64,
+    },
     /// A music event attempted to use a different policy than the stored ride policy.
     #[error("music history policy conflicts with stored policy")]
     MusicPolicyConflict,
@@ -4861,9 +4869,9 @@ fn save_music_event(
         |row| row.get(0),
     )?;
     if sequence != count {
-        return Err(StorageError::InvalidStoredValue {
-            field: "music sequence",
-            value: sequence.to_string(),
+        return Err(StorageError::MusicSequenceGap {
+            sequence,
+            expected: count,
         });
     }
     if sequence == i64::try_from(cutout_core::MAX_MUSIC_TIMELINE_EVENTS).unwrap_or(i64::MAX)

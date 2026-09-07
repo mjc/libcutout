@@ -3482,6 +3482,9 @@ pub enum MobileRideMapCoreErrorDto {
     /// The canonical database rejected the operation.
     #[error("ride map storage failure: {0}")]
     Storage(String),
+    /// The provider observation did not satisfy the bounded music contract.
+    #[error("invalid music input: {0}")]
+    InvalidMusicInput(String),
 }
 
 impl MobileRideMapCoreErrorDto {
@@ -4218,6 +4221,21 @@ pub enum MobileRideDatabaseError {
     /// The Rust worker is no longer available.
     #[error("ride database worker stopped")]
     WorkerStopped,
+    /// The bounded music timeline is full.
+    #[error("ride music timeline is full")]
+    MusicTimelineFull,
+    /// A music event reused a sequence for different data.
+    #[error("music event sequence {sequence} conflicts with stored data")]
+    MusicSequenceConflict { sequence: i64 },
+    /// A music event moved backwards in monotonic time.
+    #[error("music event sequence {sequence} is out of order")]
+    MusicEventOutOfOrder { sequence: i64 },
+    /// A music event skipped a durable sequence.
+    #[error("music event sequence {sequence} expected {expected}")]
+    MusicSequenceGap { sequence: i64, expected: i64 },
+    /// A music event used a different policy than the stored ride policy.
+    #[error("music history policy conflicts with stored policy")]
+    MusicPolicyConflict,
     /// An internal storage failure occurred.
     #[error("ride database storage failure")]
     StorageFailure,
@@ -4279,10 +4297,19 @@ fn map_ride_database_error(error: persistence::StorageError) -> MobileRideDataba
         | persistence::StorageError::SpatialSchemaInitialization(_) => {
             MobileRideDatabaseError::StorageFailure
         }
-        persistence::StorageError::MusicTimelineFull
-        | persistence::StorageError::MusicSequenceConflict { .. }
-        | persistence::StorageError::MusicEventOutOfOrder { .. }
-        | persistence::StorageError::MusicPolicyConflict => MobileRideDatabaseError::StorageFailure,
+        persistence::StorageError::MusicTimelineFull => MobileRideDatabaseError::MusicTimelineFull,
+        persistence::StorageError::MusicSequenceConflict { sequence } => {
+            MobileRideDatabaseError::MusicSequenceConflict { sequence }
+        }
+        persistence::StorageError::MusicEventOutOfOrder { sequence } => {
+            MobileRideDatabaseError::MusicEventOutOfOrder { sequence }
+        }
+        persistence::StorageError::MusicSequenceGap { sequence, expected } => {
+            MobileRideDatabaseError::MusicSequenceGap { sequence, expected }
+        }
+        persistence::StorageError::MusicPolicyConflict => {
+            MobileRideDatabaseError::MusicPolicyConflict
+        }
     }
 }
 
@@ -4946,6 +4973,10 @@ impl RideDatabaseHandle {
     /// Saves the user's bounded music-history retention choice for one ride.
     ///
     /// Disabling history also deletes previously retained music events.
+    ///
+    /// # Errors
+    ///
+    /// Returns a typed database error when the ride, policy, worker, or stored history is invalid.
     #[allow(
         clippy::needless_pass_by_value,
         reason = "UniFFI owns boundary identifiers"
@@ -4962,6 +4993,10 @@ impl RideDatabaseHandle {
     }
 
     /// Deletes all music metadata for one ride while preserving the ride itself.
+    ///
+    /// # Errors
+    ///
+    /// Returns a typed database error when the ride, worker, or stored history is invalid.
     #[allow(
         clippy::needless_pass_by_value,
         reason = "UniFFI owns boundary identifiers"
@@ -4977,6 +5012,10 @@ impl RideDatabaseHandle {
     }
 
     /// Persists one privacy-filtered music transition for a ride.
+    ///
+    /// # Errors
+    ///
+    /// Returns a typed database error when the ride, event, policy, worker, or stored history is invalid.
     #[allow(clippy::needless_pass_by_value, reason = "UniFFI owns boundary values")]
     pub fn save_music_event(
         &self,
@@ -4993,6 +5032,10 @@ impl RideDatabaseHandle {
     }
 
     /// Loads one ride's bounded music timeline in sequence order.
+    ///
+    /// # Errors
+    ///
+    /// Returns a typed database error when the ride, worker, or stored history is invalid.
     #[allow(
         clippy::needless_pass_by_value,
         reason = "UniFFI owns boundary identifiers"
@@ -5973,6 +6016,7 @@ struct MobileRideMapCoreInner {
     music_history_policy: CoreMusicHistoryPolicy,
     music_timeline: cutout_core::MusicTimeline,
     music_last_observed_at: Option<MonotonicTimestamp>,
+    music_restore_failed: bool,
     pending_location_writes: VecDeque<PendingMapLocationWrite>,
     initialization_error: Option<MobileRideMapCoreErrorDto>,
 }
@@ -6124,11 +6168,16 @@ impl MobileRideMapCoreInner {
             music_history_policy: CoreMusicHistoryPolicy::Disabled,
             music_timeline: cutout_core::MusicTimeline::new(),
             music_last_observed_at: None,
+            music_restore_failed: false,
             pending_location_writes: VecDeque::new(),
             initialization_error: None,
         };
         if let Err(error) = state.restore_active_ride() {
             state.initialization_error = Some(error);
+            state.music_history_policy = CoreMusicHistoryPolicy::Disabled;
+            state.music_timeline = cutout_core::MusicTimeline::new();
+            state.music_last_observed_at = None;
+            state.music_restore_failed = true;
         }
         state
     }
@@ -6264,7 +6313,7 @@ impl MobileRideMapCoreInner {
             .music_timeline
             .events()
             .last()
-            .map(|event| event.monotonic_at());
+            .map(cutout_core::MusicRideEvent::monotonic_at);
         Ok(())
     }
 
@@ -6415,6 +6464,7 @@ impl MobileRideMapCoreInner {
         self.music_history_policy = CoreMusicHistoryPolicy::Disabled;
         self.music_timeline = cutout_core::MusicTimeline::new();
         self.music_last_observed_at = None;
+        self.music_restore_failed = false;
         self.pending_location_writes.clear();
         Ok(self.snapshot(MobileRideLifecycleStateDto::Active))
     }
@@ -6724,12 +6774,22 @@ impl MobileRideMapCore {
     /// Sets the bounded music-history policy for the active ride.
     ///
     /// Disabling the policy clears the in-memory and durable music timeline.
+    ///
+    /// # Errors
+    ///
+    /// Returns a typed map-core error when there is no active ride, the ride is not recording,
+    /// or durable storage rejects the policy update.
     #[allow(clippy::needless_pass_by_value)]
     pub fn set_music_history_policy(
         &self,
         policy: MobileMusicHistoryPolicyDto,
     ) -> Result<(), MobileRideMapCoreErrorDto> {
         let mut state = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
+        if state.music_restore_failed {
+            return Err(MobileRideMapCoreErrorDto::Storage(
+                "music history restore failed".to_owned(),
+            ));
+        }
         let Some(ride_id) = state.active_ride_id.clone() else {
             return Err(MobileRideMapCoreErrorDto::NoActiveRide);
         };
@@ -6760,6 +6820,11 @@ impl MobileRideMapCore {
     }
 
     /// Records one low-rate provider transition for the active ride.
+    ///
+    /// # Errors
+    ///
+    /// Returns a typed map-core error when the snapshot is invalid, there is no active ride, the
+    /// ride is not recording, or durable storage rejects the event.
     #[allow(clippy::needless_pass_by_value)]
     pub fn record_music_event(
         &self,
@@ -6769,9 +6834,12 @@ impl MobileRideMapCore {
         wall_clock_at_ms: u64,
         clock_uncertainty_ms: u64,
     ) -> Result<MobileMusicTimelineOutcomeDto, MobileRideMapCoreErrorDto> {
-        let snapshot =
-            CoreMusicSnapshot::try_from(snapshot).map_err(MobileRideMapCoreErrorDto::Storage)?;
+        let snapshot = CoreMusicSnapshot::try_from(snapshot)
+            .map_err(MobileRideMapCoreErrorDto::InvalidMusicInput)?;
         let mut state = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
+        if state.music_restore_failed {
+            return Ok(MobileMusicTimelineOutcomeDto::Disabled);
+        }
         let Some(ride_id) = state.active_ride_id.clone() else {
             return Err(MobileRideMapCoreErrorDto::NoActiveRide);
         };
@@ -6857,6 +6925,10 @@ impl MobileRideMapCore {
     }
 
     /// Returns the bounded stored music timeline for one ride.
+    ///
+    /// # Errors
+    ///
+    /// Returns a typed map-core error when the ride identifier or durable storage is invalid.
     #[allow(clippy::needless_pass_by_value)]
     pub fn stored_music_events(
         &self,
@@ -16390,15 +16462,8 @@ mod tests {
         assert!(decisions.is_empty());
     }
 
-    #[test]
-    fn music_transition_is_recorded_only_after_opt_in() {
-        let path =
-            std::env::temp_dir().join(format!("libcutout-mobile-music-{}.sqlite", Uuid::new_v4()));
-        let database =
-            open_ride_database(path.to_string_lossy().into_owned()).expect("database opens");
-        let state = MobileRideMapCore::with_database(database.clone());
-        state.start_gps_only(1_000, None).expect("ride starts");
-        let snapshot = MobileMusicSnapshotDto {
+    fn test_music_snapshot() -> MobileMusicSnapshotDto {
+        MobileMusicSnapshotDto {
             provider: MobileMusicProviderDto::AppleMusic,
             session_id: "session".to_owned(),
             state: MobileMusicPlaybackStateDto::Playing,
@@ -16417,7 +16482,21 @@ mod tests {
                 next: true,
                 open_provider: true,
             },
-        };
+        }
+    }
+
+    #[test]
+    fn music_transition_is_recorded_only_after_opt_in() {
+        let _guard = RIDE_DATABASE_TEST_LOCK
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        let path =
+            std::env::temp_dir().join(format!("libcutout-mobile-music-{}.sqlite", Uuid::new_v4()));
+        let database =
+            open_ride_database(path.to_string_lossy().into_owned()).expect("database opens");
+        let state = MobileRideMapCore::with_database(database.clone());
+        state.start_gps_only(1_000, None).expect("ride starts");
+        let snapshot = test_music_snapshot();
 
         assert_eq!(
             state

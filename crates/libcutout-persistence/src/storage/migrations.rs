@@ -182,7 +182,6 @@ pub(crate) fn create_current_schema(connection: &Connection) -> Result<(), Stora
             clock_uncertainty_milliseconds INTEGER NOT NULL CHECK (clock_uncertainty_milliseconds >= 0),
             PRIMARY KEY (ride_id, sequence)
         );
-        CREATE INDEX ride_music_event_cursor ON ride_music_event (ride_id, sequence);
         CREATE TABLE selected_device (
             singleton_key BLOB PRIMARY KEY NOT NULL CHECK (length(singleton_key) = 16),
             platform_identifier TEXT NOT NULL CHECK (length(platform_identifier) BETWEEN 1 AND 512),
@@ -839,7 +838,7 @@ fn migrate_v15_to_current(connection: &mut Connection) -> Result<(), StorageErro
              clock_uncertainty_milliseconds INTEGER NOT NULL CHECK (clock_uncertainty_milliseconds >= 0),
              PRIMARY KEY (ride_id, sequence)
          );
-         CREATE INDEX IF NOT EXISTS ride_music_event_cursor ON ride_music_event (ride_id, sequence);",
+         ",
     )?;
     transaction.execute_batch(&current_schema_pragmas())?;
     transaction.commit()?;
