@@ -28,3 +28,4 @@ uuid.workspace = true
 
 [dev-dependencies]
 hex-literal.workspace = true
+rusqlite.workspace = true

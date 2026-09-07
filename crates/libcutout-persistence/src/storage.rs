@@ -4996,7 +4996,13 @@ fn save_music_history_policy(
     policy: MusicHistoryPolicy,
 ) -> Result<(), StorageError> {
     let transaction = connection.transaction()?;
-    ensure_ride_exists(&transaction, ride_id)?;
+    let lifecycle = load_ride_write_state(&transaction, ride_id)?.lifecycle();
+    if !matches!(
+        lifecycle,
+        RideLifecycleState::Active | RideLifecycleState::Paused
+    ) {
+        return Err(StorageError::InvalidRideState(lifecycle));
+    }
     apply_music_history_policy(&transaction, ride_id, policy)?;
     transaction.commit()?;
     Ok(())

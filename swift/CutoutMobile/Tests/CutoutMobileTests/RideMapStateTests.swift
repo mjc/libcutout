@@ -1,45 +1,8 @@
 import XCTest
-import SQLite3
 import CutoutMobileFFI
 @testable import CutoutMobile
 
 final class RideMapStateTests: XCTestCase {
-    func testUnreadableOptionalMusicDoesNotDisableRideRecovery() throws {
-        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
-        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        defer { try? FileManager.default.removeItem(at: directory) }
-        let path = directory.appendingPathComponent("probe.sqlite").path
-        let database: RideDatabaseHandle
-        do {
-            database = try openRideDatabase(path: path)
-        } catch {
-            if String(describing: error).contains("AlreadyOpenForDifferentPath") {
-                throw XCTSkip("Rust ride database is already open for another test")
-            }
-            throw error
-        }
-        defer { try? database.shutdown() }
-        let state = MobileRideMapState(database: database)
-        _ = try state.startGpsOnly(atMs: 1_000, lastConnectedVehicle: nil)
-        try state.setMusicHistoryPolicy(.humanReadable)
-        let snapshot = MobileMusicSnapshotDto(
-            provider: .spotify, sessionId: "session", state: .playing,
-            item: MobileMusicItemDto(identifier: "track", title: "Song", artist: "Artist"),
-            positionMilliseconds: 10, durationMilliseconds: 100, observedAtMs: 2_000,
-            capabilities: MobileMusicCapabilitiesDto(previous: false, play: true, pause: true, next: true, openProvider: true)
-        )
-        _ = try state.recordMusicEvent(snapshot: snapshot, kind: .play,
-            monotonicAtMs: 3_000, wallClockAtMs: 1_700_000_003_000, clockUncertaintyMs: 5)
-        var sql: OpaquePointer?
-        XCTAssertEqual(sqlite3_open(path, &sql), SQLITE_OK)
-        defer { sqlite3_close(sql) }
-        let invalidTitle = String(repeating: "é", count: 300)
-        XCTAssertEqual(sqlite3_exec(sql, "UPDATE ride_music_event SET title = '\(invalidTitle)'", nil, nil, nil), SQLITE_OK)
-        let recovered = MobileRideMapState(database: database)
-        XCTAssertNotNil(recovered.currentSnapshot(atMs: 4_000))
-        XCTAssertEqual(recovered.currentMusicHistory()?.status, .unavailable)
-    }
-
     func testMusicHistoryProjectsRustRetentionAndObservationTime() throws {
         let state = MobileRideMapState()
         XCTAssertNil(state.currentMusicHistory())

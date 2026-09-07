@@ -284,6 +284,74 @@ fn malformed_duplicate_cannot_poison_observation_watermark() {
 }
 
 #[test]
+fn corrupt_optional_music_does_not_disable_ride_recovery() {
+    let guard = DATABASE_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let path = std::env::temp_dir().join(format!(
+        "cutout-music-recovery-test-{}.sqlite",
+        uuid::Uuid::new_v4()
+    ));
+    let database = open_ride_database(path.to_string_lossy().into_owned()).unwrap();
+    let core = MobileRideMapCore::with_database(database.clone());
+    core.start_gps_only(1_000, None).unwrap();
+    core.set_music_history_policy(MobileMusicHistoryPolicyDto::HumanReadable)
+        .unwrap();
+    core.record_music_event(
+        snapshot(2_000),
+        MobileMusicRideEventKindDto::Play,
+        3_000,
+        1_700_000_003_000,
+        5,
+    )
+    .unwrap();
+    database.shutdown().unwrap();
+    drop(core);
+    drop(database);
+    let connection = rusqlite::Connection::open(&path).unwrap();
+    let invalid_title = "é".repeat(300);
+    connection
+        .execute("UPDATE ride_music_event SET title = ?1", [invalid_title])
+        .unwrap();
+    drop(connection);
+    let reopened = open_ride_database(path.to_string_lossy().into_owned()).unwrap();
+    let restored = MobileRideMapCore::with_database(reopened.clone());
+    assert!(restored.initialization_error().is_none());
+    assert!(restored.current_snapshot(4_000).is_some());
+    assert_eq!(
+        restored.current_music_history().unwrap().status,
+        MobileMusicHistoryStatusDto::Unavailable
+    );
+    reopened.shutdown().unwrap();
+    std::fs::remove_file(path).unwrap();
+    drop(guard);
+}
+
+#[test]
+fn stale_core_cannot_change_policy_after_durable_ride_stop() {
+    let fixture = setup();
+    record(
+        &fixture.core,
+        2_000,
+        2_000,
+        MobileMusicRideEventKindDto::Play,
+    )
+    .unwrap();
+    let controller = MobileRideMapCore::with_database(fixture.db.clone());
+    controller.stop_at(3_000).unwrap();
+    assert_eq!(
+        fixture
+            .core
+            .set_music_history_policy(MobileMusicHistoryPolicyDto::Disabled),
+        Err(MobileRideMapCoreErrorDto::InvalidTransition)
+    );
+    assert_eq!(
+        fixture.db.music_events(fixture.id.clone()).unwrap().len(),
+        1
+    );
+}
+
+#[test]
 fn failed_durable_event_does_not_consume_sequence_or_observation() {
     let fixture = setup();
     let result = fixture.core.record_music_event(

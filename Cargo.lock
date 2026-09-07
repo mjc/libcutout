@@ -565,6 +565,7 @@ dependencies = [
  "cutout-ride-maps",
  "hex-literal",
  "libcutout-persistence",
+ "rusqlite",
  "thiserror 2.0.18",
  "uniffi",
  "uuid",
