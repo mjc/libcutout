@@ -81,7 +81,7 @@ struct LightingRouteView: View {
 
 private struct LightingScreenHeader: View {
     var body: some View {
-        Text("Lighting")
+        Text(localizedAppText("lighting.title"))
             .font(.largeTitle.weight(.bold))
             .foregroundStyle(PevColors.primaryText)
             .accessibilityHeading(.h1)
@@ -92,9 +92,9 @@ private struct LightingPagePicker: View {
     @Binding var selection: LightingControlPage
 
     var body: some View {
-        Picker("Lighting controls", selection: $selection) {
+        Picker(localizedAppText("lighting.controls"), selection: $selection) {
             ForEach(LightingControlPage.allCases, id: \.self) { page in
-                Text(page.rawValue).tag(page)
+                Text(page.title).tag(page)
             }
         }
         .pickerStyle(.segmented)
@@ -227,19 +227,20 @@ private struct LightingColorControls: View {
             LightingPowerToggle(model: model)
             VStack(alignment: .leading, spacing: 12) {
                 HStack {
-                    Text("Solid color").font(.headline)
+                    Text(localizedAppText("lighting.solid_color")).font(.headline)
                     Spacer()
                     Button(action: setWhite) {
                         Image(systemName: "eyedropper")
                     }
                     .buttonStyle(.bordered)
                     .disabled(!model.isReady)
-                    .accessibilityLabel("Set white")
+                    .accessibilityLabel(localizedAppText("lighting.set_white"))
                     .accessibilityIdentifier("lighting.color-picker.reset")
                 }
                 LightingColorWheel(hue: $hue, saturation: $saturation, onUpdate: updateColor)
                     .frame(maxWidth: .infinity)
                     .opacity(model.isReady ? 1 : 0.45)
+                    .allowsHitTesting(model.isReady)
                     .accessibilityIdentifier("lighting.color-wheel")
             }
         }
@@ -269,7 +270,7 @@ private struct LightingBrightnessControl: View {
     var body: some View {
         LightingCard {
             HStack {
-                Text("Brightness").font(.headline)
+                Text(localizedAppText("lighting.brightness")).font(.headline)
                 Spacer()
                 Text("\(Int(brightness))%")
                     .monospacedDigit()

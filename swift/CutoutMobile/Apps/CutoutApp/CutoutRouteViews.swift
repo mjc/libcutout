@@ -547,6 +547,9 @@ final class LightingRouteModel {
     private func handleIdentity(_ identity: MelkLightingPeripheralIdentity) {
         peripheralName = identity.name
         peripheralIdentifier = identity.platformIdentifier
+        guard connectionState == .ready else { return }
+        ensureRecordForConnectedAccessory()
+        restoreIfEligible()
     }
 
     private func handleStateChange(_ state: MelkLightingPeripheralState) {

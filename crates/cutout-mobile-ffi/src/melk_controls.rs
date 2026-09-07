@@ -132,12 +132,12 @@ impl MobileMelkLightingProfile {
     /// Plans local clock sync followed by one scheduler-slot update.
     ///
     /// # Errors
-    /// Returns `InvalidState` for invalid time, weekday mask, or ISO weekday.
+    /// Returns `InvalidSchedule` for invalid schedule values or `InvalidClock` for invalid clock values.
     pub fn set_schedule(
         &self,
         schedule: MobileMelkScheduleDto,
         clock: MobileMelkClockDto,
-    ) -> Result<Vec<MobileMelkLightingWriteDto>, MobileRgbLightingRecordError> {
+    ) -> Result<Vec<MobileMelkLightingWriteDto>, crate::MobileMelkLightingError> {
         let schedule = MelkSchedule::new(
             power(schedule.power_on),
             schedule.hour,
@@ -145,9 +145,9 @@ impl MobileMelkLightingProfile {
             schedule.days,
             schedule.enabled,
         )
-        .map_err(|_| MobileRgbLightingRecordError::InvalidState)?;
+        .map_err(|_| crate::MobileMelkLightingError::InvalidSchedule)?;
         let clock = MelkClock::new(clock.hour, clock.minute, clock.second, clock.weekday)
-            .map_err(|_| MobileRgbLightingRecordError::InvalidState)?;
+            .map_err(|_| crate::MobileMelkLightingError::InvalidClock)?;
         Ok([
             MelkLightingProfile::control_action(MelkControl::Clock(clock)),
             MelkLightingProfile::control_action(MelkControl::Schedule(schedule)),

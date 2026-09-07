@@ -154,6 +154,7 @@ public final class LightingAccessoryPersistence {
     }
 
     private static func legacyByte(_ defaults: UserDefaults, key: String) -> UInt8? {
+        guard defaults.object(forKey: key) != nil else { return nil }
         let value = defaults.integer(forKey: key)
         guard (0...255).contains(value) else { return nil }
         return UInt8(value)
@@ -169,7 +170,9 @@ public final class LightingAccessoryPersistence {
             return
         }
 
-        guard let red = Self.legacyByte(defaults, key: Key.legacyRed),
+        guard defaults.object(forKey: Key.legacyPowerOn) != nil,
+              defaults.object(forKey: Key.legacyEnabled) != nil,
+              let red = Self.legacyByte(defaults, key: Key.legacyRed),
               let green = Self.legacyByte(defaults, key: Key.legacyGreen),
               let blue = Self.legacyByte(defaults, key: Key.legacyBlue),
               let brightness = Self.legacyByte(defaults, key: Key.legacyBrightness),

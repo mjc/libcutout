@@ -3,7 +3,13 @@ import CutoutMobileFFI
 import SwiftUI
 
 enum LightingControlPage: String, CaseIterable {
-    case color = "Color", effects = "Effects", music = "Music"
+    case color
+    case effects
+    case music
+
+    var title: String {
+        localizedAppText("lighting.page.\(rawValue)")
+    }
 }
 
 /// Wire-ID names transcribed from the MELK OA21 reference catalog (not OC21 visual verification).

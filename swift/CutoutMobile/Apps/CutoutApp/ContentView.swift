@@ -133,9 +133,10 @@ struct ContentView: View {
             LightingRouteView(model: lighting, rideModel: model)
                 .toolbar {
                     ToolbarItem(placement: .navigation) {
-                        Button("Back", systemImage: "chevron.left") { navigate(to: .devicePicker) }
+                        Button(localizedAppText("ride_map.detail_back"), systemImage: "chevron.left") { navigate(to: .devicePicker) }
                     }
                 }
+                .accessibilityFocused($focusedRoute, equals: destination)
         } else if destination == .capture {
             ZStack {
                 PevColors.pageBackground

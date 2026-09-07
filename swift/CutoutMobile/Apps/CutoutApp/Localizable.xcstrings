@@ -1,6 +1,38 @@
 {
   "sourceLanguage" : "en",
   "strings" : {
+    "lighting.page.color" : {
+      "comment" : "Lighting controls page label.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Color" } } }
+    },
+    "lighting.page.effects" : {
+      "comment" : "Lighting controls page label.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Effects" } } }
+    },
+    "lighting.page.music" : {
+      "comment" : "Lighting controls page label.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Music" } } }
+    },
+    "lighting.title" : {
+      "comment" : "Lighting screen title.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Lighting" } } }
+    },
+    "lighting.controls" : {
+      "comment" : "Lighting page picker accessibility label.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Lighting controls" } } }
+    },
+    "lighting.solid_color" : {
+      "comment" : "Solid color control heading.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Solid color" } } }
+    },
+    "lighting.set_white" : {
+      "comment" : "Set-white lighting action and accessibility label.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Set white" } } }
+    },
+    "lighting.brightness" : {
+      "comment" : "Brightness control heading.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Brightness" } } }
+    },
     "app.command.disconnect" : {
       "comment" : "App command that disconnects the current device.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Disconnect" } } }

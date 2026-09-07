@@ -46,6 +46,7 @@ struct CutoutApp: App {
             CutoutNavigationCommands(
                 navigationTabs: navigationTabs,
                 currentRoute: currentRoute,
+                connectionRoute: model.selectedConnectionRoute,
                 navigationPath: $navigationPath,
                 canDisconnect: model.selectedConnectionRoute != nil,
                 disconnect: model.disconnectTransport
@@ -85,6 +86,7 @@ struct CutoutApp: App {
 struct CutoutNavigationCommands: Commands {
     let navigationTabs: [PevScreenTab]
     let currentRoute: CutoutAppRoute
+    let connectionRoute: DevicePickerConnectionRoute?
     @Binding var navigationPath: [CutoutAppRoute]
     let canDisconnect: Bool
     let disconnect: () -> Void
@@ -118,7 +120,10 @@ struct CutoutNavigationCommands: Commands {
                     Button(tab.title) {
                         guard let target = tab.destinationTarget else { return }
                         navigationPath = CutoutAppRoute.navigationPath(
-                            for: currentRoute.destination(forNavigationTarget: target)
+                            for: currentRoute.destination(
+                                forNavigationTarget: target,
+                                connectionRoute: connectionRoute
+                            )
                         )
                     }
                     .keyboardShortcut(KeyEquivalent(Self.shortcut(for: tab.id)), modifiers: .command)

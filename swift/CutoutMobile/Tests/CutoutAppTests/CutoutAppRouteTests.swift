@@ -797,9 +797,14 @@ final class CutoutAppRouteTests: XCTestCase {
     }
 
     @MainActor
-    func testLightingRouteModelMarksPendingCommandUnconfirmedAfterLinkLoss() async {
+    func testLightingRouteModelMarksPendingCommandUnconfirmedAfterLinkLoss() async throws {
+        let suiteName = "CutoutAppRouteTests.lightingPendingCommand"
+        let defaults = try! XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defaults.removePersistentDomain(forName: suiteName)
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let persistence = LightingAccessoryPersistence(defaults: defaults)
         let fake = TestLightingSession()
-        let model = LightingRouteModel(session: fake)
+        let model = LightingRouteModel(session: fake, persistence: persistence)
 
         fake.emitState(.ready)
         await Task.yield()
@@ -923,8 +928,13 @@ final class CutoutAppRouteTests: XCTestCase {
 
     @MainActor
     func testLightingRouteModelStopsMusicThroughTheValidatedStatePath() {
+        let suiteName = "CutoutAppRouteTests.lightingMusic"
+        let defaults = try! XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defaults.removePersistentDomain(forName: suiteName)
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let persistence = LightingAccessoryPersistence(defaults: defaults)
         let fake = TestLightingSession()
-        let model = LightingRouteModel(session: fake)
+        let model = LightingRouteModel(session: fake, persistence: persistence)
 
         model.setPlayback(.music(effect: 1, sensitivity: 50))
         model.stopMusic()
@@ -1062,8 +1072,13 @@ final class CutoutAppRouteTests: XCTestCase {
 
     @MainActor
     func testLightingScheduleDoesNotChangePlaybackOrSaveOnOpening() throws {
+        let suiteName = "CutoutAppRouteTests.lightingSchedule"
+        let defaults = try! XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defaults.removePersistentDomain(forName: suiteName)
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let persistence = LightingAccessoryPersistence(defaults: defaults)
         let fake = TestLightingSession()
-        let model = LightingRouteModel(session: fake)
+        let model = LightingRouteModel(session: fake, persistence: persistence)
         XCTAssertTrue(fake.scheduleRequests.isEmpty)
         let schedule = MobileMelkScheduleDto(powerOn: false, hour: 23, minute: 15, days: 31, enabled: true)
         XCTAssertTrue(model.setSchedule(schedule))
@@ -1075,8 +1090,13 @@ final class CutoutAppRouteTests: XCTestCase {
 
     @MainActor
     func testLightingRouteModelConsumesTypedIdentityEvents() async {
+        let suiteName = "CutoutAppRouteTests.lightingIdentity"
+        let defaults = try! XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defaults.removePersistentDomain(forName: suiteName)
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let persistence = LightingAccessoryPersistence(defaults: defaults)
         let fake = TestLightingSession()
-        let model = LightingRouteModel(session: fake)
+        let model = LightingRouteModel(session: fake, persistence: persistence)
 
         fake.emitIdentity(
             MelkLightingPeripheralIdentity(

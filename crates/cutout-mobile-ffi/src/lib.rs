@@ -1179,6 +1179,14 @@ pub enum MobileMelkLightingError {
     /// Playback parameters are outside the supported controller ranges.
     #[error("invalid MELK playback parameters")]
     InvalidPlayback,
+
+    /// The scheduler slot is outside the controller's supported ranges.
+    #[error("invalid MELK schedule")]
+    InvalidSchedule,
+
+    /// The controller clock is outside the supported ranges.
+    #[error("invalid MELK clock")]
+    InvalidClock,
 }
 
 /// Verified standalone RGB profile persisted by the mobile boundary.
@@ -11349,7 +11357,14 @@ fn mobile_melk_transport_action(action: TransportAction) -> MobileMelkLightingWr
         mode,
     } = action
     else {
-        unreachable!("MELK lighting commands always produce writes")
+        debug_assert!(false, "MELK lighting commands always produce writes");
+        return MobileMelkLightingWriteDto {
+            characteristic: Vec::new(),
+            payload: Vec::new(),
+            mode: MobileMelkLightingWriteModeDto::WithoutResponse,
+            confirmation_characteristic: Vec::new(),
+            minimum_interval_ms: None,
+        };
     };
     let policy = MelkLightingProfile::write_policy();
     MobileMelkLightingWriteDto {
@@ -11372,7 +11387,10 @@ fn mobile_melk_control(command: cutout_core::MelkControl) -> MobileMelkLightingW
 fn mobile_melk_write_mode(mode: WriteMode) -> MobileMelkLightingWriteModeDto {
     match mode {
         WriteMode::WithoutResponse => MobileMelkLightingWriteModeDto::WithoutResponse,
-        WriteMode::WithResponse => unreachable!("MELK policy is write without response"),
+        WriteMode::WithResponse => {
+            debug_assert!(false, "MELK policy is write without response");
+            MobileMelkLightingWriteModeDto::WithoutResponse
+        }
     }
 }
 
