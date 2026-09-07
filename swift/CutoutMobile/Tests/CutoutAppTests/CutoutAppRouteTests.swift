@@ -1021,7 +1021,7 @@ final class CutoutAppRouteTests: XCTestCase {
 
     func testLightingPatternNamesKeepWireIDsAndUnmappedModesExplicit() {
         let groups = LightingPatternCatalog.groups
-        XCTAssertEqual(groups.flatMap(\.ids).sorted(), Array(0...220))
+        XCTAssertEqual(groups.flatMap(\.ids).sorted(), Array(0...227))
         XCTAssertEqual(groups.first?.name, "Basic")
         XCTAssertEqual(groups.first?.ids.prefix(3), [1, 2, 212])
         XCTAssertEqual(groups.first(where: { $0.name == "Curtain" })?.ids, Array(57...76))
@@ -1037,7 +1037,7 @@ final class CutoutAppRouteTests: XCTestCase {
         XCTAssertEqual(LightingPatternCatalog.name(for: 115), "Green-Dot in Red Running")
         XCTAssertEqual(LightingPatternCatalog.name(for: 169), "Green-Dot in Red Running")
         XCTAssertEqual(LightingPatternCatalog.name(for: 212), "7-Color Energy")
-        for id in [0] + Array(213...220) {
+        for id in [0] + Array(213...227) {
             XCTAssertFalse(LightingPatternCatalog.name(for: id).isEmpty)
             XCTAssertFalse(LightingPatternCatalog.name(for: id).contains("Unmapped"))
             XCTAssertFalse(LightingPatternCatalog.isMapped(id))
@@ -1045,6 +1045,8 @@ final class CutoutAppRouteTests: XCTestCase {
         XCTAssertEqual(LightingPatternCatalog.name(for: 0), "Rainbow Up (reference)")
         XCTAssertEqual(LightingPatternCatalog.name(for: 213), "Fade 73 (reference)")
         XCTAssertEqual(LightingPatternCatalog.name(for: 220), "Music Flow Flash (reference)")
+        XCTAssertEqual(LightingPatternCatalog.name(for: 221), "Music Flash (reference)")
+        XCTAssertEqual(LightingPatternCatalog.name(for: 227), "Music Pulse 2 (reference)")
         for id in [255, -1] {
             XCTAssertEqual(LightingPatternCatalog.name(for: id), "Unmapped effect \(id)")
         }

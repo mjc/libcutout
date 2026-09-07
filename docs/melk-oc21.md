@@ -26,11 +26,11 @@ still substantially slower than the official app. Music could not be tested;
 music and schedules remain physically unverified. Tests prove frame encoding and
 software behavior, not those remaining hardware capabilities.
 The upstream catalog contains generic MELK and model-specific mappings; exposing
-pattern IDs 0–220 does not prove that this firmware implements every visual mode.
+pattern IDs 0–227 does not prove that this firmware implements every visual mode.
 
 | Control | Parameters | Nine-byte frame (hex) |
 | --- | --- | --- |
-| Pattern | ID 0–220 | `7e 05 03 ID 06 ff ff 00 ef` |
+| Pattern | ID 0–227 | `7e 05 03 ID 06 ff ff 00 ef` |
 | Speed | Native 0–255 | `7e 04 02 SPEED ff ff ff 00 ef` |
 | Microphone effect | Index 0–7 | `7e 05 03 (80+INDEX) 04 ff ff 00 ef` |
 | Microphone sensitivity | 0–100 | `7e 04 06 GAIN ff ff ff 00 ef` |
@@ -49,12 +49,12 @@ The UI uses wire IDs 1–212 from the [MELK OA21 reference catalog](https://gist
 These are reference names, not a claim that OC21 renders every mode identically.
 The catalog contains duplicate names at different wire IDs; those IDs are
 preserved, not collapsed by parsing names as unique dictionary keys. The UI gives
-ID 0 and 213–220 generic STRIPX reference labels marked “(reference)” so every
+ID 0 and 213–227 generic STRIPX reference labels marked “(reference)” so every
 wire ID has a human-readable name; these entries remain unverified and disabled
 until exact OC21 capture.
 
 The production picker groups the reference IDs into Basic, Curtain, Trans, Water,
-Flow, Tail, Run, Run Back, and Unmapped. The grouping covers each ID 0–220 exactly
+Flow, Tail, Run, Run Back, and Unmapped. The grouping covers each ID 0–227 exactly
 once, while the names remain reference data pending exact OC21 matching. The
 user's official-app screenshot corroborates Basic/Curtain/Trans/Water and the
 Magic Forward, Magic Back, and 7-Color Energy names, but it is disconnected and

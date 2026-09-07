@@ -31,7 +31,7 @@ enum LightingPatternCatalog {
         Group(name: "Tail", ids: Array(23...38)),
         Group(name: "Run", ids: Array(stride(from: 89, through: 141, by: 2)) + Array(stride(from: 167, through: 179, by: 2))),
         Group(name: "Run Back", ids: Array(stride(from: 90, through: 142, by: 2)) + Array(stride(from: 168, through: 180, by: 2))),
-        Group(name: "Unmapped", ids: [0] + Array(213...220)),
+        Group(name: "Unmapped", ids: [0] + Array(213...227)),
     ]
 
     static func name(for id: Int) -> String {
@@ -56,6 +56,13 @@ enum LightingPatternCatalog {
         218: "Fade 78 (reference)",
         219: "Fade Bar (reference)",
         220: "Music Flow Flash (reference)",
+        221: "Music Flash (reference)",
+        222: "Music Rainbow (reference)",
+        223: "Music Snake (reference)",
+        224: "Music Rainbow 2 (reference)",
+        225: "Music Pulse (reference)",
+        226: "Music Flow (reference)",
+        227: "Music Pulse 2 (reference)",
     ]
 
     private static let names: [String] = [

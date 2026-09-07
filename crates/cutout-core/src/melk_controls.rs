@@ -7,8 +7,8 @@ use crate::LightingPowerState;
 /// A rejected controller-local setting.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, thiserror::Error)]
 pub enum MelkControlError {
-    /// Pattern is outside the reference's 0..=220 catalog.
-    #[error("MELK pattern must be between 0 and 220")]
+    /// Pattern is outside the reference's 0..=227 catalog.
+    #[error("MELK pattern must be between 0 and 227")]
     Pattern,
     /// The controller has eight reference microphone modes.
     #[error("MELK music effect must be between 0 and 7")]
@@ -56,7 +56,7 @@ macro_rules! bounded_setting {
 
 bounded_setting!(
     MelkPattern,
-    220,
+    227,
     Pattern,
     "Reference MELK pattern ID; appearance depends on controller firmware."
 );

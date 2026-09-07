@@ -347,7 +347,7 @@ mod tests {
             frame(MelkControl::Clock(MelkClock::new(12, 34, 56, 7).unwrap())),
             [0x7e, 0, 0x83, 12, 34, 56, 7, 0, 0xef]
         );
-        assert!(MelkPattern::try_from(221).is_err());
+        assert!(MelkPattern::try_from(228).is_err());
         assert!(MelkMusicEffect::try_from(8).is_err());
         assert!(cutout_core::MelkSensitivity::try_from(101).is_err());
         for (hour, minute, days) in [(24, 0, 0), (0, 60, 0), (0, 0, 128)] {

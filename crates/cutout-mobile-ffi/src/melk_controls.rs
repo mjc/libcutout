@@ -14,7 +14,7 @@ pub enum MobileLightingPlaybackDto {
     Solid,
     /// Reference pattern ID and native speed.
     Effect {
-        /// Reference pattern ID (0..=220).
+        /// Reference pattern ID (0..=227).
         pattern: u8,
         /// Native speed (0..=255).
         speed: u8,
@@ -209,7 +209,7 @@ mod tests {
             blue: 3,
             brightness: 50,
             playback: Some(MobileLightingPlaybackDto::Effect {
-                pattern: 220,
+                pattern: 227,
                 speed: 255,
             }),
         };
@@ -250,7 +250,7 @@ mod tests {
             profile().set_power(false).payload
         );
         state.playback = Some(MobileLightingPlaybackDto::Effect {
-            pattern: 221,
+            pattern: 228,
             speed: 50,
         });
         assert_eq!(
