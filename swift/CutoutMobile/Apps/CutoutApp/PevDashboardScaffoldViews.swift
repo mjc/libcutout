@@ -63,15 +63,18 @@ struct PevAppShell<Content: View>: View {
 
     let sectionTitle: String
     let disconnect: () -> Void
+    let openCamera: () -> Void
     let content: Content
 
     init(
         sectionTitle: String,
         disconnect: @escaping () -> Void,
+        openCamera: @escaping () -> Void,
         @ViewBuilder content: () -> Content
     ) {
         self.sectionTitle = sectionTitle
         self.disconnect = disconnect
+        self.openCamera = openCamera
         self.content = content()
     }
 
@@ -80,22 +83,38 @@ struct PevAppShell<Content: View>: View {
             PevDashboardHeader(
                 sectionTitle: sectionTitle
             ) {
-                Button(action: disconnect) {
-                    if verticalSizeClass == .compact && dynamicTypeSize.isAccessibilitySize {
-                        Image(systemName: "xmark")
-                            .accessibilityHidden(true)
-                    } else {
-                        Text(localizedAppText("ride.action.disconnect"))
+                HStack(spacing: 8) {
+                    Button(action: openCamera) {
+                        Label(
+                            localizedAppText("camera.action.open"),
+                            systemImage: "video"
+                        )
                     }
+                    .font(.callout.weight(.bold))
+                    .foregroundStyle(PevDashboardColors.primaryText)
+                    .padding(.horizontal, 12)
+                    .frame(minWidth: 44, minHeight: 44)
+                    .background(PevDashboardCardBackground(cornerRadius: 8))
+                    .buttonStyle(.plain)
+                    .accessibilityIdentifier("dashboard.camera")
+
+                    Button(action: disconnect) {
+                        if verticalSizeClass == .compact && dynamicTypeSize.isAccessibilitySize {
+                            Image(systemName: "xmark")
+                                .accessibilityHidden(true)
+                        } else {
+                            Text(localizedAppText("ride.action.disconnect"))
+                        }
+                    }
+                    .font(.callout.weight(.bold))
+                    .foregroundStyle(PevDashboardColors.primaryText)
+                    .padding(.horizontal, 12)
+                    .frame(minWidth: 44, minHeight: 44)
+                    .background(PevDashboardCardBackground(cornerRadius: 8))
+                    .buttonStyle(.plain)
+                    .accessibilityLabel(localizedAppText("ride.action.disconnect"))
+                    .accessibilityIdentifier("dashboard.disconnect")
                 }
-                .font(.callout.weight(.bold))
-                .foregroundStyle(PevDashboardColors.primaryText)
-                .padding(.horizontal, 12)
-                .frame(minWidth: 44, minHeight: 44)
-                .background(PevDashboardCardBackground(cornerRadius: 8))
-                .buttonStyle(.plain)
-                .accessibilityLabel(localizedAppText("ride.action.disconnect"))
-                .accessibilityIdentifier("dashboard.disconnect")
             }
             .padding(.horizontal, 24)
 
