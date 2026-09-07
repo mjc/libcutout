@@ -261,4 +261,42 @@ mod tests {
         let writes = profile().apply_state(state).unwrap();
         assert_eq!(writes[0].payload, [0x7e, 4, 7, 0, 255, 255, 255, 0, 0xef]);
     }
+    #[test]
+    fn schedule_and_clock_errors_remain_distinct() {
+        let invalid_schedule = MobileMelkScheduleDto {
+            power_on: true,
+            hour: 24,
+            minute: 0,
+            days: 0,
+            enabled: true,
+        };
+        let valid_schedule = MobileMelkScheduleDto {
+            power_on: true,
+            hour: 12,
+            minute: 0,
+            days: 0,
+            enabled: true,
+        };
+        let invalid_clock = MobileMelkClockDto {
+            hour: 12,
+            minute: 0,
+            second: 0,
+            weekday: 0,
+        };
+        let valid_clock = MobileMelkClockDto {
+            hour: 12,
+            minute: 0,
+            second: 0,
+            weekday: 1,
+        };
+
+        assert_eq!(
+            profile().set_schedule(invalid_schedule, valid_clock),
+            Err(crate::MobileMelkLightingError::InvalidSchedule)
+        );
+        assert_eq!(
+            profile().set_schedule(valid_schedule, invalid_clock),
+            Err(crate::MobileMelkLightingError::InvalidClock)
+        );
+    }
 }
