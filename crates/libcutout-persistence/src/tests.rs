@@ -9,9 +9,9 @@ use cutout_music::{
     MusicEventTiming, MusicHistoryPolicy, MusicProvider, MusicRideEvent, MusicRideEventKind,
 };
 use cutout_ride_maps::{
-    Coordinate, LocationAdmission, LocationSample, LocationSource, RideEvent, RouteDisplayBudget,
-    RoutePrivacyGridE7, RoutePrivacyPolicy, RouteTelemetryState, RouteViewport, VehicleIdentity,
-    WallClockUnixMilliseconds,
+    Coordinate, LocationAdmission, LocationSample, LocationSource, MAX_GAP_MILLISECONDS, RideEvent,
+    RouteDisplayBudget, RoutePrivacyGridE7, RoutePrivacyPolicy, RouteTelemetryState, RouteViewport,
+    VehicleIdentity, WallClockUnixMilliseconds,
 };
 use rusqlite::Connection;
 
@@ -4008,6 +4008,82 @@ fn route_projection_is_bounded_viewport_aware_and_cancellable() {
         ),
         Err(StorageError::Cancelled)
     ));
+
+    database.shutdown().unwrap();
+    let _ = std::fs::remove_file(path);
+}
+
+#[test]
+fn route_projection_preserves_each_segment_metadata() {
+    let _guard = test_guard();
+    let path = std::env::temp_dir().join(format!(
+        "libcutout-persistence-segment-projection-{}.sqlite",
+        uuid::Uuid::new_v4()
+    ));
+    let database = RideDatabase::open(&path).unwrap();
+    let ride = database.create_ride(RideSource::Live, 10).unwrap();
+    database.transition(ride, RideEvent::Start).unwrap();
+
+    let first = LocationSample::new(
+        Coordinate::from_degrees(40.0, -105.0).unwrap(),
+        1_000,
+        1_700_000_000_000,
+        None,
+        LocationSource::Live,
+    );
+    assert_eq!(
+        database
+            .append_location_with_segment(ride, first, 0)
+            .unwrap(),
+        LocationAdmission::Accepted
+    );
+    let second = LocationSample::new(
+        Coordinate::from_degrees(40.000_01, -105.0).unwrap(),
+        1_001 + MAX_GAP_MILLISECONDS,
+        1_700_000_000_001 + MAX_GAP_MILLISECONDS,
+        None,
+        LocationSource::Live,
+    );
+    assert_eq!(
+        database
+            .append_location_with_segment(ride, second, 1)
+            .unwrap(),
+        LocationAdmission::Accepted
+    );
+
+    let projection = database
+        .project_route_points(
+            ride,
+            None,
+            RouteDisplayBudget::new(8).unwrap(),
+            RoutePrivacyPolicy::Precise,
+        )
+        .unwrap();
+    assert_eq!(projection.source_segment_count(), 2);
+    assert_eq!(projection.background_gap_count(), 1);
+    assert_eq!(projection.segments().len(), 2);
+    assert_eq!(
+        projection.segments()[0].start_reason(),
+        RideSegmentStartReason::Initial
+    );
+    assert_eq!(
+        projection.segments()[0]
+            .canonical_point_count()
+            .unwrap()
+            .as_u64(),
+        1
+    );
+    assert_eq!(
+        projection.segments()[1].start_reason(),
+        RideSegmentStartReason::BackgroundGap
+    );
+    assert_eq!(
+        projection.segments()[1]
+            .canonical_point_count()
+            .unwrap()
+            .as_u64(),
+        1
+    );
 
     database.shutdown().unwrap();
     let _ = std::fs::remove_file(path);

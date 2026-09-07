@@ -16,6 +16,7 @@ use hex::encode as hex_encode;
 use rusqlite::{Connection, ErrorCode, OptionalExtension, params};
 use sha2::{Digest, Sha256};
 use std::{
+    collections::HashMap,
     fs::{self, File, OpenOptions},
     io::{BufReader, Read},
     path::{Path, PathBuf},
@@ -1437,6 +1438,12 @@ struct ProjectedRouteCandidates {
     camera_region: Option<RouteCameraRegion>,
     displayed_segment_count: u64,
     segments: Vec<RouteSegmentDisplayMetadata>,
+}
+
+#[derive(Clone, Copy)]
+struct RouteSegmentProjectionMetadata {
+    start_reason: RideSegmentStartReason,
+    point_count: u64,
 }
 
 impl RoutePointProjection {
@@ -6755,40 +6762,41 @@ fn project_route_candidates(
     privacy: RoutePrivacyPolicy,
     cancellation: Option<&RouteProjectionCancellation>,
 ) -> Result<ProjectedRouteCandidates, StorageError> {
+    let segment_metadata = route_segment_projection_metadata(connection, ride_id, cancellation)?;
     let select = format!(
         "SELECT points.sequence, points.segment_id, points.telemetry_state, points.monotonic_ms,
                 points.wall_clock_ms, points.latitude_e7, points.longitude_e7,
-                points.horizontal_accuracy_mm, points.source, segments.start_reason,
-                segments.point_count
+                points.horizontal_accuracy_mm, points.source
          FROM ride_points AS points
-         JOIN ride_segments AS segments
-           ON segments.ride_id = points.ride_id AND segments.segment_id = points.segment_id
          WHERE points.ride_id = ?1{}
          ORDER BY points.sequence ASC",
         counts.viewport_predicate
     );
     let mut statement = projection_sqlite(connection.prepare(&select), cancellation)?;
     projection_checkpoint(cancellation)?;
-    let rows = if let Some(viewport) = viewport {
-        projection_sqlite(
-            statement.query_map(
-                params![
-                    ride_id,
-                    viewport.minimum_latitude().as_i32(),
-                    viewport.maximum_latitude().as_i32(),
-                    viewport.minimum_longitude().as_i32(),
-                    viewport.maximum_longitude().as_i32(),
-                ],
-                projected_route_point_from_row,
-            ),
-            cancellation,
-        )?
-    } else {
-        projection_sqlite(
-            statement.query_map([ride_id], projected_route_point_from_row),
-            cancellation,
-        )?
-    };
+    let rows: Box<dyn Iterator<Item = rusqlite::Result<(RoutePoint, u64)>>> =
+        if let Some(viewport) = viewport {
+            Box::new(projection_sqlite(
+                statement.query_map(
+                    params![
+                        ride_id,
+                        viewport.minimum_latitude().as_i32(),
+                        viewport.maximum_latitude().as_i32(),
+                        viewport.minimum_longitude().as_i32(),
+                        viewport.maximum_longitude().as_i32(),
+                    ],
+                    |row| projected_route_point_from_row(row, &segment_metadata),
+                ),
+                cancellation,
+            )?)
+        } else {
+            Box::new(projection_sqlite(
+                statement.query_map([ride_id], |row| {
+                    projected_route_point_from_row(row, &segment_metadata)
+                }),
+                cancellation,
+            )?)
+        };
     let candidate_count = usize::try_from(counts.candidate_point_count).unwrap_or(usize::MAX);
     let mut accumulator = RouteProjectionAccumulator::new(candidate_count, budget, privacy);
     for (candidate_ordinal, row) in rows.enumerate() {
@@ -6823,6 +6831,48 @@ fn project_route_candidates(
         displayed_segment_count,
         segments,
     })
+}
+
+fn route_segment_projection_metadata(
+    connection: &Connection,
+    ride_id: &str,
+    cancellation: Option<&RouteProjectionCancellation>,
+) -> Result<HashMap<u64, RouteSegmentProjectionMetadata>, StorageError> {
+    let mut statement = projection_sqlite(
+        connection.prepare(
+            "SELECT segment_id, start_reason, point_count
+             FROM ride_segments
+             WHERE ride_id = ?1 AND point_count > 0",
+        ),
+        cancellation,
+    )?;
+    let rows = projection_sqlite(
+        statement.query_map([ride_id], |row| {
+            let start_reason =
+                segment_start_reason_from_db(row.get_ref(1)?.as_str()?).map_err(|error| {
+                    rusqlite::Error::FromSqlConversionFailure(
+                        1,
+                        rusqlite::types::Type::Text,
+                        Box::new(error),
+                    )
+                })?;
+            Ok((
+                row.get::<_, u64>(0)?,
+                RouteSegmentProjectionMetadata {
+                    start_reason,
+                    point_count: row.get(2)?,
+                },
+            ))
+        }),
+        cancellation,
+    )?;
+    let mut metadata = HashMap::new();
+    for row in rows {
+        projection_checkpoint(cancellation)?;
+        let (segment_id, segment) = projection_sqlite(row, cancellation)?;
+        metadata.insert(segment_id, segment);
+    }
+    Ok(metadata)
 }
 
 fn route_endpoint_metadata_from_storage(
@@ -7029,13 +7079,23 @@ fn route_point_viewport_predicate(viewport: Option<RouteViewport>) -> String {
 }
 
 fn route_point_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<RoutePoint> {
-    let source_value: String = row.get(8)?;
-    let source = source_from_db(&source_value).map_err(|error| {
+    let start_reason =
+        segment_start_reason_from_db(row.get_ref(9)?.as_str()?).map_err(|error| {
+            rusqlite::Error::FromSqlConversionFailure(
+                9,
+                rusqlite::types::Type::Text,
+                Box::new(error),
+            )
+        })?;
+    route_point_from_row_with_start_reason(row, start_reason)
+}
+
+fn route_point_from_row_with_start_reason(
+    row: &rusqlite::Row<'_>,
+    start_reason: RideSegmentStartReason,
+) -> rusqlite::Result<RoutePoint> {
+    let source = source_from_db(row.get_ref(8)?.as_str()?).map_err(|error| {
         rusqlite::Error::FromSqlConversionFailure(8, rusqlite::types::Type::Text, Box::new(error))
-    })?;
-    let start_reason_value: String = row.get(9)?;
-    let start_reason = segment_start_reason_from_db(&start_reason_value).map_err(|error| {
-        rusqlite::Error::FromSqlConversionFailure(9, rusqlite::types::Type::Text, Box::new(error))
     })?;
     let coordinate = Coordinate::from_fixed_parts(row.get(5)?, row.get(6)?).map_err(|error| {
         rusqlite::Error::FromSqlConversionFailure(
@@ -7068,8 +7128,25 @@ fn route_point_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<RoutePoint>
     })
 }
 
-fn projected_route_point_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<(RoutePoint, u64)> {
-    Ok((route_point_from_row(row)?, row.get(10)?))
+fn projected_route_point_from_row(
+    row: &rusqlite::Row<'_>,
+    segment_metadata: &HashMap<u64, RouteSegmentProjectionMetadata>,
+) -> rusqlite::Result<(RoutePoint, u64)> {
+    let segment_id = row.get::<_, u64>(1)?;
+    let segment = segment_metadata.get(&segment_id).ok_or_else(|| {
+        rusqlite::Error::FromSqlConversionFailure(
+            1,
+            rusqlite::types::Type::Integer,
+            Box::new(StorageError::InvalidStoredValue {
+                field: "ride point segment",
+                value: segment_id.to_string(),
+            }),
+        )
+    })?;
+    Ok((
+        route_point_from_row_with_start_reason(row, segment.start_reason)?,
+        segment.point_count,
+    ))
 }
 
 fn segment_start_reason_from_db(value: &str) -> Result<RideSegmentStartReason, StorageError> {
