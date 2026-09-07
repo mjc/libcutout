@@ -634,15 +634,15 @@ struct MelkLightingLogEntry: Identifiable {
 extension MelkLightingPeripheralState {
     var displayText: String {
         switch self {
-        case .idle: "Idle"
-        case .scanning: "Scanning for MELK-OC21"
-        case .connecting: "Connecting"
+        case .idle: localizedAppText("lighting.state.idle")
+        case .scanning: localizedAppText("lighting.state.scanning")
+        case .connecting: localizedAppText("lighting.state.connecting")
         case let .retrying(attempt, delayMilliseconds):
-            "Retrying (\(attempt)) in \(max(1, Int((delayMilliseconds + 999) / 1000)))s"
-        case .discovering: "Discovering FFF0/FFF3/FFF4"
-        case .ready: "Ready"
-        case .disconnected: "Disconnected"
-        case let .failed(reason): "Failed: \(reason)"
+            localizedAppText("lighting.state.retrying", Int64(attempt), Int64(max(1, Int((delayMilliseconds + 999) / 1000))))
+        case .discovering: localizedAppText("lighting.state.discovering")
+        case .ready: localizedAppText("lighting.state.ready")
+        case .disconnected: localizedAppText("lighting.state.disconnected")
+        case let .failed(reason): localizedAppText("lighting.state.failed", reason)
         }
     }
 
@@ -659,10 +659,10 @@ extension MelkLightingPeripheralState {
 private extension MelkLightingCommandStatus {
     var displayText: String {
         switch self {
-        case .idle: "Idle"
-        case .requested: "Requested; awaiting confirmation"
-        case .confirmed: "Confirmed by external observation"
-        case .unconfirmed: "Unconfirmed"
+        case .idle: localizedAppText("lighting.command.idle")
+        case .requested: localizedAppText("lighting.command.requested")
+        case .confirmed: localizedAppText("lighting.command.confirmed")
+        case .unconfirmed: localizedAppText("lighting.command.unconfirmed")
         }
     }
 

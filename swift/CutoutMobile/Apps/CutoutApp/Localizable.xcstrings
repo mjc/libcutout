@@ -1,6 +1,54 @@
 {
   "sourceLanguage" : "en",
   "strings" : {
+    "lighting.state.idle" : {
+      "comment" : "Lighting connection state.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Idle" } } }
+    },
+    "lighting.state.scanning" : {
+      "comment" : "Lighting connection state.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Scanning for MELK-OC21" } } }
+    },
+    "lighting.state.connecting" : {
+      "comment" : "Lighting connection state.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Connecting" } } }
+    },
+    "lighting.state.retrying" : {
+      "comment" : "Lighting retry state. Placeholders are attempt and delay seconds.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Retrying (%lld) in %llds" } } }
+    },
+    "lighting.state.discovering" : {
+      "comment" : "Lighting connection state.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Discovering FFF0/FFF3/FFF4" } } }
+    },
+    "lighting.state.ready" : {
+      "comment" : "Lighting connection state.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Ready" } } }
+    },
+    "lighting.state.disconnected" : {
+      "comment" : "Lighting connection state.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Disconnected" } } }
+    },
+    "lighting.state.failed" : {
+      "comment" : "Lighting connection failure. Placeholder is the failure reason.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Failed: %@" } } }
+    },
+    "lighting.command.idle" : {
+      "comment" : "Lighting command status.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Idle" } } }
+    },
+    "lighting.command.requested" : {
+      "comment" : "Lighting command status.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Requested; awaiting confirmation" } } }
+    },
+    "lighting.command.confirmed" : {
+      "comment" : "Lighting command status.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Confirmed by external observation" } } }
+    },
+    "lighting.command.unconfirmed" : {
+      "comment" : "Lighting command status.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Unconfirmed" } } }
+    },
     "lighting.page.color" : {
       "comment" : "Lighting controls page label.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Color" } } }
