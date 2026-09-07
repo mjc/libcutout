@@ -2,6 +2,10 @@ import java.io.File
 import uniffi.cutout_mobile_ffi.AeroReadOnlySession
 import uniffi.cutout_mobile_ffi.FalconReadOnlySession
 import uniffi.cutout_mobile_ffi.MobileCommandDto
+import uniffi.cutout_mobile_ffi.MobileCameraPreviewFileSink
+import uniffi.cutout_mobile_ffi.MobileCameraVideoFrameDto
+import uniffi.cutout_mobile_ffi.MobileNovatekMediaPathException
+import uniffi.cutout_mobile_ffi.mobileNovatekMediaDownloadTarget
 import uniffi.cutout_mobile_ffi.MobileFalconProfileDto
 import uniffi.cutout_mobile_ffi.MobileGattFingerprintDto
 import uniffi.cutout_mobile_ffi.MobileGattRoleDto
@@ -133,6 +137,32 @@ fun main() {
         check(exported.contains("\"roles\":[\"Read\",\"WriteWithoutResponse\",\"Notify\"]"))
         check(exported.contains("\"bytes\":[222,173,190,239]"))
         check(captureFile.delete())
+    }
+
+    val cameraFile = File.createTempFile("cutout-camera-ffi-smoke", ".h264")
+    MobileCameraPreviewFileSink.create(cameraFile.path).use { sink ->
+        sink.writeFrame(
+            MobileCameraVideoFrameDto(
+                data = byteArrayOf(0, 0, 0, 2, 0x65, 0x88.toByte()),
+                loss = 0U,
+                isRandomAccessPoint = true,
+                timestamp = 90_000L,
+                clockRateHz = 90_000U,
+            ),
+        )
+        sink.finish()
+    }
+    check(cameraFile.readBytes().contentEquals(byteArrayOf(0, 0, 0, 1, 0x65, 0x88.toByte())))
+    check(cameraFile.delete())
+
+    check(
+        mobileNovatekMediaDownloadTarget("A:\\Novatek\\Movie\\clip.TS") ==
+            "/Novatek/Movie/clip.TS",
+    )
+    try {
+        mobileNovatekMediaDownloadTarget("A:\\Novatek\\Movie\\..\\clip.TS")
+        error("unsafe Novatek media paths should throw")
+    } catch (_: MobileNovatekMediaPathException.InvalidPath) {
     }
 }
 

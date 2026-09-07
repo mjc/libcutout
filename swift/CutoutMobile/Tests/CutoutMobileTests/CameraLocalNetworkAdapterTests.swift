@@ -174,4 +174,81 @@ final class CameraLocalNetworkAdapterTests: XCTestCase {
             XCTAssertEqual(adapter.presentation.preview, .stopped)
         }
     }
+
+    @MainActor
+    func testMediaDownloadMapsCameraPathAndMovesFetchedFile() async throws {
+        let media = CameraMediaEvidence(
+            name: "clip.TS",
+            path: #"A:\Novatek\Movie\clip.TS"#,
+            sizeBytes: 4,
+            timecode: 7,
+            time: "2025/01/01 00:00:00",
+            attributes: 32
+        )
+        let source = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("cutout-camera-source-\(UUID().uuidString).tmp")
+        let destination = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("cutout-camera-download-\(UUID().uuidString).TS")
+        try Data([1, 2, 3, 4]).write(to: source)
+        defer {
+            try? FileManager.default.removeItem(at: source)
+            try? FileManager.default.removeItem(at: destination)
+        }
+
+        let requestedURL = DownloadURLCapture()
+        try await CameraLocalNetworkAdapter().downloadMedia(
+            address: "192.168.1.254",
+            port: 80,
+            media: media,
+            to: destination
+        ) { url in
+            await requestedURL.record(url)
+            return source
+        }
+
+        let actualURL = await requestedURL.value()
+        XCTAssertEqual(actualURL?.path, "/Novatek/Movie/clip.TS")
+        XCTAssertEqual(try Data(contentsOf: destination), Data([1, 2, 3, 4]))
+    }
+
+    @MainActor
+    func testMediaDownloadRejectsUnsafeCameraPathBeforeFetching() async {
+        let media = CameraMediaEvidence(
+            name: "clip.TS",
+            path: #"A:\Novatek\Movie\..\clip.TS"#,
+            sizeBytes: 4,
+            timecode: 7,
+            time: "2025/01/01 00:00:00",
+            attributes: 32
+        )
+        let destination = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("cutout-camera-download-\(UUID().uuidString).TS")
+
+        do {
+            try await CameraLocalNetworkAdapter().downloadMedia(
+                address: "192.168.1.254",
+                port: 80,
+                media: media,
+                to: destination
+            ) { _ in
+                XCTFail("unsafe camera paths must not reach the fetcher")
+                return destination
+            }
+            XCTFail("unsafe camera path should be rejected")
+        } catch {
+            XCTAssertFalse(FileManager.default.fileExists(atPath: destination.path))
+        }
+    }
+}
+
+private actor DownloadURLCapture {
+    private var recordedURL: URL?
+
+    func record(_ url: URL) {
+        recordedURL = url
+    }
+
+    func value() -> URL? {
+        recordedURL
+    }
 }
