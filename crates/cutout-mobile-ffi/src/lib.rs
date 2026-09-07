@@ -34,15 +34,15 @@ use cutout_core::{
     FaultHistoryAvailabilityDto, FaultHistoryEntry, FaultHistoryEntryDto, FaultHistoryReadback,
     FaultHistoryReadbackDto, FootpadContactStateDto, FootpadTelemetryDto, GattChannel,
     GattFingerprint, GattRoles, IgnoredNotificationEvidenceDto, IgnoredNotificationReasonDto,
-    Measured, MonotonicMillisDto, MonotonicTimestamp, NotificationByteLenDto,
-    NotificationEvidenceDto, NotificationIngestOutcomeDto, ParserDiagnosticCountDto,
-    ParserDiagnosticsDto, ParserDroppedBytesDto, ParserErrorDto, ParserFrameLenDto,
-    ParserGapEvidenceDto, PayloadBodyLenDto, PevcapEncoding as CorePevcapEncoding, PevcapHeader,
-    PevcapLocationSample, PevcapMusicEvent, PevcapPhoneLocation, PevcapRecord,
-    PevcapResolvedIdentity, PhaseCurrentReadingDto, PowerReadingDto, ProtocolFamily,
-    ProtocolFamilyDto, ProtocolTag, RIDE_SESSION_STALE_AFTER, RawFieldValue, RawFieldValueDto,
-    RawTelemetryReadback, RawTelemetryReadbackDto, ReadOnlyOutputPayload,
-    ReservedPayloadEvidenceDto, RideOperatingModeDto, RideOperatingStateDto,
+    Measured, MonotonicMillisDto, MonotonicTimestamp, MusicProvider as CorePevcapMusicProvider,
+    NotificationByteLenDto, NotificationEvidenceDto, NotificationIngestOutcomeDto,
+    ParserDiagnosticCountDto, ParserDiagnosticsDto, ParserDroppedBytesDto, ParserErrorDto,
+    ParserFrameLenDto, ParserGapEvidenceDto, PayloadBodyLenDto,
+    PevcapEncoding as CorePevcapEncoding, PevcapHeader, PevcapLocationSample, PevcapMusicEvent,
+    PevcapPhoneLocation, PevcapRecord, PevcapResolvedIdentity, PhaseCurrentReadingDto,
+    PowerReadingDto, ProtocolFamily, ProtocolFamilyDto, ProtocolTag, RIDE_SESSION_STALE_AFTER,
+    RawFieldValue, RawFieldValueDto, RawTelemetryReadback, RawTelemetryReadbackDto,
+    ReadOnlyOutputPayload, ReservedPayloadEvidenceDto, RideOperatingModeDto, RideOperatingStateDto,
     RideSessionAppPresence as CoreRideSessionAppPresence,
     RideSessionDecision as CoreRideSessionDecision, RideSessionEffect as CoreRideSessionEffect,
     RideSessionEndReason as CoreRideSessionEndReason,
@@ -3223,6 +3223,15 @@ impl TryFrom<MobilePevcapMusicEventDto> for PevcapMusicEvent {
 }
 
 impl From<MobileMusicProviderDto> for CoreMusicProvider {
+    fn from(provider: MobileMusicProviderDto) -> Self {
+        match provider {
+            MobileMusicProviderDto::AppleMusic => Self::AppleMusic,
+            MobileMusicProviderDto::Spotify => Self::Spotify,
+        }
+    }
+}
+
+impl From<MobileMusicProviderDto> for CorePevcapMusicProvider {
     fn from(provider: MobileMusicProviderDto) -> Self {
         match provider {
             MobileMusicProviderDto::AppleMusic => Self::AppleMusic,
@@ -6846,6 +6855,18 @@ impl MobileRideMapCore {
         state.pending_location_writes.clear();
         state.admission_recorder = state.recorder.clone();
         Ok(snapshot)
+    }
+
+    /// Returns the Rust-owned music-history policy for the active ride.
+    #[must_use]
+    pub fn current_music_history_policy(&self) -> MobileMusicHistoryPolicyDto {
+        match self.current_music_history().map(|history| history.status) {
+            Some(MobileMusicHistoryStatusDto::Available) => {
+                MobileMusicHistoryPolicyDto::HumanReadable
+            }
+            Some(MobileMusicHistoryStatusDto::Redacted) => MobileMusicHistoryPolicyDto::OpaqueItem,
+            _ => MobileMusicHistoryPolicyDto::Disabled,
+        }
     }
 
     /// Sets the bounded music-history policy for the active ride.

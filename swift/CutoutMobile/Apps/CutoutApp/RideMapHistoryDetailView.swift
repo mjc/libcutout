@@ -3,11 +3,31 @@ import CutoutMobileFFI
 import MapKit
 import SwiftUI
 
+struct RideMapHistoryMusicDetail {
+    let rideID: String
+    let events: [MobileMusicRideEventDto]
+    private let forgetMusicHistory: (String) -> Bool
+
+    init(
+        rideID: String,
+        events: [MobileMusicRideEventDto],
+        forgetMusicHistory: @escaping (String) -> Bool
+    ) {
+        self.rideID = rideID
+        self.events = events
+        self.forgetMusicHistory = forgetMusicHistory
+    }
+
+    func forget() -> Bool {
+        forgetMusicHistory(rideID)
+    }
+}
+
 struct RideMapHistoryDetailView: View {
     let initialHistoryID: String?
     let rides: [MobileRideMapHistorySummaryDto]
     let displayPoints: [MobileRideMapRouteDisplayPoint]
-    let musicTimeline: [MobileMusicRideEventDto]
+    let music: RideMapHistoryMusicDetail
     /// Rust's bounded projection supplies the camera; the default keeps older route-shell
     /// callers source-compatible until they pass the projection metadata through.
     var cameraRegion: MobileRideMapCameraRegion? = nil
@@ -25,7 +45,6 @@ struct RideMapHistoryDetailView: View {
     let load: () -> Void
     let retry: () -> Void
     let loadRoutePreview: () -> Void
-    let forgetMusicHistory: (String) -> Bool
     let vehicleName: (String?) -> String?
     let cameraDidChange: (MKCoordinateRegion) -> Void
     @Binding var mapPosition: MapCameraPosition
@@ -159,10 +178,9 @@ struct RideMapHistoryDetailView: View {
                                 segments: segments,
                                 segmentsOmittedByBudget: segmentsOmittedByBudget,
                                 canonicalBackgroundGapCount: canonicalBackgroundGapCount,
-                                musicTimeline: musicTimeline,
+                                musicTimeline: music.events,
                                 forgetMusicHistory: {
-                                    guard let activeHistoryID else { return false }
-                                    return forgetMusicHistory(activeHistoryID)
+                                    music.forget()
                                 },
                                 state: routeState,
                                 loadRoutePreview: loadRoutePreview,

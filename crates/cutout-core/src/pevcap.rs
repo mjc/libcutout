@@ -17,11 +17,56 @@ use crate::VerificationStatus;
 use crate::VescControllerId;
 use crate::{
     DEFAULT_REPLAY_OUTPUT_LIMIT, DeviceEvent, GattChannel, GattFingerprint, HostSession, LinkInfo,
-    MonotonicTimestamp, MusicIdentifier, MusicProvider, MusicValidationError, NotificationChunkLen,
-    ProtocolFamily, ProtocolSession, RawTelemetryReadback, ReplayChunkComparison, RequestTarget,
-    SemanticEventCount, SessionInput, SessionOutput, SessionOutputError, TransportWriteLimit,
-    VerifiedValue, WallClockUnixTimestamp, WriteMode, drain_semantic_events_checked,
+    MonotonicTimestamp, NotificationChunkLen, ProtocolFamily, ProtocolSession,
+    RawTelemetryReadback, ReplayChunkComparison, RequestTarget, SemanticEventCount, SessionInput,
+    SessionOutput, SessionOutputError, TransportWriteLimit, VerifiedValue, WallClockUnixTimestamp,
+    WriteMode, drain_semantic_events_checked,
 };
+
+const MAX_PEVCAP_MUSIC_IDENTIFIER_BYTES: usize = 256;
+
+/// Provider identity stored in PEVCAP correlation metadata.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum MusicProvider {
+    /// Apple Music system-player integration.
+    AppleMusic,
+    /// Spotify provider integration.
+    Spotify,
+}
+
+/// Bounded provider or item identifier stored in PEVCAP metadata.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct MusicIdentifier(String);
+
+impl MusicIdentifier {
+    fn new(value: impl Into<String>) -> Result<Self, MusicValidationError> {
+        let value = value.into();
+        if value.trim().is_empty() {
+            return Err(MusicValidationError::Blank);
+        }
+        if value.len() > MAX_PEVCAP_MUSIC_IDENTIFIER_BYTES {
+            return Err(MusicValidationError::TooLong);
+        }
+        Ok(Self(value))
+    }
+
+    /// Returns the opaque identifier text.
+    #[must_use]
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+/// Validation failures for PEVCAP music correlation metadata.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Error)]
+pub enum MusicValidationError {
+    /// The provider or item identifier is blank.
+    #[error("music identifier is blank")]
+    Blank,
+    /// The provider or item identifier exceeds the bounded storage limit.
+    #[error("music identifier is too long")]
+    TooLong,
+}
 
 /// PEVCAP file format magic bytes.
 pub const PEVCAP_MAGIC: [u8; 8] = *b"PEVCAP\0\0";

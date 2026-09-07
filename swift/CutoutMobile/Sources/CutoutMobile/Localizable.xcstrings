@@ -1017,6 +1017,10 @@
       "comment" : "Ride timeline event for skipping tracks.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Skipped" } } }
     },
+    "music.timeline.stopped" : {
+      "comment" : "Ride timeline event for stopped playback.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Stopped" } } }
+    },
     "music.timeline.title" : {
       "comment" : "Ride music timeline section title.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Music timeline" } } }

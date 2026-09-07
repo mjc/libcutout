@@ -41,6 +41,61 @@ final class MusicIntegrationTests: XCTestCase {
         XCTAssertNil(tracker.pendingHint)
     }
 
+    func testTransitionHintClearsWhenProviderLosesItsCurrentItem() {
+        var tracker = MusicTransitionHintTracker()
+        tracker.issue(.skip)
+
+        tracker.resolve(
+            previous: nowPlaying(trackID: "track-1"),
+            current: MusicNowPlaying(
+                provider: .appleMusic,
+                state: .stopped,
+                item: nil,
+                capabilities: .init(
+                    previous: false,
+                    play: true,
+                    pause: false,
+                    next: false,
+                    openProvider: true
+                )
+            ),
+            appliedHint: .skip
+        )
+
+        XCTAssertNil(tracker.pendingHint)
+    }
+
+    func testTransitionHintClearsOnTerminalStateBeforeLaterItemChange() {
+        var tracker = MusicTransitionHintTracker()
+        tracker.issue(.skip)
+
+        let previous = nowPlaying(trackID: "track-1")
+        tracker.resolve(
+            previous: previous,
+            current: MusicNowPlaying(
+                provider: .appleMusic,
+                state: .stopped,
+                item: previous.item,
+                capabilities: .init(
+                    previous: false,
+                    play: true,
+                    pause: false,
+                    next: false,
+                    openProvider: true
+                )
+            ),
+            appliedHint: .skip
+        )
+        XCTAssertNil(tracker.pendingHint)
+
+        tracker.resolve(
+            previous: previous,
+            current: nowPlaying(trackID: "track-2"),
+            appliedHint: .skip
+        )
+        XCTAssertNil(tracker.pendingHint)
+    }
+
     private func nowPlaying(trackID: String) -> MusicNowPlaying {
         MusicNowPlaying(
             provider: .appleMusic,

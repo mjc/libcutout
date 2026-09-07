@@ -73,11 +73,15 @@ public struct MusicTransitionHintTracker: Sendable {
             pendingHint = nil
             return
         }
-        if MusicTransitionHintTracker.isProviderFailure(current.state) {
+        if MusicTransitionHintTracker.isTerminalState(current.state) {
             pendingHint = nil
             return
         }
-        guard let previous, current.item != nil else { return }
+        guard current.item != nil else {
+            pendingHint = nil
+            return
+        }
+        guard let previous else { return }
         if previous.provider != current.provider
             || previous.item?.identifier != current.item?.identifier
         {
@@ -85,9 +89,9 @@ public struct MusicTransitionHintTracker: Sendable {
         }
     }
 
-    private static func isProviderFailure(_ state: MobileMusicPlaybackStateDto) -> Bool {
+    private static func isTerminalState(_ state: MobileMusicPlaybackStateDto) -> Bool {
         switch state {
-        case .unauthorized, .unavailable, .disconnected, .stale:
+        case .stopped, .unauthorized, .unavailable, .disconnected, .stale:
             true
         default:
             false
@@ -297,6 +301,7 @@ public extension MobileMusicRideEventKindDto {
         case .pause: pevLocalizedText("music.timeline.pause")
         case .skip: pevLocalizedText("music.timeline.skip")
         case .itemChanged: pevLocalizedText("music.timeline.item_changed")
+        case .stopped: pevLocalizedText("music.timeline.stopped")
         case .providerDisconnected: pevLocalizedText("music.timeline.provider_disconnected")
         }
     }
@@ -318,6 +323,7 @@ private extension MobileMusicRideEventKindDto {
         case .pause: "pause"
         case .skip: "skip"
         case .itemChanged: "item-changed"
+        case .stopped: "stopped"
         case .providerDisconnected: "provider-disconnected"
         }
     }
@@ -692,7 +698,7 @@ public struct MusicCompactPlayer: View {
                 .scaledToFill()
                 .frame(width: 34, height: 34)
                 .clipShape(RoundedRectangle(cornerRadius: 6))
-                .accessibilityLabel("Artwork for \(nowPlaying.title)")
+                .accessibilityHidden(true)
         } else {
             Image(systemName: "music.note")
                 .accessibilityHidden(true)
@@ -704,7 +710,7 @@ public struct MusicCompactPlayer: View {
                 .scaledToFill()
                 .frame(width: 34, height: 34)
                 .clipShape(RoundedRectangle(cornerRadius: 6))
-                .accessibilityLabel("Artwork for \(nowPlaying.title)")
+                .accessibilityHidden(true)
         } else {
             Image(systemName: "music.note")
                 .accessibilityHidden(true)
@@ -762,6 +768,7 @@ public struct MusicExpandedPlayer: View {
     public let onSelectProvider: (MobileMusicProviderDto) -> Void
     public let onSetHistoryPolicy: (MobileMusicHistoryPolicyDto) -> Bool
     @Environment(\.dismiss) private var dismiss
+    @State private var providerSelection: MobileMusicProviderDto
     @State private var selectedPolicy: MobileMusicHistoryPolicyDto
 
     public init(
@@ -778,6 +785,7 @@ public struct MusicExpandedPlayer: View {
         self.historyPolicy = historyPolicy
         self.onSelectProvider = onSelectProvider
         self.onSetHistoryPolicy = onSetHistoryPolicy
+        _providerSelection = State(initialValue: selectedProvider)
         _selectedPolicy = State(initialValue: historyPolicy)
     }
 
@@ -808,10 +816,7 @@ public struct MusicExpandedPlayer: View {
                 Section {
                     Picker(
                         pevLocalizedText("music.provider.select"),
-                        selection: Binding(
-                            get: { selectedProvider },
-                            set: { provider in onSelectProvider(provider) }
-                        )
+                        selection: $providerSelection
                     ) {
                         ForEach(MobileMusicProviderDto.allCases, id: \.self) { provider in
                             Text(provider.title).tag(provider)
@@ -845,6 +850,12 @@ public struct MusicExpandedPlayer: View {
                 if !onSetHistoryPolicy(policy) {
                     selectedPolicy = historyPolicy
                 }
+            }
+            .onChange(of: providerSelection) { _, provider in
+                onSelectProvider(provider)
+            }
+            .onChange(of: selectedProvider) { _, provider in
+                providerSelection = provider
             }
         }
     }

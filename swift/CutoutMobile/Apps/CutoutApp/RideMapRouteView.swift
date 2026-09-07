@@ -172,36 +172,44 @@ struct RideMapRouteView: View {
         )
     }
 
+    @ViewBuilder
     private var detailContent: some View {
-        RideMapHistoryDetailView(
-            initialHistoryID: initialHistoryID,
-            rides: model.rideMapHistory,
-            displayPoints: model.rideMapHistoryDetailDisplayPoints,
-            musicTimeline: model.rideMapHistoryDetailMusicTimeline,
-            cameraRegion: model.rideMapHistoryDetailCameraRegion,
-            endpointMetadata: model.rideMapHistoryDetailEndpointMetadata,
-            segments: model.rideMapHistoryDetailSegments,
-            projectionVersion: model.rideMapHistoryDetailProjectionVersion,
-            pointsTruncated: model.rideMapHistoryDetailPointsTruncated,
-            segmentsOmittedByBudget: model.rideMapHistoryDetailSegmentsOmittedByBudget,
-            canonicalBackgroundGapCount: model.rideMapHistoryDetailBackgroundGapCount,
-            historyError: model.rideMapHistoryError,
-            routeError: model.rideMapHistoryDetailRouteError,
-            isLoading: model.rideMapHistoryDetailRouteLoading,
-            selectedHistoryID: model.selectedRideMapHistoryID,
-            select: { model.selectRideMapHistory($0) },
-            load: { model.loadRideMapHistory(selecting: initialHistoryID) },
-            retry: { model.loadRideMapHistory(selecting: initialHistoryID) },
-            loadRoutePreview: { model.loadRoutePreviewMapHistory() },
-            forgetMusicHistory: { model.forgetMusicHistory(for: $0) },
-            vehicleName: model.rideMapVehicleName(for:),
-            cameraDidChange: { region in
-                model.projectRideMapHistoryDetailViewport(RideMapCanvasView.geoBounds(for: region))
-            },
-            mapPosition: $presentation.detailMapPosition,
-            isApplyingCamera: $presentation.detailIsApplyingCamera,
-            close: closeDetail ?? { dismiss() }
-        )
+        if let initialHistoryID {
+            RideMapHistoryDetailView(
+                initialHistoryID: initialHistoryID,
+                rides: model.rideMapHistory,
+                displayPoints: model.rideMapHistoryDetailDisplayPoints,
+                music: RideMapHistoryMusicDetail(
+                    rideID: initialHistoryID,
+                    events: model.rideMapHistoryDetailMusicTimeline,
+                    forgetMusicHistory: { model.forgetMusicHistory(for: $0) }
+                ),
+                cameraRegion: model.rideMapHistoryDetailCameraRegion,
+                endpointMetadata: model.rideMapHistoryDetailEndpointMetadata,
+                segments: model.rideMapHistoryDetailSegments,
+                projectionVersion: model.rideMapHistoryDetailProjectionVersion,
+                pointsTruncated: model.rideMapHistoryDetailPointsTruncated,
+                segmentsOmittedByBudget: model.rideMapHistoryDetailSegmentsOmittedByBudget,
+                canonicalBackgroundGapCount: model.rideMapHistoryDetailBackgroundGapCount,
+                historyError: model.rideMapHistoryError,
+                routeError: model.rideMapHistoryDetailRouteError,
+                isLoading: model.rideMapHistoryDetailRouteLoading,
+                selectedHistoryID: model.selectedRideMapHistoryID,
+                select: { model.selectRideMapHistory($0) },
+                load: { model.loadRideMapHistory(selecting: initialHistoryID) },
+                retry: { model.loadRideMapHistory(selecting: initialHistoryID) },
+                loadRoutePreview: { model.loadRoutePreviewMapHistory() },
+                vehicleName: model.rideMapVehicleName(for:),
+                cameraDidChange: { region in
+                    model.projectRideMapHistoryDetailViewport(RideMapCanvasView.geoBounds(for: region))
+                },
+                mapPosition: $presentation.detailMapPosition,
+                isApplyingCamera: $presentation.detailIsApplyingCamera,
+                close: closeDetail ?? { dismiss() }
+            )
+        } else {
+            RideMapHistoryDetailUnavailableState(hasError: false, retry: {})
+        }
     }
 }
 
