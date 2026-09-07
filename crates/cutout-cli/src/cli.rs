@@ -635,9 +635,9 @@ mod tests {
     use super::{
         CaptureArgs, CaptureDistributionArg, CaptureEvidenceArg, CaptureLabelArg,
         CapturePrivacyArg, Cli, Command, DEFAULT_SCAN_SECONDS, DashboardArgs, PevcapArgs,
-        PevcapCommand, PevcapConvertArgs, PevcapFormat, PevcapReplayArgs, PevcapReplayProfile,
-        RawSubscribeArgs, ReadProbe, ScanArgs, SessionProfile, TargetArgs, TargetedScanArgs,
-        VescProbe, VescProbeArgs,
+        PevcapCommand, PevcapConvertArgs, PevcapFormat, PevcapImportArgs, PevcapReplayArgs,
+        PevcapReplayProfile, RawSubscribeArgs, ReadProbe, ScanArgs, SessionProfile, TargetArgs,
+        TargetedScanArgs, VescProbe, VescProbeArgs,
     };
 
     fn assert_contains_all(haystack: &str, needles: &[&str]) {
@@ -1484,19 +1484,29 @@ mod tests {
 
     #[test]
     fn parses_pevcap_import_command() {
-        assert!(
-            Cli::try_parse_from([
-                "cutout",
-                "pevcap",
-                "import",
-                "--database",
-                "rides.sqlite3",
-                "--input",
-                "session.pevcap.jsonl",
-                "--input-format",
-                "jsonl",
-            ])
-            .is_ok()
+        let cli = Cli::try_parse_from([
+            "cutout",
+            "pevcap",
+            "import",
+            "--database",
+            "rides.sqlite3",
+            "--input",
+            "session.pevcap.jsonl",
+            "--input-format",
+            "jsonl",
+        ])
+        .expect("parser accepts PEVCAP import");
+
+        assert_eq!(
+            cli.command,
+            Command::Pevcap(PevcapArgs {
+                command: PevcapCommand::Import(PevcapImportArgs {
+                    database: PathBuf::from("rides.sqlite3"),
+                    input: PathBuf::from("session.pevcap.jsonl"),
+                    input_format: PevcapFormat::Jsonl,
+                    confirm: false,
+                })
+            })
         );
     }
 

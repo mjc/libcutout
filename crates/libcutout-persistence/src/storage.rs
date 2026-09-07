@@ -2366,7 +2366,6 @@ impl RideDatabase {
             .is_some()
         {
             preview.outcome = PevcapImportOutcome::AlreadyImported;
-            preview.warnings = Arc::from([]);
         }
         Ok(preview)
     }
@@ -2388,6 +2387,7 @@ impl RideDatabase {
         preview: &PevcapImportPreview,
         created_at_ms: u64,
     ) -> Result<PevcapImportReceipt, StorageError> {
+        verify_pevcap_preview_source(preview)?;
         if let Some(receipt) = self.request(|reply| Command::PevcapImportLookup {
             digest: preview.artifact_digest.clone(),
             reply,
@@ -2395,7 +2395,6 @@ impl RideDatabase {
             validate_existing_pevcap_confirmation(self.path.as_ref(), &receipt, preview)?;
             return Ok(receipt);
         }
-        verify_pevcap_preview_source(preview)?;
         let outcome = NewPevcapImportOutcome::try_from(preview.outcome)?;
 
         let managed = prepare_managed_pevcap(self.path.as_ref(), preview)?;
