@@ -785,9 +785,11 @@ public final class MobileRideMapState: @unchecked Sendable {
         }
     }
 
-    /// Returns the active ride's authoritative music retention and availability state.
+    /// Returns nil when a healthy core has no active ride. A storage initialization failure
+    /// returns an unavailable projection because active-ride state cannot be determined.
     public func currentMusicHistory() -> MobileMusicHistoryDto? {
         if let core { return core.currentMusicHistory() }
+        guard storageUnavailableError != nil else { return nil }
         return MobileMusicHistoryDto(status: .unavailable, events: [])
     }
 

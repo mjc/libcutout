@@ -5,6 +5,7 @@ import CutoutMobileFFI
 final class RideMapStateTests: XCTestCase {
     func testMusicHistoryProjectsRustRetentionAndObservationTime() throws {
         let state = MobileRideMapState()
+        XCTAssertNil(state.currentMusicHistory())
         _ = try state.startGpsOnly(atMs: 1_000, lastConnectedVehicle: nil)
         XCTAssertEqual(state.currentMusicHistory()?.status, .missing)
         try state.setMusicHistoryPolicy(.humanReadable)
@@ -25,6 +26,7 @@ final class RideMapStateTests: XCTestCase {
         XCTAssertTrue(state.currentMusicEvents().isEmpty)
         _ = try state.stop(atMs: 4_000)
         _ = try state.discard()
+        XCTAssertNil(state.currentMusicHistory())
     }
 
 

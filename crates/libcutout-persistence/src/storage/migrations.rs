@@ -850,6 +850,7 @@ fn migrate_v15_to_current(connection: &mut Connection) -> Result<(), StorageErro
 }
 
 fn migrate_v16_to_current(connection: &mut Connection) -> Result<(), StorageError> {
+    verify_legacy_schema(connection)?;
     let transaction = connection.transaction()?;
     for (table, column, definition) in [
         (

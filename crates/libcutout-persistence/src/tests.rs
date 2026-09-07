@@ -93,7 +93,7 @@ fn music_v16_migration_preserves_events_without_fabricating_observation_times() 
 }
 
 #[test]
-fn music_read_rejects_over_capacity_history_before_returning_it() {
+fn music_history_rejects_reads_and_writes_when_over_capacity() {
     let _guard = test_guard();
     let path = music_test_path();
     let database = RideDatabase::open(&path).unwrap();
@@ -108,15 +108,64 @@ fn music_read_rejects_over_capacity_history_before_returning_it() {
         "WITH RECURSIVE numbers(n) AS (SELECT 1 UNION ALL SELECT n + 1 FROM numbers WHERE n < 512)
          INSERT INTO ride_music_event
              (ride_id, sequence, provider, kind, monotonic_at_ms, wall_clock_at_ms, clock_uncertainty_milliseconds)
-         SELECT ?1, n, 'apple_music', 'play', 110 + n, 1700000000110 + n, 5 FROM numbers",
+         SELECT ?1, n, 'apple_music', 'play', 110, 1700000000110 + n, 5 FROM numbers",
         [ride.uuid().to_string()],
     ).unwrap();
     assert!(matches!(
         database.music_events(ride),
         Err(StorageError::MusicTimelineFull)
     ));
+    for sequence in [513, 514] {
+        assert!(matches!(
+            database.save_music_event(
+                ride,
+                MusicHistoryPolicy::OpaqueItem,
+                sequence,
+                music_event()
+            ),
+            Err(StorageError::MusicTimelineFull)
+        ));
+    }
+    let count: u64 = connection
+        .query_row(
+            "SELECT COUNT(*) FROM ride_music_event WHERE ride_id = ?1",
+            [ride.uuid().to_string()],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(count, 513);
     drop(connection);
     database.shutdown().unwrap();
+    let _ = std::fs::remove_file(path);
+}
+
+#[test]
+fn music_v16_migration_rejects_foreign_database_without_mutating_it() {
+    let _guard = test_guard();
+    let path = music_test_path();
+    let connection = Connection::open(&path).unwrap();
+    connection
+        .execute_batch(
+            "CREATE TABLE unrelated (value TEXT);
+         INSERT INTO unrelated VALUES ('keep');
+         PRAGMA user_version = 16;",
+        )
+        .unwrap();
+    drop(connection);
+    assert!(matches!(
+        RideDatabase::open(&path),
+        Err(StorageError::InvalidDatabaseIdentity)
+    ));
+    let connection = Connection::open(&path).unwrap();
+    let version: u64 = connection
+        .pragma_query_value(None, "user_version", |row| row.get(0))
+        .unwrap();
+    assert_eq!(version, 16);
+    let value: String = connection
+        .query_row("SELECT value FROM unrelated", [], |row| row.get(0))
+        .unwrap();
+    assert_eq!(value, "keep");
+    drop(connection);
     let _ = std::fs::remove_file(path);
 }
 

@@ -5072,16 +5072,14 @@ fn insert_music_event(
         [ride_id.uuid().to_string()],
         |row| row.get(0),
     )?;
+    if count >= i64::try_from(cutout_core::MAX_MUSIC_TIMELINE_EVENTS).unwrap_or(i64::MAX) {
+        return Err(StorageError::MusicTimelineFull);
+    }
     if sequence != count {
         return Err(StorageError::MusicSequenceGap {
             sequence,
             expected: count,
         });
-    }
-    if sequence == i64::try_from(cutout_core::MAX_MUSIC_TIMELINE_EVENTS).unwrap_or(i64::MAX)
-        && sequence == count
-    {
-        return Err(StorageError::MusicTimelineFull);
     }
     let monotonic_ms = music_sqlite_integer(
         event.monotonic_at().as_milliseconds(),
