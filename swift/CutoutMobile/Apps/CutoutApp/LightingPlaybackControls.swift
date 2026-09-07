@@ -274,10 +274,132 @@ enum LightingPatternCatalog {
     ]
 }
 
+private enum LightingEffectPreviewModel {
+    static func points(for id: Int, in size: CGSize) -> [CGPoint] {
+        let width = max(size.width, 1)
+        let height = max(size.height, 1)
+        let horizontalPadding = min(14, width / 5)
+        let verticalPadding = min(10, height / 5)
+        let usableWidth = max(width - (horizontalPadding * 2), 1)
+        let usableHeight = max(height - (verticalPadding * 2), 1)
+        let count = 30
+
+        switch LightingPatternCatalog.groups.first(where: { $0.ids.contains(id) })?.name {
+        case "Curtain":
+            return (0..<count).map { index in
+                let column = Double(index % 5) / 4
+                let progress = Double(index / 5) / 5
+                let x = horizontalPadding + (usableWidth * column)
+                let y = verticalPadding + (usableHeight * (0.18 + abs(sin(progress * .pi)) * 0.72))
+                return CGPoint(x: x, y: y)
+            }
+        case "Run", "Run Back":
+            return (0..<count).map { index in
+                let progress = Double(index) / Double(count - 1)
+                let x = horizontalPadding + (usableWidth * progress)
+                let wave = sin((progress * 3 + Double(id % 5) * 0.4) * .pi)
+                let y = verticalPadding + (usableHeight * (0.5 + wave * 0.3))
+                return CGPoint(x: x, y: y)
+            }
+        case "Water", "Flow":
+            return spiralPoints(
+                count: count,
+                center: CGPoint(x: width / 2, y: height / 2),
+                radius: min(usableWidth, usableHeight) * 0.42,
+                turns: id.isMultiple(of: 2) ? 2.5 : 3.5
+            )
+        case "Tail":
+            return (0..<count).map { index in
+                let progress = Double(index) / Double(count - 1)
+                let x = horizontalPadding + (usableWidth * progress)
+                let y = verticalPadding + (usableHeight * (0.8 - progress * 0.55))
+                return CGPoint(x: x, y: y)
+            }
+        default:
+            return wavePoints(
+                count: count,
+                width: width,
+                height: height,
+                horizontalPadding: horizontalPadding,
+                verticalPadding: verticalPadding,
+                reverse: id.isMultiple(of: 2)
+            )
+        }
+    }
+
+    static func colors(for id: Int) -> [Color] {
+        let baseHue = Double((abs(id) * 37) % 360) / 360
+        return (0..<4).map { index in
+            let hue = (baseHue + Double(index) * 0.11).truncatingRemainder(dividingBy: 1)
+            return Color(hue: hue, saturation: 0.9, brightness: 1)
+        }
+    }
+
+    private static func wavePoints(
+        count: Int,
+        width: CGFloat,
+        height: CGFloat,
+        horizontalPadding: CGFloat,
+        verticalPadding: CGFloat,
+        reverse: Bool
+    ) -> [CGPoint] {
+        (0..<count).map { index in
+            let progress = Double(index) / Double(count - 1)
+            let xProgress = reverse ? 1 - progress : progress
+            let y = verticalPadding + (height - (verticalPadding * 2)) * (0.5 + 0.3 * sin(progress * 3 * .pi))
+            return CGPoint(
+                x: horizontalPadding + (width - (horizontalPadding * 2)) * xProgress,
+                y: y
+            )
+        }
+    }
+
+    private static func spiralPoints(
+        count: Int,
+        center: CGPoint,
+        radius: CGFloat,
+        turns: Double
+    ) -> [CGPoint] {
+        (0..<count).map { index in
+            let progress = Double(index) / Double(count - 1)
+            let angle = progress * turns * 2 * .pi
+            let currentRadius = radius * (0.12 + progress * 0.88)
+            return CGPoint(
+                x: center.x + cos(angle) * currentRadius,
+                y: center.y + sin(angle) * currentRadius * 0.72
+            )
+        }
+    }
+}
+
+private struct LightingEffectPreview: View {
+    let patternID: Int
+
+    var body: some View {
+        GeometryReader { proxy in
+            let points = LightingEffectPreviewModel.points(for: patternID, in: proxy.size)
+            let colors = LightingEffectPreviewModel.colors(for: patternID)
+            ZStack {
+                ForEach(Array(points.enumerated()), id: \.offset) { item in
+                    Circle()
+                        .fill(colors[item.offset % colors.count])
+                        .frame(width: 6, height: 6)
+                        .shadow(color: colors[item.offset % colors.count], radius: 4)
+                        .position(item.element)
+                }
+            }
+        }
+        .frame(height: 72)
+        .padding(.horizontal, 6)
+        .background(Color.black.opacity(0.18), in: RoundedRectangle(cornerRadius: 10))
+        .clipShape(RoundedRectangle(cornerRadius: 10))
+        .accessibilityHidden(true)
+    }
+}
+
 private struct LightingEffectGrid: View {
     let ids: [Int]
     let selectedPattern: Int
-    let symbols: [Int: String]
     let onSelect: (Int) -> Void
 
     var body: some View {
@@ -286,16 +408,8 @@ private struct LightingEffectGrid: View {
                 Button {
                     onSelect(id)
                 } label: {
-                    VStack(spacing: 10) {
-                        Image(systemName: symbols[id] ?? "sparkles")
-                            .font(.title2)
-                            .foregroundStyle(
-                                LinearGradient(
-                                    colors: [PevColors.cyan, .purple, .pink],
-                                    startPoint: .leading,
-                                    endPoint: .trailing
-                                )
-                            )
+                    VStack(spacing: 8) {
+                        LightingEffectPreview(patternID: id)
                         Text(LightingPatternCatalog.name(for: id))
                             .font(.subheadline)
                             .multilineTextAlignment(.center)
@@ -304,7 +418,8 @@ private struct LightingEffectGrid: View {
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }
-                    .frame(maxWidth: .infinity, minHeight: 86)
+                    .padding(.vertical, 8)
+                    .frame(maxWidth: .infinity, minHeight: 128)
                     .background(
                         .purple.opacity(selectedPattern == id ? 0.22 : 0.08),
                         in: RoundedRectangle(cornerRadius: 14)
@@ -341,16 +456,11 @@ struct LightingPlaybackControls: View {
         LightingPatternCatalog.groups.first(where: { $0.name == group })?.ids ?? []
     }
 
-    private var favoriteSymbols: [Int: String] {
-        Dictionary(uniqueKeysWithValues: favorites.map { ($0.id, $0.symbol) })
-    }
     @State private var speed = 128.0
     @State private var musicEffect = 0
     @State private var sensitivity = 50.0
 
-    private let favorites: [(id: Int, symbol: String)] = [
-        (1, "water.waves"), (16, "arrow.right"), (22, "rainbow"), (75, "sparkles"),
-    ]
+    private let favorites = [1, 16, 22, 75]
     private let musicNames = ["Energetic", "Rhythm", "Spectrum", "Rolling", "Energetic 2", "Rhythm 2", "Spectrum 2", "Rolling 2"]
 
     var body: some View {
@@ -368,9 +478,8 @@ struct LightingPlaybackControls: View {
                     .font(.subheadline.weight(.semibold))
                     .foregroundStyle(PevColors.muted)
                 LightingEffectGrid(
-                    ids: favorites.map(\.id),
+                    ids: favorites,
                     selectedPattern: pattern,
-                    symbols: favoriteSymbols,
                     onSelect: selectPattern
                 )
                 Text("\(group) patterns")
@@ -379,7 +488,6 @@ struct LightingPlaybackControls: View {
                 LightingEffectGrid(
                     ids: patternIDs,
                     selectedPattern: pattern,
-                    symbols: [:],
                     onSelect: selectPattern
                 )
                 Picker("Pattern", selection: $pattern) {

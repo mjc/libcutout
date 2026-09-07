@@ -60,6 +60,10 @@ user's official-app screenshot corroborates Basic/Curtain/Trans/Water and the
 Magic Forward, Magic Back, and 7-Color Energy names, but it is disconnected and
 contains no wire IDs. An official-app list from this controller is needed to
 finish name matching.
+The effect cards include deterministic LED-dot previews derived from each
+pattern's reference group and ID. These thumbnails are illustrative UI
+affordances, not captures of OC21 output; only the documented wire names and
+hardware observations establish controller behavior.
 
 Moving the speed slider right sends a lower native byte: 100% sends 0 and 0%
 sends 255. It spans the same full byte range as the reference. Changing speed
