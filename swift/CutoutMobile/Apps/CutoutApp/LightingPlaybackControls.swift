@@ -768,7 +768,11 @@ private struct WeekdayMaskPicker: View {
 
     private var weekdayNames: [String] {
         let symbols = Calendar.current.weekdaySymbols
-        guard symbols.count == 7 else { return labels.map { "weekday \($0)" } }
+        guard symbols.count == 7 else {
+            // The protocol mask is Monday-first. Keep a semantic fallback if a platform
+            // calendar cannot provide localized weekday symbols.
+            return ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
+        }
         return Array(symbols.dropFirst()) + [symbols[0]]
     }
 
