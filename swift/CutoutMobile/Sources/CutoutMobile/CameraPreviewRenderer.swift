@@ -34,6 +34,15 @@ public final class CameraPreviewRenderer {
         displayLayer.videoGravity = .resizeAspect
     }
 
+    /// Installs the bounded H.264 decoder configuration advertised by RTSP
+    /// SDP before the first access unit arrives.
+    public func configure(_ configuration: MobileCameraVideoConfigurationDto) throws {
+        guard let parameterSets = CameraH264AccessUnit.parameterSets(fromAVCC: configuration.extraData) else {
+            throw CameraPreviewRendererError.missingParameterSets
+        }
+        formatDescription = try makeFormatDescription(parameterSets: parameterSets)
+    }
+
     /// Enqueues one AVCC H.264 frame for native platform decoding.
     ///
     /// The first access unit carrying SPS and PPS establishes the format
@@ -187,14 +196,25 @@ private struct CameraPreviewLayerView: UIViewRepresentable {
     let renderer: CameraPreviewRenderer
 
     func makeUIView(context: Context) -> UIView {
-        let view = UIView()
+        let view = CameraPreviewUIKitView()
         view.backgroundColor = .black
+        view.displayLayer = renderer.displayLayer
         view.layer.addSublayer(renderer.displayLayer)
         return view
     }
 
     func updateUIView(_ view: UIView, context: Context) {
         renderer.displayLayer.frame = view.bounds
+    }
+}
+
+@MainActor
+private final class CameraPreviewUIKitView: UIView {
+    weak var displayLayer: AVSampleBufferDisplayLayer?
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        displayLayer?.frame = bounds
     }
 }
 #elseif canImport(AppKit)
@@ -205,15 +225,26 @@ private struct CameraPreviewLayerView: NSViewRepresentable {
     let renderer: CameraPreviewRenderer
 
     func makeNSView(context: Context) -> NSView {
-        let view = NSView()
+        let view = CameraPreviewAppKitView()
         view.wantsLayer = true
         view.layer?.backgroundColor = NSColor.black.cgColor
+        view.displayLayer = renderer.displayLayer
         view.layer?.addSublayer(renderer.displayLayer)
         return view
     }
 
     func updateNSView(_ view: NSView, context: Context) {
         renderer.displayLayer.frame = view.bounds
+    }
+}
+
+@MainActor
+private final class CameraPreviewAppKitView: NSView {
+    weak var displayLayer: AVSampleBufferDisplayLayer?
+
+    override func layout() {
+        super.layout()
+        displayLayer?.frame = bounds
     }
 }
 #endif

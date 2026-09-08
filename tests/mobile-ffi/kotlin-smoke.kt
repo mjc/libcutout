@@ -4,6 +4,7 @@ import uniffi.cutout_mobile_ffi.CutoutSessionStateHandle
 import uniffi.cutout_mobile_ffi.FalconBenignControlSession
 import uniffi.cutout_mobile_ffi.MobileCameraClockUncertaintyDto
 import uniffi.cutout_mobile_ffi.MobileCameraMediaProvenanceInput
+import uniffi.cutout_mobile_ffi.MobileCameraPreviewStateDto
 import uniffi.cutout_mobile_ffi.MobileCommandDto
 import uniffi.cutout_mobile_ffi.MobileCameraPreviewEventDto
 import uniffi.cutout_mobile_ffi.MobileCameraPreviewFileSink
@@ -195,8 +196,20 @@ fun main() {
                 clockUncertainty = MobileCameraClockUncertaintyDto.Milliseconds(500UL),
             ),
         )
-        check(cameraState.cameraSnapshot().preview.name == "LIVE")
-        check(cameraState.cameraMediaProvenance().single().source == MobileCameraSourceKindDto.NOVATEK_R3_PRO)
+        check(cameraState.cameraSnapshot().preview == MobileCameraPreviewStateDto.LIVE)
+        val provenance = cameraState.cameraMediaProvenance().single()
+        check(provenance.source == MobileCameraSourceKindDto.NOVATEK_R3_PRO)
+        check(provenance.cameraPath == "A:\\Novatek\\Movie\\clip.TS")
+        check(provenance.sizeBytes == 42UL)
+        check(provenance.cameraTimecode == 7UL)
+        check(provenance.cameraTime == "2025/01/01 00:00:00")
+        check(provenance.rideCaptureFileName == "ride.pevcap")
+        check(provenance.capturedAtMonotonicMs == 100UL)
+        check(provenance.capturedAtWallClockMs == 200UL)
+        check(
+            provenance.clockUncertainty ==
+                MobileCameraClockUncertaintyDto.Milliseconds(500UL),
+        )
     }
 
     check(

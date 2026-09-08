@@ -11,7 +11,8 @@ import AppKit
 struct CameraRouteContainerView: View {
     let close: (() -> Void)?
     let annotateCapture: ((String, String) -> Void)?
-    let recordMediaReference: ((CameraSourceKind, CameraMediaEvidence, URL) -> Void)?
+    let recordMediaReference: ((String, CameraSourceKind, CameraMediaEvidence, URL) -> Void)?
+    let currentCaptureFileName: (() -> String?)?
     @State private var adapter = CameraLocalNetworkAdapter()
     @State private var previewRenderer = CameraPreviewRenderer()
     @State private var address = "192.168.1.254"
@@ -19,10 +20,12 @@ struct CameraRouteContainerView: View {
     @State private var isReading = false
     @State private var readErrorKey: String?
     @State private var downloadedMediaURL: URL?
+    @State private var downloadedMediaPath: String?
     @State private var downloadingMediaPath: String?
     @State private var mediaDownloadTask: Task<Void, Never>?
     @State private var mediaErrorKey: String?
     @State private var thumbnailTask: Task<Void, Never>?
+    @State private var thumbnailGeneration: UInt64 = 0
     @State private var thumbnailDataByPath: [String: Data] = [:]
     @State private var thumbnailPathInFlight: String?
     @State private var thumbnailErrorKey: String?
@@ -30,16 +33,20 @@ struct CameraRouteContainerView: View {
     @State private var isRequestingRecording = false
     @State private var stillRequestKey: String?
     @State private var isRequestingStill = false
+    @State private var mediaDownloadGeneration: UInt64 = 0
+    @Environment(\.scenePhase) private var scenePhase
 
     init(
         close: (() -> Void)? = nil,
         annotateCapture: ((String, String) -> Void)? = nil,
-        recordMediaReference: ((CameraSourceKind, CameraMediaEvidence, URL) -> Void)? = nil,
+        recordMediaReference: ((String, CameraSourceKind, CameraMediaEvidence, URL) -> Void)? = nil,
+        currentCaptureFileName: (() -> String?)? = nil,
         sessionState: CutoutSessionStateHandle = CutoutSessionStateHandle()
     ) {
         self.close = close
         self.annotateCapture = annotateCapture
         self.recordMediaReference = recordMediaReference
+        self.currentCaptureFileName = currentCaptureFileName
         _adapter = State(initialValue: CameraLocalNetworkAdapter(sessionState: sessionState))
     }
 
@@ -54,6 +61,7 @@ struct CameraRouteContainerView: View {
             isReading: isReading,
             readErrorKey: readErrorKey,
             downloadedMediaURL: downloadedMediaURL,
+            downloadedMediaPath: downloadedMediaPath,
             downloadingMediaPath: downloadingMediaPath,
             mediaErrorKey: mediaErrorKey,
             cancelDownload: cancelMediaDownload,
@@ -79,8 +87,17 @@ struct CameraRouteContainerView: View {
             stopPreview: adapter.stopPreview
         )
             .task {
+                adapter.setPreviewConfigurationHandler { configuration in
+                    try previewRenderer.configure(configuration)
+                }
                 adapter.setPreviewFrameHandler { frame in
-                    try await previewRenderer.enqueue(frame)
+                    do {
+                        try await previewRenderer.enqueue(frame)
+                    } catch CameraPreviewRendererError.missingParameterSets {
+                        // The RTSP stream may begin with inter frames. Keep
+                        // buffering until a random-access frame carries the
+                        // codec configuration instead of killing the session.
+                    }
                 }
                 adapter.start()
             }
@@ -89,11 +106,12 @@ struct CameraRouteContainerView: View {
                 annotateCapture?("camera_preview_file", url.lastPathComponent)
             }
             .onDisappear {
-                mediaDownloadTask?.cancel()
-                thumbnailTask?.cancel()
-                adapter.stop()
-                adapter.setPreviewFrameHandler(nil)
-                previewRenderer.reset()
+                stopCameraWork()
+            }
+            .onChange(of: scenePhase) { _, phase in
+                if phase == .background {
+                    stopCameraWork()
+                }
             }
     }
 
@@ -124,6 +142,7 @@ struct CameraRouteContainerView: View {
     private func startPreview(saveTo url: URL?) {
         guard let uri = adapter.readOnlyEvidence?.movieRTSPURI else { return }
 
+        previewRenderer.reset()
         Task { @MainActor in
             do {
                 if let url {
@@ -150,13 +169,20 @@ struct CameraRouteContainerView: View {
         }
 
         let destination = mediaOutputURL(for: media)
+        let captureFileName = currentCaptureFileName?()
         mediaDownloadTask?.cancel()
+        mediaDownloadGeneration &+= 1
+        let generation = mediaDownloadGeneration
         downloadingMediaPath = media.path
+        downloadedMediaURL = nil
+        downloadedMediaPath = nil
         mediaErrorKey = nil
         mediaDownloadTask = Task { @MainActor in
             defer {
-                downloadingMediaPath = nil
-                mediaDownloadTask = nil
+                if generation == mediaDownloadGeneration {
+                    downloadingMediaPath = nil
+                    mediaDownloadTask = nil
+                }
             }
             do {
                 try await adapter.downloadMedia(
@@ -165,20 +191,31 @@ struct CameraRouteContainerView: View {
                     media: media,
                     to: destination
                 )
+                guard generation == mediaDownloadGeneration else { return }
                 downloadedMediaURL = destination
+                downloadedMediaPath = media.path
                 annotateCapture?("camera_media_file", media.name)
-                recordMediaReference?(.novatekR3Pro, media, destination)
+                if let captureFileName {
+                    recordMediaReference?(captureFileName, .novatekR3Pro, media, destination)
+                }
             } catch is CancellationError {
                 // Cancellation is an expected user action, not a transfer error.
+            } catch let error as URLError where error.code == .cancelled {
+                // URLSession reports cancellation as URLError on some OSes.
             } catch CameraMediaDownloadError.originMismatch {
-                mediaErrorKey = "camera.error.origin_mismatch"
+                if generation == mediaDownloadGeneration {
+                    mediaErrorKey = "camera.error.origin_mismatch"
+                }
             } catch {
-                mediaErrorKey = "camera.error.media_download_failed"
+                if generation == mediaDownloadGeneration {
+                    mediaErrorKey = "camera.error.media_download_failed"
+                }
             }
         }
     }
 
     private func cancelMediaDownload() {
+        mediaDownloadGeneration &+= 1
         mediaDownloadTask?.cancel()
         mediaDownloadTask = nil
         downloadingMediaPath = nil
@@ -190,13 +227,17 @@ struct CameraRouteContainerView: View {
             return
         }
 
+        thumbnailGeneration &+= 1
+        let generation = thumbnailGeneration
         thumbnailTask?.cancel()
         thumbnailPathInFlight = media.path
         thumbnailErrorKey = nil
         thumbnailTask = Task { @MainActor in
             defer {
-                thumbnailPathInFlight = nil
-                thumbnailTask = nil
+                if generation == thumbnailGeneration {
+                    thumbnailPathInFlight = nil
+                    thumbnailTask = nil
+                }
             }
             do {
                 let data = try await adapter.fetchMediaThumbnail(
@@ -204,6 +245,7 @@ struct CameraRouteContainerView: View {
                     port: portNumber,
                     media: media
                 )
+                guard generation == thumbnailGeneration else { return }
                 guard !data.isEmpty else {
                     thumbnailErrorKey = "camera.error.thumbnail_empty"
                     return
@@ -212,9 +254,13 @@ struct CameraRouteContainerView: View {
             } catch is CancellationError {
                 // Cancellation is an expected user action.
             } catch CameraReadOnlyRequestError.originMismatch {
-                thumbnailErrorKey = "camera.error.origin_mismatch"
+                if generation == thumbnailGeneration {
+                    thumbnailErrorKey = "camera.error.origin_mismatch"
+                }
             } catch {
-                thumbnailErrorKey = "camera.error.thumbnail_failed"
+                if generation == thumbnailGeneration {
+                    thumbnailErrorKey = "camera.error.thumbnail_failed"
+                }
             }
         }
     }
@@ -312,6 +358,21 @@ struct CameraRouteContainerView: View {
             "camera-media-" + UUID().uuidString + "-" + cameraMediaLocalFileComponent(media.name)
         )
     }
+
+    private func stopCameraWork() {
+        mediaDownloadGeneration &+= 1
+        thumbnailGeneration &+= 1
+        mediaDownloadTask?.cancel()
+        thumbnailTask?.cancel()
+        mediaDownloadTask = nil
+        thumbnailTask = nil
+        downloadingMediaPath = nil
+        thumbnailPathInFlight = nil
+        adapter.stop()
+        adapter.setPreviewConfigurationHandler(nil)
+        adapter.setPreviewFrameHandler(nil)
+        previewRenderer.reset()
+    }
 }
 
 func cameraMediaLocalFileComponent(_ name: String) -> String {
@@ -364,6 +425,7 @@ struct CameraRouteView: View {
     let isReading: Bool
     let readErrorKey: String?
     let downloadedMediaURL: URL?
+    let downloadedMediaPath: String?
     let downloadingMediaPath: String?
     let mediaErrorKey: String?
     let cancelDownload: (() -> Void)?
@@ -398,6 +460,7 @@ struct CameraRouteView: View {
         isReading: Bool = false,
         readErrorKey: String? = nil,
         downloadedMediaURL: URL? = nil,
+        downloadedMediaPath: String? = nil,
         downloadingMediaPath: String? = nil,
         mediaErrorKey: String? = nil,
         cancelDownload: (() -> Void)? = nil,
@@ -432,6 +495,7 @@ struct CameraRouteView: View {
         self.isReading = isReading
         self.readErrorKey = readErrorKey
         self.downloadedMediaURL = downloadedMediaURL
+        self.downloadedMediaPath = downloadedMediaPath
         self.downloadingMediaPath = downloadingMediaPath
         self.mediaErrorKey = mediaErrorKey
         self.cancelDownload = cancelDownload
@@ -494,6 +558,7 @@ struct CameraRouteView: View {
             isReading: isReading,
             readErrorKey: readErrorKey,
             downloadedMediaURL: downloadedMediaURL,
+            downloadedMediaPath: downloadedMediaPath,
             downloadingMediaPath: downloadingMediaPath,
             mediaErrorKey: mediaErrorKey,
             cancelDownload: cancelDownload,
@@ -527,6 +592,8 @@ struct CameraRouteView: View {
 }
 
 private struct CameraStatusCard: View {
+    private static let mediaPageSize = 100
+    @State private var mediaPage = 1
     let presentation: CameraPresentation
     let readOnlyEvidence: CameraReadOnlyEvidence?
     let movieRTSPURI: String?
@@ -535,6 +602,7 @@ private struct CameraStatusCard: View {
     let isReading: Bool
     let readErrorKey: String?
     let downloadedMediaURL: URL?
+    let downloadedMediaPath: String?
     let downloadingMediaPath: String?
     let mediaErrorKey: String?
     let cancelDownload: (() -> Void)?
@@ -583,7 +651,11 @@ private struct CameraStatusCard: View {
                     Divider()
                     Text(localizedAppText("camera.evidence.media_title"))
                         .font(.subheadline.weight(.semibold))
-                    ForEach(readOnlyEvidence.media, id: \.path) { media in
+                    LazyVStack(alignment: .leading, spacing: 12) {
+                        ForEach(
+                            readOnlyEvidence.media.prefix(mediaPage * Self.mediaPageSize),
+                            id: \.path
+                        ) { media in
                         HStack(alignment: .top, spacing: 10) {
                             VStack(alignment: .leading, spacing: 3) {
                                 Text(media.name)
@@ -621,7 +693,7 @@ private struct CameraStatusCard: View {
                             }
                         }
                         if let downloadedMediaURL,
-                           downloadedMediaURL.lastPathComponent.hasSuffix("-" + media.name) {
+                           downloadedMediaPath == media.path {
                             HStack(spacing: 12) {
                                 Text(localizedAppText("camera.evidence.media_saved"))
                                     .font(.caption)
@@ -657,6 +729,18 @@ private struct CameraStatusCard: View {
                                     .accessibilityIdentifier("camera.media.thumbnail.\(media.name)")
                                 }
                             }
+                        }
+                        }
+                        if mediaPage * Self.mediaPageSize < readOnlyEvidence.media.count {
+                            Button {
+                                mediaPage += 1
+                            } label: {
+                                Label(
+                                    localizedAppText("camera.evidence.media_load_more"),
+                                    systemImage: "ellipsis"
+                                )
+                            }
+                            .buttonStyle(.bordered)
                         }
                     }
                     Text(localizedAppText("camera.evidence.media_local_only"))

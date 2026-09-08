@@ -19,6 +19,9 @@ const NOVATEK_MAX_MEDIA_NAME_BYTES: usize = 128;
 const NOVATEK_MAX_MEDIA_PATH_BYTES: usize = 256;
 const NOVATEK_MAX_MEDIA_TIME_BYTES: usize = 32;
 const NOVATEK_MEDIA_PATH_PREFIX: &str = r"A:\Novatek\";
+/// Firmware family whose command and capability behavior is verified for the
+/// R3 Pro integration.
+pub const NOVATEK_VERIFIED_R3_PRO_FIRMWARE_PREFIX: &str = "R3V1";
 
 /// Error returned when a bounded Novatek XML response is malformed.
 #[derive(Clone, Copy, Debug, Eq, Error, PartialEq)]
@@ -67,6 +70,14 @@ pub enum NovatekResponseError {
     /// A command id was not numeric.
     #[error("Novatek response has an invalid command id")]
     InvalidCommand,
+    /// A command response was returned for a different request.
+    #[error("Novatek response command {actual} does not match expected command {expected}")]
+    UnexpectedCommand {
+        /// Command id reported by the camera.
+        actual: u16,
+        /// Command id associated with the request.
+        expected: u16,
+    },
     /// The response contained more repeated entries than the parser stores.
     #[error("Novatek response contains more than {max} <{tag}> entries")]
     TooManyEntries {
@@ -165,14 +176,13 @@ impl NovatekFirmwareVersion {
     }
 }
 
-/// Returns whether a firmware string belongs to the verified R3 Pro family.
+/// Returns whether a firmware string is in the verified R3V1 R3 Pro family.
 ///
-/// The model prefix is the only stable identity available in the captured
-/// command `3012` response; callers must not infer an R3 Pro from generic
-/// Novatek response shapes alone.
+/// The R3V1 family is the stable identity gate used by the R3 Pro integration;
+/// other R3 revisions remain unsupported until separately validated.
 #[must_use]
 pub fn is_r3_pro_firmware(version: &str) -> bool {
-    version.starts_with("R3V")
+    version.starts_with(NOVATEK_VERIFIED_R3_PRO_FIRMWARE_PREFIX)
 }
 
 /// RTSP URI returned by a Novatek live-view response.
@@ -504,6 +514,7 @@ pub fn parse_firmware_response(
     response: &[u8],
 ) -> Result<NovatekFirmwareVersion, NovatekResponseError> {
     let xml = bounded_xml(response)?;
+    parse_expected_command(xml, NovatekReadCommand::FirmwareVersion as u16)?;
     let status = parse_status(xml)?;
     if status != 0 {
         return Err(NovatekResponseError::StatusFailure { status });
@@ -543,6 +554,7 @@ pub fn parse_storage_response(
     response: &[u8],
 ) -> Result<NovatekStoragePresence, NovatekResponseError> {
     let xml = bounded_xml(response)?;
+    parse_expected_command(xml, NovatekReadCommand::StoragePresent as u16)?;
     let status = parse_status(xml)?;
     if status != 0 {
         return Err(NovatekResponseError::StatusFailure { status });
@@ -567,8 +579,24 @@ pub fn parse_storage_response(
 /// or contains a malformed status value.
 pub fn parse_command_response(
     response: &[u8],
+    expected_command_id: u16,
 ) -> Result<NovatekCommandOutcome, NovatekResponseError> {
     let xml = bounded_xml(response)?;
+    let command = match extract_tag(xml, "Cmd", "<Cmd>", "</Cmd>") {
+        Ok(value) => value
+            .parse()
+            .map_err(|_| NovatekResponseError::InvalidCommand)?,
+        Err(NovatekResponseError::MissingTag { tag: "Cmd" }) => {
+            return Ok(NovatekCommandOutcome::Unknown);
+        }
+        Err(error) => return Err(error),
+    };
+    if command != expected_command_id {
+        return Err(NovatekResponseError::UnexpectedCommand {
+            actual: command,
+            expected: expected_command_id,
+        });
+    }
     match parse_status(xml) {
         Ok(0) => Ok(NovatekCommandOutcome::Acknowledged),
         Ok(status) => Ok(NovatekCommandOutcome::Refused { status }),
@@ -844,6 +872,16 @@ fn parse_status(xml: &str) -> Result<u16, NovatekResponseError> {
         .map_err(|_| NovatekResponseError::InvalidStatus)
 }
 
+fn parse_expected_command(xml: &str, expected: u16) -> Result<(), NovatekResponseError> {
+    let actual = extract_tag(xml, "Cmd", "<Cmd>", "</Cmd>")?
+        .parse()
+        .map_err(|_| NovatekResponseError::InvalidCommand)?;
+    if actual != expected {
+        return Err(NovatekResponseError::UnexpectedCommand { actual, expected });
+    }
+    Ok(())
+}
+
 /// Non-mutating Novatek HTTP commands reported by the reference API.
 ///
 /// These command IDs come from the reverse-engineered
@@ -976,16 +1014,36 @@ mod tests {
     #[test]
     fn command_response_classifies_acknowledged_refused_and_unknown() {
         assert_eq!(
-            parse_command_response(br"<Function><Cmd>2001</Cmd><Status>0</Status></Function>"),
+            parse_command_response(
+                br"<Function><Cmd>2001</Cmd><Status>0</Status></Function>",
+                2001
+            ),
             Ok(NovatekCommandOutcome::Acknowledged)
         );
         assert_eq!(
-            parse_command_response(br"<Function><Cmd>2001</Cmd><Status>7</Status></Function>"),
+            parse_command_response(
+                br"<Function><Cmd>2001</Cmd><Status>7</Status></Function>",
+                2001
+            ),
             Ok(NovatekCommandOutcome::Refused { status: 7 })
         );
         assert_eq!(
-            parse_command_response(br"<Function><Cmd>2001</Cmd></Function>"),
+            parse_command_response(br"<Function><Cmd>2001</Cmd></Function>", 2001),
             Ok(NovatekCommandOutcome::Unknown)
+        );
+    }
+
+    #[test]
+    fn command_response_rejects_a_different_command_acknowledgement() {
+        assert_eq!(
+            parse_command_response(
+                br"<Function><Cmd>3024</Cmd><Status>0</Status></Function>",
+                2001,
+            ),
+            Err(NovatekResponseError::UnexpectedCommand {
+                actual: 3024,
+                expected: 2001,
+            })
         );
     }
 
@@ -1004,8 +1062,23 @@ mod tests {
     }
 
     #[test]
+    fn firmware_response_rejects_a_different_command() {
+        let response = br"<Function><Cmd>3024</Cmd><Status>0</Status><String>R3V1.1_20240411</String></Function>";
+
+        assert_eq!(
+            parse_firmware_response(response),
+            Err(NovatekResponseError::UnexpectedCommand {
+                actual: 3024,
+                expected: 3012,
+            })
+        );
+    }
+
+    #[test]
     fn firmware_family_check_does_not_generalize_to_other_versions() {
         assert!(is_r3_pro_firmware("R3V1.1_20240411"));
+        assert!(is_r3_pro_firmware("R3V1.2_20250101"));
+        assert!(!is_r3_pro_firmware("R3V2.0_20250101"));
         assert!(!is_r3_pro_firmware("R4V2.0_20250101"));
         assert!(!is_r3_pro_firmware("R3-not-a-firmware-version"));
     }
@@ -1036,6 +1109,19 @@ mod tests {
         assert_eq!(
             parse_storage_response(response).expect("fixture is valid"),
             NovatekStoragePresence::Present
+        );
+    }
+
+    #[test]
+    fn storage_response_rejects_a_different_command() {
+        let response = br"<Function><Cmd>3012</Cmd><Status>0</Status><Value>1</Value></Function>";
+
+        assert_eq!(
+            parse_storage_response(response),
+            Err(NovatekResponseError::UnexpectedCommand {
+                actual: 3012,
+                expected: 3024,
+            })
         );
     }
 
