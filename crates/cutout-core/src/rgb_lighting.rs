@@ -19,12 +19,14 @@ pub enum RgbLightingProfileKind {
 }
 
 impl RgbLightingProfileKind {
+    #[cfg(feature = "serde")]
     fn wire_name(self) -> &'static str {
         match self {
             Self::MelkOc21 => "melk_oc21",
         }
     }
 
+    #[cfg(feature = "serde")]
     fn from_wire_name(name: &str) -> Option<Self> {
         match name {
             "melk_oc21" => Some(Self::MelkOc21),
