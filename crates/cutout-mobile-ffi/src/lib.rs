@@ -1184,6 +1184,10 @@ pub enum MobileMelkLightingError {
     #[error("invalid MELK schedule")]
     InvalidSchedule,
 
+    /// The capability is known by protocol shape but lacks capture-backed physical evidence.
+    #[error("unsupported MELK lighting capability")]
+    UnsupportedCapability,
+
     /// The controller clock is outside the supported ranges.
     #[error("invalid MELK clock")]
     InvalidClock,

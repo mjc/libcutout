@@ -1001,20 +1001,20 @@ final class CutoutAppRouteTests: XCTestCase {
         XCTAssertTrue(persistence.ensureRecord(platformIdentifier: "A1B2C3D4-E5F6-4789-ABCD-0123456789AB"))
         let fake = TestLightingSession()
         let model = LightingRouteModel(session: fake, persistence: persistence)
-        model.setPlayback(.music(effect: 2, sensitivity: 75))
-        XCTAssertEqual(model.requestedPlayback, .music(effect: 2, sensitivity: 75))
+        model.setPlayback(.effect(pattern: 16, speed: 75))
+        XCTAssertEqual(model.requestedPlayback, .effect(pattern: 16, speed: 75))
         XCTAssertEqual(model.commandStatus, .requested)
         XCTAssertTrue(model.canSavePreset)
-        model.savePreset(named: "Music")
+        model.savePreset(named: "Effect")
         let preset = try XCTUnwrap(model.presets.first)
-        XCTAssertEqual(preset.requested.playback, .music(effect: 2, sensitivity: 75))
+        XCTAssertEqual(preset.requested.playback, .effect(pattern: 16, speed: 75))
         model.setSolidColor(red: 255, green: 0, blue: 0)
         XCTAssertEqual(fake.stateRequests.last?.playback, .solid)
         model.applyPreset(preset)
         XCTAssertEqual(fake.stateRequests.last, preset.requested)
         fake.stateResult = false
-        model.setPlayback(.effect(pattern: 16, speed: 255))
-        XCTAssertEqual(model.requestedPlayback, .music(effect: 2, sensitivity: 75))
+        model.setPlayback(.effect(pattern: 1, speed: 255))
+        XCTAssertEqual(model.requestedPlayback, .effect(pattern: 16, speed: 75))
     }
 
     func testLightingControlPagesResolveFromTheAppCatalog() {
@@ -1028,6 +1028,9 @@ final class CutoutAppRouteTests: XCTestCase {
         XCTAssertEqual(groups.first?.ids.prefix(3), [1, 2, 212])
         XCTAssertEqual(groups.first(where: { $0.name == "Curtain" })?.ids, Array(57...76))
         XCTAssertTrue((1...212).allSatisfy { LightingPatternCatalog.isMapped($0) })
+        XCTAssertEqual(LightingPatternCatalog.verifiedEffectIDs, [1, 16, 22, 75])
+        XCTAssertTrue([1, 16, 22, 75].allSatisfy { LightingPatternCatalog.isVerified($0) })
+        XCTAssertFalse([0, 2, 212, 213, 227].contains { LightingPatternCatalog.isVerified($0) })
         XCTAssertFalse([0, 213, 220, 255, -1].contains { LightingPatternCatalog.isMapped($0) })
         for id in 1...212 {
             XCTAssertFalse(LightingPatternCatalog.name(for: id).isEmpty)

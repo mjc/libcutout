@@ -42,6 +42,15 @@ enum LightingPatternCatalog {
         return names[id]
     }
 
+    /// Capture-backed capabilities for the current MELK-OC21 profile.
+    static let verifiedEffectIDs: Set<Int> = [1, 16, 22, 75]
+    static let controllerMicrophoneVerified = false
+    static let schedulesVerified = false
+
+    static func isVerified(_ id: Int) -> Bool {
+        verifiedEffectIDs.contains(id)
+    }
+
     static func isMapped(_ id: Int) -> Bool {
         (1...212).contains(id)
     }
@@ -449,11 +458,13 @@ private struct LightingEffectGrid: View {
                     )
                 }
                 .buttonStyle(.plain)
-                .disabled(!LightingPatternCatalog.isMapped(id))
+                .disabled(!LightingPatternCatalog.isVerified(id))
                 .accessibilityValue(
-                    LightingPatternCatalog.isMapped(id)
-                        ? "available"
-                        : "unmapped, unavailable"
+                    LightingPatternCatalog.isVerified(id)
+                        ? "verified and available"
+                        : LightingPatternCatalog.isMapped(id)
+                            ? "reference, unavailable until physically verified"
+                            : "unmapped, unavailable"
                 )
                 .accessibilityIdentifier("lighting.effect.\(id)")
             }
@@ -550,12 +561,12 @@ struct LightingPlaybackControls: View {
                 Text("Reference names may vary by firmware.")
                     .font(.caption)
                     .foregroundStyle(PevColors.muted)
-                Text("Unmapped entries retain their IDs and are unavailable until this controller is captured.")
+                Text("Only capture-backed effects are enabled for MELK-OC21. Reference names and previews remain visible for future verification.")
                     .font(.caption)
                     .foregroundStyle(PevColors.muted)
             } else {
                 Label("Music", systemImage: "waveform").font(.headline)
-                Text("Uses the microphone on your light controller. Your phone does not record audio.")
+                Text("Controller-local microphone modes are shown for reference and remain unavailable until physically verified.")
                     .font(.subheadline).foregroundStyle(PevColors.muted)
                 Picker("Music effect", selection: $musicEffect) {
                     ForEach(musicNames.indices, id: \.self) { index in
@@ -563,6 +574,7 @@ struct LightingPlaybackControls: View {
                     }
                 }
                 .pickerStyle(.menu)
+                .disabled(!LightingPatternCatalog.controllerMicrophoneVerified)
                 .accessibilityIdentifier("lighting.music-effect")
                 HStack {
                     Label("Sensitivity", systemImage: "mic")
@@ -575,6 +587,7 @@ struct LightingPlaybackControls: View {
                     if !editing, case .music = model.requestedPlayback { play() }
                 }
                 .tint(.pink)
+                .disabled(!LightingPatternCatalog.controllerMicrophoneVerified)
                 .accessibilityIdentifier("lighting.music-sensitivity")
             }
             Button(action: play) {
@@ -583,7 +596,7 @@ struct LightingPlaybackControls: View {
             }
             .buttonStyle(.borderedProminent)
             .tint(page == .effects ? .purple : .pink)
-            .disabled(page == .effects && !canSendPattern(pattern))
+            .disabled(page == .effects ? !canSendPattern(pattern) : !LightingPatternCatalog.controllerMicrophoneVerified)
             .accessibilityIdentifier("lighting.play-mode")
             if page == .music {
                 Button("Stop music mode") { model.stopMusic() }
@@ -626,7 +639,7 @@ struct LightingPlaybackControls: View {
     }
 
     private func canSendPattern(_ id: Int) -> Bool {
-        LightingPatternCatalog.isMapped(id)
+        LightingPatternCatalog.isVerified(id)
     }
 
     private func play() {
@@ -654,7 +667,7 @@ struct LightingScheduleControls: View {
     var body: some View {
         DisclosureGroup(isExpanded: $isExpanded) {
             VStack(alignment: .leading, spacing: 16) {
-                Text("Manual local-time timers run on the controller. Sunrise/sunset automation and timer readback are not available for this profile.")
+                Text("Manual local-time timers are not physically verified for MELK-OC21, so timer writes are unavailable. The controller protocol shape is retained here for future capture-backed support.")
                     .font(.footnote)
                     .foregroundStyle(PevColors.muted)
 
@@ -720,7 +733,7 @@ struct LightingScheduleControls: View {
                 save(powerOn: powerOn, time: time.wrappedValue, days: days.wrappedValue, enabled: enabled.wrappedValue)
             }
             .buttonStyle(.bordered)
-            .disabled(!model.isReady)
+            .disabled(!model.isReady || !LightingPatternCatalog.schedulesVerified)
             .accessibilityIdentifier("lighting.schedule.\(powerOn ? "on" : "off").save")
         }
     }

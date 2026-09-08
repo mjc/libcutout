@@ -36,20 +36,12 @@ impl TryFrom<MobileLightingPlaybackDto> for LightingPlayback {
             MobileLightingPlaybackDto::Effect { pattern, speed } => {
                 let pattern: cutout_core::MelkPattern =
                     pattern.try_into().map_err(|_| Self::Error::InvalidState)?;
-                if !(1..=212).contains(&pattern.value()) {
+                if !MelkLightingProfile::capabilities().supports_effect(pattern.value()) {
                     return Err(Self::Error::InvalidState);
                 }
                 Self::Effect { pattern, speed }
             }
-            MobileLightingPlaybackDto::Music {
-                effect,
-                sensitivity,
-            } => Self::Music {
-                effect: effect.try_into().map_err(|_| Self::Error::InvalidState)?,
-                sensitivity: sensitivity
-                    .try_into()
-                    .map_err(|_| Self::Error::InvalidState)?,
-            },
+            MobileLightingPlaybackDto::Music { .. } => return Err(Self::Error::InvalidState),
         })
     }
 }
@@ -152,6 +144,9 @@ impl MobileMelkLightingProfile {
         .map_err(|_| crate::MobileMelkLightingError::InvalidSchedule)?;
         let clock = MelkClock::new(clock.hour, clock.minute, clock.second, clock.weekday)
             .map_err(|_| crate::MobileMelkLightingError::InvalidClock)?;
+        if !MelkLightingProfile::capabilities().schedules {
+            return Err(crate::MobileMelkLightingError::UnsupportedCapability);
+        }
         Ok([
             MelkLightingProfile::control_action(MelkControl::Clock(clock)),
             MelkLightingProfile::control_action(MelkControl::Schedule(schedule)),
@@ -213,7 +208,7 @@ mod tests {
             blue: 3,
             brightness: 50,
             playback: Some(MobileLightingPlaybackDto::Effect {
-                pattern: 212,
+                pattern: 75,
                 speed: 255,
             }),
         };
@@ -223,7 +218,7 @@ mod tests {
             marker.recover("controller".into(), true).requested,
             Some(state)
         );
-        for pattern in [0, 213, 227] {
+        for pattern in [0, 2, 212, 213, 227] {
             state.playback = Some(MobileLightingPlaybackDto::Effect {
                 pattern,
                 speed: 255,
@@ -234,7 +229,7 @@ mod tests {
             ));
         }
         state.playback = Some(MobileLightingPlaybackDto::Music {
-            effect: 8,
+            effect: 7,
             sensitivity: 50,
         });
         assert!(matches!(
@@ -251,25 +246,34 @@ mod tests {
             green: 2,
             blue: 3,
             brightness: 50,
-            playback: Some(MobileLightingPlaybackDto::Music {
-                effect: 7,
-                sensitivity: 100,
+            playback: Some(MobileLightingPlaybackDto::Effect {
+                pattern: 16,
+                speed: 50,
             }),
         };
         let writes = profile().apply_state(state).unwrap();
         assert_eq!(writes.len(), 5);
-        assert_eq!(writes[1].payload, [0x7e, 5, 3, 0x87, 4, 255, 255, 0, 0xef]);
+        assert_eq!(writes[1].payload, [0x7e, 5, 3, 16, 6, 255, 255, 0, 0xef]);
+        assert_eq!(writes[2].payload, [0x7e, 4, 2, 50, 255, 255, 255, 0, 0xef]);
         assert_eq!(
             writes.last().unwrap().payload,
             profile().set_power(false).payload
         );
-        for pattern in [0, 213, 227, 228] {
+        for pattern in [0, 2, 212, 213, 227, 228] {
             state.playback = Some(MobileLightingPlaybackDto::Effect { pattern, speed: 50 });
             assert_eq!(
                 profile().apply_state(state),
                 Err(MobileRgbLightingRecordError::InvalidState)
             );
         }
+        state.playback = Some(MobileLightingPlaybackDto::Music {
+            effect: 7,
+            sensitivity: 100,
+        });
+        assert_eq!(
+            profile().apply_state(state),
+            Err(MobileRgbLightingRecordError::InvalidState)
+        );
         state.playback = None;
         let writes = profile().apply_state(state).unwrap();
         assert_eq!(writes[0].payload, [0x7e, 4, 7, 0, 255, 255, 255, 0, 0xef]);
@@ -310,6 +314,10 @@ mod tests {
         assert_eq!(
             profile().set_schedule(valid_schedule, invalid_clock),
             Err(crate::MobileMelkLightingError::InvalidClock)
+        );
+        assert_eq!(
+            profile().set_schedule(valid_schedule, valid_clock),
+            Err(crate::MobileMelkLightingError::UnsupportedCapability)
         );
     }
 }

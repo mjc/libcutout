@@ -14,6 +14,44 @@ use cutout_core::{
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct MelkLightingProfile;
 
+/// Capture-backed capabilities for the current MELK-OC21 profile.
+///
+/// The protocol encoder can represent additional reference commands, but only these
+/// capabilities have physical evidence for this controller so far.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct MelkLightingCapabilities {
+    /// Effect IDs observed working on the user's controller.
+    pub verified_effect_ids: &'static [u8],
+    /// Whether controller-local microphone modes have been physically verified.
+    pub controller_microphone: bool,
+    /// Whether controller-local schedules have been physically verified.
+    pub schedules: bool,
+    /// Whether independently addressable zones have been physically verified.
+    pub addressable_zones: bool,
+    /// Whether named scenes are supported by the controller profile.
+    pub scenes: bool,
+}
+
+impl MelkLightingCapabilities {
+    /// Conservative MELK-OC21 capability evidence.
+    #[must_use]
+    pub const fn melk_oc21() -> Self {
+        Self {
+            verified_effect_ids: &[1, 16, 22, 75],
+            controller_microphone: false,
+            schedules: false,
+            addressable_zones: false,
+            scenes: false,
+        }
+    }
+
+    /// Returns whether the effect ID has capture-backed physical evidence.
+    #[must_use]
+    pub fn supports_effect(self, pattern: u8) -> bool {
+        self.verified_effect_ids.contains(&pattern)
+    }
+}
+
 /// Length of a candidate MELK command frame.
 pub const MELK_FRAME_LEN: usize = 9;
 
@@ -74,6 +112,11 @@ pub struct MelkWritePolicy {
 }
 
 impl MelkLightingProfile {
+    /// Returns the capture-backed capabilities for MELK-OC21.
+    #[must_use]
+    pub const fn capabilities() -> MelkLightingCapabilities {
+        MelkLightingCapabilities::melk_oc21()
+    }
     /// Selects the candidate profile only when family name and GATT evidence agree.
     #[must_use]
     pub fn identify(name: &str, evidence: MelkGattEvidence) -> Option<Self> {
@@ -470,5 +513,22 @@ mod tests {
         assert_eq!(policy.mode, WriteMode::WithoutResponse);
         assert_eq!(policy.confirmation_channel, MELK_NOTIFY_CHANNEL);
         assert_eq!(policy.minimum_interval_ms, None);
+    }
+
+    #[test]
+    fn capabilities_are_conservative_and_capture_backed() {
+        let capabilities = MelkLightingProfile::capabilities();
+
+        assert_eq!(capabilities.verified_effect_ids, &[1, 16, 22, 75]);
+        assert!(capabilities.supports_effect(1));
+        assert!(capabilities.supports_effect(16));
+        assert!(capabilities.supports_effect(22));
+        assert!(capabilities.supports_effect(75));
+        assert!(!capabilities.supports_effect(2));
+        assert!(!capabilities.supports_effect(212));
+        assert!(!capabilities.controller_microphone);
+        assert!(!capabilities.schedules);
+        assert!(!capabilities.addressable_zones);
+        assert!(!capabilities.scenes);
     }
 }
