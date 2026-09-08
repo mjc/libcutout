@@ -32,12 +32,12 @@ publish OC21 command bytes or replace a capture-backed write check.
 
 
 Power, solid RGB, and brightness were physically confirmed before this extension.
-On 2026-09-06 the user reported that the first ten pattern entries and the four
-offered shortcuts (IDs 1, 16, 22, 75) visibly worked. The exact ID boundaries of
-the ten entries were not recorded. Native speed 0 was the fastest observed, but
-still substantially slower than the official app. Music could not be tested;
-music and schedules remain physically unverified. Tests prove frame encoding and
-software behavior, not those remaining hardware capabilities.
+On 2026-09-06 the user reported that effect IDs 1–10 and the four offered
+shortcuts (IDs 1, 16, 22, 75) visibly worked. The UI now enables those IDs.
+Names remain reference labels until each visual mapping is independently matched.
+Native speed 0 was the fastest observed, but it remains substantially slower
+than the official app. Music could not be tested; music and schedules remain
+physically unverified. Tests prove frame encoding and software behavior.
 The upstream catalog contains generic MELK and model-specific mappings; exposing
 pattern IDs 0–227 does not prove that this firmware implements every visual mode.
 
@@ -58,7 +58,7 @@ is no implemented timer readback: the editor presents drafts, not controller sta
 
 ## Pattern names and speed
 
-The UI displays wire IDs 1–212 from the [MELK OA21 reference catalog](https://gist.github.com/clienthax/5b3cc5fa68f7c4c943f2252eaa21d804), but the current MELK-OC21 profile enables only capture-backed IDs 1, 16, 22, and 75.
+The UI displays wire IDs 1–212 from the [MELK OA21 reference catalog](https://gist.github.com/clienthax/5b3cc5fa68f7c4c943f2252eaa21d804), and the current MELK-OC21 profile enables capture-backed IDs 1–10, 16, 22, and 75.
 These are reference names, not a claim that OC21 renders every mode identically.
 The catalog contains duplicate names at different wire IDs; those IDs are
 preserved, not collapsed by parsing names as unique dictionary keys. The UI gives
@@ -68,7 +68,7 @@ until exact OC21 capture.
 The official-app screenshot labels its first Basic card “Auto Play”; the UI
 preserves that as an ID 0 reference label until an OC21 capture ties the name to
 a wire ID.
-The mobile FFI restore and preset boundary permits only capture-backed effect IDs 1, 16, 22, and 75; all other reference IDs, controller-microphone playback, and schedules fail closed as unavailable.
+The mobile FFI restore and preset boundary permits capture-backed effect IDs 1–10, 16, 22, and 75; all other reference IDs, controller-microphone playback, and schedules fail closed as unavailable.
 
 The production picker groups the reference IDs into Basic, Curtain, Trans, Water,
 Flow, Tail, Run, Run Back, and Unmapped. The grouping covers each ID 0–227 exactly
@@ -106,7 +106,7 @@ the official app.
 - Color drag retains the existing 30 Hz preview path; queued superseded solid-color frames are coalesced so the newest drag value is preserved under BLE backpressure. Complete playback changes
   are validated in Rust and admitted together to a bounded Bluetooth write queue.
   CoreBluetooth backpressure pauses draining; disconnect discards pending writes.
-- App-local scenes support the complete save, replace-from-current-state, and delete lifecycle through the versioned Rust-backed record. Effects are saved with named presets only when their IDs are capture-backed (currently 1, 16, 22, and 75). Controller-native named scenes are not claimed; controller-microphone music and schedules remain visible as future design surfaces but are disabled until physical verification.
+- App-local scenes support the complete save, replace-from-current-state, and delete lifecycle through the versioned Rust-backed record. Effects are saved with named presets only when their IDs are capture-backed (currently 1–10, 16, 22, and 75). Controller-native named scenes are not claimed; controller-microphone music and schedules remain visible as future design surfaces but are disabled until physical verification.
   Schema version 2 reads version 1 records as solid RGB.
 - Optional reconnect restore uses the last confirmed settings for the same
   accessory identity. Requested state is not a claim of physical confirmation.

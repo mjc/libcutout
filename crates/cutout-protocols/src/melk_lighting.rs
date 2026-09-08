@@ -18,6 +18,9 @@ pub struct MelkLightingProfile;
 ///
 /// The protocol encoder can represent additional reference commands, but only these
 /// capabilities have physical evidence for this controller so far.
+///
+/// IDs 1-10 are enabled from the user's first ten-device trial; names remain
+/// reference-catalog labels until each visual mapping is independently matched.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct MelkLightingCapabilities {
     /// Effect IDs observed working on the user's controller.
@@ -37,7 +40,7 @@ impl MelkLightingCapabilities {
     #[must_use]
     pub const fn melk_oc21() -> Self {
         Self {
-            verified_effect_ids: &[1, 16, 22, 75],
+            verified_effect_ids: &[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 16, 22, 75],
             controller_microphone: false,
             schedules: false,
             addressable_zones: false,
@@ -519,12 +522,15 @@ mod tests {
     fn capabilities_are_conservative_and_capture_backed() {
         let capabilities = MelkLightingProfile::capabilities();
 
-        assert_eq!(capabilities.verified_effect_ids, &[1, 16, 22, 75]);
+        assert_eq!(
+            capabilities.verified_effect_ids,
+            &[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 16, 22, 75]
+        );
         assert!(capabilities.supports_effect(1));
         assert!(capabilities.supports_effect(16));
         assert!(capabilities.supports_effect(22));
         assert!(capabilities.supports_effect(75));
-        assert!(!capabilities.supports_effect(2));
+        assert!(capabilities.supports_effect(2));
         assert!(!capabilities.supports_effect(212));
         assert!(!capabilities.controller_microphone);
         assert!(!capabilities.schedules);

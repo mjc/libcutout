@@ -1924,7 +1924,10 @@ mod melk_lighting_tests {
     #[test]
     fn mobile_capabilities_match_the_capture_backed_profile() {
         let capabilities = mobile_melk_lighting_capabilities();
-        assert_eq!(capabilities.verified_effect_ids, vec![1, 16, 22, 75]);
+        assert_eq!(
+            capabilities.verified_effect_ids,
+            vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 16, 22, 75]
+        );
         assert!(!capabilities.controller_microphone);
         assert!(!capabilities.schedules);
         assert!(!capabilities.addressable_zones);

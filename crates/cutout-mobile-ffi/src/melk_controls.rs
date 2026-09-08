@@ -234,7 +234,7 @@ mod tests {
             marker.recover("controller".into(), true).requested,
             Some(state)
         );
-        for pattern in [0, 2, 212, 213, 227] {
+        for pattern in [0, 11, 212, 213, 227] {
             state.playback = Some(MobileLightingPlaybackDto::Effect {
                 pattern,
                 speed: 255,
@@ -275,7 +275,7 @@ mod tests {
             writes.last().unwrap().payload,
             profile().set_power(false).payload
         );
-        for pattern in [0, 2, 212, 213, 227, 228] {
+        for pattern in [0, 11, 212, 213, 227, 228] {
             state.playback = Some(MobileLightingPlaybackDto::Effect { pattern, speed: 50 });
             assert_eq!(
                 profile().apply_state(state),
