@@ -9498,10 +9498,16 @@ impl MobilePevcapCaptureBuilder {
         &self,
         music: Option<MobilePevcapMusicEventDto>,
     ) -> Result<Option<PevcapMusicEvent>, ()> {
-        let pending = self.take_music_context();
-        music.map_or(Ok(pending), |music| {
-            PevcapMusicEvent::try_from(music).map(Some).map_err(|_| ())
-        })
+        match music {
+            None => Ok(self.take_music_context()),
+            Some(music) => {
+                let resolved = PevcapMusicEvent::try_from(music).map(Some).map_err(|_| ());
+                if resolved.is_ok() {
+                    let _ = self.take_music_context();
+                }
+                resolved
+            }
+        }
     }
 
     fn metadata(&self) -> CaptureMetadata {
@@ -14823,6 +14829,44 @@ mod tests {
         );
         assert!(capture.records[1].music.is_none());
         let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn invalid_explicit_music_context_preserves_pending_context() {
+        let builder = MobilePevcapCaptureBuilder::new(
+            wc(1_700_000_000_000),
+            "ios-corebluetooth".into(),
+            None,
+        );
+        assert!(builder.set_music_context(Some(MobilePevcapMusicEventDto {
+            provider: MobileMusicProviderDto::AppleMusic,
+            track_id: "pending-song".into(),
+            monotonic_at_ms: 17,
+            wall_clock_unix_ms: 1_700_000_000_017,
+            clock_uncertainty_ms: 75,
+            ride_sequence: Some(1),
+        })));
+        assert!(
+            builder
+                .resolve_music_context(Some(MobilePevcapMusicEventDto {
+                    provider: MobileMusicProviderDto::AppleMusic,
+                    track_id: String::new(),
+                    monotonic_at_ms: 18,
+                    wall_clock_unix_ms: 1_700_000_000_018,
+                    clock_uncertainty_ms: 75,
+                    ride_sequence: Some(2),
+                }))
+                .is_err()
+        );
+        assert_eq!(
+            builder
+                .resolve_music_context(None)
+                .expect("pending context remains")
+                .expect("pending context exists")
+                .track_id
+                .as_str(),
+            "pending-song"
+        );
     }
 
     #[test]
