@@ -1,3 +1,5 @@
+//! Intent classification for future automatic turn signals.
+
 use crate::{Angle, Speed};
 
 /// Side selected by an automatic lean-based turn signal.
@@ -82,41 +84,34 @@ impl TurnSignalDetector {
     /// Missing roll, low speed, or a lean below the release threshold clears an
     /// active signal. A new signal requires the engage threshold to remain
     /// crossed for the configured duration.
+    #[must_use]
     pub fn update(
         &mut self,
         at_ms: u64,
         speed: Speed,
         roll: Option<Angle>,
     ) -> Option<TurnSignalSide> {
-        let magnitude = roll
-            .map(|value| i64::from(value.as_millidegrees()).abs())
-            .unwrap_or_default();
+        let Some(roll) = roll else {
+            return self.clear();
+        };
+        let magnitude = i64::from(roll.as_millidegrees()).abs();
         let speed_is_sufficient =
             speed.as_millimetres_per_second() >= self.config.minimum_speed_mm_s;
 
         if !speed_is_sufficient || magnitude < i64::from(self.config.release_roll_mdeg) {
-            self.candidate = None;
-            self.active = None;
-            return None;
+            return self.clear();
         }
 
-        if let (Some(active), Some(roll)) = (self.active, roll) {
-            if self.side(roll) == active {
-                return Some(active);
-            }
+        let side = self.side(roll);
+        if self.active == Some(side) {
+            return self.active;
         }
 
-        let Some(roll) = roll else {
-            self.candidate = None;
-            self.active = None;
-            return None;
-        };
         if magnitude < i64::from(self.config.engage_roll_mdeg) {
             self.candidate = None;
             return self.active;
         }
 
-        let side = self.side(roll);
         match self.candidate {
             Some((candidate, started_at)) if candidate == side => {
                 if at_ms.saturating_sub(started_at) >= self.config.engage_duration_ms {
@@ -127,6 +122,12 @@ impl TurnSignalDetector {
             _ => self.candidate = Some((side, at_ms)),
         }
         self.active
+    }
+
+    fn clear(&mut self) -> Option<TurnSignalSide> {
+        self.candidate = None;
+        self.active = None;
+        None
     }
 
     fn side(self, roll: Angle) -> TurnSignalSide {
