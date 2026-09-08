@@ -52,6 +52,12 @@ private enum MusicObservationValidator {
         guard acceptsRequired(snapshot.sessionId, maxBytes: Int(limits.identifierMaxBytes)) else {
             return false
         }
+        if let position = snapshot.positionMilliseconds,
+           let duration = snapshot.durationMilliseconds,
+           position > duration
+        {
+            return false
+        }
         guard let item = snapshot.item else { return true }
         guard acceptsRequired(item.identifier, maxBytes: Int(limits.identifierMaxBytes)) else {
             return false
@@ -198,11 +204,6 @@ public struct MusicTransitionHintTracker: Sendable {
         pendingHints.removeAll { $0.id == id }
         guard clearsFront else { return }
         remainingUnchangedObservations = pendingHints.isEmpty ? nil : Self.maximumUnchangedObservations
-    }
-
-    public mutating func clear() {
-        pendingHint = nil
-        remainingUnchangedObservations = nil
     }
 
     public mutating func resolve(
@@ -799,17 +800,6 @@ public final class MusicIntegrationCoordinator {
         }
         try rideMapState.setMusicHistoryPolicy(policy)
         adoptHistoryPolicy(policy)
-    }
-
-    /// Adopts a policy restored by Rust without issuing a second persistence write.
-    public func restoreHistoryPolicy(_ policy: MobileMusicHistoryPolicyDto) {
-        adoptHistoryPolicy(policy)
-    }
-
-    private func adoptHistoryPolicy(_ policy: MobileMusicHistoryPolicyDto) {
-        let previousPolicy = historyPolicy
-        historyPolicy = policy
-        rebasePersistedState(from: previousPolicy, to: policy)
     }
 
     /// Drops provider-local observations before a deliberate provider switch.
@@ -1530,10 +1520,6 @@ public final class AppleMusicProviderAdapter {
         artworkCache.artwork(for: player.nowPlayingItem.map(appleMusicIdentifier)) {
             loadArtwork()
         }?.data
-    }
-
-    private var currentItemIdentifier: String? {
-        player.nowPlayingItem.map { String($0.persistentID) }
     }
 
     private func loadArtwork() -> MusicArtwork? {

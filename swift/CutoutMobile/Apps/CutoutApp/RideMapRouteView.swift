@@ -183,6 +183,8 @@ struct RideMapRouteView: View {
                     rideID: initialHistoryID,
                     events: model.rideMapHistoryDetailMusicTimeline,
                     timelineUnavailable: model.rideMapHistoryDetailMusicTimelineUnavailable,
+                    state: model.rideMapHistoryDetailMusicState,
+                    error: model.rideMapHistoryDetailMusicError,
                     forgetMusicHistory: { model.forgetMusicHistory(for: $0) }
                 ),
                 projectionRideID: model.rideMapHistoryDetailProjectionRideID,
@@ -201,6 +203,7 @@ struct RideMapRouteView: View {
                 load: { model.loadRideMapHistory(selecting: initialHistoryID) },
                 retry: { model.loadRideMapHistory(selecting: initialHistoryID) },
                 loadRoutePreview: { model.loadRoutePreviewMapHistory() },
+                forgetMusicHistory: { model.forgetMusicHistory(for: $0) },
                 vehicleName: model.rideMapVehicleName(for:),
                 cameraDidChange: { region in
                     model.projectRideMapHistoryDetailViewport(RideMapCanvasView.geoBounds(for: region))

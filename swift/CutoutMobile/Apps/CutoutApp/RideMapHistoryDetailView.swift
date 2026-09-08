@@ -7,17 +7,23 @@ struct RideMapHistoryMusicDetail {
     let rideID: String
     let events: [MobileMusicRideEventDto]
     let timelineUnavailable: Bool
+    let state: MobileMusicHistoryStateDto?
+    let error: MobileRideMapError?
     private let forgetMusicHistory: (String) -> Bool
 
     init(
         rideID: String,
         events: [MobileMusicRideEventDto],
         timelineUnavailable: Bool = false,
+        state: MobileMusicHistoryStateDto? = nil,
+        error: MobileRideMapError? = nil,
         forgetMusicHistory: @escaping (String) -> Bool
     ) {
         self.rideID = rideID
         self.events = events
         self.timelineUnavailable = timelineUnavailable
+        self.state = state
+        self.error = error
         self.forgetMusicHistory = forgetMusicHistory
     }
 
@@ -188,6 +194,8 @@ struct RideMapHistoryDetailView: View {
                                 canonicalBackgroundGapCount: canonicalBackgroundGapCount,
                                 musicTimeline: music.events,
                                 musicTimelineUnavailable: music.timelineUnavailable,
+                                musicHistoryState: music.state,
+                                musicHistoryError: music.error,
                                 forgetMusicHistory: {
                                     music.forget()
                                 },

@@ -186,6 +186,8 @@ struct RideMapHistoryDetailSummary: View {
     let canonicalBackgroundGapCount: UInt64
     let musicTimeline: [MobileMusicRideEventDto]
     let musicTimelineUnavailable: Bool
+    let musicHistoryState: MobileMusicHistoryStateDto?
+    let musicHistoryError: MobileRideMapError?
     let forgetMusicHistory: () -> Bool
     let state: RideMapHistoryRouteState
     let loadRoutePreview: () -> Void
@@ -253,27 +255,30 @@ struct RideMapHistoryDetailSummary: View {
                     ),
                     telemetryState: telemetryState
                 )
-                if musicTimeline.isEmpty == false || musicTimelineUnavailable {
+                if musicTimeline.isEmpty == false || musicTimelineUnavailable || musicHistoryState != nil {
                     VStack(alignment: .leading, spacing: 8) {
                         HStack(alignment: .firstTextBaseline) {
                             Text(localizedAppText("music.timeline.title"))
                                 .font(.headline.weight(.semibold))
                             Spacer()
                             Button(localizedAppText("music.history.forget"), role: .destructive) {
-                                if forgetMusicHistory() == false {
-                                    isMusicHistoryForgetErrorPresented = true
-                                }
+                                isMusicHistoryForgetConfirmationPresented = true
                             }
-                            Button(localizedAppText("common.cancel"), role: .cancel) {}
-                        } message: {
-                            Text(localizedAppText("music.history.forget.message"))
                         }
-                        if musicTimeline.isEmpty {
-                            Text(localizedAppText("music.timeline.unavailable"))
+                        switch MusicHistoryPresentation(
+                            events: musicTimeline,
+                            state: musicHistoryState,
+                            error: musicHistoryError
+                        ) {
+                        case .unavailable(let error):
+                            Text(error.musicHistoryAccessibilityText)
                                 .font(.caption)
                                 .foregroundStyle(PevColors.muted)
-                        } else {
-                            MusicTimelineRows(events: musicTimeline)
+                        case .status(let state):
+                            Label(state.detailTitle, systemImage: state.detailSymbol)
+                                .font(.caption.weight(.semibold))
+                        case .timeline(let events):
+                            MusicTimelineRows(events: events)
                         }
                     }
                     .accessibilityIdentifier("ride-map.detail-music-timeline")
@@ -287,6 +292,17 @@ struct RideMapHistoryDetailSummary: View {
                                 isMusicHistoryForgetErrorPresented = true
                             }
                         }
+                    } message: {
+                        Text(localizedAppText("music.history.forget.message"))
+                    }
+                    .alert(
+                        localizedAppText("ride_map.command_failed"),
+                        isPresented: $isMusicHistoryForgetErrorPresented
+                    ) {
+                        Button(localizedAppText("common.cancel"), role: .cancel) {}
+                    } message: {
+                        Text(localizedAppText("music.history.unavailable"))
+                    }
                 }
                 if pointsTruncated {
                     Text(localizedAppText("ride_map.history_truncated_count", displayPointCount))

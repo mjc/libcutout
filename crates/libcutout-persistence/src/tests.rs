@@ -6,7 +6,8 @@ use cutout_core::{
     PevcapPhoneLocation, PevcapRecord, WallClockUnixTimestamp,
 };
 use cutout_music::{
-    MusicEventTiming, MusicHistoryPolicy, MusicProvider, MusicRideEvent, MusicRideEventKind,
+    MusicEventTiming, MusicHistoryPolicy, MusicHistoryState, MusicProvider, MusicRideEvent,
+    MusicRideEventKind,
 };
 use cutout_ride_maps::{
     Coordinate, LocationAdmission, LocationSample, LocationSource, MAX_GAP_MILLISECONDS, RideEvent,
@@ -4289,7 +4290,7 @@ fn music_history_state_distinguishes_missing_disabled_redacted_and_deleted() {
 
     assert_eq!(
         database.music_history_state(ride).unwrap(),
-        cutout_core::MusicHistoryState::Missing
+        MusicHistoryState::Missing
     );
 
     database
@@ -4297,15 +4298,19 @@ fn music_history_state_distinguishes_missing_disabled_redacted_and_deleted() {
         .unwrap();
     assert_eq!(
         database.music_history_state(ride).unwrap(),
-        cutout_core::MusicHistoryState::Disabled
+        MusicHistoryState::Disabled
     );
+
+    database
+        .save_music_history_policy(ride, MusicHistoryPolicy::HumanReadable)
+        .unwrap();
 
     database
         .save_music_event(ride, MusicHistoryPolicy::HumanReadable, 0, music_event())
         .unwrap();
     assert_eq!(
         database.music_history_state(ride).unwrap(),
-        cutout_core::MusicHistoryState::HumanReadable
+        MusicHistoryState::HumanReadable
     );
 
     database
@@ -4313,13 +4318,13 @@ fn music_history_state_distinguishes_missing_disabled_redacted_and_deleted() {
         .unwrap();
     assert_eq!(
         database.music_history_state(ride).unwrap(),
-        cutout_core::MusicHistoryState::Redacted
+        MusicHistoryState::Redacted
     );
 
     database.delete_music_history(ride).unwrap();
     assert_eq!(
         database.music_history_state(ride).unwrap(),
-        cutout_core::MusicHistoryState::Deleted
+        MusicHistoryState::Deleted
     );
     close_music_test_database(database, path);
 }
@@ -4338,6 +4343,7 @@ fn ride_export_includes_privacy_filtered_music_history() {
         Some("Artist".to_owned()),
         MusicRideEventKind::ItemChanged,
         MusicEventTiming {
+            observed_at: None,
             monotonic_at: MonotonicTimestamp::new(110),
             wall_clock_at: WallClockUnixTimestamp::new(1_700_000_000_110),
             clock_uncertainty_milliseconds: 5,
@@ -4644,6 +4650,7 @@ fn lowering_music_history_policy_redacts_existing_display_metadata() {
         Some("Artist".to_owned()),
         MusicRideEventKind::ItemChanged,
         MusicEventTiming {
+            observed_at: None,
             monotonic_at: MonotonicTimestamp::new(110),
             wall_clock_at: WallClockUnixTimestamp::new(1_700_000_000_110),
             clock_uncertainty_milliseconds: 5,
@@ -4663,7 +4670,7 @@ fn lowering_music_history_policy_redacts_existing_display_metadata() {
     assert_eq!(
         redacted[0]
             .item_identifier()
-            .map(cutout_core::MusicIdentifier::as_str),
+            .map(cutout_music::MusicIdentifier::as_str),
         Some("opaque-track")
     );
     assert_eq!(redacted[0].title(), None);

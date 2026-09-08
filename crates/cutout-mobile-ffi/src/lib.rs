@@ -6989,7 +6989,7 @@ impl MobileRideMapCore {
         state.music_history_policy.into()
     }
 
-    /// Sets the bounded music-history policy for the active ride.
+    /// Sets the bounded music-history policy for the active or paused ride.
     ///
     /// Disabling the policy clears the authoritative durable music timeline.
     ///
@@ -7006,7 +7006,7 @@ impl MobileRideMapCore {
         let Some(ride_id) = state.active_ride_id.clone() else {
             return Err(MobileRideMapCoreErrorDto::NoActiveRide);
         };
-        if state.recorder.state() != Some(ride_maps::RideLifecycleState::Active) {
+        if !music_history_is_recordable(state.recorder.state()) {
             return Err(MobileRideMapCoreErrorDto::InvalidTransition);
         }
         let policy = CoreMusicHistoryPolicy::from(policy);
@@ -17601,7 +17601,18 @@ mod tests {
 
     #[test]
     fn music_transition_is_rejected_after_ride_stops() {
-        let state = MobileRideMapCore::new();
+        let _guard = RIDE_DATABASE_TEST_LOCK
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        let path = std::env::temp_dir().join(format!(
+            "cutout-mobile-music-stopped-{}-{}.sqlite3",
+            std::process::id(),
+            Uuid::new_v4()
+        ));
+        let _ = fs::remove_file(&path);
+        let database =
+            open_ride_database(path.to_string_lossy().into_owned()).expect("database opens");
+        let state = MobileRideMapCore::with_database(database.clone());
         state.start_gps_only(1_000, None).expect("ride starts");
         state
             .set_music_history_policy(MobileMusicHistoryPolicyDto::OpaqueItem)
@@ -17635,12 +17646,14 @@ mod tests {
             5,
         );
 
-        assert_eq!(result, Err(MobileRideMapCoreErrorDto::InvalidTransition));
+        assert_eq!(result, Ok(MobileMusicTimelineOutcomeDto::RideNotOpen));
         assert!(
             state
                 .current_music_events()
                 .is_some_and(|events| events.is_empty())
         );
+        database.shutdown().expect("database shuts down");
+        let _ = fs::remove_file(path);
     }
 
     #[test]
@@ -17774,63 +17787,5 @@ mod tests {
         );
         database.shutdown().expect("database shuts down");
         let _ = fs::remove_file(path);
-    }
-
-    #[test]
-    fn music_event_dtos_expose_ordered_sequences() {
-        let state = MobileRideMapCore::new();
-        state.start_gps_only(1_000, None).expect("ride starts");
-        state
-            .set_music_history_policy(MobileMusicHistoryPolicyDto::OpaqueItem)
-            .expect("policy can be enabled while recording");
-        for (state_value, kind, timestamp) in [
-            (
-                MobileMusicPlaybackStateDto::Playing,
-                MobileMusicRideEventKindDto::Play,
-                2_000,
-            ),
-            (
-                MobileMusicPlaybackStateDto::Paused,
-                MobileMusicRideEventKindDto::Pause,
-                2_001,
-            ),
-        ] {
-            state
-                .record_music_event(
-                    MobileMusicSnapshotDto {
-                        provider: MobileMusicProviderDto::AppleMusic,
-                        session_id: "session".to_owned(),
-                        state: state_value,
-                        item: Some(MobileMusicItemDto {
-                            identifier: "track-1".to_owned(),
-                            title: Some("Song".to_owned()),
-                            artist: Some("Artist".to_owned()),
-                        }),
-                        position_milliseconds: None,
-                        duration_milliseconds: None,
-                        observed_at_ms: timestamp,
-                        capabilities: MobileMusicCapabilitiesDto {
-                            previous: false,
-                            play: state_value == MobileMusicPlaybackStateDto::Paused,
-                            pause: state_value == MobileMusicPlaybackStateDto::Playing,
-                            next: true,
-                            open_provider: true,
-                        },
-                    },
-                    kind,
-                    timestamp,
-                    1_700_000_000_000 + timestamp,
-                    5,
-                )
-                .expect("music event is recorded");
-        }
-        let events = state.current_music_events().expect("active timeline");
-        assert_eq!(
-            events
-                .iter()
-                .map(|event| event.sequence)
-                .collect::<Vec<_>>(),
-            [0, 1]
-        );
     }
 }

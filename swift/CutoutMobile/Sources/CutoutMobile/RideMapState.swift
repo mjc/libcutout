@@ -847,6 +847,13 @@ public final class MobileRideMapState: @unchecked Sendable {
         }
     }
 
+    /// Returns the durable state of one ride's music-history record.
+    public func storedMusicHistoryState(rideID: String) throws -> MobileMusicHistoryStateDto {
+        try withDatabase {
+            try $0.musicHistoryState(rideId: MobileRideIdDto(value: rideID))
+        }
+    }
+
     /// Permanently deletes stored music metadata for one ride.
     public func deleteStoredMusicHistory(rideID: String) throws {
         try withCore {

@@ -4,29 +4,6 @@ use rusqlite::{Connection, OptionalExtension, params};
 const CURRENT_SCHEMA_VERSION: i64 = 19;
 const APPLICATION_ID: i64 = 0x4355_544f;
 
-const MUSIC_SCHEMA_SQL: &str = "
-CREATE TABLE IF NOT EXISTS ride_music_history (
-    ride_id TEXT PRIMARY KEY NOT NULL REFERENCES rides(id) ON DELETE CASCADE,
-    policy TEXT NOT NULL CHECK (policy IN ('disabled', 'opaque_item', 'human_readable')),
-    state TEXT NOT NULL DEFAULT 'disabled'
-        CHECK (state IN ('disabled', 'opaque_item', 'human_readable', 'deleted'))
-);
-CREATE TABLE IF NOT EXISTS ride_music_event (
-    ride_id TEXT NOT NULL REFERENCES rides(id) ON DELETE CASCADE,
-    sequence INTEGER NOT NULL CHECK (sequence >= 0),
-    provider TEXT NOT NULL CHECK (provider IN ('apple_music', 'spotify')),
-    item_identifier TEXT CHECK (item_identifier IS NULL OR length(CAST(item_identifier AS BLOB)) BETWEEN 1 AND 256),
-    title TEXT CHECK (title IS NULL OR length(CAST(title AS BLOB)) BETWEEN 1 AND 512),
-    artist TEXT CHECK (artist IS NULL OR length(CAST(artist AS BLOB)) BETWEEN 1 AND 512),
-    kind TEXT NOT NULL CHECK (kind IN ('play', 'pause', 'skip', 'item_changed', 'provider_disconnected')),
-    monotonic_at_ms INTEGER NOT NULL CHECK (monotonic_at_ms >= 0),
-    wall_clock_at_ms INTEGER NOT NULL CHECK (wall_clock_at_ms >= 0),
-    clock_uncertainty_milliseconds INTEGER NOT NULL CHECK (clock_uncertainty_milliseconds >= 0),
-    PRIMARY KEY (ride_id, sequence)
-);
-CREATE INDEX IF NOT EXISTS ride_music_event_cursor ON ride_music_event (ride_id, sequence);
-";
-
 fn current_schema_pragmas() -> String {
     format!(
         "PRAGMA application_id = {APPLICATION_ID}; PRAGMA user_version = {CURRENT_SCHEMA_VERSION};"
@@ -205,7 +182,8 @@ pub(crate) fn create_current_schema(connection: &Connection) -> Result<(), Stora
             sequence INTEGER NOT NULL CHECK (sequence >= 0),
             provider TEXT NOT NULL CHECK (provider IN ('apple_music', 'spotify')),
             item_identifier TEXT CHECK (item_identifier IS NULL OR length(CAST(item_identifier AS BLOB)) BETWEEN 1 AND 256),
-            title TEXT CHECK (title IS NULL OR length(CAST(title AS BLOB)) BETWEEN 1 AND 512),
+            title TEXT CONSTRAINT ride_music_event_title_bytes
+                CHECK (title IS NULL OR length(CAST(title AS BLOB)) BETWEEN 1 AND 512),
             artist TEXT CHECK (artist IS NULL OR length(CAST(artist AS BLOB)) BETWEEN 1 AND 512),
             kind TEXT NOT NULL CHECK (kind IN ('play', 'pause', 'skip', 'item_changed', 'stopped', 'provider_disconnected')),
             monotonic_at_ms INTEGER NOT NULL CHECK (monotonic_at_ms >= 0),
@@ -947,9 +925,10 @@ fn migrate_v16_to_current(connection: &mut Connection) -> Result<(), StorageErro
     }
     transaction.execute_batch(
         "UPDATE ride_music_history
-         SET state = CASE policy
-             WHEN 'opaque_item' THEN 'opaque_item'
-             WHEN 'human_readable' THEN 'human_readable'
+         SET state = CASE
+             WHEN deleted = 1 THEN 'deleted'
+             WHEN policy = 'opaque_item' THEN 'opaque_item'
+             WHEN policy = 'human_readable' THEN 'human_readable'
              ELSE 'disabled'
          END;",
     )?;
@@ -1031,6 +1010,22 @@ fn migrate_v18_to_current(connection: &mut Connection) -> Result<(), StorageErro
     let transaction = connection.transaction()?;
     if !captures_exists {
         transaction.execute_batch(super::capture_data::SCHEMA)?;
+    }
+    if table_exists(&transaction, "ride_music_history")?
+        && !table_has_column(&transaction, "ride_music_history", "state")?
+    {
+        transaction.execute_batch(
+            "ALTER TABLE ride_music_history
+                 ADD COLUMN state TEXT NOT NULL DEFAULT 'disabled'
+                 CHECK (state IN ('disabled', 'opaque_item', 'human_readable', 'deleted'));
+             UPDATE ride_music_history
+             SET state = CASE
+                 WHEN deleted = 1 THEN 'deleted'
+                 WHEN policy = 'opaque_item' THEN 'opaque_item'
+                 WHEN policy = 'human_readable' THEN 'human_readable'
+                 ELSE 'disabled'
+             END;",
+        )?;
     }
     transaction.execute_batch(&current_schema_pragmas())?;
     transaction.commit()?;

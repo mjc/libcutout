@@ -13,7 +13,7 @@ use cutout_ride_maps::{
     route_camera_region, route_segment_display_metadata,
 };
 use hex::encode as hex_encode;
-use rusqlite::{Connection, ErrorCode, OptionalExtension, Transaction, params};
+use rusqlite::{Connection, ErrorCode, OptionalExtension, params};
 use sha2::{Digest, Sha256};
 use std::{
     collections::HashMap,
@@ -5351,11 +5351,15 @@ fn apply_music_history_policy(
         }
     }
     transaction.execute(
-        "INSERT INTO ride_music_history (ride_id, policy)
-         VALUES (?1, ?2)
-         ON CONFLICT(ride_id) DO UPDATE SET policy = excluded.policy, deleted = 0,
+        "INSERT INTO ride_music_history (ride_id, policy, state)
+         VALUES (?1, ?2, ?3)
+         ON CONFLICT(ride_id) DO UPDATE SET policy = excluded.policy, state = excluded.state, deleted = 0,
              last_observed_at_ms = CASE WHEN excluded.policy = 'disabled' THEN NULL ELSE last_observed_at_ms END",
-        params![ride_id.uuid().to_string(), policy_name(policy)],
+        params![
+            ride_id.uuid().to_string(),
+            policy_name(policy),
+            history_state_name(policy),
+        ],
     )?;
     if policy == MusicHistoryPolicy::Disabled {
         transaction.execute(
@@ -5572,9 +5576,9 @@ fn delete_music_history(connection: &mut Connection, ride_id: RideId) -> Result<
         [ride_id.uuid().to_string()],
     )?;
     transaction.execute(
-        "INSERT INTO ride_music_history (ride_id, policy, deleted)
-         VALUES (?1, 'disabled', 1)
-         ON CONFLICT(ride_id) DO UPDATE SET policy = 'disabled', deleted = 1, last_observed_at_ms = NULL",
+        "INSERT INTO ride_music_history (ride_id, policy, state, deleted)
+         VALUES (?1, 'disabled', 'deleted', 1)
+         ON CONFLICT(ride_id) DO UPDATE SET policy = 'disabled', state = 'deleted', deleted = 1, last_observed_at_ms = NULL",
         [ride_id.uuid().to_string()],
     )?;
     transaction.commit()?;
