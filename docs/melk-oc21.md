@@ -113,3 +113,8 @@ Test on/off timers shortly ahead of local time, disable both slots afterward, an
 check repeat-day behavior separately. Confirm lighting interactions do not
 interrupt the wheel telemetry connection. Automated payload tests do not replace
 these observations.
+
+On 2026-09-07, the Mac validator confirmed that CoreBluetooth was powered on
+and scanning, but observed neither a connected MELK link nor a `MELK-OC21`
+advertisement during 45-second, 120-second, and 30-second runs. This is a
+discovery-state observation, not evidence that the controller is unsupported.
