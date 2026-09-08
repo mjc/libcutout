@@ -432,7 +432,12 @@ public final class MelkLightingPeripheralSession: NSObject, CBCentralManagerDele
             }
             if let connectedPeripheral = central.retrieveConnectedPeripherals(
                 withServices: [MelkLightingCommandProfile.service.coreBluetoothUuid]
-            ).first(where: { Self.isMelkName($0.name) }) {
+            ).first(where: {
+                Self.isMelkName($0.name)
+                    && targetPolicy.accepts(
+                        CoreBluetoothPeripheralIdentifier($0.identifier.uuidString)
+                    )
+            }) {
                 connect(
                     central: central,
                     peripheral: connectedPeripheral,
