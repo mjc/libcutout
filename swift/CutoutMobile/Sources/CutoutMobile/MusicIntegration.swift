@@ -25,15 +25,39 @@ public struct MusicArtwork: Equatable, Sendable {
 }
 
 private enum MusicObservationValidator {
-    private static let identifierMaxBytes = 256
-    private static let displayTextMaxBytes = 512
+    private static let limits = mobileMusicLimits()
+
+    static func normalized(_ snapshot: MobileMusicSnapshotDto) -> MobileMusicSnapshotDto {
+        guard let item = snapshot.item else { return snapshot }
+        let title = normalizedOptional(item.title)
+        let artist = normalizedOptional(item.artist)
+        guard title != item.title || artist != item.artist else { return snapshot }
+        return MobileMusicSnapshotDto(
+            provider: snapshot.provider,
+            sessionId: snapshot.sessionId,
+            state: snapshot.state,
+            item: MobileMusicItemDto(
+                identifier: item.identifier,
+                title: title,
+                artist: artist
+            ),
+            positionMilliseconds: snapshot.positionMilliseconds,
+            durationMilliseconds: snapshot.durationMilliseconds,
+            observedAtMs: snapshot.observedAtMs,
+            capabilities: snapshot.capabilities
+        )
+    }
 
     static func accepts(_ snapshot: MobileMusicSnapshotDto) -> Bool {
-        guard acceptsRequired(snapshot.sessionId, maxBytes: identifierMaxBytes) else { return false }
+        guard acceptsRequired(snapshot.sessionId, maxBytes: Int(limits.identifierMaxBytes)) else {
+            return false
+        }
         guard let item = snapshot.item else { return true }
-        guard acceptsRequired(item.identifier, maxBytes: identifierMaxBytes) else { return false }
-        return acceptsOptional(item.title, maxBytes: displayTextMaxBytes)
-            && acceptsOptional(item.artist, maxBytes: displayTextMaxBytes)
+        guard acceptsRequired(item.identifier, maxBytes: Int(limits.identifierMaxBytes)) else {
+            return false
+        }
+        return acceptsOptional(item.title, maxBytes: Int(limits.displayTextMaxBytes))
+            && acceptsOptional(item.artist, maxBytes: Int(limits.displayTextMaxBytes))
     }
 
     private static func acceptsRequired(_ value: String, maxBytes: Int) -> Bool {
@@ -42,8 +66,15 @@ private enum MusicObservationValidator {
     }
 
     private static func acceptsOptional(_ value: String?, maxBytes: Int) -> Bool {
-        guard let value else { return true }
+        guard let value = normalizedOptional(value) else { return true }
         return acceptsRequired(value, maxBytes: maxBytes)
+    }
+
+    private static func normalizedOptional(_ value: String?) -> String? {
+        guard let value, value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false else {
+            return nil
+        }
+        return value
     }
 }
 
@@ -163,10 +194,10 @@ public struct MusicTransitionHintTracker: Sendable {
     }
 
     public mutating func clear(id: UInt64) {
+        let clearsFront = pendingHints.first?.id == id
         pendingHints.removeAll { $0.id == id }
-        remainingUnchangedObservations = pendingHints.isEmpty
-            ? nil
-            : Self.maximumUnchangedObservations
+        guard clearsFront else { return }
+        remainingUnchangedObservations = pendingHints.isEmpty ? nil : Self.maximumUnchangedObservations
     }
 
     public mutating func resolve(
@@ -216,7 +247,7 @@ public struct MusicTransitionHintTracker: Sendable {
     private mutating func consumeUnchangedObservation() {
         let remaining = remainingUnchangedObservations ?? Self.maximumUnchangedObservations
         guard remaining > 1 else {
-            clear()
+            removeFirstPending()
             return
         }
         remainingUnchangedObservations = remaining - 1
@@ -682,6 +713,7 @@ public final class MusicIntegrationCoordinator {
         transitionHint: MusicTransitionHint?
     ) throws -> MobileMusicTimelineOutcomeDto? {
         resetCorrelationIfRideChanged()
+        let snapshot = MusicObservationValidator.normalized(snapshot)
         guard MusicObservationValidator.accepts(snapshot) else { return nil }
         guard accept(snapshot) else { return nil }
         let previous = lastPersistedNowPlayingByProvider[snapshot.provider]

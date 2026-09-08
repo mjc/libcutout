@@ -4226,7 +4226,8 @@ fn music_event_text_constraints_measure_utf8_bytes() {
         [&title],
     );
 
-    assert!(result.is_err(), "music text bounds must use UTF-8 byte length");
+    let error = result.expect_err("music text bounds must use UTF-8 byte length");
+    assert!(error.to_string().contains("ride_music_event_title_bytes"));
 }
 
 #[test]

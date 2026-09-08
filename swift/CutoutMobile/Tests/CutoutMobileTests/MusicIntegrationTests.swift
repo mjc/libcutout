@@ -70,6 +70,21 @@ final class MusicIntegrationTests: XCTestCase {
         XCTAssertNil(tracker.pendingHint)
     }
 
+    func testClearingNonFrontHintDoesNotRefreshFrontHintAge() {
+        var tracker = MusicTransitionHintTracker()
+        _ = tracker.issue(.skip)
+        let second = tracker.issue(.skip)
+        let unchanged = nowPlaying(trackID: "track-1")
+
+        for _ in 0..<4 {
+            tracker.resolve(previous: unchanged, current: unchanged, appliedHint: .skip)
+        }
+        tracker.clear(id: second)
+        tracker.resolve(previous: unchanged, current: unchanged, appliedHint: .skip)
+
+        XCTAssertNil(tracker.pendingHint)
+    }
+
     func testTransitionHintExpiresWhenProviderNeverChangesTheItem() {
         var tracker = MusicTransitionHintTracker()
         tracker.issue(.skip, issuedAtMs: 1_000)
@@ -408,6 +423,37 @@ final class MusicIntegrationTests: XCTestCase {
         )
         XCTAssertEqual(coordinator.nowPlaying?.item?.identifier, "track-1")
         XCTAssertEqual(coordinator.nowPlaying?.item?.title, "Song")
+    }
+
+    @MainActor
+    func testCoordinatorNormalizesBlankOptionalMetadataLikeRust() throws {
+        let state = MobileRideMapState()
+        _ = try state.startGpsOnly(atMs: 1_000, lastConnectedVehicle: nil)
+        try state.setMusicHistoryPolicy(.humanReadable)
+        let coordinator = MusicIntegrationCoordinator(rideMapState: state)
+        let snapshot = MobileMusicSnapshotDto(
+            provider: .appleMusic,
+            sessionId: "session",
+            state: .playing,
+            item: MobileMusicItemDto(identifier: "track-1", title: " ", artist: ""),
+            positionMilliseconds: nil,
+            durationMilliseconds: nil,
+            observedAtMs: 1_100,
+            capabilities: .init(previous: false, play: false, pause: true, next: true, openProvider: true)
+        )
+
+        XCTAssertEqual(
+            try coordinator.ingest(
+                snapshot: snapshot,
+                wallClockAtMs: 1_700_000_000_100,
+                clockUncertaintyMs: 5
+            ),
+            .recorded
+        )
+        XCTAssertNil(coordinator.nowPlaying?.item?.title)
+        XCTAssertNil(coordinator.nowPlaying?.item?.artist)
+        XCTAssertNil(state.currentMusicEvents().first?.title)
+        XCTAssertNil(state.currentMusicEvents().first?.artist)
     }
 
     func testNowPlayingExposesOnlySupportedTransportCommands() {

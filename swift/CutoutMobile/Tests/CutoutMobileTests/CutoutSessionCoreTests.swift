@@ -587,7 +587,8 @@ final class CutoutSessionCoreTests: XCTestCase {
     func testSuccessfulScriptedRecordOnlyFlushUsesTheRealWriter() async throws {
         let started = expectation(description: "real capture writer starts")
         var captureURL: URL?
-        let core = CutoutSessionCore(testScript: CutoutSessionTestScript(
+        let clock = MonotonicClock(now: { MonotonicMilliseconds(10) })
+        let core = CutoutSessionCore(clock: clock, testScript: CutoutSessionTestScript(
             candidate: scriptedVescCandidate,
             telemetry: nil,
             connectionDelayMilliseconds: 0
@@ -606,6 +607,7 @@ final class CutoutSessionCoreTests: XCTestCase {
             clockUncertaintyMs: 5,
             rideSequence: 7
         )
+        core.updateMusicCapturePolicy(.humanReadable)
         core.updateMusicCaptureObservation(observation)
 
         XCTAssertTrue(core.recordOnly(
@@ -615,6 +617,7 @@ final class CutoutSessionCoreTests: XCTestCase {
         ))
         await fulfillment(of: [started], timeout: 1)
         XCTAssertNil(core.musicCaptureObservationForTesting)
+        core.updateMusicCaptureObservation(observation)
         let url = try XCTUnwrap(captureURL)
         defer { try? FileManager.default.removeItem(at: url) }
 
@@ -624,6 +627,7 @@ final class CutoutSessionCoreTests: XCTestCase {
         XCTAssertGreaterThan((attributes[.size] as? NSNumber)?.uint64Value ?? 0, 0)
         let capture = try String(contentsOf: url, encoding: .utf8)
         XCTAssertTrue(capture.contains("durability=background"))
+        XCTAssertTrue(capture.contains("writer-track"))
         XCTAssertTrue(capture.contains("capture_evidence=simulator_fixture"))
         XCTAssertFalse(capture.contains("capture_evidence=hardware_tested"))
 

@@ -3871,6 +3871,15 @@ pub struct MobileRideMapLimitsDto {
     pub history_recent_window_milliseconds: u64,
 }
 
+/// Rust-owned byte bounds for provider music metadata.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct MobileMusicLimitsDto {
+    /// Maximum provider/session/item identifier bytes.
+    pub identifier_max_bytes: u32,
+    /// Maximum title or artist bytes.
+    pub display_text_max_bytes: u32,
+}
+
 /// Inputs for a bounded history overview context projection.
 #[derive(Clone, Debug, PartialEq, uniffi::Record)]
 pub struct MobileRideHistoryContextOptionsDto {
@@ -4952,6 +4961,18 @@ pub fn mobile_ride_map_limits() -> MobileRideMapLimitsDto {
         history_context_per_route_budget: persistence::DEFAULT_HISTORY_CONTEXT_POINTS_PER_ROUTE,
         history_context_total_point_budget: persistence::DEFAULT_HISTORY_CONTEXT_TOTAL_POINTS,
         history_recent_window_milliseconds: persistence::DEFAULT_HISTORY_RECENT_WINDOW_MILLISECONDS,
+    }
+}
+
+/// Returns the Rust-owned byte bounds used by mobile music validation.
+#[uniffi::export]
+#[must_use]
+pub fn mobile_music_limits() -> MobileMusicLimitsDto {
+    MobileMusicLimitsDto {
+        identifier_max_bytes: u32::try_from(cutout_music::MAX_MUSIC_IDENTIFIER_BYTES)
+            .unwrap_or(u32::MAX),
+        display_text_max_bytes: u32::try_from(cutout_music::MAX_MUSIC_DISPLAY_TEXT_BYTES)
+            .unwrap_or(u32::MAX),
     }
 }
 
@@ -9450,10 +9471,10 @@ fn pevcap_music_event_for_policy(
     music: MobilePevcapMusicEventDto,
     policy: CoreMusicHistoryPolicy,
 ) -> Result<Option<PevcapMusicEvent>, String> {
-    let event = PevcapMusicEvent::try_from(music.clone())?;
     if policy == CoreMusicHistoryPolicy::Disabled {
         return Ok(None);
     }
+    let event = PevcapMusicEvent::try_from(music.clone())?;
     if policy == CoreMusicHistoryPolicy::OpaqueItem
         && music.provider == MobileMusicProviderDto::Spotify
         && music.track_id.starts_with("spotify:local:")
@@ -9770,27 +9791,15 @@ impl MobilePevcapCaptureBuilder {
         if let Some(location) = phone_location.and_then(MobilePhoneLocationSampleDto::canonical) {
             record = record.with_phone_location(location.pevcap_location());
         }
-        let music_valid = match self.resolve_music_context(music, monotonic_ms.milliseconds) {
+        match self.resolve_music_context(music, monotonic_ms.milliseconds) {
             Ok(Some(music)) => {
                 record = record
                     .with_music(music)
                     .expect("inbound records accept music metadata");
-                true
             }
-            Ok(None) => true,
-            Err(()) => {
-                let has_pending_context = !self
-                    .music_context
-                    .lock()
-                    .unwrap_or_else(PoisonError::into_inner)
-                    .is_empty();
-                if has_pending_context {
-                    return false;
-                }
-                return self.send_record(record);
-            }
-        };
-        self.send_record(record) && music_valid
+            Ok(None) | Err(()) => {}
+        }
+        self.send_record(record)
     }
 
     /// Records an independent Core Location sample in the PEVCAP location stream.
@@ -15374,7 +15383,7 @@ mod tests {
             ride_sequence: Some(1),
         })));
         assert!(builder.start_writer(path.to_string_lossy().into_owned()));
-        assert!(!builder.record_notification_with_context_and_music(
+        assert!(builder.record_notification_with_context_and_music(
             ms(42),
             vec![0; 16],
             vec![1; 16],
@@ -15403,9 +15412,9 @@ mod tests {
         let bytes = fs::read(&path).expect("music capture exists");
         let capture =
             PevcapCapture::decode(&bytes, PevcapEncoding::Jsonl).expect("music capture decodes");
-        assert_eq!(capture.records.len(), 1);
+        assert_eq!(capture.records.len(), 2);
         assert_eq!(
-            capture.records[0]
+            capture.records[1]
                 .music
                 .as_ref()
                 .expect("pending context survives rejected explicit context")
@@ -15413,7 +15422,25 @@ mod tests {
                 .as_str(),
             "pending-song"
         );
+        assert!(capture.records[0].music.is_none());
         let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn disabled_music_policy_drops_invalid_capture_context() {
+        let builder = MobilePevcapCaptureBuilder::new(
+            wc(1_700_000_000_000),
+            "ios-corebluetooth".into(),
+            None,
+        );
+        assert!(builder.set_music_context(Some(MobilePevcapMusicEventDto {
+            provider: MobileMusicProviderDto::AppleMusic,
+            track_id: String::new(),
+            monotonic_at_ms: 18,
+            wall_clock_unix_ms: 1_700_000_000_018,
+            clock_uncertainty_ms: 75,
+            ride_sequence: Some(2),
+        })));
     }
 
     #[test]
@@ -17538,8 +17565,8 @@ mod tests {
             Uuid::new_v4()
         ));
         let _ = fs::remove_file(&path);
-        let database = open_ride_database(path.to_string_lossy().into_owned())
-            .expect("database opens");
+        let database =
+            open_ride_database(path.to_string_lossy().into_owned()).expect("database opens");
         let state = MobileRideMapCore::with_database(database.clone());
         state.start_gps_only(1_000, None).expect("ride starts");
         state
