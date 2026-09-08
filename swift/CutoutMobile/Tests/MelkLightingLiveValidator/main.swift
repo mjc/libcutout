@@ -52,6 +52,10 @@ struct MelkLightingLiveValidator {
         case "help":
             print("power on|off; color R G B; brightness 0-100; speed 0-255; effect 1|16|22|75 [speed]; confirm; unconfirm; quit")
         case "power" where parts.count == 2:
+            guard parts[1] == "on" || parts[1] == "off" else {
+                print("invalid power; use on or off")
+                return
+            }
             print("requested=\(session.setPower(parts[1] == "on"))")
         case "color" where parts.count == 4,
              "brightness" where parts.count == 2,
@@ -82,7 +86,16 @@ struct MelkLightingLiveValidator {
             print("requested=\(session.setEffectSpeed(value))")
         case "effect":
             guard let pattern = UInt8(parts[1]), [1, 16, 22, 75].contains(pattern) else { print("unverified effect; use one of 1,16,22,75"); return }
-            let speed = parts.count == 3 ? UInt8(parts[2]) ?? 50 : 50
+            let speed: UInt8
+            if parts.count == 3 {
+                guard let suppliedSpeed = UInt8(parts[2]) else {
+                    print("invalid speed; use 0-255")
+                    return
+                }
+                speed = suppliedSpeed
+            } else {
+                speed = 50
+            }
             let state = MobileMelkLightingRestoreStateDto(powerOn: true, red: 255, green: 255, blue: 255, brightness: 100, playback: .effect(pattern: pattern, speed: speed))
             do { print("requested=\(try session.applyState(state))") } catch { print("error=\(error)") }
         default: break
