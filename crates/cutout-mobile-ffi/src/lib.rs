@@ -1,5 +1,8 @@
 //! Concrete `UniFFI` mobile binding surface for Cutout.
 
+mod melk_controls;
+pub use melk_controls::*;
+
 use std::{
     collections::VecDeque,
     convert::TryFrom,
@@ -34,16 +37,22 @@ use cutout_core::{
     FaultHistoryAvailabilityDto, FaultHistoryEntry, FaultHistoryEntryDto, FaultHistoryReadback,
     FaultHistoryReadbackDto, FootpadContactStateDto, FootpadTelemetryDto, GattChannel,
     GattFingerprint, GattRoles, IgnoredNotificationEvidenceDto, IgnoredNotificationReasonDto,
-    Measured, MonotonicMillisDto, MonotonicTimestamp, MusicProvider as CorePevcapMusicProvider,
-    NotificationByteLenDto, NotificationEvidenceDto, NotificationIngestOutcomeDto,
-    ParserDiagnosticCountDto, ParserDiagnosticsDto, ParserDroppedBytesDto, ParserErrorDto,
-    ParserFrameLenDto, ParserGapEvidenceDto, PayloadBodyLenDto,
-    PevcapEncoding as CorePevcapEncoding, PevcapHeader, PevcapLocationSample, PevcapMusicEvent,
-    PevcapPhoneLocation, PevcapRecord, PevcapResolvedIdentity, PhaseCurrentReadingDto,
-    PowerReadingDto, ProtocolFamily, ProtocolFamilyDto, ProtocolTag, RIDE_SESSION_STALE_AFTER,
-    RawFieldValue, RawFieldValueDto, RawTelemetryReadback, RawTelemetryReadbackDto,
-    ReadOnlyOutputPayload, ReservedPayloadEvidenceDto, RideOperatingModeDto, RideOperatingStateDto,
-    RideSessionAppPresence as CoreRideSessionAppPresence,
+    LightingBrightness, LightingPowerState, Measured, MonotonicMillisDto, MonotonicTimestamp,
+    MusicProvider as CorePevcapMusicProvider, NotificationByteLenDto, NotificationEvidenceDto,
+    NotificationIngestOutcomeDto, ParserDiagnosticCountDto, ParserDiagnosticsDto,
+    ParserDroppedBytesDto, ParserErrorDto, ParserFrameLenDto, ParserGapEvidenceDto,
+    PayloadBodyLenDto, PevcapEncoding as CorePevcapEncoding, PevcapHeader, PevcapLocationSample,
+    PevcapMusicEvent, PevcapPhoneLocation, PevcapRecord, PevcapResolvedIdentity,
+    PhaseCurrentReadingDto, PowerReadingDto, ProtocolFamily, ProtocolFamilyDto, ProtocolTag,
+    RIDE_SESSION_STALE_AFTER, RawFieldValue, RawFieldValueDto, RawTelemetryReadback,
+    RawTelemetryReadbackDto, ReadOnlyOutputPayload, ReservedPayloadEvidenceDto, RgbColor,
+    RgbLightingAccessoryRecord, RgbLightingCommand,
+    RgbLightingConfirmationState as CoreRgbLightingConfirmationState,
+    RgbLightingConnectionState as CoreRgbLightingConnectionState, RgbLightingPreset,
+    RgbLightingProfileKind, RgbLightingRecordError as CoreRgbLightingRecordError,
+    RgbLightingRequestedState, RgbLightingRestoreDecision,
+    RgbLightingRestoreMarker as CoreRgbLightingRestoreMarker, RideOperatingModeDto,
+    RideOperatingStateDto, RideSessionAppPresence as CoreRideSessionAppPresence,
     RideSessionDecision as CoreRideSessionDecision, RideSessionEffect as CoreRideSessionEffect,
     RideSessionEndReason as CoreRideSessionEndReason,
     RideSessionIdentity as CoreRideSessionIdentity, RideSessionInput as CoreRideSessionInput,
@@ -53,11 +62,11 @@ use cutout_core::{
     SessionInputDto, SessionOutputDto, SettingsEntry, SettingsEntryDto, SettingsReadback,
     SettingsReadbackAvailability, SettingsReadbackAvailabilityDto, SettingsReadbackDto,
     Speed as CoreSpeed, SpeedReadingDto, TelemetryFreshness, TelemetrySnapshotDto,
-    TemperatureReadingDto, TransportActionDto, TransportWriteLimit, TransportWriteLimitDto,
-    UsablePackCapacity, ValueQuality, ValueQuality as CoreValueQuality, ValueQualityDto,
-    ValueSource, ValueSource as CoreValueSource, ValueSourceDto, VerificationStatus,
-    VerificationStatusDto, VerifiedValue, Voltage as CoreVoltage, VoltageReadingDto,
-    VoltageSagEstimate, VoltageSagEstimator, VoltageSagInput, VoltageSagModel,
+    TemperatureReadingDto, TransportAction, TransportActionDto, TransportWriteLimit,
+    TransportWriteLimitDto, UsablePackCapacity, ValueQuality, ValueQuality as CoreValueQuality,
+    ValueQualityDto, ValueSource, ValueSource as CoreValueSource, ValueSourceDto,
+    VerificationStatus, VerificationStatusDto, VerifiedValue, Voltage as CoreVoltage,
+    VoltageReadingDto, VoltageSagEstimate, VoltageSagEstimator, VoltageSagInput, VoltageSagModel,
     WallClockUnixTimestamp, WriteMode,
 };
 use cutout_music::{
@@ -72,13 +81,13 @@ use cutout_protocols::{
     BEGODE_DATA_CHANNEL, BEGODE_FIELD_TILTBACK_SPEED_KMH, ConcreteAeroReadOnlySession,
     ConcreteFalconProfileDto, ConcreteFalconReadOnlySession, ConcreteSessionErrorDto,
     ConcreteSessionStepResultDto, DeviceDetectionEvent, DeviceDetectionResolution,
-    DeviceDetectionSession, DeviceFamily, IdentityBannerEvidence, PendingProbe,
-    ProtocolFamilyClassification, ProtocolFamilyState, ProtocolModelIdentityEvidence,
-    StagedIdentityInput, StagedIdentityOutcome, VETERAN_FIELD_PEDALS_MODE,
-    VETERAN_FIELD_SPEED_ALERT_DECI_KMH, VETERAN_FIELD_SPEED_TILTBACK_DECI_KMH,
-    VescBatteryType as CoreVescBatteryType, VescBoardProfile as CoreVescBoardProfile,
-    VescReadOnlySession as CoreVescReadOnlySession, begode_identification_probes,
-    identify_known_model, new_nosfet_aero_read_only_session,
+    DeviceDetectionSession, DeviceFamily, IdentityBannerEvidence, MelkGattEvidence,
+    MelkLightingProfile, PendingProbe, ProtocolFamilyClassification, ProtocolFamilyState,
+    ProtocolModelIdentityEvidence, StagedIdentityInput, StagedIdentityOutcome,
+    VETERAN_FIELD_PEDALS_MODE, VETERAN_FIELD_SPEED_ALERT_DECI_KMH,
+    VETERAN_FIELD_SPEED_TILTBACK_DECI_KMH, VescBatteryType as CoreVescBatteryType,
+    VescBoardProfile as CoreVescBoardProfile, VescReadOnlySession as CoreVescReadOnlySession,
+    begode_identification_probes, identify_known_model, new_nosfet_aero_read_only_session,
     try_new_begode_falcon_read_only_session,
 };
 use cutout_ride_maps as ride_maps;
@@ -1117,6 +1126,1031 @@ impl MobileIdentificationProbeWriteDto {
             payload: payload.to_vec(),
             mode: MobileIdentificationProbeWriteModeDto::WithoutResponse,
         }
+    }
+}
+
+/// GATT write mode for a standalone MELK lighting command.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Enum)]
+pub enum MobileMelkLightingWriteModeDto {
+    /// Write without waiting for a transport acknowledgement.
+    WithoutResponse,
+}
+
+/// Typed GATT-role evidence observed for a standalone MELK controller.
+///
+/// Swift/CoreBluetooth derives these flags from discovered UUIDs and
+/// characteristic properties; it never supplies UUIDs or protocol bytes to
+/// the Rust profile boundary.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct MobileMelkLightingGattEvidence {
+    /// The verified `FFF0` primary service was observed.
+    pub service_present: bool,
+
+    /// The verified `FFF3` characteristic supports write-without-response.
+    pub write_without_response: bool,
+
+    /// The verified `FFF4` characteristic supports notifications or indicates.
+    pub notify_or_indicate: bool,
+}
+
+/// One bounded MELK lighting write plus its independent confirmation policy.
+#[derive(Clone, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct MobileMelkLightingWriteDto {
+    /// Characteristic receiving the command frame.
+    pub characteristic: Vec<u8>,
+
+    /// Candidate protocol frame emitted by Rust.
+    pub payload: Vec<u8>,
+
+    /// Required transport write mode.
+    pub mode: MobileMelkLightingWriteModeDto,
+
+    /// Characteristic whose notifications may confirm the command.
+    pub confirmation_characteristic: Vec<u8>,
+
+    /// Capture-backed minimum command interval, when known.
+    pub minimum_interval_ms: Option<u16>,
+}
+
+/// Evidence-record capabilities exposed to the mobile lighting UI.
+#[derive(Clone, Debug, Eq, PartialEq, uniffi::Record)]
+#[allow(
+    clippy::struct_excessive_bools,
+    reason = "independent capability flags mirror the typed protocol evidence"
+)]
+pub struct MobileMelkLightingCapabilitiesDto {
+    /// Effect IDs with physical evidence on the MELK-OC21 controller.
+    pub verified_effect_ids: Vec<u8>,
+    /// Whether controller-local microphone modes are verified.
+    pub controller_microphone: bool,
+    /// Whether controller-local schedules are verified.
+    pub schedules: bool,
+    /// Whether independently addressable zones are verified.
+    pub addressable_zones: bool,
+    /// Whether controller-native named scenes are verified.
+    pub scenes: bool,
+}
+
+/// Returns the conservative, capture-backed MELK-OC21 capability set.
+#[uniffi::export]
+#[must_use]
+pub fn mobile_melk_lighting_capabilities() -> MobileMelkLightingCapabilitiesDto {
+    let capabilities = MelkLightingProfile::capabilities();
+    MobileMelkLightingCapabilitiesDto {
+        verified_effect_ids: capabilities.verified_effect_ids.to_vec(),
+        controller_microphone: capabilities.controller_microphone,
+        schedules: capabilities.schedules,
+        addressable_zones: capabilities.addressable_zones,
+        scenes: capabilities.scenes,
+    }
+}
+
+/// Invalid input presented to the MELK lighting boundary.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, thiserror::Error, uniffi::Error)]
+pub enum MobileMelkLightingError {
+    /// Name and observed GATT evidence did not identify the candidate profile.
+    #[error("invalid MELK GATT evidence")]
+    InvalidGattEvidence,
+
+    /// Brightness was outside the protocol's 0..=100 range.
+    #[error("invalid MELK brightness percentage")]
+    InvalidBrightness,
+
+    /// Playback parameters are outside the supported controller ranges.
+    #[error("invalid MELK playback parameters")]
+    InvalidPlayback,
+
+    /// The scheduler slot is outside the controller's supported ranges.
+    #[error("invalid MELK schedule")]
+    InvalidSchedule,
+
+    /// The capability is known by protocol shape but lacks capture-backed physical evidence.
+    #[error("unsupported MELK lighting capability")]
+    UnsupportedCapability,
+
+    /// The controller clock is outside the supported ranges.
+    #[error("invalid MELK clock")]
+    InvalidClock,
+}
+
+/// Verified standalone RGB profile persisted by the mobile boundary.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Enum)]
+pub enum MobileRgbLightingProfileKindDto {
+    /// ELK-BLEDOM/MELK profile verified for MELK-OC21.
+    MelkOc21,
+}
+
+/// Persisted command-confirmation evidence for a standalone RGB accessory.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Enum)]
+pub enum MobileRgbLightingConfirmationStateDto {
+    /// No explicit confirmation exists.
+    Unknown,
+    /// The command was independently confirmed.
+    Confirmed,
+    /// The command was explicitly left unconfirmed.
+    Unconfirmed,
+}
+
+/// Persisted transport status for a standalone RGB accessory.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Enum)]
+pub enum MobileRgbLightingConnectionStateDto {
+    /// No current transport conclusion is available.
+    Unknown,
+    /// The accessory is known to be disconnected.
+    Disconnected,
+    /// The verified accessory is currently connected.
+    Ready,
+}
+
+/// One named solid-lighting preset crossing the mobile boundary.
+#[derive(Clone, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct MobileRgbLightingPresetDto {
+    /// User-visible preset name.
+    pub name: String,
+
+    /// Typed solid-lighting state stored by the preset.
+    pub requested: MobileMelkLightingRestoreStateDto,
+}
+
+/// Invalid persisted RGB accessory data presented by the mobile platform.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, thiserror::Error, uniffi::Error)]
+pub enum MobileRgbLightingRecordError {
+    /// Bytes do not match the record schema.
+    #[error("invalid RGB lighting record encoding")]
+    InvalidEncoding,
+    /// The record schema version is not supported.
+    #[error("unsupported RGB lighting record version")]
+    UnsupportedVersion,
+    /// An identity or user label is empty or too large.
+    #[error("invalid RGB lighting record text")]
+    InvalidText,
+    /// The profile is not verified by this build.
+    #[error("invalid RGB lighting profile")]
+    InvalidProfile,
+    /// Profile version zero is not meaningful.
+    #[error("invalid RGB lighting profile version")]
+    InvalidProfileVersion,
+    /// The bounded preset count was exceeded.
+    #[error("too many RGB lighting presets")]
+    TooManyPresets,
+    /// A preset name is already present.
+    #[error("duplicate RGB lighting preset")]
+    DuplicatePreset,
+    /// A persisted state was outside the typed domain.
+    #[error("invalid RGB lighting state")]
+    InvalidState,
+}
+
+impl From<CoreRgbLightingRecordError> for MobileRgbLightingRecordError {
+    fn from(error: CoreRgbLightingRecordError) -> Self {
+        match error {
+            CoreRgbLightingRecordError::InvalidEncoding => Self::InvalidEncoding,
+            CoreRgbLightingRecordError::UnsupportedVersion => Self::UnsupportedVersion,
+            CoreRgbLightingRecordError::InvalidText => Self::InvalidText,
+            CoreRgbLightingRecordError::InvalidProfile => Self::InvalidProfile,
+            CoreRgbLightingRecordError::InvalidProfileVersion => Self::InvalidProfileVersion,
+            CoreRgbLightingRecordError::TooManyPresets => Self::TooManyPresets,
+            CoreRgbLightingRecordError::DuplicatePreset => Self::DuplicatePreset,
+            CoreRgbLightingRecordError::InvalidState => Self::InvalidState,
+        }
+    }
+}
+
+impl From<MobileRgbLightingProfileKindDto> for RgbLightingProfileKind {
+    fn from(profile: MobileRgbLightingProfileKindDto) -> Self {
+        match profile {
+            MobileRgbLightingProfileKindDto::MelkOc21 => Self::MelkOc21,
+        }
+    }
+}
+
+impl From<RgbLightingProfileKind> for MobileRgbLightingProfileKindDto {
+    fn from(profile: RgbLightingProfileKind) -> Self {
+        match profile {
+            RgbLightingProfileKind::MelkOc21 => Self::MelkOc21,
+        }
+    }
+}
+
+impl From<MobileRgbLightingConfirmationStateDto> for CoreRgbLightingConfirmationState {
+    fn from(state: MobileRgbLightingConfirmationStateDto) -> Self {
+        match state {
+            MobileRgbLightingConfirmationStateDto::Unknown => Self::Unknown,
+            MobileRgbLightingConfirmationStateDto::Confirmed => Self::Confirmed,
+            MobileRgbLightingConfirmationStateDto::Unconfirmed => Self::Unconfirmed,
+        }
+    }
+}
+
+impl From<CoreRgbLightingConfirmationState> for MobileRgbLightingConfirmationStateDto {
+    fn from(state: CoreRgbLightingConfirmationState) -> Self {
+        match state {
+            CoreRgbLightingConfirmationState::Unknown => Self::Unknown,
+            CoreRgbLightingConfirmationState::Confirmed => Self::Confirmed,
+            CoreRgbLightingConfirmationState::Unconfirmed => Self::Unconfirmed,
+        }
+    }
+}
+
+impl From<MobileRgbLightingConnectionStateDto> for CoreRgbLightingConnectionState {
+    fn from(state: MobileRgbLightingConnectionStateDto) -> Self {
+        match state {
+            MobileRgbLightingConnectionStateDto::Unknown => Self::Unknown,
+            MobileRgbLightingConnectionStateDto::Disconnected => Self::Disconnected,
+            MobileRgbLightingConnectionStateDto::Ready => Self::Ready,
+        }
+    }
+}
+
+impl From<CoreRgbLightingConnectionState> for MobileRgbLightingConnectionStateDto {
+    fn from(state: CoreRgbLightingConnectionState) -> Self {
+        match state {
+            CoreRgbLightingConnectionState::Unknown => Self::Unknown,
+            CoreRgbLightingConnectionState::Disconnected => Self::Disconnected,
+            CoreRgbLightingConnectionState::Ready => Self::Ready,
+        }
+    }
+}
+
+impl TryFrom<MobileMelkLightingRestoreStateDto> for RgbLightingRequestedState {
+    type Error = MobileRgbLightingRecordError;
+
+    fn try_from(state: MobileMelkLightingRestoreStateDto) -> Result<Self, Self::Error> {
+        let brightness = LightingBrightness::try_from_percent(state.brightness)
+            .map_err(|_| MobileRgbLightingRecordError::InvalidState)?;
+        Ok(Self::new(
+            if state.power_on {
+                LightingPowerState::On
+            } else {
+                LightingPowerState::Off
+            },
+            RgbColor::new(state.red, state.green, state.blue),
+            brightness,
+        )
+        .with_playback(
+            state
+                .playback
+                .unwrap_or(MobileLightingPlaybackDto::Solid)
+                .try_into()?,
+        ))
+    }
+}
+
+impl From<RgbLightingRequestedState> for MobileMelkLightingRestoreStateDto {
+    fn from(state: RgbLightingRequestedState) -> Self {
+        Self {
+            power_on: state.power() == LightingPowerState::On,
+            red: state.color().red(),
+            green: state.color().green(),
+            blue: state.color().blue(),
+            brightness: state.brightness().as_percent(),
+            playback: (state.playback() != cutout_core::LightingPlayback::Solid)
+                .then(|| state.playback().into()),
+        }
+    }
+}
+
+impl From<RgbLightingPreset> for MobileRgbLightingPresetDto {
+    fn from(preset: RgbLightingPreset) -> Self {
+        Self {
+            name: preset.name().to_owned(),
+            requested: preset.requested().into(),
+        }
+    }
+}
+
+/// Rust-owned versioned persistence record for one standalone RGB accessory.
+#[derive(Debug, uniffi::Object)]
+pub struct MobileRgbLightingAccessoryRecord {
+    inner: Mutex<RgbLightingAccessoryRecord>,
+}
+
+#[uniffi::export]
+impl MobileRgbLightingAccessoryRecord {
+    /// Creates an empty record for one verified profile.
+    ///
+    /// # Errors
+    ///
+    /// Returns a typed record error when the identity or profile version is invalid.
+    #[uniffi::constructor]
+    #[allow(clippy::needless_pass_by_value, reason = "UniFFI exports owned inputs")]
+    pub fn new(
+        platform_identifier: String,
+        profile: MobileRgbLightingProfileKindDto,
+        profile_version: u16,
+    ) -> Result<Arc<Self>, MobileRgbLightingRecordError> {
+        Ok(Arc::new(Self {
+            inner: Mutex::new(
+                RgbLightingAccessoryRecord::new(
+                    platform_identifier,
+                    profile.into(),
+                    profile_version,
+                )
+                .map_err(MobileRgbLightingRecordError::from)?,
+            ),
+        }))
+    }
+
+    /// Decodes a persisted record without exposing JSON to Swift.
+    ///
+    /// # Errors
+    ///
+    /// Returns a typed record error when bytes are malformed, unsupported, or out of bounds.
+    #[uniffi::constructor]
+    #[allow(clippy::needless_pass_by_value, reason = "UniFFI exports owned inputs")]
+    pub fn decode(bytes: Vec<u8>) -> Result<Arc<Self>, MobileRgbLightingRecordError> {
+        Ok(Arc::new(Self {
+            inner: Mutex::new(
+                RgbLightingAccessoryRecord::decode(&bytes)
+                    .map_err(MobileRgbLightingRecordError::from)?,
+            ),
+        }))
+    }
+
+    /// Encodes this record as versioned bytes.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`MobileRgbLightingRecordError::InvalidEncoding`] when Rust cannot serialize the
+    /// record.
+    pub fn encode(&self) -> Result<Vec<u8>, MobileRgbLightingRecordError> {
+        self.inner
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .encode()
+            .map_err(Into::into)
+    }
+
+    /// Returns the persisted platform identity.
+    pub fn platform_identifier(&self) -> String {
+        self.inner
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .platform_identifier()
+            .to_owned()
+    }
+
+    /// Returns the verified profile kind.
+    pub fn profile(&self) -> MobileRgbLightingProfileKindDto {
+        self.inner
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .profile()
+            .into()
+    }
+
+    /// Returns the verified profile schema version.
+    pub fn profile_version(&self) -> u16 {
+        self.inner
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .profile_version()
+    }
+
+    /// Returns the optional user alias.
+    pub fn alias(&self) -> Option<String> {
+        self.inner
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .alias()
+            .map(str::to_owned)
+    }
+
+    /// Sets or clears the user alias.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`MobileRgbLightingRecordError::InvalidText`] for an empty or oversized alias.
+    pub fn set_alias(&self, alias: Option<String>) -> Result<(), MobileRgbLightingRecordError> {
+        self.inner
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .set_alias(alias)
+            .map_err(Into::into)
+    }
+
+    /// Returns the optional installed-vehicle association.
+    pub fn vehicle_identifier(&self) -> Option<String> {
+        self.inner
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .vehicle_identifier()
+            .map(str::to_owned)
+    }
+
+    /// Sets or clears the installed-vehicle association.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`MobileRgbLightingRecordError::InvalidText`] for an empty or oversized identifier.
+    pub fn set_vehicle_identifier(
+        &self,
+        identifier: Option<String>,
+    ) -> Result<(), MobileRgbLightingRecordError> {
+        self.inner
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .set_vehicle_identifier(identifier)
+            .map_err(Into::into)
+    }
+
+    /// Returns the last requested solid-lighting state.
+    pub fn requested_state(&self) -> Option<MobileMelkLightingRestoreStateDto> {
+        self.inner
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .requested_state()
+            .map(Into::into)
+    }
+
+    /// Records the last typed state requested by the user.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`MobileRgbLightingRecordError::InvalidState`] for brightness above 100 percent.
+    pub fn set_requested_state(
+        &self,
+        state: Option<MobileMelkLightingRestoreStateDto>,
+    ) -> Result<(), MobileRgbLightingRecordError> {
+        let state = state.map(TryInto::try_into).transpose()?;
+        self.inner
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .set_requested_state(state);
+        Ok(())
+    }
+
+    /// Returns the last independently confirmed state.
+    pub fn confirmed_state(&self) -> Option<MobileMelkLightingRestoreStateDto> {
+        self.inner
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .confirmed_state()
+            .map(Into::into)
+    }
+
+    /// Records the last independently confirmed state.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`MobileRgbLightingRecordError::InvalidState`] for brightness above 100 percent.
+    pub fn set_confirmed_state(
+        &self,
+        state: Option<MobileMelkLightingRestoreStateDto>,
+    ) -> Result<(), MobileRgbLightingRecordError> {
+        let state = state.map(TryInto::try_into).transpose()?;
+        self.inner
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .set_confirmed_state(state);
+        Ok(())
+    }
+
+    /// Returns the latest command-confirmation evidence.
+    pub fn confirmation(&self) -> MobileRgbLightingConfirmationStateDto {
+        self.inner
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .confirmation()
+            .into()
+    }
+
+    /// Records command-confirmation evidence.
+    pub fn set_confirmation(&self, state: MobileRgbLightingConfirmationStateDto) {
+        self.inner
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .set_confirmation(state.into());
+    }
+
+    /// Returns the persisted transport status.
+    pub fn connection(&self) -> MobileRgbLightingConnectionStateDto {
+        self.inner
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .connection()
+            .into()
+    }
+
+    /// Records transport status without treating it as output truth.
+    pub fn set_connection(&self, state: MobileRgbLightingConnectionStateDto) {
+        self.inner
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .set_connection(state.into());
+    }
+
+    /// Returns whether explicit same-profile restore is enabled.
+    pub fn restore_enabled(&self) -> bool {
+        self.inner
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .restore_enabled()
+    }
+
+    /// Sets the explicit restore preference.
+    pub fn set_restore_enabled(&self, enabled: bool) {
+        self.inner
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .set_restore_enabled(enabled);
+    }
+
+    /// Returns all named presets in insertion order.
+    pub fn presets(&self) -> Vec<MobileRgbLightingPresetDto> {
+        self.inner
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .presets()
+            .iter()
+            .cloned()
+            .map(Into::into)
+            .collect()
+    }
+
+    /// Adds one named solid-lighting preset.
+    ///
+    /// # Errors
+    ///
+    /// Returns a typed record error for invalid state/name, duplicate names, or the preset bound.
+    pub fn add_preset(
+        &self,
+        name: String,
+        requested: MobileMelkLightingRestoreStateDto,
+    ) -> Result<(), MobileRgbLightingRecordError> {
+        let preset = RgbLightingPreset::new(name, requested.try_into()?)
+            .map_err(MobileRgbLightingRecordError::from)?;
+        self.inner
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .add_preset(preset)
+            .map_err(Into::into)
+    }
+
+    /// Removes a named app scene and reports whether it existed.
+    #[allow(
+        clippy::needless_pass_by_value,
+        reason = "String is the stable UniFFI ABI for this exported method"
+    )]
+    pub fn remove_preset(&self, name: String) -> bool {
+        self.inner
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .remove_preset(&name)
+    }
+
+    /// Replaces a named app scene and reports whether it existed.
+    ///
+    /// # Errors
+    ///
+    /// Returns a typed record error when the replacement state or name is invalid.
+    pub fn replace_preset(
+        &self,
+        name: String,
+        requested: MobileMelkLightingRestoreStateDto,
+    ) -> Result<bool, MobileRgbLightingRecordError> {
+        let preset = RgbLightingPreset::new(name, requested.try_into()?)
+            .map_err(MobileRgbLightingRecordError::from)?;
+        Ok(self
+            .inner
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .replace_preset(preset))
+    }
+}
+
+/// Complete solid-lighting state stored for an explicit restore.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct MobileMelkLightingRestoreStateDto {
+    /// Whether the controller was requested on.
+    pub power_on: bool,
+
+    /// Requested red channel.
+    pub red: u8,
+
+    /// Requested green channel.
+    pub green: u8,
+
+    /// Requested blue channel.
+    pub blue: u8,
+
+    /// Requested brightness percentage.
+    pub brightness: u8,
+
+    /// Controller playback; omitted values preserve legacy solid-color presets.
+    #[uniffi(default = None)]
+    pub playback: Option<MobileLightingPlaybackDto>,
+}
+
+/// Typed result kind for an attempted lighting restore.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Enum)]
+pub enum MobileMelkLightingRestoreDecisionKindDto {
+    /// Restore was disabled by the user.
+    Disabled,
+
+    /// `CoreBluetooth` restored a different platform identity.
+    DifferentAccessory,
+
+    /// The remembered state may be restored.
+    Restore,
+}
+
+/// Result of reconciling a persisted lighting marker.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct MobileMelkLightingRestoreDecisionDto {
+    /// Typed decision kind.
+    pub kind: MobileMelkLightingRestoreDecisionKindDto,
+
+    /// Requested state when `kind` is `Restore`.
+    pub requested: Option<MobileMelkLightingRestoreStateDto>,
+}
+
+/// Rust-owned marker for one selected MELK accessory and its confirmed state.
+#[derive(Debug, uniffi::Object)]
+pub struct MobileMelkLightingRestoreMarker {
+    marker: CoreRgbLightingRestoreMarker,
+}
+
+#[uniffi::export]
+impl MobileMelkLightingRestoreMarker {
+    /// Creates a marker from a confirmed, bounded requested state.
+    ///
+    /// # Errors
+    ///
+    /// Returns `InvalidBrightness` when the requested brightness is outside the
+    /// protocol's percentage range.
+    #[uniffi::constructor]
+    #[allow(clippy::needless_pass_by_value, reason = "UniFFI exports owned inputs")]
+    pub fn new(
+        platform_identifier: String,
+        requested: MobileMelkLightingRestoreStateDto,
+    ) -> Result<Arc<Self>, MobileMelkLightingError> {
+        let brightness = LightingBrightness::try_from_percent(requested.brightness)
+            .map_err(|_| MobileMelkLightingError::InvalidBrightness)?;
+        let playback = requested
+            .playback
+            .unwrap_or(MobileLightingPlaybackDto::Solid)
+            .try_into()
+            .map_err(|_| MobileMelkLightingError::InvalidPlayback)?;
+        let requested = RgbLightingRequestedState::new(
+            if requested.power_on {
+                LightingPowerState::On
+            } else {
+                LightingPowerState::Off
+            },
+            RgbColor::new(requested.red, requested.green, requested.blue),
+            brightness,
+        )
+        .with_playback(playback);
+        Ok(Arc::new(Self {
+            marker: CoreRgbLightingRestoreMarker::new(platform_identifier, requested),
+        }))
+    }
+
+    /// Reconciles a marker with a restored platform identity and opt-in flag.
+    #[must_use]
+    #[allow(clippy::needless_pass_by_value, reason = "UniFFI exports owned inputs")]
+    pub fn recover(
+        &self,
+        restored_platform_identifier: String,
+        restore_enabled: bool,
+    ) -> MobileMelkLightingRestoreDecisionDto {
+        match self
+            .marker
+            .recover(&restored_platform_identifier, restore_enabled)
+        {
+            RgbLightingRestoreDecision::Disabled => MobileMelkLightingRestoreDecisionDto {
+                kind: MobileMelkLightingRestoreDecisionKindDto::Disabled,
+                requested: None,
+            },
+            RgbLightingRestoreDecision::DifferentAccessory => {
+                MobileMelkLightingRestoreDecisionDto {
+                    kind: MobileMelkLightingRestoreDecisionKindDto::DifferentAccessory,
+                    requested: None,
+                }
+            }
+            RgbLightingRestoreDecision::Restore(requested) => {
+                MobileMelkLightingRestoreDecisionDto {
+                    kind: MobileMelkLightingRestoreDecisionKindDto::Restore,
+                    requested: Some(requested.into()),
+                }
+            }
+        }
+    }
+}
+
+/// Rust-owned candidate profile for an observed `MELK-OC21` controller.
+#[derive(Debug, uniffi::Object)]
+pub struct MobileMelkLightingProfile;
+
+#[uniffi::export]
+impl MobileMelkLightingProfile {
+    /// Selects the profile only when the family name and all typed GATT roles agree.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`MobileMelkLightingError::InvalidGattEvidence`] when the identity evidence does
+    /// not match the candidate profile.
+    #[uniffi::constructor]
+    #[allow(clippy::needless_pass_by_value, reason = "UniFFI exports owned inputs")]
+    pub fn new(
+        name: String,
+        evidence: MobileMelkLightingGattEvidence,
+    ) -> Result<Arc<Self>, MobileMelkLightingError> {
+        let evidence = MelkGattEvidence {
+            service: evidence
+                .service_present
+                .then_some(cutout_protocols::MELK_SERVICE_CHANNEL),
+            write: evidence
+                .write_without_response
+                .then_some(cutout_protocols::MELK_WRITE_CHANNEL),
+            notify: evidence
+                .notify_or_indicate
+                .then_some(cutout_protocols::MELK_NOTIFY_CHANNEL),
+        };
+        MelkLightingProfile::identify(&name, evidence)
+            .map(|_| Arc::new(Self))
+            .ok_or(MobileMelkLightingError::InvalidGattEvidence)
+    }
+    /// Returns the MELK login sequence required by some firmware revisions.
+    #[must_use]
+    pub fn initialization(&self) -> Vec<MobileMelkLightingWriteDto> {
+        MelkLightingProfile::initialization_actions()
+            .into_iter()
+            .map(mobile_melk_transport_action)
+            .collect()
+    }
+
+    /// Creates an on/off command write.
+    #[must_use]
+    pub fn set_power(&self, on: bool) -> MobileMelkLightingWriteDto {
+        mobile_melk_write(RgbLightingCommand::SetPower(if on {
+            LightingPowerState::On
+        } else {
+            LightingPowerState::Off
+        }))
+    }
+
+    /// Creates a solid RGB command write.
+    #[must_use]
+    pub fn set_solid_color(&self, red: u8, green: u8, blue: u8) -> MobileMelkLightingWriteDto {
+        mobile_melk_write(RgbLightingCommand::SetSolidColor(RgbColor::new(
+            red, green, blue,
+        )))
+    }
+
+    /// Creates a brightness command write.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`MobileMelkLightingError::InvalidBrightness`] when `percentage` is greater than
+    /// 100.
+    pub fn set_brightness(
+        &self,
+        percentage: u8,
+    ) -> Result<MobileMelkLightingWriteDto, MobileMelkLightingError> {
+        let brightness = LightingBrightness::try_from_percent(percentage)
+            .map_err(|_| MobileMelkLightingError::InvalidBrightness)?;
+        Ok(mobile_melk_write(RgbLightingCommand::SetBrightness(
+            brightness,
+        )))
+    }
+}
+
+#[cfg(test)]
+mod melk_lighting_tests {
+    use super::{
+        MobileMelkLightingError, MobileMelkLightingGattEvidence, MobileMelkLightingProfile,
+        MobileMelkLightingRestoreDecisionKindDto, MobileMelkLightingRestoreMarker,
+        MobileMelkLightingRestoreStateDto, MobileMelkLightingWriteModeDto,
+        MobileRgbLightingAccessoryRecord, MobileRgbLightingConfirmationStateDto,
+        MobileRgbLightingConnectionStateDto, MobileRgbLightingProfileKindDto,
+        MobileRgbLightingRecordError, mobile_melk_lighting_capabilities,
+    };
+    use cutout_protocols::{MELK_NOTIFY_CHANNEL, MELK_WRITE_CHANNEL};
+
+    fn observed_profile() -> std::sync::Arc<MobileMelkLightingProfile> {
+        MobileMelkLightingProfile::new(
+            "MELK-OC21  6A".to_owned(),
+            MobileMelkLightingGattEvidence {
+                service_present: true,
+                write_without_response: true,
+                notify_or_indicate: true,
+            },
+        )
+        .expect("observed MELK evidence should select the profile")
+    }
+
+    #[test]
+    fn mobile_capabilities_match_the_melk_evidence_record() {
+        let capabilities = mobile_melk_lighting_capabilities();
+        assert_eq!(
+            capabilities.verified_effect_ids,
+            vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 16, 22, 75]
+        );
+        assert!(!capabilities.controller_microphone);
+        assert!(!capabilities.schedules);
+        assert!(!capabilities.addressable_zones);
+        assert!(!capabilities.scenes);
+    }
+
+    #[test]
+    fn profile_requires_name_and_complete_gatt_evidence() {
+        let result = MobileMelkLightingProfile::new(
+            "MELK-OC21  6A".to_owned(),
+            MobileMelkLightingGattEvidence {
+                service_present: true,
+                write_without_response: true,
+                notify_or_indicate: false,
+            },
+        );
+        assert!(matches!(
+            result,
+            Err(MobileMelkLightingError::InvalidGattEvidence)
+        ));
+
+        let result = MobileMelkLightingProfile::new(
+            "Govee_H607C_D635".to_owned(),
+            MobileMelkLightingGattEvidence {
+                service_present: true,
+                write_without_response: true,
+                notify_or_indicate: true,
+            },
+        );
+        assert!(matches!(
+            result,
+            Err(MobileMelkLightingError::InvalidGattEvidence)
+        ));
+    }
+
+    #[test]
+    fn writes_include_transport_and_confirmation_policy() {
+        let profile = observed_profile();
+        let write = profile.set_power(true);
+
+        assert_eq!(write.characteristic, MELK_WRITE_CHANNEL.as_bytes());
+        assert_eq!(
+            write.confirmation_characteristic,
+            MELK_NOTIFY_CHANNEL.as_bytes()
+        );
+        assert_eq!(write.mode, MobileMelkLightingWriteModeDto::WithoutResponse);
+        assert_eq!(write.minimum_interval_ms, Some(50));
+        assert_eq!(write.payload, [0x7e, 0x00, 0x04, 0x01, 0, 0, 0, 0, 0xef]);
+    }
+    #[test]
+    fn initialization_writes_use_the_melk_write_channel() {
+        let writes = observed_profile().initialization();
+        assert_eq!(writes.len(), 2);
+        assert_eq!(writes[0].payload, [0x7e, 0x07, 0x83]);
+        assert_eq!(writes[1].payload, [0x7e, 0x04, 0x04]);
+        assert!(
+            writes
+                .iter()
+                .all(|write| write.characteristic == MELK_WRITE_CHANNEL.as_bytes())
+        );
+        assert!(
+            writes
+                .iter()
+                .all(|write| write.mode == MobileMelkLightingWriteModeDto::WithoutResponse)
+        );
+    }
+
+    #[test]
+    fn brightness_rejects_values_outside_the_protocol_range() {
+        let profile = observed_profile();
+        assert_eq!(
+            profile.set_brightness(101),
+            Err(MobileMelkLightingError::InvalidBrightness)
+        );
+    }
+
+    #[test]
+    fn restore_marker_requires_opt_in_and_same_platform_identity() {
+        let marker = MobileMelkLightingRestoreMarker::new(
+            "melk-1".to_owned(),
+            MobileMelkLightingRestoreStateDto {
+                power_on: true,
+                red: 1,
+                green: 2,
+                blue: 3,
+                brightness: 42,
+                playback: None,
+            },
+        )
+        .expect("bounded restore state should be accepted");
+
+        assert_eq!(
+            marker.recover("melk-1".to_owned(), false).kind,
+            MobileMelkLightingRestoreDecisionKindDto::Disabled
+        );
+        assert_eq!(
+            marker.recover("melk-2".to_owned(), true).kind,
+            MobileMelkLightingRestoreDecisionKindDto::DifferentAccessory
+        );
+        let decision = marker.recover("melk-1".to_owned(), true);
+        assert_eq!(
+            decision.kind,
+            MobileMelkLightingRestoreDecisionKindDto::Restore
+        );
+        assert_eq!(
+            decision.requested,
+            Some(MobileMelkLightingRestoreStateDto {
+                power_on: true,
+                red: 1,
+                green: 2,
+                blue: 3,
+                brightness: 42,
+                playback: None,
+            })
+        );
+    }
+
+    #[test]
+    fn persisted_rgb_record_round_trips_through_mobile_boundary() {
+        let record = MobileRgbLightingAccessoryRecord::new(
+            "melk-1".to_owned(),
+            MobileRgbLightingProfileKindDto::MelkOc21,
+            1,
+        )
+        .expect("record should be constructible");
+        assert_eq!(record.profile(), MobileRgbLightingProfileKindDto::MelkOc21);
+        assert_eq!(record.profile_version(), 1);
+        record
+            .set_alias(Some("Aero LEDs".to_owned()))
+            .expect("alias should be valid");
+        record
+            .set_vehicle_identifier(Some("euc-1".to_owned()))
+            .expect("association should be valid");
+        let state = MobileMelkLightingRestoreStateDto {
+            power_on: true,
+            red: 1,
+            green: 2,
+            blue: 3,
+            brightness: 42,
+            playback: None,
+        };
+        record
+            .set_requested_state(Some(state))
+            .expect("requested state should be valid");
+        record
+            .set_confirmed_state(Some(state))
+            .expect("confirmed state should be valid");
+        record.set_confirmation(MobileRgbLightingConfirmationStateDto::Confirmed);
+        record.set_connection(MobileRgbLightingConnectionStateDto::Ready);
+        record.set_restore_enabled(true);
+        record
+            .add_preset("Cruise".to_owned(), state)
+            .expect("preset should be valid");
+
+        let restored = MobileRgbLightingAccessoryRecord::decode(
+            record.encode().expect("record should encode"),
+        )
+        .expect("record should decode");
+        assert_eq!(restored.platform_identifier(), "melk-1");
+        assert_eq!(restored.alias().as_deref(), Some("Aero LEDs"));
+        assert_eq!(restored.vehicle_identifier().as_deref(), Some("euc-1"));
+        assert_eq!(restored.requested_state(), Some(state));
+        assert_eq!(restored.confirmed_state(), Some(state));
+        assert_eq!(
+            restored.confirmation(),
+            MobileRgbLightingConfirmationStateDto::Confirmed
+        );
+        assert_eq!(
+            restored.connection(),
+            MobileRgbLightingConnectionStateDto::Ready
+        );
+        assert!(restored.restore_enabled());
+        assert_eq!(restored.presets().len(), 1);
+        assert!(
+            restored
+                .replace_preset("Cruise".to_owned(), state)
+                .expect("preset replacement should validate")
+        );
+        assert!(restored.remove_preset("Cruise".to_owned()));
+        assert!(!restored.remove_preset("Cruise".to_owned()));
+    }
+
+    #[test]
+    fn persisted_rgb_record_refuses_invalid_brightness_without_mutation() {
+        let record = MobileRgbLightingAccessoryRecord::new(
+            "melk-1".to_owned(),
+            MobileRgbLightingProfileKindDto::MelkOc21,
+            1,
+        )
+        .expect("record should be constructible");
+        let invalid = MobileMelkLightingRestoreStateDto {
+            power_on: true,
+            red: 1,
+            green: 2,
+            blue: 3,
+            brightness: 101,
+            playback: None,
+        };
+        assert_eq!(
+            record.set_requested_state(Some(invalid)),
+            Err(MobileRgbLightingRecordError::InvalidState)
+        );
+        assert_eq!(record.requested_state(), None);
     }
 }
 
@@ -7198,6 +8232,11 @@ impl MobileRideMapCore {
 
     /// Records one transition and returns the authoritative sequence assigned
     /// by Rust when a new event is appended.
+    ///
+    /// # Errors
+    ///
+    /// Returns a typed ride-map error when the event is invalid, no ride is active,
+    /// or durable storage is unavailable.
     #[allow(clippy::needless_pass_by_value)]
     pub fn record_music_event_with_sequence(
         &self,
@@ -9853,7 +10892,7 @@ impl MobilePevcapCaptureBuilder {
 
     /// Sets the ride music-history policy used for future PEVCAP metadata.
     ///
-    /// Disabled drops all music observations. OpaqueItem drops provider identifiers that embed
+    /// Disabled drops all music observations. `OpaqueItem` drops provider identifiers that embed
     /// display metadata. Changing policy clears queued context so an earlier, more permissive
     /// choice cannot leak into a later frame. Existing PEVCAP files remain separate private
     /// capture artifacts and are not rewritten by ride-history deletion.
@@ -10047,6 +11086,11 @@ impl MobilePevcapCaptureBuilder {
     }
 
     /// Records an inbound notification with optional music correlation metadata.
+    ///
+    /// # Panics
+    ///
+    /// Panics only if the internal record builder rejects music metadata for an inbound record;
+    /// the builder's invariant guarantees that this cannot occur.
     #[allow(clippy::needless_pass_by_value, clippy::too_many_arguments)]
     pub fn record_notification_with_context_and_music(
         &self,
@@ -10729,6 +11773,50 @@ impl From<MobileResolvedIdentityDto> for PevcapResolvedIdentity {
 
 fn mobile_gatt_channel(channel: &[u8]) -> GattChannel {
     GattChannel::from_bytes(mobile_channel_bytes(channel))
+}
+
+fn mobile_melk_transport_action(action: TransportAction) -> MobileMelkLightingWriteDto {
+    let TransportAction::Write {
+        channel,
+        bytes,
+        mode,
+    } = action
+    else {
+        debug_assert!(false, "MELK lighting commands always produce writes");
+        return MobileMelkLightingWriteDto {
+            characteristic: Vec::new(),
+            payload: Vec::new(),
+            mode: MobileMelkLightingWriteModeDto::WithoutResponse,
+            confirmation_characteristic: Vec::new(),
+            minimum_interval_ms: None,
+        };
+    };
+    let policy = MelkLightingProfile::write_policy();
+    MobileMelkLightingWriteDto {
+        characteristic: channel.as_bytes().to_vec(),
+        payload: bytes.as_slice().to_vec(),
+        mode: mobile_melk_write_mode(mode),
+        confirmation_characteristic: policy.confirmation_channel.as_bytes().to_vec(),
+        minimum_interval_ms: policy.minimum_interval_ms,
+    }
+}
+
+fn mobile_melk_write(command: RgbLightingCommand) -> MobileMelkLightingWriteDto {
+    mobile_melk_transport_action(MelkLightingProfile::write_action(command))
+}
+
+fn mobile_melk_control(command: cutout_core::MelkControl) -> MobileMelkLightingWriteDto {
+    mobile_melk_transport_action(MelkLightingProfile::control_action(command))
+}
+
+fn mobile_melk_write_mode(mode: WriteMode) -> MobileMelkLightingWriteModeDto {
+    match mode {
+        WriteMode::WithoutResponse => MobileMelkLightingWriteModeDto::WithoutResponse,
+        WriteMode::WithResponse => {
+            debug_assert!(false, "MELK policy is write without response");
+            MobileMelkLightingWriteModeDto::WithoutResponse
+        }
+    }
 }
 
 /// Mobile-facing wrapper for a NOSFET Aero read-only session.
@@ -17608,6 +18696,10 @@ mod tests {
     }
 
     #[test]
+    #[allow(
+        clippy::too_many_lines,
+        reason = "the opt-in test exercises the complete ride and music transition contract"
+    )]
     fn music_transition_is_recorded_only_after_opt_in() {
         let _guard = RIDE_DATABASE_TEST_LOCK
             .lock()
