@@ -390,6 +390,7 @@ final class LightingRouteModel {
             controlError = localizedAppText("lighting.error.power_not_ready")
             return
         }
+        controlError = nil
         requestedState.powerOn = on
         updatePersistedRequestedState()
         commandStatus = .requested
@@ -400,6 +401,7 @@ final class LightingRouteModel {
             controlError = localizedAppText("lighting.error.color_not_ready")
             return
         }
+        controlError = nil
         requestedState.playback = nil
         requestedState.red = red
         requestedState.green = green
@@ -412,6 +414,7 @@ final class LightingRouteModel {
         let now = ProcessInfo.processInfo.systemUptime
         guard now - lastColorPreviewAt >= 1.0 / 30.0 else { return }
         guard sendSolidColor(red: red, green: green, blue: blue) else { return }
+        controlError = nil
         requestedState.playback = nil
         lastColorPreviewAt = now
         requestedState.red = red
@@ -425,6 +428,7 @@ final class LightingRouteModel {
             controlError = localizedAppText("lighting.error.brightness_not_ready")
             return
         }
+        controlError = nil
         requestedState.brightness = percentage
         updatePersistedRequestedState()
         commandStatus = .requested

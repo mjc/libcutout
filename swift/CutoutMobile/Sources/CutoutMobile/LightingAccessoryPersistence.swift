@@ -1,7 +1,7 @@
 import CutoutMobileFFI
 import Foundation
 
-/// Rust-backed persistence for the selected standalone MELK accessory.
+/// Rust-backed persistence for the selected Aero-installed MELK controller.
 ///
 /// The store owns the versioned record and its one-time migration boundary. UI models only
 /// coordinate transport events and render the typed values exposed here.
@@ -101,8 +101,11 @@ public final class LightingAccessoryPersistence {
     /// - Returns: `true` only when a new record was created.
     @discardableResult
     public func ensureRecord(platformIdentifier: String) -> Bool {
-        guard !platformIdentifier.isEmpty,
-              record?.platformIdentifier() != platformIdentifier else {
+        guard !platformIdentifier.isEmpty else {
+            return false
+        }
+        if record?.platformIdentifier() == platformIdentifier {
+            backfillMissingCapabilitiesFingerprint()
             return false
         }
         guard let newRecord = try? MobileRgbLightingAccessoryRecord(
@@ -116,6 +119,18 @@ public final class LightingAccessoryPersistence {
         defaults.set(Self.currentCapabilitiesFingerprint, forKey: Key.capabilitiesFingerprint)
         persist()
         return true
+    }
+
+    /// Repairs records written before capability fingerprints were introduced. A present
+    /// fingerprint is never replaced here: a stale value must fail closed until the user
+    /// explicitly re-pairs after profile evidence changes.
+    private func backfillMissingCapabilitiesFingerprint() {
+        guard record?.profile() == .melkOc21,
+              record?.profileVersion() == Self.currentProfileVersion,
+              defaults.string(forKey: Key.capabilitiesFingerprint) == nil else {
+            return
+        }
+        defaults.set(Self.currentCapabilitiesFingerprint, forKey: Key.capabilitiesFingerprint)
     }
 
     public func setConnection(_ state: MobileRgbLightingConnectionStateDto) {

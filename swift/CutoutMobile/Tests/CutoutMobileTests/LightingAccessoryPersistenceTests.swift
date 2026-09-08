@@ -61,7 +61,7 @@ final class LightingAccessoryPersistenceTests: XCTestCase {
     }
 
     func testStoreRejectsRestoreWhenCapabilityFingerprintIsStale() throws {
-        let suiteName = "LightingAccessoryPersistenceTests-compatibility-(UUID().uuidString)"
+        let suiteName = "LightingAccessoryPersistenceTests-compatibility-\(UUID().uuidString)"
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
         defer { defaults.removePersistentDomain(forName: suiteName) }
 
@@ -73,6 +73,21 @@ final class LightingAccessoryPersistenceTests: XCTestCase {
         let reopened = LightingAccessoryPersistence(defaults: defaults)
 
         XCTAssertFalse(reopened.isCompatibleWithCurrentProfile)
+    }
+
+    func testStoreBackfillsMissingCapabilityFingerprintForExistingRecord() throws {
+        let suiteName = "LightingAccessoryPersistenceTests-backfill-\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        let store = LightingAccessoryPersistence(defaults: defaults)
+        XCTAssertTrue(store.ensureRecord(platformIdentifier: "legacy-canonical-melk"))
+        defaults.removeObject(forKey: "lighting.accessory.capabilitiesFingerprint")
+
+        let reopened = LightingAccessoryPersistence(defaults: defaults)
+        XCTAssertFalse(reopened.isCompatibleWithCurrentProfile)
+        XCTAssertFalse(reopened.ensureRecord(platformIdentifier: "legacy-canonical-melk"))
+        XCTAssertTrue(reopened.isCompatibleWithCurrentProfile)
     }
 
     func testStoreReplacesRecordWhenTheConnectedIdentityChanges() throws {

@@ -928,6 +928,25 @@ final class CutoutAppRouteTests: XCTestCase {
     }
 
     @MainActor
+    func testLightingRouteModelClearsCommandErrorAfterRecovery() throws {
+        let suiteName = "CutoutAppRouteTests.lightingRefusalRecovery-\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        let fake = TestLightingSession()
+        fake.powerResult = false
+        let model = LightingRouteModel(session: fake, persistence: LightingAccessoryPersistence(defaults: defaults))
+        model.setPower(true)
+        XCTAssertNotNil(model.controlError)
+
+        fake.powerResult = true
+        model.setPower(true)
+
+        XCTAssertNil(model.controlError)
+        XCTAssertEqual(model.commandStatus, .requested)
+    }
+
+    @MainActor
     func testLightingRouteModelCountsOneNotificationOnce() async throws {
         let suiteName = "CutoutAppRouteTests.lightingNotification"
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))

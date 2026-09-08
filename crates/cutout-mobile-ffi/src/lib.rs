@@ -1163,7 +1163,7 @@ pub struct MobileMelkLightingWriteDto {
     pub minimum_interval_ms: Option<u16>,
 }
 
-/// Capture-backed capabilities exposed to the mobile lighting UI.
+/// Evidence-record capabilities exposed to the mobile lighting UI.
 #[derive(Clone, Debug, Eq, PartialEq, uniffi::Record)]
 #[allow(
     clippy::struct_excessive_bools,
@@ -1933,7 +1933,7 @@ mod melk_lighting_tests {
     }
 
     #[test]
-    fn mobile_capabilities_match_the_capture_backed_profile() {
+    fn mobile_capabilities_match_the_melk_evidence_record() {
         let capabilities = mobile_melk_lighting_capabilities();
         assert_eq!(
             capabilities.verified_effect_ids,

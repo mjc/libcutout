@@ -14,16 +14,16 @@ use cutout_core::{
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct MelkLightingProfile;
 
-/// Exact nine-byte effect write fixtures retained for every effect currently exposed by the
-/// MELK-OC21 UI. Keeping the wire bytes beside the allowlist prevents a catalog rename or a
-/// reference-only ID from silently widening the write boundary.
+/// Candidate nine-byte effect command examples retained for every effect currently exposed by
+/// the MELK-OC21 UI. These encode the public MELK template; they are not traffic captures and do
+/// not replace exact-controller capture evidence.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct MelkLightingEffectFixture {
     pub id: u8,
     pub frame: [u8; MELK_FRAME_LEN],
 }
 
-/// Capture-backed capabilities for the current MELK-OC21 profile.
+/// User-observed capabilities for the current MELK-OC21 profile.
 ///
 /// The protocol encoder can represent additional reference commands, but only these
 /// capabilities have physical evidence for this controller so far.
@@ -61,13 +61,13 @@ impl MelkLightingCapabilities {
         }
     }
 
-    /// Returns the bounded OC21 effect command fixtures used by the mobile write boundary.
+    /// Returns bounded candidate OC21 effect command examples for diagnostics and tests.
     #[must_use]
     pub const fn effect_fixtures() -> &'static [MelkLightingEffectFixture] {
         &MELK_OC21_EFFECT_FIXTURES
     }
 
-    /// Returns whether the effect ID has capture-backed physical evidence.
+    /// Returns whether the effect ID is enabled from the current OC21 evidence record.
     #[must_use]
     pub fn supports_effect(self, pattern: u8) -> bool {
         self.verified_effect_ids.contains(&pattern)
@@ -77,7 +77,7 @@ impl MelkLightingCapabilities {
     }
 }
 
-const fn fixture(id: u8) -> MelkLightingEffectFixture {
+const fn candidate_fixture(id: u8) -> MelkLightingEffectFixture {
     MelkLightingEffectFixture {
         id,
         frame: [0x7e, 0x05, 0x03, id, 0x06, 0xff, 0xff, 0x00, 0xef],
@@ -85,19 +85,19 @@ const fn fixture(id: u8) -> MelkLightingEffectFixture {
 }
 
 const MELK_OC21_EFFECT_FIXTURES: [MelkLightingEffectFixture; 13] = [
-    fixture(1),
-    fixture(2),
-    fixture(3),
-    fixture(4),
-    fixture(5),
-    fixture(6),
-    fixture(7),
-    fixture(8),
-    fixture(9),
-    fixture(10),
-    fixture(16),
-    fixture(22),
-    fixture(75),
+    candidate_fixture(1),
+    candidate_fixture(2),
+    candidate_fixture(3),
+    candidate_fixture(4),
+    candidate_fixture(5),
+    candidate_fixture(6),
+    candidate_fixture(7),
+    candidate_fixture(8),
+    candidate_fixture(9),
+    candidate_fixture(10),
+    candidate_fixture(16),
+    candidate_fixture(22),
+    candidate_fixture(75),
 ];
 
 /// Length of a candidate MELK command frame.
@@ -160,7 +160,7 @@ pub struct MelkWritePolicy {
 }
 
 impl MelkLightingProfile {
-    /// Returns the capture-backed capabilities for MELK-OC21.
+    /// Returns the current evidence-record capabilities for the Aero-installed MELK-OC21.
     #[must_use]
     pub const fn capabilities() -> MelkLightingCapabilities {
         MelkLightingCapabilities::melk_oc21()
@@ -463,7 +463,7 @@ mod tests {
     }
 
     #[test]
-    fn every_enabled_effect_has_an_exact_command_fixture() {
+    fn every_enabled_effect_has_a_bounded_candidate_command() {
         let capabilities = MelkLightingProfile::capabilities();
         let fixtures = MelkLightingCapabilities::effect_fixtures();
         assert_eq!(

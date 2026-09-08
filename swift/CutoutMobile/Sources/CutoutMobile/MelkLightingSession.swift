@@ -40,7 +40,7 @@ struct MelkLightingTargetPolicy: Equatable, Sendable {
             || UUID(uuidString: identifier.rawValue) == preferredUUID
     }
 
-    private static func isMelkName(_ name: String?) -> Bool {
+    static func isMelkName(_ name: String?) -> Bool {
         name?.trimmingCharacters(in: .whitespacesAndNewlines)
             .lowercased().hasPrefix("melk") == true
     }
@@ -565,7 +565,17 @@ public final class MelkLightingPeripheralSession: NSObject, CBCentralManagerDele
             }
             if discoveredPeripherals[peripheral.identifier] == nil,
                discoveredPeripherals.count >= 32 {
-                return
+                // Keep one slot available for the known MELK family so unrelated named
+                // peripherals cannot hide the user's controller during first pairing.
+                if !MelkLightingTargetPolicy.isMelkName(name) {
+                    return
+                }
+                guard let evicted = discoveredPeripherals.keys.first(where: { key in
+                    !MelkLightingTargetPolicy.isMelkName(discoveredPeripherals[key]?.name)
+                }) else {
+                    return
+                }
+                discoveredPeripherals.removeValue(forKey: evicted)
             }
             discoveredPeripherals[peripheral.identifier] = peripheral
             record("candidate=\(name ?? "") id=\(peripheral.identifier.uuidString) rssi=\(rssi)")
@@ -786,8 +796,8 @@ public final class MelkLightingPeripheralSession: NSObject, CBCentralManagerDele
                 if case let .subscribe(channel) = candidate.subscription {
                     sink?.subscribe(channel: channel)
                 }
-                // Subscribe before the handshake so a fast FFF4 response cannot be lost while
-                // initialization is being drained.
+                // Wait for CoreBluetooth to confirm notification setup before sending the
+                // handshake; subscribing is asynchronous and does not itself establish readiness.
                 drainInitialization()
                 record("gatt=FFF0 write=FFF3 notify=FFF4")
             } catch {
@@ -830,6 +840,7 @@ public final class MelkLightingPeripheralSession: NSObject, CBCentralManagerDele
                 return
             }
             notificationReady = true
+            drainInitialization()
             finishReadyIfPossible()
         }
     }
@@ -875,6 +886,7 @@ public final class MelkLightingPeripheralSession: NSObject, CBCentralManagerDele
     private func drainInitialization() {
         guard connectionState == .discovering,
               initializationTask == nil,
+              notificationReady,
               let peripheral,
               let sink,
               !pendingInitialization.isEmpty,
