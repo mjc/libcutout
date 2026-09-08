@@ -1531,8 +1531,24 @@ public final class CutoutSessionCore: NSObject {
     /// Retains one bounded music observation for the next captured BLE frame.
     /// The Rust writer consumes it once, keeping capture metadata low-rate.
     public func updateMusicCaptureObservation(_ observation: MobilePevcapMusicEventDto?) {
-        latestMusicCaptureObservation = observation
-        _ = captureBuilder?.setMusicContext(music: observation)
+        onBleQueue {
+            latestMusicCaptureObservation = observation
+            if let observation,
+               let captured = captureMusicObservation(observation) {
+                _ = captureBuilder?.recordMusicEvent(music: captured)
+            }
+        }
+    }
+
+    private func captureMusicObservation(
+        _ observation: MobilePevcapMusicEventDto?
+    ) -> MobilePevcapMusicEventDto? {
+        guard let observation, let captureStartedAt else { return observation }
+        var relative = observation
+        relative.monotonicAtMs = observation.monotonicAtMs >= captureStartedAt.rawValue
+            ? observation.monotonicAtMs - captureStartedAt.rawValue
+            : 0
+        return relative
     }
 
     private func captureFrame(
@@ -1603,7 +1619,6 @@ public final class CutoutSessionCore: NSObject {
         ].forEach { _ = builder.addAnnotation(annotation: $0) }
         extraAnnotations.forEach { _ = builder.addAnnotation(annotation: sanitizedPevcapAnnotation($0)) }
         captureBuilder = builder
-        _ = builder.setMusicContext(music: latestMusicCaptureObservation)
         guard builder.startWriter(path: url.path) else {
             record("capture_error=writer_start_failed")
             captureBuilder = nil
@@ -1645,6 +1660,7 @@ public final class CutoutSessionCore: NSObject {
         captureBuilder = nil
         captureFileURL = nil
         captureStartedAt = nil
+        latestMusicCaptureObservation = nil
         let finish = DispatchWorkItem { [weak self] in
             let writerSucceeded = builder.finishWriter()
             let succeeded = priorWriteSucceeded && writerSucceeded

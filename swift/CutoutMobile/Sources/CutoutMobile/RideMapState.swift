@@ -790,6 +790,25 @@ public final class MobileRideMapState: @unchecked Sendable {
         }
     }
 
+    /// Records a transition and returns the Rust-assigned ride-local sequence.
+    public func recordMusicEventWithSequence(
+        snapshot: MobileMusicSnapshotDto,
+        kind: MobileMusicRideEventKindDto,
+        monotonicAtMs: UInt64,
+        wallClockAtMs: UInt64,
+        clockUncertaintyMs: UInt64
+    ) throws -> MobileMusicTimelineRecordResultDto {
+        try withCore {
+            try $0.recordMusicEventWithSequence(
+                snapshot: snapshot,
+                kind: kind,
+                monotonicAtMs: monotonicAtMs,
+                wallClockAtMs: wallClockAtMs,
+                clockUncertaintyMs: clockUncertaintyMs
+            )
+        }
+    }
+
     /// Returns nil when a healthy core has no active ride. A storage initialization failure
     /// returns an unavailable projection because active-ride state cannot be determined.
     public func currentMusicHistory() -> MobileMusicHistoryDto? {

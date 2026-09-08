@@ -32,6 +32,52 @@ final class MusicIntegrationTests: XCTestCase {
         XCTAssertNil(tracker.pendingHint)
     }
 
+    @MainActor
+    func testProviderResetDropsCorrelationWithoutWritingAnEvent() throws {
+        let state = MobileRideMapState()
+        _ = try state.startGpsOnly(atMs: 1_000, lastConnectedVehicle: nil)
+        try state.setMusicHistoryPolicy(.humanReadable)
+        let coordinator = MusicIntegrationCoordinator(rideMapState: state)
+
+        let playing = MobileMusicSnapshotDto(
+            provider: .appleMusic,
+            sessionId: "apple",
+            state: .playing,
+            item: MobileMusicItemDto(identifier: "track-1", title: "Song", artist: "Artist"),
+            positionMilliseconds: nil,
+            durationMilliseconds: nil,
+            observedAtMs: 1_000,
+            capabilities: .init(previous: true, play: false, pause: true, next: true, openProvider: true)
+        )
+        _ = try coordinator.ingest(
+            snapshot: playing,
+            wallClockAtMs: 1_700_000_000_000,
+            clockUncertaintyMs: 5
+        )
+
+        coordinator.resetProviderCorrelation()
+
+        _ = try coordinator.ingest(
+            snapshot: .init(
+                provider: .spotify,
+                sessionId: "spotify",
+                state: .unavailable,
+                item: nil,
+                positionMilliseconds: nil,
+                durationMilliseconds: nil,
+                observedAtMs: 1_001,
+                capabilities: .init(previous: false, play: false, pause: false, next: false, openProvider: true)
+            ),
+            wallClockAtMs: 1_700_000_000_001,
+            clockUncertaintyMs: 5
+        )
+
+        XCTAssertEqual(coordinator.nowPlaying?.provider, .spotify)
+        XCTAssertEqual(coordinator.nowPlaying?.state, .unavailable)
+        XCTAssertNil(coordinator.lastRecordedSequence)
+        XCTAssertEqual(coordinator.recordedEvents.count, 1)
+    }
+
     func testTransitionHintCanBeClearedWithoutIssuingAnEmptyCommand() {
         var tracker = MusicTransitionHintTracker()
         tracker.issue(.skip)

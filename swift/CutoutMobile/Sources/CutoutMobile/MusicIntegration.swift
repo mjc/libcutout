@@ -395,6 +395,7 @@ public final class MusicIntegrationCoordinator {
     private var lastCorrelationRideID: String?
     private var lastPersistedNowPlaying: MusicNowPlaying?
     private var historyPolicy = MobileMusicHistoryPolicyDto.disabled
+    public private(set) var lastRecordedSequence: UInt64?
     public init(rideMapState: MobileRideMapState?) {
         self.rideMapState = rideMapState
     }
@@ -445,13 +446,15 @@ public final class MusicIntegrationCoordinator {
                 rememberPersistedState(.disabled)
                 return .disabled
             }
-            let outcome = try rideMapState.recordMusicEvent(
+            let result = try rideMapState.recordMusicEventWithSequence(
                 snapshot: snapshot,
                 kind: kind,
                 monotonicAtMs: snapshot.observedAtMs,
                 wallClockAtMs: wallClockAtMs,
                 clockUncertaintyMs: clockUncertaintyMs
             )
+            lastRecordedSequence = result.sequence
+            let outcome = result.outcome
             rememberPersistedState(outcome)
             return outcome
         } catch MobileRideMapError.noActiveRide {
@@ -489,12 +492,24 @@ public final class MusicIntegrationCoordinator {
         try rideMapState.setMusicHistoryPolicy(policy)
         historyPolicy = policy
         lastPersistedNowPlaying = nil
+        lastRecordedSequence = nil
     }
 
     /// Adopts a policy restored by Rust without issuing a second persistence write.
     public func restoreHistoryPolicy(_ policy: MobileMusicHistoryPolicyDto) {
         historyPolicy = policy
         lastPersistedNowPlaying = nil
+        lastRecordedSequence = nil
+    }
+
+    /// Drops provider-local observations before a deliberate provider switch.
+    /// Selection itself must not synthesize a stop, disconnect, or item change.
+    public func resetProviderCorrelation() {
+        lastObservedAtByProvider.removeAll(keepingCapacity: true)
+        lastCorrelationRideID = rideMapState?.currentSnapshot()?.rideID
+        lastPersistedNowPlaying = nil
+        nowPlaying = nil
+        lastRecordedSequence = nil
     }
 
     public func record(
@@ -531,6 +546,7 @@ public final class MusicIntegrationCoordinator {
         lastCorrelationRideID = rideID
         lastObservedAtByProvider.removeAll()
         lastPersistedNowPlaying = nil
+        lastRecordedSequence = nil
     }
 
     private func rememberPersistedState(_ outcome: MobileMusicTimelineOutcomeDto) {
@@ -957,6 +973,8 @@ public final class AppleMusicProviderAdapter {
     private let systemPlayer = SystemMusicPlayer.shared
 #endif
     private var notificationTokens = [NSObjectProtocol]()
+    private var cachedArtworkIdentifier: String?
+    private var cachedArtworkData: Data?
 
     public init() {}
 
@@ -1068,7 +1086,7 @@ public final class AppleMusicProviderAdapter {
     public func snapshot(observedAtMs: UInt64) -> MobileMusicSnapshotDto {
         let item = player.nowPlayingItem.map {
             MobileMusicItemDto(
-                identifier: String($0.persistentID),
+                identifier: appleMusicIdentifier(for: $0),
                 title: $0.title,
                 artist: $0.artist
             )
@@ -1113,16 +1131,36 @@ public final class AppleMusicProviderAdapter {
 
     private func artworkData() -> Data? {
 #if canImport(UIKit) && os(iOS)
-        guard
-            let artwork = player.nowPlayingItem?.artwork,
-            let image = artwork.image(at: Self.artworkSize)
-        else {
+        guard let item = player.nowPlayingItem else {
+            cachedArtworkIdentifier = nil
+            cachedArtworkData = nil
             return nil
         }
-        return image.jpegData(compressionQuality: 0.8)
+        let identifier = appleMusicIdentifier(for: item)
+        if cachedArtworkIdentifier == identifier {
+            return cachedArtworkData
+        }
+        guard let artwork = item.artwork,
+              let image = artwork.image(at: Self.artworkSize),
+              let data = image.jpegData(compressionQuality: 0.8)
+        else {
+            cachedArtworkIdentifier = identifier
+            cachedArtworkData = nil
+            return nil
+        }
+        cachedArtworkIdentifier = identifier
+        cachedArtworkData = data
+        return data
 #else
         nil
 #endif
+    }
+
+    private func appleMusicIdentifier(for item: MPMediaItem) -> String {
+        if item.playbackStoreID != 0 {
+            return "apple:catalog:\(item.playbackStoreID)"
+        }
+        return "apple:local:\(item.persistentID)"
     }
 }
 #endif

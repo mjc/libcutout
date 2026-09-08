@@ -126,6 +126,7 @@ struct RideMapHistoryDetailSummary: View {
     let segmentsOmittedByBudget: Bool
     let canonicalBackgroundGapCount: UInt64
     let musicTimeline: [MobileMusicRideEventDto]
+    let musicTimelineUnavailable: Bool
     let forgetMusicHistory: () -> Bool
     let state: RideMapHistoryRouteState
     let loadRoutePreview: () -> Void
@@ -193,7 +194,7 @@ struct RideMapHistoryDetailSummary: View {
                     ),
                     telemetryState: telemetryState
                 )
-                if musicTimeline.isEmpty == false {
+                if musicTimeline.isEmpty == false || musicTimelineUnavailable {
                     VStack(alignment: .leading, spacing: 8) {
                         HStack(alignment: .firstTextBaseline) {
                             Text(localizedAppText("music.timeline.title"))
@@ -205,7 +206,13 @@ struct RideMapHistoryDetailSummary: View {
                             .font(.caption.weight(.semibold))
                             .accessibilityIdentifier("ride-map.detail-forget-music-history")
                         }
-                        MusicTimelineRows(events: musicTimeline)
+                        if musicTimeline.isEmpty {
+                            Text(localizedAppText("music.timeline.unavailable"))
+                                .font(.caption)
+                                .foregroundStyle(PevColors.muted)
+                        } else {
+                            MusicTimelineRows(events: musicTimeline)
+                        }
                     }
                     .accessibilityIdentifier("ride-map.detail-music-timeline")
                     .confirmationDialog(

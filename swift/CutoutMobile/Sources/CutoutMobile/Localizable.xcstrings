@@ -891,7 +891,7 @@
     },
     "music.history.disabled.explanation" : {
       "comment" : "Explanation for the disabled music history policy.",
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Music stays in the player and is not added to rides." } } }
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Music stays in the player and is not added to rides or PEVCAP captures." } } }
     },
     "music.history.forget" : {
       "comment" : "Removes music metadata from a saved ride without deleting the ride.",
@@ -903,7 +903,7 @@
     },
     "music.history.forget.message" : {
       "comment" : "Confirmation message for removing saved-ride music metadata.",
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "This removes only music metadata. The ride and route stay saved." } } }
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "This removes music history from the ride database. Existing PEVCAP capture files are separate and may retain their captured copy." } } }
     },
     "music.history.forget.title" : {
       "comment" : "Confirmation title for removing saved-ride music metadata.",
@@ -915,7 +915,7 @@
     },
     "music.history.human_readable.explanation" : {
       "comment" : "Explanation for readable music history.",
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Save provider, title, artist, and playback events with the ride." } } }
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Save provider, title, artist, and playback events with the ride and permitted track correlations in PEVCAP captures." } } }
     },
     "music.history.opaque_item" : {
       "comment" : "History policy that saves provider item identifiers only.",
@@ -923,7 +923,7 @@
     },
     "music.history.opaque_item.explanation" : {
       "comment" : "Explanation for opaque music history.",
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Save provider and item IDs without readable track metadata." } } }
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Save provider and item IDs without readable track metadata, including permitted PEVCAP correlations." } } }
     },
     "music.history.title" : {
       "comment" : "Music history privacy setting title.",
@@ -1024,6 +1024,10 @@
     "music.timeline.title" : {
       "comment" : "Ride music timeline section title.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Music timeline" } } }
+    },
+    "music.timeline.unavailable" : {
+      "comment" : "Ride music timeline could not be loaded.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Music history unavailable" } } }
     },
     "music.timeline.unknown_item" : {
       "comment" : "Fallback for a music event without an item title.",

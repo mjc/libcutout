@@ -68,6 +68,33 @@ final class CutoutAppModelTests: XCTestCase {
         super.tearDown()
     }
 
+    @MainActor
+    func testOpaqueSpotifyLocalIdentifierIsNotCopiedIntoPevcap() {
+        XCTAssertNil(
+            CutoutAppModel.pevcapTrackIdentifier(
+                policy: .opaqueItem,
+                provider: .spotify,
+                identifier: "spotify:local:artist:album:track"
+            )
+        )
+        XCTAssertEqual(
+            CutoutAppModel.pevcapTrackIdentifier(
+                policy: .opaqueItem,
+                provider: .spotify,
+                identifier: "spotify:track:catalog-id"
+            ),
+            "spotify:track:catalog-id"
+        )
+        XCTAssertEqual(
+            CutoutAppModel.pevcapTrackIdentifier(
+                policy: .humanReadable,
+                provider: .spotify,
+                identifier: "spotify:local:artist:album:track"
+            ),
+            "spotify:local:artist:album:track"
+        )
+    }
+
 #if !os(iOS)
     @MainActor
     func testMusicSetupShowsUnavailableOnUnsupportedPlatform() {
@@ -135,6 +162,28 @@ final class CutoutAppModelTests: XCTestCase {
         XCTAssertTrue(model.musicTimelineEvents.isEmpty)
         XCTAssertEqual(driver.rideMapState.currentMusicHistoryPolicy(), .disabled)
         XCTAssertTrue(driver.rideMapState.currentMusicEvents().isEmpty)
+    }
+
+    @MainActor
+    func testForgetActiveMusicHistoryDoesNotChangeFutureDefault() throws {
+        let suiteName = "CutoutAppMusicHistoryFutureDefault-\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let policyStore = MusicHistoryPolicyStore(defaults: defaults)
+        policyStore.set(.humanReadable)
+
+        let driver = SessionDriverSpy(rows: [])
+        let model = CutoutAppModel(core: driver, musicHistoryPolicyStore: policyStore)
+        XCTAssertTrue(model.startGpsOnlyRide())
+        let rideID = try XCTUnwrap(model.rideMapSnapshot?.rideID)
+
+        XCTAssertTrue(model.forgetMusicHistory(for: rideID))
+        XCTAssertEqual(model.musicHistoryPolicy, .disabled)
+        XCTAssertEqual(policyStore.policy, .humanReadable)
+        XCTAssertTrue(model.stopRideMap())
+        XCTAssertTrue(model.startGpsOnlyRide())
+        XCTAssertEqual(model.musicHistoryPolicy, .humanReadable)
+        XCTAssertEqual(driver.rideMapState.currentMusicHistoryPolicy(), .humanReadable)
     }
 
     private func clear(
@@ -260,6 +309,37 @@ final class CutoutAppModelTests: XCTestCase {
         XCTAssertEqual(model.rideMapHistoryError, .storageError("Rust ride database is unavailable"))
         XCTAssertNil(model.rideMapLiveError)
         XCTAssertFalse(model.rideMapHistoryLoading)
+    }
+
+    @MainActor
+    func testHistoryDetailLoadGenerationRejectsDeletedOrReplacedSelection() {
+        XCTAssertTrue(
+            CutoutAppModel.shouldApplyHistoryDetailLoad(
+                rideID: "ride-a",
+                selectedRideID: "ride-a",
+                loadGeneration: 3,
+                currentGeneration: 3,
+                isCancelled: false
+            )
+        )
+        XCTAssertFalse(
+            CutoutAppModel.shouldApplyHistoryDetailLoad(
+                rideID: "ride-a",
+                selectedRideID: "ride-a",
+                loadGeneration: 3,
+                currentGeneration: 4,
+                isCancelled: false
+            )
+        )
+        XCTAssertFalse(
+            CutoutAppModel.shouldApplyHistoryDetailLoad(
+                rideID: "ride-a",
+                selectedRideID: "ride-b",
+                loadGeneration: 3,
+                currentGeneration: 3,
+                isCancelled: false
+            )
+        )
     }
 
     @MainActor

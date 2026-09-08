@@ -3123,6 +3123,14 @@ pub enum MobileMusicTimelineOutcomeDto {
     Full,
 }
 
+/// Result of submitting a transition, including the Rust-assigned ride-local
+/// sequence used to correlate PEVCAP records without re-counting in Swift.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct MobileMusicTimelineRecordResultDto {
+    pub outcome: MobileMusicTimelineOutcomeDto,
+    pub sequence: Option<u64>,
+}
+
 /// Music retention status, including an unavailable database projection.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Enum)]
 pub enum MobileMusicHistoryStatusDto {
@@ -6961,6 +6969,34 @@ impl MobileRideMapCore {
             .map_err(map_storage_core_error)
     }
 
+    /// Records one transition and returns the authoritative sequence assigned
+    /// by Rust when a new event is appended.
+    #[allow(clippy::needless_pass_by_value)]
+    pub fn record_music_event_with_sequence(
+        &self,
+        snapshot: MobileMusicSnapshotDto,
+        kind: MobileMusicRideEventKindDto,
+        monotonic_at_ms: u64,
+        wall_clock_at_ms: u64,
+        clock_uncertainty_ms: u64,
+    ) -> Result<MobileMusicTimelineRecordResultDto, MobileRideMapCoreErrorDto> {
+        let outcome = self.record_music_event(
+            snapshot,
+            kind,
+            monotonic_at_ms,
+            wall_clock_at_ms,
+            clock_uncertainty_ms,
+        )?;
+        let sequence = if outcome == MobileMusicTimelineOutcomeDto::Recorded {
+            self.current_music_events()
+                .and_then(|events| events.len().checked_sub(1))
+                .and_then(|index| u64::try_from(index).ok())
+        } else {
+            None
+        };
+        Ok(MobileMusicTimelineRecordResultDto { outcome, sequence })
+    }
+
     /// Returns the authoritative bounded music timeline for the active ride.
     #[must_use]
     pub fn current_music_events(&self) -> Option<Vec<MobileMusicRideEventDto>> {
@@ -8886,6 +8922,7 @@ struct CaptureMetadata {
 enum CaptureWriterMessage {
     Record,
     Location(PevcapLocationSample),
+    Music(PevcapMusicEvent),
     Metadata(CaptureMetadata),
     Flush(SyncSender<Result<(), String>>),
     Finish(SyncSender<Result<(), String>>),
@@ -9150,6 +9187,17 @@ fn write_capture_stream(
                     &mut last_sync,
                 )?;
             }
+            CaptureWriterMessage::Music(music) => {
+                let line = music.to_jsonl_line().map_err(|error| error.to_string())?;
+                write_capture_event_line(
+                    &mut writer,
+                    &line,
+                    state,
+                    &mut bytes_since_flush,
+                    &mut last_flush,
+                    &mut last_sync,
+                )?;
+            }
             CaptureWriterMessage::Metadata(metadata) => {
                 pending_metadata = Some(metadata);
             }
@@ -9354,7 +9402,16 @@ pub struct MobilePevcapCaptureBuilder {
     annotations: Mutex<Vec<String>>,
     writer: Mutex<Option<CaptureWriter>>,
     writer_state: Mutex<Option<Arc<CaptureWriterState>>>,
-    music_context: Mutex<Option<PevcapMusicEvent>>,
+    music_context: Mutex<VecDeque<PendingPevcapMusicContext>>,
+}
+
+const PEVCAP_MUSIC_CONTEXT_CAPACITY: usize = 8;
+const PEVCAP_MUSIC_CONTEXT_FRESHNESS_MS: u64 = 5_000;
+
+#[derive(Clone, Debug)]
+struct PendingPevcapMusicContext {
+    event: PevcapMusicEvent,
+    monotonic_at_ms: u64,
 }
 
 #[uniffi::export]
@@ -9377,7 +9434,7 @@ impl MobilePevcapCaptureBuilder {
             annotations: Mutex::new(Vec::new()),
             writer: Mutex::new(None),
             writer_state: Mutex::new(None),
-            music_context: Mutex::new(None),
+            music_context: Mutex::new(VecDeque::with_capacity(PEVCAP_MUSIC_CONTEXT_CAPACITY)),
         })
     }
 
@@ -9475,16 +9532,40 @@ impl MobilePevcapCaptureBuilder {
         writer.is_none_or(|writer| writer.finish().is_ok())
     }
 
-    /// Sets the optional current music observation used for the next notification.
+    /// Queues a bounded music observation for correlation with the next notifications.
     pub fn set_music_context(&self, music: Option<MobilePevcapMusicEventDto>) -> bool {
-        let Ok(music) = music.map(PevcapMusicEvent::try_from).transpose() else {
-            return false;
-        };
-        *self
+        let mut pending = self
             .music_context
             .lock()
-            .unwrap_or_else(PoisonError::into_inner) = music;
+            .unwrap_or_else(PoisonError::into_inner);
+        let Some(music) = music else {
+            pending.clear();
+            return true;
+        };
+        let Ok(event) = PevcapMusicEvent::try_from(music.clone()) else {
+            return false;
+        };
+        if pending.len() == PEVCAP_MUSIC_CONTEXT_CAPACITY {
+            pending.pop_front();
+        }
+        pending.push_back(PendingPevcapMusicContext {
+            event,
+            monotonic_at_ms: music.monotonic_at_ms,
+        });
         true
+    }
+
+    /// Records an independent music observation immediately. Unlike the
+    /// compatibility context API, this does not wait for a BLE frame.
+    pub fn record_music_event(&self, music: MobilePevcapMusicEventDto) -> bool {
+        let Ok(event) = PevcapMusicEvent::try_from(music) else {
+            return false;
+        };
+        self.writer
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .as_ref()
+            .is_some_and(|writer| writer.try_send(CaptureWriterMessage::Music(event)))
     }
 
     /// Returns bounded writer queue instrumentation.
@@ -9603,10 +9684,7 @@ impl MobilePevcapCaptureBuilder {
         if let Some(location) = phone_location.and_then(MobilePhoneLocationSampleDto::canonical) {
             record = record.with_phone_location(location.pevcap_location());
         }
-        let Ok(music) = self.resolve_music_context(music) else {
-            return false;
-        };
-        if let Some(music) = music {
+        if let Ok(Some(music)) = self.resolve_music_context(music, monotonic_ms.milliseconds) {
             record = record.with_music(music);
         }
         self.send_record(record)
@@ -9640,20 +9718,37 @@ impl MobilePevcapCaptureBuilder {
 }
 
 impl MobilePevcapCaptureBuilder {
-    fn take_music_context(&self) -> Option<PevcapMusicEvent> {
-        self.music_context
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .take()
-    }
-
     fn resolve_music_context(
         &self,
         music: Option<MobilePevcapMusicEventDto>,
+        frame_monotonic_ms: u64,
     ) -> Result<Option<PevcapMusicEvent>, ()> {
         match music {
-            Some(music) => PevcapMusicEvent::try_from(music).map(Some).map_err(|_| ()),
-            None => Ok(self.take_music_context()),
+            Some(music) => {
+                self.music_context
+                    .lock()
+                    .unwrap_or_else(PoisonError::into_inner)
+                    .clear();
+                PevcapMusicEvent::try_from(music).map(Some).map_err(|_| ())
+            }
+            None => {
+                let mut pending = self
+                    .music_context
+                    .lock()
+                    .unwrap_or_else(PoisonError::into_inner);
+                while let Some(candidate) = pending.front() {
+                    if candidate.monotonic_at_ms > frame_monotonic_ms {
+                        return Ok(None);
+                    }
+                    let candidate = pending.pop_front().expect("front exists");
+                    if frame_monotonic_ms.saturating_sub(candidate.monotonic_at_ms)
+                        <= PEVCAP_MUSIC_CONTEXT_FRESHNESS_MS
+                    {
+                        return Ok(Some(candidate.event));
+                    }
+                }
+                Ok(None)
+            }
         }
     }
 
@@ -14914,6 +15009,170 @@ mod tests {
     }
 
     #[test]
+    fn mobile_capture_builder_consumes_music_context_in_order_and_drops_stale_entries() {
+        let path = std::env::temp_dir().join(format!(
+            "cutout-mobile-writer-music-order-{}-{}.jsonl",
+            std::process::id(),
+            thread::current().name().unwrap_or("test")
+        ));
+        let _ = fs::remove_file(&path);
+        let builder = MobilePevcapCaptureBuilder::new(
+            wc(1_700_000_000_000),
+            "ios-corebluetooth".into(),
+            None,
+        );
+        assert!(builder.set_music_context(Some(MobilePevcapMusicEventDto {
+            provider: MobileMusicProviderDto::Spotify,
+            track_id: "track-1".into(),
+            monotonic_at_ms: 100,
+            wall_clock_unix_ms: 1_700_000_000_100,
+            clock_uncertainty_ms: 1,
+            ride_sequence: Some(1),
+        })));
+        assert!(builder.set_music_context(Some(MobilePevcapMusicEventDto {
+            provider: MobileMusicProviderDto::Spotify,
+            track_id: "track-2".into(),
+            monotonic_at_ms: 101,
+            wall_clock_unix_ms: 1_700_000_000_101,
+            clock_uncertainty_ms: 1,
+            ride_sequence: Some(2),
+        })));
+        assert!(builder.start_writer(path.to_string_lossy().into_owned()));
+        assert!(builder.record_notification_with_context(
+            ms(102),
+            vec![0; 16],
+            vec![1; 16],
+            vec![1],
+            None,
+            None,
+        ));
+        assert!(builder.record_notification_with_context(
+            ms(103),
+            vec![0; 16],
+            vec![1; 16],
+            vec![2],
+            None,
+            None,
+        ));
+        assert!(builder.finish_writer());
+        let capture = PevcapCapture::decode(
+            &fs::read(&path).expect("music capture exists"),
+            PevcapEncoding::Jsonl,
+        )
+        .expect("music capture decodes");
+        assert_eq!(
+            capture.records[0].music.as_ref().unwrap().track_id.as_str(),
+            "track-1"
+        );
+        assert_eq!(
+            capture.records[1].music.as_ref().unwrap().track_id.as_str(),
+            "track-2"
+        );
+        let _ = fs::remove_file(path);
+
+        let stale_builder = MobilePevcapCaptureBuilder::new(
+            wc(1_700_000_000_000),
+            "ios-corebluetooth".into(),
+            None,
+        );
+        assert!(
+            stale_builder.set_music_context(Some(MobilePevcapMusicEventDto {
+                provider: MobileMusicProviderDto::AppleMusic,
+                track_id: "stale".into(),
+                monotonic_at_ms: 1,
+                wall_clock_unix_ms: 1_700_000_000_001,
+                clock_uncertainty_ms: 1,
+                ride_sequence: None,
+            }))
+        );
+        assert!(
+            stale_builder
+                .resolve_music_context(None, 10_000)
+                .unwrap()
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn invalid_explicit_music_does_not_drop_the_capture_frame() {
+        let path = std::env::temp_dir().join(format!(
+            "cutout-mobile-writer-invalid-music-{}-{}.jsonl",
+            std::process::id(),
+            thread::current().name().unwrap_or("test")
+        ));
+        let _ = fs::remove_file(&path);
+        let builder = MobilePevcapCaptureBuilder::new(
+            wc(1_700_000_000_000),
+            "ios-corebluetooth".into(),
+            None,
+        );
+        assert!(builder.start_writer(path.to_string_lossy().into_owned()));
+        assert!(builder.record_notification_with_context_and_music(
+            ms(1),
+            vec![0; 16],
+            vec![1; 16],
+            vec![0xab],
+            None,
+            None,
+            Some(MobilePevcapMusicEventDto {
+                provider: MobileMusicProviderDto::AppleMusic,
+                track_id: String::new(),
+                monotonic_at_ms: 1,
+                wall_clock_unix_ms: 1_700_000_000_001,
+                clock_uncertainty_ms: 1,
+                ride_sequence: None,
+            }),
+        ));
+        assert!(builder.finish_writer());
+        let capture = PevcapCapture::decode(
+            &fs::read(&path).expect("capture exists"),
+            PevcapEncoding::Jsonl,
+        )
+        .expect("capture decodes");
+        assert_eq!(capture.records.len(), 1);
+        assert!(capture.records[0].music.is_none());
+        assert_eq!(capture.records[0].bytes.as_ref(), [0xab]);
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn mobile_capture_writer_persists_independent_music_without_ble_frames() {
+        let path = std::env::temp_dir().join(format!(
+            "cutout-mobile-writer-independent-music-{}-{}.jsonl",
+            std::process::id(),
+            thread::current().name().unwrap_or("test")
+        ));
+        let _ = fs::remove_file(&path);
+        let builder = MobilePevcapCaptureBuilder::new(
+            wc(1_700_000_000_000),
+            "ios-corebluetooth".into(),
+            None,
+        );
+        assert!(builder.start_writer(path.to_string_lossy().into_owned()));
+        for (index, track_id) in ["track-1", "track-2"].into_iter().enumerate() {
+            assert!(builder.record_music_event(MobilePevcapMusicEventDto {
+                provider: MobileMusicProviderDto::Spotify,
+                track_id: track_id.into(),
+                monotonic_at_ms: 100 + index as u64,
+                wall_clock_unix_ms: 1_700_000_000_100 + index as u64,
+                clock_uncertainty_ms: 1,
+                ride_sequence: Some(index as u64),
+            }));
+        }
+        assert!(builder.finish_writer());
+        let capture = PevcapCapture::decode(
+            &fs::read(&path).expect("capture exists"),
+            PevcapEncoding::Jsonl,
+        )
+        .expect("capture decodes");
+        assert_eq!(capture.records.len(), 0);
+        assert_eq!(capture.music_events.len(), 2);
+        assert_eq!(capture.music_events[0].track_id.as_str(), "track-1");
+        assert_eq!(capture.music_events[1].track_id.as_str(), "track-2");
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
     fn mobile_capture_writer_reports_start_failure() {
         let path = std::env::temp_dir().join(format!(
             "cutout-mobile-writer-missing-{}-{}/capture.jsonl",
@@ -16883,6 +17142,38 @@ mod tests {
                 .current_music_events()
                 .is_some_and(|events| events.is_empty())
         );
+        database.shutdown().expect("database shuts down");
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn music_record_result_returns_rust_assigned_sequence() {
+        let _guard = RIDE_DATABASE_TEST_LOCK
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        let path = std::env::temp_dir().join(format!(
+            "libcutout-mobile-music-sequence-{}.sqlite",
+            Uuid::new_v4()
+        ));
+        let database =
+            open_ride_database(path.to_string_lossy().into_owned()).expect("database opens");
+        let state = MobileRideMapCore::with_database(database.clone());
+        state.start_gps_only(1_000, None).expect("ride starts");
+        state
+            .set_music_history_policy(MobileMusicHistoryPolicyDto::HumanReadable)
+            .expect("policy enables history");
+
+        let result = state
+            .record_music_event_with_sequence(
+                test_music_snapshot(),
+                MobileMusicRideEventKindDto::Play,
+                2_000,
+                1_700_000_000_000,
+                5,
+            )
+            .expect("event records");
+        assert_eq!(result.outcome, MobileMusicTimelineOutcomeDto::Recorded);
+        assert_eq!(result.sequence, Some(0));
         database.shutdown().expect("database shuts down");
         let _ = fs::remove_file(path);
     }

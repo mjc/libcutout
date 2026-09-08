@@ -335,9 +335,9 @@ pub struct PevcapReader<R: Read> {
 
 /// One event from a streaming PEVCAP capture.
 ///
-/// JSONL preserves the physical interleaving of transport and location lines when this API is
-/// used. The binary container stores its two streams in separate sections, so binary events are
-/// emitted as transport records followed by locations.
+/// JSONL preserves the physical interleaving of transport, location, and music lines when this
+/// API is used. The binary container stores transport and location in separate sections; it does
+/// not encode independent music events.
 #[allow(
     clippy::large_enum_variant,
     reason = "stream events own decoded records without another heap allocation"
@@ -349,6 +349,10 @@ pub enum PevcapEvent {
 
     /// An independent Core Location observation.
     Location(PevcapLocationSample),
+
+    /// An independent music observation. Music is asynchronous to BLE and is
+    /// therefore not forced onto a transport frame.
+    Music(PevcapMusicEvent),
 
     /// A location observation that decoded structurally but failed canonical validation.
     ///
@@ -619,6 +623,7 @@ impl<R: Read> PevcapReader<R> {
                     // use `next_event` when the physical interleaving matters.
                     continue;
                 }
+                PevcapJsonlLine::Music { music: _ } => continue,
             };
         }
     }
@@ -790,6 +795,11 @@ impl<R: Read> PevcapReader<R> {
                         return Ok(Some(location));
                     }
                 }
+                PevcapJsonlLine::Music { music } => {
+                    music
+                        .try_into_event()
+                        .map_err(|source| PevcapJsonlError::InvalidMusic { source })?;
+                }
             }
         }
     }
@@ -840,6 +850,11 @@ impl<R: Read> PevcapReader<R> {
                         .into());
                     }
                     Ok(Some(location_event(location)))
+                }
+                PevcapJsonlLine::Music { music } => {
+                    Ok(Some(PevcapEvent::Music(music.try_into_event().map_err(
+                        |source| PevcapJsonlError::InvalidMusic { source },
+                    )?)))
                 }
             };
         }
@@ -1558,6 +1573,15 @@ impl PevcapMusicEvent {
             ride_sequence,
         })
     }
+
+    /// Serializes this independent observation as a JSONL event line.
+    #[cfg(feature = "serde")]
+    pub fn to_jsonl_line(&self) -> Result<String, PevcapJsonlError> {
+        serde_json::to_string(&PevcapJsonlLine::Music {
+            music: PevcapMusicEventJson::from(self),
+        })
+        .map_err(PevcapJsonlError::Serialize)
+    }
 }
 
 /// Full-precision Core Location sample correlated with a PEVCAP record.
@@ -1912,6 +1936,9 @@ pub struct PevcapCapture {
 
     /// Ordered first-class Core Location observations.
     pub locations: Vec<PevcapLocationSample>,
+
+    /// Ordered independent music observations.
+    pub music_events: Vec<PevcapMusicEvent>,
 }
 
 impl PevcapCapture {
@@ -1923,6 +1950,7 @@ impl PevcapCapture {
             header,
             records,
             locations: Vec::new(),
+            music_events: Vec::new(),
         }
     }
 
@@ -1938,7 +1966,31 @@ impl PevcapCapture {
             header,
             records,
             locations,
+            music_events: Vec::new(),
         }
+    }
+
+    /// Creates a capture with independent location and music streams.
+    #[must_use]
+    pub fn new_with_locations_and_music(
+        header: PevcapHeader,
+        records: Vec<PevcapRecord>,
+        locations: Vec<PevcapLocationSample>,
+        music_events: Vec<PevcapMusicEvent>,
+    ) -> Self {
+        Self {
+            version: PevcapFormatVersion::current(),
+            header,
+            records,
+            locations,
+            music_events,
+        }
+    }
+
+    /// Returns the number of independent music observations in this capture.
+    #[must_use]
+    pub fn music_event_count(&self) -> usize {
+        self.music_events.len()
     }
 
     /// Returns the number of independent location observations in this capture.
@@ -2109,9 +2161,9 @@ impl PevcapCapture {
 
     /// Serializes this capture as line-delimited JSON for review tooling.
     ///
-    /// The first line is a PEVCAP header line, followed by transport records and then the
-    /// independent location stream. The owned capture API keeps those streams in separate
-    /// vectors; use [`PevcapReader::next_event`] when physical JSONL interleaving matters.
+    /// The first line is a PEVCAP header line, followed by transport records, locations, and
+    /// independent music events. The owned capture API keeps those streams in separate vectors;
+    /// use [`PevcapReader::next_event`] when physical JSONL interleaving matters.
     ///
     /// # Errors
     ///
@@ -2120,6 +2172,11 @@ impl PevcapCapture {
     pub fn to_jsonl(&self) -> Result<String, PevcapJsonlError> {
         if !self.version.supports_locations() && !self.locations.is_empty() {
             return Err(PevcapJsonlError::LocationsUnsupported {
+                version: self.version,
+            });
+        }
+        if !self.version.supports_locations() && !self.music_events.is_empty() {
+            return Err(PevcapJsonlError::MusicUnsupported {
                 version: self.version,
             });
         }
@@ -2151,6 +2208,11 @@ impl PevcapCapture {
             output.push('\n');
         }
 
+        for music in &self.music_events {
+            output.push_str(&music.to_jsonl_line()?);
+            output.push('\n');
+        }
+
         Ok(output)
     }
 
@@ -2176,6 +2238,7 @@ impl PevcapCapture {
                 .saturating_sub(1),
         );
         let mut locations = Vec::new();
+        let mut music_events = Vec::new();
 
         for (index, raw_line) in input.lines().enumerate() {
             let line = raw_line.trim();
@@ -2240,6 +2303,16 @@ impl PevcapCapture {
                         }
                     })?);
                 }
+                PevcapJsonlLine::Music { music } => {
+                    if header.is_none() {
+                        return Err(PevcapJsonlError::MissingHeader);
+                    }
+                    music_events.push(
+                        music
+                            .try_into_event()
+                            .map_err(|source| PevcapJsonlError::InvalidMusic { source })?,
+                    );
+                }
             }
         }
 
@@ -2248,6 +2321,7 @@ impl PevcapCapture {
             header: header.ok_or(PevcapJsonlError::MissingHeader)?,
             records,
             locations,
+            music_events,
         })
     }
 
@@ -2268,6 +2342,9 @@ impl PevcapCapture {
             return Err(PevcapBinaryError::LocationsUnsupported {
                 version: self.version,
             });
+        }
+        if !self.music_events.is_empty() {
+            return Err(PevcapBinaryError::MusicUnsupported);
         }
         let header = serde_json::to_vec(&PevcapHeaderJson::from(&self.header))
             .map_err(PevcapBinaryError::Serialize)?;
@@ -2395,6 +2472,7 @@ impl PevcapCapture {
             header,
             records,
             locations,
+            music_events: Vec::new(),
         })
     }
 
@@ -2687,10 +2765,24 @@ pub enum PevcapJsonlError {
         source: PevcapPhoneLocationError,
     },
 
+    /// A music line decoded as JSON but violated bounded music invariants.
+    #[error("malformed PEVCAP JSONL music event: {source}")]
+    InvalidMusic {
+        /// Bounded music validation failure.
+        source: MusicValidationError,
+    },
+
     /// Legacy JSONL cannot represent location observations.
     #[error("PEVCAP JSONL version {version:?} cannot encode locations")]
     LocationsUnsupported {
         /// Version that does not support locations.
+        version: PevcapFormatVersion,
+    },
+
+    /// Legacy JSONL cannot represent independent music observations.
+    #[error("PEVCAP JSONL version {version:?} cannot encode music events")]
+    MusicUnsupported {
+        /// Version that does not support music events.
         version: PevcapFormatVersion,
     },
 }
@@ -2737,6 +2829,10 @@ pub enum PevcapBinaryError {
     /// Header magic bytes did not match PEVCAP.
     #[error("invalid PEVCAP binary magic")]
     InvalidMagic,
+
+    /// The v1 binary container has no independent music section.
+    #[error("PEVCAP binary cannot encode independent music events")]
+    MusicUnsupported,
 
     /// Header version is not supported by this reader.
     #[error("unsupported PEVCAP binary version {version:?}")]
@@ -2967,6 +3063,9 @@ enum PevcapJsonlLine {
     },
     Location {
         location: PevcapLocationJson,
+    },
+    Music {
+        music: PevcapMusicEventJson,
     },
 }
 
@@ -5389,6 +5488,42 @@ mod tests {
 
         assert_eq!(decoded, capture);
         assert!(encoded.starts_with(br#"{"kind":"header""#));
+    }
+
+    #[cfg(feature = "serde")]
+    #[test]
+    fn pevcap_jsonl_round_trips_independent_music_events() {
+        let base = sample_pevcap_capture();
+        let music = PevcapMusicEvent::new(
+            MusicProvider::Spotify,
+            "spotify:track:abc",
+            ms(12),
+            wc(1_725_000_123_468),
+            5,
+            Some(3),
+        )
+        .expect("music event validates");
+        let capture = PevcapCapture::new_with_locations_and_music(
+            base.header,
+            base.records,
+            base.locations,
+            vec![music.clone()],
+        );
+
+        let encoded = capture.to_jsonl().expect("music JSONL encodes");
+        let decoded = PevcapCapture::from_jsonl(&encoded).expect("music JSONL decodes");
+
+        assert_eq!(decoded.music_events, vec![music]);
+        let mut reader = PevcapReader::new(Cursor::new(encoded.as_bytes()), PevcapEncoding::Jsonl)
+            .expect("music JSONL reader opens");
+        let events = std::iter::from_fn(|| reader.next_event().transpose())
+            .collect::<Result<Vec<_>, _>>()
+            .expect("music events stream");
+        assert!(
+            events
+                .iter()
+                .any(|event| matches!(event, PevcapEvent::Music(_)))
+        );
     }
 
     #[cfg(feature = "serde")]

@@ -6,17 +6,22 @@ import SwiftUI
 struct RideMapHistoryMusicDetail {
     let rideID: String
     let events: [MobileMusicRideEventDto]
+    let timelineUnavailable: Bool
     private let forgetMusicHistory: (String) -> Bool
 
     init(
         rideID: String,
         events: [MobileMusicRideEventDto],
+        timelineUnavailable: Bool = false,
         forgetMusicHistory: @escaping (String) -> Bool
     ) {
         self.rideID = rideID
         self.events = events
+        self.timelineUnavailable = timelineUnavailable
         self.forgetMusicHistory = forgetMusicHistory
     }
+
+    var canForget: Bool { !events.isEmpty || timelineUnavailable }
 
     func forget() -> Bool {
         forgetMusicHistory(rideID)
@@ -179,6 +184,7 @@ struct RideMapHistoryDetailView: View {
                                 segmentsOmittedByBudget: segmentsOmittedByBudget,
                                 canonicalBackgroundGapCount: canonicalBackgroundGapCount,
                                 musicTimeline: music.events,
+                                musicTimelineUnavailable: music.timelineUnavailable,
                                 forgetMusicHistory: {
                                     music.forget()
                                 },
