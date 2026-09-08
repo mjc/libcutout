@@ -25,6 +25,10 @@ corroborates the FFF0/FFF3/FFF4 transport and documents scenes, microphone
 reactivity, and timers for its tested MELK-OA10/SYMPHONY profile. Its basic
 frame templates are not identical to the OC21 captures, so this is family-level
 corroboration only, not OC21 capability proof.
+The [Lotus Lamp X manual for a MELK-OC21 product](https://manuals.plus/yisibo/yisibo-rbr-024w-rainbow-table-lamp-user-manual)
+also shows the app's color, mode, music-rhythm, scene, and timing surfaces for
+that model family. It confirms product-level feature intent, but it does not
+publish OC21 command bytes or replace a capture-backed write check.
 
 
 Power, solid RGB, and brightness were physically confirmed before this extension.
