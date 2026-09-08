@@ -19,6 +19,14 @@ final class CameraLocalNetworkAdapterTests: XCTestCase {
             cameraConnectionPresentation(pathStatus: .satisfied, usesWiFi: true),
             .notConfigured
         )
+        XCTAssertEqual(
+            cameraConnectionPresentation(
+                pathStatus: .satisfied,
+                usesWiFi: true,
+                hasReadOnlyEvidence: true
+            ),
+            .connected
+        )
     }
 
     @MainActor
@@ -120,6 +128,28 @@ final class CameraLocalNetworkAdapterTests: XCTestCase {
         XCTAssertEqual(adapter.presentation.storage, .present)
         XCTAssertEqual(adapter.presentation.preview, .stopped)
         XCTAssertEqual(adapter.presentation.recording, .unknown)
+    }
+
+    @MainActor
+    func testReadOnlyLoaderDoesNotProbeWhenWiFiPathIsUnavailable() async {
+        let adapter = CameraLocalNetworkAdapter()
+        adapter.apply(pathStatus: .unavailable, usesWiFi: false)
+
+        do {
+            _ = try await adapter.loadReadOnlyEvidence(
+                address: "192.168.1.254",
+                port: 80
+            ) { _ in
+                XCTFail("a known-unavailable Wi-Fi path must not reach the fetcher")
+                return Data()
+            }
+            XCTFail("camera evidence must require the Wi-Fi path")
+        } catch let error as CameraReadOnlyRequestError {
+            XCTAssertEqual(error, .pathUnavailable)
+        } catch {
+            XCTFail("unexpected error: \(error)")
+        }
+        XCTAssertEqual(adapter.presentation.connection, .wifiRequired)
     }
 
     @MainActor
@@ -250,6 +280,25 @@ final class CameraLocalNetworkAdapterTests: XCTestCase {
         XCTAssertEqual(adapter.presentation.connection, .wifiRequired)
         XCTAssertEqual(session.cameraSnapshot().preview, .stopped)
         XCTAssertEqual(session.cameraSnapshot().onboardRecording, .unknown)
+    }
+
+    @MainActor
+    func testSatisfiedWiFiPathPreservesConnectedCameraEvidence() {
+        let adapter = CameraLocalNetworkAdapter()
+        let evidence = CameraReadOnlyEvidence(MobileNovatekReadOnlySnapshotDto(
+            firmwareVersion: "R3V1.1_20240411",
+            movieRtspUri: "rtsp://192.168.1.254/xxx.mov",
+            photoRtspUri: "rtsp://192.168.1.254/xxx.mov",
+            configuration: [],
+            storagePresent: true,
+            media: []
+        ))
+        adapter.apply(readOnlyEvidence: evidence)
+
+        adapter.apply(pathStatus: .satisfied, usesWiFi: true)
+
+        XCTAssertEqual(adapter.presentation.connection, .connected)
+        XCTAssertEqual(adapter.readOnlyEvidence, evidence)
     }
 
     @MainActor
@@ -743,6 +792,25 @@ final class CameraLocalNetworkAdapterTests: XCTestCase {
         } catch let error as CameraCommandRequestError {
             XCTAssertEqual(error, .originMismatch)
         }
+    }
+
+    func testCameraURLResponsesMustRemainOnTheSelectedOrigin() throws {
+        let origin = try mobileValidateNovatekHttpOrigin(address: "192.168.1.254", port: 80)
+        let sameOrigin = try XCTUnwrap(URL(string: "http://192.168.1.254/?custom=1&cmd=3012"))
+        let redirectedOrigin = try XCTUnwrap(URL(string: "http://192.168.1.253/?custom=1&cmd=3012"))
+
+        XCTAssertTrue(
+            cameraResponseMatchesOrigin(
+                URLResponse(url: sameOrigin, mimeType: nil, expectedContentLength: 0, textEncodingName: nil),
+                origin: origin
+            )
+        )
+        XCTAssertFalse(
+            cameraResponseMatchesOrigin(
+                URLResponse(url: redirectedOrigin, mimeType: nil, expectedContentLength: 0, textEncodingName: nil),
+                origin: origin
+            )
+        )
     }
 
     @MainActor

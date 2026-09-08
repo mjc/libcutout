@@ -118,6 +118,14 @@ struct ContentView: View {
         navigationPath.removeLast()
     }
 
+    private func openCamera() {
+        navigationPath = CutoutAppRoute.navigationPath(openingCameraFrom: route)
+    }
+
+    private func closeCamera() {
+        guard navigationPath.last == .camera else { return }
+        navigationPath.removeLast()
+    }
     private func disconnectAndReturnToPicker() {
         model.disconnectTransport()
         navigate(to: .devicePicker)
@@ -221,7 +229,7 @@ struct ContentView: View {
                 PevAppShell(
                     sectionTitle: appSectionTitle(for: destination),
                     disconnect: disconnectAndReturnToPicker,
-                    openCamera: { navigate(to: .camera) }
+                    openCamera: openCamera
                 ) {
                     routedContent(for: destination)
                 }
@@ -229,7 +237,7 @@ struct ContentView: View {
                 PevAppShell(
                     sectionTitle: appSectionTitle(for: destination),
                     disconnect: disconnectAndReturnToPicker,
-                    openCamera: { navigate(to: .camera) }
+                    openCamera: openCamera
                 ) {
                 routedContent(for: destination)
                 }
@@ -265,6 +273,7 @@ struct ContentView: View {
             CaptureRouteView(model: model, finishCapture: finishCaptureAndReturnToPicker)
         case .camera:
             CameraRouteContainerView(
+                close: closeCamera,
                 annotateCapture: model.annotateCapture(key:value:),
                 recordMediaReference: model.recordCameraMediaReference(source:media:localURL:),
                 sessionState: model.cameraSessionStateHandle
