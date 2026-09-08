@@ -85,6 +85,10 @@
       "comment" : "Brightness control heading.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Brightness" } } }
     },
+    "lighting.power" : {
+      "comment" : "Lighting power toggle label.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Power" } } }
+    },
     "app.command.disconnect" : {
       "comment" : "App command that disconnects the current device.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Disconnect" } } }

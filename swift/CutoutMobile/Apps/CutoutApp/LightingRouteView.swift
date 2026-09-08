@@ -139,7 +139,7 @@ private struct LightingPowerToggle: View {
 
     var body: some View {
         Toggle(
-            "Power",
+            localizedAppText("lighting.power"),
             isOn: Binding(
                 get: { model.requestedPowerOn },
                 set: model.setPower
