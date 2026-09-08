@@ -268,14 +268,20 @@ fn source_fingerprint(root: &Path) -> Result<String> {
         PathBuf::from("Cargo.toml"),
         PathBuf::from("rust-toolchain.toml"),
         PathBuf::from("crates/cutout-core/Cargo.toml"),
+        PathBuf::from("crates/cutout-music/Cargo.toml"),
         PathBuf::from("crates/cutout-mobile-ffi/Cargo.toml"),
+        PathBuf::from("crates/cutout-ride-maps/Cargo.toml"),
         PathBuf::from("crates/cutout-protocols/Cargo.toml"),
+        PathBuf::from("crates/libcutout-persistence/Cargo.toml"),
     ]);
     for directory in [
         "crates/cutout-core/src",
+        "crates/cutout-music/src",
         "crates/cutout-mobile-ffi/src",
+        "crates/cutout-ride-maps/src",
         "crates/cutout-protocols/src",
         "crates/cutout-protocols/registry",
+        "crates/libcutout-persistence/src",
     ] {
         collect_files(root, Path::new(directory), &mut files)?;
     }
@@ -524,8 +530,11 @@ mod tests {
         let _ = fs::remove_dir_all(&root);
         for directory in [
             "crates/cutout-core/src",
+            "crates/cutout-music/src",
             "crates/cutout-mobile-ffi/src",
+            "crates/cutout-ride-maps/src",
             "crates/cutout-protocols/src",
+            "crates/libcutout-persistence/src",
         ] {
             fs::create_dir_all(root.join(directory)).unwrap();
         }
@@ -534,15 +543,19 @@ mod tests {
             "Cargo.toml",
             "rust-toolchain.toml",
             "crates/cutout-core/Cargo.toml",
+            "crates/cutout-music/Cargo.toml",
             "crates/cutout-mobile-ffi/Cargo.toml",
+            "crates/cutout-ride-maps/Cargo.toml",
             "crates/cutout-protocols/Cargo.toml",
+            "crates/libcutout-persistence/Cargo.toml",
             "crates/cutout-core/src/lib.rs",
+            "crates/cutout-music/src/lib.rs",
         ] {
             fs::write(root.join(file), "original\n").unwrap();
         }
 
         let before = source_fingerprint(&root).unwrap();
-        fs::write(root.join("crates/cutout-core/src/lib.rs"), "changed\n").unwrap();
+        fs::write(root.join("crates/cutout-music/src/lib.rs"), "changed\n").unwrap();
         let after = source_fingerprint(&root).unwrap();
         fs::remove_dir_all(root).unwrap();
 

@@ -52,7 +52,7 @@ private extension LightSettingState {
     var lightState: LightState? {
         switch kind {
         case .pending:
-            current
+            requested ?? current
         case .unknown, .current, .confirmed, .refused, .timedOut, .failed:
             current
         }
