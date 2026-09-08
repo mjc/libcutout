@@ -16,6 +16,10 @@ The same upstream integration documents a MELK initialization handshake: send
 one-time sequence after FFF3 discovery and before admitting user commands; it is
 initialization, not command confirmation.
 At the pinned upstream commit, `models.json` has no `MELK-OC21` entry. Its closest `MELK-OA21` entry selects the `EFFECTS_STRIPX` catalog (228 symbolic entries), while the separate OA21 reference list used by the UI supplies verified wire names only for IDs 1–212. The shared effect frame shape is useful protocol evidence, but it is not enough to assign the remaining names or claim those modes on OC21.
+The same source also has a generic `MELK` profile with a smaller, different
+effect-name mapping and the controller-microphone frames. We retain those
+frames as a future capability path, but do not transplant its names into the
+OC21 catalog while the model-specific mapping is absent.
 
 
 Power, solid RGB, and brightness were physically confirmed before this extension.
