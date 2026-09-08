@@ -788,7 +788,9 @@ public final class MelkLightingPeripheralSession: NSObject, CBCentralManagerDele
         guard !pendingWrites.isEmpty else { return }
 
         // MELK accepts write-without-response frames, but a burst can exhaust its
-        // small controller-side queue. Pace frames while retaining color coalescing.
+        // small controller-side queue. Keep the profile-provided cadence when present;
+        // MELK currently falls back to the 50 ms cadence observed on hardware.
+        let delayMilliseconds = Int(plan.minimumIntervalMilliseconds ?? 50)
         let task = DispatchWorkItem { [weak self, weak peripheral] in
             guard let self, let peripheral else { return }
             self.onQueue {
@@ -799,7 +801,7 @@ public final class MelkLightingPeripheralSession: NSObject, CBCentralManagerDele
             }
         }
         writeDrainTask = task
-        queue.asyncAfter(deadline: .now() + .milliseconds(50), execute: task)
+        queue.asyncAfter(deadline: .now() + .milliseconds(delayMilliseconds), execute: task)
     }
 
     public func peripheralIsReady(toSendWriteWithoutResponse peripheral: CBPeripheral) {
