@@ -314,6 +314,28 @@ final class CutoutAppUITests: XCTestCase {
         XCTAssertGreaterThanOrEqual(useButton.frame.height, 92)
     }
 
+    func testCameraSurfaceReturnsToTheRideWithoutCameraNetwork() {
+        XCTAssertTrue(pairAvailableDevice(.vesc))
+        let ride = app.descendants(matching: .any)["dashboard.screen.vescRide"]
+        XCTAssertTrue(ride.waitForExistence(timeout: 20), app.debugDescription)
+
+        let cameraButton = app.buttons["dashboard.camera"]
+        XCTAssertTrue(cameraButton.waitForExistence(timeout: 5), app.debugDescription)
+        XCTAssertTrue(cameraButton.isHittable)
+        cameraButton.tap()
+
+        let camera = app.descendants(matching: .any)["camera.screen"]
+        XCTAssertTrue(camera.waitForExistence(timeout: 5), app.debugDescription)
+        let back = app.buttons["camera.back"]
+        XCTAssertTrue(back.waitForExistence(timeout: 5), app.debugDescription)
+        XCTAssertTrue(back.isHittable)
+        back.tap()
+
+        XCTAssertTrue(ride.waitForExistence(timeout: 5), app.debugDescription)
+        XCTAssertFalse(camera.exists)
+        disconnectIfConnected()
+    }
+
     func testBluetoothUnavailablePickerDoesNotOfferUseOrRide() throws {
         try assertBluetoothBlockedPicker(status: "Bluetooth unavailable")
     }

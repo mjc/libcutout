@@ -1,16 +1,13 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-origin="${NOVATEK_CAMERA_ORIGIN:-http://192.168.1.254}"
-origin="${origin%/}"
-readonly origin
+readonly origin='http://192.168.1.254'
 readonly -a probes=(liveview-format:2019 firmware-version:3012 configuration:3014 media-list:3015 storage-present:3024)
 readonly rtsp_capture_seconds=10
 readonly rtsp_stream_timeout_seconds=10
 
 usage() {
   echo "usage: $0 [--dry-run | --self-test | LOG_FILE]"
-  echo "override the default origin with NOVATEK_CAMERA_ORIGIN=http://HOST[:PORT]"
   echo "run while connected to the camera Wi-Fi; metadata stops at complete responses and video capture is finite"
   echo "RTSP video is saved beside LOG_FILE as LOG_FILE.rtsp.ts, with a 10-second capture and 10-second stream I/O timeout"
 }
@@ -118,6 +115,59 @@ capture_http_response() {
   return 1
 }
 
+capture_rtsp_response() {
+  local host="$1" port="$2" request_file="$3" response_file="$4"
+  local error_file="$5" need_body="$6"
+
+  : >"$response_file" || return 1
+  perl - "$host" "$port" "$request_file" "$response_file" "$need_body" <<'PERL' 2>"$error_file"
+use strict;
+use warnings;
+use IO::Socket::INET;
+
+my ($host, $port, $request_path, $response_path, $need_body) = @ARGV;
+open my $request, '<:raw', $request_path or die "open request: $!\n";
+local $/;
+my $request_data = <$request>;
+close $request or die "close request: $!\n";
+
+my $socket = IO::Socket::INET->new(
+    PeerHost => $host,
+    PeerPort => $port,
+    Proto    => 'tcp',
+) or die "connect: $!\n";
+$socket->autoflush(1);
+print {$socket} $request_data or die "write request: $!\n";
+
+open my $response, '>:raw', $response_path or die "open response: $!\n";
+my $data = '';
+while (1) {
+    my $read = sysread($socket, my $chunk, 8192);
+    die "read response: $!\n" unless defined $read;
+    last if $read == 0;
+    print {$response} $chunk or die "write response: $!\n";
+    $data .= $chunk;
+    my $header_end = index($data, "\r\n\r\n");
+    next if $header_end < 0;
+    if (!$need_body) {
+        close $response or die "close response: $!\n";
+        close $socket or die "close socket: $!\n";
+        exit 0;
+    }
+    my $headers = substr($data, 0, $header_end);
+    my ($length) = $headers =~ /^Content-Length:\s*(\d+)/mi;
+    if (!defined $length || length($data) >= $header_end + 4 + $length) {
+        close $response or die "close response: $!\n";
+        close $socket or die "close socket: $!\n";
+        exit 0;
+    }
+}
+close $response or die "close response: $!\n";
+close $socket or die "close socket: $!\n";
+exit 1;
+PERL
+}
+
 for probe in "${probes[@]}"; do
   command_id="${probe##*:}"
   request="$origin/?custom=1&cmd=$command_id"
@@ -192,13 +242,14 @@ if [[ -n "$rtsp_uri" ]]; then
   printf '\n=== rtsp-discovery ===\nuri=%s\nhost=%s\nport=%s\npath=%s\n' \
     "$rtsp_uri" "$rtsp_host" "$rtsp_port" "$rtsp_path" >>"$log_file"
 
-  if ! command -v nc >/dev/null; then
-    printf 'result=nc-required\n' >>"$log_file"
+  if ! command -v perl >/dev/null; then
+    printf 'result=perl-required\n' >>"$log_file"
     failures=$((failures + 1))
   else
     probe_rtsp() {
       local label="$1" method="$2" request_file="$scratch_dir/rtsp-$1-request"
-      local response_file="$scratch_dir/rtsp-$1-response" status
+      local response_file="$scratch_dir/rtsp-$1-response"
+      local error_file="$scratch_dir/rtsp-$1-error" status need_body=0
       {
         printf '%s %s RTSP/1.0\r\n' "$method" "$rtsp_uri"
         printf 'CSeq: 1\r\n'
@@ -209,39 +260,16 @@ if [[ -n "$rtsp_uri" ]]; then
         printf '\r\n'
       } >"$request_file"
 
-      set +e
-      cat "$request_file" |
-        nc "$rtsp_host" "$rtsp_port" 2>&1 |
-        NOVATEK_RTSP_NEED_BODY="$([[ "$method" == DESCRIBE ]] && echo 1 || echo 0)" perl -e '
-          my $need_body = $ENV{"NOVATEK_RTSP_NEED_BODY"};
-          my $data = "";
-          while (sysread(STDIN, my $chunk, 8192)) {
-            print $chunk;
-            $data .= $chunk;
-            my $header_end = index($data, "\r\n\r\n");
-            next if $header_end < 0;
-            exit 0 if !$need_body;
-            my $headers = substr($data, 0, $header_end);
-            my ($length) = $headers =~ /^Content-Length:\s*(\d+)/mi;
-            exit 0 if !defined($length);
-            exit 0 if length($data) >= $header_end + 4 + $length;
-          }
-          exit 1;
-        ' >"$response_file"
-      local -a pipeline_status=("${PIPESTATUS[@]}")
-      set -e
-      local nc_status="${pipeline_status[1]}"
-      local parser_status="${pipeline_status[2]}"
-      rtsp_nc_raw_status="$nc_status"
-      if ((parser_status == 0)); then
+      [[ "$method" == DESCRIBE ]] && need_body=1
+      if capture_rtsp_response \
+        "$rtsp_host" "$rtsp_port" "$request_file" "$response_file" "$error_file" "$need_body"
+      then
         status=0
       else
-        status="$nc_status"
-        if ((status == 0)); then
-          status="$parser_status"
-        fi
+        status=$?
         failures=$((failures + 1))
       fi
+      rtsp_transport_raw_status="$status"
       {
         printf '\n=== rtsp-%s ===\n' "$label"
         printf 'request_uri=%s\n' "$rtsp_uri"
@@ -249,8 +277,12 @@ if [[ -n "$rtsp_uri" ]]; then
         cat "$request_file"
         printf '\nresponse_bytes:\n'
         cat "$response_file"
-        printf '\n\nnc_exit=%s\nnc_raw_exit=%s\n' \
-          "$status" "$rtsp_nc_raw_status"
+        if [[ -s "$error_file" ]]; then
+          printf '\ntransport_error:\n'
+          cat "$error_file"
+        fi
+        printf '\n\nrtsp_exit=%s\nrtsp_raw_exit=%s\n' \
+          "$status" "$rtsp_transport_raw_status"
       } >>"$log_file"
     }
 

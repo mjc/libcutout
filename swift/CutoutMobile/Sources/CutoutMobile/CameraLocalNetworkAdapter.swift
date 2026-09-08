@@ -31,6 +31,20 @@ public typealias CameraReadOnlyFetcher = @Sendable (URL) async throws -> Data
 
 private let maximumCameraThumbnailBytes = 2 * 1024 * 1024
 
+func cameraResponseMatchesOrigin(
+    _ response: URLResponse?,
+    origin: MobileNovatekHttpOriginDto
+) -> Bool {
+    guard let url = response?.url,
+          url.scheme?.lowercased() == "http",
+          url.host == origin.address,
+          (url.port ?? 80) == Int(origin.port)
+    else {
+        return false
+    }
+    return true
+}
+
 /// Failure while downloading one camera-reported media file.
 public enum CameraMediaDownloadError: Error, Equatable, Sendable {
     case invalidPath
@@ -58,17 +72,18 @@ public typealias CameraPreviewFrameHandler = @MainActor @Sendable (MobileCameraV
 /// Maps Apple path evidence to a conservative camera connection state.
 public func cameraConnectionPresentation(
     pathStatus: CameraLocalNetworkPathStatus,
-    usesWiFi: Bool
+    usesWiFi: Bool,
+    hasReadOnlyEvidence: Bool = false
 ) -> CameraConnectionPresentation {
     guard pathStatus == .satisfied, usesWiFi else { return .wifiRequired }
-    return .notConfigured
+    return hasReadOnlyEvidence ? .connected : .notConfigured
 }
 
 /// Apple-owned local-network readiness monitor for the selected camera path.
 ///
 /// This monitor does not scan the LAN or infer a camera connection. It only
-/// reports whether the phone currently has a usable Wi-Fi path; a future
-/// selected-origin connection will supply the read-only Novatek evidence.
+/// reports whether the phone currently has a usable Wi-Fi path; the caller
+/// supplies the selected origin used to load read-only Novatek evidence.
 @MainActor
 @Observable
 public final class CameraLocalNetworkAdapter {
@@ -296,6 +311,9 @@ public final class CameraLocalNetworkAdapter {
         port: UInt16,
         fetch: @escaping CameraReadOnlyFetcher
     ) async throws -> CameraReadOnlyEvidence {
+        guard !presentation.connection.blocksReadOnlyDiscovery else {
+            throw CameraReadOnlyRequestError.pathUnavailable
+        }
         clearReadOnlyEvidence()
         let requestGeneration = readOnlyEvidenceGeneration
         let origin = try mobileValidateNovatekHttpOrigin(address: address, port: port)
@@ -334,8 +352,13 @@ public final class CameraLocalNetworkAdapter {
         address: String,
         port: UInt16
     ) async throws -> CameraReadOnlyEvidence {
-        try await loadReadOnlyEvidence(address: address, port: port) { url in
-            try await URLSession.shared.data(from: url).0
+        let origin = try mobileValidateNovatekHttpOrigin(address: address, port: port)
+        return try await loadReadOnlyEvidence(address: address, port: port) { url in
+            let (data, response) = try await URLSession.shared.data(from: url)
+            guard cameraResponseMatchesOrigin(response, origin: origin) else {
+                throw CameraReadOnlyRequestError.originMismatch
+            }
+            return data
         }
     }
 
@@ -438,8 +461,13 @@ public final class CameraLocalNetworkAdapter {
         port: UInt16,
         media: CameraMediaEvidence
     ) async throws -> Data {
-        try await fetchMediaThumbnail(address: address, port: port, media: media) { url in
-            try await URLSession.shared.data(from: url).0
+        let origin = try mobileValidateNovatekHttpOrigin(address: address, port: port)
+        return try await fetchMediaThumbnail(address: address, port: port, media: media) { url in
+            let (data, response) = try await URLSession.shared.data(from: url)
+            guard cameraResponseMatchesOrigin(response, origin: origin) else {
+                throw CameraReadOnlyRequestError.originMismatch
+            }
+            return data
         }
     }
 
@@ -453,13 +481,19 @@ public final class CameraLocalNetworkAdapter {
         media: CameraMediaEvidence,
         to destination: URL
     ) async throws {
-        try await downloadMedia(
+        let origin = try mobileValidateNovatekHttpOrigin(address: address, port: port)
+        return try await downloadMedia(
             address: address,
             port: port,
             media: media,
             to: destination
         ) { url in
-            try await URLSession.shared.download(from: url).0
+            let (temporaryURL, response) = try await URLSession.shared.download(from: url)
+            guard cameraResponseMatchesOrigin(response, origin: origin) else {
+                try? FileManager.default.removeItem(at: temporaryURL)
+                throw CameraMediaDownloadError.originMismatch
+            }
+            return temporaryURL
         }
     }
 
@@ -500,8 +534,13 @@ public final class CameraLocalNetworkAdapter {
         port: UInt16,
         start: Bool
     ) async throws -> CameraCommandOutcome {
-        try await requestOnboardRecording(address: address, port: port, start: start) { url in
-            try await URLSession.shared.data(from: url).0
+        let origin = try mobileValidateNovatekHttpOrigin(address: address, port: port)
+        return try await requestOnboardRecording(address: address, port: port, start: start) { url in
+            let (data, response) = try await URLSession.shared.data(from: url)
+            guard cameraResponseMatchesOrigin(response, origin: origin) else {
+                throw CameraCommandRequestError.originMismatch
+            }
+            return data
         }
     }
 
@@ -539,8 +578,13 @@ public final class CameraLocalNetworkAdapter {
         address: String,
         port: UInt16
     ) async throws -> CameraCommandOutcome {
-        try await requestStillCapture(address: address, port: port) { url in
-            try await URLSession.shared.data(from: url).0
+        let origin = try mobileValidateNovatekHttpOrigin(address: address, port: port)
+        return try await requestStillCapture(address: address, port: port) { url in
+            let (data, response) = try await URLSession.shared.data(from: url)
+            guard cameraResponseMatchesOrigin(response, origin: origin) else {
+                throw CameraCommandRequestError.originMismatch
+            }
+            return data
         }
     }
 
@@ -580,9 +624,10 @@ public final class CameraLocalNetworkAdapter {
     func apply(pathStatus: CameraLocalNetworkPathStatus, usesWiFi: Bool) {
         let nextConnection = cameraConnectionPresentation(
             pathStatus: pathStatus,
-            usesWiFi: usesWiFi
+            usesWiFi: usesWiFi,
+            hasReadOnlyEvidence: readOnlyEvidence != nil
         )
-        guard nextConnection == .notConfigured else {
+        guard pathStatus == .satisfied, usesWiFi else {
             clearReadOnlyEvidence()
             presentation.connection = nextConnection
             return

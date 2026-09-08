@@ -103,6 +103,22 @@ nix develop -c ./scripts/run-ios-app-on-mac.sh
 CUTOUT_IOS_DEVELOPMENT_TEAM=YOURTEAM nix develop -c cargo cutout ios deploy
 ```
 
+## R3 Pro camera validation on iPhone
+
+The R3 Pro creates the local network that owns `192.168.1.254`. The Mac does
+not need to join that network: build and install `CutoutApp` on the iPhone
+first (USB is sufficient), then join the camera Wi-Fi from the iPhone and
+open the Camera route. Grant local-network access when iOS asks. The route
+will remain read-only until the phone reports a usable Wi-Fi path, then it can
+load the R3 Pro firmware/configuration/media evidence and start or save the
+RTSP preview.
+
+For the hardware pass, retain the firmware/configuration response log, one
+successful RTSP preview file (or the app's saved preview), and one downloaded
+media file with its reported size. Keep those artifacts separate from the
+offline simulator/UI evidence: this is the proof that the phone reached the
+camera network, not proof that the Mac was connected to it.
+
 The Mac command builds the iPhone app for Apple Silicon Mac and opens it. The
 phone command builds, installs, and launches on a connected unlocked device.
 `CUTOUT_IOS_DEVELOPMENT_TEAM` is required; `CUTOUT_IOS_APP_BUNDLE_ID` is

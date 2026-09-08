@@ -2096,8 +2096,12 @@
       "comment" : "Button that opens the optional ride-camera surface from a connected ride shell.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Camera" } } }
     },
+    "camera.action.back" : {
+      "comment" : "Button that returns from the optional ride-camera surface to the connected ride.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Back to ride" } } }
+    },
     "camera.setup.title" : {
-      "comment" : "Camera setup card title before local-network connection is implemented.",
+      "comment" : "Camera setup card title for local-network camera connection.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Connect a ride camera" } } }
     },
     "camera.origin.address" : {
@@ -2217,7 +2221,7 @@
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Camera thumbnail could not be loaded." } } }
     },
     "camera.connection.not_configured" : {
-      "comment" : "Camera connection state before a local-network adapter is configured.",
+      "comment" : "Camera connection state before a validated local camera origin is loaded.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Camera not configured" } } }
     },
     "camera.connection.permission_required" : {
@@ -2241,7 +2245,7 @@
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Unsupported camera" } } }
     },
     "camera.connection.detail.not_configured" : {
-      "comment" : "Camera detail before network adapter implementation.",
+      "comment" : "Camera detail before a validated local camera origin is loaded.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Join the camera Wi-Fi network, then return to CutOut for read-only identification. Ride telemetry continues independently." } } }
     },
     "camera.connection.detail.permission_required" : {

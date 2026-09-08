@@ -167,6 +167,7 @@ final class CutoutAppRouteTests: XCTestCase {
             "Camera address changed; reload camera status before requesting media or control."
         )
         XCTAssertEqual(localizedAppText("camera.preview.export"), "Export preview")
+        XCTAssertEqual(localizedAppText("camera.action.back"), "Back to ride")
         XCTAssertEqual(
             localizedAppText("bms.no_data.pack_estimate_accessibility_value", "71", "Derived from voltage curve"),
             "71%. Derived from voltage curve"
@@ -398,6 +399,7 @@ final class CutoutAppRouteTests: XCTestCase {
             .vescRide,
             .vescDebug,
             .capture,
+            .camera,
         ]
 
         XCTAssertEqual(routes.count, 13)
@@ -434,6 +436,24 @@ final class CutoutAppRouteTests: XCTestCase {
         )
     }
 
+    func testOpeningCameraPreservesTheConnectedRouteForReturnNavigation() {
+        XCTAssertEqual(
+            CutoutAppRoute.navigationPath(openingCameraFrom: .eucRide),
+            [.eucRide, .camera]
+        )
+        XCTAssertEqual(
+            CutoutAppRoute.navigationPath(openingCameraFrom: .vescDebug),
+            [.vescDebug, .camera]
+        )
+        XCTAssertEqual(
+            CutoutAppRoute.navigationPath(openingCameraFrom: .devicePicker),
+            [.camera]
+        )
+        XCTAssertEqual(
+            CutoutAppRoute.navigationPath(openingCameraFrom: .camera),
+            [.camera]
+        )
+    }
     func testRouteOwnsTheSameTabsUsedByWindowCommandsAndContent() {
         XCTAssertTrue(CutoutAppRoute.devicePicker.navigationTabs(for: nil).isEmpty)
         XCTAssertTrue(CutoutAppRoute.capture.navigationTabs(for: nil).isEmpty)
