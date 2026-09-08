@@ -905,7 +905,7 @@ final class CutoutAppUITests: XCTestCase {
                 .waitForExistence(timeout: 5)
         )
 
-        let headlight = app.switches["High beam"]
+        let headlight = app.switches["settings.control.headlight"]
         XCTAssertTrue(headlight.exists)
         XCTAssertTrue(headlight.isEnabled)
 

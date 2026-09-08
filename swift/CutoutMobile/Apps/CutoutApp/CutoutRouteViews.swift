@@ -172,6 +172,7 @@ struct EucTuneRouteView: View {
                     .buttonStyle(.bordered)
                     .disabled(model.phase != .live || !model.headlightControlAvailable)
                     .accessibilityHint(model.headlightStatusText)
+                    .accessibilityIdentifier("settings.control.headlight")
                     if model.pedalModeControlAvailable {
                         EucPedalModeControl(model: model)
                     }
