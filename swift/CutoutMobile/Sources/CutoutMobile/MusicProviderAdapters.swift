@@ -3,207 +3,11 @@ import Foundation
 #if canImport(UIKit) && os(iOS)
 import UIKit
 #endif
-#if canImport(MusicKit) && os(iOS)
-@preconcurrency import MusicKit
+#if canImport(Security)
+import Security
 #endif
 #if canImport(SpotifyiOS) && os(iOS)
 @preconcurrency import SpotifyiOS
-#endif
-
-#if canImport(MediaPlayer) && os(iOS)
-import MediaPlayer
-
-/// Apple Music's system-player bridge. MusicKit owns transport; MediaPlayer is
-/// retained only for the system now-playing metadata/artwork surface. iOS does
-/// not provide a system PCM tap for another app's playback.
-@MainActor
-public final class AppleMusicProviderAdapter {
-    public static let providerURL = URL(string: "https://music.apple.com/")!
-    private static let artworkSize = CGSize(width: 256, height: 256)
-    private let player = MPMusicPlayerController.systemMusicPlayer
-#if canImport(MusicKit) && os(iOS)
-    private let systemPlayer = SystemMusicPlayer.shared
-#endif
-    private var notificationTokens = [NSObjectProtocol]()
-    private var artworkCache = MusicArtworkCache()
-
-    public init() {}
-
-    /// Starts the system-player callbacks used to refresh bounded metadata.
-    /// Polling remains the fallback for position and lifecycle reconciliation.
-    public func startMonitoring(onChange: @escaping @MainActor () -> Void) {
-        stopMonitoring()
-        player.beginGeneratingPlaybackNotifications()
-        let center = NotificationCenter.default
-        let names: [Notification.Name] = [
-            .MPMusicPlayerControllerPlaybackStateDidChange,
-            .MPMusicPlayerControllerNowPlayingItemDidChange,
-        ]
-        notificationTokens = names.map { name in
-            center.addObserver(forName: name, object: player, queue: .main) { _ in
-                Task { @MainActor in onChange() }
-            }
-        }
-    }
-
-    public func stopMonitoring() {
-        let center = NotificationCenter.default
-        notificationTokens.forEach(center.removeObserver)
-        notificationTokens.removeAll(keepingCapacity: true)
-        player.endGeneratingPlaybackNotifications()
-    }
-
-    public func requestAuthorization() async -> Bool {
-#if canImport(MusicKit) && os(iOS)
-        return await MusicAuthorization.request() == .authorized
-#else
-        return await withCheckedContinuation { continuation in
-            MPMediaLibrary.requestAuthorization { status in
-                continuation.resume(returning: status == .authorized)
-            }
-        }
-#endif
-    }
-
-    public func unauthorizedSnapshot(observedAtMs: UInt64) -> MobileMusicSnapshotDto {
-        MobileMusicSnapshotDto(
-            provider: .appleMusic,
-            sessionId: "system-music-player",
-            state: .unauthorized,
-            item: nil,
-            positionMilliseconds: nil,
-            durationMilliseconds: nil,
-            observedAtMs: observedAtMs,
-            capabilities: MobileMusicCapabilitiesDto(
-                previous: false,
-                play: false,
-                pause: false,
-                next: false,
-                openProvider: true
-            )
-        )
-    }
-
-    @MainActor
-    public func perform(_ command: MobileMusicCommandDto) async -> MusicCommandOutcome {
-        switch command {
-        case .previous:
-#if canImport(MusicKit) && os(iOS)
-            do {
-                try await systemPlayer.skipToPreviousEntry()
-            } catch {
-                return .failed
-            }
-#else
-            player.skipToPreviousItem()
-#endif
-        case .play:
-#if canImport(MusicKit) && os(iOS)
-            do {
-                try await systemPlayer.play()
-            } catch {
-                return .failed
-            }
-#else
-            player.play()
-#endif
-        case .pause:
-#if canImport(MusicKit) && os(iOS)
-            systemPlayer.pause()
-#else
-            player.pause()
-#endif
-        case .next:
-#if canImport(MusicKit) && os(iOS)
-            do {
-                try await systemPlayer.skipToNextEntry()
-            } catch {
-                return .failed
-            }
-#else
-            player.skipToNextItem()
-#endif
-        case .openProvider:
-#if canImport(UIKit) && os(iOS)
-            guard UIApplication.shared.canOpenURL(Self.providerURL) else { return .unavailable }
-            guard await UIApplication.shared.open(Self.providerURL) else { return .failed }
-#else
-            return .unavailable
-#endif
-        }
-        return .accepted
-    }
-
-    public func snapshot(observedAtMs: UInt64) -> MobileMusicSnapshotDto {
-        let item = player.nowPlayingItem.map {
-            MobileMusicItemDto(
-                identifier: String($0.persistentID),
-                title: $0.title,
-                artist: $0.artist
-            )
-        }
-        let state: MobileMusicPlaybackStateDto = switch player.playbackState {
-        case .playing: .playing
-        case .paused: .paused
-        case .interrupted: .interrupted
-        case .stopped: .stopped
-        default: .unavailable
-        }
-        let position = MusicTimeConversion.milliseconds(player.currentPlaybackTime)
-        let duration = player.nowPlayingItem.flatMap {
-            MusicTimeConversion.milliseconds($0.playbackDuration)
-        }
-        return MobileMusicSnapshotDto(
-            provider: .appleMusic,
-            sessionId: "system-music-player",
-            state: state,
-            item: item,
-            positionMilliseconds: position,
-            durationMilliseconds: duration,
-            observedAtMs: observedAtMs,
-            capabilities: MobileMusicCapabilitiesDto(
-                previous: item != nil,
-                play: state == .paused || state == .stopped,
-                pause: state == .playing,
-                next: item != nil,
-                openProvider: true
-            )
-        )
-    }
-
-    /// Returns the same bounded provider snapshot plus permitted artwork for
-    /// SwiftUI. The artwork bytes never enter the Rust ride contract.
-    public func observation(observedAtMs: UInt64) -> MusicProviderObservation {
-        MusicProviderObservation(
-            snapshot: snapshot(observedAtMs: observedAtMs),
-            artworkData: artworkData()
-        )
-    }
-
-    private func artworkData() -> Data? {
-        artworkCache.artwork(for: currentItemIdentifier) {
-            loadArtwork()
-        }?.data
-    }
-
-    private var currentItemIdentifier: String? {
-        player.nowPlayingItem.map { String($0.persistentID) }
-    }
-
-    private func loadArtwork() -> MusicArtwork? {
-#if canImport(UIKit) && os(iOS)
-        guard
-            let artwork = player.nowPlayingItem?.artwork,
-            let image = artwork.image(at: Self.artworkSize)
-        else {
-            return nil
-        }
-        return image.jpegData(compressionQuality: 0.8).flatMap(MusicArtwork.init(data:))
-#else
-        nil
-#endif
-    }
-}
 #endif
 
 #if canImport(SpotifyiOS) && os(iOS)
@@ -216,16 +20,13 @@ public final class SpotifyProviderAdapter: NSObject, @preconcurrency SPTAppRemot
     public static let providerURL = URL(string: "spotify://")!
     private static let defaultRedirectURI = "cutout-spotify://spotify-login-callback"
     private static let accessTokenKey = "io.cutout.music.spotify.access-token"
+    private static let accessTokenAccount = "default"
 
     private let configuration: SPTConfiguration?
     private var appRemote: SPTAppRemote?
     private var accessToken: String? {
         didSet {
-            if let accessToken {
-                UserDefaults.standard.set(accessToken, forKey: Self.accessTokenKey)
-            } else {
-                UserDefaults.standard.removeObject(forKey: Self.accessTokenKey)
-            }
+            Self.storeAccessToken(accessToken)
         }
     }
     private var playerState: SPTAppRemotePlayerState?
@@ -233,6 +34,10 @@ public final class SpotifyProviderAdapter: NSObject, @preconcurrency SPTAppRemot
     private var lifecycleState: MobileMusicPlaybackStateDto = .disconnected
     private var monitoringGeneration: UInt64 = 0
     private var playerStateRequestPending = false
+    private var connectionAttemptInFlight = false
+    private var nextConnectionAttemptAt = Date.distantPast
+    private var connectionAttemptCount = 0
+    private static let maximumConnectionAttempts = 3
 #if DEBUG
     private var lastObservationDiagnostic: String?
 #endif
@@ -251,8 +56,49 @@ public final class SpotifyProviderAdapter: NSObject, @preconcurrency SPTAppRemot
         } else {
             configuration = nil
         }
-        accessToken = UserDefaults.standard.string(forKey: Self.accessTokenKey)
+        accessToken = Self.loadAccessToken()
         super.init()
+    }
+
+    private static func keychainQuery() -> [String: Any] {
+        [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: accessTokenKey,
+            kSecAttrAccount as String: accessTokenAccount,
+        ]
+    }
+
+    private static func loadAccessToken() -> String? {
+#if canImport(Security)
+        var query = keychainQuery()
+        query[kSecReturnData as String] = true
+        query[kSecMatchLimit as String] = kSecMatchLimitOne
+        var result: CFTypeRef?
+        guard SecItemCopyMatching(query as CFDictionary, &result) == errSecSuccess,
+              let data = result as? Data,
+              let token = String(data: data, encoding: .utf8),
+              !token.isEmpty
+        else { return nil }
+        return token
+#else
+        nil
+#endif
+    }
+
+    private static func storeAccessToken(_ token: String?) {
+#if canImport(Security)
+        let query = keychainQuery()
+        guard let token, let data = token.data(using: .utf8) else {
+            SecItemDelete(query as CFDictionary)
+            return
+        }
+        let attributes = [kSecValueData as String: data]
+        if SecItemUpdate(query as CFDictionary, attributes as CFDictionary) != errSecSuccess {
+            var item = query
+            item[kSecValueData as String] = data
+            SecItemAdd(item as CFDictionary, nil)
+        }
+#endif
     }
 
     public func startMonitoring(onChange: @escaping @MainActor () -> Void) {
@@ -269,14 +115,15 @@ public final class SpotifyProviderAdapter: NSObject, @preconcurrency SPTAppRemot
         lifecycleState = .buffering
         emitChange()
         if let accessToken {
-            appRemote.connectionParameters.accessToken = accessToken
-            appRemote.connect()
+            connect(appRemote, with: accessToken)
         } else {
+            connectionAttemptInFlight = true
             let generation = monitoringGeneration
             appRemote.authorizeAndPlayURI("") { [weak self] installed in
                 guard !installed else { return }
                 Task { @MainActor [weak self] in
                     guard let self, self.monitoringGeneration == generation else { return }
+                    self.connectionAttemptInFlight = false
                     self.lifecycleState = .unavailable
                     self.emitChange()
                 }
@@ -293,7 +140,33 @@ public final class SpotifyProviderAdapter: NSObject, @preconcurrency SPTAppRemot
         appRemote = nil
         playerStateRequestPending = false
         playerState = nil
+        connectionAttemptInFlight = false
+        nextConnectionAttemptAt = .distantPast
+        connectionAttemptCount = 0
         lifecycleState = .disconnected
+    }
+
+    /// Reconnects an existing App Remote session after a provider-side
+    /// disconnect. Missing or rejected credentials never trigger an auth loop;
+    /// the next explicit setup starts authorization again.
+    public func ensureConnection() {
+        guard onChange != nil,
+              let appRemote,
+              !appRemote.isConnected,
+              !connectionAttemptInFlight,
+              Date() >= nextConnectionAttemptAt,
+              let accessToken,
+              connectionAttemptCount < Self.maximumConnectionAttempts
+        else { return }
+        connect(appRemote, with: accessToken)
+    }
+
+    private func connect(_ appRemote: SPTAppRemote, with accessToken: String) {
+        connectionAttemptCount += 1
+        appRemote.connectionParameters.accessToken = accessToken
+        connectionAttemptInFlight = true
+        nextConnectionAttemptAt = Date().addingTimeInterval(2)
+        appRemote.connect()
     }
 
     /// Polls the current Spotify player state so a track that was already
@@ -330,10 +203,16 @@ public final class SpotifyProviderAdapter: NSObject, @preconcurrency SPTAppRemot
         guard let parameters else { return false }
         if let token = parameters[SPTAppRemoteAccessTokenKey], !token.isEmpty {
             accessToken = token
+            self.appRemote = appRemote
+            appRemote.delegate = self
             appRemote.connectionParameters.accessToken = token
-            if onChange != nil { appRemote.connect() }
+            if onChange != nil {
+                connectionAttemptCount = 0
+                connect(appRemote, with: token)
+            }
             return true
         }
+        connectionAttemptInFlight = false
         lifecycleState = .unauthorized
         emitChange()
         return true
@@ -371,8 +250,8 @@ public final class SpotifyProviderAdapter: NSObject, @preconcurrency SPTAppRemot
             item: playerState.map {
                 MobileMusicItemDto(
                     identifier: $0.track.uri,
-                    title: MusicObservationValidator.optionalDisplayText($0.track.name),
-                    artist: MusicObservationValidator.optionalDisplayText($0.track.artist.name)
+                    title: $0.track.name,
+                    artist: $0.track.artist.name
                 )
             },
             positionMilliseconds: playerState.flatMap { UInt64(exactly: max(0, $0.playbackPosition)) },
@@ -408,6 +287,9 @@ public final class SpotifyProviderAdapter: NSObject, @preconcurrency SPTAppRemot
 
     public func appRemoteDidEstablishConnection(_ appRemote: SPTAppRemote) {
         guard appRemote === self.appRemote, onChange != nil else { return }
+        connectionAttemptInFlight = false
+        nextConnectionAttemptAt = .distantPast
+        connectionAttemptCount = 0
         lifecycleState = .buffering
         appRemote.playerAPI?.delegate = self
         let generation = monitoringGeneration
@@ -429,7 +311,13 @@ public final class SpotifyProviderAdapter: NSObject, @preconcurrency SPTAppRemot
         didFailConnectionAttemptWithError error: Error?
     ) {
         guard appRemote === self.appRemote, onChange != nil else { return }
-        lifecycleState = error == nil ? .unavailable : .disconnected
+        connectionAttemptInFlight = false
+        // A failed connection means the cached token is no longer usable (for
+        // example after revocation or account switching). Drop it so the next
+        // explicit setup can authorize instead of retrying forever.
+        accessToken = nil
+        nextConnectionAttemptAt = .distantFuture
+        lifecycleState = .unauthorized
 #if DEBUG
         if let error = error as NSError? {
             print("spotify_connection_failed domain=\(error.domain) code=\(error.code)")
@@ -440,6 +328,8 @@ public final class SpotifyProviderAdapter: NSObject, @preconcurrency SPTAppRemot
 
     public func appRemote(_ appRemote: SPTAppRemote, didDisconnectWithError error: Error?) {
         guard appRemote === self.appRemote, onChange != nil else { return }
+        connectionAttemptInFlight = false
+        nextConnectionAttemptAt = Date().addingTimeInterval(2)
         lifecycleState = error == nil ? .disconnected : .stale
         emitChange()
     }
@@ -459,7 +349,7 @@ public final class SpotifyProviderAdapter: NSObject, @preconcurrency SPTAppRemot
     private func emitChange() {
 #if DEBUG
         let snapshot = observation(observedAtMs: 0).snapshot
-        let diagnostic = "spotify_observation state=\(lifecycleState) has_item=\(snapshot.item != nil) valid=\(MusicObservationValidator.accepts(snapshot)) monitoring=\(onChange != nil)"
+        let diagnostic = "spotify_observation state=\(lifecycleState) has_item=\(snapshot.item != nil) monitoring=\(onChange != nil)"
         if lastObservationDiagnostic != diagnostic {
             lastObservationDiagnostic = diagnostic
             print(diagnostic)

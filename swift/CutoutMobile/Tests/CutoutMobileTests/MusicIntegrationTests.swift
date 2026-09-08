@@ -12,8 +12,8 @@ final class MusicIntegrationTests: XCTestCase {
             state: .playing,
             item: .init(
                 identifier: "spotify:episode:example",
-                title: MusicObservationValidator.optionalDisplayText("Episode title"),
-                artist: MusicObservationValidator.optionalDisplayText("")
+                title: "Episode title",
+                artist: ""
             ),
             positionMilliseconds: 1_777_678,
             durationMilliseconds: 3_783_235,
@@ -25,17 +25,18 @@ final class MusicIntegrationTests: XCTestCase {
         XCTAssertEqual(coordinator.nowPlaying?.state, .playing)
         XCTAssertEqual(coordinator.nowPlaying?.playPauseCommand, .pause)
         XCTAssertNil(coordinator.nowPlaying?.item?.artist)
-        XCTAssertNil(MusicObservationValidator.optionalDisplayText("  \n"))
     }
 
     func testMissingSpotifyMetadataDoesNotHideConnectionStatus() {
         let disconnected = MusicNowPlaying(provider: .spotify, state: .disconnected)
-        XCTAssertEqual(disconnected.title, disconnected.statusText)
+        XCTAssertEqual(disconnected.title, pevLocalizedText("music.not_playing"))
+        XCTAssertEqual(disconnected.statusText, pevLocalizedText("music.state.disconnected"))
         let playing = MusicNowPlaying(
             provider: .spotify, state: .playing,
             item: .init(identifier: "spotify:track:example", title: nil, artist: nil)
         )
-        XCTAssertEqual(playing.title, playing.providerName)
+        XCTAssertEqual(playing.title, pevLocalizedText("music.not_playing"))
+        XCTAssertNil(playing.statusText)
     }
 
     func testProviderMonitoringModeMatchesSupportedLifecycle() {
@@ -43,10 +44,11 @@ final class MusicIntegrationTests: XCTestCase {
             MobileMusicProviderDto.appleMusic.monitoringMode,
             .appleMusicSystemPlayer
         )
-        XCTAssertEqual(
-            MobileMusicProviderDto.spotify.monitoringMode,
-            .spotifyAppRemote
-        )
+#if canImport(SpotifyiOS) && os(iOS)
+        XCTAssertEqual(MobileMusicProviderDto.spotify.monitoringMode, .spotifyAppRemote)
+#else
+        XCTAssertEqual(MobileMusicProviderDto.spotify.monitoringMode, .unavailable)
+#endif
     }
 
     @MainActor

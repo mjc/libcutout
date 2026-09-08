@@ -60,31 +60,19 @@ final class CutoutAppModelTests: XCTestCase {
         super.setUp()
         clear(RideSessionMarkerStore())
         clear(DevicePickerSelectionStore())
-<<<<<<< HEAD
         MusicProviderSelectionStore().set(.appleMusic)
         MusicPlayerVisibilityStore().setHidden(false)
-        MusicHistoryPolicyStore().set(.disabled)
-||||||| parent of 704ce8cb (Restore music monitoring across launches)
-=======
-        MusicProviderSelectionStore().set(.appleMusic)
         MusicMonitoringPreferenceStore().setEnabled(false)
         MusicHistoryPolicyStore().set(.disabled)
->>>>>>> 704ce8cb (Restore music monitoring across launches)
     }
 
     override func tearDown() {
         clear(RideSessionMarkerStore())
         clear(DevicePickerSelectionStore())
-<<<<<<< HEAD
         MusicProviderSelectionStore().set(.appleMusic)
         MusicPlayerVisibilityStore().setHidden(false)
-        MusicHistoryPolicyStore().set(.disabled)
-||||||| parent of 704ce8cb (Restore music monitoring across launches)
-=======
-        MusicProviderSelectionStore().set(.appleMusic)
         MusicMonitoringPreferenceStore().setEnabled(false)
         MusicHistoryPolicyStore().set(.disabled)
->>>>>>> 704ce8cb (Restore music monitoring across launches)
         super.tearDown()
     }
 
@@ -127,8 +115,16 @@ final class CutoutAppModelTests: XCTestCase {
     }
 
     @MainActor
-    func testMusicMonitoringStartsWhenHistoryIsDisabled() {
-        let model = CutoutAppModel(core: SessionDriverSpy(rows: []))
+    func testMusicMonitoringStartsWhenHistoryIsDisabled() throws {
+        let suiteName = "MusicMonitoringDisabledHistory-\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let monitoringStore = MusicMonitoringPreferenceStore(defaults: defaults)
+        monitoringStore.setEnabled(true)
+        let model = CutoutAppModel(
+            core: SessionDriverSpy(rows: []),
+            musicMonitoringPreferenceStore: monitoringStore
+        )
 
         XCTAssertEqual(model.musicHistoryPolicy, .disabled)
         model.start()
@@ -260,7 +256,8 @@ final class CutoutAppModelTests: XCTestCase {
             musicMonitoringPreferenceStore: monitoringStore
         )
         relaunched.restoreMusicPlayer()
-        XCTAssertNil(relaunched.musicNowPlaying)
+        XCTAssertEqual(relaunched.musicNowPlaying?.provider, .spotify)
+        XCTAssertEqual(relaunched.musicNowPlaying?.state, .unavailable)
         relaunched.start()
         XCTAssertEqual(relaunched.musicNowPlaying?.provider, .spotify)
         XCTAssertEqual(relaunched.musicNowPlaying?.state, .unavailable)

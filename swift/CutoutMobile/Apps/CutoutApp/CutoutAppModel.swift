@@ -434,12 +434,13 @@ final class CutoutAppModel {
         guard let nowPlaying = musicNowPlaying else { return .unavailable }
         guard nowPlaying.isCommandAvailable(command) else { return .refused }
 #if canImport(MediaPlayer) && os(iOS)
-        let skipHintID: UInt64? = switch command {
+        let skipHintID: UInt64?
+        switch command {
         case .previous, .next:
             let issuedAtMs = core.now().rawValue
-            musicTransitionHintTracker.issue(.skip, issuedAtMs: issuedAtMs)
+            skipHintID = musicTransitionHintTracker.issue(.skip, issuedAtMs: issuedAtMs)
         default:
-            nil
+            skipHintID = nil
         }
         let outcome: MusicCommandOutcome
         if nowPlaying.provider == .spotify {
@@ -706,10 +707,10 @@ final class CutoutAppModel {
         guard isCurrent() else { return }
 #if canImport(SpotifyiOS) && os(iOS)
         if provider.monitoringMode == .spotifyAppRemote {
-            spotifyMusicProvider.startMonitoring { [weak self] in
-                guard let self, self.musicMonitorGeneration.owns(generation) else { return }
+            spotifyMusicProvider.startMonitoring {
+                guard isCurrent() else { return }
                 // Both SDK callbacks and polling must use the session's monotonic clock.
-                self.refreshMusicSnapshot()
+                refresh()
             }
             defer {
                 if currentGeneration() == generation {
@@ -717,6 +718,7 @@ final class CutoutAppModel {
                 }
             }
             while !Task.isCancelled && isCurrent() {
+                spotifyMusicProvider.ensureConnection()
                 spotifyMusicProvider.refreshPlayerState()
                 refresh()
                 do {
@@ -751,11 +753,9 @@ final class CutoutAppModel {
         guard !Task.isCancelled, isCurrent() else { return }
         appleMusicProvider.startMonitoring(onChange: refresh)
         defer {
-            guard let currentGeneration = currentGeneration() else {
+            if let currentGeneration = currentGeneration(), generation == currentGeneration {
                 appleMusicProvider.stopMonitoring()
-                return
-            }
-            if generation == currentGeneration {
+            } else if currentGeneration() == nil {
                 appleMusicProvider.stopMonitoring()
             }
         }

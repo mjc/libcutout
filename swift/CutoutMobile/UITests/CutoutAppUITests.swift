@@ -5,38 +5,50 @@ import XCTest
 final class MusicPreferencesDeviceUITests: XCTestCase {
     func testReadableHistorySelectionSurvivesSheetReopen() {
         continueAfterFailure = false
+        guard ProcessInfo.processInfo.environment["CUTOUT_RUN_DEVICE_MUSIC_UI_TESTS"] == "1" else {
+            throw XCTSkip("Requires an explicitly enabled, installed-device music session")
+        }
         let app = XCUIApplication()
         app.terminate()
         app.launch()
-        let details = app.buttons["Music details"]
-        if !app.navigationBars["Music details"].exists {
+        app.activate()
+        let map = app.buttons["device-picker.open-map"]
+        if map.waitForExistence(timeout: 5) {
+            map.tap()
+        }
+        let details = app.buttons["music.expand"]
+        if !app.buttons["music.done"].exists {
             XCTAssertTrue(details.waitForExistence(timeout: 20), app.debugDescription)
             details.tap()
         }
-        let picker = app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "Ride music history")).firstMatch
+        let picker = app.buttons["music.history-picker"]
         XCTAssertTrue(picker.waitForExistence(timeout: 5), app.debugDescription)
         picker.tap()
-        app.buttons["Save readable history"].tap()
-        XCTAssertTrue(app.staticTexts["Save provider, title, artist, and playback events with the ride."].waitForExistence(timeout: 5), app.debugDescription)
+        app.buttons["music.history-policy.human-readable"].tap()
+        XCTAssertEqual(picker.value as? String, "human-readable")
         picker.tap()
-        app.buttons["Save item IDs only"].tap()
-        XCTAssertTrue(app.staticTexts["Save provider and item IDs without readable track metadata."].waitForExistence(timeout: 5), app.debugDescription)
-        app.navigationBars["Music details"].buttons["Done"].tap()
+        app.buttons["music.history-policy.opaque-item"].tap()
+        XCTAssertEqual(picker.value as? String, "opaque-item")
+        app.buttons["music.done"].tap()
         details.tap()
-        XCTAssertTrue(app.staticTexts["Save provider and item IDs without readable track metadata."].waitForExistence(timeout: 5), app.debugDescription)
+        XCTAssertEqual(picker.value as? String, "opaque-item")
         picker.tap()
-        app.buttons["Save readable history"].tap()
-        XCTAssertTrue(app.staticTexts["Save provider, title, artist, and playback events with the ride."].waitForExistence(timeout: 5), app.debugDescription)
-        app.navigationBars["Music details"].buttons["Done"].tap()
+        app.buttons["music.history-policy.human-readable"].tap()
+        XCTAssertEqual(picker.value as? String, "human-readable")
+        app.buttons["music.done"].tap()
         details.tap()
-        XCTAssertTrue(app.staticTexts["Save provider, title, artist, and playback events with the ride."].waitForExistence(timeout: 5), app.debugDescription)
-        app.navigationBars["Music details"].buttons["Done"].tap()
+        XCTAssertEqual(picker.value as? String, "human-readable")
+        app.buttons["music.done"].tap()
         app.terminate()
         app.launch()
+        app.activate()
+        if map.waitForExistence(timeout: 5) {
+            map.tap()
+        }
         XCTAssertTrue(details.waitForExistence(timeout: 30), app.debugDescription)
         details.tap()
-        XCTAssertTrue(app.staticTexts["Save provider, title, artist, and playback events with the ride."].waitForExistence(timeout: 5), app.debugDescription)
-        app.navigationBars["Music details"].buttons["Done"].tap()
+        XCTAssertEqual(picker.value as? String, "human-readable")
+        app.buttons["music.done"].tap()
     }
 }
 
