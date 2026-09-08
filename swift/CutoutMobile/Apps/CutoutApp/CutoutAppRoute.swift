@@ -119,6 +119,11 @@ enum CutoutAppRoute: Hashable {
         }
     }
 
+    static func navigationPath(openingCameraFrom route: CutoutAppRoute) -> [CutoutAppRoute] {
+        guard route != .camera else { return [.camera] }
+        return navigationPath(for: route) + [.camera]
+    }
+
     var preservesNavigationOnConnectionLoss: Bool {
         switch self {
         case .capture, .rideMap, .rideMapDetail, .lighting:

@@ -1,16 +1,14 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-origin="${NOVATEK_CAMERA_ORIGIN:-http://192.168.1.254}"
-origin="${origin%/}"
-readonly origin
+readonly origin='http://192.168.1.254'
 readonly -a probes=(liveview-format:2019 firmware-version:3012 configuration:3014 media-list:3015 storage-present:3024)
 readonly rtsp_capture_seconds=10
 readonly rtsp_stream_timeout_seconds=10
+readonly response_limit_bytes=$((1024 * 1024))
 
 usage() {
   echo "usage: $0 [--dry-run | --self-test | LOG_FILE]"
-  echo "override the default origin with NOVATEK_CAMERA_ORIGIN=http://HOST[:PORT]"
   echo "run while connected to the camera Wi-Fi; metadata stops at complete responses and video capture is finite"
   echo "RTSP video is saved beside LOG_FILE as LOG_FILE.rtsp.ts, with a 10-second capture and 10-second stream I/O timeout"
 }
@@ -68,7 +66,7 @@ umask 077
   printf 'Novatek R3 Pro read-only probe\n'
   printf 'captured_at_utc=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
   printf 'origin=%s\n' "$origin"
-  printf 'http_response_limit=none\n'
+  printf 'http_response_limit_bytes=%s\n' "$response_limit_bytes"
   printf 'network_timeouts=none\n'
   printf 'completion=xml-end-tags-and-rtsp-response-body\n'
   printf 'rtsp_methods=OPTIONS,DESCRIBE\n'
@@ -93,7 +91,10 @@ capture_http_response() {
     NOVATEK_CAPTURE_MARKER="$marker" perl -e '
       my $marker = $ENV{"NOVATEK_CAPTURE_MARKER"};
       my $tail = "";
+      my $bytes = 0;
       while (sysread(STDIN, my $chunk, 8192)) {
+        $bytes += length($chunk);
+        exit 2 if $bytes > $ENV{"NOVATEK_CAPTURE_LIMIT_BYTES"};
         print $chunk;
         $tail .= $chunk;
         exit 0 if index($tail, $marker) >= 0;
@@ -107,7 +108,7 @@ capture_http_response() {
   local curl_status="${pipeline_status[0]}"
   local parser_status="${pipeline_status[1]}"
   capture_curl_raw_status="$curl_status"
-  if ((parser_status == 0)); then
+  if ((parser_status == 0 && curl_status == 0)); then
     capture_curl_status=0
     return 0
   fi
@@ -116,6 +117,60 @@ capture_http_response() {
     capture_curl_status="$parser_status"
   fi
   return 1
+}
+
+capture_rtsp_response() {
+  local host="$1" port="$2" request_file="$3" response_file="$4"
+  local error_file="$5" need_body="$6"
+
+  : >"$response_file" || return 1
+  perl - "$host" "$port" "$request_file" "$response_file" "$need_body" "$response_limit_bytes" <<'PERL' 2>"$error_file"
+use strict;
+use warnings;
+use IO::Socket::INET;
+
+my ($host, $port, $request_path, $response_path, $need_body, $max_bytes) = @ARGV;
+open my $request, '<:raw', $request_path or die "open request: $!\n";
+local $/;
+my $request_data = <$request>;
+close $request or die "close request: $!\n";
+
+my $socket = IO::Socket::INET->new(
+    PeerHost => $host,
+    PeerPort => $port,
+    Proto    => 'tcp',
+) or die "connect: $!\n";
+$socket->autoflush(1);
+print {$socket} $request_data or die "write request: $!\n";
+
+open my $response, '>:raw', $response_path or die "open response: $!\n";
+my $data = '';
+while (1) {
+    my $read = sysread($socket, my $chunk, 8192);
+    die "read response: $!\n" unless defined $read;
+    last if $read == 0;
+    die "response exceeds $max_bytes bytes\n" if length($data) + $read > $max_bytes;
+    print {$response} $chunk or die "write response: $!\n";
+    $data .= $chunk;
+    my $header_end = index($data, "\r\n\r\n");
+    next if $header_end < 0;
+    if (!$need_body) {
+        close $response or die "close response: $!\n";
+        close $socket or die "close socket: $!\n";
+        exit 0;
+    }
+    my $headers = substr($data, 0, $header_end);
+    my ($length) = $headers =~ /^Content-Length:\s*(\d+)/mi;
+    if (!defined $length || length($data) >= $header_end + 4 + $length) {
+        close $response or die "close response: $!\n";
+        close $socket or die "close socket: $!\n";
+        exit 0;
+    }
+}
+close $response or die "close response: $!\n";
+close $socket or die "close socket: $!\n";
+exit 1;
+PERL
 }
 
 for probe in "${probes[@]}"; do
@@ -142,7 +197,7 @@ for probe in "${probes[@]}"; do
     marker='</LIST>'
   fi
 
-  if capture_http_response "$marker" "$response_file" "${curl_options[@]}" "$request"
+  if NOVATEK_CAPTURE_LIMIT_BYTES="$response_limit_bytes" capture_http_response "$marker" "$response_file" "${curl_options[@]}" "$request"
   then
     status=0
   else
@@ -192,13 +247,14 @@ if [[ -n "$rtsp_uri" ]]; then
   printf '\n=== rtsp-discovery ===\nuri=%s\nhost=%s\nport=%s\npath=%s\n' \
     "$rtsp_uri" "$rtsp_host" "$rtsp_port" "$rtsp_path" >>"$log_file"
 
-  if ! command -v nc >/dev/null; then
-    printf 'result=nc-required\n' >>"$log_file"
+  if ! command -v perl >/dev/null; then
+    printf 'result=perl-required\n' >>"$log_file"
     failures=$((failures + 1))
   else
     probe_rtsp() {
       local label="$1" method="$2" request_file="$scratch_dir/rtsp-$1-request"
-      local response_file="$scratch_dir/rtsp-$1-response" status
+      local response_file="$scratch_dir/rtsp-$1-response"
+      local error_file="$scratch_dir/rtsp-$1-error" status need_body=0
       {
         printf '%s %s RTSP/1.0\r\n' "$method" "$rtsp_uri"
         printf 'CSeq: 1\r\n'
@@ -209,37 +265,19 @@ if [[ -n "$rtsp_uri" ]]; then
         printf '\r\n'
       } >"$request_file"
 
-      set +e
-      cat "$request_file" |
-        nc "$rtsp_host" "$rtsp_port" 2>&1 |
-        NOVATEK_RTSP_NEED_BODY="$([[ "$method" == DESCRIBE ]] && echo 1 || echo 0)" perl -e '
-          my $need_body = $ENV{"NOVATEK_RTSP_NEED_BODY"};
-          my $data = "";
-          while (sysread(STDIN, my $chunk, 8192)) {
-            print $chunk;
-            $data .= $chunk;
-            my $header_end = index($data, "\r\n\r\n");
-            next if $header_end < 0;
-            exit 0 if !$need_body;
-            my $headers = substr($data, 0, $header_end);
-            my ($length) = $headers =~ /^Content-Length:\s*(\d+)/mi;
-            exit 0 if !defined($length);
-            exit 0 if length($data) >= $header_end + 4 + $length;
-          }
-          exit 1;
-        ' >"$response_file"
-      local -a pipeline_status=("${PIPESTATUS[@]}")
-      set -e
-      local nc_status="${pipeline_status[1]}"
-      local parser_status="${pipeline_status[2]}"
-      rtsp_nc_raw_status="$nc_status"
-      if ((parser_status == 0)); then
+      [[ "$method" == DESCRIBE ]] && need_body=1
+      if capture_rtsp_response \
+        "$rtsp_host" "$rtsp_port" "$request_file" "$response_file" "$error_file" "$need_body"
+      then
         status=0
       else
-        status="$nc_status"
-        if ((status == 0)); then
-          status="$parser_status"
-        fi
+        status=$?
+        failures=$((failures + 1))
+      fi
+      rtsp_transport_raw_status="$status"
+      rtsp_status_line="$(sed -n '1p' "$response_file")"
+      if [[ "$status" == 0 && ! "$rtsp_status_line" =~ ^RTSP/1\.0[[:space:]]2[0-9][0-9]([[:space:]]|$) ]]; then
+        status=1
         failures=$((failures + 1))
       fi
       {
@@ -249,15 +287,19 @@ if [[ -n "$rtsp_uri" ]]; then
         cat "$request_file"
         printf '\nresponse_bytes:\n'
         cat "$response_file"
-        printf '\n\nnc_exit=%s\nnc_raw_exit=%s\n' \
-          "$status" "$rtsp_nc_raw_status"
+        if [[ -s "$error_file" ]]; then
+          printf '\ntransport_error:\n'
+          cat "$error_file"
+        fi
+        printf '\n\nrtsp_exit=%s\nrtsp_raw_exit=%s\n' \
+          "$status" "$rtsp_transport_raw_status"
       } >>"$log_file"
     }
 
     probe_rtsp options OPTIONS
     probe_rtsp describe DESCRIBE
 
-    video_file="${log_file%.*}.rtsp.ts"
+    video_file="$log_file.rtsp.ts"
     {
       printf '\n=== rtsp-video-capture ===\n'
       printf 'file=%s\n' "$video_file"
@@ -275,36 +317,49 @@ if [[ -n "$rtsp_uri" ]]; then
     else
       video_log="$scratch_dir/ffmpeg-video.log"
       stream_timeout_microseconds=$((10#$rtsp_stream_timeout_seconds * 1000000))
-      set +e
-      ffmpeg \
-        -hide_banner \
-        -loglevel warning \
-        -rtsp_transport tcp \
-        -timeout "$stream_timeout_microseconds" \
-        -i "$rtsp_uri" \
-        -t "$rtsp_capture_seconds" \
-        -map 0 \
-        -c copy \
-        -f mpegts \
-        "$video_file" >"$video_log" 2>&1
-      ffmpeg_status=$?
-      set -e
-      cat "$video_log" >>"$log_file"
-      if [[ -e "$video_file" ]]; then
-        video_size="$(wc -c <"$video_file" | tr -d ' ')"
-      else
-        video_size=0
-      fi
-      printf 'ffmpeg_exit=%s\nbytes=%s\n' "$ffmpeg_status" "$video_size" >>"$log_file"
-      if ((ffmpeg_status != 0 || video_size == 0)); then
+      ffmpeg_major="$(ffmpeg -version 2>/dev/null | sed -nE '1s/^ffmpeg version ([0-9]+).*/\1/p')"
+      if [[ ! "$ffmpeg_major" =~ ^[0-9]+$ ]]; then
+        printf 'result=ffmpeg-version-unavailable\n' >>"$log_file"
         failures=$((failures + 1))
-      elif command -v ffprobe >/dev/null; then
-        printf 'ffprobe:\n' >>"$log_file"
-        ffprobe \
-          -v error \
-          -show_entries stream=index,codec_type,codec_name,width,height,avg_frame_rate \
-          -of default=noprint_wrappers=1 \
-          "$video_file" >>"$log_file" 2>&1 || true
+      else
+        if ((ffmpeg_major >= 5)); then
+          rtsp_timeout_option=(-timeout "$stream_timeout_microseconds")
+        else
+          rtsp_timeout_option=(-stimeout "$stream_timeout_microseconds")
+        fi
+        printf 'ffmpeg_major=%s\nrtsp_timeout_option=%s\n' \
+          "$ffmpeg_major" "${rtsp_timeout_option[0]}" >>"$log_file"
+        set +e
+        ffmpeg \
+          -hide_banner \
+          -loglevel warning \
+          -rtsp_transport tcp \
+          "${rtsp_timeout_option[@]}" \
+          -i "$rtsp_uri" \
+          -t "$rtsp_capture_seconds" \
+          -map 0 \
+          -c copy \
+          -f mpegts \
+          "$video_file" >"$video_log" 2>&1
+        ffmpeg_status=$?
+        set -e
+        cat "$video_log" >>"$log_file"
+        if [[ -e "$video_file" ]]; then
+          video_size="$(wc -c <"$video_file" | tr -d ' ')"
+        else
+          video_size=0
+        fi
+        printf 'ffmpeg_exit=%s\nbytes=%s\n' "$ffmpeg_status" "$video_size" >>"$log_file"
+        if ((ffmpeg_status != 0 || video_size == 0)); then
+          failures=$((failures + 1))
+        elif command -v ffprobe >/dev/null; then
+          printf 'ffprobe:\n' >>"$log_file"
+          ffprobe \
+            -v error \
+            -show_entries stream=index,codec_type,codec_name,width,height,avg_frame_rate \
+            -of default=noprint_wrappers=1 \
+            "$video_file" >>"$log_file" 2>&1 || true
+        fi
       fi
     fi
   fi
