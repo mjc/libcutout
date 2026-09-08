@@ -425,6 +425,17 @@ public final class MelkLightingPeripheralSession: NSObject, CBCentralManagerDele
                 record("target=melk id=\(preferredUUID.uuidString)")
                 return
             }
+            if let connectedPeripheral = central.retrieveConnectedPeripherals(
+                withServices: [MelkLightingCommandProfile.service.coreBluetoothUuid]
+            ).first(where: { Self.isMelkName($0.name) }) {
+                connect(
+                    central: central,
+                    peripheral: connectedPeripheral,
+                    advertisedName: connectedPeripheral.name
+                )
+                record("connected=melk id=\(connectedPeripheral.identifier.uuidString)")
+                return
+            }
             // MELK-OC21 does not advertise FFF0 in its advertisement packet. Filter only after
             // connecting and discovering the GATT inventory; the advertised name is the
             // candidate gate that keeps this standalone scan narrow. When a remembered identity
@@ -450,8 +461,7 @@ public final class MelkLightingPeripheralSession: NSObject, CBCentralManagerDele
                 return
             }
             let name = (advertisementData[CBAdvertisementDataLocalNameKey] as? String) ?? peripheral.name
-            guard name?.trimmingCharacters(in: .whitespacesAndNewlines)
-                .lowercased().hasPrefix("melk") == true else {
+            guard Self.isMelkName(name) else {
                 return
             }
             central.stopScan()
@@ -820,6 +830,11 @@ public final class MelkLightingPeripheralSession: NSObject, CBCentralManagerDele
 
     private func record(_ message: String) {
         onRecord?(message)
+    }
+
+    private static func isMelkName(_ name: String?) -> Bool {
+        name?.trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased().hasPrefix("melk") == true
     }
 
     private func onQueue<T>(_ work: () throws -> T) rethrows -> T {

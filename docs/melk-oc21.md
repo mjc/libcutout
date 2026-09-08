@@ -86,6 +86,10 @@ the official app.
 - MELK readiness is gated on both the FFF4 notification subscription and the
   documented two-frame initialization handshake. Reconnect and failure paths
   cancel any delayed second frame before clearing the session.
+- When CoreBluetooth already has a connected MELK peripheral, the session
+  recovers it by the FFF0 service and the same MELK name gate before starting a
+  broad advertisement scan. This covers restored/system-managed links without
+  treating an arbitrary FFF0 device as the controller.
 - Color drag retains the existing 30 Hz preview path; queued superseded solid-color frames are coalesced so the newest drag value is preserved under BLE backpressure. Complete playback changes
   are validated in Rust and admitted together to a bounded Bluetooth write queue.
   CoreBluetooth backpressure pauses draining; disconnect discards pending writes.
