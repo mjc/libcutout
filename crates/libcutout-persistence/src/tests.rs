@@ -4239,7 +4239,6 @@ fn music_history_round_trips_and_can_be_deleted_without_deleting_ride() {
     database.shutdown().unwrap();
     let _ = std::fs::remove_file(path);
 }
-
 #[test]
 fn music_history_policy_downgrade_redacts_existing_display_metadata() {
     let _guard = test_guard();

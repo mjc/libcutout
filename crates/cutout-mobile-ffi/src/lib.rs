@@ -6140,6 +6140,14 @@ struct PendingMapLocationWrite {
 }
 
 impl MobileRideMapCoreInner {
+    fn apply_music_history_policy(&mut self, policy: CoreMusicHistoryPolicy) {
+        self.music_history_policy = policy;
+    }
+
+    fn reset_music_history_policy(&mut self) {
+        self.music_history_policy = CoreMusicHistoryPolicy::Disabled;
+    }
+
     fn transition_state(
         &mut self,
         event: MobileRideEventDto,
@@ -6557,7 +6565,7 @@ impl MobileRideMapCoreInner {
         self.admission_recorder = staged_recorder;
         self.active_ride_id = Some(id);
         self.settled_ride_id = None;
-        self.music_history_policy = CoreMusicHistoryPolicy::Disabled;
+        self.reset_music_history_policy();
         self.music_restore_failed = false;
         self.pending_location_writes.clear();
         Ok(self.snapshot(MobileRideLifecycleStateDto::Active))
@@ -6916,7 +6924,7 @@ impl MobileRideMapCore {
             .inner
             .save_music_history_policy(ride_id, policy)
             .map_err(map_storage_core_error)?;
-        state.music_history_policy = policy;
+        state.apply_music_history_policy(policy);
         state.music_restore_failed = false;
         Ok(())
     }
@@ -15245,6 +15253,72 @@ mod tests {
     }
 
     #[test]
+    fn explicit_music_context_replaces_pending_context() {
+        let path = std::env::temp_dir().join(format!(
+            "cutout-mobile-writer-music-override-{}-{}.jsonl",
+            std::process::id(),
+            thread::current().name().unwrap_or("test")
+        ));
+        let _ = fs::remove_file(&path);
+        let builder = MobilePevcapCaptureBuilder::new(
+            wc(1_700_000_000_000),
+            "ios-corebluetooth".into(),
+            None,
+        );
+        assert!(builder.set_music_history_policy(MobileMusicHistoryPolicyDto::HumanReadable));
+        assert!(builder.set_music_context(Some(MobilePevcapMusicEventDto {
+            provider: MobileMusicProviderDto::AppleMusic,
+            track_id: "pending-song".into(),
+            monotonic_at_ms: 17,
+            wall_clock_unix_ms: 1_700_000_000_017,
+            clock_uncertainty_ms: 75,
+            ride_sequence: Some(1),
+        })));
+        assert!(builder.start_writer(path.to_string_lossy().into_owned()));
+        assert!(builder.record_notification_with_context_and_music(
+            ms(42),
+            vec![0; 16],
+            vec![1; 16],
+            vec![0xde, 0xad],
+            None,
+            None,
+            Some(MobilePevcapMusicEventDto {
+                provider: MobileMusicProviderDto::AppleMusic,
+                track_id: "explicit-song".into(),
+                monotonic_at_ms: 18,
+                wall_clock_unix_ms: 1_700_000_000_018,
+                clock_uncertainty_ms: 75,
+                ride_sequence: Some(2),
+            }),
+        ));
+        assert!(builder.record_notification_with_context(
+            ms(43),
+            vec![0; 16],
+            vec![1; 16],
+            vec![0xbe, 0xef],
+            None,
+            None,
+        ));
+        assert!(builder.finish_writer());
+
+        let bytes = fs::read(&path).expect("music capture exists");
+        let capture =
+            PevcapCapture::decode(&bytes, PevcapEncoding::Jsonl).expect("music capture decodes");
+        assert_eq!(capture.records.len(), 2);
+        assert_eq!(
+            capture.records[0]
+                .music
+                .as_ref()
+                .expect("explicit context is attached")
+                .track_id
+                .as_str(),
+            "explicit-song"
+        );
+        assert!(capture.records[1].music.is_none());
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
     fn mobile_capture_writer_reports_start_failure() {
         let path = std::env::temp_dir().join(format!(
             "cutout-mobile-writer-missing-{}-{}/capture.jsonl",
@@ -17289,5 +17363,66 @@ mod tests {
             Err(MobileRideMapCoreErrorDto::Storage(message))
                 if message == "Rust ride database is unavailable"
         ));
+    }
+
+    #[test]
+    fn lowering_music_policy_redacts_the_active_timeline() {
+        let _guard = RIDE_DATABASE_TEST_LOCK
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        let path = std::env::temp_dir().join(format!(
+            "cutout-mobile-music-redaction-{}-{}.sqlite3",
+            std::process::id(),
+            Uuid::new_v4()
+        ));
+        let _ = fs::remove_file(&path);
+        let database =
+            open_ride_database(path.to_string_lossy().into_owned()).expect("database opens");
+        let state = MobileRideMapCore::with_database(database.clone());
+        state.start_gps_only(1_000, None).expect("ride starts");
+        state
+            .set_music_history_policy(MobileMusicHistoryPolicyDto::HumanReadable)
+            .expect("policy can be enabled while recording");
+        let snapshot = MobileMusicSnapshotDto {
+            provider: MobileMusicProviderDto::AppleMusic,
+            session_id: "session".to_owned(),
+            state: MobileMusicPlaybackStateDto::Playing,
+            item: Some(MobileMusicItemDto {
+                identifier: "track-1".to_owned(),
+                title: Some("Song".to_owned()),
+                artist: Some("Artist".to_owned()),
+            }),
+            position_milliseconds: None,
+            duration_milliseconds: None,
+            observed_at_ms: 2_000,
+            capabilities: MobileMusicCapabilitiesDto {
+                previous: false,
+                play: false,
+                pause: true,
+                next: true,
+                open_provider: true,
+            },
+        };
+
+        state
+            .record_music_event(
+                snapshot,
+                MobileMusicRideEventKindDto::Play,
+                2_000,
+                1_700_000_000_000,
+                5,
+            )
+            .expect("opted-in event is recorded");
+        state
+            .set_music_history_policy(MobileMusicHistoryPolicyDto::OpaqueItem)
+            .expect("opaque policy can redact while recording");
+
+        let events = state.current_music_events().expect("active timeline");
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].item_identifier.as_deref(), Some("track-1"));
+        assert_eq!(events[0].title, None);
+        assert_eq!(events[0].artist, None);
+        database.shutdown().expect("database shuts down");
+        let _ = fs::remove_file(path);
     }
 }

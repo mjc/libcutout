@@ -43,6 +43,16 @@ public enum MusicTransitionHint: Equatable, Sendable {
     case skip
 }
 
+/// Describes the provider lifecycle that the app can currently monitor.
+///
+/// Spotify remains an explicit handoff/unavailable path until its App Remote
+/// credentials and on-device lifecycle are proven; it must not fall through
+/// to the Apple Music system-player monitor.
+public enum MusicProviderMonitoringMode: Equatable, Sendable {
+    case appleMusicSystemPlayer
+    case unavailable
+}
+
 /// Holds a transport hint until the provider reports the resulting state.
 ///
 /// System-player notifications can arrive after the immediate post-command
@@ -142,6 +152,13 @@ public struct MusicTransitionHintTracker: Sendable {
 
 public extension MobileMusicProviderDto {
     static var allCases: [Self] { [.appleMusic, .spotify] }
+
+    var monitoringMode: MusicProviderMonitoringMode {
+        switch self {
+        case .appleMusic: .appleMusicSystemPlayer
+        case .spotify: .unavailable
+        }
+    }
 
     var title: String {
         switch self {
@@ -310,6 +327,11 @@ public struct MusicNowPlaying: Equatable, Sendable {
             components.append(statusText)
         }
         return components.joined(separator: ", ")
+    }
+
+    public var artworkAccessibilityLabel: String {
+        let artworkName = item?.title.flatMap { $0.isEmpty ? nil : $0 } ?? providerName
+        return pevLocalizedText("music.artwork", artworkName)
     }
 
     public var playPauseCommand: MobileMusicCommandDto? {
@@ -781,7 +803,7 @@ public struct MusicCompactPlayer: View {
                 .scaledToFill()
                 .frame(width: 34, height: 34)
                 .clipShape(RoundedRectangle(cornerRadius: 6))
-                .accessibilityHidden(true)
+                .accessibilityLabel(nowPlaying.artworkAccessibilityLabel)
         } else {
             Image(systemName: "music.note")
                 .accessibilityHidden(true)
@@ -793,7 +815,7 @@ public struct MusicCompactPlayer: View {
                 .scaledToFill()
                 .frame(width: 34, height: 34)
                 .clipShape(RoundedRectangle(cornerRadius: 6))
-                .accessibilityHidden(true)
+                .accessibilityLabel(nowPlaying.artworkAccessibilityLabel)
         } else {
             Image(systemName: "music.note")
                 .accessibilityHidden(true)

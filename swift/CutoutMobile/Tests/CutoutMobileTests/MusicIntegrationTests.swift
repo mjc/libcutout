@@ -3,6 +3,17 @@ import CutoutMobileFFI
 @testable import CutoutMobile
 
 final class MusicIntegrationTests: XCTestCase {
+    func testProviderMonitoringModeMatchesSupportedLifecycle() {
+        XCTAssertEqual(
+            MobileMusicProviderDto.appleMusic.monitoringMode,
+            .appleMusicSystemPlayer
+        )
+        XCTAssertEqual(
+            MobileMusicProviderDto.spotify.monitoringMode,
+            .unavailable
+        )
+    }
+
     func testMusicHistoryPolicyStoreDefaultsToDisabledAndRoundTrips() throws {
         let suiteName = "MusicHistoryPolicyStoreTests-\(UUID().uuidString)"
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
@@ -242,6 +253,30 @@ final class MusicIntegrationTests: XCTestCase {
         XCTAssertEqual(nowPlaying.artist, "Artist")
         XCTAssertEqual(nowPlaying.playPauseCommand, .pause)
         XCTAssertTrue(nowPlaying.supports(.next))
+    }
+
+    func testNowPlayingProvidesLocalizedArtworkAccessibilityLabel() {
+        let nowPlaying = MusicNowPlaying(
+            provider: .appleMusic,
+            state: .playing,
+            item: MobileMusicItemDto(
+                identifier: "track-1",
+                title: "Song",
+                artist: "Artist"
+            )
+        )
+
+        XCTAssertEqual(nowPlaying.artworkAccessibilityLabel, pevLocalizedText("music.artwork", "Song"))
+    }
+
+    func testArtworkAccessibilityLabelUsesProviderWhenTitleIsUnavailable() {
+        let nowPlaying = MusicNowPlaying(
+            provider: .spotify,
+            state: .unavailable,
+            item: MobileMusicItemDto(identifier: "track-1", title: nil, artist: nil)
+        )
+
+        XCTAssertEqual(nowPlaying.artworkAccessibilityLabel, pevLocalizedText("music.artwork", "Spotify"))
     }
 
     @MainActor
