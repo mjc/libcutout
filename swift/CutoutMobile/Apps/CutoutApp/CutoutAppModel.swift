@@ -15,6 +15,29 @@ private enum RideSessionRestorationState {
     case recovering
 }
 
+struct MusicMonitorSceneState: Equatable {
+    private(set) var isSceneActive = true
+    private(set) var isRequested = false
+
+    mutating func request() {
+        isRequested = true
+    }
+
+    mutating func cancel() {
+        isRequested = false
+    }
+
+    mutating func suspend() {
+        isSceneActive = false
+    }
+
+    mutating func resumeIfNeeded() -> Bool {
+        let shouldResume = isRequested && !isSceneActive
+        isSceneActive = true
+        return shouldResume
+    }
+}
+
 @MainActor
 @Observable
 final class CutoutAppModel {
@@ -270,7 +293,8 @@ final class CutoutAppModel {
     private var rideMapHistoryContextTask: Task<Void, Never>?
     private var rideMapRestoreTask: Task<Void, Never>?
     private var musicMonitorTask: Task<Void, Never>?
-    private var musicMonitorGeneration: UInt64 = 0
+    private var musicMonitorGeneration = MusicMonitorGeneration()
+    private var musicMonitorSceneState = MusicMonitorSceneState()
     private var musicTransitionHintTracker = MusicTransitionHintTracker()
     private var rideMapLiveProjectionTask: Task<Void, Never>?
     private var rideMapDurationTask: Task<Void, Never>?
@@ -435,6 +459,9 @@ final class CutoutAppModel {
         musicNowPlaying = projectedMusicNowPlaying()
         musicProviderSelectionStore.set(provider)
         musicTransitionHintTracker.clear()
+        if provider.monitoringMode == .unavailable {
+            musicMonitorSceneState.cancel()
+        }
 #if canImport(MediaPlayer) && os(iOS)
         if provider.monitoringMode == .unavailable {
             stopMusicMonitoring()
@@ -675,6 +702,11 @@ final class CutoutAppModel {
     }
 #endif
 
+    private func finishMusicMonitoring(generation: UInt64) {
+        guard musicMonitorGeneration.owns(generation) else { return }
+        stopMusicMonitoring()
+    }
+
     private func unavailableMusicObservation(observedAtMs: UInt64) -> MusicProviderObservation {
         MusicProviderObservation.unavailable(
             provider: selectedMusicProvider,
@@ -684,6 +716,7 @@ final class CutoutAppModel {
     }
 
     private func stopMusicMonitoring() {
+        musicMonitorGeneration.invalidate()
         musicMonitorTask?.cancel()
         musicMonitorTask = nil
 #if canImport(MediaPlayer) && os(iOS)
@@ -691,11 +724,11 @@ final class CutoutAppModel {
 #endif
     }
 
-    func connectMusic() {
+    private func beginMusicMonitoring() {
+        guard musicMonitorSceneState.isSceneActive else { return }
 #if os(iOS) && canImport(MediaPlayer)
         stopMusicMonitoring()
-        musicMonitorGeneration &+= 1
-        let generation = musicMonitorGeneration
+        let generation = musicMonitorGeneration.begin()
         let provider = selectedMusicProvider
         let appleMusicProvider = self.appleMusicProvider
         musicMonitorTask = Task { [weak self, appleMusicProvider] in
@@ -705,11 +738,11 @@ final class CutoutAppModel {
                 appleMusicProvider: appleMusicProvider,
                 isCurrent: { [weak self] in
                     guard let self else { return false }
-                    return self.musicMonitorGeneration == generation
+                    return self.musicMonitorGeneration.owns(generation)
                         && self.selectedMusicProvider == provider
                 },
                 currentGeneration: { [weak self] in
-                    self?.musicMonitorGeneration
+                    self?.musicMonitorGeneration.current
                 },
                 observedAtMs: { [weak self] in
                     self?.core.now().rawValue
@@ -726,6 +759,11 @@ final class CutoutAppModel {
 #else
         _ = ingestMusicObservation(unavailableMusicObservation(observedAtMs: core.now().rawValue))
 #endif
+    }
+
+    func connectMusic() {
+        musicMonitorSceneState.request()
+        beginMusicMonitoring()
     }
 
     private func restoreRideMapState() {
@@ -1932,6 +1970,8 @@ final class CutoutAppModel {
     }
 
     func appDidEnterBackground() {
+        musicMonitorSceneState.suspend()
+        stopMusicMonitoring()
         guard let snapshot = currentLiveActivitySnapshot() else {
             guard isRecordOnlyCapture else { return }
             Task { [weak self] in _ = await self?.flushCapture() }
@@ -1952,6 +1992,9 @@ final class CutoutAppModel {
     }
 
     func appDidBecomeActive() {
+        if musicMonitorSceneState.resumeIfNeeded() {
+            beginMusicMonitoring()
+        }
         guard let snapshot = currentLiveActivitySnapshot() else { return }
         liveActivityRequestID += 1
         let requestID = liveActivityRequestID

@@ -216,6 +216,84 @@ final class MusicIntegrationTests: XCTestCase {
         XCTAssertNil(tracker.pendingHint)
     }
 
+    func testMusicMonitorGenerationInvalidatesOlderTasks() {
+        var generation = MusicMonitorGeneration()
+        let first = generation.begin()
+
+        XCTAssertTrue(generation.owns(first))
+
+        generation.invalidate()
+
+        XCTAssertFalse(generation.owns(first))
+        let second = generation.begin()
+        XCTAssertTrue(generation.owns(second))
+        XCTAssertFalse(generation.owns(first))
+    }
+
+    func testMusicAccessibilityAnnouncementsDeduplicateProjectedState() {
+        var tracker = MusicAccessibilityAnnouncementTracker()
+        let playing = nowPlaying(trackID: "track-1")
+
+        XCTAssertEqual(tracker.next(for: playing), playing.accessibilitySummary)
+        XCTAssertNil(tracker.next(for: playing))
+
+        let paused = MusicNowPlaying(
+            provider: .appleMusic,
+            state: .paused,
+            item: playing.item,
+            capabilities: .init(
+                previous: true,
+                play: true,
+                pause: false,
+                next: true,
+                openProvider: true
+            )
+        )
+        XCTAssertEqual(tracker.next(for: paused), paused.accessibilitySummary)
+        XCTAssertNil(tracker.next(for: paused))
+
+        let pausedWithDifferentCapabilities = MusicNowPlaying(
+            provider: .appleMusic,
+            state: .paused,
+            item: paused.item,
+            capabilities: .init(
+                previous: false,
+                play: true,
+                pause: false,
+                next: false,
+                openProvider: true
+            )
+        )
+        XCTAssertNil(tracker.next(for: pausedWithDifferentCapabilities))
+    }
+
+    func testArtworkCacheReusesOnlyBoundedArtworkForTheSameItem() {
+        var cache = MusicArtworkCache()
+        var loadCount = 0
+        let artwork = MusicArtwork(data: Data([1, 2, 3]))
+
+        let first = cache.artwork(for: "track-1") {
+            loadCount += 1
+            return artwork
+        }
+        let second = cache.artwork(for: "track-1") {
+            loadCount += 1
+            return artwork
+        }
+
+        XCTAssertEqual(first, artwork)
+        XCTAssertEqual(second, artwork)
+        XCTAssertEqual(loadCount, 1)
+
+        _ = cache.artwork(for: "track-2") {
+            loadCount += 1
+            return nil
+        }
+        XCTAssertEqual(loadCount, 2)
+        XCTAssertNil(cache.artwork(for: nil) { loadCount += 1; return artwork })
+        XCTAssertEqual(loadCount, 2)
+    }
+
     private func nowPlaying(trackID: String) -> MusicNowPlaying {
         MusicNowPlaying(
             provider: .appleMusic,
@@ -253,6 +331,27 @@ final class MusicIntegrationTests: XCTestCase {
         XCTAssertEqual(nowPlaying.artist, "Artist")
         XCTAssertEqual(nowPlaying.playPauseCommand, .pause)
         XCTAssertTrue(nowPlaying.supports(.next))
+    }
+
+    func testNowPlayingExposesOnlySupportedTransportCommands() {
+        let nowPlaying = MusicNowPlaying(
+            provider: .appleMusic,
+            state: .playing,
+            item: MobileMusicItemDto(
+                identifier: "track-1",
+                title: "Song",
+                artist: "Artist"
+            ),
+            capabilities: MobileMusicCapabilitiesDto(
+                previous: false,
+                play: false,
+                pause: true,
+                next: false,
+                openProvider: true
+            )
+        )
+
+        XCTAssertEqual(nowPlaying.availableTransportCommands, [.pause])
     }
 
     func testNowPlayingProvidesLocalizedArtworkAccessibilityLabel() {

@@ -24,6 +24,39 @@ public struct MusicArtwork: Equatable, Sendable {
     }
 }
 
+/// Keeps one positive artwork result so polling does not repeatedly decode the
+/// same provider image. The value is already bounded by `MusicArtwork`.
+struct MusicArtworkCache: Sendable {
+    private var itemIdentifier: String?
+    private var cachedArtwork: MusicArtwork?
+
+    mutating func artwork(
+        for itemIdentifier: String?,
+        load: () -> MusicArtwork?
+    ) -> MusicArtwork? {
+        guard let itemIdentifier else {
+            clear()
+            return nil
+        }
+        if self.itemIdentifier == itemIdentifier, let cachedArtwork {
+            return cachedArtwork
+        }
+        let artwork = load()
+        if let artwork {
+            self.itemIdentifier = itemIdentifier
+            cachedArtwork = artwork
+        } else {
+            clear()
+        }
+        return artwork
+    }
+
+    private mutating func clear() {
+        itemIdentifier = nil
+        cachedArtwork = nil
+    }
+}
+
 /// Result of dispatching one provider transport command.
 public enum MusicCommandOutcome: Equatable, Sendable {
     /// The provider adapter accepted the command for dispatch.
@@ -168,6 +201,29 @@ public extension MobileMusicProviderDto {
     }
 }
 
+/// Identifies the currently owning music-monitor task.
+///
+/// A cancelled task may finish after a replacement task starts. The generation
+/// keeps that stale task from tearing down the replacement provider observer.
+public struct MusicMonitorGeneration: Sendable, Equatable {
+    public private(set) var current: UInt64 = 0
+
+    public init() {}
+
+    public mutating func begin() -> UInt64 {
+        current &+= 1
+        return current
+    }
+
+    public mutating func invalidate() {
+        current &+= 1
+    }
+
+    public func owns(_ generation: UInt64) -> Bool {
+        generation == current
+    }
+}
+
 private extension MobileMusicCapabilitiesDto {
     func supports(_ command: MobileMusicCommandDto) -> Bool {
         switch command {
@@ -251,6 +307,13 @@ public struct MusicHistoryPolicyStore {
 
 /// Provider-neutral music state used by the compact ride/map player.
 public struct MusicNowPlaying: Equatable, Sendable {
+    private static let transportCommands: [MobileMusicCommandDto] = [
+        .previous,
+        .play,
+        .pause,
+        .next,
+    ]
+
     public let provider: MobileMusicProviderDto
     public let state: MobileMusicPlaybackStateDto
     public let item: MobileMusicItemDto?
@@ -343,8 +406,45 @@ public struct MusicNowPlaying: Equatable, Sendable {
         }
     }
 
+    public var availableTransportCommands: [MobileMusicCommandDto] {
+        Self.transportCommands.filter { command in
+            if command == .play || command == .pause {
+                return command == playPauseCommand
+            }
+            return supports(command)
+        }
+    }
+
     public func supports(_ command: MobileMusicCommandDto) -> Bool {
         capabilities.supports(command)
+    }
+}
+
+/// Deduplicates VoiceOver announcements while the provider is polled.
+private struct MusicAccessibilityAnnouncementKey: Equatable {
+    let provider: MobileMusicProviderDto
+    let state: MobileMusicPlaybackStateDto
+    let itemIdentifier: String?
+    let title: String?
+    let artist: String?
+
+    init(_ nowPlaying: MusicNowPlaying) {
+        provider = nowPlaying.provider
+        state = nowPlaying.state
+        itemIdentifier = nowPlaying.item?.identifier
+        title = nowPlaying.item?.title
+        artist = nowPlaying.item?.artist
+    }
+}
+
+struct MusicAccessibilityAnnouncementTracker {
+    private var lastAnnounced: MusicAccessibilityAnnouncementKey?
+
+    mutating func next(for nowPlaying: MusicNowPlaying) -> String? {
+        let key = MusicAccessibilityAnnouncementKey(nowPlaying)
+        guard lastAnnounced != key else { return nil }
+        lastAnnounced = key
+        return nowPlaying.accessibilitySummary
     }
 }
 
@@ -570,16 +670,18 @@ public final class MusicIntegrationCoordinator {
             throw MobileRideMapError.storageError("Rust ride database is unavailable")
         }
         try rideMapState.setMusicHistoryPolicy(policy)
-        historyPolicy = policy
-        lastPersistedNowPlayingByProvider.removeAll(keepingCapacity: true)
-        lastRecordedSequence = nil
+        adoptHistoryPolicy(policy)
     }
 
     /// Adopts a policy restored by Rust without issuing a second persistence write.
     public func restoreHistoryPolicy(_ policy: MobileMusicHistoryPolicyDto) {
+        adoptHistoryPolicy(policy)
+    }
+
+    private func adoptHistoryPolicy(_ policy: MobileMusicHistoryPolicyDto) {
+        let previousPolicy = historyPolicy
         historyPolicy = policy
-        lastPersistedNowPlayingByProvider.removeAll(keepingCapacity: true)
-        lastRecordedSequence = nil
+        rebasePersistedState(from: previousPolicy, to: policy)
     }
 
     /// Drops provider-local observations before a deliberate provider switch.
@@ -635,6 +737,28 @@ public final class MusicIntegrationCoordinator {
                 lastPersistedNowPlayingByProvider[nowPlaying.provider] = nowPlaying
             }
         case .outOfOrder, .rideNotOpen, .full:
+            break
+        }
+    }
+
+    private func rebasePersistedState(
+        from previousPolicy: MobileMusicHistoryPolicyDto,
+        to policy: MobileMusicHistoryPolicyDto
+    ) {
+        switch (previousPolicy, policy) {
+        case (.disabled, .opaqueItem), (.disabled, .humanReadable):
+            // Enabling history should capture the current item on the next
+            // accepted observation, even if it was already playing.
+            lastPersistedNowPlayingByProvider.removeAll(keepingCapacity: true)
+        case (_, .disabled):
+            // Keep the current player as the baseline while history is off so
+            // a later re-enable can deliberately start a new association.
+            if let nowPlaying {
+                lastPersistedNowPlayingByProvider[nowPlaying.provider] = nowPlaying
+            }
+        default:
+            // Redaction and display-policy changes are not music transitions.
+            // Preserve the baseline so the next poll cannot duplicate one.
             break
         }
     }
@@ -707,6 +831,7 @@ public struct MusicCompactPlayer: View {
     public let onSelectProvider: (MobileMusicProviderDto) -> Void
     public let onSetHistoryPolicy: (MobileMusicHistoryPolicyDto) -> Bool
     @State private var isExpanded = false
+    @State private var accessibilityAnnouncementTracker = MusicAccessibilityAnnouncementTracker()
 
     public init(
         nowPlaying: MusicNowPlaying,
@@ -743,11 +868,12 @@ public struct MusicCompactPlayer: View {
                     .foregroundStyle(.secondary)
             }
             Spacer(minLength: 4)
-            Button { onCommand(.previous) } label: {
-                Image(systemName: "backward.fill")
+            if nowPlaying.supports(.previous) {
+                Button { onCommand(.previous) } label: {
+                    Image(systemName: "backward.fill")
+                }
+                .accessibilityLabel(pevLocalizedText("music.previous"))
             }
-            .accessibilityLabel(pevLocalizedText("music.previous"))
-            .disabled(!nowPlaying.capabilities.previous)
             if let command = nowPlaying.playPauseCommand {
                 Button { onCommand(command) } label: {
                     Image(systemName: command == .pause ? "pause.fill" : "play.fill")
@@ -756,11 +882,12 @@ public struct MusicCompactPlayer: View {
                     pevLocalizedText(command == .pause ? "music.pause" : "music.play")
                 )
             }
-            Button { onCommand(.next) } label: {
-                Image(systemName: "forward.fill")
+            if nowPlaying.supports(.next) {
+                Button { onCommand(.next) } label: {
+                    Image(systemName: "forward.fill")
+                }
+                .accessibilityLabel(pevLocalizedText("music.next"))
             }
-            .accessibilityLabel(pevLocalizedText("music.next"))
-            .disabled(!nowPlaying.capabilities.next)
             if nowPlaying.capabilities.openProvider {
                 Button { onCommand(.openProvider) } label: {
                     Image(systemName: "arrow.up.forward.app")
@@ -781,6 +908,12 @@ public struct MusicCompactPlayer: View {
         .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 16))
         .accessibilityElement(children: .contain)
         .accessibilityLabel(nowPlaying.accessibilitySummary)
+        .onChange(of: nowPlaying) { _, nowPlaying in
+            guard let announcement = accessibilityAnnouncementTracker.next(for: nowPlaying) else {
+                return
+            }
+            AccessibilityNotification.Announcement(announcement).post()
+        }
         .sheet(isPresented: $isExpanded) {
             MusicExpandedPlayer(
                 nowPlaying: nowPlaying,
@@ -1090,8 +1223,7 @@ public final class AppleMusicProviderAdapter {
     private let systemPlayer = SystemMusicPlayer.shared
 #endif
     private var notificationTokens = [NSObjectProtocol]()
-    private var cachedArtworkIdentifier: String?
-    private var cachedArtworkData: Data?
+    private var artworkCache = MusicArtworkCache()
 
     public init() {}
 
@@ -1253,27 +1385,20 @@ public final class AppleMusicProviderAdapter {
     }
 
     private func artworkData() -> Data? {
+        artworkCache.artwork(for: player.nowPlayingItem.map(appleMusicIdentifier)) {
+            loadArtwork()
+        }?.data
+    }
+
+    private func loadArtwork() -> MusicArtwork? {
 #if canImport(UIKit) && os(iOS)
-        guard let item = player.nowPlayingItem else {
-            cachedArtworkIdentifier = nil
-            cachedArtworkData = nil
-            return nil
-        }
-        let identifier = appleMusicIdentifier(for: item)
-        if cachedArtworkIdentifier == identifier {
-            return cachedArtworkData
-        }
-        guard let artwork = item.artwork,
+        guard let artwork = player.nowPlayingItem?.artwork,
               let image = artwork.image(at: Self.artworkSize),
               let data = image.jpegData(compressionQuality: 0.8)
         else {
-            cachedArtworkIdentifier = nil
-            cachedArtworkData = nil
             return nil
         }
-        cachedArtworkIdentifier = identifier
-        cachedArtworkData = data
-        return data
+        return MusicArtwork(data: data)
 #else
         nil
 #endif
