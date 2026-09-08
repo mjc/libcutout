@@ -384,6 +384,7 @@ public final class CutoutSessionCore: NSObject {
     private var captureStartedAt: MonotonicMilliseconds?
     private var captureNotificationCount: UInt64 = 0
     private var captureBuilder: MobilePevcapCaptureBuilder?
+    private var musicCaptureContext = CaptureMusicContext()
     private var captureMusicHistoryPolicy = MobileMusicHistoryPolicyDto.disabled
     private var captureFileURL: URL?
     private var bmsPages: [BmsPageKey: BmsSnapshot] = [:]
@@ -1557,6 +1558,7 @@ public final class CutoutSessionCore: NSObject {
     /// The Rust writer owns the capture event and keeps metadata low-rate.
     public func updateMusicCaptureObservation(_ observation: MobilePevcapMusicEventDto?) {
         onBleQueue {
+            self.musicCaptureContext.update(observation)
             guard let captured = self.captureMusicObservation(observation),
                   let builder = self.captureBuilder
             else { return }
@@ -1651,7 +1653,7 @@ public final class CutoutSessionCore: NSObject {
         ].forEach { _ = builder.addAnnotation(annotation: $0) }
         extraAnnotations.forEach { _ = builder.addAnnotation(annotation: sanitizedPevcapAnnotation($0)) }
         captureBuilder = builder
-        _ = builder.setMusicContext(music: musicCaptureContext.take())
+        _ = builder.setMusicContext(music: musicCaptureContext.current)
         guard builder.startWriter(path: url.path) else {
             record("capture_error=writer_start_failed")
             captureBuilder = nil
@@ -1660,6 +1662,7 @@ public final class CutoutSessionCore: NSObject {
             setPhase(.failed(.sessionFailed("capture writer failed to start")))
             return
         }
+        musicCaptureContext.reset()
         captureFileURL = url
         record("capture_file=\(url.path)")
         publishCaptureEvent(.started(fileURL: url))

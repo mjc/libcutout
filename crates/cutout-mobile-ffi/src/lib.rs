@@ -3380,31 +3380,32 @@ impl TryFrom<MobileMusicSnapshotDto> for CoreMusicSnapshot {
     }
 }
 
-impl From<&CoreMusicRideEvent> for MobileMusicRideEventDto {
-    fn from(event: &CoreMusicRideEvent) -> Self {
-        Self {
-            sequence: 0,
-            provider: event.provider().into(),
-            item_identifier: event
-                .item_identifier()
-                .map(|identifier| identifier.as_str().to_owned()),
-            title: event.title().map(str::to_owned),
-            artist: event.artist().map(str::to_owned),
-            kind: match event.kind() {
-                CoreMusicRideEventKind::Play => MobileMusicRideEventKindDto::Play,
-                CoreMusicRideEventKind::Pause => MobileMusicRideEventKindDto::Pause,
-                CoreMusicRideEventKind::Skip => MobileMusicRideEventKindDto::Skip,
-                CoreMusicRideEventKind::ItemChanged => MobileMusicRideEventKindDto::ItemChanged,
-                CoreMusicRideEventKind::Stopped => MobileMusicRideEventKindDto::Stopped,
-                CoreMusicRideEventKind::ProviderDisconnected => {
-                    MobileMusicRideEventKindDto::ProviderDisconnected
-                }
-            },
-            observed_at_ms: event.observed_at().map(MonotonicTimestamp::as_milliseconds),
-            monotonic_at_ms: event.monotonic_at().as_milliseconds(),
-            wall_clock_at_ms: event.wall_clock_at().as_milliseconds(),
-            clock_uncertainty_ms: event.clock_uncertainty_milliseconds(),
-        }
+fn mobile_music_ride_event_dto(
+    event: &CoreMusicRideEvent,
+    sequence: u64,
+) -> MobileMusicRideEventDto {
+    MobileMusicRideEventDto {
+        sequence,
+        provider: event.provider().into(),
+        item_identifier: event
+            .item_identifier()
+            .map(|identifier| identifier.as_str().to_owned()),
+        title: event.title().map(str::to_owned),
+        artist: event.artist().map(str::to_owned),
+        kind: match event.kind() {
+            CoreMusicRideEventKind::Play => MobileMusicRideEventKindDto::Play,
+            CoreMusicRideEventKind::Pause => MobileMusicRideEventKindDto::Pause,
+            CoreMusicRideEventKind::Skip => MobileMusicRideEventKindDto::Skip,
+            CoreMusicRideEventKind::ItemChanged => MobileMusicRideEventKindDto::ItemChanged,
+            CoreMusicRideEventKind::Stopped => MobileMusicRideEventKindDto::Stopped,
+            CoreMusicRideEventKind::ProviderDisconnected => {
+                MobileMusicRideEventKindDto::ProviderDisconnected
+            }
+        },
+        observed_at_ms: event.observed_at().map(MonotonicTimestamp::as_milliseconds),
+        monotonic_at_ms: event.monotonic_at().as_milliseconds(),
+        wall_clock_at_ms: event.wall_clock_at().as_milliseconds(),
+        clock_uncertainty_ms: event.clock_uncertainty_milliseconds(),
     }
 }
 
@@ -3415,9 +3416,7 @@ fn mobile_music_event_dtos(
         .into_iter()
         .enumerate()
         .map(|(sequence, event)| {
-            let mut dto = MobileMusicRideEventDto::from(&event);
-            dto.sequence = u64::try_from(sequence).unwrap_or(u64::MAX);
-            dto
+            mobile_music_ride_event_dto(&event, u64::try_from(sequence).unwrap_or(u64::MAX))
         })
         .collect()
 }
@@ -7141,6 +7140,7 @@ impl MobileRideMapCore {
         database
             .inner
             .save_music_history_policy(ride_id, CoreMusicHistoryPolicy::OpaqueItem)
+            .map_err(map_storage_core_error)
     }
 
     /// Associates a connected vehicle with the active recording.
@@ -9450,6 +9450,7 @@ fn pevcap_music_event_for_policy(
     music: MobilePevcapMusicEventDto,
     policy: CoreMusicHistoryPolicy,
 ) -> Result<Option<PevcapMusicEvent>, String> {
+    let event = PevcapMusicEvent::try_from(music.clone())?;
     if policy == CoreMusicHistoryPolicy::Disabled {
         return Ok(None);
     }
@@ -9459,7 +9460,7 @@ fn pevcap_music_event_for_policy(
     {
         return Ok(None);
     }
-    PevcapMusicEvent::try_from(music).map(Some)
+    Ok(Some(event))
 }
 
 #[derive(Clone, Debug)]
@@ -9769,12 +9770,27 @@ impl MobilePevcapCaptureBuilder {
         if let Some(location) = phone_location.and_then(MobilePhoneLocationSampleDto::canonical) {
             record = record.with_phone_location(location.pevcap_location());
         }
-        if let Ok(Some(music)) = self.resolve_music_context(music, monotonic_ms.milliseconds) {
-            record = record
-                .with_music(music)
-                .expect("inbound records accept music metadata");
-        }
-        self.send_record(record)
+        let music_valid = match self.resolve_music_context(music, monotonic_ms.milliseconds) {
+            Ok(Some(music)) => {
+                record = record
+                    .with_music(music)
+                    .expect("inbound records accept music metadata");
+                true
+            }
+            Ok(None) => true,
+            Err(()) => {
+                let has_pending_context = !self
+                    .music_context
+                    .lock()
+                    .unwrap_or_else(PoisonError::into_inner)
+                    .is_empty();
+                if has_pending_context {
+                    return false;
+                }
+                return self.send_record(record);
+            }
+        };
+        self.send_record(record) && music_valid
     }
 
     /// Records an independent Core Location sample in the PEVCAP location stream.
@@ -9821,7 +9837,7 @@ impl MobilePevcapCaptureBuilder {
                     .lock()
                     .unwrap_or_else(PoisonError::into_inner)
                     .clear();
-                Ok(Some(event))
+                Ok(event)
             }
             None => {
                 let mut pending = self
@@ -15348,6 +15364,7 @@ mod tests {
             "ios-corebluetooth".into(),
             None,
         );
+        assert!(builder.set_music_history_policy(MobileMusicHistoryPolicyDto::HumanReadable));
         assert!(builder.set_music_context(Some(MobilePevcapMusicEventDto {
             provider: MobileMusicProviderDto::AppleMusic,
             track_id: "pending-song".into(),
@@ -17411,6 +17428,7 @@ mod tests {
     #[test]
     fn invalid_music_event_input_is_typed() {
         let error = core_music_event(MobileMusicRideEventDto {
+            sequence: 0,
             provider: MobileMusicProviderDto::Spotify,
             item_identifier: Some(" ".to_owned()),
             title: None,
@@ -17511,7 +17529,18 @@ mod tests {
 
     #[test]
     fn music_event_dtos_expose_ordered_sequences() {
-        let state = MobileRideMapCore::new();
+        let _guard = RIDE_DATABASE_TEST_LOCK
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        let path = std::env::temp_dir().join(format!(
+            "cutout-mobile-music-sequence-{}-{}.sqlite3",
+            std::process::id(),
+            Uuid::new_v4()
+        ));
+        let _ = fs::remove_file(&path);
+        let database = open_ride_database(path.to_string_lossy().into_owned())
+            .expect("database opens");
+        let state = MobileRideMapCore::with_database(database.clone());
         state.start_gps_only(1_000, None).expect("ride starts");
         state
             .set_music_history_policy(MobileMusicHistoryPolicyDto::OpaqueItem)
@@ -17565,5 +17594,7 @@ mod tests {
                 .collect::<Vec<_>>(),
             [0, 1]
         );
+        database.shutdown().expect("database shuts down");
+        let _ = fs::remove_file(path);
     }
 }

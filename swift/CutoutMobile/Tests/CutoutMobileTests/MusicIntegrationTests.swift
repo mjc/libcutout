@@ -452,6 +452,7 @@ final class MusicIntegrationTests: XCTestCase {
                 title: "Song",
                 artist: "Artist",
                 kind: .play,
+                observedAtMs: 1_000,
                 monotonicAtMs: 1_000,
                 wallClockAtMs: 1_700_000_000_000,
                 clockUncertaintyMs: 5
