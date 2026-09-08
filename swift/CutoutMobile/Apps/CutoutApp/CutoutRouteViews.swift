@@ -386,14 +386,20 @@ final class LightingRouteModel {
     }
 
     func setPower(_ on: Bool) {
-        guard session.setPower(on) else { return }
+        guard session.setPower(on) else {
+            controlError = localizedAppText("lighting.error.power_not_ready")
+            return
+        }
         requestedState.powerOn = on
         updatePersistedRequestedState()
         commandStatus = .requested
     }
 
     func setSolidColor(red: UInt8, green: UInt8, blue: UInt8) {
-        guard sendSolidColor(red: red, green: green, blue: blue) else { return }
+        guard sendSolidColor(red: red, green: green, blue: blue) else {
+            controlError = localizedAppText("lighting.error.color_not_ready")
+            return
+        }
         requestedState.playback = nil
         requestedState.red = red
         requestedState.green = green
@@ -415,7 +421,10 @@ final class LightingRouteModel {
     }
 
     func setBrightness(_ percentage: UInt8) {
-        guard (try? session.setBrightness(percentage)) == true else { return }
+        guard (try? session.setBrightness(percentage)) == true else {
+            controlError = localizedAppText("lighting.error.brightness_not_ready")
+            return
+        }
         requestedState.brightness = percentage
         updatePersistedRequestedState()
         commandStatus = .requested
@@ -452,7 +461,7 @@ final class LightingRouteModel {
     func setEffectSpeed(_ speed: UInt8) {
         guard case let .effect(pattern, _) = requestedPlayback else { return }
         guard session.setEffectSpeed(speed) else {
-            controlError = "Could not send effect speed. Check the connection and try again."
+            controlError = localizedAppText("lighting.error.effect_speed_failed")
             return
         }
         controlError = nil
@@ -463,7 +472,7 @@ final class LightingRouteModel {
 
     private func applyState(_ state: MobileMelkLightingRestoreStateDto) {
         guard (try? session.applyState(state)) == true else {
-            controlError = "Could not send lighting settings. Check the connection and try again."
+            controlError = localizedAppText("lighting.error.state_failed")
             return
         }
         controlError = nil
@@ -482,7 +491,7 @@ final class LightingRouteModel {
             weekday: UInt8((weekday + 5) % 7 + 1)
         )
         guard (try? session.setSchedule(schedule, clock: clock)) == true else {
-            controlError = "Could not send the timer. Check the connection and try again."
+            controlError = localizedAppText("lighting.error.schedule_failed")
             return false
         }
         controlError = nil
@@ -506,6 +515,12 @@ final class LightingRouteModel {
     }
 
     var isReady: Bool { connectionState == .ready }
+
+    /// Candidates are only selectable while the session is scanning. Once CoreBluetooth has a
+    /// connection attempt in flight, selecting a stale row cannot change the active peripheral.
+    var canSelectCandidate: Bool {
+        connectionState == .idle || connectionState == .scanning
+    }
 
     var requestedPowerOn: Bool { requestedState.powerOn }
     var requestedRed: UInt8 { requestedState.red }
@@ -660,6 +675,12 @@ final class LightingRouteModel {
               persistence.platformIdentifier == peripheralIdentifier,
               persistence.confirmation == .confirmed,
               let requested = persistence.confirmedState else {
+            return
+        }
+        guard persistence.isCompatibleWithCurrentProfile else {
+            restoreAttempted = true
+            controlError = localizedAppText("lighting.error.restore_incompatible")
+            append("restore=skipped incompatible-profile")
             return
         }
         restoreAttempted = true

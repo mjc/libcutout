@@ -707,6 +707,30 @@ final class CutoutAppRouteTests: XCTestCase {
         }
     }
 
+    func testMELKWriteQueuePolicyCoalescesSolidColorsAndUsesProfileCadence() {
+        let solid = MelkLightingWritePlan(
+            operation: .writeWithoutResponse(
+                channel: .bluetooth16(0xfff3),
+                bytes: Data([0x7e, 0, 5, 3, 1, 2, 3, 0, 0xef])
+            ),
+            confirmationChannel: .bluetooth16(0xfff4),
+            minimumIntervalMilliseconds: nil
+        )
+        let effect = MelkLightingWritePlan(
+            operation: .writeWithoutResponse(
+                channel: .bluetooth16(0xfff3),
+                bytes: Data([0x7e, 5, 3, 1, 6, 0xff, 0xff, 0, 0xef])
+            ),
+            confirmationChannel: .bluetooth16(0xfff4),
+            minimumIntervalMilliseconds: 75
+        )
+
+        XCTAssertTrue(MelkLightingWriteQueuePolicy.isCoalescibleColorWrite(solid))
+        XCTAssertFalse(MelkLightingWriteQueuePolicy.isCoalescibleColorWrite(effect))
+        XCTAssertEqual(MelkLightingWriteQueuePolicy.intervalMilliseconds(for: solid), 50)
+        XCTAssertEqual(MelkLightingWriteQueuePolicy.intervalMilliseconds(for: effect), 75)
+    }
+
     func testRememberedMELKTargetAcceptsOnlyTheSamePlatformIdentity() {
         let target = MelkLightingTargetPolicy(preferredPlatformIdentifier: "A1B2C3D4-E5F6-4789-ABCD-0123456789AB")
 
@@ -724,12 +748,13 @@ final class CutoutAppRouteTests: XCTestCase {
         XCTAssertFalse(target.acceptsDiscovery(name: nil, identifier: different))
     }
 
-    func testFirstMELKDiscoveryStillRequiresTheAdvertisedName() {
+    func testFirstDiscoverySurfacesNamedUnknownAccessoriesForInspection() {
         let target = MelkLightingTargetPolicy(preferredPlatformIdentifier: nil)
         let identifier = CoreBluetoothPeripheralIdentifier("first-melk")
 
         XCTAssertFalse(target.acceptsDiscovery(name: nil, identifier: identifier))
         XCTAssertTrue(target.acceptsDiscovery(name: "MELK-OC21 6A", identifier: identifier))
+        XCTAssertTrue(target.acceptsDiscovery(name: "Unknown RGB controller", identifier: identifier))
     }
 
     func testFirstPairingTargetAcceptsAnyPlatformIdentity() {
@@ -883,6 +908,41 @@ final class CutoutAppRouteTests: XCTestCase {
         await Task.yield()
 
         XCTAssertEqual(model.commandStatus, .unconfirmed)
+    }
+
+    @MainActor
+    func testLightingRouteModelReportsCommandRefusalWhenDisconnected() throws {
+        let suiteName = "CutoutAppRouteTests.lightingRefusal"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defaults.removePersistentDomain(forName: suiteName)
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        let fake = TestLightingSession()
+        fake.powerResult = false
+        let model = LightingRouteModel(session: fake, persistence: LightingAccessoryPersistence(defaults: defaults))
+
+        model.setPower(true)
+
+        XCTAssertEqual(model.controlError, "Power was not sent because the lighting controller is not ready.")
+        XCTAssertEqual(model.commandStatus, .idle)
+    }
+
+    @MainActor
+    func testLightingRouteModelCountsOneNotificationOnce() async throws {
+        let suiteName = "CutoutAppRouteTests.lightingNotification"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defaults.removePersistentDomain(forName: suiteName)
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        let fake = TestLightingSession()
+        let model = LightingRouteModel(session: fake, persistence: LightingAccessoryPersistence(defaults: defaults))
+        model.start()
+
+        fake.emitNotification(Data([0x59, 0x42]))
+        await Task.yield()
+
+        XCTAssertEqual(model.notificationCount, 1)
+        XCTAssertEqual(model.records.filter { $0.text == "FFF4 notification received" }.count, 1)
     }
 
     @MainActor
@@ -1315,6 +1375,10 @@ private final class TestLightingSession: MelkLightingPeripheralSessionProtocol {
 
     func emitRecord(_ record: String) {
         onRecord?(record)
+    }
+
+    func emitNotification(_ data: Data) {
+        onNotification?(data)
     }
 
     func emitState(_ state: MelkLightingPeripheralState) {

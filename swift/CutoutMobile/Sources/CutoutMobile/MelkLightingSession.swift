@@ -30,7 +30,12 @@ struct MelkLightingTargetPolicy: Equatable, Sendable {
         identifier: CoreBluetoothPeripheralIdentifier
     ) -> Bool {
         guard accepts(identifier) else { return false }
-        guard preferredUUID != nil else { return Self.isMelkName(name) }
+        // First pairing may surface any named, connectable accessory for inspection. The typed
+        // MELK profile is still selected only after GATT validation, and unknown devices can
+        // never reach the write boundary.
+        guard preferredUUID != nil else {
+            return name?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
+        }
         return Self.isMelkName(name)
             || UUID(uuidString: identifier.rawValue) == preferredUUID
     }
@@ -76,6 +81,31 @@ struct MelkLightingCommandEvidence: Equatable, Sendable {
     mutating func unconfirmed() {
         guard status == .requested else { return }
         status = .unconfirmed
+    }
+}
+
+/// Pure queue policy shared by the CoreBluetooth writer and deterministic tests. MELK controllers
+/// have a small no-response queue, so color previews coalesce while complete states remain bounded.
+enum MelkLightingWriteQueuePolicy {
+    static let maximumPendingWrites = 32
+    static let fallbackIntervalMilliseconds: UInt16 = 50
+
+    static func isCoalescibleColorWrite(_ plan: MelkLightingWritePlan) -> Bool {
+        guard plan.confirmationChannel == MelkLightingCommandProfile.notify,
+              case let .writeWithoutResponse(channel, bytes) = plan.operation,
+              channel == MelkLightingCommandProfile.write,
+              bytes.count == 9 else {
+            return false
+        }
+        return bytes[0] == 0x7e
+            && bytes[1] == 0
+            && bytes[2] == 5
+            && bytes[3] == 3
+            && bytes[8] == 0xef
+    }
+
+    static func intervalMilliseconds(for plan: MelkLightingWritePlan) -> UInt16 {
+        plan.minimumIntervalMilliseconds ?? fallbackIntervalMilliseconds
     }
 }
 
@@ -228,7 +258,8 @@ public struct MelkLightingPeripheralIdentity: Equatable, Sendable {
     }
 }
 
-/// A nearby MELK advertisement awaiting explicit selection during first pairing.
+/// A nearby lighting advertisement awaiting explicit selection during first pairing. Unknown
+/// devices are intentionally visible for capture/diagnostics but fail closed before writes.
 public struct MelkLightingPeripheralCandidate: Equatable, Sendable, Identifiable {
     public let id: String
     public let name: String?
@@ -504,9 +535,8 @@ public final class MelkLightingPeripheralSession: NSObject, CBCentralManagerDele
                 return
             }
             // MELK-OC21 does not advertise FFF0 in its advertisement packet. Filter only after
-            // connecting and discovering the GATT inventory; the advertised name is the
-            // candidate gate that keeps this standalone scan narrow. When a remembered identity
-            // exists, didDiscoverPeripheral applies the identity filter before this gate.
+            // connecting and discovering the GATT inventory. First pairing surfaces named
+            // peripherals for inspection; a remembered identity remains strictly scoped.
             central.scanForPeripherals(withServices: nil)
             transition(to: .scanning)
             let target = targetPolicy.preferredUUID.map { " id=\($0.uuidString)" } ?? ""
@@ -711,13 +741,13 @@ public final class MelkLightingPeripheralSession: NSObject, CBCentralManagerDele
         onQueue {
             guard peripheral === self.peripheral else { return }
             guard error == nil else {
-                transition(to: .failed(error.map(String.init(describing:)) ?? "service discovery failed"))
+                rejectCandidateOrFail(error.map(String.init(describing:)) ?? "service discovery failed")
                 return
             }
             guard let service = peripheral.services?.first(where: {
                 $0.uuid == MelkLightingCommandProfile.service.coreBluetoothUuid
             }) else {
-                transition(to: .failed("missing FFF0 service"))
+                rejectCandidateOrFail("missing FFF0 service")
                 record("gatt=missing FFF0 service")
                 return
             }
@@ -734,14 +764,14 @@ public final class MelkLightingPeripheralSession: NSObject, CBCentralManagerDele
             guard peripheral === self.peripheral,
                   service.uuid == MelkLightingCommandProfile.service.coreBluetoothUuid else { return }
             guard error == nil else {
-                transition(to: .failed(error.map(String.init(describing:)) ?? "characteristic discovery failed"))
+                rejectCandidateOrFail(error.map(String.init(describing:)) ?? "characteristic discovery failed")
                 return
             }
             let name = advertisedName
                 ?? peripheral.name
                 ?? (targetPolicy.preferredUUID == peripheral.identifier ? "MELK-OC21" : nil)
             guard let name else {
-                transition(to: .failed("missing MELK name"))
+                rejectCandidateOrFail("missing MELK name")
                 return
             }
             do {
@@ -753,15 +783,36 @@ public final class MelkLightingPeripheralSession: NSObject, CBCentralManagerDele
                 sink = CoreBluetoothPeripheralOperationSink(peripheral: peripheral)
                 pendingInitialization = try candidate.initialization()
                 notificationReady = false
-                drainInitialization()
                 if case let .subscribe(channel) = candidate.subscription {
                     sink?.subscribe(channel: channel)
                 }
+                // Subscribe before the handshake so a fast FFF4 response cannot be lost while
+                // initialization is being drained.
+                drainInitialization()
                 record("gatt=FFF0 write=FFF3 notify=FFF4")
             } catch {
-                transition(to: .failed(String(describing: error)))
+                rejectCandidateOrFail(String(describing: error))
             }
         }
+    }
+
+    /// A first-pairing candidate that does not match the typed profile should return to the list
+    /// instead of trapping the user in a failed connection with no way to choose another device.
+    private func rejectCandidateOrFail(_ reason: String) {
+        guard targetPolicy.preferredUUID == nil, let central, let peripheral else {
+            transition(to: .failed(reason))
+            return
+        }
+        central.cancelPeripheralConnection(peripheral)
+        self.peripheral = nil
+        advertisedName = nil
+        peripheralName = nil
+        peripheralIdentifier = nil
+        harness = nil
+        sink = nil
+        transition(to: .scanning)
+        record("candidate_rejected reason=\(reason)")
+        central.scanForPeripherals(withServices: nil)
     }
 
     public func peripheral(
@@ -793,7 +844,6 @@ public final class MelkLightingPeripheralSession: NSObject, CBCentralManagerDele
                   characteristic.uuid == MelkLightingCommandProfile.notify.coreBluetoothUuid,
                   let value = characteristic.value else { return }
             onNotification?(value)
-            record("notification=\(value.count) bytes")
         }
     }
 
@@ -810,30 +860,16 @@ public final class MelkLightingPeripheralSession: NSObject, CBCentralManagerDele
                   return false
               }) else { return false }
 
-        if plans.allSatisfy(Self.isCoalescibleColorWrite) {
+        if plans.allSatisfy(MelkLightingWriteQueuePolicy.isCoalescibleColorWrite) {
             // A drag produces many superseded colors; keep only the newest one.
-            pendingWrites.removeAll(where: Self.isCoalescibleColorWrite)
+            pendingWrites.removeAll(where: MelkLightingWriteQueuePolicy.isCoalescibleColorWrite)
         }
-        guard pendingWrites.count + plans.count <= 32 else { return false }
+        guard pendingWrites.count + plans.count <= MelkLightingWriteQueuePolicy.maximumPendingWrites else { return false }
 
         pendingWrites.append(contentsOf: plans)
         commandEvidence.requested()
         drainWrites()
         return true
-    }
-
-    private static func isCoalescibleColorWrite(_ plan: MelkLightingWritePlan) -> Bool {
-        guard plan.confirmationChannel == MelkLightingCommandProfile.notify,
-              case let .writeWithoutResponse(channel, bytes) = plan.operation,
-              channel == MelkLightingCommandProfile.write,
-              bytes.count == 9 else {
-            return false
-        }
-        return bytes[0] == 0x7e
-            && bytes[1] == 0
-            && bytes[2] == 5
-            && bytes[3] == 3
-            && bytes[8] == 0xef
     }
 
     private func drainInitialization() {
@@ -900,7 +936,7 @@ public final class MelkLightingPeripheralSession: NSObject, CBCentralManagerDele
         // MELK accepts write-without-response frames, but a burst can exhaust its
         // small controller-side queue. Keep the profile-provided cadence when present;
         // MELK currently falls back to the 50 ms cadence observed on hardware.
-        let delayMilliseconds = Int(plan.minimumIntervalMilliseconds ?? 50)
+        let delayMilliseconds = Int(MelkLightingWriteQueuePolicy.intervalMilliseconds(for: plan))
         let task = DispatchWorkItem { [weak self, weak peripheral] in
             guard let self, let peripheral else { return }
             self.onQueue {

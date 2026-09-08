@@ -57,6 +57,22 @@ final class LightingAccessoryPersistenceTests: XCTestCase {
         XCTAssertEqual(reopened.requestedState?.red, 255)
         XCTAssertEqual(reopened.confirmedState?.blue, 24)
         XCTAssertEqual(reopened.confirmation, .confirmed)
+        XCTAssertTrue(reopened.isCompatibleWithCurrentProfile)
+    }
+
+    func testStoreRejectsRestoreWhenCapabilityFingerprintIsStale() throws {
+        let suiteName = "LightingAccessoryPersistenceTests-compatibility-(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        let store = LightingAccessoryPersistence(defaults: defaults)
+        XCTAssertTrue(store.ensureRecord(platformIdentifier: "compatibility-melk"))
+        XCTAssertTrue(store.isCompatibleWithCurrentProfile)
+
+        defaults.set("stale-capabilities", forKey: "lighting.accessory.capabilitiesFingerprint")
+        let reopened = LightingAccessoryPersistence(defaults: defaults)
+
+        XCTAssertFalse(reopened.isCompatibleWithCurrentProfile)
     }
 
     func testStoreReplacesRecordWhenTheConnectedIdentityChanges() throws {

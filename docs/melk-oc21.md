@@ -10,7 +10,8 @@ Commands are based on [dave-code-ruiz/elkbledom](https://github.com/dave-code-ru
 specifically `models.json`, `definitions.json`, `model.py`, and `elkbledom.py`.
 The user's nRF Connect inventory establishes FFF0 service, FFF3 read/write
 without response, and FFF4 notify. The advertisement does not include FFF0:
-scan without a service filter, then check identity and discovered GATT roles.
+scan without a service filter, surface named candidates for inspection, then
+check identity and discovered GATT roles before selecting the typed profile.
 The same upstream integration documents a MELK initialization handshake: send
 `7e 07 83`, wait one second, then send `7e 04 04`. Production performs this
 one-time sequence after FFF3 discovery and before admitting user commands; it is
@@ -68,7 +69,11 @@ until exact OC21 capture.
 The official-app screenshot labels its first Basic card “Auto Play”; the UI
 preserves that as an ID 0 reference label until an OC21 capture ties the name to
 a wire ID.
-The mobile FFI restore and preset boundary permits capture-backed effect IDs 1–10, 16, 22, and 75; all other reference IDs, controller-microphone playback, and schedules fail closed as unavailable.
+The mobile FFI restore and preset boundary permits only the bounded OC21 effect fixture set
+(IDs 1–10, 16, 22, and 75). Each enabled ID has an exact nine-byte command fixture in the Rust
+profile; the fixture is the write contract, while physical visual confirmation remains a separate
+acceptance step. All other reference IDs, controller-microphone playback, and schedules fail
+closed as unavailable.
 
 The production picker groups the reference IDs into Basic, Curtain, Trans, Water,
 Flow, Tail, Run, Run Back, and Unmapped. The grouping covers each ID 0–227 exactly
@@ -112,7 +117,7 @@ the official app.
 - Optional reconnect restore uses the last confirmed settings for the same
   accessory identity. Requested state is not a claim of physical confirmation.
 - Manual clock scheduling is retained as a future controller-local design surface; this MELK-OC21 profile does not send schedule writes until physical verification. The editor shows the protocol shape without claiming device state.
-- The Mac-only MelkLightingLiveValidator executable uses CoreBluetooth to discover MELK-OC21, verify FFF0/FFF3/FFF4, and exercise capture-backed commands without sharing the ride telemetry connection. Run `nix develop -c ./scripts/validate-melk-corebluetooth.sh [timeout-seconds] [platform-UUID]`; the optional UUID retries a previously observed CoreBluetooth identity and is parsed fail-closed. The wrapper selects the standalone MELK validator rather than the ride/Aero validator, which requires CoreLocation on macOS.
+- The Mac-only MelkLightingLiveValidator executable uses CoreBluetooth to discover MELK-OC21, verify FFF0/FFF3/FFF4, and exercise capture-backed commands without sharing the ride telemetry connection. Run `nix develop -c ./scripts/validate-melk-corebluetooth.sh [timeout-seconds] [platform-UUID]`; the optional UUID retries a previously observed CoreBluetooth identity and is parsed fail-closed. For a fresh pairing, enter `select <UUID>` for the printed candidate before the timeout expires. The wrapper selects the standalone MELK validator rather than the ride/Aero validator, which requires CoreLocation on macOS.
   A timeout or failed remembered-identity check exits nonzero.
 - When scheduling is enabled in a future profile, saving will send a clock sync followed by the selected slot; opening the editor never writes. The controller has no timer readback, so future profiles must retain drafts rather than claim device state.
 - A future capture-backed profile may use the accessory microphone for music modes; this MELK-OC21 profile keeps music unavailable, with no phone recording or audio permission.

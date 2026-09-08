@@ -8,6 +8,7 @@ import Foundation
 public final class LightingAccessoryPersistence {
     private enum Key {
         static let record = "lighting.accessory.record"
+        static let capabilitiesFingerprint = "lighting.accessory.capabilitiesFingerprint"
         static let legacyEnabled = "lighting.restore.enabled"
         static let legacyPlatformIdentifier = "lighting.restore.platformIdentifier"
         static let legacyPowerOn = "lighting.restore.powerOn"
@@ -66,6 +67,32 @@ public final class LightingAccessoryPersistence {
         record?.restoreEnabled() ?? false
     }
 
+    /// The profile identity and capability set that were present when this accessory was paired.
+    /// A missing fingerprint intentionally makes restore ineligible rather than guessing that an
+    /// old record is still safe after a profile change.
+    public var isCompatibleWithCurrentProfile: Bool {
+        guard let record,
+              record.profile() == .melkOc21,
+              record.profileVersion() == Self.currentProfileVersion,
+              let fingerprint = defaults.string(forKey: Key.capabilitiesFingerprint) else {
+            return false
+        }
+        return fingerprint == Self.currentCapabilitiesFingerprint
+    }
+
+    public static let currentProfileVersion: UInt16 = 1
+
+    private static var currentCapabilitiesFingerprint: String {
+        let capabilities = mobileMelkLightingCapabilities()
+        return [
+            capabilities.verifiedEffectIds.map(String.init).joined(separator: ","),
+            capabilities.controllerMicrophone ? "1" : "0",
+            capabilities.schedules ? "1" : "0",
+            capabilities.addressableZones ? "1" : "0",
+            capabilities.scenes ? "1" : "0",
+        ].joined(separator: "|")
+    }
+
     public var presets: [MobileRgbLightingPresetDto] {
         record?.presets() ?? []
     }
@@ -81,11 +108,12 @@ public final class LightingAccessoryPersistence {
         guard let newRecord = try? MobileRgbLightingAccessoryRecord(
             platformIdentifier: platformIdentifier,
             profile: .melkOc21,
-            profileVersion: 1
+            profileVersion: Self.currentProfileVersion
         ) else {
             return false
         }
         record = newRecord
+        defaults.set(Self.currentCapabilitiesFingerprint, forKey: Key.capabilitiesFingerprint)
         persist()
         return true
     }
@@ -116,6 +144,7 @@ public final class LightingAccessoryPersistence {
     public func forget() {
         record = nil
         defaults.removeObject(forKey: Key.record)
+        defaults.removeObject(forKey: Key.capabilitiesFingerprint)
         Key.legacy.forEach(defaults.removeObject(forKey:))
     }
 
@@ -186,7 +215,7 @@ public final class LightingAccessoryPersistence {
               let migrated = try? MobileRgbLightingAccessoryRecord(
                   platformIdentifier: identifier,
                   profile: .melkOc21,
-                  profileVersion: 1
+                  profileVersion: Self.currentProfileVersion
               ) else {
             return
         }
@@ -217,6 +246,7 @@ public final class LightingAccessoryPersistence {
         migrated.setConfirmation(state: .confirmed)
         migrated.setRestoreEnabled(enabled: defaults.bool(forKey: Key.legacyEnabled))
         record = migrated
+        defaults.set(Self.currentCapabilitiesFingerprint, forKey: Key.capabilitiesFingerprint)
         persist()
         Key.legacy.forEach(defaults.removeObject(forKey:))
     }

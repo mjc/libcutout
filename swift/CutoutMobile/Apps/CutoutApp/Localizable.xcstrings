@@ -105,6 +105,46 @@
       "comment" : "Lighting power toggle label.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Power" } } }
     },
+    "lighting.error.power_not_ready" : {
+      "comment" : "Lighting command refusal when the controller is not ready.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Power was not sent because the lighting controller is not ready." } } }
+    },
+    "lighting.error.color_not_ready" : {
+      "comment" : "Lighting command refusal when the controller is not ready.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Color was not sent because the lighting controller is not ready." } } }
+    },
+    "lighting.error.brightness_not_ready" : {
+      "comment" : "Lighting command refusal when the controller is not ready.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Brightness was not sent because the lighting controller is not ready." } } }
+    },
+    "lighting.error.effect_speed_failed" : {
+      "comment" : "Lighting effect speed command failed.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Could not send effect speed. Check the connection and try again." } } }
+    },
+    "lighting.error.state_failed" : {
+      "comment" : "Lighting state command failed.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Could not send lighting settings. Check the connection and try again." } } }
+    },
+    "lighting.error.schedule_failed" : {
+      "comment" : "Lighting schedule command failed.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Could not send the timer. Check the connection and try again." } } }
+    },
+    "lighting.error.restore_incompatible" : {
+      "comment" : "Saved lighting state cannot be restored after a profile or capability change.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Saved lighting settings are from an incompatible profile; pair this accessory again before restoring." } } }
+    },
+    "lighting.pairing.nearby_title" : {
+      "comment" : "Heading for the first-pairing accessory list.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Nearby lighting accessories" } } }
+    },
+    "lighting.pairing.nearby_hint" : {
+      "comment" : "First-pairing guidance; unknown devices remain read-only until their profile is verified.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Choose an accessory to inspect; unknown profiles remain read-only." } } }
+    },
+    "lighting.pairing.unknown_name" : {
+      "comment" : "Fallback name for an advertisement without a local name.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Unknown lighting accessory" } } }
+    },
     "app.command.disconnect" : {
       "comment" : "App command that disconnects the current device.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Disconnect" } } }

@@ -14,6 +14,15 @@ use cutout_core::{
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct MelkLightingProfile;
 
+/// Exact nine-byte effect write fixtures retained for every effect currently exposed by the
+/// MELK-OC21 UI. Keeping the wire bytes beside the allowlist prevents a catalog rename or a
+/// reference-only ID from silently widening the write boundary.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct MelkLightingEffectFixture {
+    pub id: u8,
+    pub frame: [u8; MELK_FRAME_LEN],
+}
+
 /// Capture-backed capabilities for the current MELK-OC21 profile.
 ///
 /// The protocol encoder can represent additional reference commands, but only these
@@ -52,12 +61,44 @@ impl MelkLightingCapabilities {
         }
     }
 
+    /// Returns the bounded OC21 effect command fixtures used by the mobile write boundary.
+    #[must_use]
+    pub const fn effect_fixtures() -> &'static [MelkLightingEffectFixture] {
+        &MELK_OC21_EFFECT_FIXTURES
+    }
+
     /// Returns whether the effect ID has capture-backed physical evidence.
     #[must_use]
     pub fn supports_effect(self, pattern: u8) -> bool {
         self.verified_effect_ids.contains(&pattern)
+            && Self::effect_fixtures()
+                .iter()
+                .any(|fixture| fixture.id == pattern)
     }
 }
+
+const fn fixture(id: u8) -> MelkLightingEffectFixture {
+    MelkLightingEffectFixture {
+        id,
+        frame: [0x7e, 0x05, 0x03, id, 0x06, 0xff, 0xff, 0x00, 0xef],
+    }
+}
+
+const MELK_OC21_EFFECT_FIXTURES: [MelkLightingEffectFixture; 13] = [
+    fixture(1),
+    fixture(2),
+    fixture(3),
+    fixture(4),
+    fixture(5),
+    fixture(6),
+    fixture(7),
+    fixture(8),
+    fixture(9),
+    fixture(10),
+    fixture(16),
+    fixture(22),
+    fixture(75),
+];
 
 /// Length of a candidate MELK command frame.
 pub const MELK_FRAME_LEN: usize = 9;
@@ -223,8 +264,9 @@ impl MelkLightingProfile {
 
     /// Plans the ordered writes needed to restore one requested controller state.
     ///
-    /// Microphone mode is disabled before solid/effect playback and enabled last for music.
-    /// Brightness is applied before power so restoring an off state cannot finish lit.
+    /// Brightness is applied before power so restoring an off state cannot finish lit. Music
+    /// playback emits its sensitivity/effect/microphone sequence; solid and effect playback do
+    /// not claim microphone state because OC21 readback is unavailable.
     #[must_use]
     pub fn plan_state(state: RgbLightingRequestedState) -> Vec<TransportAction> {
         let mut actions = match state.playback() {
@@ -306,7 +348,7 @@ impl MelkLightingProfile {
 mod tests {
     use super::{
         MELK_FRAME_LEN, MELK_NOTIFY_CHANNEL, MELK_WRITE_CHANNEL, MelkGattEvidence,
-        MelkLightingProfile,
+        MelkLightingCapabilities, MelkLightingProfile,
     };
     use cutout_core::{
         LightingBrightness, LightingPlayback, LightingPowerState, RgbColor, RgbLightingCommand,
@@ -418,6 +460,28 @@ mod tests {
             MelkLightingProfile::encode(RgbLightingCommand::SetPower(LightingPowerState::Off)),
             [0x7e, 0x00, 0x04, 0x00, 0x00, 0x00, 0xff, 0x00, 0xef]
         );
+    }
+
+    #[test]
+    fn every_enabled_effect_has_an_exact_command_fixture() {
+        let capabilities = MelkLightingProfile::capabilities();
+        let fixtures = MelkLightingCapabilities::effect_fixtures();
+        assert_eq!(
+            capabilities.verified_effect_ids,
+            fixtures
+                .iter()
+                .map(|fixture| fixture.id)
+                .collect::<Vec<_>>()
+                .as_slice()
+        );
+        for fixture in fixtures {
+            assert_eq!(
+                fixture.frame,
+                MelkLightingProfile::encode_control(cutout_core::MelkControl::Pattern(
+                    fixture.id.try_into().expect("fixture ID is bounded"),
+                ))
+            );
+        }
     }
 
     #[test]

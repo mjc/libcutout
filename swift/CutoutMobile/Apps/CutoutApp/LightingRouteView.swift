@@ -673,11 +673,11 @@ private struct LightingPairingSheet: View {
                     .disabled(model.isReady)
                     .accessibilityIdentifier("lighting.pairing.connect")
 
-                    if !model.candidates.isEmpty && !model.isReady {
+                    if !model.candidates.isEmpty && model.canSelectCandidate {
                         LightingCard {
-                            Text("Nearby MELK-OC21 accessories")
+                            Text(localizedAppText("lighting.pairing.nearby_title"))
                                 .font(.headline)
-                            Text("Choose the controller to pair; no accessory is selected automatically.")
+                            Text(localizedAppText("lighting.pairing.nearby_hint"))
                                 .font(.footnote)
                                 .foregroundStyle(PevColors.muted)
                             ForEach(model.candidates) { candidate in
@@ -685,7 +685,7 @@ private struct LightingPairingSheet: View {
                                     model.selectCandidate(candidate)
                                 } label: {
                                     HStack {
-                                        Label(candidate.name ?? "MELK-OC21", systemImage: "lightbulb.led.fill")
+                                        Label(candidate.name ?? localizedAppText("lighting.pairing.unknown_name"), systemImage: "lightbulb.led.fill")
                                         Spacer()
                                         Text("\(candidate.rssi) dBm")
                                             .monospacedDigit()
@@ -693,6 +693,7 @@ private struct LightingPairingSheet: View {
                                     }
                                 }
                                 .buttonStyle(.bordered)
+                                .disabled(!model.canSelectCandidate)
                                 .accessibilityIdentifier("lighting.candidate.\(candidate.id)")
                             }
                         }
