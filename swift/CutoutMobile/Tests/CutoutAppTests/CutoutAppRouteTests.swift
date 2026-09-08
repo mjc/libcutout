@@ -208,11 +208,11 @@ final class CutoutAppRouteTests: XCTestCase {
         XCTAssertTrue(CutoutAppRoute.capture.navigationTabs(for: nil).isEmpty)
         XCTAssertEqual(
             CutoutAppRoute.eucRide.navigationTabs(for: .electricUnicycle).map(\.id),
-            [.ride, .pack, .map, .tune]
+            [.ride, .lighting, .pack, .map, .tune]
         )
         XCTAssertEqual(
             CutoutAppRoute.vescRide.navigationTabs(for: .vescOnewheel).map(\.id),
-            [.ride, .debug, .map, .logs]
+            [.ride, .lighting, .debug, .map, .logs]
         )
         XCTAssertTrue(
             CutoutAppRoute.eucPack(.bmsOverview)
@@ -242,19 +242,19 @@ final class CutoutAppRouteTests: XCTestCase {
     func testNativeNavigationOmitsUnavailableDestinations() {
         XCTAssertEqual(
             CutoutAppRoute.eucRide.availableNavigationTabs(for: .electricUnicycle).map(\.id),
-            [.ride, .pack, .map]
+            [.ride, .lighting, .pack, .map]
         )
         XCTAssertEqual(
             CutoutAppRoute.eucPack(.bmsOverview).availableNavigationTabs(for: .electricUnicycle).map(\.id),
-            [.ride, .pack, .map]
+            [.ride, .lighting, .pack, .map]
         )
         XCTAssertEqual(
             CutoutAppRoute.vescRide.availableNavigationTabs(for: .vescOnewheel).map(\.id),
-            [.ride, .debug, .map]
+            [.ride, .lighting, .debug, .map]
         )
         XCTAssertEqual(
             CutoutAppRoute.vescDebug.availableNavigationTabs(for: .vescOnewheel).map(\.id),
-            [.ride, .debug, .map]
+            [.ride, .lighting, .debug, .map]
         )
         XCTAssertTrue(CutoutAppRoute.devicePicker.availableNavigationTabs(for: nil).isEmpty)
         XCTAssertTrue(CutoutAppRoute.capture.availableNavigationTabs(for: nil).isEmpty)
@@ -285,8 +285,8 @@ final class CutoutAppRouteTests: XCTestCase {
         let vescTabs = CutoutAppRoute.rideMapDetail(rideID: "ride-1")
             .availableNavigationTabs(for: .vescOnewheel)
 
-        XCTAssertEqual(eucTabs.map(\.id), [.ride, .pack, .map])
-        XCTAssertEqual(vescTabs.map(\.id), [.ride, .debug, .map])
+        XCTAssertEqual(eucTabs.map(\.id), [.ride, .lighting, .pack, .map])
+        XCTAssertEqual(vescTabs.map(\.id), [.ride, .lighting, .debug, .map])
         XCTAssertEqual(eucTabs.first(where: { $0.isSelected })?.id, .map)
         XCTAssertEqual(vescTabs.first(where: { $0.isSelected })?.id, .map)
     }
@@ -296,17 +296,17 @@ final class CutoutAppRouteTests: XCTestCase {
         let tabs = nestedPackRoute.availableNavigationTabs(for: .electricUnicycle)
 
         XCTAssertEqual(nestedPackRoute.destination(for: tabs[0]), .eucRide)
-        XCTAssertEqual(nestedPackRoute.destination(for: tabs[1]), nestedPackRoute)
+        XCTAssertEqual(nestedPackRoute.destination(for: tabs[2]), nestedPackRoute)
         XCTAssertEqual(
             CutoutAppRoute.vescDebug.destination(
-                for: CutoutAppRoute.vescDebug.availableNavigationTabs(for: .vescOnewheel)[1]
+                for: CutoutAppRoute.vescDebug.availableNavigationTabs(for: .vescOnewheel)[2]
             ),
             .vescDebug
         )
     }
 
     func testUnavailableTabHasNoDestination() {
-        let unavailableLogsTab = CutoutAppRoute.vescRide.navigationTabs(for: .vescOnewheel)[3]
+        let unavailableLogsTab = CutoutAppRoute.vescRide.navigationTabs(for: .vescOnewheel)[4]
 
         XCTAssertNil(CutoutAppRoute.vescRide.destination(for: unavailableLogsTab))
     }
@@ -872,6 +872,7 @@ final class CutoutAppRouteTests: XCTestCase {
         let persistence = LightingAccessoryPersistence(defaults: defaults)
         let fake = TestLightingSession()
         let model = LightingRouteModel(session: fake, persistence: persistence)
+        model.start()
 
         fake.emitState(.ready)
         await Task.yield()
@@ -1111,9 +1112,9 @@ final class CutoutAppRouteTests: XCTestCase {
         XCTAssertEqual(LightingPatternCatalog.name(for: 1), "Magic Forward")
         XCTAssertEqual(LightingPatternCatalog.name(for: 16), "6-Color to Cyan Back")
         XCTAssertEqual(LightingPatternCatalog.name(for: 75), "White Close")
-        XCTAssertEqual(LightingPatternCatalog.name(for: 115), "Green-Dot in Red Running")
-        XCTAssertEqual(LightingPatternCatalog.name(for: 169), "Green-Dot in Red Running")
-        XCTAssertEqual(LightingPatternCatalog.name(for: 212), "7-Color Energy")
+        XCTAssertEqual(LightingPatternCatalog.name(for: 115), "Green-Dot in Red Running (reference)")
+        XCTAssertEqual(LightingPatternCatalog.name(for: 169), "Green-Dot in Red Running (reference)")
+        XCTAssertEqual(LightingPatternCatalog.name(for: 212), "7-Color Energy (reference)")
         for id in [0] + Array(213...227) {
             XCTAssertFalse(LightingPatternCatalog.name(for: id).isEmpty)
             XCTAssertFalse(LightingPatternCatalog.name(for: id).contains("Unmapped"))
@@ -1180,6 +1181,39 @@ final class CutoutAppRouteTests: XCTestCase {
     }
 
     @MainActor
+    func testLightingRouteModelPublishesCandidatesUntilExplicitSelection() async throws {
+        let suiteName = "CutoutAppRouteTests.lightingCandidates"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defaults.removePersistentDomain(forName: suiteName)
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let fake = TestLightingSession()
+        let model = LightingRouteModel(
+            session: fake,
+            persistence: LightingAccessoryPersistence(defaults: defaults)
+        )
+        model.start()
+
+        let farther = MelkLightingPeripheralCandidate(
+            name: "MELK-OC21 6A",
+            platformIdentifier: "A1B2C3D4-E5F6-4789-ABCD-0123456789AB",
+            rssi: -70
+        )
+        let nearer = MelkLightingPeripheralCandidate(
+            name: "MELK-OC21 6B",
+            platformIdentifier: "B1B2C3D4-E5F6-4789-ABCD-0123456789AB",
+            rssi: -40
+        )
+        fake.emitCandidate(farther)
+        fake.emitCandidate(nearer)
+        await Task.yield()
+
+        XCTAssertEqual(model.candidates, [nearer, farther])
+        XCTAssertTrue(model.peripheralIdentifier == nil)
+        model.selectCandidate(nearer)
+        XCTAssertEqual(fake.candidateSelections, [nearer.id])
+    }
+
+    @MainActor
     func testLightingRouteModelConsumesTypedIdentityEvents() async {
         let suiteName = "CutoutAppRouteTests.lightingIdentity"
         let defaults = try! XCTUnwrap(UserDefaults(suiteName: suiteName))
@@ -1188,6 +1222,7 @@ final class CutoutAppRouteTests: XCTestCase {
         let persistence = LightingAccessoryPersistence(defaults: defaults)
         let fake = TestLightingSession()
         let model = LightingRouteModel(session: fake, persistence: persistence)
+        model.start()
 
         fake.emitIdentity(
             MelkLightingPeripheralIdentity(
@@ -1213,8 +1248,10 @@ private final class TestLightingSession: MelkLightingPeripheralSessionProtocol {
     var onStateChange: ((MelkLightingPeripheralState) -> Void)?
     var onNotification: ((Data) -> Void)?
     var onRecord: ((String) -> Void)?
+    var onCandidate: ((MelkLightingPeripheralCandidate) -> Void)?
     var startCalls: [String?] = []
     var stopCalls = 0
+    var candidateSelections: [String] = []
     var speedRequests: [UInt8] = []
     var speedResult = true
     var stateResult = true
@@ -1233,6 +1270,10 @@ private final class TestLightingSession: MelkLightingPeripheralSessionProtocol {
 
     func stop() {
         stopCalls += 1
+    }
+
+    func selectCandidate(platformIdentifier: String) {
+        candidateSelections.append(platformIdentifier)
     }
 
     func setPower(_ on: Bool) -> Bool {
@@ -1278,5 +1319,9 @@ private final class TestLightingSession: MelkLightingPeripheralSessionProtocol {
 
     func emitState(_ state: MelkLightingPeripheralState) {
         onStateChange?(state)
+    }
+
+    func emitCandidate(_ candidate: MelkLightingPeripheralCandidate) {
+        onCandidate?(candidate)
     }
 }

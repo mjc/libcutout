@@ -109,20 +109,22 @@ pub struct RgbLightingAccessoryRecord {
     presets: Vec<RgbLightingPreset>,
 }
 
+const RGB_LIGHTING_PROFILE_VERSION: u16 = 1;
+
 impl RgbLightingAccessoryRecord {
     /// Creates a record for a verified profile and platform-scoped identity.
     ///
     /// # Errors
     ///
     /// Returns [`RgbLightingRecordError::InvalidText`] for an empty or oversized identity, or
-    /// [`RgbLightingRecordError::InvalidProfileVersion`] for version zero.
+    /// [`RgbLightingRecordError::InvalidProfileVersion`] for an unsupported version.
     pub fn new(
         platform_identifier: String,
         profile: RgbLightingProfileKind,
         profile_version: u16,
     ) -> Result<Self, RgbLightingRecordError> {
         validate_text(&platform_identifier)?;
-        if profile_version == 0 {
+        if profile_version != RGB_LIGHTING_PROFILE_VERSION {
             return Err(RgbLightingRecordError::InvalidProfileVersion);
         }
         Ok(Self {
@@ -646,6 +648,12 @@ mod tests {
         assert_eq!(
             RgbLightingAccessoryRecord::decode(invalid_brightness),
             Err(RgbLightingRecordError::InvalidState)
+        );
+
+        let unknown_profile_version = br#"{"version":1,"platform_identifier":"melk-1","profile":"melk_oc21","profile_version":2,"alias":null,"vehicle_identifier":null,"requested_state":null,"confirmed_state":null,"confirmation":"unknown","connection":"unknown","restore_enabled":false,"presets":[]}"#;
+        assert_eq!(
+            RgbLightingAccessoryRecord::decode(unknown_profile_version),
+            Err(RgbLightingRecordError::InvalidProfileVersion)
         );
     }
 

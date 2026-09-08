@@ -228,6 +228,19 @@ public struct MelkLightingPeripheralIdentity: Equatable, Sendable {
     }
 }
 
+/// A nearby MELK advertisement awaiting explicit selection during first pairing.
+public struct MelkLightingPeripheralCandidate: Equatable, Sendable, Identifiable {
+    public let id: String
+    public let name: String?
+    public let rssi: Int
+
+    public init(name: String?, platformIdentifier: String, rssi: Int) {
+        id = platformIdentifier
+        self.name = name
+        self.rssi = rssi
+    }
+}
+
 /// The app-facing seam for an independent MELK lighting connection.
 ///
 /// Keeping the CoreBluetooth implementation behind this protocol lets the route model test
@@ -237,9 +250,11 @@ public protocol MelkLightingPeripheralSessionProtocol: AnyObject {
     var onStateChange: ((MelkLightingPeripheralState) -> Void)? { get set }
     var onNotification: ((Data) -> Void)? { get set }
     var onRecord: ((String) -> Void)? { get set }
+    var onCandidate: ((MelkLightingPeripheralCandidate) -> Void)? { get set }
 
     func start(preferredPlatformIdentifier: String?)
     func stop()
+    func selectCandidate(platformIdentifier: String)
     @discardableResult
     func setPower(_ on: Bool) -> Bool
     @discardableResult
@@ -272,6 +287,7 @@ public final class MelkLightingPeripheralSession: NSObject, CBCentralManagerDele
     private var harness: MelkLightingCommandProfile?
     private var sink: CoreBluetoothPeripheralOperationSink?
     private var targetPolicy = MelkLightingTargetPolicy(preferredPlatformIdentifier: nil)
+    private var discoveredPeripherals: [UUID: CBPeripheral] = [:]
     private var reconnectEnabled = true
     private var pendingWrites: [MelkLightingWritePlan] = []
     private var writeDrainTask: DispatchWorkItem?
@@ -301,6 +317,9 @@ public final class MelkLightingPeripheralSession: NSObject, CBCentralManagerDele
     /// Called on the lighting session's CoreBluetooth queue for bounded diagnostic records.
     public var onRecord: ((String) -> Void)?
 
+    /// Called on the CoreBluetooth queue for each first-pairing candidate.
+    public var onCandidate: ((MelkLightingPeripheralCandidate) -> Void)?
+
     public init(queue: DispatchQueue = DispatchQueue(label: "io.cutout.melk-lighting")) {
         self.queue = queue
         self.reconnectController = ConnectionReconnectController(
@@ -316,6 +335,7 @@ public final class MelkLightingPeripheralSession: NSObject, CBCentralManagerDele
             targetPolicy = MelkLightingTargetPolicy(
                 preferredPlatformIdentifier: preferredPlatformIdentifier
             )
+            discoveredPeripherals.removeAll(keepingCapacity: true)
             reconnectEnabled = true
             reconnectController.cancel()
 #if os(iOS)
@@ -343,6 +363,7 @@ public final class MelkLightingPeripheralSession: NSObject, CBCentralManagerDele
                 central?.cancelPeripheralConnection(peripheral)
             }
             central?.stopScan()
+            discoveredPeripherals.removeAll(keepingCapacity: false)
             central = nil
             peripheral = nil
             advertisedName = nil
@@ -351,6 +372,24 @@ public final class MelkLightingPeripheralSession: NSObject, CBCentralManagerDele
             harness = nil
             sink = nil
             transition(to: .disconnected)
+        }
+    }
+
+    public func selectCandidate(platformIdentifier: String) {
+        onQueue {
+            guard targetPolicy.preferredUUID == nil,
+                  !targetPolicy.isInvalid,
+                  peripheral == nil,
+                  let identifier = UUID(uuidString: platformIdentifier),
+                  let candidate = discoveredPeripherals[identifier],
+                  let central else { return }
+            central.stopScan()
+            record("selected=melk id=\(platformIdentifier)")
+            connect(
+                central: central,
+                peripheral: candidate,
+                advertisedName: candidate.name
+            )
         }
     }
 
@@ -447,7 +486,8 @@ public final class MelkLightingPeripheralSession: NSObject, CBCentralManagerDele
                 record("target=melk id=\(preferredUUID.uuidString)")
                 return
             }
-            if let connectedPeripheral = central.retrieveConnectedPeripherals(
+            if targetPolicy.preferredUUID != nil,
+               let connectedPeripheral = central.retrieveConnectedPeripherals(
                 withServices: [MelkLightingCommandProfile.service.coreBluetoothUuid]
             ).first(where: {
                 targetPolicy.acceptsDiscovery(
@@ -493,9 +533,22 @@ public final class MelkLightingPeripheralSession: NSObject, CBCentralManagerDele
             guard targetPolicy.acceptsDiscovery(name: name, identifier: identifier) else {
                 return
             }
-            central.stopScan()
+            if discoveredPeripherals[peripheral.identifier] == nil,
+               discoveredPeripherals.count >= 32 {
+                return
+            }
+            discoveredPeripherals[peripheral.identifier] = peripheral
             record("candidate=\(name ?? "") id=\(peripheral.identifier.uuidString) rssi=\(rssi)")
-            connect(central: central, peripheral: peripheral, advertisedName: name, rssi: rssi.intValue)
+            if targetPolicy.preferredUUID != nil {
+                central.stopScan()
+                connect(central: central, peripheral: peripheral, advertisedName: name, rssi: rssi.intValue)
+            } else {
+                onCandidate?(MelkLightingPeripheralCandidate(
+                    name: name,
+                    platformIdentifier: peripheral.identifier.uuidString,
+                    rssi: rssi.intValue
+                ))
+            }
         }
     }
 
@@ -843,7 +896,6 @@ public final class MelkLightingPeripheralSession: NSObject, CBCentralManagerDele
             sink.writeWithoutResponse(channel: channel, bytes: bytes)
             record("requested=\(bytes.map { String(format: "%02x", $0) }.joined())")
         }
-        guard !pendingWrites.isEmpty else { return }
 
         // MELK accepts write-without-response frames, but a burst can exhaust its
         // small controller-side queue. Keep the profile-provided cadence when present;

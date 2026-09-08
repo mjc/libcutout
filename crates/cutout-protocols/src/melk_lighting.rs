@@ -22,6 +22,10 @@ pub struct MelkLightingProfile;
 /// IDs 1-10 are enabled from the user's first ten-device trial; names remain
 /// reference-catalog labels until each visual mapping is independently matched.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[allow(
+    clippy::struct_excessive_bools,
+    reason = "these independent capability flags mirror protocol evidence"
+)]
 pub struct MelkLightingCapabilities {
     /// Effect IDs observed working on the user's controller.
     pub verified_effect_ids: &'static [u8],
@@ -224,12 +228,10 @@ impl MelkLightingProfile {
     #[must_use]
     pub fn plan_state(state: RgbLightingRequestedState) -> Vec<TransportAction> {
         let mut actions = match state.playback() {
-            LightingPlayback::Solid => vec![
-                Self::control_action(MelkControl::Microphone(false)),
-                Self::write_action(RgbLightingCommand::SetSolidColor(state.color())),
-            ],
+            LightingPlayback::Solid => vec![Self::write_action(RgbLightingCommand::SetSolidColor(
+                state.color(),
+            ))],
             LightingPlayback::Effect { pattern, speed } => vec![
-                Self::control_action(MelkControl::Microphone(false)),
                 Self::control_action(MelkControl::Pattern(pattern)),
                 Self::control_action(MelkControl::Speed(speed)),
             ],
@@ -333,18 +335,14 @@ mod tests {
 
         let actions = MelkLightingProfile::plan_state(state);
 
-        assert_eq!(actions.len(), 5);
+        assert_eq!(actions.len(), 4);
+        assert_eq!(payload(&actions[0]), [0x7e, 5, 3, 16, 6, 255, 255, 0, 0xef]);
         assert_eq!(
-            payload(&actions[0]),
-            [0x7e, 4, 7, 0, 255, 255, 255, 0, 0xef]
-        );
-        assert_eq!(payload(&actions[1]), [0x7e, 5, 3, 16, 6, 255, 255, 0, 0xef]);
-        assert_eq!(
-            payload(&actions[2]),
+            payload(&actions[1]),
             [0x7e, 4, 2, 200, 255, 255, 255, 0, 0xef]
         );
-        assert_eq!(payload(&actions[3]), [0x7e, 4, 1, 42, 255, 0, 255, 0, 0xef]);
-        assert_eq!(payload(&actions[4]), [0x7e, 0, 4, 0, 0, 0, 255, 0, 0xef]);
+        assert_eq!(payload(&actions[2]), [0x7e, 4, 1, 42, 255, 0, 255, 0, 0xef]);
+        assert_eq!(payload(&actions[3]), [0x7e, 0, 4, 0, 0, 0, 255, 0, 0xef]);
     }
 
     #[test]

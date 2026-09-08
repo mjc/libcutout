@@ -104,6 +104,7 @@ impl TurnSignalDetector {
 
         let side = self.side(roll);
         if self.active == Some(side) {
+            self.candidate = None;
             return self.active;
         }
 

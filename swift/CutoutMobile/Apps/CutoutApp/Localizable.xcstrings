@@ -49,6 +49,22 @@
       "comment" : "Lighting command status.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Unconfirmed" } } }
     },
+    "lighting.command.evidence.title" : {
+      "comment" : "Heading for the lighting command observation card.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Command evidence" } } }
+    },
+    "lighting.command.evidence.hint" : {
+      "comment" : "Instruction to confirm a lighting command only after observing the controller.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Confirm only after observing the controller change." } } }
+    },
+    "lighting.command.mark_confirmed" : {
+      "comment" : "Action that records external confirmation of a lighting command.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Mark confirmed" } } }
+    },
+    "lighting.command.mark_unconfirmed" : {
+      "comment" : "Action that records that a lighting command could not be externally confirmed.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Mark unconfirmed" } } }
+    },
     "lighting.page.color" : {
       "comment" : "Lighting controls page label.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Color" } } }

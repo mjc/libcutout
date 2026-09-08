@@ -36,10 +36,11 @@ enum LightingPatternCatalog {
     ]
 
     static func name(for id: Int) -> String {
-        guard id > 0, id < names.count else {
-            return referenceNames[id] ?? "Unmapped effect \(id)"
-        }
-        return names[id]
+        let name = id > 0 && id < names.count
+            ? names[id]
+            : referenceNames[id] ?? "Unmapped effect \(id)"
+        guard !name.hasSuffix(" (reference)"), !name.hasPrefix("Unmapped effect") else { return name }
+        return isVerified(id) ? name : "\(name) (reference)"
     }
 
     /// Capture-backed capabilities come from the Rust profile so UI availability cannot drift

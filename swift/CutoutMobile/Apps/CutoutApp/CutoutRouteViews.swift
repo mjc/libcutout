@@ -268,6 +268,7 @@ final class LightingRouteModel {
     private(set) var connectionState: MelkLightingPeripheralState = .idle
     private(set) var peripheralName: String?
     private(set) var peripheralIdentifier: String?
+    private(set) var candidates: [MelkLightingPeripheralCandidate] = []
     private(set) var commandStatus: MelkLightingCommandStatus = .idle
     private(set) var restoreEnabled: Bool
     private(set) var accessoryAlias: String?
@@ -286,6 +287,7 @@ final class LightingRouteModel {
     )
     private var restoreAttempted = false
     private var lastColorPreviewAt: TimeInterval = 0
+    private var callbackGeneration = 0
 
     init(
         session: any MelkLightingPeripheralSessionProtocol = MelkLightingPeripheralSession(),
@@ -303,18 +305,22 @@ final class LightingRouteModel {
             requestedState = requested
         }
         session.onStateChange = { [weak self] state in
-            Task { @MainActor in
-                self?.handleStateChange(state)
-            }
+            self?.enqueueCallback { $0.handleStateChange(state) }
         }
         session.onIdentity = { [weak self] identity in
-            Task { @MainActor in
-                self?.handleIdentity(identity)
-            }
+            self?.enqueueCallback { $0.handleIdentity(identity) }
         }
         session.onRecord = { [weak self] record in
-            Task { @MainActor in
-                self?.handleRecord(record)
+            self?.enqueueCallback { $0.handleRecord(record) }
+        }
+        session.onNotification = { [weak self] data in
+            self?.enqueueCallback { $0.append("notification=FFF4 (\(data.count) bytes)") }
+        }
+        session.onCandidate = { [weak self] candidate in
+            self?.enqueueCallback { model in
+                model.candidates.removeAll { $0.id == candidate.id }
+                model.candidates.append(candidate)
+                model.candidates.sort { $0.rssi > $1.rssi }
             }
         }
     }
@@ -322,6 +328,8 @@ final class LightingRouteModel {
     func start() {
         guard !isRunning else { return }
         isRunning = true
+        callbackGeneration &+= 1
+        candidates.removeAll()
         session.start(preferredPlatformIdentifier: persistence.platformIdentifier)
     }
 
@@ -335,6 +343,8 @@ final class LightingRouteModel {
     func stop() {
         guard isRunning else { return }
         isRunning = false
+        callbackGeneration &+= 1
+        candidates.removeAll()
         session.stop()
     }
 
@@ -353,12 +363,26 @@ final class LightingRouteModel {
             brightness: 100
         )
         commandStatus = .idle
+        candidates.removeAll()
         restoreAttempted = true
+    }
+
+    private func enqueueCallback(_ operation: @escaping @MainActor (LightingRouteModel) -> Void) {
+        let generation = callbackGeneration
+        Task { @MainActor [weak self] in
+            guard let self, self.isRunning, self.callbackGeneration == generation else { return }
+            operation(self)
+        }
     }
 
     func reconnect() {
         stop()
         start()
+    }
+
+    func selectCandidate(_ candidate: MelkLightingPeripheralCandidate) {
+        guard isRunning else { return }
+        session.selectCandidate(platformIdentifier: candidate.id)
     }
 
     func setPower(_ on: Bool) {

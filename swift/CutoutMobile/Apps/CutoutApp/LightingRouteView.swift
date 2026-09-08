@@ -11,6 +11,7 @@ struct LightingRouteView: View {
     @State private var hue = 0.0
     @State private var saturation = 1.0
     @State private var showsPairing = false
+    @FocusState private var isPresetNameFocused: Bool
 
     var body: some View {
         ScrollView {
@@ -19,6 +20,7 @@ struct LightingRouteView: View {
                 LightingConnectionCard(model: model, rideModel: rideModel) {
                     showsPairing = true
                 }
+                LightingCommandEvidenceCard(model: model)
                 LightingPagePicker(selection: $page)
                 LightingControlSurface(
                     model: model,
@@ -36,7 +38,8 @@ struct LightingRouteView: View {
                         model: model,
                         isEnabled: model.isReady,
                         hue: $hue,
-                        saturation: $saturation
+                        saturation: $saturation,
+                        isPresetNameFocused: $isPresetNameFocused
                     )
                 }
                 if page == .schedule {
@@ -49,6 +52,7 @@ struct LightingRouteView: View {
         }
         .background(PevColors.pageBackground.ignoresSafeArea())
         .scrollDismissesKeyboard(.interactively)
+        .simultaneousGesture(TapGesture().onEnded { isPresetNameFocused = false })
         .onChange(of: model.requestedBrightness) { _, value in
             brightness = Double(value)
         }
@@ -83,6 +87,48 @@ struct LightingRouteView: View {
         )
         hue = selection.hue
         saturation = selection.saturation
+    }
+}
+
+private struct LightingCommandEvidenceCard: View {
+    let model: LightingRouteModel
+
+    var body: some View {
+        LightingCard {
+            Label(localizedAppText("lighting.command.evidence.title"), systemImage: "checkmark.seal")
+                .font(.headline)
+            Text(statusText)
+                .foregroundStyle(statusColor)
+            if model.commandStatus == .requested {
+                Text(localizedAppText("lighting.command.evidence.hint"))
+                    .font(.footnote)
+                    .foregroundStyle(PevColors.muted)
+                HStack {
+                    Button(localizedAppText("lighting.command.mark_confirmed")) { model.markConfirmed() }
+                    Button(localizedAppText("lighting.command.mark_unconfirmed")) { model.markUnconfirmed() }
+                }
+                .buttonStyle(.bordered)
+            }
+        }
+        .accessibilityIdentifier("lighting.command-evidence")
+    }
+
+    private var statusText: String {
+        switch model.commandStatus {
+        case .idle: localizedAppText("lighting.command.idle")
+        case .requested: localizedAppText("lighting.command.requested")
+        case .confirmed: localizedAppText("lighting.command.confirmed")
+        case .unconfirmed: localizedAppText("lighting.command.unconfirmed")
+        }
+    }
+
+    private var statusColor: Color {
+        switch model.commandStatus {
+        case .confirmed: PevColors.green
+        case .unconfirmed: PevColors.red
+        case .requested: PevColors.yellow
+        case .idle: PevColors.muted
+        }
     }
 }
 
@@ -192,7 +238,7 @@ private struct LightingConnectionCard: View {
         }
     }
 
-    private var connectionSummary: String {
+    private var connectionSummary: LocalizedStringResource {
         switch model.connectionState {
         case .ready: "Connected"
         case .scanning: "Scanning for nearby accessories…"
@@ -313,7 +359,7 @@ private struct LightingPresetsCard: View {
     @Binding var hue: Double
     @Binding var saturation: Double
     @State private var presetName = ""
-    @FocusState private var isPresetNameFocused: Bool
+    @FocusState.Binding var isPresetNameFocused: Bool
 
     var body: some View {
         LightingCard {
@@ -381,10 +427,10 @@ private struct LightingPresetsCard: View {
         }
     }
 
-    private func sceneSummary(for requested: MobileMelkLightingRestoreStateDto) -> String {
+    private func sceneSummary(for requested: MobileMelkLightingRestoreStateDto) -> LocalizedStringResource {
         switch requested.playback {
         case let .effect(pattern, speed):
-            return "\(LightingPatternCatalog.name(for: Int(pattern))) · speed \(speed)"
+            return "Effect \(LightingPatternCatalog.name(for: Int(pattern))) · speed \(speed)"
         case let .music(_, sensitivity):
             return "Controller music · sensitivity \(sensitivity)%"
         case .solid, nil:
@@ -481,33 +527,7 @@ private struct LightingColorWheel: View {
             let pointerX = radius + cos(pointerAngle) * pointerRadius
             let pointerY = radius + sin(pointerAngle) * pointerRadius
 
-            ZStack {
-                Circle()
-                    .fill(AngularGradient(
-                        gradient: Gradient(colors: [
-                            .red, .yellow, .green, .cyan, .blue, .purple, .red,
-                        ]),
-                        center: .center
-                    ))
-                Circle()
-                    .fill(RadialGradient(
-                        colors: [.white, .white.opacity(0)],
-                        center: .center,
-                        startRadius: 0,
-                        endRadius: radius
-                    ))
-                Circle()
-                    .stroke(PevColors.cardStroke, lineWidth: 1)
-                Circle()
-                    .fill(Color(hue: hue, saturation: saturation, brightness: 1))
-                    .frame(width: size * 0.44, height: size * 0.44)
-                    .overlay(Circle().stroke(.white.opacity(0.35), lineWidth: 1))
-                Circle()
-                    .fill(.white)
-                    .frame(width: 28, height: 28)
-                    .overlay(Circle().stroke(.black.opacity(0.5), lineWidth: 2))
-                    .position(x: pointerX, y: pointerY)
-            }
+            wheelCanvas(size: size, radius: radius, pointerX: pointerX, pointerY: pointerY)
             .frame(width: size, height: size)
             .contentShape(Circle())
             .gesture(DragGesture(minimumDistance: 0).onChanged { value in
@@ -517,13 +537,48 @@ private struct LightingColorWheel: View {
             })
             .accessibilityElement(children: .ignore)
             .accessibilityLabel("Solid color")
-            .accessibilityValue("Hue \(Int(hue * 360)) degrees, saturation \(Int(saturation * 100)) percent")
+            .accessibilityValue(accessibilityValueText)
             .accessibilityHint("Drag around the color wheel to choose a color")
             .accessibilityIdentifier("lighting.color-wheel.control")
+            .accessibilityRepresentation {
+                VStack {
+                    Slider(value: hueAccessibilityBinding, in: 0...1)
+                        .accessibilityLabel("Hue")
+                    Slider(value: saturationAccessibilityBinding, in: 0...1)
+                        .accessibilityLabel("Saturation")
+                }
+            }
         }
         .aspectRatio(1, contentMode: .fit)
         .frame(maxWidth: 300)
         .frame(maxWidth: .infinity)
+    }
+
+    private func wheelCanvas(size: CGFloat, radius: CGFloat, pointerX: CGFloat, pointerY: CGFloat) -> some View {
+        ZStack {
+            Circle()
+                .fill(AngularGradient(
+                    gradient: Gradient(colors: [.red, .yellow, .green, .cyan, .blue, .purple, .red]),
+                    center: .center
+                ))
+            Circle()
+                .fill(RadialGradient(
+                    colors: [.white, .white.opacity(0)],
+                    center: .center,
+                    startRadius: 0,
+                    endRadius: radius
+                ))
+            Circle().stroke(PevColors.cardStroke, lineWidth: 1)
+            Circle()
+                .fill(Color(hue: hue, saturation: saturation, brightness: 1))
+                .frame(width: size * 0.44, height: size * 0.44)
+                .overlay(Circle().stroke(.white.opacity(0.35), lineWidth: 1))
+            Circle()
+                .fill(.white)
+                .frame(width: 28, height: 28)
+                .overlay(Circle().stroke(.black.opacity(0.5), lineWidth: 2))
+                .position(x: pointerX, y: pointerY)
+        }
     }
 
     private func update(at location: CGPoint, in size: CGFloat, isFinal: Bool) {
@@ -538,6 +593,37 @@ private struct LightingColorWheel: View {
         hue = angle
         let rgb = Self.rgb(hue: hue, saturation: saturation)
         onUpdate(rgb.red, rgb.green, rgb.blue, isFinal)
+    }
+
+    private func emitAccessibleColor() {
+        let rgb = Self.rgb(hue: hue, saturation: saturation)
+        onUpdate(rgb.red, rgb.green, rgb.blue, true)
+    }
+
+    private var accessibilityValueText: String {
+        let hueDegrees = Int(hue * 360)
+        let saturationPercent = Int(saturation * 100)
+        return "Hue \(hueDegrees) degrees, saturation \(saturationPercent) percent"
+    }
+
+    private var hueAccessibilityBinding: Binding<Double> {
+        Binding(
+            get: { hue },
+            set: { newValue in
+                hue = newValue
+                emitAccessibleColor()
+            }
+        )
+    }
+
+    private var saturationAccessibilityBinding: Binding<Double> {
+        Binding(
+            get: { saturation },
+            set: { newValue in
+                saturation = newValue
+                emitAccessibleColor()
+            }
+        )
     }
 
     private static func rgb(hue: Double, saturation: Double) -> (red: UInt8, green: UInt8, blue: UInt8) {
@@ -586,6 +672,31 @@ private struct LightingPairingSheet: View {
                     .buttonStyle(.borderedProminent)
                     .disabled(model.isReady)
                     .accessibilityIdentifier("lighting.pairing.connect")
+
+                    if !model.candidates.isEmpty && !model.isReady {
+                        LightingCard {
+                            Text("Nearby MELK-OC21 accessories")
+                                .font(.headline)
+                            Text("Choose the controller to pair; no accessory is selected automatically.")
+                                .font(.footnote)
+                                .foregroundStyle(PevColors.muted)
+                            ForEach(model.candidates) { candidate in
+                                Button {
+                                    model.selectCandidate(candidate)
+                                } label: {
+                                    HStack {
+                                        Label(candidate.name ?? "MELK-OC21", systemImage: "lightbulb.led.fill")
+                                        Spacer()
+                                        Text("\(candidate.rssi) dBm")
+                                            .monospacedDigit()
+                                            .foregroundStyle(PevColors.muted)
+                                    }
+                                }
+                                .buttonStyle(.bordered)
+                                .accessibilityIdentifier("lighting.candidate.\(candidate.id)")
+                            }
+                        }
+                    }
 
                     Toggle(
                         "Restore last lighting settings",
