@@ -79,13 +79,13 @@ final class RideMapPresentationTests: XCTestCase {
         )
     }
 
-    func testHistoryDetailUsesTheCurrentSelectionForRouteIdentity() {
+    func testHistoryDetailKeepsTheDestinationIdentityWhenSelectionIsStale() {
         XCTAssertEqual(
             RideMapHistoryDetailView.activeHistoryID(
                 initialHistoryID: "initial",
                 selectedHistoryID: "selected"
             ),
-            "selected"
+            "initial"
         )
         XCTAssertEqual(
             RideMapHistoryDetailView.activeHistoryID(

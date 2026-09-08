@@ -2115,6 +2115,22 @@ impl RideDatabase {
         ride_id: RideId,
         event: MusicRideEvent,
     ) -> Result<MusicTimelineOutcome, StorageError> {
+        self.record_music_event_with_sequence(ride_id, event)
+            .map(|result| result.outcome)
+    }
+
+    /// Atomically admits a live transition and returns its durable ride-local sequence.
+    ///
+    /// The sequence is present only when a new event was appended; duplicate, out-of-order,
+    /// disabled, and full outcomes do not allocate one.
+    ///
+    /// # Errors
+    /// Returns a storage error when the ride or history is invalid or the commit fails.
+    pub fn record_music_event_with_sequence(
+        &self,
+        ride_id: RideId,
+        event: MusicRideEvent,
+    ) -> Result<MusicTimelineRecordResult, StorageError> {
         self.request(move |reply| Command::RecordMusicEvent {
             ride_id,
             event,
@@ -3323,7 +3339,7 @@ enum Command {
     RecordMusicEvent {
         ride_id: RideId,
         event: MusicRideEvent,
-        reply: Reply<MusicTimelineOutcome>,
+        reply: Reply<MusicTimelineRecordResult>,
     },
     MusicHistory {
         ride_id: RideId,
@@ -4988,6 +5004,15 @@ pub struct MusicHistory {
     pub events: Vec<MusicRideEvent>,
 }
 
+/// Result of appending one live music transition.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct MusicTimelineRecordResult {
+    /// Admission outcome for the transition.
+    pub outcome: MusicTimelineOutcome,
+    /// Durable ride-local sequence when the transition was recorded.
+    pub sequence: Option<u64>,
+}
+
 fn music_history(connection: &Connection, ride_id: RideId) -> Result<MusicHistory, StorageError> {
     ensure_visible_ride(connection, ride_id)?;
     music_history_unfiltered(connection, ride_id)
@@ -5094,7 +5119,7 @@ fn record_music_event(
     connection: &mut Connection,
     ride_id: RideId,
     event: &MusicRideEvent,
-) -> Result<MusicTimelineOutcome, StorageError> {
+) -> Result<MusicTimelineRecordResult, StorageError> {
     let transaction = connection.transaction()?;
     let lifecycle = load_ride_write_state(&transaction, ride_id)?.lifecycle();
     if lifecycle != RideLifecycleState::Active {
@@ -5102,7 +5127,10 @@ fn record_music_event(
     }
     let policy = music_history_policy(&transaction, ride_id)?;
     if policy == MusicHistoryPolicy::Disabled {
-        return Ok(MusicTimelineOutcome::Disabled);
+        return Ok(MusicTimelineRecordResult {
+            outcome: MusicTimelineOutcome::Disabled,
+            sequence: None,
+        });
     }
     // Keep live writes closed while the existing durable prefix is unreadable or non-contiguous.
     let _ = music_events(&transaction, ride_id)?;
@@ -5113,7 +5141,10 @@ fn record_music_event(
     let timestamps = music_event_sql_timestamps(&event)?;
     let observed = timestamps.observed_at;
     if music_observation_out_of_order(&transaction, ride_id, &event)? {
-        return Ok(MusicTimelineOutcome::OutOfOrder);
+        return Ok(MusicTimelineRecordResult {
+            outcome: MusicTimelineOutcome::OutOfOrder,
+            sequence: None,
+        });
     }
     let previous = transaction
         .query_row(
@@ -5148,7 +5179,10 @@ fn record_music_event(
         | MusicTimelineOutcome::Disabled => {}
     }
     transaction.commit()?;
-    Ok(outcome)
+    Ok(MusicTimelineRecordResult {
+        sequence: (outcome == MusicTimelineOutcome::Recorded).then_some(count),
+        outcome,
+    })
 }
 
 fn save_music_history_policy(

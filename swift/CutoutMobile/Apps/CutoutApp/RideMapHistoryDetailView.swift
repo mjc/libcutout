@@ -33,6 +33,7 @@ struct RideMapHistoryDetailView: View {
     let rides: [MobileRideMapHistorySummaryDto]
     let displayPoints: [MobileRideMapRouteDisplayPoint]
     let music: RideMapHistoryMusicDetail
+    let projectionRideID: String?
     /// Rust's bounded projection supplies the camera; the default keeps older route-shell
     /// callers source-compatible until they pass the projection metadata through.
     var cameraRegion: MobileRideMapCameraRegion? = nil
@@ -62,10 +63,7 @@ struct RideMapHistoryDetailView: View {
     }
 
     private var activeHistoryID: String? {
-        Self.activeHistoryID(
-            initialHistoryID: initialHistoryID,
-            selectedHistoryID: selectedHistoryID
-        )
+        initialHistoryID ?? selectedHistoryID
     }
 
     private var selectionTaskID: String { initialHistoryID ?? "" }
@@ -140,7 +138,7 @@ struct RideMapHistoryDetailView: View {
 
     @MainActor
     static func activeHistoryID(initialHistoryID: String?, selectedHistoryID: String?) -> String? {
-        selectedHistoryID ?? initialHistoryID
+        initialHistoryID ?? selectedHistoryID
     }
 
     var body: some View {
@@ -150,21 +148,25 @@ struct RideMapHistoryDetailView: View {
             GeometryReader { proxy in
                 ScrollView(.vertical, showsIndicators: false) {
                     VStack(spacing: 0) {
-                        RideMapHistoryDetailMap(
-                            points: displayPoints,
-                            routeID: Self.routeID(for: activeHistoryID),
-                            projectionVersion: projectionVersion,
-                            endpointMetadata: endpointMetadata,
-                            cameraRegion: cameraRegion,
-                            segments: segments,
-                            state: routeState,
-                            mapPosition: $mapPosition,
-                            isApplyingCamera: $isApplyingCamera,
-                            cameraDidChange: cameraDidChange
-                        )
-                        .frame(height: Self.mapHeight(for: proxy.size.height))
+                        if projectionRideID == activeHistoryID {
+                            RideMapHistoryDetailMap(
+                                points: displayPoints,
+                                routeID: Self.routeID(for: activeHistoryID),
+                                projectionVersion: projectionVersion,
+                                endpointMetadata: endpointMetadata,
+                                cameraRegion: cameraRegion,
+                                segments: segments,
+                                state: routeState,
+                                mapPosition: $mapPosition,
+                                isApplyingCamera: $isApplyingCamera,
+                                cameraDidChange: cameraDidChange
+                            )
+                            .frame(height: Self.mapHeight(for: proxy.size.height))
+                        }
 
-                        if let ride = selectedRide {
+                        if projectionRideID != activeHistoryID {
+                            RideMapHistoryDetailUnavailableState(hasError: false, retry: retry)
+                        } else if let ride = selectedRide {
                             RideMapHistoryDetailSummary(
                                 distance: distanceText(for: ride.summary),
                                 duration: durationText(for: ride.summary),

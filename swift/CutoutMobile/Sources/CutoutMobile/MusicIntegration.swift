@@ -49,43 +49,83 @@ public enum MusicTransitionHint: Equatable, Sendable {
 /// poll, so clearing the hint after one unchanged snapshot would misclassify
 /// an accepted skip as an unsolicited item change.
 public struct MusicTransitionHintTracker: Sendable {
-    public private(set) var pendingHint: MusicTransitionHint?
+    private static let maxAgeMilliseconds: UInt64 = 5_000
+    private struct PendingHint: Sendable {
+        let id: UInt64
+        let hint: MusicTransitionHint
+        let issuedAtMs: UInt64?
+    }
 
-    public init() {}
+    private var pendingHints = [PendingHint]()
+    private var nextID: UInt64 = 0
+
+    public var pendingHint: MusicTransitionHint? { pendingHints.first?.hint }
+
+    public init() {
+        pendingHints = []
+    }
 
     public var hint: MusicTransitionHint? { pendingHint }
 
-    public mutating func issue(_ hint: MusicTransitionHint) {
-        pendingHint = hint
+    @discardableResult
+    public mutating func issue(_ hint: MusicTransitionHint, issuedAtMs: UInt64? = nil) -> UInt64 {
+        let id = nextID
+        nextID &+= 1
+        pendingHints.append(PendingHint(id: id, hint: hint, issuedAtMs: issuedAtMs))
+        return id
+    }
+
+    public mutating func hint(atMonotonicMs monotonicMs: UInt64) -> MusicTransitionHint? {
+        pendingHints.removeAll { hint in
+            guard let issuedAtMs = hint.issuedAtMs,
+                  monotonicMs >= issuedAtMs
+            else { return false }
+            return monotonicMs - issuedAtMs > Self.maxAgeMilliseconds
+        }
+        return pendingHints.first?.hint
     }
 
     public mutating func clear() {
-        pendingHint = nil
+        pendingHints.removeAll(keepingCapacity: true)
+    }
+
+    public mutating func clear(id: UInt64) {
+        pendingHints.removeAll { $0.id == id }
     }
 
     public mutating func resolve(
         previous: MusicNowPlaying?,
         current: MusicNowPlaying?,
-        appliedHint: MusicTransitionHint?
+        appliedHint: MusicTransitionHint?,
+        currentObservedAtMs: UInt64? = nil
     ) {
-        guard pendingHint == .skip, appliedHint == .skip else { return }
+        guard pendingHint == .skip, appliedHint == .skip,
+              let pending = pendingHints.first
+        else { return }
+        if let issuedAtMs = pending.issuedAtMs,
+           let currentObservedAtMs,
+           currentObservedAtMs >= issuedAtMs,
+           currentObservedAtMs - issuedAtMs > Self.maxAgeMilliseconds {
+            pendingHints.removeFirst()
+            return
+        }
         guard let current else {
-            pendingHint = nil
+            pendingHints.removeFirst()
             return
         }
         if MusicTransitionHintTracker.isTerminalState(current.state) {
-            pendingHint = nil
+            pendingHints.removeFirst()
             return
         }
         guard current.item != nil else {
-            pendingHint = nil
+            pendingHints.removeFirst()
             return
         }
         guard let previous else { return }
         if previous.provider != current.provider
             || previous.item?.identifier != current.item?.identifier
         {
-            pendingHint = nil
+            pendingHints.removeFirst()
         }
     }
 
@@ -138,6 +178,24 @@ public struct MusicPlayerVisibilityStore {
 
     public func setHidden(_ hidden: Bool) {
         defaults.set(hidden, forKey: Self.key)
+    }
+}
+
+/// Persists the selected provider without storing provider credentials.
+public struct MusicProviderSelectionStore {
+    private static let key = "io.cutout.music.provider.selected"
+    private let defaults: UserDefaults
+
+    public init(defaults: UserDefaults = .standard) {
+        self.defaults = defaults
+    }
+
+    public var provider: MobileMusicProviderDto {
+        defaults.string(forKey: Self.key) == "spotify" ? .spotify : .appleMusic
+    }
+
+    public func set(_ provider: MobileMusicProviderDto) {
+        defaults.set(provider == .spotify ? "spotify" : "apple_music", forKey: Self.key)
     }
 }
 
@@ -393,7 +451,7 @@ public final class MusicIntegrationCoordinator {
 
     private var lastObservedAtByProvider = [MobileMusicProviderDto: UInt64]()
     private var lastCorrelationRideID: String?
-    private var lastPersistedNowPlaying: MusicNowPlaying?
+    private var lastPersistedNowPlayingByProvider = [MobileMusicProviderDto: MusicNowPlaying]()
     private var historyPolicy = MobileMusicHistoryPolicyDto.disabled
     public private(set) var lastRecordedSequence: UInt64?
     public init(rideMapState: MobileRideMapState?) {
@@ -432,7 +490,7 @@ public final class MusicIntegrationCoordinator {
     ) throws -> MobileMusicTimelineOutcomeDto? {
         resetCorrelationIfRideChanged()
         guard accept(snapshot) else { return nil }
-        let previous = lastPersistedNowPlaying
+        let previous = lastPersistedNowPlayingByProvider[snapshot.provider]
         update(snapshot: snapshot, artwork: artwork)
         guard let kind = Self.transitionKind(
             from: previous,
@@ -462,7 +520,7 @@ public final class MusicIntegrationCoordinator {
                 rememberPersistedState(.disabled)
                 return .disabled
             }
-            lastPersistedNowPlaying = nowPlaying
+            lastPersistedNowPlayingByProvider[snapshot.provider] = nowPlaying
             throw MobileRideMapError.noActiveRide
         }
     }
@@ -491,14 +549,14 @@ public final class MusicIntegrationCoordinator {
         }
         try rideMapState.setMusicHistoryPolicy(policy)
         historyPolicy = policy
-        lastPersistedNowPlaying = nil
+        lastPersistedNowPlayingByProvider.removeAll(keepingCapacity: true)
         lastRecordedSequence = nil
     }
 
     /// Adopts a policy restored by Rust without issuing a second persistence write.
     public func restoreHistoryPolicy(_ policy: MobileMusicHistoryPolicyDto) {
         historyPolicy = policy
-        lastPersistedNowPlaying = nil
+        lastPersistedNowPlayingByProvider.removeAll(keepingCapacity: true)
         lastRecordedSequence = nil
     }
 
@@ -507,7 +565,6 @@ public final class MusicIntegrationCoordinator {
     public func resetProviderCorrelation() {
         lastObservedAtByProvider.removeAll(keepingCapacity: true)
         lastCorrelationRideID = rideMapState?.currentSnapshot()?.rideID
-        lastPersistedNowPlaying = nil
         nowPlaying = nil
         lastRecordedSequence = nil
     }
@@ -545,14 +602,16 @@ public final class MusicIntegrationCoordinator {
         guard rideID != lastCorrelationRideID else { return }
         lastCorrelationRideID = rideID
         lastObservedAtByProvider.removeAll()
-        lastPersistedNowPlaying = nil
+        lastPersistedNowPlayingByProvider.removeAll()
         lastRecordedSequence = nil
     }
 
     private func rememberPersistedState(_ outcome: MobileMusicTimelineOutcomeDto) {
         switch outcome {
         case .recorded, .duplicate, .disabled:
-            lastPersistedNowPlaying = nowPlaying
+            if let nowPlaying {
+                lastPersistedNowPlayingByProvider[nowPlaying.provider] = nowPlaying
+            }
         case .outOfOrder, .rideNotOpen, .full:
             break
         }
@@ -575,13 +634,17 @@ public final class MusicIntegrationCoordinator {
     ) -> MobileMusicRideEventKindDto? {
         guard let current else { return .providerDisconnected }
         guard let previous else { return current.item == nil ? nil : .itemChanged }
+        if current.state == .disconnected {
+            return previous.state == .disconnected ? nil : .providerDisconnected
+        }
         if Self.isProviderFailure(current.state) {
-            return Self.isProviderFailure(previous.state)
-                ? nil
-                : .providerDisconnected
+            return nil
         }
         if previous.provider != current.provider {
             return .itemChanged
+        }
+        if current.state == .stopped, previous.state != .stopped {
+            return .stopped
         }
         if previous.item?.identifier != current.item?.identifier {
             if hint == .skip, previous.item != nil, current.item != nil {
@@ -616,6 +679,7 @@ public struct MusicCompactPlayer: View {
     public let timeline: [MobileMusicRideEventDto]
     public let selectedProvider: MobileMusicProviderDto
     public let historyPolicy: MobileMusicHistoryPolicyDto
+    public let historyUnavailable: Bool
     public let onCommand: (MobileMusicCommandDto) -> Void
     public let onDismiss: () -> Void
     public let onSelectProvider: (MobileMusicProviderDto) -> Void
@@ -627,6 +691,7 @@ public struct MusicCompactPlayer: View {
         timeline: [MobileMusicRideEventDto] = [],
         selectedProvider: MobileMusicProviderDto = .appleMusic,
         historyPolicy: MobileMusicHistoryPolicyDto = .disabled,
+        historyUnavailable: Bool = false,
         onCommand: @escaping (MobileMusicCommandDto) -> Void,
         onDismiss: @escaping () -> Void = {},
         onSelectProvider: @escaping (MobileMusicProviderDto) -> Void = { _ in },
@@ -636,6 +701,7 @@ public struct MusicCompactPlayer: View {
         self.timeline = timeline
         self.selectedProvider = selectedProvider
         self.historyPolicy = historyPolicy
+        self.historyUnavailable = historyUnavailable
         self.onCommand = onCommand
         self.onDismiss = onDismiss
         self.onSelectProvider = onSelectProvider
@@ -699,6 +765,7 @@ public struct MusicCompactPlayer: View {
                 timeline: timeline,
                 selectedProvider: selectedProvider,
                 historyPolicy: historyPolicy,
+                historyUnavailable: historyUnavailable,
                 onSelectProvider: onSelectProvider,
                 onSetHistoryPolicy: onSetHistoryPolicy
             )
@@ -781,6 +848,7 @@ public struct MusicExpandedPlayer: View {
     public let timeline: [MobileMusicRideEventDto]
     public let selectedProvider: MobileMusicProviderDto
     public let historyPolicy: MobileMusicHistoryPolicyDto
+    public let historyUnavailable: Bool
     public let onSelectProvider: (MobileMusicProviderDto) -> Void
     public let onSetHistoryPolicy: (MobileMusicHistoryPolicyDto) -> Bool
     @Environment(\.dismiss) private var dismiss
@@ -792,6 +860,7 @@ public struct MusicExpandedPlayer: View {
         timeline: [MobileMusicRideEventDto] = [],
         selectedProvider: MobileMusicProviderDto,
         historyPolicy: MobileMusicHistoryPolicyDto,
+        historyUnavailable: Bool = false,
         onSelectProvider: @escaping (MobileMusicProviderDto) -> Void,
         onSetHistoryPolicy: @escaping (MobileMusicHistoryPolicyDto) -> Bool
     ) {
@@ -799,6 +868,7 @@ public struct MusicExpandedPlayer: View {
         self.timeline = timeline
         self.selectedProvider = selectedProvider
         self.historyPolicy = historyPolicy
+        self.historyUnavailable = historyUnavailable
         self.onSelectProvider = onSelectProvider
         self.onSetHistoryPolicy = onSetHistoryPolicy
         _providerSelection = State(initialValue: selectedProvider)
@@ -843,15 +913,20 @@ public struct MusicExpandedPlayer: View {
                 }
 
                 Section {
-                    Picker(pevLocalizedText("music.history.title"), selection: $selectedPolicy) {
-                        ForEach(MobileMusicHistoryPolicyDto.allCases, id: \.self) { policy in
-                            Text(policy.title)
-                                .tag(policy)
+                    if historyUnavailable {
+                        Text(pevLocalizedText("music.state.unavailable"))
+                            .foregroundStyle(.secondary)
+                    } else {
+                        Picker(pevLocalizedText("music.history.title"), selection: $selectedPolicy) {
+                            ForEach(MobileMusicHistoryPolicyDto.allCases, id: \.self) { policy in
+                                Text(policy.title)
+                                    .tag(policy)
+                            }
                         }
+                        Text(selectedPolicy.explanation)
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
                     }
-                    Text(selectedPolicy.explanation)
-                        .font(.footnote)
-                        .foregroundStyle(.secondary)
                 } header: {
                     Text(pevLocalizedText("music.history.title"))
                 }
@@ -873,6 +948,9 @@ public struct MusicExpandedPlayer: View {
             .onChange(of: selectedProvider) { _, provider in
                 providerSelection = provider
             }
+            .onChange(of: historyPolicy) { _, policy in
+                selectedPolicy = policy
+            }
         }
     }
 }
@@ -884,6 +962,7 @@ public struct MusicCompactPlayerInset: ViewModifier {
     public let selectedProvider: MobileMusicProviderDto
     public let isHidden: Bool
     public let historyPolicy: MobileMusicHistoryPolicyDto
+    public let historyUnavailable: Bool
     public let onCommand: (MobileMusicCommandDto) -> Void
     public let onConnect: () -> Void
     public let onDismiss: () -> Void
@@ -899,6 +978,7 @@ public struct MusicCompactPlayerInset: ViewModifier {
                     timeline: timeline,
                     selectedProvider: selectedProvider,
                     historyPolicy: historyPolicy,
+                    historyUnavailable: historyUnavailable,
                     onCommand: onCommand,
                     onDismiss: onDismiss,
                     onSelectProvider: onSelectProvider,
@@ -915,13 +995,26 @@ public struct MusicCompactPlayerInset: ViewModifier {
                 .buttonStyle(.bordered)
                 .accessibilityIdentifier("music.restore")
             } else {
-                Button(action: onConnect) {
-                    Label(
-                        pevLocalizedText("music.connect"),
-                        systemImage: "music.note"
-                    )
+                HStack(spacing: 10) {
+                    Button(action: onConnect) {
+                        Label(
+                            pevLocalizedText("music.connect"),
+                            systemImage: "music.note"
+                        )
+                    }
+                    .buttonStyle(.bordered)
+                    Menu {
+                        ForEach(MobileMusicProviderDto.allCases, id: \.self) { provider in
+                            Button(provider.title) {
+                                onSelectProvider(provider)
+                            }
+                        }
+                    } label: {
+                        Label(selectedProvider.title, systemImage: "chevron.up.chevron.down")
+                    }
+                    .buttonStyle(.bordered)
+                    .accessibilityIdentifier("music.provider-picker")
                 }
-                .buttonStyle(.bordered)
                 .accessibilityIdentifier("music.connect")
             }
         }
@@ -935,6 +1028,7 @@ public extension View {
         selectedProvider: MobileMusicProviderDto,
         isHidden: Bool,
         historyPolicy: MobileMusicHistoryPolicyDto,
+        historyUnavailable: Bool,
         onCommand: @escaping (MobileMusicCommandDto) -> Void,
         onConnect: @escaping () -> Void,
         onDismiss: @escaping () -> Void,
@@ -948,6 +1042,7 @@ public extension View {
             selectedProvider: selectedProvider,
             isHidden: isHidden,
             historyPolicy: historyPolicy,
+            historyUnavailable: historyUnavailable,
             onCommand: onCommand,
             onConnect: onConnect,
             onDismiss: onDismiss,
@@ -977,6 +1072,12 @@ public final class AppleMusicProviderAdapter {
     private var cachedArtworkData: Data?
 
     public init() {}
+
+    isolated deinit {
+        let center = NotificationCenter.default
+        notificationTokens.forEach(center.removeObserver)
+        player.endGeneratingPlaybackNotifications()
+    }
 
     /// Starts the system-player callbacks used to refresh bounded metadata.
     /// Polling remains the fallback for position and lifecycle reconciliation.
@@ -1144,7 +1245,7 @@ public final class AppleMusicProviderAdapter {
               let image = artwork.image(at: Self.artworkSize),
               let data = image.jpegData(compressionQuality: 0.8)
         else {
-            cachedArtworkIdentifier = identifier
+            cachedArtworkIdentifier = nil
             cachedArtworkData = nil
             return nil
         }
@@ -1157,8 +1258,9 @@ public final class AppleMusicProviderAdapter {
     }
 
     private func appleMusicIdentifier(for item: MPMediaItem) -> String {
-        if item.playbackStoreID != 0 {
-            return "apple:catalog:\(item.playbackStoreID)"
+        let storeID = item.playbackStoreID
+        if !storeID.isEmpty, storeID != "0" {
+            return "apple:catalog:\(storeID)"
         }
         return "apple:local:\(item.persistentID)"
     }

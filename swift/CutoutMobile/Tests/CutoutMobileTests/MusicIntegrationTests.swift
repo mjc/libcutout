@@ -32,6 +32,28 @@ final class MusicIntegrationTests: XCTestCase {
         XCTAssertNil(tracker.pendingHint)
     }
 
+    func testTransitionHintsQueueAndFailedCommandClearsOnlyItsOwnToken() {
+        var tracker = MusicTransitionHintTracker()
+        let first = tracker.issue(.skip)
+        _ = tracker.issue(.skip)
+
+        tracker.clear(id: first)
+        XCTAssertEqual(tracker.pendingHint, .skip)
+
+        let previous = nowPlaying(trackID: "track-1")
+        tracker.resolve(previous: previous, current: nowPlaying(trackID: "track-2"), appliedHint: .skip)
+        XCTAssertNil(tracker.pendingHint)
+    }
+
+    func testTransitionHintExpiresWhenProviderNeverChangesTheItem() {
+        var tracker = MusicTransitionHintTracker()
+        tracker.issue(.skip, issuedAtMs: 1_000)
+
+        XCTAssertEqual(tracker.hint(atMonotonicMs: 6_000), .skip)
+        XCTAssertNil(tracker.hint(atMonotonicMs: 6_001))
+        XCTAssertNil(tracker.pendingHint)
+    }
+
     @MainActor
     func testProviderResetDropsCorrelationWithoutWritingAnEvent() throws {
         let state = MobileRideMapState()
@@ -75,6 +97,47 @@ final class MusicIntegrationTests: XCTestCase {
         XCTAssertEqual(coordinator.nowPlaying?.provider, .spotify)
         XCTAssertEqual(coordinator.nowPlaying?.state, .unavailable)
         XCTAssertNil(coordinator.lastRecordedSequence)
+        XCTAssertEqual(coordinator.recordedEvents.count, 1)
+    }
+
+    @MainActor
+    func testEnablingHistorySeedsTheCurrentTrackAfterDisabledObservation() throws {
+        let state = MobileRideMapState()
+        _ = try state.startGpsOnly(atMs: 1_000, lastConnectedVehicle: nil)
+        let coordinator = MusicIntegrationCoordinator(rideMapState: state)
+        let playing = MobileMusicSnapshotDto(
+            provider: .appleMusic,
+            sessionId: "apple",
+            state: .playing,
+            item: MobileMusicItemDto(identifier: "track-1", title: "Song", artist: "Artist"),
+            positionMilliseconds: nil,
+            durationMilliseconds: nil,
+            observedAtMs: 1_000,
+            capabilities: .init(previous: true, play: false, pause: true, next: true, openProvider: true)
+        )
+
+        _ = try coordinator.ingest(
+            snapshot: playing,
+            wallClockAtMs: 1_700_000_000_000,
+            clockUncertaintyMs: 5
+        )
+        try coordinator.setHistoryPolicy(.humanReadable)
+        let nextObservation = MobileMusicSnapshotDto(
+            provider: playing.provider,
+            sessionId: playing.sessionId,
+            state: playing.state,
+            item: playing.item,
+            positionMilliseconds: playing.positionMilliseconds,
+            durationMilliseconds: playing.durationMilliseconds,
+            observedAtMs: 1_001,
+            capabilities: playing.capabilities
+        )
+        _ = try coordinator.ingest(
+            snapshot: nextObservation,
+            wallClockAtMs: 1_700_000_000_001,
+            clockUncertaintyMs: 5
+        )
+
         XCTAssertEqual(coordinator.recordedEvents.count, 1)
     }
 

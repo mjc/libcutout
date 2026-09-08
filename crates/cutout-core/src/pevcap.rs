@@ -326,6 +326,18 @@ impl PevcapFormatVersion {
     }
 }
 
+fn ensure_music_supported<E>(
+    has_music: bool,
+    version: PevcapFormatVersion,
+    error: E,
+) -> Result<(), E> {
+    if has_music && !version.supports_music() {
+        Err(error)
+    } else {
+        Ok(())
+    }
+}
+
 /// Supported PEVCAP byte encodings for file and tooling surfaces.
 #[cfg(feature = "serde")]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -383,6 +395,7 @@ enum PevcapReaderState<R: Read> {
     },
     Binary {
         reader: R,
+        version: PevcapFormatVersion,
         remaining_records: u32,
         remaining_locations: u32,
         locations_count_read: bool,
@@ -494,6 +507,7 @@ impl<R: Read> PevcapReader<R> {
         Ok(Self {
             state: PevcapReaderState::Binary {
                 reader,
+                version,
                 remaining_records,
                 remaining_locations: 0,
                 locations_count_read: !version.supports_locations(),
@@ -518,6 +532,7 @@ impl<R: Read> PevcapReader<R> {
     fn next_binary_record(&mut self) -> Result<Option<PevcapRecord>, PevcapStreamError> {
         let PevcapReaderState::Binary {
             reader,
+            version,
             remaining_records,
             remaining_locations,
             locations_count_read,
@@ -533,11 +548,19 @@ impl<R: Read> PevcapReader<R> {
         if *remaining_records > 0 {
             let payload = read_stream_len_prefixed(reader, PevcapBinarySection::Record)?;
             *remaining_records -= 1;
-            let record = serde_json::from_slice::<PevcapRecordJson>(&payload)
-                .map_err(|source| PevcapBinaryError::Deserialize {
-                    section: PevcapBinarySection::Record,
-                    source,
-                })?
+            let record_json =
+                serde_json::from_slice::<PevcapRecordJson>(&payload).map_err(|source| {
+                    PevcapBinaryError::Deserialize {
+                        section: PevcapBinarySection::Record,
+                        source,
+                    }
+                })?;
+            ensure_music_supported(
+                record_json.music.is_some(),
+                *version,
+                PevcapBinaryError::MusicUnsupported { version: *version },
+            )?;
+            let record = record_json
                 .try_into_record()
                 .map_err(PevcapBinaryError::Record)?;
             return Ok(Some(record));
@@ -651,10 +674,15 @@ impl<R: Read> PevcapReader<R> {
                     // use `next_event` when the physical interleaving matters.
                     continue;
                 }
-                PevcapJsonlLine::Music { music: _ } => {
-                    if !version.supports_music() {
-                        return Err(PevcapJsonlError::MusicUnsupported { version: *version }.into());
-                    }
+                PevcapJsonlLine::Music { music } => {
+                    ensure_music_supported(
+                        true,
+                        *version,
+                        PevcapJsonlError::MusicUnsupported { version: *version },
+                    )?;
+                    music
+                        .try_into_event()
+                        .map_err(|source| PevcapJsonlError::InvalidMusic { source })?;
                     continue;
                 }
             };
@@ -691,6 +719,7 @@ impl<R: Read> PevcapReader<R> {
     fn next_binary_event(&mut self) -> Result<Option<PevcapEvent>, PevcapStreamError> {
         let PevcapReaderState::Binary {
             reader,
+            version,
             remaining_records,
             remaining_locations,
             locations_count_read,
@@ -712,6 +741,11 @@ impl<R: Read> PevcapReader<R> {
                         source,
                     }
                 })?;
+            ensure_music_supported(
+                record.music.is_some(),
+                *version,
+                PevcapBinaryError::MusicUnsupported { version: *version },
+            )?;
             return Ok(Some(PevcapEvent::Record(
                 record
                     .try_into_record()
@@ -782,6 +816,7 @@ impl<R: Read> PevcapReader<R> {
             } => Self::next_jsonl_location(reader, line_number, line, *version),
             PevcapReaderState::Binary {
                 reader,
+                version,
                 remaining_records,
                 remaining_locations,
                 locations_count_read,
@@ -791,6 +826,7 @@ impl<R: Read> PevcapReader<R> {
                 ..
             } => Self::next_binary_location(
                 reader,
+                *version,
                 remaining_records,
                 remaining_locations,
                 locations_count_read,
@@ -828,6 +864,11 @@ impl<R: Read> PevcapReader<R> {
                     return Err(PevcapJsonlError::DuplicateHeader { line: *line_number }.into());
                 }
                 PevcapJsonlLine::Record { record } => {
+                    ensure_music_supported(
+                        record.music.is_some(),
+                        version,
+                        PevcapJsonlError::MusicUnsupported { version },
+                    )?;
                     record
                         .try_into_record()
                         .map_err(|source| PevcapJsonlError::Record {
@@ -848,9 +889,11 @@ impl<R: Read> PevcapReader<R> {
                     }
                 }
                 PevcapJsonlLine::Music { music } => {
-                    if !version.supports_music() {
-                        return Err(PevcapJsonlError::MusicUnsupported { version }.into());
-                    }
+                    ensure_music_supported(
+                        true,
+                        version,
+                        PevcapJsonlError::MusicUnsupported { version },
+                    )?;
                     music
                         .try_into_event()
                         .map_err(|source| PevcapJsonlError::InvalidMusic { source })?;
@@ -885,14 +928,21 @@ impl<R: Read> PevcapReader<R> {
                 PevcapJsonlLine::Header { .. } => {
                     Err(PevcapJsonlError::DuplicateHeader { line: *line_number }.into())
                 }
-                PevcapJsonlLine::Record { record } => Ok(Some(PevcapEvent::Record(
-                    record
-                        .try_into_record()
-                        .map_err(|source| PevcapJsonlError::Record {
-                            line: *line_number,
-                            source,
-                        })?,
-                ))),
+                PevcapJsonlLine::Record { record } => {
+                    ensure_music_supported(
+                        record.music.is_some(),
+                        version,
+                        PevcapJsonlError::MusicUnsupported { version },
+                    )?;
+                    Ok(Some(PevcapEvent::Record(
+                        record
+                            .try_into_record()
+                            .map_err(|source| PevcapJsonlError::Record {
+                                line: *line_number,
+                                source,
+                            })?,
+                    )))
+                }
                 PevcapJsonlLine::Location { location } => {
                     if !version.supports_locations() {
                         return Err(PevcapJsonlError::UnsupportedVersion {
@@ -904,9 +954,11 @@ impl<R: Read> PevcapReader<R> {
                     Ok(Some(location_event(location)))
                 }
                 PevcapJsonlLine::Music { music } => {
-                    if !version.supports_music() {
-                        return Err(PevcapJsonlError::MusicUnsupported { version }.into());
-                    }
+                    ensure_music_supported(
+                        true,
+                        version,
+                        PevcapJsonlError::MusicUnsupported { version },
+                    )?;
                     Ok(Some(PevcapEvent::Music(music.try_into_event().map_err(
                         |source| PevcapJsonlError::InvalidMusic { source },
                     )?)))
@@ -917,6 +969,7 @@ impl<R: Read> PevcapReader<R> {
 
     fn next_binary_location(
         reader: &mut R,
+        version: PevcapFormatVersion,
         remaining_records: &mut u32,
         remaining_locations: &mut u32,
         locations_count_read: &mut bool,
@@ -927,11 +980,19 @@ impl<R: Read> PevcapReader<R> {
         while *remaining_records > 0 {
             let payload = read_stream_len_prefixed(reader, PevcapBinarySection::Record)?;
             *remaining_records -= 1;
-            serde_json::from_slice::<PevcapRecordJson>(&payload)
-                .map_err(|source| PevcapBinaryError::Deserialize {
-                    section: PevcapBinarySection::Record,
-                    source,
-                })?
+            let record =
+                serde_json::from_slice::<PevcapRecordJson>(&payload).map_err(|source| {
+                    PevcapBinaryError::Deserialize {
+                        section: PevcapBinarySection::Record,
+                        source,
+                    }
+                })?;
+            ensure_music_supported(
+                record.music.is_some(),
+                version,
+                PevcapBinaryError::MusicUnsupported { version },
+            )?;
+            record
                 .try_into_record()
                 .map_err(PevcapBinaryError::Record)?;
         }
@@ -1875,10 +1936,13 @@ impl PevcapRecord {
     }
 
     /// Attaches bounded music metadata to this capture frame.
-    #[must_use]
-    pub fn with_music(mut self, music: PevcapMusicEvent) -> Self {
+    #[cfg(feature = "serde")]
+    pub fn with_music(mut self, music: PevcapMusicEvent) -> Result<Self, PevcapRecordError> {
+        if self.direction != PevcapDirection::Inbound {
+            return Err(PevcapRecordError::UnexpectedMusic);
+        }
         self.music = Some(music);
-        self
+        Ok(self)
     }
     /// Creates a link-up lifecycle record.
     #[must_use]
@@ -2242,16 +2306,25 @@ impl PevcapCapture {
     /// Returns [`PevcapJsonlError::Serialize`] when JSON serialization fails.
     #[cfg(feature = "serde")]
     pub fn to_jsonl(&self) -> Result<String, PevcapJsonlError> {
+        if !self.version.is_supported() {
+            return Err(PevcapJsonlError::UnsupportedVersion {
+                line: 1,
+                version: self.version,
+            });
+        }
         if !self.version.supports_locations() && !self.locations.is_empty() {
             return Err(PevcapJsonlError::LocationsUnsupported {
                 version: self.version,
             });
         }
-        if !self.version.supports_music() && !self.music_events.is_empty() {
-            return Err(PevcapJsonlError::MusicUnsupported {
+        ensure_music_supported(
+            !self.music_events.is_empty()
+                || self.records.iter().any(|record| record.music.is_some()),
+            self.version,
+            PevcapJsonlError::MusicUnsupported {
                 version: self.version,
-            });
-        }
+            },
+        )?;
         let mut output = serde_json::to_string(&PevcapJsonlLine::Header {
             magic: PEVCAP_MAGIC,
             version: self.version,
@@ -2348,6 +2421,16 @@ impl PevcapCapture {
                     if header.is_none() {
                         return Err(PevcapJsonlError::MissingHeader);
                     }
+                    let Some(decoded_version) = version else {
+                        return Err(PevcapJsonlError::MissingHeader);
+                    };
+                    ensure_music_supported(
+                        record.music.is_some(),
+                        decoded_version,
+                        PevcapJsonlError::MusicUnsupported {
+                            version: decoded_version,
+                        },
+                    )?;
                     records.push(record.try_into_record().map_err(|source| {
                         PevcapJsonlError::Record {
                             line: line_number,
@@ -2382,11 +2465,13 @@ impl PevcapCapture {
                     let Some(decoded_version) = version else {
                         return Err(PevcapJsonlError::MissingHeader);
                     };
-                    if !decoded_version.supports_music() {
-                        return Err(PevcapJsonlError::MusicUnsupported {
+                    ensure_music_supported(
+                        true,
+                        decoded_version,
+                        PevcapJsonlError::MusicUnsupported {
                             version: decoded_version,
-                        });
-                    }
+                        },
+                    )?;
                     music_events.push(
                         music
                             .try_into_event()
@@ -2418,16 +2503,24 @@ impl PevcapCapture {
     /// represented by the v1 length prefix.
     #[cfg(feature = "serde")]
     pub fn to_binary(&self) -> Result<Vec<u8>, PevcapBinaryError> {
+        if !self.version.is_supported() {
+            return Err(PevcapBinaryError::UnsupportedVersion {
+                version: self.version,
+            });
+        }
         if !self.version.supports_locations() && !self.locations.is_empty() {
             return Err(PevcapBinaryError::LocationsUnsupported {
                 version: self.version,
             });
         }
-        if !self.version.supports_music() && !self.music_events.is_empty() {
-            return Err(PevcapBinaryError::MusicUnsupported {
+        ensure_music_supported(
+            !self.music_events.is_empty()
+                || self.records.iter().any(|record| record.music.is_some()),
+            self.version,
+            PevcapBinaryError::MusicUnsupported {
                 version: self.version,
-            });
-        }
+            },
+        )?;
         let header = serde_json::to_vec(&PevcapHeaderJson::from(&self.header))
             .map_err(PevcapBinaryError::Serialize)?;
 
@@ -2527,12 +2620,19 @@ impl PevcapCapture {
         let mut records = Vec::with_capacity(record_count as usize);
         for _ in 0..record_count {
             let payload = read_len_prefixed(&mut remaining, PevcapBinarySection::Record)?;
+            let record = serde_json::from_slice::<PevcapRecordJson>(payload).map_err(|source| {
+                PevcapBinaryError::Deserialize {
+                    section: PevcapBinarySection::Record,
+                    source,
+                }
+            })?;
+            ensure_music_supported(
+                record.music.is_some(),
+                version,
+                PevcapBinaryError::MusicUnsupported { version },
+            )?;
             records.push(
-                serde_json::from_slice::<PevcapRecordJson>(payload)
-                    .map_err(|source| PevcapBinaryError::Deserialize {
-                        section: PevcapBinarySection::Record,
-                        source,
-                    })?
+                record
                     .try_into_record()
                     .map_err(PevcapBinaryError::Record)?,
             );
@@ -3976,7 +4076,10 @@ mod tests {
             Some(9),
         )
         .expect("music metadata validates");
-        capture.records[1] = capture.records[1].clone().with_music(event);
+        capture.records[1] = capture.records[1]
+            .clone()
+            .with_music(event)
+            .expect("inbound records accept music metadata");
 
         let encoded = capture.to_jsonl().expect("capture serializes");
         let decoded = PevcapCapture::from_jsonl(&encoded).expect("capture decodes");
