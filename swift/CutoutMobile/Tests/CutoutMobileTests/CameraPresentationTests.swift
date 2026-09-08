@@ -68,6 +68,7 @@ final class CameraPresentationTests: XCTestCase {
         )
 
         XCTAssertEqual(reference.cameraPath, "/DCIM/MOV001.TS")
+        XCTAssertEqual(reference.source, .novatekR3Pro)
         XCTAssertEqual(reference.sizeBytes, 42)
         XCTAssertEqual(reference.rideCaptureFileName, "ride.pevcap")
         XCTAssertEqual(reference.clockUncertainty, .milliseconds(500))
@@ -135,6 +136,7 @@ final class CameraPresentationTests: XCTestCase {
 
     func testCameraMediaReferenceKeepsRideAssociationAndClockUncertaintyExplicit() {
         let reference = CameraMediaReference(
+            source: .rtsp,
             cameraPath: #"A:\Novatek\Movie\clip.TS"#,
             localURL: URL(fileURLWithPath: "/tmp/clip.TS"),
             sizeBytes: 42,
@@ -145,6 +147,7 @@ final class CameraPresentationTests: XCTestCase {
         )
 
         XCTAssertEqual(reference.cameraPath, #"A:\Novatek\Movie\clip.TS"#)
+        XCTAssertEqual(reference.source, .rtsp)
         XCTAssertEqual(reference.rideCaptureFileName, "ride.jsonl")
         XCTAssertEqual(reference.clockUncertainty, .unknown)
     }
