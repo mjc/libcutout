@@ -907,7 +907,7 @@
     },
     "music.history.forget.message" : {
       "comment" : "Confirmation message for removing saved-ride music metadata.",
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "This removes music history from the ride database. Existing PEVCAP capture files are separate and may retain their captured copy." } } }
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "This removes music history from the ride database. The ride and route stay saved. Existing PEVCAP capture files are separate and may retain their captured copy." } } }
     },
     "music.history.forget.title" : {
       "comment" : "Confirmation title for removing saved-ride music metadata.",

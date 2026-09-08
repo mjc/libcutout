@@ -183,6 +183,8 @@ struct RideMapRouteView: View {
                     rideID: initialHistoryID,
                     events: model.rideMapHistoryDetailMusicTimeline,
                     timelineUnavailable: model.rideMapHistoryDetailMusicTimelineUnavailable,
+                    state: model.rideMapHistoryDetailMusicState,
+                    error: model.rideMapHistoryDetailMusicError,
                     forgetMusicHistory: { model.forgetMusicHistory(for: $0) }
                 ),
                 projectionRideID: model.rideMapHistoryDetailProjectionRideID,

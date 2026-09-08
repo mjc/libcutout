@@ -1,8 +1,9 @@
 use super::{MapPointId, SpatialRowId, StorageError};
 use rusqlite::{Connection, OptionalExtension, params};
 
-const CURRENT_SCHEMA_VERSION: i64 = 19;
+const CURRENT_SCHEMA_VERSION: i64 = 20;
 const APPLICATION_ID: i64 = 0x4355_544f;
+
 fn current_schema_pragmas() -> String {
     format!(
         "PRAGMA application_id = {APPLICATION_ID}; PRAGMA user_version = {CURRENT_SCHEMA_VERSION};"
@@ -39,6 +40,7 @@ pub(super) fn migrate(connection: &mut Connection) -> Result<(), StorageError> {
         16 => migrate_v16_to_current(connection)?,
         17 => migrate_v17_to_current(connection)?,
         18 => migrate_v18_to_current(connection)?,
+        19 => migrate_v19_to_current(connection)?,
         CURRENT_SCHEMA_VERSION => {
             if application_id != APPLICATION_ID {
                 return Err(StorageError::InvalidDatabaseIdentity);
@@ -171,6 +173,8 @@ pub(crate) fn create_current_schema(connection: &Connection) -> Result<(), Stora
         CREATE TABLE ride_music_history (
             ride_id TEXT PRIMARY KEY NOT NULL REFERENCES rides(id) ON DELETE CASCADE,
             policy TEXT NOT NULL CHECK (policy IN ('disabled', 'opaque_item', 'human_readable')),
+            state TEXT NOT NULL DEFAULT 'disabled'
+                CHECK (state IN ('disabled', 'opaque_item', 'human_readable', 'deleted')),
             deleted INTEGER NOT NULL DEFAULT 0 CHECK (deleted IN (0, 1)),
             last_observed_at_ms INTEGER CHECK (last_observed_at_ms IS NULL OR last_observed_at_ms >= 0)
         );
@@ -179,7 +183,8 @@ pub(crate) fn create_current_schema(connection: &Connection) -> Result<(), Stora
             sequence INTEGER NOT NULL CHECK (sequence >= 0),
             provider TEXT NOT NULL CHECK (provider IN ('apple_music', 'spotify')),
             item_identifier TEXT CHECK (item_identifier IS NULL OR length(CAST(item_identifier AS BLOB)) BETWEEN 1 AND 256),
-            title TEXT CHECK (title IS NULL OR length(CAST(title AS BLOB)) BETWEEN 1 AND 512),
+            title TEXT CONSTRAINT ride_music_event_title_bytes
+                CHECK (title IS NULL OR length(CAST(title AS BLOB)) BETWEEN 1 AND 512),
             artist TEXT CHECK (artist IS NULL OR length(CAST(artist AS BLOB)) BETWEEN 1 AND 512),
             kind TEXT NOT NULL CHECK (kind IN ('play', 'pause', 'skip', 'item_changed', 'stopped', 'provider_disconnected')),
             monotonic_at_ms INTEGER NOT NULL CHECK (monotonic_at_ms >= 0),
@@ -903,6 +908,11 @@ fn migrate_v16_to_current(connection: &mut Connection) -> Result<(), StorageErro
             "INTEGER CHECK (last_observed_at_ms IS NULL OR last_observed_at_ms >= 0)",
         ),
         (
+            "ride_music_history",
+            "state",
+            "TEXT NOT NULL DEFAULT 'disabled' CHECK (state IN ('disabled', 'opaque_item', 'human_readable', 'deleted'))",
+        ),
+        (
             "ride_music_event",
             "observed_at_ms",
             "INTEGER CHECK (observed_at_ms IS NULL OR observed_at_ms BETWEEN 0 AND monotonic_at_ms)",
@@ -914,6 +924,15 @@ fn migrate_v16_to_current(connection: &mut Connection) -> Result<(), StorageErro
             ))?;
         }
     }
+    transaction.execute_batch(
+        "UPDATE ride_music_history
+         SET state = CASE
+             WHEN deleted = 1 THEN 'deleted'
+             WHEN policy = 'opaque_item' THEN 'opaque_item'
+             WHEN policy = 'human_readable' THEN 'human_readable'
+             ELSE 'disabled'
+         END;",
+    )?;
     transaction.execute_batch("PRAGMA application_id = 1129665615; PRAGMA user_version = 18;")?;
     transaction.commit()?;
     migrate_v18_to_current(connection)
@@ -993,9 +1012,29 @@ fn migrate_v18_to_current(connection: &mut Connection) -> Result<(), StorageErro
     if !captures_exists {
         transaction.execute_batch(super::capture_data::SCHEMA)?;
     }
+    if table_exists(&transaction, "ride_music_history")?
+        && !table_has_column(&transaction, "ride_music_history", "state")?
+    {
+        transaction.execute_batch(
+            "ALTER TABLE ride_music_history
+                 ADD COLUMN state TEXT NOT NULL DEFAULT 'disabled'
+                 CHECK (state IN ('disabled', 'opaque_item', 'human_readable', 'deleted'));
+             UPDATE ride_music_history
+             SET state = CASE
+                 WHEN deleted = 1 THEN 'deleted'
+                 WHEN policy = 'opaque_item' THEN 'opaque_item'
+                 WHEN policy = 'human_readable' THEN 'human_readable'
+                 ELSE 'disabled'
+             END;",
+        )?;
+    }
     transaction.execute_batch(&current_schema_pragmas())?;
     transaction.commit()?;
     Ok(())
+}
+
+fn migrate_v19_to_current(connection: &mut Connection) -> Result<(), StorageError> {
+    migrate_v18_to_current(connection)
 }
 
 fn table_has_column(

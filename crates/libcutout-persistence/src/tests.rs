@@ -6,7 +6,8 @@ use cutout_core::{
     PevcapPhoneLocation, PevcapRecord, WallClockUnixTimestamp,
 };
 use cutout_music::{
-    MusicEventTiming, MusicHistoryPolicy, MusicProvider, MusicRideEvent, MusicRideEventKind,
+    MusicEventTiming, MusicHistoryPolicy, MusicHistoryState, MusicProvider, MusicRideEvent,
+    MusicRideEventKind,
 };
 use cutout_ride_maps::{
     Coordinate, LocationAdmission, LocationSample, LocationSource, MAX_GAP_MILLISECONDS, RideEvent,
@@ -41,6 +42,21 @@ fn music_event() -> MusicRideEvent {
         },
     )
     .expect("music event is valid")
+}
+
+fn music_test_database(name: &str) -> (RideDatabase, std::path::PathBuf) {
+    let path = std::env::temp_dir().join(format!(
+        "libcutout-music-{name}-{}.sqlite",
+        std::process::id()
+    ));
+    let _ = std::fs::remove_file(&path);
+    let database = RideDatabase::open(&path).expect("music test database opens");
+    (database, path)
+}
+
+fn close_music_test_database(database: RideDatabase, path: std::path::PathBuf) {
+    database.shutdown().expect("music test database shuts down");
+    let _ = std::fs::remove_file(path);
 }
 
 fn test_guard() -> std::sync::MutexGuard<'static, ()> {
@@ -95,6 +111,31 @@ fn music_v16_migration_preserves_events_without_fabricating_observation_times() 
 }
 
 #[test]
+fn schema_v19_migration_adds_music_history_state() {
+    let _guard = test_guard();
+    let (database, path) = music_test_database("v19-state");
+    let ride = database
+        .create_started_live_ride(1_700_000_000_000, 100, None)
+        .expect("ride creates");
+    database.shutdown().expect("database shuts down");
+    let connection = Connection::open(&path).expect("sqlite opens");
+    connection
+        .execute_batch(
+            "ALTER TABLE ride_music_history DROP COLUMN state;
+             PRAGMA user_version = 19;",
+        )
+        .expect("legacy v19 shape creates");
+    drop(connection);
+    let database = RideDatabase::open(&path).expect("v19 database migrates");
+    assert_eq!(
+        database.music_history_state(ride).expect("state reads"),
+        MusicHistoryState::Missing
+    );
+    database.shutdown().expect("database shuts down");
+    let _ = std::fs::remove_file(path);
+}
+
+#[test]
 fn pre_music_v16_migration_preserves_existing_capture_tables() {
     let _guard = test_guard();
     let path = music_test_path();
@@ -117,7 +158,7 @@ fn pre_music_v16_migration_preserves_existing_capture_tables() {
         connection
             .query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0))
             .unwrap(),
-        19
+        20
     );
     for table in ["pevcap_captures", "pevcap_capture_chunks"] {
         assert!(
@@ -2815,7 +2856,7 @@ fn legacy_schema_versions_migrate_to_the_current_schema() {
         let current_version: i64 = connection
             .pragma_query_value(None, "user_version", |row| row.get(0))
             .unwrap();
-        assert_eq!(current_version, 19);
+        assert_eq!(current_version, 20);
         let music_tables: i64 = connection
             .query_row(
                 "SELECT COUNT(*) FROM sqlite_schema
@@ -3230,7 +3271,7 @@ fn schema_v13_spatial_rows_migrate_without_integer_domain_ids() {
     let version: i64 = connection
         .pragma_query_value(None, "user_version", |row| row.get(0))
         .unwrap();
-    assert_eq!(version, 19);
+    assert_eq!(version, 20);
     let rtree_id: i64 = connection
         .query_row(
             "SELECT rtree_id FROM trail_segment_spatial_keys",
@@ -3296,7 +3337,7 @@ fn schema_v12_singleton_rows_migrate_to_uuid_keys_without_data_loss() {
     let version: i64 = connection
         .pragma_query_value(None, "user_version", |row| row.get(0))
         .unwrap();
-    assert_eq!(version, 19);
+    assert_eq!(version, 20);
     let selected_key_length: u64 = connection
         .query_row(
             "SELECT length(singleton_key) FROM selected_device",
@@ -3814,7 +3855,7 @@ fn version_eight_migration_adds_monotonic_ride_start_column() {
             |row| row.get(0),
         )
         .unwrap();
-    assert_eq!(version, 19);
+    assert_eq!(version, 20);
     assert!(has_monotonic_start);
 
     let _ = std::fs::remove_file(path);
@@ -3832,6 +3873,10 @@ fn ride_history_excludes_explicitly_discarded_rides() {
     database.transition(discarded, RideEvent::Start).unwrap();
     database.transition(discarded, RideEvent::Stop).unwrap();
     database.transition(discarded, RideEvent::Discard).unwrap();
+    assert!(matches!(
+        database.music_history_state(discarded),
+        Err(StorageError::NotFound)
+    ));
 
     let saved = database.create_ride(RideSource::Live, 20).unwrap();
     database.transition(saved, RideEvent::Start).unwrap();
@@ -4262,9 +4307,127 @@ fn music_history_round_trips_and_can_be_deleted_without_deleting_ride() {
     database.delete_music_history(ride).unwrap();
     assert!(database.music_events(ride).unwrap().is_empty());
     assert!(database.find_ride(ride).unwrap().is_some());
-    database.shutdown().unwrap();
-    let _ = std::fs::remove_file(path);
+    close_music_test_database(database, path);
 }
+#[test]
+fn music_history_state_distinguishes_missing_disabled_redacted_and_deleted() {
+    let _guard = test_guard();
+    let (database, path) = music_test_database("history-state");
+    let ride = database
+        .create_started_live_ride(1_700_000_000_000, 100, None)
+        .unwrap();
+
+    assert_eq!(
+        database.music_history_state(ride).unwrap(),
+        MusicHistoryState::Missing
+    );
+
+    database
+        .save_music_history_policy(ride, MusicHistoryPolicy::Disabled)
+        .unwrap();
+    assert_eq!(
+        database.music_history_state(ride).unwrap(),
+        MusicHistoryState::Disabled
+    );
+
+    database
+        .save_music_history_policy(ride, MusicHistoryPolicy::HumanReadable)
+        .unwrap();
+
+    database
+        .save_music_event(ride, MusicHistoryPolicy::HumanReadable, 0, music_event())
+        .unwrap();
+    assert_eq!(
+        database.music_history_state(ride).unwrap(),
+        MusicHistoryState::HumanReadable
+    );
+
+    database
+        .save_music_history_policy(ride, MusicHistoryPolicy::OpaqueItem)
+        .unwrap();
+    assert_eq!(
+        database.music_history_state(ride).unwrap(),
+        MusicHistoryState::Redacted
+    );
+
+    database.delete_music_history(ride).unwrap();
+    assert_eq!(
+        database.music_history_state(ride).unwrap(),
+        MusicHistoryState::Deleted
+    );
+    close_music_test_database(database, path);
+}
+
+#[test]
+fn ride_export_includes_privacy_filtered_music_history() {
+    let _guard = test_guard();
+    let (database, path) = music_test_database("export-music");
+    let ride = database
+        .create_started_live_ride(1_700_000_000_000, 100, None)
+        .unwrap();
+    let event = MusicRideEvent::new(
+        MusicProvider::AppleMusic,
+        Some("opaque-track".to_owned()),
+        Some("Song".to_owned()),
+        Some("Artist".to_owned()),
+        MusicRideEventKind::ItemChanged,
+        MusicEventTiming {
+            observed_at: None,
+            monotonic_at: MonotonicTimestamp::new(110),
+            wall_clock_at: WallClockUnixTimestamp::new(1_700_000_000_110),
+            clock_uncertainty_milliseconds: 5,
+        },
+    )
+    .unwrap();
+    database
+        .save_music_event(ride, MusicHistoryPolicy::HumanReadable, 0, event)
+        .unwrap();
+    let export_path = std::env::temp_dir().join(format!(
+        "libcutout-music-export-{}.json",
+        uuid::Uuid::new_v4()
+    ));
+    let read_export = || {
+        let export: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&export_path).unwrap()).unwrap();
+        std::fs::remove_file(&export_path).unwrap();
+        export
+    };
+
+    database.export_ride_json(ride, &export_path).unwrap();
+    let export = read_export();
+    assert_eq!(export["schema_version"], 2);
+    assert_eq!(export["music_history"]["state"], "human_readable");
+    assert_eq!(export["music_history"]["events"][0]["sequence"], 0);
+    assert_eq!(export["music_history"]["events"][0]["title"], "Song");
+    assert_eq!(export["music_history"]["events"][0]["artist"], "Artist");
+
+    database
+        .save_music_history_policy(ride, MusicHistoryPolicy::OpaqueItem)
+        .unwrap();
+    database.export_ride_json(ride, &export_path).unwrap();
+    let export = read_export();
+    assert_eq!(export["music_history"]["state"], "redacted");
+    assert_eq!(
+        export["music_history"]["events"][0]["item_identifier"],
+        "opaque-track"
+    );
+    assert!(export["music_history"]["events"][0]["title"].is_null());
+    assert!(export["music_history"]["events"][0]["artist"].is_null());
+
+    database.delete_music_history(ride).unwrap();
+    database.export_ride_json(ride, &export_path).unwrap();
+    let export = read_export();
+    assert_eq!(export["music_history"]["state"], "deleted");
+    assert!(
+        export["music_history"]["events"]
+            .as_array()
+            .unwrap()
+            .is_empty()
+    );
+
+    close_music_test_database(database, path);
+}
+
 #[test]
 fn music_history_policy_downgrade_redacts_existing_display_metadata() {
     let _guard = test_guard();
@@ -4393,8 +4556,7 @@ fn music_event_sequence_conflict_is_rejected() {
         error,
         StorageError::MusicSequenceConflict { sequence: 0 }
     ));
-    database.shutdown().unwrap();
-    let _ = std::fs::remove_file(path);
+    close_music_test_database(database, path);
 }
 
 #[test]
@@ -4439,8 +4601,7 @@ fn music_event_sequence_requires_contiguous_order_and_monotonic_time() {
         error,
         StorageError::MusicEventOutOfOrder { sequence: 1 }
     ));
-    database.shutdown().unwrap();
-    let _ = std::fs::remove_file(path);
+    close_music_test_database(database, path);
 }
 
 #[test]
@@ -4503,4 +4664,45 @@ fn music_event_timestamps_must_fit_sqlite_integer() {
 
     database.shutdown().unwrap();
     let _ = std::fs::remove_file(path);
+}
+#[test]
+fn lowering_music_history_policy_redacts_existing_display_metadata() {
+    let _guard = test_guard();
+    let (database, path) = music_test_database("policy-redaction");
+    let ride = database
+        .create_started_live_ride(1_700_000_000_000, 100, None)
+        .unwrap();
+    let event = MusicRideEvent::new(
+        MusicProvider::AppleMusic,
+        Some("opaque-track".to_owned()),
+        Some("Song".to_owned()),
+        Some("Artist".to_owned()),
+        MusicRideEventKind::ItemChanged,
+        MusicEventTiming {
+            observed_at: None,
+            monotonic_at: MonotonicTimestamp::new(110),
+            wall_clock_at: WallClockUnixTimestamp::new(1_700_000_000_110),
+            clock_uncertainty_milliseconds: 5,
+        },
+    )
+    .unwrap();
+
+    database
+        .save_music_event(ride, MusicHistoryPolicy::HumanReadable, 0, event)
+        .unwrap();
+    database
+        .save_music_history_policy(ride, MusicHistoryPolicy::OpaqueItem)
+        .unwrap();
+
+    let redacted = database.music_events(ride).unwrap();
+    assert_eq!(redacted.len(), 1);
+    assert_eq!(
+        redacted[0]
+            .item_identifier()
+            .map(cutout_music::MusicIdentifier::as_str),
+        Some("opaque-track")
+    );
+    assert_eq!(redacted[0].title(), None);
+    assert_eq!(redacted[0].artist(), None);
+    close_music_test_database(database, path);
 }

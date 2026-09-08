@@ -1,7 +1,7 @@
 use cutout_core::{PevcapEncoding, PevcapEvent, PevcapPhoneLocation, PevcapReader};
 use cutout_music::{
-    MusicEventTiming, MusicHistoryPolicy, MusicProvider, MusicRideEvent, MusicRideEventKind,
-    MusicTimeline, MusicTimelineOutcome, MusicValidationError,
+    MusicEventTiming, MusicHistoryPolicy, MusicHistoryState, MusicProvider, MusicRideEvent,
+    MusicRideEventKind, MusicTimeline, MusicTimelineOutcome, MusicValidationError,
 };
 use cutout_ride_maps::{
     AverageSpeedMillimetresPerSecond, Coordinate, LocationAdmission, LocationSample,
@@ -2221,6 +2221,19 @@ impl RideDatabase {
     ) -> Result<MusicHistoryPolicy, StorageError> {
         self.request(move |reply| Command::MusicHistoryPolicy { ride_id, reply })
     }
+
+    /// Loads the durable music-history state for one ride.
+    ///
+    /// A ride without a history row is [`MusicHistoryState::Missing`]. Explicit
+    /// deletion is represented by [`MusicHistoryState::Deleted`].
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StorageError::NotFound`] when the ride does not exist or a storage error when
+    /// the persisted state cannot be decoded.
+    pub fn music_history_state(&self, ride_id: RideId) -> Result<MusicHistoryState, StorageError> {
+        self.request(move |reply| Command::MusicHistoryState { ride_id, reply })
+    }
     /// Stores the display name associated with a platform-local device identifier.
     ///
     /// # Errors
@@ -3377,6 +3390,10 @@ enum Command {
         ride_id: RideId,
         reply: Reply<MusicHistoryPolicy>,
     },
+    MusicHistoryState {
+        ride_id: RideId,
+        reply: Reply<MusicHistoryState>,
+    },
     SaveVoltageSagModel {
         device_identity: String,
         model: VoltageSagModelRecord,
@@ -3805,18 +3822,81 @@ fn export_ride_json(
         )
         .optional()?
         .ok_or(StorageError::NotFound)?;
-    let json = format!(
-        "{{\"schema_version\":1,\"ride_id\":\"{}\",\"source\":\"{}\",\"state\":\"{}\",\"created_at_ms\":{},\"updated_at_ms\":{},\"point_count\":{},\"distance_mm\":{}}}",
-        ride_id.uuid(),
-        source,
-        state,
-        created_at_ms,
-        updated_at_ms,
-        point_count,
-        distance_mm
-    );
+    let music_history = export_music_history(connection, ride_id)?;
+    let json = serde_json::json!({
+        "schema_version": 2,
+        "ride_id": ride_id.uuid().to_string(),
+        "source": source,
+        "state": state,
+        "created_at_ms": created_at_ms,
+        "updated_at_ms": updated_at_ms,
+        "point_count": point_count,
+        "distance_mm": distance_mm,
+        "music_history": music_history,
+    })
+    .to_string();
     fs::write(destination, json)?;
     Ok(())
+}
+
+fn export_music_history(
+    connection: &Connection,
+    ride_id: RideId,
+) -> Result<serde_json::Value, StorageError> {
+    let state = music_history_state(connection, ride_id)?;
+    let events = match state {
+        MusicHistoryState::HumanReadable | MusicHistoryState::Redacted => {
+            let mut statement = connection.prepare(
+                "SELECT sequence, provider, item_identifier, title, artist, kind,
+                        monotonic_at_ms, wall_clock_at_ms, clock_uncertainty_milliseconds
+                 FROM ride_music_event WHERE ride_id = ?1 ORDER BY sequence",
+            )?;
+            statement
+                .query_map([ride_id.uuid().to_string()], |row| {
+                    let item_identifier = row.get::<_, Option<String>>(2)?;
+                    let display_metadata = state == MusicHistoryState::HumanReadable;
+                    let title = if display_metadata {
+                        row.get::<_, Option<String>>(3)?
+                    } else {
+                        None
+                    };
+                    let artist = if display_metadata {
+                        row.get::<_, Option<String>>(4)?
+                    } else {
+                        None
+                    };
+                    Ok(serde_json::json!({
+                        "sequence": row.get::<_, u64>(0)?,
+                        "provider": row.get::<_, String>(1)?,
+                        "item_identifier": item_identifier,
+                        "title": title,
+                        "artist": artist,
+                        "kind": row.get::<_, String>(5)?,
+                        "monotonic_at_ms": row.get::<_, u64>(6)?,
+                        "wall_clock_at_ms": row.get::<_, u64>(7)?,
+                        "clock_uncertainty_milliseconds": row.get::<_, u64>(8)?,
+                    }))
+                })?
+                .collect::<Result<Vec<_>, _>>()?
+        }
+        MusicHistoryState::Missing | MusicHistoryState::Disabled | MusicHistoryState::Deleted => {
+            Vec::new()
+        }
+    };
+    Ok(serde_json::json!({
+        "state": export_music_history_state_name(state),
+        "events": events,
+    }))
+}
+
+fn export_music_history_state_name(state: MusicHistoryState) -> &'static str {
+    match state {
+        MusicHistoryState::Missing => "missing",
+        MusicHistoryState::Disabled => "disabled",
+        MusicHistoryState::Redacted => "redacted",
+        MusicHistoryState::HumanReadable => "human_readable",
+        MusicHistoryState::Deleted => "deleted",
+    }
 }
 
 fn create_ride(
@@ -5271,11 +5351,15 @@ fn apply_music_history_policy(
         }
     }
     transaction.execute(
-        "INSERT INTO ride_music_history (ride_id, policy)
-         VALUES (?1, ?2)
-         ON CONFLICT(ride_id) DO UPDATE SET policy = excluded.policy, deleted = 0,
+        "INSERT INTO ride_music_history (ride_id, policy, state)
+         VALUES (?1, ?2, ?3)
+         ON CONFLICT(ride_id) DO UPDATE SET policy = excluded.policy, state = excluded.state, deleted = 0,
              last_observed_at_ms = CASE WHEN excluded.policy = 'disabled' THEN NULL ELSE last_observed_at_ms END",
-        params![ride_id.uuid().to_string(), policy_name(policy)],
+        params![
+            ride_id.uuid().to_string(),
+            policy_name(policy),
+            history_state_name(policy),
+        ],
     )?;
     if policy == MusicHistoryPolicy::Disabled {
         transaction.execute(
@@ -5492,9 +5576,9 @@ fn delete_music_history(connection: &mut Connection, ride_id: RideId) -> Result<
         [ride_id.uuid().to_string()],
     )?;
     transaction.execute(
-        "INSERT INTO ride_music_history (ride_id, policy, deleted)
-         VALUES (?1, 'disabled', 1)
-         ON CONFLICT(ride_id) DO UPDATE SET policy = 'disabled', deleted = 1, last_observed_at_ms = NULL",
+        "INSERT INTO ride_music_history (ride_id, policy, state, deleted)
+         VALUES (?1, 'disabled', 'deleted', 1)
+         ON CONFLICT(ride_id) DO UPDATE SET policy = 'disabled', state = 'deleted', deleted = 1, last_observed_at_ms = NULL",
         [ride_id.uuid().to_string()],
     )?;
     transaction.commit()?;
@@ -5582,6 +5666,24 @@ fn music_history_policy(
     }
 }
 
+fn music_history_state(
+    connection: &Connection,
+    ride_id: RideId,
+) -> Result<MusicHistoryState, StorageError> {
+    ensure_visible_ride(connection, ride_id)?;
+    let value = connection
+        .query_row(
+            "SELECT state FROM ride_music_history WHERE ride_id = ?1",
+            [ride_id.uuid().to_string()],
+            |row| row.get::<_, String>(0),
+        )
+        .optional()?;
+    value
+        .map(|value| parse_music_history_state(&value))
+        .transpose()
+        .map(|state| state.unwrap_or(MusicHistoryState::Missing))
+}
+
 fn ensure_ride_exists(connection: &Connection, ride_id: RideId) -> Result<(), StorageError> {
     let exists: bool = connection.query_row(
         "SELECT EXISTS(SELECT 1 FROM rides WHERE id = ?1)",
@@ -5605,6 +5707,27 @@ fn policy_name(policy: MusicHistoryPolicy) -> &'static str {
         MusicHistoryPolicy::Disabled => "disabled",
         MusicHistoryPolicy::OpaqueItem => "opaque_item",
         MusicHistoryPolicy::HumanReadable => "human_readable",
+    }
+}
+
+fn history_state_name(policy: MusicHistoryPolicy) -> &'static str {
+    match policy {
+        MusicHistoryPolicy::Disabled => "disabled",
+        MusicHistoryPolicy::OpaqueItem => "opaque_item",
+        MusicHistoryPolicy::HumanReadable => "human_readable",
+    }
+}
+
+fn parse_music_history_state(value: &str) -> Result<MusicHistoryState, StorageError> {
+    match value {
+        "disabled" => Ok(MusicHistoryState::Disabled),
+        "opaque_item" => Ok(MusicHistoryState::Redacted),
+        "human_readable" => Ok(MusicHistoryState::HumanReadable),
+        "deleted" => Ok(MusicHistoryState::Deleted),
+        other => Err(StorageError::InvalidStoredValue {
+            field: "music history state",
+            value: other.to_owned(),
+        }),
     }
 }
 

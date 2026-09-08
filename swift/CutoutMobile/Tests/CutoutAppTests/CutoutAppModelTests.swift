@@ -251,6 +251,37 @@ final class CutoutAppModelTests: XCTestCase {
     }
 
     @MainActor
+    func testStoppingRideClearsPendingMusicCaptureContext() {
+        let driver = SessionDriverSpy(rows: [])
+        let model = CutoutAppModel(core: driver)
+        XCTAssertTrue(model.startGpsOnlyRide())
+        XCTAssertTrue(model.setMusicHistoryPolicy(.opaqueItem))
+
+        let snapshot = MobileMusicSnapshotDto(
+            provider: .appleMusic,
+            sessionId: "session",
+            state: .playing,
+            item: MobileMusicItemDto(identifier: "track-1", title: "Song", artist: "Artist"),
+            positionMilliseconds: nil,
+            durationMilliseconds: nil,
+            observedAtMs: 1,
+            capabilities: MobileMusicCapabilitiesDto(
+                previous: false,
+                play: false,
+                pause: true,
+                next: true,
+                openProvider: true
+            )
+        )
+        XCTAssertTrue(model.ingestMusicObservation(MusicProviderObservation(snapshot: snapshot)))
+        XCTAssertNotNil(driver.musicCaptureObservation)
+
+        XCTAssertTrue(model.stopRideMap())
+
+        XCTAssertNil(driver.musicCaptureObservation)
+    }
+
+    @MainActor
     func testLoweringActiveMusicPolicyRedactsVisibleTimeline() {
         let driver = SessionDriverSpy(rows: [])
         let model = CutoutAppModel(core: driver)
@@ -355,10 +386,18 @@ final class CutoutAppModelTests: XCTestCase {
         XCTAssertEqual(model.rideMapHistoryDetailMusicTimeline.first?.title, "Song")
         XCTAssertEqual(model.rideMapHistoryDetailMusicTimeline.first?.kind, .play)
         XCTAssertEqual(try state.storedMusicEvents(rideID: ride.rideID).first?.sequence, 0)
+        XCTAssertEqual(
+            try state.storedMusicHistoryState(rideID: ride.rideID),
+            .humanReadable
+        )
 
         XCTAssertTrue(model.forgetMusicHistory(for: ride.rideID))
         XCTAssertTrue(model.rideMapHistoryDetailMusicTimeline.isEmpty)
         XCTAssertTrue(try state.storedMusicEvents(rideID: ride.rideID).isEmpty)
+        XCTAssertEqual(
+            try state.storedMusicHistoryState(rideID: ride.rideID),
+            .deleted
+        )
         XCTAssertNotNil(try state.storedHistoryRide(rideID: ride.rideID))
     }
 
@@ -392,6 +431,40 @@ final class CutoutAppModelTests: XCTestCase {
         XCTAssertEqual(model.musicNowPlaying?.provider, .spotify)
         XCTAssertEqual(model.musicNowPlaying?.state, .unavailable)
         XCTAssertNil(model.musicNowPlaying?.item)
+    }
+
+    @MainActor
+    func testBackgroundMusicProjectionBecomesStaleWithoutRecordingAnEvent() throws {
+        let state = MobileRideMapState()
+        _ = try state.startGpsOnly(atMs: 1_000, lastConnectedVehicle: nil)
+        let model = CutoutAppModel(
+            core: SessionDriverSpy(rows: [], rideMapState: state, preserveExistingRide: true)
+        )
+        model.restoreMusicPlayer()
+
+        let snapshot = MobileMusicSnapshotDto(
+            provider: .appleMusic,
+            sessionId: "session",
+            state: .playing,
+            item: MobileMusicItemDto(identifier: "track-1", title: "Song", artist: "Artist"),
+            positionMilliseconds: nil,
+            durationMilliseconds: nil,
+            observedAtMs: 1,
+            capabilities: .init(previous: true, play: false, pause: true, next: true, openProvider: true)
+        )
+        XCTAssertTrue(
+            model.ingestMusicObservation(
+                MusicProviderObservation(snapshot: snapshot),
+                wallClockAtMs: 1_700_000_000_000,
+                clockUncertaintyMs: 5
+            )
+        )
+        XCTAssertEqual(model.musicNowPlaying?.state, .playing)
+
+        model.appDidEnterBackground()
+
+        XCTAssertEqual(model.musicNowPlaying?.state, .stale)
+        XCTAssertTrue(model.musicTimelineEvents.isEmpty)
     }
 
     private func clear(
@@ -548,6 +621,30 @@ final class CutoutAppModelTests: XCTestCase {
                 isCancelled: false
             )
         )
+    }
+
+    @MainActor
+    func testMusicHistoryQueryPreservesDurableStateAlongsideEvents() {
+        let result = CutoutAppModel.musicHistoryQueryResult(
+            .success([]),
+            state: .success(.redacted)
+        )
+
+        XCTAssertEqual(result.state, .redacted)
+        XCTAssertTrue(result.events.isEmpty)
+        XCTAssertNil(result.error)
+    }
+
+    @MainActor
+    func testMusicHistoryErrorAccessibilityTextDoesNotExposeStorageDetails() {
+        let error = MobileRideMapError.storageError("private database path")
+        let accessibilityText = error.musicHistoryAccessibilityText
+
+        XCTAssertEqual(
+            accessibilityText,
+            localizedAppText("music.history.unavailable")
+        )
+        XCTAssertFalse(accessibilityText.contains("private database path"))
     }
 
     @MainActor

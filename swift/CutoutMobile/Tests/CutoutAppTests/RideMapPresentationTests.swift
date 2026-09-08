@@ -21,6 +21,32 @@ final class RideMapPresentationTests: XCTestCase {
         XCTAssertEqual(forgottenRideID, "destination-ride")
     }
 
+    func testHistoryMusicForgetRequiresRetainedMetadata() {
+        let forget: (String) -> Bool = { _ in true }
+        let missing = RideMapHistoryMusicDetail(
+            rideID: "missing",
+            events: [],
+            state: .missing,
+            forgetMusicHistory: forget
+        )
+        let redacted = RideMapHistoryMusicDetail(
+            rideID: "redacted",
+            events: [],
+            state: .redacted,
+            forgetMusicHistory: forget
+        )
+        let deleted = RideMapHistoryMusicDetail(
+            rideID: "deleted",
+            events: [],
+            state: .deleted,
+            forgetMusicHistory: forget
+        )
+
+        XCTAssertFalse(missing.canForget)
+        XCTAssertTrue(redacted.canForget)
+        XCTAssertFalse(deleted.canForget)
+    }
+
     private func point(
         sequence: UInt64,
         segmentId: UInt64 = 0,
