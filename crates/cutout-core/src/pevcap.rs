@@ -967,6 +967,10 @@ impl<R: Read> PevcapReader<R> {
         }
     }
 
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "the streaming cursor state is passed by reference to avoid copying it"
+    )]
     fn next_binary_location(
         reader: &mut R,
         version: PevcapFormatVersion,
@@ -1708,6 +1712,10 @@ impl PevcapMusicEvent {
     }
 
     /// Serializes this independent observation as a JSONL event line.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`PevcapJsonlError::Serialize`] when the event cannot be encoded as JSON.
     #[cfg(feature = "serde")]
     pub fn to_jsonl_line(&self) -> Result<String, PevcapJsonlError> {
         serde_json::to_string(&PevcapJsonlLine::Music {
@@ -1936,6 +1944,10 @@ impl PevcapRecord {
     }
 
     /// Attaches bounded music metadata to this capture frame.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`PevcapRecordError::UnexpectedMusic`] when this is an outbound frame.
     #[cfg(feature = "serde")]
     pub fn with_music(mut self, music: PevcapMusicEvent) -> Result<Self, PevcapRecordError> {
         if self.direction != PevcapDirection::Inbound {
@@ -2367,6 +2379,10 @@ impl PevcapCapture {
     ///
     /// Returns [`PevcapJsonlError`] when the stream is malformed, missing a
     /// header, has the wrong magic/version, or violates PEVCAP header bounds.
+    #[allow(
+        clippy::too_many_lines,
+        reason = "the line-oriented parser keeps all format validation in one place"
+    )]
     #[cfg(feature = "serde")]
     pub fn from_jsonl(input: &str) -> Result<Self, PevcapJsonlError> {
         let mut header = None;
@@ -4040,8 +4056,8 @@ mod tests {
         assert_eq!(decoded_jsonl.locations, capture.locations);
         assert!(decoded_jsonl.records.is_empty());
         let locations_v1_jsonl = jsonl.replacen(
-            &format!("\"minor\":{}", PEVCAP_VERSION_MINOR),
-            &format!("\"minor\":{}", PEVCAP_VERSION_MINOR_LOCATIONS),
+            &format!("\"minor\":{PEVCAP_VERSION_MINOR}"),
+            &format!("\"minor\":{PEVCAP_VERSION_MINOR_LOCATIONS}"),
             1,
         );
         let decoded_locations_v1 =
@@ -4291,7 +4307,7 @@ mod tests {
         }
 
         let legacy_input = capture.to_jsonl().expect("capture should encode").replacen(
-            &format!("\"minor\":{}", PEVCAP_VERSION_MINOR),
+            &format!("\"minor\":{PEVCAP_VERSION_MINOR}"),
             "\"minor\":0",
             1,
         );
@@ -4471,7 +4487,7 @@ mod tests {
 
         let jsonl = capture.to_jsonl().expect("capture should encode");
         let legacy_jsonl = jsonl.replacen(
-            &format!("\"minor\":{}", PEVCAP_VERSION_MINOR),
+            &format!("\"minor\":{PEVCAP_VERSION_MINOR}"),
             "\"minor\":0",
             1,
         );
@@ -5828,8 +5844,8 @@ mod tests {
         .to_jsonl()
         .expect("current JSONL encodes");
         let legacy_jsonl = current.replacen(
-            &format!("\"minor\":{}", PEVCAP_VERSION_MINOR),
-            &format!("\"minor\":{}", PEVCAP_VERSION_MINOR_LOCATIONS),
+            &format!("\"minor\":{PEVCAP_VERSION_MINOR}"),
+            &format!("\"minor\":{PEVCAP_VERSION_MINOR_LOCATIONS}"),
             1,
         );
         assert!(matches!(

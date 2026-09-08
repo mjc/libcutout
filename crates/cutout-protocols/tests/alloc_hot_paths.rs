@@ -1,10 +1,8 @@
 #![allow(unsafe_code)]
 
 use std::alloc::{GlobalAlloc, Layout, System};
-use std::sync::{
-    Mutex,
-    atomic::{AtomicUsize, Ordering},
-};
+use std::cell::Cell;
+use std::sync::Mutex;
 
 use cutout_core::{
     CommandKind, LinkInfo, MonotonicTimestamp, ProtocolSession, SessionInput, SessionOutput,
@@ -33,8 +31,10 @@ const fn write_len(value: u16) -> TransportWriteLimit {
     TransportWriteLimit::from_bytes(value)
 }
 
-static ALLOCATIONS: AtomicUsize = AtomicUsize::new(0);
-static REALLOCATIONS: AtomicUsize = AtomicUsize::new(0);
+thread_local! {
+    static ALLOCATIONS: Cell<usize> = const { Cell::new(0) };
+    static REALLOCATIONS: Cell<usize> = const { Cell::new(0) };
+}
 static ALLOCATION_TEST_LOCK: Mutex<()> = Mutex::new(());
 
 #[global_allocator]
@@ -44,13 +44,13 @@ static GLOBAL_ALLOCATOR: CountingAllocator = CountingAllocator;
 // allocation operations to `System` with the original pointers and layouts.
 unsafe impl GlobalAlloc for CountingAllocator {
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
-        ALLOCATIONS.fetch_add(1, Ordering::SeqCst);
+        ALLOCATIONS.with(|count| count.set(count.get() + 1));
         // SAFETY: delegate to the system allocator.
         unsafe { System.alloc(layout) }
     }
 
     unsafe fn alloc_zeroed(&self, layout: Layout) -> *mut u8 {
-        ALLOCATIONS.fetch_add(1, Ordering::SeqCst);
+        ALLOCATIONS.with(|count| count.set(count.get() + 1));
         // SAFETY: delegate to the system allocator.
         unsafe { System.alloc_zeroed(layout) }
     }
@@ -61,7 +61,7 @@ unsafe impl GlobalAlloc for CountingAllocator {
     }
 
     unsafe fn realloc(&self, ptr: *mut u8, layout: Layout, new_size: usize) -> *mut u8 {
-        REALLOCATIONS.fetch_add(1, Ordering::SeqCst);
+        REALLOCATIONS.with(|count| count.set(count.get() + 1));
         // SAFETY: delegate to the system allocator.
         unsafe { System.realloc(ptr, layout, new_size) }
     }
@@ -82,8 +82,8 @@ const VESC_VALUES: [u8; 28] = [
 ];
 
 fn reset_counts() {
-    ALLOCATIONS.store(0, Ordering::SeqCst);
-    REALLOCATIONS.store(0, Ordering::SeqCst);
+    ALLOCATIONS.with(|count| count.set(0));
+    REALLOCATIONS.with(|count| count.set(0));
 }
 
 fn assert_no_allocations(label: &str, action: impl FnOnce()) {
@@ -93,12 +93,10 @@ fn assert_no_allocations(label: &str, action: impl FnOnce()) {
     reset_counts();
     action();
 
-    assert_eq!(ALLOCATIONS.load(Ordering::SeqCst), 0, "{label} allocated");
-    assert_eq!(
-        REALLOCATIONS.load(Ordering::SeqCst),
-        0,
-        "{label} reallocated"
-    );
+    let allocations = ALLOCATIONS.with(Cell::get);
+    let reallocations = REALLOCATIONS.with(Cell::get);
+    assert_eq!(allocations, 0, "{label} allocated");
+    assert_eq!(reallocations, 0, "{label} reallocated");
 }
 
 fn linked_session<M>() -> (ReadOnlySession<M, false>, Vec<SessionOutput>)
