@@ -19,6 +19,9 @@ struct MelkLightingLiveValidator {
         session.onIdentity = { identity in
             print("identity name=\(identity.name ?? "unknown") id=\(identity.platformIdentifier) rssi=\(identity.rssi.map(String.init) ?? "unknown")")
         }
+        session.onAdvertisement = { name, identifier, rssi in
+            print("advertisement name=\(name ?? "unknown") id=\(identifier) rssi=\(rssi)")
+        }
         session.onStateChange = { state in
             print("state=\(state)")
             if case .ready = state { ready = true }

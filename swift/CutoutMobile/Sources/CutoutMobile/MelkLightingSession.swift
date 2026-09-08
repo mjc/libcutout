@@ -277,6 +277,10 @@ public final class MelkLightingPeripheralSession: NSObject, CBCentralManagerDele
     /// Called on the lighting session's CoreBluetooth queue for the selected peripheral identity.
     public var onIdentity: ((MelkLightingPeripheralIdentity) -> Void)?
 
+    /// Called on the lighting session's CoreBluetooth queue for every advertisement observed while scanning.
+    /// This is intended for bounded validator diagnostics; production callers should leave it unset.
+    public var onAdvertisement: ((String?, String, Int) -> Void)?
+
     /// Called on the lighting session's CoreBluetooth queue for bounded diagnostic records.
     public var onRecord: ((String) -> Void)?
 
@@ -455,12 +459,13 @@ public final class MelkLightingPeripheralSession: NSObject, CBCentralManagerDele
     ) {
         onQueue {
             guard central === self.central, self.peripheral == nil else { return }
+            let name = (advertisementData[CBAdvertisementDataLocalNameKey] as? String) ?? peripheral.name
+            onAdvertisement?(name, peripheral.identifier.uuidString, rssi.intValue)
             guard targetPolicy.accepts(
                 CoreBluetoothPeripheralIdentifier(peripheral.identifier.uuidString)
             ) else {
                 return
             }
-            let name = (advertisementData[CBAdvertisementDataLocalNameKey] as? String) ?? peripheral.name
             guard Self.isMelkName(name) else {
                 return
             }
