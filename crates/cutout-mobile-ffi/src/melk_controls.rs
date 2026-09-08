@@ -41,7 +41,22 @@ impl TryFrom<MobileLightingPlaybackDto> for LightingPlayback {
                 }
                 Self::Effect { pattern, speed }
             }
-            MobileLightingPlaybackDto::Music { .. } => return Err(Self::Error::InvalidState),
+            MobileLightingPlaybackDto::Music {
+                effect,
+                sensitivity,
+            } => {
+                if !MelkLightingProfile::capabilities().controller_microphone {
+                    return Err(Self::Error::InvalidState);
+                }
+                let effect: cutout_core::MelkMusicEffect =
+                    effect.try_into().map_err(|_| Self::Error::InvalidState)?;
+                let sensitivity: cutout_core::MelkSensitivity =
+                    sensitivity.try_into().map_err(|_| Self::Error::InvalidState)?;
+                Self::Music {
+                    effect,
+                    sensitivity,
+                }
+            }
         })
     }
 }
