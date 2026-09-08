@@ -86,7 +86,7 @@ the official app.
 - Color drag retains the existing 30 Hz preview path; queued superseded solid-color frames are coalesced so the newest drag value is preserved under BLE backpressure. Complete playback changes
   are validated in Rust and admitted together to a bounded Bluetooth write queue.
   CoreBluetooth backpressure pauses draining; disconnect discards pending writes.
-- Effects are saved with named presets only when their IDs are capture-backed (currently 1, 16, 22, and 75). Controller-microphone music and schedules remain visible as future design surfaces but are disabled until physical verification.
+- App-local scenes support the complete save, replace-from-current-state, and delete lifecycle through the versioned Rust-backed record. Effects are saved with named presets only when their IDs are capture-backed (currently 1, 16, 22, and 75). Controller-native named scenes are not claimed; controller-microphone music and schedules remain visible as future design surfaces but are disabled until physical verification.
   Schema version 2 reads version 1 records as solid RGB.
 - Optional reconnect restore uses the last confirmed settings for the same
   accessory identity. Requested state is not a claim of physical confirmation.
