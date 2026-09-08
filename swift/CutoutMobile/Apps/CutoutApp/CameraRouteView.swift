@@ -9,6 +9,7 @@ import AppKit
 #endif
 
 struct CameraRouteContainerView: View {
+    let close: (() -> Void)?
     let annotateCapture: ((String, String) -> Void)?
     let recordMediaReference: ((CameraSourceKind, CameraMediaEvidence, URL) -> Void)?
     @State private var adapter = CameraLocalNetworkAdapter()
@@ -31,10 +32,12 @@ struct CameraRouteContainerView: View {
     @State private var isRequestingStill = false
 
     init(
+        close: (() -> Void)? = nil,
         annotateCapture: ((String, String) -> Void)? = nil,
         recordMediaReference: ((CameraSourceKind, CameraMediaEvidence, URL) -> Void)? = nil,
         sessionState: CutoutSessionStateHandle = CutoutSessionStateHandle()
     ) {
+        self.close = close
         self.annotateCapture = annotateCapture
         self.recordMediaReference = recordMediaReference
         _adapter = State(initialValue: CameraLocalNetworkAdapter(sessionState: sessionState))
@@ -42,6 +45,7 @@ struct CameraRouteContainerView: View {
 
     var body: some View {
         CameraRouteView(
+            onClose: close,
             presentation: adapter.presentation,
             readOnlyEvidence: adapter.readOnlyEvidence,
             movieRTSPURI: adapter.readOnlyEvidence?.movieRTSPURI,
@@ -107,6 +111,8 @@ struct CameraRouteContainerView: View {
                 let evidence = try await adapter.loadReadOnlyEvidence(address: address, port: portNumber)
                 annotateCapture?("camera_profile", "novatek_r3_pro")
                 annotateCapture?("camera_firmware", evidence.firmwareVersion)
+            } catch CameraReadOnlyRequestError.pathUnavailable {
+                readErrorKey = "camera.connection.detail.wifi_required"
             } catch CameraReadOnlyRequestError.unsupportedProfile {
                 readErrorKey = "camera.error.unsupported_profile"
             } catch {
@@ -348,6 +354,7 @@ private extension CameraCommandOutcome {
 }
 
 struct CameraRouteView: View {
+    let onClose: (() -> Void)?
     let presentation: CameraPresentation
     let readOnlyEvidence: CameraReadOnlyEvidence?
     let movieRTSPURI: String?
@@ -382,6 +389,7 @@ struct CameraRouteView: View {
     let stopPreview: (() -> Void)?
 
     init(
+        onClose: (() -> Void)? = nil,
         presentation: CameraPresentation = .initial,
         readOnlyEvidence: CameraReadOnlyEvidence? = nil,
         movieRTSPURI: String? = nil,
@@ -414,6 +422,7 @@ struct CameraRouteView: View {
         savePreview: (() -> Void)? = nil,
         stopPreview: (() -> Void)? = nil
     ) {
+        self.onClose = onClose
         self.presentation = presentation
         self.readOnlyEvidence = readOnlyEvidence
         self.movieRTSPURI = movieRTSPURI
@@ -454,6 +463,14 @@ struct CameraRouteView: View {
             bottomPadding: 32,
             horizontalPadding: 20
         ) {
+            if let onClose {
+                Button(action: onClose) {
+                    Label(localizedAppText("camera.action.back"), systemImage: "chevron.left")
+                }
+                .buttonStyle(.bordered)
+                .accessibilityIdentifier("camera.back")
+            }
+
             if #available(iOS 26, macOS 26, *) {
                 GlassEffectContainer(spacing: 16) {
                     cameraCards
@@ -677,7 +694,12 @@ private struct CameraStatusCard: View {
                     )
                 }
                 .buttonStyle(.borderedProminent)
-                .disabled(isReading || address.isEmpty || port.isEmpty)
+                .disabled(
+                    isReading
+                        || address.isEmpty
+                        || port.isEmpty
+                        || presentation.connection.blocksReadOnlyDiscovery
+                )
                 .accessibilityIdentifier("camera.origin.read")
 
                 if let readErrorKey {

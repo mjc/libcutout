@@ -11,6 +11,13 @@ public enum CameraConnectionPresentation: Equatable, Sendable {
     case unsupported
 }
 
+public extension CameraConnectionPresentation {
+    /// The known path state that must block a read-only camera probe.
+    var blocksReadOnlyDiscovery: Bool {
+        self == .wifiRequired
+    }
+}
+
 /// Foreground preview truth, kept independent from onboard recording.
 public enum CameraPreviewPresentation: Equatable, Sendable {
     case stopped
@@ -276,7 +283,7 @@ public struct CameraReadOnlyEvidence: Equatable, Sendable {
     }
 }
 
-/// Presentation-only camera state supplied by the future Apple network adapter.
+/// Presentation-only camera state supplied by the Apple local-network adapter.
 ///
 /// The initial value is deliberately non-optimistic: it does not claim a
 /// connection, preview, recording, or storage status before read-only evidence

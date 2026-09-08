@@ -13,6 +13,12 @@ final class CameraPresentationTests: XCTestCase {
         XCTAssertNil(presentation.profileName)
     }
 
+    func testOnlyKnownUnavailableWiFiBlocksReadOnlyDiscovery() {
+        XCTAssertTrue(CameraConnectionPresentation.wifiRequired.blocksReadOnlyDiscovery)
+        XCTAssertFalse(CameraConnectionPresentation.notConfigured.blocksReadOnlyDiscovery)
+        XCTAssertFalse(CameraConnectionPresentation.connected.blocksReadOnlyDiscovery)
+    }
+
     func testPreviewAndOnboardRecordingAreIndependentPresentationValues() {
         let presentation = CameraPresentation(
             connection: .connected,

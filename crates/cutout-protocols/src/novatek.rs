@@ -933,6 +933,8 @@ impl NovatekRecordingCommand {
 
 #[cfg(test)]
 mod tests {
+    use std::fmt::Write as _;
+
     use super::*;
 
     #[test]
@@ -1127,6 +1129,33 @@ mod tests {
         assert_eq!(
             media.entries()[1].path(),
             r"A:\Novatek\Photo\20251021191727_001681.JPG"
+        );
+    }
+
+    #[test]
+    fn media_list_parser_accepts_the_observed_r3_inventory_size() {
+        const OBSERVED_ENTRY_COUNT: usize = 1_826;
+        let mut response = String::from("<LIST>");
+        for index in 0..OBSERVED_ENTRY_COUNT {
+            write!(
+                response,
+                "<ALLFile><File><NAME>20260822112613_{index:06}.TS</NAME>\
+<FPATH>A:\\Novatek\\Movie\\20260822112613_{index:06}.TS</FPATH>\
+<SIZE>70827496</SIZE><TIMECODE>1561746275</TIMECODE>\
+<TIME>2026/08/22 11:27:06</TIME><ATTR>32</ATTR></File></ALLFile>"
+            )
+            .expect("writing the bounded fixture");
+        }
+        response.push_str("</LIST>");
+
+        let media = parse_media_list_response(response.as_bytes())
+            .expect("the observed R3 inventory remains within parser bounds");
+
+        assert_eq!(media.entries().len(), OBSERVED_ENTRY_COUNT);
+        assert_eq!(media.entries()[0].name(), "20260822112613_000000.TS");
+        assert_eq!(
+            media.entries()[OBSERVED_ENTRY_COUNT - 1].path(),
+            r"A:\Novatek\Movie\20260822112613_001825.TS"
         );
     }
 
