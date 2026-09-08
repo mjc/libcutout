@@ -76,9 +76,23 @@ struct RideMapCanvasView: View {
         for coordinates: [CLLocationCoordinate2D],
         dynamicTypeSize: DynamicTypeSize = .large
     ) -> (start: CGSize, end: CGSize) {
+        markerOffsets(
+            first: coordinates.first,
+            last: coordinates.last,
+            coordinateCount: coordinates.count,
+            dynamicTypeSize: dynamicTypeSize
+        )
+    }
+
+    private static func markerOffsets(
+        first: CLLocationCoordinate2D?,
+        last: CLLocationCoordinate2D?,
+        coordinateCount: Int,
+        dynamicTypeSize: DynamicTypeSize
+    ) -> (start: CGSize, end: CGSize) {
         let scale: CGFloat = dynamicTypeSize.isAccessibilitySize ? 1.5 : 1
-        guard let first = coordinates.first, let last = coordinates.last, coordinates.count > 1 else {
-            guard coordinates.isEmpty == false else { return (.zero, .zero) }
+        guard let first, let last, coordinateCount > 1 else {
+            guard coordinateCount > 0 else { return (.zero, .zero) }
             return (
                 CGSize(width: -36 * scale, height: -18 * scale),
                 CGSize(width: 36 * scale, height: 18 * scale)
@@ -214,9 +228,12 @@ struct RideMapCanvasView: View {
     }
 
     var body: some View {
-        let endpointOffsets = Self.markerOffsets(for: points.map {
-            CLLocationCoordinate2D(latitude: $0.latitudeDegrees, longitude: $0.longitudeDegrees)
-        }, dynamicTypeSize: dynamicTypeSize)
+        let endpointOffsets = Self.markerOffsets(
+            first: points.first.map(coordinate(for:)),
+            last: points.last.map(coordinate(for:)),
+            coordinateCount: points.count,
+            dynamicTypeSize: dynamicTypeSize
+        )
         let startPoint = Self.canonicalEndpointPoint(
             in: points,
             sequence: endpointMetadata.canonicalStartSequence,
