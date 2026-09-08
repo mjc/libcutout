@@ -14,12 +14,14 @@ struct MelkLightingLiveValidator {
         let session = MelkLightingPeripheralSession()
         let startedAt = Date()
         var ready = false
+        var advertisedIdentifiers = Set<String>()
         var finished = false
 
         session.onIdentity = { identity in
             print("identity name=\(identity.name ?? "unknown") id=\(identity.platformIdentifier) rssi=\(identity.rssi.map(String.init) ?? "unknown")")
         }
         session.onAdvertisement = { name, identifier, rssi in
+            guard advertisedIdentifiers.insert(identifier).inserted else { return }
             print("advertisement name=\(name ?? "unknown") id=\(identifier) rssi=\(rssi)")
         }
         session.onStateChange = { state in
