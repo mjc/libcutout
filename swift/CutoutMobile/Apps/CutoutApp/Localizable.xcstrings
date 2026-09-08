@@ -1,6 +1,150 @@
 {
   "sourceLanguage" : "en",
   "strings" : {
+    "lighting.state.idle" : {
+      "comment" : "Lighting connection state.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Idle" } } }
+    },
+    "lighting.state.scanning" : {
+      "comment" : "Lighting connection state.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Scanning for MELK-OC21" } } }
+    },
+    "lighting.state.connecting" : {
+      "comment" : "Lighting connection state.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Connecting" } } }
+    },
+    "lighting.state.retrying" : {
+      "comment" : "Lighting retry state. Placeholders are attempt and delay seconds.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Retrying (%lld) in %llds" } } }
+    },
+    "lighting.state.discovering" : {
+      "comment" : "Lighting connection state.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Discovering FFF0/FFF3/FFF4" } } }
+    },
+    "lighting.state.ready" : {
+      "comment" : "Lighting connection state.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Ready" } } }
+    },
+    "lighting.state.disconnected" : {
+      "comment" : "Lighting connection state.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Disconnected" } } }
+    },
+    "lighting.state.failed" : {
+      "comment" : "Lighting connection failure. Placeholder is the failure reason.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Failed: %@" } } }
+    },
+    "lighting.command.idle" : {
+      "comment" : "Lighting command status.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Idle" } } }
+    },
+    "lighting.command.requested" : {
+      "comment" : "Lighting command status.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Requested; awaiting confirmation" } } }
+    },
+    "lighting.command.confirmed" : {
+      "comment" : "Lighting command status.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Confirmed by external observation" } } }
+    },
+    "lighting.command.unconfirmed" : {
+      "comment" : "Lighting command status.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Unconfirmed" } } }
+    },
+    "lighting.command.evidence.title" : {
+      "comment" : "Heading for the lighting command observation card.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Command evidence" } } }
+    },
+    "lighting.command.evidence.hint" : {
+      "comment" : "Instruction to confirm a lighting command only after observing the controller.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Confirm only after observing the controller change." } } }
+    },
+    "lighting.command.mark_confirmed" : {
+      "comment" : "Action that records external confirmation of a lighting command.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Mark confirmed" } } }
+    },
+    "lighting.command.mark_unconfirmed" : {
+      "comment" : "Action that records that a lighting command could not be externally confirmed.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Mark unconfirmed" } } }
+    },
+    "lighting.page.color" : {
+      "comment" : "Lighting controls page label.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Color" } } }
+    },
+    "lighting.page.effects" : {
+      "comment" : "Lighting controls page label.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Effects" } } }
+    },
+    "lighting.page.music" : {
+      "comment" : "Lighting controls page label.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Music" } } }
+    },
+    "lighting.page.schedule" : {
+      "comment" : "Lighting controls page label.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Schedule" } } }
+    },
+    "lighting.title" : {
+      "comment" : "Lighting screen title.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Lighting" } } }
+    },
+    "lighting.controls" : {
+      "comment" : "Lighting page picker accessibility label.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Lighting controls" } } }
+    },
+    "lighting.solid_color" : {
+      "comment" : "Solid color control heading.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Solid color" } } }
+    },
+    "lighting.set_white" : {
+      "comment" : "Set-white lighting action and accessibility label.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Set white" } } }
+    },
+    "lighting.brightness" : {
+      "comment" : "Brightness control heading.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Brightness" } } }
+    },
+    "lighting.power" : {
+      "comment" : "Lighting power toggle label.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Power" } } }
+    },
+    "lighting.error.power_not_ready" : {
+      "comment" : "Lighting command refusal when the controller is not ready.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Power was not sent because the lighting controller is not ready." } } }
+    },
+    "lighting.error.color_not_ready" : {
+      "comment" : "Lighting command refusal when the controller is not ready.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Color was not sent because the lighting controller is not ready." } } }
+    },
+    "lighting.error.brightness_not_ready" : {
+      "comment" : "Lighting command refusal when the controller is not ready.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Brightness was not sent because the lighting controller is not ready." } } }
+    },
+    "lighting.error.effect_speed_failed" : {
+      "comment" : "Lighting effect speed command failed.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Could not send effect speed. Check the connection and try again." } } }
+    },
+    "lighting.error.state_failed" : {
+      "comment" : "Lighting state command failed.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Could not send lighting settings. Check the connection and try again." } } }
+    },
+    "lighting.error.schedule_failed" : {
+      "comment" : "Lighting schedule command failed.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Could not send the timer. Check the connection and try again." } } }
+    },
+    "lighting.error.restore_incompatible" : {
+      "comment" : "Saved lighting state cannot be restored after a profile or capability change.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Saved lighting settings are from an incompatible profile; pair this accessory again before restoring." } } }
+    },
+    "lighting.pairing.nearby_title" : {
+      "comment" : "Heading for the first-pairing accessory list.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Nearby lighting accessories" } } }
+    },
+    "lighting.pairing.nearby_hint" : {
+      "comment" : "First-pairing guidance; unknown devices remain read-only until their profile is verified.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Choose an accessory to inspect; unknown profiles remain read-only." } } }
+    },
+    "lighting.pairing.unknown_name" : {
+      "comment" : "Fallback name for an advertisement without a local name.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Unknown lighting accessory" } } }
+    },
     "app.command.disconnect" : {
       "comment" : "App command that disconnects the current device.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Disconnect" } } }
@@ -1068,6 +1212,10 @@
     "navigation.section.ride" : {
       "comment" : "Top-level app navigation title for live riding telemetry.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Ride" } } }
+    },
+    "navigation.section.lighting" : {
+      "comment" : "Top-level app navigation title for standalone RGB lighting control.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Lighting" } } }
     },
     "navigation.tab.cells" : {
       "comment" : "Compact navigation tab title for battery cells.",

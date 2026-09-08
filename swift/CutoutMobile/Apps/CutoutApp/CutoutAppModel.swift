@@ -205,6 +205,9 @@ final class CutoutAppModel {
         return candidate
     }
 
+    var selectedRideIdentifier: String? {
+        connectionState.selection?.platformIdentifier
+    }
     var selectedConnectionRoute: DevicePickerConnectionRoute? {
         connectionState.selection?.route
     }
