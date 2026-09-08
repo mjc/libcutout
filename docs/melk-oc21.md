@@ -10,7 +10,8 @@ Commands are based on [dave-code-ruiz/elkbledom](https://github.com/dave-code-ru
 specifically `models.json`, `definitions.json`, `model.py`, and `elkbledom.py`.
 The user's nRF Connect inventory establishes FFF0 service, FFF3 read/write
 without response, and FFF4 notify. The advertisement does not include FFF0:
-scan without a service filter, then check identity and discovered GATT roles.
+scan without a service filter (allowing duplicate advertisements so scan
+responses remain visible), then check identity and discovered GATT roles.
 The same upstream integration documents a MELK initialization handshake: send
 `7e 07 83`, wait one second, then send `7e 04 04`. Production performs this
 one-time sequence after FFF3 discovery and before admitting user commands; it is

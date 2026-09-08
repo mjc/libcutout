@@ -440,7 +440,10 @@ public final class MelkLightingPeripheralSession: NSObject, CBCentralManagerDele
             // connecting and discovering the GATT inventory; the advertised name is the
             // candidate gate that keeps this standalone scan narrow. When a remembered identity
             // exists, didDiscoverPeripheral applies the identity filter before this gate.
-            central.scanForPeripherals(withServices: nil)
+            central.scanForPeripherals(
+                withServices: nil,
+                options: [CBCentralManagerScanOptionAllowDuplicatesKey: true]
+            )
             transition(to: .scanning)
             let target = targetPolicy.preferredUUID.map { " id=\($0.uuidString)" } ?? ""
             record("scan=melk services=all; gatt=FFF0 post-connect\(target)")
