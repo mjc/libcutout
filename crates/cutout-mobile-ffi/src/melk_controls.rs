@@ -50,8 +50,9 @@ impl TryFrom<MobileLightingPlaybackDto> for LightingPlayback {
                 }
                 let effect: cutout_core::MelkMusicEffect =
                     effect.try_into().map_err(|_| Self::Error::InvalidState)?;
-                let sensitivity: cutout_core::MelkSensitivity =
-                    sensitivity.try_into().map_err(|_| Self::Error::InvalidState)?;
+                let sensitivity: cutout_core::MelkSensitivity = sensitivity
+                    .try_into()
+                    .map_err(|_| Self::Error::InvalidState)?;
                 Self::Music {
                     effect,
                     sensitivity,
