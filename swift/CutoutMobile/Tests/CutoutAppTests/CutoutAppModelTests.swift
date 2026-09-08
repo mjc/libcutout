@@ -2400,10 +2400,11 @@ final class CutoutAppModelTests: XCTestCase {
         XCTAssertTrue(model.cameraMediaReferences.isEmpty)
 
         model.applyCaptureEvent(.started(fileURL: URL(fileURLWithPath: "/tmp/ride.jsonl")))
-        model.recordCameraMediaReference(media: media, localURL: localURL)
+        model.recordCameraMediaReference(source: .rtsp, media: media, localURL: localURL)
         model.recordCameraMediaReference(media: media, localURL: localURL)
 
         XCTAssertEqual(model.cameraMediaReferences.count, 1)
+        XCTAssertEqual(model.cameraMediaReferences[0].source, .rtsp)
         XCTAssertEqual(model.cameraMediaReferences[0].rideCaptureFileName, "ride.jsonl")
         XCTAssertEqual(model.cameraMediaReferences[0].clockUncertainty, .unknown)
         XCTAssertEqual(model.cameraSessionStateHandle.cameraMediaProvenance().count, 1)

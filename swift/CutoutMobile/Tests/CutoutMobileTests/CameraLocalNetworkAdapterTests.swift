@@ -345,6 +345,32 @@ final class CameraLocalNetworkAdapterTests: XCTestCase {
     }
 
     @MainActor
+    func testPreviewStartRemainsBoundToTheReadOnlyOriginWhenAddressIsOverridden() async throws {
+        let adapter = CameraLocalNetworkAdapter()
+        let evidence = CameraReadOnlyEvidence(MobileNovatekReadOnlySnapshotDto(
+            firmwareVersion: "R3V1.1_20240411",
+            movieRtspUri: "rtsp://192.168.1.253/xxx.mov",
+            photoRtspUri: "rtsp://192.168.1.253/xxx.mov",
+            configuration: [],
+            storagePresent: true,
+            media: []
+        ))
+        let origin = try mobileValidateNovatekHttpOrigin(address: "192.168.1.254", port: 80)
+        adapter.apply(readOnlyEvidence: evidence, origin: origin)
+
+        do {
+            try await adapter.startPreview(
+                uri: evidence.movieRTSPURI,
+                expectedAddress: "192.168.1.253"
+            )
+            XCTFail("an explicit preview address must not override the evidence origin")
+        } catch let error as CameraReadOnlyRequestError {
+            XCTAssertEqual(error, .originMismatch)
+        }
+        XCTAssertEqual(adapter.presentation.preview, .stopped)
+    }
+
+    @MainActor
     func testPreviewFileDestinationIsCreatedOnlyAfterRTSPNegotiation() async {
         let adapter = CameraLocalNetworkAdapter()
         let path = URL(fileURLWithPath: NSTemporaryDirectory())
@@ -682,6 +708,40 @@ final class CameraLocalNetworkAdapterTests: XCTestCase {
             XCTAssertEqual(error, .unsupported)
         } catch {
             XCTFail("unexpected error: \(error)")
+        }
+    }
+
+    @MainActor
+    func testCameraCommandsRemainBoundToTheReadOnlyOrigin() async throws {
+        let adapter = CameraLocalNetworkAdapter()
+        let responses: [String: Data] = [
+            "3012": Data("<Function><Cmd>3012</Cmd><Status>0</Status><String>R3V1.1_20240411</String></Function>".utf8),
+            "2019": Data("<LIST><MovieLiveViewLink>rtsp://192.168.1.254/xxx.mov</MovieLiveViewLink><PhotoLiveViewLink>rtsp://192.168.1.254/xxx.mov</PhotoLiveViewLink></LIST>".utf8),
+            "3014": Data("<Function><Cmd>1001</Cmd><Status>0</Status></Function>".utf8),
+            "3024": Data("<Function><Cmd>3024</Cmd><Status>0</Status><Value>1</Value></Function>".utf8),
+            "3015": Data("<LIST></LIST>".utf8),
+        ]
+        _ = try await adapter.loadReadOnlyEvidence(
+            address: "192.168.1.254",
+            port: 80
+        ) { url in
+            let command = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems?.first {
+                $0.name == "cmd"
+            }?.value
+            return responses[command!]!
+        }
+
+        do {
+            _ = try await adapter.requestStillCapture(
+                address: "192.168.1.253",
+                port: 80
+            ) { _ in
+                XCTFail("a command for a different local origin must not reach the fetcher")
+                return Data()
+            }
+            XCTFail("camera commands must remain bound to the evidence origin")
+        } catch let error as CameraCommandRequestError {
+            XCTAssertEqual(error, .originMismatch)
         }
     }
 

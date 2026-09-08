@@ -28,6 +28,37 @@ public enum CameraRecordingPresentation: Equatable, Sendable {
     case recording
 }
 
+/// Identity of the camera transport that produced a media record.
+public enum CameraSourceKind: Equatable, Sendable {
+    case novatekR3Pro
+    case rtsp
+    case fixture
+}
+
+extension CameraSourceKind {
+    init(_ dto: MobileCameraSourceKindDto) {
+        switch dto {
+        case .novatekR3Pro:
+            self = .novatekR3Pro
+        case .rtsp:
+            self = .rtsp
+        case .fixture:
+            self = .fixture
+        }
+    }
+
+    public var mobileDto: MobileCameraSourceKindDto {
+        switch self {
+        case .novatekR3Pro:
+            .novatekR3Pro
+        case .rtsp:
+            .rtsp
+        case .fixture:
+            .fixture
+        }
+    }
+}
+
 /// Result of a camera control request, kept distinct from recording readback.
 public enum CameraCommandOutcome: Equatable, Sendable {
     /// The camera response reported status zero.
@@ -130,6 +161,7 @@ extension CameraClockUncertainty {
 /// This reference carries metadata and a local URL only; camera video bytes
 /// remain outside PEVCAP and SQLite.
 public struct CameraMediaReference: Equatable, Sendable {
+    public let source: CameraSourceKind
     public let cameraPath: String
     public let localURL: URL
     public let sizeBytes: UInt64
@@ -139,6 +171,7 @@ public struct CameraMediaReference: Equatable, Sendable {
     public let clockUncertainty: CameraClockUncertainty
 
     public init(
+        source: CameraSourceKind = .novatekR3Pro,
         cameraPath: String,
         localURL: URL,
         sizeBytes: UInt64,
@@ -147,6 +180,7 @@ public struct CameraMediaReference: Equatable, Sendable {
         rideCaptureFileName: String,
         clockUncertainty: CameraClockUncertainty
     ) {
+        self.source = source
         self.cameraPath = cameraPath
         self.localURL = localURL
         self.sizeBytes = sizeBytes
@@ -159,6 +193,7 @@ public struct CameraMediaReference: Equatable, Sendable {
     /// Projects Rust-owned provenance while retaining the local presentation URL.
     public init(provenance: MobileCameraMediaProvenanceDto, localURL: URL) {
         self.init(
+            source: CameraSourceKind(provenance.source),
             cameraPath: provenance.cameraPath,
             localURL: localURL,
             sizeBytes: provenance.sizeBytes,

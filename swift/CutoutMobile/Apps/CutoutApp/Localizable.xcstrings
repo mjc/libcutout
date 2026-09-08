@@ -2152,6 +2152,10 @@
       "comment" : "The camera responded, but its firmware is not the verified R3 Pro profile.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Camera firmware is not the verified R3 Pro profile." } } }
     },
+    "camera.error.origin_mismatch" : {
+      "comment" : "Camera request rejected because the address no longer matches the origin used for read-only evidence.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Camera address changed; reload camera status before requesting media or control." } } }
+    },
     "camera.profile.pending" : {
       "comment" : "Profile identity shown before read-only camera evidence has arrived.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Profile identity pending" } } }

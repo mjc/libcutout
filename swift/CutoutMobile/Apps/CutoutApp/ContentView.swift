@@ -266,7 +266,7 @@ struct ContentView: View {
         case .camera:
             CameraRouteContainerView(
                 annotateCapture: model.annotateCapture(key:value:),
-                recordMediaReference: model.recordCameraMediaReference(media:localURL:),
+                recordMediaReference: model.recordCameraMediaReference(source:media:localURL:),
                 sessionState: model.cameraSessionStateHandle
             )
         case .rideMap:

@@ -10,7 +10,7 @@ import AppKit
 
 struct CameraRouteContainerView: View {
     let annotateCapture: ((String, String) -> Void)?
-    let recordMediaReference: ((CameraMediaEvidence, URL) -> Void)?
+    let recordMediaReference: ((CameraSourceKind, CameraMediaEvidence, URL) -> Void)?
     @State private var adapter = CameraLocalNetworkAdapter()
     @State private var previewRenderer = CameraPreviewRenderer()
     @State private var address = "192.168.1.254"
@@ -32,7 +32,7 @@ struct CameraRouteContainerView: View {
 
     init(
         annotateCapture: ((String, String) -> Void)? = nil,
-        recordMediaReference: ((CameraMediaEvidence, URL) -> Void)? = nil,
+        recordMediaReference: ((CameraSourceKind, CameraMediaEvidence, URL) -> Void)? = nil,
         sessionState: CutoutSessionStateHandle = CutoutSessionStateHandle()
     ) {
         self.annotateCapture = annotateCapture
@@ -129,6 +129,8 @@ struct CameraRouteContainerView: View {
                 } else {
                     try await adapter.startPreview(uri: uri, expectedAddress: address)
                 }
+            } catch CameraReadOnlyRequestError.originMismatch {
+                readErrorKey = "camera.error.origin_mismatch"
             } catch {
                 readErrorKey = "camera.error.read_failed"
             }
@@ -159,9 +161,11 @@ struct CameraRouteContainerView: View {
                 )
                 downloadedMediaURL = destination
                 annotateCapture?("camera_media_file", media.name)
-                recordMediaReference?(media, destination)
+                recordMediaReference?(.novatekR3Pro, media, destination)
             } catch is CancellationError {
                 // Cancellation is an expected user action, not a transfer error.
+            } catch CameraMediaDownloadError.originMismatch {
+                mediaErrorKey = "camera.error.origin_mismatch"
             } catch {
                 mediaErrorKey = "camera.error.media_download_failed"
             }
@@ -201,6 +205,8 @@ struct CameraRouteContainerView: View {
                 thumbnailDataByPath[media.path] = data
             } catch is CancellationError {
                 // Cancellation is an expected user action.
+            } catch CameraReadOnlyRequestError.originMismatch {
+                thumbnailErrorKey = "camera.error.origin_mismatch"
             } catch {
                 thumbnailErrorKey = "camera.error.thumbnail_failed"
             }
@@ -241,6 +247,8 @@ struct CameraRouteContainerView: View {
                 recordingRequestKey = "camera.recording.unavailable"
             } catch CameraCommandRequestError.inFlight {
                 recordingRequestKey = "camera.command.busy"
+            } catch CameraCommandRequestError.originMismatch {
+                recordingRequestKey = "camera.error.origin_mismatch"
             } catch {
                 recordingRequestKey = "camera.error.recording_request_failed"
             }
@@ -275,6 +283,8 @@ struct CameraRouteContainerView: View {
                 stillRequestKey = "camera.still.unavailable"
             } catch CameraCommandRequestError.inFlight {
                 stillRequestKey = "camera.command.busy"
+            } catch CameraCommandRequestError.originMismatch {
+                stillRequestKey = "camera.error.origin_mismatch"
             } catch {
                 stillRequestKey = "camera.error.still_request_failed"
             }
@@ -458,7 +468,7 @@ struct CameraRouteView: View {
 
     @ViewBuilder
     private var cameraCards: some View {
-                        CameraStatusCard(
+        CameraStatusCard(
             presentation: presentation,
             readOnlyEvidence: readOnlyEvidence,
             movieRTSPURI: movieRTSPURI,
