@@ -17,10 +17,10 @@ use crate::VerificationStatus;
 use crate::VescControllerId;
 use crate::{
     DEFAULT_REPLAY_OUTPUT_LIMIT, DeviceEvent, GattChannel, GattFingerprint, HostSession, LinkInfo,
-    MonotonicTimestamp, MusicIdentifier, MusicProvider, MusicValidationError, NotificationChunkLen,
-    ProtocolFamily, ProtocolSession, RawTelemetryReadback, ReplayChunkComparison, RequestTarget,
-    SemanticEventCount, SessionInput, SessionOutput, SessionOutputError, TransportWriteLimit,
-    VerifiedValue, WallClockUnixTimestamp, WriteMode, drain_semantic_events_checked,
+    MonotonicTimestamp, NotificationChunkLen, ProtocolFamily, ProtocolSession,
+    RawTelemetryReadback, ReplayChunkComparison, RequestTarget, SemanticEventCount, SessionInput,
+    SessionOutput, SessionOutputError, TransportWriteLimit, VerifiedValue, WallClockUnixTimestamp,
+    WriteMode, drain_semantic_events_checked,
 };
 
 const MAX_PEVCAP_MUSIC_IDENTIFIER_BYTES: usize = 256;

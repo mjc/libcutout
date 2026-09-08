@@ -195,6 +195,8 @@ pub(crate) fn create_current_schema(connection: &Connection) -> Result<(), Stora
         CREATE TABLE ride_music_history (
             ride_id TEXT PRIMARY KEY NOT NULL REFERENCES rides(id) ON DELETE CASCADE,
             policy TEXT NOT NULL CHECK (policy IN ('disabled', 'opaque_item', 'human_readable')),
+            state TEXT NOT NULL DEFAULT 'disabled'
+                CHECK (state IN ('disabled', 'opaque_item', 'human_readable', 'deleted')),
             deleted INTEGER NOT NULL DEFAULT 0 CHECK (deleted IN (0, 1)),
             last_observed_at_ms INTEGER CHECK (last_observed_at_ms IS NULL OR last_observed_at_ms >= 0)
         );
@@ -927,6 +929,11 @@ fn migrate_v16_to_current(connection: &mut Connection) -> Result<(), StorageErro
             "INTEGER CHECK (last_observed_at_ms IS NULL OR last_observed_at_ms >= 0)",
         ),
         (
+            "ride_music_history",
+            "state",
+            "TEXT NOT NULL DEFAULT 'disabled' CHECK (state IN ('disabled', 'opaque_item', 'human_readable', 'deleted'))",
+        ),
+        (
             "ride_music_event",
             "observed_at_ms",
             "INTEGER CHECK (observed_at_ms IS NULL OR observed_at_ms BETWEEN 0 AND monotonic_at_ms)",
@@ -938,6 +945,14 @@ fn migrate_v16_to_current(connection: &mut Connection) -> Result<(), StorageErro
             ))?;
         }
     }
+    transaction.execute_batch(
+        "UPDATE ride_music_history
+         SET state = CASE policy
+             WHEN 'opaque_item' THEN 'opaque_item'
+             WHEN 'human_readable' THEN 'human_readable'
+             ELSE 'disabled'
+         END;",
+    )?;
     transaction.execute_batch("PRAGMA application_id = 1129665615; PRAGMA user_version = 18;")?;
     transaction.commit()?;
     migrate_v18_to_current(connection)
@@ -1017,26 +1032,6 @@ fn migrate_v18_to_current(connection: &mut Connection) -> Result<(), StorageErro
     if !captures_exists {
         transaction.execute_batch(super::capture_data::SCHEMA)?;
     }
-    transaction.execute_batch(&current_schema_pragmas())?;
-    transaction.commit()?;
-    Ok(())
-}
-
-fn migrate_v16_to_current(connection: &mut Connection) -> Result<(), StorageError> {
-    verify_legacy_schema(connection)?;
-    let transaction = connection.transaction()?;
-    transaction.execute_batch(
-        "ALTER TABLE ride_music_history
-             ADD COLUMN state TEXT NOT NULL DEFAULT 'disabled'
-             CHECK (state IN ('disabled', 'opaque_item', 'human_readable', 'deleted'));
-         UPDATE ride_music_history
-         SET state = CASE policy
-             WHEN 'opaque_item' THEN 'opaque_item'
-             WHEN 'human_readable' THEN 'human_readable'
-             ELSE 'disabled'
-         END;
-         ",
-    )?;
     transaction.execute_batch(&current_schema_pragmas())?;
     transaction.commit()?;
     Ok(())

@@ -62,8 +62,8 @@ use cutout_core::{
 };
 use cutout_music::{
     MusicCapabilities as CoreMusicCapabilities, MusicCommand as CoreMusicCommand,
-    MusicHistoryPolicy as CoreMusicHistoryPolicy, MusicItem as CoreMusicItem,
-    MusicPlaybackPosition as CoreMusicPlaybackPosition,
+    MusicHistoryPolicy as CoreMusicHistoryPolicy, MusicHistoryState as CoreMusicHistoryState,
+    MusicItem as CoreMusicItem, MusicPlaybackPosition as CoreMusicPlaybackPosition,
     MusicPlaybackState as CoreMusicPlaybackState, MusicProvider as CoreMusicProvider,
     MusicRideEvent as CoreMusicRideEvent, MusicRideEventKind as CoreMusicRideEventKind,
     MusicSnapshot as CoreMusicSnapshot, MusicTimelineOutcome as CoreMusicTimelineOutcome,
@@ -6769,13 +6769,6 @@ impl MobileRideMapCore {
             .map(|(_, active)| state.snapshot_at(active.into(), at_ms))
     }
 
-    /// Returns the Rust-owned music-history policy for the active ride.
-    #[must_use]
-    pub fn current_music_history_policy(&self) -> MobileMusicHistoryPolicyDto {
-        let state = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
-        state.music_history_policy.into()
-    }
-
     /// Returns a storage error encountered while restoring the previous ride projection.
     #[must_use]
     pub fn initialization_error(&self) -> Option<MobileRideMapCoreErrorDto> {
@@ -7250,7 +7243,7 @@ impl MobileRideMapCore {
             .inner
             .delete_music_history(parse_mobile_ride_id(&ride_id).map_err(map_core_error)?)
             .map_err(map_storage_core_error)?;
-        state.reset_music_history();
+        state.reset_music_history_policy();
         Ok(())
     }
 

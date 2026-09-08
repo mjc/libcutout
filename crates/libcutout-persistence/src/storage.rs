@@ -1,7 +1,7 @@
 use cutout_core::{PevcapEncoding, PevcapEvent, PevcapPhoneLocation, PevcapReader};
 use cutout_music::{
-    MusicEventTiming, MusicHistoryPolicy, MusicProvider, MusicRideEvent, MusicRideEventKind,
-    MusicTimeline, MusicTimelineOutcome, MusicValidationError,
+    MusicEventTiming, MusicHistoryPolicy, MusicHistoryState, MusicProvider, MusicRideEvent,
+    MusicRideEventKind, MusicTimeline, MusicTimelineOutcome, MusicValidationError,
 };
 use cutout_ride_maps::{
     AverageSpeedMillimetresPerSecond, Coordinate, LocationAdmission, LocationSample,
