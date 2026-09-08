@@ -1,4 +1,5 @@
 import CutoutMobile
+import CutoutMobileFFI
 import SwiftUI
 
 #if canImport(UIKit)
@@ -16,7 +17,6 @@ struct CameraRouteContainerView: View {
     @State private var port = "80"
     @State private var isReading = false
     @State private var readErrorKey: String?
-    @State private var savedFileURL: URL?
     @State private var downloadedMediaURL: URL?
     @State private var downloadingMediaPath: String?
     @State private var mediaDownloadTask: Task<Void, Never>?
@@ -32,10 +32,12 @@ struct CameraRouteContainerView: View {
 
     init(
         annotateCapture: ((String, String) -> Void)? = nil,
-        recordMediaReference: ((CameraMediaEvidence, URL) -> Void)? = nil
+        recordMediaReference: ((CameraMediaEvidence, URL) -> Void)? = nil,
+        sessionState: CutoutSessionStateHandle = CutoutSessionStateHandle()
     ) {
         self.annotateCapture = annotateCapture
         self.recordMediaReference = recordMediaReference
+        _adapter = State(initialValue: CameraLocalNetworkAdapter(sessionState: sessionState))
     }
 
     var body: some View {
@@ -62,7 +64,7 @@ struct CameraRouteContainerView: View {
             stillRequestKey: stillRequestKey,
             isRequestingStill: isRequestingStill,
             supportsStillCapture: adapter.readOnlyEvidence?.supportsStillCapture ?? false,
-            savedFileURL: savedFileURL,
+            savedFileURL: adapter.savedPreviewFileURL,
             previewRenderer: previewRenderer,
             loadEvidence: readCamera,
             downloadMedia: downloadMedia,
@@ -77,6 +79,10 @@ struct CameraRouteContainerView: View {
                     try await previewRenderer.enqueue(frame)
                 }
                 adapter.start()
+            }
+            .onChange(of: adapter.savedPreviewFileURL) { _, url in
+                guard let url else { return }
+                annotateCapture?("camera_preview_file", url.lastPathComponent)
             }
             .onDisappear {
                 mediaDownloadTask?.cancel()
@@ -115,11 +121,13 @@ struct CameraRouteContainerView: View {
         Task { @MainActor in
             do {
                 if let url {
-                    try await adapter.startPreview(uri: uri, saveTo: url)
-                    savedFileURL = url
-                    annotateCapture?("camera_preview_file", url.lastPathComponent)
+                    try await adapter.startPreview(
+                        uri: uri,
+                        expectedAddress: address,
+                        saveTo: url
+                    )
                 } else {
-                    try await adapter.startPreview(uri: uri)
+                    try await adapter.startPreview(uri: uri, expectedAddress: address)
                 }
             } catch {
                 readErrorKey = "camera.error.read_failed"
@@ -227,7 +235,11 @@ struct CameraRouteContainerView: View {
                 )
             } catch is CancellationError {
                 // Cancellation is an expected lifecycle event.
-            } catch is CameraCommandRequestError {
+            } catch CameraCommandRequestError.pathUnavailable {
+                recordingRequestKey = "camera.connection.detail.wifi_required"
+            } catch CameraCommandRequestError.unsupported {
+                recordingRequestKey = "camera.recording.unavailable"
+            } catch CameraCommandRequestError.inFlight {
                 recordingRequestKey = "camera.command.busy"
             } catch {
                 recordingRequestKey = "camera.error.recording_request_failed"
@@ -257,7 +269,11 @@ struct CameraRouteContainerView: View {
                 annotateCapture?("camera_still_request", outcome.annotationValue)
             } catch is CancellationError {
                 // Cancellation is an expected lifecycle event.
-            } catch is CameraCommandRequestError {
+            } catch CameraCommandRequestError.pathUnavailable {
+                stillRequestKey = "camera.connection.detail.wifi_required"
+            } catch CameraCommandRequestError.unsupported {
+                stillRequestKey = "camera.still.unavailable"
+            } catch CameraCommandRequestError.inFlight {
                 stillRequestKey = "camera.command.busy"
             } catch {
                 stillRequestKey = "camera.error.still_request_failed"
@@ -277,9 +293,18 @@ struct CameraRouteContainerView: View {
         let directory = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first
             ?? FileManager.default.temporaryDirectory
         return directory.appendingPathComponent(
-            "camera-media-" + UUID().uuidString + "-" + media.name
+            "camera-media-" + UUID().uuidString + "-" + cameraMediaLocalFileComponent(media.name)
         )
     }
+}
+
+func cameraMediaLocalFileComponent(_ name: String) -> String {
+    let allowed = CharacterSet.alphanumerics.union(CharacterSet(charactersIn: "-_."))
+    let sanitized = name.unicodeScalars
+        .map { allowed.contains($0) ? String($0) : "_" }
+        .joined()
+        .trimmingCharacters(in: .whitespacesAndNewlines)
+    return sanitized.isEmpty || sanitized == "." || sanitized == ".." ? "media" : sanitized
 }
 
 private func cameraCommandOutcomeKey(
@@ -863,10 +888,20 @@ private struct CameraTruthCard: View {
                     .foregroundStyle(PevColors.muted)
 
                 if let savedFileURL {
-                    Text(savedFileURL.lastPathComponent)
-                        .font(.footnote.monospaced())
-                        .foregroundStyle(PevColors.muted)
-                        .accessibilityIdentifier("camera.preview.saved-file")
+                    HStack(spacing: 12) {
+                        Text(savedFileURL.lastPathComponent)
+                            .font(.footnote.monospaced())
+                            .foregroundStyle(PevColors.muted)
+                            .accessibilityIdentifier("camera.preview.saved-file")
+                        ShareLink(item: savedFileURL) {
+                            Label(
+                                localizedAppText("camera.preview.export"),
+                                systemImage: "square.and.arrow.up"
+                            )
+                        }
+                        .buttonStyle(.bordered)
+                        .accessibilityIdentifier("camera.preview.export")
+                    }
                 }
             }
         }
