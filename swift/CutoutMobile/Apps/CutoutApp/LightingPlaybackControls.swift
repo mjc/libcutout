@@ -42,11 +42,12 @@ enum LightingPatternCatalog {
         return names[id]
     }
 
-    /// Capture-backed capabilities for the current MELK-OC21 profile.
-    static let verifiedEffectIDs: Set<Int> = [1, 16, 22, 75]
-    static let controllerMicrophoneVerified = false
-    static let schedulesVerified = false
-
+    /// Capture-backed capabilities come from the Rust profile so UI availability cannot drift
+    /// from the write boundary. Reference catalog entries remain visible but disabled.
+    private static let capabilities = mobileMelkLightingCapabilities()
+    static let verifiedEffectIDs = Set(capabilities.verifiedEffectIds.map(Int.init))
+    static let controllerMicrophoneVerified = capabilities.controllerMicrophone
+    static let schedulesVerified = capabilities.schedules
     static func isVerified(_ id: Int) -> Bool {
         verifiedEffectIDs.contains(id)
     }

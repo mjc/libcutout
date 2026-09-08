@@ -1165,6 +1165,34 @@ pub struct MobileMelkLightingWriteDto {
     pub minimum_interval_ms: Option<u16>,
 }
 
+/// Capture-backed capabilities exposed to the mobile lighting UI.
+#[derive(Clone, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct MobileMelkLightingCapabilitiesDto {
+    /// Effect IDs with physical evidence on the MELK-OC21 controller.
+    pub verified_effect_ids: Vec<u8>,
+    /// Whether controller-local microphone modes are verified.
+    pub controller_microphone: bool,
+    /// Whether controller-local schedules are verified.
+    pub schedules: bool,
+    /// Whether independently addressable zones are verified.
+    pub addressable_zones: bool,
+    /// Whether controller-native named scenes are verified.
+    pub scenes: bool,
+}
+
+/// Returns the conservative, capture-backed MELK-OC21 capability set.
+#[uniffi::export]
+pub fn mobile_melk_lighting_capabilities() -> MobileMelkLightingCapabilitiesDto {
+    let capabilities = MelkLightingProfile::capabilities();
+    MobileMelkLightingCapabilitiesDto {
+        verified_effect_ids: capabilities.verified_effect_ids.to_vec(),
+        controller_microphone: capabilities.controller_microphone,
+        schedules: capabilities.schedules,
+        addressable_zones: capabilities.addressable_zones,
+        scenes: capabilities.scenes,
+    }
+}
+
 /// Invalid input presented to the MELK lighting boundary.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, thiserror::Error, uniffi::Error)]
 pub enum MobileMelkLightingError {
@@ -1854,7 +1882,7 @@ mod melk_lighting_tests {
         MobileMelkLightingRestoreStateDto, MobileMelkLightingWriteModeDto,
         MobileRgbLightingAccessoryRecord, MobileRgbLightingConfirmationStateDto,
         MobileRgbLightingConnectionStateDto, MobileRgbLightingProfileKindDto,
-        MobileRgbLightingRecordError,
+        MobileRgbLightingRecordError, mobile_melk_lighting_capabilities,
     };
     use cutout_protocols::{MELK_NOTIFY_CHANNEL, MELK_WRITE_CHANNEL};
 
@@ -1868,6 +1896,16 @@ mod melk_lighting_tests {
             },
         )
         .expect("observed MELK evidence should select the profile")
+    }
+
+    #[test]
+    fn mobile_capabilities_match_the_capture_backed_profile() {
+        let capabilities = mobile_melk_lighting_capabilities();
+        assert_eq!(capabilities.verified_effect_ids, vec![1, 16, 22, 75]);
+        assert!(!capabilities.controller_microphone);
+        assert!(!capabilities.schedules);
+        assert!(!capabilities.addressable_zones);
+        assert!(!capabilities.scenes);
     }
 
     #[test]
