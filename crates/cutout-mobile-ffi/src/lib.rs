@@ -1974,7 +1974,7 @@ mod melk_lighting_tests {
             MELK_NOTIFY_CHANNEL.as_bytes()
         );
         assert_eq!(write.mode, MobileMelkLightingWriteModeDto::WithoutResponse);
-        assert_eq!(write.minimum_interval_ms, None);
+        assert_eq!(write.minimum_interval_ms, Some(50));
         assert_eq!(write.payload, [0x7e, 0x00, 0x04, 0x01, 0, 0, 0, 0, 0xef]);
     }
     #[test]

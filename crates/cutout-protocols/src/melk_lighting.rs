@@ -141,7 +141,7 @@ impl MelkLightingProfile {
             channel: MELK_WRITE_CHANNEL,
             mode: WriteMode::WithoutResponse,
             confirmation_channel: MELK_NOTIFY_CHANNEL,
-            minimum_interval_ms: None,
+            minimum_interval_ms: Some(50),
         }
     }
 
@@ -515,7 +515,7 @@ mod tests {
         assert_eq!(policy.channel, MELK_WRITE_CHANNEL);
         assert_eq!(policy.mode, WriteMode::WithoutResponse);
         assert_eq!(policy.confirmation_channel, MELK_NOTIFY_CHANNEL);
-        assert_eq!(policy.minimum_interval_ms, None);
+        assert_eq!(policy.minimum_interval_ms, Some(50));
     }
 
     #[test]
