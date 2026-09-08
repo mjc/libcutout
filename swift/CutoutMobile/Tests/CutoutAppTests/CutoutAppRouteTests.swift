@@ -766,6 +766,53 @@ final class CutoutAppRouteTests: XCTestCase {
     }
 
     @MainActor
+    func testLightingRouteModelsKeepSimultaneousControllersIsolated() throws {
+        let suiteNames = [
+            "CutoutAppRouteTests.lightingSessionA",
+            "CutoutAppRouteTests.lightingSessionB",
+        ]
+        let defaults = try suiteNames.map { name in
+            let defaults = try XCTUnwrap(UserDefaults(suiteName: name))
+            defaults.removePersistentDomain(forName: name)
+            return defaults
+        }
+        defer {
+            for (name, defaults) in zip(suiteNames, defaults) {
+                defaults.removePersistentDomain(forName: name)
+            }
+        }
+
+        let sessionA = TestLightingSession()
+        let sessionB = TestLightingSession()
+        let modelA = LightingRouteModel(
+            session: sessionA,
+            persistence: LightingAccessoryPersistence(defaults: defaults[0])
+        )
+        let modelB = LightingRouteModel(
+            session: sessionB,
+            persistence: LightingAccessoryPersistence(defaults: defaults[1])
+        )
+
+        modelA.start()
+        modelB.start()
+        modelA.setPower(true)
+        modelB.setSolidColor(red: 1, green: 2, blue: 3)
+
+        XCTAssertEqual(sessionA.startCalls, [nil])
+        XCTAssertEqual(sessionB.startCalls, [nil])
+        XCTAssertEqual(sessionA.powerRequests, [true])
+        XCTAssertTrue(sessionA.colorRequests.isEmpty)
+        XCTAssertEqual(sessionB.colorRequests, ["1,2,3"])
+        XCTAssertTrue(sessionB.powerRequests.isEmpty)
+
+        modelA.stop()
+        XCTAssertEqual(sessionA.stopCalls, 1)
+        XCTAssertEqual(sessionB.stopCalls, 0)
+        modelB.stop()
+        XCTAssertEqual(sessionB.stopCalls, 1)
+    }
+
+    @MainActor
     func testLightingRouteModelPublishesPresetChanges() throws {
         let suiteName = "CutoutAppRouteTests.lightingPresets"
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
