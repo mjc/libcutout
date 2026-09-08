@@ -12,7 +12,7 @@ public enum PevRideTabs {
             PevScreenTab(
                 id: .tune,
                 title: pevLocalizedText("tab.tune"),
-                isSelected: isTuneSelected,
+                isSelected: selected == nil && isTuneSelected,
                 destinationTarget: .eucTune
             ),
         ]

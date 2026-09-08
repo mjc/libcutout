@@ -1233,7 +1233,12 @@ public enum LightState: Equatable, Hashable, Sendable {
     case on
 
     fileprivate init(_ dto: MobileLightStateDto) {
-        self = dto == .on ? .on : .off
+        switch dto {
+        case .off:
+            self = .off
+        case .on, .strobe:
+            self = .on
+        }
     }
 
     fileprivate var dto: MobileLightStateDto {
