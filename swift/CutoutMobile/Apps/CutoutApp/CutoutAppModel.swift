@@ -155,10 +155,9 @@ final class CutoutAppModel {
     let capture: CaptureFeatureModel
     var isRecordOnlyCapture: Bool { capture.isManualCapture }
     private(set) var hasSavedDevice = false
-    private(set) var settings: DeviceSettings?
-    private(set) var phoneAlarmSettings: MobilePhoneAlarmPreferencesDto?
-    private(set) var phoneAlarmAuthorization = PhoneRideAlarmAuthorization.unavailable
-    private(set) var phoneAlarmDeliveryError: String?
+    private(set) var deviceControlsSnapshot: DeviceControlsSnapshot?
+    private(set) var cameraMediaReferences: [CameraMediaReference] = []
+    private static let maximumCameraMediaReferences = 64
 
     var selectedRideTitle: String? {
         connectionState.selection?.title
@@ -425,6 +424,56 @@ final class CutoutAppModel {
 
     var connectionStatusText: String {
         connectionState.statusText ?? phase.displayText
+    }
+
+    func annotateCapture(key: String, value: String) {
+        core.annotateCapture(key: key, value: value)
+    }
+
+    /// Records a completed camera download against the capture identity that
+    /// was captured when the operation started.
+    func recordCameraMediaReference(
+        captureFileName: String,
+        source: CameraSourceKind = .novatekR3Pro,
+        media: CameraMediaEvidence,
+        localURL: URL
+    ) {
+        guard !captureFileName.isEmpty else { return }
+        guard !cameraMediaReferences.contains(where: {
+            $0.source == source
+                && $0.rideCaptureFileName == captureFileName
+                && $0.cameraPath == media.path
+        }) else { return }
+
+        let input = MobileCameraMediaProvenanceInput(
+            source: source.mobileDto,
+            cameraPath: media.path,
+            sizeBytes: media.sizeBytes,
+            cameraTimecode: media.timecode,
+            cameraTime: media.time,
+            rideCaptureFileName: captureFileName,
+            capturedAtMonotonicMs: currentMonotonicTime.rawValue,
+            capturedAtWallClockMs: UInt64(max(0, Date().timeIntervalSince1970 * 1_000)),
+            clockUncertainty: .unknown
+        )
+        let sessionState = core.rideSessionStateHandle
+        guard (try? sessionState.recordCameraMediaProvenance(input: input)) != nil else {
+            return
+        }
+        guard let provenance = sessionState.cameraMediaProvenance().first(where: {
+            $0.source == source.mobileDto
+                && $0.cameraPath == media.path
+                && $0.rideCaptureFileName == captureFileName
+        }) else {
+            return
+        }
+
+        let reference = CameraMediaReference(provenance: provenance, localURL: localURL)
+        guard captureFileName == self.captureFileName else { return }
+        cameraMediaReferences.append(reference)
+        if cameraMediaReferences.count > Self.maximumCameraMediaReferences {
+            cameraMediaReferences.removeFirst()
+        }
     }
 
     private let core: any CutoutSessionDriving

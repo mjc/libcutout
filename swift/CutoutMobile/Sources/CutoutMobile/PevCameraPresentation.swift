@@ -11,6 +11,13 @@ public enum CameraConnectionPresentation: Equatable, Sendable {
     case unsupported
 }
 
+public extension CameraConnectionPresentation {
+    /// The known path state that must block a read-only camera probe.
+    var blocksReadOnlyDiscovery: Bool {
+        self == .wifiRequired
+    }
+}
+
 /// Foreground preview truth, kept independent from onboard recording.
 public enum CameraPreviewPresentation: Equatable, Sendable {
     case stopped
@@ -26,6 +33,51 @@ public enum CameraRecordingPresentation: Equatable, Sendable {
     case unknown
     case stopped
     case recording
+}
+
+/// Identity of the camera transport that produced a media record.
+public enum CameraSourceKind: Equatable, Sendable {
+    case novatekR3Pro
+    case rtsp
+    case fixture
+}
+
+extension CameraSourceKind {
+    init(_ dto: MobileCameraSourceKindDto) {
+        switch dto {
+        case .novatekR3Pro:
+            self = .novatekR3Pro
+        case .rtsp:
+            self = .rtsp
+        case .fixture:
+            self = .fixture
+        }
+    }
+
+    public var mobileDto: MobileCameraSourceKindDto {
+        switch self {
+        case .novatekR3Pro:
+            .novatekR3Pro
+        case .rtsp:
+            .rtsp
+        case .fixture:
+            .fixture
+        }
+    }
+}
+
+/// Result of a camera control request, kept distinct from recording readback.
+public enum CameraCommandOutcome: Equatable, Sendable {
+    /// The camera response reported status zero.
+    case acknowledged
+    /// The camera response reported a nonzero status.
+    case refused
+    /// The transport reported a timeout.
+    case timedOut
+    /// The response did not provide a usable status.
+    case unknown
+    /// The transport failed for a non-timeout reason.
+    case failed
 }
 
 /// SD-card/storage truth when available.
@@ -92,6 +144,74 @@ extension CameraMediaEvidence {
     }
 }
 
+/// The confidence available for the relationship between camera and phone
+/// clocks. Unknown is retained instead of treating a camera timestamp as a
+/// phone timestamp.
+public enum CameraClockUncertainty: Equatable, Sendable {
+    case unknown
+    case milliseconds(UInt64)
+}
+
+extension CameraClockUncertainty {
+    init(_ dto: MobileCameraClockUncertaintyDto) {
+        switch dto {
+        case .unknown:
+            self = .unknown
+        case let .milliseconds(value):
+            self = .milliseconds(value)
+        }
+    }
+}
+
+/// A verified local media file associated with the active ride capture.
+///
+/// This reference carries metadata and a local URL only; camera video bytes
+/// remain outside PEVCAP and SQLite.
+public struct CameraMediaReference: Equatable, Sendable {
+    public let source: CameraSourceKind
+    public let cameraPath: String
+    public let localURL: URL
+    public let sizeBytes: UInt64
+    public let cameraTimecode: UInt64
+    public let cameraTime: String
+    public let rideCaptureFileName: String
+    public let clockUncertainty: CameraClockUncertainty
+
+    public init(
+        source: CameraSourceKind = .novatekR3Pro,
+        cameraPath: String,
+        localURL: URL,
+        sizeBytes: UInt64,
+        cameraTimecode: UInt64,
+        cameraTime: String,
+        rideCaptureFileName: String,
+        clockUncertainty: CameraClockUncertainty
+    ) {
+        self.source = source
+        self.cameraPath = cameraPath
+        self.localURL = localURL
+        self.sizeBytes = sizeBytes
+        self.cameraTimecode = cameraTimecode
+        self.cameraTime = cameraTime
+        self.rideCaptureFileName = rideCaptureFileName
+        self.clockUncertainty = clockUncertainty
+    }
+
+    /// Projects Rust-owned provenance while retaining the local presentation URL.
+    public init(provenance: MobileCameraMediaProvenanceDto, localURL: URL) {
+        self.init(
+            source: CameraSourceKind(provenance.source),
+            cameraPath: provenance.cameraPath,
+            localURL: localURL,
+            sizeBytes: provenance.sizeBytes,
+            cameraTimecode: provenance.cameraTimecode,
+            cameraTime: provenance.cameraTime,
+            rideCaptureFileName: provenance.rideCaptureFileName,
+            clockUncertainty: CameraClockUncertainty(provenance.clockUncertainty)
+        )
+    }
+}
+
 /// Read-only Novatek evidence parsed by Rust before reaching the Swift UI.
 public struct CameraReadOnlyEvidence: Equatable, Sendable {
     public let firmwareVersion: String
@@ -103,6 +223,33 @@ public struct CameraReadOnlyEvidence: Equatable, Sendable {
 
     /// Number of bounded media records returned by the camera.
     public var mediaCount: Int { media.count }
+
+    /// Whether the observed firmware belongs to the verified R3 Pro family.
+    ///
+    /// The adapter must not label another Novatek camera as an R3 Pro merely
+    /// because its response shape is parseable.
+    public var isR3ProProfile: Bool {
+        mobileNovatekFirmwareIsR3Pro(firmwareVersion: firmwareVersion)
+    }
+
+    /// Whether read-only configuration evidence advertises the Novatek
+    /// onboard-recording command. This is capability evidence, not recording
+    /// state readback.
+    public var supportsOnboardRecording: Bool {
+        advertises(commandID: 2001)
+    }
+
+    /// Whether read-only configuration evidence advertises still capture.
+    /// This is capability evidence, not a capture acknowledgement or media
+    /// readback.
+    public var supportsStillCapture: Bool {
+        advertises(commandID: 1001)
+    }
+
+    /// Whether read-only configuration evidence advertises thumbnail requests.
+    public var supportsMediaThumbnails: Bool {
+        advertises(commandID: 4001)
+    }
 
     public init(_ snapshot: MobileNovatekReadOnlySnapshotDto) {
         self.init(
@@ -130,9 +277,13 @@ public struct CameraReadOnlyEvidence: Equatable, Sendable {
         self.storagePresent = storagePresent
         self.media = media
     }
+
+    private func advertises(commandID: UInt16) -> Bool {
+        configuration.contains { $0.commandID == commandID && $0.status == 0 }
+    }
 }
 
-/// Presentation-only camera state supplied by the future Apple network adapter.
+/// Presentation-only camera state supplied by the Apple local-network adapter.
 ///
 /// The initial value is deliberately non-optimistic: it does not claim a
 /// connection, preview, recording, or storage status before read-only evidence

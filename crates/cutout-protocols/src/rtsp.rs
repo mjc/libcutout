@@ -9,9 +9,16 @@ use std::{
 
 use crate::NovatekHttpOrigin;
 use futures_util::StreamExt;
-use retina::{client, codec::CodecItem};
+use retina::{
+    client,
+    codec::{CodecItem, ParametersRef},
+};
 use thiserror::Error;
 use url::Url;
+
+/// Maximum encoded H.264 access-unit size accepted from an RTSP camera.
+const RETINA_MAX_VIDEO_FRAME_BYTES: usize = 8 * 1024 * 1024;
+const RETINA_MAX_VIDEO_CONFIGURATION_BYTES: usize = 64 * 1024;
 
 /// Failure while creating or consuming a Retina RTSP preview session.
 #[derive(Debug, Error)]
@@ -22,12 +29,21 @@ pub enum RetinaRtspError {
     /// The RTSP endpoint is not a validated local IPv4 camera origin.
     #[error("RTSP endpoint is not local")]
     NonLocalUri,
-    /// The server's SDP did not advertise a video stream.
-    #[error("RTSP session has no video stream")]
-    NoVideoStream,
+    /// The RTSP endpoint differs from the explicitly selected camera origin.
+    #[error("RTSP endpoint does not match the camera origin")]
+    OriginMismatch,
+    /// The server's SDP did not advertise an H.264 video stream.
+    #[error("RTSP session has no H.264 video stream")]
+    UnsupportedVideoCodec,
     /// Retina could not establish or negotiate the session.
     #[error("RTSP session error: {0}")]
     Session(String),
+    /// A decoded access unit exceeded the mobile preview memory budget.
+    #[error("RTSP video frame exceeds {max} bytes")]
+    VideoFrameTooLarge {
+        /// Maximum accepted encoded frame size.
+        max: usize,
+    },
 }
 
 /// One encoded video access unit emitted by a Retina preview session.
@@ -43,6 +59,19 @@ pub struct RetinaVideoFrame {
     pub timestamp: i64,
     /// Clock rate associated with [`Self::timestamp`], in Hz.
     pub clock_rate_hz: u32,
+}
+
+/// Codec configuration advertised by the RTSP video stream.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RetinaVideoConfiguration {
+    /// RFC 6381 codec identifier, for example `avc1.4D401E`.
+    pub codec: String,
+    /// Coded width in pixels.
+    pub width: u32,
+    /// Coded height in pixels.
+    pub height: u32,
+    /// Codec-specific decoder configuration (H.264 `avcC` bytes).
+    pub extra_data: Vec<u8>,
 }
 
 impl RetinaVideoFrame {
@@ -189,6 +218,7 @@ fn invalid_data(message: &'static str) -> io::Error {
 pub struct RetinaRtspPreviewSession {
     demuxed: client::Demuxed,
     video_stream_id: usize,
+    video_configuration: Option<RetinaVideoConfiguration>,
 }
 
 impl std::fmt::Debug for RetinaRtspPreviewSession {
@@ -208,6 +238,31 @@ impl RetinaRtspPreviewSession {
     /// Returns an error if the URI is invalid, no video stream is advertised,
     /// or Retina cannot complete DESCRIBE/SETUP/PLAY.
     pub async fn connect(uri: &str) -> Result<Self, RetinaRtspError> {
+        Self::connect_inner(uri, None).await
+    }
+
+    /// Connects only when the RTSP host matches the selected camera origin.
+    ///
+    /// The live-view URI is camera-reported input. Binding it to the origin
+    /// already selected by the caller prevents a camera response from
+    /// redirecting the preview to another private-network host.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the URI is malformed, non-local, or names a
+    /// different address than `expected_address`, or when the RTSP handshake
+    /// fails.
+    pub async fn connect_for_origin(
+        uri: &str,
+        expected_address: Ipv4Addr,
+    ) -> Result<Self, RetinaRtspError> {
+        Self::connect_inner(uri, Some(expected_address)).await
+    }
+
+    async fn connect_inner(
+        uri: &str,
+        expected_address: Option<Ipv4Addr>,
+    ) -> Result<Self, RetinaRtspError> {
         let url = Url::parse(uri).map_err(|_| RetinaRtspError::InvalidUri)?;
         if url.scheme() != "rtsp" || url.host_str().is_none() {
             return Err(RetinaRtspError::InvalidUri);
@@ -216,6 +271,9 @@ impl RetinaRtspPreviewSession {
             .host_str()
             .and_then(|host| host.parse::<Ipv4Addr>().ok())
             .ok_or(RetinaRtspError::NonLocalUri)?;
+        if expected_address.is_some_and(|expected| expected != host) {
+            return Err(RetinaRtspError::OriginMismatch);
+        }
         NovatekHttpOrigin::new(host, url.port().unwrap_or(554))
             .map_err(|_| RetinaRtspError::NonLocalUri)?;
 
@@ -225,8 +283,8 @@ impl RetinaRtspPreviewSession {
         let video_stream_id = described
             .streams()
             .iter()
-            .position(|stream| stream.media() == "video")
-            .ok_or(RetinaRtspError::NoVideoStream)?;
+            .position(|stream| stream.media() == "video" && stream.encoding_name() == "h264")
+            .ok_or(RetinaRtspError::UnsupportedVideoCodec)?;
         described
             .setup(
                 video_stream_id,
@@ -242,10 +300,21 @@ impl RetinaRtspPreviewSession {
             .demuxed()
             .map_err(|error| RetinaRtspError::Session(error.to_string()))?;
 
+        let video_configuration =
+            video_configuration_for_stream(demuxed.streams().get(video_stream_id));
+
         Ok(Self {
             demuxed,
             video_stream_id,
+            video_configuration,
         })
+    }
+
+    /// Returns codec configuration advertised by SDP, when available and
+    /// within the fixed boundary budget.
+    #[must_use]
+    pub fn video_configuration(&self) -> Option<&RetinaVideoConfiguration> {
+        self.video_configuration.as_ref()
     }
 
     /// Waits for the next encoded video access unit.
@@ -257,11 +326,18 @@ impl RetinaRtspPreviewSession {
         while let Some(item) = self.demuxed.next().await {
             match item.map_err(|error| RetinaRtspError::Session(error.to_string()))? {
                 CodecItem::VideoFrame(frame) if frame.stream_id() == self.video_stream_id => {
+                    if frame.has_new_parameters() {
+                        self.video_configuration = video_configuration_for_stream(
+                            self.demuxed.streams().get(self.video_stream_id),
+                        );
+                    }
                     let loss = frame.loss();
                     let is_random_access_point = frame.is_random_access_point();
                     let timestamp = frame.timestamp();
+                    let data = frame.into_data();
+                    ensure_video_frame_size(data.len())?;
                     return Ok(Some(RetinaVideoFrame::new(
-                        frame.into_data(),
+                        data,
                         loss,
                         is_random_access_point,
                         timestamp.timestamp(),
@@ -273,6 +349,35 @@ impl RetinaRtspPreviewSession {
         }
         Ok(None)
     }
+}
+
+fn video_configuration_for_stream(
+    stream: Option<&client::Stream>,
+) -> Option<RetinaVideoConfiguration> {
+    stream
+        .and_then(client::Stream::parameters)
+        .and_then(|parameters| match parameters {
+            ParametersRef::Video(parameters)
+                if parameters.extra_data().len() <= RETINA_MAX_VIDEO_CONFIGURATION_BYTES =>
+            {
+                Some(RetinaVideoConfiguration {
+                    codec: parameters.rfc6381_codec().to_owned(),
+                    width: parameters.pixel_dimensions().0,
+                    height: parameters.pixel_dimensions().1,
+                    extra_data: parameters.extra_data().to_owned(),
+                })
+            }
+            _ => None,
+        })
+}
+
+fn ensure_video_frame_size(length: usize) -> Result<(), RetinaRtspError> {
+    if length > RETINA_MAX_VIDEO_FRAME_BYTES {
+        return Err(RetinaRtspError::VideoFrameTooLarge {
+            max: RETINA_MAX_VIDEO_FRAME_BYTES,
+        });
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -293,6 +398,18 @@ mod tests {
         assert!(matches!(
             RetinaRtspPreviewSession::connect("rtsp://example.com/xxx.mov").await,
             Err(RetinaRtspError::NonLocalUri)
+        ));
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn rtsp_session_rejects_a_uri_from_a_different_local_origin_before_network_io() {
+        assert!(matches!(
+            RetinaRtspPreviewSession::connect_for_origin(
+                "rtsp://192.168.1.253/xxx.mov",
+                Ipv4Addr::new(192, 168, 1, 254),
+            )
+            .await,
+            Err(RetinaRtspError::OriginMismatch)
         ));
     }
 
@@ -339,5 +456,14 @@ mod tests {
         assert_eq!(error.kind(), io::ErrorKind::InvalidData);
         drop(sink);
         fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn rtsp_frame_size_is_bounded_before_crossing_the_mobile_boundary() {
+        assert!(ensure_video_frame_size(RETINA_MAX_VIDEO_FRAME_BYTES).is_ok());
+        assert!(matches!(
+            ensure_video_frame_size(RETINA_MAX_VIDEO_FRAME_BYTES + 1),
+            Err(RetinaRtspError::VideoFrameTooLarge { .. })
+        ));
     }
 }

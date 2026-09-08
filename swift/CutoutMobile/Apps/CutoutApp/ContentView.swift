@@ -162,6 +162,14 @@ struct ContentView: View {
         navigationPath.removeLast()
     }
 
+    private func openCamera() {
+        navigationPath = CutoutAppRoute.navigationPath(openingCameraFrom: route)
+    }
+
+    private func closeCamera() {
+        guard navigationPath.last == .camera else { return }
+        navigationPath.removeLast()
+    }
     private func disconnectAndReturnToPicker() {
         model.disconnectTransport()
         navigate(to: .devicePicker)
@@ -264,18 +272,12 @@ struct ContentView: View {
                 PevAppShell(
                     sectionTitle: appSectionTitle(for: destination),
                     disconnect: disconnectAndReturnToPicker,
-                    openCamera: { navigate(to: .camera) }
+                    openCamera: openCamera
                 ) {
                     routedContent(for: destination)
                 }
             } else {
-                PevAppShell(
-                    sectionTitle: appSectionTitle(for: destination),
-                    disconnect: disconnectAndReturnToPicker,
-                    openCamera: { navigate(to: .camera) }
-                ) {
                 routedContent(for: destination)
-                }
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
@@ -307,7 +309,13 @@ struct ContentView: View {
         case .capture:
             CaptureRouteView(model: model, finishCapture: finishCaptureAndReturnToPicker)
         case .camera:
-            CameraRouteContainerView()
+            CameraRouteContainerView(
+                close: closeCamera,
+                annotateCapture: model.annotateCapture(key:value:),
+                recordMediaReference: model.recordCameraMediaReference(captureFileName:source:media:localURL:),
+                currentCaptureFileName: model.currentCameraCaptureFileName,
+                sessionState: model.cameraSessionStateHandle
+            )
         case .rideMap:
             RideMapRouteView(model: model, presentation: rideMapPresentation, { rideID in
                 model.rideMapMode = .history
