@@ -20,6 +20,11 @@ The same source also has a generic `MELK` profile with a smaller, different
 effect-name mapping and the controller-microphone frames. We retain those
 frames as a future capability path, but do not transplant its names into the
 OC21 catalog while the model-specific mapping is absent.
+An independent [LotusLamp X reverse-engineering project](https://l0lsec.github.io/LotusLampX/)
+corroborates the FFF0/FFF3/FFF4 transport and documents scenes, microphone
+reactivity, and timers for its tested MELK-OA10/SYMPHONY profile. Its basic
+frame templates are not identical to the OC21 captures, so this is family-level
+corroboration only, not OC21 capability proof.
 
 
 Power, solid RGB, and brightness were physically confirmed before this extension.
