@@ -100,9 +100,10 @@ the official app.
   documented two-frame initialization handshake. Reconnect and failure paths
   cancel any delayed second frame before clearing the session.
 - When CoreBluetooth already has a connected MELK peripheral, the session
-  recovers it by the FFF0 service and the same MELK name gate before starting a
-  broad advertisement scan. This covers restored/system-managed links without
-  treating an arbitrary FFF0 device as the controller.
+  recovers it by the FFF0 service and the remembered platform identity (or the
+  MELK name on first pairing) before starting a broad advertisement scan. This
+  covers restored/system-managed links without treating an arbitrary FFF0
+  device as the controller.
 - Color drag retains the existing 30 Hz preview path; queued superseded solid-color frames are coalesced so the newest drag value is preserved under BLE backpressure. Complete playback changes
   are validated in Rust and admitted together to a bounded Bluetooth write queue.
   CoreBluetooth backpressure pauses draining; writes are also paced at 50 ms because a burst can exhaust the controller-side queue. Disconnect discards pending writes.
@@ -143,3 +144,8 @@ The validator advertisement trace also observed unrelated nearby names (includin
 A later Mac validator run on 2026-09-07 found `MELK-OC21   6A` at RSSI -68 and connected successfully. It discovered the expected `FFF0` service with `FFF3` write and `FFF4` notify characteristics, completed the `7e0783` / `7e0404` initialization handshake, enabled notifications, and reached `ready`. Live writes for power, solid red (`255,0,0`), brightness 50%, and effect ID 1 at speed 0 emitted the expected `7e…ef` frames; confirmation remained an explicit operator action. A rapid burst of effect IDs 2–10 then exhausted the controller link and produced a CoreBluetooth timeout, and a remembered-UUID retry later timed out while the device was no longer advertising. This is evidence for a paced/coalesced write follow-up, not proof that every effect in the burst was physically observed.
 
 On 2026-09-08, a Mac validator retry using the remembered identity reached `connecting` but did not receive `didConnect` within 15 seconds. The session emitted `connect_timeout`, canceled the stale attempt, resumed the MELK-filtered scan, and ended without a MELK advertisement. This validates bounded recovery from a stale CoreBluetooth identity; it is not evidence that the controller is unsupported.
+
+The same 2026-09-08 scan observed a nearby `ELK-BLEDOB 44` identity, but it did
+not connect or expose GATT evidence during the bounded retry. The name is not
+accepted as `MELK-OC21`; no commands were sent and this observation does not
+establish that it is the user's controller.

@@ -450,10 +450,10 @@ public final class MelkLightingPeripheralSession: NSObject, CBCentralManagerDele
             if let connectedPeripheral = central.retrieveConnectedPeripherals(
                 withServices: [MelkLightingCommandProfile.service.coreBluetoothUuid]
             ).first(where: {
-                Self.isMelkName($0.name)
-                    && targetPolicy.accepts(
-                        CoreBluetoothPeripheralIdentifier($0.identifier.uuidString)
-                    )
+                targetPolicy.acceptsDiscovery(
+                    name: $0.name,
+                    identifier: CoreBluetoothPeripheralIdentifier($0.identifier.uuidString)
+                )
             }) {
                 connect(
                     central: central,
@@ -923,11 +923,6 @@ public final class MelkLightingPeripheralSession: NSObject, CBCentralManagerDele
 
     private func record(_ message: String) {
         onRecord?(message)
-    }
-
-    private static func isMelkName(_ name: String?) -> Bool {
-        name?.trimmingCharacters(in: .whitespacesAndNewlines)
-            .lowercased().hasPrefix("melk") == true
     }
 
     private func onQueue<T>(_ work: () throws -> T) rethrows -> T {
