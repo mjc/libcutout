@@ -102,6 +102,10 @@ final class LightingAccessoryPersistenceTests: XCTestCase {
         XCTAssertThrowsError(try store.addPreset(name: "Night", requested: state))
         let reopened = LightingAccessoryPersistence(defaults: defaults)
         XCTAssertEqual(reopened.presets.map(\.name), ["Night"])
+        XCTAssertTrue(store.removePreset(named: "Night"))
+        XCTAssertFalse(store.removePreset(named: "Night"))
+        XCTAssertTrue(store.presets.isEmpty)
+        XCTAssertTrue(LightingAccessoryPersistence(defaults: defaults).presets.isEmpty)
     }
 
     func testStorePersistsAliasAndVehicleAssociationAcrossReopen() throws {

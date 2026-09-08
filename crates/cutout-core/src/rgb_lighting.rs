@@ -279,6 +279,15 @@ impl RgbLightingAccessoryRecord {
         Ok(())
     }
 
+    /// Removes a named preset and reports whether a scene was deleted.
+    pub fn remove_preset(&mut self, name: &str) -> bool {
+        let Some(index) = self.presets.iter().position(|preset| preset.name == name) else {
+            return false;
+        };
+        self.presets.remove(index);
+        true
+    }
+
     /// Encodes the versioned record as bounded JSON bytes.
     ///
     /// # Errors
@@ -650,5 +659,19 @@ mod tests {
             record.add_preset(RgbLightingPreset::new("overflow".to_owned(), state()).unwrap()),
             Err(RgbLightingRecordError::TooManyPresets)
         );
+    }
+
+    #[test]
+    fn named_presets_can_be_removed_without_affecting_other_state() {
+        let mut record =
+            RgbLightingAccessoryRecord::new("melk-1".into(), RgbLightingProfileKind::MelkOc21, 1)
+                .expect("valid record");
+        record
+            .add_preset(RgbLightingPreset::new("Night".to_owned(), state()).expect("preset"))
+            .expect("preset fits");
+
+        assert!(record.remove_preset("Night"));
+        assert!(record.presets().is_empty());
+        assert!(!record.remove_preset("Night"));
     }
 }

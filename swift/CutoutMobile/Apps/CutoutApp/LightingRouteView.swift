@@ -347,6 +347,11 @@ private struct LightingPresetsCard: View {
                         .buttonStyle(.bordered)
                         .disabled(!isEnabled)
                         .accessibilityIdentifier("lighting.preset.\(preset.name)")
+                        .contextMenu {
+                            Button("Delete scene", role: .destructive) {
+                                _ = model.deletePreset(named: preset.name)
+                            }
+                        }
                     }
                 }
             }

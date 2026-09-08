@@ -148,6 +148,15 @@ public final class LightingAccessoryPersistence {
         persist()
     }
 
+    /// Removes a named app scene and persists the updated record.
+    @discardableResult
+    public func removePreset(named name: String) -> Bool {
+        guard let record, record.removePreset(name: name) else { return false }
+        persist()
+        return true
+    }
+
+
     private static func loadRecord(from defaults: UserDefaults) -> MobileRgbLightingAccessoryRecord? {
         guard let data = defaults.data(forKey: Key.record) else { return nil }
         return try? MobileRgbLightingAccessoryRecord.decode(bytes: data)

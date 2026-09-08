@@ -513,6 +513,13 @@ final class LightingRouteModel {
         }
     }
 
+    @discardableResult
+    func deletePreset(named name: String) -> Bool {
+        guard persistence.removePreset(named: name) else { return false }
+        refreshPresets()
+        return true
+    }
+
     func saveAccessoryMetadata(alias: String, vehicleIdentifier: String?) {
         guard canEditMetadata else { return }
         let trimmedAlias = alias.trimmingCharacters(in: .whitespacesAndNewlines)

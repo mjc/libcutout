@@ -1674,6 +1674,14 @@ impl MobileRgbLightingAccessoryRecord {
             .add_preset(preset)
             .map_err(Into::into)
     }
+
+    /// Removes a named app scene and reports whether it existed.
+    pub fn remove_preset(&self, name: String) -> bool {
+        self.inner
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .remove_preset(&name)
+    }
 }
 
 /// Complete solid-lighting state stored for an explicit restore.
@@ -2075,6 +2083,8 @@ mod melk_lighting_tests {
         );
         assert!(restored.restore_enabled());
         assert_eq!(restored.presets().len(), 1);
+        assert!(restored.remove_preset("Cruise".to_owned()));
+        assert!(!restored.remove_preset("Cruise".to_owned()));
     }
 
     #[test]

@@ -1015,6 +1015,9 @@ final class CutoutAppRouteTests: XCTestCase {
         fake.stateResult = false
         model.setPlayback(.effect(pattern: 1, speed: 255))
         XCTAssertEqual(model.requestedPlayback, .effect(pattern: 16, speed: 75))
+        XCTAssertTrue(model.deletePreset(named: "Effect"))
+        XCTAssertTrue(model.presets.isEmpty)
+        XCTAssertFalse(model.deletePreset(named: "Effect"))
     }
 
     func testLightingControlPagesResolveFromTheAppCatalog() {
