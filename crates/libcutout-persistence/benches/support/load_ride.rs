@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 use cutout_ride_maps::{
     Coordinate, LocationAdmission, LocationSample, LocationSource, MAX_ROUTE_DISPLAY_POINTS,
     RideEvent, RouteDisplayBudget, RoutePrivacyPolicy,
@@ -10,6 +12,11 @@ const GENERATED_POINTS: u32 = 4_697;
 
 type LoadResult = (RideRecord, RoutePointProjection);
 
+pub(super) enum RideSelection {
+    MostPoints,
+    LongestDistance,
+}
+
 pub(super) struct Fixture {
     database: RideDatabase,
     ride: RideId,
@@ -19,8 +26,22 @@ pub(super) struct Fixture {
 
 impl Fixture {
     pub(super) fn setup() -> Self {
+        Self::setup_for(RideSelection::MostPoints)
+    }
+
+    pub(super) fn setup_largest() -> Self {
+        Self::setup_for(RideSelection::LongestDistance)
+    }
+
+    fn setup_for(selection: RideSelection) -> Self {
         let directory = tempfile::tempdir().expect("private benchmark directory");
         let path = directory.path().join("ride.sqlite");
+        let (order_by, workload) = match selection {
+            RideSelection::MostPoints => ("point_count DESC, distance_mm DESC", "imported"),
+            RideSelection::LongestDistance => {
+                ("distance_mm DESC, point_count DESC", "imported-largest")
+            }
+        };
         let (database, ride, workload) = if let Some(source_path) =
             std::env::var_os("CUTOUT_BENCH_DATABASE")
         {
@@ -33,22 +54,17 @@ impl Fixture {
                 .expect("snapshot database");
             let snapshot =
                 Connection::open_with_flags(&path, OpenFlags::SQLITE_OPEN_READ_ONLY).unwrap();
+            let query = format!(
+                "SELECT id FROM rides
+                 WHERE source = 'pevcap_import' AND state = 'imported'
+                   AND distance_mm >= ?1 AND point_count >= 2
+                 ORDER BY {order_by}, id LIMIT 1"
+            );
             let ride: String = snapshot
-                .query_row(
-                    "SELECT id FROM rides
-                         WHERE source = 'pevcap_import' AND state = 'imported'
-                           AND distance_mm >= ?1 AND point_count >= 2
-                         ORDER BY point_count DESC, id LIMIT 1",
-                    [MILE_MILLIMETRES],
-                    |row| row.get(0),
-                )
+                .query_row(&query, [MILE_MILLIMETRES], |row| row.get(0))
                 .expect("snapshot must contain an imported ride at least one mile long");
             let database = RideDatabase::open(&path).expect("open snapshot worker");
-            (
-                database,
-                RideId::from_uuid(ride.parse().unwrap()),
-                "imported",
-            )
+            (database, RideId::from_uuid(ride.parse().unwrap()), workload)
         } else {
             let database = RideDatabase::open(&path).expect("open generated database");
             let ride = generated_ride(&database);

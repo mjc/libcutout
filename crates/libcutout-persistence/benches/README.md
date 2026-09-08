@@ -16,6 +16,7 @@ history uses.
 
 ```sh
 nix develop -c cargo bench -p libcutout-persistence --bench load_ride_ips -- --items-count=1
+nix develop -c cargo bench -p libcutout-persistence --bench load_largest_ride_ips -- --items-count=1
 ```
 
 ## Gungraun instruction counts
@@ -58,12 +59,16 @@ Set `CUTOUT_BENCH_DATABASE` to a Cutout SQLite database. Setup opens it read-onl
 and uses SQLite backup to create a private temporary snapshot, including committed
 WAL data. Only the snapshot is opened by the recovery-capable production worker.
 It selects the imported ride with the most points among rides at least one mile
-long; no qualifying ride is a hard failure, never a synthetic fallback. Private
+long. `load_largest_ride_ips` instead selects the imported ride with the greatest
+recorded distance, breaking ties by point count. No qualifying ride is a hard
+failure, never a synthetic fallback. Private
 databases and GPS fixtures must not be committed.
 
 ```sh
 CUTOUT_BENCH_DATABASE=/path/to/ride.sqlite nix develop -c cargo bench \
   -p libcutout-persistence --bench load_ride_ips -- --items-count=1
+CUTOUT_BENCH_DATABASE=/path/to/ride.sqlite nix develop -c cargo bench \
+  -p libcutout-persistence --bench load_largest_ride_ips -- --items-count=1
 CUTOUT_BENCH_DATABASE=/path/to/ride.sqlite nix develop -c cargo bench \
   -p libcutout-persistence --bench load_ride -- --save-baseline=imported_before --nocapture
 CUTOUT_BENCH_DATABASE=/path/to/ride.sqlite nix develop -c cargo bench \

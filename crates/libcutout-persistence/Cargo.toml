@@ -36,3 +36,7 @@ harness = false
 [[bench]]
 name = "load_ride_ips"
 harness = false
+
+[[bench]]
+name = "load_largest_ride_ips"
+harness = false
