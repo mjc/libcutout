@@ -1682,6 +1682,21 @@ impl MobileRgbLightingAccessoryRecord {
             .unwrap_or_else(PoisonError::into_inner)
             .remove_preset(&name)
     }
+
+    /// Replaces a named app scene and reports whether it existed.
+    pub fn replace_preset(
+        &self,
+        name: String,
+        requested: MobileMelkLightingRestoreStateDto,
+    ) -> Result<bool, MobileRgbLightingRecordError> {
+        let preset = RgbLightingPreset::new(name, requested.try_into()?)
+            .map_err(MobileRgbLightingRecordError::from)?;
+        Ok(self
+            .inner
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .replace_preset(preset))
+    }
 }
 
 /// Complete solid-lighting state stored for an explicit restore.
@@ -2083,6 +2098,11 @@ mod melk_lighting_tests {
         );
         assert!(restored.restore_enabled());
         assert_eq!(restored.presets().len(), 1);
+        assert!(
+            restored
+                .replace_preset("Cruise".to_owned(), state)
+                .expect("preset replacement should validate")
+        );
         assert!(restored.remove_preset("Cruise".to_owned()));
         assert!(!restored.remove_preset("Cruise".to_owned()));
     }

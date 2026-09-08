@@ -100,8 +100,17 @@ final class LightingAccessoryPersistenceTests: XCTestCase {
         XCTAssertEqual(store.presets.first?.requested, state)
 
         XCTAssertThrowsError(try store.addPreset(name: "Night", requested: state))
+        let replacement = MobileMelkLightingRestoreStateDto(
+            powerOn: false,
+            red: 1,
+            green: 2,
+            blue: 3,
+            brightness: 10
+        )
+        XCTAssertTrue(try store.replacePreset(named: "Night", requested: replacement))
+        XCTAssertEqual(store.presets.first?.requested, replacement)
         let reopened = LightingAccessoryPersistence(defaults: defaults)
-        XCTAssertEqual(reopened.presets.map(\.name), ["Night"])
+        XCTAssertEqual(reopened.presets.first?.requested, replacement)
         XCTAssertTrue(store.removePreset(named: "Night"))
         XCTAssertFalse(store.removePreset(named: "Night"))
         XCTAssertTrue(store.presets.isEmpty)

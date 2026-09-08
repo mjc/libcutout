@@ -288,6 +288,19 @@ impl RgbLightingAccessoryRecord {
         true
     }
 
+    /// Replaces a named preset while preserving its insertion position.
+    pub fn replace_preset(&mut self, preset: RgbLightingPreset) -> bool {
+        let Some(existing) = self
+            .presets
+            .iter_mut()
+            .find(|existing| existing.name == preset.name)
+        else {
+            return false;
+        };
+        *existing = preset;
+        true
+    }
+
     /// Encodes the versioned record as bounded JSON bytes.
     ///
     /// # Errors
@@ -670,6 +683,12 @@ mod tests {
             .add_preset(RgbLightingPreset::new("Night".to_owned(), state()).expect("preset"))
             .expect("preset fits");
 
+        let replacement = RgbLightingPreset::new("Night".to_owned(), state()).expect("preset");
+        assert!(record.replace_preset(replacement));
+        assert_eq!(record.presets().len(), 1);
+        assert!(!record.replace_preset(
+            RgbLightingPreset::new("Missing".to_owned(), state()).expect("preset")
+        ));
         assert!(record.remove_preset("Night"));
         assert!(record.presets().is_empty());
         assert!(!record.remove_preset("Night"));

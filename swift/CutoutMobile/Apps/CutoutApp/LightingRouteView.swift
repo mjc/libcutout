@@ -348,6 +348,10 @@ private struct LightingPresetsCard: View {
                         .disabled(!isEnabled)
                         .accessibilityIdentifier("lighting.preset.\(preset.name)")
                         .contextMenu {
+                            Button("Replace with current") {
+                                _ = model.replacePreset(named: preset.name)
+                            }
+                            .disabled(!model.canSavePreset)
                             Button("Delete scene", role: .destructive) {
                                 _ = model.deletePreset(named: preset.name)
                             }
@@ -704,4 +708,3 @@ private struct LightingPairingSheet: View {
             .background((model.connectionState == .ready ? PevColors.green : PevColors.yellow).opacity(0.14), in: Capsule())
     }
 }
-

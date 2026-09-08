@@ -520,6 +520,22 @@ final class LightingRouteModel {
         return true
     }
 
+    @discardableResult
+    func replacePreset(named name: String) -> Bool {
+        guard canSavePreset else { return false }
+        do {
+            guard try persistence.replacePreset(named: name, requested: requestedState) else {
+                return false
+            }
+            refreshPresets()
+            controlError = nil
+            return true
+        } catch {
+            controlError = "Could not update this preset: \(error.localizedDescription)"
+            return false
+        }
+    }
+
     func saveAccessoryMetadata(alias: String, vehicleIdentifier: String?) {
         guard canEditMetadata else { return }
         let trimmedAlias = alias.trimmingCharacters(in: .whitespacesAndNewlines)
