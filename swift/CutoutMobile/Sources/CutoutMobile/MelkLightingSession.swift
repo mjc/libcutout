@@ -474,7 +474,9 @@ public final class MelkLightingPeripheralSession: NSObject, CBCentralManagerDele
             ) else {
                 return
             }
-            guard Self.isMelkName(name) else {
+            let isRememberedTarget = targetPolicy.preferredUUID
+                == peripheral.identifier
+            guard isRememberedTarget || Self.isMelkName(name) else {
                 return
             }
             central.stopScan()
@@ -668,7 +670,10 @@ public final class MelkLightingPeripheralSession: NSObject, CBCentralManagerDele
                 transition(to: .failed(error.map(String.init(describing:)) ?? "characteristic discovery failed"))
                 return
             }
-            guard let name = advertisedName ?? peripheral.name else {
+            let name = advertisedName
+                ?? peripheral.name
+                ?? (targetPolicy.preferredUUID == peripheral.identifier ? "MELK-OC21" : nil)
+            guard let name else {
                 transition(to: .failed("missing MELK name"))
                 return
             }
