@@ -137,3 +137,5 @@ CoreBluetooth scan also found no MELK advertisement. The upstream LotusLampX
 `bleak` CoreBluetooth backend independently found 22 nearby devices in a
 ten-second scan and also found no MELK device. This is a discovery-state
 observation, not evidence that the controller is unsupported.
+
+The validator advertisement trace also observed unrelated nearby names (including Govee, GAFVent, `uac088`, and iPhone) and repeated RSSI updates during that run. This confirms the Mac callback path is active while the exact MELK controller remains absent from the radio environment.
