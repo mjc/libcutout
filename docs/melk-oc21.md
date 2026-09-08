@@ -52,6 +52,9 @@ preserved, not collapsed by parsing names as unique dictionary keys. The UI give
 ID 0 and 213–227 generic STRIPX reference labels marked “(reference)” so every
 wire ID has a human-readable name; these entries remain unverified and disabled
 until exact OC21 capture.
+The official-app screenshot labels its first Basic card “Auto Play”; the UI
+preserves that as an ID 0 reference label until an OC21 capture ties the name to
+a wire ID.
 The mobile FFI restore and preset boundary permits only capture-backed effect IDs 1, 16, 22, and 75; all other reference IDs, controller-microphone playback, and schedules fail closed as unavailable.
 
 The production picker groups the reference IDs into Basic, Curtain, Trans, Water,

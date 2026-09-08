@@ -1054,7 +1054,7 @@ final class CutoutAppRouteTests: XCTestCase {
             XCTAssertFalse(LightingPatternCatalog.name(for: id).contains("Unmapped"))
             XCTAssertFalse(LightingPatternCatalog.isMapped(id))
         }
-        XCTAssertEqual(LightingPatternCatalog.name(for: 0), "Rainbow Up (reference)")
+        XCTAssertEqual(LightingPatternCatalog.name(for: 0), "Auto Play (reference)")
         XCTAssertEqual(LightingPatternCatalog.name(for: 213), "Fade 73 (reference)")
         XCTAssertEqual(LightingPatternCatalog.name(for: 220), "Music Flow Flash (reference)")
         XCTAssertEqual(LightingPatternCatalog.name(for: 221), "Music Flash (reference)")

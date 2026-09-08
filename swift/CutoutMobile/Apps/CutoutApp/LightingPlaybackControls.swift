@@ -58,7 +58,7 @@ enum LightingPatternCatalog {
 
     /// Generic STRIPX labels from the pinned upstream catalog; not OC21 verification.
     private static let referenceNames: [Int: String] = [
-        0: "Rainbow Up (reference)",
+        0: "Auto Play (reference)",
         213: "Fade 73 (reference)",
         214: "Fade 74 (reference)",
         215: "Fade 75 (reference)",
