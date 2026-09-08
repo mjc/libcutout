@@ -14,7 +14,7 @@ pub enum MobileLightingPlaybackDto {
     Solid,
     /// Reference pattern ID and native speed.
     Effect {
-        /// Verified pattern ID (1..=212).
+        /// Capture-backed MELK-OC21 pattern ID. Reference entries fail closed until verified.
         pattern: u8,
         /// Native speed (0..=255).
         speed: u8,
