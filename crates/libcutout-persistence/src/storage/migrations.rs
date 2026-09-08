@@ -1,7 +1,7 @@
 use super::{MapPointId, SpatialRowId, StorageError};
 use rusqlite::{Connection, OptionalExtension, params};
 
-const CURRENT_SCHEMA_VERSION: i64 = 19;
+const CURRENT_SCHEMA_VERSION: i64 = 20;
 const APPLICATION_ID: i64 = 0x4355_544f;
 
 fn current_schema_pragmas() -> String {
@@ -40,6 +40,7 @@ pub(super) fn migrate(connection: &mut Connection) -> Result<(), StorageError> {
         16 => migrate_v16_to_current(connection)?,
         17 => migrate_v17_to_current(connection)?,
         18 => migrate_v18_to_current(connection)?,
+        19 => migrate_v19_to_current(connection)?,
         CURRENT_SCHEMA_VERSION => {
             if application_id != APPLICATION_ID {
                 return Err(StorageError::InvalidDatabaseIdentity);
@@ -1030,6 +1031,10 @@ fn migrate_v18_to_current(connection: &mut Connection) -> Result<(), StorageErro
     transaction.execute_batch(&current_schema_pragmas())?;
     transaction.commit()?;
     Ok(())
+}
+
+fn migrate_v19_to_current(connection: &mut Connection) -> Result<(), StorageError> {
+    migrate_v18_to_current(connection)
 }
 
 fn table_has_column(

@@ -5003,6 +5003,138 @@ pub fn mobile_music_limits() -> MobileMusicLimitsDto {
     }
 }
 
+/// Validates one provider observation using the portable Rust music contract.
+///
+/// Platform adapters may use this before updating presentation state so malformed
+/// metadata never enters the UI or capture path.
+#[uniffi::export]
+pub fn validate_music_snapshot(
+    snapshot: MobileMusicSnapshotDto,
+) -> Result<(), MobileRideMapCoreErrorDto> {
+    CoreMusicSnapshot::try_from(snapshot)
+        .map(|_| ())
+        .map_err(MobileRideMapCoreErrorDto::InvalidMusicInput)
+}
+
+/// Normalizes optional display fields and validates one provider observation.
+#[uniffi::export]
+pub fn normalize_music_snapshot(
+    mut snapshot: MobileMusicSnapshotDto,
+) -> Result<MobileMusicSnapshotDto, MobileRideMapCoreErrorDto> {
+    if let Some(item) = snapshot.item.as_mut() {
+        if item
+            .title
+            .as_deref()
+            .is_some_and(|value| value.trim().is_empty())
+        {
+            item.title = None;
+        }
+        if item
+            .artist
+            .as_deref()
+            .is_some_and(|value| value.trim().is_empty())
+        {
+            item.artist = None;
+        }
+    }
+    validate_music_snapshot(snapshot.clone())?;
+    Ok(snapshot)
+}
+
+/// Applies the Rust-owned monotonic observation watermark used by provider
+/// adapters before they update presentation or submit a ride transition.
+#[uniffi::export]
+pub fn accept_music_snapshot(
+    previous_observed_at_ms: Option<u64>,
+    current_observed_at_ms: u64,
+) -> bool {
+    previous_observed_at_ms.is_none_or(|previous| current_observed_at_ms > previous)
+}
+
+/// Applies the Rust-owned PEVCAP music retention filter to one provider item.
+#[uniffi::export]
+pub fn pevcap_music_track_identifier(
+    policy: MobileMusicHistoryPolicyDto,
+    provider: MobileMusicProviderDto,
+    identifier: String,
+) -> Option<String> {
+    if policy == MobileMusicHistoryPolicyDto::OpaqueItem
+        && provider == MobileMusicProviderDto::Spotify
+        && identifier.starts_with("spotify:local:")
+    {
+        None
+    } else {
+        Some(identifier)
+    }
+}
+
+/// Classifies a validated provider observation against the last committed one.
+///
+/// The decision is portable domain logic; Swift only supplies observations and
+/// the fact that a skip command is awaiting provider confirmation.
+#[uniffi::export]
+pub fn music_transition_kind(
+    previous: Option<MobileMusicSnapshotDto>,
+    current: MobileMusicSnapshotDto,
+    skip_hint: bool,
+) -> Result<Option<MobileMusicRideEventKindDto>, MobileRideMapCoreErrorDto> {
+    validate_music_snapshot(current.clone())?;
+    let Some(previous) = previous else {
+        return Ok(current
+            .item
+            .as_ref()
+            .map(|_| MobileMusicRideEventKindDto::ItemChanged));
+    };
+    validate_music_snapshot(previous.clone())?;
+    if current.state == MobileMusicPlaybackStateDto::Disconnected {
+        return Ok(
+            (previous.state != MobileMusicPlaybackStateDto::Disconnected)
+                .then_some(MobileMusicRideEventKindDto::ProviderDisconnected),
+        );
+    }
+    if matches!(
+        current.state,
+        MobileMusicPlaybackStateDto::Unauthorized
+            | MobileMusicPlaybackStateDto::Unavailable
+            | MobileMusicPlaybackStateDto::Disconnected
+            | MobileMusicPlaybackStateDto::Stale
+    ) {
+        return Ok(None);
+    }
+    if previous.provider != current.provider {
+        return Ok(Some(MobileMusicRideEventKindDto::ItemChanged));
+    }
+    if current.state == MobileMusicPlaybackStateDto::Stopped
+        && previous.state != MobileMusicPlaybackStateDto::Stopped
+    {
+        return Ok(Some(MobileMusicRideEventKindDto::Stopped));
+    }
+    if previous.item.as_ref().map(|item| &item.identifier)
+        != current.item.as_ref().map(|item| &item.identifier)
+    {
+        return Ok(Some(
+            if skip_hint && previous.item.is_some() && current.item.is_some() {
+                MobileMusicRideEventKindDto::Skip
+            } else {
+                MobileMusicRideEventKindDto::ItemChanged
+            },
+        ));
+    }
+    Ok(match (previous.state, current.state) {
+        (_, MobileMusicPlaybackStateDto::Playing)
+            if previous.state != MobileMusicPlaybackStateDto::Playing =>
+        {
+            Some(MobileMusicRideEventKindDto::Play)
+        }
+        (_, MobileMusicPlaybackStateDto::Paused)
+            if previous.state != MobileMusicPlaybackStateDto::Paused =>
+        {
+            Some(MobileMusicRideEventKindDto::Pause)
+        }
+        _ => None,
+    })
+}
+
 /// Acquires the process-wide Rust-owned ride database service for `path`.
 ///
 /// # Errors
@@ -9544,6 +9676,7 @@ pub struct MobilePevcapCaptureBuilder {
     writer: Mutex<Option<CaptureWriter>>,
     writer_state: Mutex<Option<Arc<CaptureWriterState>>>,
     music_history_policy: Mutex<CoreMusicHistoryPolicy>,
+    music_capture_start_monotonic_ms: Mutex<Option<u64>>,
     music_context: Mutex<VecDeque<PendingPevcapMusicContext>>,
 }
 
@@ -9594,6 +9727,7 @@ impl MobilePevcapCaptureBuilder {
             writer: Mutex::new(None),
             writer_state: Mutex::new(None),
             music_history_policy: Mutex::new(CoreMusicHistoryPolicy::Disabled),
+            music_capture_start_monotonic_ms: Mutex::new(None),
             music_context: Mutex::new(VecDeque::with_capacity(PEVCAP_MUSIC_CONTEXT_CAPACITY)),
         })
     }
@@ -9710,6 +9844,37 @@ impl MobilePevcapCaptureBuilder {
         true
     }
 
+    /// Sets the monotonic origin used for capture-relative music timestamps.
+    pub fn set_music_capture_start_monotonic_ms(&self, monotonic_ms: u64) -> bool {
+        *self
+            .music_capture_start_monotonic_ms
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner) = Some(monotonic_ms);
+        true
+    }
+
+    fn relative_music_event(
+        &self,
+        mut music: MobilePevcapMusicEventDto,
+    ) -> Option<MobilePevcapMusicEventDto> {
+        let start = *self
+            .music_capture_start_monotonic_ms
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        let Some(start) = start else {
+            return Some(music);
+        };
+        if music.monotonic_at_ms >= start {
+            music.monotonic_at_ms -= start;
+            Some(music)
+        } else if start - music.monotonic_at_ms <= PEVCAP_MUSIC_CONTEXT_FRESHNESS_MS {
+            music.monotonic_at_ms = 0;
+            Some(music)
+        } else {
+            None
+        }
+    }
+
     /// Queues a bounded music observation for correlation with the next notifications.
     pub fn set_music_context(&self, music: Option<MobilePevcapMusicEventDto>) -> bool {
         let mut pending = self
@@ -9724,6 +9889,9 @@ impl MobilePevcapCaptureBuilder {
             .music_history_policy
             .lock()
             .unwrap_or_else(PoisonError::into_inner);
+        let Some(music) = self.relative_music_event(music) else {
+            return false;
+        };
         let event = match pevcap_music_event_for_policy(music.clone(), policy) {
             Ok(Some(event)) => event,
             Ok(None) => return true,
@@ -9746,6 +9914,9 @@ impl MobilePevcapCaptureBuilder {
             .music_history_policy
             .lock()
             .unwrap_or_else(PoisonError::into_inner);
+        let Some(music) = self.relative_music_event(music) else {
+            return false;
+        };
         let event = match pevcap_music_event_for_policy(music, policy) {
             Ok(Some(event)) => event,
             Ok(None) => return true,
@@ -17393,6 +17564,14 @@ mod tests {
                 open_provider: true,
             },
         }
+    }
+
+    #[test]
+    fn music_observation_watermark_accepts_only_newer_samples() {
+        assert!(accept_music_snapshot(None, 1));
+        assert!(accept_music_snapshot(Some(1), 2));
+        assert!(!accept_music_snapshot(Some(2), 2));
+        assert!(!accept_music_snapshot(Some(2), 1));
     }
 
     #[test]

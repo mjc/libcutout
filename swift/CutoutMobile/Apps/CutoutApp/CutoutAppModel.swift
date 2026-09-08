@@ -624,12 +624,11 @@ final class CutoutAppModel {
         provider: MobileMusicProviderDto,
         identifier: String
     ) -> String? {
-        if policy == .opaqueItem,
-           provider == .spotify,
-           identifier.hasPrefix("spotify:local:") {
-            return nil
-        }
-        return identifier
+        pevcapMusicTrackIdentifier(
+            policy: policy,
+            provider: provider,
+            identifier: identifier
+        )
     }
 
     func setMusicHistoryPolicy(_ policy: MobileMusicHistoryPolicyDto) -> Bool {
@@ -1319,11 +1318,13 @@ final class CutoutAppModel {
             if rideMapSnapshot?.rideID == rideID,
                rideMapSnapshot?.state.isOpen == true
             {
-                try clearActiveMusicHistory(using: state)
+                try state.deleteCurrentMusicHistory()
+                clearActiveMusicHistory()
             } else {
                 try state.deleteMusicHistory(rideID: rideID)
                 if rideMapSnapshot?.rideID == rideID {
                     musicHistoryPolicy = .disabled
+                    musicHistoryUnavailable = false
                     musicCoordinator.restoreHistoryPolicy(.disabled)
                     musicTransitionHintTracker.clear()
                     clearMusicCaptureContext()
@@ -1340,11 +1341,10 @@ final class CutoutAppModel {
         }
     }
 
-    private func clearActiveMusicHistory(using state: MobileRideMapState) throws {
-        // Route active-ride deletion through the Rust state owner so its
-        // in-memory timeline and durable policy change together.
-        try state.setMusicHistoryPolicy(.disabled)
+    private func clearActiveMusicHistory() {
+        // Rust owns the durable tombstone; this only clears Swift's presentation cache.
         musicHistoryPolicy = .disabled
+        musicHistoryUnavailable = false
         musicCoordinator.restoreHistoryPolicy(.disabled)
         musicTransitionHintTracker.clear()
         clearMusicCaptureContext()
@@ -1505,11 +1505,10 @@ final class CutoutAppModel {
                         )
                         let musicHistory: MusicHistoryQueryResult
                         do {
-                            let musicState = try state.storedMusicHistoryState(rideID: rideID)
-                            let musicTimeline = try state.storedMusicEvents(rideID: rideID)
+                            let storedHistory = try state.storedMusicHistory(rideID: rideID)
                             musicHistory = MusicHistoryQueryResult(
-                                events: musicTimeline,
-                                state: musicState,
+                                events: storedHistory.events,
+                                state: storedHistory.historyState,
                                 error: nil
                             )
                         } catch {

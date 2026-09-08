@@ -24,66 +24,6 @@ public struct MusicArtwork: Equatable, Sendable {
     }
 }
 
-private enum MusicObservationValidator {
-    private static let limits = mobileMusicLimits()
-
-    static func normalized(_ snapshot: MobileMusicSnapshotDto) -> MobileMusicSnapshotDto {
-        guard let item = snapshot.item else { return snapshot }
-        let title = normalizedOptional(item.title)
-        let artist = normalizedOptional(item.artist)
-        guard title != item.title || artist != item.artist else { return snapshot }
-        return MobileMusicSnapshotDto(
-            provider: snapshot.provider,
-            sessionId: snapshot.sessionId,
-            state: snapshot.state,
-            item: MobileMusicItemDto(
-                identifier: item.identifier,
-                title: title,
-                artist: artist
-            ),
-            positionMilliseconds: snapshot.positionMilliseconds,
-            durationMilliseconds: snapshot.durationMilliseconds,
-            observedAtMs: snapshot.observedAtMs,
-            capabilities: snapshot.capabilities
-        )
-    }
-
-    static func accepts(_ snapshot: MobileMusicSnapshotDto) -> Bool {
-        guard acceptsRequired(snapshot.sessionId, maxBytes: Int(limits.identifierMaxBytes)) else {
-            return false
-        }
-        if let position = snapshot.positionMilliseconds,
-           let duration = snapshot.durationMilliseconds,
-           position > duration
-        {
-            return false
-        }
-        guard let item = snapshot.item else { return true }
-        guard acceptsRequired(item.identifier, maxBytes: Int(limits.identifierMaxBytes)) else {
-            return false
-        }
-        return acceptsOptional(item.title, maxBytes: Int(limits.displayTextMaxBytes))
-            && acceptsOptional(item.artist, maxBytes: Int(limits.displayTextMaxBytes))
-    }
-
-    private static func acceptsRequired(_ value: String, maxBytes: Int) -> Bool {
-        value.utf8.count <= maxBytes
-            && value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
-    }
-
-    private static func acceptsOptional(_ value: String?, maxBytes: Int) -> Bool {
-        guard let value = normalizedOptional(value) else { return true }
-        return acceptsRequired(value, maxBytes: maxBytes)
-    }
-
-    private static func normalizedOptional(_ value: String?) -> String? {
-        guard let value, value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false else {
-            return nil
-        }
-        return value
-    }
-}
-
 /// Keeps one positive artwork result so polling does not repeatedly decode the
 /// same provider image. The value is already bounded by `MusicArtwork`.
 struct MusicArtworkCache: Sendable {
@@ -700,7 +640,7 @@ public final class MusicIntegrationCoordinator {
 
     private var lastObservedAtByProvider = [MobileMusicProviderDto: UInt64]()
     private var lastCorrelationRideID: String?
-    private var lastPersistedNowPlayingByProvider = [MobileMusicProviderDto: MusicNowPlaying]()
+    private var lastPersistedSnapshotByProvider = [MobileMusicProviderDto: MobileMusicSnapshotDto]()
     private var historyPolicy = MobileMusicHistoryPolicyDto.disabled
     public private(set) var lastRecordedSequence: UInt64?
     public init(rideMapState: MobileRideMapState?) {
@@ -738,21 +678,20 @@ public final class MusicIntegrationCoordinator {
         transitionHint: MusicTransitionHint?
     ) throws -> MobileMusicTimelineOutcomeDto? {
         resetCorrelationIfRideChanged()
-        let snapshot = MusicObservationValidator.normalized(snapshot)
-        guard MusicObservationValidator.accepts(snapshot) else { return nil }
+        guard let snapshot = try? normalizeMusicSnapshot(snapshot: snapshot) else { return nil }
         guard accept(snapshot) else { return nil }
-        let previous = lastPersistedNowPlayingByProvider[snapshot.provider]
+        let previous = lastPersistedSnapshotByProvider[snapshot.provider]
         update(snapshot: snapshot, artwork: artwork)
-        guard let kind = Self.transitionKind(
-            from: previous,
-            to: nowPlaying,
-            hint: transitionHint
+        guard let kind = try musicTransitionKind(
+            previous: previous,
+            current: snapshot,
+            skipHint: transitionHint == .skip
         ) else {
             return nil
         }
         do {
             guard let rideMapState else {
-                rememberPersistedState(.disabled)
+                rememberPersistedState(.disabled, snapshot: snapshot)
                 return .disabled
             }
             let result = try rideMapState.recordMusicEventWithSequence(
@@ -764,14 +703,14 @@ public final class MusicIntegrationCoordinator {
             )
             lastRecordedSequence = result.sequence
             let outcome = result.outcome
-            rememberPersistedState(outcome)
+            rememberPersistedState(outcome, snapshot: snapshot)
             return outcome
         } catch MobileRideMapError.noActiveRide {
             if historyPolicy == .disabled {
-                rememberPersistedState(.disabled)
+                rememberPersistedState(.disabled, snapshot: snapshot)
                 return .disabled
             }
-            lastPersistedNowPlayingByProvider[snapshot.provider] = nowPlaying
+            lastPersistedSnapshotByProvider[snapshot.provider] = snapshot
             throw MobileRideMapError.noActiveRide
         }
     }
@@ -830,9 +769,7 @@ public final class MusicIntegrationCoordinator {
         clockUncertaintyMs: UInt64
     ) throws -> MobileMusicTimelineOutcomeDto {
         resetCorrelationIfRideChanged()
-        guard MusicObservationValidator.accepts(snapshot) else {
-            throw MobileRideMapError.storageError("invalid music observation")
-        }
+        let snapshot = try validatedMusicSnapshot(snapshot)
         guard accept(snapshot) else { return .outOfOrder }
         update(snapshot: snapshot)
         guard let rideMapState else {
@@ -845,7 +782,7 @@ public final class MusicIntegrationCoordinator {
             wallClockAtMs: wallClockAtMs,
             clockUncertaintyMs: clockUncertaintyMs
         )
-        rememberPersistedState(outcome)
+        rememberPersistedState(outcome, snapshot: snapshot)
         return outcome
     }
 
@@ -858,16 +795,17 @@ public final class MusicIntegrationCoordinator {
         guard rideID != lastCorrelationRideID else { return }
         lastCorrelationRideID = rideID
         lastObservedAtByProvider.removeAll()
-        lastPersistedNowPlayingByProvider.removeAll()
+        lastPersistedSnapshotByProvider.removeAll()
         lastRecordedSequence = nil
     }
 
-    private func rememberPersistedState(_ outcome: MobileMusicTimelineOutcomeDto) {
+    private func rememberPersistedState(
+        _ outcome: MobileMusicTimelineOutcomeDto,
+        snapshot: MobileMusicSnapshotDto
+    ) {
         switch outcome {
         case .recorded, .duplicate, .disabled:
-            if let nowPlaying {
-                lastPersistedNowPlayingByProvider[nowPlaying.provider] = nowPlaying
-            }
+            lastPersistedSnapshotByProvider[snapshot.provider] = snapshot
         case .outOfOrder, .rideNotOpen, .full:
             break
         }
@@ -881,13 +819,11 @@ public final class MusicIntegrationCoordinator {
         case (.disabled, .opaqueItem), (.disabled, .humanReadable):
             // Enabling history should capture the current item on the next
             // accepted observation, even if it was already playing.
-            lastPersistedNowPlayingByProvider.removeAll(keepingCapacity: true)
+            lastPersistedSnapshotByProvider.removeAll(keepingCapacity: true)
         case (_, .disabled):
             // Keep the current player as the baseline while history is off so
             // a later re-enable can deliberately start a new association.
-            if let nowPlaying {
-                lastPersistedNowPlayingByProvider[nowPlaying.provider] = nowPlaying
-            }
+            lastPersistedSnapshotByProvider.removeAll(keepingCapacity: true)
         default:
             // Redaction and display-policy changes are not music transitions.
             // Preserve the baseline so the next poll cannot duplicate one.
@@ -896,58 +832,30 @@ public final class MusicIntegrationCoordinator {
     }
 
     private func accept(_ snapshot: MobileMusicSnapshotDto) -> Bool {
-        guard let lastObservedAtMs = lastObservedAtByProvider[snapshot.provider] else {
-            lastObservedAtByProvider[snapshot.provider] = snapshot.observedAtMs
-            return true
-        }
-        guard snapshot.observedAtMs > lastObservedAtMs else { return false }
+        let lastObservedAtMs = lastObservedAtByProvider[snapshot.provider]
+        guard acceptMusicSnapshot(
+            previousObservedAtMs: lastObservedAtMs,
+            currentObservedAtMs: snapshot.observedAtMs
+        ) else { return false }
         lastObservedAtByProvider[snapshot.provider] = snapshot.observedAtMs
         return true
     }
 
-    private static func transitionKind(
-        from previous: MusicNowPlaying?,
-        to current: MusicNowPlaying?,
-        hint: MusicTransitionHint?
-    ) -> MobileMusicRideEventKindDto? {
-        guard let current else { return .providerDisconnected }
-        guard let previous else { return current.item == nil ? nil : .itemChanged }
-        if current.state == .disconnected {
-            return previous.state == .disconnected ? nil : .providerDisconnected
-        }
-        if Self.isProviderFailure(current.state) {
-            return nil
-        }
-        if previous.provider != current.provider {
-            return .itemChanged
-        }
-        if current.state == .stopped, previous.state != .stopped {
-            return .stopped
-        }
-        if previous.item?.identifier != current.item?.identifier {
-            if hint == .skip, previous.item != nil, current.item != nil {
-                return .skip
+    private func validatedMusicSnapshot(
+        _ snapshot: MobileMusicSnapshotDto
+    ) throws -> MobileMusicSnapshotDto {
+        do {
+            return try normalizeMusicSnapshot(snapshot: snapshot)
+        } catch let error as MobileRideMapCoreErrorDto {
+            switch error {
+            case let .InvalidMusicInput(message):
+                throw MobileRideMapError.invalidMusicInput(message)
+            default:
+                throw MobileRideMapError.storageError(String(describing: error))
             }
-            return .itemChanged
-        }
-        switch (previous.state, current.state) {
-        case (_, .playing) where previous.state != .playing:
-            return MobileMusicRideEventKindDto.play
-        case (_, .paused) where previous.state != .paused:
-            return MobileMusicRideEventKindDto.pause
-        default:
-            return nil
         }
     }
 
-    private static func isProviderFailure(_ state: MobileMusicPlaybackStateDto) -> Bool {
-        switch state {
-        case .unauthorized, .unavailable, .disconnected, .stale:
-            true
-        default:
-            false
-        }
-    }
 }
 
 /// A small, reusable control surface for Ride and Map. It renders metadata only;

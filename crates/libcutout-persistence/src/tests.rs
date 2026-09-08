@@ -111,6 +111,31 @@ fn music_v16_migration_preserves_events_without_fabricating_observation_times() 
 }
 
 #[test]
+fn schema_v19_migration_adds_music_history_state() {
+    let _guard = test_guard();
+    let (database, path) = music_test_database("v19-state");
+    let ride = database
+        .create_started_live_ride(1_700_000_000_000, 100, None)
+        .expect("ride creates");
+    database.shutdown().expect("database shuts down");
+    let connection = Connection::open(&path).expect("sqlite opens");
+    connection
+        .execute_batch(
+            "ALTER TABLE ride_music_history DROP COLUMN state;
+             PRAGMA user_version = 19;",
+        )
+        .expect("legacy v19 shape creates");
+    drop(connection);
+    let database = RideDatabase::open(&path).expect("v19 database migrates");
+    assert_eq!(
+        database.music_history_state(ride).expect("state reads"),
+        MusicHistoryState::Missing
+    );
+    database.shutdown().expect("database shuts down");
+    let _ = std::fs::remove_file(path);
+}
+
+#[test]
 fn pre_music_v16_migration_preserves_existing_capture_tables() {
     let _guard = test_guard();
     let path = music_test_path();
@@ -133,7 +158,7 @@ fn pre_music_v16_migration_preserves_existing_capture_tables() {
         connection
             .query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0))
             .unwrap(),
-        19
+        20
     );
     for table in ["pevcap_captures", "pevcap_capture_chunks"] {
         assert!(
@@ -2831,7 +2856,7 @@ fn legacy_schema_versions_migrate_to_the_current_schema() {
         let current_version: i64 = connection
             .pragma_query_value(None, "user_version", |row| row.get(0))
             .unwrap();
-        assert_eq!(current_version, 19);
+        assert_eq!(current_version, 20);
         let music_tables: i64 = connection
             .query_row(
                 "SELECT COUNT(*) FROM sqlite_schema
@@ -3246,7 +3271,7 @@ fn schema_v13_spatial_rows_migrate_without_integer_domain_ids() {
     let version: i64 = connection
         .pragma_query_value(None, "user_version", |row| row.get(0))
         .unwrap();
-    assert_eq!(version, 19);
+    assert_eq!(version, 20);
     let rtree_id: i64 = connection
         .query_row(
             "SELECT rtree_id FROM trail_segment_spatial_keys",
@@ -3312,7 +3337,7 @@ fn schema_v12_singleton_rows_migrate_to_uuid_keys_without_data_loss() {
     let version: i64 = connection
         .pragma_query_value(None, "user_version", |row| row.get(0))
         .unwrap();
-    assert_eq!(version, 19);
+    assert_eq!(version, 20);
     let selected_key_length: u64 = connection
         .query_row(
             "SELECT length(singleton_key) FROM selected_device",
@@ -3830,7 +3855,7 @@ fn version_eight_migration_adds_monotonic_ride_start_column() {
             |row| row.get(0),
         )
         .unwrap();
-    assert_eq!(version, 19);
+    assert_eq!(version, 20);
     assert!(has_monotonic_start);
 
     let _ = std::fs::remove_file(path);

@@ -292,6 +292,8 @@ struct RideMapHistoryDetailSummary: View {
                                 isMusicHistoryForgetErrorPresented = true
                             }
                         }
+                        .accessibilityIdentifier("ride-map.detail-forget-music-history")
+                        Button(localizedAppText("common.cancel"), role: .cancel) {}
                     } message: {
                         Text(localizedAppText("music.history.forget.message"))
                     }

@@ -12,6 +12,19 @@ public enum MobileRideMapAvailability: Equatable, Hashable, Sendable {
     case storageUnavailable
 }
 
+extension MobileMusicHistoryDto {
+    public var historyState: MobileMusicHistoryStateDto? {
+        switch status {
+        case .missing: .missing
+        case .disabled: .disabled
+        case .redacted: .redacted
+        case .available: .humanReadable
+        case .deleted: .deleted
+        case .unavailable: nil
+        }
+    }
+}
+
 /// Errors surfaced by the map presentation adapter.
 public enum MobileRideMapError: Error, Equatable, Hashable, Sendable {
     case alreadyRecording
@@ -854,6 +867,13 @@ public final class MobileRideMapState: @unchecked Sendable {
         }
     }
 
+    /// Returns the durable history state and events from one Rust worker query.
+    public func storedMusicHistory(rideID: String) throws -> MobileMusicHistoryDto {
+        try withDatabase {
+            try $0.musicHistory(rideId: MobileRideIdDto(value: rideID))
+        }
+    }
+
     /// Permanently deletes stored music metadata for one ride.
     public func deleteStoredMusicHistory(rideID: String) throws {
         try withCore {
@@ -871,6 +891,11 @@ public final class MobileRideMapState: @unchecked Sendable {
     /// Deletes a ride's music metadata while preserving the ride and its route.
     public func deleteMusicHistory(rideID: String) throws {
         try deleteStoredMusicHistory(rideID: rideID)
+    }
+
+    /// Deletes the current ride's music history and updates the Rust-owned live projection.
+    public func deleteCurrentMusicHistory() throws {
+        try withCore { try $0.deleteCurrentMusicHistory() }
     }
 
     public func ingestLocation(

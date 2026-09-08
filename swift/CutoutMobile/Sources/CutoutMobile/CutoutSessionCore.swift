@@ -1563,10 +1563,9 @@ public final class CutoutSessionCore: NSObject {
                 _ = self.captureBuilder?.setMusicContext(music: nil)
                 return
             }
-            guard let captured = self.captureMusicObservation(observation),
-                  let builder = self.captureBuilder
+            guard let builder = self.captureBuilder
             else { return }
-            _ = self.acceptCaptureWrite(builder.recordMusicEvent(music: captured))
+            _ = self.acceptCaptureWrite(builder.recordMusicEvent(music: observation))
         }
     }
 
@@ -1576,32 +1575,6 @@ public final class CutoutSessionCore: NSObject {
         onBleQueue {
             _ = self.captureBuilder?.setMusicHistoryPolicy(policy: policy)
         }
-    }
-
-    private func captureMusicObservation(
-        _ observation: MobilePevcapMusicEventDto?
-    ) -> MobilePevcapMusicEventDto? {
-        guard let observation, let captureStartedAt else { return observation }
-        guard observation.monotonicAtMs >= captureStartedAt.rawValue else { return nil }
-        var relative = observation
-        relative.monotonicAtMs = observation.monotonicAtMs - captureStartedAt.rawValue
-        return relative
-    }
-
-    private func captureMusicContextObservation() -> MobilePevcapMusicEventDto? {
-        guard let observation = musicCaptureContext.current,
-              let captureStartedAt
-        else { return musicCaptureContext.current }
-        var relative = observation
-        if observation.monotonicAtMs < captureStartedAt.rawValue {
-            guard captureStartedAt.rawValue - observation.monotonicAtMs <= 5_000 else {
-                return nil
-            }
-            relative.monotonicAtMs = 0
-        } else {
-            relative.monotonicAtMs = observation.monotonicAtMs - captureStartedAt.rawValue
-        }
-        return relative
     }
 
     private func captureFrame(
@@ -1651,7 +1624,8 @@ public final class CutoutSessionCore: NSObject {
         annotations extraAnnotations: [String] = [],
         evidence: String = "hardware_tested"
     ) {
-        captureStartedAt = clock.now()
+        let captureStart = clock.now()
+        captureStartedAt = captureStart
         captureNotificationCount = 0
 
         let directory = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
@@ -1662,6 +1636,7 @@ public final class CutoutSessionCore: NSObject {
             writeLimit: MobileTransportWriteLimitDto(bytes: 23)
         )
         _ = builder.setMusicHistoryPolicy(policy: captureMusicHistoryPolicy)
+        _ = builder.setMusicCaptureStartMonotonicMs(monotonicMs: captureStart.rawValue)
         (advertisement?.advertisedServiceUuids ?? []).forEach { service in
             _ = builder.addAdvertisedService(service: service.bytes)
         }
@@ -1673,7 +1648,7 @@ public final class CutoutSessionCore: NSObject {
         ].forEach { _ = builder.addAnnotation(annotation: $0) }
         extraAnnotations.forEach { _ = builder.addAnnotation(annotation: sanitizedPevcapAnnotation($0)) }
         captureBuilder = builder
-        _ = builder.setMusicContext(music: captureMusicContextObservation())
+        _ = builder.setMusicContext(music: musicCaptureContext.current)
         guard builder.startWriter(path: url.path) else {
             record("capture_error=writer_start_failed")
             captureBuilder = nil
