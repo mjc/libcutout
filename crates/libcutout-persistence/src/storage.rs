@@ -6274,7 +6274,7 @@ fn find_ride(connection: &Connection, ride_id: RideId) -> Result<Option<RideReco
                     monotonic_last_event_ms, paused_at_ms, paused_duration_ms,
                     completed_duration_ms, updated_at_ms,
                     CASE
-                        WHEN state IN ('stopped', 'interrupted', 'saved', 'discarded')
+                        WHEN state IN ('stopped', 'interrupted', 'saved', 'discarded', 'imported')
                             THEN completed_duration_ms
                         WHEN monotonic_created_at_ms IS NOT NULL
                             AND monotonic_last_event_ms IS NOT NULL
@@ -6295,7 +6295,8 @@ fn find_ride(connection: &Connection, ride_id: RideId) -> Result<Option<RideReco
                               FROM ride_points WHERE ride_id = rides.id)
                     END,
                     point_count, distance_mm,
-                    (SELECT COUNT(DISTINCT segment_id) FROM ride_points WHERE ride_id = rides.id),
+                    (SELECT COUNT(*) FROM ride_segments
+                     WHERE ride_id = rides.id AND point_count > 0),
                     candidate_vehicle, associated_vehicle, associated_at_ms, last_telemetry_at_ms,
                     (SELECT display_name FROM devices
                      WHERE platform_identifier = rides.candidate_vehicle),
@@ -6690,21 +6691,10 @@ fn project_route_points(
 ) -> Result<RoutePointProjection, StorageError> {
     projection_checkpoint(cancellation)?;
     let ride_id = ride_id.uuid().to_string();
-    let exists: bool = projection_sqlite(
-        connection.query_row(
-            "SELECT EXISTS(SELECT 1 FROM rides WHERE id = ?1)",
-            [&ride_id],
-            |row| row.get(0),
-        ),
-        cancellation,
-    )?;
-    if !exists {
+    let Some(counts) = route_projection_counts(connection, &ride_id, viewport, cancellation)?
+    else {
         return Err(StorageError::NotFound);
-    }
-
-    projection_checkpoint(cancellation)?;
-
-    let counts = route_projection_counts(connection, &ride_id, viewport, cancellation)?;
+    };
     projection_checkpoint(cancellation)?;
     let candidate_count = usize::try_from(counts.candidate_point_count).unwrap_or(usize::MAX);
     let endpoint_metadata = route_endpoint_metadata_from_storage(
@@ -6919,31 +6909,29 @@ fn route_projection_counts(
     ride_id: &str,
     viewport: Option<RouteViewport>,
     cancellation: Option<&RouteProjectionCancellation>,
-) -> Result<RouteProjectionCounts, StorageError> {
-    let source_point_count = projection_sqlite(
-        connection.query_row(
-            "SELECT point_count FROM rides WHERE id = ?1",
-            [ride_id],
-            |row| row.get::<_, u64>(0),
-        ),
+) -> Result<Option<RouteProjectionCounts>, StorageError> {
+    let Some(source_point_count) = projection_sqlite(
+        connection
+            .query_row(
+                "SELECT point_count FROM rides WHERE id = ?1",
+                [ride_id],
+                |row| row.get::<_, u64>(0),
+            )
+            .optional(),
         cancellation,
-    )?;
+    )?
+    else {
+        return Ok(None);
+    };
     projection_checkpoint(cancellation)?;
-    let source_segment_count = projection_sqlite(
+    let (source_segment_count, background_gap_count) = projection_sqlite(
         connection.query_row(
-            "SELECT COUNT(*) FROM ride_segments WHERE ride_id = ?1 AND point_count > 0",
+            "SELECT COUNT(*),
+                    COALESCE(SUM(CASE WHEN start_reason = 'background_gap' THEN 1 ELSE 0 END), 0)
+             FROM ride_segments
+             WHERE ride_id = ?1 AND point_count > 0",
             [ride_id],
-            |row| row.get::<_, u64>(0),
-        ),
-        cancellation,
-    )?;
-    projection_checkpoint(cancellation)?;
-    let background_gap_count = projection_sqlite(
-        connection.query_row(
-            "SELECT COUNT(*) FROM ride_segments
-             WHERE ride_id = ?1 AND start_reason = 'background_gap' AND point_count > 0",
-            [ride_id],
-            |row| row.get::<_, u64>(0),
+            |row| Ok((row.get::<_, u64>(0)?, row.get::<_, u64>(1)?)),
         ),
         cancellation,
     )?;
@@ -6996,7 +6984,7 @@ fn route_projection_counts(
     } else {
         (source_point_count, source_segment_count)
     };
-    Ok(RouteProjectionCounts {
+    Ok(Some(RouteProjectionCounts {
         source_point_count,
         source_segment_count,
         background_gap_count,
@@ -7005,7 +6993,7 @@ fn route_projection_counts(
         viewport_predicate,
         source_start_sequence,
         source_end_sequence,
-    })
+    }))
 }
 
 fn endpoint_is_visible(
