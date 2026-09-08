@@ -24,6 +24,21 @@ struct MelkLightingTargetPolicy: Equatable, Sendable {
         guard let preferredUUID else { return true }
         return UUID(uuidString: identifier.rawValue) == preferredUUID
     }
+
+    func acceptsDiscovery(
+        name: String?,
+        identifier: CoreBluetoothPeripheralIdentifier
+    ) -> Bool {
+        guard accepts(identifier) else { return false }
+        guard preferredUUID != nil else { return Self.isMelkName(name) }
+        return Self.isMelkName(name)
+            || UUID(uuidString: identifier.rawValue) == preferredUUID
+    }
+
+    private static func isMelkName(_ name: String?) -> Bool {
+        name?.trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased().hasPrefix("melk") == true
+    }
 }
 
 /// Failure while matching an observed standalone MELK controller to its typed profile.
@@ -474,9 +489,8 @@ public final class MelkLightingPeripheralSession: NSObject, CBCentralManagerDele
             ) else {
                 return
             }
-            let isRememberedTarget = targetPolicy.preferredUUID
-                == peripheral.identifier
-            guard isRememberedTarget || Self.isMelkName(name) else {
+            let identifier = CoreBluetoothPeripheralIdentifier(peripheral.identifier.uuidString)
+            guard targetPolicy.acceptsDiscovery(name: name, identifier: identifier) else {
                 return
             }
             central.stopScan()

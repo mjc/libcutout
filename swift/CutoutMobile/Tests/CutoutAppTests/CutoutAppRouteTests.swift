@@ -715,6 +715,23 @@ final class CutoutAppRouteTests: XCTestCase {
         XCTAssertFalse(target.isInvalid)
     }
 
+    func testRememberedMELKDiscoveryCanUseIdentityWhenAdvertisementOmitsName() {
+        let target = MelkLightingTargetPolicy(preferredPlatformIdentifier: "A1B2C3D4-E5F6-4789-ABCD-0123456789AB")
+        let remembered = CoreBluetoothPeripheralIdentifier("a1b2c3d4-e5f6-4789-abcd-0123456789ab")
+        let different = CoreBluetoothPeripheralIdentifier("B1B2C3D4-E5F6-4789-ABCD-0123456789AB")
+
+        XCTAssertTrue(target.acceptsDiscovery(name: nil, identifier: remembered))
+        XCTAssertFalse(target.acceptsDiscovery(name: nil, identifier: different))
+    }
+
+    func testFirstMELKDiscoveryStillRequiresTheAdvertisedName() {
+        let target = MelkLightingTargetPolicy(preferredPlatformIdentifier: nil)
+        let identifier = CoreBluetoothPeripheralIdentifier("first-melk")
+
+        XCTAssertFalse(target.acceptsDiscovery(name: nil, identifier: identifier))
+        XCTAssertTrue(target.acceptsDiscovery(name: "MELK-OC21 6A", identifier: identifier))
+    }
+
     func testFirstPairingTargetAcceptsAnyPlatformIdentity() {
         let target = MelkLightingTargetPolicy(preferredPlatformIdentifier: nil)
 
