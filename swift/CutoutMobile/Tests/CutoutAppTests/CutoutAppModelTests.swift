@@ -329,6 +329,15 @@ final class CutoutAppModelTests: XCTestCase {
         }
     }
 
+    func testCameraMediaLocalFileComponentRejectsPathSeparatorsAndUnsafeCharacters() {
+        XCTAssertEqual(
+            cameraMediaLocalFileComponent(#"../../DCIM/clip:01.TS"#),
+            ".._.._DCIM_clip_01.TS"
+        )
+        XCTAssertEqual(cameraMediaLocalFileComponent("../"), ".._")
+        XCTAssertEqual(cameraMediaLocalFileComponent(""), "media")
+    }
+
     @MainActor
     func testHeadlightWriteRefusesWithoutVerifiedEucModel() {
         let driver = SessionDriverSpy(rows: [])
@@ -2397,10 +2406,14 @@ final class CutoutAppModelTests: XCTestCase {
         XCTAssertEqual(model.cameraMediaReferences.count, 1)
         XCTAssertEqual(model.cameraMediaReferences[0].rideCaptureFileName, "ride.jsonl")
         XCTAssertEqual(model.cameraMediaReferences[0].clockUncertainty, .unknown)
+        XCTAssertEqual(model.cameraSessionStateHandle.cameraMediaProvenance().count, 1)
 
         model.applyCaptureEvent(.finished(fileURL: URL(fileURLWithPath: "/tmp/ride.jsonl")))
         model.recordCameraMediaReference(media: media, localURL: localURL)
         XCTAssertEqual(model.cameraMediaReferences.count, 1)
+
+        model.applyCaptureEvent(.started(fileURL: URL(fileURLWithPath: "/tmp/next-ride.jsonl")))
+        XCTAssertTrue(model.cameraSessionStateHandle.cameraMediaProvenance().isEmpty)
     }
 
     @MainActor

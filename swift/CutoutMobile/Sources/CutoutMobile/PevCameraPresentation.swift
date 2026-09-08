@@ -114,6 +114,17 @@ public enum CameraClockUncertainty: Equatable, Sendable {
     case milliseconds(UInt64)
 }
 
+extension CameraClockUncertainty {
+    init(_ dto: MobileCameraClockUncertaintyDto) {
+        switch dto {
+        case .unknown:
+            self = .unknown
+        case let .milliseconds(value):
+            self = .milliseconds(value)
+        }
+    }
+}
+
 /// A verified local media file associated with the active ride capture.
 ///
 /// This reference carries metadata and a local URL only; camera video bytes
@@ -143,6 +154,19 @@ public struct CameraMediaReference: Equatable, Sendable {
         self.cameraTime = cameraTime
         self.rideCaptureFileName = rideCaptureFileName
         self.clockUncertainty = clockUncertainty
+    }
+
+    /// Projects Rust-owned provenance while retaining the local presentation URL.
+    public init(provenance: MobileCameraMediaProvenanceDto, localURL: URL) {
+        self.init(
+            cameraPath: provenance.cameraPath,
+            localURL: localURL,
+            sizeBytes: provenance.sizeBytes,
+            cameraTimecode: provenance.cameraTimecode,
+            cameraTime: provenance.cameraTime,
+            rideCaptureFileName: provenance.rideCaptureFileName,
+            clockUncertainty: CameraClockUncertainty(provenance.clockUncertainty)
+        )
     }
 }
 

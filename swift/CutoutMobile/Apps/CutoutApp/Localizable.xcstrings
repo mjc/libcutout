@@ -2136,6 +2136,10 @@
       "comment" : "Detail describing the raw H.264 file output format.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Saves a local Annex-B H.264 file; no cloud upload." } } }
     },
+    "camera.preview.export" : {
+      "comment" : "Button that shares a saved local camera preview file.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Export preview" } } }
+    },
     "camera.error.invalid_port" : {
       "comment" : "Camera setup error when the explicit port is not a valid number.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Enter a valid HTTP port." } } }

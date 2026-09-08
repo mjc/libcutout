@@ -1,10 +1,10 @@
 //! Rust-owned session-state root and typed state slices.
 
 use crate::{
-    BatteryPageMetadata, BatteryPagePayload, BatteryReadback, CameraSessionState, DeviceEvent,
-    FirmwareInfo, GattFingerprint, MonotonicTimestamp, ParserDiagnostics, ProtocolFamily,
-    RawTelemetryReadback, ReadOnlyResponse, RideSessionLifecycle, SessionOutput, TelemetryDelta,
-    TelemetrySnapshot,
+    BatteryPageMetadata, BatteryPagePayload, BatteryReadback, CameraMediaProvenance,
+    CameraProvenanceState, CameraSessionState, DeviceEvent, FirmwareInfo, GattFingerprint,
+    MonotonicTimestamp, ParserDiagnostics, ProtocolFamily, RawTelemetryReadback, ReadOnlyResponse,
+    RideSessionLifecycle, SessionOutput, TelemetryDelta, TelemetrySnapshot,
 };
 use arrayvec::ArrayVec;
 use bytes::Bytes;
@@ -17,6 +17,9 @@ pub struct CutoutSessionState {
 
     /// External ride-camera state, independent of the ride lifecycle.
     pub camera: CameraSessionState,
+
+    /// Bounded camera-media associations, kept separate from video bytes and ride capture data.
+    pub camera_provenance: CameraProvenanceState,
 
     /// Device identity state accumulated from discovery, protocol, and model evidence.
     pub identity: DeviceIdentityState,
@@ -39,6 +42,17 @@ impl CutoutSessionState {
     #[must_use]
     pub const fn camera_mut(&mut self) -> &mut CameraSessionState {
         &mut self.camera
+    }
+
+    /// Returns bounded camera-media associations without cloning the session root.
+    #[must_use]
+    pub const fn camera_provenance(&self) -> &CameraProvenanceState {
+        &self.camera_provenance
+    }
+
+    /// Records one validated camera-media association.
+    pub fn record_camera_media_provenance(&mut self, record: CameraMediaProvenance) {
+        self.camera_provenance.record_media(record);
     }
 
     /// Returns the current identity state without cloning the whole root.

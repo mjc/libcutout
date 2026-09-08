@@ -162,6 +162,7 @@ final class CutoutAppRouteTests: XCTestCase {
             localizedAppText("camera.error.unsupported_profile"),
             "Camera firmware is not the verified R3 Pro profile."
         )
+        XCTAssertEqual(localizedAppText("camera.preview.export"), "Export preview")
         XCTAssertEqual(
             localizedAppText("bms.no_data.pack_estimate_accessibility_value", "71", "Derived from voltage curve"),
             "71%. Derived from voltage curve"

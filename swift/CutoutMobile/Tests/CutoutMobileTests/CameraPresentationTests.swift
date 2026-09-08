@@ -1,5 +1,6 @@
 import XCTest
 @testable import CutoutMobile
+import CutoutMobileFFI
 
 final class CameraPresentationTests: XCTestCase {
     func testInitialCameraPresentationDoesNotClaimConnectionOrRecording() {
@@ -46,6 +47,30 @@ final class CameraPresentationTests: XCTestCase {
         )
 
         XCTAssertEqual(evidence.mediaCount, 1)
+    }
+
+    func testCameraMediaReferenceCanProjectRustOwnedProvenance() {
+        let dto = MobileCameraMediaProvenanceDto(
+            source: .novatekR3Pro,
+            cameraPath: "/DCIM/MOV001.TS",
+            sizeBytes: 42,
+            cameraTimecode: 7,
+            cameraTime: "2026-09-07 12:00:00",
+            rideCaptureFileName: "ride.pevcap",
+            capturedAtMonotonicMs: 100,
+            capturedAtWallClockMs: 200,
+            clockUncertainty: .milliseconds(value: 500)
+        )
+
+        let reference = CameraMediaReference(
+            provenance: dto,
+            localURL: URL(fileURLWithPath: "/tmp/MOV001.TS")
+        )
+
+        XCTAssertEqual(reference.cameraPath, "/DCIM/MOV001.TS")
+        XCTAssertEqual(reference.sizeBytes, 42)
+        XCTAssertEqual(reference.rideCaptureFileName, "ride.pevcap")
+        XCTAssertEqual(reference.clockUncertainty, .milliseconds(500))
     }
 
     func testReadOnlyEvidenceOnlyAdvertisesOnboardRecordingForCommand2001StatusZero() {
