@@ -98,7 +98,8 @@ the official app.
 - Optional reconnect restore uses the last confirmed settings for the same
   accessory identity. Requested state is not a claim of physical confirmation.
 - Manual clock scheduling is retained as a future controller-local design surface; this MELK-OC21 profile does not send schedule writes until physical verification. The editor shows the protocol shape without claiming device state.
-- The Mac-only MelkLightingLiveValidator executable uses CoreBluetooth to discover MELK-OC21, verify FFF0/FFF3/FFF4, and exercise capture-backed commands without sharing the ride telemetry connection. Run it with nix develop -c swift run --package-path swift/CutoutMobile MelkLightingLiveValidator.
+- The Mac-only MelkLightingLiveValidator executable uses CoreBluetooth to discover MELK-OC21, verify FFF0/FFF3/FFF4, and exercise capture-backed commands without sharing the ride telemetry connection. Run it with `nix develop -c swift run --package-path swift/CutoutMobile MelkLightingLiveValidator [timeout-seconds] [platform-UUID]`; the optional UUID retries a previously observed CoreBluetooth identity and is parsed fail-closed.
+  A timeout or failed remembered-identity check exits nonzero.
 - When scheduling is enabled in a future profile, saving will send a clock sync followed by the selected slot; opening the editor never writes. The controller has no timer readback, so future profiles must retain drafts rather than claim device state.
 - A future capture-backed profile may use the accessory microphone for music modes; this MELK-OC21 profile keeps music unavailable, with no phone recording or audio permission.
 - Unknown zone, pixel-count, calibration, and status-query commands are not sent.

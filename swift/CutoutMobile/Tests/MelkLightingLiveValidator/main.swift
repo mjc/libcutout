@@ -8,7 +8,9 @@ import CoreBluetooth
 @main
 struct MelkLightingLiveValidator {
     static func main() {
-        let timeout = CommandLine.arguments.dropFirst().first.flatMap(Double.init) ?? 60
+        let arguments = Array(CommandLine.arguments.dropFirst())
+        let timeout = arguments.first.flatMap(Double.init) ?? 60
+        let preferredPlatformIdentifier = arguments.dropFirst().first
         let session = MelkLightingPeripheralSession()
         let startedAt = Date()
         var ready = false
@@ -28,7 +30,10 @@ struct MelkLightingLiveValidator {
         session.onRecord = { record in print("record=\(record)") }
 
         print("Scanning for MELK-OC21 on macOS. Press Ctrl-C to stop.")
-        session.start()
+        if let preferredPlatformIdentifier {
+            print("target=melk id=\(preferredPlatformIdentifier)")
+        }
+        session.start(preferredPlatformIdentifier: preferredPlatformIdentifier)
         while !ready, !finished, Date().timeIntervalSince(startedAt) < timeout {
             RunLoop.current.run(mode: .default, before: Date(timeIntervalSinceNow: 0.1))
         }
@@ -41,6 +46,8 @@ struct MelkLightingLiveValidator {
             }
         } else {
             print("validation=timeout")
+            session.stop()
+            exit(EXIT_FAILURE)
         }
         session.stop()
     }
