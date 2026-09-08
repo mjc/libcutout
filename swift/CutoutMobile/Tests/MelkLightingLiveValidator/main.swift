@@ -50,7 +50,7 @@ struct MelkLightingLiveValidator {
         guard let command = parts.first else { return }
         switch command {
         case "help":
-            print("power on|off; color R G B; brightness 0-100; speed 0-100; effect 1|16|22|75 [speed]; confirm; unconfirm; quit")
+            print("power on|off; color R G B; brightness 0-100; speed 0-255; effect 1|16|22|75 [speed]; confirm; unconfirm; quit")
         case "power" where parts.count == 2:
             print("requested=\(session.setPower(parts[1] == "on"))")
         case "color" where parts.count == 4,
