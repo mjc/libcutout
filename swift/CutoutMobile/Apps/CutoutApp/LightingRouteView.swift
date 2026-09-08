@@ -373,6 +373,12 @@ private struct LightingPresetsCard: View {
                     .accessibilityIdentifier("lighting.preset.save")
             }
         }
+        .background {
+            Rectangle()
+                .fill(.clear)
+                .contentShape(Rectangle())
+                .onTapGesture { isPresetNameFocused = false }
+        }
     }
 
     private func sceneSummary(for requested: MobileMelkLightingRestoreStateDto) -> String {
