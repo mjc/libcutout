@@ -362,6 +362,7 @@ public final class CutoutSessionCore: NSObject {
     private var captureStartedAt: MonotonicMilliseconds?
     private var captureNotificationCount: UInt64 = 0
     private var captureBuilder: MobilePevcapCaptureBuilder?
+    private var captureMusicHistoryPolicy = MobileMusicHistoryPolicyDto.disabled
     private var captureFileURL: URL?
     private var bmsPages: [BmsPageKey: BmsSnapshot] = [:]
     private let deviceDetectionSession: DeviceDetectionSession
@@ -1527,6 +1528,35 @@ public final class CutoutSessionCore: NSObject {
         publishOnMain { self.onCaptureEvent?(event) }
     }
 
+    /// Records one bounded music observation independently of BLE frame arrival.
+    /// The Rust writer owns the capture event and keeps metadata low-rate.
+    public func updateMusicCaptureObservation(_ observation: MobilePevcapMusicEventDto?) {
+        onBleQueue {
+            guard let captured = self.captureMusicObservation(observation),
+                  let builder = self.captureBuilder
+            else { return }
+            _ = self.acceptCaptureWrite(builder.recordMusicEvent(music: captured))
+        }
+    }
+
+    /// Applies the ride's Rust-owned retention policy to future PEVCAP music writes.
+    public func updateMusicCapturePolicy(_ policy: MobileMusicHistoryPolicyDto) {
+        captureMusicHistoryPolicy = policy
+        onBleQueue {
+            _ = self.captureBuilder?.setMusicHistoryPolicy(policy: policy)
+        }
+    }
+
+    private func captureMusicObservation(
+        _ observation: MobilePevcapMusicEventDto?
+    ) -> MobilePevcapMusicEventDto? {
+        guard let observation, let captureStartedAt else { return observation }
+        guard observation.monotonicAtMs >= captureStartedAt.rawValue else { return nil }
+        var relative = observation
+        relative.monotonicAtMs = observation.monotonicAtMs - captureStartedAt.rawValue
+        return relative
+    }
+
     private func captureFrame(
         direction: String,
         characteristic: CBUUID,
@@ -1584,6 +1614,7 @@ public final class CutoutSessionCore: NSObject {
             platformId: advertisement?.peripheralIdentifier.rawValue ?? "ios",
             writeLimit: MobileTransportWriteLimitDto(bytes: 23)
         )
+        _ = builder.setMusicHistoryPolicy(policy: captureMusicHistoryPolicy)
         (advertisement?.advertisedServiceUuids ?? []).forEach { service in
             _ = builder.addAdvertisedService(service: service.bytes)
         }

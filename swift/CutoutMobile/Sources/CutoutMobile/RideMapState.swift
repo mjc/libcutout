@@ -766,6 +766,11 @@ public final class MobileRideMapState: @unchecked Sendable {
         try withCore { try $0.setMusicHistoryPolicy(policy: policy) }
     }
 
+    /// Returns the Rust-owned music-history policy restored for the active ride.
+    public func currentMusicHistoryPolicy() -> MobileMusicHistoryPolicyDto {
+        core?.currentMusicHistoryPolicy() ?? .disabled
+    }
+
     /// Records one low-rate provider transition for the active ride.
     public func recordMusicEvent(
         snapshot: MobileMusicSnapshotDto,
@@ -776,6 +781,25 @@ public final class MobileRideMapState: @unchecked Sendable {
     ) throws -> MobileMusicTimelineOutcomeDto {
         try withCore {
             try $0.recordMusicEvent(
+                snapshot: snapshot,
+                kind: kind,
+                monotonicAtMs: monotonicAtMs,
+                wallClockAtMs: wallClockAtMs,
+                clockUncertaintyMs: clockUncertaintyMs
+            )
+        }
+    }
+
+    /// Records a transition and returns the Rust-assigned ride-local sequence.
+    public func recordMusicEventWithSequence(
+        snapshot: MobileMusicSnapshotDto,
+        kind: MobileMusicRideEventKindDto,
+        monotonicAtMs: UInt64,
+        wallClockAtMs: UInt64,
+        clockUncertaintyMs: UInt64
+    ) throws -> MobileMusicTimelineRecordResultDto {
+        try withCore {
+            try $0.recordMusicEventWithSequence(
                 snapshot: snapshot,
                 kind: kind,
                 monotonicAtMs: monotonicAtMs,
@@ -819,6 +843,11 @@ public final class MobileRideMapState: @unchecked Sendable {
         try withCore {
             try $0.redactStoredMusicHistory(rideId: MobileRideIdDto(value: rideID))
         }
+    }
+
+    /// Deletes a ride's music metadata while preserving the ride and its route.
+    public func deleteMusicHistory(rideID: String) throws {
+        try deleteStoredMusicHistory(rideID: rideID)
     }
 
     public func ingestLocation(

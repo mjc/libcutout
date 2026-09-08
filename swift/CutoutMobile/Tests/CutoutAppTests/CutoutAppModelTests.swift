@@ -68,6 +68,124 @@ final class CutoutAppModelTests: XCTestCase {
         super.tearDown()
     }
 
+    @MainActor
+    func testOpaqueSpotifyLocalIdentifierIsNotCopiedIntoPevcap() {
+        XCTAssertNil(
+            CutoutAppModel.pevcapTrackIdentifier(
+                policy: .opaqueItem,
+                provider: .spotify,
+                identifier: "spotify:local:artist:album:track"
+            )
+        )
+        XCTAssertEqual(
+            CutoutAppModel.pevcapTrackIdentifier(
+                policy: .opaqueItem,
+                provider: .spotify,
+                identifier: "spotify:track:catalog-id"
+            ),
+            "spotify:track:catalog-id"
+        )
+        XCTAssertEqual(
+            CutoutAppModel.pevcapTrackIdentifier(
+                policy: .humanReadable,
+                provider: .spotify,
+                identifier: "spotify:local:artist:album:track"
+            ),
+            "spotify:local:artist:album:track"
+        )
+    }
+
+#if !os(iOS)
+    @MainActor
+    func testMusicSetupShowsUnavailableOnUnsupportedPlatform() {
+        let model = CutoutAppModel(core: SessionDriverSpy(rows: []))
+
+        model.connectMusic()
+
+        XCTAssertEqual(model.musicNowPlaying?.state, .unavailable)
+        XCTAssertEqual(model.musicNowPlaying?.provider, .appleMusic)
+    }
+#endif
+
+    @MainActor
+    func testMusicHistoryDefaultIsLoadedForFutureRides() throws {
+        let suiteName = "CutoutAppMusicHistoryTests-\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let policyStore = MusicHistoryPolicyStore(defaults: defaults)
+        policyStore.set(.opaqueItem)
+
+        let model = CutoutAppModel(
+            core: SessionDriverSpy(rows: []),
+            musicHistoryPolicyStore: policyStore
+        )
+
+        XCTAssertEqual(model.musicHistoryPolicy, .opaqueItem)
+    }
+
+    @MainActor
+    func testForgetActiveMusicHistoryClearsLivePolicyAndTimeline() throws {
+        let driver = SessionDriverSpy(rows: [])
+        let model = CutoutAppModel(core: driver)
+        XCTAssertTrue(model.startGpsOnlyRide())
+        XCTAssertTrue(model.setMusicHistoryPolicy(.humanReadable))
+
+        let snapshot = MobileMusicSnapshotDto(
+            provider: .appleMusic,
+            sessionId: "session",
+            state: .playing,
+            item: MobileMusicItemDto(identifier: "track-1", title: "Song", artist: "Artist"),
+            positionMilliseconds: nil,
+            durationMilliseconds: nil,
+            observedAtMs: 1,
+            capabilities: MobileMusicCapabilitiesDto(
+                previous: false,
+                play: false,
+                pause: true,
+                next: true,
+                openProvider: true
+            )
+        )
+        XCTAssertTrue(
+            model.ingestMusicObservation(
+                MusicProviderObservation(snapshot: snapshot),
+                wallClockAtMs: 1_700_000_000_000,
+                clockUncertaintyMs: 5
+            )
+        )
+        let rideID = try XCTUnwrap(model.rideMapSnapshot?.rideID)
+        XCTAssertFalse(model.musicTimelineEvents.isEmpty)
+
+        XCTAssertTrue(model.forgetMusicHistory(for: rideID))
+
+        XCTAssertEqual(model.musicHistoryPolicy, .disabled)
+        XCTAssertTrue(model.musicTimelineEvents.isEmpty)
+        XCTAssertEqual(driver.rideMapState.currentMusicHistoryPolicy(), .disabled)
+        XCTAssertTrue(driver.rideMapState.currentMusicEvents().isEmpty)
+    }
+
+    @MainActor
+    func testForgetActiveMusicHistoryDoesNotChangeFutureDefault() throws {
+        let suiteName = "CutoutAppMusicHistoryFutureDefault-\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let policyStore = MusicHistoryPolicyStore(defaults: defaults)
+        policyStore.set(.humanReadable)
+
+        let driver = SessionDriverSpy(rows: [])
+        let model = CutoutAppModel(core: driver, musicHistoryPolicyStore: policyStore)
+        XCTAssertTrue(model.startGpsOnlyRide())
+        let rideID = try XCTUnwrap(model.rideMapSnapshot?.rideID)
+
+        XCTAssertTrue(model.forgetMusicHistory(for: rideID))
+        XCTAssertEqual(model.musicHistoryPolicy, .disabled)
+        XCTAssertEqual(policyStore.policy, .humanReadable)
+        XCTAssertTrue(model.stopRideMap())
+        XCTAssertTrue(model.startGpsOnlyRide())
+        XCTAssertEqual(model.musicHistoryPolicy, .humanReadable)
+        XCTAssertEqual(driver.rideMapState.currentMusicHistoryPolicy(), .humanReadable)
+    }
+
     private func clear(
         _ store: RideSessionMarkerStore,
         file: StaticString = #filePath,
@@ -191,6 +309,37 @@ final class CutoutAppModelTests: XCTestCase {
         XCTAssertEqual(model.rideMapHistoryError, .storageError("Rust ride database is unavailable"))
         XCTAssertNil(model.rideMapLiveError)
         XCTAssertFalse(model.rideMapHistoryLoading)
+    }
+
+    @MainActor
+    func testHistoryDetailLoadGenerationRejectsDeletedOrReplacedSelection() {
+        XCTAssertTrue(
+            CutoutAppModel.shouldApplyHistoryDetailLoad(
+                rideID: "ride-a",
+                selectedRideID: "ride-a",
+                loadGeneration: 3,
+                currentGeneration: 3,
+                isCancelled: false
+            )
+        )
+        XCTAssertFalse(
+            CutoutAppModel.shouldApplyHistoryDetailLoad(
+                rideID: "ride-a",
+                selectedRideID: "ride-a",
+                loadGeneration: 3,
+                currentGeneration: 4,
+                isCancelled: false
+            )
+        )
+        XCTAssertFalse(
+            CutoutAppModel.shouldApplyHistoryDetailLoad(
+                rideID: "ride-a",
+                selectedRideID: "ride-b",
+                loadGeneration: 3,
+                currentGeneration: 3,
+                isCancelled: false
+            )
+        )
     }
 
     @MainActor
@@ -2684,6 +2833,8 @@ private final class SessionDriverSpy: CutoutSessionDriving {
         captureAnnotations.append(label)
     }
     func annotateCapture(key _: String, value _: String) {}
+    func updateMusicCapturePolicy(_: MobileMusicHistoryPolicyDto) {}
+    func updateMusicCaptureObservation(_: MobilePevcapMusicEventDto?) {}
     func flushCapture() async -> Bool {
         flushCaptureCount += 1
         return flushSucceeds

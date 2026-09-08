@@ -6,6 +6,21 @@ import XCTest
 
 @MainActor
 final class RideMapPresentationTests: XCTestCase {
+    func testHistoryMusicForgetUsesDestinationRideID() {
+        var forgottenRideID: String?
+        let music = RideMapHistoryMusicDetail(
+            rideID: "destination-ride",
+            events: [],
+            forgetMusicHistory: { rideID in
+                forgottenRideID = rideID
+                return true
+            }
+        )
+
+        XCTAssertTrue(music.forget())
+        XCTAssertEqual(forgottenRideID, "destination-ride")
+    }
+
     private func point(
         sequence: UInt64,
         segmentId: UInt64 = 0,
@@ -64,13 +79,13 @@ final class RideMapPresentationTests: XCTestCase {
         )
     }
 
-    func testHistoryDetailUsesTheCurrentSelectionForRouteIdentity() {
+    func testHistoryDetailKeepsTheDestinationIdentityWhenSelectionIsStale() {
         XCTAssertEqual(
             RideMapHistoryDetailView.activeHistoryID(
                 initialHistoryID: "initial",
                 selectedHistoryID: "selected"
             ),
-            "selected"
+            "initial"
         )
         XCTAssertEqual(
             RideMapHistoryDetailView.activeHistoryID(

@@ -20,8 +20,14 @@
 	<string>$(CURRENT_PROJECT_VERSION)</string>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
+	<key>LSApplicationQueriesSchemes</key>
+	<array>
+		<string>spotify</string>
+	</array>
 	<key>NSBluetoothAlwaysUsageDescription</key>
 	<string>CutOut uses Bluetooth to read live vehicle telemetry.</string>
+	<key>NSAppleMusicUsageDescription</key>
+	<string>CutOut lets you view and control Apple Music playback. If you enable listening history, it saves song identifiers, timestamps, and optionally titles and artists on this device so you can see what you listened to during a ride. CutOut does not record audio.</string>
 	<key>NSLocationWhenInUseUsageDescription</key>
 	<string>CutOut records ride location, altitude, speed, and direction with vehicle telemetry.</string>
 	<key>NSLocationAlwaysUsageDescription</key>

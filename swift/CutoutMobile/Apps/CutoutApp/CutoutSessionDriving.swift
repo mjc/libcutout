@@ -26,6 +26,8 @@ protocol CutoutSessionDriving: AnyObject {
     func recordOnly(platformIdentifier: String, note: String?, annotations: [String]) -> Bool
     func annotateCapture(label: String)
     func annotateCapture(key: String, value: String)
+    func updateMusicCapturePolicy(_ policy: MobileMusicHistoryPolicyDto)
+    func updateMusicCaptureObservation(_ observation: MobilePevcapMusicEventDto?)
     func flushCapture() async -> Bool
     func disconnectAndScan()
     func now() -> MonotonicMilliseconds

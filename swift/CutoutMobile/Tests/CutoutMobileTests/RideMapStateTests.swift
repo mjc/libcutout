@@ -33,6 +33,64 @@ final class RideMapStateTests: XCTestCase {
         XCTAssertNil(state.currentMusicHistory())
     }
 
+    func testMusicHistoryPolicyIsProjectedFromRustAndResetsForNewRide() throws {
+        let state = MobileRideMapState()
+
+        XCTAssertEqual(state.currentMusicHistoryPolicy(), .disabled)
+        _ = try state.startGpsOnly(atMs: 1_000, lastConnectedVehicle: nil)
+        try state.setMusicHistoryPolicy(.humanReadable)
+        XCTAssertEqual(state.currentMusicHistoryPolicy(), .humanReadable)
+
+        _ = try state.stop(atMs: 2_000)
+        _ = try state.save()
+        _ = try state.startGpsOnly(atMs: 3_000, lastConnectedVehicle: nil)
+        XCTAssertEqual(state.currentMusicHistoryPolicy(), .disabled)
+    }
+
+    func testDeletingStoredMusicHistoryPreservesRide() throws {
+        let state = MobileRideMapState()
+        _ = try state.startGpsOnly(atMs: 1_000, lastConnectedVehicle: nil)
+        try state.setMusicHistoryPolicy(.humanReadable)
+        let snapshot = MobileMusicSnapshotDto(
+            provider: .appleMusic,
+            sessionId: "session",
+            state: .playing,
+            item: MobileMusicItemDto(
+                identifier: "track-1",
+                title: "Song",
+                artist: "Artist"
+            ),
+            positionMilliseconds: nil,
+            durationMilliseconds: nil,
+            observedAtMs: 1_100,
+            capabilities: MobileMusicCapabilitiesDto(
+                previous: false,
+                play: false,
+                pause: true,
+                next: true,
+                openProvider: true
+            )
+        )
+        XCTAssertEqual(
+            try state.recordMusicEvent(
+                snapshot: snapshot,
+                kind: .play,
+                monotonicAtMs: 1_100,
+                wallClockAtMs: 1_700_000_000_000,
+                clockUncertaintyMs: 5
+            ),
+            .recorded
+        )
+
+        let rideID = try state.stop(atMs: 2_000).rideID
+        _ = try state.save()
+        XCTAssertEqual(try state.storedMusicEvents(rideID: rideID).count, 1)
+
+        try state.deleteMusicHistory(rideID: rideID)
+
+        XCTAssertTrue(try state.storedMusicEvents(rideID: rideID).isEmpty)
+        XCTAssertEqual(try state.storedHistoryRide(rideID: rideID)?.rideID, rideID)
+    }
 
     func testHistoryContextOverviewBudgetIsBounded() {
         XCTAssertEqual(
@@ -230,6 +288,11 @@ final class RideMapStateTests: XCTestCase {
         }
         XCTAssertThrowsError(
             try state.storedPointsAfter(rideId: "missing", afterCursor: nil, limit: 10)
+        ) { error in
+            XCTAssertEqual(error as? MobileRideMapError, .storageError("database unavailable"))
+        }
+        XCTAssertThrowsError(
+            try state.deleteMusicHistory(rideID: "missing")
         ) { error in
             XCTAssertEqual(error as? MobileRideMapError, .storageError("database unavailable"))
         }

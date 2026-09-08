@@ -86,6 +86,9 @@ final class CutoutAppModel {
     private(set) var rideMapHistoryPointsTruncated = false
     private(set) var rideMapHistorySegmentsOmittedByBudget = false
     private(set) var rideMapHistoryDetailDisplayPoints = [MobileRideMapRouteDisplayPoint]()
+    private(set) var rideMapHistoryDetailMusicTimeline = [MobileMusicRideEventDto]()
+    private(set) var rideMapHistoryDetailMusicTimelineUnavailable = false
+    private(set) var rideMapHistoryDetailProjectionRideID: String? = nil
     private(set) var rideMapHistoryDetailCameraRegion: MobileRideMapCameraRegion?
     private(set) var rideMapHistoryDetailEndpointMetadata = MobileRideMapRouteEndpointMetadata.empty
     private(set) var rideMapHistoryDetailSegments = [MobileRideMapSegmentDisplayMetadata]()
@@ -106,6 +109,12 @@ final class CutoutAppModel {
     private(set) var rideMapLastDecision: MobileRideMapDecisionDto?
     var rideMapMode = RideMapMode.live
     private(set) var rideMapHistoryLoading = false
+    private(set) var musicNowPlaying: MusicNowPlaying?
+    private(set) var musicTimelineEvents = [MobileMusicRideEventDto]()
+    private(set) var selectedMusicProvider: MobileMusicProviderDto
+    private(set) var isMusicPlayerHidden: Bool
+    private(set) var musicHistoryPolicy = MobileMusicHistoryPolicyDto.disabled
+    private(set) var musicHistoryUnavailable = false
 
     /// Compatibility projection for callers that only display the live map.
     /// New route presentations should use the explicitly scoped error properties.
@@ -228,6 +237,14 @@ final class CutoutAppModel {
     private let liveActivityCoordinator: LiveActivityRideLifecycleCoordinator
     private let selectedDeviceStore: DevicePickerSelectionStore
     private let rideSessionMarkerStore: RideSessionMarkerStore
+    private let musicPlayerVisibilityStore: MusicPlayerVisibilityStore
+    private let musicProviderSelectionStore: MusicProviderSelectionStore
+    private let musicHistoryPolicyStore: MusicHistoryPolicyStore
+    private let musicCoordinator: MusicIntegrationCoordinator
+    private let spotifyMusicProvider = SpotifyProviderAdapter()
+#if canImport(MediaPlayer) && os(iOS)
+    private let appleMusicProvider = AppleMusicProviderAdapter()
+#endif
     private var liveActivityIdentity: LiveActivityRideIdentity?
     private var liveActivityGlyph = LiveActivityRideGlyph.electricUnicycle
     private var lastLiveActivitySnapshot: LiveActivityRideSnapshot?
@@ -246,11 +263,15 @@ final class CutoutAppModel {
     private var rideMapHistoryLoadTask: Task<Void, Never>?
     private var rideMapHistoryPageTask: Task<Void, Never>?
     private var rideMapHistorySelectionTask: Task<Void, Never>?
+    private var rideMapHistoryDetailLoadGeneration: UInt64 = 0
     private var rideMapHistorySelectionCancellation: MobileRideMapProjectionCancellation?
     private var rideMapHistoryViewportTask: Task<Void, Never>?
     private var rideMapHistoryViewportCancellation: MobileRideMapProjectionCancellation?
     private var rideMapHistoryContextTask: Task<Void, Never>?
     private var rideMapRestoreTask: Task<Void, Never>?
+    private var musicMonitorTask: Task<Void, Never>?
+    private var musicMonitorGeneration: UInt64 = 0
+    private var musicTransitionHintTracker = MusicTransitionHintTracker()
     private var rideMapLiveProjectionTask: Task<Void, Never>?
     private var rideMapDurationTask: Task<Void, Never>?
     private var rideMapLiveProjectionCancellation: MobileLiveRideMapProjectionCancellation?
@@ -269,7 +290,8 @@ final class CutoutAppModel {
             permitsStoredDeviceAutoPairing: permitsStoredDeviceAutoPairing,
             selectedDeviceStore: DevicePickerSelectionStore(),
             rideSessionMarkerStore: RideSessionMarkerStore(),
-            liveActivityManager: LiveActivityRideActivityKitManager()
+            liveActivityManager: LiveActivityRideActivityKitManager(),
+            musicHistoryPolicyStore: MusicHistoryPolicyStore()
         )
     }
 
@@ -277,14 +299,16 @@ final class CutoutAppModel {
         core: any CutoutSessionDriving,
         selectedDeviceStore: DevicePickerSelectionStore = DevicePickerSelectionStore(),
         rideSessionMarkerStore: RideSessionMarkerStore = RideSessionMarkerStore(),
-        liveActivityManager: any LiveActivityRideLifecycleManaging = LiveActivityRideActivityKitManager()
+        liveActivityManager: any LiveActivityRideLifecycleManaging = LiveActivityRideActivityKitManager(),
+        musicHistoryPolicyStore: MusicHistoryPolicyStore = MusicHistoryPolicyStore()
     ) {
         self.init(
             core: core,
             permitsStoredDeviceAutoPairing: true,
             selectedDeviceStore: selectedDeviceStore,
             rideSessionMarkerStore: rideSessionMarkerStore,
-            liveActivityManager: liveActivityManager
+            liveActivityManager: liveActivityManager,
+            musicHistoryPolicyStore: musicHistoryPolicyStore
         )
     }
 
@@ -293,7 +317,8 @@ final class CutoutAppModel {
         permitsStoredDeviceAutoPairing: Bool,
         selectedDeviceStore: DevicePickerSelectionStore,
         rideSessionMarkerStore: RideSessionMarkerStore,
-        liveActivityManager: any LiveActivityRideLifecycleManaging
+        liveActivityManager: any LiveActivityRideLifecycleManaging,
+        musicHistoryPolicyStore: MusicHistoryPolicyStore
     ) {
         self.permitsStoredDeviceAutoPairing = permitsStoredDeviceAutoPairing
         self.core = core
@@ -306,6 +331,14 @@ final class CutoutAppModel {
         )
         self.selectedDeviceStore = selectedDeviceStore
         self.rideSessionMarkerStore = rideSessionMarkerStore
+        self.musicPlayerVisibilityStore = MusicPlayerVisibilityStore()
+        self.isMusicPlayerHidden = musicPlayerVisibilityStore.isHidden
+        self.musicProviderSelectionStore = MusicProviderSelectionStore()
+        self.selectedMusicProvider = musicProviderSelectionStore.provider
+        self.musicHistoryPolicyStore = musicHistoryPolicyStore
+        self.musicHistoryPolicy = musicHistoryPolicyStore.policy
+        self.musicCoordinator = MusicIntegrationCoordinator(rideMapState: core.rideMapStateHandle)
+        self.musicTimelineEvents = musicCoordinator.recordedEvents
         hasSavedDevice = selectedDeviceStore.platformIdentifier != nil
         if let identity = selectedDeviceStore.platformIdentifier,
            let name = selectedDeviceStore.displayName(for: identity)
@@ -350,9 +383,298 @@ final class CutoutAppModel {
         }
     }
 
+    @discardableResult
+    func handleMusicCommand(_ command: MobileMusicCommandDto) async -> MusicCommandOutcome {
+        guard let nowPlaying = musicNowPlaying else { return .unavailable }
+        guard nowPlaying.supports(command) else { return .refused }
+#if canImport(MediaPlayer) && os(iOS)
+        let skipHintID: UInt64? = switch command {
+        case .previous, .next:
+            let issuedAtMs = core.now().rawValue
+            musicTransitionHintTracker.issue(.skip, issuedAtMs: issuedAtMs)
+        default:
+            nil
+        }
+        let outcome: MusicCommandOutcome
+        if nowPlaying.provider == .spotify {
+            outcome = await spotifyMusicProvider.perform(command)
+        } else {
+            outcome = await appleMusicProvider.perform(command)
+        }
+        if outcome == .accepted {
+            refreshMusicSnapshot()
+        } else if let skipHintID {
+            musicTransitionHintTracker.clear(id: skipHintID)
+        }
+        return outcome
+#else
+        return .unavailable
+#endif
+    }
+
+    func dismissMusicPlayer() {
+        musicPlayerVisibilityStore.setHidden(true)
+        isMusicPlayerHidden = true
+        musicNowPlaying = nil
+    }
+
+    func restoreMusicPlayer() {
+        musicPlayerVisibilityStore.setHidden(false)
+        isMusicPlayerHidden = false
+        musicNowPlaying = musicCoordinator.nowPlaying
+        connectMusic()
+    }
+
+    func selectMusicProvider(_ provider: MobileMusicProviderDto) {
+        musicCoordinator.resetProviderCorrelation()
+        selectedMusicProvider = provider
+        musicProviderSelectionStore.set(provider)
+        musicTransitionHintTracker.clear()
+        if !isMusicPlayerHidden {
+            connectMusic()
+        }
+    }
+
+    func refreshMusicSnapshot(
+        transitionHint: MusicTransitionHint? = nil
+    ) {
+#if canImport(MediaPlayer) && os(iOS)
+        let observedAtMs = core.now().rawValue
+        let observation = if selectedMusicProvider == .spotify {
+            MusicProviderObservation(snapshot: spotifyMusicProvider.unavailableSnapshot(observedAtMs: observedAtMs))
+        } else {
+            appleMusicProvider.observation(observedAtMs: observedAtMs)
+        }
+        _ = ingestMusicObservation(
+            observation,
+            transitionHint: transitionHint
+                ?? musicTransitionHintTracker.hint(atMonotonicMs: observedAtMs)
+        )
+#endif
+    }
+
+    @discardableResult
+    func ingestMusicObservation(
+        _ observation: MusicProviderObservation,
+        wallClockAtMs: UInt64? = nil,
+        clockUncertaintyMs: UInt64 = 1_000,
+        transitionHint: MusicTransitionHint? = nil
+    ) -> Bool {
+        let wallClockAtMs = wallClockAtMs ?? UInt64(Date().timeIntervalSince1970 * 1_000)
+        let previousNowPlaying = musicCoordinator.nowPlaying
+        do {
+            let outcome = try musicCoordinator.ingest(
+                observation: observation,
+                wallClockAtMs: wallClockAtMs,
+                clockUncertaintyMs: clockUncertaintyMs,
+                transitionHint: transitionHint
+            )
+            if outcome == .recorded {
+                core.updateMusicCaptureObservation(
+                    pevcapMusicObservation(
+                        from: observation,
+                        wallClockAtMs: wallClockAtMs,
+                        clockUncertaintyMs: clockUncertaintyMs,
+                        rideSequence: musicCoordinator.lastRecordedSequence
+                    )
+                )
+            } else if outcome == .disabled {
+                core.updateMusicCaptureObservation(nil)
+            }
+            finishMusicObservation(
+                previousNowPlaying: previousNowPlaying,
+                appliedHint: transitionHint,
+                currentObservedAtMs: observation.snapshot.observedAtMs
+            )
+            return true
+        } catch MobileRideMapError.noActiveRide {
+            finishMusicObservation(
+                previousNowPlaying: previousNowPlaying,
+                appliedHint: transitionHint,
+                currentObservedAtMs: observation.snapshot.observedAtMs
+            )
+            return false
+        } catch {
+            rideMapLiveError = Self.mapRideMapError(error)
+            finishMusicObservation(
+                previousNowPlaying: previousNowPlaying,
+                appliedHint: transitionHint,
+                currentObservedAtMs: observation.snapshot.observedAtMs
+            )
+            return false
+        }
+    }
+
+    private func finishMusicObservation(
+        previousNowPlaying: MusicNowPlaying?,
+        appliedHint: MusicTransitionHint?,
+        currentObservedAtMs: UInt64
+    ) {
+        musicTransitionHintTracker.resolve(
+            previous: previousNowPlaying,
+            current: musicCoordinator.nowPlaying,
+            appliedHint: appliedHint,
+            currentObservedAtMs: currentObservedAtMs
+        )
+        musicTimelineEvents = musicCoordinator.recordedEvents
+        musicNowPlaying = isMusicPlayerHidden ? nil : musicCoordinator.nowPlaying
+    }
+
+    private func pevcapMusicObservation(
+        from observation: MusicProviderObservation,
+        wallClockAtMs: UInt64,
+        clockUncertaintyMs: UInt64,
+        rideSequence: UInt64?
+    ) -> MobilePevcapMusicEventDto? {
+        guard !musicHistoryUnavailable,
+              musicHistoryPolicy != .disabled,
+              let item = observation.snapshot.item
+        else {
+            return nil
+        }
+        guard let trackID = Self.pevcapTrackIdentifier(
+            policy: musicHistoryPolicy,
+            provider: observation.snapshot.provider,
+            identifier: item.identifier
+        ) else {
+            return nil
+        }
+        return MobilePevcapMusicEventDto(
+            provider: observation.snapshot.provider,
+            trackId: trackID,
+            monotonicAtMs: observation.snapshot.observedAtMs,
+            wallClockUnixMs: wallClockAtMs,
+            clockUncertaintyMs: clockUncertaintyMs,
+            rideSequence: rideSequence
+        )
+    }
+
+    static func pevcapTrackIdentifier(
+        policy: MobileMusicHistoryPolicyDto,
+        provider: MobileMusicProviderDto,
+        identifier: String
+    ) -> String? {
+        if policy == .opaqueItem,
+           provider == .spotify,
+           identifier.hasPrefix("spotify:local:") {
+            return nil
+        }
+        return identifier
+    }
+
+    func setMusicHistoryPolicy(_ policy: MobileMusicHistoryPolicyDto) -> Bool {
+        let previous = musicHistoryPolicy
+        do {
+            try musicCoordinator.setHistoryPolicy(policy)
+            musicHistoryUnavailable = false
+            rememberMusicHistoryPolicy(policy)
+            if policy == .disabled {
+                core.updateMusicCaptureObservation(nil)
+            }
+            musicTimelineEvents = musicCoordinator.recordedEvents
+            return true
+        } catch MobileRideMapError.noActiveRide {
+            // Keep the choice as the default for the next ride.
+            rememberMusicHistoryPolicy(policy)
+            musicCoordinator.restoreHistoryPolicy(policy)
+            musicHistoryUnavailable = false
+            if policy == .disabled {
+                core.updateMusicCaptureObservation(nil)
+            }
+            return true
+        } catch {
+            musicHistoryPolicy = previous
+            return false
+        }
+    }
+
+    private func rememberMusicHistoryPolicy(_ policy: MobileMusicHistoryPolicyDto) {
+        musicHistoryPolicyStore.set(policy)
+        musicHistoryPolicy = policy
+        musicHistoryUnavailable = false
+        core.updateMusicCapturePolicy(policy)
+    }
+
+    private func monitorMusic(
+        provider: MobileMusicProviderDto,
+        generation: UInt64
+    ) async {
+#if canImport(MediaPlayer) && os(iOS)
+        guard selectedMusicProvider == provider else { return }
+        guard provider == .appleMusic else {
+            guard !Task.isCancelled,
+                  generation == musicMonitorGeneration,
+                  selectedMusicProvider == provider
+            else { return }
+            _ = ingestMusicObservation(
+                unavailableMusicObservation(observedAtMs: core.now().rawValue)
+            )
+            return
+        }
+        guard await appleMusicProvider.requestAuthorization() else {
+            guard !Task.isCancelled,
+                  generation == musicMonitorGeneration,
+                  selectedMusicProvider == provider
+            else { return }
+            _ = ingestMusicObservation(MusicProviderObservation(
+                snapshot: appleMusicProvider.unauthorizedSnapshot(observedAtMs: core.now().rawValue)
+            ))
+            return
+        }
+        guard !Task.isCancelled,
+              generation == musicMonitorGeneration,
+              selectedMusicProvider == provider
+        else { return }
+        appleMusicProvider.startMonitoring { [weak self] in
+            self?.refreshMusicSnapshot()
+        }
+        defer { appleMusicProvider.stopMonitoring() }
+        while !Task.isCancelled {
+            guard generation == musicMonitorGeneration,
+                  selectedMusicProvider == provider
+            else { return }
+            refreshMusicSnapshot()
+            do {
+                try await Task.sleep(for: .seconds(1))
+            } catch {
+                return
+            }
+        }
+#endif
+    }
+
+    private func unavailableMusicObservation(observedAtMs: UInt64) -> MusicProviderObservation {
+        MusicProviderObservation.unavailable(
+            provider: selectedMusicProvider,
+            sessionId: "music-unavailable",
+            observedAtMs: observedAtMs
+        )
+    }
+
+    func connectMusic() {
+#if os(iOS)
+        musicMonitorTask?.cancel()
+        musicMonitorGeneration &+= 1
+        let generation = musicMonitorGeneration
+        let provider = selectedMusicProvider
+        musicMonitorTask = Task { [weak self] in
+            await self?.monitorMusic(provider: provider, generation: generation)
+        }
+#else
+        _ = ingestMusicObservation(unavailableMusicObservation(observedAtMs: core.now().rawValue))
+#endif
+    }
+
     private func restoreRideMapState() {
         guard let state = core.rideMapStateHandle else { return }
         rideMapSnapshot = state.currentSnapshot()
+        if rideMapSnapshot != nil {
+            synchronizeMusicHistory(state.currentMusicHistory())
+        } else {
+            musicHistoryUnavailable = false
+            musicCoordinator.restoreHistoryPolicy(musicHistoryPolicy)
+            musicTimelineEvents = []
+        }
         rideMapLiveTelemetryState = rideMapSnapshot?.associatedVehicle == nil
             ? .gpsOnly
             : .associatedNoTelemetry
@@ -397,6 +719,9 @@ final class CutoutAppModel {
         restorationMarkerAtLaunch = rideSessionMarkerStore.marker
         rideSessionRestorationState = .awaitingBluetooth
         core.start()
+        if musicHistoryPolicy != .disabled {
+            connectMusic()
+        }
     }
 
     @discardableResult
@@ -408,7 +733,69 @@ final class CutoutAppModel {
                 lastConnectedVehicle: selectedDeviceStore.platformIdentifier
             )
         }
-        return started
+        guard started else { return false }
+        // Apply the user's default to the fresh Rust-owned ride timeline.
+        core.updateMusicCaptureObservation(nil)
+        let defaultPolicy = musicHistoryPolicyStore.policy
+        musicHistoryPolicy = defaultPolicy
+        do {
+            try musicCoordinator.setHistoryPolicy(defaultPolicy)
+            synchronizeMusicHistory(core.rideMapStateHandle?.currentMusicHistory())
+        } catch {
+            rideMapLiveError = Self.mapRideMapError(error)
+            guard let state = core.rideMapStateHandle,
+                  state.currentSnapshot() != nil
+            else {
+                musicHistoryPolicy = .disabled
+                musicHistoryUnavailable = false
+                musicCoordinator.restoreHistoryPolicy(.disabled)
+                musicTimelineEvents = []
+                return false
+            }
+            synchronizeMusicHistory(state.currentMusicHistory())
+            return true
+        }
+        musicTimelineEvents = musicCoordinator.recordedEvents
+        if defaultPolicy != .disabled {
+            connectMusic()
+        }
+        return true
+    }
+
+    private func synchronizeMusicHistory(_ history: MobileMusicHistoryDto?) {
+        guard let history else {
+            musicHistoryUnavailable = false
+            musicHistoryPolicy = .disabled
+            musicCoordinator.restoreHistoryPolicy(.disabled)
+            musicTimelineEvents = []
+            core.updateMusicCapturePolicy(.disabled)
+            return
+        }
+        switch history.status {
+        case .available:
+            musicHistoryUnavailable = false
+            musicHistoryPolicy = .humanReadable
+            musicCoordinator.restoreHistoryPolicy(.humanReadable)
+            musicTimelineEvents = history.events
+        case .redacted:
+            musicHistoryUnavailable = false
+            musicHistoryPolicy = .opaqueItem
+            musicCoordinator.restoreHistoryPolicy(.opaqueItem)
+            musicTimelineEvents = history.events
+        case .unavailable:
+            musicHistoryUnavailable = true
+            let persistedPolicy = core.rideMapStateHandle?.currentMusicHistoryPolicy()
+                ?? musicHistoryPolicy
+            musicHistoryPolicy = persistedPolicy
+            musicCoordinator.restoreHistoryPolicy(persistedPolicy)
+            musicTimelineEvents = []
+        case .missing, .disabled, .deleted:
+            musicHistoryUnavailable = false
+            musicHistoryPolicy = .disabled
+            musicCoordinator.restoreHistoryPolicy(.disabled)
+            musicTimelineEvents = history.events
+        }
+        core.updateMusicCapturePolicy(musicHistoryPolicy)
     }
 
     @discardableResult
@@ -469,6 +856,8 @@ final class CutoutAppModel {
             return false
         }
         invalidateLiveProjection(clearPoints: false)
+        core.updateMusicCaptureObservation(nil)
+        musicTimelineEvents = musicCoordinator.recordedEvents
         loadRideMapHistory()
         return true
     }
@@ -479,6 +868,8 @@ final class CutoutAppModel {
             return false
         }
         invalidateLiveProjection(clearPoints: true)
+        core.updateMusicCaptureObservation(nil)
+        musicTimelineEvents = musicCoordinator.recordedEvents
         clearRideMapHistoryRouteProjection()
         rideMapHistoryRouteLoading = false
         rideMapHistoryDetailRouteError = nil
@@ -494,6 +885,7 @@ final class CutoutAppModel {
         // older route request repopulate points after the new page arrives.
         rideMapHistorySelectionTask?.cancel()
         rideMapHistorySelectionCancellation?.cancel()
+        rideMapHistoryDetailLoadGeneration &+= 1
         rideMapHistoryViewportCancellation?.cancel()
         rideMapHistoryViewportTask?.cancel()
         rideMapHistoryContextTask?.cancel()
@@ -506,6 +898,8 @@ final class CutoutAppModel {
         rideMapHistoryLoading = true
         rideMapHistoryRouteLoading = false
         rideMapHistoryDetailRouteLoading = false
+        rideMapHistoryDetailMusicTimeline.removeAll(keepingCapacity: true)
+        rideMapHistoryDetailMusicTimelineUnavailable = false
         rideMapHistoryQueryDateAfterMilliseconds = historyDateAfterMilliseconds
         if let rideMapStorageError {
             rideMapHistoryLoading = false
@@ -790,6 +1184,45 @@ final class CutoutAppModel {
         )
     }
 
+    /// Removes only the selected ride's persisted music metadata.
+    @discardableResult
+    func forgetMusicHistory(for rideID: String) -> Bool {
+        guard let state = core.rideMapStateHandle else {
+            rideMapHistoryError = .storageError("Rust ride database is unavailable")
+            return false
+        }
+        rideMapHistorySelectionTask?.cancel()
+        rideMapHistorySelectionCancellation?.cancel()
+        rideMapHistoryDetailLoadGeneration &+= 1
+        do {
+            if rideMapSnapshot?.rideID == rideID {
+                try clearActiveMusicHistory(using: state)
+            } else {
+                try state.deleteMusicHistory(rideID: rideID)
+            }
+            if selectedRideMapHistoryID == rideID {
+                rideMapHistoryDetailMusicTimeline.removeAll(keepingCapacity: true)
+                rideMapHistoryDetailMusicTimelineUnavailable = false
+            }
+            return true
+        } catch {
+            rideMapHistoryError = Self.mapRideMapError(error)
+            return false
+        }
+    }
+
+    private func clearActiveMusicHistory(using state: MobileRideMapState) throws {
+        // Route active-ride deletion through the Rust state owner so its
+        // in-memory timeline and durable policy change together.
+        try state.setMusicHistoryPolicy(.disabled)
+        musicHistoryPolicy = .disabled
+        musicHistoryUnavailable = false
+        musicCoordinator.restoreHistoryPolicy(.disabled)
+        musicTransitionHintTracker.clear()
+        core.updateMusicCaptureObservation(nil)
+        musicTimelineEvents = musicCoordinator.recordedEvents
+    }
+
     static func detailPointsAreTruncated(
         sourcePointsOmittedByBudget: Bool,
         viewportPointsOmittedByBudget: Bool
@@ -802,6 +1235,16 @@ final class CutoutAppModel {
         viewportSegmentsOmittedByBudget: Bool
     ) -> Bool {
         sourceSegmentsOmittedByBudget || viewportSegmentsOmittedByBudget
+    }
+
+    static func shouldApplyHistoryDetailLoad(
+        rideID: String,
+        selectedRideID: String?,
+        loadGeneration: UInt64,
+        currentGeneration: UInt64,
+        isCancelled: Bool
+    ) -> Bool {
+        !isCancelled && loadGeneration == currentGeneration && selectedRideID == rideID
     }
 
     func projectRideMapHistoryDetailViewport(_ viewport: MobileGeoBoundsDto?) {
@@ -884,6 +1327,8 @@ final class CutoutAppModel {
         }
         rideMapHistorySelectionTask?.cancel()
         rideMapHistorySelectionCancellation?.cancel()
+        rideMapHistoryDetailLoadGeneration &+= 1
+        let detailLoadGeneration = rideMapHistoryDetailLoadGeneration
         rideMapHistoryViewportCancellation?.cancel()
         rideMapHistoryViewportTask?.cancel()
         rideMapHistoryContextTask?.cancel()
@@ -918,39 +1363,61 @@ final class CutoutAppModel {
             do {
                 let result = try await withTaskCancellationHandler(operation: {
                     try await Self.runCancellableDetached(priority: .userInitiated) {
-                        try state.projectStoredPoints(
+                        let projection = try state.projectStoredPoints(
                             rideID: rideID,
                             budget: budget,
                             cancellation: cancellation
                         )
+                        let musicTimeline: [MobileMusicRideEventDto]
+                        let musicTimelineUnavailable: Bool
+                        do {
+                            musicTimeline = try state.storedMusicEvents(rideID: rideID)
+                            musicTimelineUnavailable = false
+                        } catch {
+                            musicTimeline = []
+                            musicTimelineUnavailable = true
+                        }
+                        return (projection, musicTimeline, musicTimelineUnavailable)
                     }
                 }, onCancel: {
                     cancellation.cancel()
                 })
-                guard !Task.isCancelled, let self else { return }
+                guard let self,
+                      Self.shouldApplyHistoryDetailLoad(
+                          rideID: rideID,
+                          selectedRideID: self.selectedRideMapHistoryID,
+                          loadGeneration: detailLoadGeneration,
+                          currentGeneration: self.rideMapHistoryDetailLoadGeneration,
+                          isCancelled: Task.isCancelled
+                      )
+                else { return }
+                let (projection, musicTimeline, musicTimelineUnavailable) = result
                 self.rideMapHistoryRouteError = nil
                 self.rideMapHistoryDetailRouteError = nil
                 self.replaceRideMapHistoryDisplayPoints(
-                    result.points,
-                    cameraRegion: result.cameraRegion,
-                    endpointMetadata: result.endpointMetadata,
-                    segments: result.segments,
-                    backgroundGapCount: result.backgroundGapCount,
-                    truncated: result.pointsOmittedByBudget,
-                    segmentsOmittedByBudget: result.segmentsOmittedByBudget
+                    projection.points,
+                    cameraRegion: projection.cameraRegion,
+                    endpointMetadata: projection.endpointMetadata,
+                    segments: projection.segments,
+                    backgroundGapCount: projection.backgroundGapCount,
+                    truncated: projection.pointsOmittedByBudget,
+                    segmentsOmittedByBudget: projection.segmentsOmittedByBudget
                 )
-                self.rideMapHistoryDetailSourcePointsOmittedByBudget = result.pointsOmittedByBudget
-                self.rideMapHistoryDetailSourceSegmentsOmittedByBudget = result.segmentsOmittedByBudget
+                self.rideMapHistoryDetailSourcePointsOmittedByBudget = projection.pointsOmittedByBudget
+                self.rideMapHistoryDetailSourceSegmentsOmittedByBudget = projection.segmentsOmittedByBudget
+                self.rideMapHistoryDetailMusicTimeline = musicTimeline
+                self.rideMapHistoryDetailMusicTimelineUnavailable = musicTimelineUnavailable
+                self.rideMapHistoryDetailProjectionRideID = rideID
                 self.replaceRideMapHistoryDetailDisplayPoints(
-                    result.points,
-                    cameraRegion: result.cameraRegion,
-                    endpointMetadata: result.endpointMetadata,
-                    segments: result.segments,
-                    backgroundGapCount: result.backgroundGapCount,
-                    truncated: result.pointsOmittedByBudget,
+                    projection.points,
+                    cameraRegion: projection.cameraRegion,
+                    endpointMetadata: projection.endpointMetadata,
+                    segments: projection.segments,
+                    backgroundGapCount: projection.backgroundGapCount,
+                    truncated: projection.pointsOmittedByBudget,
                     segmentsOmittedByBudget: Self.detailSegmentsAreOmitted(
                         sourceSegmentsOmittedByBudget: self.rideMapHistoryDetailSourceSegmentsOmittedByBudget,
-                        viewportSegmentsOmittedByBudget: result.segmentsOmittedByBudget
+                        viewportSegmentsOmittedByBudget: projection.segmentsOmittedByBudget
                     )
                 )
                 self.rideMapHistoryRouteLoading = false
@@ -961,6 +1428,9 @@ final class CutoutAppModel {
                 self.rideMapHistoryRouteLoading = false
                 self.rideMapHistoryDetailRouteError = self.rideMapHistoryRouteError
                 self.rideMapHistoryDetailRouteLoading = false
+                self.rideMapHistoryDetailMusicTimeline.removeAll(keepingCapacity: true)
+                self.rideMapHistoryDetailMusicTimelineUnavailable = true
+                self.rideMapHistoryDetailProjectionRideID = nil
                 self.replaceRideMapHistoryDetailDisplayPoints([], truncated: false)
             }
         }
@@ -1017,6 +1487,9 @@ final class CutoutAppModel {
         rideMapHistoryContextProjection = nil
         rideMapHistoryContextRoutes.removeAll(keepingCapacity: true)
         replaceRideMapHistoryDisplayPoints([], truncated: false)
+        rideMapHistoryDetailMusicTimeline.removeAll(keepingCapacity: true)
+        rideMapHistoryDetailMusicTimelineUnavailable = false
+        rideMapHistoryDetailProjectionRideID = nil
         rideMapHistoryDetailSourcePointsOmittedByBudget = false
         rideMapHistoryDetailSourceSegmentsOmittedByBudget = false
         replaceRideMapHistoryDetailDisplayPoints([], truncated: false)
