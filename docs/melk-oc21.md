@@ -105,7 +105,7 @@ the official app.
   treating an arbitrary FFF0 device as the controller.
 - Color drag retains the existing 30 Hz preview path; queued superseded solid-color frames are coalesced so the newest drag value is preserved under BLE backpressure. Complete playback changes
   are validated in Rust and admitted together to a bounded Bluetooth write queue.
-  CoreBluetooth backpressure pauses draining; disconnect discards pending writes.
+  CoreBluetooth backpressure pauses draining; writes are also paced at 50 ms because a burst can exhaust the controller-side queue. Disconnect discards pending writes.
 - App-local scenes support the complete save, replace-from-current-state, and delete lifecycle through the versioned Rust-backed record. Effects are saved with named presets only when their IDs are capture-backed (currently 1–10, 16, 22, and 75). Controller-native named scenes are not claimed; controller-microphone music and schedules remain visible as future design surfaces but are disabled until physical verification.
   Schema version 2 reads version 1 records as solid RGB.
 - Optional reconnect restore uses the last confirmed settings for the same
@@ -139,3 +139,5 @@ ten-second scan and also found no MELK device. This is a discovery-state
 observation, not evidence that the controller is unsupported.
 
 The validator advertisement trace also observed unrelated nearby names (including Govee, GAFVent, `uac088`, and iPhone) and repeated RSSI updates during that run. This confirms the Mac callback path is active while the exact MELK controller remains absent from the radio environment.
+
+A later Mac validator run on 2026-09-07 found `MELK-OC21   6A` at RSSI -68 and connected successfully. It discovered the expected `FFF0` service with `FFF3` write and `FFF4` notify characteristics, completed the `7e0783` / `7e0404` initialization handshake, enabled notifications, and reached `ready`. Live writes for power, solid red (`255,0,0`), brightness 50%, and effect ID 1 at speed 0 emitted the expected `7e…ef` frames; confirmation remained an explicit operator action. A rapid burst of effect IDs 2–10 then exhausted the controller link and produced a CoreBluetooth timeout, and a remembered-UUID retry later timed out while the device was no longer advertising. This is evidence for a paced/coalesced write follow-up, not proof that every effect in the burst was physically observed.

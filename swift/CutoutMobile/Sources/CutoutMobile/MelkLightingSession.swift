@@ -259,6 +259,7 @@ public final class MelkLightingPeripheralSession: NSObject, CBCentralManagerDele
     private var targetPolicy = MelkLightingTargetPolicy(preferredPlatformIdentifier: nil)
     private var reconnectEnabled = true
     private var pendingWrites: [MelkLightingWritePlan] = []
+    private var writeDrainTask: DispatchWorkItem?
     private var pendingInitialization: [MelkLightingWritePlan] = []
     private var initializationTask: DispatchWorkItem?
     private var notificationReady = false
@@ -767,14 +768,33 @@ public final class MelkLightingPeripheralSession: NSObject, CBCentralManagerDele
     }
 
     private func drainWrites() {
-        guard connectionState == .ready, let peripheral, let sink else { return }
-        while peripheral.canSendWriteWithoutResponse, !pendingWrites.isEmpty {
-            let plan = pendingWrites.removeFirst()
-            if case let .writeWithoutResponse(channel, bytes) = plan.operation {
-                sink.writeWithoutResponse(channel: channel, bytes: bytes)
-                record("requested=\(bytes.map { String(format: "%02x", $0) }.joined())")
+        guard connectionState == .ready,
+              let peripheral,
+              let sink,
+              writeDrainTask == nil,
+              peripheral.canSendWriteWithoutResponse,
+              !pendingWrites.isEmpty else { return }
+
+        let plan = pendingWrites.removeFirst()
+        if case let .writeWithoutResponse(channel, bytes) = plan.operation {
+            sink.writeWithoutResponse(channel: channel, bytes: bytes)
+            record("requested=\(bytes.map { String(format: "%02x", $0) }.joined())")
+        }
+        guard !pendingWrites.isEmpty else { return }
+
+        // MELK accepts write-without-response frames, but a burst can exhaust its
+        // small controller-side queue. Pace frames while retaining color coalescing.
+        let task = DispatchWorkItem { [weak self, weak peripheral] in
+            guard let self, let peripheral else { return }
+            self.onQueue {
+                guard self.peripheral === peripheral,
+                      self.connectionState == .ready else { return }
+                self.writeDrainTask = nil
+                self.drainWrites()
             }
         }
+        writeDrainTask = task
+        queue.asyncAfter(deadline: .now() + .milliseconds(50), execute: task)
     }
 
     public func peripheralIsReady(toSendWriteWithoutResponse peripheral: CBPeripheral) {
@@ -820,6 +840,8 @@ public final class MelkLightingPeripheralSession: NSObject, CBCentralManagerDele
     private func transition(to state: MelkLightingPeripheralState) {
         if state != .ready {
             pendingWrites.removeAll()
+            writeDrainTask?.cancel()
+            writeDrainTask = nil
             resetInitialization()
         }
         connectionState = state
