@@ -98,7 +98,7 @@ struct DevicePickerRouteView: View {
                 Button {
                     navigate(.lighting(.euc))
                 } label: {
-                    Label("Lighting", systemImage: "lightbulb.2")
+                    Label(localizedAppText("navigation.section.lighting"), systemImage: "lightbulb.2")
                         .frame(maxWidth: .infinity, minHeight: 44)
                 }
                 .accessibilityIdentifier("device-picker.open-lighting")
