@@ -149,3 +149,8 @@ The same 2026-09-08 scan observed a nearby `ELK-BLEDOB 44` identity, but it did
 not connect or expose GATT evidence during the bounded retry. The name is not
 accepted as `MELK-OC21`; no commands were sent and this observation does not
 establish that it is the user's controller.
+
+A subsequent fresh 180-second Mac scan on 2026-09-08 again saw the CoreBluetooth
+callback path and many unrelated advertisements, but no `MELK-OC21` name. This
+extends the current discovery evidence without changing the controller profile
+or its fail-closed write policy.
