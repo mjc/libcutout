@@ -263,6 +263,7 @@ public final class MelkLightingPeripheralSession: NSObject, CBCentralManagerDele
     private var pendingInitialization: [MelkLightingWritePlan] = []
     private var initializationTask: DispatchWorkItem?
     private var notificationReady = false
+    private var connectionAttemptTask: DispatchWorkItem?
 
     public private(set) var connectionState: MelkLightingPeripheralState = .idle
     public private(set) var peripheralName: String?
@@ -318,6 +319,7 @@ public final class MelkLightingPeripheralSession: NSObject, CBCentralManagerDele
         onQueue {
             reconnectEnabled = false
             reconnectController.cancel()
+            cancelConnectionAttempt()
             resetInitialization()
             if commandEvidence.status == .requested {
                 commandEvidence.unconfirmed()
@@ -484,6 +486,7 @@ public final class MelkLightingPeripheralSession: NSObject, CBCentralManagerDele
     public func centralManager(_ central: CBCentralManager, didConnect peripheral: CBPeripheral) {
         onQueue {
             guard central === self.central, peripheral === self.peripheral else { return }
+            cancelConnectionAttempt()
             reconnectController.cancel()
             transition(to: .discovering)
             peripheral.discoverServices(CoreBluetoothScanPolicy.melk.coreBluetoothServiceUuids)
@@ -497,6 +500,7 @@ public final class MelkLightingPeripheralSession: NSObject, CBCentralManagerDele
     ) {
         onQueue {
             guard central === self.central, peripheral === self.peripheral else { return }
+            cancelConnectionAttempt()
             if reconnectEnabled {
                 scheduleReconnect(
                     central: central,
@@ -596,7 +600,42 @@ public final class MelkLightingPeripheralSession: NSObject, CBCentralManagerDele
         } else {
             transition(to: .connecting)
             central.connect(peripheral)
+            scheduleConnectionAttemptTimeout(central: central, peripheral: peripheral)
         }
+    }
+
+    private func scheduleConnectionAttemptTimeout(central: CBCentralManager, peripheral: CBPeripheral) {
+        cancelConnectionAttempt()
+        let task = DispatchWorkItem { [weak self, weak peripheral] in
+            guard let self, let peripheral else { return }
+            self.onQueue {
+                guard self.central === central,
+                      self.peripheral === peripheral,
+                      self.connectionState == .connecting,
+                      self.reconnectEnabled else {
+                    return
+                }
+
+                self.connectionAttemptTask = nil
+                self.peripheral = nil
+                self.advertisedName = nil
+                self.peripheralName = nil
+                self.peripheralIdentifier = nil
+                self.harness = nil
+                self.sink = nil
+                central.cancelPeripheralConnection(peripheral)
+                self.transition(to: .scanning)
+                self.record("connect_timeout id=\(peripheral.identifier.uuidString)")
+                central.scanForPeripherals(withServices: nil)
+            }
+        }
+        connectionAttemptTask = task
+        queue.asyncAfter(deadline: .now() + 15, execute: task)
+    }
+
+    private func cancelConnectionAttempt() {
+        connectionAttemptTask?.cancel()
+        connectionAttemptTask = nil
     }
 
     public func peripheral(_ peripheral: CBPeripheral, didDiscoverServices error: Error?) {
@@ -827,6 +866,7 @@ public final class MelkLightingPeripheralSession: NSObject, CBCentralManagerDele
             }
             self.transition(to: .connecting)
             central.connect(peripheral)
+            self.scheduleConnectionAttemptTimeout(central: central, peripheral: peripheral)
         }) else {
             transition(to: .failed(
                 "Accessory reconnect exhausted after \(ConnectionReconnectPolicy.maximumAttempts) attempts"
