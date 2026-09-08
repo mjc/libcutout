@@ -266,7 +266,17 @@ final class MusicIntegrationTests: XCTestCase {
             )
         )
 
-        XCTAssertEqual(nowPlaying.artworkAccessibilityLabel, "Artwork for Song")
+        XCTAssertEqual(nowPlaying.artworkAccessibilityLabel, pevLocalizedText("music.artwork", "Song"))
+    }
+
+    func testArtworkAccessibilityLabelUsesProviderWhenTitleIsUnavailable() {
+        let nowPlaying = MusicNowPlaying(
+            provider: .spotify,
+            state: .unavailable,
+            item: MobileMusicItemDto(identifier: "track-1", title: nil, artist: nil)
+        )
+
+        XCTAssertEqual(nowPlaying.artworkAccessibilityLabel, pevLocalizedText("music.artwork", "Spotify"))
     }
 
     @MainActor

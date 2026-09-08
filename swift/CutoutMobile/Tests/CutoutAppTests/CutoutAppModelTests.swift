@@ -60,11 +60,17 @@ final class CutoutAppModelTests: XCTestCase {
         super.setUp()
         clear(RideSessionMarkerStore())
         clear(DevicePickerSelectionStore())
+        MusicProviderSelectionStore().set(.appleMusic)
+        MusicPlayerVisibilityStore().setHidden(false)
+        MusicHistoryPolicyStore().set(.disabled)
     }
 
     override func tearDown() {
         clear(RideSessionMarkerStore())
         clear(DevicePickerSelectionStore())
+        MusicProviderSelectionStore().set(.appleMusic)
+        MusicPlayerVisibilityStore().setHidden(false)
+        MusicHistoryPolicyStore().set(.disabled)
         super.tearDown()
     }
 
@@ -104,6 +110,17 @@ final class CutoutAppModelTests: XCTestCase {
 
         XCTAssertEqual(model.musicNowPlaying?.state, .unavailable)
         XCTAssertEqual(model.musicNowPlaying?.provider, .appleMusic)
+    }
+
+    @MainActor
+    func testMusicMonitoringStartsWhenHistoryIsDisabled() {
+        let model = CutoutAppModel(core: SessionDriverSpy(rows: []))
+
+        XCTAssertEqual(model.musicHistoryPolicy, .disabled)
+        model.start()
+
+        XCTAssertEqual(model.musicNowPlaying?.provider, .appleMusic)
+        XCTAssertEqual(model.musicNowPlaying?.state, .unavailable)
     }
 #endif
 

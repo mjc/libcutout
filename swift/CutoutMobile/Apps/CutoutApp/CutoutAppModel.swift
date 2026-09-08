@@ -432,6 +432,7 @@ final class CutoutAppModel {
     func selectMusicProvider(_ provider: MobileMusicProviderDto) {
         musicCoordinator.resetProviderCorrelation()
         selectedMusicProvider = provider
+        musicNowPlaying = projectedMusicNowPlaying()
         musicProviderSelectionStore.set(provider)
         musicTransitionHintTracker.clear()
 #if canImport(MediaPlayer) && os(iOS)
@@ -781,9 +782,7 @@ final class CutoutAppModel {
         restorationMarkerAtLaunch = rideSessionMarkerStore.marker
         rideSessionRestorationState = .awaitingBluetooth
         core.start()
-        if musicHistoryPolicy != .disabled {
-            connectMusic()
-        }
+        connectMusic()
     }
 
     @discardableResult

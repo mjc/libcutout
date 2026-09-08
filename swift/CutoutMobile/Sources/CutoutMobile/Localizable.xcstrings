@@ -870,7 +870,7 @@
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Unknown segment reason" } } }
     },
     "music.artwork" : {
-      "comment" : "Accessibility label for permitted music artwork. The placeholder is the current track title.",
+      "comment" : "Accessibility label for permitted music artwork. Use the track title when available; otherwise use the provider name.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Artwork for %@" } } }
     },
     "music.connect" : {

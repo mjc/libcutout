@@ -6144,8 +6144,8 @@ impl MobileRideMapCoreInner {
         self.music_history_policy = policy;
     }
 
-    fn reset_music_history(&mut self) {
-        self.apply_music_history_policy(CoreMusicHistoryPolicy::Disabled);
+    fn reset_music_history_policy(&mut self) {
+        self.music_history_policy = CoreMusicHistoryPolicy::Disabled;
     }
 
     fn transition_state(
@@ -6565,7 +6565,7 @@ impl MobileRideMapCoreInner {
         self.admission_recorder = staged_recorder;
         self.active_ride_id = Some(id);
         self.settled_ride_id = None;
-        self.reset_music_history();
+        self.reset_music_history_policy();
         self.music_restore_failed = false;
         self.pending_location_writes.clear();
         Ok(self.snapshot(MobileRideLifecycleStateDto::Active))
@@ -15265,6 +15265,7 @@ mod tests {
             "ios-corebluetooth".into(),
             None,
         );
+        assert!(builder.set_music_history_policy(MobileMusicHistoryPolicyDto::HumanReadable));
         assert!(builder.set_music_context(Some(MobilePevcapMusicEventDto {
             provider: MobileMusicProviderDto::AppleMusic,
             track_id: "pending-song".into(),
@@ -17366,7 +17367,18 @@ mod tests {
 
     #[test]
     fn lowering_music_policy_redacts_the_active_timeline() {
-        let state = MobileRideMapCore::new();
+        let _guard = RIDE_DATABASE_TEST_LOCK
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        let path = std::env::temp_dir().join(format!(
+            "cutout-mobile-music-redaction-{}-{}.sqlite3",
+            std::process::id(),
+            Uuid::new_v4()
+        ));
+        let _ = fs::remove_file(&path);
+        let database =
+            open_ride_database(path.to_string_lossy().into_owned()).expect("database opens");
+        let state = MobileRideMapCore::with_database(database.clone());
         state.start_gps_only(1_000, None).expect("ride starts");
         state
             .set_music_history_policy(MobileMusicHistoryPolicyDto::HumanReadable)
@@ -17410,5 +17422,7 @@ mod tests {
         assert_eq!(events[0].item_identifier.as_deref(), Some("track-1"));
         assert_eq!(events[0].title, None);
         assert_eq!(events[0].artist, None);
+        database.shutdown().expect("database shuts down");
+        let _ = fs::remove_file(path);
     }
 }

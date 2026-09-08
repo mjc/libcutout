@@ -330,7 +330,8 @@ public struct MusicNowPlaying: Equatable, Sendable {
     }
 
     public var artworkAccessibilityLabel: String {
-        pevLocalizedText("music.artwork", title)
+        let artworkName = item?.title.flatMap { $0.isEmpty ? nil : $0 } ?? providerName
+        return pevLocalizedText("music.artwork", artworkName)
     }
 
     public var playPauseCommand: MobileMusicCommandDto? {
