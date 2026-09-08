@@ -5670,7 +5670,7 @@ fn music_history_state(
     connection: &Connection,
     ride_id: RideId,
 ) -> Result<MusicHistoryState, StorageError> {
-    ensure_ride_exists(connection, ride_id)?;
+    ensure_visible_ride(connection, ride_id)?;
     let value = connection
         .query_row(
             "SELECT state FROM ride_music_history WHERE ride_id = ?1",

@@ -188,6 +188,7 @@ struct RideMapHistoryDetailSummary: View {
     let musicTimelineUnavailable: Bool
     let musicHistoryState: MobileMusicHistoryStateDto?
     let musicHistoryError: MobileRideMapError?
+    let musicHistoryCanForget: Bool
     let forgetMusicHistory: () -> Bool
     let state: RideMapHistoryRouteState
     let loadRoutePreview: () -> Void
@@ -261,8 +262,10 @@ struct RideMapHistoryDetailSummary: View {
                             Text(localizedAppText("music.timeline.title"))
                                 .font(.headline.weight(.semibold))
                             Spacer()
-                            Button(localizedAppText("music.history.forget"), role: .destructive) {
-                                isMusicHistoryForgetConfirmationPresented = true
+                            if musicHistoryCanForget {
+                                Button(localizedAppText("music.history.forget"), role: .destructive) {
+                                    isMusicHistoryForgetConfirmationPresented = true
+                                }
                             }
                         }
                         switch MusicHistoryPresentation(

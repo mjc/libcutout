@@ -3873,6 +3873,10 @@ fn ride_history_excludes_explicitly_discarded_rides() {
     database.transition(discarded, RideEvent::Start).unwrap();
     database.transition(discarded, RideEvent::Stop).unwrap();
     database.transition(discarded, RideEvent::Discard).unwrap();
+    assert!(matches!(
+        database.music_history_state(discarded),
+        Err(StorageError::NotFound)
+    ));
 
     let saved = database.create_ride(RideSource::Live, 20).unwrap();
     database.transition(saved, RideEvent::Start).unwrap();
