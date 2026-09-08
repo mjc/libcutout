@@ -117,5 +117,6 @@ these observations.
 
 On 2026-09-07, the Mac validator confirmed that CoreBluetooth was powered on
 and scanning, but observed neither a connected MELK link nor a `MELK-OC21`
-advertisement during 45-second, 120-second, and 30-second runs. This is a
-discovery-state observation, not evidence that the controller is unsupported.
+advertisement during 30-second, 45-second, 60-second, 120-second, and
+180-second runs. This is a discovery-state observation, not evidence that the
+controller is unsupported.
