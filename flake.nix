@@ -168,6 +168,7 @@
             ];
 
             shellHook = ''
+              export KOTLINX_COROUTINES_JAR="${kotlinxCoroutines}/share/java/kotlinx-coroutines-core-jvm.jar"
               ${pkgs.lib.optionalString pkgs.stdenv.isDarwin ''
                 export PATH="/usr/bin:/bin:/usr/sbin:/sbin:$PATH"
                 unset CC CXX LD AR RANLIB SDKROOT

@@ -39,16 +39,10 @@ if [[ -z "$jna_jar" ]]; then
   exit 1
 fi
 
-coroutines_jar=""
-for candidate in \
-  /nix/store/*-kotlinx-coroutines-core-jvm-*/share/java/kotlinx-coroutines-core-jvm.jar \
-  /usr/share/java/kotlinx-coroutines-core-jvm.jar
-do
-  if [[ -f "$candidate" ]]; then
-    coroutines_jar="$candidate"
-    break
-  fi
-done
+coroutines_jar="${KOTLINX_COROUTINES_JAR:-}"
+if [[ -z "$coroutines_jar" && -f /usr/share/java/kotlinx-coroutines-core-jvm.jar ]]; then
+  coroutines_jar=/usr/share/java/kotlinx-coroutines-core-jvm.jar
+fi
 if [[ -z "$coroutines_jar" ]]; then
   echo "kotlinx-coroutines-core-jvm.jar not found; enter the Nix dev shell" >&2
   exit 1
