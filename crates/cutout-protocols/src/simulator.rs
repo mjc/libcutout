@@ -424,6 +424,12 @@ impl AeroSettingsSimulator {
                     i64::from(value.kilometres_per_hour()) * 10,
                 )
             }),
+            self.readback.pwm_percent.map(|value| {
+                settings_entry(
+                    crate::AERO_FIELD_PWM_PERCENT,
+                    i64::from(pwm_wire_value(value)),
+                )
+            }),
             self.readback.gyro_calibration_state.map(|value| {
                 settings_entry(
                     crate::AERO_FIELD_GYRO_CALIBRATION_STATE,
@@ -532,6 +538,13 @@ const fn pedal_mode_raw(value: PedalMode) -> u16 {
         PedalMode::Hard => 0,
         PedalMode::Medium => 1,
         PedalMode::Soft => 2,
+    }
+}
+
+const fn pwm_wire_value(value: AeroPwmSetting) -> u8 {
+    match value {
+        AeroPwmSetting::Off => 200,
+        AeroPwmSetting::Margin(percent) => 100 - percent.percent(),
     }
 }
 
@@ -710,6 +723,7 @@ mod tests {
             vec![
                 crate::VETERAN_FIELD_SPEED_TILTBACK_DECI_KMH,
                 crate::VETERAN_FIELD_SPEED_ALERT_DECI_KMH,
+                crate::AERO_FIELD_PWM_PERCENT,
                 crate::AERO_FIELD_GYRO_CALIBRATION_STATE,
                 crate::AERO_FIELD_BRAKE_OVERPRESSURE_ALARM_PERCENT,
                 crate::VETERAN_FIELD_PEDALS_MODE,
@@ -723,6 +737,7 @@ mod tests {
         let mut simulator = AeroSettingsSimulator::default();
         let now = MonotonicTimestamp::new(10);
         let commands = [
+            DeviceCommand::SetAeroPwmPercent(pwm(64)),
             DeviceCommand::SetAeroDisplayBacklight(
                 AeroDisplayBacklight::new(80).expect("80 percent fits"),
             ),
@@ -751,8 +766,11 @@ mod tests {
             DeviceCommand::SetAeroTransportMode(AeroTransportMode::new(true)),
         ];
 
-        for command in commands {
-            let _ = simulator.issue(command, parked(), None, now);
+        for (index, command) in commands.into_iter().enumerate() {
+            let monotonic_ms = now.saturating_add_duration(Duration::from_milliseconds(
+                u64::try_from(index).expect("test index fits in a timestamp"),
+            ));
+            let _ = simulator.issue(command, parked(), None, monotonic_ms);
         }
 
         let settings = simulator.settings_readback();
@@ -763,6 +781,7 @@ mod tests {
             .map(|entry| (entry.field.id, entry.field.value))
             .collect();
 
+        assert!(fields.contains(&(crate::AERO_FIELD_PWM_PERCENT, 36)));
         assert!(fields.contains(&(crate::AERO_FIELD_DISPLAY_BACKLIGHT_PERCENT, 80)));
         assert!(fields.contains(&(crate::AERO_FIELD_BEEPER_VOLUME_PERCENT, 40)));
         assert!(fields.contains(&(crate::AERO_FIELD_DYNAMIC_ASSIST_PERCENT, 35)));
@@ -775,6 +794,30 @@ mod tests {
         assert!(fields.contains(&(crate::AERO_FIELD_HIGH_SPEED_MODE, 1)));
         assert!(fields.contains(&(crate::AERO_FIELD_LOW_BATTERY_MODE, 0)));
         assert!(fields.contains(&(crate::AERO_FIELD_TRANSPORT_MODE, 1)));
+    }
+
+    #[test]
+    fn simulator_readback_maps_disabled_pwm_to_the_wire_sentinel() {
+        let mut simulator = AeroSettingsSimulator::default();
+        let settings = simulator
+            .issue(
+                DeviceCommand::SetAeroPwmOff,
+                parked(),
+                None,
+                MonotonicTimestamp::new(10),
+            )
+            .into_iter()
+            .find_map(|output| match output {
+                SessionOutput::Event(DeviceEvent::ReadOnlyResponse(
+                    ReadOnlyResponse::Settings(settings),
+                )) => Some(settings),
+                _ => None,
+            })
+            .expect("PWM writes emit a settings readback");
+
+        assert!(settings.entries().into_iter().flatten().any(|entry| {
+            entry.field == RawFieldValue::new(crate::AERO_FIELD_PWM_PERCENT, 200)
+        }));
     }
 
     #[test]

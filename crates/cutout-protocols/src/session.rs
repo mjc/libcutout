@@ -4573,7 +4573,7 @@ mod tests {
             .iter()
             .flat_map(|response| match response {
                 ReadOnlyResponse::Settings(settings) => settings.entries(),
-                _ => [None; 17],
+                _ => [None; 18],
             })
             .flatten()
             .map(|entry| entry.field)

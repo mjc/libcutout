@@ -172,12 +172,25 @@ final class CutoutAppModel {
         }
     }
 
+    var manualHeadlightOn: Bool {
+        guard let state = core.headlightState else { return false }
+        return state.kind == .pending ? state.requested == .on : state.current == .on
+    }
+
     var headlightCommandStatus: LightCommandStatus {
         core.headlightCommandStatus ?? lastHeadlightSubmissionStatus ?? .idle
     }
 
     var headlightControlAvailable: Bool {
         headlightWriteSupport == .supported
+    }
+
+    var manualHeadlightControlVisible: Bool {
+        core.electricUnicycleModel == .aero
+    }
+
+    var manualHeadlightControlAvailable: Bool {
+        manualHeadlightControlVisible && core.settingsCapabilities?.headlight == .supported
     }
 
     var settingsCapabilities: EucSettingsCapabilities? {
@@ -258,6 +271,10 @@ final class CutoutAppModel {
 
     var aeroHighBeamState: LightSettingState? {
         core.aeroHighBeamState
+    }
+
+    var manualHeadlightState: LightSettingState? {
+        core.headlightState
     }
 
     var pedalModeState: PedalModeSettingState? {
@@ -529,6 +546,12 @@ final class CutoutAppModel {
         case .sentWithoutConfirmation:
             localizedAppText("settings.high_beam.sent_unconfirmed")
         }
+    }
+
+    var manualHeadlightStatusText: String {
+        manualHeadlightControlAvailable
+            ? localizedAppText("settings.headlight.sent_unconfirmed")
+            : localizedAppText("settings.headlight.unavailable")
     }
 
     private let core: any CutoutSessionDriving
@@ -2272,6 +2295,12 @@ final class CutoutAppModel {
             ? core.setAeroHighBeam(state)
             : core.setLights(state)
         return applyHeadlightSubmission(result, for: state)
+    }
+
+    @discardableResult
+    func setManualHeadlight(_ enabled: Bool) -> SettingCommandResult {
+        guard manualHeadlightControlAvailable else { return .failed }
+        return core.setLights(enabled ? .on : .off)
     }
 
     @discardableResult

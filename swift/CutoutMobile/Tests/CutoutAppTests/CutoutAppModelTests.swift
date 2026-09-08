@@ -383,6 +383,19 @@ final class CutoutAppModelTests: XCTestCase {
     }
 
     @MainActor
+    func testAeroManualHeadlightUsesTheIndependentLightCommand() {
+        let driver = SessionDriverSpy(rows: [])
+        driver.electricUnicycleModel = .aero
+        driver.headlightWriteSucceeds = true
+        let model = CutoutAppModel(core: driver)
+
+        XCTAssertTrue(model.manualHeadlightControlAvailable)
+        XCTAssertEqual(model.setManualHeadlight(true), .accepted)
+        XCTAssertEqual(driver.headlightStates, [.on])
+        XCTAssertEqual(driver.aeroHighBeamStates, [])
+    }
+
+    @MainActor
     func testFalconHeadlightToggleIsAvailableThroughTheGuardedSession() {
         let driver = SessionDriverSpy(rows: [])
         driver.electricUnicycleModel = .falcon

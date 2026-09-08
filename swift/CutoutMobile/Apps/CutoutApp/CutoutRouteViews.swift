@@ -182,6 +182,18 @@ struct EucTuneRouteView: View {
                     .disabled(model.phase != .live || !model.headlightControlAvailable)
                     .accessibilityHint(model.headlightStatusText)
                     .accessibilityIdentifier("settings.control.headlight")
+                    if model.manualHeadlightControlVisible {
+                        Toggle(
+                            localizedAppText("settings.headlight.title"),
+                            isOn: Binding(
+                                get: { model.manualHeadlightOn },
+                                set: { model.setManualHeadlight($0) }
+                            )
+                        )
+                        .disabled(model.phase != .live || !model.manualHeadlightControlAvailable)
+                        .accessibilityIdentifier("settings.manualHeadlight")
+                        .accessibilityHint(model.manualHeadlightStatusText)
+                    }
                     if model.pedalModeControlAvailable {
                         EucPedalModeControl(model: model)
                     }
@@ -396,6 +408,16 @@ struct EucTuneRouteView: View {
 
                 if let capabilities = model.settingsCapabilities {
                     Section {
+                        if model.manualHeadlightControlVisible {
+                            EucSettingCapabilityRow(
+                                id: "manualHeadlight",
+                                title: localizedAppText("settings.headlight.title"),
+                                support: capabilities.headlight,
+                                state: model.manualHeadlightState?.kind,
+                                confirmedAt: model.manualHeadlightState?.confirmedAt,
+                                now: model.currentMonotonicTime
+                            )
+                        }
                         EucSettingCapabilityRow(
                             id: "aeroHighBeam",
                             title: localizedAppText("settings.high_beam.title"),

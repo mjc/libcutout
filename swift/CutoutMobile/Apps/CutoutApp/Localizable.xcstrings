@@ -141,6 +141,10 @@
       "comment" : "Shown when wheel telemetry confirmed the requested headlight state, with elapsed whole seconds.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Confirmed by wheel telemetry %llds ago." } } }
     },
+    "settings.headlight.sent_unconfirmed" : {
+      "comment" : "Explains that a manual Aero headlight command was sent without a decoded state readback.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Command sent. This wheel does not report headlight state." } } }
+    },
     "settings.high_beam.title" : {
       "comment" : "Label for a wheel protocol that controls the high beam.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "High beam" } } }

@@ -4,9 +4,10 @@ The completeness target is the Aero settings available in DarknessBot and EUC
 World. Tests of Cutout's implemented command variants are not a completeness
 test of those apps. EUC World 2.66.1 has a versioned code/resource inventory,
 and DarknessBot 6.1.0 has a static Flutter/AOT menu and adapter inventory in
-the linked reverse-engineering record. DarknessBot's model-specific write path
-is still undecoded, so the manufacturer menu below supplies a cross-check, not
-proof that both apps expose every entry.
+the linked reverse-engineering record. Its recovered `VeteranAdapter` write
+methods now corroborate the frame shapes for the existing Rust controls; the
+remaining model-gated branches are still intentionally outside the generic
+write API.
 
 ## Implemented commands
 
@@ -64,6 +65,11 @@ fixed PWM warning that cannot be disabled; a phone-generated alarm in another
 app would be a different feature. Inventory the app behavior before adding a
 wheel-write toggle for it.
 
+FreeWheel labels page-8 byte 68 `acceleration_limit`, whereas EUC World labels
+the same field `pedal_dip_compensation`. Cutout treats this as one wire setting,
+not two Aero commands; a distinct acceleration-limit control requires a
+model-specific capture.
+
 The max-charge field is intentionally different from the other source-backed
 settings: it is present in the captured page-8 payload and its raw transport
 frame is source-backed, but the official NOSFET/EUC World generic conversion
@@ -75,10 +81,28 @@ label it as volts.
 Unknown payloads remain out of the write surface. An Unsupported row does not
 mean the setting is implemented, and a simulator cannot supply missing wire
 evidence. The inspected EUC World Veteran numeric controls are represented
-by the implemented source-backed controls above. Modern binary riding-mode T remains distinct from the legacy pedal presets, and DarknessBot parity remains
-unverified because its AOT model-specific write path has not been decoded.
+by the implemented source-backed controls above. Modern binary riding-mode T
+remains distinct from the legacy pedal presets. DarknessBot's decoded
+`VeteranAdapter` paths corroborate the implemented controls; its model-gated
+legacy light and mileage-reset branches remain open until their selection rules
+and device effects are independently established.
 
 ## Sources and limits
+
+- The ignored `.protocol-references/freewheel` source snapshot provides an
+  additional cross-platform app inventory. `core/.../domain/settings/WheelSettingsConfig.kt`
+  enumerates the Veteran menu (headlight, screen backlight, pedal mode and
+  hardness, alarm/stop speed, pedal tilt, PWM limit, dynamic assist,
+  acceleration limit, units, transport/high-speed/low-voltage modes, key tone,
+  voltage correction, charge ceiling, brake-pressure alarm, lateral cutoff,
+  lock, calibration, power-off and trip reset). Its
+  `core/.../protocol/VeteranDecoder.kt` `buildCommandWithVer` implementation
+  records the corresponding LkAp/LdAp positions and firmware gates. This
+  corroborates the source-backed settings implemented here while preserving
+  FreeWheel's model gates: dynamic assist and acceleration limit are removed
+  for NOSFET models, and brake-pressure alarm uses a different field for
+  non-NOSFET Veteran models. Lock, power-off and password operations remain
+  outside this benign settings surface because they are dangerous controls.
 
 - [NOSFET support and official manuals](https://www.nosfet.com/support), with
   [AERO manual 4.0 mirror](https://device.report/m/15c21f5faf7c4b946395bd8596be32a778817c729ce71cdcc1f10e7f53ae463f.pdf):
@@ -94,9 +118,9 @@ unverified because its AOT model-specific write path has not been decoded.
 - [EUC World Aero support announcement](https://euc.world/blog/euc-world-2-54-0-has-been-released)
   and [DarknessBot listing](https://apps.apple.com/us/app/darknessbot/id1108403878):
   app support claims do not enumerate every Aero command. DarknessBot's
-  static 6.1.0 artifact and AOT limitation are recorded in the linked RE
-  inventory; cross-app parity remains open until its model-specific write path
-  is decoded or corroborated by a frame capture.
+  static 6.1.0 artifact and decoded AOT frame inventory are recorded in the
+  linked RE inventory; static construction evidence remains distinct from
+  physical write/readback proof.
 - The ignored `.protocol-references/nosfet-official` decompilation is the
   authoritative Aero cross-check for lighting: its `BtManager` sends the
   high-beam `LkAp` frame alone. The older `LdAp` companion capture is not sent

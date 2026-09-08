@@ -11,8 +11,11 @@ use std::{
 
 use anyhow::{Context, Result, bail, ensure};
 use cutout_core::{
-    AeroAngleAdjustment, AeroPedalHardness, AeroPwmPercent, AeroPwmSetting, AeroSpeedSetting,
-    DeviceCommand, LightState, MonotonicTimestamp, PedalMode, RideOperatingState,
+    AeroAngleAdjustment, AeroBeeperVolume, AeroBrakeOverpressureAlarm, AeroDisplayBacklight,
+    AeroDynamicAssist, AeroHighSpeedMode, AeroLateralTiltLimit, AeroLowBatteryMode,
+    AeroMaxChargeVoltageRaw, AeroPedalDipCompensation, AeroPedalHardness, AeroPwmPercent,
+    AeroPwmSetting, AeroRidingMode, AeroSpeedSetting, AeroTransportMode, AeroVoltageCorrection,
+    AeroWheelUnits, DeviceCommand, LightState, MonotonicTimestamp, PedalMode, RideOperatingState,
 };
 use cutout_protocols::AeroSettingsSimulator;
 use serde_json::Value;
@@ -105,9 +108,41 @@ fn run_aero_settings_simulator() -> Result<()> {
             AeroAngleAdjustment::new(-12).context("-1.2 degrees is a valid Aero angle")?,
         ),
         DeviceCommand::SetPedalMode(PedalMode::Hard),
+        DeviceCommand::SetAeroRidingMode(AeroRidingMode::Medium),
         DeviceCommand::SetAeroPedalHardness(
             AeroPedalHardness::new(64).context("64% is a source-documented MD hardness")?,
         ),
+        DeviceCommand::SetAeroDisplayBacklight(
+            AeroDisplayBacklight::new(80).context("80% is a valid Aero backlight")?,
+        ),
+        DeviceCommand::SetAeroBeeperVolume(
+            AeroBeeperVolume::new(40).context("40% is a valid Aero beeper volume")?,
+        ),
+        DeviceCommand::SetAeroDynamicAssist(
+            AeroDynamicAssist::new(35).context("35% is a valid Aero dynamic assist")?,
+        ),
+        DeviceCommand::SetAeroPedalDipCompensation(
+            AeroPedalDipCompensation::new(25)
+                .context("25% is a valid Aero pedal-dip compensation")?,
+        ),
+        DeviceCommand::SetAeroLateralTiltLimit(
+            AeroLateralTiltLimit::new(55).context("55 degrees is a valid Aero lateral limit")?,
+        ),
+        DeviceCommand::SetAeroVoltageCorrection(
+            AeroVoltageCorrection::new(-5).context("-0.5% is a valid Aero voltage correction")?,
+        ),
+        DeviceCommand::SetAeroMaxChargeVoltageRaw(
+            AeroMaxChargeVoltageRaw::new(46).context("46 is a valid raw Aero MxV value")?,
+        ),
+        DeviceCommand::SetAeroWheelUnits(AeroWheelUnits::Imperial),
+        DeviceCommand::SetAeroHighSpeedMode(AeroHighSpeedMode::new(true)),
+        DeviceCommand::SetAeroLowBatteryMode(AeroLowBatteryMode::new(false)),
+        DeviceCommand::SetAeroTransportMode(AeroTransportMode::new(true)),
+        DeviceCommand::SetAeroBrakeOverpressureAlarm(
+            AeroBrakeOverpressureAlarm::new(110)
+                .context("110% is a valid Aero brake overpressure alarm")?,
+        ),
+        DeviceCommand::SetAeroGyroCalibration,
         DeviceCommand::SetAeroHighBeam(LightState::On),
         DeviceCommand::SetLights(LightState::On),
         DeviceCommand::ResetTripMeter,

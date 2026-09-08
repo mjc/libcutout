@@ -366,7 +366,7 @@ pub enum DeviceCommand {
     /// Set the Aero voltage correction.
     SetAeroVoltageCorrection(AeroVoltageCorrection),
 
-    /// Set the NOSFET Aero maximum charge voltage using the official raw MxV value.
+    /// Set the NOSFET Aero maximum charge voltage using the official raw `MxV` value.
     SetAeroMaxChargeVoltageRaw(AeroMaxChargeVoltageRaw),
 
     /// Set the wheel display units independently of host display preferences.
@@ -795,7 +795,7 @@ impl AeroMaxChargeVoltageRaw {
         if raw <= 70 { Some(Self(raw)) } else { None }
     }
 
-    /// Returns the raw MxV value written to the wheel.
+    /// Returns the raw `MxV` value written to the wheel.
     #[must_use]
     pub const fn raw(self) -> u8 {
         self.0
@@ -7388,7 +7388,7 @@ pub enum SettingsReadbackAvailability {
 }
 
 /// Number of settings entries retained in a settings readback.
-const SETTINGS_READBACK_CAPACITY: usize = 17;
+const SETTINGS_READBACK_CAPACITY: usize = 18;
 
 /// Bounded settings readback response.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -10085,6 +10085,22 @@ mod tests {
             response.entries()[0].map(|entry| entry.verification),
             Some(VerificationStatus::HardwareVerified)
         );
+    }
+
+    #[test]
+    fn settings_readback_preserves_the_eighteenth_entry() {
+        let entry = crate::SettingsEntry {
+            field: crate::RawFieldValue::new(0x11, 3),
+            source: ValueSource::Reported,
+            quality: ValueQuality::Known,
+            verification: VerificationStatus::SourceVerified,
+        };
+        let mut entries = [None; 18];
+        entries[17] = Some(entry);
+
+        let response = crate::SettingsReadback::available(entries);
+
+        assert_eq!(response.entries()[17], Some(entry));
     }
 
     #[test]

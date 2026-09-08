@@ -142,8 +142,10 @@ The ignored Nosfet official Android source also provides the ANG TLT gyro
 calibration frame and page-8 state byte; Cutout now exposes that command in the
 Rust protocol boundary as stationary-only. Its calibration effect remains
 unverified until a physical Aero capture is recorded.
-Coverage of existing command variants does not establish parity with DarknessBot
-or physical device behavior. See
+Coverage of existing command variants does not establish physical device
+behavior. DarknessBot's recovered `VeteranAdapter` methods now corroborate the
+frame shapes for the implemented Aero controls; its model-gated legacy branches
+remain outside the generic write surface. See
 [Aero settings coverage](aero-settings-coverage.md) for the outstanding inventory.
 A setting without a typed readback and controlled device observation stays provisional.
 The CLI therefore reports transport acceptance separately and only calls the

@@ -27,7 +27,7 @@ const VALIDATION_ROWS: &[ValidationRow] = &[
         unverified_fields: "controls, firmware variants, BMS metadata currents under load, page 8 semantics beyond reserved/raw",
         controls: "read-only scan, connect, capture",
         minimum_evidence: "idle and changing-load Bluetooth evidence, BMS-screen/app labels, live dashboard parser-first typed-ingest verification",
-        acceptance: "hardware-tested",
+        acceptance: "hardware-capture-only",
     },
     ValidationRow {
         device: "Begode Falcon",
@@ -109,9 +109,22 @@ mod tests {
     fn validation_report_marks_each_acceptance_state() {
         let report = render_validation_report();
 
-        assert!(report.contains("hardware-tested"));
+        assert!(report.contains("hardware-capture-only"));
         assert!(report.contains("inferred"));
         assert!(report.contains("unverified"));
+    }
+
+    #[test]
+    fn aero_capture_does_not_claim_settings_hardware_validation() {
+        let report = render_validation_report();
+        let aero_row = report
+            .lines()
+            .find(|line| line.starts_with("NOSFET Aero |"))
+            .expect("validation report includes the Aero row");
+
+        assert!(aero_row.contains("controls"));
+        assert!(aero_row.ends_with("| hardware-capture-only"));
+        assert!(!aero_row.ends_with("| hardware-tested"));
     }
 
     #[test]

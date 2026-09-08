@@ -17,13 +17,35 @@ This document records protocol facts and references, not copied app source.
 
 DarknessBot 6.1.0 was also inspected statically from its split XAPK. The base
 APK identifies a Flutter application and the arm64 split contains an AOT
-`libapp.so`; JADX therefore cannot recover its Dart implementation. The binary
-does retain a `veteran_adapter.dart` path, device-settings widget names, and
-labels for riding mode, gyro calibration, pedal/tilt limits, PWM alarms,
-backlight, beeper, transport, and battery modes. Those names are useful parity
-leads, but they do not establish a byte offset or a safe Aero write. No new
-DarknessBot-derived command is claimed here without a decoded frame or a
-matching source trace.
+`libapp.so`; JADX therefore cannot recover its Dart implementation. The AOT
+image was decoded with [Blutter](https://github.com/worawit/blutter), retaining
+the generated assembly outside the repository while keeping the input artifact
+under the ignored reverse-engineering workspace. The
+input `libapp.so` is pinned by SHA-256
+`ebfaecb6eb3cb02dbeb3c39abf93e978fbdb690044ed086829fec71583d3ed96`.
+
+The recovered `VeteranAdapter` methods now provide a frame-level parity trace
+for the settings already implemented in Rust:
+
+| DarknessBot method | Decoded frame shape | Existing Cutout command |
+| --- | --- | --- |
+| `changeGyroLevel` | `LkAp`, declared length 16, value at absolute byte 11 | `SetAeroAngleAdjustment` |
+| `changeMaxRollAngle` | `LkAp`, declared length 22, value at absolute byte 17 | `SetAeroLateralTiltLimit` |
+| `changeSafeMode` | `LdAp`, declared length 25, value at absolute byte 20 | `SetAeroLowBatteryMode` |
+| `changeMaxSpeed` | `LdAp`, declared length 17, value at absolute byte 12 | `SetAeroTiltbackSpeed` |
+| `changeVolume` | `LdAp`, declared length 28, value at absolute byte 23 | `SetAeroBeeperVolume` |
+| `changeTorchMode` | Modern branch uses the ASCII `SetLightON`/`SetLightOFF` commands; an older branch constructs model-gated binary frames | `SetLights` for the modern branch |
+| `changeRidingLevel` | Selects an advanced `LdAp` frame (declared length 24) or a legacy binary frame based on the adapter's riding-mode flag | `SetAeroRidingMode` covers the source-backed modern command; legacy selection still needs a model/firmware gate |
+| `changeLimitSpeed` | Stores the app's limit-speed preference and delegates to `changeMaxSpeed` only when the adapter's limit-mode flag is enabled; it is not a second wheel setting | `SetAeroTiltbackSpeed`; no separate limit-mode wheel write is inferred |
+| `changeLimitMode` | Updates the app/device preference record and conditionally invokes `changeMaxSpeed`; no independent command builder is present | App policy, not a separate benign wheel command |
+| `resetSingleMileage` | Protocol-v2 branch constructs a multi-write reset sequence; the recovered AOT does not expose a stable setting key or generic model gate | `ResetTripMeter` exists, but the multi-step legacy sequence remains outside the generic API |
+
+The byte shapes, positions, and CRCs are covered by the existing Rust golden
+frame tests. The older `changeTorchMode` branch is recorded as evidence but is
+not emitted by the generic encoder: model/firmware selection is not an input to
+that API, and sending an un-gated legacy companion frame can produce the extra
+acknowledgement beep observed on Aero. This is static command-construction
+evidence, not proof of a physical write or readback result.
 
 ## Reproducible code trail
 
@@ -109,6 +131,13 @@ keeps the source-backed transport as an explicitly raw, unverified read/write;
 the mobile surface must not present it as volts until an Aero-specific
 conversion and safe range are physically established.
 
+FreeWheel's Veteran decoder calls page-8 byte 68 `acceleration_limit`, while
+EUC World 2.66.1 exposes the same wire position as
+`vn_pedal_dip_compensation` (setter `Q`, `LdAp` position 28). This is a label
+and product-policy difference, not evidence for two independent Aero commands;
+Cutout keeps one typed `PedalDipCompensation` field until a model-specific
+capture proves a distinct acceleration-limit command.
+
 Cross-check: NOSFET's official Android 1.1.3 download independently uses the same
 MD/PWT offsets and excludes the CRC. This is corroboration, not the parity target.
 
@@ -120,7 +149,12 @@ NOSFET brake-overpressure alarm (90..125%). Speed controls use 10..200 km/h.
 Golden frame tests cover the numeric additions and safety modes, including CRC
 and the 33-byte pedal-dip command. These are source-backed software
 capabilities awaiting device effect/readback proof, not hardware-validated
-writes. The official NOSFET control menu and the EUC World Veteran inventory
-are covered; DarknessBot remains a static parity lead until its AOT protocol
-path can be decoded or corroborated by a frame capture. Unknown
-manufacturer-menu items stay open.
+writes. The official NOSFET control menu, the EUC World Veteran inventory, and
+the decoded DarknessBot `VeteranAdapter` frame paths above are covered. The
+remaining DarknessBot-only actions (including model-gated legacy light and riding-level frames
+and its multi-step mileage reset path) stay out of the generic write surface
+until their protocol gate and device behavior are independently established.
+`changeLimitSpeed` and `changeLimitMode` do not add new wheel commands: the
+recovered code only persists policy and, in one branch, delegates to the
+already traced maximum-speed setter.
+Unknown manufacturer-menu items stay open.

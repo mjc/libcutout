@@ -1,5 +1,9 @@
 # Control Safety Matrix
 
+User-visible confirmation, reversibility, disconnect, and accessibility policy
+for settings controls is defined in
+[`settings-safety-ux.md`](settings-safety-ux.md).
+
 Cutout command support is split by safety class before a protocol encoder can
 produce transport writes. Read-only sessions must fail closed for every
 non-read command.
