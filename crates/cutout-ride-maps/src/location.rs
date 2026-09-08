@@ -168,7 +168,7 @@ pub enum LocationAdmission {
     Accepted,
     /// The sample repeats the previous accepted sample exactly.
     Duplicate,
-    /// The sample would move time backwards.
+    /// The sample would fail to advance the monotonic timestamp.
     OutOfOrder,
     /// The sample's horizontal accuracy exceeds the Rust admission threshold.
     AccuracyTooLow,
