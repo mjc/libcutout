@@ -57,7 +57,6 @@ use libcutout_persistence::RideDatabase;
 use tracing::{debug, info};
 
 use crate::cli::{
-<<<<<<< HEAD
     AeroSetting, AeroWriteArgs, CaptureArgs, Cli, Command, DashboardArgs, PevcapArgs,
     PevcapCommand, PevcapConvertArgs, PevcapFormat, PevcapImportArgs, PevcapReplayProfile,
     RawSubscribeArgs, ReadProbe, SessionProfile, TargetedScanArgs, VescProbe, VescProbeArgs,

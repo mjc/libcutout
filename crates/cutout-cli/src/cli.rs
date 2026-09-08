@@ -694,7 +694,6 @@ mod tests {
     use uuid::Uuid;
 
     use super::{
-<<<<<<< HEAD
         AeroSetting, AeroWriteArgs, CaptureArgs, CaptureDistributionArg, CaptureEvidenceArg,
         CaptureLabelArg, CapturePrivacyArg, Cli, Command, DEFAULT_SCAN_SECONDS, DashboardArgs,
         PevcapArgs, PevcapCommand, PevcapConvertArgs, PevcapFormat, PevcapImportArgs,
