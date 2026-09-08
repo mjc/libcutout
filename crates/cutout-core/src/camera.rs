@@ -263,55 +263,6 @@ pub struct CameraSessionState {
     onboard_recording: CameraOnboardRecordingState,
 }
 
-/// Rust-owned camera source and state boundary.
-///
-/// The platform adapter owns connection and decoding details; this type keeps
-/// only the selected source identity and truthful camera state.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct CameraSourceSession {
-    source: CameraSourceKind,
-    state: CameraSessionState,
-}
-
-impl CameraSourceSession {
-    /// Creates a session for a selected camera source.
-    #[must_use]
-    pub const fn new(source: CameraSourceKind) -> Self {
-        Self {
-            source,
-            state: CameraSessionState {
-                preview: CameraPreviewState::Stopped,
-                onboard_recording: CameraOnboardRecordingState::Unknown,
-            },
-        }
-    }
-
-    /// Returns the source identity.
-    #[must_use]
-    pub const fn source(self) -> CameraSourceKind {
-        self.source
-    }
-
-    /// Returns the current truthful camera state.
-    #[must_use]
-    pub const fn state(self) -> CameraSessionState {
-        self.state
-    }
-
-    /// Records a foreground preview observation.
-    pub const fn observe_preview(&mut self, preview: CameraPreviewState) {
-        self.state.observe_preview(preview);
-    }
-
-    /// Records authoritative onboard recording truth.
-    pub const fn observe_onboard_recording(
-        &mut self,
-        onboard_recording: CameraOnboardRecordingState,
-    ) {
-        self.state.observe_onboard_recording(onboard_recording);
-    }
-}
-
 impl CameraSessionState {
     /// Returns the current foreground preview state.
     #[must_use]
@@ -483,21 +434,6 @@ mod tests {
         assert_eq!(
             state.onboard_recording(),
             CameraOnboardRecordingState::Recording
-        );
-    }
-
-    #[test]
-    fn source_session_keeps_transport_identity_separate_from_state() {
-        let mut session = CameraSourceSession::new(CameraSourceKind::NovatekR3Pro);
-
-        session.observe_preview(CameraPreviewState::Live);
-        session.observe_onboard_recording(CameraOnboardRecordingState::Unknown);
-
-        assert_eq!(session.source(), CameraSourceKind::NovatekR3Pro);
-        assert_eq!(session.state().preview(), CameraPreviewState::Live);
-        assert_eq!(
-            session.state().onboard_recording(),
-            CameraOnboardRecordingState::Unknown
         );
     }
 }

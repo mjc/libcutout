@@ -9,12 +9,16 @@ use std::{
 
 use crate::NovatekHttpOrigin;
 use futures_util::StreamExt;
-use retina::{client, codec::CodecItem};
+use retina::{
+    client,
+    codec::{CodecItem, ParametersRef},
+};
 use thiserror::Error;
 use url::Url;
 
 /// Maximum encoded H.264 access-unit size accepted from an RTSP camera.
 const RETINA_MAX_VIDEO_FRAME_BYTES: usize = 8 * 1024 * 1024;
+const RETINA_MAX_VIDEO_CONFIGURATION_BYTES: usize = 64 * 1024;
 
 /// Failure while creating or consuming a Retina RTSP preview session.
 #[derive(Debug, Error)]
@@ -28,9 +32,9 @@ pub enum RetinaRtspError {
     /// The RTSP endpoint differs from the explicitly selected camera origin.
     #[error("RTSP endpoint does not match the camera origin")]
     OriginMismatch,
-    /// The server's SDP did not advertise a video stream.
-    #[error("RTSP session has no video stream")]
-    NoVideoStream,
+    /// The server's SDP did not advertise an H.264 video stream.
+    #[error("RTSP session has no H.264 video stream")]
+    UnsupportedVideoCodec,
     /// Retina could not establish or negotiate the session.
     #[error("RTSP session error: {0}")]
     Session(String),
@@ -55,6 +59,19 @@ pub struct RetinaVideoFrame {
     pub timestamp: i64,
     /// Clock rate associated with [`Self::timestamp`], in Hz.
     pub clock_rate_hz: u32,
+}
+
+/// Codec configuration advertised by the RTSP video stream.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RetinaVideoConfiguration {
+    /// RFC 6381 codec identifier, for example `avc1.4D401E`.
+    pub codec: String,
+    /// Coded width in pixels.
+    pub width: u32,
+    /// Coded height in pixels.
+    pub height: u32,
+    /// Codec-specific decoder configuration (H.264 `avcC` bytes).
+    pub extra_data: Vec<u8>,
 }
 
 impl RetinaVideoFrame {
@@ -201,6 +218,7 @@ fn invalid_data(message: &'static str) -> io::Error {
 pub struct RetinaRtspPreviewSession {
     demuxed: client::Demuxed,
     video_stream_id: usize,
+    video_configuration: Option<RetinaVideoConfiguration>,
 }
 
 impl std::fmt::Debug for RetinaRtspPreviewSession {
@@ -265,8 +283,8 @@ impl RetinaRtspPreviewSession {
         let video_stream_id = described
             .streams()
             .iter()
-            .position(|stream| stream.media() == "video")
-            .ok_or(RetinaRtspError::NoVideoStream)?;
+            .position(|stream| stream.media() == "video" && stream.encoding_name() == "h264")
+            .ok_or(RetinaRtspError::UnsupportedVideoCodec)?;
         described
             .setup(
                 video_stream_id,
@@ -282,10 +300,21 @@ impl RetinaRtspPreviewSession {
             .demuxed()
             .map_err(|error| RetinaRtspError::Session(error.to_string()))?;
 
+        let video_configuration =
+            video_configuration_for_stream(demuxed.streams().get(video_stream_id));
+
         Ok(Self {
             demuxed,
             video_stream_id,
+            video_configuration,
         })
+    }
+
+    /// Returns codec configuration advertised by SDP, when available and
+    /// within the fixed boundary budget.
+    #[must_use]
+    pub fn video_configuration(&self) -> Option<&RetinaVideoConfiguration> {
+        self.video_configuration.as_ref()
     }
 
     /// Waits for the next encoded video access unit.
@@ -297,6 +326,11 @@ impl RetinaRtspPreviewSession {
         while let Some(item) = self.demuxed.next().await {
             match item.map_err(|error| RetinaRtspError::Session(error.to_string()))? {
                 CodecItem::VideoFrame(frame) if frame.stream_id() == self.video_stream_id => {
+                    if frame.has_new_parameters() {
+                        self.video_configuration = video_configuration_for_stream(
+                            self.demuxed.streams().get(self.video_stream_id),
+                        );
+                    }
                     let loss = frame.loss();
                     let is_random_access_point = frame.is_random_access_point();
                     let timestamp = frame.timestamp();
@@ -315,6 +349,26 @@ impl RetinaRtspPreviewSession {
         }
         Ok(None)
     }
+}
+
+fn video_configuration_for_stream(
+    stream: Option<&client::Stream>,
+) -> Option<RetinaVideoConfiguration> {
+    stream
+        .and_then(client::Stream::parameters)
+        .and_then(|parameters| match parameters {
+            ParametersRef::Video(parameters)
+                if parameters.extra_data().len() <= RETINA_MAX_VIDEO_CONFIGURATION_BYTES =>
+            {
+                Some(RetinaVideoConfiguration {
+                    codec: parameters.rfc6381_codec().to_owned(),
+                    width: parameters.pixel_dimensions().0,
+                    height: parameters.pixel_dimensions().1,
+                    extra_data: parameters.extra_data().to_owned(),
+                })
+            }
+            _ => None,
+        })
 }
 
 fn ensure_video_frame_size(length: usize) -> Result<(), RetinaRtspError> {

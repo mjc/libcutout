@@ -402,7 +402,7 @@ final class CutoutAppRouteTests: XCTestCase {
             .camera,
         ]
 
-        XCTAssertEqual(routes.count, 13)
+        XCTAssertEqual(routes.count, 14)
     }
 
     func testBmsDetailRouteStaysSelectedOnlyWhileItsGroupExists() {

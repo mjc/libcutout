@@ -234,13 +234,7 @@ struct ContentView: View {
                     routedContent(for: destination)
                 }
             } else {
-                PevAppShell(
-                    sectionTitle: appSectionTitle(for: destination),
-                    disconnect: disconnectAndReturnToPicker,
-                    openCamera: openCamera
-                ) {
                 routedContent(for: destination)
-                }
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
@@ -275,7 +269,8 @@ struct ContentView: View {
             CameraRouteContainerView(
                 close: closeCamera,
                 annotateCapture: model.annotateCapture(key:value:),
-                recordMediaReference: model.recordCameraMediaReference(source:media:localURL:),
+                recordMediaReference: model.recordCameraMediaReference(captureFileName:source:media:localURL:),
+                currentCaptureFileName: model.currentCameraCaptureFileName,
                 sessionState: model.cameraSessionStateHandle
             )
         case .rideMap:

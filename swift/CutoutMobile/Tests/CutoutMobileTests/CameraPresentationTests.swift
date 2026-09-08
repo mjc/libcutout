@@ -55,6 +55,28 @@ final class CameraPresentationTests: XCTestCase {
         XCTAssertEqual(evidence.mediaCount, 1)
     }
 
+    func testReadOnlyEvidenceRecognizesOnlyTheVerifiedR3ProFirmwareFamily() {
+        let verified = CameraReadOnlyEvidence(
+            firmwareVersion: "R3V1.1_20240411",
+            movieRTSPURI: "rtsp://192.168.1.254/live",
+            photoRTSPURI: "rtsp://192.168.1.254/photo",
+            configuration: [],
+            storagePresent: true,
+            media: []
+        )
+        let foreign = CameraReadOnlyEvidence(
+            firmwareVersion: "R4V2.0_20250101",
+            movieRTSPURI: "rtsp://192.168.1.254/live",
+            photoRTSPURI: "rtsp://192.168.1.254/photo",
+            configuration: [],
+            storagePresent: true,
+            media: []
+        )
+
+        XCTAssertTrue(verified.isR3ProProfile)
+        XCTAssertFalse(foreign.isR3ProProfile)
+    }
+
     func testCameraMediaReferenceCanProjectRustOwnedProvenance() {
         let dto = MobileCameraMediaProvenanceDto(
             source: .novatekR3Pro,
@@ -138,6 +160,15 @@ final class CameraPresentationTests: XCTestCase {
         )
 
         XCTAssertTrue(evidence.supportsMediaThumbnails)
+        let unavailable = CameraReadOnlyEvidence(
+            firmwareVersion: "FW-1.0",
+            movieRTSPURI: "rtsp://192.168.1.254/live",
+            photoRTSPURI: "rtsp://192.168.1.254/photo",
+            configuration: [CameraCommandStatusEvidence(commandID: 4001, status: 1)],
+            storagePresent: true,
+            media: []
+        )
+        XCTAssertFalse(unavailable.supportsMediaThumbnails)
     }
 
     func testCameraMediaReferenceKeepsRideAssociationAndClockUncertaintyExplicit() {

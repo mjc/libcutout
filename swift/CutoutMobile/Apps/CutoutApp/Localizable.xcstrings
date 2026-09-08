@@ -2176,6 +2176,10 @@
       "comment" : "Heading for camera media entries returned by the read-only listing.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Camera files" } } }
     },
+    "camera.evidence.media_load_more" : {
+      "comment" : "Button that loads the next bounded page of camera media entries.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Load more" } } }
+    },
     "camera.evidence.media_download" : {
       "comment" : "Button that downloads one camera media file to local storage.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Download" } } }
