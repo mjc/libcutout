@@ -28,6 +28,8 @@ mod energy_estimate;
 pub use energy_estimate::*;
 mod melk_controls;
 pub use melk_controls::*;
+mod turn_signals;
+pub use turn_signals::*;
 mod rgb_lighting;
 pub use rgb_lighting::*;
 
