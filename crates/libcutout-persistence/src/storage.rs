@@ -16,6 +16,7 @@ use hex::encode as hex_encode;
 use rusqlite::{Connection, ErrorCode, OptionalExtension, params};
 use sha2::{Digest, Sha256};
 use std::{
+    collections::HashMap,
     fs::{self, File, OpenOptions},
     io::{BufReader, Read},
     path::{Path, PathBuf},
@@ -29,6 +30,7 @@ use std::{
 use thiserror::Error;
 use uuid::Uuid;
 
+mod capture_data;
 mod migrations;
 mod ride_write;
 mod service;
@@ -758,9 +760,36 @@ pub enum PevcapImportOutcome {
     RideAndCapture,
     /// The artifact contained no route locations and produced only a managed capture.
     CaptureOnly,
+    /// The artifact digest already has a committed import receipt.
+    AlreadyImported,
 }
 
-impl PevcapImportOutcome {
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum NewPevcapImportOutcome {
+    RideAndCapture,
+    CaptureOnly,
+}
+
+impl TryFrom<PevcapImportOutcome> for NewPevcapImportOutcome {
+    type Error = StorageError;
+
+    fn try_from(outcome: PevcapImportOutcome) -> Result<Self, Self::Error> {
+        match outcome {
+            PevcapImportOutcome::RideAndCapture => Ok(Self::RideAndCapture),
+            PevcapImportOutcome::CaptureOnly => Ok(Self::CaptureOnly),
+            PevcapImportOutcome::AlreadyImported => Err(StorageError::PevcapPreviewChanged),
+        }
+    }
+}
+
+impl NewPevcapImportOutcome {
+    const fn as_public(self) -> PevcapImportOutcome {
+        match self {
+            Self::RideAndCapture => PevcapImportOutcome::RideAndCapture,
+            Self::CaptureOnly => PevcapImportOutcome::CaptureOnly,
+        }
+    }
+
     const fn as_db(self) -> &'static str {
         match self {
             Self::RideAndCapture => "ride_and_capture",
@@ -1409,6 +1438,12 @@ struct ProjectedRouteCandidates {
     camera_region: Option<RouteCameraRegion>,
     displayed_segment_count: u64,
     segments: Vec<RouteSegmentDisplayMetadata>,
+}
+
+#[derive(Clone, Copy)]
+struct RouteSegmentProjectionMetadata {
+    start_reason: RideSegmentStartReason,
+    point_count: u64,
 }
 
 impl RoutePointProjection {
@@ -2321,6 +2356,8 @@ impl RideDatabase {
     }
 
     /// Validates a PEVCAP artifact and returns the bounded facts a user must confirm.
+    /// No capture or ride is published. An existing receipt changes only the proposed
+    /// outcome to [`PevcapImportOutcome::AlreadyImported`]; warnings remain available.
     ///
     /// # Errors
     ///
@@ -2330,7 +2367,17 @@ impl RideDatabase {
         path: &Path,
         encoding: PevcapEncoding,
     ) -> Result<PevcapImportPreview, StorageError> {
-        preflight_pevcap(path, encoding)
+        let mut preview = preflight_pevcap(path, encoding)?;
+        if self
+            .request(|reply| Command::PevcapImportLookup {
+                digest: preview.artifact_digest.clone(),
+                reply,
+            })?
+            .is_some()
+        {
+            preview.outcome = PevcapImportOutcome::AlreadyImported;
+        }
+        Ok(preview)
     }
 
     #[cfg(test)]
@@ -2338,8 +2385,13 @@ impl RideDatabase {
         worker::drop_next_pevcap_finish_response_for_test();
     }
 
-    /// Confirms a reviewed PEVCAP preview, copies it into managed storage, and commits bounded
-    /// location batches without monopolizing the database worker.
+    /// Confirms a reviewed PEVCAP preview using bounded byte and location batches.
+    /// Original bytes, the receipt, and any derived ride become visible together;
+    /// GPS-free captures do not create an empty ride. Managed source copies are also retained.
+    ///
+    /// Reconfirmation preserves the receipt and ride identity and backfills older
+    /// file-only receipts into SQLite. It still requires a valid source and managed copy.
+    /// `created_at_ms` is Unix milliseconds used for a new import, not its capture timestamp.
     ///
     /// # Errors
     ///
@@ -2356,14 +2408,20 @@ impl RideDatabase {
             reply,
         })? {
             validate_existing_pevcap_confirmation(self.path.as_ref(), &receipt, preview)?;
+            capture_data::store(self, preview, preview.source_path())?;
+            self.request(|reply| Command::PublishCaptureData {
+                digest: preview.artifact_digest.clone(),
+                reply,
+            })?;
             return Ok(receipt);
         }
+        let outcome = NewPevcapImportOutcome::try_from(preview.outcome)?;
 
         let managed = prepare_managed_pevcap(self.path.as_ref(), preview)?;
         let begin = match self.request(|reply| Command::BeginPevcapImport {
             digest: preview.artifact_digest.clone(),
             managed_path: managed.path.clone(),
-            outcome: preview.outcome,
+            outcome,
             created_at_ms,
             reply,
         }) {
@@ -2379,6 +2437,11 @@ impl RideDatabase {
             return match begin {
                 PevcapBegin::Duplicate(receipt) => {
                     validate_existing_pevcap_confirmation(self.path.as_ref(), &receipt, preview)?;
+                    capture_data::store(self, preview, preview.source_path())?;
+                    self.request(|reply| Command::PublishCaptureData {
+                        digest: preview.artifact_digest.clone(),
+                        reply,
+                    })?;
                     Ok(receipt)
                 }
                 PevcapBegin::Started { .. } => unreachable!(),
@@ -2386,6 +2449,7 @@ impl RideDatabase {
         };
 
         let result = (|| {
+            capture_data::store(self, preview, &managed.path)?;
             let location_count = if let Some(ride_id) = ride_id {
                 stream_pevcap_location_batches(&managed.path, preview.encoding(), |samples| {
                     self.request(|reply| Command::AppendPevcapLocationBatch {
@@ -2401,7 +2465,7 @@ impl RideDatabase {
                 digest: preview.artifact_digest.clone(),
                 ride_id,
                 managed_path: managed.path.clone(),
-                outcome: preview.outcome,
+                outcome,
                 artifact_size: preview.artifact_size,
                 record_count: preview.record_count,
                 location_count,
@@ -2440,6 +2504,24 @@ impl RideDatabase {
             }
         }
         result
+    }
+
+    /// Reads one bounded chunk of an imported capture's original bytes from SQLite.
+    /// Chunks are at most 64 KiB; `None` means absent, incomplete, or end of capture.
+    /// Neither the source nor a managed artifact file is needed.
+    ///
+    /// # Errors
+    /// Returns [`StorageError`] when SQLite or the database worker cannot read the chunk.
+    pub fn pevcap_capture_chunk(
+        &self,
+        digest: &str,
+        sequence: u64,
+    ) -> Result<Option<Vec<u8>>, StorageError> {
+        self.request(|reply| Command::CaptureDataChunk {
+            digest: digest.to_owned(),
+            sequence,
+            reply,
+        })
     }
 
     /// Creates an empty canonical trail definition.
@@ -3149,6 +3231,31 @@ struct ManagedArtifact {
 }
 
 enum Command {
+    BeginCaptureData {
+        digest: String,
+        encoding: PevcapEncoding,
+        artifact_size: u64,
+        reply: Reply<capture_data::CaptureStart>,
+    },
+    AppendCaptureData {
+        digest: String,
+        sequence: u64,
+        chunk: capture_data::CaptureChunk,
+        reply: Reply<()>,
+    },
+    PublishCaptureData {
+        digest: String,
+        reply: Reply<()>,
+    },
+    AbortCaptureData {
+        digest: String,
+        reply: Reply<()>,
+    },
+    CaptureDataChunk {
+        digest: String,
+        sequence: u64,
+        reply: Reply<Option<Vec<u8>>>,
+    },
     Capabilities {
         reply: Reply<SqliteCapabilities>,
     },
@@ -3284,7 +3391,7 @@ enum Command {
     BeginPevcapImport {
         digest: String,
         managed_path: PathBuf,
-        outcome: PevcapImportOutcome,
+        outcome: NewPevcapImportOutcome,
         created_at_ms: u64,
         reply: Reply<PevcapBegin>,
     },
@@ -3297,7 +3404,7 @@ enum Command {
         digest: String,
         ride_id: Option<RideId>,
         managed_path: PathBuf,
-        outcome: PevcapImportOutcome,
+        outcome: NewPevcapImportOutcome,
         artifact_size: u64,
         record_count: u64,
         location_count: u64,
@@ -3567,6 +3674,10 @@ fn recover_abandoned_pevcap_imports(
         [],
     )?;
     transaction.execute("DELETE FROM pevcap_import_work", [])?;
+    transaction.execute(
+        "DELETE FROM pevcap_captures WHERE receipt_digest IS NULL",
+        [],
+    )?;
     transaction.commit()?;
     let mut managed_directory_name = database_path.as_os_str().to_owned();
     managed_directory_name.push(".pevcap-imports");
@@ -4358,6 +4469,8 @@ fn validate_managed_pevcap_artifact(
     Ok(())
 }
 
+/// Checks duplicate receipt facts against the managed artifact and reviewed preview.
+/// `AlreadyImported` is a preview classification, never a persisted capture outcome.
 fn validate_existing_pevcap_confirmation(
     database_path: &Path,
     receipt: &PevcapImportReceipt,
@@ -4371,22 +4484,23 @@ fn validate_existing_pevcap_confirmation(
         preview.artifact_digest(),
         preview.artifact_size(),
     )?;
-    if receipt.artifact_digest != preview.artifact_digest
-        || receipt.record_count != preview.record_count
-        || receipt.location_count != preview.location_count
-        || receipt.outcome != preview.outcome
-    {
-        return Err(StorageError::PevcapPreviewChanged);
-    }
     let managed_preview = preflight_pevcap(&receipt.managed_artifact_path, preview.encoding())
         .map_err(|_| StorageError::PevcapPreviewChanged)?;
-    if managed_preview.artifact_digest != preview.artifact_digest
+    if receipt.artifact_digest != managed_preview.artifact_digest
+        || receipt.record_count != managed_preview.record_count
+        || receipt.location_count != managed_preview.location_count
+        || receipt.outcome != managed_preview.outcome
+        || managed_preview.artifact_digest != preview.artifact_digest
         || managed_preview.artifact_size != preview.artifact_size
         || managed_preview.record_count != preview.record_count
         || managed_preview.location_count != preview.location_count
         || managed_preview.duration_milliseconds != preview.duration_milliseconds
-        || managed_preview.outcome != preview.outcome
         || managed_preview.warnings != preview.warnings
+    {
+        return Err(StorageError::PevcapPreviewChanged);
+    }
+    if preview.outcome != PevcapImportOutcome::AlreadyImported
+        && managed_preview.outcome != preview.outcome
     {
         return Err(StorageError::PevcapPreviewChanged);
     }
@@ -4670,7 +4784,7 @@ fn begin_pevcap_import(
     connection: &mut Connection,
     digest: &str,
     managed_path: &Path,
-    outcome: PevcapImportOutcome,
+    outcome: NewPevcapImportOutcome,
     created_at_ms: u64,
 ) -> Result<PevcapBegin, StorageError> {
     if let Some(receipt) = pevcap_import_receipt(connection, digest, true)? {
@@ -4686,13 +4800,13 @@ fn begin_pevcap_import(
         return Err(StorageError::PevcapImportInProgress);
     }
     let ride_id = match outcome {
-        PevcapImportOutcome::RideAndCapture => Some(create_ride(
+        NewPevcapImportOutcome::RideAndCapture => Some(create_ride(
             &transaction,
             RideSource::PevcapImport,
             created_at_ms,
             None,
         )?),
-        PevcapImportOutcome::CaptureOnly => None,
+        NewPevcapImportOutcome::CaptureOnly => None,
     };
     transaction.execute(
         "INSERT INTO pevcap_import_work (artifact_digest, artifact_path, ride_id)
@@ -4740,7 +4854,7 @@ fn finish_pevcap_import(
     digest: &str,
     ride_id: Option<RideId>,
     managed_path: &Path,
-    outcome: PevcapImportOutcome,
+    outcome: NewPevcapImportOutcome,
     artifact_size: u64,
     record_count: u64,
     location_count: u64,
@@ -4786,6 +4900,7 @@ fn finish_pevcap_import(
             imported_at_ms,
         ],
     )?;
+    capture_data::publish(&transaction, digest)?;
     transaction.execute(
         "DELETE FROM pevcap_import_work WHERE artifact_digest = ?1",
         [digest],
@@ -4795,7 +4910,7 @@ fn finish_pevcap_import(
         ride_id,
         artifact_digest: digest.to_owned(),
         managed_artifact_path: managed_path.to_owned(),
-        outcome,
+        outcome: outcome.as_public(),
         record_count,
         location_count,
         duplicate: false,
@@ -4808,6 +4923,7 @@ fn abort_pevcap_import(
     ride_id: Option<RideId>,
 ) -> Result<(), StorageError> {
     let transaction = connection.transaction()?;
+    capture_data::abort(&transaction, digest)?;
     transaction.execute(
         "DELETE FROM pevcap_import_work WHERE artifact_digest = ?1",
         [digest],
@@ -6158,7 +6274,7 @@ fn find_ride(connection: &Connection, ride_id: RideId) -> Result<Option<RideReco
                     monotonic_last_event_ms, paused_at_ms, paused_duration_ms,
                     completed_duration_ms, updated_at_ms,
                     CASE
-                        WHEN state IN ('stopped', 'interrupted', 'saved', 'discarded')
+                        WHEN state IN ('stopped', 'interrupted', 'saved', 'discarded', 'imported')
                             THEN completed_duration_ms
                         WHEN monotonic_created_at_ms IS NOT NULL
                             AND monotonic_last_event_ms IS NOT NULL
@@ -6179,7 +6295,8 @@ fn find_ride(connection: &Connection, ride_id: RideId) -> Result<Option<RideReco
                               FROM ride_points WHERE ride_id = rides.id)
                     END,
                     point_count, distance_mm,
-                    (SELECT COUNT(DISTINCT segment_id) FROM ride_points WHERE ride_id = rides.id),
+                    (SELECT COUNT(*) FROM ride_segments
+                     WHERE ride_id = rides.id AND point_count > 0),
                     candidate_vehicle, associated_vehicle, associated_at_ms, last_telemetry_at_ms,
                     (SELECT display_name FROM devices
                      WHERE platform_identifier = rides.candidate_vehicle),
@@ -6574,21 +6691,10 @@ fn project_route_points(
 ) -> Result<RoutePointProjection, StorageError> {
     projection_checkpoint(cancellation)?;
     let ride_id = ride_id.uuid().to_string();
-    let exists: bool = projection_sqlite(
-        connection.query_row(
-            "SELECT EXISTS(SELECT 1 FROM rides WHERE id = ?1)",
-            [&ride_id],
-            |row| row.get(0),
-        ),
-        cancellation,
-    )?;
-    if !exists {
+    let Some(counts) = route_projection_counts(connection, &ride_id, viewport, cancellation)?
+    else {
         return Err(StorageError::NotFound);
-    }
-
-    projection_checkpoint(cancellation)?;
-
-    let counts = route_projection_counts(connection, &ride_id, viewport, cancellation)?;
+    };
     projection_checkpoint(cancellation)?;
     let candidate_count = usize::try_from(counts.candidate_point_count).unwrap_or(usize::MAX);
     let endpoint_metadata = route_endpoint_metadata_from_storage(
@@ -6646,40 +6752,41 @@ fn project_route_candidates(
     privacy: RoutePrivacyPolicy,
     cancellation: Option<&RouteProjectionCancellation>,
 ) -> Result<ProjectedRouteCandidates, StorageError> {
+    let segment_metadata = route_segment_projection_metadata(connection, ride_id, cancellation)?;
     let select = format!(
         "SELECT points.sequence, points.segment_id, points.telemetry_state, points.monotonic_ms,
                 points.wall_clock_ms, points.latitude_e7, points.longitude_e7,
-                points.horizontal_accuracy_mm, points.source, segments.start_reason,
-                segments.point_count
+                points.horizontal_accuracy_mm, points.source
          FROM ride_points AS points
-         JOIN ride_segments AS segments
-           ON segments.ride_id = points.ride_id AND segments.segment_id = points.segment_id
          WHERE points.ride_id = ?1{}
          ORDER BY points.sequence ASC",
         counts.viewport_predicate
     );
     let mut statement = projection_sqlite(connection.prepare(&select), cancellation)?;
     projection_checkpoint(cancellation)?;
-    let rows = if let Some(viewport) = viewport {
-        projection_sqlite(
-            statement.query_map(
-                params![
-                    ride_id,
-                    viewport.minimum_latitude().as_i32(),
-                    viewport.maximum_latitude().as_i32(),
-                    viewport.minimum_longitude().as_i32(),
-                    viewport.maximum_longitude().as_i32(),
-                ],
-                projected_route_point_from_row,
-            ),
-            cancellation,
-        )?
-    } else {
-        projection_sqlite(
-            statement.query_map([ride_id], projected_route_point_from_row),
-            cancellation,
-        )?
-    };
+    let rows: Box<dyn Iterator<Item = rusqlite::Result<(RoutePoint, u64)>>> =
+        if let Some(viewport) = viewport {
+            Box::new(projection_sqlite(
+                statement.query_map(
+                    params![
+                        ride_id,
+                        viewport.minimum_latitude().as_i32(),
+                        viewport.maximum_latitude().as_i32(),
+                        viewport.minimum_longitude().as_i32(),
+                        viewport.maximum_longitude().as_i32(),
+                    ],
+                    |row| projected_route_point_from_row(row, &segment_metadata),
+                ),
+                cancellation,
+            )?)
+        } else {
+            Box::new(projection_sqlite(
+                statement.query_map([ride_id], |row| {
+                    projected_route_point_from_row(row, &segment_metadata)
+                }),
+                cancellation,
+            )?)
+        };
     let candidate_count = usize::try_from(counts.candidate_point_count).unwrap_or(usize::MAX);
     let mut accumulator = RouteProjectionAccumulator::new(candidate_count, budget, privacy);
     for (candidate_ordinal, row) in rows.enumerate() {
@@ -6714,6 +6821,48 @@ fn project_route_candidates(
         displayed_segment_count,
         segments,
     })
+}
+
+fn route_segment_projection_metadata(
+    connection: &Connection,
+    ride_id: &str,
+    cancellation: Option<&RouteProjectionCancellation>,
+) -> Result<HashMap<u64, RouteSegmentProjectionMetadata>, StorageError> {
+    let mut statement = projection_sqlite(
+        connection.prepare(
+            "SELECT segment_id, start_reason, point_count
+             FROM ride_segments
+             WHERE ride_id = ?1 AND point_count > 0",
+        ),
+        cancellation,
+    )?;
+    let rows = projection_sqlite(
+        statement.query_map([ride_id], |row| {
+            let start_reason =
+                segment_start_reason_from_db(row.get_ref(1)?.as_str()?).map_err(|error| {
+                    rusqlite::Error::FromSqlConversionFailure(
+                        1,
+                        rusqlite::types::Type::Text,
+                        Box::new(error),
+                    )
+                })?;
+            Ok((
+                row.get::<_, u64>(0)?,
+                RouteSegmentProjectionMetadata {
+                    start_reason,
+                    point_count: row.get(2)?,
+                },
+            ))
+        }),
+        cancellation,
+    )?;
+    let mut metadata = HashMap::new();
+    for row in rows {
+        projection_checkpoint(cancellation)?;
+        let (segment_id, segment) = projection_sqlite(row, cancellation)?;
+        metadata.insert(segment_id, segment);
+    }
+    Ok(metadata)
 }
 
 fn route_endpoint_metadata_from_storage(
@@ -6760,31 +6909,29 @@ fn route_projection_counts(
     ride_id: &str,
     viewport: Option<RouteViewport>,
     cancellation: Option<&RouteProjectionCancellation>,
-) -> Result<RouteProjectionCounts, StorageError> {
-    let source_point_count = projection_sqlite(
-        connection.query_row(
-            "SELECT point_count FROM rides WHERE id = ?1",
-            [ride_id],
-            |row| row.get::<_, u64>(0),
-        ),
+) -> Result<Option<RouteProjectionCounts>, StorageError> {
+    let Some(source_point_count) = projection_sqlite(
+        connection
+            .query_row(
+                "SELECT point_count FROM rides WHERE id = ?1",
+                [ride_id],
+                |row| row.get::<_, u64>(0),
+            )
+            .optional(),
         cancellation,
-    )?;
+    )?
+    else {
+        return Ok(None);
+    };
     projection_checkpoint(cancellation)?;
-    let source_segment_count = projection_sqlite(
+    let (source_segment_count, background_gap_count) = projection_sqlite(
         connection.query_row(
-            "SELECT COUNT(*) FROM ride_segments WHERE ride_id = ?1 AND point_count > 0",
+            "SELECT COUNT(*),
+                    COALESCE(SUM(CASE WHEN start_reason = 'background_gap' THEN 1 ELSE 0 END), 0)
+             FROM ride_segments
+             WHERE ride_id = ?1 AND point_count > 0",
             [ride_id],
-            |row| row.get::<_, u64>(0),
-        ),
-        cancellation,
-    )?;
-    projection_checkpoint(cancellation)?;
-    let background_gap_count = projection_sqlite(
-        connection.query_row(
-            "SELECT COUNT(*) FROM ride_segments
-             WHERE ride_id = ?1 AND start_reason = 'background_gap' AND point_count > 0",
-            [ride_id],
-            |row| row.get::<_, u64>(0),
+            |row| Ok((row.get::<_, u64>(0)?, row.get::<_, u64>(1)?)),
         ),
         cancellation,
     )?;
@@ -6837,7 +6984,7 @@ fn route_projection_counts(
     } else {
         (source_point_count, source_segment_count)
     };
-    Ok(RouteProjectionCounts {
+    Ok(Some(RouteProjectionCounts {
         source_point_count,
         source_segment_count,
         background_gap_count,
@@ -6846,7 +6993,7 @@ fn route_projection_counts(
         viewport_predicate,
         source_start_sequence,
         source_end_sequence,
-    })
+    }))
 }
 
 fn endpoint_is_visible(
@@ -6920,13 +7067,23 @@ fn route_point_viewport_predicate(viewport: Option<RouteViewport>) -> String {
 }
 
 fn route_point_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<RoutePoint> {
-    let source_value: String = row.get(8)?;
-    let source = source_from_db(&source_value).map_err(|error| {
+    let start_reason =
+        segment_start_reason_from_db(row.get_ref(9)?.as_str()?).map_err(|error| {
+            rusqlite::Error::FromSqlConversionFailure(
+                9,
+                rusqlite::types::Type::Text,
+                Box::new(error),
+            )
+        })?;
+    route_point_from_row_with_start_reason(row, start_reason)
+}
+
+fn route_point_from_row_with_start_reason(
+    row: &rusqlite::Row<'_>,
+    start_reason: RideSegmentStartReason,
+) -> rusqlite::Result<RoutePoint> {
+    let source = source_from_db(row.get_ref(8)?.as_str()?).map_err(|error| {
         rusqlite::Error::FromSqlConversionFailure(8, rusqlite::types::Type::Text, Box::new(error))
-    })?;
-    let start_reason_value: String = row.get(9)?;
-    let start_reason = segment_start_reason_from_db(&start_reason_value).map_err(|error| {
-        rusqlite::Error::FromSqlConversionFailure(9, rusqlite::types::Type::Text, Box::new(error))
     })?;
     let coordinate = Coordinate::from_fixed_parts(row.get(5)?, row.get(6)?).map_err(|error| {
         rusqlite::Error::FromSqlConversionFailure(
@@ -6959,8 +7116,25 @@ fn route_point_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<RoutePoint>
     })
 }
 
-fn projected_route_point_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<(RoutePoint, u64)> {
-    Ok((route_point_from_row(row)?, row.get(10)?))
+fn projected_route_point_from_row(
+    row: &rusqlite::Row<'_>,
+    segment_metadata: &HashMap<u64, RouteSegmentProjectionMetadata>,
+) -> rusqlite::Result<(RoutePoint, u64)> {
+    let segment_id = row.get::<_, u64>(1)?;
+    let segment = segment_metadata.get(&segment_id).ok_or_else(|| {
+        rusqlite::Error::FromSqlConversionFailure(
+            1,
+            rusqlite::types::Type::Integer,
+            Box::new(StorageError::InvalidStoredValue {
+                field: "ride point segment",
+                value: segment_id.to_string(),
+            }),
+        )
+    })?;
+    Ok((
+        route_point_from_row_with_start_reason(row, segment.start_reason)?,
+        segment.point_count,
+    ))
 }
 
 fn segment_start_reason_from_db(value: &str) -> Result<RideSegmentStartReason, StorageError> {

@@ -782,7 +782,12 @@ final class CutoutAppModel {
     }
 
     func selectRideMapHistory(_ rideID: String) {
-        selectRideMapHistory(rideID, requestedPointLimit: Int(Self.rideMapLimits.liveTailPointLimit))
+        // Keep MapKit's first paint small. The explicit preview action below still requests the
+        // full Rust-bounded route after the user asks for it.
+        selectRideMapHistory(
+            rideID,
+            requestedPointLimit: Int(Self.rideMapLimits.historyContextPerRouteBudget)
+        )
     }
 
     static func detailPointsAreTruncated(
@@ -950,7 +955,6 @@ final class CutoutAppModel {
                 )
                 self.rideMapHistoryRouteLoading = false
                 self.rideMapHistoryDetailRouteLoading = false
-                self.projectRideMapHistoryContext(for: rideID)
             } catch {
                 guard !Task.isCancelled, let self else { return }
                 self.rideMapHistoryRouteError = Self.mapRideMapError(error)

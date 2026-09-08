@@ -392,7 +392,9 @@ public final class CutoutSessionCore: NSObject {
     }()
 
     public override convenience init() {
-        self.init(clock: MonotonicClock())
+        let rideMapState = RustPersistenceStore.shared.map(MobileRideMapState.init(database:))
+            ?? MobileRideMapState(storageUnavailable: "Rust ride database is unavailable")
+        self.init(clock: MonotonicClock(), rideMapState: rideMapState)
     }
 
 #if DEBUG

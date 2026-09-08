@@ -292,7 +292,7 @@ final class CutoutAppModelTests: XCTestCase {
         model.loadRideMapHistory(selecting: rideID)
         await Self.waitUntil("bounded history route preview", maxTurns: 100_000) {
             model.selectedRideMapHistoryID == rideID
-                && model.rideMapHistoryDisplayPoints.count == 4_096
+                && model.rideMapHistoryDisplayPoints.count == 512
                 && !model.rideMapHistoryRouteLoading
         }
 
@@ -305,6 +305,47 @@ final class CutoutAppModelTests: XCTestCase {
 
         XCTAssertEqual(model.rideMapHistoryDisplayPoints.count, 4_097)
         XCTAssertFalse(model.rideMapHistoryPointsTruncated)
+    }
+
+    @MainActor
+    func testHistorySelectionDoesNotLoadSupplementaryMapContext() async throws {
+        let driver = SessionDriverSpy(rows: [])
+        let state = driver.rideMapState
+
+        func saveRide(startingAt startMs: UInt64) async throws -> String {
+            _ = try state.startGpsOnly(atMs: startMs, lastConnectedVehicle: nil)
+            _ = await Self.settle(state, try state.ingestLocation(
+                monotonicMs: startMs,
+                wallClockUnixMs: 1_700_000_000_000 + startMs,
+                latitudeDegrees: 39.7000,
+                longitudeDegrees: -104.9000,
+                horizontalAccuracyMeters: 5
+            ))
+            _ = await Self.settle(state, try state.ingestLocation(
+                monotonicMs: startMs + 1_000,
+                wallClockUnixMs: 1_700_000_001_000 + startMs,
+                latitudeDegrees: 39.7001,
+                longitudeDegrees: -104.9000,
+                horizontalAccuracyMeters: 5
+            ))
+            _ = try state.stop(atMs: startMs + 1_000)
+            return try state.save().rideID
+        }
+
+        _ = try await saveRide(startingAt: 100)
+        let selectedRideID = try await saveRide(startingAt: 10_000)
+        let model = CutoutAppModel(core: driver)
+        model.setRideMapHistoryDateFilter(.allTime)
+        model.loadRideMapHistory(selecting: selectedRideID)
+
+        await Self.waitUntil("selected history route", maxTurns: 100_000) {
+            model.selectedRideMapHistoryID == selectedRideID
+                && !model.rideMapHistoryRouteLoading
+        }
+        try await Task.sleep(for: .milliseconds(100))
+
+        XCTAssertNil(model.rideMapHistoryContextProjection)
+        XCTAssertTrue(model.rideMapHistoryContextRoutes.isEmpty)
     }
 
     @MainActor

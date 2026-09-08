@@ -85,6 +85,12 @@ By default the command auto-selects the replay profile from persisted PEVCAP
 identity metadata. Use --profile to override that metadata for verification.
 Use --diagnostics-jsonl to emit stable diagnostic snapshot records for replay
 tooling.";
+const PEVCAP_IMPORT_LONG_ABOUT: &str = "\
+Preflight a PEVCAP capture against Rust-owned ride history storage.
+
+Without --confirm, this command only reports bounded facts and never commits
+an import.
+Pass --confirm after reviewing the preview to copy and commit the capture.";
 const DASHBOARD_LONG_ABOUT: &str = "\
 Open a read-only Ratatui dashboard backed by the Termina terminal backend.
 The dashboard is intended as a live inspection surface for discovery, device
@@ -480,6 +486,10 @@ pub(crate) enum PevcapCommand {
     #[command(long_about = PEVCAP_CONVERT_LONG_ABOUT)]
     Convert(PevcapConvertArgs),
 
+    /// Preflight and optionally import a capture into Rust-owned ride history.
+    #[command(long_about = PEVCAP_IMPORT_LONG_ABOUT)]
+    Import(PevcapImportArgs),
+
     /// Replay a capture through a selected read-only session.
     #[command(long_about = PEVCAP_REPLAY_LONG_ABOUT)]
     Replay(PevcapReplayArgs),
@@ -502,6 +512,25 @@ pub(crate) struct PevcapConvertArgs {
     /// Output capture format.
     #[arg(long = "output-format", value_enum)]
     pub(crate) output_format: PevcapFormat,
+}
+
+#[derive(Clone, Debug, Args, PartialEq, Eq)]
+pub(crate) struct PevcapImportArgs {
+    /// SQLite database path.
+    #[arg(long, value_name = "PATH")]
+    pub(crate) database: PathBuf,
+
+    /// Input capture path.
+    #[arg(long, value_name = "PATH")]
+    pub(crate) input: PathBuf,
+
+    /// Input capture format.
+    #[arg(long = "input-format", value_enum)]
+    pub(crate) input_format: PevcapFormat,
+
+    /// Commit the reviewed preview instead of only printing it.
+    #[arg(long)]
+    pub(crate) confirm: bool,
 }
 
 #[derive(Clone, Debug, Args, PartialEq, Eq)]
@@ -606,9 +635,9 @@ mod tests {
     use super::{
         CaptureArgs, CaptureDistributionArg, CaptureEvidenceArg, CaptureLabelArg,
         CapturePrivacyArg, Cli, Command, DEFAULT_SCAN_SECONDS, DashboardArgs, PevcapArgs,
-        PevcapCommand, PevcapConvertArgs, PevcapFormat, PevcapReplayArgs, PevcapReplayProfile,
-        RawSubscribeArgs, ReadProbe, ScanArgs, SessionProfile, TargetArgs, TargetedScanArgs,
-        VescProbe, VescProbeArgs,
+        PevcapCommand, PevcapConvertArgs, PevcapFormat, PevcapImportArgs, PevcapReplayArgs,
+        PevcapReplayProfile, RawSubscribeArgs, ReadProbe, ScanArgs, SessionProfile, TargetArgs,
+        TargetedScanArgs, VescProbe, VescProbeArgs,
     };
 
     fn assert_contains_all(haystack: &str, needles: &[&str]) {
@@ -1448,6 +1477,34 @@ mod tests {
                     input_format: PevcapFormat::Jsonl,
                     output: PathBuf::from("session.pevcap"),
                     output_format: PevcapFormat::Binary,
+                })
+            })
+        );
+    }
+
+    #[test]
+    fn parses_pevcap_import_command() {
+        let cli = Cli::try_parse_from([
+            "cutout",
+            "pevcap",
+            "import",
+            "--database",
+            "rides.sqlite3",
+            "--input",
+            "session.pevcap.jsonl",
+            "--input-format",
+            "jsonl",
+        ])
+        .expect("parser accepts PEVCAP import");
+
+        assert_eq!(
+            cli.command,
+            Command::Pevcap(PevcapArgs {
+                command: PevcapCommand::Import(PevcapImportArgs {
+                    database: PathBuf::from("rides.sqlite3"),
+                    input: PathBuf::from("session.pevcap.jsonl"),
+                    input_format: PevcapFormat::Jsonl,
+                    confirm: false,
                 })
             })
         );

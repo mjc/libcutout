@@ -7,6 +7,21 @@ import CoreBluetooth
 @testable import CutoutMobile
 
 final class CutoutSessionCoreTests: XCTestCase {
+    func testDefaultSessionProvidesCanonicalRideHistory() throws {
+        let core = CutoutSessionCore()
+        let state = try XCTUnwrap(core.rideMapStateHandle)
+
+        if RustPersistenceStore.shared != nil {
+            XCTAssertNil(state.initializationError)
+            XCTAssertNoThrow(try state.storedSummaries(limit: 1))
+        } else {
+            XCTAssertEqual(
+                state.initializationError,
+                .storageError("Rust ride database is unavailable")
+            )
+        }
+    }
+
     #if canImport(CoreBluetooth)
     func testCoreBluetoothRestorationPolicyOptsInAndSelectsOnlySavedDevice() {
         XCTAssertEqual(

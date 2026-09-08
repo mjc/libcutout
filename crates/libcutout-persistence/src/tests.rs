@@ -9,9 +9,9 @@ use cutout_music::{
     MusicEventTiming, MusicHistoryPolicy, MusicProvider, MusicRideEvent, MusicRideEventKind,
 };
 use cutout_ride_maps::{
-    Coordinate, LocationAdmission, LocationSample, LocationSource, RideEvent, RouteDisplayBudget,
-    RoutePrivacyGridE7, RoutePrivacyPolicy, RouteTelemetryState, RouteViewport, VehicleIdentity,
-    WallClockUnixMilliseconds,
+    Coordinate, LocationAdmission, LocationSample, LocationSource, MAX_GAP_MILLISECONDS, RideEvent,
+    RouteDisplayBudget, RoutePrivacyGridE7, RoutePrivacyPolicy, RouteTelemetryState, RouteViewport,
+    VehicleIdentity, WallClockUnixMilliseconds,
 };
 use rusqlite::Connection;
 
@@ -90,6 +90,47 @@ fn music_v16_migration_preserves_events_without_fabricating_observation_times() 
         crate::MusicHistoryStatus::Deleted
     );
     assert!(database.music_events(ride).unwrap().is_empty());
+    database.shutdown().unwrap();
+    let _ = std::fs::remove_file(path);
+}
+
+#[test]
+fn pre_music_v16_migration_preserves_existing_capture_tables() {
+    let _guard = test_guard();
+    let path = music_test_path();
+    let database = RideDatabase::open(&path).unwrap();
+    database.shutdown().unwrap();
+
+    let connection = Connection::open(&path).unwrap();
+    connection
+        .execute_batch(
+            "DROP TABLE ride_music_event;
+             DROP TABLE ride_music_history;
+             PRAGMA user_version = 16;",
+        )
+        .unwrap();
+    drop(connection);
+
+    let database = RideDatabase::open(&path).unwrap();
+    let connection = Connection::open(&path).unwrap();
+    assert_eq!(
+        connection
+            .query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0))
+            .unwrap(),
+        19
+    );
+    for table in ["pevcap_captures", "pevcap_capture_chunks"] {
+        assert!(
+            connection
+                .query_row(
+                    "SELECT EXISTS(SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = ?1)",
+                    [table],
+                    |row| row.get::<_, bool>(0),
+                )
+                .unwrap()
+        );
+    }
+    drop(connection);
     database.shutdown().unwrap();
     let _ = std::fs::remove_file(path);
 }
@@ -1709,7 +1750,8 @@ fn database_preflights_confirms_and_deduplicates_managed_pevcap_artifacts() {
         pevcap_header(),
         vec![pevcap_location_record(1, 40.0, Some(3.0))],
     );
-    std::fs::write(&artifact_path, capture.to_jsonl().unwrap()).unwrap();
+    let artifact_bytes = capture.to_jsonl().unwrap();
+    std::fs::write(&artifact_path, &artifact_bytes).unwrap();
 
     let database = RideDatabase::open(&database_path).unwrap();
     let preview = database
@@ -1737,6 +1779,25 @@ fn database_preflights_confirms_and_deduplicates_managed_pevcap_artifacts() {
             .readonly()
     );
     assert_ne!(first.managed_artifact_path, artifact_path);
+    let duplicate_preview = database
+        .preflight_pevcap(&artifact_path, PevcapEncoding::Jsonl)
+        .unwrap();
+    assert_eq!(
+        duplicate_preview.outcome(),
+        PevcapImportOutcome::AlreadyImported
+    );
+    assert_duplicate_preview_variants_rejected(&database, &duplicate_preview);
+    std::fs::write(&artifact_path, b"changed").unwrap();
+    assert!(matches!(
+        database.confirm_pevcap_import(&duplicate_preview, 1_700_000_000_001),
+        Err(StorageError::PevcapPreviewChanged)
+    ));
+    std::fs::write(&artifact_path, &artifact_bytes).unwrap();
+    let duplicate_confirmation = database
+        .confirm_pevcap_import(&duplicate_preview, 1_700_000_000_001)
+        .unwrap();
+    assert!(duplicate_confirmation.duplicate);
+    assert_eq!(duplicate_confirmation.ride_id, first.ride_id);
     assert!(matches!(
         database.append_location(
             ride_id,
@@ -2062,6 +2123,145 @@ fn malformed_pevcap_import_does_not_publish_an_orphan_ride() {
 }
 
 #[test]
+fn capture_only_bytes_survive_without_external_files() {
+    let _guard = test_guard();
+    for encoding in [PevcapEncoding::Jsonl, PevcapEncoding::Binary] {
+        let directory =
+            std::env::temp_dir().join(format!("cutout-sqlite-capture-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir(&directory).unwrap();
+        let path = directory.join("ride.sqlite");
+        let source = directory.join("source.pevcap");
+        let mut record = PevcapRecord::link_up(MonotonicTimestamp::new(1), None);
+        record.direction = cutout_core::PevcapDirection::Inbound;
+        record.service = Some(record.characteristic);
+        record.bytes = vec![0xde, 0xad, 0xbe, 0xef].into();
+        let bytes = PevcapCapture::new(pevcap_header(), vec![record; 2_000])
+            .encode(encoding)
+            .unwrap();
+        std::fs::write(&source, &bytes).unwrap();
+        let database = RideDatabase::open(&path).unwrap();
+        let preview = database.preflight_pevcap(&source, encoding).unwrap();
+        let receipt = database
+            .confirm_pevcap_import(&preview, 1_700_000_000_000)
+            .unwrap();
+        assert_eq!(receipt.outcome, PevcapImportOutcome::CaptureOnly);
+        database.shutdown().unwrap();
+        std::fs::remove_file(&source).unwrap();
+        std::fs::remove_file(&receipt.managed_artifact_path).unwrap();
+        let database = RideDatabase::open(&path).unwrap();
+        let mut reconstructed = Vec::new();
+        let mut sequence = 0;
+        while let Some(chunk) = database
+            .pevcap_capture_chunk(&receipt.artifact_digest, sequence)
+            .unwrap()
+        {
+            assert!(chunk.len() <= 65_536);
+            reconstructed.extend(chunk);
+            sequence += 1;
+        }
+        assert!(sequence > 1);
+        assert_eq!(reconstructed, bytes);
+        assert!(
+            database
+                .list_rides(None, QueryLimit::new(10).unwrap())
+                .unwrap()
+                .rides()
+                .is_empty()
+        );
+        database.shutdown().unwrap();
+        let connection = Connection::open(&path).unwrap();
+        let stored = connection.prepare(
+            "SELECT payload FROM pevcap_capture_chunks WHERE artifact_digest = ?1 ORDER BY sequence"
+        ).unwrap().query_map([&receipt.artifact_digest], |row| row.get::<_, Vec<u8>>(0))
+            .unwrap().collect::<Result<Vec<_>, _>>().unwrap().concat();
+        assert_eq!(stored, bytes);
+        drop(connection);
+        std::fs::remove_dir_all(&directory).unwrap();
+    }
+}
+
+#[test]
+fn schema_fifteen_capture_backfill_preserves_receipts_and_rides() {
+    let _guard = test_guard();
+    for with_gps in [false, true] {
+        let directory =
+            std::env::temp_dir().join(format!("cutout-capture-backfill-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir(&directory).unwrap();
+        let path = directory.join("ride.sqlite");
+        let source = directory.join("source.jsonl");
+        let record = if with_gps {
+            pevcap_location_record(1, 40.0, Some(3.0))
+        } else {
+            PevcapRecord::link_up(MonotonicTimestamp::new(1), None)
+        };
+        let bytes = PevcapCapture::new(pevcap_header(), vec![record])
+            .encode(PevcapEncoding::Jsonl)
+            .unwrap();
+        std::fs::write(&source, &bytes).unwrap();
+        let database = RideDatabase::open(&path).unwrap();
+        let preview = database
+            .preflight_pevcap(&source, PevcapEncoding::Jsonl)
+            .unwrap();
+        let original = database
+            .confirm_pevcap_import(&preview, 1_700_000_000_010)
+            .unwrap();
+        database.shutdown().unwrap();
+        let connection = Connection::open(&path).unwrap();
+        connection
+            .execute_batch(
+                "DROP TABLE pevcap_capture_chunks; DROP TABLE pevcap_captures;
+             PRAGMA user_version = 15;",
+            )
+            .unwrap();
+        drop(connection);
+        let database = RideDatabase::open(&path).unwrap();
+        assert_eq!(
+            database
+                .pevcap_capture_chunk(&original.artifact_digest, 0)
+                .unwrap(),
+            None
+        );
+        let duplicate = database
+            .confirm_pevcap_import(&preview, 1_700_000_000_020)
+            .unwrap();
+        assert!(duplicate.duplicate);
+        assert_eq!(duplicate.ride_id, original.ride_id);
+        assert_eq!(
+            database
+                .pevcap_capture_chunk(&original.artifact_digest, 0)
+                .unwrap(),
+            Some(bytes)
+        );
+        assert_eq!(
+            database
+                .list_rides(None, QueryLimit::new(10).unwrap())
+                .unwrap()
+                .rides()
+                .len(),
+            usize::from(with_gps)
+        );
+        database.shutdown().unwrap();
+        let connection = Connection::open(&path).unwrap();
+        let imported_at: u64 = connection
+            .query_row("SELECT imported_at_ms FROM pevcap_imports", [], |row| {
+                row.get(0)
+            })
+            .unwrap();
+        assert_eq!(imported_at, 1_700_000_000_010);
+        assert!(
+            connection
+                .execute(
+                    "UPDATE pevcap_captures SET written_bytes = written_bytes - 1",
+                    []
+                )
+                .is_err()
+        );
+        drop(connection);
+        std::fs::remove_dir_all(&directory).unwrap();
+    }
+}
+
+#[test]
 fn capture_only_pevcap_import_does_not_publish_an_empty_ride() {
     let _guard = test_guard();
     let database_path = std::env::temp_dir().join(format!(
@@ -2108,6 +2308,36 @@ fn capture_only_pevcap_import_does_not_publish_an_empty_ride() {
             .rides()
             .is_empty()
     );
+    let duplicate_preview = database
+        .preflight_pevcap(&artifact_path, PevcapEncoding::Jsonl)
+        .unwrap();
+    assert_eq!(
+        duplicate_preview.outcome(),
+        PevcapImportOutcome::AlreadyImported
+    );
+    assert_eq!(
+        duplicate_preview.warnings(),
+        &[PevcapImportWarning::NoRouteLocations]
+    );
+    let without_warnings = pevcap_preview_variant(
+        &duplicate_preview,
+        duplicate_preview.artifact_size(),
+        duplicate_preview.record_count(),
+        duplicate_preview.location_count(),
+        duplicate_preview.duration_milliseconds(),
+        duplicate_preview.outcome(),
+        vec![],
+    );
+    assert!(matches!(
+        database.confirm_pevcap_import(&without_warnings, 1_700_000_000_001),
+        Err(StorageError::PevcapPreviewChanged)
+    ));
+    let duplicate_receipt = database
+        .confirm_pevcap_import(&duplicate_preview, 1_700_000_000_001)
+        .unwrap();
+    assert!(duplicate_receipt.duplicate);
+    assert_eq!(duplicate_receipt.ride_id, None);
+    assert_eq!(duplicate_receipt.outcome, PevcapImportOutcome::CaptureOnly);
     database.shutdown().unwrap();
     let _ = std::fs::remove_file(&receipt.managed_artifact_path);
     let _ = std::fs::remove_dir(receipt.managed_artifact_path.parent().unwrap());
@@ -2585,7 +2815,7 @@ fn legacy_schema_versions_migrate_to_the_current_schema() {
         let current_version: i64 = connection
             .pragma_query_value(None, "user_version", |row| row.get(0))
             .unwrap();
-        assert_eq!(current_version, 18);
+        assert_eq!(current_version, 19);
         let music_tables: i64 = connection
             .query_row(
                 "SELECT COUNT(*) FROM sqlite_schema
@@ -2971,6 +3201,8 @@ fn schema_v13_spatial_rows_migrate_without_integer_domain_ids() {
              INSERT INTO map_points_rtree
                  VALUES (11, 400000000, 400000000, -1050000000, -1050000000);
              PRAGMA application_id = 1129665615;
+             DROP TABLE pevcap_capture_chunks;
+             DROP TABLE pevcap_captures;
              PRAGMA user_version = 13;",
         )
         .unwrap();
@@ -2998,7 +3230,7 @@ fn schema_v13_spatial_rows_migrate_without_integer_domain_ids() {
     let version: i64 = connection
         .pragma_query_value(None, "user_version", |row| row.get(0))
         .unwrap();
-    assert_eq!(version, 18);
+    assert_eq!(version, 19);
     let rtree_id: i64 = connection
         .query_row(
             "SELECT rtree_id FROM trail_segment_spatial_keys",
@@ -3045,6 +3277,8 @@ fn schema_v12_singleton_rows_migrate_to_uuid_keys_without_data_loss() {
              VALUES (1, 'corebluetooth-a', 42);
              INSERT INTO ride_session_marker (id, marker) VALUES (1, X'010203');
              PRAGMA application_id = 1129665615;
+             DROP TABLE pevcap_capture_chunks;
+             DROP TABLE pevcap_captures;
              PRAGMA user_version = 12;",
         )
         .unwrap();
@@ -3062,7 +3296,7 @@ fn schema_v12_singleton_rows_migrate_to_uuid_keys_without_data_loss() {
     let version: i64 = connection
         .pragma_query_value(None, "user_version", |row| row.get(0))
         .unwrap();
-    assert_eq!(version, 18);
+    assert_eq!(version, 19);
     let selected_key_length: u64 = connection
         .query_row(
             "SELECT length(singleton_key) FROM selected_device",
@@ -3555,6 +3789,8 @@ fn version_eight_migration_adds_monotonic_ride_start_column() {
             ALTER TABLE rides DROP COLUMN completed_duration_ms;
             DROP TABLE devices;
             PRAGMA application_id = 1129665615;
+            DROP TABLE pevcap_capture_chunks;
+            DROP TABLE pevcap_captures;
             PRAGMA user_version = 8;
             ",
         )
@@ -3578,7 +3814,7 @@ fn version_eight_migration_adds_monotonic_ride_start_column() {
             |row| row.get(0),
         )
         .unwrap();
-    assert_eq!(version, 18);
+    assert_eq!(version, 19);
     assert!(has_monotonic_start);
 
     let _ = std::fs::remove_file(path);
@@ -3772,6 +4008,82 @@ fn route_projection_is_bounded_viewport_aware_and_cancellable() {
         ),
         Err(StorageError::Cancelled)
     ));
+
+    database.shutdown().unwrap();
+    let _ = std::fs::remove_file(path);
+}
+
+#[test]
+fn route_projection_preserves_each_segment_metadata() {
+    let _guard = test_guard();
+    let path = std::env::temp_dir().join(format!(
+        "libcutout-persistence-segment-projection-{}.sqlite",
+        uuid::Uuid::new_v4()
+    ));
+    let database = RideDatabase::open(&path).unwrap();
+    let ride = database.create_ride(RideSource::Live, 10).unwrap();
+    database.transition(ride, RideEvent::Start).unwrap();
+
+    let first = LocationSample::new(
+        Coordinate::from_degrees(40.0, -105.0).unwrap(),
+        1_000,
+        1_700_000_000_000,
+        None,
+        LocationSource::Live,
+    );
+    assert_eq!(
+        database
+            .append_location_with_segment(ride, first, 0)
+            .unwrap(),
+        LocationAdmission::Accepted
+    );
+    let second = LocationSample::new(
+        Coordinate::from_degrees(40.000_01, -105.0).unwrap(),
+        1_001 + MAX_GAP_MILLISECONDS,
+        1_700_000_000_001 + MAX_GAP_MILLISECONDS,
+        None,
+        LocationSource::Live,
+    );
+    assert_eq!(
+        database
+            .append_location_with_segment(ride, second, 1)
+            .unwrap(),
+        LocationAdmission::Accepted
+    );
+
+    let projection = database
+        .project_route_points(
+            ride,
+            None,
+            RouteDisplayBudget::new(8).unwrap(),
+            RoutePrivacyPolicy::Precise,
+        )
+        .unwrap();
+    assert_eq!(projection.source_segment_count(), 2);
+    assert_eq!(projection.background_gap_count(), 1);
+    assert_eq!(projection.segments().len(), 2);
+    assert_eq!(
+        projection.segments()[0].start_reason(),
+        RideSegmentStartReason::Initial
+    );
+    assert_eq!(
+        projection.segments()[0]
+            .canonical_point_count()
+            .unwrap()
+            .as_u64(),
+        1
+    );
+    assert_eq!(
+        projection.segments()[1].start_reason(),
+        RideSegmentStartReason::BackgroundGap
+    );
+    assert_eq!(
+        projection.segments()[1]
+            .canonical_point_count()
+            .unwrap()
+            .as_u64(),
+        1
+    );
 
     database.shutdown().unwrap();
     let _ = std::fs::remove_file(path);

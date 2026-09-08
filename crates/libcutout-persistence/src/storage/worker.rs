@@ -60,6 +60,42 @@ impl DatabaseWorker<'_> {
         let spatial_schema = &mut self.spatial_schema;
         let worker_alive = self.worker_alive;
         match command {
+            Command::BeginCaptureData {
+                digest,
+                encoding,
+                artifact_size,
+                reply,
+            } => {
+                let _ = reply.send(super::capture_data::begin(
+                    connection,
+                    &digest,
+                    encoding,
+                    artifact_size,
+                ));
+            }
+            Command::AppendCaptureData {
+                digest,
+                sequence,
+                chunk,
+                reply,
+            } => {
+                let _ = reply.send(super::capture_data::append(
+                    connection, &digest, sequence, &chunk,
+                ));
+            }
+            Command::PublishCaptureData { digest, reply } => {
+                let _ = reply.send(super::capture_data::publish(connection, &digest));
+            }
+            Command::AbortCaptureData { digest, reply } => {
+                let _ = reply.send(super::capture_data::abort(connection, &digest));
+            }
+            Command::CaptureDataChunk {
+                digest,
+                sequence,
+                reply,
+            } => {
+                let _ = reply.send(super::capture_data::chunk(connection, &digest, sequence));
+            }
             Command::Capabilities { reply } => {
                 let _ = reply.send(sqlite_capabilities(connection));
             }
