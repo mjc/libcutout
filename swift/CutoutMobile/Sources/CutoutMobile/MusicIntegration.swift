@@ -24,6 +24,60 @@ public struct MusicArtwork: Equatable, Sendable {
     }
 }
 
+private enum MusicObservationValidator {
+    private static let limits = mobileMusicLimits()
+
+    static func normalized(_ snapshot: MobileMusicSnapshotDto) -> MobileMusicSnapshotDto {
+        guard let item = snapshot.item else { return snapshot }
+        let title = normalizedOptional(item.title)
+        let artist = normalizedOptional(item.artist)
+        guard title != item.title || artist != item.artist else { return snapshot }
+        return MobileMusicSnapshotDto(
+            provider: snapshot.provider,
+            sessionId: snapshot.sessionId,
+            state: snapshot.state,
+            item: MobileMusicItemDto(
+                identifier: item.identifier,
+                title: title,
+                artist: artist
+            ),
+            positionMilliseconds: snapshot.positionMilliseconds,
+            durationMilliseconds: snapshot.durationMilliseconds,
+            observedAtMs: snapshot.observedAtMs,
+            capabilities: snapshot.capabilities
+        )
+    }
+
+    static func accepts(_ snapshot: MobileMusicSnapshotDto) -> Bool {
+        guard acceptsRequired(snapshot.sessionId, maxBytes: Int(limits.identifierMaxBytes)) else {
+            return false
+        }
+        guard let item = snapshot.item else { return true }
+        guard acceptsRequired(item.identifier, maxBytes: Int(limits.identifierMaxBytes)) else {
+            return false
+        }
+        return acceptsOptional(item.title, maxBytes: Int(limits.displayTextMaxBytes))
+            && acceptsOptional(item.artist, maxBytes: Int(limits.displayTextMaxBytes))
+    }
+
+    private static func acceptsRequired(_ value: String, maxBytes: Int) -> Bool {
+        value.utf8.count <= maxBytes
+            && value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
+    }
+
+    private static func acceptsOptional(_ value: String?, maxBytes: Int) -> Bool {
+        guard let value = normalizedOptional(value) else { return true }
+        return acceptsRequired(value, maxBytes: maxBytes)
+    }
+
+    private static func normalizedOptional(_ value: String?) -> String? {
+        guard let value, value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false else {
+            return nil
+        }
+        return value
+    }
+}
+
 /// Keeps one positive artwork result so polling does not repeatedly decode the
 /// same provider image. The value is already bounded by `MusicArtwork`.
 struct MusicArtworkCache: Sendable {
@@ -89,10 +143,11 @@ public enum MusicProviderMonitoringMode: Equatable, Sendable {
 /// Holds a transport hint until the provider reports the resulting state.
 ///
 /// System-player notifications can arrive after the immediate post-command
-/// poll, so clearing the hint after one unchanged snapshot would misclassify
-/// an accepted skip as an unsolicited item change.
+/// poll, so the hint survives several unchanged snapshots but expires when the
+/// provider never reports a resulting item change.
 public struct MusicTransitionHintTracker: Sendable {
     private static let maxAgeMilliseconds: UInt64 = 5_000
+    private static let maximumUnchangedObservations = 5
     private struct PendingHint: Sendable {
         let id: UInt64
         let hint: MusicTransitionHint
@@ -101,6 +156,7 @@ public struct MusicTransitionHintTracker: Sendable {
 
     private var pendingHints = [PendingHint]()
     private var nextID: UInt64 = 0
+    private var remainingUnchangedObservations: Int?
 
     public var pendingHint: MusicTransitionHint? { pendingHints.first?.hint }
 
@@ -115,6 +171,7 @@ public struct MusicTransitionHintTracker: Sendable {
         let id = nextID
         nextID &+= 1
         pendingHints.append(PendingHint(id: id, hint: hint, issuedAtMs: issuedAtMs))
+        remainingUnchangedObservations = Self.maximumUnchangedObservations
         return id
     }
 
@@ -125,15 +182,22 @@ public struct MusicTransitionHintTracker: Sendable {
             else { return false }
             return monotonicMs - issuedAtMs > Self.maxAgeMilliseconds
         }
+        if pendingHints.isEmpty {
+            remainingUnchangedObservations = nil
+        }
         return pendingHints.first?.hint
     }
 
     public mutating func clear() {
         pendingHints.removeAll(keepingCapacity: true)
+        remainingUnchangedObservations = nil
     }
 
     public mutating func clear(id: UInt64) {
+        let clearsFront = pendingHints.first?.id == id
         pendingHints.removeAll { $0.id == id }
+        guard clearsFront else { return }
+        remainingUnchangedObservations = pendingHints.isEmpty ? nil : Self.maximumUnchangedObservations
     }
 
     public mutating func resolve(
@@ -149,27 +213,44 @@ public struct MusicTransitionHintTracker: Sendable {
            let currentObservedAtMs,
            currentObservedAtMs >= issuedAtMs,
            currentObservedAtMs - issuedAtMs > Self.maxAgeMilliseconds {
-            pendingHints.removeFirst()
+            removeFirstPending()
             return
         }
         guard let current else {
-            pendingHints.removeFirst()
+            removeFirstPending()
             return
         }
         if MusicTransitionHintTracker.isTerminalState(current.state) {
-            pendingHints.removeFirst()
+            removeFirstPending()
             return
         }
-        guard current.item != nil else {
-            pendingHints.removeFirst()
+        guard let previous, current.item != nil else {
+            consumeUnchangedObservation()
             return
         }
-        guard let previous else { return }
         if previous.provider != current.provider
             || previous.item?.identifier != current.item?.identifier
         {
-            pendingHints.removeFirst()
+            removeFirstPending()
+        } else {
+            consumeUnchangedObservation()
         }
+    }
+
+    private mutating func removeFirstPending() {
+        pendingHints.removeFirst()
+        remainingUnchangedObservations = pendingHints.isEmpty
+            ? nil
+            : Self.maximumUnchangedObservations
+    }
+
+    private mutating func consumeUnchangedObservation() {
+        let remaining = remainingUnchangedObservations ?? Self.maximumUnchangedObservations
+        guard remaining > 1 else {
+            removeFirstPending()
+            return
+        }
+        remainingUnchangedObservations = remaining - 1
     }
 
     private static func isTerminalState(_ state: MobileMusicPlaybackStateDto) -> Bool {
@@ -415,6 +496,16 @@ public struct MusicNowPlaying: Equatable, Sendable {
         }
     }
 
+    /// Whether the command is both provider-supported and valid for this state.
+    public func isCommandAvailable(_ command: MobileMusicCommandDto) -> Bool {
+        switch command {
+        case .openProvider:
+            capabilities.openProvider
+        case .play, .pause, .previous, .next:
+            availableTransportCommands.contains(command)
+        }
+    }
+
     public func supports(_ command: MobileMusicCommandDto) -> Bool {
         capabilities.supports(command)
     }
@@ -512,6 +603,7 @@ private extension MobileMusicRideEventKindDto {
 public extension MobileMusicRideEventDto {
     var timelineID: String {
         [
+            String(sequence),
             provider.timelineIDComponent,
             String(monotonicAtMs),
             String(wallClockAtMs),
@@ -565,6 +657,16 @@ public struct MusicProviderObservation: Equatable, Sendable {
     }
 }
 
+/// Converts provider seconds into bounded milliseconds without trapping.
+enum MusicTimeConversion {
+    static func milliseconds(_ seconds: TimeInterval) -> UInt64? {
+        guard seconds.isFinite, seconds >= 0 else { return nil }
+        let milliseconds = seconds * 1_000
+        guard milliseconds < Double(UInt64.max) else { return nil }
+        return UInt64(milliseconds)
+    }
+}
+
 /// The Rust-owned ride association is the only path for music metadata to enter a ride.
 @MainActor
 public final class MusicIntegrationCoordinator {
@@ -611,6 +713,8 @@ public final class MusicIntegrationCoordinator {
         transitionHint: MusicTransitionHint?
     ) throws -> MobileMusicTimelineOutcomeDto? {
         resetCorrelationIfRideChanged()
+        let snapshot = MusicObservationValidator.normalized(snapshot)
+        guard MusicObservationValidator.accepts(snapshot) else { return nil }
         guard accept(snapshot) else { return nil }
         let previous = lastPersistedNowPlayingByProvider[snapshot.provider]
         update(snapshot: snapshot, artwork: artwork)
@@ -868,7 +972,7 @@ public struct MusicCompactPlayer: View {
                     .foregroundStyle(.secondary)
             }
             Spacer(minLength: 4)
-            if nowPlaying.supports(.previous) {
+            if nowPlaying.isCommandAvailable(.previous) {
                 Button { onCommand(.previous) } label: {
                     Image(systemName: "backward.fill")
                 }
@@ -882,13 +986,13 @@ public struct MusicCompactPlayer: View {
                     pevLocalizedText(command == .pause ? "music.pause" : "music.play")
                 )
             }
-            if nowPlaying.supports(.next) {
+            if nowPlaying.isCommandAvailable(.next) {
                 Button { onCommand(.next) } label: {
                     Image(systemName: "forward.fill")
                 }
                 .accessibilityLabel(pevLocalizedText("music.next"))
             }
-            if nowPlaying.capabilities.openProvider {
+            if nowPlaying.isCommandAvailable(.openProvider) {
                 Button { onCommand(.openProvider) } label: {
                     Image(systemName: "arrow.up.forward.app")
                 }
@@ -1353,10 +1457,10 @@ public final class AppleMusicProviderAdapter {
         case .stopped: .stopped
         default: .unavailable
         }
-        let position = player.currentPlaybackTime >= 0
-            ? UInt64(player.currentPlaybackTime * 1_000)
-            : nil
-        let duration = player.nowPlayingItem.map { UInt64(max(0, $0.playbackDuration) * 1_000) }
+        let position = MusicTimeConversion.milliseconds(player.currentPlaybackTime)
+        let duration = player.nowPlayingItem.flatMap {
+            MusicTimeConversion.milliseconds($0.playbackDuration)
+        }
         return MobileMusicSnapshotDto(
             provider: .appleMusic,
             sessionId: "system-music-player",

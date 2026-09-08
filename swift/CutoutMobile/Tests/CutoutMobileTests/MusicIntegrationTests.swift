@@ -14,6 +14,20 @@ final class MusicIntegrationTests: XCTestCase {
         )
     }
 
+    @MainActor
+    func testSpotifyTransportStaysUnavailableUntilAppRemoteIsProven() async {
+        let adapter = SpotifyProviderAdapter()
+
+        let outcomes = await [
+            adapter.perform(.previous),
+            adapter.perform(.play),
+            adapter.perform(.pause),
+            adapter.perform(.next),
+        ]
+
+        XCTAssertEqual(outcomes, [.unavailable, .unavailable, .unavailable, .unavailable])
+    }
+
     func testMusicHistoryPolicyStoreDefaultsToDisabledAndRoundTrips() throws {
         let suiteName = "MusicHistoryPolicyStoreTests-\(UUID().uuidString)"
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
@@ -56,12 +70,39 @@ final class MusicIntegrationTests: XCTestCase {
         XCTAssertNil(tracker.pendingHint)
     }
 
+    func testClearingNonFrontHintDoesNotRefreshFrontHintAge() {
+        var tracker = MusicTransitionHintTracker()
+        _ = tracker.issue(.skip)
+        let second = tracker.issue(.skip)
+        let unchanged = nowPlaying(trackID: "track-1")
+
+        for _ in 0..<4 {
+            tracker.resolve(previous: unchanged, current: unchanged, appliedHint: .skip)
+        }
+        tracker.clear(id: second)
+        tracker.resolve(previous: unchanged, current: unchanged, appliedHint: .skip)
+
+        XCTAssertNil(tracker.pendingHint)
+    }
+
     func testTransitionHintExpiresWhenProviderNeverChangesTheItem() {
         var tracker = MusicTransitionHintTracker()
         tracker.issue(.skip, issuedAtMs: 1_000)
 
         XCTAssertEqual(tracker.hint(atMonotonicMs: 6_000), .skip)
         XCTAssertNil(tracker.hint(atMonotonicMs: 6_001))
+        XCTAssertNil(tracker.pendingHint)
+    }
+
+    func testTransitionHintExpiresAfterBoundedUnchangedObservations() {
+        var tracker = MusicTransitionHintTracker()
+        tracker.issue(.skip)
+
+        let unchanged = nowPlaying(trackID: "track-1")
+        for _ in 0..<5 {
+            tracker.resolve(previous: unchanged, current: unchanged, appliedHint: .skip)
+        }
+
         XCTAssertNil(tracker.pendingHint)
     }
 
@@ -333,6 +374,88 @@ final class MusicIntegrationTests: XCTestCase {
         XCTAssertTrue(nowPlaying.supports(.next))
     }
 
+    @MainActor
+    func testCoordinatorRejectsOversizedProviderMetadataBeforeProjectingIt() throws {
+        let state = MobileRideMapState()
+        _ = try state.startGpsOnly(atMs: 1_000, lastConnectedVehicle: nil)
+        try state.setMusicHistoryPolicy(.humanReadable)
+        let coordinator = MusicIntegrationCoordinator(rideMapState: state)
+
+        let valid = MobileMusicSnapshotDto(
+            provider: .appleMusic,
+            sessionId: "session",
+            state: .playing,
+            item: MobileMusicItemDto(identifier: "track-1", title: "Song", artist: "Artist"),
+            positionMilliseconds: nil,
+            durationMilliseconds: nil,
+            observedAtMs: 1_100,
+            capabilities: .init(previous: true, play: false, pause: true, next: true, openProvider: true)
+        )
+        XCTAssertEqual(
+            try coordinator.ingest(
+                snapshot: valid,
+                wallClockAtMs: 1_700_000_000_100,
+                clockUncertaintyMs: 5
+            ),
+            .recorded
+        )
+
+        let invalid = MobileMusicSnapshotDto(
+            provider: .appleMusic,
+            sessionId: "session",
+            state: .playing,
+            item: MobileMusicItemDto(
+                identifier: "track-2",
+                title: String(repeating: "é", count: 257),
+                artist: "Artist"
+            ),
+            positionMilliseconds: nil,
+            durationMilliseconds: nil,
+            observedAtMs: 1_200,
+            capabilities: valid.capabilities
+        )
+        XCTAssertNil(
+            try coordinator.ingest(
+                snapshot: invalid,
+                wallClockAtMs: 1_700_000_000_200,
+                clockUncertaintyMs: 5
+            )
+        )
+        XCTAssertEqual(coordinator.nowPlaying?.item?.identifier, "track-1")
+        XCTAssertEqual(coordinator.nowPlaying?.item?.title, "Song")
+    }
+
+    @MainActor
+    func testCoordinatorNormalizesBlankOptionalMetadataLikeRust() throws {
+        let state = MobileRideMapState()
+        _ = try state.startGpsOnly(atMs: 1_000, lastConnectedVehicle: nil)
+        try state.setMusicHistoryPolicy(.humanReadable)
+        let coordinator = MusicIntegrationCoordinator(rideMapState: state)
+        let snapshot = MobileMusicSnapshotDto(
+            provider: .appleMusic,
+            sessionId: "session",
+            state: .playing,
+            item: MobileMusicItemDto(identifier: "track-1", title: " ", artist: ""),
+            positionMilliseconds: nil,
+            durationMilliseconds: nil,
+            observedAtMs: 1_100,
+            capabilities: .init(previous: false, play: false, pause: true, next: true, openProvider: true)
+        )
+
+        XCTAssertEqual(
+            try coordinator.ingest(
+                snapshot: snapshot,
+                wallClockAtMs: 1_700_000_000_100,
+                clockUncertaintyMs: 5
+            ),
+            .recorded
+        )
+        XCTAssertNil(coordinator.nowPlaying?.item?.title)
+        XCTAssertNil(coordinator.nowPlaying?.item?.artist)
+        XCTAssertNil(state.currentMusicEvents().first?.title)
+        XCTAssertNil(state.currentMusicEvents().first?.artist)
+    }
+
     func testNowPlayingExposesOnlySupportedTransportCommands() {
         let nowPlaying = MusicNowPlaying(
             provider: .appleMusic,
@@ -344,7 +467,7 @@ final class MusicIntegrationTests: XCTestCase {
             ),
             capabilities: MobileMusicCapabilitiesDto(
                 previous: false,
-                play: false,
+                play: true,
                 pause: true,
                 next: false,
                 openProvider: true
@@ -352,6 +475,37 @@ final class MusicIntegrationTests: XCTestCase {
         )
 
         XCTAssertEqual(nowPlaying.availableTransportCommands, [.pause])
+        XCTAssertFalse(nowPlaying.isCommandAvailable(.play))
+        XCTAssertTrue(nowPlaying.isCommandAvailable(.pause))
+        XCTAssertTrue(nowPlaying.isCommandAvailable(.openProvider))
+    }
+
+    func testMusicTimeConversionRejectsInvalidProviderValues() {
+        XCTAssertEqual(MusicTimeConversion.milliseconds(1.5), 1_500)
+        XCTAssertNil(MusicTimeConversion.milliseconds(-1))
+        XCTAssertNil(MusicTimeConversion.milliseconds(.nan))
+        XCTAssertNil(MusicTimeConversion.milliseconds(.infinity))
+        XCTAssertNil(MusicTimeConversion.milliseconds(.greatestFiniteMagnitude))
+        XCTAssertNil(MusicTimeConversion.milliseconds(Double(UInt64.max) / 1_000))
+    }
+
+    func testMusicTimelineIDsUseTheRustEventSequence() {
+        func event(sequence: UInt64) -> MobileMusicRideEventDto {
+            MobileMusicRideEventDto(
+                sequence: sequence,
+                provider: .appleMusic,
+                itemIdentifier: "track-1",
+                title: "Song",
+                artist: "Artist",
+                kind: .play,
+                observedAtMs: 1_000,
+                monotonicAtMs: 1_000,
+                wallClockAtMs: 1_700_000_000_000,
+                clockUncertaintyMs: 5
+            )
+        }
+
+        XCTAssertNotEqual(event(sequence: 0).timelineID, event(sequence: 1).timelineID)
     }
 
     func testNowPlayingProvidesLocalizedArtworkAccessibilityLabel() {

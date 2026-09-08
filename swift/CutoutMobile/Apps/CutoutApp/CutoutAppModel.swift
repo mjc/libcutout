@@ -414,7 +414,7 @@ final class CutoutAppModel {
     @discardableResult
     func handleMusicCommand(_ command: MobileMusicCommandDto) async -> MusicCommandOutcome {
         guard let nowPlaying = musicNowPlaying else { return .unavailable }
-        guard nowPlaying.supports(command) else { return .refused }
+        guard nowPlaying.isCommandAvailable(command) else { return .refused }
 #if canImport(MediaPlayer) && os(iOS)
         let skipHintID: UInt64? = switch command {
         case .previous, .next:
@@ -454,21 +454,31 @@ final class CutoutAppModel {
     }
 
     func selectMusicProvider(_ provider: MobileMusicProviderDto) {
+        let previousProvider = selectedMusicProvider
         musicCoordinator.resetProviderCorrelation()
         selectedMusicProvider = provider
         musicNowPlaying = projectedMusicNowPlaying()
         musicProviderSelectionStore.set(provider)
         musicTransitionHintTracker.clear()
-        if provider.monitoringMode == .unavailable {
-            musicMonitorSceneState.cancel()
-        }
-#if canImport(MediaPlayer) && os(iOS)
-        if provider.monitoringMode == .unavailable {
-            stopMusicMonitoring()
-        }
-#endif
+        updateMusicMonitoring(from: previousProvider, to: provider)
         if !isMusicPlayerHidden {
             connectMusic()
+        }
+    }
+
+    private func updateMusicMonitoring(
+        from previousProvider: MobileMusicProviderDto,
+        to provider: MobileMusicProviderDto
+    ) {
+        switch provider.monitoringMode {
+        case .unavailable:
+            musicMonitorSceneState.cancel()
+            stopMusicMonitoring()
+        case .appleMusicSystemPlayer where previousProvider != provider:
+            musicMonitorSceneState.request()
+            beginMusicMonitoring()
+        case .appleMusicSystemPlayer:
+            break
         }
     }
 

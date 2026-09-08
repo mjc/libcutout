@@ -85,6 +85,22 @@ public enum CaptureEvent: Equatable, Sendable {
     case failed
 }
 
+struct CaptureMusicContext: Equatable {
+    private(set) var current: MobilePevcapMusicEventDto?
+
+    mutating func update(_ observation: MobilePevcapMusicEventDto?) {
+        current = observation
+    }
+
+    mutating func take() -> MobilePevcapMusicEventDto? {
+        defer { current = nil }
+        return current
+    }
+
+    mutating func reset() {
+        current = nil
+    }
+}
 struct ConnectionReconnectPolicy {
     static let maximumAttempts = 3
 
@@ -322,6 +338,12 @@ public final class CutoutSessionCore: NSObject {
     public private(set) var phoneLocationSnapshot = MobilePhoneLocationSnapshotDto(latestSample: nil, gpsSpeed: nil)
     public private(set) var protocolIdentityCandidate: DevicePickerDiscoveryCandidate?
 
+#if DEBUG
+    var musicCaptureObservationForTesting: MobilePevcapMusicEventDto? {
+        onBleQueue { musicCaptureContext.current }
+    }
+#endif
+
     public var onDisplayStateChange: ((RideDisplayState) -> Void)?
     public var onPhaseChange: ((SessionConnectionPhase) -> Void)?
     public var onReconnectScheduled: ((SessionConnectionRetry) -> Void)?
@@ -362,6 +384,7 @@ public final class CutoutSessionCore: NSObject {
     private var captureStartedAt: MonotonicMilliseconds?
     private var captureNotificationCount: UInt64 = 0
     private var captureBuilder: MobilePevcapCaptureBuilder?
+    private var musicCaptureContext = CaptureMusicContext()
     private var captureMusicHistoryPolicy = MobileMusicHistoryPolicyDto.disabled
     private var captureFileURL: URL?
     private var bmsPages: [BmsPageKey: BmsSnapshot] = [:]
@@ -887,6 +910,9 @@ public final class CutoutSessionCore: NSObject {
 #endif
         suppressReconnect = true
         cancelPendingReconnect()
+        // A teardown must not carry a pending provider observation into the
+        // next capture, including the synthetic/debug writer path below.
+        musicCaptureContext.reset()
 #if DEBUG
         if testScript != nil, isRecordOnly, captureBuilder != nil {
             finishCaptureAfterLinkDown()
@@ -1532,6 +1558,11 @@ public final class CutoutSessionCore: NSObject {
     /// The Rust writer owns the capture event and keeps metadata low-rate.
     public func updateMusicCaptureObservation(_ observation: MobilePevcapMusicEventDto?) {
         onBleQueue {
+            self.musicCaptureContext.update(observation)
+            guard let observation else {
+                _ = self.captureBuilder?.setMusicContext(music: nil)
+                return
+            }
             guard let captured = self.captureMusicObservation(observation),
                   let builder = self.captureBuilder
             else { return }
@@ -1554,6 +1585,22 @@ public final class CutoutSessionCore: NSObject {
         guard observation.monotonicAtMs >= captureStartedAt.rawValue else { return nil }
         var relative = observation
         relative.monotonicAtMs = observation.monotonicAtMs - captureStartedAt.rawValue
+        return relative
+    }
+
+    private func captureMusicContextObservation() -> MobilePevcapMusicEventDto? {
+        guard let observation = musicCaptureContext.current,
+              let captureStartedAt
+        else { return musicCaptureContext.current }
+        var relative = observation
+        if observation.monotonicAtMs < captureStartedAt.rawValue {
+            guard captureStartedAt.rawValue - observation.monotonicAtMs <= 5_000 else {
+                return nil
+            }
+            relative.monotonicAtMs = 0
+        } else {
+            relative.monotonicAtMs = observation.monotonicAtMs - captureStartedAt.rawValue
+        }
         return relative
     }
 
@@ -1626,6 +1673,7 @@ public final class CutoutSessionCore: NSObject {
         ].forEach { _ = builder.addAnnotation(annotation: $0) }
         extraAnnotations.forEach { _ = builder.addAnnotation(annotation: sanitizedPevcapAnnotation($0)) }
         captureBuilder = builder
+        _ = builder.setMusicContext(music: captureMusicContextObservation())
         guard builder.startWriter(path: url.path) else {
             record("capture_error=writer_start_failed")
             captureBuilder = nil
@@ -1634,6 +1682,7 @@ public final class CutoutSessionCore: NSObject {
             setPhase(.failed(.sessionFailed("capture writer failed to start")))
             return
         }
+        musicCaptureContext.reset()
         captureFileURL = url
         record("capture_file=\(url.path)")
         publishCaptureEvent(.started(fileURL: url))
@@ -1667,6 +1716,7 @@ public final class CutoutSessionCore: NSObject {
         captureBuilder = nil
         captureFileURL = nil
         captureStartedAt = nil
+        musicCaptureContext.reset()
         let finish = DispatchWorkItem { [weak self] in
             let writerSucceeded = builder.finishWriter()
             let succeeded = priorWriteSucceeded && writerSucceeded

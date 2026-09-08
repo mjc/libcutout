@@ -159,6 +159,33 @@ final class CutoutAppModelTests: XCTestCase {
     }
 
     @MainActor
+    func testNewRideUsesPersistedMusicDefaultAfterRestoringAnotherRide() throws {
+        let state = MobileRideMapState()
+        _ = try state.startGpsOnly(atMs: 1_000, lastConnectedVehicle: nil)
+        try state.setMusicHistoryPolicy(.humanReadable)
+
+        let driver = SessionDriverSpy(
+            rows: [],
+            rideMapState: state,
+            preserveExistingRide: true
+        )
+        let suiteName = "CutoutAppMusicHistoryRestoreTests-\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let model = CutoutAppModel(
+            core: driver,
+            musicHistoryPolicyStore: MusicHistoryPolicyStore(defaults: defaults)
+        )
+
+        XCTAssertEqual(model.musicHistoryPolicy, .humanReadable)
+        XCTAssertTrue(model.stopRideMap())
+        XCTAssertTrue(model.saveRideMap())
+        XCTAssertTrue(model.startGpsOnlyRide())
+        XCTAssertEqual(model.musicHistoryPolicy, .disabled)
+        XCTAssertEqual(state.currentMusicHistoryPolicy(), .disabled)
+    }
+
+    @MainActor
     func testForgetActiveMusicHistoryClearsLivePolicyAndTimeline() throws {
         let driver = SessionDriverSpy(rows: [])
         let model = CutoutAppModel(core: driver)
@@ -188,6 +215,7 @@ final class CutoutAppModelTests: XCTestCase {
                 clockUncertaintyMs: 5
             )
         )
+        XCTAssertEqual(driver.musicCaptureObservation?.rideSequence, 0)
         let rideID = try XCTUnwrap(model.rideMapSnapshot?.rideID)
         XCTAssertFalse(model.musicTimelineEvents.isEmpty)
 
@@ -197,6 +225,7 @@ final class CutoutAppModelTests: XCTestCase {
         XCTAssertTrue(model.musicTimelineEvents.isEmpty)
         XCTAssertEqual(driver.rideMapState.currentMusicHistoryPolicy(), .disabled)
         XCTAssertTrue(driver.rideMapState.currentMusicEvents().isEmpty)
+        XCTAssertNil(driver.musicCaptureObservation)
     }
 
     @MainActor
@@ -270,6 +299,67 @@ final class CutoutAppModelTests: XCTestCase {
             )
         )
         XCTAssertEqual(model.musicTimelineEvents.count, 1)
+    }
+
+    @MainActor
+    func testSavedRideReloadsPersistedMusicTimelineInHistoryDetail() async throws {
+        let driver = SessionDriverSpy(rows: [])
+        let state = driver.rideMapState
+        _ = try state.startGpsOnly(atMs: 100, lastConnectedVehicle: nil)
+        _ = await Self.settle(state, try state.ingestLocation(
+            monotonicMs: 100,
+            wallClockUnixMs: 1_700_000_000_100,
+            latitudeDegrees: 39.7000,
+            longitudeDegrees: -104.9000,
+            horizontalAccuracyMeters: 5
+        ))
+        try state.setMusicHistoryPolicy(.humanReadable)
+        let snapshot = MobileMusicSnapshotDto(
+            provider: .appleMusic,
+            sessionId: "session",
+            state: .playing,
+            item: MobileMusicItemDto(identifier: "track-1", title: "Song", artist: "Artist"),
+            positionMilliseconds: nil,
+            durationMilliseconds: nil,
+            observedAtMs: 200,
+            capabilities: MobileMusicCapabilitiesDto(
+                previous: false,
+                play: false,
+                pause: true,
+                next: true,
+                openProvider: true
+            )
+        )
+        XCTAssertEqual(
+            try state.recordMusicEvent(
+                snapshot: snapshot,
+                kind: .play,
+                monotonicAtMs: 200,
+                wallClockAtMs: 1_700_000_000_200,
+                clockUncertaintyMs: 5
+            ),
+            .recorded
+        )
+        _ = try state.stop(atMs: 300)
+        let ride = try state.save()
+
+        let model = CutoutAppModel(core: driver)
+        model.setRideMapHistoryDateFilter(.allTime)
+        model.loadRideMapHistory(selecting: ride.rideID)
+        await Self.waitUntil("saved ride music timeline", maxTurns: 100_000) {
+            model.selectedRideMapHistoryID == ride.rideID
+                && model.rideMapHistoryDetailMusicTimeline.count == 1
+                && !model.rideMapHistoryDetailRouteLoading
+        }
+
+        XCTAssertEqual(model.rideMapHistoryDetailMusicTimeline.first?.title, "Song")
+        XCTAssertEqual(model.rideMapHistoryDetailMusicTimeline.first?.kind, .play)
+        XCTAssertEqual(try state.storedMusicEvents(rideID: ride.rideID).first?.sequence, 0)
+
+        XCTAssertTrue(model.forgetMusicHistory(for: ride.rideID))
+        XCTAssertTrue(model.rideMapHistoryDetailMusicTimeline.isEmpty)
+        XCTAssertTrue(try state.storedMusicEvents(rideID: ride.rideID).isEmpty)
+        XCTAssertNotNil(try state.storedHistoryRide(rideID: ride.rideID))
     }
 
     @MainActor
@@ -2895,6 +2985,7 @@ private final class SessionDriverSpy: CutoutSessionDriving {
     private(set) var probedPlatformIdentifiers = [String]()
     private(set) var recordedPlatformIdentifiers = [String]()
     private(set) var captureAnnotations = [String]()
+    private(set) var musicCaptureObservation: MobilePevcapMusicEventDto?
     private(set) var flushCaptureCount = 0
     private(set) var disconnectCount = 0
     private(set) var resetRideMapLocationAdmissionCount = 0
@@ -2905,7 +2996,9 @@ private final class SessionDriverSpy: CutoutSessionDriving {
         flushSucceeds: Bool = true,
         restoredPlatformIdentifier: String? = nil,
         notifyBluetoothRestorationOnStart: Bool = true,
-        rideMapUnavailable: Bool = false
+        rideMapUnavailable: Bool = false,
+        rideMapState: MobileRideMapState? = nil,
+        preserveExistingRide: Bool = false
     ) {
         scanState = DevicePickerScanState(status: .scanning, rows: rows)
         self.pairingSucceeds = pairingSucceeds
@@ -2913,12 +3006,13 @@ private final class SessionDriverSpy: CutoutSessionDriving {
         self.restoredPlatformIdentifier = restoredPlatformIdentifier
         self.notifyBluetoothRestorationOnStart = notifyBluetoothRestorationOnStart
         self.rideMapUnavailable = rideMapUnavailable
-        let state = RustPersistenceStore.shared.map(MobileRideMapState.init(database:))
+        let state = rideMapState
+            ?? RustPersistenceStore.shared.map(MobileRideMapState.init(database:))
             ?? MobileRideMapState()
-        if state.currentSnapshot() != nil {
+        if !preserveExistingRide, state.currentSnapshot() != nil {
             _ = try? state.discard()
         }
-        rideMapState = state
+        self.rideMapState = state
     }
 
     func start() {
@@ -2952,7 +3046,9 @@ private final class SessionDriverSpy: CutoutSessionDriving {
     }
     func annotateCapture(key _: String, value _: String) {}
     func updateMusicCapturePolicy(_: MobileMusicHistoryPolicyDto) {}
-    func updateMusicCaptureObservation(_: MobilePevcapMusicEventDto?) {}
+    func updateMusicCaptureObservation(_ observation: MobilePevcapMusicEventDto?) {
+        musicCaptureObservation = observation
+    }
     func flushCapture() async -> Bool {
         flushCaptureCount += 1
         return flushSucceeds

@@ -587,7 +587,8 @@ final class CutoutSessionCoreTests: XCTestCase {
     func testSuccessfulScriptedRecordOnlyFlushUsesTheRealWriter() async throws {
         let started = expectation(description: "real capture writer starts")
         var captureURL: URL?
-        let core = CutoutSessionCore(testScript: CutoutSessionTestScript(
+        let clock = MonotonicClock(now: { MonotonicMilliseconds(10) })
+        let core = CutoutSessionCore(clock: clock, testScript: CutoutSessionTestScript(
             candidate: scriptedVescCandidate,
             telemetry: nil,
             connectionDelayMilliseconds: 0
@@ -598,6 +599,16 @@ final class CutoutSessionCoreTests: XCTestCase {
                 started.fulfill()
             }
         }
+        let observation = MobilePevcapMusicEventDto(
+            provider: .appleMusic,
+            trackId: "writer-track",
+            monotonicAtMs: 10,
+            wallClockUnixMs: 1_700_000_000_010,
+            clockUncertaintyMs: 5,
+            rideSequence: 7
+        )
+        core.updateMusicCapturePolicy(.humanReadable)
+        core.updateMusicCaptureObservation(observation)
 
         XCTAssertTrue(core.recordOnly(
             platformIdentifier: scriptedVescCandidate.platformIdentifier,
@@ -605,6 +616,8 @@ final class CutoutSessionCoreTests: XCTestCase {
             annotations: ["durability=background"]
         ))
         await fulfillment(of: [started], timeout: 1)
+        XCTAssertNil(core.musicCaptureObservationForTesting)
+        core.updateMusicCaptureObservation(observation)
         let url = try XCTUnwrap(captureURL)
         defer { try? FileManager.default.removeItem(at: url) }
 
@@ -614,12 +627,66 @@ final class CutoutSessionCoreTests: XCTestCase {
         XCTAssertGreaterThan((attributes[.size] as? NSNumber)?.uint64Value ?? 0, 0)
         let capture = try String(contentsOf: url, encoding: .utf8)
         XCTAssertTrue(capture.contains("durability=background"))
+        XCTAssertTrue(capture.contains("writer-track"))
         XCTAssertTrue(capture.contains("capture_evidence=simulator_fixture"))
         XCTAssertFalse(capture.contains("capture_evidence=hardware_tested"))
 
         core.disconnectAndScan()
     }
 
+    func testCaptureMusicContextClearsBetweenWriters() {
+        var context = CaptureMusicContext()
+        let observation = MobilePevcapMusicEventDto(
+            provider: .appleMusic,
+            trackId: "track-1",
+            monotonicAtMs: 10,
+            wallClockUnixMs: 1_700_000_000_010,
+            clockUncertaintyMs: 5,
+            rideSequence: nil
+        )
+
+        context.update(observation)
+        XCTAssertEqual(context.current, observation)
+
+        XCTAssertEqual(context.take(), observation)
+        XCTAssertNil(context.current)
+
+        context.reset()
+
+        XCTAssertNil(context.current)
+    }
+
+    func testSyntheticCaptureTeardownClearsMusicContext() async {
+        let finished = expectation(description: "synthetic capture finishes")
+        let core = CutoutSessionCore(testScript: CutoutSessionTestScript(
+            candidate: scriptedVescCandidate,
+            telemetry: nil,
+            flushCaptureSucceeds: false,
+            connectionDelayMilliseconds: 0
+        ))
+        core.onCaptureEvent = { event in
+            if case .finished = event {
+                finished.fulfill()
+            }
+        }
+        let observation = MobilePevcapMusicEventDto(
+            provider: .appleMusic,
+            trackId: "synthetic-track",
+            monotonicAtMs: 10,
+            wallClockUnixMs: 1_700_000_000_010,
+            clockUncertaintyMs: 5,
+            rideSequence: 7
+        )
+
+        core.updateMusicCaptureObservation(observation)
+        XCTAssertTrue(core.recordOnly(platformIdentifier: scriptedVescCandidate.platformIdentifier))
+        XCTAssertEqual(core.musicCaptureObservationForTesting, observation)
+
+        core.disconnectAndScan()
+        await fulfillment(of: [finished], timeout: 1)
+
+        XCTAssertNil(core.musicCaptureObservationForTesting)
+    }
     func testObservedAdvertisementsReplaceDuplicatePeripheralRows() {
         let core = CutoutSessionCore()
 
