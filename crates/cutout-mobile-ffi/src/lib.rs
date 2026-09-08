@@ -1165,6 +1165,10 @@ pub struct MobileMelkLightingWriteDto {
 
 /// Capture-backed capabilities exposed to the mobile lighting UI.
 #[derive(Clone, Debug, Eq, PartialEq, uniffi::Record)]
+#[allow(
+    clippy::struct_excessive_bools,
+    reason = "independent capability flags mirror the typed protocol evidence"
+)]
 pub struct MobileMelkLightingCapabilitiesDto {
     /// Effect IDs with physical evidence on the MELK-OC21 controller.
     pub verified_effect_ids: Vec<u8>,
@@ -1180,6 +1184,7 @@ pub struct MobileMelkLightingCapabilitiesDto {
 
 /// Returns the conservative, capture-backed MELK-OC21 capability set.
 #[uniffi::export]
+#[must_use]
 pub fn mobile_melk_lighting_capabilities() -> MobileMelkLightingCapabilitiesDto {
     let capabilities = MelkLightingProfile::capabilities();
     MobileMelkLightingCapabilitiesDto {
@@ -1674,6 +1679,10 @@ impl MobileRgbLightingAccessoryRecord {
     }
 
     /// Removes a named app scene and reports whether it existed.
+    #[allow(
+        clippy::needless_pass_by_value,
+        reason = "String is the stable UniFFI ABI for this exported method"
+    )]
     pub fn remove_preset(&self, name: String) -> bool {
         self.inner
             .lock()
@@ -1682,6 +1691,10 @@ impl MobileRgbLightingAccessoryRecord {
     }
 
     /// Replaces a named app scene and reports whether it existed.
+    ///
+    /// # Errors
+    ///
+    /// Returns a typed record error when the replacement state or name is invalid.
     pub fn replace_preset(
         &self,
         name: String,
@@ -7969,6 +7982,11 @@ impl MobileRideMapCore {
 
     /// Records one transition and returns the authoritative sequence assigned
     /// by Rust when a new event is appended.
+    ///
+    /// # Errors
+    ///
+    /// Returns a typed ride-map error when the event is invalid, no ride is active,
+    /// or durable storage is unavailable.
     #[allow(clippy::needless_pass_by_value)]
     pub fn record_music_event_with_sequence(
         &self,
@@ -10586,7 +10604,7 @@ impl MobilePevcapCaptureBuilder {
 
     /// Sets the ride music-history policy used for future PEVCAP metadata.
     ///
-    /// Disabled drops all music observations. OpaqueItem drops provider identifiers that embed
+    /// Disabled drops all music observations. `OpaqueItem` drops provider identifiers that embed
     /// display metadata. Changing policy clears queued context so an earlier, more permissive
     /// choice cannot leak into a later frame. Existing PEVCAP files remain separate private
     /// capture artifacts and are not rewritten by ride-history deletion.
@@ -10743,6 +10761,11 @@ impl MobilePevcapCaptureBuilder {
     }
 
     /// Records an inbound notification with optional music correlation metadata.
+    ///
+    /// # Panics
+    ///
+    /// Panics only if the internal record builder rejects music metadata for an inbound record;
+    /// the builder's invariant guarantees that this cannot occur.
     #[allow(clippy::needless_pass_by_value, clippy::too_many_arguments)]
     pub fn record_notification_with_context_and_music(
         &self,
@@ -10807,37 +10830,34 @@ impl MobilePevcapCaptureBuilder {
         music: Option<MobilePevcapMusicEventDto>,
         frame_monotonic_ms: u64,
     ) -> Result<Option<PevcapMusicEvent>, ()> {
-        match music {
-            Some(music) => {
-                self.music_context
-                    .lock()
-                    .unwrap_or_else(PoisonError::into_inner)
-                    .clear();
-                let policy = *self
-                    .music_history_policy
-                    .lock()
-                    .unwrap_or_else(PoisonError::into_inner);
-                pevcap_music_event_for_policy(music, policy).map_err(|_| ())
+        if let Some(music) = music {
+            self.music_context
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .clear();
+            let policy = *self
+                .music_history_policy
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner);
+            return pevcap_music_event_for_policy(music, policy).map_err(|_| ());
+        }
+
+        let mut pending = self
+            .music_context
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        while let Some(candidate) = pending.front() {
+            if candidate.monotonic_at_ms > frame_monotonic_ms {
+                return Ok(None);
             }
-            None => {
-                let mut pending = self
-                    .music_context
-                    .lock()
-                    .unwrap_or_else(PoisonError::into_inner);
-                while let Some(candidate) = pending.front() {
-                    if candidate.monotonic_at_ms > frame_monotonic_ms {
-                        return Ok(None);
-                    }
-                    let candidate = pending.pop_front().expect("front exists");
-                    if frame_monotonic_ms.saturating_sub(candidate.monotonic_at_ms)
-                        <= PEVCAP_MUSIC_CONTEXT_FRESHNESS_MS
-                    {
-                        return Ok(Some(candidate.event));
-                    }
-                }
-                Ok(None)
+            let candidate = pending.pop_front().expect("front exists");
+            if frame_monotonic_ms.saturating_sub(candidate.monotonic_at_ms)
+                <= PEVCAP_MUSIC_CONTEXT_FRESHNESS_MS
+            {
+                return Ok(Some(candidate.event));
             }
         }
+        Ok(None)
     }
 
     fn metadata(&self) -> CaptureMetadata {
@@ -18179,6 +18199,10 @@ mod tests {
     }
 
     #[test]
+    #[allow(
+        clippy::too_many_lines,
+        reason = "the opt-in test exercises the complete ride and music transition contract"
+    )]
     fn music_transition_is_recorded_only_after_opt_in() {
         let _guard = RIDE_DATABASE_TEST_LOCK
             .lock()

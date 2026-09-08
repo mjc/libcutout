@@ -114,7 +114,7 @@ pub(super) fn finish_shutdown(service_id: Uuid) -> Result<(), StorageError> {
 }
 
 pub(super) fn worker_has_exited(service_id: Uuid) -> bool {
-    owner().lock().ok().is_some_and(|owner| {
+    owner().lock().is_ok_and(|owner| {
         owner.as_ref().is_some_and(|entry| {
             entry.service_id == service_id && !entry.worker_alive.load(Ordering::Acquire)
         })
@@ -122,7 +122,7 @@ pub(super) fn worker_has_exited(service_id: Uuid) -> bool {
 }
 
 pub(super) fn can_restart(service_id: Uuid) -> bool {
-    owner().lock().ok().is_some_and(|owner| {
+    owner().lock().is_ok_and(|owner| {
         owner
             .as_ref()
             .is_some_and(|entry| entry.service_id == service_id && !entry.shutting_down)

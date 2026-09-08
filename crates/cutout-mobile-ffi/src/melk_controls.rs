@@ -206,8 +206,8 @@ mod tests {
                     playback: Some(MobileLightingPlaybackDto::Effect { pattern: 16, speed }),
                 })
                 .unwrap();
-            assert_eq!(writes[1].payload, [0x7e, 5, 3, 16, 6, 255, 255, 0, 0xef]);
-            assert_eq!(writes[2], write);
+            assert_eq!(writes[0].payload, [0x7e, 5, 3, 16, 6, 255, 255, 0, 0xef]);
+            assert_eq!(writes[1], write);
             assert_eq!(
                 writes.last().unwrap().payload,
                 profile.set_power(false).payload
@@ -268,9 +268,9 @@ mod tests {
             }),
         };
         let writes = profile().apply_state(state).unwrap();
-        assert_eq!(writes.len(), 5);
-        assert_eq!(writes[1].payload, [0x7e, 5, 3, 16, 6, 255, 255, 0, 0xef]);
-        assert_eq!(writes[2].payload, [0x7e, 4, 2, 50, 255, 255, 255, 0, 0xef]);
+        assert_eq!(writes.len(), 4);
+        assert_eq!(writes[0].payload, [0x7e, 5, 3, 16, 6, 255, 255, 0, 0xef]);
+        assert_eq!(writes[1].payload, [0x7e, 4, 2, 50, 255, 255, 255, 0, 0xef]);
         assert_eq!(
             writes.last().unwrap().payload,
             profile().set_power(false).payload
@@ -292,7 +292,7 @@ mod tests {
         );
         state.playback = None;
         let writes = profile().apply_state(state).unwrap();
-        assert_eq!(writes[0].payload, [0x7e, 4, 7, 0, 255, 255, 255, 0, 0xef]);
+        assert_eq!(writes[0].payload, [0x7e, 0, 5, 3, 1, 2, 3, 0, 0xef]);
     }
     #[test]
     fn schedule_and_clock_errors_remain_distinct() {
