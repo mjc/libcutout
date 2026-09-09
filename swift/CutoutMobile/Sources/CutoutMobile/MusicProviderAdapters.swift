@@ -19,6 +19,7 @@ import Security
 public final class SpotifyProviderAdapter: NSObject, @preconcurrency SPTAppRemoteDelegate, @preconcurrency SPTAppRemotePlayerStateDelegate {
     public static let providerURL = URL(string: "spotify://")!
     private static let defaultRedirectURI = "cutout-spotify://spotify-login-callback"
+    private static let artworkSize = CGSize(width: 256, height: 256)
     private static let accessTokenKey = "io.cutout.music.spotify.access-token"
     private static let accessTokenAccount = "default"
 
@@ -30,6 +31,7 @@ public final class SpotifyProviderAdapter: NSObject, @preconcurrency SPTAppRemot
         }
     }
     private var playerState: SPTAppRemotePlayerState?
+    private var artwork: MusicArtwork?
     private var onChange: (@MainActor () -> Void)?
     private var lifecycleState: MobileMusicPlaybackStateDto = .disconnected
     private var monitoringGeneration: UInt64 = 0
@@ -173,6 +175,7 @@ public final class SpotifyProviderAdapter: NSObject, @preconcurrency SPTAppRemot
         authorizationTimeoutTask = nil
         playerStateRequest.reset()
         playerState = nil
+        artwork = nil
         connection = MobileMusicConnection()
         lifecycleState = .disconnected
     }
@@ -332,7 +335,7 @@ public final class SpotifyProviderAdapter: NSObject, @preconcurrency SPTAppRemot
                 openProvider: true
             )
         )
-        return MusicProviderObservation(snapshot: snapshot)
+        return MusicProviderObservation(snapshot: snapshot, artworkData: artwork?.data)
     }
 
     public func unavailableSnapshot(observedAtMs: UInt64) -> MobileMusicSnapshotDto {
@@ -427,14 +430,33 @@ public final class SpotifyProviderAdapter: NSObject, @preconcurrency SPTAppRemot
 
     public func playerStateDidChange(_ playerState: SPTAppRemotePlayerState) {
         guard onChange != nil else { return }
+        let trackChanged = self.playerState?.track.uri != playerState.track.uri
 #if DEBUG
-        if self.playerState?.track.uri != playerState.track.uri {
+        if trackChanged {
             print("spotify_player_state uri_bytes=\(playerState.track.uri.utf8.count) title_bytes=\(playerState.track.name.utf8.count) artist_bytes=\(playerState.track.artist.name.utf8.count) position=\(playerState.playbackPosition) duration=\(playerState.track.duration)")
         }
 #endif
         self.playerStateRequest.markObserved(nowMs: connectionNowMs)
         self.playerState = playerState
         lifecycleState = playerState.isPaused ? .paused : .playing
+        if trackChanged {
+            artwork = nil
+            let trackURI = playerState.track.uri
+            appRemote?.imageAPI?.fetchImage(
+                forItem: playerState.track,
+                with: Self.artworkSize,
+                callback: { [weak self] image, error in
+                    guard error == nil,
+                          let data = (image as? UIImage)?.jpegData(compressionQuality: 0.8)
+                    else { return }
+                    Task { @MainActor [weak self, data, trackURI] in
+                        guard let self, self.playerState?.track.uri == trackURI else { return }
+                        self.artwork = MusicArtwork(data: data)
+                        self.emitChange()
+                    }
+                }
+            )
+        }
         emitChange()
     }
 
