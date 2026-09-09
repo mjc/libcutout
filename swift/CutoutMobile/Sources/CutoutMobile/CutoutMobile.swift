@@ -6018,7 +6018,9 @@ public final class CoreBluetoothPeripheralOperationSink: CoreBluetoothOperationS
             return
         }
         guard peripheral.canSendWriteWithoutResponse else {
-            guard pendingWithoutResponseWrites.count < Self.maximumPendingWrites else { return }
+            if pendingWithoutResponseWrites.count >= Self.maximumPendingWrites {
+                pendingWithoutResponseWrites.removeFirst()
+            }
             pendingWithoutResponseWrites.append((characteristic, bytes))
             return
         }

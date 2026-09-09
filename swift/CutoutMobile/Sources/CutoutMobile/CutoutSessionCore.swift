@@ -2398,9 +2398,9 @@ extension CutoutSessionCore: CoreBluetoothOperationSink {
             return
         }
         guard peripheral.canSendWriteWithoutResponse else {
-            guard pendingWithoutResponseWrites.count < Self.maximumPendingWithoutResponseWrites else {
-                record("write_without_response_dropped=queue_full")
-                return
+            if pendingWithoutResponseWrites.count >= Self.maximumPendingWithoutResponseWrites {
+                pendingWithoutResponseWrites.removeFirst()
+                record("write_without_response_dropped=queue_full_oldest")
             }
             pendingWithoutResponseWrites.append((characteristic, bytes))
             record("write_without_response_queued=\(channel.coreBluetoothUuid.uuidString) bytes=\(bytes.count)")
