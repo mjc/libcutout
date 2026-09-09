@@ -1010,6 +1010,10 @@ public struct MusicCompactPlayer: View {
                 .accessibilityLabel(nowPlaying.artworkAccessibilityLabel)
         } else {
             Image(systemName: "music.note")
+                .font(.title3)
+                .frame(width: 44, height: 44)
+                .background(PevDashboardColors.yellow.opacity(0.16), in: RoundedRectangle(cornerRadius: 12))
+                .foregroundStyle(PevDashboardColors.yellow)
                 .accessibilityHidden(true)
         }
 #elseif canImport(AppKit)
@@ -1096,6 +1100,14 @@ private struct MusicPlayerIconButton: View {
     }
 
     var body: some View {
+        if let accessibilityIdentifier, !accessibilityIdentifier.isEmpty {
+            button.accessibilityIdentifier(accessibilityIdentifier)
+        } else {
+            button
+        }
+    }
+
+    private var button: some View {
         Button(action: action) {
             Image(systemName: systemImage)
                 .frame(minWidth: isProminent ? 36 : 30, minHeight: 36)
@@ -1106,7 +1118,6 @@ private struct MusicPlayerIconButton: View {
         }
         .buttonStyle(.plain)
         .accessibilityLabel(label)
-        .accessibilityIdentifier(accessibilityIdentifier ?? "")
     }
 }
 

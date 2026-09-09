@@ -33,6 +33,7 @@ public final class SpotifyProviderAdapter: NSObject, @preconcurrency SPTAppRemot
     private var onChange: (@MainActor () -> Void)?
     private var lifecycleState: MobileMusicPlaybackStateDto = .disconnected
     private var monitoringGeneration: UInt64 = 0
+    private var connectionAttemptIDs = [ObjectIdentifier: UInt64]()
     private let playerStateRequest = MobileMusicPlayerRequest()
     private var connection = MobileMusicConnection()
     private var authorizationTimeoutTask: Task<Void, Never>?
@@ -121,16 +122,14 @@ public final class SpotifyProviderAdapter: NSObject, @preconcurrency SPTAppRemot
             emitChange()
             return
         }
-        let appRemote = SPTAppRemote(configuration: configuration, logLevel: .error)
-        self.appRemote = appRemote
-        appRemote.delegate = self
-        lifecycleState = .buffering
-        emitChange()
         if let accessToken {
             authorizationTimeoutTask?.cancel()
             authorizationTimeoutTask = nil
-            connect(appRemote, with: accessToken)
+            connect(with: accessToken)
         } else {
+            let appRemote = makeAppRemote(configuration)
+            lifecycleState = .buffering
+            emitChange()
             authorizationInFlight = true
             let generation = monitoringGeneration
             appRemote.authorizeAndPlayURI("") { [weak self] installed in
@@ -142,7 +141,7 @@ public final class SpotifyProviderAdapter: NSObject, @preconcurrency SPTAppRemot
                     self.emitChange()
                 }
             }
-            authorizationTimeoutTask = Task { [weak self] in
+            authorizationTimeoutTask = Task { @MainActor [weak self] in
                 do {
                     try await Task.sleep(for: .seconds(20))
                 } catch {
@@ -164,6 +163,7 @@ public final class SpotifyProviderAdapter: NSObject, @preconcurrency SPTAppRemot
         appRemote?.delegate = nil
         appRemote?.disconnect()
         appRemote = nil
+        connectionAttemptIDs.removeAll()
         authorizationTimeoutTask?.cancel()
         authorizationTimeoutTask = nil
         playerStateRequest.reset()
@@ -177,15 +177,26 @@ public final class SpotifyProviderAdapter: NSObject, @preconcurrency SPTAppRemot
     /// the next explicit setup starts authorization again.
     public func ensureConnection() {
         guard onChange != nil,
-              let appRemote,
-              !appRemote.isConnected,
+              appRemote?.isConnected != true,
               let accessToken
         else { return }
-        connect(appRemote, with: accessToken)
+        connect(with: accessToken)
     }
 
-    private func connect(_ appRemote: SPTAppRemote, with accessToken: String) {
-        guard connection.beginAttempt(nowMs: connectionNowMs) else { return }
+    private func makeAppRemote(_ configuration: SPTConfiguration) -> SPTAppRemote {
+        let appRemote = SPTAppRemote(configuration: configuration, logLevel: .error)
+        self.appRemote = appRemote
+        appRemote.delegate = self
+        return appRemote
+    }
+
+    private func connect(with accessToken: String) {
+        guard let configuration,
+              let attemptID = connection.beginAttemptId(nowMs: connectionNowMs) else { return }
+        // Every retry gets a fresh SDK object. This makes an old callback
+        // unambiguously stale instead of letting it mutate the new attempt.
+        let appRemote = makeAppRemote(configuration)
+        connectionAttemptIDs[ObjectIdentifier(appRemote)] = attemptID
         appRemote.connectionParameters.accessToken = accessToken
         appRemote.connect()
     }
@@ -240,7 +251,8 @@ public final class SpotifyProviderAdapter: NSObject, @preconcurrency SPTAppRemot
             appRemote.connectionParameters.accessToken = token
             if onChange != nil {
                 connection = MobileMusicConnection()
-                connect(appRemote, with: token)
+                connectionAttemptIDs.removeAll()
+                connect(with: token)
             }
 #if DEBUG
             print("spotify_callback_token accepted")
@@ -324,13 +336,14 @@ public final class SpotifyProviderAdapter: NSObject, @preconcurrency SPTAppRemot
 
     public func appRemoteDidEstablishConnection(_ appRemote: SPTAppRemote) {
         guard appRemote === self.appRemote, onChange != nil else { return }
+        guard let attemptID = connectionAttemptIDs[ObjectIdentifier(appRemote)],
+              connection.establishedFor(attemptId: attemptID) else { return }
 #if DEBUG
         print("spotify_connection_established")
 #endif
         monitoringGeneration &+= 1
         authorizationTimeoutTask?.cancel()
         authorizationTimeoutTask = nil
-        connection.established()
         playerStateRequest.reset()
         lifecycleState = .buffering
         appRemote.playerAPI?.delegate = self
@@ -353,14 +366,17 @@ public final class SpotifyProviderAdapter: NSObject, @preconcurrency SPTAppRemot
         didFailConnectionAttemptWithError error: Error?
     ) {
         guard appRemote === self.appRemote, onChange != nil else { return }
+        guard let attemptID = connectionAttemptIDs[ObjectIdentifier(appRemote)],
+              connection.failedFor(attemptId: attemptID, nowMs: connectionNowMs) else { return }
+        connectionAttemptIDs.removeValue(forKey: ObjectIdentifier(appRemote))
         monitoringGeneration &+= 1
-        connection.failed(nowMs: connectionNowMs)
         authorizationTimeoutTask?.cancel()
         authorizationTimeoutTask = nil
         // App Remote reports transport and wakeup failures here too. A generic
         // connection failure is not evidence that the credential was rejected.
         lifecycleState = .disconnected
         playerStateRequest.reset()
+        self.appRemote = nil
 #if DEBUG
         if let error = error as NSError? {
             print("spotify_connection_failed domain=\(error.domain) code=\(error.code)")
@@ -371,8 +387,11 @@ public final class SpotifyProviderAdapter: NSObject, @preconcurrency SPTAppRemot
 
     public func appRemote(_ appRemote: SPTAppRemote, didDisconnectWithError error: Error?) {
         guard appRemote === self.appRemote, onChange != nil else { return }
+        guard let attemptID = connectionAttemptIDs[ObjectIdentifier(appRemote)],
+              connection.disconnectedFor(attemptId: attemptID, nowMs: connectionNowMs) else { return }
+        connectionAttemptIDs.removeValue(forKey: ObjectIdentifier(appRemote))
         monitoringGeneration &+= 1
-        connection.disconnected(nowMs: connectionNowMs)
+        self.appRemote = nil
         playerStateRequest.reset()
         lifecycleState = error == nil ? .disconnected : .stale
 #if DEBUG

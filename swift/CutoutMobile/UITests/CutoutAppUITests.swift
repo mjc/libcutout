@@ -162,19 +162,19 @@ final class CutoutAppUITests: XCTestCase {
         try await super.tearDown()
     }
 
-    func testPickerSetupOpensGeneralSettingsWithoutConnectingMusic() {
-        verifySetupNavigation()
+    func testPickerSetupOpensGeneralSettingsWithoutConnectingMusic() throws {
+        try verifySetupNavigation()
     }
 
-    func testPickerSetupOpensGeneralSettingsInDarkAppearanceAtAccessibilityDynamicType() {
-        verifySetupNavigation()
+    func testPickerSetupOpensGeneralSettingsInDarkAppearanceAtAccessibilityDynamicType() throws {
+        try verifySetupNavigation()
     }
 
-    func testPickerSetupOpensGeneralSettingsInLightAppearanceAtAccessibilityDynamicType() {
-        verifySetupNavigation()
+    func testPickerSetupOpensGeneralSettingsInLightAppearanceAtAccessibilityDynamicType() throws {
+        try verifySetupNavigation()
     }
 
-    private func verifySetupNavigation() {
+    private func verifySetupNavigation() throws {
         let setup = app.buttons["device-picker.open-setup"]
         XCTAssertTrue(setup.waitForExistence(timeout: 5))
         XCTAssertTrue(setup.isHittable)
@@ -188,6 +188,7 @@ final class CutoutAppUITests: XCTestCase {
         XCTAssertTrue(app.buttons["music.provider-picker"].isHittable)
         XCTAssertTrue(app.buttons["music.history-picker"].exists)
         XCTAssertEqual(app.state, .runningForeground)
+        try performVisibleLayoutAccessibilityAudit()
         let done = app.buttons["setup.done"]
         XCTAssertTrue(done.isHittable)
         done.tap()
