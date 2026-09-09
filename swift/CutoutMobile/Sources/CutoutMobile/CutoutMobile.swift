@@ -5222,6 +5222,14 @@ public protocol CoreBluetoothOperationSink: AnyObject {
     func disconnect()
 }
 
+public extension CoreBluetoothOperationSink {
+    /// Flushes writes retained while CoreBluetooth reported a full no-response queue.
+    func peripheralIsReadyToSendWithoutResponse() {}
+
+    /// Discards writes retained for a disconnected connection generation.
+    func clearPendingWithoutResponseWrites() {}
+}
+
 public struct CoreBluetoothOperationExecutor {
     private weak var sink: CoreBluetoothOperationSink?
 
@@ -5440,6 +5448,7 @@ public final class CoreBluetoothLiveSessionOwner: @unchecked Sendable {
     @discardableResult
     public func handleLinkDown(at monotonicMilliseconds: MonotonicMilliseconds) throws -> CoreBluetoothSessionStep {
         cancelPendingRetry()
+        retainedSink.clearPendingWithoutResponseWrites()
         pendingOperationsAfterSubscription.removeAll()
         waitingForSubscriptionChannel = nil
         let step = try runner.handle(.linkDown(at: monotonicMilliseconds))
@@ -5466,6 +5475,11 @@ public final class CoreBluetoothLiveSessionOwner: @unchecked Sendable {
         let pending = pendingOperationsAfterSubscription
         pendingOperationsAfterSubscription.removeAll()
         executeAndRecord(pending)
+    }
+
+    /// Forwards CoreBluetooth's ready-to-send callback to the operation sink.
+    public func handlePeripheralIsReadyToSendWithoutResponse() {
+        retainedSink.peripheralIsReadyToSendWithoutResponse()
     }
 
     private func executeAndRecord(_ operations: [CoreBluetoothPlannedOperation]) {
@@ -5896,6 +5910,8 @@ private extension CoreBluetoothCharacteristicProperty {
 
 public final class CoreBluetoothPeripheralOperationSink: CoreBluetoothOperationSink {
     private let peripheral: CBPeripheral
+    private var pendingWithoutResponseWrites: [(CBCharacteristic, Data)] = []
+    private static let maximumPendingWrites = 64
 
     public init(peripheral: CBPeripheral) {
         self.peripheral = peripheral
@@ -5912,7 +5928,23 @@ public final class CoreBluetoothPeripheralOperationSink: CoreBluetoothOperationS
         guard let characteristic = peripheral.characteristic(for: channel) else {
             return
         }
+        guard peripheral.canSendWriteWithoutResponse else {
+            guard pendingWithoutResponseWrites.count < Self.maximumPendingWrites else { return }
+            pendingWithoutResponseWrites.append((characteristic, bytes))
+            return
+        }
         peripheral.writeValue(bytes, for: characteristic, type: .withoutResponse)
+    }
+
+    public func peripheralIsReadyToSendWithoutResponse() {
+        while peripheral.canSendWriteWithoutResponse, !pendingWithoutResponseWrites.isEmpty {
+            let (characteristic, bytes) = pendingWithoutResponseWrites.removeFirst()
+            peripheral.writeValue(bytes, for: characteristic, type: .withoutResponse)
+        }
+    }
+
+    public func clearPendingWithoutResponseWrites() {
+        pendingWithoutResponseWrites.removeAll()
     }
 
     public func disconnect() {
