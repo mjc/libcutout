@@ -6003,6 +6003,9 @@ pub enum RideWarning {
     /// The controller is applying duty-based pushback.
     DutyPushback,
 
+    /// The controller is applying speed-based pushback.
+    SpeedPushback,
+
     /// The controller is applying temperature-based pushback.
     TemperaturePushback,
 
@@ -6015,6 +6018,8 @@ pub enum RideWarning {
     LowBattery,
     /// The package reports an error warning.
     Error,
+    /// The package cannot communicate with its battery-management system.
+    BmsConnection,
 }
 
 /// Protocol-decoded reason that the controller stopped balancing.

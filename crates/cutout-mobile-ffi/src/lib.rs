@@ -7960,6 +7960,8 @@ pub enum MobileVescRideWarningDto {
 
     /// The controller is applying duty-based pushback.
     DutyPushback,
+    /// The controller is applying speed-based pushback.
+    SpeedPushback,
     /// The controller is applying temperature-based pushback.
     TemperaturePushback,
     /// The controller reports active wheel slip.
@@ -7970,6 +7972,8 @@ pub enum MobileVescRideWarningDto {
     LowBattery,
     /// The package reports an error warning.
     Error,
+    /// The package cannot communicate with its battery-management system.
+    BmsConnection,
 }
 
 /// Reason a VESC float controller stopped balancing.
@@ -8015,11 +8019,13 @@ impl From<RideWarningDto> for MobileVescRideWarningDto {
             RideWarningDto::MotorTemperature => Self::MotorTemperature,
             RideWarningDto::Current => Self::Current,
             RideWarningDto::DutyPushback => Self::DutyPushback,
+            RideWarningDto::SpeedPushback => Self::SpeedPushback,
             RideWarningDto::TemperaturePushback => Self::TemperaturePushback,
             RideWarningDto::Wheelslip => Self::Wheelslip,
             RideWarningDto::Sensors => Self::Sensors,
             RideWarningDto::LowBattery => Self::LowBattery,
             RideWarningDto::Error => Self::Error,
+            RideWarningDto::BmsConnection => Self::BmsConnection,
         }
     }
 }

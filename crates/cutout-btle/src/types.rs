@@ -16,6 +16,9 @@ use crate::{
     },
 };
 
+const VESC_WRITE_UUID: Uuid = Uuid::from_u128(0x6e400002_b5a3_f393_e0a9_e50e24dcca9e);
+const VESC_NOTIFY_UUID: Uuid = Uuid::from_u128(0x6e400003_b5a3_f393_e0a9_e50e24dcca9e);
+
 /// Service summaries carried inline for the common single-GATT-service devices.
 pub type ServiceSummaries = SmallVec<[ServiceSummary; 4]>;
 
@@ -252,19 +255,27 @@ impl ConnectionSummary {
     /// Selects session endpoints from the discovered tree.
     #[must_use]
     pub fn select_session_endpoints(&self) -> Option<SessionEndpoints<'_>> {
-        let write = self.write_candidates().next()?;
+        let write = self
+            .write_candidates()
+            .find(|characteristic| characteristic.uuid == VESC_WRITE_UUID)
+            .or_else(|| self.write_candidates().next())?;
         let notify = self
             .services
             .iter()
             .flat_map(|service| service.characteristics.iter())
             .find(|characteristic| {
-                characteristic.service_uuid == write.service_uuid && characteristic.can_notify()
+                characteristic.uuid == VESC_NOTIFY_UUID
+                    && characteristic.service_uuid == write.service_uuid
+                    && characteristic.can_notify()
             })
             .or_else(|| {
                 self.services
                     .iter()
                     .flat_map(|service| service.characteristics.iter())
-                    .find(|characteristic| characteristic.can_notify())
+                    .find(|characteristic| {
+                        characteristic.service_uuid == write.service_uuid
+                            && characteristic.can_notify()
+                    })
             });
 
         Some(SessionEndpoints { write, notify })

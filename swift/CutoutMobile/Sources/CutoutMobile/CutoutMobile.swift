@@ -1673,11 +1673,13 @@ public enum VescRideWarning: Equatable, Hashable, Sendable {
     case motorTemperature
     case current
     case dutyPushback
+    case speedPushback
     case temperaturePushback
     case wheelslip
     case sensors
     case lowBattery
     case error
+    case bmsConnection
     case unknown
 
     fileprivate init(_ dto: MobileVescRideWarningDto) {
@@ -1696,6 +1698,8 @@ public enum VescRideWarning: Equatable, Hashable, Sendable {
             self = .current
         case .dutyPushback:
             self = .dutyPushback
+        case .speedPushback:
+            self = .speedPushback
         case .temperaturePushback:
             self = .temperaturePushback
         case .wheelslip:
@@ -1706,6 +1710,8 @@ public enum VescRideWarning: Equatable, Hashable, Sendable {
             self = .lowBattery
         case .error:
             self = .error
+        case .bmsConnection:
+            self = .bmsConnection
         }
     }
 }
@@ -2237,9 +2243,9 @@ private func rideHeroSeverity(_ warning: VescRideWarning) -> RideHeroSeverity {
     switch warning {
     case .none: .nominal
     case .lowVoltage, .highVoltage, .mosfetTemperature, .motorTemperature,
-         .current, .dutyPushback, .temperaturePushback, .wheelslip, .sensors, .lowBattery:
+         .current, .dutyPushback, .speedPushback, .temperaturePushback, .wheelslip, .sensors, .lowBattery:
         .caution
-    case .error: .critical
+    case .error, .bmsConnection: .critical
     case .unknown: .unavailable
     }
 }

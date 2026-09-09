@@ -36,6 +36,10 @@ const REFLOAT_MAX_FRAME_LEN: usize = 512;
 const INFO_STRING_LEN: usize = 20;
 const INFO_V2_BODY_LEN: usize = 58;
 const REFLOAT_BEEP_DUTY: u8 = 6;
+const REFLOAT_SAT_PUSHBACK_SPEED: u8 = 5;
+const REFLOAT_SAT_BMS_ERROR: u8 = 7;
+const REFLOAT_BEEP_PUSHBACK_SPEED: u8 = 11;
+const REFLOAT_BEEP_BMS_ERROR: u8 = 17;
 
 /// Refloat read-only package request.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -211,36 +215,47 @@ impl RefloatRealtimeData {
     ) -> TelemetryDelta {
         let stop_reason = refloat_stop_reason(self.stop_condition);
         TelemetryDelta {
-            speed: self.value("motor.speed").map(|metres_per_second| {
-                Measured::reported(Speed::from_metres_per_second(metres_per_second))
-            }),
+            speed: self
+                .value("speed")
+                .map(|kilometres_per_hour| {
+                    Measured::reported(Speed::from_metres_per_second(kilometres_per_hour / 3.6))
+                })
+                .or_else(|| {
+                    self.value("motor.speed").map(|metres_per_second| {
+                        Measured::reported(Speed::from_metres_per_second(metres_per_second))
+                    })
+                }),
             battery_current: reports_battery_current
-                .then(|| self.value("motor.batt_current"))
+                .then(|| self.value_with_legacy("batt_current", "motor.batt_current"))
                 .flatten()
                 .map(|amps| Measured::reported(BatteryCurrent::from_milliamps(milliscale(amps)))),
             voltage: self
-                .value("motor.batt_voltage")
+                .value_with_legacy("batt_voltage", "motor.batt_voltage")
                 .map(|volts| Measured::reported(Voltage::from_millivolts(milliscale(volts)))),
             motor_current: self
-                .value("motor.current")
+                .value_with_legacy("current", "motor.current")
                 .map(|amps| Measured::reported(PhaseCurrent::from_milliamps(milliscale(amps)))),
-            controller_temperature: self.value("motor.mosfet_temp").map(|celsius| {
-                Measured::reported(Temperature::from_millicelsius(milliscale(celsius)))
-            }),
-            motor_temperature: self.value("motor.motor_temp").map(|celsius| {
-                Measured::reported(Temperature::from_millicelsius(milliscale(celsius)))
-            }),
+            controller_temperature: self
+                .value_with_legacy("mosfet_temp", "motor.mosfet_temp")
+                .map(|celsius| {
+                    Measured::reported(Temperature::from_millicelsius(milliscale(celsius)))
+                }),
+            motor_temperature: self
+                .value_with_legacy("motor_temp", "motor.motor_temp")
+                .map(|celsius| {
+                    Measured::reported(Temperature::from_millicelsius(milliscale(celsius)))
+                }),
             pwm: self
-                .value("motor.duty_cycle")
+                .value_with_legacy("duty_cycle", "motor.duty_cycle")
                 .map(|duty| Measured::reported(DutyCycle::from_permille(permille(duty)))),
             pitch: self
-                .value("imu.pitch")
+                .value_with_legacy("pitch", "imu.pitch")
                 .map(|degrees| Measured::reported(Angle::from_millidegrees(milliscale(degrees)))),
             balance_angle: self
-                .value("imu.balance_pitch")
+                .value_with_legacy("balance_pitch", "imu.balance_pitch")
                 .map(|degrees| Measured::reported(Angle::from_millidegrees(milliscale(degrees)))),
             roll: self
-                .value("imu.roll")
+                .value_with_legacy("roll", "imu.roll")
                 .map(|degrees| Measured::reported(Angle::from_millidegrees(milliscale(degrees)))),
             operating_state: Some(refloat_operating_state(self.package_state, self.charging)),
             operating_mode: Some(refloat_operating_mode(self.package_mode, self.darkride)),
@@ -257,8 +272,12 @@ impl RefloatRealtimeData {
             footpad: Some(FootpadTelemetry {
                 state: self.footpad_state,
                 contact_state: refloat_footpad_contact_state(self.footpad_state),
-                adc1_milliunits: self.value("footpad.adc1").map(milliscale),
-                adc2_milliunits: self.value("footpad.adc2").map(milliscale),
+                adc1_milliunits: self
+                    .value_with_legacy("adc_left", "footpad.adc1")
+                    .map(milliscale),
+                adc2_milliunits: self
+                    .value_with_legacy("adc_right", "footpad.adc2")
+                    .map(milliscale),
             }),
             ..TelemetryDelta::empty(at_ms)
         }
@@ -270,6 +289,10 @@ impl RefloatRealtimeData {
             .chain(self.runtime_values.iter())
             .find(|value| value.id.as_str() == id)
             .map(|value| value.value)
+    }
+
+    fn value_with_legacy(&self, current: &str, legacy: &str) -> Option<f32> {
+        self.value(current).or_else(|| self.value(legacy))
     }
 }
 
@@ -297,7 +320,9 @@ const fn refloat_operating_mode(package_mode: u8, darkride: bool) -> RideOperati
 
 const fn refloat_ride_warning(sat: u8, beep_reason: u8) -> RideWarning {
     match sat {
+        REFLOAT_SAT_PUSHBACK_SPEED => return RideWarning::SpeedPushback,
         6 => return RideWarning::DutyPushback,
+        REFLOAT_SAT_BMS_ERROR => return RideWarning::BmsConnection,
         10 => return RideWarning::HighVoltage,
         11 => return RideWarning::LowVoltage,
         12 => return RideWarning::TemperaturePushback,
@@ -313,6 +338,8 @@ const fn refloat_ride_warning(sat: u8, beep_reason: u8) -> RideWarning {
         7 => RideWarning::Sensors,
         8 => RideWarning::LowBattery,
         10 => RideWarning::Error,
+        REFLOAT_BEEP_PUSHBACK_SPEED => RideWarning::SpeedPushback,
+        REFLOAT_BEEP_BMS_ERROR => RideWarning::BmsConnection,
         _ => RideWarning::None,
     }
 }
@@ -860,7 +887,6 @@ fn float16_to_f32(bits: u16) -> f32 {
             frac &= 0x03ff;
             sign | (u32::try_from(exp + 127).unwrap_or(0) << 23) | (frac << 13)
         }
-        0x1f => sign | 0x7f80_0000 | (fraction << 13),
         _ => sign | ((exponent + 112) << 23) | (fraction << 13),
     };
     f32::from_bits(output)
@@ -1132,6 +1158,78 @@ mod tests {
     }
 
     #[test]
+    fn realtime_data_maps_refloat_1_3_short_field_ids() {
+        let mut values = ArrayVec::new();
+        for (id, value) in [
+            ("speed", 36.0),
+            ("current", 3.0),
+            ("batt_current", -4.0),
+            ("batt_voltage", 75.5),
+            ("mosfet_temp", 32.0),
+            ("motor_temp", 48.0),
+            ("duty_cycle", 0.25),
+            ("pitch", -1.5),
+            ("balance_pitch", 0.5),
+            ("roll", 2.0),
+            ("adc_left", 10.0),
+            ("adc_right", 11.0),
+        ] {
+            values.push(RefloatRealtimeValue {
+                id: field_id(id),
+                value,
+            });
+        }
+        let data = RefloatRealtimeData {
+            mask: 0,
+            extra_flags: 0,
+            time_ticks: 0,
+            package_state: REFLOAT_PACKAGE_STATE_RUNNING,
+            package_mode: 0,
+            footpad_state: 3,
+            charging: false,
+            fatal_error: None,
+            darkride: false,
+            wheelslip: false,
+            stop_condition: 0,
+            sat: 0,
+            beep_reason: 0,
+            values,
+            runtime_values: ArrayVec::new(),
+            charging_current: None,
+            charging_voltage: None,
+            active_alert_mask_low: None,
+            active_alert_mask_high: None,
+            firmware_fault_code: None,
+        };
+
+        let delta = data.to_delta(MonotonicTimestamp::from_milliseconds(42), true);
+        assert_eq!(
+            delta
+                .speed
+                .map(|value| value.value.as_millimetres_per_second()),
+            Some(10_000)
+        );
+        assert_eq!(
+            delta.voltage.map(|value| value.value.as_millivolts()),
+            Some(75_500)
+        );
+        assert_eq!(
+            delta.pitch.map(|value| value.value.as_millidegrees()),
+            Some(-1_500)
+        );
+        assert_eq!(delta.footpad.unwrap().adc1_milliunits, Some(10_000));
+        assert_eq!(delta.footpad.unwrap().adc2_milliunits, Some(11_000));
+    }
+
+    #[test]
+    fn finite_refloat_float16_keeps_extended_exponent_values_finite() {
+        assert_eq!(float16_to_f32(0x7c00), 65_536.0);
+        assert_eq!(float16_to_f32(0x7fff), 131_008.0);
+        assert_eq!(float16_to_f32(0xfc00), -65_536.0);
+        assert_eq!(float16_to_f32(0xffff), -131_008.0);
+    }
+
+    #[test]
     fn realtime_data_maps_named_refloat_fields_to_shared_telemetry() {
         let mut decoder = RefloatStreamDecoder::new();
         decoder
@@ -1259,6 +1357,8 @@ mod tests {
             (4, RideWarning::MotorTemperature),
             (5, RideWarning::Current),
             (REFLOAT_BEEP_DUTY, RideWarning::DutyPushback),
+            (REFLOAT_BEEP_PUSHBACK_SPEED, RideWarning::SpeedPushback),
+            (REFLOAT_BEEP_BMS_ERROR, RideWarning::BmsConnection),
             (7, RideWarning::Sensors),
             (8, RideWarning::LowBattery),
             (9, RideWarning::None),
@@ -1287,7 +1387,9 @@ mod tests {
 
         data.wheelslip = false;
         for (sat, warning) in [
+            (REFLOAT_SAT_PUSHBACK_SPEED, RideWarning::SpeedPushback),
             (6, RideWarning::DutyPushback),
+            (REFLOAT_SAT_BMS_ERROR, RideWarning::BmsConnection),
             (10, RideWarning::HighVoltage),
             (11, RideWarning::LowVoltage),
             (12, RideWarning::TemperaturePushback),

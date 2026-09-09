@@ -577,6 +577,33 @@ impl ReadOnlyNotificationDecoder for VescNotificationDecoder {
         monotonic_ms: MonotonicTimestamp,
         output: &mut Vec<SessionOutput>,
     ) {
+        if let Some(frame_len) = complete_vesc_frame_len(bytes) {
+            let frame = &bytes[..frame_len];
+            self.handle_notification_chunk(family, channel, frame, monotonic_ms, output);
+            if frame_len < bytes.len() {
+                self.handle_notification(
+                    family,
+                    channel,
+                    &bytes[frame_len..],
+                    monotonic_ms,
+                    output,
+                );
+            }
+            return;
+        }
+        self.handle_notification_chunk(family, channel, bytes, monotonic_ms, output);
+    }
+}
+
+impl VescNotificationDecoder {
+    fn handle_notification_chunk(
+        &mut self,
+        family: ProtocolFamily,
+        channel: GattChannel,
+        bytes: &[u8],
+        monotonic_ms: MonotonicTimestamp,
+        output: &mut Vec<SessionOutput>,
+    ) {
         if self.handle_refloat_notification(family, channel, bytes, monotonic_ms, output) {
             return;
         }
@@ -653,6 +680,19 @@ impl ReadOnlyNotificationDecoder for VescNotificationDecoder {
             }
         }
     }
+}
+
+fn complete_vesc_frame_len(bytes: &[u8]) -> Option<usize> {
+    let (header_len, payload_len) = match bytes.first().copied()? {
+        2 => (2_usize, usize::from(*bytes.get(1)?)),
+        3 => (
+            3_usize,
+            usize::from(u16::from_be_bytes([*bytes.get(1)?, *bytes.get(2)?])),
+        ),
+        _ => return None,
+    };
+    let total_len = header_len.checked_add(payload_len)?.checked_add(3)?;
+    (bytes.len() >= total_len && bytes.get(total_len - 1) == Some(&3)).then_some(total_len)
 }
 
 const fn vesc_reply_event_count(reply: &VescReadOnlyReply) -> SemanticEventCount {

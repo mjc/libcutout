@@ -22,6 +22,7 @@ const VESC_FRAME_START_SHORT: u8 = 2;
 const VESC_FRAME_START_LONG: u8 = 3;
 const VESC_FRAME_END: u8 = 3;
 const VESC_COMM_GET_VALUES: u8 = 4;
+const VESC_COMM_GET_STATS: u8 = 128;
 const VESC_COMM_GET_MCCONF: u8 = 14;
 const VESC_COMM_GET_VALUES_SELECTIVE: u8 = 50;
 const VESC_COMM_GET_MCCONF_TEMP: u8 = 91;
@@ -125,6 +126,12 @@ bitflags::bitflags! {
         const CURRENT_AVG = 1 << 4;
         /// Maximum current.
         const CURRENT_MAX = 1 << 5;
+        /// Average MOSFET temperature.
+        const TEMP_MOSFET_AVG = 1 << 6;
+        /// Maximum MOSFET temperature.
+        const TEMP_MOSFET_MAX = 1 << 7;
+        /// Average motor temperature.
+        const TEMP_MOTOR_AVG = 1 << 8;
         /// Maximum motor temperature.
         const TEMP_MOTOR_MAX = 1 << 9;
         /// Statistics accumulation time.
@@ -457,21 +464,40 @@ impl MotorPolePairs {
     }
 }
 
-/// Mechanical gear-reduction denominator.
+/// Mechanical gear-reduction denominator stored in thousandths.
 #[repr(transparent)]
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub struct GearRatioDenominator(u8);
+pub struct GearRatioDenominator(u32);
 
 impl GearRatioDenominator {
     /// Creates a gear-reduction denominator.
     #[must_use]
     pub const fn new(value: u8) -> Self {
-        Self(value)
+        Self((value as u32) * 1_000)
+    }
+
+    /// Creates a denominator from a finite positive VESC ratio.
+    #[must_use]
+    pub fn from_ratio(value: f32) -> Option<Self> {
+        if !value.is_finite() || value <= 0.0 {
+            return None;
+        }
+        let scaled = (value * 1_000.0).round();
+        if scaled > u32::MAX as f32 {
+            return None;
+        }
+        Some(Self(scaled as u32))
     }
 
     /// Returns the gear-reduction denominator.
     #[must_use]
     pub const fn get(self) -> u8 {
+        (self.0 / 1_000) as u8
+    }
+
+    /// Returns the ratio in thousandths.
+    #[must_use]
+    pub const fn as_milli(self) -> u32 {
         self.0
     }
 }
@@ -479,6 +505,8 @@ impl GearRatioDenominator {
 /// Owned VESC statistics telemetry subset.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct VescStatsTelemetry {
+    /// Statistics fields present in this reply.
+    pub present_fields: VescStatsMask,
     /// Average speed.
     pub speed_avg: Speed,
 
@@ -491,14 +519,42 @@ pub struct VescStatsTelemetry {
     /// Maximum power.
     pub power_max: Power,
 
-    /// Average current.
-    pub current_avg: BatteryCurrent,
+    /// Average motor current reported by the controller.
+    pub current_avg: PhaseCurrent,
 
     /// Peak current.
     pub peak_current: PeakCurrent,
 
+    /// Average MOSFET temperature, when requested.
+    pub mosfet_temperature_avg: Temperature,
+    /// Maximum MOSFET temperature, when requested.
+    pub mosfet_temperature_max: Temperature,
+    /// Average motor temperature, when requested.
+    pub motor_temperature_avg: Temperature,
+    /// Maximum motor temperature, when requested.
+    pub motor_temperature_max: Temperature,
+
     /// Statistics accumulation time.
     pub count_time: Duration,
+}
+
+impl Default for VescStatsTelemetry {
+    fn default() -> Self {
+        Self {
+            present_fields: VescStatsMask::empty(),
+            speed_avg: Speed::from_millimetres_per_second(0),
+            speed_max: Speed::from_millimetres_per_second(0),
+            power_avg: Power::from_watts_f32(0.0),
+            power_max: Power::from_watts_f32(0.0),
+            current_avg: PhaseCurrent::from_milliamps(0),
+            peak_current: PeakCurrent::from_milliamps(0),
+            mosfet_temperature_avg: Temperature::from_millicelsius(0),
+            mosfet_temperature_max: Temperature::from_millicelsius(0),
+            motor_temperature_avg: Temperature::from_millicelsius(0),
+            motor_temperature_max: Temperature::from_millicelsius(0),
+            count_time: Duration::from_milliseconds(0),
+        }
+    }
 }
 
 /// VESC speed geometry from motor setup config.
@@ -680,11 +736,21 @@ impl VescBoardProfile {
         if !self.calculates_speed {
             return None;
         }
-        erpm.as_speed(
-            self.motor_pole_pairs.get(),
-            self.gear_ratio_denominator.get(),
-            self.wheel_circumference,
-        )
+        let wheel_circumference_mm =
+            i64::try_from(self.wheel_circumference.as_millimetres()).ok()?;
+        let denominator = i64::from(self.motor_pole_pairs.get())
+            .checked_mul(i64::from(self.gear_ratio_denominator.as_milli()))?
+            .checked_mul(60)?;
+        if denominator == 0 {
+            return None;
+        }
+        let numerator = i64::from(erpm.as_erpm())
+            .checked_mul(wheel_circumference_mm)?
+            .checked_mul(1_000)?;
+        Some(Speed::from_millimetres_per_second(round_div_i64_to_i32(
+            numerator,
+            denominator,
+        )))
     }
 
     /// Estimates battery level from pack voltage when a voltage curve is known.
@@ -928,21 +994,40 @@ impl VescReadOnlyStreamDecoder {
         self.write_position = write_end;
 
         let mut replies = ArrayVec::new();
+        let mut saw_invalid_frame = false;
         while self.read_position < self.write_position {
             let frame = self
                 .buffer
                 .get(self.read_position..self.write_position)
                 .ok_or(VescCodecError::DecodeFailed)?;
-            match frame_len(frame)? {
-                Some(len) => {
+            match frame_len(frame) {
+                Ok(Some(len)) => {
                     let frame = frame.get(..len).ok_or(VescCodecError::DecodeFailed)?;
-                    replies
-                        .try_push(decode_frame(frame)?)
-                        .map_err(|_reply| VescCodecError::DecodeFailed)?;
-                    self.read_position += len;
+                    if replies.is_full() {
+                        break;
+                    }
+                    match decode_frame(frame) {
+                        Ok(reply) => {
+                            replies
+                                .try_push(reply)
+                                .map_err(|_reply| VescCodecError::DecodeFailed)?;
+                            self.read_position += len;
+                        }
+                        Err(_error) => {
+                            saw_invalid_frame = true;
+                            self.read_position += 1;
+                        }
+                    }
                 }
-                None => break,
+                Ok(None) => break,
+                Err(_error) => {
+                    saw_invalid_frame = true;
+                    self.read_position += 1;
+                }
             }
+        }
+        if replies.is_empty() && saw_invalid_frame {
+            return Err(VescCodecError::DecodeFailed);
         }
         Ok(if replies.is_empty() {
             VescReadOnlyStreamResult::Buffered
@@ -1057,6 +1142,9 @@ fn decode_typed_reply(frame: &[u8]) -> Result<Option<VescReadOnlyReply>, VescCod
     match command_id {
         VESC_COMM_GET_VALUES => decode_values(body, full_values_mask(body.len())?)
             .map(|values| Some(VescReadOnlyReply::Values(values))),
+        VESC_COMM_GET_STATS => {
+            decode_stats(body).map(|stats| Some(VescReadOnlyReply::Stats(stats)))
+        }
         VESC_COMM_GET_MCCONF => {
             decode_motor_config(body).map(|config| Some(VescReadOnlyReply::MotorConfig(config)))
         }
@@ -1067,6 +1155,60 @@ fn decode_typed_reply(frame: &[u8]) -> Result<Option<VescReadOnlyReply>, VescCod
             .map(|geometry| Some(VescReadOnlyReply::MotorSetupConfig(geometry))),
         _ => Ok(None),
     }
+}
+
+fn decode_stats(body: &[u8]) -> Result<VescStatsTelemetry, VescCodecError> {
+    let mut reader = VescValuesReader::new(body);
+    let raw_mask = reader.read_u32()?;
+    let present_fields = VescStatsMask::from_bits(
+        u16::try_from(raw_mask).map_err(|_| VescCodecError::DecodeFailed)?,
+    )
+    .ok_or(VescCodecError::DecodeFailed)?;
+    let mut stats = VescStatsTelemetry {
+        present_fields,
+        ..VescStatsTelemetry::default()
+    };
+    if present_fields.contains(VescStatsMask::SPEED_AVG) {
+        stats.speed_avg = Speed::from_metres_per_second(reader.read_f32()?);
+    }
+    if present_fields.contains(VescStatsMask::SPEED_MAX) {
+        stats.speed_max = Speed::from_metres_per_second(reader.read_f32()?);
+    }
+    if present_fields.contains(VescStatsMask::POWER_AVG) {
+        stats.power_avg = Power::from_watts_f32(reader.read_f32()?);
+    }
+    if present_fields.contains(VescStatsMask::POWER_MAX) {
+        stats.power_max = Power::from_watts_f32(reader.read_f32()?);
+    }
+    if present_fields.contains(VescStatsMask::CURRENT_AVG) {
+        stats.current_avg = PhaseCurrent::from_amps_f32(reader.read_f32()?);
+    }
+    if present_fields.contains(VescStatsMask::CURRENT_MAX) {
+        stats.peak_current = PeakCurrent::from_amps_f32(reader.read_f32()?);
+    }
+    if present_fields.contains(VescStatsMask::TEMP_MOSFET_AVG) {
+        stats.mosfet_temperature_avg =
+            Temperature::from_millicelsius((reader.read_f32()? * 1_000.0).round() as i32);
+    }
+    if present_fields.contains(VescStatsMask::TEMP_MOSFET_MAX) {
+        stats.mosfet_temperature_max =
+            Temperature::from_millicelsius((reader.read_f32()? * 1_000.0).round() as i32);
+    }
+    if present_fields.contains(VescStatsMask::TEMP_MOTOR_AVG) {
+        stats.motor_temperature_avg =
+            Temperature::from_millicelsius((reader.read_f32()? * 1_000.0).round() as i32);
+    }
+    if present_fields.contains(VescStatsMask::TEMP_MOTOR_MAX) {
+        stats.motor_temperature_max =
+            Temperature::from_millicelsius((reader.read_f32()? * 1_000.0).round() as i32);
+    }
+    if present_fields.contains(VescStatsMask::COUNT_TIME) {
+        stats.count_time = Duration::from_seconds_f32(reader.read_f32()?);
+    }
+    if !reader.remaining().is_empty() {
+        return Err(VescCodecError::DecodeFailed);
+    }
+    Ok(stats)
 }
 
 struct VescValuesReader<'a> {
@@ -1107,6 +1249,10 @@ impl<'a> VescValuesReader<'a> {
 
     fn read_u32(&mut self) -> Result<u32, VescCodecError> {
         self.read().map(u32::from_be_bytes)
+    }
+
+    fn read_f32(&mut self) -> Result<f32, VescCodecError> {
+        self.read_u32().map(f32::from_bits)
     }
 
     fn remaining(&self) -> &'a [u8] {
@@ -1276,6 +1422,9 @@ fn frame_parts(bytes: &[u8]) -> Result<Option<(usize, usize, usize)>, VescCodecE
     let total_len = checksum_start
         .checked_add(3)
         .ok_or(VescCodecError::DecodeFailed)?;
+    if total_len > VESC_MAX_FRAME_LEN {
+        return Err(VescCodecError::DecodeFailed);
+    }
     if bytes.len() < total_len {
         return Ok(None);
     }
@@ -1334,17 +1483,12 @@ fn decode_setup_fields(body: &[u8]) -> Result<(VescSpeedGeometry, usize), VescCo
     if motor_pole_pairs == 0 || gear_ratio <= 0.0 || wheel_diameter_metres <= 0.0 {
         return Err(VescCodecError::DecodeFailed);
     }
-    let rounded_gear_ratio = gear_ratio.round();
-    if rounded_gear_ratio > f32::from(u8::MAX) {
-        return Err(VescCodecError::DecodeFailed);
-    }
-    let gear_ratio_denominator = (1..=u8::MAX)
-        .find(|candidate| (f32::from(*candidate) - rounded_gear_ratio).abs() < f32::EPSILON)
-        .ok_or(VescCodecError::DecodeFailed)?;
+    let gear_ratio_denominator =
+        GearRatioDenominator::from_ratio(gear_ratio).ok_or(VescCodecError::DecodeFailed)?;
     Ok((
         VescSpeedGeometry {
             motor_pole_pairs: MotorPolePairs::new(motor_pole_pairs),
-            gear_ratio_denominator: GearRatioDenominator::new(gear_ratio_denominator),
+            gear_ratio_denominator,
             wheel_circumference: Distance::from_metres_f32(
                 wheel_diameter_metres * core::f32::consts::PI,
             ),
@@ -1374,6 +1518,18 @@ fn vesc_crc16(bytes: &[u8]) -> u16 {
         }
         crc
     })
+}
+
+fn round_div_i64_to_i32(numerator: i64, denominator: i64) -> i32 {
+    if denominator == 0 {
+        return 0;
+    }
+    let rounded = if numerator >= 0 {
+        (numerator + denominator / 2) / denominator
+    } else {
+        (numerator - denominator / 2) / denominator
+    };
+    rounded.clamp(i64::from(i32::MIN), i64::from(i32::MAX)) as i32
 }
 
 fn command_for_can_request(request: VescCanReadOnlyRequest) -> vesc::Command<'static> {
@@ -1412,6 +1568,15 @@ fn vesc_stats_mask(mask: VescStatsMask) -> vesc::StatsMask {
     if mask.contains(VescStatsMask::CURRENT_MAX) {
         converted |= vesc::StatsMask::CURRENT_MAX;
     }
+    if mask.contains(VescStatsMask::TEMP_MOSFET_AVG) {
+        converted |= vesc::StatsMask::TEMP_MOSFET_AVG;
+    }
+    if mask.contains(VescStatsMask::TEMP_MOSFET_MAX) {
+        converted |= vesc::StatsMask::TEMP_MOSFET_MAX;
+    }
+    if mask.contains(VescStatsMask::TEMP_MOTOR_AVG) {
+        converted |= vesc::StatsMask::TEMP_MOTOR_AVG;
+    }
     if mask.contains(VescStatsMask::TEMP_MOTOR_MAX) {
         converted |= vesc::StatsMask::TEMP_MOTOR_MAX;
     }
@@ -1430,12 +1595,25 @@ fn bounded_string(value: &str) -> ArrayString<VESC_MAX_HASH_LEN> {
 impl From<vesc::Stats> for VescStatsTelemetry {
     fn from(stats: vesc::Stats) -> Self {
         Self {
+            present_fields: VescStatsMask::all(),
             speed_avg: Speed::from_metres_per_second(stats.speed_avg),
             speed_max: Speed::from_metres_per_second(stats.speed_max),
             power_avg: Power::from_watts_f32(stats.power_avg),
             power_max: Power::from_watts_f32(stats.power_max),
-            current_avg: BatteryCurrent::from_amps_f32(stats.current_avg),
+            current_avg: PhaseCurrent::from_amps_f32(stats.current_avg),
             peak_current: PeakCurrent::from_amps_f32(stats.current_max),
+            mosfet_temperature_avg: Temperature::from_millicelsius(
+                (stats.temp_mosfet_avg * 1_000.0).round() as i32,
+            ),
+            mosfet_temperature_max: Temperature::from_millicelsius(
+                (stats.temp_mosfet_max * 1_000.0).round() as i32,
+            ),
+            motor_temperature_avg: Temperature::from_millicelsius(
+                (stats.temp_motor_avg * 1_000.0).round() as i32,
+            ),
+            motor_temperature_max: Temperature::from_millicelsius(
+                (stats.temp_motor_max * 1_000.0).round() as i32,
+            ),
             count_time: Duration::from_seconds_f32(stats.count_time),
         }
     }
@@ -1772,6 +1950,22 @@ mod tests {
     }
 
     #[test]
+    fn preserves_fractional_vesc_gear_ratio() {
+        let frame = motor_setup_config_frame(30, 2.5, 0.280);
+        let reply = VescReadOnlyCodec::decode_reply(&frame).expect("motor setup config decodes");
+        let VescReadOnlyReply::MotorSetupConfig(geometry) = reply else {
+            panic!("expected motor setup config reply");
+        };
+
+        assert_eq!(geometry.gear_ratio_denominator.as_milli(), 2_500);
+        assert_eq!(
+            VescBoardProfile::from_speed_geometry(geometry)
+                .speed_from_erpm(RotationalSpeed::from_erpm(4_500)),
+            Some(Speed::from_millimetres_per_second(1_760))
+        );
+    }
+
+    #[test]
     fn stream_decoder_decodes_fragmented_long_motor_config_frame() {
         let frame = motor_config_frame(30, 1.0, 0.280, 20);
         let mut decoder = VescReadOnlyStreamDecoder::new();
@@ -2011,6 +2205,67 @@ mod tests {
         }
 
         assert_eq!(replies.as_slice(), &[expected_values, expected_stats]);
+    }
+
+    #[test]
+    fn stream_decoder_resynchronizes_after_noise_before_valid_frame() {
+        let frame = selective_values_frame();
+        let mut input = ArrayVec::<u8, 64>::new();
+        input.push(0x99);
+        input.try_extend_from_slice(&frame).unwrap();
+        let mut decoder = VescReadOnlyStreamDecoder::new();
+
+        let replies = decoder
+            .feed_result(&input)
+            .expect("noise must not poison the following frame")
+            .into_replies();
+        assert_eq!(
+            replies.as_slice(),
+            &[VescReadOnlyCodec::decode_reply(&frame).unwrap()]
+        );
+    }
+
+    #[test]
+    fn stream_decoder_discards_impossible_length_and_recovers() {
+        let frame = selective_values_frame();
+        let mut input = ArrayVec::<u8, 64>::new();
+        input
+            .try_extend_from_slice(&[VESC_FRAME_START_LONG, 0xff, 0xff])
+            .unwrap();
+        input.try_extend_from_slice(&frame).unwrap();
+        let mut decoder = VescReadOnlyStreamDecoder::new();
+
+        let replies = decoder
+            .feed_result(&input)
+            .expect("impossible length must not poison the following frame")
+            .into_replies();
+        assert_eq!(
+            replies.as_slice(),
+            &[VescReadOnlyCodec::decode_reply(&frame).unwrap()]
+        );
+    }
+
+    #[test]
+    fn stream_decoder_keeps_replies_after_bounded_batch_is_full() {
+        let frame = selective_values_frame();
+        let mut input = ArrayVec::<u8, 160>::new();
+        for _ in 0..(VESC_MAX_STREAM_REPLIES + 1) {
+            input.try_extend_from_slice(&frame).unwrap();
+        }
+        let mut decoder = VescReadOnlyStreamDecoder::new();
+        let first = decoder
+            .feed_result(&input)
+            .expect("first batch")
+            .into_replies();
+        assert_eq!(first.len(), VESC_MAX_STREAM_REPLIES);
+        let second = decoder
+            .feed_result(&[])
+            .expect("remaining frame")
+            .into_replies();
+        assert_eq!(
+            second.as_slice(),
+            &[VescReadOnlyCodec::decode_reply(&frame).unwrap()]
+        );
     }
 
     #[test]

@@ -4,7 +4,9 @@ use cutout_core::{
     NotificationEvidence, NotificationIngestOutcome, ProtocolSession, SessionInput, SessionOutput,
     TransportAction, TransportWriteLimit, WriteMode, WritePayload,
 };
-use futures_util::StreamExt;
+use futures_util::{Stream, StreamExt};
+use std::pin::Pin;
+use std::time::Instant;
 use tracing::{debug, info};
 
 use crate::{
@@ -329,6 +331,7 @@ where
         "session bridge drive inner entered"
     );
     let mut report = SessionBridgeReport::default();
+    let monotonic_origin = Instant::now();
     if let Some(observer) = identity_observer.as_deref_mut() {
         observer.observe_connection(config.summary);
         report.identity = observer.resolution();
@@ -356,8 +359,15 @@ where
     )
     .await?;
 
+    let mut notifications =
+        if config.notification_window.is_zero() || bindings.notify_characteristic.is_none() {
+            None
+        } else {
+            Some(peripheral.notifications().await?)
+        };
+
     for command in config.commands {
-        monotonic_ms = monotonic_ms.next();
+        monotonic_ms = elapsed_or_next(monotonic_ms, monotonic_origin);
         session.handle(SessionInput::Command(*command), &mut outputs);
         process_session_outputs(
             SessionOutputContext {
@@ -377,7 +387,7 @@ where
         .await?;
     }
 
-    monotonic_ms = monotonic_ms.next();
+    monotonic_ms = elapsed_or_next(monotonic_ms, monotonic_origin);
     session.handle(
         SessionInput::Tick {
             monotonic_ms: monotonic_ms.into_core(),
@@ -401,9 +411,9 @@ where
     )
     .await?;
 
-    if config.notification_window.is_zero() || bindings.notify_characteristic.is_none() {
+    let Some(notifications) = notifications.take() else {
         return Ok(report);
-    }
+    };
 
     process_notification_window(
         NotificationLoopContext {
@@ -417,15 +427,23 @@ where
             write_provenance: config.write_provenance,
             stream_end_is_link_down: config.stream_end_is_link_down,
             link_loss_idle_window: config.link_loss_idle_window,
+            monotonic_origin,
         },
         session,
         &mut outputs,
         &mut monotonic_ms,
         config.notification_window,
+        notifications,
     )
     .await?;
 
     Ok(report)
+}
+
+fn elapsed_or_next(previous: MonotonicMs, origin: Instant) -> MonotonicMs {
+    previous.next().max(MonotonicMs::from_elapsed_millis(
+        origin.elapsed().as_millis(),
+    ))
 }
 
 struct BridgeBindings {
@@ -509,6 +527,7 @@ struct NotificationLoopContext<'a, 'observer, P: ?Sized> {
     write_provenance: WriteProvenance,
     stream_end_is_link_down: bool,
     link_loss_idle_window: Option<NotificationWindow>,
+    monotonic_origin: Instant,
 }
 
 async fn process_notification_window<P, S>(
@@ -517,6 +536,7 @@ async fn process_notification_window<P, S>(
     outputs: &mut Vec<SessionOutput>,
     monotonic_ms: &mut MonotonicMs,
     notification_window: NotificationWindow,
+    mut notifications: Pin<Box<dyn Stream<Item = BtleNotification> + Send>>,
 ) -> Result<(), BtleError>
 where
     P: SessionPeripheral + Sync + ?Sized,
@@ -527,8 +547,7 @@ where
         "session notification window starting"
     );
     info!("session notifications stream await starting");
-    let mut notifications = context.peripheral.notifications().await?;
-    info!("session notifications stream await completed");
+    info!("session notifications stream ready before protocol polling");
     let deadline = tokio::time::Instant::now() + notification_window.as_duration();
     while tokio::time::Instant::now() < deadline {
         let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
@@ -540,7 +559,7 @@ where
         );
         match tokio::time::timeout(wait, notifications.next()).await {
             Ok(Some(notification)) => {
-                *monotonic_ms = monotonic_ms.next();
+                *monotonic_ms = elapsed_or_next(*monotonic_ms, context.monotonic_origin);
                 let decode_outcome = ingest_notification(
                     &mut context,
                     session,

@@ -603,6 +603,8 @@ pub enum RideWarningDto {
 
     /// The controller is applying duty-based pushback.
     DutyPushback,
+    /// The controller is applying speed-based pushback.
+    SpeedPushback,
     /// The controller is applying temperature-based pushback.
     TemperaturePushback,
     /// The controller reports active wheel slip.
@@ -613,6 +615,8 @@ pub enum RideWarningDto {
     LowBattery,
     /// The package reports an error warning.
     Error,
+    /// The package cannot communicate with its battery-management system.
+    BmsConnection,
 }
 
 /// UniFFI-ready reason that the controller stopped balancing.
@@ -658,11 +662,13 @@ impl From<RideWarning> for RideWarningDto {
             RideWarning::MotorTemperature => Self::MotorTemperature,
             RideWarning::Current => Self::Current,
             RideWarning::DutyPushback => Self::DutyPushback,
+            RideWarning::SpeedPushback => Self::SpeedPushback,
             RideWarning::TemperaturePushback => Self::TemperaturePushback,
             RideWarning::Wheelslip => Self::Wheelslip,
             RideWarning::Sensors => Self::Sensors,
             RideWarning::LowBattery => Self::LowBattery,
             RideWarning::Error => Self::Error,
+            RideWarning::BmsConnection => Self::BmsConnection,
         }
     }
 }
