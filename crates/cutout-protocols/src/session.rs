@@ -19,14 +19,15 @@ use crate::{
     BegodeFrameReassembler, BegodeLiveATelemetry, BegodeLiveBTelemetry, BegodePackVoltageProfile,
     BegodeTelemetryContext, BegodeTelemetryError, EncodedRequest, FalconProbe,
     FalconRequestEncoder, RefloatCodecError, RefloatReadOnlyRequest, RefloatReply,
-    RefloatStreamDecoder, RefloatStreamResult, RequestDisposition, VESC_NOTIFY_CHANNEL,
-    VESC_WRITE_CHANNEL, VETERAN_DATA_CHANNEL, VescBoardProfile, VescCodecError, VescReadOnlyCodec,
-    VescReadOnlyReply, VescReadOnlyRequest, VescReadOnlyStreamDecoder, VescReadOnlyStreamResult,
-    VescRequestEncoder, VescStatsMask, VescStatsTelemetry, VescValuesMask, VescValuesTelemetry,
-    VeteranBmsCellPage, VeteranBmsMetadataPage, VeteranBmsPageEvidence, VeteranBmsTemperaturePage,
-    VeteranFrame, VeteranFrameParseResult, VeteranFrameReassembler, VeteranReassemblyError,
-    VeteranTelemetry, VeteranTelemetryError, begode_falcon_target_voltage_profile,
-    decode_veteran_bms_page, util::u64_to_i64_saturating,
+    RefloatStreamDecoder, RefloatStreamResult, RequestDisposition, VESC_COMM_CUSTOM_APP_DATA,
+    VESC_MAX_FRAME_LEN, VESC_NOTIFY_CHANNEL, VESC_WRITE_CHANNEL, VETERAN_DATA_CHANNEL,
+    VescBoardProfile, VescCodecError, VescReadOnlyCodec, VescReadOnlyReply, VescReadOnlyRequest,
+    VescReadOnlyStreamDecoder, VescReadOnlyStreamResult, VescRequestEncoder, VescStatsMask,
+    VescStatsTelemetry, VescValuesMask, VescValuesTelemetry, VeteranBmsCellPage,
+    VeteranBmsMetadataPage, VeteranBmsPageEvidence, VeteranBmsTemperaturePage, VeteranFrame,
+    VeteranFrameParseResult, VeteranFrameReassembler, VeteranReassemblyError, VeteranTelemetry,
+    VeteranTelemetryError, begode_falcon_target_voltage_profile, decode_veteran_bms_page,
+    util::u64_to_i64_saturating,
 };
 
 /// Raw VESC electrical RPM telemetry field id.
@@ -512,6 +513,8 @@ pub struct VescNotificationDecoder {
     polling: bool,
     motor_config_received: bool,
     refloat_info_received: bool,
+    generic_stream_pending: bool,
+    generic_prefix: ArrayVec<u8, 4>,
 }
 
 impl VescNotificationDecoder {
@@ -532,6 +535,8 @@ impl VescNotificationDecoder {
             polling: false,
             motor_config_received: false,
             refloat_info_received: false,
+            generic_stream_pending: false,
+            generic_prefix: ArrayVec::new_const(),
         }
     }
 
@@ -600,6 +605,8 @@ impl ReadOnlyNotificationDecoder for VescNotificationDecoder {
         self.polling = false;
         self.motor_config_received = false;
         self.refloat_info_received = false;
+        self.generic_stream_pending = false;
+        self.generic_prefix.clear();
     }
 
     fn on_tick(&mut self, monotonic_ms: MonotonicTimestamp, output: &mut Vec<SessionOutput>) {
@@ -702,15 +709,61 @@ impl VescNotificationDecoder {
         self.now_ms = monotonic_ms.as_milliseconds();
         let refloat_handled =
             self.handle_refloat_notification(family, channel, bytes, monotonic_ms, output);
-        self.handle_vesc_notification(
-            family,
-            channel,
-            bytes,
-            monotonic_ms,
-            output,
-            !refloat_handled,
-            !refloat_handled,
-        );
+        let mut generic_bytes = ArrayVec::<u8, VESC_MAX_FRAME_LEN>::new();
+        let feed_generic = if self.generic_stream_pending {
+            generic_bytes
+                .try_extend_from_slice(bytes)
+                .expect("notification fits bounded VESC frame");
+            true
+        } else if !self.generic_prefix.is_empty() {
+            generic_bytes
+                .try_extend_from_slice(&self.generic_prefix)
+                .expect("generic prefix fits bounded VESC frame");
+            generic_bytes
+                .try_extend_from_slice(bytes)
+                .expect("notification fits bounded VESC frame");
+            match generic_frame_kind(&generic_bytes) {
+                Some(is_generic) => {
+                    self.generic_prefix.clear();
+                    is_generic
+                }
+                None => {
+                    self.generic_prefix.clear();
+                    self.generic_prefix
+                        .try_extend_from_slice(&generic_bytes)
+                        .expect("generic prefix remains bounded");
+                    false
+                }
+            }
+        } else {
+            match generic_frame_kind(bytes) {
+                Some(is_generic) => {
+                    generic_bytes
+                        .try_extend_from_slice(bytes)
+                        .expect("notification fits bounded VESC frame");
+                    is_generic
+                }
+                None if matches!(bytes.first(), Some(2 | 3)) => {
+                    self.generic_prefix
+                        .try_extend_from_slice(bytes)
+                        .expect("generic prefix remains bounded");
+                    false
+                }
+                None => false,
+            }
+        };
+        if feed_generic {
+            let (replied, buffered) = self.handle_vesc_notification(
+                family,
+                channel,
+                &generic_bytes,
+                monotonic_ms,
+                output,
+                !refloat_handled,
+                !refloat_handled,
+            );
+            self.generic_stream_pending = buffered && !replied;
+        }
     }
 
     fn handle_vesc_notification(
@@ -722,7 +775,7 @@ impl VescNotificationDecoder {
         output: &mut Vec<SessionOutput>,
         report_errors: bool,
         emit_ingest: bool,
-    ) -> bool {
+    ) -> (bool, bool) {
         match self.stream.feed_result(bytes) {
             Ok(VescReadOnlyStreamResult::Replies(replies)) => {
                 let event_count = replies
@@ -763,7 +816,7 @@ impl VescNotificationDecoder {
                         ),
                     ));
                 }
-                true
+                (true, false)
             }
             Err(VescCodecError::UnsupportedReply) if report_errors => {
                 push_parser_error(ParserError::UnmatchedReply, output);
@@ -778,7 +831,7 @@ impl VescNotificationDecoder {
                         ),
                     ));
                 }
-                false
+                (false, false)
             }
             Err(
                 VescCodecError::DecodeFailed
@@ -797,7 +850,7 @@ impl VescNotificationDecoder {
                         ),
                     ));
                 }
-                false
+                (false, false)
             }
             Ok(VescReadOnlyStreamResult::Buffered) if report_errors => {
                 if emit_ingest {
@@ -810,9 +863,9 @@ impl VescNotificationDecoder {
                         ),
                     ));
                 }
-                false
+                (false, true)
             }
-            Err(_) | Ok(VescReadOnlyStreamResult::Buffered) => false,
+            Err(_) | Ok(VescReadOnlyStreamResult::Buffered) => (false, false),
         }
     }
 }
@@ -828,6 +881,15 @@ fn complete_vesc_frame_len(bytes: &[u8]) -> Option<usize> {
     };
     let total_len = header_len.checked_add(payload_len)?.checked_add(3)?;
     (bytes.len() >= total_len && bytes.get(total_len - 1) == Some(&3)).then_some(total_len)
+}
+
+fn generic_frame_kind(bytes: &[u8]) -> Option<bool> {
+    let command_index = match bytes.first().copied()? {
+        2 => 2,
+        3 => 3,
+        _ => return None,
+    };
+    Some(bytes.get(command_index).copied()? != VESC_COMM_CUSTOM_APP_DATA)
 }
 
 const fn vesc_reply_event_count(reply: &VescReadOnlyReply) -> SemanticEventCount {
@@ -2816,6 +2878,30 @@ mod tests {
                 .iter()
                 .all(|delta| delta.speed.is_none() && delta.pitch.is_none()),
             "field-id discovery alone must not fabricate Refloat telemetry"
+        );
+    }
+
+    #[test]
+    fn generic_vesc_session_does_not_poison_generic_stream_with_split_refloat_frame() {
+        let refloat_ids = refloat_realtime_ids_frame();
+        let generic = vesc_selective_values_frame();
+        let output = vesc_output_for_notification_chunks(&[
+            &refloat_ids[..2],
+            &refloat_ids[2..],
+            generic.as_slice(),
+        ]);
+
+        assert!(
+            telemetry_events(&output)
+                .iter()
+                .all(|delta| delta.speed.is_none() && delta.pitch.is_none()),
+            "field-id discovery alone must not fabricate Refloat telemetry"
+        );
+        assert!(
+            read_only_response_events(&output)
+                .iter()
+                .any(|response| matches!(response, ReadOnlyResponse::RawTelemetry(_))),
+            "a split Refloat frame must not poison the following generic VESC reply"
         );
     }
 
