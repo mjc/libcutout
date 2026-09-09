@@ -513,6 +513,7 @@ pub struct VescNotificationDecoder {
     polling: bool,
     motor_config_received: bool,
     refloat_info_received: bool,
+    refloat_stream_pending: bool,
     generic_stream_pending: bool,
     generic_prefix: ArrayVec<u8, 4>,
 }
@@ -535,6 +536,7 @@ impl VescNotificationDecoder {
             polling: false,
             motor_config_received: false,
             refloat_info_received: false,
+            refloat_stream_pending: false,
             generic_stream_pending: false,
             generic_prefix: ArrayVec::new_const(),
         }
@@ -562,6 +564,7 @@ impl VescNotificationDecoder {
 
         match result {
             Ok(RefloatStreamResult::Replies(reply_count)) => {
+                self.refloat_stream_pending = false;
                 output.push(SessionOutput::NotificationIngest(
                     NotificationIngestOutcome::semantic_events(
                         family,
@@ -573,13 +576,20 @@ impl VescNotificationDecoder {
                 ));
                 true
             }
-            Ok(RefloatStreamResult::Buffered)
-            | Err(
+            Ok(RefloatStreamResult::Buffered) => {
+                self.refloat_stream_pending = true;
+                false
+            }
+            Err(
                 RefloatCodecError::UnexpectedVescCommand
                 | RefloatCodecError::UnexpectedPackageInterface
                 | RefloatCodecError::UnsupportedCommand,
-            ) => false,
+            ) => {
+                self.refloat_stream_pending = false;
+                false
+            }
             Err(_) => {
+                self.refloat_stream_pending = false;
                 push_parser_error(ParserError::MalformedFrame, output);
                 output.push(SessionOutput::NotificationIngest(
                     NotificationIngestOutcome::parser_diagnostic(
@@ -605,6 +615,7 @@ impl ReadOnlyNotificationDecoder for VescNotificationDecoder {
         self.polling = false;
         self.motor_config_received = false;
         self.refloat_info_received = false;
+        self.refloat_stream_pending = false;
         self.generic_stream_pending = false;
         self.generic_prefix.clear();
     }
@@ -633,7 +644,10 @@ impl ReadOnlyNotificationDecoder for VescNotificationDecoder {
         monotonic_ms: MonotonicTimestamp,
         output: &mut Vec<SessionOutput>,
     ) {
-        if self.generic_stream_pending || !self.generic_prefix.is_empty() {
+        if self.refloat_stream_pending
+            || self.generic_stream_pending
+            || !self.generic_prefix.is_empty()
+        {
             self.handle_notification_chunk(family, channel, bytes, monotonic_ms, output);
             return;
         }
@@ -755,7 +769,12 @@ impl VescNotificationDecoder {
                         .expect("generic prefix remains bounded");
                     false
                 }
-                None => false,
+                None => {
+                    generic_bytes
+                        .try_extend_from_slice(bytes)
+                        .expect("notification fits bounded VESC frame");
+                    true
+                }
             }
         };
         if feed_generic {
@@ -765,6 +784,7 @@ impl VescNotificationDecoder {
                 &generic_bytes,
                 monotonic_ms,
                 output,
+                NotificationByteLen::from_bytes(bytes.len()),
                 !refloat_handled,
                 !refloat_handled,
             );
@@ -788,6 +808,7 @@ impl VescNotificationDecoder {
         bytes: &[u8],
         monotonic_ms: MonotonicTimestamp,
         output: &mut Vec<SessionOutput>,
+        source_len: NotificationByteLen,
         report_errors: bool,
         emit_ingest: bool,
     ) -> (bool, bool) {
@@ -825,7 +846,7 @@ impl VescNotificationDecoder {
                         NotificationIngestOutcome::semantic_events(
                             family,
                             channel,
-                            NotificationByteLen::from_bytes(bytes.len()),
+                            source_len,
                             monotonic_ms,
                             event_count,
                         ),
@@ -840,7 +861,7 @@ impl VescNotificationDecoder {
                         NotificationIngestOutcome::parser_diagnostic(
                             family,
                             channel,
-                            NotificationByteLen::from_bytes(bytes.len()),
+                            source_len,
                             monotonic_ms,
                             ParserError::UnmatchedReply,
                         ),
@@ -859,7 +880,7 @@ impl VescNotificationDecoder {
                         NotificationIngestOutcome::parser_diagnostic(
                             family,
                             channel,
-                            NotificationByteLen::from_bytes(bytes.len()),
+                            source_len,
                             monotonic_ms,
                             ParserError::MalformedFrame,
                         ),
@@ -873,7 +894,7 @@ impl VescNotificationDecoder {
                         NotificationIngestOutcome::buffered_fragment(
                             family,
                             channel,
-                            NotificationByteLen::from_bytes(bytes.len()),
+                            source_len,
                             monotonic_ms,
                         ),
                     ));
