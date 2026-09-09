@@ -745,10 +745,7 @@ fn parse_realtime_data(
     let mask = cursor.read_u8()?;
     let extra_flags = cursor.read_u8()?;
     let time_ticks = cursor.read_u32()?;
-    let state_and_mode = cursor.read_u8()?;
-    let flags_and_footpad = cursor.read_u8()?;
-    let stop_cond_and_sat = cursor.read_u8()?;
-    let beep_reason = cursor.read_u8()?;
+    let state_flags = cursor.read_u32()?;
     let values = read_values(&mut cursor, &ids.always)?;
     let runtime_values = if mask & 0x1 == 0x1 {
         read_values(&mut cursor, &ids.runtime)?
@@ -778,16 +775,16 @@ fn parse_realtime_data(
         mask,
         extra_flags,
         time_ticks,
-        package_state: state_and_mode & 0x0f,
-        package_mode: (state_and_mode >> 4) & 0x0f,
-        footpad_state: flags_and_footpad >> 6,
-        charging: flags_and_footpad & 0x20 == 0x20,
-        fatal_error: (flags_and_footpad & 0x10 == 0x10).then_some(RefloatFatalError::FirmwareFault),
-        darkride: flags_and_footpad & 0x02 == 0x02,
-        wheelslip: flags_and_footpad & 0x01 == 0x01,
-        stop_condition: stop_cond_and_sat & 0x0f,
-        sat: stop_cond_and_sat >> 4,
-        beep_reason,
+        package_state: ((state_flags >> 24) & 0x0f) as u8,
+        package_mode: ((state_flags >> 28) & 0x0f) as u8,
+        footpad_state: ((state_flags >> 22) & 0x03) as u8,
+        charging: state_flags & (1 << 21) != 0,
+        fatal_error: (state_flags & (1 << 20) != 0).then_some(RefloatFatalError::FirmwareFault),
+        darkride: state_flags & (1 << 17) != 0,
+        wheelslip: state_flags & (1 << 16) != 0,
+        stop_condition: ((state_flags >> 8) & 0x0f) as u8,
+        sat: ((state_flags >> 12) & 0x0f) as u8,
+        beep_reason: (state_flags & 0xff) as u8,
         values,
         runtime_values,
         charging_current,
@@ -1514,7 +1511,7 @@ mod tests {
             .try_extend_from_slice(&42_u32.to_be_bytes())
             .expect("time fits");
         payload
-            .try_extend_from_slice(&[0x13, 0xd1, 0xa6, 8])
+            .try_extend_from_slice(&0x13d0_a608_u32.to_be_bytes())
             .expect("state fits");
         payload
             .try_extend_from_slice(&0x3c00_u16.to_be_bytes())
@@ -1565,7 +1562,7 @@ mod tests {
             .try_extend_from_slice(&42_u32.to_be_bytes())
             .expect("time fits");
         payload
-            .try_extend_from_slice(&[0x13, 0xc1, 0xa6, 8])
+            .try_extend_from_slice(&0x13c0_a608_u32.to_be_bytes())
             .expect("state fits");
         for half in [
             0x3c00_u16, // 1.0 m/s

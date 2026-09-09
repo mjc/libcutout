@@ -6,14 +6,7 @@ use serde_json::Value;
 
 #[test]
 fn shared_vesc_fixture_replays_through_mobile_ffi() {
-    let fixture: Value = serde_json::from_str(
-        &std::fs::read_to_string(concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/tests/fixtures/vesc-replay-v1.json"
-        ))
-        .expect("the Rust-owned shared VESC replay fixture must exist"),
-    )
-    .expect("valid fixture JSON");
+    let fixture = load_fixture();
     assert_eq!(fixture["version"], 1);
     let session = VescReadOnlySession::new();
     let link = session.ingest_checked(MobileSessionInputDto {
@@ -94,6 +87,78 @@ fn shared_vesc_fixture_replays_through_mobile_ffi() {
             notification["name"]
         );
     }
+}
+
+#[test]
+fn complete_refloat_descriptor_survives_every_notification_split() {
+    let fixture = load_fixture();
+    let notifications = fixture["notifications"].as_array().expect("notifications");
+    let descriptor = notifications
+        .iter()
+        .find(|notification| notification["name"] == "Refloat 1.3 complete 393-byte descriptor")
+        .expect("complete descriptor fixture");
+    let realtime = notifications
+        .iter()
+        .find(|notification| {
+            notification["name"] == "Refloat 1.3 complete runtime data with alerts"
+        })
+        .expect("complete runtime fixture");
+    let descriptor_bytes = byte_array(&descriptor["bytes"]);
+    let realtime_bytes = byte_array(&realtime["bytes"]);
+    assert_eq!(descriptor_bytes.len(), 393);
+
+    for split in 1..descriptor_bytes.len() {
+        let session = VescReadOnlySession::new();
+        let link = session.ingest_checked(MobileSessionInputDto {
+            kind: MobileSessionInputKindDto::LinkUp,
+            monotonic_ms: MobileMonotonicMillisDto { milliseconds: 0 },
+            max_write_len: Some(MobileTransportWriteLimitDto { bytes: 20 }),
+            channel: Vec::new(),
+            bytes: Vec::new(),
+            command: None,
+        });
+        assert_eq!(link.error, None);
+        for (index, bytes) in [
+            descriptor_bytes[..split].to_vec(),
+            descriptor_bytes[split..].to_vec(),
+            realtime_bytes.clone(),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let step = session.ingest_checked(MobileSessionInputDto {
+                kind: MobileSessionInputKindDto::Notification,
+                monotonic_ms: MobileMonotonicMillisDto {
+                    milliseconds: u64::try_from(index + 1).expect("small split index"),
+                },
+                max_write_len: None,
+                channel: byte_array(&descriptor["channel"]),
+                bytes,
+                command: None,
+            });
+            assert_eq!(step.error, None, "split {split}, part {index}");
+        }
+        let snapshot = session.current_snapshot();
+        assert_eq!(
+            snapshot.speed.map(|reading| reading.value.value),
+            Some(10_000)
+        );
+        assert_eq!(
+            snapshot.voltage.map(|reading| reading.value.value),
+            Some(75_500)
+        );
+    }
+}
+
+fn load_fixture() -> Value {
+    serde_json::from_str(
+        &std::fs::read_to_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/fixtures/vesc-replay-v1.json"
+        ))
+        .expect("the Rust-owned shared VESC replay fixture must exist"),
+    )
+    .expect("valid fixture JSON")
 }
 
 fn byte_array(value: &Value) -> Vec<u8> {

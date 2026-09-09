@@ -19,10 +19,12 @@ The Rust consumer additionally checks exact ingest outcome and receive metadata.
 Swift `SessionAction` currently discards the detailed ingest DTO, so the Swift
 consumer can only assert that an ingest action survives that conversion.
 
-This starts LIBCU-602 rather than completing its entire acceptance matrix. Remaining:
-the complete 393-byte Refloat 1.3.0 descriptor, every split boundary, warning and
-finite-only float16 cases, backpressure, retry cancellation after a healthy sample,
-response loss/reconnect, and full raw-telemetry capture metadata assertions.
+This advances LIBCU-602 without completing its entire acceptance matrix. Remaining:
+every split boundary, warning and finite-only float16 cases at the Swift boundary,
+backpressure, retry cancellation after a healthy sample, response loss/reconnect,
+and full raw-telemetry capture metadata assertions. The fixture includes the
+complete current 393-byte Refloat 1.3.0 descriptor and its 32-bit state-flags data
+layout.
 In particular, coalesced Rust input currently labels each frame length as a
 notification length (12 bytes for the first frame of the 47-byte mixed fixture).
 The fixture preserves the original notification and the Swift receive record
