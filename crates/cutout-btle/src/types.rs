@@ -289,9 +289,10 @@ impl ConnectionSummary {
     /// DFU endpoint, so probe paths must use this strict selector.
     #[must_use]
     pub fn select_vesc_nordic_endpoints(&self) -> Option<SessionEndpoints<'_>> {
-        let service = self.services.iter().find(|service| {
-            service.uuid == VESC_SERVICE_UUID && service.primary
-        })?;
+        let service = self
+            .services
+            .iter()
+            .find(|service| service.uuid == VESC_SERVICE_UUID && service.primary)?;
         let write = service.characteristics.iter().find(|characteristic| {
             characteristic.uuid == VESC_WRITE_UUID
                 && characteristic
