@@ -1208,6 +1208,7 @@ public struct MusicSettingsView: View {
     @Binding var selectedProvider: MobileMusicProviderDto
     @Binding var historyPolicy: MobileMusicHistoryPolicyDto
     let historyUnavailable: Bool
+    let historySaveError: MobileRideMapError?
     let onConnect: () -> Void
     let onAuthorizeSpotify: () -> Void
     let onOpenProvider: () -> Void
@@ -1217,6 +1218,7 @@ public struct MusicSettingsView: View {
         selectedProvider: Binding<MobileMusicProviderDto>,
         historyPolicy: Binding<MobileMusicHistoryPolicyDto>,
         historyUnavailable: Bool,
+        historySaveError: MobileRideMapError?,
         onConnect: @escaping () -> Void,
         onAuthorizeSpotify: @escaping () -> Void,
         onOpenProvider: @escaping () -> Void
@@ -1225,6 +1227,7 @@ public struct MusicSettingsView: View {
         _selectedProvider = selectedProvider
         _historyPolicy = historyPolicy
         self.historyUnavailable = historyUnavailable
+        self.historySaveError = historySaveError
         self.onConnect = onConnect
         self.onAuthorizeSpotify = onAuthorizeSpotify
         self.onOpenProvider = onOpenProvider
@@ -1266,6 +1269,10 @@ public struct MusicSettingsView: View {
                 .accessibilityIdentifier("music.history-picker")
                 .accessibilityValue(historyPolicy.musicAccessibilityIdentifier)
                 if historyUnavailable {
+                    Label(pevLocalizedText("music.state.unavailable"), systemImage: "exclamationmark.triangle")
+                        .accessibilityIdentifier("music.history-unavailable")
+                }
+                if historySaveError != nil {
                     Label(pevLocalizedText("music.history.save_error"), systemImage: "exclamationmark.triangle")
                         .accessibilityIdentifier("music.history-error")
                 }

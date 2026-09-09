@@ -126,6 +126,7 @@ final class CutoutAppModel {
     private(set) var isMusicPlayerHidden: Bool
     private(set) var musicHistoryPolicy = MobileMusicHistoryPolicyDto.disabled
     private(set) var musicHistoryUnavailable = false
+    private(set) var musicHistorySaveError: MobileRideMapError?
 
     /// Compatibility projection for callers that only display the live map.
     /// New route presentations should use the explicitly scoped error properties.
@@ -537,6 +538,7 @@ final class CutoutAppModel {
                 transitionHint: transitionHint
             )
             if outcome == .recorded {
+                musicHistorySaveError = nil
                 core.updateMusicCaptureObservation(
                     pevcapMusicObservation(
                         from: observation,
@@ -643,6 +645,7 @@ final class CutoutAppModel {
         print("music_history_request policy=\(policy) has_ride_store=\(core.rideMapStateHandle != nil)")
 #endif
         let previous = musicHistoryPolicy
+        musicHistorySaveError = nil
         do {
             try musicCoordinator.setHistoryPolicy(policy)
             musicHistoryUnavailable = false
@@ -668,7 +671,7 @@ final class CutoutAppModel {
             print("music_history_rejected error=\(error)")
 #endif
             musicHistoryPolicy = previous
-            musicHistoryUnavailable = true
+            musicHistorySaveError = Self.mapRideMapError(error)
             return false
         }
     }
@@ -677,6 +680,7 @@ final class CutoutAppModel {
         musicHistoryPolicyStore.set(policy)
         musicHistoryPolicy = policy
         musicHistoryUnavailable = false
+        musicHistorySaveError = nil
         core.updateMusicCapturePolicy(policy)
     }
 
@@ -965,6 +969,7 @@ final class CutoutAppModel {
     private func synchronizeMusicHistory(_ history: MobileMusicHistoryDto?) {
         guard let history else {
             musicHistoryUnavailable = false
+            musicHistorySaveError = nil
             musicHistoryPolicy = .disabled
             musicCoordinator.restoreHistoryPolicy(.disabled)
             musicTimelineEvents = []
@@ -974,11 +979,13 @@ final class CutoutAppModel {
         switch history.status {
         case .available:
             musicHistoryUnavailable = false
+            musicHistorySaveError = nil
             musicHistoryPolicy = .humanReadable
             musicCoordinator.restoreHistoryPolicy(.humanReadable)
             musicTimelineEvents = history.events
         case .redacted:
             musicHistoryUnavailable = false
+            musicHistorySaveError = nil
             musicHistoryPolicy = .opaqueItem
             musicCoordinator.restoreHistoryPolicy(.opaqueItem)
             musicTimelineEvents = history.events
@@ -991,6 +998,7 @@ final class CutoutAppModel {
             musicTimelineEvents = []
         case .missing, .disabled, .deleted:
             musicHistoryUnavailable = false
+            musicHistorySaveError = nil
             musicHistoryPolicy = .disabled
             musicCoordinator.restoreHistoryPolicy(.disabled)
             musicTimelineEvents = history.events
@@ -1020,7 +1028,6 @@ final class CutoutAppModel {
         if stopped {
             invalidateLiveProjection(clearPoints: false)
             clearMusicCaptureContext()
-            stopMusicMonitoring()
         }
         return stopped
     }
@@ -1429,6 +1436,7 @@ final class CutoutAppModel {
         // Rust owns the durable tombstone; this only clears Swift's presentation cache.
         musicHistoryPolicy = .disabled
         musicHistoryUnavailable = false
+        musicHistorySaveError = nil
         musicCoordinator.restoreHistoryPolicy(.disabled)
         musicTransitionHintTracker.clear()
         clearMusicCaptureContext()

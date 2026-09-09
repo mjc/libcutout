@@ -143,4 +143,30 @@ mod tests {
             MobileMusicConnectionCallback::Accepted
         );
     }
+
+    #[test]
+    fn mobile_connection_preserves_attempt_identity_after_success() {
+        let connection = MobileMusicConnection::new();
+        let first = connection.begin_attempt_id(0).expect("first attempt");
+        assert_eq!(
+            connection.established_for(first),
+            MobileMusicConnectionCallback::Accepted
+        );
+        assert_eq!(
+            connection.disconnected_for(first, 100),
+            MobileMusicConnectionCallback::Accepted
+        );
+        let second = connection
+            .begin_attempt_id(2_100)
+            .expect("recovery attempt");
+        assert_ne!(first, second);
+        assert_eq!(
+            connection.failed_for(first, 2_200),
+            MobileMusicConnectionCallback::Stale
+        );
+        assert_eq!(
+            connection.established_for(second),
+            MobileMusicConnectionCallback::Accepted
+        );
+    }
 }

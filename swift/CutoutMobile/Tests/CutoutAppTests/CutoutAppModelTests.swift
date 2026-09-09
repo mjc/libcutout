@@ -141,7 +141,7 @@ final class CutoutAppModelTests: XCTestCase {
         XCTAssertNil(state.takeStart())
 
         state.suspend()
-        XCTAssertEqual(state.resume(), .restored)
+        XCTAssertEqual(state.resume(), .noRequest)
 
         state.request(request: .authorize)
         XCTAssertEqual(state.takeStart(), .authorize)
@@ -208,8 +208,10 @@ final class CutoutAppModelTests: XCTestCase {
             musicHistoryPolicyStore: store
         )
 
+        XCTAssertFalse(model.musicHistoryUnavailable)
         XCTAssertFalse(model.setMusicHistoryPolicy(.humanReadable))
-        XCTAssertTrue(model.musicHistoryUnavailable)
+        XCTAssertNotNil(model.musicHistorySaveError)
+        XCTAssertFalse(model.musicHistoryUnavailable, "A rejected choice must not disable capture under the retained policy")
         XCTAssertEqual(model.musicHistoryPolicy, .opaqueItem)
         XCTAssertEqual(store.policy, .opaqueItem)
     }
@@ -432,9 +434,10 @@ final class CutoutAppModelTests: XCTestCase {
     }
 
     @MainActor
-    func testStoppingRideClearsPendingMusicCaptureContext() {
+    func testStoppingRideClearsCaptureContextButKeepsLiveMusicSnapshot() {
         let driver = SessionDriverSpy(rows: [])
         let model = CutoutAppModel(core: driver)
+        model.restoreMusicPlayer()
         XCTAssertTrue(model.startGpsOnlyRide())
         XCTAssertTrue(model.setMusicHistoryPolicy(.opaqueItem))
 
@@ -460,6 +463,7 @@ final class CutoutAppModelTests: XCTestCase {
         XCTAssertTrue(model.stopRideMap())
 
         XCTAssertNil(driver.musicCaptureObservation)
+        XCTAssertEqual(model.musicSettingsNowPlaying?.state, .playing)
     }
 
     @MainActor

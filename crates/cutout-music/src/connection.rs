@@ -48,9 +48,12 @@ impl MusicConnection {
         Some(attempt_id)
     }
 
-    /// Resets the retry budget after the provider confirms connection.
+    /// Resets retry/session state after success without reusing callback identities.
     pub fn established(&mut self) {
-        *self = Self::default();
+        *self = Self {
+            next_attempt_id: self.next_attempt_id,
+            ..Self::default()
+        };
     }
 
     /// Schedules recovery after a disconnect without granting additional attempts.
@@ -222,5 +225,39 @@ mod tests {
         );
         assert!(!connection.begin_attempt_id(2_099).is_some());
         assert!(connection.begin_attempt_id(2_100).is_some());
+    }
+
+    #[test]
+    fn successful_connection_does_not_reuse_attempt_identity_on_recovery() {
+        let mut connection = MusicConnection::default();
+        let first = connection.begin_attempt_id(0).expect("first attempt");
+        assert_eq!(
+            connection.established_for(first),
+            MusicConnectionCallback::Accepted
+        );
+        assert_eq!(
+            connection.disconnected_for(first, 100),
+            MusicConnectionCallback::Accepted
+        );
+        let second = connection
+            .begin_attempt_id(2_100)
+            .expect("recovery attempt");
+        assert_ne!(first, second);
+        assert_eq!(
+            connection.failed_for(first, 2_200),
+            MusicConnectionCallback::Stale
+        );
+        assert_eq!(
+            connection.established_for(first),
+            MusicConnectionCallback::Stale
+        );
+        assert_eq!(
+            connection.disconnected_for(first, 2_300),
+            MusicConnectionCallback::Stale
+        );
+        assert_eq!(
+            connection.established_for(second),
+            MusicConnectionCallback::Accepted
+        );
     }
 }

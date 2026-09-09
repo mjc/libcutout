@@ -48,6 +48,7 @@ struct AppSetupView: View {
                         set: { _ = model.setMusicHistoryPolicy($0) }
                     ),
                     historyUnavailable: model.musicHistoryUnavailable,
+                    historySaveError: model.musicHistorySaveError,
                     onConnect: model.connectMusic,
                     onAuthorizeSpotify: model.authorizeSpotify,
                     onOpenProvider: {
