@@ -1464,6 +1464,37 @@ mod tests {
         );
     }
 
+    #[test]
+    fn ignores_foreign_vesc_frame_and_decodes_following_refloat_frame() {
+        let foreign = [2, 1, 1, 0x10, 0x21, 3];
+        let refloat = custom_app_frame(&ids_payload());
+        let mut bytes = Vec::from(foreign);
+        bytes.extend_from_slice(&refloat);
+        let mut decoder = RefloatStreamDecoder::new();
+
+        let (_, replies) = feed_captured(&mut decoder, &bytes).expect("mixed stream decodes");
+
+        assert!(matches!(
+            replies.as_slice(),
+            [CapturedReply::RealtimeFieldIds(_)]
+        ));
+    }
+
+    #[test]
+    fn oversized_frame_does_not_block_following_refloat_frame() {
+        let refloat = custom_app_frame(&ids_payload());
+        let mut bytes = vec![FRAME_START_LONG, 0xff, 0xff];
+        bytes.extend_from_slice(&refloat);
+        let mut decoder = RefloatStreamDecoder::new();
+
+        let (_, replies) = feed_captured(&mut decoder, &bytes).expect("decoder recovers");
+
+        assert!(matches!(
+            replies.as_slice(),
+            [CapturedReply::RealtimeFieldIds(_)]
+        ));
+    }
+
     fn custom_app_frame(app_data: &[u8]) -> ArrayVec<u8, VESC_MAX_FRAME_LEN> {
         let mut frame = ArrayVec::new();
         encode_custom_app_frame(app_data, &mut frame).expect("frame encodes");

@@ -2693,6 +2693,32 @@ mod tests {
     }
 
     #[test]
+    fn generic_vesc_session_recovers_mixed_noise_and_frames() {
+        let vesc = vesc_selective_values_frame();
+        let refloat_ids = refloat_realtime_ids_frame();
+        let refloat_data = refloat_realtime_data_frame();
+        let mut mixed = vec![0xa5, 0x5a, 0x00];
+        mixed.extend_from_slice(&vesc);
+        mixed.extend_from_slice(&refloat_ids);
+        mixed.extend_from_slice(&refloat_data);
+
+        let output = vesc_output_for_notification_chunks(&[mixed.as_slice()]);
+
+        assert!(
+            read_only_response_events(&output)
+                .iter()
+                .any(|response| matches!(response, ReadOnlyResponse::RawTelemetry(_))),
+            "the VESC frame survives noise and a coalesced Refloat frame"
+        );
+        assert!(
+            telemetry_events(&output)
+                .iter()
+                .any(|delta| delta.speed.is_some()),
+            "the Refloat stream remains usable after the mixed frame"
+        );
+    }
+
+    #[test]
     fn generic_vesc_polling_recovers_missing_descriptors_and_paces_overlap() {
         let mut session = ReadOnlySession::<VescGenericModel, true>::default();
         let mut output = Vec::new();
