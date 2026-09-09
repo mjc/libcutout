@@ -361,7 +361,11 @@ where
     .await?;
     Ok((
         SessionCapture { records, report },
-        notifications.expect("provided stream remains owned"),
+        notifications.ok_or_else(|| {
+            BtleError::from(SessionBridgeError::MissingNotifyEndpoint {
+                channel: channels.subscribe,
+            })
+        })?,
     ))
 }
 
@@ -451,7 +455,7 @@ where
 
     let mut notifications =
         if config.notification_window.is_zero() || bindings.notify_characteristic.is_none() {
-            None
+            notification_stream.take()
         } else if let Some(stream) = notification_stream.take() {
             Some(stream)
         } else {
