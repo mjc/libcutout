@@ -513,6 +513,25 @@ final class MusicIntegrationTests: XCTestCase {
         XCTAssertTrue(stale.availableTransportCommands.isEmpty)
     }
 
+    func testStaleStateRejectsRetainedSkipCapabilities() {
+        let stale = MusicNowPlaying(
+            provider: .spotify,
+            state: .stale,
+            item: .init(identifier: "track-1", title: "Song", artist: "Artist"),
+            capabilities: .init(
+                previous: true,
+                play: false,
+                pause: false,
+                next: true,
+                openProvider: true
+            )
+        )
+
+        XCTAssertFalse(stale.isCommandAvailable(.previous))
+        XCTAssertFalse(stale.isCommandAvailable(.next))
+        XCTAssertTrue(stale.isCommandAvailable(.openProvider))
+    }
+
     @MainActor
     func testCoordinatorRejectsMalformedExplicitRecordBeforeProjectingIt() throws {
         let state = MobileRideMapState()

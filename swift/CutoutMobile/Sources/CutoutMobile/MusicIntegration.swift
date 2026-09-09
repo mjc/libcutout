@@ -504,6 +504,9 @@ public struct MusicNowPlaying: Equatable, Sendable {
 
     public var availableTransportCommands: [MobileMusicCommandDto] {
         Self.transportCommands.filter { command in
+            if command == .previous || command == .next {
+                guard state == .playing || state == .paused else { return false }
+            }
             if command == .play || command == .pause {
                 return command == playPauseCommand
             }

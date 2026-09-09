@@ -309,6 +309,7 @@ public final class SpotifyProviderAdapter: NSObject, @preconcurrency SPTAppRemot
     }
 
     public func observation(observedAtMs: UInt64) -> MusicProviderObservation {
+        let controlsAvailable = lifecycleState == .playing || lifecycleState == .paused
         let snapshot = MobileMusicSnapshotDto(
             provider: .spotify,
             sessionId: "spotify-app-remote",
@@ -324,10 +325,10 @@ public final class SpotifyProviderAdapter: NSObject, @preconcurrency SPTAppRemot
             durationMilliseconds: playerState.flatMap { UInt64(exactly: $0.track.duration) },
             observedAtMs: observedAtMs,
             capabilities: MobileMusicCapabilitiesDto(
-                previous: playerState?.playbackRestrictions.canSkipPrevious == true,
+                previous: controlsAvailable && playerState?.playbackRestrictions.canSkipPrevious == true,
                 play: lifecycleState == .paused,
                 pause: lifecycleState == .playing,
-                next: playerState?.playbackRestrictions.canSkipNext == true,
+                next: controlsAvailable && playerState?.playbackRestrictions.canSkipNext == true,
                 openProvider: true
             )
         )
