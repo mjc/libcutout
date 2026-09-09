@@ -875,6 +875,10 @@ final class CutoutAppModel {
         print("music_connect_requested provider=\(selectedMusicProvider) scene_active=\(musicMonitorSceneState.isSceneActive)")
 #endif
         musicMonitoringPreferenceStore.setEnabled(true)
+        // This is an explicit foreground user action. If the previous scene
+        // lifecycle suspended monitoring, resume it before starting the new
+        // provider session instead of silently dropping the tap.
+        _ = musicMonitorSceneState.resumeIfNeeded()
         musicMonitorSceneState.request()
         beginMusicMonitoring(allowOutsideRide: true)
     }

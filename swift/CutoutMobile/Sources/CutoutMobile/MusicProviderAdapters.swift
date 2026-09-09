@@ -37,6 +37,7 @@ public final class SpotifyProviderAdapter: NSObject, @preconcurrency SPTAppRemot
     private var monitoringGeneration: UInt64 = 0
     private var playerStateRequestPending = false
     private var connectionAttemptInFlight = false
+    private var authorizationTimeoutTask: Task<Void, Never>?
     private var nextConnectionAttemptAt = Date.distantPast
     private var connectionAttemptCount = 0
     private static let maximumConnectionAttempts = 3
@@ -119,6 +120,8 @@ public final class SpotifyProviderAdapter: NSObject, @preconcurrency SPTAppRemot
         lifecycleState = .buffering
         emitChange()
         if let accessToken {
+            authorizationTimeoutTask?.cancel()
+            authorizationTimeoutTask = nil
             connect(appRemote, with: accessToken)
         } else {
             connectionAttemptInFlight = true
@@ -130,6 +133,19 @@ public final class SpotifyProviderAdapter: NSObject, @preconcurrency SPTAppRemot
                 options: .clientOnly,
                 campaign: nil
             )
+            let generation = monitoringGeneration
+            authorizationTimeoutTask = Task { [weak self] in
+                do {
+                    try await Task.sleep(for: .seconds(20))
+                } catch {
+                    return
+                }
+                guard let self, self.monitoringGeneration == generation,
+                      self.connectionAttemptInFlight else { return }
+                self.connectionAttemptInFlight = false
+                self.lifecycleState = .unauthorized
+                self.emitChange()
+            }
         }
     }
 
@@ -142,6 +158,8 @@ public final class SpotifyProviderAdapter: NSObject, @preconcurrency SPTAppRemot
         appRemote = nil
         sessionManager?.delegate = nil
         sessionManager = nil
+        authorizationTimeoutTask?.cancel()
+        authorizationTimeoutTask = nil
         playerStateRequestPending = false
         playerState = nil
         connectionAttemptInFlight = false
@@ -231,6 +249,8 @@ public final class SpotifyProviderAdapter: NSObject, @preconcurrency SPTAppRemot
 
     public func sessionManager(manager: SPTSessionManager, didInitiate session: SPTSession) {
         guard manager === sessionManager, onChange != nil else { return }
+        authorizationTimeoutTask?.cancel()
+        authorizationTimeoutTask = nil
         accessToken = session.accessToken
         connectionAttemptCount = 0
         connectionAttemptInFlight = false
@@ -240,6 +260,8 @@ public final class SpotifyProviderAdapter: NSObject, @preconcurrency SPTAppRemot
 
     public func sessionManager(manager: SPTSessionManager, didFailWith error: Error) {
         guard manager === sessionManager, onChange != nil else { return }
+        authorizationTimeoutTask?.cancel()
+        authorizationTimeoutTask = nil
         connectionAttemptInFlight = false
         lifecycleState = .unauthorized
 #if DEBUG
