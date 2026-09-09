@@ -16,7 +16,7 @@ import Security
 /// authorization, playback, and provider lifecycle; only bounded projections
 /// enter the shared music/Rust pipeline.
 @MainActor
-public final class SpotifyProviderAdapter: NSObject, @preconcurrency SPTAppRemoteDelegate, @preconcurrency SPTAppRemotePlayerStateDelegate {
+public final class SpotifyProviderAdapter: NSObject, @preconcurrency SPTSessionManagerDelegate, @preconcurrency SPTAppRemoteDelegate, @preconcurrency SPTAppRemotePlayerStateDelegate {
     public static let providerURL = URL(string: "spotify://")!
     private static let defaultRedirectURI = "cutout-spotify://spotify-login-callback"
     private static let artworkSize = CGSize(width: 256, height: 256)
@@ -24,6 +24,7 @@ public final class SpotifyProviderAdapter: NSObject, @preconcurrency SPTAppRemot
     private static let accessTokenAccount = "default"
 
     private let configuration: SPTConfiguration?
+    private var sessionManager: SPTSessionManager?
     private var appRemote: SPTAppRemote?
     private var accessToken: String? {
         didSet {
@@ -133,20 +134,13 @@ public final class SpotifyProviderAdapter: NSObject, @preconcurrency SPTAppRemot
             connect(with: accessToken)
             return true
         } else {
-            let appRemote = makeAppRemote(configuration)
             lifecycleState = .buffering
             emitChange()
             authorizationInFlight = true
             let generation = monitoringGeneration
-            appRemote.authorizeAndPlayURI("") { [weak self] installed in
-                guard !installed else { return }
-                Task { @MainActor [weak self] in
-                    guard let self, self.monitoringGeneration == generation else { return }
-                    self.authorizationInFlight = false
-                    self.lifecycleState = .unavailable
-                    self.emitChange()
-                }
-            }
+            let sessionManager = SPTSessionManager(configuration: configuration, delegate: self)
+            self.sessionManager = sessionManager
+            sessionManager.initiateSession(with: .appRemoteControl, options: .default, campaign: nil)
             authorizationTimeoutTask = Task { @MainActor [weak self] in
                 do {
                     try await Task.sleep(for: .seconds(20))
@@ -252,39 +246,46 @@ public final class SpotifyProviderAdapter: NSObject, @preconcurrency SPTAppRemot
               url.host == configuration.redirectURL.host,
               musicCallbackPathMatches(expected: configuration.redirectURL.path, actual: url.path)
         else { return false }
-        // The URL can arrive before the scene resumes monitoring after handoff.
-        let appRemote = self.appRemote ?? SPTAppRemote(configuration: configuration, logLevel: .error)
-        let parameters = appRemote.authorizationParameters(from: url)
-        guard let parameters else {
-#if DEBUG
-            print("spotify_callback_parameters missing")
-#endif
-            return false
-        }
-        if let token = parameters[SPTAppRemoteAccessTokenKey], !token.isEmpty {
-            authorizationTimeoutTask?.cancel()
-            authorizationTimeoutTask = nil
-            authorizationInFlight = false
-            accessToken = token
-            self.appRemote = appRemote
-            appRemote.delegate = self
-            appRemote.connectionParameters.accessToken = token
-            if onChange != nil {
-                connection = MobileMusicConnection()
-                connectionAttemptIDs.removeAll()
-                connect(with: token)
-            }
-#if DEBUG
-            print("spotify_callback_token accepted")
-#endif
-            return true
-        }
+        // SessionManager owns the authorization-code/PKCE callback. It never
+        // asks Spotify to start playback; the returned session is connected to
+        // App Remote below after the callback delegate fires.
+        let sessionManager = self.sessionManager
+            ?? SPTSessionManager(configuration: configuration, delegate: self)
+        self.sessionManager = sessionManager
+        return sessionManager.application(UIApplication.shared, open: url, options: [:])
+    }
+
+    public func sessionManager(manager: SPTSessionManager, didInitiate session: SPTSession) {
+        guard manager === sessionManager else { return }
+        accept(session: session)
+    }
+
+    public func sessionManager(manager: SPTSessionManager, didRenew session: SPTSession) {
+        guard manager === sessionManager else { return }
+        accept(session: session)
+    }
+
+    public func sessionManager(manager: SPTSessionManager, didFailWith error: Error) {
+        guard manager === sessionManager else { return }
         authorizationTimeoutTask?.cancel()
         authorizationTimeoutTask = nil
         authorizationInFlight = false
         lifecycleState = .unauthorized
+#if DEBUG
+        print("spotify_authorization_failed domain=\((error as NSError).domain) code=\((error as NSError).code)")
+#endif
         emitChange()
-        return true
+    }
+
+    private func accept(session: SPTSession) {
+        authorizationTimeoutTask?.cancel()
+        authorizationTimeoutTask = nil
+        authorizationInFlight = false
+        accessToken = session.accessToken
+        guard onChange != nil else { return }
+        connection = MobileMusicConnection()
+        connectionAttemptIDs.removeAll()
+        connect(with: session.accessToken)
     }
 
     @MainActor
@@ -463,6 +464,7 @@ public final class SpotifyProviderAdapter: NSObject, @preconcurrency SPTAppRemot
     /// Called only by the explicit Reauthorize Spotify account action.
     public func clearAuthorization() {
         stopMonitoring()
+        sessionManager = nil
         accessToken = nil
         authorizationInFlight = false
     }
