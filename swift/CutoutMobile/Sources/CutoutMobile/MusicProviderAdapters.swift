@@ -102,10 +102,13 @@ public final class SpotifyProviderAdapter: NSObject, @preconcurrency SPTAppRemot
 #endif
     }
 
+    /// Starts provider observation. Returns false when passive observation has
+    /// no configured SDK or token, so the caller can avoid a no-op poll task.
+    @discardableResult
     public func startMonitoring(
         allowAuthorization: Bool = false,
         onChange: @escaping @MainActor () -> Void
-    ) {
+    ) -> Bool {
         stopMonitoring()
         self.onChange = onChange
 #if DEBUG
@@ -114,18 +117,19 @@ public final class SpotifyProviderAdapter: NSObject, @preconcurrency SPTAppRemot
         guard let configuration else {
             lifecycleState = .unavailable
             emitChange()
-            return
+            return false
         }
         // No credentials means no connection attempt, not transient buffering.
         guard accessToken != nil || allowAuthorization else {
             lifecycleState = .unauthorized
             emitChange()
-            return
+            return false
         }
         if let accessToken {
             authorizationTimeoutTask?.cancel()
             authorizationTimeoutTask = nil
             connect(with: accessToken)
+            return true
         } else {
             let appRemote = makeAppRemote(configuration)
             lifecycleState = .buffering
@@ -153,6 +157,7 @@ public final class SpotifyProviderAdapter: NSObject, @preconcurrency SPTAppRemot
                 self.lifecycleState = .unauthorized
                 self.emitChange()
             }
+            return true
         }
     }
 

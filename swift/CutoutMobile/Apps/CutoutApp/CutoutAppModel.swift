@@ -701,11 +701,12 @@ final class CutoutAppModel {
         guard isCurrent() else { return }
 #if canImport(SpotifyiOS) && os(iOS)
         if provider.monitoringMode == .spotifyAppRemote {
-            spotifyMusicProvider.startMonitoring(allowAuthorization: allowAuthorization) {
+            let started = spotifyMusicProvider.startMonitoring(allowAuthorization: allowAuthorization) {
                 guard isCurrent() else { return }
                 // Both SDK callbacks and polling must use the session's monotonic clock.
                 refresh()
             }
+            guard started else { return }
             defer {
                 if currentGeneration() == generation {
                     spotifyMusicProvider.stopMonitoring()
