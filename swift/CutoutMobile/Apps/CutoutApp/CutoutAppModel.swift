@@ -712,7 +712,7 @@ final class CutoutAppModel {
                     spotifyMusicProvider.stopMonitoring()
                 }
             }
-            while !Task.isCancelled && isCurrent() {
+            while !Task.isCancelled && isCurrent() && spotifyMusicProvider.shouldContinueMonitoring {
                 spotifyMusicProvider.ensureConnection()
                 spotifyMusicProvider.refreshPlayerState()
                 do {

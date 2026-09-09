@@ -30,6 +30,16 @@ struct MusicArtworkCache: Sendable {
     private var itemIdentifier: String?
     private var cachedArtwork: MusicArtwork?
 
+    func cachedArtwork(for itemIdentifier: String?) -> MusicArtwork? {
+        guard let itemIdentifier, self.itemIdentifier == itemIdentifier else { return nil }
+        return cachedArtwork
+    }
+
+    mutating func insert(_ artwork: MusicArtwork, for itemIdentifier: String) {
+        self.itemIdentifier = itemIdentifier
+        cachedArtwork = artwork
+    }
+
     mutating func artwork(
         for itemIdentifier: String?,
         load: () -> MusicArtwork?

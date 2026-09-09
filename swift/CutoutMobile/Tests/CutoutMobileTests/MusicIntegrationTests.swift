@@ -459,6 +459,20 @@ final class MusicIntegrationTests: XCTestCase {
         XCTAssertEqual(loadCount, 2)
     }
 
+    func testArtworkCacheRejectsOldTrackAfterIdentityChanges() {
+        var cache = MusicArtworkCache()
+        let first = MusicArtwork(data: Data([1, 2, 3]))!
+        let second = MusicArtwork(data: Data([4, 5, 6]))!
+
+        cache.insert(first, for: "spotify:track:first")
+        XCTAssertEqual(cache.cachedArtwork(for: "spotify:track:first"), first)
+        XCTAssertNil(cache.cachedArtwork(for: "spotify:track:second"))
+
+        cache.insert(second, for: "spotify:track:second")
+        XCTAssertNil(cache.cachedArtwork(for: "spotify:track:first"))
+        XCTAssertEqual(cache.cachedArtwork(for: "spotify:track:second"), second)
+    }
+
     @MainActor
     func testProviderArtworkReachesPresentationOnlyNowPlaying() throws {
         let rideMapState = MobileRideMapState()
