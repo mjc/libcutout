@@ -6,7 +6,7 @@ use cutout_core::{
 };
 use futures_util::{Stream, StreamExt};
 use std::pin::Pin;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 use tracing::{debug, info};
 
 use crate::{
@@ -549,6 +549,8 @@ struct NotificationLoopContext<'a, 'observer, P: ?Sized> {
     monotonic_origin: Instant,
 }
 
+const SESSION_DEADLINE_TICK: Duration = Duration::from_millis(100);
+
 async fn process_notification_window<P, S>(
     mut context: NotificationLoopContext<'_, '_, P>,
     session: &mut S,
@@ -568,16 +570,24 @@ where
     info!("session notifications stream await starting");
     info!("session notifications stream ready before protocol polling");
     let deadline = tokio::time::Instant::now() + notification_window.as_duration();
+    let mut next_tick = tokio::time::Instant::now() + SESSION_DEADLINE_TICK;
+    let mut last_notification_at = tokio::time::Instant::now();
+    let mut link_down_recorded = false;
     while tokio::time::Instant::now() < deadline {
         let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
         let wait = link_loss_next_wait(remaining, context.link_loss_idle_window);
+        let wait_deadline = tokio::time::Instant::now() + wait;
+        let tick_due = next_tick <= wait_deadline;
+        let tick_deadline = if tick_due { next_tick } else { wait_deadline };
         debug!(
             remaining_ms = remaining.as_millis(),
             wait_ms = wait.as_millis(),
             "session notification next await starting"
         );
-        match tokio::time::timeout(wait, notifications.next()).await {
-            Ok(Some(notification)) => {
+        tokio::select! {
+            result = notifications.next() => match result {
+                Some(notification) => {
+                last_notification_at = tokio::time::Instant::now();
                 *monotonic_ms = elapsed_or_next(*monotonic_ms, context.monotonic_origin);
                 let decode_outcome = ingest_notification(
                     &mut context,
@@ -615,7 +625,7 @@ where
                     );
                 context.report.latest_notification_len = Some(notification_len);
             }
-            Ok(None) => {
+                None => {
                 debug!("session notification stream ended");
                 if context.stream_end_is_link_down {
                     *monotonic_ms = monotonic_ms.next();
@@ -626,11 +636,41 @@ where
                         outputs,
                         *monotonic_ms,
                     )?;
+                    link_down_recorded = true;
                 }
                 break;
-            }
-            Err(_) => {
-                if link_loss_idle_elapsed(remaining, context.link_loss_idle_window) {
+                }
+            },
+            _ = tokio::time::sleep_until(tick_deadline), if tick_due => {
+                *monotonic_ms = elapsed_or_next(*monotonic_ms, context.monotonic_origin);
+                session.handle(
+                    SessionInput::Tick {
+                        monotonic_ms: monotonic_ms.into_core(),
+                    },
+                    outputs,
+                );
+                process_session_outputs(
+                    SessionOutputContext {
+                        peripheral: context.peripheral,
+                        write_channel: context.write_channel,
+                        subscribe_channel: context.subscribe_channel,
+                        write_characteristic: &context.bindings.write_characteristic,
+                        notify_characteristic: context.bindings.notify_characteristic.as_ref(),
+                        report: context.report,
+                        capture: context.capture.as_deref_mut(),
+                        write_provenance: context.write_provenance,
+                    },
+                    session,
+                    outputs,
+                    *monotonic_ms,
+                )
+                .await?;
+                next_tick = next_tick
+                    .checked_add(SESSION_DEADLINE_TICK)
+                    .unwrap_or(wait_deadline);
+            },
+            _ = tokio::time::sleep_until(wait_deadline) => {
+                if link_loss_idle_elapsed(last_notification_at, context.link_loss_idle_window) {
                     debug!("session notification idle window elapsed; recording link down");
                     *monotonic_ms = monotonic_ms.next();
                     record_external_link_down(
@@ -640,12 +680,26 @@ where
                         outputs,
                         *monotonic_ms,
                     )?;
+                    link_down_recorded = true;
                 } else {
                     debug!("session notification window elapsed");
                 }
                 break;
             }
         }
+    }
+    if !link_down_recorded
+        && context.stream_end_is_link_down
+        && link_loss_idle_elapsed(last_notification_at, context.link_loss_idle_window)
+    {
+        *monotonic_ms = monotonic_ms.next();
+        record_external_link_down(
+            context.report,
+            context.capture.as_deref_mut(),
+            session,
+            outputs,
+            *monotonic_ms,
+        )?;
     }
     debug!(
         notifications = context.report.notifications.as_events(),
@@ -714,19 +768,22 @@ where
 }
 
 fn link_loss_next_wait(
-    remaining: std::time::Duration,
+    remaining: Duration,
     link_loss_idle_window: Option<NotificationWindow>,
-) -> std::time::Duration {
+) -> Duration {
     link_loss_idle_window.map_or(remaining, |idle_window| {
         remaining.min(idle_window.as_duration())
     })
 }
 
 fn link_loss_idle_elapsed(
-    remaining: std::time::Duration,
+    last_notification_at: tokio::time::Instant,
     link_loss_idle_window: Option<NotificationWindow>,
 ) -> bool {
-    link_loss_idle_window.is_some_and(|idle_window| idle_window.as_duration() < remaining)
+    link_loss_idle_window.is_some_and(|idle_window| {
+        tokio::time::Instant::now().saturating_duration_since(last_notification_at)
+            >= idle_window.as_duration()
+    })
 }
 
 fn record_external_link_down<S>(

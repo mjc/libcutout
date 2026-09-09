@@ -1283,6 +1283,33 @@ async fn drive_session_rejects_same_characteristic_from_wrong_service() {
     );
 }
 
+#[tokio::test]
+async fn drive_session_emits_deadline_ticks_during_quiet_notifications() {
+    let peripheral = RecordingPeripheral::with_open_notifications(Vec::new());
+    let mut session = TickCountingSession::default();
+    let summary = shared_write_notify_summary("VESC BLE UART");
+
+    crate::drive_session(
+        &peripheral,
+        &mut session,
+        GattChannel::from_bytes([0xA1; 16]),
+        &summary,
+        summary
+            .select_session_endpoints()
+            .expect("summary has session endpoints"),
+        crate::NotificationWindow::from_millis(250),
+    )
+    .await
+    .expect("quiet notification window completes");
+
+    let ticks = session.ticks.lock().expect("tick log");
+    assert!(
+        ticks.len() >= 2,
+        "quiet windows must receive recurring ticks"
+    );
+    assert!(ticks.iter().any(|tick| tick.get() >= 100));
+}
+
 #[allow(clippy::too_many_lines)]
 #[tokio::test]
 async fn drive_session_relays_notifications_back_into_session() {
@@ -2148,18 +2175,27 @@ async fn capture_reconnecting_session_retries_after_external_notification_idle()
     assert_eq!(*session.link_ups.lock().expect("link ups"), 2);
     assert_eq!(*session.link_downs.lock().expect("link downs"), 2);
     assert_eq!(*first.disconnects.lock().expect("first disconnects"), 0);
+    let first_link_down_ms = capture
+        .records
+        .iter()
+        .find_map(|record| match record {
+            crate::SessionCaptureRecord::LinkDown { monotonic_ms } => Some(monotonic_ms.get()),
+            _ => None,
+        })
+        .expect("idle timeout records link down");
+    assert!(first_link_down_ms >= 1_500);
     assert!(capture.records.iter().any(|record| matches!(
         record,
         crate::SessionCaptureRecord::LinkDown {
             monotonic_ms,
-        } if *monotonic_ms == crate::MonotonicMs::new(3)
+        } if monotonic_ms.get() == first_link_down_ms
     )));
     assert!(capture.records.iter().any(|record| matches!(
         record,
         crate::SessionCaptureRecord::Link {
             monotonic_ms,
             ..
-        } if *monotonic_ms == crate::MonotonicMs::new(4)
+        } if monotonic_ms.get() > first_link_down_ms
     )));
 }
 
@@ -2214,6 +2250,29 @@ async fn capture_reconnecting_session_cancels_commands_after_reconnect() {
 struct BridgeSession {
     notification_count: Arc<Mutex<usize>>,
     last_notification_channel: Arc<Mutex<Option<GattChannel>>>,
+}
+
+#[derive(Default)]
+struct TickCountingSession {
+    ticks: Arc<Mutex<Vec<cutout_core::MonotonicTimestamp>>>,
+}
+
+impl ProtocolSession for TickCountingSession {
+    fn handle(&mut self, input: SessionInput<'_>, output: &mut Vec<SessionOutput>) {
+        match input {
+            SessionInput::LinkUp(_) => {
+                output.push(SessionOutput::Transport(TransportAction::Subscribe {
+                    channel: GattChannel::from_bytes([0xA1; 16]),
+                }))
+            }
+            SessionInput::Tick { monotonic_ms } => {
+                self.ticks.lock().expect("tick log").push(monotonic_ms)
+            }
+            SessionInput::LinkDown
+            | SessionInput::Notification { .. }
+            | SessionInput::Command(_) => {}
+        }
+    }
 }
 
 #[derive(Default)]
