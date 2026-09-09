@@ -32,6 +32,18 @@ final class VescSharedReplayTests: XCTestCase {
             XCTAssertEqual(step.snapshot?.speed?.value, notification.speed_mmps, notification.name)
             XCTAssertEqual(step.actions.filter { $0.kind == .notificationIngest }.count,
                            notification.ingest_count, notification.name)
+            if notification.name == "ordinary values complete" {
+                XCTAssertFalse(
+                    step.actions.contains { $0.vescRealtimeTelemetry },
+                    "generic VESC values must not satisfy the Refloat startup retry"
+                )
+            }
+            if notification.name == "Refloat 1.3 complete runtime data with alerts" {
+                XCTAssertTrue(
+                    step.actions.contains { $0.vescRealtimeTelemetry },
+                    "a fresh Refloat realtime event must satisfy the startup retry"
+                )
+            }
             XCTAssertNotNil(step.captureContext, notification.name)
             XCTAssertTrue(owner.records.contains(.notification(
                 channel: channel,
@@ -44,6 +56,178 @@ final class VescSharedReplayTests: XCTestCase {
         }
     }
 
+    func testCompleteRefloatDescriptorSurvivesEveryNotificationSplitAtRunnerBoundary() throws {
+        let fixture = try loadFixture()
+        let descriptor = try XCTUnwrap(fixture.notifications.first {
+            $0.name == "Refloat 1.3 complete 393-byte descriptor"
+        })
+        let realtime = try XCTUnwrap(fixture.notifications.first {
+            $0.name == "Refloat 1.3 complete runtime data with alerts"
+        })
+        let descriptorChannel = try XCTUnwrap(BluetoothUuid(Data(descriptor.channel)))
+        let realtimeChannel = try XCTUnwrap(BluetoothUuid(Data(realtime.channel)))
+        XCTAssertEqual(descriptor.bytes.count, 393)
+
+        for split in 1..<descriptor.bytes.count {
+            let runner = CoreBluetoothSessionRunner(
+                session: .vescOnewheel(),
+                writeLimit: TransportWriteLimitBytes(20)
+            )
+            _ = try runner.handle(.linkUp(at: MonotonicMilliseconds(0)))
+
+            let first = try runner.handle(.notification(
+                bytes: Data(descriptor.bytes[..<split]),
+                channel: descriptorChannel,
+                at: MonotonicMilliseconds(1)
+            ))
+            XCTAssertEqual(
+                first.actions.filter { $0.kind == .notificationIngest }.count,
+                1,
+                "descriptor prefix split at byte \(split)"
+            )
+
+            let second = try runner.handle(.notification(
+                bytes: Data(descriptor.bytes[split...]),
+                channel: descriptorChannel,
+                at: MonotonicMilliseconds(2)
+            ))
+            XCTAssertEqual(
+                second.actions.filter { $0.kind == .notificationIngest }.count,
+                1,
+                "descriptor suffix split at byte \(split)"
+            )
+
+            let runtime = try runner.handle(.notification(
+                bytes: Data(realtime.bytes),
+                channel: realtimeChannel,
+                at: MonotonicMilliseconds(3)
+            ))
+            XCTAssertEqual(runtime.snapshot?.speed?.value, realtime.speed_mmps, "split \(split)")
+            XCTAssertEqual(runtime.snapshot?.voltage?.value, realtime.voltage_mv, "split \(split)")
+        }
+    }
+
+    func testMalformedPrefixIsReportedAndDoesNotPoisonTheFollowingRefloatFrame() throws {
+        let fixture = try loadFixture()
+        let malformed = try XCTUnwrap(fixture.notifications.first { $0.name == "malformed prefix" })
+        let descriptor = try XCTUnwrap(fixture.notifications.first {
+            $0.name == "Refloat 1.3 complete 393-byte descriptor"
+        })
+        let realtime = try XCTUnwrap(fixture.notifications.first {
+            $0.name == "Refloat 1.3 complete runtime data with alerts"
+        })
+        let session = VescOnewheelSession()
+        _ = try session.linkUp(at: MonotonicMilliseconds(0), writeLimit: TransportWriteLimitBytes(20))
+
+        _ = try session.ingestNotificationActions(
+            Data(descriptor.bytes),
+            channel: Data(descriptor.channel),
+            at: MonotonicMilliseconds(1)
+        )
+
+        let malformedActions = try session.ingestNotificationActions(
+            Data(malformed.bytes),
+            channel: Data(malformed.channel),
+            at: MonotonicMilliseconds(2)
+        )
+        XCTAssertEqual(malformedActions.filter { $0.kind == .notificationIngest }.count, 1)
+
+        _ = try session.ingestNotificationActions(
+            Data(realtime.bytes),
+            channel: Data(realtime.channel),
+            at: MonotonicMilliseconds(3)
+        )
+        XCTAssertEqual(session.currentSnapshot.speed?.value, realtime.speed_mmps)
+        XCTAssertEqual(session.currentSnapshot.voltage?.value, realtime.voltage_mv)
+    }
+
+    func testOwnerForwardsBackpressureReadinessAndClearsWritesOnReconnect() throws {
+        let sink = BackpressureSink()
+        let owner = CoreBluetoothLiveSessionOwner(
+            session: .vescOnewheel(),
+            advertisement: CoreBluetoothAdvertisement(
+                peripheralIdentifier: CoreBluetoothPeripheralIdentifier("backpressure-fixture"),
+                localName: "VESC fixture",
+                advertisedServiceUuids: []
+            ),
+            writeLimit: TransportWriteLimitBytes(20),
+            operationSink: sink
+        )
+
+        _ = try owner.handleLinkUp(at: MonotonicMilliseconds(0))
+        owner.handleNotificationStateUpdate(
+            channel: .vescNordicUartNotify,
+            isNotifying: true,
+            error: nil
+        )
+        XCTAssertEqual(sink.writes.count, 3)
+
+        owner.handlePeripheralIsReadyToSendWithoutResponse()
+        XCTAssertEqual(sink.readyCallbacks, 1)
+
+        _ = try owner.handleLinkDown(at: MonotonicMilliseconds(10))
+        XCTAssertEqual(sink.clearCallbacks, 1)
+        XCTAssertTrue(sink.writes.isEmpty)
+
+        _ = try owner.handleLinkUp(at: MonotonicMilliseconds(20))
+        owner.handleNotificationStateUpdate(
+            channel: .vescNordicUartNotify,
+            isNotifying: true,
+            error: nil
+        )
+        XCTAssertEqual(sink.subscriptions, 2)
+        XCTAssertEqual(sink.writes.count, 3)
+    }
+
+    func testRunnerReconnectRediscoversCompleteRefloatDescriptorBeforeRuntimeData() throws {
+        let fixture = try loadFixture()
+        let descriptor = try XCTUnwrap(fixture.notifications.first {
+            $0.name == "Refloat 1.3 complete 393-byte descriptor"
+        })
+        let realtime = try XCTUnwrap(fixture.notifications.first {
+            $0.name == "Refloat 1.3 complete runtime data with alerts"
+        })
+        let descriptorChannel = try XCTUnwrap(BluetoothUuid(Data(descriptor.channel)))
+        let realtimeChannel = try XCTUnwrap(BluetoothUuid(Data(realtime.channel)))
+        let runner = CoreBluetoothSessionRunner(
+            session: .vescOnewheel(),
+            writeLimit: TransportWriteLimitBytes(20)
+        )
+
+        _ = try runner.handle(.linkUp(at: MonotonicMilliseconds(0)))
+        _ = try runner.handle(.notification(
+            bytes: Data(descriptor.bytes), channel: descriptorChannel, at: MonotonicMilliseconds(1)
+        ))
+        _ = try runner.handle(.notification(
+            bytes: Data(realtime.bytes), channel: realtimeChannel, at: MonotonicMilliseconds(2)
+        ))
+        XCTAssertEqual(
+            try XCTUnwrap(runner.handle(.notification(
+                bytes: Data(realtime.bytes), channel: realtimeChannel, at: MonotonicMilliseconds(3)
+            )).snapshot?.speed?.value),
+            realtime.speed_mmps
+        )
+
+        _ = try runner.handle(.linkDown(at: MonotonicMilliseconds(4)))
+        let relink = try runner.handle(.linkUp(at: MonotonicMilliseconds(5)))
+        XCTAssertTrue(relink.operations.contains(.subscribe(channel: .vescNordicUartNotify)))
+        XCTAssertTrue(relink.operations.contains {
+            if case .writeWithoutResponse(channel: .vescNordicUartWrite, bytes: let bytes) = $0 {
+                return isRefloatRequestForReplay(bytes, command: 32)
+            }
+            return false
+        })
+
+        _ = try runner.handle(.notification(
+            bytes: Data(descriptor.bytes), channel: descriptorChannel, at: MonotonicMilliseconds(6)
+        ))
+        let recovered = try runner.handle(.notification(
+            bytes: Data(realtime.bytes), channel: realtimeChannel, at: MonotonicMilliseconds(7)
+        ))
+        XCTAssertEqual(recovered.snapshot?.speed?.value, realtime.speed_mmps)
+        XCTAssertEqual(recovered.snapshot?.voltage?.value, realtime.voltage_mv)
+    }
+
     private func loadFixture() throws -> ReplayFixture {
         // Test-only source-relative access keeps Rust and Swift on one checked-in corpus.
         let repository = URL(fileURLWithPath: #filePath)
@@ -51,6 +235,41 @@ final class VescSharedReplayTests: XCTestCase {
             .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
         let url = repository.appendingPathComponent("crates/cutout-mobile-ffi/tests/fixtures/vesc-replay-v1.json")
         return try JSONDecoder().decode(ReplayFixture.self, from: Data(contentsOf: url))
+    }
+}
+
+private func isRefloatRequestForReplay(_ bytes: Data, command: UInt8) -> Bool {
+    bytes.count >= 7
+        && bytes.first == 0x02
+        && bytes.last == 0x03
+        && bytes[bytes.index(bytes.startIndex, offsetBy: 2)] == 36
+        && bytes[bytes.index(bytes.startIndex, offsetBy: 3)] == 101
+        && bytes[bytes.index(bytes.startIndex, offsetBy: 4)] == command
+}
+
+private final class BackpressureSink: CoreBluetoothOperationSink {
+    var subscriptions = 0
+    var writes: [Data] = []
+    var readyCallbacks = 0
+    var clearCallbacks = 0
+
+    func subscribe(channel: BluetoothUuid) {
+        subscriptions += 1
+    }
+
+    func writeWithoutResponse(channel: BluetoothUuid, bytes: Data) {
+        writes.append(bytes)
+    }
+
+    func disconnect() {}
+
+    func peripheralIsReadyToSendWithoutResponse() {
+        readyCallbacks += 1
+    }
+
+    func clearPendingWithoutResponseWrites() {
+        clearCallbacks += 1
+        writes.removeAll()
     }
 }
 

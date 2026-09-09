@@ -49,8 +49,8 @@ use cutout_core::{
     RideSessionIdentity as CoreRideSessionIdentity, RideSessionInput as CoreRideSessionInput,
     RideSessionLifecycle as CoreRideSessionLifecycle, RideSessionMarker as CoreRideSessionMarker,
     RideSessionMarkerError as CoreRideSessionMarkerError, RideSessionPhase as CoreRideSessionPhase,
-    RideStopReasonDto, RideWarningDto, SemanticEventCountDto, SeriesCount, SessionInputDto,
-    SessionOutputDto, SettingsEntry, SettingsEntryDto, SettingsReadback,
+    RideStopReasonDto, RideWarningDto, SemanticEventCountDto, SeriesCount, SessionEventDto,
+    SessionInputDto, SessionOutputDto, SettingsEntry, SettingsEntryDto, SettingsReadback,
     SettingsReadbackAvailability, SettingsReadbackAvailabilityDto, SettingsReadbackDto,
     Speed as CoreSpeed, SpeedReadingDto, TelemetryFreshness, TelemetrySnapshotDto,
     TemperatureReadingDto, TransportActionDto, TransportWriteLimit, TransportWriteLimitDto,
@@ -2236,6 +2236,13 @@ pub struct MobileSessionOutputDto {
 
     /// Full protocol-native raw telemetry.
     pub raw_telemetry: Option<MobileRawTelemetryReadbackDto>,
+
+    /// A fresh Refloat realtime telemetry event was emitted for this output.
+    ///
+    /// This is event-scoped rather than inferred from the retained snapshot, so
+    /// reconnect retry logic cannot mistake stale Refloat fields for a new
+    /// realtime sample.
+    pub vesc_realtime_telemetry: bool,
 
     /// Veteran/NOSFET protocol model id when an Aero-family session decoded it.
     pub veteran_protocol_model_id: Option<u16>,
@@ -10844,6 +10851,7 @@ impl MobileSessionOutputDto {
             fault_history_readback: None,
             bms_snapshot: None,
             raw_telemetry: None,
+            vesc_realtime_telemetry: false,
             veteran_protocol_model_id: None,
         }
     }
@@ -10896,6 +10904,13 @@ impl From<SessionOutputDto> for MobileSessionOutputDto {
                 Self::empty(MobileSessionOutputKindDto::Disconnect)
             }
             SessionOutputDto::ReadOnly(response) => Self::read_only(response.payload),
+            SessionOutputDto::Event(SessionEventDto::Telemetry(delta)) => {
+                let mut output = Self::empty(MobileSessionOutputKindDto::Event);
+                output.vesc_realtime_telemetry = delta.operating_state.is_some()
+                    && delta.operating_mode.is_some()
+                    && delta.footpad.is_some();
+                output
+            }
             SessionOutputDto::Event(_) => Self::empty(MobileSessionOutputKindDto::Event),
             SessionOutputDto::NotificationIngest(outcome) => {
                 let mut output = Self::empty(MobileSessionOutputKindDto::NotificationIngest);

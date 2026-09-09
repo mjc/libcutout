@@ -63,6 +63,23 @@ fn shared_vesc_fixture_replays_through_mobile_ffi() {
             "{}",
             notification["name"]
         );
+        let fresh_refloat_events = step
+            .outputs
+            .iter()
+            .filter(|output| output.vesc_realtime_telemetry)
+            .count();
+        if notification["name"] == "ordinary values complete" {
+            assert_eq!(
+                fresh_refloat_events, 0,
+                "generic VESC values must not satisfy the Refloat startup retry"
+            );
+        }
+        if notification["name"] == "Refloat 1.3 complete runtime data with alerts" {
+            assert_eq!(
+                fresh_refloat_events, 1,
+                "a fresh Refloat realtime event must satisfy the startup retry"
+            );
+        }
         if let Some(evidence) = &ingest.notification {
             assert_eq!(evidence.channel, channel);
             assert!(

@@ -382,6 +382,11 @@ public struct SessionAction: Equatable, Hashable, Sendable {
     public let faultHistoryReadback: FaultHistoryReadback?
     public let bmsSnapshot: BmsSnapshot?
     public let rawTelemetry: RawTelemetryReadback?
+    /// True when this action carries a fresh Refloat realtime telemetry event.
+    ///
+    /// The session snapshot is retained across reconnects, so retry logic must
+    /// use this event-scoped marker instead of inspecting snapshot fields.
+    public let vescRealtimeTelemetry: Bool
     public let veteranProtocolModelId: UInt16?
 
     fileprivate init(
@@ -392,6 +397,7 @@ public struct SessionAction: Equatable, Hashable, Sendable {
         faultHistoryReadback: FaultHistoryReadback? = nil,
         bmsSnapshot: BmsSnapshot? = nil,
         rawTelemetry: RawTelemetryReadback? = nil,
+        vescRealtimeTelemetry: Bool = false,
         veteranProtocolModelId: UInt16? = nil
     ) {
         self.kind = kind
@@ -401,6 +407,7 @@ public struct SessionAction: Equatable, Hashable, Sendable {
         self.faultHistoryReadback = faultHistoryReadback
         self.bmsSnapshot = bmsSnapshot
         self.rawTelemetry = rawTelemetry
+        self.vescRealtimeTelemetry = vescRealtimeTelemetry
         self.veteranProtocolModelId = veteranProtocolModelId
     }
 
@@ -468,6 +475,7 @@ public struct SessionAction: Equatable, Hashable, Sendable {
         self.faultHistoryReadback = dto.faultHistoryReadback.map(FaultHistoryReadback.init)
         self.bmsSnapshot = dto.bmsSnapshot.map(BmsSnapshot.init)
         self.rawTelemetry = dto.rawTelemetry.map(RawTelemetryReadback.init)
+        self.vescRealtimeTelemetry = dto.vescRealtimeTelemetry
         self.veteranProtocolModelId = dto.veteranProtocolModelId
     }
 }
@@ -5245,6 +5253,8 @@ public protocol CoreBluetoothOperationSink: AnyObject {
     func subscribe(channel: BluetoothUuid)
     func writeWithoutResponse(channel: BluetoothUuid, bytes: Data)
     func disconnect()
+    func peripheralIsReadyToSendWithoutResponse()
+    func clearPendingWithoutResponseWrites()
 }
 
 public extension CoreBluetoothOperationSink {
@@ -5473,9 +5483,7 @@ public final class CoreBluetoothLiveSessionOwner: @unchecked Sendable {
         ))
         receivedRealtimeTelemetrySinceLinkUp =
             receivedRealtimeTelemetrySinceLinkUp
-            || step.snapshot?.pitch != nil
-            || step.snapshot?.roll != nil
-            || step.snapshot?.footpad != nil
+            || step.actions.contains { $0.vescRealtimeTelemetry }
         if receivedRealtimeTelemetrySinceLinkUp {
             cancelPendingRetry()
         }

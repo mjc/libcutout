@@ -2350,7 +2350,13 @@ extension CutoutSessionCore: CoreBluetoothOperationSink {
 
     public func writeWithoutResponse(channel: BluetoothUuid, bytes: Data) {
         observeDetectionProbeWrite(channel: channel, bytes: bytes)
-        _ = captureFrame(direction: "write_without_response", characteristic: channel.coreBluetoothUuid, bytes: bytes)
+        guard captureFrame(
+            direction: "write_without_response",
+            characteristic: channel.coreBluetoothUuid,
+            bytes: bytes
+        ) else {
+            return
+        }
         guard let characteristic = subscribedCharacteristics[channel] else {
             setPhase(.failed(.missingWriteChannel))
             return

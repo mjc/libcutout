@@ -744,9 +744,12 @@ where
                     *monotonic_ms,
                 )
                 .await?;
-                next_tick = next_tick
-                    .checked_add(SESSION_DEADLINE_TICK)
-                    .unwrap_or(wait_deadline);
+                // A tick can produce a write that waits for the transport to
+                // accept it (for example while a no-response BLE queue is
+                // full). Rebase the next response deadline after that write
+                // completes instead of catching up from the old timer slot.
+                // This keeps requests serialized at the transport boundary.
+                next_tick = tokio::time::Instant::now() + SESSION_DEADLINE_TICK;
             },
             _ = tokio::time::sleep_until(wait_deadline) => {
                 if link_loss_idle_elapsed(last_notification_at, context.link_loss_idle_window) {

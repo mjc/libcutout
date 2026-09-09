@@ -1310,6 +1310,35 @@ async fn drive_session_emits_deadline_ticks_during_quiet_notifications() {
     assert!(ticks.iter().any(|tick| tick.get() >= 100));
 }
 
+#[tokio::test]
+async fn drive_session_rebases_deadline_after_transport_submission() {
+    let peripheral = RecordingPeripheral::with_open_notifications_and_write_delay(
+        Vec::new(),
+        Duration::from_millis(150),
+    );
+    let mut session = WriteOnTickSession { ticks: 0 };
+    let summary = shared_write_notify_summary("VESC BLE UART");
+
+    crate::drive_session(
+        &peripheral,
+        &mut session,
+        GattChannel::from_bytes([0xA1; 16]),
+        &summary,
+        summary
+            .select_session_endpoints()
+            .expect("summary has session endpoints"),
+        crate::NotificationWindow::from_millis(320),
+    )
+    .await
+    .expect("slow transport window completes");
+
+    assert_eq!(
+        peripheral.writes.lock().expect("write log").len(),
+        1,
+        "a delayed submission must start the next deadline after completion"
+    );
+}
+
 #[allow(clippy::too_many_lines)]
 #[tokio::test]
 async fn drive_session_relays_notifications_back_into_session() {
@@ -2257,6 +2286,36 @@ struct TickCountingSession {
     ticks: Arc<Mutex<Vec<cutout_core::MonotonicTimestamp>>>,
 }
 
+struct WriteOnTickSession {
+    ticks: usize,
+}
+
+impl ProtocolSession for WriteOnTickSession {
+    fn handle(&mut self, input: SessionInput<'_>, output: &mut Vec<SessionOutput>) {
+        match input {
+            SessionInput::LinkUp(_) => {
+                output.push(SessionOutput::Transport(TransportAction::Subscribe {
+                    channel: GattChannel::from_bytes([0xA1; 16]),
+                }))
+            }
+            SessionInput::Tick { .. } => {
+                self.ticks += 1;
+                if self.ticks > 1 {
+                    output.push(SessionOutput::Transport(TransportAction::Write {
+                        channel: GattChannel::from_bytes([0xA1; 16]),
+                        bytes: cutout_core::WritePayload::try_from_slice(b"tick")
+                            .expect("fixture payload fits"),
+                        mode: WriteMode::WithoutResponse,
+                    }))
+                }
+            }
+            SessionInput::LinkDown
+            | SessionInput::Notification { .. }
+            | SessionInput::Command(_) => {}
+        }
+    }
+}
+
 impl ProtocolSession for TickCountingSession {
     fn handle(&mut self, input: SessionInput<'_>, output: &mut Vec<SessionOutput>) {
         match input {
@@ -2598,6 +2657,7 @@ struct RecordingPeripheral {
     disconnects: Arc<Mutex<usize>>,
     mtu: u16,
     keep_notifications_open: bool,
+    write_delay: Duration,
 }
 
 impl Default for RecordingPeripheral {
@@ -2609,6 +2669,7 @@ impl Default for RecordingPeripheral {
             disconnects: Arc::new(Mutex::new(0)),
             mtu: 185,
             keep_notifications_open: false,
+            write_delay: Duration::ZERO,
         }
     }
 }
@@ -2636,6 +2697,18 @@ impl RecordingPeripheral {
         Self {
             notifications: Arc::new(Mutex::new(notifications)),
             keep_notifications_open: true,
+            ..Self::default()
+        }
+    }
+
+    fn with_open_notifications_and_write_delay(
+        notifications: Vec<crate::BtleNotification>,
+        write_delay: Duration,
+    ) -> Self {
+        Self {
+            notifications: Arc::new(Mutex::new(notifications)),
+            keep_notifications_open: true,
+            write_delay,
             ..Self::default()
         }
     }
@@ -2718,6 +2791,9 @@ impl crate::SessionPeripheral for RecordingPeripheral {
         chunk: crate::BtleWriteChunk<'_>,
         mode: WriteMode,
     ) -> Result<(), crate::BtleError> {
+        if !self.write_delay.is_zero() {
+            tokio::time::sleep(self.write_delay).await;
+        }
         self.writes.lock().expect("write log").push((
             characteristic.uuid,
             Bytes::copy_from_slice(chunk.as_slice()),
