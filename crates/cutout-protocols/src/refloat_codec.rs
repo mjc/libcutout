@@ -1193,9 +1193,7 @@ mod tests {
         assert_eq!(
             data.to_delta(MonotonicTimestamp::from_milliseconds(42), true)
                 .speed,
-            Some(Measured::reported(Speed::from_millimetres_per_second(
-                278
-            )))
+            Some(Measured::reported(Speed::from_millimetres_per_second(278)))
         );
     }
 

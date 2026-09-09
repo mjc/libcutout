@@ -644,7 +644,7 @@ impl ReadOnlyNotificationDecoder for VescNotificationDecoder {
         monotonic_ms: MonotonicTimestamp,
         output: &mut Vec<SessionOutput>,
     ) {
-        if self.refloat_stream_pending
+        if (self.refloat_stream_pending && complete_vesc_frame_len(bytes).is_none())
             || self.generic_stream_pending
             || !self.generic_prefix.is_empty()
         {
@@ -727,8 +727,18 @@ impl VescNotificationDecoder {
         output: &mut Vec<SessionOutput>,
     ) {
         self.now_ms = monotonic_ms.as_milliseconds();
-        let refloat_handled =
-            self.handle_refloat_notification(family, channel, bytes, monotonic_ms, output);
+        if self.refloat_stream_pending
+            && !self.generic_stream_pending
+            && self.generic_prefix.is_empty()
+        {
+            let refloat_handled =
+                self.handle_refloat_notification(family, channel, bytes, monotonic_ms, output);
+            if refloat_handled || self.refloat_stream_pending {
+                return;
+            }
+        }
+        let mut refloat_handled = false;
+        let mut refloat_buffered = false;
         let mut generic_bytes = ArrayVec::<u8, VESC_MAX_FRAME_LEN>::new();
         let feed_generic = if self.generic_stream_pending {
             generic_bytes
@@ -745,6 +755,16 @@ impl VescNotificationDecoder {
             match generic_frame_kind(&generic_bytes) {
                 Some(is_generic) => {
                     self.generic_prefix.clear();
+                    if !is_generic {
+                        refloat_handled = self.handle_refloat_notification(
+                            family,
+                            channel,
+                            &generic_bytes,
+                            monotonic_ms,
+                            output,
+                        );
+                        refloat_buffered = !refloat_handled;
+                    }
                     is_generic
                 }
                 None => {
@@ -761,6 +781,16 @@ impl VescNotificationDecoder {
                     generic_bytes
                         .try_extend_from_slice(bytes)
                         .expect("notification fits bounded VESC frame");
+                    if !is_generic {
+                        refloat_handled = self.handle_refloat_notification(
+                            family,
+                            channel,
+                            bytes,
+                            monotonic_ms,
+                            output,
+                        );
+                        refloat_buffered = !refloat_handled;
+                    }
                     is_generic
                 }
                 None if matches!(bytes.first(), Some(2 | 3)) => {
@@ -789,7 +819,7 @@ impl VescNotificationDecoder {
                 !refloat_handled,
             );
             self.generic_stream_pending = buffered && !replied;
-        } else if !self.generic_prefix.is_empty() {
+        } else if refloat_buffered || !self.generic_prefix.is_empty() {
             output.push(SessionOutput::NotificationIngest(
                 NotificationIngestOutcome::buffered_fragment(
                     family,
@@ -2899,10 +2929,7 @@ mod tests {
         let mut first = vec![0xa5, 0x5a];
         first.extend_from_slice(&vesc[..split_at]);
 
-        let output = vesc_output_for_notification_chunks(&[
-            first.as_slice(),
-            &vesc[split_at..],
-        ]);
+        let output = vesc_output_for_notification_chunks(&[first.as_slice(), &vesc[split_at..]]);
 
         assert!(
             read_only_response_events(&output)
