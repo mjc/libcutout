@@ -816,13 +816,23 @@ final class CutoutAppModel {
     }
 
     private func beginMusicMonitoring(allowOutsideRide: Bool = false) {
-        guard musicMonitorSceneState.isSceneActive else { return }
+        guard musicMonitorSceneState.isSceneActive else {
+#if DEBUG
+            print("music_monitor_skipped scene_inactive allow_outside_ride=\(allowOutsideRide)")
+#endif
+            return
+        }
 #if os(iOS) && canImport(MediaPlayer)
         // Provider sessions are ride-scoped. Persisted setup intent may be
         // restored at app launch, but it must not wake Spotify while browsing
         // the picker or map without an open ride.
         let rideIsOpen = rideMapSnapshot?.state.isOpen == true
-        guard rideIsOpen || allowOutsideRide else { return }
+        guard rideIsOpen || allowOutsideRide else {
+#if DEBUG
+            print("music_monitor_skipped ride_closed allow_outside_ride=\(allowOutsideRide)")
+#endif
+            return
+        }
         stopMusicMonitoring()
         let generation = musicMonitorGeneration.begin()
         let provider = selectedMusicProvider
@@ -861,6 +871,9 @@ final class CutoutAppModel {
     }
 
     func connectMusic() {
+#if DEBUG
+        print("music_connect_requested provider=\(selectedMusicProvider) scene_active=\(musicMonitorSceneState.isSceneActive)")
+#endif
         musicMonitoringPreferenceStore.setEnabled(true)
         musicMonitorSceneState.request()
         beginMusicMonitoring(allowOutsideRide: true)
