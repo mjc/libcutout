@@ -5019,9 +5019,9 @@ public enum CoreBluetoothSession: Sendable {
     fileprivate var preferredServiceUuid: CBUUID {
         switch self {
         case .electricUnicycle:
-            CBUUID(string: "0000FFE0-0000-1000-8000-00805F9B34FB")
+            BluetoothUuid.bluetooth16(0xffe0).coreBluetoothUuid
         case .vescOnewheel:
-            CBUUID(string: "6E400001-B5A3-F393-E0A9-E50E24DCCA9E")
+            BluetoothUuid.vescNordicUartService.coreBluetoothUuid
         }
     }
 

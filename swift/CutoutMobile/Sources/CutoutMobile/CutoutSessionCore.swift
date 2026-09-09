@@ -2359,9 +2359,9 @@ private extension CutoutSessionCore {
     func preferredServiceUuid(for route: DevicePickerConnectionRoute?) -> CBUUID? {
         switch route {
         case .vescOnewheel:
-            return CBUUID(string: "6E400001-B5A3-F393-E0A9-E50E24DCCA9E")
+            return BluetoothUuid.vescNordicUartService.coreBluetoothUuid
         case .electricUnicycle:
-            return CBUUID(string: "0000FFE0-0000-1000-8000-00805F9B34FB")
+            return BluetoothUuid.bluetooth16(0xffe0).coreBluetoothUuid
         case nil:
             return nil
         }
