@@ -378,6 +378,7 @@ public final class CutoutSessionCore: NSObject {
     private var isProbeOnly = false
     private var subscribedCharacteristics: [BluetoothUuid: CBCharacteristic] = [:]
     private var pendingWithoutResponseWrites: [(CBCharacteristic, Data)] = []
+    private static let maximumPendingWithoutResponseWrites = 64
     private var pendingServiceDiscoveries = Set<CBUUID>()
     private var suppressReconnect = false
     private let reconnectController: ConnectionReconnectController
@@ -2350,6 +2351,11 @@ extension CutoutSessionCore: CoreBluetoothOperationSink {
 
     public func writeWithoutResponse(channel: BluetoothUuid, bytes: Data) {
         observeDetectionProbeWrite(channel: channel, bytes: bytes)
+        guard let characteristic = subscribedCharacteristics[channel] else {
+            setPhase(.failed(.missingWriteChannel))
+            return
+        }
+        guard let peripheral else { return }
         guard captureFrame(
             direction: "write_without_response",
             characteristic: channel.coreBluetoothUuid,
@@ -2357,12 +2363,11 @@ extension CutoutSessionCore: CoreBluetoothOperationSink {
         ) else {
             return
         }
-        guard let characteristic = subscribedCharacteristics[channel] else {
-            setPhase(.failed(.missingWriteChannel))
-            return
-        }
-        guard let peripheral else { return }
         guard peripheral.canSendWriteWithoutResponse else {
+            guard pendingWithoutResponseWrites.count < Self.maximumPendingWithoutResponseWrites else {
+                record("write_without_response_dropped=queue_full")
+                return
+            }
             pendingWithoutResponseWrites.append((characteristic, bytes))
             record("write_without_response_queued=\(channel.coreBluetoothUuid.uuidString) bytes=\(bytes.count)")
             return

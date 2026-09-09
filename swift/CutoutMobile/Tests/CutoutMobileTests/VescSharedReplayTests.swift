@@ -213,7 +213,7 @@ final class VescSharedReplayTests: XCTestCase {
         XCTAssertTrue(relink.operations.contains(.subscribe(channel: .vescNordicUartNotify)))
         XCTAssertTrue(relink.operations.contains {
             if case .writeWithoutResponse(channel: .vescNordicUartWrite, bytes: let bytes) = $0 {
-                return isRefloatRequestForReplay(bytes, command: 32)
+                return isRefloatRequestForReplay(bytes, command: 0)
             }
             return false
         })

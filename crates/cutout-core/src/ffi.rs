@@ -617,6 +617,8 @@ pub enum RideWarningDto {
     Error,
     /// The package cannot communicate with its battery-management system.
     BmsConnection,
+    /// The controller reported a warning code this version does not know.
+    Unknown,
 }
 
 /// UniFFI-ready reason that the controller stopped balancing.
@@ -669,6 +671,7 @@ impl From<RideWarning> for RideWarningDto {
             RideWarning::LowBattery => Self::LowBattery,
             RideWarning::Error => Self::Error,
             RideWarning::BmsConnection => Self::BmsConnection,
+            RideWarning::Unknown => Self::Unknown,
         }
     }
 }

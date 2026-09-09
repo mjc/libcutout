@@ -1628,7 +1628,7 @@ async fn vesc_probe(args: VescProbeArgs) -> Result<()> {
         connect_and_discover(&args.into_target(), ScanWindow::from_secs(seconds)).await?;
     let endpoints = connection
         .summary
-        .select_session_endpoints()
+        .select_vesc_nordic_endpoints()
         .context("no writable VESC BLE UART endpoints discovered")?;
 
     info!("{}", connection.summary);

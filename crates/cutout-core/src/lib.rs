@@ -6020,6 +6020,8 @@ pub enum RideWarning {
     Error,
     /// The package cannot communicate with its battery-management system.
     BmsConnection,
+    /// The controller reported a warning code this version does not know.
+    Unknown,
 }
 
 /// Protocol-decoded reason that the controller stopped balancing.

@@ -1720,6 +1720,8 @@ public enum VescRideWarning: Equatable, Hashable, Sendable {
             self = .error
         case .bmsConnection:
             self = .bmsConnection
+        case .unknown:
+            self = .unknown
         }
     }
 }

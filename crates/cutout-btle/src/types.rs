@@ -18,6 +18,7 @@ use crate::{
 
 const VESC_WRITE_UUID: Uuid = Uuid::from_u128(0x6e400002_b5a3_f393_e0a9_e50e24dcca9e);
 const VESC_NOTIFY_UUID: Uuid = Uuid::from_u128(0x6e400003_b5a3_f393_e0a9_e50e24dcca9e);
+const VESC_SERVICE_UUID: Uuid = Uuid::from_u128(0x6e400001_b5a3_f393_e0a9_e50e24dcca9e);
 
 /// Service summaries carried inline for the common single-GATT-service devices.
 pub type ServiceSummaries = SmallVec<[ServiceSummary; 4]>;
@@ -279,6 +280,31 @@ impl ConnectionSummary {
             });
 
         Some(SessionEndpoints { write, notify })
+    }
+
+    /// Selects the Nordic UART endpoints required by a VESC session.
+    ///
+    /// VESC writes are submitted without response. Falling back to an
+    /// arbitrary writable characteristic can silently target a management or
+    /// DFU endpoint, so probe paths must use this strict selector.
+    #[must_use]
+    pub fn select_vesc_nordic_endpoints(&self) -> Option<SessionEndpoints<'_>> {
+        let service = self.services.iter().find(|service| {
+            service.uuid == VESC_SERVICE_UUID && service.primary
+        })?;
+        let write = service.characteristics.iter().find(|characteristic| {
+            characteristic.uuid == VESC_WRITE_UUID
+                && characteristic
+                    .properties
+                    .contains(CharPropFlags::WRITE_WITHOUT_RESPONSE)
+        })?;
+        let notify = service.characteristics.iter().find(|characteristic| {
+            characteristic.uuid == VESC_NOTIFY_UUID && characteristic.can_notify()
+        })?;
+        Some(SessionEndpoints {
+            write,
+            notify: Some(notify),
+        })
     }
 }
 

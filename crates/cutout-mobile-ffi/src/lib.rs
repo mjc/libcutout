@@ -7981,6 +7981,8 @@ pub enum MobileVescRideWarningDto {
     Error,
     /// The package cannot communicate with its battery-management system.
     BmsConnection,
+    /// The controller reported a warning code this version does not know.
+    Unknown,
 }
 
 /// Reason a VESC float controller stopped balancing.
@@ -8033,6 +8035,7 @@ impl From<RideWarningDto> for MobileVescRideWarningDto {
             RideWarningDto::LowBattery => Self::LowBattery,
             RideWarningDto::Error => Self::Error,
             RideWarningDto::BmsConnection => Self::BmsConnection,
+            RideWarningDto::Unknown => Self::Unknown,
         }
     }
 }

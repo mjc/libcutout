@@ -1032,6 +1032,40 @@ fn connection_summary_selects_session_endpoints() {
     );
 }
 
+#[test]
+fn connection_summary_strict_vesc_selector_rejects_decoy_endpoints() {
+    let service = Uuid::from_u128(0x6e400001_b5a3_f393_e0a9_e50e24dcca9e);
+    let summary = crate::ConnectionSummary {
+        observation: crate::PeripheralObservation {
+            identifier: "vesc".to_owned(),
+            address: None,
+            name: Some("VESC".to_owned()),
+            rssi: Some(rssi(-40)),
+            advertised_services: smallvec![],
+            manufacturer_data: crate::ManufacturerDataSummaries::new(),
+        },
+        services: vec![crate::ServiceSummary {
+            uuid: service,
+            primary: true,
+            characteristics: vec![
+                crate::CharacteristicSummary {
+                    uuid: Uuid::from_u128(0x6e400002_b5a3_f393_e0a9_e50e24dcca9e),
+                    service_uuid: service,
+                    properties: CharPropFlags::WRITE,
+                },
+                crate::CharacteristicSummary {
+                    uuid: Uuid::from_u128(0x6e400003_b5a3_f393_e0a9_e50e24dcca9e),
+                    service_uuid: service,
+                    properties: CharPropFlags::NOTIFY,
+                },
+            ]
+            .into(),
+        }]
+        .into(),
+    };
+    assert!(summary.select_vesc_nordic_endpoints().is_none());
+}
+
 #[tokio::test]
 async fn drive_session_reports_hints_only_identity_from_host_observer() {
     let peripheral = RecordingPeripheral::default();
