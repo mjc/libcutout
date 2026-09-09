@@ -5386,7 +5386,7 @@ public final class CoreBluetoothLiveSessionOwner: @unchecked Sendable {
         let subscriptions = step.operations.filter { operation in
             if case .subscribe = operation { true } else { false }
         }
-        executeAndRecord(writes + subscriptions)
+        executeAndRecord(subscriptions + writes)
         scheduleRetryIfNeeded()
         return step
     }

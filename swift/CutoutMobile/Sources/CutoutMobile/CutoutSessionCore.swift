@@ -377,6 +377,7 @@ public final class CutoutSessionCore: NSObject {
     private var isRecordOnly = false
     private var isProbeOnly = false
     private var subscribedCharacteristics: [BluetoothUuid: CBCharacteristic] = [:]
+    private var pendingWithoutResponseWrites: [(CBCharacteristic, Data)] = []
     private var pendingServiceDiscoveries = Set<CBUUID>()
     private var suppressReconnect = false
     private let reconnectController: ConnectionReconnectController
@@ -1361,6 +1362,7 @@ public final class CutoutSessionCore: NSObject {
         selectedRoute = nil
         liveOwner = nil
         subscribedCharacteristics.removeAll()
+        pendingWithoutResponseWrites.removeAll()
         pendingServiceDiscoveries.removeAll()
 
         guard !suppressReconnect else {
@@ -2151,6 +2153,12 @@ extension CutoutSessionCore: CBCentralManagerDelegate {
 }
 
 extension CutoutSessionCore: CBPeripheralDelegate {
+    public func peripheralIsReady(toSendWriteWithoutResponse peripheral: CBPeripheral) {
+        assertOnBleQueue()
+        guard self.peripheral === peripheral else { return }
+        flushPendingWithoutResponseWrites()
+    }
+
     public func peripheral(_ peripheral: CBPeripheral, didDiscoverServices error: Error?) {
         assertOnBleQueue()
         if let error {
@@ -2342,8 +2350,23 @@ extension CutoutSessionCore: CoreBluetoothOperationSink {
             setPhase(.failed(.missingWriteChannel))
             return
         }
-        peripheral?.writeValue(bytes, for: characteristic, type: .withoutResponse)
+        guard let peripheral else { return }
+        guard peripheral.canSendWriteWithoutResponse else {
+            pendingWithoutResponseWrites.append((characteristic, bytes))
+            record("write_without_response_queued=\(channel.coreBluetoothUuid.uuidString) bytes=\(bytes.count)")
+            return
+        }
+        peripheral.writeValue(bytes, for: characteristic, type: .withoutResponse)
         record("write_without_response=\(channel.coreBluetoothUuid.uuidString) bytes=\(bytes.count)")
+    }
+
+    private func flushPendingWithoutResponseWrites() {
+        guard let peripheral else { return }
+        while peripheral.canSendWriteWithoutResponse, !pendingWithoutResponseWrites.isEmpty {
+            let (characteristic, bytes) = pendingWithoutResponseWrites.removeFirst()
+            peripheral.writeValue(bytes, for: characteristic, type: .withoutResponse)
+            record("write_without_response_flush=\(characteristic.uuid.uuidString) bytes=\(bytes.count)")
+        }
     }
 
     public func disconnect() {

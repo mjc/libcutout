@@ -1330,7 +1330,7 @@ func testVescRideSnapshotProjectsBatteryLevelAndUpdateTime() throws {
         XCTAssertNil(step.snapshot?.speed)
     }
 
-    func testVescLiveOwnerWritesRequestsBeforeSubscribing() throws {
+    func testVescLiveOwnerSubscribesBeforeWritingRequests() throws {
         let sink = RecordingOperationSink()
         let owner = CoreBluetoothLiveSessionOwner(
             session: .vescOnewheel(),
@@ -1345,7 +1345,14 @@ func testVescRideSnapshotProjectsBatteryLevelAndUpdateTime() throws {
 
         _ = try owner.handleLinkUp(at: MonotonicMilliseconds(1))
 
-        XCTAssertEqual(sink.events, [.write, .write, .write, .subscribe])
+        XCTAssertEqual(sink.events, [.subscribe])
+
+        owner.handleNotificationStateUpdate(
+            channel: .vescNordicUartNotify,
+            isNotifying: true,
+            error: nil
+        )
+        XCTAssertEqual(sink.events, [.subscribe, .write, .write, .write])
     }
 
     func testVescLiveOwnerRetriesTelemetryAfterLinkUp() throws {

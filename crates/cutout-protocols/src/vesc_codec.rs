@@ -1057,8 +1057,14 @@ fn map_command_reply(reply: vesc::CommandReply) -> Result<VescReadOnlyReply, Ves
             user_commit_hash: bounded_string(info.user_commit_hash().unwrap_or("")),
         }),
         vesc::CommandReply::GetStats(stats) => Ok(VescReadOnlyReply::Stats(stats.into())),
-        vesc::CommandReply::FwVersion(_)
-        | vesc::CommandReply::GetValues(_)
+        vesc::CommandReply::FwVersion(info) => Ok(VescReadOnlyReply::FirmwareInfo {
+            major: info.major,
+            minor: info.minor,
+            test_version_number: info.test_version_number,
+            commit_hash: ArrayString::new(),
+            user_commit_hash: ArrayString::new(),
+        }),
+        vesc::CommandReply::GetValues(_)
         | vesc::CommandReply::GetValuesSelective(_)
         | vesc::CommandReply::GetValuesSetupSelective(_)
         | vesc::CommandReply::ResetStats => Err(VescCodecError::UnsupportedReply),
