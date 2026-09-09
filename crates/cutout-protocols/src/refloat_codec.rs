@@ -37,9 +37,11 @@ const INFO_STRING_LEN: usize = 20;
 const INFO_V2_BODY_LEN: usize = 58;
 const REFLOAT_BEEP_DUTY: u8 = 6;
 const REFLOAT_SAT_PUSHBACK_SPEED: u8 = 5;
-const REFLOAT_SAT_BMS_ERROR: u8 = 7;
+const REFLOAT_SAT_PUSHBACK_ERROR: u8 = 7;
 const REFLOAT_BEEP_PUSHBACK_SPEED: u8 = 11;
 const REFLOAT_BEEP_BMS_ERROR: u8 = 17;
+const REFLOAT_BEEP_BOARD_IDLE: u8 = 9;
+const REFLOAT_BEEP_FIRMWARE_FAULT: u8 = 19;
 
 /// Refloat read-only package request.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -322,7 +324,7 @@ const fn refloat_ride_warning(sat: u8, beep_reason: u8) -> RideWarning {
     match sat {
         REFLOAT_SAT_PUSHBACK_SPEED => return RideWarning::SpeedPushback,
         6 => return RideWarning::DutyPushback,
-        REFLOAT_SAT_BMS_ERROR => return RideWarning::BmsConnection,
+        REFLOAT_SAT_PUSHBACK_ERROR => return RideWarning::Error,
         10 => return RideWarning::HighVoltage,
         11 => return RideWarning::LowVoltage,
         12 => return RideWarning::TemperaturePushback,
@@ -337,7 +339,8 @@ const fn refloat_ride_warning(sat: u8, beep_reason: u8) -> RideWarning {
         REFLOAT_BEEP_DUTY => RideWarning::DutyPushback,
         7 => RideWarning::Sensors,
         8 => RideWarning::LowBattery,
-        10 => RideWarning::Error,
+        10 | REFLOAT_BEEP_FIRMWARE_FAULT => RideWarning::Error,
+        REFLOAT_BEEP_BOARD_IDLE => RideWarning::None,
         REFLOAT_BEEP_PUSHBACK_SPEED => RideWarning::SpeedPushback,
         REFLOAT_BEEP_BMS_ERROR => RideWarning::BmsConnection,
         _ if sat != 0 || beep_reason != 0 => RideWarning::Unknown,
@@ -1403,8 +1406,10 @@ mod tests {
             (REFLOAT_BEEP_BMS_ERROR, RideWarning::BmsConnection),
             (7, RideWarning::Sensors),
             (8, RideWarning::LowBattery),
-            (9, RideWarning::Unknown),
+            (9, RideWarning::None),
             (10, RideWarning::Error),
+            (12, RideWarning::Unknown),
+            (19, RideWarning::Error),
             (u8::MAX, RideWarning::Unknown),
         ] {
             data.beep_reason = beep_reason;
@@ -1431,7 +1436,7 @@ mod tests {
         for (sat, warning) in [
             (REFLOAT_SAT_PUSHBACK_SPEED, RideWarning::SpeedPushback),
             (6, RideWarning::DutyPushback),
-            (REFLOAT_SAT_BMS_ERROR, RideWarning::BmsConnection),
+            (REFLOAT_SAT_PUSHBACK_ERROR, RideWarning::Error),
             (10, RideWarning::HighVoltage),
             (11, RideWarning::LowVoltage),
             (12, RideWarning::TemperaturePushback),
