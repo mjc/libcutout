@@ -2810,7 +2810,7 @@ mod tests {
         assert_eq!(
             delta.speed,
             Some(Measured::reported(
-                cutout_core::Speed::from_millimetres_per_second(1_000)
+                cutout_core::Speed::from_millimetres_per_second(278)
             ))
         );
         assert_eq!(
