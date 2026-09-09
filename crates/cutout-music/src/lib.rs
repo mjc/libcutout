@@ -14,12 +14,103 @@
 use cutout_core::{MonotonicTimestamp, WallClockUnixTimestamp};
 use thiserror::Error;
 
+pub mod connection;
+pub mod player_request;
+
 /// Maximum provider/session identifier bytes accepted at the platform boundary.
 pub const MAX_MUSIC_IDENTIFIER_BYTES: usize = 256;
 /// Maximum title or artist bytes retained in human-readable ride history.
 pub const MAX_MUSIC_DISPLAY_TEXT_BYTES: usize = 512;
 /// Maximum number of music transitions retained for one ride timeline.
 pub const MAX_MUSIC_TIMELINE_EVENTS: usize = 512;
+
+/// Matches a provider callback path, treating only empty and slash roots as equal.
+/// Scheme and host matching remain the platform URL parser's responsibility.
+#[must_use]
+pub fn music_callback_path_matches(expected: &str, actual: &str) -> bool {
+    expected == actual || (matches!(expected, "" | "/") && matches!(actual, "" | "/"))
+}
+
+/// What a foreground provider monitor may do when it starts.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum MusicMonitorStart {
+    /// Observe or reconnect using existing authorization without launching auth UI.
+    Observe,
+    /// Consume one explicit user request to launch authorization if necessary.
+    Authorize,
+}
+
+/// Foreground music intent, independent of ride recording and history retention.
+///
+/// Platform code owns the SDK task and credential callbacks. A callback can save
+/// credentials in either scene state; it never grants another authorization
+/// launch. Restored preferences request passive observation only.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct MusicMonitor {
+    scene_active: bool,
+    requested: bool,
+    authorization_pending: bool,
+}
+
+impl Default for MusicMonitor {
+    fn default() -> Self {
+        Self {
+            scene_active: true,
+            requested: false,
+            authorization_pending: false,
+        }
+    }
+}
+
+impl MusicMonitor {
+    /// Requests observation; only an explicit user action may allow authorization.
+    pub fn request(&mut self, allow_authorization: bool) {
+        self.requested = true;
+        self.authorization_pending |= allow_authorization;
+    }
+
+    /// Cancels observation and any unconsumed authorization request.
+    pub fn cancel(&mut self) {
+        self.requested = false;
+        self.authorization_pending = false;
+    }
+
+    /// Suspends observation without forgetting intent or retaining an auth launch.
+    pub fn suspend(&mut self) {
+        self.scene_active = false;
+        self.authorization_pending = false;
+    }
+
+    /// Returns whether entering the foreground should restore requested observation.
+    #[must_use]
+    pub fn resume(&mut self) -> bool {
+        let should_resume = self.requested && !self.scene_active;
+        self.scene_active = true;
+        should_resume
+    }
+
+    /// Whether the platform scene permits foreground observation.
+    #[must_use]
+    pub const fn is_scene_active(&self) -> bool {
+        self.scene_active
+    }
+
+    /// Admits a foreground start and consumes any one-shot authorization grant.
+    ///
+    /// Further starts remain passive until another explicit request. The platform
+    /// must cancel or replace its existing SDK task before starting another one.
+    #[must_use]
+    pub fn take_start(&mut self) -> Option<MusicMonitorStart> {
+        if !self.scene_active || !self.requested {
+            return None;
+        }
+        Some(if std::mem::take(&mut self.authorization_pending) {
+            MusicMonitorStart::Authorize
+        } else {
+            MusicMonitorStart::Observe
+        })
+    }
+}
 
 /// A provider with a supported transport-control adapter.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
@@ -51,6 +142,24 @@ pub enum MusicPlaybackState {
     Disconnected,
     /// The observation is older than the consumer's freshness policy.
     Stale,
+}
+
+impl MusicPlaybackState {
+    /// Localized title key when a provider has not supplied item metadata.
+    #[must_use]
+    pub const fn fallback_title_key(self) -> &'static str {
+        match self {
+            Self::Playing => "music.state.playing",
+            Self::Paused => "music.state.paused",
+            Self::Stopped => "music.state.stopped",
+            Self::Buffering => "music.state.buffering",
+            Self::Interrupted => "music.state.interrupted",
+            Self::Unauthorized => "music.state.authorization_required",
+            Self::Unavailable => "music.state.unavailable",
+            Self::Disconnected => "music.state.disconnected",
+            Self::Stale => "music.state.stale",
+        }
+    }
 }
 
 /// A transport command exposed by a provider adapter.
