@@ -96,6 +96,20 @@ final class MusicIntegrationTests: XCTestCase {
 #endif
     }
 
+    func testPlayerStateFreshnessExpiresOnlyAfterRustObservationDeadline() {
+        let request = MobileMusicPlayerRequest()
+
+        XCTAssertFalse(request.isStale(nowMs: 30_000))
+        request.markObserved(nowMs: 1_000)
+        XCTAssertFalse(request.isStale(nowMs: 31_000))
+        XCTAssertTrue(request.isStale(nowMs: 31_001))
+
+        request.markObserved(nowMs: 31_001)
+        XCTAssertFalse(request.isStale(nowMs: 61_001))
+        request.reset()
+        XCTAssertFalse(request.isStale(nowMs: UInt64.max))
+    }
+
     @MainActor
     func testSpotifyTransportStaysUnavailableUntilAppRemoteIsProven() async {
         let adapter = SpotifyProviderAdapter()

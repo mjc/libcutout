@@ -41,6 +41,17 @@ impl MobileMusicPlayerRequest {
         }
     }
 
+    /// Records a verified player-state update using the platform monotonic clock.
+    pub fn mark_observed(&self, now_ms: u64) {
+        self.lock_inner().mark_observed(now_ms);
+    }
+
+    /// Whether the cached player state is older than the Rust freshness policy.
+    #[must_use]
+    pub fn is_stale(&self, now_ms: u64) -> bool {
+        self.lock_inner().is_stale(now_ms)
+    }
+
     /// Discards outstanding work after disconnect without reusing callback IDs.
     pub fn reset(&self) {
         self.lock_inner().reset();
@@ -82,5 +93,18 @@ mod tests {
             request.complete(current),
             MobileMusicPlayerRequestCompletion::Accepted
         );
+    }
+
+    #[test]
+    fn binding_expires_cached_observation_without_a_callback() {
+        let request = MobileMusicPlayerRequest::new();
+        assert!(!request.is_stale(30_000));
+        request.mark_observed(1_000);
+        assert!(!request.is_stale(31_000));
+        assert!(request.is_stale(31_001));
+        request.mark_observed(31_001);
+        assert!(!request.is_stale(61_001));
+        request.reset();
+        assert!(!request.is_stale(u64::MAX));
     }
 }

@@ -434,36 +434,51 @@ final class CutoutAppModelTests: XCTestCase {
     }
 
     @MainActor
-    func testStoppingRideClearsCaptureContextButKeepsLiveMusicSnapshot() {
+    func testStoppingRideKeepsMonitoringForTheNextRideWithoutAppendingToTheStoppedRide() {
         let driver = SessionDriverSpy(rows: [])
         let model = CutoutAppModel(core: driver)
         model.restoreMusicPlayer()
         XCTAssertTrue(model.startGpsOnlyRide())
         XCTAssertTrue(model.setMusicHistoryPolicy(.opaqueItem))
 
-        let snapshot = MobileMusicSnapshotDto(
-            provider: .appleMusic,
-            sessionId: "session",
-            state: .playing,
-            item: MobileMusicItemDto(identifier: "track-1", title: "Song", artist: "Artist"),
-            positionMilliseconds: nil,
-            durationMilliseconds: nil,
-            observedAtMs: 1,
-            capabilities: MobileMusicCapabilitiesDto(
-                previous: false,
-                play: false,
-                pause: true,
-                next: true,
-                openProvider: true
+        func snapshot(identifier: String, title: String, observedAtMs: UInt64) -> MobileMusicSnapshotDto {
+            MobileMusicSnapshotDto(
+                provider: .appleMusic,
+                sessionId: "session",
+                state: .playing,
+                item: MobileMusicItemDto(identifier: identifier, title: title, artist: "Artist"),
+                positionMilliseconds: nil,
+                durationMilliseconds: nil,
+                observedAtMs: observedAtMs,
+                capabilities: MobileMusicCapabilitiesDto(
+                    previous: false,
+                    play: false,
+                    pause: true,
+                    next: true,
+                    openProvider: true
+                )
             )
-        )
-        XCTAssertTrue(model.ingestMusicObservation(MusicProviderObservation(snapshot: snapshot)))
+        }
+
+        let firstSnapshot = snapshot(identifier: "track-1", title: "Song A", observedAtMs: 1)
+        XCTAssertTrue(model.ingestMusicObservation(MusicProviderObservation(snapshot: firstSnapshot)))
         XCTAssertNotNil(driver.musicCaptureObservation)
+        let stoppedRideEvents = model.musicTimelineEvents
 
         XCTAssertTrue(model.stopRideMap())
 
         XCTAssertNil(driver.musicCaptureObservation)
-        XCTAssertEqual(model.musicSettingsNowPlaying?.state, .playing)
+        XCTAssertEqual(model.musicSettingsNowPlaying?.item?.identifier, "track-1")
+
+        let stoppedSnapshot = snapshot(identifier: "track-2", title: "Song B", observedAtMs: 2)
+        _ = model.ingestMusicObservation(MusicProviderObservation(snapshot: stoppedSnapshot))
+        XCTAssertEqual(model.musicSettingsNowPlaying?.item?.identifier, "track-2")
+        XCTAssertEqual(model.musicTimelineEvents, stoppedRideEvents)
+
+        XCTAssertTrue(model.startGpsOnlyRide())
+        let nextRideSnapshot = snapshot(identifier: "track-3", title: "Song C", observedAtMs: 3)
+        XCTAssertTrue(model.ingestMusicObservation(MusicProviderObservation(snapshot: nextRideSnapshot)))
+        XCTAssertEqual(model.musicTimelineEvents.last?.itemIdentifier, "track-3")
     }
 
     @MainActor

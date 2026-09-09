@@ -184,6 +184,13 @@ public final class SpotifyProviderAdapter: NSObject, @preconcurrency SPTAppRemot
     }
 
     private func makeAppRemote(_ configuration: SPTConfiguration) -> SPTAppRemote {
+        if let previous = appRemote {
+            appRemote = nil
+            connectionAttemptIDs.removeValue(forKey: ObjectIdentifier(previous))
+            previous.playerAPI?.delegate = nil
+            previous.delegate = nil
+            previous.disconnect()
+        }
         let appRemote = SPTAppRemote(configuration: configuration, logLevel: .error)
         self.appRemote = appRemote
         appRemote.delegate = self
@@ -205,9 +212,14 @@ public final class SpotifyProviderAdapter: NSObject, @preconcurrency SPTAppRemot
     /// playing before App Remote connected is reflected without waiting for a
     /// change notification.
     public func refreshPlayerState() {
-        guard appRemote?.isConnected == true,
-              let playerAPI = appRemote?.playerAPI,
-              let requestID = playerStateRequest.begin(nowMs: connectionNowMs) else { return }
+        guard appRemote?.isConnected == true else { return }
+        let nowMs = connectionNowMs
+        if playerStateRequest.isStale(nowMs: nowMs), lifecycleState != .stale {
+            lifecycleState = .stale
+            emitChange()
+        }
+        guard let playerAPI = appRemote?.playerAPI,
+              let requestID = playerStateRequest.begin(nowMs: nowMs) else { return }
         let generation = monitoringGeneration
         playerAPI.getPlayerState { [weak self] result, error in
             guard let self, self.monitoringGeneration == generation else { return }
@@ -411,6 +423,7 @@ public final class SpotifyProviderAdapter: NSObject, @preconcurrency SPTAppRemot
             print("spotify_player_state uri_bytes=\(playerState.track.uri.utf8.count) title_bytes=\(playerState.track.name.utf8.count) artist_bytes=\(playerState.track.artist.name.utf8.count) position=\(playerState.playbackPosition) duration=\(playerState.track.duration)")
         }
 #endif
+        self.playerStateRequest.markObserved(nowMs: connectionNowMs)
         self.playerState = playerState
         lifecycleState = playerState.isPaused ? .paused : .playing
         emitChange()
