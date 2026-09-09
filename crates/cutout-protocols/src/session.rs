@@ -511,7 +511,7 @@ pub struct VescNotificationDecoder {
     now_ms: u64,
     polling: bool,
     motor_config_received: bool,
-    refloat_info_requested: bool,
+    refloat_info_received: bool,
 }
 
 impl VescNotificationDecoder {
@@ -531,7 +531,7 @@ impl VescNotificationDecoder {
             now_ms: 0,
             polling: false,
             motor_config_received: false,
-            refloat_info_requested: false,
+            refloat_info_received: false,
         }
     }
 
@@ -546,9 +546,14 @@ impl VescNotificationDecoder {
         let reports_battery_current = self
             .board_profile()
             .is_some_and(|profile| profile.reports_battery_current);
+        let mut info_received = false;
         let result = self.refloat_stream.feed_result(bytes, |reply| {
+            if matches!(reply, RefloatReply::Info(_)) {
+                info_received = true;
+            }
             push_refloat_reply(reply, monotonic_ms, reports_battery_current, output);
         });
+        self.refloat_info_received |= info_received;
 
         match result {
             Ok(RefloatStreamResult::Replies(reply_count)) => {
@@ -595,7 +600,7 @@ impl ReadOnlyNotificationDecoder for VescNotificationDecoder {
         self.now_ms = 0;
         self.polling = false;
         self.motor_config_received = false;
-        self.refloat_info_requested = false;
+        self.refloat_info_received = false;
     }
 
     fn on_tick(&mut self, monotonic_ms: MonotonicTimestamp, output: &mut Vec<SessionOutput>) {
@@ -673,8 +678,7 @@ impl VescNotificationDecoder {
             return;
         }
         self.last_poll_ms = Some(self.now_ms);
-        let package_request = if !self.refloat_info_requested {
-            self.refloat_info_requested = true;
+        let package_request = if !self.refloat_info_received {
             RefloatReadOnlyRequest::Info
         } else if self.refloat_stream.field_ids().is_some() {
             RefloatReadOnlyRequest::RealtimeData
@@ -3049,7 +3053,7 @@ mod tests {
         );
         let mut expected = ArrayVec::new();
         VescReadOnlyCodec::encode_request(
-            VescReadOnlyRequest::Refloat(RefloatReadOnlyRequest::RealtimeDataIds),
+            VescReadOnlyRequest::Refloat(RefloatReadOnlyRequest::Info),
             &mut expected,
         )
         .expect("Refloat descriptor request fits");
