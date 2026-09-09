@@ -505,25 +505,33 @@ impl ReadOnlyNotificationDecoder for BegodeNotificationDecoder {
 pub struct VescNotificationDecoder {
     stream: VescReadOnlyStreamDecoder,
     refloat_stream: RefloatStreamDecoder,
-    board_profile: Option<VescBoardProfile>,
+    configured_board_profile: Option<VescBoardProfile>,
+    learned_board_profile: Option<VescBoardProfile>,
     last_poll_ms: Option<u64>,
     now_ms: u64,
     polling: bool,
     motor_config_received: bool,
+    refloat_info_requested: bool,
 }
 
 impl VescNotificationDecoder {
+    fn board_profile(&self) -> Option<VescBoardProfile> {
+        self.configured_board_profile.or(self.learned_board_profile)
+    }
+
     /// Creates a VESC decoder that can calculate speed from explicit board geometry.
     #[must_use]
     pub fn with_board_profile(board_profile: VescBoardProfile) -> Self {
         Self {
             stream: VescReadOnlyStreamDecoder::new(),
             refloat_stream: RefloatStreamDecoder::new(),
-            board_profile: Some(board_profile),
+            configured_board_profile: Some(board_profile),
+            learned_board_profile: None,
             last_poll_ms: None,
             now_ms: 0,
             polling: false,
             motor_config_received: false,
+            refloat_info_requested: false,
         }
     }
 
@@ -536,7 +544,7 @@ impl VescNotificationDecoder {
         output: &mut Vec<SessionOutput>,
     ) -> bool {
         let reports_battery_current = self
-            .board_profile
+            .board_profile()
             .is_some_and(|profile| profile.reports_battery_current);
         let result = self.refloat_stream.feed_result(bytes, |reply| {
             push_refloat_reply(reply, monotonic_ms, reports_battery_current, output);
@@ -587,6 +595,7 @@ impl ReadOnlyNotificationDecoder for VescNotificationDecoder {
         self.now_ms = 0;
         self.polling = false;
         self.motor_config_received = false;
+        self.refloat_info_requested = false;
     }
 
     fn on_tick(&mut self, monotonic_ms: MonotonicTimestamp, output: &mut Vec<SessionOutput>) {
@@ -640,7 +649,10 @@ impl VescNotificationDecoder {
             return;
         }
         self.last_poll_ms = Some(self.now_ms);
-        let package_request = if self.refloat_stream.field_ids().is_some() {
+        let package_request = if !self.refloat_info_requested {
+            self.refloat_info_requested = true;
+            RefloatReadOnlyRequest::Info
+        } else if self.refloat_stream.field_ids().is_some() {
             RefloatReadOnlyRequest::RealtimeData
         } else {
             RefloatReadOnlyRequest::RealtimeDataIds
@@ -662,9 +674,21 @@ impl VescNotificationDecoder {
     ) {
         self.now_ms = monotonic_ms.as_milliseconds();
         if self.handle_refloat_notification(family, channel, bytes, monotonic_ms, output) {
+            self.stream = VescReadOnlyStreamDecoder::new();
             return;
         }
+        self.handle_vesc_notification(family, channel, bytes, monotonic_ms, output, true);
+    }
 
+    fn handle_vesc_notification(
+        &mut self,
+        family: ProtocolFamily,
+        channel: GattChannel,
+        bytes: &[u8],
+        monotonic_ms: MonotonicTimestamp,
+        output: &mut Vec<SessionOutput>,
+        report_errors: bool,
+    ) {
         match self.stream.feed_result(bytes) {
             Ok(VescReadOnlyStreamResult::Replies(replies)) => {
                 let event_count = replies
@@ -676,18 +700,23 @@ impl VescNotificationDecoder {
                     match reply {
                         VescReadOnlyReply::MotorConfig(config) => {
                             self.motor_config_received = true;
-                            self.board_profile = Some(VescBoardProfile::from_motor_config(*config));
+                            if self.configured_board_profile.is_none() {
+                                self.learned_board_profile =
+                                    Some(VescBoardProfile::from_motor_config(*config));
+                            }
                         }
                         VescReadOnlyReply::MotorSetupConfig(geometry) => {
                             self.motor_config_received = true;
-                            self.board_profile =
-                                Some(VescBoardProfile::from_speed_geometry(*geometry));
+                            if self.configured_board_profile.is_none() {
+                                self.learned_board_profile =
+                                    Some(VescBoardProfile::from_speed_geometry(*geometry));
+                            }
                         }
                         VescReadOnlyReply::FirmwareInfo { .. }
                         | VescReadOnlyReply::Values(_)
                         | VescReadOnlyReply::Stats(_) => {}
                     }
-                    push_vesc_reply(reply, monotonic_ms, self.board_profile, output);
+                    push_vesc_reply(reply, monotonic_ms, self.board_profile(), output);
                 }
                 output.push(SessionOutput::NotificationIngest(
                     NotificationIngestOutcome::semantic_events(
@@ -699,7 +728,7 @@ impl VescNotificationDecoder {
                     ),
                 ));
             }
-            Err(VescCodecError::UnsupportedReply) => {
+            Err(VescCodecError::UnsupportedReply) if report_errors => {
                 push_parser_error(ParserError::UnmatchedReply, output);
                 output.push(SessionOutput::NotificationIngest(
                     NotificationIngestOutcome::parser_diagnostic(
@@ -715,7 +744,7 @@ impl VescNotificationDecoder {
                 VescCodecError::DecodeFailed
                 | VescCodecError::EncodedFrameTooLong
                 | VescCodecError::EncodeFailed,
-            ) => {
+            ) if report_errors => {
                 push_parser_error(ParserError::MalformedFrame, output);
                 output.push(SessionOutput::NotificationIngest(
                     NotificationIngestOutcome::parser_diagnostic(
@@ -727,7 +756,7 @@ impl VescNotificationDecoder {
                     ),
                 ));
             }
-            Ok(VescReadOnlyStreamResult::Buffered) => {
+            Ok(VescReadOnlyStreamResult::Buffered) if report_errors => {
                 output.push(SessionOutput::NotificationIngest(
                     NotificationIngestOutcome::buffered_fragment(
                         family,
@@ -737,6 +766,7 @@ impl VescNotificationDecoder {
                     ),
                 ));
             }
+            Err(_) | Ok(VescReadOnlyStreamResult::Buffered) => {}
         }
     }
 }
@@ -2493,8 +2523,8 @@ mod tests {
             vec![
                 SessionOutput::Transport(TransportAction::Write {
                     channel: VESC_WRITE_CHANNEL,
-                    bytes: WritePayload::try_from_slice(&[2, 3, 36, 101, 32, 138, 187, 3])
-                        .expect("Refloat ids request fits"),
+                    bytes: WritePayload::try_from_slice(&[2, 5, 36, 101, 0, 2, 0, 2, 71, 3])
+                        .expect("Refloat info request fits"),
                     mode: WriteMode::WithoutResponse,
                 }),
                 SessionOutput::Transport(TransportAction::Write {
@@ -2864,7 +2894,7 @@ mod tests {
         );
         let mut expected = ArrayVec::new();
         VescReadOnlyCodec::encode_request(
-            VescReadOnlyRequest::Refloat(RefloatReadOnlyRequest::RealtimeDataIds),
+            VescReadOnlyRequest::Refloat(RefloatReadOnlyRequest::Info),
             &mut expected,
         )
         .unwrap();

@@ -340,6 +340,7 @@ const fn refloat_ride_warning(sat: u8, beep_reason: u8) -> RideWarning {
         10 => RideWarning::Error,
         REFLOAT_BEEP_PUSHBACK_SPEED => RideWarning::SpeedPushback,
         REFLOAT_BEEP_BMS_ERROR => RideWarning::BmsConnection,
+        _ if sat != 0 || beep_reason != 0 => RideWarning::Unknown,
         _ => RideWarning::None,
     }
 }
@@ -463,16 +464,24 @@ impl RefloatStreamDecoder {
         bytes: &[u8],
         mut on_reply: impl FnMut(RefloatReply<'_>),
     ) -> Result<RefloatStreamResult, RefloatCodecError> {
-        for byte in bytes {
-            self.buffer
-                .try_push(*byte)
-                .map_err(|_byte| RefloatCodecError::FrameTooLong)?;
-        }
-
         let mut reply_count = 0;
-        while let Some(frame) = self.take_next_frame()? {
-            self.decode_frame(&frame, &mut on_reply)?;
-            reply_count += 1;
+        let mut first_error = None;
+        for byte in bytes {
+            if self.buffer.try_push(*byte).is_err() {
+                self.buffer.remove(0);
+                self.buffer
+                    .try_push(*byte)
+                    .expect("removing one byte makes room in the bounded buffer");
+                first_error.get_or_insert(RefloatCodecError::FrameTooLong);
+            }
+            self.decode_pending(&mut on_reply, &mut reply_count, &mut first_error);
+        }
+        self.decode_pending(&mut on_reply, &mut reply_count, &mut first_error);
+
+        if reply_count == 0 {
+            if let Some(error) = first_error {
+                return Err(error);
+            }
         }
 
         Ok(if reply_count == 0 {
@@ -480,6 +489,29 @@ impl RefloatStreamDecoder {
         } else {
             RefloatStreamResult::Replies(reply_count)
         })
+    }
+
+    fn decode_pending(
+        &mut self,
+        on_reply: &mut impl FnMut(RefloatReply<'_>),
+        reply_count: &mut usize,
+        first_error: &mut Option<RefloatCodecError>,
+    ) {
+        loop {
+            match self.take_next_frame() {
+                Ok(Some(frame)) => match self.decode_frame(&frame, on_reply) {
+                    Ok(()) => *reply_count += 1,
+                    Err(error) if is_foreign_frame(error) => {}
+                    Err(error) => {
+                        first_error.get_or_insert(error);
+                    }
+                },
+                Ok(None) => break,
+                Err(error) => {
+                    first_error.get_or_insert(error);
+                }
+            }
+        }
     }
 
     fn take_next_frame(
@@ -518,6 +550,7 @@ impl RefloatStreamDecoder {
             .checked_add(frame_len_extra)
             .ok_or(RefloatCodecError::FrameTooLong)?;
         if payload_len == 0 || header_len >= frame_len || frame_len > REFLOAT_MAX_FRAME_LEN {
+            self.buffer.remove(0);
             return Err(RefloatCodecError::FrameTooLong);
         }
         if self.buffer.len() < frame_len {
@@ -608,6 +641,15 @@ impl RefloatStreamDecoder {
         }
         Ok(())
     }
+}
+
+const fn is_foreign_frame(error: RefloatCodecError) -> bool {
+    matches!(
+        error,
+        RefloatCodecError::UnexpectedVescCommand
+            | RefloatCodecError::UnexpectedPackageInterface
+            | RefloatCodecError::UnsupportedCommand
+    )
 }
 
 /// Encodes a Refloat read-only request as a complete VESC UART frame.
@@ -1361,9 +1403,9 @@ mod tests {
             (REFLOAT_BEEP_BMS_ERROR, RideWarning::BmsConnection),
             (7, RideWarning::Sensors),
             (8, RideWarning::LowBattery),
-            (9, RideWarning::None),
+            (9, RideWarning::Unknown),
             (10, RideWarning::Error),
-            (u8::MAX, RideWarning::None),
+            (u8::MAX, RideWarning::Unknown),
         ] {
             data.beep_reason = beep_reason;
             let delta = data.to_delta(MonotonicTimestamp::from_milliseconds(43), false);
