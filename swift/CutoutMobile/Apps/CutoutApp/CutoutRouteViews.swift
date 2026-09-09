@@ -4,26 +4,25 @@ import SwiftUI
 
 struct AppMusicCompactPlayerModifier: ViewModifier {
     let model: CutoutAppModel
+    @State private var isMusicSettingsPresented = false
 
     func body(content: Content) -> some View {
         content.musicCompactPlayer(
             nowPlaying: model.musicNowPlaying,
             timeline: model.musicTimelineEvents,
-            selectedProvider: model.selectedMusicProvider,
             isHidden: model.isMusicPlayerHidden,
-            historyPolicy: model.musicHistoryPolicy,
-            historyUnavailable: model.musicHistoryUnavailable,
             onCommand: { command in
                 Task { @MainActor in
                     _ = await model.handleMusicCommand(command)
                 }
             },
-            onConnect: model.connectMusic,
+            onOpenSettings: { isMusicSettingsPresented = true },
             onDismiss: model.dismissMusicPlayer,
-            onRestore: model.restoreMusicPlayer,
-            onSelectProvider: model.selectMusicProvider,
-            onSetHistoryPolicy: model.setMusicHistoryPolicy
+            onRestore: model.restoreMusicPlayer
         )
+        .sheet(isPresented: $isMusicSettingsPresented) {
+            AppSetupView(model: model, opensMusic: true)
+        }
     }
 }
 
@@ -37,6 +36,7 @@ struct DevicePickerRouteView: View {
     let model: CutoutAppModel
     let pair: (DevicePickerRow) -> Void
     let navigate: (CutoutAppRoute) -> Void
+    @State private var isSetupPresented = false
 
     var body: some View {
         DevicePickerView(
@@ -52,8 +52,11 @@ struct DevicePickerRouteView: View {
                 navigate(model.isRecordOnlyCapture ? .capture : .eucRide)
                 return true
             },
-            connectMusic: model.connectMusic
+            openSetup: { isSetupPresented = true }
         )
+        .sheet(isPresented: $isSetupPresented) {
+            AppSetupView(model: model)
+        }
         .safeAreaInset(edge: .bottom, spacing: 12) {
             Button {
                 navigate(.rideMap)

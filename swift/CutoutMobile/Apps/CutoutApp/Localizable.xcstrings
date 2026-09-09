@@ -1085,6 +1085,14 @@
       "comment" : "Device picker heading for unsupported devices that can only be captured.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Record only" } } }
     },
+    "setup.open.hint" : {
+      "comment" : "Scan screen Setup accessibility hint.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Opens app settings, including music and saved device recovery." } } }
+    },
+    "setup.device" : {
+      "comment" : "Device recovery settings section.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Device" } } }
+    },
     "picker.section.setup" : {
       "comment" : "Device picker dashboard section heading.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Setup" } } }

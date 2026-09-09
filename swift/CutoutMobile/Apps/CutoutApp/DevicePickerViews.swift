@@ -10,7 +10,7 @@ struct DevicePickerView: View {
     let forgetSavedDevice: () -> Void
     let probe: (DevicePickerRow) -> Bool
     let recordOnly: (DevicePickerRow, String) -> Bool
-    var connectMusic: () -> Void = {}
+    let openSetup: () -> Void
     @State private var isAdvancedCapturePresented = false
 
     private var renderedScanState: DevicePickerScanState {
@@ -34,13 +34,14 @@ struct DevicePickerView: View {
                 HStack(alignment: .firstTextBaseline) {
                     PevDashboardBrand()
                     Spacer()
-                    Button(action: connectMusic) {
+                    Button(action: openSetup) {
                         Text(localizedAppText("picker.section.setup"))
+                            .frame(minWidth: 44, minHeight: 44)
                     }
                     .font(.subheadline.weight(.semibold))
                     .foregroundStyle(PevColors.primaryText)
-                    .frame(minWidth: 44, minHeight: 44)
-                    .accessibilityIdentifier("music.connect.home")
+                    .accessibilityIdentifier("device-picker.open-setup")
+                    .accessibilityHint(localizedAppText("setup.open.hint"))
                 }
                 .accessibilityElement(children: .contain)
                 .accessibilityIdentifier("dashboard.top.navigation")

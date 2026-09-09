@@ -9,6 +9,13 @@ titles and artists under the user's retention policy. Portable admission,
 ordering, privacy, persistence, and deletion remain Rust-owned; Swift owns the
 provider SDK and UI boundaries.
 
+Live now-playing and explicit provider controls work without a ride, including
+on Map. Ride state gates only recording listening-history metadata, never
+provider connection recovery or displaying playback. General Setup is reached
+from the scan screen's Setup button; its Music page owns provider preferences
+and explicit authorization. Foreground restoration may reuse authorization but
+must not launch a new authorization flow.
+
 Future **ride replay** means replaying route and telemetry while displaying which
 song was playing at the corresponding ride time. Play, pause, and seek on that
 replay must control ride data only. They must not issue provider play, pause,

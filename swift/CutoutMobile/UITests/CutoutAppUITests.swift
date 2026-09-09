@@ -3,7 +3,7 @@ import XCTest
 /// Runs against the installed app and its real preferences/provider session.
 @MainActor
 final class MusicPreferencesDeviceUITests: XCTestCase {
-    func testReadableHistorySelectionSurvivesSheetReopen() {
+    func testReadableHistorySelectionSurvivesSheetReopen() throws {
         continueAfterFailure = false
         guard ProcessInfo.processInfo.environment["CUTOUT_RUN_DEVICE_MUSIC_UI_TESTS"] == "1" else {
             throw XCTSkip("Requires an explicitly enabled, installed-device music session")
@@ -12,15 +12,7 @@ final class MusicPreferencesDeviceUITests: XCTestCase {
         app.terminate()
         app.launch()
         app.activate()
-        let map = app.buttons["device-picker.open-map"]
-        if map.waitForExistence(timeout: 5) {
-            map.tap()
-        }
-        let details = app.buttons["music.expand"]
-        if !app.buttons["music.done"].exists {
-            XCTAssertTrue(details.waitForExistence(timeout: 20), app.debugDescription)
-            details.tap()
-        }
+        openMusicSettings(in: app)
         let picker = app.buttons["music.history-picker"]
         XCTAssertTrue(picker.waitForExistence(timeout: 5), app.debugDescription)
         picker.tap()
@@ -29,26 +21,118 @@ final class MusicPreferencesDeviceUITests: XCTestCase {
         picker.tap()
         app.buttons["music.history-policy.opaque-item"].tap()
         XCTAssertEqual(picker.value as? String, "opaque-item")
-        app.buttons["music.done"].tap()
-        details.tap()
+        app.buttons["setup.done"].tap()
+        openMusicSettings(in: app)
         XCTAssertEqual(picker.value as? String, "opaque-item")
         picker.tap()
         app.buttons["music.history-policy.human-readable"].tap()
         XCTAssertEqual(picker.value as? String, "human-readable")
-        app.buttons["music.done"].tap()
-        details.tap()
+        app.buttons["setup.done"].tap()
+        openMusicSettings(in: app)
         XCTAssertEqual(picker.value as? String, "human-readable")
-        app.buttons["music.done"].tap()
+        app.buttons["setup.done"].tap()
         app.terminate()
         app.launch()
         app.activate()
-        if map.waitForExistence(timeout: 5) {
-            map.tap()
-        }
-        XCTAssertTrue(details.waitForExistence(timeout: 30), app.debugDescription)
-        details.tap()
+        openMusicSettings(in: app)
         XCTAssertEqual(picker.value as? String, "human-readable")
-        app.buttons["music.done"].tap()
+        app.buttons["setup.done"].tap()
+    }
+
+    func testSpotifyMapPlayingWithoutRide() throws {
+        continueAfterFailure = false
+        guard ProcessInfo.processInfo.environment["CUTOUT_RUN_DEVICE_MUSIC_UI_TESTS"] == "1" else {
+            throw XCTSkip("Requires Spotify playing on the physical iPhone with a cached authorization")
+        }
+        let app = XCUIApplication()
+        // No fixtures, provider commands, preference writes, or ride creation.
+        app.launch()
+        app.activate()
+        let setup = app.buttons["device-picker.open-setup"]
+        XCTAssertTrue(setup.waitForExistence(timeout: 30), app.debugDescription)
+        setup.tap()
+        let music = app.buttons["setup.music"]
+        XCTAssertTrue(music.waitForExistence(timeout: 5), app.debugDescription)
+        XCTAssertFalse(app.buttons["music.connect-provider"].exists)
+        music.tap()
+        XCTAssertTrue(app.buttons["music.connect-provider"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["music.authorize-spotify"].exists, "Spotify must already be selected")
+        XCTAssertEqual(app.state, .runningForeground)
+        app.buttons["setup.done"].tap()
+        XCTAssertTrue(setup.waitForExistence(timeout: 5))
+
+        app.buttons["device-picker.open-map"].tap()
+        XCTAssertTrue(app.descendants(matching: .any)["ride-map.screen"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["No active ride"].exists, app.debugDescription)
+        XCTAssertFalse(app.buttons["Set up music"].exists)
+        requirePlayingTitle(in: app)
+
+        XCUIDevice.shared.press(.home)
+        app.activate()
+        requirePlayingTitle(in: app)
+        XCTAssertEqual(app.state, .runningForeground, "Recovery must not open Spotify authorization")
+        XCTAssertTrue(app.staticTexts["No active ride"].exists)
+    }
+    func testSpotifyExplicitConnectionThenMapRecovery() throws {
+        continueAfterFailure = false
+        guard ProcessInfo.processInfo.environment["CUTOUT_RUN_DEVICE_MUSIC_UI_TESTS"] == "1" else {
+            throw XCTSkip("Requires Spotify playing on the physical iPhone; exercises explicit Connect Spotify")
+        }
+        let app = XCUIApplication()
+        let spotify = XCUIApplication(bundleIdentifier: "com.spotify.client")
+        app.launch()
+        app.activate()
+        openMusicSettings(in: app)
+        XCTAssertTrue(app.buttons["music.authorize-spotify"].exists, "Spotify must already be selected")
+        app.buttons["music.connect-provider"].tap()
+
+        // Existing consent may hand straight back. Never guess at Spotify's
+        // authorization controls or start playback to make this test pass.
+        if spotify.wait(for: .runningForeground, timeout: 5) {
+            XCTAssertTrue(
+                app.wait(for: .runningForeground, timeout: 45),
+                "Spotify authorization did not return to CutOut:\n\(spotify.debugDescription)"
+            )
+        }
+        XCTAssertEqual(app.state, .runningForeground, spotify.debugDescription)
+        let done = app.buttons["setup.done"]
+        XCTAssertTrue(done.waitForExistence(timeout: 10), app.debugDescription)
+        done.tap()
+        app.buttons["device-picker.open-map"].tap()
+        XCTAssertTrue(app.descendants(matching: .any)["ride-map.screen"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["No active ride"].exists, app.debugDescription)
+        requirePlayingTitle(in: app)
+
+        app.terminate()
+        app.launch()
+        let map = app.buttons["device-picker.open-map"]
+        XCTAssertTrue(map.waitForExistence(timeout: 30), app.debugDescription)
+        map.tap()
+        XCTAssertTrue(app.staticTexts["No active ride"].waitForExistence(timeout: 5))
+        requirePlayingTitle(in: app)
+        XCTAssertEqual(app.state, .runningForeground, "Cached recovery must not reopen Spotify authorization")
+    }
+
+
+    private func openMusicSettings(in app: XCUIApplication) {
+        let setup = app.buttons["device-picker.open-setup"]
+        XCTAssertTrue(setup.waitForExistence(timeout: 30), app.debugDescription)
+        setup.tap()
+        let music = app.buttons["setup.music"]
+        XCTAssertTrue(music.waitForExistence(timeout: 5), app.debugDescription)
+        music.tap()
+        XCTAssertTrue(app.buttons["music.history-picker"].waitForExistence(timeout: 5), app.debugDescription)
+    }
+
+    private func requirePlayingTitle(in app: XCUIApplication) {
+        let title = app.staticTexts["music.now-playing-title"]
+        let playing = NSPredicate { object, _ in
+            guard let title = object as? XCUIElement, title.exists,
+                  title.value as? String == "playing" else { return false }
+            return !title.label.isEmpty && !["Playing", "Not playing", "Spotify"].contains(title.label)
+        }
+        let result = XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: playing, object: title)], timeout: 30)
+        XCTAssertEqual(result, .completed, "Spotify must deliver an actual title without a ride:\n\(app.debugDescription)")
     }
 }
 
@@ -76,6 +160,39 @@ final class CutoutAppUITests: XCTestCase {
         app = nil
         XCUIDevice.shared.orientation = .portrait
         try await super.tearDown()
+    }
+
+    func testPickerSetupOpensGeneralSettingsWithoutConnectingMusic() {
+        verifySetupNavigation()
+    }
+
+    func testPickerSetupOpensGeneralSettingsInDarkAppearanceAtAccessibilityDynamicType() {
+        verifySetupNavigation()
+    }
+
+    func testPickerSetupOpensGeneralSettingsInLightAppearanceAtAccessibilityDynamicType() {
+        verifySetupNavigation()
+    }
+
+    private func verifySetupNavigation() {
+        let setup = app.buttons["device-picker.open-setup"]
+        XCTAssertTrue(setup.waitForExistence(timeout: 5))
+        XCTAssertTrue(setup.isHittable)
+        setup.tap()
+        let music = app.buttons["setup.music"]
+        XCTAssertTrue(music.waitForExistence(timeout: 5))
+        XCTAssertTrue(music.isHittable)
+        XCTAssertFalse(app.buttons["music.connect-provider"].exists)
+        music.tap()
+        XCTAssertTrue(app.buttons["music.provider-picker"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["music.provider-picker"].isHittable)
+        XCTAssertTrue(app.buttons["music.history-picker"].exists)
+        XCTAssertEqual(app.state, .runningForeground)
+        let done = app.buttons["setup.done"]
+        XCTAssertTrue(done.isHittable)
+        done.tap()
+        XCTAssertTrue(setup.waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["device-picker.open-advanced-capture"].exists)
     }
 
     func testPickerExposesAccessibleCaptureControls() {

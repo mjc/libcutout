@@ -134,22 +134,27 @@ final class CutoutAppModelTests: XCTestCase {
     }
 #endif
 
-    func testMusicMonitorSceneStateResumesOnlyRequestedMonitor() {
-        var state = MusicMonitorSceneState()
+    func testRustMusicMonitorResumesOnlyRequestedMonitorWithoutRideState() {
+        let state = MobileMusicMonitor()
 
-        XCTAssertFalse(state.resumeIfNeeded())
+        XCTAssertFalse(state.resume())
+        XCTAssertNil(state.takeStart())
 
         state.suspend()
-        XCTAssertFalse(state.resumeIfNeeded())
+        XCTAssertFalse(state.resume())
 
-        state.request()
+        state.request(allowAuthorization: true)
+        XCTAssertEqual(state.takeStart()?.allowAuthorization, true)
         state.suspend()
-        XCTAssertTrue(state.resumeIfNeeded())
-        XCTAssertFalse(state.resumeIfNeeded())
+        XCTAssertNil(state.takeStart())
+        XCTAssertTrue(state.resume())
+        XCTAssertEqual(state.takeStart()?.allowAuthorization, false)
+        XCTAssertFalse(state.resume())
 
         state.cancel()
         state.suspend()
-        XCTAssertFalse(state.resumeIfNeeded())
+        XCTAssertFalse(state.resume())
+        XCTAssertNil(state.takeStart())
     }
 
     @MainActor
@@ -188,6 +193,54 @@ final class CutoutAppModelTests: XCTestCase {
             )
             XCTAssertEqual(relaunched.musicHistoryPolicy, policy)
         }
+    }
+
+    @MainActor
+    func testMusicHistorySaveFailureRemainsVisibleAndKeepsPersistedChoice() throws {
+        let suiteName = "MusicHistoryFailure-\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let store = MusicHistoryPolicyStore(defaults: defaults)
+        store.set(.opaqueItem)
+        let state = MobileRideMapState(storageUnavailable: "Test storage failure")
+        let model = CutoutAppModel(
+            core: SessionDriverSpy(rows: [], rideMapState: state),
+            musicHistoryPolicyStore: store
+        )
+
+        XCTAssertFalse(model.setMusicHistoryPolicy(.humanReadable))
+        XCTAssertTrue(model.musicHistoryUnavailable)
+        XCTAssertEqual(model.musicHistoryPolicy, .opaqueItem)
+        XCTAssertEqual(store.policy, .opaqueItem)
+    }
+
+    @MainActor
+    func testMusicSettingsKeepReceivingMetadataWhenPlayerIsHidden() throws {
+        let suiteName = "MusicHiddenSettings-\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let providerStore = MusicProviderSelectionStore(defaults: defaults)
+        providerStore.set(.appleMusic)
+        let model = CutoutAppModel(
+            core: SessionDriverSpy(rows: [], rideMapUnavailable: true),
+            musicProviderSelectionStore: providerStore
+        )
+        model.dismissMusicPlayer()
+        let observation = MusicProviderObservation(snapshot: MobileMusicSnapshotDto(
+            provider: .appleMusic, sessionId: "settings-test", state: .playing,
+            item: .init(identifier: "track-1", title: "Song", artist: "Artist"),
+            positionMilliseconds: nil, durationMilliseconds: nil, observedAtMs: 1,
+            capabilities: .init(previous: false, play: false, pause: true, next: false, openProvider: true)
+        ))
+        _ = model.ingestMusicObservation(observation)
+
+        XCTAssertTrue(model.isMusicPlayerHidden)
+        XCTAssertNil(model.musicNowPlaying)
+        XCTAssertEqual(model.musicSettingsNowPlaying?.title, "Song")
+        XCTAssertEqual(model.musicSettingsNowPlaying?.state, .playing)
+        model.appDidEnterBackground()
+        XCTAssertNil(model.musicNowPlaying)
+        XCTAssertEqual(model.musicSettingsNowPlaying?.state, .stale)
     }
 
     @MainActor
