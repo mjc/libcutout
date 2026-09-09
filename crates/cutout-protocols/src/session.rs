@@ -709,6 +709,7 @@ impl VescNotificationDecoder {
             monotonic_ms,
             output,
             !refloat_handled,
+            !refloat_handled,
         );
     }
 
@@ -720,7 +721,8 @@ impl VescNotificationDecoder {
         monotonic_ms: MonotonicTimestamp,
         output: &mut Vec<SessionOutput>,
         report_errors: bool,
-    ) {
+        emit_ingest: bool,
+    ) -> bool {
         match self.stream.feed_result(bytes) {
             Ok(VescReadOnlyStreamResult::Replies(replies)) => {
                 let event_count = replies
@@ -750,27 +752,33 @@ impl VescNotificationDecoder {
                     }
                     push_vesc_reply(reply, monotonic_ms, self.board_profile(), output);
                 }
-                output.push(SessionOutput::NotificationIngest(
-                    NotificationIngestOutcome::semantic_events(
-                        family,
-                        channel,
-                        NotificationByteLen::from_bytes(bytes.len()),
-                        monotonic_ms,
-                        event_count,
-                    ),
-                ));
+                if emit_ingest {
+                    output.push(SessionOutput::NotificationIngest(
+                        NotificationIngestOutcome::semantic_events(
+                            family,
+                            channel,
+                            NotificationByteLen::from_bytes(bytes.len()),
+                            monotonic_ms,
+                            event_count,
+                        ),
+                    ));
+                }
+                true
             }
             Err(VescCodecError::UnsupportedReply) if report_errors => {
                 push_parser_error(ParserError::UnmatchedReply, output);
-                output.push(SessionOutput::NotificationIngest(
-                    NotificationIngestOutcome::parser_diagnostic(
-                        family,
-                        channel,
-                        NotificationByteLen::from_bytes(bytes.len()),
-                        monotonic_ms,
-                        ParserError::UnmatchedReply,
-                    ),
-                ));
+                if emit_ingest {
+                    output.push(SessionOutput::NotificationIngest(
+                        NotificationIngestOutcome::parser_diagnostic(
+                            family,
+                            channel,
+                            NotificationByteLen::from_bytes(bytes.len()),
+                            monotonic_ms,
+                            ParserError::UnmatchedReply,
+                        ),
+                    ));
+                }
+                false
             }
             Err(
                 VescCodecError::DecodeFailed
@@ -778,27 +786,33 @@ impl VescNotificationDecoder {
                 | VescCodecError::EncodeFailed,
             ) if report_errors => {
                 push_parser_error(ParserError::MalformedFrame, output);
-                output.push(SessionOutput::NotificationIngest(
-                    NotificationIngestOutcome::parser_diagnostic(
-                        family,
-                        channel,
-                        NotificationByteLen::from_bytes(bytes.len()),
-                        monotonic_ms,
-                        ParserError::MalformedFrame,
-                    ),
-                ));
+                if emit_ingest {
+                    output.push(SessionOutput::NotificationIngest(
+                        NotificationIngestOutcome::parser_diagnostic(
+                            family,
+                            channel,
+                            NotificationByteLen::from_bytes(bytes.len()),
+                            monotonic_ms,
+                            ParserError::MalformedFrame,
+                        ),
+                    ));
+                }
+                false
             }
             Ok(VescReadOnlyStreamResult::Buffered) if report_errors => {
-                output.push(SessionOutput::NotificationIngest(
-                    NotificationIngestOutcome::buffered_fragment(
-                        family,
-                        channel,
-                        NotificationByteLen::from_bytes(bytes.len()),
-                        monotonic_ms,
-                    ),
-                ));
+                if emit_ingest {
+                    output.push(SessionOutput::NotificationIngest(
+                        NotificationIngestOutcome::buffered_fragment(
+                            family,
+                            channel,
+                            NotificationByteLen::from_bytes(bytes.len()),
+                            monotonic_ms,
+                        ),
+                    ));
+                }
+                false
             }
-            Err(_) | Ok(VescReadOnlyStreamResult::Buffered) => {}
+            Err(_) | Ok(VescReadOnlyStreamResult::Buffered) => false,
         }
     }
 }
