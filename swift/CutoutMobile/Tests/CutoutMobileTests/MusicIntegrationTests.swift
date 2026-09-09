@@ -3,6 +3,17 @@ import CutoutMobileFFI
 @testable import CutoutMobile
 
 final class MusicIntegrationTests: XCTestCase {
+    func testSpotifyCallbackAcceptsObservedRootSlashWithoutAcceptingAnotherPath() throws {
+        let configured = try XCTUnwrap(URL(string: "cutout-spotify://spotify-login-callback"))
+        let returned = try XCTUnwrap(URL(string: "cutout-spotify://spotify-login-callback/#access_token=test"))
+        XCTAssertEqual(configured.scheme, returned.scheme)
+        XCTAssertEqual(configured.host, returned.host)
+        XCTAssertEqual(configured.path, "")
+        XCTAssertEqual(returned.path, "/")
+        XCTAssertTrue(musicCallbackPathMatches(expected: configured.path, actual: returned.path))
+        XCTAssertFalse(musicCallbackPathMatches(expected: configured.path, actual: "/another-callback"))
+    }
+
     @MainActor
     func testSpotifyEpisodeWithoutArtistStillUpdatesPlayingTitle() throws {
         let coordinator = MusicIntegrationCoordinator(rideMapState: nil)
@@ -29,14 +40,22 @@ final class MusicIntegrationTests: XCTestCase {
 
     func testMissingSpotifyMetadataDoesNotHideConnectionStatus() {
         let disconnected = MusicNowPlaying(provider: .spotify, state: .disconnected)
-        XCTAssertEqual(disconnected.title, pevLocalizedText("music.not_playing"))
+        XCTAssertEqual(disconnected.title, pevLocalizedText("music.state.disconnected"))
         XCTAssertEqual(disconnected.statusText, pevLocalizedText("music.state.disconnected"))
         let playing = MusicNowPlaying(
             provider: .spotify, state: .playing,
             item: .init(identifier: "spotify:track:example", title: nil, artist: nil)
         )
-        XCTAssertEqual(playing.title, pevLocalizedText("music.not_playing"))
+        XCTAssertEqual(playing.title, pevLocalizedText("music.state.playing"))
         XCTAssertNil(playing.statusText)
+    }
+
+    func testMissingMetadataUsesPlaybackStateInsteadOfInventingStoppedPlayback() {
+        for state in [MobileMusicPlaybackStateDto.playing, .paused, .buffering, .stale, .unauthorized] {
+            let playing = MusicNowPlaying(provider: .spotify, state: state)
+            XCTAssertEqual(playing.title, pevLocalizedText(musicPlaybackTitleKey(state: state)))
+            XCTAssertNotEqual(playing.title, pevLocalizedText("music.not_playing"))
+        }
     }
 
     func testProviderFailureStatesKeepSetupActionAvailable() {
@@ -75,6 +94,20 @@ final class MusicIntegrationTests: XCTestCase {
 #else
         XCTAssertEqual(MobileMusicProviderDto.spotify.monitoringMode, .unavailable)
 #endif
+    }
+
+    func testPlayerStateFreshnessExpiresOnlyAfterRustObservationDeadline() {
+        let request = MobileMusicPlayerRequest()
+
+        XCTAssertFalse(request.isStale(nowMs: 30_000))
+        request.markObserved(nowMs: 1_000)
+        XCTAssertFalse(request.isStale(nowMs: 31_000))
+        XCTAssertTrue(request.isStale(nowMs: 31_001))
+
+        request.markObserved(nowMs: 31_001)
+        XCTAssertFalse(request.isStale(nowMs: 61_001))
+        request.reset()
+        XCTAssertFalse(request.isStale(nowMs: UInt64.max))
     }
 
     @MainActor
@@ -478,6 +511,25 @@ final class MusicIntegrationTests: XCTestCase {
         XCTAssertFalse(stale.isCommandAvailable(.pause))
         XCTAssertFalse(stale.isCommandAvailable(.next))
         XCTAssertTrue(stale.availableTransportCommands.isEmpty)
+    }
+
+    func testStaleStateRejectsRetainedSkipCapabilities() {
+        let stale = MusicNowPlaying(
+            provider: .spotify,
+            state: .stale,
+            item: .init(identifier: "track-1", title: "Song", artist: "Artist"),
+            capabilities: .init(
+                previous: true,
+                play: false,
+                pause: false,
+                next: true,
+                openProvider: true
+            )
+        )
+
+        XCTAssertFalse(stale.isCommandAvailable(.previous))
+        XCTAssertFalse(stale.isCommandAvailable(.next))
+        XCTAssertTrue(stale.isCommandAvailable(.openProvider))
     }
 
     @MainActor

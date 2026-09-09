@@ -87,6 +87,13 @@ use uuid::Uuid;
 
 uniffi::setup_scaffolding!();
 
+mod music_connection;
+mod music_monitor;
+mod music_player_request;
+pub use music_connection::*;
+pub use music_monitor::*;
+pub use music_player_request::*;
+
 /// Mobile discovery candidate support state.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Enum)]
 pub enum DiscoveryCandidateSupport {

@@ -25,12 +25,20 @@ unavailable/handoff state.
 
 ## Lifecycle and policy
 
-Automatic monitoring and reconnect are ride-scoped. The main-screen Set up
-music action may initiate one foreground authorization/connection before a
-ride is open, but persisted setup intent does not wake Spotify while browsing.
-During an open ride, App Remote remains connected while the app is in the
-foreground and is disconnected when the ride ends or the app enters the
-background. Player-state updates are projected into the same
+Live music observation and reconnect do not require a ride. Scan screen
+Setup opens general settings; Setup → Music owns provider selection, history
+preferences, Connect, and explicit Reauthorize Spotify. Opening settings,
+selecting a provider, restoring the player, and starting a ride do not launch
+authorization. Persisted monitoring restores a foreground connection using
+cached credentials only. Only an explicit Connect/Reauthorize action grants
+one authorization attempt; returning from Spotify or the background resumes
+observation without granting another authorization attempt.
+
+App Remote disconnects when the app enters the background and reconnects in
+the foreground, including on Map with no active ride. Generic transport or
+wakeup failures retain credentials and use bounded Rust-owned retries. A lost
+player-state callback cannot permanently block subsequent requests. Player-state
+updates are projected into the same
 bounded observation path used by Apple Music. Missing Spotify, cancelled or
 failed authorization, logout, token expiry, disconnect, and unavailable
 account states disable transport controls and keep the provider handoff

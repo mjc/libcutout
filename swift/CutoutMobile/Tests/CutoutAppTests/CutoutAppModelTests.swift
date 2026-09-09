@@ -134,22 +134,27 @@ final class CutoutAppModelTests: XCTestCase {
     }
 #endif
 
-    func testMusicMonitorSceneStateResumesOnlyRequestedMonitor() {
-        var state = MusicMonitorSceneState()
+    func testRustMusicMonitorResumesOnlyRequestedMonitorWithoutRideState() {
+        let state = MobileMusicMonitor()
 
-        XCTAssertFalse(state.resumeIfNeeded())
+        XCTAssertEqual(state.resume(), .alreadyActive)
+        XCTAssertNil(state.takeStart())
 
         state.suspend()
-        XCTAssertFalse(state.resumeIfNeeded())
+        XCTAssertEqual(state.resume(), .noRequest)
 
-        state.request()
+        state.request(request: .authorize)
+        XCTAssertEqual(state.takeStart(), .authorize)
         state.suspend()
-        XCTAssertTrue(state.resumeIfNeeded())
-        XCTAssertFalse(state.resumeIfNeeded())
+        XCTAssertNil(state.takeStart())
+        XCTAssertEqual(state.resume(), .restored)
+        XCTAssertEqual(state.takeStart(), .observe)
+        XCTAssertEqual(state.resume(), .alreadyActive)
 
         state.cancel()
         state.suspend()
-        XCTAssertFalse(state.resumeIfNeeded())
+        XCTAssertEqual(state.resume(), .noRequest)
+        XCTAssertNil(state.takeStart())
     }
 
     @MainActor
@@ -188,6 +193,56 @@ final class CutoutAppModelTests: XCTestCase {
             )
             XCTAssertEqual(relaunched.musicHistoryPolicy, policy)
         }
+    }
+
+    @MainActor
+    func testMusicHistorySaveFailureRemainsVisibleAndKeepsPersistedChoice() throws {
+        let suiteName = "MusicHistoryFailure-\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let store = MusicHistoryPolicyStore(defaults: defaults)
+        store.set(.opaqueItem)
+        let state = MobileRideMapState(storageUnavailable: "Test storage failure")
+        let model = CutoutAppModel(
+            core: SessionDriverSpy(rows: [], rideMapState: state),
+            musicHistoryPolicyStore: store
+        )
+
+        XCTAssertFalse(model.musicHistoryUnavailable)
+        XCTAssertFalse(model.setMusicHistoryPolicy(.humanReadable))
+        XCTAssertNotNil(model.musicHistorySaveError)
+        XCTAssertFalse(model.musicHistoryUnavailable, "A rejected choice must not disable capture under the retained policy")
+        XCTAssertEqual(model.musicHistoryPolicy, .opaqueItem)
+        XCTAssertEqual(store.policy, .opaqueItem)
+    }
+
+    @MainActor
+    func testMusicSettingsKeepReceivingMetadataWhenPlayerIsHidden() throws {
+        let suiteName = "MusicHiddenSettings-\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let providerStore = MusicProviderSelectionStore(defaults: defaults)
+        providerStore.set(.appleMusic)
+        let model = CutoutAppModel(
+            core: SessionDriverSpy(rows: [], rideMapUnavailable: true),
+            musicProviderSelectionStore: providerStore
+        )
+        model.dismissMusicPlayer()
+        let observation = MusicProviderObservation(snapshot: MobileMusicSnapshotDto(
+            provider: .appleMusic, sessionId: "settings-test", state: .playing,
+            item: .init(identifier: "track-1", title: "Song", artist: "Artist"),
+            positionMilliseconds: nil, durationMilliseconds: nil, observedAtMs: 1,
+            capabilities: .init(previous: false, play: false, pause: true, next: false, openProvider: true)
+        ))
+        _ = model.ingestMusicObservation(observation)
+
+        XCTAssertTrue(model.isMusicPlayerHidden)
+        XCTAssertNil(model.musicNowPlaying)
+        XCTAssertEqual(model.musicSettingsNowPlaying?.title, "Song")
+        XCTAssertEqual(model.musicSettingsNowPlaying?.state, .playing)
+        model.appDidEnterBackground()
+        XCTAssertNil(model.musicNowPlaying)
+        XCTAssertEqual(model.musicSettingsNowPlaying?.state, .stale)
     }
 
     @MainActor
@@ -379,34 +434,51 @@ final class CutoutAppModelTests: XCTestCase {
     }
 
     @MainActor
-    func testStoppingRideClearsPendingMusicCaptureContext() {
+    func testStoppingRideKeepsMonitoringForTheNextRideWithoutAppendingToTheStoppedRide() {
         let driver = SessionDriverSpy(rows: [])
         let model = CutoutAppModel(core: driver)
+        model.restoreMusicPlayer()
         XCTAssertTrue(model.startGpsOnlyRide())
         XCTAssertTrue(model.setMusicHistoryPolicy(.opaqueItem))
 
-        let snapshot = MobileMusicSnapshotDto(
-            provider: .appleMusic,
-            sessionId: "session",
-            state: .playing,
-            item: MobileMusicItemDto(identifier: "track-1", title: "Song", artist: "Artist"),
-            positionMilliseconds: nil,
-            durationMilliseconds: nil,
-            observedAtMs: 1,
-            capabilities: MobileMusicCapabilitiesDto(
-                previous: false,
-                play: false,
-                pause: true,
-                next: true,
-                openProvider: true
+        func snapshot(identifier: String, title: String, observedAtMs: UInt64) -> MobileMusicSnapshotDto {
+            MobileMusicSnapshotDto(
+                provider: .appleMusic,
+                sessionId: "session",
+                state: .playing,
+                item: MobileMusicItemDto(identifier: identifier, title: title, artist: "Artist"),
+                positionMilliseconds: nil,
+                durationMilliseconds: nil,
+                observedAtMs: observedAtMs,
+                capabilities: MobileMusicCapabilitiesDto(
+                    previous: false,
+                    play: false,
+                    pause: true,
+                    next: true,
+                    openProvider: true
+                )
             )
-        )
-        XCTAssertTrue(model.ingestMusicObservation(MusicProviderObservation(snapshot: snapshot)))
+        }
+
+        let firstSnapshot = snapshot(identifier: "track-1", title: "Song A", observedAtMs: 1)
+        XCTAssertTrue(model.ingestMusicObservation(MusicProviderObservation(snapshot: firstSnapshot)))
         XCTAssertNotNil(driver.musicCaptureObservation)
+        let stoppedRideEvents = model.musicTimelineEvents
 
         XCTAssertTrue(model.stopRideMap())
 
         XCTAssertNil(driver.musicCaptureObservation)
+        XCTAssertEqual(model.musicSettingsNowPlaying?.item?.identifier, "track-1")
+
+        let stoppedSnapshot = snapshot(identifier: "track-2", title: "Song B", observedAtMs: 2)
+        _ = model.ingestMusicObservation(MusicProviderObservation(snapshot: stoppedSnapshot))
+        XCTAssertEqual(model.musicSettingsNowPlaying?.item?.identifier, "track-2")
+        XCTAssertEqual(model.musicTimelineEvents, stoppedRideEvents)
+
+        XCTAssertTrue(model.startGpsOnlyRide())
+        let nextRideSnapshot = snapshot(identifier: "track-3", title: "Song C", observedAtMs: 3)
+        XCTAssertTrue(model.ingestMusicObservation(MusicProviderObservation(snapshot: nextRideSnapshot)))
+        XCTAssertEqual(model.musicTimelineEvents.last?.itemIdentifier, "track-3")
     }
 
     @MainActor

@@ -33,11 +33,12 @@ public final class SpotifyProviderAdapter: NSObject, @preconcurrency SPTAppRemot
     private var onChange: (@MainActor () -> Void)?
     private var lifecycleState: MobileMusicPlaybackStateDto = .disconnected
     private var monitoringGeneration: UInt64 = 0
-    private var playerStateRequestPending = false
-    private var connectionAttemptInFlight = false
-    private var nextConnectionAttemptAt = Date.distantPast
-    private var connectionAttemptCount = 0
-    private static let maximumConnectionAttempts = 3
+    private var connectionAttemptIDs = [ObjectIdentifier: UInt64]()
+    private let playerStateRequest = MobileMusicPlayerRequest()
+    private var connection = MobileMusicConnection()
+    private var authorizationTimeoutTask: Task<Void, Never>?
+    private var authorizationInFlight = false
+    private var connectionNowMs: UInt64 { UInt64(ProcessInfo.processInfo.systemUptime * 1_000) }
 #if DEBUG
     private var lastObservationDiagnostic: String?
 #endif
@@ -101,33 +102,62 @@ public final class SpotifyProviderAdapter: NSObject, @preconcurrency SPTAppRemot
 #endif
     }
 
-    public func startMonitoring(onChange: @escaping @MainActor () -> Void) {
+    /// Starts provider observation. Returns false when passive observation has
+    /// no configured SDK or token, so the caller can avoid a no-op poll task.
+    @discardableResult
+    public func startMonitoring(
+        allowAuthorization: Bool = false,
+        onChange: @escaping @MainActor () -> Void
+    ) -> Bool {
         stopMonitoring()
         self.onChange = onChange
+#if DEBUG
+        print("spotify_monitor_start allow_authorization=\(allowAuthorization) has_token=\(accessToken != nil)")
+#endif
         guard let configuration else {
             lifecycleState = .unavailable
             emitChange()
-            return
+            return false
         }
-        let appRemote = SPTAppRemote(configuration: configuration, logLevel: .error)
-        self.appRemote = appRemote
-        appRemote.delegate = self
-        lifecycleState = .buffering
-        emitChange()
+        // No credentials means no connection attempt, not transient buffering.
+        guard accessToken != nil || allowAuthorization else {
+            lifecycleState = .unauthorized
+            emitChange()
+            return false
+        }
         if let accessToken {
-            connect(appRemote, with: accessToken)
+            authorizationTimeoutTask?.cancel()
+            authorizationTimeoutTask = nil
+            connect(with: accessToken)
+            return true
         } else {
-            connectionAttemptInFlight = true
+            let appRemote = makeAppRemote(configuration)
+            lifecycleState = .buffering
+            emitChange()
+            authorizationInFlight = true
             let generation = monitoringGeneration
             appRemote.authorizeAndPlayURI("") { [weak self] installed in
                 guard !installed else { return }
                 Task { @MainActor [weak self] in
                     guard let self, self.monitoringGeneration == generation else { return }
-                    self.connectionAttemptInFlight = false
+                    self.authorizationInFlight = false
                     self.lifecycleState = .unavailable
                     self.emitChange()
                 }
             }
+            authorizationTimeoutTask = Task { @MainActor [weak self] in
+                do {
+                    try await Task.sleep(for: .seconds(20))
+                } catch {
+                    return
+                }
+                guard let self, self.monitoringGeneration == generation,
+                      self.authorizationInFlight else { return }
+                self.authorizationInFlight = false
+                self.lifecycleState = .unauthorized
+                self.emitChange()
+            }
+            return true
         }
     }
 
@@ -138,11 +168,12 @@ public final class SpotifyProviderAdapter: NSObject, @preconcurrency SPTAppRemot
         appRemote?.delegate = nil
         appRemote?.disconnect()
         appRemote = nil
-        playerStateRequestPending = false
+        connectionAttemptIDs.removeAll()
+        authorizationTimeoutTask?.cancel()
+        authorizationTimeoutTask = nil
+        playerStateRequest.reset()
         playerState = nil
-        connectionAttemptInFlight = false
-        nextConnectionAttemptAt = .distantPast
-        connectionAttemptCount = 0
+        connection = MobileMusicConnection()
         lifecycleState = .disconnected
     }
 
@@ -151,21 +182,34 @@ public final class SpotifyProviderAdapter: NSObject, @preconcurrency SPTAppRemot
     /// the next explicit setup starts authorization again.
     public func ensureConnection() {
         guard onChange != nil,
-              let appRemote,
-              !appRemote.isConnected,
-              !connectionAttemptInFlight,
-              Date() >= nextConnectionAttemptAt,
-              let accessToken,
-              connectionAttemptCount < Self.maximumConnectionAttempts
+              appRemote?.isConnected != true,
+              let accessToken
         else { return }
-        connect(appRemote, with: accessToken)
+        connect(with: accessToken)
     }
 
-    private func connect(_ appRemote: SPTAppRemote, with accessToken: String) {
-        connectionAttemptCount += 1
+    private func makeAppRemote(_ configuration: SPTConfiguration) -> SPTAppRemote {
+        if let previous = appRemote {
+            appRemote = nil
+            connectionAttemptIDs.removeValue(forKey: ObjectIdentifier(previous))
+            previous.playerAPI?.delegate = nil
+            previous.delegate = nil
+            previous.disconnect()
+        }
+        let appRemote = SPTAppRemote(configuration: configuration, logLevel: .error)
+        self.appRemote = appRemote
+        appRemote.delegate = self
+        return appRemote
+    }
+
+    private func connect(with accessToken: String) {
+        guard let configuration,
+              let attemptID = connection.beginAttemptId(nowMs: connectionNowMs) else { return }
+        // Every retry gets a fresh SDK object. This makes an old callback
+        // unambiguously stale instead of letting it mutate the new attempt.
+        let appRemote = makeAppRemote(configuration)
+        connectionAttemptIDs[ObjectIdentifier(appRemote)] = attemptID
         appRemote.connectionParameters.accessToken = accessToken
-        connectionAttemptInFlight = true
-        nextConnectionAttemptAt = Date().addingTimeInterval(2)
         appRemote.connect()
     }
 
@@ -173,17 +217,24 @@ public final class SpotifyProviderAdapter: NSObject, @preconcurrency SPTAppRemot
     /// playing before App Remote connected is reflected without waiting for a
     /// change notification.
     public func refreshPlayerState() {
-        guard appRemote?.isConnected == true,
-              !playerStateRequestPending,
-              let playerAPI = appRemote?.playerAPI else { return }
-        playerStateRequestPending = true
+        guard appRemote?.isConnected == true else { return }
+        let nowMs = connectionNowMs
+        if playerStateRequest.isStale(nowMs: nowMs), lifecycleState != .stale {
+            lifecycleState = .stale
+            emitChange()
+        }
+        guard let playerAPI = appRemote?.playerAPI,
+              let requestID = playerStateRequest.begin(nowMs: nowMs) else { return }
         let generation = monitoringGeneration
         playerAPI.getPlayerState { [weak self] result, error in
             guard let self, self.monitoringGeneration == generation else { return }
-            self.playerStateRequestPending = false
+            guard self.playerStateRequest.complete(requestId: requestID) == .accepted else { return }
             if let playerState = result as? SPTAppRemotePlayerState, error == nil {
                 self.playerStateDidChange(playerState)
-            } else if error != nil {
+            } else if let error = error as NSError? {
+#if DEBUG
+                print("spotify_player_state_failed domain=\(error.domain) code=\(error.code)")
+#endif
                 self.lifecycleState = .stale
                 self.emitChange()
             }
@@ -196,23 +247,38 @@ public final class SpotifyProviderAdapter: NSObject, @preconcurrency SPTAppRemot
         guard let configuration,
               url.scheme == configuration.redirectURL.scheme,
               url.host == configuration.redirectURL.host,
-              url.path == configuration.redirectURL.path else { return false }
+              musicCallbackPathMatches(expected: configuration.redirectURL.path, actual: url.path)
+        else { return false }
         // The URL can arrive before the scene resumes monitoring after handoff.
         let appRemote = self.appRemote ?? SPTAppRemote(configuration: configuration, logLevel: .error)
         let parameters = appRemote.authorizationParameters(from: url)
-        guard let parameters else { return false }
+        guard let parameters else {
+#if DEBUG
+            print("spotify_callback_parameters missing")
+#endif
+            return false
+        }
         if let token = parameters[SPTAppRemoteAccessTokenKey], !token.isEmpty {
+            authorizationTimeoutTask?.cancel()
+            authorizationTimeoutTask = nil
+            authorizationInFlight = false
             accessToken = token
             self.appRemote = appRemote
             appRemote.delegate = self
             appRemote.connectionParameters.accessToken = token
             if onChange != nil {
-                connectionAttemptCount = 0
-                connect(appRemote, with: token)
+                connection = MobileMusicConnection()
+                connectionAttemptIDs.removeAll()
+                connect(with: token)
             }
+#if DEBUG
+            print("spotify_callback_token accepted")
+#endif
             return true
         }
-        connectionAttemptInFlight = false
+        authorizationTimeoutTask?.cancel()
+        authorizationTimeoutTask = nil
+        authorizationInFlight = false
         lifecycleState = .unauthorized
         emitChange()
         return true
@@ -243,6 +309,7 @@ public final class SpotifyProviderAdapter: NSObject, @preconcurrency SPTAppRemot
     }
 
     public func observation(observedAtMs: UInt64) -> MusicProviderObservation {
+        let controlsAvailable = lifecycleState == .playing || lifecycleState == .paused
         let snapshot = MobileMusicSnapshotDto(
             provider: .spotify,
             sessionId: "spotify-app-remote",
@@ -258,10 +325,10 @@ public final class SpotifyProviderAdapter: NSObject, @preconcurrency SPTAppRemot
             durationMilliseconds: playerState.flatMap { UInt64(exactly: $0.track.duration) },
             observedAtMs: observedAtMs,
             capabilities: MobileMusicCapabilitiesDto(
-                previous: playerState?.playbackRestrictions.canSkipPrevious == true,
+                previous: controlsAvailable && playerState?.playbackRestrictions.canSkipPrevious == true,
                 play: lifecycleState == .paused,
                 pause: lifecycleState == .playing,
-                next: playerState?.playbackRestrictions.canSkipNext == true,
+                next: controlsAvailable && playerState?.playbackRestrictions.canSkipNext == true,
                 openProvider: true
             )
         )
@@ -287,9 +354,18 @@ public final class SpotifyProviderAdapter: NSObject, @preconcurrency SPTAppRemot
 
     public func appRemoteDidEstablishConnection(_ appRemote: SPTAppRemote) {
         guard appRemote === self.appRemote, onChange != nil else { return }
-        connectionAttemptInFlight = false
-        nextConnectionAttemptAt = .distantPast
-        connectionAttemptCount = 0
+        guard let attemptID = connectionAttemptIDs[ObjectIdentifier(appRemote)],
+              connection.establishedFor(attemptId: attemptID) == .accepted else { return }
+#if DEBUG
+        print("spotify_connection_established")
+#endif
+        monitoringGeneration &+= 1
+        authorizationTimeoutTask?.cancel()
+        authorizationTimeoutTask = nil
+        playerStateRequest.reset()
+        // A connected session that never returns player state must not remain
+        // in buffering forever. Verified callbacks refresh this same window.
+        playerStateRequest.markObserved(nowMs: connectionNowMs)
         lifecycleState = .buffering
         appRemote.playerAPI?.delegate = self
         let generation = monitoringGeneration
@@ -311,13 +387,17 @@ public final class SpotifyProviderAdapter: NSObject, @preconcurrency SPTAppRemot
         didFailConnectionAttemptWithError error: Error?
     ) {
         guard appRemote === self.appRemote, onChange != nil else { return }
-        connectionAttemptInFlight = false
-        // A failed connection means the cached token is no longer usable (for
-        // example after revocation or account switching). Drop it so the next
-        // explicit setup can authorize instead of retrying forever.
-        accessToken = nil
-        nextConnectionAttemptAt = .distantFuture
-        lifecycleState = .unauthorized
+        guard let attemptID = connectionAttemptIDs[ObjectIdentifier(appRemote)],
+              connection.failedFor(attemptId: attemptID, nowMs: connectionNowMs) == .accepted else { return }
+        connectionAttemptIDs.removeValue(forKey: ObjectIdentifier(appRemote))
+        monitoringGeneration &+= 1
+        authorizationTimeoutTask?.cancel()
+        authorizationTimeoutTask = nil
+        // App Remote reports transport and wakeup failures here too. A generic
+        // connection failure is not evidence that the credential was rejected.
+        lifecycleState = .disconnected
+        playerStateRequest.reset()
+        self.appRemote = nil
 #if DEBUG
         if let error = error as NSError? {
             print("spotify_connection_failed domain=\(error.domain) code=\(error.code)")
@@ -328,9 +408,20 @@ public final class SpotifyProviderAdapter: NSObject, @preconcurrency SPTAppRemot
 
     public func appRemote(_ appRemote: SPTAppRemote, didDisconnectWithError error: Error?) {
         guard appRemote === self.appRemote, onChange != nil else { return }
-        connectionAttemptInFlight = false
-        nextConnectionAttemptAt = Date().addingTimeInterval(2)
+        guard let attemptID = connectionAttemptIDs[ObjectIdentifier(appRemote)],
+              connection.disconnectedFor(attemptId: attemptID, nowMs: connectionNowMs) == .accepted else { return }
+        connectionAttemptIDs.removeValue(forKey: ObjectIdentifier(appRemote))
+        monitoringGeneration &+= 1
+        self.appRemote = nil
+        playerStateRequest.reset()
         lifecycleState = error == nil ? .disconnected : .stale
+#if DEBUG
+        if let error = error as NSError? {
+            print("spotify_disconnected domain=\(error.domain) code=\(error.code)")
+        } else {
+            print("spotify_disconnected without_error")
+        }
+#endif
         emitChange()
     }
 
@@ -341,9 +432,17 @@ public final class SpotifyProviderAdapter: NSObject, @preconcurrency SPTAppRemot
             print("spotify_player_state uri_bytes=\(playerState.track.uri.utf8.count) title_bytes=\(playerState.track.name.utf8.count) artist_bytes=\(playerState.track.artist.name.utf8.count) position=\(playerState.playbackPosition) duration=\(playerState.track.duration)")
         }
 #endif
+        self.playerStateRequest.markObserved(nowMs: connectionNowMs)
         self.playerState = playerState
         lifecycleState = playerState.isPaused ? .paused : .playing
         emitChange()
+    }
+
+    /// Called only by the explicit Reauthorize Spotify account action.
+    public func clearAuthorization() {
+        stopMonitoring()
+        accessToken = nil
+        authorizationInFlight = false
     }
 
     private func emitChange() {

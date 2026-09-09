@@ -10,6 +10,7 @@ struct DevicePickerView: View {
     let forgetSavedDevice: () -> Void
     let probe: (DevicePickerRow) -> Bool
     let recordOnly: (DevicePickerRow, String) -> Bool
+    let openSetup: () -> Void
     @State private var isAdvancedCapturePresented = false
 
     private var renderedScanState: DevicePickerScanState {
@@ -27,8 +28,24 @@ struct DevicePickerView: View {
                 bottomPadding: 24,
                 allowsVerticalScroll: true,
                 contentSpacing: 10,
-                horizontalPadding: 24
+                horizontalPadding: 24,
+                showsHeader: false
             ) {
+                HStack(alignment: .firstTextBaseline) {
+                    PevDashboardBrand()
+                    Spacer()
+                    Button(action: openSetup) {
+                        Text(localizedAppText("picker.section.setup"))
+                            .frame(minWidth: 44, minHeight: 44)
+                    }
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(PevColors.primaryText)
+                    .accessibilityIdentifier("device-picker.open-setup")
+                    .accessibilityHint(localizedAppText("setup.open.hint"))
+                }
+                .accessibilityElement(children: .contain)
+                .accessibilityIdentifier("dashboard.top.navigation")
+
                 PevScreenTitleBlock(
                     title: localizedAppText("picker.title"),
                     subtitle: localizedAppText("picker.subtitle.nearby_devices")
