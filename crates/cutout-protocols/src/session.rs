@@ -2857,6 +2857,26 @@ mod tests {
     }
 
     #[test]
+    fn generic_vesc_session_keeps_noisy_split_vesc_frame() {
+        let vesc = vesc_selective_values_frame();
+        let split_at = 5;
+        let mut first = vec![0xa5, 0x5a];
+        first.extend_from_slice(&vesc[..split_at]);
+
+        let output = vesc_output_for_notification_chunks(&[
+            first.as_slice(),
+            &vesc[split_at..],
+        ]);
+
+        assert!(
+            read_only_response_events(&output)
+                .iter()
+                .any(|response| matches!(response, ReadOnlyResponse::RawTelemetry(_))),
+            "a generic VESC frame split after leading noise must survive"
+        );
+    }
+
+    #[test]
     fn generic_vesc_session_keeps_split_vesc_frame_before_refloat_reply() {
         let vesc = vesc_selective_values_frame();
         let refloat_ids = refloat_realtime_ids_frame();
