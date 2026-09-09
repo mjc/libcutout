@@ -2372,12 +2372,20 @@ extension CutoutSessionCore: CoreBluetoothOperationSink {
             setPhase(.failed(.missingNotifyChannel))
             return
         }
+        guard characteristic.properties.contains(.notify) || characteristic.properties.contains(.indicate) else {
+            setPhase(.failed(.missingNotifyChannel))
+            return
+        }
         peripheral?.setNotifyValue(true, for: characteristic)
     }
 
     public func writeWithoutResponse(channel: BluetoothUuid, bytes: Data) {
         observeDetectionProbeWrite(channel: channel, bytes: bytes)
         guard let characteristic = subscribedCharacteristics[channel] else {
+            setPhase(.failed(.missingWriteChannel))
+            return
+        }
+        guard characteristic.properties.contains(.writeWithoutResponse) else {
             setPhase(.failed(.missingWriteChannel))
             return
         }

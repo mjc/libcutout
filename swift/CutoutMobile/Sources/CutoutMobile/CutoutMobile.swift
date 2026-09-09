@@ -6004,11 +6004,17 @@ public final class CoreBluetoothPeripheralOperationSink: CoreBluetoothOperationS
         guard let characteristic = peripheral.characteristic(for: channel) else {
             return
         }
+        guard characteristic.properties.contains(.notify) || characteristic.properties.contains(.indicate) else {
+            return
+        }
         peripheral.setNotifyValue(true, for: characteristic)
     }
 
     public func writeWithoutResponse(channel: BluetoothUuid, bytes: Data) {
         guard let characteristic = peripheral.characteristic(for: channel) else {
+            return
+        }
+        guard characteristic.properties.contains(.writeWithoutResponse) else {
             return
         }
         guard peripheral.canSendWriteWithoutResponse else {
