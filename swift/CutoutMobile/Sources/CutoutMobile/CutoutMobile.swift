@@ -5254,12 +5254,16 @@ public final class CoreBluetoothSessionRunner: @unchecked Sendable {
 public protocol CoreBluetoothOperationSink: AnyObject {
     func subscribe(channel: BluetoothUuid)
     func writeWithoutResponse(channel: BluetoothUuid, bytes: Data)
+    func canSubmitWithoutResponse() -> Bool
     func disconnect()
     func peripheralIsReadyToSendWithoutResponse()
     func clearPendingWithoutResponseWrites()
 }
 
 public extension CoreBluetoothOperationSink {
+    /// Reports whether a no-response write can be submitted immediately.
+    func canSubmitWithoutResponse() -> Bool { true }
+
     /// Flushes writes retained while CoreBluetooth reported a full no-response queue.
     func peripheralIsReadyToSendWithoutResponse() {}
 
@@ -5538,6 +5542,7 @@ public final class CoreBluetoothLiveSessionOwner: @unchecked Sendable {
         timer.schedule(deadline: .now() + .milliseconds(100), repeating: .milliseconds(100))
         timer.setEventHandler { [weak self] in
             guard let self, self.linkGeneration == generation else { return }
+            guard self.retainedSink.canSubmitWithoutResponse() else { return }
             do {
                 let step = try self.runner.handle(.tick(at: self.monotonicClock.now()))
                 self.executeAndRecord(step.operations)
@@ -6012,6 +6017,10 @@ public final class CoreBluetoothPeripheralOperationSink: CoreBluetoothOperationS
             return
         }
         peripheral.writeValue(bytes, for: characteristic, type: .withoutResponse)
+    }
+
+    public func canSubmitWithoutResponse() -> Bool {
+        peripheral.canSendWriteWithoutResponse
     }
 
     public func peripheralIsReadyToSendWithoutResponse() {

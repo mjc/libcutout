@@ -2010,7 +2010,7 @@ private extension CutoutSessionCore {
             }
             for characteristic in characteristics {
                 if let channel = BluetoothUuid(coreBluetoothUuid: characteristic.uuid) {
-                    subscribedCharacteristics[channel] = characteristic
+                    bindDiscoveredCharacteristic(channel, characteristic)
                 }
             }
             pendingServiceDiscoveries.remove(service.uuid)
@@ -2191,7 +2191,7 @@ extension CutoutSessionCore: CBPeripheralDelegate {
         }
         service.characteristics?.forEach { characteristic in
             if let channel = BluetoothUuid(coreBluetoothUuid: characteristic.uuid) {
-                subscribedCharacteristics[channel] = characteristic
+                bindDiscoveredCharacteristic(channel, characteristic)
             }
         }
         recordGattFingerprints(service: service)
@@ -2335,6 +2335,32 @@ extension CutoutSessionCore: CBPeripheralDelegate {
 }
 
 private extension CutoutSessionCore {
+    func bindDiscoveredCharacteristic(_ channel: BluetoothUuid, _ characteristic: CBCharacteristic) {
+        guard let existing = subscribedCharacteristics[channel] else {
+            subscribedCharacteristics[channel] = characteristic
+            return
+        }
+        guard preferredServiceUuid(for: selectedRoute) == characteristic.service?.uuid else {
+            return
+        }
+        if existing.service?.uuid != characteristic.service?.uuid {
+            subscribedCharacteristics[channel] = characteristic
+        }
+    }
+
+    func preferredServiceUuid(for route: DevicePickerConnectionRoute?) -> CBUUID? {
+        switch route {
+        case .vescOnewheel:
+            return CBUUID(string: "6E400001-B5A3-F393-E0A9-E50E24DCCA9E")
+        case .electricUnicycle:
+            return CBUUID(string: "0000FFE0-0000-1000-8000-00805F9B34FB")
+        case nil:
+            return nil
+        }
+    }
+}
+
+private extension CutoutSessionCore {
     func assertOnBleQueue() {
         dispatchPrecondition(condition: .onQueue(bleQueue))
     }
@@ -2374,6 +2400,10 @@ extension CutoutSessionCore: CoreBluetoothOperationSink {
         }
         peripheral.writeValue(bytes, for: characteristic, type: .withoutResponse)
         record("write_without_response=\(channel.coreBluetoothUuid.uuidString) bytes=\(bytes.count)")
+    }
+
+    public func canSubmitWithoutResponse() -> Bool {
+        peripheral?.canSendWriteWithoutResponse ?? false
     }
 
     private func flushPendingWithoutResponseWrites() {
