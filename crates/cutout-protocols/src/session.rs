@@ -22,7 +22,7 @@ use crate::{
     RefloatStreamDecoder, RefloatStreamResult, RequestDisposition, VESC_NOTIFY_CHANNEL,
     VESC_WRITE_CHANNEL, VETERAN_DATA_CHANNEL, VescBoardProfile, VescCodecError, VescReadOnlyCodec,
     VescReadOnlyReply, VescReadOnlyRequest, VescReadOnlyStreamDecoder, VescReadOnlyStreamResult,
-    VescRequestEncoder, VescStatsTelemetry, VescValuesMask, VescValuesTelemetry,
+    VescRequestEncoder, VescStatsMask, VescStatsTelemetry, VescValuesMask, VescValuesTelemetry,
     VeteranBmsCellPage, VeteranBmsMetadataPage, VeteranBmsPageEvidence, VeteranBmsTemperaturePage,
     VeteranFrame, VeteranFrameParseResult, VeteranFrameReassembler, VeteranReassemblyError,
     VeteranTelemetry, VeteranTelemetryError, begode_falcon_target_voltage_profile,
@@ -901,22 +901,34 @@ fn vesc_values_to_raw_telemetry(values: &VescValuesTelemetry) -> RawTelemetryRea
 fn vesc_stats_to_diagnostics(stats: VescStatsTelemetry) -> DiagnosticReadback {
     DiagnosticReadback {
         details: [
-            Some(vesc_diagnostic_detail(
-                VESC_RAW_STATS_SPEED_AVG_FIELD_ID,
-                i64::from(stats.speed_avg.as_millimetres_per_second()),
-            )),
-            Some(vesc_diagnostic_detail(
-                VESC_RAW_STATS_POWER_AVG_FIELD_ID,
-                stats.power_avg.as_milliwatts(),
-            )),
-            Some(vesc_diagnostic_detail(
-                VESC_RAW_STATS_CURRENT_AVG_FIELD_ID,
-                i64::from(stats.current_avg.as_milliamps()),
-            )),
-            Some(vesc_diagnostic_detail(
-                VESC_RAW_STATS_COUNT_TIME_FIELD_ID,
-                u64_to_i64_saturating(stats.count_time.as_milliseconds()),
-            )),
+            stats
+                .present_fields
+                .contains(VescStatsMask::SPEED_AVG)
+                .then_some(vesc_diagnostic_detail(
+                    VESC_RAW_STATS_SPEED_AVG_FIELD_ID,
+                    i64::from(stats.speed_avg.as_millimetres_per_second()),
+                )),
+            stats
+                .present_fields
+                .contains(VescStatsMask::POWER_AVG)
+                .then_some(vesc_diagnostic_detail(
+                    VESC_RAW_STATS_POWER_AVG_FIELD_ID,
+                    stats.power_avg.as_milliwatts(),
+                )),
+            stats
+                .present_fields
+                .contains(VescStatsMask::CURRENT_AVG)
+                .then_some(vesc_diagnostic_detail(
+                    VESC_RAW_STATS_CURRENT_AVG_FIELD_ID,
+                    i64::from(stats.current_avg.as_milliamps()),
+                )),
+            stats
+                .present_fields
+                .contains(VescStatsMask::COUNT_TIME)
+                .then_some(vesc_diagnostic_detail(
+                    VESC_RAW_STATS_COUNT_TIME_FIELD_ID,
+                    u64_to_i64_saturating(stats.count_time.as_milliseconds()),
+                )),
         ],
     }
 }
@@ -2903,6 +2915,18 @@ mod tests {
             diagnostics.details[3].expect("count time").field,
             RawFieldValue::new(VESC_RAW_STATS_COUNT_TIME_FIELD_ID, 11_000)
         );
+    }
+
+    #[test]
+    fn generic_vesc_stats_diagnostics_preserve_selective_presence() {
+        let diagnostics = vesc_stats_to_diagnostics(VescStatsTelemetry {
+            present_fields: VescStatsMask::SPEED_AVG,
+            speed_avg: cutout_core::Speed::from_millimetres_per_second(1_250),
+            ..VescStatsTelemetry::default()
+        });
+
+        assert!(diagnostics.details[0].is_some());
+        assert!(diagnostics.details[1..].iter().all(Option::is_none));
     }
 
     #[test]

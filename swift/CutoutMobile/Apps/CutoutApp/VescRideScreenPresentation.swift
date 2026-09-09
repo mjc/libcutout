@@ -54,6 +54,8 @@ struct VescRideScreenPresentation {
             return warningCard("vesc.warning.current")
         case .dutyPushback:
             return warningCard("vesc.warning.duty_pushback", showsFootpad: true)
+        case .speedPushback:
+            return warningCard("vesc.warning.duty_pushback")
         case .temperaturePushback:
             return warningCard("vesc.warning.temperature_pushback")
         case .wheelslip:
@@ -63,6 +65,8 @@ struct VescRideScreenPresentation {
         case .lowBattery:
             return warningCard("vesc.warning.low_battery")
         case .error:
+            return warningCard("vesc.warning.error")
+        case .bmsConnection:
             return warningCard("vesc.warning.error")
         case .none:
             return stopWarningCard
