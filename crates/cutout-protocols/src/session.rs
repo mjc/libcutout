@@ -557,7 +557,6 @@ impl VescNotificationDecoder {
 
         match result {
             Ok(RefloatStreamResult::Replies(reply_count)) => {
-                self.stream = VescReadOnlyStreamDecoder::new();
                 output.push(SessionOutput::NotificationIngest(
                     NotificationIngestOutcome::semantic_events(
                         family,
@@ -701,11 +700,16 @@ impl VescNotificationDecoder {
         output: &mut Vec<SessionOutput>,
     ) {
         self.now_ms = monotonic_ms.as_milliseconds();
-        if self.handle_refloat_notification(family, channel, bytes, monotonic_ms, output) {
-            self.stream = VescReadOnlyStreamDecoder::new();
-            return;
-        }
-        self.handle_vesc_notification(family, channel, bytes, monotonic_ms, output, true);
+        let refloat_handled =
+            self.handle_refloat_notification(family, channel, bytes, monotonic_ms, output);
+        self.handle_vesc_notification(
+            family,
+            channel,
+            bytes,
+            monotonic_ms,
+            output,
+            !refloat_handled,
+        );
     }
 
     fn handle_vesc_notification(
@@ -2773,6 +2777,31 @@ mod tests {
                 .iter()
                 .any(|delta| delta.speed.is_some()),
             "the Refloat stream remains usable after the mixed frame"
+        );
+    }
+
+    #[test]
+    fn generic_vesc_session_keeps_split_vesc_frame_before_refloat_reply() {
+        let vesc = vesc_selective_values_frame();
+        let refloat_ids = refloat_realtime_ids_frame();
+        let split_at = 4;
+        let mut remainder = Vec::with_capacity(vesc.len() - split_at + refloat_ids.len());
+        remainder.extend_from_slice(&vesc[split_at..]);
+        remainder.extend_from_slice(&refloat_ids);
+
+        let output = vesc_output_for_notification_chunks(&[&vesc[..split_at], &remainder]);
+
+        assert!(
+            read_only_response_events(&output)
+                .iter()
+                .any(|response| matches!(response, ReadOnlyResponse::RawTelemetry(_))),
+            "the split generic VESC frame must survive a following Refloat reply"
+        );
+        assert!(
+            telemetry_events(&output)
+                .iter()
+                .all(|delta| delta.speed.is_none() && delta.pitch.is_none()),
+            "field-id discovery alone must not fabricate Refloat telemetry"
         );
     }
 
