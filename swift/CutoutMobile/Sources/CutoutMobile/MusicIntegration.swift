@@ -442,6 +442,18 @@ public struct MusicNowPlaying: Equatable, Sendable {
         }
     }
 
+    /// Setup remains available after a provider handoff or failed connection.
+    /// A non-nil snapshot is still useful for showing the truthful lifecycle
+    /// state, but it must not hide the main-screen setup action.
+    public var requiresSetup: Bool {
+        switch state {
+        case .unauthorized, .unavailable, .disconnected, .stale:
+            true
+        default:
+            false
+        }
+    }
+
     /// VoiceOver summary includes meaningful provider failure states without progress ticks.
     public var accessibilitySummary: String {
         var components = [providerName, title]
@@ -904,6 +916,7 @@ public struct MusicCompactPlayer: View {
     public let historyPolicy: MobileMusicHistoryPolicyDto
     public let historyUnavailable: Bool
     public let onCommand: (MobileMusicCommandDto) -> Void
+    public let onConnect: () -> Void
     public let onDismiss: () -> Void
     public let onSelectProvider: (MobileMusicProviderDto) -> Void
     public let onSetHistoryPolicy: (MobileMusicHistoryPolicyDto) -> Bool
@@ -917,6 +930,7 @@ public struct MusicCompactPlayer: View {
         historyPolicy: MobileMusicHistoryPolicyDto = .disabled,
         historyUnavailable: Bool = false,
         onCommand: @escaping (MobileMusicCommandDto) -> Void,
+        onConnect: @escaping () -> Void = {},
         onDismiss: @escaping () -> Void = {},
         onSelectProvider: @escaping (MobileMusicProviderDto) -> Void = { _ in },
         onSetHistoryPolicy: @escaping (MobileMusicHistoryPolicyDto) -> Bool = { _ in false }
@@ -927,6 +941,7 @@ public struct MusicCompactPlayer: View {
         self.historyPolicy = historyPolicy
         self.historyUnavailable = historyUnavailable
         self.onCommand = onCommand
+        self.onConnect = onConnect
         self.onDismiss = onDismiss
         self.onSelectProvider = onSelectProvider
         self.onSetHistoryPolicy = onSetHistoryPolicy
@@ -945,6 +960,17 @@ public struct MusicCompactPlayer: View {
                     .foregroundStyle(.secondary)
             }
             Spacer(minLength: 4)
+            if nowPlaying.requiresSetup {
+                Button(action: onConnect) {
+                    Label(
+                        pevLocalizedText("music.connect"),
+                        systemImage: "music.note"
+                    )
+                }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.small)
+                .accessibilityIdentifier("music.connect")
+            }
             if nowPlaying.isCommandAvailable(.previous) {
                 Button { onCommand(.previous) } label: {
                     Image(systemName: "backward.fill")
@@ -1216,6 +1242,7 @@ public struct MusicCompactPlayerInset: ViewModifier {
                     historyPolicy: historyPolicy,
                     historyUnavailable: historyUnavailable,
                     onCommand: onCommand,
+                    onConnect: onConnect,
                     onDismiss: onDismiss,
                     onSelectProvider: onSelectProvider,
                     onSetHistoryPolicy: onSetHistoryPolicy
@@ -1239,6 +1266,7 @@ public struct MusicCompactPlayerInset: ViewModifier {
                         )
                     }
                     .buttonStyle(.bordered)
+                    .accessibilityIdentifier("music.connect")
                     Menu {
                         ForEach(MobileMusicProviderDto.allCases, id: \.self) { provider in
                             Button(provider.title) {
@@ -1251,7 +1279,6 @@ public struct MusicCompactPlayerInset: ViewModifier {
                     .buttonStyle(.bordered)
                     .accessibilityIdentifier("music.provider-picker")
                 }
-                .accessibilityIdentifier("music.connect")
             }
         }
     }

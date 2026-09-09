@@ -25,8 +25,10 @@ unavailable/handoff state.
 
 ## Lifecycle and policy
 
-App Remote is connected while the app is active and disconnected when the app
-enters the background. Player-state updates are projected into the same
+App Remote is connected only while an open ride is active and the app is in the
+foreground; persisted setup intent does not wake Spotify while browsing. It is
+disconnected when the ride ends or the app enters the background. Player-state
+updates are projected into the same
 bounded observation path used by Apple Music. Missing Spotify, cancelled or
 failed authorization, logout, token expiry, disconnect, and unavailable
 account states disable transport controls and keep the provider handoff
