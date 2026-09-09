@@ -41,7 +41,7 @@ impl MobileMusicPlayerRequest {
         }
     }
 
-    /// Records a verified player-state update using the platform monotonic clock.
+    /// Starts or refreshes the player-state freshness window using the platform monotonic clock.
     pub fn mark_observed(&self, now_ms: u64) {
         self.lock_inner().mark_observed(now_ms);
     }

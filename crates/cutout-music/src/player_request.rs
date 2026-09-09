@@ -46,7 +46,9 @@ impl MusicPlayerRequest {
         }
     }
 
-    /// Records the monotonic time of a verified player-state update.
+    /// Starts or refreshes the monotonic freshness window for this session.
+    /// Connected sessions seed it before the first player-state response;
+    /// verified updates then refresh it as they arrive.
     pub fn mark_observed(&mut self, now_ms: u64) {
         self.last_observed_at = Some(now_ms);
     }

@@ -357,6 +357,9 @@ public final class SpotifyProviderAdapter: NSObject, @preconcurrency SPTAppRemot
         authorizationTimeoutTask?.cancel()
         authorizationTimeoutTask = nil
         playerStateRequest.reset()
+        // A connected session that never returns player state must not remain
+        // in buffering forever. Verified callbacks refresh this same window.
+        playerStateRequest.markObserved(nowMs: connectionNowMs)
         lifecycleState = .buffering
         appRemote.playerAPI?.delegate = self
         let generation = monitoringGeneration
