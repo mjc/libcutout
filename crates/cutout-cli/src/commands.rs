@@ -1646,7 +1646,8 @@ async fn vesc_probe(args: VescProbeArgs) -> Result<()> {
         let capture = capture_session_with_channel_pair(
             &connection.peripheral,
             &mut session,
-            SessionChannelPair::new(VESC_WRITE_CHANNEL, VESC_NOTIFY_CHANNEL),
+            SessionChannelPair::new(VESC_WRITE_CHANNEL, VESC_NOTIFY_CHANNEL)
+                .with_endpoint_admission(),
             &connection.summary,
             endpoints,
             NotificationWindow::from_secs(seconds),
@@ -1656,15 +1657,21 @@ async fn vesc_probe(args: VescProbeArgs) -> Result<()> {
         let report = &capture.report;
         print_session_report(report);
         print_session_diagnostics_jsonl(report, diagnostics_jsonl)?;
-        match protocol {
-            VescProbeProtocol::Vesc => {
-                print_vesc_replies_jsonl(&capture, &mut vesc_decoder, read_only_jsonl)?;
-            }
-            VescProbeProtocol::Refloat => {
-                print_refloat_replies_jsonl(&capture, &mut refloat_decoder, read_only_jsonl)?;
-            }
-        }
         print_raw_notifications_jsonl(&capture, raw_notifications_jsonl)?;
+        let replies = match protocol {
+            VescProbeProtocol::Vesc => {
+                print_vesc_replies_jsonl(&capture, &mut vesc_decoder, command, read_only_jsonl)?
+            }
+            VescProbeProtocol::Refloat => print_refloat_replies_jsonl(
+                &capture,
+                &mut refloat_decoder,
+                command,
+                read_only_jsonl,
+            )?,
+        };
+        if replies == 0 {
+            bail!("VESC probe {probe:?} produced no matching decoded reply");
+        }
     }
     Ok(())
 }
@@ -2710,8 +2717,10 @@ fn print_raw_notifications_jsonl(
 fn print_vesc_replies_jsonl(
     capture: &SessionCapture,
     decoder: &mut VescReadOnlyStreamDecoder,
+    expected_command: DeviceCommand,
     enabled: bool,
-) -> Result<()> {
+) -> Result<usize> {
+    let mut replies_seen = 0_usize;
     for record in &capture.records {
         let SessionCaptureRecord::Notification { bytes, .. } = record else {
             continue;
@@ -2720,6 +2729,9 @@ fn print_vesc_replies_jsonl(
             Ok(VescReadOnlyStreamResult::Buffered) => {}
             Ok(VescReadOnlyStreamResult::Replies(replies)) => {
                 for reply in replies {
+                    if vesc_reply_matches(expected_command, &reply) {
+                        replies_seen = replies_seen.saturating_add(1);
+                    }
                     print_vesc_reply_summary(&reply);
                     if enabled {
                         info!("{}", serde_json::to_string(&vesc_reply_json(&reply))?);
@@ -2729,7 +2741,23 @@ fn print_vesc_replies_jsonl(
             Err(err) => return Err(err.into()),
         }
     }
-    Ok(())
+    Ok(replies_seen)
+}
+
+fn vesc_reply_matches(command: DeviceCommand, reply: &VescReadOnlyReply) -> bool {
+    matches!(
+        (command, reply),
+        (
+            DeviceCommand::RequestFirmwareInfo,
+            VescReadOnlyReply::FirmwareInfo { .. }
+        ) | (
+            DeviceCommand::RequestTelemetry,
+            VescReadOnlyReply::Values(_)
+        ) | (
+            DeviceCommand::RequestDiagnostics,
+            VescReadOnlyReply::Stats(_)
+        )
+    )
 }
 
 fn print_vesc_reply_summary(reply: &VescReadOnlyReply) {
@@ -2824,14 +2852,19 @@ fn vesc_reply_json(reply: &VescReadOnlyReply) -> serde_json::Value {
 fn print_refloat_replies_jsonl(
     capture: &SessionCapture,
     decoder: &mut RefloatStreamDecoder,
+    expected_command: DeviceCommand,
     enabled: bool,
-) -> Result<()> {
+) -> Result<usize> {
+    let mut replies_seen = 0_usize;
     for record in &capture.records {
         let SessionCaptureRecord::Notification { bytes, .. } = record else {
             continue;
         };
         let mut json_error = None;
         let result = decoder.feed_result(bytes.as_raw_bytes(), |reply| {
+            if refloat_reply_matches(expected_command, &reply) {
+                replies_seen = replies_seen.saturating_add(1);
+            }
             print_refloat_reply_summary(reply);
             if enabled && json_error.is_none() {
                 match serde_json::to_string(&refloat_reply_json(reply)) {
@@ -2854,7 +2887,22 @@ fn print_refloat_replies_jsonl(
             return Err(error.into());
         }
     }
-    Ok(())
+    Ok(replies_seen)
+}
+
+fn refloat_reply_matches(command: DeviceCommand, reply: &RefloatReply<'_>) -> bool {
+    matches!(
+        (command, reply),
+        (DeviceCommand::RequestIdentity, RefloatReply::Info(_))
+            | (
+                DeviceCommand::RequestDiagnostics,
+                RefloatReply::RealtimeFieldIds(_)
+            )
+            | (
+                DeviceCommand::RequestTelemetry,
+                RefloatReply::RealtimeData(_)
+            )
+    )
 }
 
 fn print_refloat_reply_summary(reply: RefloatReply<'_>) {

@@ -23,13 +23,25 @@ use crate::{
 pub struct SessionChannelPair {
     write: GattChannel,
     subscribe: GattChannel,
+    admit_notifications: bool,
 }
 
 impl SessionChannelPair {
     /// Creates a pair with distinct write and notification channels.
     #[must_use]
     pub const fn new(write: GattChannel, subscribe: GattChannel) -> Self {
-        Self { write, subscribe }
+        Self {
+            write,
+            subscribe,
+            admit_notifications: false,
+        }
+    }
+
+    /// Requires incoming notifications to match the selected endpoint UUIDs.
+    #[must_use]
+    pub const fn with_endpoint_admission(mut self) -> Self {
+        self.admit_notifications = true;
+        self
     }
 
     const fn shared(channel: GattChannel) -> Self {
@@ -93,6 +105,7 @@ where
         DriveSessionConfig {
             write_channel: channel,
             subscribe_channel: channel,
+            admit_notifications: false,
             summary,
             endpoints,
             notification_window,
@@ -168,6 +181,7 @@ where
         DriveSessionConfig {
             write_channel: channels.write,
             subscribe_channel: channels.subscribe,
+            admit_notifications: channels.admit_notifications,
             summary,
             endpoints,
             notification_window,
@@ -210,6 +224,7 @@ where
         DriveSessionConfig {
             write_channel: channel,
             subscribe_channel: channel,
+            admit_notifications: false,
             summary,
             endpoints,
             notification_window,
@@ -284,6 +299,7 @@ where
         DriveSessionConfig {
             write_channel: channels.write,
             subscribe_channel: channels.subscribe,
+            admit_notifications: channels.admit_notifications,
             summary,
             endpoints,
             notification_window,
@@ -303,6 +319,7 @@ where
 pub(crate) struct DriveSessionConfig<'a> {
     pub(crate) write_channel: GattChannel,
     pub(crate) subscribe_channel: GattChannel,
+    pub(crate) admit_notifications: bool,
     pub(crate) summary: &'a ConnectionSummary,
     pub(crate) endpoints: SessionEndpoints<'a>,
     pub(crate) notification_window: NotificationWindow,
@@ -420,6 +437,7 @@ where
             peripheral,
             write_channel: config.write_channel,
             subscribe_channel: config.subscribe_channel,
+            admit_notifications: config.admit_notifications,
             bindings: &bindings,
             identity_observer,
             report: &mut report,
@@ -520,6 +538,7 @@ struct NotificationLoopContext<'a, 'observer, P: ?Sized> {
     peripheral: &'a P,
     write_channel: GattChannel,
     subscribe_channel: GattChannel,
+    admit_notifications: bool,
     bindings: &'a BridgeBindings,
     identity_observer: Option<&'observer mut dyn BridgeIdentityObserver>,
     report: &'a mut SessionBridgeReport,
@@ -660,6 +679,28 @@ where
     if let Some(observer) = context.identity_observer.as_deref_mut() {
         observer.observe_notification(notification);
         context.report.identity = observer.resolution();
+    }
+    let admitted = !context.admit_notifications
+        || context
+            .bindings
+            .notify_characteristic
+            .as_ref()
+            .is_some_and(|expected| {
+                notification.characteristic == expected.uuid
+                    && notification.service == expected.service_uuid
+            });
+    if !admitted {
+        let outcome = NotificationIngestOutcome::Ignored {
+            evidence: IgnoredNotificationEvidence::with_retained_payload(
+                None,
+                context.subscribe_channel,
+                notification.as_raw_bytes(),
+                monotonic_ms.into_core(),
+            ),
+            reason: IgnoredNotificationReason::WrongChannel,
+        };
+        outputs.push(SessionOutput::NotificationIngest(outcome));
+        return notification_decode_outcome(outputs);
     }
     session.handle(
         SessionInput::Notification {

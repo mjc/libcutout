@@ -1226,6 +1226,63 @@ async fn drive_session_accepts_split_write_and_notify_channels() {
     );
 }
 
+#[tokio::test]
+async fn drive_session_rejects_same_characteristic_from_wrong_service() {
+    let notify = Uuid::from_u128(0x0000_ffe1_0000_1000_8000_0080_5f9b_34fb);
+    let expected_service = Uuid::from_u128(0x0000_ffe0_0000_1000_8000_0080_5f9b_34fb);
+    let decoy_service = Uuid::from_u128(0x0000_fff0_0000_1000_8000_0080_5f9b_34fb);
+    let peripheral =
+        RecordingPeripheral::with_notification(crate::BtleNotification::from_raw_bytes(
+            notify,
+            decoy_service,
+            Bytes::from_static(b"\x13\x37"),
+        ));
+    let mut session = BridgeSession::default();
+    let summary = shared_write_notify_summary("VESC BLE UART");
+
+    let report = crate::drive_session_with_channel_pair(
+        &peripheral,
+        &mut session,
+        crate::SessionChannelPair::new(
+            GattChannel::from_bytes([0xA1; 16]),
+            GattChannel::from_bytes([0xA1; 16]),
+        )
+        .with_endpoint_admission(),
+        &summary,
+        summary
+            .select_session_endpoints()
+            .expect("summary has session endpoints"),
+        crate::NotificationWindow::from_millis(10),
+        &[],
+    )
+    .await
+    .expect("bridge records rejected notifications");
+
+    assert_eq!(
+        *session
+            .notification_count
+            .lock()
+            .expect("notification count"),
+        0
+    );
+    assert!(report.events.iter().any(|event| matches!(
+        event,
+        crate::SessionBridgeEvent::NotificationIngest {
+            outcome: NotificationIngestOutcome::Ignored { reason, .. },
+            ..
+        } if *reason == cutout_core::IgnoredNotificationReason::WrongChannel
+    )));
+    assert_eq!(
+        summary
+            .select_session_endpoints()
+            .unwrap()
+            .notify
+            .unwrap()
+            .service_uuid,
+        expected_service
+    );
+}
+
 #[allow(clippy::too_many_lines)]
 #[tokio::test]
 async fn drive_session_relays_notifications_back_into_session() {

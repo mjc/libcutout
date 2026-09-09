@@ -195,6 +195,7 @@ where
             DriveSessionConfig {
                 write_channel: channel,
                 subscribe_channel: channel,
+                admit_notifications: false,
                 summary: &summary,
                 endpoints,
                 notification_window,
