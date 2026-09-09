@@ -769,6 +769,15 @@ impl VescNotificationDecoder {
                 !refloat_handled,
             );
             self.generic_stream_pending = buffered && !replied;
+        } else if !self.generic_prefix.is_empty() {
+            output.push(SessionOutput::NotificationIngest(
+                NotificationIngestOutcome::buffered_fragment(
+                    family,
+                    channel,
+                    NotificationByteLen::from_bytes(bytes.len()),
+                    monotonic_ms,
+                ),
+            ));
         }
     }
 
