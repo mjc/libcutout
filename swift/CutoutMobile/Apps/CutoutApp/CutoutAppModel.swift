@@ -804,7 +804,11 @@ final class CutoutAppModel {
     func handleMusicURL(_ url: URL) -> Bool {
 #if canImport(SpotifyiOS) && os(iOS)
         guard selectedMusicProvider == .spotify else { return false }
-        return spotifyMusicProvider.handleCallback(url)
+        let handled = spotifyMusicProvider.handleCallback(url)
+#if DEBUG
+        print("spotify_callback handled=\(handled) scheme=\(url.scheme ?? "-") host=\(url.host ?? "-") path=\(url.path)")
+#endif
+        return handled
 #else
         _ = url
         return false

@@ -183,7 +183,10 @@ public final class SpotifyProviderAdapter: NSObject, @preconcurrency SPTAppRemot
             self.playerStateRequestPending = false
             if let playerState = result as? SPTAppRemotePlayerState, error == nil {
                 self.playerStateDidChange(playerState)
-            } else if error != nil {
+            } else if let error = error as NSError? {
+#if DEBUG
+                print("spotify_player_state_failed domain=\(error.domain) code=\(error.code)")
+#endif
                 self.lifecycleState = .stale
                 self.emitChange()
             }
@@ -331,6 +334,13 @@ public final class SpotifyProviderAdapter: NSObject, @preconcurrency SPTAppRemot
         connectionAttemptInFlight = false
         nextConnectionAttemptAt = Date().addingTimeInterval(2)
         lifecycleState = error == nil ? .disconnected : .stale
+#if DEBUG
+        if let error = error as NSError? {
+            print("spotify_disconnected domain=\(error.domain) code=\(error.code)")
+        } else {
+            print("spotify_disconnected without_error")
+        }
+#endif
         emitChange()
     }
 

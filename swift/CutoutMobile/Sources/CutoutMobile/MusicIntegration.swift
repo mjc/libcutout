@@ -1026,7 +1026,8 @@ public struct MusicCompactPlayer: View {
                 historyPolicy: historyPolicy,
                 historyUnavailable: historyUnavailable,
                 onSelectProvider: onSelectProvider,
-                onSetHistoryPolicy: onSetHistoryPolicy
+                onSetHistoryPolicy: onSetHistoryPolicy,
+                onDone: { isExpanded = false }
             )
         }
     }
@@ -1110,6 +1111,7 @@ public struct MusicExpandedPlayer: View {
     public let historyUnavailable: Bool
     public let onSelectProvider: (MobileMusicProviderDto) -> Void
     public let onSetHistoryPolicy: (MobileMusicHistoryPolicyDto) -> Bool
+    public let onDone: () -> Void
     @Environment(\.dismiss) private var dismiss
     @State private var providerSelection: MobileMusicProviderDto
     @State private var selectedPolicy: MobileMusicHistoryPolicyDto
@@ -1121,7 +1123,8 @@ public struct MusicExpandedPlayer: View {
         historyPolicy: MobileMusicHistoryPolicyDto,
         historyUnavailable: Bool = false,
         onSelectProvider: @escaping (MobileMusicProviderDto) -> Void,
-        onSetHistoryPolicy: @escaping (MobileMusicHistoryPolicyDto) -> Bool
+        onSetHistoryPolicy: @escaping (MobileMusicHistoryPolicyDto) -> Bool,
+        onDone: @escaping () -> Void = {}
     ) {
         self.nowPlaying = nowPlaying
         self.timeline = timeline
@@ -1130,6 +1133,7 @@ public struct MusicExpandedPlayer: View {
         self.historyUnavailable = historyUnavailable
         self.onSelectProvider = onSelectProvider
         self.onSetHistoryPolicy = onSetHistoryPolicy
+        self.onDone = onDone
         _providerSelection = State(initialValue: selectedProvider)
         _selectedPolicy = State(initialValue: historyPolicy)
     }
@@ -1195,7 +1199,14 @@ public struct MusicExpandedPlayer: View {
             .navigationTitle(pevLocalizedText("music.expand"))
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) {
-                    Button(pevLocalizedText("music.done")) { dismiss() }
+                    Button(pevLocalizedText("music.done")) {
+                        // Keep the parent's presentation state and the sheet's
+                        // presentation environment in sync. This also handles
+                        // sheets embedded in a TabView where changing the
+                        // presenting @State alone can be deferred.
+                        onDone()
+                        dismiss()
+                    }
                         .accessibilityIdentifier("music.done")
                 }
             }
@@ -1232,6 +1243,46 @@ public struct MusicCompactPlayerInset: ViewModifier {
     public let onSelectProvider: (MobileMusicProviderDto) -> Void
     public let onSetHistoryPolicy: (MobileMusicHistoryPolicyDto) -> Bool
 
+    private var setupBar: some View {
+        HStack(spacing: 12) {
+            Image(systemName: "music.note")
+                .font(.title3)
+                .accessibilityHidden(true)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(pevLocalizedText("music.connect"))
+                    .font(.subheadline.weight(.semibold))
+                Text(selectedProvider.title)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            Spacer(minLength: 8)
+            Menu {
+                ForEach(MobileMusicProviderDto.allCases, id: \.self) { provider in
+                    Button(provider.title) {
+                        onSelectProvider(provider)
+                    }
+                }
+            } label: {
+                Label(selectedProvider.title, systemImage: "chevron.up.chevron.down")
+            }
+            .buttonStyle(.bordered)
+            .controlSize(.small)
+            .accessibilityIdentifier("music.provider-picker")
+            Button(action: onConnect) {
+                Text(pevLocalizedText("music.connect"))
+            }
+            .buttonStyle(.borderedProminent)
+            .controlSize(.small)
+            .accessibilityIdentifier("music.connect")
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 10)
+        .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 16))
+        .padding(.horizontal, 12)
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel(pevLocalizedText("music.connect"))
+    }
+
     public func body(content: Content) -> some View {
         content.safeAreaInset(edge: .bottom, spacing: 8) {
             if let nowPlaying {
@@ -1258,27 +1309,7 @@ public struct MusicCompactPlayerInset: ViewModifier {
                 .buttonStyle(.bordered)
                 .accessibilityIdentifier("music.restore")
             } else {
-                HStack(spacing: 10) {
-                    Button(action: onConnect) {
-                        Label(
-                            pevLocalizedText("music.connect"),
-                            systemImage: "music.note"
-                        )
-                    }
-                    .buttonStyle(.bordered)
-                    .accessibilityIdentifier("music.connect")
-                    Menu {
-                        ForEach(MobileMusicProviderDto.allCases, id: \.self) { provider in
-                            Button(provider.title) {
-                                onSelectProvider(provider)
-                            }
-                        }
-                    } label: {
-                        Label(selectedProvider.title, systemImage: "chevron.up.chevron.down")
-                    }
-                    .buttonStyle(.bordered)
-                    .accessibilityIdentifier("music.provider-picker")
-                }
+                setupBar
             }
         }
     }
