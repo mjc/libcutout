@@ -1093,7 +1093,10 @@ mod tests {
         assert_eq!(data.package_state, 3);
         assert_eq!(data.package_mode, 1);
         assert_eq!(data.footpad_state, 3);
+        assert!(!data.charging);
         assert_eq!(data.fatal_error, Some(RefloatFatalError::FirmwareFault));
+        assert!(!data.darkride);
+        assert!(!data.wheelslip);
         assert_eq!(data.stop_condition, 6);
         assert_eq!(data.sat, 10);
         assert_eq!(data.beep_reason, 8);
