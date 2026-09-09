@@ -1,5 +1,57 @@
 import XCTest
 
+/// Runs against the installed app and its real preferences/provider session.
+@MainActor
+final class MusicPreferencesDeviceUITests: XCTestCase {
+    func testReadableHistorySelectionSurvivesSheetReopen() {
+        continueAfterFailure = false
+        guard ProcessInfo.processInfo.environment["CUTOUT_RUN_DEVICE_MUSIC_UI_TESTS"] == "1" else {
+            throw XCTSkip("Requires an explicitly enabled, installed-device music session")
+        }
+        let app = XCUIApplication()
+        app.terminate()
+        app.launch()
+        app.activate()
+        let map = app.buttons["device-picker.open-map"]
+        if map.waitForExistence(timeout: 5) {
+            map.tap()
+        }
+        let details = app.buttons["music.expand"]
+        if !app.buttons["music.done"].exists {
+            XCTAssertTrue(details.waitForExistence(timeout: 20), app.debugDescription)
+            details.tap()
+        }
+        let picker = app.buttons["music.history-picker"]
+        XCTAssertTrue(picker.waitForExistence(timeout: 5), app.debugDescription)
+        picker.tap()
+        app.buttons["music.history-policy.human-readable"].tap()
+        XCTAssertEqual(picker.value as? String, "human-readable")
+        picker.tap()
+        app.buttons["music.history-policy.opaque-item"].tap()
+        XCTAssertEqual(picker.value as? String, "opaque-item")
+        app.buttons["music.done"].tap()
+        details.tap()
+        XCTAssertEqual(picker.value as? String, "opaque-item")
+        picker.tap()
+        app.buttons["music.history-policy.human-readable"].tap()
+        XCTAssertEqual(picker.value as? String, "human-readable")
+        app.buttons["music.done"].tap()
+        details.tap()
+        XCTAssertEqual(picker.value as? String, "human-readable")
+        app.buttons["music.done"].tap()
+        app.terminate()
+        app.launch()
+        app.activate()
+        if map.waitForExistence(timeout: 5) {
+            map.tap()
+        }
+        XCTAssertTrue(details.waitForExistence(timeout: 30), app.debugDescription)
+        details.tap()
+        XCTAssertEqual(picker.value as? String, "human-readable")
+        app.buttons["music.done"].tap()
+    }
+}
+
 @MainActor
 final class CutoutAppUITests: XCTestCase {
     private var app: XCUIApplication!

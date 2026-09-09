@@ -78,11 +78,12 @@ public enum MusicTransitionHint: Equatable, Sendable {
 
 /// Describes the provider lifecycle that the app can currently monitor.
 ///
-/// Spotify remains an explicit handoff/unavailable path until its App Remote
-/// credentials and on-device lifecycle are proven; it must not fall through
-/// to the Apple Music system-player monitor.
+/// Spotify uses App Remote when the iOS SDK and app credentials are present;
+/// otherwise it remains a truthful handoff/unavailable state. It must never
+/// fall through to the Apple Music system-player monitor.
 public enum MusicProviderMonitoringMode: Equatable, Sendable {
     case appleMusicSystemPlayer
+    case spotifyAppRemote
     case unavailable
 }
 
@@ -216,7 +217,11 @@ public extension MobileMusicProviderDto {
     var monitoringMode: MusicProviderMonitoringMode {
         switch self {
         case .appleMusic: .appleMusicSystemPlayer
+#if canImport(SpotifyiOS) && os(iOS)
+        case .spotify: .spotifyAppRemote
+#else
         case .spotify: .unavailable
+#endif
         }
     }
 
@@ -225,6 +230,54 @@ public extension MobileMusicProviderDto {
         case .appleMusic: pevLocalizedText("music.provider.apple_music")
         case .spotify: pevLocalizedText("music.provider.spotify")
         }
+    }
+}
+
+extension MobileMusicHistoryPolicyDto {
+    var musicAccessibilityIdentifier: String {
+        switch self {
+        case .disabled: "disabled"
+        case .opaqueItem: "opaque-item"
+        case .humanReadable: "human-readable"
+        }
+    }
+}
+
+/// Persists the provider selected for the compact music player.
+public struct MusicProviderSelectionStore {
+    private static let key = "io.cutout.music.provider.selected"
+    private let defaults: UserDefaults
+
+    public init(defaults: UserDefaults = .standard) {
+        self.defaults = defaults
+    }
+
+    public var provider: MobileMusicProviderDto {
+        defaults.string(forKey: Self.key) == "spotify" ? .spotify : .appleMusic
+    }
+
+    public func set(_ provider: MobileMusicProviderDto) {
+        defaults.set(provider == .spotify ? "spotify" : "apple_music", forKey: Self.key)
+    }
+}
+
+/// Persists whether the user asked the app to monitor the selected music provider.
+/// The provider session itself remains owned by the platform adapter; this is
+/// only the durable setup intent used to restore monitoring on the next launch.
+public struct MusicMonitoringPreferenceStore {
+    private static let key = "io.cutout.music.monitoring.enabled"
+    private let defaults: UserDefaults
+
+    public init(defaults: UserDefaults = .standard) {
+        self.defaults = defaults
+    }
+
+    public var isEnabled: Bool {
+        defaults.bool(forKey: Self.key)
+    }
+
+    public func setEnabled(_ enabled: Bool) {
+        defaults.set(enabled, forKey: Self.key)
     }
 }
 
@@ -278,24 +331,6 @@ public struct MusicPlayerVisibilityStore {
 
     public func setHidden(_ hidden: Bool) {
         defaults.set(hidden, forKey: Self.key)
-    }
-}
-
-/// Persists the selected provider without storing provider credentials.
-public struct MusicProviderSelectionStore {
-    private static let key = "io.cutout.music.provider.selected"
-    private let defaults: UserDefaults
-
-    public init(defaults: UserDefaults = .standard) {
-        self.defaults = defaults
-    }
-
-    public var provider: MobileMusicProviderDto {
-        defaults.string(forKey: Self.key) == "spotify" ? .spotify : .appleMusic
-    }
-
-    public func set(_ provider: MobileMusicProviderDto) {
-        defaults.set(provider == .spotify ? "spotify" : "apple_music", forKey: Self.key)
     }
 }
 
@@ -735,7 +770,9 @@ public final class MusicIntegrationCoordinator {
 
     public func setHistoryPolicy(_ policy: MobileMusicHistoryPolicyDto) throws {
         guard let rideMapState else {
-            throw MobileRideMapError.storageError("Rust ride database is unavailable")
+            // A future-ride preference is still valid without a current ride store.
+            adoptHistoryPolicy(policy)
+            return
         }
         try rideMapState.setMusicHistoryPolicy(policy)
         adoptHistoryPolicy(policy)
@@ -938,6 +975,7 @@ public struct MusicCompactPlayer: View {
                 Image(systemName: "ellipsis.circle")
             }
             .accessibilityLabel(pevLocalizedText("music.expand"))
+            .accessibilityIdentifier("music.expand")
             Button(action: onDismiss) {
                 Image(systemName: "xmark")
             }
@@ -1115,9 +1153,11 @@ public struct MusicExpandedPlayer: View {
                         Picker(pevLocalizedText("music.history.title"), selection: $selectedPolicy) {
                             ForEach(MobileMusicHistoryPolicyDto.allCases, id: \.self) { policy in
                                 Text(policy.title)
+                                    .accessibilityIdentifier("music.history-policy.\(policy.musicAccessibilityIdentifier)")
                                     .tag(policy)
                             }
                         }
+                        .accessibilityIdentifier("music.history-picker")
                         Text(selectedPolicy.explanation)
                             .font(.footnote)
                             .foregroundStyle(.secondary)
@@ -1130,6 +1170,7 @@ public struct MusicExpandedPlayer: View {
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) {
                     Button(pevLocalizedText("music.done")) { dismiss() }
+                        .accessibilityIdentifier("music.done")
                 }
             }
             .onChange(of: selectedPolicy) { _, policy in
@@ -1453,36 +1494,3 @@ public final class AppleMusicProviderAdapter {
     }
 }
 #endif
-
-/// Spotify is intentionally represented without an SDK dependency. A future
-/// App Remote adapter can feed the same snapshot/command contract once its
-/// redirect, entitlement, and account lifecycle are proven on-device.
-public struct SpotifyProviderAdapter: Sendable {
-    public static let providerURL = URL(string: "spotify://")!
-
-    public init() {}
-
-    /// Opens Spotify when the provider can be handed off to its own app.
-    /// Playback control and metadata remain unavailable until App Remote is
-    /// integrated and proven on a physical device.
-    @MainActor
-    public func perform(_ command: MobileMusicCommandDto) async -> MusicCommandOutcome {
-        guard case .openProvider = command else { return .unavailable }
-#if canImport(UIKit) && os(iOS)
-        guard UIApplication.shared.canOpenURL(Self.providerURL) else { return .unavailable }
-        guard await UIApplication.shared.open(Self.providerURL) else { return .failed }
-        return .accepted
-#else
-        return .unavailable
-#endif
-    }
-
-    public func unavailableSnapshot(observedAtMs: UInt64) -> MobileMusicSnapshotDto {
-        MusicProviderObservation.unavailable(
-            provider: .spotify,
-            sessionId: "spotify-unavailable",
-            observedAtMs: observedAtMs,
-            openProvider: true
-        ).snapshot
-    }
-}

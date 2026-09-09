@@ -62,6 +62,7 @@ final class CutoutAppModelTests: XCTestCase {
         clear(DevicePickerSelectionStore())
         MusicProviderSelectionStore().set(.appleMusic)
         MusicPlayerVisibilityStore().setHidden(false)
+        MusicMonitoringPreferenceStore().setEnabled(false)
         MusicHistoryPolicyStore().set(.disabled)
     }
 
@@ -70,6 +71,7 @@ final class CutoutAppModelTests: XCTestCase {
         clear(DevicePickerSelectionStore())
         MusicProviderSelectionStore().set(.appleMusic)
         MusicPlayerVisibilityStore().setHidden(false)
+        MusicMonitoringPreferenceStore().setEnabled(false)
         MusicHistoryPolicyStore().set(.disabled)
         super.tearDown()
     }
@@ -113,8 +115,16 @@ final class CutoutAppModelTests: XCTestCase {
     }
 
     @MainActor
-    func testMusicMonitoringStartsWhenHistoryIsDisabled() {
-        let model = CutoutAppModel(core: SessionDriverSpy(rows: []))
+    func testMusicMonitoringStartsWhenHistoryIsDisabled() throws {
+        let suiteName = "MusicMonitoringDisabledHistory-\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let monitoringStore = MusicMonitoringPreferenceStore(defaults: defaults)
+        monitoringStore.setEnabled(true)
+        let model = CutoutAppModel(
+            core: SessionDriverSpy(rows: []),
+            musicMonitoringPreferenceStore: monitoringStore
+        )
 
         XCTAssertEqual(model.musicHistoryPolicy, .disabled)
         model.start()
@@ -156,6 +166,124 @@ final class CutoutAppModelTests: XCTestCase {
         )
 
         XCTAssertEqual(model.musicHistoryPolicy, .opaqueItem)
+    }
+
+    @MainActor
+    func testMusicHistoryPreferenceSavesWithoutRideDatabase() throws {
+        let suiteName = "MusicHistoryWithoutDatabase-\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let store = MusicHistoryPolicyStore(defaults: defaults)
+        let model = CutoutAppModel(
+            core: SessionDriverSpy(rows: [], rideMapUnavailable: true),
+            musicHistoryPolicyStore: store
+        )
+        for policy in [MobileMusicHistoryPolicyDto.opaqueItem, .humanReadable] {
+            XCTAssertTrue(model.setMusicHistoryPolicy(policy))
+            XCTAssertEqual(model.musicHistoryPolicy, policy)
+            XCTAssertEqual(store.policy, policy)
+            let relaunched = CutoutAppModel(
+                core: SessionDriverSpy(rows: [], rideMapUnavailable: true),
+                musicHistoryPolicyStore: MusicHistoryPolicyStore(defaults: defaults)
+            )
+            XCTAssertEqual(relaunched.musicHistoryPolicy, policy)
+        }
+    }
+
+    @MainActor
+    func testProductionSessionHasRustRideDatabase() throws {
+        guard RustPersistenceStore.shared != nil else {
+            throw XCTSkip("Platform persistence unavailable; production wiring is covered on device")
+        }
+        let core = CutoutSessionCore()
+        XCTAssertNotNil(core.rideMapStateHandle)
+    }
+
+    @MainActor
+    func testSelectedMusicProviderPersistsAcrossModelLaunches() throws {
+        let suiteName = "CutoutAppMusicProviderSelectionTests-\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let providerStore = MusicProviderSelectionStore(defaults: defaults)
+
+        let firstModel = CutoutAppModel(
+            core: SessionDriverSpy(rows: []),
+            musicProviderSelectionStore: providerStore
+        )
+        firstModel.selectMusicProvider(.spotify)
+
+        let secondModel = CutoutAppModel(
+            core: SessionDriverSpy(rows: []),
+            musicProviderSelectionStore: providerStore
+        )
+
+        XCTAssertEqual(secondModel.selectedMusicProvider, .spotify)
+    }
+
+    @MainActor
+    func testConnectMusicPersistsMonitoringIntent() throws {
+        let suiteName = "CutoutAppMusicMonitoringTests-\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let monitoringStore = MusicMonitoringPreferenceStore(defaults: defaults)
+        let model = CutoutAppModel(
+            core: SessionDriverSpy(rows: []),
+            musicMonitoringPreferenceStore: monitoringStore
+        )
+
+        XCTAssertFalse(monitoringStore.isEnabled)
+        model.connectMusic()
+        XCTAssertTrue(monitoringStore.isEnabled)
+    }
+
+#if !os(iOS)
+    @MainActor
+    func testMusicSetupRestoresMonitoringForSelectedProviderOnNextLaunch() throws {
+        let suiteName = "MusicRelaunch-\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let providerStore = MusicProviderSelectionStore(defaults: defaults)
+        let monitoringStore = MusicMonitoringPreferenceStore(defaults: defaults)
+        let first = CutoutAppModel(
+            core: SessionDriverSpy(rows: []),
+            musicProviderSelectionStore: providerStore,
+            musicMonitoringPreferenceStore: monitoringStore
+        )
+        first.selectMusicProvider(.spotify)
+        let relaunched = CutoutAppModel(
+            core: SessionDriverSpy(rows: []),
+            musicProviderSelectionStore: providerStore,
+            musicMonitoringPreferenceStore: monitoringStore
+        )
+        relaunched.restoreMusicPlayer()
+        XCTAssertEqual(relaunched.musicNowPlaying?.provider, .spotify)
+        XCTAssertEqual(relaunched.musicNowPlaying?.state, .unavailable)
+        relaunched.start()
+        XCTAssertEqual(relaunched.musicNowPlaying?.provider, .spotify)
+        XCTAssertEqual(relaunched.musicNowPlaying?.state, .unavailable)
+    }
+#endif
+
+    @MainActor
+    func testMusicHistoryPolicyCanBeChangedAfterRideStops() throws {
+        let state = MobileRideMapState()
+        _ = try state.startGpsOnly(atMs: 1_000, lastConnectedVehicle: nil)
+        try state.setMusicHistoryPolicy(.humanReadable)
+
+        let suiteName = "CutoutAppMusicHistoryStoppedRideTests-\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let policyStore = MusicHistoryPolicyStore(defaults: defaults)
+        let model = CutoutAppModel(
+            core: SessionDriverSpy(rows: [], rideMapState: state, preserveExistingRide: true),
+            musicHistoryPolicyStore: policyStore
+        )
+
+        XCTAssertTrue(model.stopRideMap())
+        XCTAssertTrue(model.setMusicHistoryPolicy(.opaqueItem))
+        XCTAssertEqual(model.musicHistoryPolicy, .opaqueItem)
+        XCTAssertEqual(policyStore.policy, .opaqueItem)
+        XCTAssertEqual(state.currentMusicHistoryPolicy(), .humanReadable)
     }
 
     @MainActor

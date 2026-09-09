@@ -3,15 +3,52 @@ import CutoutMobileFFI
 @testable import CutoutMobile
 
 final class MusicIntegrationTests: XCTestCase {
+    @MainActor
+    func testSpotifyEpisodeWithoutArtistStillUpdatesPlayingTitle() throws {
+        let coordinator = MusicIntegrationCoordinator(rideMapState: nil)
+        let snapshot = MobileMusicSnapshotDto(
+            provider: .spotify,
+            sessionId: "spotify-app-remote",
+            state: .playing,
+            item: .init(
+                identifier: "spotify:episode:example",
+                title: "Episode title",
+                artist: ""
+            ),
+            positionMilliseconds: 1_777_678,
+            durationMilliseconds: 3_783_235,
+            observedAtMs: 100,
+            capabilities: .init(previous: false, play: false, pause: true, next: true, openProvider: true)
+        )
+        _ = try coordinator.ingest(snapshot: snapshot, wallClockAtMs: 1_700_000_000_000, clockUncertaintyMs: 1)
+        XCTAssertEqual(coordinator.nowPlaying?.title, "Episode title")
+        XCTAssertEqual(coordinator.nowPlaying?.state, .playing)
+        XCTAssertEqual(coordinator.nowPlaying?.playPauseCommand, .pause)
+        XCTAssertNil(coordinator.nowPlaying?.item?.artist)
+    }
+
+    func testMissingSpotifyMetadataDoesNotHideConnectionStatus() {
+        let disconnected = MusicNowPlaying(provider: .spotify, state: .disconnected)
+        XCTAssertEqual(disconnected.title, pevLocalizedText("music.not_playing"))
+        XCTAssertEqual(disconnected.statusText, pevLocalizedText("music.state.disconnected"))
+        let playing = MusicNowPlaying(
+            provider: .spotify, state: .playing,
+            item: .init(identifier: "spotify:track:example", title: nil, artist: nil)
+        )
+        XCTAssertEqual(playing.title, pevLocalizedText("music.not_playing"))
+        XCTAssertNil(playing.statusText)
+    }
+
     func testProviderMonitoringModeMatchesSupportedLifecycle() {
         XCTAssertEqual(
             MobileMusicProviderDto.appleMusic.monitoringMode,
             .appleMusicSystemPlayer
         )
-        XCTAssertEqual(
-            MobileMusicProviderDto.spotify.monitoringMode,
-            .unavailable
-        )
+#if canImport(SpotifyiOS) && os(iOS)
+        XCTAssertEqual(MobileMusicProviderDto.spotify.monitoringMode, .spotifyAppRemote)
+#else
+        XCTAssertEqual(MobileMusicProviderDto.spotify.monitoringMode, .unavailable)
+#endif
     }
 
     @MainActor
@@ -40,6 +77,34 @@ final class MusicIntegrationTests: XCTestCase {
             store.set(policy)
             XCTAssertEqual(store.policy, policy)
         }
+    }
+
+    func testMusicProviderSelectionStoreDefaultsToAppleMusicAndRoundTrips() throws {
+        let suiteName = "MusicProviderSelectionStoreTests-\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        let store = MusicProviderSelectionStore(defaults: defaults)
+
+        XCTAssertEqual(store.provider, .appleMusic)
+        store.set(.spotify)
+        XCTAssertEqual(store.provider, .spotify)
+        store.set(.appleMusic)
+        XCTAssertEqual(store.provider, .appleMusic)
+    }
+
+    func testMusicMonitoringPreferenceStoreDefaultsOffAndRoundTrips() throws {
+        let suiteName = "MusicMonitoringPreferenceStoreTests-\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        let store = MusicMonitoringPreferenceStore(defaults: defaults)
+
+        XCTAssertFalse(store.isEnabled)
+        store.setEnabled(true)
+        XCTAssertTrue(store.isEnabled)
+        store.setEnabled(false)
+        XCTAssertFalse(store.isEnabled)
     }
 
     func testTransitionHintRemainsPendingUntilTheItemChanges() {

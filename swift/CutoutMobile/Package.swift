@@ -13,12 +13,14 @@ let package = Package(
     ],
     dependencies: [
         .package(path: "../../target/swift-ffi/CutoutMobileFFI"),
+        .package(url: "https://github.com/spotify/ios-sdk.git", from: "5.0.1"),
     ],
     targets: [
         .target(
             name: "CutoutMobile",
             dependencies: [
                 .product(name: "CutoutMobileFFI", package: "CutoutMobileFFI"),
+                .product(name: "SpotifyiOS", package: "ios-sdk", condition: .when(platforms: [.iOS])),
             ],
             resources: [.process("Localizable.xcstrings")]
         ),
