@@ -163,6 +163,9 @@ pub trait ReadOnlyNotificationDecoder {
     /// Resets model-specific parser state.
     fn reset(&mut self);
 
+    /// Gives a decoder a chance to issue a bounded periodic read request.
+    fn on_tick(&mut self, _monotonic_ms: MonotonicTimestamp, _output: &mut Vec<SessionOutput>) {}
+
     /// Handles an accepted notification payload.
     fn handle_notification(
         &mut self,
@@ -498,6 +501,7 @@ pub struct VescNotificationDecoder {
     stream: VescReadOnlyStreamDecoder,
     refloat_stream: RefloatStreamDecoder,
     board_profile: Option<VescBoardProfile>,
+    last_refloat_poll_ms: Option<u64>,
 }
 
 impl VescNotificationDecoder {
@@ -508,6 +512,7 @@ impl VescNotificationDecoder {
             stream: VescReadOnlyStreamDecoder::new(),
             refloat_stream: RefloatStreamDecoder::new(),
             board_profile: Some(board_profile),
+            last_refloat_poll_ms: None,
         }
     }
 
@@ -567,6 +572,21 @@ impl ReadOnlyNotificationDecoder for VescNotificationDecoder {
     fn reset(&mut self) {
         self.stream = VescReadOnlyStreamDecoder::new();
         self.refloat_stream = RefloatStreamDecoder::new();
+        self.last_refloat_poll_ms = None;
+    }
+
+    fn on_tick(&mut self, monotonic_ms: MonotonicTimestamp, output: &mut Vec<SessionOutput>) {
+        let Some(_) = self.refloat_stream.field_ids() else {
+            return;
+        };
+        let now = monotonic_ms.as_milliseconds();
+        if self
+            .last_refloat_poll_ms
+            .is_none_or(|last| now.saturating_sub(last) >= 100)
+        {
+            self.last_refloat_poll_ms = Some(now);
+            push_refloat_realtime_request(output);
+        }
     }
 
     fn handle_notification(
@@ -1351,6 +1371,7 @@ fn handle_read_only_session<M: ReadOnlyModelSpec, const ACCEPT_ANY_NOTIFICATION:
             output.push(SessionOutput::Event(DeviceEvent::LinkDown));
         }
         SessionInput::Tick { monotonic_ms } => {
+            decoder.on_tick(monotonic_ms, output);
             output.push(SessionOutput::Event(DeviceEvent::Tick { monotonic_ms }));
         }
         SessionInput::Notification {
@@ -2609,6 +2630,39 @@ mod tests {
                 >= 2,
             "field ids should schedule realtime data, and realtime data should schedule the next sample"
         );
+    }
+
+    #[test]
+    fn generic_vesc_session_repolls_refloat_after_a_missed_reply() {
+        let mut session = ReadOnlySession::<VescGenericModel, true>::default();
+        let mut output = Vec::new();
+        session.handle(
+            SessionInput::LinkUp(LinkInfo {
+                monotonic_ms: ms(0),
+                max_write_len: Some(write_len(20)),
+            }),
+            &mut output,
+        );
+        output.clear();
+        session.handle(
+            SessionInput::Notification {
+                channel: VESC_NOTIFY_CHANNEL,
+                bytes: refloat_realtime_ids_frame().as_slice(),
+                monotonic_ms: ms(1),
+            },
+            &mut output,
+        );
+        output.clear();
+        session.handle(
+            SessionInput::Tick {
+                monotonic_ms: ms(101),
+            },
+            &mut output,
+        );
+        assert!(output.iter().any(|item| matches!(
+            item,
+            SessionOutput::Transport(TransportAction::Write { .. })
+        )));
     }
 
     #[test]
