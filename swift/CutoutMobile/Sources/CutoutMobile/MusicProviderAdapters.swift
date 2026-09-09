@@ -122,6 +122,13 @@ public final class SpotifyProviderAdapter: NSObject, @preconcurrency SPTSessionM
             emitChange()
             return false
         }
+#if canImport(UIKit) && os(iOS)
+        guard UIApplication.shared.canOpenURL(Self.providerURL) else {
+            lifecycleState = .unavailable
+            emitChange()
+            return false
+        }
+#endif
         // No credentials means no connection attempt, not transient buffering.
         guard accessToken != nil || allowAuthorization else {
             lifecycleState = .unauthorized

@@ -461,7 +461,10 @@ final class MusicIntegrationTests: XCTestCase {
 
     @MainActor
     func testProviderArtworkReachesPresentationOnlyNowPlaying() throws {
-        let coordinator = MusicIntegrationCoordinator(rideMapState: nil)
+        let rideMapState = MobileRideMapState()
+        _ = try rideMapState.startGpsOnly(atMs: 1_000, lastConnectedVehicle: nil)
+        let coordinator = MusicIntegrationCoordinator(rideMapState: rideMapState)
+        try coordinator.setHistoryPolicy(.humanReadable)
         let snapshot = MobileMusicSnapshotDto(
             provider: .spotify,
             sessionId: "spotify-app-remote",
@@ -481,6 +484,28 @@ final class MusicIntegrationTests: XCTestCase {
         )
 
         XCTAssertEqual(coordinator.nowPlaying?.artwork?.data, artwork)
+
+        let updatedSnapshot = MobileMusicSnapshotDto(
+            provider: snapshot.provider,
+            sessionId: snapshot.sessionId,
+            state: snapshot.state,
+            item: snapshot.item,
+            positionMilliseconds: 2,
+            durationMilliseconds: snapshot.durationMilliseconds,
+            observedAtMs: 101,
+            capabilities: snapshot.capabilities
+        )
+        let updatedArtwork = Data([4, 5, 6])
+        let eventCount = coordinator.recordedEvents.count
+
+        _ = try coordinator.ingest(
+            observation: MusicProviderObservation(snapshot: updatedSnapshot, artworkData: updatedArtwork),
+            wallClockAtMs: 1_700_000_000_100,
+            clockUncertaintyMs: 1
+        )
+
+        XCTAssertEqual(coordinator.nowPlaying?.artwork?.data, updatedArtwork)
+        XCTAssertEqual(coordinator.recordedEvents.count, eventCount)
     }
 
     private func nowPlaying(trackID: String) -> MusicNowPlaying {
