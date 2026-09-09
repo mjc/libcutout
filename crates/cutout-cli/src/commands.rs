@@ -18,7 +18,7 @@ use cutout_btle::{
     SessionBridgeEvent, SessionBridgeReport, SessionCapture, SessionCaptureRecord,
     SessionChannelPair, SessionEndpoints, SessionPeripheral, SubscribeCount, TelemetryEventCount,
     TransportWriteCount, WriteProvenance, capture_raw_notifications,
-    capture_reconnecting_session_with_commands, capture_session_with_channel_pair,
+    capture_reconnecting_session_with_commands, capture_session_with_channel_pair_and_stream,
     capture_session_with_commands, connect_and_discover, drive_session,
     drive_session_with_commands, read_battery_level, scan_peripherals,
 };
@@ -1635,6 +1635,7 @@ async fn vesc_probe(args: VescProbeArgs) -> Result<()> {
     print_session_endpoints(endpoints);
     let mut vesc_decoder = VescReadOnlyStreamDecoder::new();
     let mut refloat_decoder = RefloatStreamDecoder::new();
+    let mut notifications = Some(connection.peripheral.notifications().await?);
     for probe in probes {
         info!(?probe, "running serialized VESC probe");
         let EncodedVescProbe {
@@ -1643,7 +1644,10 @@ async fn vesc_probe(args: VescProbeArgs) -> Result<()> {
             protocol,
         } = encode_vesc_probe(probe)?;
         let mut session = OneShotVescRequestSession::new(payload);
-        let capture = capture_session_with_channel_pair(
+        let stream = notifications
+            .take()
+            .context("VESC notification stream was consumed unexpectedly")?;
+        let (capture, stream) = capture_session_with_channel_pair_and_stream(
             &connection.peripheral,
             &mut session,
             SessionChannelPair::new(VESC_WRITE_CHANNEL, VESC_NOTIFY_CHANNEL)
@@ -1652,8 +1656,10 @@ async fn vesc_probe(args: VescProbeArgs) -> Result<()> {
             endpoints,
             NotificationWindow::from_secs(seconds),
             &[command],
+            stream,
         )
         .await?;
+        notifications = Some(stream);
         let report = &capture.report;
         print_session_report(report);
         print_session_diagnostics_jsonl(report, diagnostics_jsonl)?;

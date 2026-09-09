@@ -18,6 +18,9 @@ use crate::{
     units::{MonotonicMs, NegotiatedWriteLimit, NotificationWindow, WriteProvenance},
 };
 
+/// Reusable notification stream for serialized protocol probes.
+pub type BtleNotificationStream = Pin<Box<dyn Stream<Item = BtleNotification> + Send>>;
+
 /// Write and notification channels used by a protocol session.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct SessionChannelPair {
@@ -316,6 +319,52 @@ where
     Ok(SessionCapture { records, report })
 }
 
+/// Captures one session window using an already-open notification stream.
+///
+/// Returning the stream allows callers to serialize multiple request windows
+/// without losing notifications between probes.
+pub async fn capture_session_with_channel_pair_and_stream<P, S>(
+    peripheral: &P,
+    session: &mut S,
+    channels: SessionChannelPair,
+    summary: &ConnectionSummary,
+    endpoints: SessionEndpoints<'_>,
+    notification_window: NotificationWindow,
+    commands: &[DeviceCommand],
+    notifications: BtleNotificationStream,
+) -> Result<(SessionCapture, BtleNotificationStream), BtleError>
+where
+    P: SessionPeripheral + Sync + ?Sized,
+    S: ProtocolSession + Send,
+{
+    let mut records = Vec::new();
+    let (report, notifications) = drive_session_inner_with_stream(
+        peripheral,
+        session,
+        DriveSessionConfig {
+            write_channel: channels.write,
+            subscribe_channel: channels.subscribe,
+            admit_notifications: channels.admit_notifications,
+            summary,
+            endpoints,
+            notification_window,
+            commands,
+            write_provenance: WriteProvenance::Stable,
+            monotonic_start: MonotonicMs::default(),
+            stream_end_is_link_down: false,
+            link_loss_idle_window: None,
+        },
+        Some(&mut records),
+        None,
+        Some(notifications),
+    )
+    .await?;
+    Ok((
+        SessionCapture { records, report },
+        notifications.expect("provided stream remains owned"),
+    ))
+}
+
 pub(crate) struct DriveSessionConfig<'a> {
     pub(crate) write_channel: GattChannel,
     pub(crate) subscribe_channel: GattChannel,
@@ -334,9 +383,33 @@ pub(crate) async fn drive_session_inner<P, S>(
     peripheral: &P,
     session: &mut S,
     config: DriveSessionConfig<'_>,
+    capture: Option<&mut Vec<SessionCaptureRecord>>,
+    identity_observer: Option<&mut dyn BridgeIdentityObserver>,
+) -> Result<SessionBridgeReport, BtleError>
+where
+    P: SessionPeripheral + Sync + ?Sized,
+    S: ProtocolSession + Send,
+{
+    drive_session_inner_with_stream(
+        peripheral,
+        session,
+        config,
+        capture,
+        identity_observer,
+        None,
+    )
+    .await
+    .map(|(report, _)| report)
+}
+
+async fn drive_session_inner_with_stream<P, S>(
+    peripheral: &P,
+    session: &mut S,
+    config: DriveSessionConfig<'_>,
     mut capture: Option<&mut Vec<SessionCaptureRecord>>,
     mut identity_observer: Option<&mut dyn BridgeIdentityObserver>,
-) -> Result<SessionBridgeReport, BtleError>
+    mut notification_stream: Option<BtleNotificationStream>,
+) -> Result<(SessionBridgeReport, Option<BtleNotificationStream>), BtleError>
 where
     P: SessionPeripheral + Sync + ?Sized,
     S: ProtocolSession + Send,
@@ -379,6 +452,8 @@ where
     let mut notifications =
         if config.notification_window.is_zero() || bindings.notify_characteristic.is_none() {
             None
+        } else if let Some(stream) = notification_stream.take() {
+            Some(stream)
         } else {
             Some(peripheral.notifications().await?)
         };
@@ -429,10 +504,10 @@ where
     .await?;
 
     let Some(notifications) = notifications.take() else {
-        return Ok(report);
+        return Ok((report, None));
     };
 
-    process_notification_window(
+    let notifications = process_notification_window(
         NotificationLoopContext {
             peripheral,
             write_channel: config.write_channel,
@@ -455,7 +530,7 @@ where
     )
     .await?;
 
-    Ok(report)
+    Ok((report, Some(notifications)))
 }
 
 fn elapsed_or_next(previous: MonotonicMs, origin: Instant) -> MonotonicMs {
@@ -557,8 +632,8 @@ async fn process_notification_window<P, S>(
     outputs: &mut Vec<SessionOutput>,
     monotonic_ms: &mut MonotonicMs,
     notification_window: NotificationWindow,
-    mut notifications: Pin<Box<dyn Stream<Item = BtleNotification> + Send>>,
-) -> Result<(), BtleError>
+    mut notifications: BtleNotificationStream,
+) -> Result<BtleNotificationStream, BtleError>
 where
     P: SessionPeripheral + Sync + ?Sized,
     S: ProtocolSession + Send,
@@ -708,7 +783,7 @@ where
         "session notification window completed"
     );
 
-    Ok(())
+    Ok(notifications)
 }
 
 fn ingest_notification<P, S>(
