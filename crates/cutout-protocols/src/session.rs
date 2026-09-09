@@ -2895,6 +2895,95 @@ mod tests {
     }
 
     #[test]
+    fn generic_vesc_values_after_reconnect_do_not_cancel_refloat_recovery() {
+        let mut session = ReadOnlySession::<VescGenericModel, true>::default();
+        let mut output = Vec::new();
+        session.handle(
+            SessionInput::LinkUp(LinkInfo {
+                monotonic_ms: ms(0),
+                max_write_len: Some(write_len(20)),
+            }),
+            &mut output,
+        );
+        session.handle(
+            SessionInput::Command(DeviceCommand::RequestTelemetry),
+            &mut output,
+        );
+        output.clear();
+        session.handle(
+            SessionInput::Notification {
+                channel: VESC_NOTIFY_CHANNEL,
+                bytes: refloat_realtime_ids_frame().as_slice(),
+                monotonic_ms: ms(1),
+            },
+            &mut output,
+        );
+        session.handle(
+            SessionInput::Notification {
+                channel: VESC_NOTIFY_CHANNEL,
+                bytes: refloat_realtime_data_frame().as_slice(),
+                monotonic_ms: ms(2),
+            },
+            &mut output,
+        );
+        assert!(
+            telemetry_events(&output)
+                .iter()
+                .any(|delta| delta.pitch.is_some())
+        );
+
+        session.handle(SessionInput::LinkDown, &mut output);
+        output.clear();
+        session.handle(
+            SessionInput::LinkUp(LinkInfo {
+                monotonic_ms: ms(1_000),
+                max_write_len: Some(write_len(20)),
+            }),
+            &mut output,
+        );
+        session.handle(
+            SessionInput::Command(DeviceCommand::RequestTelemetry),
+            &mut output,
+        );
+        output.clear();
+        session.handle(
+            SessionInput::Notification {
+                channel: VESC_NOTIFY_CHANNEL,
+                bytes: &vesc_selective_values_frame(),
+                monotonic_ms: ms(1_001),
+            },
+            &mut output,
+        );
+        assert!(
+            telemetry_events(&output)
+                .iter()
+                .all(|delta| delta.pitch.is_none() && delta.footpad.is_none()),
+            "generic VESC values may refresh retained voltage but not Refloat fields"
+        );
+        output.clear();
+        session.handle(
+            SessionInput::Tick {
+                monotonic_ms: ms(1_100),
+            },
+            &mut output,
+        );
+        let mut expected = ArrayVec::new();
+        VescReadOnlyCodec::encode_request(
+            VescReadOnlyRequest::Refloat(RefloatReadOnlyRequest::RealtimeDataIds),
+            &mut expected,
+        )
+        .expect("Refloat descriptor request fits");
+        assert!(
+            output.iter().any(|item| matches!(
+                item,
+                SessionOutput::Transport(TransportAction::Write { bytes, .. })
+                    if bytes.as_slice() == expected.as_slice()
+            )),
+            "a generic values reply after reconnect must not stop descriptor recovery"
+        );
+    }
+
+    #[test]
     fn generic_vesc_current_fault_code_stays_raw_telemetry_not_fault_history() {
         let mut output = Vec::new();
         push_vesc_reply(

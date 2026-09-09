@@ -228,6 +228,90 @@ final class VescSharedReplayTests: XCTestCase {
         XCTAssertEqual(recovered.snapshot?.voltage?.value, realtime.voltage_mv)
     }
 
+    func testGenericValuesDoNotCancelRetryWhileRetainedRefloatTelemetryIsStale() throws {
+        let fixture = try loadFixture()
+        let descriptor = try XCTUnwrap(fixture.notifications.first {
+            $0.name == "Refloat 1.3 complete 393-byte descriptor"
+        })
+        let realtime = try XCTUnwrap(fixture.notifications.first {
+            $0.name == "Refloat 1.3 complete runtime data with alerts"
+        })
+        let generic = try XCTUnwrap(fixture.notifications.first {
+            $0.name == "ordinary values complete"
+        })
+        let queue = DispatchQueue(label: "cutout.vesc.stale-retry-test")
+        let retried = expectation(description: "reconnect retry after generic values")
+        let sink = ReplayOperationSink()
+        var reconnectWriteCount = 0
+        sink.onWrite = {
+            if reconnectWriteCount > 0, sink.writes.count > reconnectWriteCount {
+                retried.fulfill()
+            }
+        }
+        var now: UInt64 = 1_000
+        let owner = CoreBluetoothLiveSessionOwner(
+            session: .vescOnewheel(),
+            advertisement: CoreBluetoothAdvertisement(
+                peripheralIdentifier: CoreBluetoothPeripheralIdentifier("stale-retry-fixture"),
+                localName: "VESC fixture",
+                advertisedServiceUuids: []
+            ),
+            writeLimit: TransportWriteLimitBytes(20),
+            operationSink: sink,
+            retryCommandOnLinkUp: .requestTelemetry,
+            maximumRetryAttempts: 1,
+            retryDelay: .milliseconds(20),
+            executionQueue: queue,
+            monotonicClock: MonotonicClock(now: {
+                now += 100
+                return MonotonicMilliseconds(now)
+            })
+        )
+
+        try queue.sync {
+            _ = try owner.handleLinkUp(at: MonotonicMilliseconds(0))
+            owner.handleNotificationStateUpdate(
+                channel: .vescNordicUartNotify,
+                isNotifying: true,
+                error: nil
+            )
+            _ = try owner.handleNotification(
+                bytes: Data(descriptor.bytes),
+                channel: .vescNordicUartNotify,
+                at: MonotonicMilliseconds(1)
+            )
+            _ = try owner.handleNotification(
+                bytes: Data(realtime.bytes),
+                channel: .vescNordicUartNotify,
+                at: MonotonicMilliseconds(2)
+            )
+            _ = try owner.handleLinkDown(at: MonotonicMilliseconds(3))
+            _ = try owner.handleLinkUp(at: MonotonicMilliseconds(4))
+            owner.handleNotificationStateUpdate(
+                channel: .vescNordicUartNotify,
+                isNotifying: true,
+                error: nil
+            )
+            reconnectWriteCount = sink.writes.count
+            XCTAssertEqual(reconnectWriteCount, 6, "reconnect subscription must release the three startup requests")
+
+            let genericStep = try owner.handleNotification(
+                bytes: Data(generic.bytes),
+                channel: .vescNordicUartNotify,
+                at: MonotonicMilliseconds(5)
+            )
+            XCTAssertFalse(
+                genericStep.actions.contains { $0.vescRealtimeTelemetry },
+                "generic values must not look like fresh Refloat telemetry"
+            )
+            XCTAssertNotNil(genericStep.snapshot?.pitch)
+            XCTAssertNotNil(genericStep.snapshot?.footpad)
+            XCTAssertEqual(sink.writes.count, reconnectWriteCount)
+        }
+
+        wait(for: [retried], timeout: 2)
+    }
+
     private func loadFixture() throws -> ReplayFixture {
         // Test-only source-relative access keeps Rust and Swift on one checked-in corpus.
         let repository = URL(fileURLWithPath: #filePath)
@@ -292,7 +376,11 @@ private struct ReplayNotification: Decodable {
 private final class ReplayOperationSink: CoreBluetoothOperationSink {
     var subscriptions: [BluetoothUuid] = []
     var writes: [Data] = []
+    var onWrite: (() -> Void)?
     func subscribe(channel: BluetoothUuid) { subscriptions.append(channel) }
-    func writeWithoutResponse(channel: BluetoothUuid, bytes: Data) { writes.append(bytes) }
+    func writeWithoutResponse(channel: BluetoothUuid, bytes: Data) {
+        writes.append(bytes)
+        onWrite?()
+    }
     func disconnect() {}
 }
