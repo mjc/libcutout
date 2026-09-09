@@ -633,7 +633,7 @@ impl ReadOnlyNotificationDecoder for VescNotificationDecoder {
         monotonic_ms: MonotonicTimestamp,
         output: &mut Vec<SessionOutput>,
     ) {
-        if self.generic_stream_pending {
+        if self.generic_stream_pending || !self.generic_prefix.is_empty() {
             self.handle_notification_chunk(family, channel, bytes, monotonic_ms, output);
             return;
         }
