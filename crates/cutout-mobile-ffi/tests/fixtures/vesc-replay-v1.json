@@ -1,0 +1,33 @@
+{
+  "version": 1,
+  "provenance": "Synthetic wire fixture from VESC 7.00 c835e9f10989f217269efb4ec943dfea7d280dfd commands.c and Refloat v1.3.0 47a2c5ce69f0bba4ef634990a8e53a1c07e07e93; legacy field aliases retained for earlier captures. Not a hardware capture. Four-field descriptor subset, not the complete v1.3 descriptor.",
+  "service": [
+    110,
+    64,
+    0,
+    1,
+    181,
+    163,
+    243,
+    147,
+    224,
+    169,
+    229,
+    14,
+    36,
+    220,
+    202,
+    158
+  ],
+  "notifications": [
+    {"name":"malformed prefix","monotonic_ms":2,"channel":[110,64,0,3,181,163,243,147,224,169,229,14,36,220,202,158],"bytes":[153],"ingest":"ParserDiagnostic","voltage_mv":null,"speed_mmps":null,"ingest_count":1},
+    {"name":"ordinary values header buffered","monotonic_ms":3,"channel":[110,64,0,3,181,163,243,147,224,169,229,14,36,220,202,158],"bytes":[2,7],"ingest":"BufferedFragment","voltage_mv":null,"speed_mmps":null,"ingest_count":1},
+    {"name":"ordinary values complete","monotonic_ms":4,"channel":[110,64,0,3,181,163,243,147,224,169,229,14,36,220,202,158],"bytes":[50,0,0,1,0,2,243,246,196,3],"ingest":"SemanticEvents","voltage_mv":75500,"speed_mmps":null,"ingest_count":1},
+    {"name":"Refloat 1.3 short descriptor subset","monotonic_ms":5,"channel":[110,64,0,3,181,163,243,147,224,169,229,14,36,220,202,158],"bytes":[2,36,36,101,32,4,5,115,112,101,101,100,5,112,105,116,99,104,8,97,100,99,95,108,101,102,116,9,97,100,99,95,114,105,103,104,116,0,99,6,3],"ingest":"SemanticEvents","voltage_mv":75500,"speed_mmps":null,"ingest_count":1},
+    {"name":"Refloat 1.3 36 kmh is 10000 mmps","monotonic_ms":6,"channel":[110,64,0,3,181,163,243,147,224,169,229,14,36,220,202,158],"bytes":[2,30,36,101,31,4,0,0,0,0,42,19,195,0,0,80,128,68,0,61,0,59,0,0,0,0,0,0,0,0,0,0,206,136,3],"ingest":"SemanticEvents","voltage_mv":75500,"speed_mmps":10000,"ingest_count":1},
+    {"name":"mixed ordinary and Refloat notification","monotonic_ms":7,"channel":[110,64,0,3,181,163,243,147,224,169,229,14,36,220,202,158],"bytes":[2,7,50,0,0,1,0,2,243,246,196,3,2,30,36,101,31,4,0,0,0,0,42,19,195,0,0,80,128,68,0,61,0,59,0,0,0,0,0,0,0,0,0,0,206,136,3],"ingest":"SemanticEvents","voltage_mv":75500,"speed_mmps":10000,"ingest_count":2},
+    {"name":"five coalesced ordinary replies","monotonic_ms":8,"channel":[110,64,0,3,181,163,243,147,224,169,229,14,36,220,202,158],"bytes":[2,7,50,0,0,1,0,2,243,246,196,3,2,7,50,0,0,1,0,2,243,246,196,3,2,7,50,0,0,1,0,2,243,246,196,3,2,7,50,0,0,1,0,2,243,246,196,3,2,7,50,0,0,1,0,2,243,246,196,3],"ingest":"SemanticEvents","voltage_mv":75500,"speed_mmps":10000,"ingest_count":5},
+    {"name":"legacy descriptor subset","monotonic_ms":9,"channel":[110,64,0,3,181,163,243,147,224,169,229,14,36,220,202,158],"bytes":[2,53,36,101,32,4,11,109,111,116,111,114,46,115,112,101,101,100,9,105,109,117,46,112,105,116,99,104,12,102,111,111,116,112,97,100,46,97,100,99,49,12,102,111,111,116,112,97,100,46,97,100,99,50,0,146,130,3],"ingest":"SemanticEvents","voltage_mv":75500,"speed_mmps":10000,"ingest_count":1},
+    {"name":"legacy speed remains metres per second","monotonic_ms":10,"channel":[110,64,0,3,181,163,243,147,224,169,229,14,36,220,202,158],"bytes":[2,30,36,101,31,4,0,0,0,0,42,19,195,0,0,60,0,68,0,61,0,59,0,0,0,0,0,0,0,0,0,0,70,103,3],"ingest":"SemanticEvents","voltage_mv":75500,"speed_mmps":1000,"ingest_count":1}
+  ]
+}

@@ -4658,7 +4658,7 @@ public final class ElectricUnicycleSession: @unchecked Sendable {
         try step(.command, at: monotonicMilliseconds, command: command)
     }
 
-    private func step(
+    fileprivate func step(
         _ kind: MobileSessionInputKindDto,
         at monotonicMilliseconds: MonotonicMilliseconds,
         writeLimit: TransportWriteLimitBytes? = nil,
@@ -4783,7 +4783,7 @@ public final class VescOnewheelSession: @unchecked Sendable {
         try step(.command, at: monotonicMilliseconds, command: command)
     }
 
-    private func step(
+    fileprivate func step(
         _ kind: MobileSessionInputKindDto,
         at monotonicMilliseconds: MonotonicMilliseconds,
         writeLimit: TransportWriteLimitBytes? = nil,
@@ -5108,7 +5108,20 @@ public enum CoreBluetoothSession: Sendable {
         case .electricUnicycle(let session):
             try session.perform(command, at: monotonicMilliseconds)
         case .vescOnewheel(let session):
-            try session.perform(command, at: monotonicMilliseconds)
+            try session.step(.tick, at: monotonicMilliseconds)
+                + session.perform(command, at: monotonicMilliseconds)
+        }
+    }
+
+    fileprivate func lifecycle(
+        _ kind: MobileSessionInputKindDto,
+        at monotonicMilliseconds: MonotonicMilliseconds
+    ) throws -> [SessionAction] {
+        switch self {
+        case .electricUnicycle(let session):
+            try session.step(kind, at: monotonicMilliseconds)
+        case .vescOnewheel(let session):
+            try session.step(kind, at: monotonicMilliseconds)
         }
     }
 }
@@ -5117,6 +5130,7 @@ public enum CoreBluetoothSessionEvent: Equatable, Hashable, Sendable {
     case linkUp(at: MonotonicMilliseconds)
     case notification(bytes: Data, channel: BluetoothUuid, at: MonotonicMilliseconds)
     case command(DeviceCommand, at: MonotonicMilliseconds)
+    case tick(at: MonotonicMilliseconds)
     case linkDown(at: MonotonicMilliseconds)
 }
 
@@ -5206,10 +5220,21 @@ public final class CoreBluetoothSessionRunner: @unchecked Sendable {
                 captureContext: captureContext
             )
 
-        case .linkDown:
+        case .tick(let monotonicMilliseconds):
+            let actions = try session.lifecycle(.tick, at: monotonicMilliseconds)
+            return CoreBluetoothSessionStep(
+                operations: actions.flatMap(planner.plan(action:)),
+                snapshot: session.currentSnapshot,
+                actions: actions,
+                captureContext: captureContext
+            )
+
+        case .linkDown(let monotonicMilliseconds):
+            let actions = try session.lifecycle(.linkDown, at: monotonicMilliseconds)
             return CoreBluetoothSessionStep(
                 operations: [.disconnect],
                 snapshot: session.currentSnapshot,
+                actions: actions,
                 captureContext: captureContext
             )
         }
@@ -5299,8 +5324,11 @@ public final class CoreBluetoothLiveSessionOwner: @unchecked Sendable {
     private let maximumRetryAttempts: Int
     private let retryDelay: DispatchTimeInterval
     private let monotonicClock: MonotonicClock
+    private let pollsVesc: Bool
     private var recorded: [CoreBluetoothLiveRecord] = []
     private var pendingRetry: DispatchWorkItem?
+    private var deadlineTimer: DispatchSourceTimer?
+    private var linkGeneration: UInt64 = 0
     private var retryGeneration: UInt64 = 0
     private var retryAttempts = 0
     private var receivedRealtimeTelemetrySinceLinkUp = false
@@ -5362,10 +5390,20 @@ public final class CoreBluetoothLiveSessionOwner: @unchecked Sendable {
         self.maximumRetryAttempts = max(0, maximumRetryAttempts)
         self.retryDelay = retryDelay
         self.monotonicClock = monotonicClock
+        if case .vescOnewheel = session {
+            self.pollsVesc = true
+        } else {
+            self.pollsVesc = false
+        }
     }
 
     public var records: [CoreBluetoothLiveRecord] {
         recorded
+    }
+
+    deinit {
+        deadlineTimer?.cancel()
+        pendingRetry?.cancel()
     }
 
     /// Configures the Rust-owned charge estimate profile for this connection.
@@ -5380,6 +5418,7 @@ public final class CoreBluetoothLiveSessionOwner: @unchecked Sendable {
 
     @discardableResult
     public func handleLinkUp(at monotonicMilliseconds: MonotonicMilliseconds) throws -> CoreBluetoothSessionStep {
+        cancelDeadlineTimer()
         cancelPendingRetry()
         receivedRealtimeTelemetrySinceLinkUp = false
         retryAttempts = 0
@@ -5395,7 +5434,6 @@ public final class CoreBluetoothLiveSessionOwner: @unchecked Sendable {
             if case .subscribe = operation { true } else { false }
         }
         executeAndRecord(subscriptions + writes)
-        scheduleRetryIfNeeded()
         return step
     }
 
@@ -5447,6 +5485,7 @@ public final class CoreBluetoothLiveSessionOwner: @unchecked Sendable {
 
     @discardableResult
     public func handleLinkDown(at monotonicMilliseconds: MonotonicMilliseconds) throws -> CoreBluetoothSessionStep {
+        cancelDeadlineTimer()
         cancelPendingRetry()
         retainedSink.clearPendingWithoutResponseWrites()
         pendingOperationsAfterSubscription.removeAll()
@@ -5469,12 +5508,41 @@ public final class CoreBluetoothLiveSessionOwner: @unchecked Sendable {
         guard waitingForSubscriptionChannel == channel else { return }
         waitingForSubscriptionChannel = nil
         guard error == nil, isNotifying else {
+            cancelDeadlineTimer()
+            cancelPendingRetry()
             pendingOperationsAfterSubscription.removeAll()
             return
         }
         let pending = pendingOperationsAfterSubscription
         pendingOperationsAfterSubscription.removeAll()
         executeAndRecord(pending)
+        startDeadlineTimer()
+        scheduleRetryIfNeeded()
+    }
+
+    private func startDeadlineTimer() {
+        cancelDeadlineTimer()
+        guard pollsVesc else { return }
+        let generation = linkGeneration
+        let timer = DispatchSource.makeTimerSource(queue: executionQueue ?? DispatchQueue.main)
+        timer.schedule(deadline: .now() + .milliseconds(100), repeating: .milliseconds(100))
+        timer.setEventHandler { [weak self] in
+            guard let self, self.linkGeneration == generation else { return }
+            do {
+                let step = try self.runner.handle(.tick(at: self.monotonicClock.now()))
+                self.executeAndRecord(step.operations)
+            } catch {
+                self.cancelDeadlineTimer()
+            }
+        }
+        deadlineTimer = timer
+        timer.resume()
+    }
+
+    private func cancelDeadlineTimer() {
+        linkGeneration &+= 1
+        deadlineTimer?.cancel()
+        deadlineTimer = nil
     }
 
     /// Forwards CoreBluetooth's ready-to-send callback to the operation sink.

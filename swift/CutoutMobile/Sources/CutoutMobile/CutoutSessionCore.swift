@@ -1579,15 +1579,15 @@ public final class CutoutSessionCore: NSObject {
         }
     }
 
-    private func captureFrame(
+    func captureFrame(
         direction: String,
         characteristic: CBUUID,
         service: CBUUID? = nil,
         bytes: Data,
         telemetry: RawTelemetryReadback? = nil
-    ) {
+    ) -> Bool {
         guard let channel = BluetoothUuid(coreBluetoothUuid: characteristic) else {
-            return
+            return false
         }
 
         switch direction {
@@ -1596,10 +1596,12 @@ public final class CutoutSessionCore: NSObject {
                 record("capture_error=notification_missing_service characteristic=\(characteristic.uuidString)")
                 publishCaptureEvent(.failed)
                 setPhase(.failed(.notificationFailed("missing service UUID for \(characteristic.uuidString)")))
-                return
+                finishCaptureWriter()
+                return false
             }
+            guard let builder = captureBuilder else { return true }
             let location = phoneLocationState.currentSnapshot().latestSample
-            _ = captureBuilder?.recordNotificationWithContext(
+            let accepted = builder.recordNotificationWithContext(
                 monotonicMs: MobileMonotonicMillisDto(milliseconds: captureElapsedMilliseconds()),
                 characteristic: channel.bytes,
                 service: serviceUuid.bytes,
@@ -1607,18 +1609,21 @@ public final class CutoutSessionCore: NSObject {
                 telemetry: telemetry?.dto,
                 phoneLocation: location
             )
+            guard acceptCaptureWrite(accepted) else { return false }
             record("capture_queue_depth=\(captureBuilder?.writerStatus().queuedMessages ?? 0)")
         case "write_without_response":
-            let accepted = captureBuilder?.recordWriteWithoutResponse(
+            guard let builder = captureBuilder else { return true }
+            let accepted = builder.recordWriteWithoutResponse(
                 monotonicMs: MobileMonotonicMillisDto(milliseconds: captureElapsedMilliseconds()),
                 characteristic: channel.bytes,
                 bytes: bytes
-            ) ?? false
-            guard acceptCaptureWrite(accepted) else { return }
+            )
+            guard acceptCaptureWrite(accepted) else { return false }
             record("capture_queue_depth=\(captureBuilder?.writerStatus().queuedMessages ?? 0)")
         default:
-            return
+            return false
         }
+        return true
     }
 
     private func startCapture(
@@ -2228,24 +2233,24 @@ extension CutoutSessionCore: CBPeripheralDelegate {
         let detectionResolution = observeDetectionNotification(channel: channel, bytes: value)
         if isProbeOnly {
             guard promoteProbeIfResolved(detectionResolution, on: characteristic.service?.peripheral) else {
-                captureFrame(
+                guard captureFrame(
                     direction: "notify",
                     characteristic: characteristic.uuid,
                     service: characteristic.service?.uuid,
                     bytes: value
-                )
+                ) else { return }
                 captureNotificationCount += 1
                 publishCaptureEvent(.progress(captureProgress()))
                 return
             }
         }
         if isRecordOnly {
-            captureFrame(
+            guard captureFrame(
                 direction: "notify",
                 characteristic: characteristic.uuid,
                 service: characteristic.service?.uuid,
                 bytes: value
-            )
+            ) else { return }
             record("record_only_notification=\(characteristic.uuid.uuidString) bytes=\(value.count)")
             captureNotificationCount += 1
             publishCaptureEvent(.progress(captureProgress()))
@@ -2266,13 +2271,13 @@ extension CutoutSessionCore: CBPeripheralDelegate {
             let ingestMilliseconds = ingestFinishedAt.rawValue >= ingestStartedAt.rawValue
                 ? ingestFinishedAt.rawValue - ingestStartedAt.rawValue
                 : 0
-            captureFrame(
+            guard captureFrame(
                 direction: "notify",
                 characteristic: characteristic.uuid,
                 service: characteristic.service?.uuid,
                 bytes: value,
                 telemetry: step.actions.compactMap(\.rawTelemetry).last
-            )
+            ) else { return }
             record("notification=\(characteristic.uuid.uuidString) bytes=\(value.count)")
             captureNotificationCount += 1
             publishCaptureEvent(.progress(captureProgress()))
@@ -2345,7 +2350,7 @@ extension CutoutSessionCore: CoreBluetoothOperationSink {
 
     public func writeWithoutResponse(channel: BluetoothUuid, bytes: Data) {
         observeDetectionProbeWrite(channel: channel, bytes: bytes)
-        captureFrame(direction: "write_without_response", characteristic: channel.coreBluetoothUuid, bytes: bytes)
+        _ = captureFrame(direction: "write_without_response", characteristic: channel.coreBluetoothUuid, bytes: bytes)
         guard let characteristic = subscribedCharacteristics[channel] else {
             setPhase(.failed(.missingWriteChannel))
             return

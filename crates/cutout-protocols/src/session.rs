@@ -166,6 +166,11 @@ pub trait ReadOnlyNotificationDecoder {
     /// Gives a decoder a chance to issue a bounded periodic read request.
     fn on_tick(&mut self, _monotonic_ms: MonotonicTimestamp, _output: &mut Vec<SessionOutput>) {}
 
+    /// Handles a read whose scheduling is owned by the model, returning whether it was handled.
+    fn on_read_command(&mut self, _kind: CommandKind, _output: &mut Vec<SessionOutput>) -> bool {
+        false
+    }
+
     /// Handles an accepted notification payload.
     fn handle_notification(
         &mut self,
@@ -501,7 +506,10 @@ pub struct VescNotificationDecoder {
     stream: VescReadOnlyStreamDecoder,
     refloat_stream: RefloatStreamDecoder,
     board_profile: Option<VescBoardProfile>,
-    last_refloat_poll_ms: Option<u64>,
+    last_poll_ms: Option<u64>,
+    now_ms: u64,
+    polling: bool,
+    motor_config_received: bool,
 }
 
 impl VescNotificationDecoder {
@@ -512,7 +520,10 @@ impl VescNotificationDecoder {
             stream: VescReadOnlyStreamDecoder::new(),
             refloat_stream: RefloatStreamDecoder::new(),
             board_profile: Some(board_profile),
-            last_refloat_poll_ms: None,
+            last_poll_ms: None,
+            now_ms: 0,
+            polling: false,
+            motor_config_received: false,
         }
     }
 
@@ -572,21 +583,26 @@ impl ReadOnlyNotificationDecoder for VescNotificationDecoder {
     fn reset(&mut self) {
         self.stream = VescReadOnlyStreamDecoder::new();
         self.refloat_stream = RefloatStreamDecoder::new();
-        self.last_refloat_poll_ms = None;
+        self.last_poll_ms = None;
+        self.now_ms = 0;
+        self.polling = false;
+        self.motor_config_received = false;
     }
 
     fn on_tick(&mut self, monotonic_ms: MonotonicTimestamp, output: &mut Vec<SessionOutput>) {
-        let Some(_) = self.refloat_stream.field_ids() else {
-            return;
-        };
-        let now = monotonic_ms.as_milliseconds();
-        if self
-            .last_refloat_poll_ms
-            .is_none_or(|last| now.saturating_sub(last) >= 100)
-        {
-            self.last_refloat_poll_ms = Some(now);
-            push_refloat_realtime_request(output);
+        self.now_ms = monotonic_ms.as_milliseconds();
+        if self.polling {
+            self.poll_if_due(output);
         }
+    }
+
+    fn on_read_command(&mut self, kind: CommandKind, output: &mut Vec<SessionOutput>) -> bool {
+        if kind != CommandKind::RequestTelemetry {
+            return false;
+        }
+        self.polling = true;
+        self.poll_if_due(output);
+        true
     }
 
     fn handle_notification(
@@ -616,6 +632,26 @@ impl ReadOnlyNotificationDecoder for VescNotificationDecoder {
 }
 
 impl VescNotificationDecoder {
+    fn poll_if_due(&mut self, output: &mut Vec<SessionOutput>) {
+        if self
+            .last_poll_ms
+            .is_some_and(|last| self.now_ms.saturating_sub(last) < 100)
+        {
+            return;
+        }
+        self.last_poll_ms = Some(self.now_ms);
+        let package_request = if self.refloat_stream.field_ids().is_some() {
+            RefloatReadOnlyRequest::RealtimeData
+        } else {
+            RefloatReadOnlyRequest::RealtimeDataIds
+        };
+        push_vesc_read_request(VescReadOnlyRequest::Refloat(package_request), output);
+        if !self.motor_config_received {
+            push_vesc_read_request(VescReadOnlyRequest::MotorConfig, output);
+        }
+        push_vesc_read_request(VescReadOnlyRequest::Values, output);
+    }
+
     fn handle_notification_chunk(
         &mut self,
         family: ProtocolFamily,
@@ -624,6 +660,7 @@ impl VescNotificationDecoder {
         monotonic_ms: MonotonicTimestamp,
         output: &mut Vec<SessionOutput>,
     ) {
+        self.now_ms = monotonic_ms.as_milliseconds();
         if self.handle_refloat_notification(family, channel, bytes, monotonic_ms, output) {
             return;
         }
@@ -638,9 +675,11 @@ impl VescNotificationDecoder {
                 for reply in &replies {
                     match reply {
                         VescReadOnlyReply::MotorConfig(config) => {
+                            self.motor_config_received = true;
                             self.board_profile = Some(VescBoardProfile::from_motor_config(*config));
                         }
                         VescReadOnlyReply::MotorSetupConfig(geometry) => {
+                            self.motor_config_received = true;
                             self.board_profile =
                                 Some(VescBoardProfile::from_speed_geometry(*geometry));
                         }
@@ -773,21 +812,14 @@ fn push_refloat_reply(
             output.push(SessionOutput::Event(DeviceEvent::Telemetry(
                 data.to_delta(monotonic_ms, reports_battery_current),
             )));
-            push_refloat_realtime_request(output);
         }
-        RefloatReply::RealtimeFieldIds(_) => push_refloat_realtime_request(output),
-        RefloatReply::Info(_) => {}
+        RefloatReply::RealtimeFieldIds(_) | RefloatReply::Info(_) => {}
     }
 }
 
-fn push_refloat_realtime_request(output: &mut Vec<SessionOutput>) {
+fn push_vesc_read_request(request: VescReadOnlyRequest, output: &mut Vec<SessionOutput>) {
     let mut payload = ArrayVec::new();
-    if VescReadOnlyCodec::encode_request(
-        VescReadOnlyRequest::Refloat(RefloatReadOnlyRequest::RealtimeData),
-        &mut payload,
-    )
-    .is_ok()
-    {
+    if VescReadOnlyCodec::encode_request(request, &mut payload).is_ok() {
         let Ok(bytes) = WritePayload::try_from_slice(payload.as_slice()) else {
             return;
         };
@@ -1372,6 +1404,7 @@ fn handle_read_only_session<M: ReadOnlyModelSpec, const ACCEPT_ANY_NOTIFICATION:
         SessionInput::LinkUp(info) => {
             *connected = true;
             decoder.reset();
+            decoder.on_tick(info.monotonic_ms, output);
             output.push(SessionOutput::Event(DeviceEvent::LinkUp(info)));
             output.push(SessionOutput::Transport(TransportAction::Subscribe {
                 channel: M::SUBSCRIBE_CHANNEL,
@@ -1383,7 +1416,9 @@ fn handle_read_only_session<M: ReadOnlyModelSpec, const ACCEPT_ANY_NOTIFICATION:
             output.push(SessionOutput::Event(DeviceEvent::LinkDown));
         }
         SessionInput::Tick { monotonic_ms } => {
-            decoder.on_tick(monotonic_ms, output);
+            if *connected {
+                decoder.on_tick(monotonic_ms, output);
+            }
             output.push(SessionOutput::Event(DeviceEvent::Tick { monotonic_ms }));
         }
         SessionInput::Notification {
@@ -1407,7 +1442,13 @@ fn handle_read_only_session<M: ReadOnlyModelSpec, const ACCEPT_ANY_NOTIFICATION:
             }
         }
         SessionInput::Command(command) => match gate_read_only_command::<M>(command) {
-            ReadOnlyCommandGate::SupportedRead(kind) => push_read_request::<M>(kind, output),
+            ReadOnlyCommandGate::SupportedRead(kind) => {
+                if (*connected || M::PROTOCOL != ProtocolFamily::Vesc)
+                    && !decoder.on_read_command(kind, output)
+                {
+                    push_read_request::<M>(kind, output);
+                }
+            }
             ReadOnlyCommandGate::Unsupported(CommandKind::RequestSettings) => {
                 output.push(SessionOutput::Event(DeviceEvent::ReadOnlyResponse(
                     ReadOnlyResponse::Settings(cutout_core::SettingsReadback::unsupported()),
@@ -2433,6 +2474,14 @@ mod tests {
     fn generic_vesc_session_writes_refloat_ids_motor_config_and_values_for_telemetry() {
         let mut session = ReadOnlySession::<VescGenericModel, true>::default();
         let mut output = Vec::new();
+        session.handle(
+            SessionInput::LinkUp(LinkInfo {
+                monotonic_ms: ms(0),
+                max_write_len: None,
+            }),
+            &mut output,
+        );
+        output.clear();
 
         session.handle(
             SessionInput::Command(DeviceCommand::RequestTelemetry),
@@ -2468,6 +2517,14 @@ mod tests {
     fn generic_vesc_session_writes_stats_request_for_diagnostics() {
         let mut session = ReadOnlySession::<VescGenericModel, true>::default();
         let mut output = Vec::new();
+        session.handle(
+            SessionInput::LinkUp(LinkInfo {
+                monotonic_ms: ms(0),
+                max_write_len: None,
+            }),
+            &mut output,
+        );
+        output.clear();
 
         session.handle(
             SessionInput::Command(DeviceCommand::RequestDiagnostics),
@@ -2628,20 +2685,176 @@ mod tests {
             delta.battery_current, None,
             "default VESC sessions must not claim battery current without explicit profile evidence"
         );
-        assert!(
-            output
-                .iter()
-                .filter(|event| matches!(
-                    event,
-                    SessionOutput::Transport(TransportAction::Write {
-                        bytes,
-                        ..
-                    }) if bytes.as_slice() == [2, 3, 36, 101, 31, 77, 7, 3]
-                ))
-                .count()
-                >= 2,
-            "field ids should schedule realtime data, and realtime data should schedule the next sample"
+        assert_eq!(
+            vesc_request_count(&output),
+            0,
+            "notifications must not spawn unpaced polling loops"
         );
+    }
+
+    #[test]
+    fn generic_vesc_polling_recovers_missing_descriptors_and_paces_overlap() {
+        let mut session = ReadOnlySession::<VescGenericModel, true>::default();
+        let mut output = Vec::new();
+        session.handle(
+            SessionInput::LinkUp(LinkInfo {
+                monotonic_ms: ms(0),
+                max_write_len: None,
+            }),
+            &mut output,
+        );
+        session.handle(
+            SessionInput::Command(DeviceCommand::RequestTelemetry),
+            &mut output,
+        );
+        assert_eq!(vesc_request_count(&output), 3);
+        output.clear();
+        session.handle(
+            SessionInput::Notification {
+                channel: VESC_NOTIFY_CHANNEL,
+                bytes: &vesc_selective_values_frame(),
+                monotonic_ms: ms(50),
+            },
+            &mut output,
+        );
+        session.handle(
+            SessionInput::Tick {
+                monotonic_ms: ms(100),
+            },
+            &mut output,
+        );
+        assert_eq!(
+            vesc_request_count(&output),
+            3,
+            "generic values, missing config and missing package descriptors must be retried independently"
+        );
+        output.clear();
+        session.handle(
+            SessionInput::Command(DeviceCommand::RequestTelemetry),
+            &mut output,
+        );
+        session.handle(
+            SessionInput::Tick {
+                monotonic_ms: ms(199),
+            },
+            &mut output,
+        );
+        assert_eq!(
+            vesc_request_count(&output),
+            0,
+            "manual overlap cannot bypass cadence"
+        );
+        session.handle(
+            SessionInput::Tick {
+                monotonic_ms: ms(200),
+            },
+            &mut output,
+        );
+        assert_eq!(vesc_request_count(&output), 3);
+    }
+
+    #[test]
+    fn generic_vesc_delayed_replies_do_not_multiply_polling_and_reconnect_rediscovers() {
+        let mut session = ReadOnlySession::<VescGenericModel, true>::default();
+        let mut output = Vec::new();
+        session.handle(
+            SessionInput::LinkUp(LinkInfo {
+                monotonic_ms: ms(0),
+                max_write_len: None,
+            }),
+            &mut output,
+        );
+        session.handle(
+            SessionInput::Command(DeviceCommand::RequestTelemetry),
+            &mut output,
+        );
+        output.clear();
+        for at in [50, 75] {
+            session.handle(
+                SessionInput::Notification {
+                    channel: VESC_NOTIFY_CHANNEL,
+                    bytes: refloat_realtime_ids_frame().as_slice(),
+                    monotonic_ms: ms(at),
+                },
+                &mut output,
+            );
+        }
+        assert_eq!(
+            vesc_request_count(&output),
+            0,
+            "late/duplicate descriptors must not spawn request loops"
+        );
+        session.handle(
+            SessionInput::Tick {
+                monotonic_ms: ms(100),
+            },
+            &mut output,
+        );
+        assert_eq!(vesc_request_count(&output), 3);
+        output.clear();
+        for at in [110, 120] {
+            session.handle(
+                SessionInput::Notification {
+                    channel: VESC_NOTIFY_CHANNEL,
+                    bytes: refloat_realtime_data_frame().as_slice(),
+                    monotonic_ms: ms(at),
+                },
+                &mut output,
+            );
+        }
+        assert_eq!(telemetry_events(&output).len(), 2);
+        assert_eq!(
+            vesc_request_count(&output),
+            0,
+            "replies must not restart polling deadlines"
+        );
+        session.handle(SessionInput::LinkDown, &mut output);
+        output.clear();
+        session.handle(
+            SessionInput::Tick {
+                monotonic_ms: ms(500),
+            },
+            &mut output,
+        );
+        session.handle(
+            SessionInput::Command(DeviceCommand::RequestTelemetry),
+            &mut output,
+        );
+        assert_eq!(
+            vesc_request_count(&output),
+            0,
+            "disconnected generations must issue no writes"
+        );
+        session.handle(
+            SessionInput::LinkUp(LinkInfo {
+                monotonic_ms: ms(1_000),
+                max_write_len: None,
+            }),
+            &mut output,
+        );
+        session.handle(
+            SessionInput::Command(DeviceCommand::RequestTelemetry),
+            &mut output,
+        );
+        let mut expected = ArrayVec::new();
+        VescReadOnlyCodec::encode_request(
+            VescReadOnlyRequest::Refloat(RefloatReadOnlyRequest::RealtimeDataIds),
+            &mut expected,
+        )
+        .unwrap();
+        assert!(output.iter().any(|item| matches!(item, SessionOutput::Transport(TransportAction::Write { bytes, .. }) if bytes.as_slice() == expected.as_slice())), "new connection must rediscover descriptors");
+    }
+
+    fn vesc_request_count(output: &[SessionOutput]) -> usize {
+        output
+            .iter()
+            .filter(|item| {
+                matches!(
+                    item,
+                    SessionOutput::Transport(TransportAction::Write { .. })
+                )
+            })
+            .count()
     }
 
     #[test]
@@ -2653,6 +2866,10 @@ mod tests {
                 monotonic_ms: ms(0),
                 max_write_len: Some(write_len(20)),
             }),
+            &mut output,
+        );
+        session.handle(
+            SessionInput::Command(DeviceCommand::RequestTelemetry),
             &mut output,
         );
         output.clear();
