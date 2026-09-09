@@ -51,7 +51,8 @@ struct DevicePickerRouteView: View {
                 guard model.recordOnly(platformIdentifier: row.id, deviceKind: deviceKind) else { return false }
                 navigate(model.isRecordOnlyCapture ? .capture : .eucRide)
                 return true
-            }
+            },
+            connectMusic: model.connectMusic
         )
         .safeAreaInset(edge: .bottom, spacing: 12) {
             Button {
