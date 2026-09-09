@@ -948,68 +948,49 @@ public struct MusicCompactPlayer: View {
     }
 
     public var body: some View {
-        HStack(spacing: 12) {
-            artworkView
-            VStack(alignment: .leading, spacing: 2) {
-                Text(nowPlaying.title)
-                    .lineLimit(1)
-                    .font(.subheadline.weight(.semibold))
-                Text(nowPlaying.statusText ?? nowPlaying.artist)
-                    .lineLimit(1)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-            Spacer(minLength: 4)
-            if nowPlaying.requiresSetup {
-                Button(action: onConnect) {
-                    Label(
-                        pevLocalizedText("music.connect"),
-                        systemImage: "music.note"
-                    )
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 12) {
+                artworkView
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(nowPlaying.title)
+                        .lineLimit(1)
+                        .font(.subheadline.weight(.bold))
+                    Text(nowPlaying.statusText ?? nowPlaying.artist)
+                        .lineLimit(1)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                 }
-                .buttonStyle(.borderedProminent)
-                .controlSize(.small)
-                .accessibilityIdentifier("music.connect")
+                .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
             }
-            if nowPlaying.isCommandAvailable(.previous) {
-                Button { onCommand(.previous) } label: {
-                    Image(systemName: "backward.fill")
+            HStack(spacing: 8) {
+                if nowPlaying.requiresSetup {
+                    Button(action: onConnect) {
+                        Label(pevLocalizedText("music.connect"), systemImage: "link")
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.small)
+                    .tint(PevDashboardColors.yellow)
+                    .accessibilityIdentifier("music.connect")
                 }
-                .accessibilityLabel(pevLocalizedText("music.previous"))
-            }
-            if let command = nowPlaying.playPauseCommand {
-                Button { onCommand(command) } label: {
-                    Image(systemName: command == .pause ? "pause.fill" : "play.fill")
-                }
-                .accessibilityLabel(
-                    pevLocalizedText(command == .pause ? "music.pause" : "music.play")
+                Spacer(minLength: 0)
+                MusicTransportControls(nowPlaying: nowPlaying, onCommand: onCommand)
+                MusicPlayerIconButton(
+                    systemImage: "ellipsis",
+                    label: pevLocalizedText("music.expand"),
+                    action: { isExpanded = true },
+                    accessibilityIdentifier: "music.expand"
+                )
+                MusicPlayerIconButton(
+                    systemImage: "xmark",
+                    label: pevLocalizedText("music.hide"),
+                    action: onDismiss
                 )
             }
-            if nowPlaying.isCommandAvailable(.next) {
-                Button { onCommand(.next) } label: {
-                    Image(systemName: "forward.fill")
-                }
-                .accessibilityLabel(pevLocalizedText("music.next"))
-            }
-            if nowPlaying.isCommandAvailable(.openProvider) {
-                Button { onCommand(.openProvider) } label: {
-                    Image(systemName: "arrow.up.forward.app")
-                }
-                .accessibilityLabel(pevLocalizedText("music.open_provider"))
-            }
-            Button { isExpanded = true } label: {
-                Image(systemName: "ellipsis.circle")
-            }
-            .accessibilityLabel(pevLocalizedText("music.expand"))
-            .accessibilityIdentifier("music.expand")
-            Button(action: onDismiss) {
-                Image(systemName: "xmark")
-            }
-            .accessibilityLabel(pevLocalizedText("music.hide"))
         }
         .padding(.horizontal, 14)
-        .padding(.vertical, 10)
-        .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 16))
+        .padding(.vertical, 12)
+        .tint(PevDashboardColors.yellow)
+        .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 20))
         .accessibilityElement(children: .contain)
         .accessibilityLabel(nowPlaying.accessibilitySummary)
         .onChange(of: nowPlaying) { _, nowPlaying in
@@ -1039,7 +1020,7 @@ public struct MusicCompactPlayer: View {
             Image(uiImage: image)
                 .resizable()
                 .scaledToFill()
-                .frame(width: 34, height: 34)
+                .frame(width: 44, height: 44)
                 .clipShape(RoundedRectangle(cornerRadius: 6))
                 .accessibilityLabel(nowPlaying.artworkAccessibilityLabel)
         } else {
@@ -1051,17 +1032,96 @@ public struct MusicCompactPlayer: View {
             Image(nsImage: image)
                 .resizable()
                 .scaledToFill()
-                .frame(width: 34, height: 34)
+                .frame(width: 44, height: 44)
                 .clipShape(RoundedRectangle(cornerRadius: 6))
                 .accessibilityLabel(nowPlaying.artworkAccessibilityLabel)
         } else {
             Image(systemName: "music.note")
+                .font(.title3)
+                .frame(width: 44, height: 44)
+                .background(PevDashboardColors.yellow.opacity(0.16), in: RoundedRectangle(cornerRadius: 12))
+                .foregroundStyle(PevDashboardColors.yellow)
                 .accessibilityHidden(true)
         }
 #else
         Image(systemName: "music.note")
             .accessibilityHidden(true)
 #endif
+    }
+}
+
+private struct MusicTransportControls: View {
+    let nowPlaying: MusicNowPlaying
+    let onCommand: (MobileMusicCommandDto) -> Void
+
+    var body: some View {
+        HStack(spacing: 4) {
+            if nowPlaying.isCommandAvailable(.previous) {
+                MusicPlayerIconButton(
+                    systemImage: "backward.fill",
+                    label: pevLocalizedText("music.previous"),
+                    action: { onCommand(.previous) }
+                )
+            }
+            if let command = nowPlaying.playPauseCommand {
+                MusicPlayerIconButton(
+                    systemImage: command == .pause ? "pause.fill" : "play.fill",
+                    label: pevLocalizedText(command == .pause ? "music.pause" : "music.play"),
+                    action: { onCommand(command) },
+                    isProminent: true
+                )
+            }
+            if nowPlaying.isCommandAvailable(.next) {
+                MusicPlayerIconButton(
+                    systemImage: "forward.fill",
+                    label: pevLocalizedText("music.next"),
+                    action: { onCommand(.next) }
+                )
+            }
+            if nowPlaying.isCommandAvailable(.openProvider) {
+                MusicPlayerIconButton(
+                    systemImage: "arrow.up.forward.app",
+                    label: pevLocalizedText("music.open_provider"),
+                    action: { onCommand(.openProvider) }
+                )
+            }
+        }
+    }
+}
+
+private struct MusicPlayerIconButton: View {
+    let systemImage: String
+    let label: String
+    let action: () -> Void
+    var accessibilityIdentifier: String?
+    var isProminent = false
+
+    init(
+        systemImage: String,
+        label: String,
+        action: @escaping () -> Void,
+        accessibilityIdentifier: String? = nil,
+        isProminent: Bool = false
+    ) {
+        self.systemImage = systemImage
+        self.label = label
+        self.action = action
+        self.accessibilityIdentifier = accessibilityIdentifier
+        self.isProminent = isProminent
+    }
+
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: systemImage)
+                .frame(minWidth: isProminent ? 36 : 30, minHeight: 36)
+                .background(
+                    isProminent ? PevDashboardColors.yellow.opacity(0.18) : .clear,
+                    in: Circle()
+                )
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(label)
+        .accessibilityIdentifier(accessibilityIdentifier ?? "")
     }
 }
 
@@ -1140,63 +1200,14 @@ public struct MusicExpandedPlayer: View {
 
     public var body: some View {
         NavigationStack {
-            Form {
-                Section {
-                    Text(nowPlaying.title)
-                        .font(.headline)
-                    Text(nowPlaying.artist)
-                        .foregroundStyle(.secondary)
-                    if let status = nowPlaying.statusText {
-                        Text(status)
-                            .foregroundStyle(.secondary)
-                    }
-                } header: {
-                    Text(nowPlaying.providerName)
-                }
-
-                if timeline.isEmpty == false {
-                    Section {
-                        MusicTimelineRows(events: timeline)
-                    } header: {
-                        Text(pevLocalizedText("music.timeline.title"))
-                    }
-                }
-
-                Section {
-                    Picker(
-                        pevLocalizedText("music.provider.select"),
-                        selection: $providerSelection
-                    ) {
-                        ForEach(MobileMusicProviderDto.allCases, id: \.self) { provider in
-                            Text(provider.title).tag(provider)
-                        }
-                    }
-                } header: {
-                    Text(pevLocalizedText("music.provider.select"))
-                }
-
-                Section {
-                    if historyUnavailable {
-                        Text(pevLocalizedText("music.state.unavailable"))
-                            .foregroundStyle(.secondary)
-                    } else {
-                        Picker(pevLocalizedText("music.history.title"), selection: $selectedPolicy) {
-                            ForEach(MobileMusicHistoryPolicyDto.allCases, id: \.self) { policy in
-                                Text(policy.title)
-                                    .accessibilityIdentifier("music.history-policy.\(policy.musicAccessibilityIdentifier)")
-                                    .tag(policy)
-                            }
-                        }
-                        .accessibilityIdentifier("music.history-picker")
-                        Text(selectedPolicy.explanation)
-                            .font(.footnote)
-                            .foregroundStyle(.secondary)
-                    }
-                } header: {
-                    Text(pevLocalizedText("music.history.title"))
-                }
-            }
-            .navigationTitle(pevLocalizedText("music.expand"))
+            MusicExpandedContent(
+                nowPlaying: nowPlaying,
+                timeline: timeline,
+                historyUnavailable: historyUnavailable,
+                providerSelection: $providerSelection,
+                selectedPolicy: $selectedPolicy
+            )
+            .navigationTitle("Music")
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) {
                     Button(pevLocalizedText("music.done")) {
@@ -1228,6 +1239,202 @@ public struct MusicExpandedPlayer: View {
     }
 }
 
+private struct MusicExpandedContent: View {
+    let nowPlaying: MusicNowPlaying
+    let timeline: [MobileMusicRideEventDto]
+    let historyUnavailable: Bool
+    @Binding var providerSelection: MobileMusicProviderDto
+    @Binding var selectedPolicy: MobileMusicHistoryPolicyDto
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 16) {
+                MusicExpandedHero(nowPlaying: nowPlaying)
+
+                if timeline.isEmpty == false {
+                    VStack(alignment: .leading, spacing: 10) {
+                        MusicSectionHeading(
+                            title: pevLocalizedText("music.timeline.title"),
+                            systemImage: "clock.arrow.circlepath"
+                        )
+                        MusicTimelineRows(events: timeline)
+                    }
+                    .musicDetailCard()
+                }
+
+                MusicProviderCard(providerSelection: $providerSelection)
+                MusicHistoryCard(
+                    selectedPolicy: $selectedPolicy,
+                    historyUnavailable: historyUnavailable
+                )
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 12)
+        }
+        .scrollIndicators(.hidden)
+        .background(PevDashboardColors.pageBackground)
+    }
+}
+
+private struct MusicProviderCard: View {
+    @Binding var providerSelection: MobileMusicProviderDto
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            MusicSectionHeading(
+                title: pevLocalizedText("music.provider.select"),
+                systemImage: "music.note.list"
+            )
+            Picker(
+                pevLocalizedText("music.provider.select"),
+                selection: $providerSelection
+            ) {
+                ForEach(MobileMusicProviderDto.allCases, id: \.self) { provider in
+                    Text(provider.title).tag(provider)
+                }
+            }
+            .pickerStyle(.menu)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .accessibilityIdentifier("music.provider-picker")
+        }
+        .musicDetailCard()
+    }
+}
+
+private struct MusicExpandedHero: View {
+    let nowPlaying: MusicNowPlaying
+
+    var body: some View {
+        HStack(spacing: 16) {
+            artworkView
+            VStack(alignment: .leading, spacing: 5) {
+                Text(nowPlaying.providerName.uppercased())
+                    .font(.caption.weight(.bold))
+                    .foregroundStyle(PevDashboardColors.yellow)
+                    .tracking(0.8)
+                Text(nowPlaying.title)
+                    .font(.title3.weight(.bold))
+                    .lineLimit(2)
+                Text(nowPlaying.artist)
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                if let status = nowPlaying.statusText {
+                    Text(status)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(16)
+        .background(PevDashboardColors.yellow.opacity(0.10), in: RoundedRectangle(cornerRadius: 20))
+    }
+
+    @ViewBuilder
+    private var artworkView: some View {
+#if canImport(UIKit) && os(iOS)
+        if let data = nowPlaying.artwork?.data, let image = UIImage(data: data) {
+            Image(uiImage: image)
+                .resizable()
+                .scaledToFill()
+                .frame(width: 84, height: 84)
+                .clipShape(RoundedRectangle(cornerRadius: 16))
+                .accessibilityLabel(nowPlaying.artworkAccessibilityLabel)
+        } else {
+            MusicArtworkPlaceholder()
+        }
+#elseif canImport(AppKit)
+        if let data = nowPlaying.artwork?.data, let image = NSImage(data: data) {
+            Image(nsImage: image)
+                .resizable()
+                .scaledToFill()
+                .frame(width: 84, height: 84)
+                .clipShape(RoundedRectangle(cornerRadius: 16))
+                .accessibilityLabel(nowPlaying.artworkAccessibilityLabel)
+        } else {
+            MusicArtworkPlaceholder()
+        }
+#else
+        MusicArtworkPlaceholder()
+#endif
+    }
+}
+
+private struct MusicArtworkPlaceholder: View {
+    var body: some View {
+        Image(systemName: "music.note")
+            .font(.largeTitle)
+            .foregroundStyle(PevDashboardColors.yellow)
+            .frame(width: 84, height: 84)
+            .background(PevDashboardColors.yellow.opacity(0.16), in: RoundedRectangle(cornerRadius: 16))
+            .accessibilityHidden(true)
+    }
+}
+
+private struct MusicSectionHeading: View {
+    let title: String
+    let systemImage: String
+
+    var body: some View {
+        Label(title, systemImage: systemImage)
+            .font(.headline)
+            .foregroundStyle(.primary)
+    }
+}
+
+private struct MusicHistoryPolicyLabel: View {
+    let policy: MobileMusicHistoryPolicyDto
+
+    var body: some View {
+        Text(policy.title)
+            .accessibilityIdentifier("music.history-policy.\(policy.musicAccessibilityIdentifier)")
+    }
+}
+
+private struct MusicHistoryCard: View {
+    @Binding var selectedPolicy: MobileMusicHistoryPolicyDto
+    let historyUnavailable: Bool
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            MusicSectionHeading(
+                title: pevLocalizedText("music.history.title"),
+                systemImage: "clock"
+            )
+            if historyUnavailable {
+                Label(
+                    pevLocalizedText("music.state.unavailable"),
+                    systemImage: "exclamationmark.triangle"
+                )
+                .foregroundStyle(.secondary)
+            } else {
+                Picker(pevLocalizedText("music.history.title"), selection: $selectedPolicy) {
+                    ForEach(MobileMusicHistoryPolicyDto.allCases, id: \.self) { policy in
+                        MusicHistoryPolicyLabel(policy: policy)
+                            .tag(policy)
+                    }
+                }
+                .pickerStyle(.menu)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .accessibilityIdentifier("music.history-picker")
+                Text(selectedPolicy.explanation)
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .musicDetailCard()
+    }
+}
+
+private extension View {
+    func musicDetailCard() -> some View {
+        padding(16)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 18))
+    }
+}
+
 /// Shared Ride/Map composition for the compact player.
 public struct MusicCompactPlayerInset: ViewModifier {
     public let nowPlaying: MusicNowPlaying?
@@ -1244,40 +1451,55 @@ public struct MusicCompactPlayerInset: ViewModifier {
     public let onSetHistoryPolicy: (MobileMusicHistoryPolicyDto) -> Bool
 
     private var setupBar: some View {
-        HStack(spacing: 12) {
-            Image(systemName: "music.note")
-                .font(.title3)
-                .accessibilityHidden(true)
-            VStack(alignment: .leading, spacing: 2) {
-                Text(pevLocalizedText("music.connect"))
-                    .font(.subheadline.weight(.semibold))
-                Text(selectedProvider.title)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-            Spacer(minLength: 8)
-            Menu {
-                ForEach(MobileMusicProviderDto.allCases, id: \.self) { provider in
-                    Button(provider.title) {
-                        onSelectProvider(provider)
-                    }
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(spacing: 12) {
+                Image(systemName: "music.note.list")
+                    .font(.title3.weight(.semibold))
+                    .foregroundStyle(PevDashboardColors.yellow)
+                    .frame(width: 44, height: 44)
+                    .background(PevDashboardColors.yellow.opacity(0.16), in: RoundedRectangle(cornerRadius: 12))
+                    .accessibilityHidden(true)
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(pevLocalizedText("music.connect"))
+                        .font(.headline)
+                    Text("Choose a provider to show what you are listening to.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(2)
                 }
-            } label: {
-                Label(selectedProvider.title, systemImage: "chevron.up.chevron.down")
+                Spacer(minLength: 0)
             }
-            .buttonStyle(.bordered)
-            .controlSize(.small)
-            .accessibilityIdentifier("music.provider-picker")
+            HStack(spacing: 10) {
+                Text("Provider")
+                    .font(.subheadline.weight(.medium))
+                    .foregroundStyle(.secondary)
+                Spacer(minLength: 8)
+                Menu {
+                    ForEach(MobileMusicProviderDto.allCases, id: \.self) { provider in
+                        Button(provider.title) {
+                            onSelectProvider(provider)
+                        }
+                    }
+                } label: {
+                    Label(selectedProvider.title, systemImage: "chevron.up.chevron.down")
+                        .font(.subheadline.weight(.semibold))
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+                .tint(PevDashboardColors.yellow)
+                .accessibilityIdentifier("music.provider-picker")
+            }
             Button(action: onConnect) {
-                Text(pevLocalizedText("music.connect"))
+                Label(pevLocalizedText("music.connect"), systemImage: "link")
+                    .frame(maxWidth: .infinity)
             }
             .buttonStyle(.borderedProminent)
-            .controlSize(.small)
+            .controlSize(.regular)
+            .tint(PevDashboardColors.yellow)
             .accessibilityIdentifier("music.connect")
         }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 10)
-        .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 16))
+        .padding(16)
+        .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 20))
         .padding(.horizontal, 12)
         .accessibilityElement(children: .contain)
         .accessibilityLabel(pevLocalizedText("music.connect"))
