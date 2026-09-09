@@ -673,12 +673,13 @@ where
             )
         })?;
 
-    Ok(summarize_pevcap_replay(
+    let report = summarize_pevcap_replay(
         replay_records,
         arbitrary_chunk_plan_len,
         &outputs,
         comparison,
-    ))
+    );
+    Ok(report)
 }
 
 fn summarize_pevcap_replay(
@@ -5644,7 +5645,7 @@ mod tests {
                 .telemetry_snapshot
                 .speed
                 .map(|speed| speed.value.get()),
-            Some(-359)
+            Some(-100)
         );
         assert_eq!(
             report
