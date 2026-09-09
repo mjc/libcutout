@@ -1,6 +1,6 @@
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
-use cutout_music::{MusicMonitor, MusicMonitorStart};
+use cutout_music::{MusicMonitor, MusicMonitorRequest, MusicMonitorResume, MusicMonitorStart};
 
 use crate::{CoreMusicPlaybackState, MobileMusicPlaybackStateDto};
 
@@ -21,11 +21,33 @@ pub fn music_playback_title_key(state: MobileMusicPlaybackStateDto) -> String {
         .to_owned()
 }
 
+/// User intent for a foreground provider-monitor request.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Enum)]
+pub enum MobileMusicMonitorRequest {
+    /// Observe or reconnect using existing authorization.
+    Observe,
+    /// Consume one explicit user request to launch authorization if necessary.
+    Authorize,
+}
+
 /// Permission for a single foreground provider-monitor start.
-#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Record)]
-pub struct MobileMusicMonitorStart {
-    /// Whether this start may consume an explicit user authorization request.
-    pub allow_authorization: bool,
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Enum)]
+pub enum MobileMusicMonitorStart {
+    /// Observe or reconnect using existing authorization.
+    Observe,
+    /// Launch provider authorization for an explicit user request.
+    Authorize,
+}
+
+/// Result of bringing a monitor back to the foreground.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Enum)]
+pub enum MobileMusicMonitorResume {
+    /// The monitor was already in the foreground.
+    AlreadyActive,
+    /// No monitor request was waiting when the scene resumed.
+    NoRequest,
+    /// A requested monitor was restored after suspension.
+    Restored,
 }
 
 /// Rust-owned music observation intent, unrelated to whether a ride is open.
@@ -44,8 +66,11 @@ impl MobileMusicMonitor {
     }
 
     /// Requests passive monitoring or one explicit authorization attempt.
-    pub fn request(&self, allow_authorization: bool) {
-        self.lock_inner().request(allow_authorization);
+    pub fn request(&self, request: MobileMusicMonitorRequest) {
+        self.lock_inner().request(match request {
+            MobileMusicMonitorRequest::Observe => MusicMonitorRequest::Observe,
+            MobileMusicMonitorRequest::Authorize => MusicMonitorRequest::Authorize,
+        });
     }
 
     /// Cancels monitoring intent and any unused authorization permission.
@@ -60,8 +85,12 @@ impl MobileMusicMonitor {
 
     /// Whether entering the foreground should restore observation.
     #[must_use]
-    pub fn resume(&self) -> bool {
-        self.lock_inner().resume()
+    pub fn resume(&self) -> MobileMusicMonitorResume {
+        match self.lock_inner().resume() {
+            MusicMonitorResume::AlreadyActive => MobileMusicMonitorResume::AlreadyActive,
+            MusicMonitorResume::NoRequest => MobileMusicMonitorResume::NoRequest,
+            MusicMonitorResume::Restored => MobileMusicMonitorResume::Restored,
+        }
     }
 
     /// Whether the scene permits foreground observation.
@@ -73,11 +102,10 @@ impl MobileMusicMonitor {
     /// Admits a start and consumes the one-shot authorization permission, if any.
     #[must_use]
     pub fn take_start(&self) -> Option<MobileMusicMonitorStart> {
-        self.lock_inner()
-            .take_start()
-            .map(|start| MobileMusicMonitorStart {
-                allow_authorization: start == MusicMonitorStart::Authorize,
-            })
+        self.lock_inner().take_start().map(|start| match start {
+            MusicMonitorStart::Observe => MobileMusicMonitorStart::Observe,
+            MusicMonitorStart::Authorize => MobileMusicMonitorStart::Authorize,
+        })
     }
 }
 

@@ -137,23 +137,23 @@ final class CutoutAppModelTests: XCTestCase {
     func testRustMusicMonitorResumesOnlyRequestedMonitorWithoutRideState() {
         let state = MobileMusicMonitor()
 
-        XCTAssertFalse(state.resume())
+        XCTAssertEqual(state.resume(), .alreadyActive)
         XCTAssertNil(state.takeStart())
 
         state.suspend()
-        XCTAssertFalse(state.resume())
+        XCTAssertEqual(state.resume(), .restored)
 
-        state.request(allowAuthorization: true)
-        XCTAssertEqual(state.takeStart()?.allowAuthorization, true)
+        state.request(request: .authorize)
+        XCTAssertEqual(state.takeStart(), .authorize)
         state.suspend()
         XCTAssertNil(state.takeStart())
-        XCTAssertTrue(state.resume())
-        XCTAssertEqual(state.takeStart()?.allowAuthorization, false)
-        XCTAssertFalse(state.resume())
+        XCTAssertEqual(state.resume(), .restored)
+        XCTAssertEqual(state.takeStart(), .observe)
+        XCTAssertEqual(state.resume(), .alreadyActive)
 
         state.cancel()
         state.suspend()
-        XCTAssertFalse(state.resume())
+        XCTAssertEqual(state.resume(), .noRequest)
         XCTAssertNil(state.takeStart())
     }
 

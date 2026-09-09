@@ -40,6 +40,39 @@ pub enum MusicMonitorStart {
     Authorize,
 }
 
+/// User intent for the next foreground monitor start.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum MusicMonitorRequest {
+    /// Observe or reconnect using existing authorization.
+    Observe,
+    /// Consume one explicit user request to launch authorization if necessary.
+    Authorize,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum MonitorScene {
+    Active,
+    Suspended,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum MonitorIntent {
+    Idle,
+    Observe,
+    Authorize,
+}
+
+/// Result of bringing a monitor back to the foreground.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum MusicMonitorResume {
+    /// The monitor was already in the foreground.
+    AlreadyActive,
+    /// No monitor request was waiting when the scene resumed.
+    NoRequest,
+    /// A requested monitor was restored after suspension.
+    Restored,
+}
+
 /// Foreground music intent, independent of ride recording and history retention.
 ///
 /// Platform code owns the SDK task and credential callbacks. A callback can save
@@ -47,52 +80,62 @@ pub enum MusicMonitorStart {
 /// launch. Restored preferences request passive observation only.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct MusicMonitor {
-    scene_active: bool,
-    requested: bool,
-    authorization_pending: bool,
+    scene: MonitorScene,
+    intent: MonitorIntent,
 }
 
 impl Default for MusicMonitor {
     fn default() -> Self {
         Self {
-            scene_active: true,
-            requested: false,
-            authorization_pending: false,
+            scene: MonitorScene::Active,
+            intent: MonitorIntent::Idle,
         }
     }
 }
 
 impl MusicMonitor {
     /// Requests observation; only an explicit user action may allow authorization.
-    pub fn request(&mut self, allow_authorization: bool) {
-        self.requested = true;
-        self.authorization_pending |= allow_authorization;
+    pub fn request(&mut self, request: MusicMonitorRequest) {
+        self.intent = match request {
+            MusicMonitorRequest::Observe => match self.intent {
+                MonitorIntent::Authorize => MonitorIntent::Authorize,
+                MonitorIntent::Idle | MonitorIntent::Observe => MonitorIntent::Observe,
+            },
+            MusicMonitorRequest::Authorize => MonitorIntent::Authorize,
+        };
     }
 
     /// Cancels observation and any unconsumed authorization request.
     pub fn cancel(&mut self) {
-        self.requested = false;
-        self.authorization_pending = false;
+        self.intent = MonitorIntent::Idle;
     }
 
     /// Suspends observation without forgetting intent or retaining an auth launch.
     pub fn suspend(&mut self) {
-        self.scene_active = false;
-        self.authorization_pending = false;
+        self.scene = MonitorScene::Suspended;
+        if self.intent == MonitorIntent::Authorize {
+            self.intent = MonitorIntent::Observe;
+        }
     }
 
     /// Returns whether entering the foreground should restore requested observation.
     #[must_use]
-    pub fn resume(&mut self) -> bool {
-        let should_resume = self.requested && !self.scene_active;
-        self.scene_active = true;
-        should_resume
+    pub fn resume(&mut self) -> MusicMonitorResume {
+        let result = match self.scene {
+            MonitorScene::Active => MusicMonitorResume::AlreadyActive,
+            MonitorScene::Suspended => match self.intent {
+                MonitorIntent::Idle => MusicMonitorResume::NoRequest,
+                MonitorIntent::Observe | MonitorIntent::Authorize => MusicMonitorResume::Restored,
+            },
+        };
+        self.scene = MonitorScene::Active;
+        result
     }
 
     /// Whether the platform scene permits foreground observation.
     #[must_use]
     pub const fn is_scene_active(&self) -> bool {
-        self.scene_active
+        matches!(self.scene, MonitorScene::Active)
     }
 
     /// Admits a foreground start and consumes any one-shot authorization grant.
@@ -101,14 +144,15 @@ impl MusicMonitor {
     /// must cancel or replace its existing SDK task before starting another one.
     #[must_use]
     pub fn take_start(&mut self) -> Option<MusicMonitorStart> {
-        if !self.scene_active || !self.requested {
+        if self.scene != MonitorScene::Active || self.intent == MonitorIntent::Idle {
             return None;
         }
-        Some(if std::mem::take(&mut self.authorization_pending) {
-            MusicMonitorStart::Authorize
-        } else {
-            MusicMonitorStart::Observe
-        })
+        let start = match self.intent {
+            MonitorIntent::Idle | MonitorIntent::Observe => MusicMonitorStart::Observe,
+            MonitorIntent::Authorize => MusicMonitorStart::Authorize,
+        };
+        self.intent = MonitorIntent::Observe;
+        Some(start)
     }
 }
 

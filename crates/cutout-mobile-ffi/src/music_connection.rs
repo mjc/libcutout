@@ -19,15 +19,6 @@ impl MobileMusicConnection {
         Self::default()
     }
 
-    /// Whether the SDK may attempt connection at this monotonic millisecond time.
-    #[must_use]
-    pub fn begin_attempt(&self, now_ms: u64) -> bool {
-        self.inner
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .begin_attempt(now_ms)
-    }
-
     /// Starts an attempt and returns its identity for SDK callback validation.
     #[must_use]
     pub fn begin_attempt_id(&self, now_ms: u64) -> Option<u64> {
@@ -93,16 +84,16 @@ mod tests {
     #[test]
     fn mobile_connection_preserves_bounded_domain_retry_behavior() {
         let connection = MobileMusicConnection::new();
-        assert!(connection.begin_attempt(0));
-        assert!(!connection.begin_attempt(9_999));
-        assert!(connection.begin_attempt(10_000));
+        assert!(connection.begin_attempt_id(0).is_some());
+        assert!(!connection.begin_attempt_id(9_999).is_some());
+        assert!(connection.begin_attempt_id(10_000).is_some());
         connection.failed(10_000);
-        assert!(!connection.begin_attempt(11_999));
-        assert!(connection.begin_attempt(12_000));
+        assert!(!connection.begin_attempt_id(11_999).is_some());
+        assert!(connection.begin_attempt_id(12_000).is_some());
         connection.disconnected(12_000);
-        assert!(!connection.begin_attempt(14_000));
+        assert!(!connection.begin_attempt_id(14_000).is_some());
         connection.established();
-        assert!(connection.begin_attempt(14_000));
+        assert!(connection.begin_attempt_id(14_000).is_some());
     }
 
     #[test]

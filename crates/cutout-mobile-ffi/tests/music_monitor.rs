@@ -1,6 +1,7 @@
 use cutout_mobile_ffi::{
-    MobileMusicMonitor, MobileMusicMonitorStart, MobileMusicPlaybackStateDto,
-    music_callback_path_matches, music_playback_title_key,
+    MobileMusicMonitor, MobileMusicMonitorRequest, MobileMusicMonitorResume,
+    MobileMusicMonitorStart, MobileMusicPlaybackStateDto, music_callback_path_matches,
+    music_playback_title_key,
 };
 
 #[test]
@@ -30,24 +31,17 @@ fn music_monitor_binding_resumes_passively_without_ride_state() {
     let monitor = MobileMusicMonitor::new();
     assert!(monitor.is_scene_active());
     assert_eq!(monitor.take_start(), None);
-    monitor.request(true);
+    monitor.request(MobileMusicMonitorRequest::Authorize);
     assert_eq!(
         monitor.take_start(),
-        Some(MobileMusicMonitorStart {
-            allow_authorization: true,
-        })
+        Some(MobileMusicMonitorStart::Authorize)
     );
     monitor.suspend();
     assert!(!monitor.is_scene_active());
     assert_eq!(monitor.take_start(), None);
-    assert!(monitor.resume());
-    assert_eq!(
-        monitor.take_start(),
-        Some(MobileMusicMonitorStart {
-            allow_authorization: false,
-        })
-    );
-    assert!(!monitor.resume());
+    assert_eq!(monitor.resume(), MobileMusicMonitorResume::Restored);
+    assert_eq!(monitor.take_start(), Some(MobileMusicMonitorStart::Observe));
+    assert_eq!(monitor.resume(), MobileMusicMonitorResume::AlreadyActive);
     monitor.cancel();
     assert_eq!(monitor.take_start(), None);
 }

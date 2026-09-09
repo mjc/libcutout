@@ -19,13 +19,6 @@ pub struct MusicConnection {
 }
 
 impl MusicConnection {
-    /// Admits at most three attempts, including ones whose SDK callback is lost.
-    /// `now_ms` must use the same monotonic clock throughout this session.
-    #[must_use]
-    pub fn begin_attempt(&mut self, now_ms: u64) -> bool {
-        self.begin_attempt_id(now_ms).is_some()
-    }
-
     /// Starts an attempt and returns its identity for callback validation.
     #[must_use]
     pub fn begin_attempt_id(&mut self, now_ms: u64) -> Option<u64> {
@@ -108,47 +101,47 @@ mod tests {
     #[test]
     fn a_failed_attempt_retries_after_delay_without_resetting_budget() {
         let mut connection = MusicConnection::default();
-        assert!(connection.begin_attempt(0));
+        assert!(connection.begin_attempt_id(0).is_some());
         connection.failed(100);
-        assert!(!connection.begin_attempt(2_099));
-        assert!(connection.begin_attempt(2_100));
+        assert!(!connection.begin_attempt_id(2_099).is_some());
+        assert!(connection.begin_attempt_id(2_100).is_some());
         connection.failed(2_200);
-        assert!(connection.begin_attempt(4_200));
+        assert!(connection.begin_attempt_id(4_200).is_some());
         connection.failed(4_300);
-        assert!(!connection.begin_attempt(100_000));
+        assert!(!connection.begin_attempt_id(100_000).is_some());
     }
 
     #[test]
     fn a_lost_callback_times_out_but_attempts_remain_bounded() {
         let mut connection = MusicConnection::default();
-        assert!(connection.begin_attempt(0));
-        assert!(!connection.begin_attempt(9_999));
-        assert!(connection.begin_attempt(10_000));
-        assert!(!connection.begin_attempt(19_999));
-        assert!(connection.begin_attempt(20_000));
-        assert!(!connection.begin_attempt(30_000));
+        assert!(connection.begin_attempt_id(0).is_some());
+        assert!(!connection.begin_attempt_id(9_999).is_some());
+        assert!(connection.begin_attempt_id(10_000).is_some());
+        assert!(!connection.begin_attempt_id(19_999).is_some());
+        assert!(connection.begin_attempt_id(20_000).is_some());
+        assert!(!connection.begin_attempt_id(30_000).is_some());
     }
 
     #[test]
     fn disconnect_preserves_budget_and_established_resets_it() {
         let mut connection = MusicConnection::default();
         for now_ms in [0, 2_000, 4_000] {
-            assert!(connection.begin_attempt(now_ms));
+            assert!(connection.begin_attempt_id(now_ms).is_some());
             connection.disconnected(now_ms);
         }
-        assert!(!connection.begin_attempt(6_000));
+        assert!(!connection.begin_attempt_id(6_000).is_some());
         connection.established();
         connection.disconnected(6_000);
-        assert!(!connection.begin_attempt(7_999));
-        assert!(connection.begin_attempt(8_000));
+        assert!(!connection.begin_attempt_id(7_999).is_some());
+        assert!(connection.begin_attempt_id(8_000).is_some());
     }
 
     #[test]
     fn backwards_or_overflowing_clock_cannot_shorten_an_in_flight_attempt() {
         let mut connection = MusicConnection::default();
-        assert!(connection.begin_attempt(u64::MAX - 1));
-        assert!(!connection.begin_attempt(0));
-        assert!(!connection.begin_attempt(u64::MAX));
+        assert!(connection.begin_attempt_id(u64::MAX - 1).is_some());
+        assert!(!connection.begin_attempt_id(0).is_some());
+        assert!(!connection.begin_attempt_id(u64::MAX).is_some());
     }
 
     #[test]

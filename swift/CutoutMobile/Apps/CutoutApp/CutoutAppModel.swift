@@ -460,7 +460,7 @@ final class CutoutAppModel {
         isMusicPlayerHidden = false
         musicSettingsNowPlaying = projectedMusicNowPlaying()
         musicMonitoringPreferenceStore.setEnabled(true)
-        musicMonitorSceneState.request(allowAuthorization: false)
+        musicMonitorSceneState.request(request: .observe)
         beginMusicMonitoring()
     }
 
@@ -484,12 +484,12 @@ final class CutoutAppModel {
             musicMonitorSceneState.cancel()
             stopMusicMonitoring()
         case .appleMusicSystemPlayer where previousProvider != provider:
-            musicMonitorSceneState.request(allowAuthorization: false)
+            musicMonitorSceneState.request(request: .observe)
             beginMusicMonitoring()
         case .appleMusicSystemPlayer:
             break
         case .spotifyAppRemote where previousProvider != provider:
-            musicMonitorSceneState.request(allowAuthorization: false)
+            musicMonitorSceneState.request(request: .observe)
             beginMusicMonitoring()
         case .spotifyAppRemote:
             break
@@ -818,7 +818,7 @@ final class CutoutAppModel {
             await Self.monitorMusic(
                 provider: provider,
                 generation: generation,
-                allowAuthorization: start.allowAuthorization,
+                allowAuthorization: start == .authorize,
                 appleMusicProvider: appleMusicProvider,
                 spotifyMusicProvider: spotifyMusicProvider,
                 isCurrent: { [weak self] in
@@ -855,7 +855,7 @@ final class CutoutAppModel {
         // lifecycle suspended monitoring, resume it before starting the new
         // provider session instead of silently dropping the tap.
         _ = musicMonitorSceneState.resume()
-        musicMonitorSceneState.request(allowAuthorization: true)
+        musicMonitorSceneState.request(request: .authorize)
         beginMusicMonitoring()
     }
 
@@ -923,7 +923,7 @@ final class CutoutAppModel {
         rideSessionRestorationState = .awaitingBluetooth
         core.start()
         guard musicMonitoringPreferenceStore.isEnabled else { return }
-        musicMonitorSceneState.request(allowAuthorization: false)
+        musicMonitorSceneState.request(request: .observe)
         beginMusicMonitoring()
     }
 
@@ -2145,7 +2145,7 @@ final class CutoutAppModel {
     }
 
     func appDidBecomeActive() {
-        if musicMonitorSceneState.resume() {
+        if musicMonitorSceneState.resume() == .restored {
             beginMusicMonitoring()
         }
         guard let snapshot = currentLiveActivitySnapshot() else { return }
