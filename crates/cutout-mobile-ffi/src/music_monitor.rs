@@ -83,7 +83,7 @@ impl MobileMusicMonitor {
         self.lock_inner().suspend();
     }
 
-    /// Whether entering the foreground should restore observation.
+    /// Returns the foreground transition outcome and restores active observation.
     #[must_use]
     pub fn resume(&self) -> MobileMusicMonitorResume {
         match self.lock_inner().resume() {

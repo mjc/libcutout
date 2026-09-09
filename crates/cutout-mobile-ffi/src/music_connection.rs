@@ -2,7 +2,16 @@
 
 use std::sync::{Mutex, PoisonError};
 
-use cutout_music::connection::MusicConnection;
+use cutout_music::connection::{MusicConnection, MusicConnectionCallback};
+
+/// Whether a provider callback matched the current connection lifecycle.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Enum)]
+pub enum MobileMusicConnectionCallback {
+    /// The callback was accepted for the current attempt or session.
+    Accepted,
+    /// The callback belonged to an older or unknown attempt.
+    Stale,
+}
 
 /// Bounded foreground provider connection attempts; never stores credentials.
 #[derive(Debug, Default, uniffi::Object)]
@@ -37,11 +46,14 @@ impl MobileMusicConnection {
     }
 
     /// Accepts success only from the currently active attempt.
-    pub fn established_for(&self, attempt_id: u64) -> bool {
-        self.inner
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .established_for(attempt_id)
+    #[must_use]
+    pub fn established_for(&self, attempt_id: u64) -> MobileMusicConnectionCallback {
+        map_callback(
+            self.inner
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .established_for(attempt_id),
+        )
     }
 
     /// Reports disconnection without discarding credentials or the attempt count.
@@ -52,12 +64,15 @@ impl MobileMusicConnection {
             .disconnected(now_ms);
     }
 
-    /// Accepts disconnection only from the currently active attempt.
-    pub fn disconnected_for(&self, attempt_id: u64, now_ms: u64) -> bool {
-        self.inner
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .disconnected_for(attempt_id, now_ms)
+    /// Accepts disconnection only from the active attempt or connected session.
+    #[must_use]
+    pub fn disconnected_for(&self, attempt_id: u64, now_ms: u64) -> MobileMusicConnectionCallback {
+        map_callback(
+            self.inner
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .disconnected_for(attempt_id, now_ms),
+        )
     }
 
     /// Reports a failed attempt without treating a transport error as auth failure.
@@ -68,18 +83,28 @@ impl MobileMusicConnection {
             .failed(now_ms);
     }
 
-    /// Accepts failure only from the currently active attempt.
-    pub fn failed_for(&self, attempt_id: u64, now_ms: u64) -> bool {
-        self.inner
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .failed_for(attempt_id, now_ms)
+    /// Accepts failure only from the active attempt or connected session.
+    #[must_use]
+    pub fn failed_for(&self, attempt_id: u64, now_ms: u64) -> MobileMusicConnectionCallback {
+        map_callback(
+            self.inner
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .failed_for(attempt_id, now_ms),
+        )
+    }
+}
+
+fn map_callback(callback: MusicConnectionCallback) -> MobileMusicConnectionCallback {
+    match callback {
+        MusicConnectionCallback::Accepted => MobileMusicConnectionCallback::Accepted,
+        MusicConnectionCallback::Stale => MobileMusicConnectionCallback::Stale,
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::MobileMusicConnection;
+    use super::{MobileMusicConnection, MobileMusicConnectionCallback};
 
     #[test]
     fn mobile_connection_preserves_bounded_domain_retry_behavior() {
@@ -100,10 +125,22 @@ mod tests {
     fn mobile_connection_rejects_stale_callbacks() {
         let connection = MobileMusicConnection::new();
         let first = connection.begin_attempt_id(0).expect("first attempt");
-        assert!(connection.failed_for(first, 100));
+        assert_eq!(
+            connection.failed_for(first, 100),
+            MobileMusicConnectionCallback::Accepted
+        );
         let second = connection.begin_attempt_id(2_100).expect("second attempt");
-        assert!(!connection.failed_for(first, 2_200));
-        assert!(!connection.established_for(first));
-        assert!(connection.failed_for(second, 2_200));
+        assert_eq!(
+            connection.failed_for(first, 2_200),
+            MobileMusicConnectionCallback::Stale
+        );
+        assert_eq!(
+            connection.established_for(first),
+            MobileMusicConnectionCallback::Stale
+        );
+        assert_eq!(
+            connection.failed_for(second, 2_200),
+            MobileMusicConnectionCallback::Accepted
+        );
     }
 }

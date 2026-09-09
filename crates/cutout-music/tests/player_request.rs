@@ -1,4 +1,4 @@
-use cutout_music::player_request::MusicPlayerRequest;
+use cutout_music::player_request::{MusicPlayerRequest, MusicPlayerRequestCompletion};
 
 #[test]
 fn lost_callback_times_out_and_late_callback_cannot_clear_retry() {
@@ -7,9 +7,12 @@ fn lost_callback_times_out_and_late_callback_cannot_clear_retry() {
     assert_eq!(request.begin(9_999), None);
     let retry = request.begin(10_000).expect("lost callback timed out");
     assert_ne!(first, retry);
-    assert!(!request.complete(first));
+    assert_eq!(request.complete(first), MusicPlayerRequestCompletion::Stale);
     assert_eq!(request.begin(10_001), None);
-    assert!(request.complete(retry));
+    assert_eq!(
+        request.complete(retry),
+        MusicPlayerRequestCompletion::Accepted
+    );
     assert!(request.begin(10_002).is_some());
 }
 
@@ -17,14 +20,23 @@ fn lost_callback_times_out_and_late_callback_cannot_clear_retry() {
 fn normal_completion_allows_next_poll_and_reset_invalidates_old_callback() {
     let mut request = MusicPlayerRequest::default();
     let first = request.begin(100).expect("first request");
-    assert!(request.complete(first));
-    assert!(!request.complete(first));
+    assert_eq!(
+        request.complete(first),
+        MusicPlayerRequestCompletion::Accepted
+    );
+    assert_eq!(request.complete(first), MusicPlayerRequestCompletion::Stale);
     let second = request.begin(101).expect("next poll");
     request.reset();
     let third = request.begin(102).expect("new connection");
     assert_ne!(second, third);
-    assert!(!request.complete(second));
-    assert!(request.complete(third));
+    assert_eq!(
+        request.complete(second),
+        MusicPlayerRequestCompletion::Stale
+    );
+    assert_eq!(
+        request.complete(third),
+        MusicPlayerRequestCompletion::Accepted
+    );
 }
 
 #[test]

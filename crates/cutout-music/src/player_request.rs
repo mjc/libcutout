@@ -2,6 +2,15 @@
 
 const REQUEST_TIMEOUT_MS: u64 = 10_000;
 
+/// Result of applying a provider player-state callback.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum MusicPlayerRequestCompletion {
+    /// The callback matched the current request.
+    Accepted,
+    /// The callback belonged to a timed-out or reset request.
+    Stale,
+}
+
 /// One outstanding player-state request, replaceable if its callback is lost.
 #[derive(Debug, Default)]
 pub struct MusicPlayerRequest {
@@ -26,12 +35,12 @@ impl MusicPlayerRequest {
 
     /// Accepts only the outstanding callback; late callbacks cannot clear a retry.
     #[must_use]
-    pub fn complete(&mut self, request_id: u64) -> bool {
+    pub fn complete(&mut self, request_id: u64) -> MusicPlayerRequestCompletion {
         if self.pending.is_some_and(|(id, _)| id == request_id) {
             self.pending = None;
-            true
+            MusicPlayerRequestCompletion::Accepted
         } else {
-            false
+            MusicPlayerRequestCompletion::Stale
         }
     }
 

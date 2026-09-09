@@ -118,7 +118,7 @@ impl MusicMonitor {
         }
     }
 
-    /// Returns whether entering the foreground should restore requested observation.
+    /// Returns the foreground transition outcome and restores active observation.
     #[must_use]
     pub fn resume(&mut self) -> MusicMonitorResume {
         let result = match self.scene {

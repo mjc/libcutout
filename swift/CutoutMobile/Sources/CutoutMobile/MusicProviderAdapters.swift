@@ -211,7 +211,7 @@ public final class SpotifyProviderAdapter: NSObject, @preconcurrency SPTAppRemot
         let generation = monitoringGeneration
         playerAPI.getPlayerState { [weak self] result, error in
             guard let self, self.monitoringGeneration == generation else { return }
-            guard self.playerStateRequest.complete(requestId: requestID) else { return }
+            guard self.playerStateRequest.complete(requestId: requestID) == .accepted else { return }
             if let playerState = result as? SPTAppRemotePlayerState, error == nil {
                 self.playerStateDidChange(playerState)
             } else if let error = error as NSError? {
@@ -337,7 +337,7 @@ public final class SpotifyProviderAdapter: NSObject, @preconcurrency SPTAppRemot
     public func appRemoteDidEstablishConnection(_ appRemote: SPTAppRemote) {
         guard appRemote === self.appRemote, onChange != nil else { return }
         guard let attemptID = connectionAttemptIDs[ObjectIdentifier(appRemote)],
-              connection.establishedFor(attemptId: attemptID) else { return }
+              connection.establishedFor(attemptId: attemptID) == .accepted else { return }
 #if DEBUG
         print("spotify_connection_established")
 #endif
@@ -367,7 +367,7 @@ public final class SpotifyProviderAdapter: NSObject, @preconcurrency SPTAppRemot
     ) {
         guard appRemote === self.appRemote, onChange != nil else { return }
         guard let attemptID = connectionAttemptIDs[ObjectIdentifier(appRemote)],
-              connection.failedFor(attemptId: attemptID, nowMs: connectionNowMs) else { return }
+              connection.failedFor(attemptId: attemptID, nowMs: connectionNowMs) == .accepted else { return }
         connectionAttemptIDs.removeValue(forKey: ObjectIdentifier(appRemote))
         monitoringGeneration &+= 1
         authorizationTimeoutTask?.cancel()
@@ -388,7 +388,7 @@ public final class SpotifyProviderAdapter: NSObject, @preconcurrency SPTAppRemot
     public func appRemote(_ appRemote: SPTAppRemote, didDisconnectWithError error: Error?) {
         guard appRemote === self.appRemote, onChange != nil else { return }
         guard let attemptID = connectionAttemptIDs[ObjectIdentifier(appRemote)],
-              connection.disconnectedFor(attemptId: attemptID, nowMs: connectionNowMs) else { return }
+              connection.disconnectedFor(attemptId: attemptID, nowMs: connectionNowMs) == .accepted else { return }
         connectionAttemptIDs.removeValue(forKey: ObjectIdentifier(appRemote))
         monitoringGeneration &+= 1
         self.appRemote = nil

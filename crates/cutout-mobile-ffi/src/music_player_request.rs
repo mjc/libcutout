@@ -1,6 +1,15 @@
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
-use cutout_music::player_request::MusicPlayerRequest;
+use cutout_music::player_request::{MusicPlayerRequest, MusicPlayerRequestCompletion};
+
+/// Whether a player-state callback matched the current request.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Enum)]
+pub enum MobileMusicPlayerRequestCompletion {
+    /// The callback matched the current request.
+    Accepted,
+    /// The callback belonged to a timed-out or reset request.
+    Stale,
+}
 
 /// Rust-owned correlation for SDK player-state requests and lost callbacks.
 #[derive(Debug, Default, uniffi::Object)]
@@ -25,8 +34,11 @@ impl MobileMusicPlayerRequest {
 
     /// Whether the callback belongs to the current outstanding request.
     #[must_use]
-    pub fn complete(&self, request_id: u64) -> bool {
-        self.lock_inner().complete(request_id)
+    pub fn complete(&self, request_id: u64) -> MobileMusicPlayerRequestCompletion {
+        match self.lock_inner().complete(request_id) {
+            MusicPlayerRequestCompletion::Accepted => MobileMusicPlayerRequestCompletion::Accepted,
+            MusicPlayerRequestCompletion::Stale => MobileMusicPlayerRequestCompletion::Stale,
+        }
     }
 
     /// Discards outstanding work after disconnect without reusing callback IDs.
@@ -43,7 +55,7 @@ impl MobileMusicPlayerRequest {
 
 #[cfg(test)]
 mod tests {
-    use super::MobileMusicPlayerRequest;
+    use super::{MobileMusicPlayerRequest, MobileMusicPlayerRequestCompletion};
 
     #[test]
     fn binding_rejects_late_callbacks_after_timeout_and_reset() {
@@ -51,12 +63,24 @@ mod tests {
         let first = request.begin(0).expect("first request");
         assert_eq!(request.begin(9_999), None);
         let retry = request.begin(10_000).expect("timed out");
-        assert!(!request.complete(first));
-        assert!(request.complete(retry));
+        assert_eq!(
+            request.complete(first),
+            MobileMusicPlayerRequestCompletion::Stale
+        );
+        assert_eq!(
+            request.complete(retry),
+            MobileMusicPlayerRequestCompletion::Accepted
+        );
         let old_connection = request.begin(10_001).expect("next poll");
         request.reset();
         let current = request.begin(10_002).expect("reconnected");
-        assert!(!request.complete(old_connection));
-        assert!(request.complete(current));
+        assert_eq!(
+            request.complete(old_connection),
+            MobileMusicPlayerRequestCompletion::Stale
+        );
+        assert_eq!(
+            request.complete(current),
+            MobileMusicPlayerRequestCompletion::Accepted
+        );
     }
 }
