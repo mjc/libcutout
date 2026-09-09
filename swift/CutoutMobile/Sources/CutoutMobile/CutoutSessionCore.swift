@@ -2231,6 +2231,10 @@ extension CutoutSessionCore: CBPeripheralDelegate {
         else {
             return
         }
+        guard subscribedCharacteristics[channel] === characteristic else {
+            record("notification_ignored=unbound_characteristic service=\(characteristic.service?.uuid.uuidString ?? "unknown") characteristic=\(characteristic.uuid.uuidString)")
+            return
+        }
         let detectionResolution = observeDetectionNotification(channel: channel, bytes: value)
         if isProbeOnly {
             guard promoteProbeIfResolved(detectionResolution, on: characteristic.service?.peripheral) else {
@@ -2302,6 +2306,10 @@ extension CutoutSessionCore: CBPeripheralDelegate {
     ) {
         assertOnBleQueue()
         guard let channel = BluetoothUuid(coreBluetoothUuid: characteristic.uuid) else {
+            return
+        }
+        guard subscribedCharacteristics[channel] === characteristic else {
+            record("notification_state_ignored=unbound_characteristic service=\(characteristic.service?.uuid.uuidString ?? "unknown") characteristic=\(characteristic.uuid.uuidString)")
             return
         }
         if let error {

@@ -5016,6 +5016,15 @@ public enum CoreBluetoothSession: Sendable {
     case electricUnicycle(ElectricUnicycleSession)
     case vescOnewheel(VescOnewheelSession)
 
+    fileprivate var preferredServiceUuid: CBUUID {
+        switch self {
+        case .electricUnicycle:
+            CBUUID(string: "0000FFE0-0000-1000-8000-00805F9B34FB")
+        case .vescOnewheel:
+            CBUUID(string: "6E400001-B5A3-F393-E0A9-E50E24DCCA9E")
+        }
+    }
+
     public static func electricUnicycle(
         model: ElectricUnicycleModel,
         deviceIdentity: String? = nil
@@ -5963,7 +5972,10 @@ public extension CoreBluetoothLiveSessionOwner {
             session: session,
             advertisement: advertisement,
             writeLimit: TransportWriteLimitBytes(peripheral.withoutResponseWriteLimit),
-            operationSink: CoreBluetoothPeripheralOperationSink(peripheral: peripheral)
+            operationSink: CoreBluetoothPeripheralOperationSink(
+                peripheral: peripheral,
+                preferredServiceUuid: session.preferredServiceUuid
+            )
         )
     }
 }
@@ -5993,15 +6005,20 @@ private extension CoreBluetoothCharacteristicProperty {
 
 public final class CoreBluetoothPeripheralOperationSink: CoreBluetoothOperationSink {
     private let peripheral: CBPeripheral
+    private let preferredServiceUuid: CBUUID?
     private var pendingWithoutResponseWrites: [(CBCharacteristic, Data)] = []
     private static let maximumPendingWrites = 64
 
-    public init(peripheral: CBPeripheral) {
+    public init(peripheral: CBPeripheral, preferredServiceUuid: CBUUID? = nil) {
         self.peripheral = peripheral
+        self.preferredServiceUuid = preferredServiceUuid
     }
 
     public func subscribe(channel: BluetoothUuid) {
-        guard let characteristic = peripheral.characteristic(for: channel) else {
+        guard let characteristic = peripheral.characteristic(
+            for: channel,
+            preferredServiceUuid: preferredServiceUuid
+        ) else {
             return
         }
         guard characteristic.properties.contains(.notify) || characteristic.properties.contains(.indicate) else {
@@ -6011,7 +6028,10 @@ public final class CoreBluetoothPeripheralOperationSink: CoreBluetoothOperationS
     }
 
     public func writeWithoutResponse(channel: BluetoothUuid, bytes: Data) {
-        guard let characteristic = peripheral.characteristic(for: channel) else {
+        guard let characteristic = peripheral.characteristic(
+            for: channel,
+            preferredServiceUuid: preferredServiceUuid
+        ) else {
             return
         }
         guard characteristic.properties.contains(.writeWithoutResponse) else {
@@ -6048,10 +6068,15 @@ public final class CoreBluetoothPeripheralOperationSink: CoreBluetoothOperationS
 }
 
 private extension CBPeripheral {
-    func characteristic(for channel: BluetoothUuid) -> CBCharacteristic? {
+    func characteristic(
+        for channel: BluetoothUuid,
+        preferredServiceUuid: CBUUID? = nil
+    ) -> CBCharacteristic? {
         let uuid = channel.coreBluetoothUuid
-        return services?
-            .lazy
+        guard let services else { return nil }
+        return services.lazy.filter { service in
+            preferredServiceUuid == nil || service.uuid == preferredServiceUuid
+        }
             .compactMap { $0.characteristics }
             .joined()
             .first { $0.uuid == uuid }
