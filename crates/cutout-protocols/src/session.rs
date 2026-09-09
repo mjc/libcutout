@@ -731,6 +731,27 @@ impl VescNotificationDecoder {
             && !self.generic_stream_pending
             && self.generic_prefix.is_empty()
         {
+            if let Some(refloat_bytes) = self.refloat_stream.pending_frame_bytes()
+                && bytes.len() > refloat_bytes
+            {
+                let refloat_handled = self.handle_refloat_notification(
+                    family,
+                    channel,
+                    &bytes[..refloat_bytes],
+                    monotonic_ms,
+                    output,
+                );
+                if refloat_handled || !self.refloat_stream_pending {
+                    self.handle_notification(
+                        family,
+                        channel,
+                        &bytes[refloat_bytes..],
+                        monotonic_ms,
+                        output,
+                    );
+                }
+                return;
+            }
             let refloat_handled =
                 self.handle_refloat_notification(family, channel, bytes, monotonic_ms, output);
             if refloat_handled || self.refloat_stream_pending {
@@ -756,6 +777,33 @@ impl VescNotificationDecoder {
                 Some(is_generic) => {
                     self.generic_prefix.clear();
                     if !is_generic {
+                        if let Some(frame_len) = complete_vesc_frame_len(&generic_bytes)
+                            .filter(|frame_len| *frame_len < generic_bytes.len())
+                        {
+                            let mut refloat_frame = ArrayVec::<u8, VESC_MAX_FRAME_LEN>::new();
+                            refloat_frame
+                                .try_extend_from_slice(&generic_bytes[..frame_len])
+                                .expect("Refloat frame fits bounded VESC frame");
+                            let mut trailing = ArrayVec::<u8, VESC_MAX_FRAME_LEN>::new();
+                            trailing
+                                .try_extend_from_slice(&generic_bytes[frame_len..])
+                                .expect("trailing VESC bytes fit bounded frame");
+                            self.handle_refloat_notification(
+                                family,
+                                channel,
+                                &refloat_frame,
+                                monotonic_ms,
+                                output,
+                            );
+                            self.handle_notification(
+                                family,
+                                channel,
+                                &trailing,
+                                monotonic_ms,
+                                output,
+                            );
+                            return;
+                        }
                         refloat_handled = self.handle_refloat_notification(
                             family,
                             channel,
@@ -2985,6 +3033,26 @@ mod tests {
                 .iter()
                 .any(|response| matches!(response, ReadOnlyResponse::RawTelemetry(_))),
             "a split Refloat frame must not poison the following generic VESC reply"
+        );
+    }
+
+    #[test]
+    fn generic_vesc_session_keeps_trailing_generic_frame_after_split_refloat_frame() {
+        let refloat_ids = refloat_realtime_ids_frame();
+        let generic = vesc_selective_values_frame();
+        let split_at = 2;
+        let mut remainder = Vec::with_capacity(refloat_ids.len() - split_at + generic.len());
+        remainder.extend_from_slice(&refloat_ids[split_at..]);
+        remainder.extend_from_slice(&generic);
+
+        let output =
+            vesc_output_for_notification_chunks(&[&refloat_ids[..split_at], remainder.as_slice()]);
+
+        assert!(
+            read_only_response_events(&output)
+                .iter()
+                .any(|response| matches!(response, ReadOnlyResponse::RawTelemetry(_))),
+            "a generic VESC frame coalesced after a split Refloat frame must survive"
         );
     }
 

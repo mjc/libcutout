@@ -453,6 +453,14 @@ impl RefloatStreamDecoder {
         self.field_ids.as_ref()
     }
 
+    /// Returns the number of bytes needed to complete the buffered frame.
+    pub(crate) fn pending_frame_bytes(&self) -> Option<usize> {
+        self.header_frame_len()
+            .ok()
+            .flatten()
+            .map(|frame_len| frame_len.saturating_sub(self.buffer.len()))
+    }
+
     /// Feeds BLE UART bytes and returns decoded Refloat replies.
     ///
     /// # Errors
@@ -525,6 +533,32 @@ impl RefloatStreamDecoder {
             self.buffer.remove(0);
         }
 
+        let frame_len = match self.header_frame_len() {
+            Ok(Some(frame_len)) => frame_len,
+            Ok(None) => return Ok(None),
+            Err(error) => {
+                self.buffer.remove(0);
+                return Err(error);
+            }
+        };
+        if self.buffer.len() < frame_len {
+            return Ok(None);
+        }
+        if self.buffer.get(frame_len - 1).copied() != Some(FRAME_END) {
+            self.buffer.remove(0);
+            return Err(RefloatCodecError::MalformedFrame);
+        }
+
+        let mut frame = ArrayVec::new();
+        for byte in self.buffer.drain(0..frame_len) {
+            frame
+                .try_push(byte)
+                .map_err(|_byte| RefloatCodecError::FrameTooLong)?;
+        }
+        Ok(Some(frame))
+    }
+
+    fn header_frame_len(&self) -> Result<Option<usize>, RefloatCodecError> {
         let Some(start) = self.buffer.first().copied() else {
             return Ok(None);
         };
@@ -550,24 +584,9 @@ impl RefloatStreamDecoder {
             .checked_add(frame_len_extra)
             .ok_or(RefloatCodecError::FrameTooLong)?;
         if payload_len == 0 || header_len >= frame_len || frame_len > REFLOAT_MAX_FRAME_LEN {
-            self.buffer.remove(0);
             return Err(RefloatCodecError::FrameTooLong);
         }
-        if self.buffer.len() < frame_len {
-            return Ok(None);
-        }
-        if self.buffer.get(frame_len - 1).copied() != Some(FRAME_END) {
-            self.buffer.remove(0);
-            return Err(RefloatCodecError::MalformedFrame);
-        }
-
-        let mut frame = ArrayVec::new();
-        for byte in self.buffer.drain(0..frame_len) {
-            frame
-                .try_push(byte)
-                .map_err(|_byte| RefloatCodecError::FrameTooLong)?;
-        }
-        Ok(Some(frame))
+        Ok(Some(frame_len))
     }
 
     fn decode_frame(
