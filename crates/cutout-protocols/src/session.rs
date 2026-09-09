@@ -633,6 +633,10 @@ impl ReadOnlyNotificationDecoder for VescNotificationDecoder {
         monotonic_ms: MonotonicTimestamp,
         output: &mut Vec<SessionOutput>,
     ) {
+        if self.generic_stream_pending {
+            self.handle_notification_chunk(family, channel, bytes, monotonic_ms, output);
+            return;
+        }
         if !matches!(bytes.first(), Some(2 | 3)) {
             if let Some(start) = bytes.iter().position(|byte| *byte == 2 || *byte == 3) {
                 let candidate = &bytes[start..];
@@ -655,6 +659,8 @@ impl ReadOnlyNotificationDecoder for VescNotificationDecoder {
                     }
                     return;
                 }
+                self.handle_notification_chunk(family, channel, candidate, monotonic_ms, output);
+                return;
             }
         }
         if let Some(frame_len) = complete_vesc_frame_len(bytes) {

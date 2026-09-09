@@ -219,13 +219,9 @@ impl RefloatRealtimeData {
         TelemetryDelta {
             speed: self
                 .value("speed")
+                .or_else(|| self.value("motor.speed"))
                 .map(|kilometres_per_hour| {
                     Measured::reported(Speed::from_metres_per_second(kilometres_per_hour / 3.6))
-                })
-                .or_else(|| {
-                    self.value("motor.speed").map(|metres_per_second| {
-                        Measured::reported(Speed::from_metres_per_second(metres_per_second))
-                    })
                 }),
             battery_current: reports_battery_current
                 .then(|| self.value_with_legacy("batt_current", "motor.batt_current"))
