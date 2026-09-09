@@ -39,6 +39,32 @@ final class MusicIntegrationTests: XCTestCase {
         XCTAssertNil(playing.statusText)
     }
 
+    func testProviderFailureStatesKeepSetupActionAvailable() {
+        for state in [
+            MobileMusicPlaybackStateDto.unauthorized,
+            .unavailable,
+            .disconnected,
+            .stale,
+        ] {
+            XCTAssertTrue(
+                MusicNowPlaying(provider: .spotify, state: state).requiresSetup,
+                "expected setup action for \(state)"
+            )
+        }
+        for state in [
+            MobileMusicPlaybackStateDto.playing,
+            .paused,
+            .buffering,
+            .interrupted,
+            .stopped,
+        ] {
+            XCTAssertFalse(
+                MusicNowPlaying(provider: .spotify, state: state).requiresSetup,
+                "did not expect setup action for \(state)"
+            )
+        }
+    }
+
     func testProviderMonitoringModeMatchesSupportedLifecycle() {
         XCTAssertEqual(
             MobileMusicProviderDto.appleMusic.monitoringMode,

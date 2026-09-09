@@ -696,6 +696,7 @@ final class CutoutAppModel {
     private static func monitorMusic(
         provider: MobileMusicProviderDto,
         generation: UInt64,
+        reconnectWhileRideIsOpen: Bool,
         appleMusicProvider: AppleMusicProviderAdapter,
         spotifyMusicProvider: SpotifyProviderAdapter,
         isCurrent: @escaping @MainActor () -> Bool,
@@ -718,7 +719,9 @@ final class CutoutAppModel {
                 }
             }
             while !Task.isCancelled && isCurrent() {
-                spotifyMusicProvider.ensureConnection()
+                if reconnectWhileRideIsOpen {
+                    spotifyMusicProvider.ensureConnection()
+                }
                 spotifyMusicProvider.refreshPlayerState()
                 refresh()
                 do {
@@ -808,9 +811,14 @@ final class CutoutAppModel {
 #endif
     }
 
-    private func beginMusicMonitoring() {
+    private func beginMusicMonitoring(allowOutsideRide: Bool = false) {
         guard musicMonitorSceneState.isSceneActive else { return }
 #if os(iOS) && canImport(MediaPlayer)
+        // Provider sessions are ride-scoped. Persisted setup intent may be
+        // restored at app launch, but it must not wake Spotify while browsing
+        // the picker or map without an open ride.
+        let rideIsOpen = rideMapSnapshot?.state.isOpen == true
+        guard rideIsOpen || allowOutsideRide else { return }
         stopMusicMonitoring()
         let generation = musicMonitorGeneration.begin()
         let provider = selectedMusicProvider
@@ -820,6 +828,7 @@ final class CutoutAppModel {
             await Self.monitorMusic(
                 provider: provider,
                 generation: generation,
+                reconnectWhileRideIsOpen: rideIsOpen,
                 appleMusicProvider: appleMusicProvider,
                 spotifyMusicProvider: spotifyMusicProvider,
                 isCurrent: { [weak self] in
@@ -850,7 +859,7 @@ final class CutoutAppModel {
     func connectMusic() {
         musicMonitoringPreferenceStore.setEnabled(true)
         musicMonitorSceneState.request()
-        beginMusicMonitoring()
+        beginMusicMonitoring(allowOutsideRide: true)
     }
 
     private func restoreRideMapState() {
@@ -1008,6 +1017,7 @@ final class CutoutAppModel {
         if stopped {
             invalidateLiveProjection(clearPoints: false)
             clearMusicCaptureContext()
+            stopMusicMonitoring()
         }
         return stopped
     }
