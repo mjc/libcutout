@@ -235,7 +235,8 @@ impl RefloatRealtimeData {
                 .value_with_legacy("batt_voltage", "motor.batt_voltage")
                 .map(|volts| Measured::reported(Voltage::from_millivolts(milliscale(volts)))),
             motor_current: self
-                .value_with_legacy("current", "motor.current")
+                .value_with_legacy("current", "filt_current")
+                .or_else(|| self.value_with_legacy("motor.current", "motor.filt_current"))
                 .map(|amps| Measured::reported(PhaseCurrent::from_milliamps(milliscale(amps)))),
             controller_temperature: self
                 .value_with_legacy("mosfet_temp", "motor.mosfet_temp")
@@ -1264,6 +1265,22 @@ mod tests {
         );
         assert_eq!(delta.footpad.unwrap().adc1_milliunits, Some(10_000));
         assert_eq!(delta.footpad.unwrap().adc2_milliunits, Some(11_000));
+    }
+
+    #[test]
+    fn realtime_data_uses_filtered_current_when_raw_current_is_missing() {
+        let mut data = realtime_data_fixture();
+        data.values.push(RefloatRealtimeValue {
+            id: field_id("filt_current"),
+            value: 2.5,
+        });
+
+        assert_eq!(
+            data.to_delta(MonotonicTimestamp::from_milliseconds(42), false)
+                .motor_current
+                .map(|value| value.value.as_milliamps()),
+            Some(2_500)
+        );
     }
 
     #[test]
