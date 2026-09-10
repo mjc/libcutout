@@ -45,7 +45,7 @@ struct RideMapLiveContentView: View {
                     cameraRegion: cameraRegion,
                     segments: segments,
                     contextRoutes: [],
-                    fitsRouteOnChange: true,
+                    fitsRouteOnChange: false,
                     mapPosition: $mapPosition,
                     isApplyingCamera: $isApplyingCamera,
                     cameraDidChange: { _ in followsLatestPoint = false }

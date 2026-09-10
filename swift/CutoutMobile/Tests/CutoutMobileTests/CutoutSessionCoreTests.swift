@@ -426,6 +426,7 @@ final class CutoutSessionCoreTests: XCTestCase {
         let temporaryPath = FileManager.default.temporaryDirectory
             .appendingPathComponent("cutout-production-route-\(UUID().uuidString).sqlite")
             .path
+        var usesSharedDatabaseFallback = false
         var path: String
         let database: RideDatabaseHandle
         do {
@@ -434,6 +435,7 @@ final class CutoutSessionCoreTests: XCTestCase {
         } catch {
             // The Rust service is intentionally process-global. If another test acquired the
             // canonical service first, reuse that service so the full suite remains order-safe.
+            usesSharedDatabaseFallback = true
             let applicationSupport = try XCTUnwrap(
                 FileManager.default.urls(
                     for: .applicationSupportDirectory,
@@ -454,6 +456,13 @@ final class CutoutSessionCoreTests: XCTestCase {
             }
         }
         let state = MobileRideMapState(database: database)
+
+        defer {
+            if usesSharedDatabaseFallback {
+                _ = try? state.stop(atMs: 10_000)
+                _ = try? state.discard()
+            }
+        }
         let live = expectation(description: "scripted session reaches live")
         let pointAccepted = expectation(description: "ride-map point is accepted")
         let core = CutoutSessionCore(
@@ -497,6 +506,10 @@ final class CutoutSessionCoreTests: XCTestCase {
 
         let rideID = try XCTUnwrap(state.currentSnapshot()?.rideID)
         XCTAssertEqual(try state.storedPointsAfter(rideId: rideID, afterCursor: nil, limit: 10).points.count, 1)
+
+        if usesSharedDatabaseFallback == false {
+            try database.shutdown()
+        }
 
         let reopenedState = MobileRideMapState(database: try openRideDatabase(path: path))
         let reopenedPoints = try reopenedState.storedPointsAfter(

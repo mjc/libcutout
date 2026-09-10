@@ -53,6 +53,7 @@ final class CutoutAppModelTests: XCTestCase {
         for _ in 0 ..< maxTurns {
             if await condition() { return }
             await Task.yield()
+            try? await Task.sleep(for: .milliseconds(5))
         }
         XCTFail("timed out waiting for \(description)", file: file, line: line)
     }

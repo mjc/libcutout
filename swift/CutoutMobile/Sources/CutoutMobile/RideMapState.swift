@@ -961,6 +961,9 @@ public final class MobileRideMapState: @unchecked Sendable {
         }
         return core.pollLocationWrites().map(map)
     }
+    public var hasPendingLocationWrites: Bool {
+        core?.hasPendingLocationWrites() ?? false
+    }
 
     public func pointsAfter(afterCursor: UInt64?, limit: UInt32) throws -> MobileRideMapPointBatchDto {
         try withCore { map(try $0.pointsAfter(afterCursor: afterCursor, limit: limit)) }

@@ -7543,6 +7543,16 @@ impl MobileRideMapCore {
         Ok(decisions)
     }
 
+    /// Returns whether a location write is waiting for its SQLite completion.
+    pub fn has_pending_location_writes(&self) -> bool {
+        !self
+            .inner
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .pending_location_writes
+            .is_empty()
+    }
+
     ///
     /// A pending write is removed when its worker result becomes available. Results belonging to
     /// a ride that is neither active nor settling after save are discarded so a late completion

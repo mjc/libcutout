@@ -412,6 +412,7 @@ public final class CutoutSessionCore: NSObject {
     private var lastPublishedWarningSeverity: EucRideWarningSeverity?
     private let rideMapState: MobileRideMapState?
     private let phoneLocationState = MobilePhoneLocationState()
+    private var latestRideMapSnapshot: MobileRideMapSnapshotDto?
     private var rideMapWritePoller: DispatchSourceTimer?
     private var didRequestAlwaysLocationAuthorization = false
     private var didResolveBluetoothRestoration = false
@@ -421,6 +422,11 @@ public final class CutoutSessionCore: NSObject {
     private var testScriptUpdateWorkItem: DispatchWorkItem?
     private var testScriptDidReconnect = false
 #endif
+
+    deinit {
+        rideMapWritePoller?.cancel()
+    }
+
     private lazy var locationManager: CLLocationManager = {
         let manager = CLLocationManager()
         manager.delegate = self
@@ -1463,6 +1469,12 @@ public final class CutoutSessionCore: NSObject {
         publishOnMain { self.onRecord?(message) }
     }
 
+    private func recordRideMapDiagnostic(_ message: String) {
+        bleQueue.async { [weak self] in
+            self?.record(message)
+        }
+    }
+
     private func publishOnMain(_ work: @escaping () -> Void) {
         if Thread.isMainThread {
             work()
@@ -1595,6 +1607,11 @@ public final class CutoutSessionCore: NSObject {
 
     private func drainRideMapWrites() {
         guard let rideMapState, rideMapState.initializationError == nil else { return }
+        guard rideMapState.hasPendingLocationWrites
+            || rideMapState.currentSnapshot(atMs: clock.now().rawValue)?.state.isOpen == true
+        else {
+            return
+        }
         publishRideMapDecisions(rideMapState.pollLocationWrites())
     }
 
@@ -1608,11 +1625,14 @@ public final class CutoutSessionCore: NSObject {
             return
         }
 
-        onRideMapQueue {
+        let queue = rideMapQueue
+        let reference = WeakCutoutSessionCoreReference(self)
+        queue.async {
+            guard let self = reference.value else { return }
             do {
                 if let snapshot = rideMapState.currentSnapshot(atMs: receivedAt.rawValue) {
                     guard snapshot.state.isOpen else {
-                        publishRideMapSnapshot(snapshot)
+                        self.publishRideMapSnapshot(snapshot)
                         return
                     }
                 } else {
@@ -1627,27 +1647,27 @@ public final class CutoutSessionCore: NSObject {
                 )
                 _ = try rideMapState.observeTelemetry(atMs: receivedAt.rawValue)
                 if let snapshot = rideMapState.currentSnapshot(atMs: receivedAt.rawValue) {
-                    publishRideMapSnapshot(snapshot)
+                    self.publishRideMapSnapshot(snapshot)
                 }
             } catch let error as MobileRideMapError {
-                publishRideMapError(error)
-                record("ride_map_connection_error=\(error)")
+                self.publishRideMapError(error)
+                self.recordRideMapDiagnostic("ride_map_connection_error=\(error)")
             } catch {
-                record("ride_map_connection_error=\(error)")
+                self.recordRideMapDiagnostic("ride_map_connection_error=\(error)")
             }
         }
     }
 
     private func publishRideMapDecisions(_ decisions: [MobileRideMapDecisionDto]) {
         guard let rideMapState else { return }
+        let snapshot = rideMapState.currentSnapshot(atMs: clock.now().rawValue)
+            ?? latestRideMapSnapshot
         for decision in decisions {
             switch decision {
             case let .storageError(message):
                 publishRideMapError(.storageError(message))
             default:
-                guard let snapshot = rideMapState.currentSnapshot(atMs: clock.now().rawValue) else {
-                    continue
-                }
+                guard let snapshot else { continue }
                 publishOnMain {
                     self.onRideMapDecisionChange?(snapshot, decision)
                 }
@@ -1656,6 +1676,7 @@ public final class CutoutSessionCore: NSObject {
     }
 
     private func publishRideMapSnapshot(_ snapshot: MobileRideMapSnapshotDto) {
+        latestRideMapSnapshot = snapshot
         publishOnMain { self.onRideMapSnapshotChange?(snapshot) }
     }
 
@@ -2727,9 +2748,9 @@ extension CutoutSessionCore: CLLocationManagerDelegate {
                 self.publishRideMapDecisions(decisions)
             } catch let error as MobileRideMapError {
                 self.publishRideMapError(error)
-                self.record("ride_map_ingest_error=\(error)")
+                self.recordRideMapDiagnostic("ride_map_ingest_error=\(error)")
             } catch {
-                self.record("ride_map_ingest_error=\(error)")
+                self.recordRideMapDiagnostic("ride_map_ingest_error=\(error)")
             }
         }
     }

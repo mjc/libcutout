@@ -403,7 +403,12 @@ final class CutoutAppModel {
             self?.applyRideMapDecision(snapshot: snapshot, decision: decision)
         }
         self.core.onRideMapSnapshotChange = { [weak self] snapshot in
-            self?.rideMapSnapshot = snapshot
+            guard let self else { return }
+            self.rideMapSnapshot = snapshot
+            self.rideMapLiveTelemetryState = snapshot.associatedVehicle == nil
+                ? .gpsOnly
+                : .associatedNoTelemetry
+            self.updateRideMapDurationTicker()
         }
         self.core.onRideMapErrorChange = { [weak self] error in
             self?.rideMapLiveError = error
