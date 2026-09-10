@@ -348,6 +348,167 @@ final class CutoutSessionCoreTests: XCTestCase {
         XCTAssertNil(core.displayState.speed.millimetersPerSecond)
     }
 
+    func testScriptedLiveConnectionStartsRideMapAndPublishesSnapshot() {
+        let live = expectation(description: "scripted session reaches live")
+        let rideStarted = expectation(description: "ride-map recording starts")
+
+        let core = CutoutSessionCore(
+            testScript: CutoutSessionTestScript(
+                candidate: scriptedVescCandidate,
+                telemetry: TelemetrySnapshot(speed: speedValue(8_000)),
+                startsLive: true,
+                connectionDelayMilliseconds: 0
+            ),
+            rideMapState: MobileRideMapState()
+        )
+        core.onPhaseChange = { phase in
+            if phase == .live {
+                live.fulfill()
+            }
+        }
+        core.onRideMapSnapshotChange = { snapshot in
+            if snapshot.state == .active {
+                rideStarted.fulfill()
+            }
+        }
+
+        XCTAssertNil(core.rideMapStateHandle?.initializationError)
+        core.start()
+        XCTAssertTrue(core.pair(platformIdentifier: scriptedVescCandidate.platformIdentifier))
+
+        wait(for: [live, rideStarted], timeout: 1)
+        XCTAssertEqual(core.rideMapStateHandle?.currentSnapshot()?.state, .active)
+    }
+
+    func testProductionLocationPathPublishesAcceptedRideMapPoint() {
+        let live = expectation(description: "scripted session reaches live")
+        let pointAccepted = expectation(description: "ride-map point is accepted")
+
+        let core = CutoutSessionCore(
+            testScript: CutoutSessionTestScript(
+                candidate: scriptedVescCandidate,
+                telemetry: TelemetrySnapshot(speed: speedValue(8_000)),
+                startsLive: true,
+                connectionDelayMilliseconds: 0
+            ),
+            rideMapState: MobileRideMapState()
+        )
+        core.onPhaseChange = { phase in
+            if phase == .live {
+                live.fulfill()
+            }
+        }
+        core.onRideMapDecisionChange = { _, decision in
+            if case .accepted = decision {
+                pointAccepted.fulfill()
+            }
+        }
+
+        core.start()
+        XCTAssertTrue(core.pair(platformIdentifier: scriptedVescCandidate.platformIdentifier))
+        wait(for: [live], timeout: 1)
+
+        let location = CLLocation(
+            coordinate: CLLocationCoordinate2D(latitude: 39.7392, longitude: -104.9903),
+            altitude: 1_600,
+            horizontalAccuracy: 4,
+            verticalAccuracy: 4,
+            course: 0,
+            speed: 8,
+            timestamp: Date()
+        )
+        core.locationManager(CLLocationManager(), didUpdateLocations: [location])
+
+        wait(for: [pointAccepted], timeout: 2)
+    }
+
+    func testReconnectDoesNotCreateSecondAutomaticallyStartedRide() throws {
+        let live = expectation(description: "scripted session reaches live")
+        let state = MobileRideMapState()
+        let core = CutoutSessionCore(
+            testScript: CutoutSessionTestScript(
+                candidate: scriptedVescCandidate,
+                telemetry: TelemetrySnapshot(speed: speedValue(8_000)),
+                startsLive: true,
+                connectionDelayMilliseconds: 0
+            ),
+            rideMapState: state
+        )
+        var liveObserved = false
+        core.onPhaseChange = { phase in
+            if phase == .live && !liveObserved {
+                liveObserved = true
+                live.fulfill()
+            }
+        }
+
+        core.start()
+        XCTAssertTrue(core.pair(platformIdentifier: scriptedVescCandidate.platformIdentifier))
+        wait(for: [live], timeout: 1)
+
+        let rideID = try XCTUnwrap(state.currentSnapshot(atMs: 1_000)?.rideID)
+        core.applyNotificationStep(
+            CoreBluetoothSessionStep(
+                operations: [],
+                snapshot: TelemetrySnapshot(speed: speedValue(8_000))
+            ),
+            receivedAt: MonotonicMilliseconds(2_000)
+        )
+
+        XCTAssertEqual(state.currentSnapshot(atMs: 2_000)?.rideID, rideID)
+        XCTAssertEqual(state.currentSnapshot(atMs: 2_000)?.state, .active)
+    }
+
+    func testExplicitlyStoppedRideRequiresExplicitStartBeforeLaterTelemetry() throws {
+        let live = expectation(description: "scripted session reaches live")
+        let state = MobileRideMapState()
+        let core = CutoutSessionCore(
+            clock: MonotonicClock { MonotonicMilliseconds(1_000) },
+            testScript: CutoutSessionTestScript(
+                candidate: scriptedVescCandidate,
+                telemetry: TelemetrySnapshot(speed: speedValue(8_000)),
+                startsLive: true,
+                connectionDelayMilliseconds: 0
+            ),
+            rideMapState: state
+        )
+        var liveObserved = false
+        core.onPhaseChange = { phase in
+            if phase == .live && !liveObserved {
+                liveObserved = true
+                live.fulfill()
+            }
+        }
+
+        core.start()
+        XCTAssertTrue(core.pair(platformIdentifier: scriptedVescCandidate.platformIdentifier))
+        wait(for: [live], timeout: 1)
+
+        let rideID = try XCTUnwrap(state.currentSnapshot(atMs: 1_000)?.rideID)
+        _ = try state.stop(atMs: 2_000)
+        core.applyNotificationStep(
+            CoreBluetoothSessionStep(
+                operations: [],
+                snapshot: TelemetrySnapshot(speed: speedValue(8_000))
+            ),
+            receivedAt: MonotonicMilliseconds(2_100)
+        )
+        XCTAssertEqual(state.currentSnapshot(atMs: 2_100)?.rideID, rideID)
+        XCTAssertEqual(state.currentSnapshot(atMs: 2_100)?.state, .stopped)
+
+        let newRide = try state.startGpsOnly(atMs: 2_500, lastConnectedVehicle: nil)
+        core.applyNotificationStep(
+            CoreBluetoothSessionStep(
+                operations: [],
+                snapshot: TelemetrySnapshot(speed: speedValue(8_000))
+            ),
+            receivedAt: MonotonicMilliseconds(3_000)
+        )
+
+        XCTAssertEqual(state.currentSnapshot(atMs: 3_000)?.rideID, newRide.rideID)
+        XCTAssertEqual(state.currentSnapshot(atMs: 3_000)?.state, .active)
+    }
+
     func testScriptedSessionUsesTheCorePublicationPath() {
         let live = expectation(description: "scripted session reaches live")
         let core = CutoutSessionCore(
