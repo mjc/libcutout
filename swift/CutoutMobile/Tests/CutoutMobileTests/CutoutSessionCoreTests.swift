@@ -3065,7 +3065,7 @@ private func assertVescTelemetryRequests(
         return bytes
     }
     XCTAssertEqual(writes.count, expectedWriteCount, file: file, line: line)
-    XCTAssertTrue(writes.first.map { isRefloatRequest($0, command: 32) } ?? false, file: file, line: line)
+    XCTAssertTrue(writes.first.map { isRefloatRequest($0, command: 0) } ?? false, file: file, line: line)
     XCTAssertEqual(writes[1], Data([2, 1, 14, 225, 206, 3]), file: file, line: line)
     XCTAssertEqual(writes[2], Data([2, 1, 4, 64, 132, 3]), file: file, line: line)
 }
