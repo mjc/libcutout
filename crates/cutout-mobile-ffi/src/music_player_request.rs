@@ -1,6 +1,8 @@
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
-use cutout_music::player_request::{MusicPlayerRequest, MusicPlayerRequestCompletion};
+use cutout_music::player_request::{
+    MusicArtworkRequest, MusicPlayerRequest, MusicPlayerRequestCompletion,
+};
 
 /// Whether a player-state callback matched the current request.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Enum)]
@@ -15,6 +17,48 @@ pub enum MobileMusicPlayerRequestCompletion {
 #[derive(Debug, Default, uniffi::Object)]
 pub struct MobileMusicPlayerRequest {
     inner: Mutex<MusicPlayerRequest>,
+}
+
+/// Rust-owned bounded retry and identity policy for provider artwork requests.
+#[derive(Debug, Default, uniffi::Object)]
+pub struct MobileMusicArtworkRequest {
+    inner: Mutex<MusicArtworkRequest>,
+}
+
+#[uniffi::export]
+impl MobileMusicArtworkRequest {
+    /// Creates a fresh artwork request budget.
+    #[uniffi::constructor]
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Starts the next bounded attempt when no request is pending.
+    #[must_use]
+    pub fn begin(&self) -> Option<u64> {
+        self.lock_inner().begin()
+    }
+
+    /// Accepts only the current callback or deadline.
+    #[must_use]
+    pub fn complete(&self, request_id: u64) -> MobileMusicPlayerRequestCompletion {
+        match self.lock_inner().complete(request_id) {
+            MusicPlayerRequestCompletion::Accepted => MobileMusicPlayerRequestCompletion::Accepted,
+            MusicPlayerRequestCompletion::Stale => MobileMusicPlayerRequestCompletion::Stale,
+        }
+    }
+
+    /// Whether another attempt remains in the current track budget.
+    #[must_use]
+    pub fn can_retry(&self) -> bool {
+        self.lock_inner().can_retry()
+    }
+
+    /// Starts a new track or connection budget.
+    pub fn reset(&self) {
+        self.lock_inner().reset();
+    }
 }
 
 #[uniffi::export]
@@ -58,6 +102,12 @@ impl MobileMusicPlayerRequest {
     }
 }
 
+impl MobileMusicArtworkRequest {
+    fn lock_inner(&self) -> MutexGuard<'_, MusicArtworkRequest> {
+        self.inner.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+}
+
 impl MobileMusicPlayerRequest {
     fn lock_inner(&self) -> MutexGuard<'_, MusicPlayerRequest> {
         self.inner.lock().unwrap_or_else(PoisonError::into_inner)
@@ -66,7 +116,9 @@ impl MobileMusicPlayerRequest {
 
 #[cfg(test)]
 mod tests {
-    use super::{MobileMusicPlayerRequest, MobileMusicPlayerRequestCompletion};
+    use super::{
+        MobileMusicArtworkRequest, MobileMusicPlayerRequest, MobileMusicPlayerRequestCompletion,
+    };
 
     #[test]
     fn binding_rejects_late_callbacks_after_timeout_and_reset() {
@@ -106,5 +158,30 @@ mod tests {
         assert!(!request.is_stale(61_001));
         request.reset();
         assert!(!request.is_stale(u64::MAX));
+    }
+
+    #[test]
+    fn artwork_binding_bounds_retries_and_rejects_timed_out_callbacks() {
+        let request = MobileMusicArtworkRequest::new();
+        let timed_out = request.begin().expect("initial request");
+        assert_eq!(
+            request.complete(timed_out),
+            MobileMusicPlayerRequestCompletion::Accepted
+        );
+        let replacement = request.begin().expect("retry");
+        assert_eq!(
+            request.complete(timed_out),
+            MobileMusicPlayerRequestCompletion::Stale
+        );
+        assert_eq!(
+            request.complete(replacement),
+            MobileMusicPlayerRequestCompletion::Accepted
+        );
+        let final_attempt = request.begin().expect("final attempt");
+        assert_eq!(
+            request.complete(final_attempt),
+            MobileMusicPlayerRequestCompletion::Accepted
+        );
+        assert_eq!(request.begin(), None);
     }
 }

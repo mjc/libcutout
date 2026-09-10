@@ -20,6 +20,35 @@ cutout_ios_development_team() {
   printf '%s\n' "${CUTOUT_IOS_DEVELOPMENT_TEAM:-2RH32Y5HM5}"
 }
 
+cutout_spotify_client_id() {
+  local config_file client_id
+  if [[ -n "${CUTOUT_SPOTIFY_CLIENT_ID:-}" ]]; then
+    printf '%s\n' "$CUTOUT_SPOTIFY_CLIENT_ID"
+    return
+  fi
+  if [[ -n "${SPOTIFY_CLIENT_ID:-}" ]]; then
+    printf '%s\n' "$SPOTIFY_CLIENT_ID"
+    return
+  fi
+
+  config_file="${CUTOUT_SPOTIFY_CLIENT_ID_FILE:-${XDG_CONFIG_HOME:-$HOME/.config}/libcutout/spotify-client-id}"
+  if [[ -r "$config_file" ]]; then
+    IFS= read -r client_id <"$config_file" || true
+    printf '%s\n' "$client_id"
+  fi
+}
+
+cutout_require_spotify_client_id() {
+  local client_id
+  client_id="$(cutout_spotify_client_id)"
+  if [[ -z "$client_id" ]]; then
+    echo "Spotify client ID is required for an installable iOS build" >&2
+    echo "Set CUTOUT_SPOTIFY_CLIENT_ID or write it to ~/.config/libcutout/spotify-client-id" >&2
+    return 2
+  fi
+  printf '%s\n' "$client_id"
+}
+
 cutout_swift_ffi_package_dir() {
   printf '%s\n' "$1/target/swift-ffi/CutoutMobileFFI"
 }
@@ -380,13 +409,14 @@ PY
 }
 
 cutout_build_ios_app_bundle() {
-  local root project scheme destination derived_data product configuration
+  local root project scheme destination derived_data product configuration spotify_client_id
   root="$(cutout_repo_root)"
   project="${CUTOUT_IOS_APP_PROJECT:-swift/CutoutMobile/CutoutApp.xcodeproj}"
   scheme="${CUTOUT_IOS_APP_SCHEME:-CutoutApp}"
   destination="${CUTOUT_IOS_APP_BUILD_DESTINATION:-platform=macOS,id=00008103-001935121A8A001E}"
   derived_data="${CUTOUT_IOS_APP_DERIVED_DATA:-$root/target/xcode-designed-for-iphone}"
   configuration="${1:-Debug}"
+  spotify_client_id="$(cutout_spotify_client_id)"
   case "$configuration" in
     Debug|Release) ;;
     *)
@@ -407,6 +437,7 @@ cutout_build_ios_app_bundle() {
       -destination "$destination" \
       -derivedDataPath "$derived_data" \
       -configuration "$configuration" \
+      ${spotify_client_id:+SPOTIFY_CLIENT_ID="$spotify_client_id"} \
       build >&2; then
     rm -rf "$product"
     return 1
@@ -422,7 +453,7 @@ cutout_build_ios_app_bundle() {
 
 cutout_build_ios_device_app_bundle() {
   local root project scheme device_udid destination derived_data product
-  local development_team bundle_id
+  local development_team bundle_id spotify_client_id
   root="$(cutout_repo_root)"
   project="${CUTOUT_IOS_APP_PROJECT:-swift/CutoutMobile/CutoutApp.xcodeproj}"
   scheme="${CUTOUT_IOS_APP_SCHEME:-CutoutApp}"
@@ -432,6 +463,7 @@ cutout_build_ios_device_app_bundle() {
   product="$derived_data/Build/Products/Debug-iphoneos/CutoutApp.app"
   development_team="$(cutout_ios_development_team)"
   bundle_id="${CUTOUT_IOS_APP_BUNDLE_ID:-}"
+  spotify_client_id="$(cutout_require_spotify_client_id)"
 
   cutout_use_xcode_developer_dir
   cutout_ensure_swift_ffi_build_input "$root"
@@ -450,6 +482,7 @@ cutout_build_ios_device_app_bundle() {
       CODE_SIGN_IDENTITY="Apple Development" \
       ${development_team:+DEVELOPMENT_TEAM="$development_team"} \
       ${bundle_id:+PRODUCT_BUNDLE_IDENTIFIER="$bundle_id"} \
+      SPOTIFY_CLIENT_ID="$spotify_client_id" \
       build >&2; then
     rm -rf "$product"
     return 1
@@ -471,7 +504,7 @@ cutout_ios_app_bundle_identifier() {
 
 cutout_archive_ios_release_testing_app() {
   local root project scheme archive_path
-  local development_team bundle_id
+  local development_team bundle_id spotify_client_id
   local -a auth_args=()
 
   root="$(cutout_repo_root)"
@@ -481,6 +514,7 @@ cutout_archive_ios_release_testing_app() {
   archive_path="${CUTOUT_IOS_AD_HOC_ARCHIVE_PATH:-$root/target/xcode-ad-hoc/CutoutApp.xcarchive}"
   development_team="$(cutout_ios_development_team)"
   bundle_id="${CUTOUT_IOS_APP_BUNDLE_ID:-}"
+  spotify_client_id="$(cutout_require_spotify_client_id)"
 
   cutout_use_xcode_developer_dir
 
@@ -508,6 +542,7 @@ cutout_archive_ios_release_testing_app() {
       CODE_SIGN_STYLE=Automatic \
       DEVELOPMENT_TEAM="$development_team" \
       ${bundle_id:+PRODUCT_BUNDLE_IDENTIFIER="$bundle_id"} \
+      SPOTIFY_CLIENT_ID="$spotify_client_id" \
       archive >&2; then
     rm -rf "$archive_path"
     return 1

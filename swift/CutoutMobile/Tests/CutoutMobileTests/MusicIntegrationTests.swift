@@ -28,7 +28,7 @@ final class MusicIntegrationTests: XCTestCase {
             ),
             positionMilliseconds: 1_777_678,
             durationMilliseconds: 3_783_235,
-            observedAtMs: 100,
+            observedAtMs: 1_100,
             capabilities: .init(previous: false, play: false, pause: true, next: true, openProvider: true)
         )
         _ = try coordinator.ingest(snapshot: snapshot, wallClockAtMs: 1_700_000_000_000, clockUncertaintyMs: 1)
@@ -457,6 +457,72 @@ final class MusicIntegrationTests: XCTestCase {
         XCTAssertEqual(loadCount, 2)
         XCTAssertNil(cache.artwork(for: nil) { loadCount += 1; return artwork })
         XCTAssertEqual(loadCount, 2)
+    }
+
+    func testArtworkCacheRejectsOldTrackAfterIdentityChanges() {
+        var cache = MusicArtworkCache()
+        let first = MusicArtwork(data: Data([1, 2, 3]))!
+        let second = MusicArtwork(data: Data([4, 5, 6]))!
+
+        cache.insert(first, for: "spotify:track:first")
+        XCTAssertEqual(cache.cachedArtwork(for: "spotify:track:first"), first)
+        XCTAssertNil(cache.cachedArtwork(for: "spotify:track:second"))
+
+        cache.insert(second, for: "spotify:track:second")
+        XCTAssertNil(cache.cachedArtwork(for: "spotify:track:first"))
+        XCTAssertEqual(cache.cachedArtwork(for: "spotify:track:second"), second)
+    }
+
+    @MainActor
+    func testProviderArtworkReachesPresentationOnlyNowPlaying() throws {
+        let rideMapState = MobileRideMapState()
+        _ = try rideMapState.startGpsOnly(atMs: 1_000, lastConnectedVehicle: nil)
+        let coordinator = MusicIntegrationCoordinator(rideMapState: rideMapState)
+        try coordinator.setHistoryPolicy(.humanReadable)
+        let snapshot = MobileMusicSnapshotDto(
+            provider: .spotify,
+            sessionId: "spotify-app-remote",
+            state: .playing,
+            item: .init(identifier: "spotify:track:artwork", title: "Track", artist: "Artist"),
+            positionMilliseconds: 1,
+            durationMilliseconds: 2,
+            observedAtMs: 1_100,
+            capabilities: .init(previous: true, play: false, pause: true, next: true, openProvider: true)
+        )
+        let artwork = Data([1, 2, 3])
+
+        let firstOutcome = try coordinator.ingest(
+            observation: MusicProviderObservation(snapshot: snapshot, artworkData: artwork),
+            wallClockAtMs: 1_700_000_000_000,
+            clockUncertaintyMs: 1
+        )
+
+        XCTAssertEqual(firstOutcome, .recorded)
+        XCTAssertEqual(coordinator.recordedEvents.count, 1)
+        XCTAssertEqual(coordinator.nowPlaying?.artwork?.data, artwork)
+        let recordedEvents = coordinator.recordedEvents
+
+        let updatedSnapshot = MobileMusicSnapshotDto(
+            provider: snapshot.provider,
+            sessionId: snapshot.sessionId,
+            state: snapshot.state,
+            item: snapshot.item,
+            positionMilliseconds: 2,
+            durationMilliseconds: snapshot.durationMilliseconds,
+            observedAtMs: 1_200,
+            capabilities: snapshot.capabilities
+        )
+        let updatedArtwork = Data([4, 5, 6])
+        let secondOutcome = try coordinator.ingest(
+            observation: MusicProviderObservation(snapshot: updatedSnapshot, artworkData: updatedArtwork),
+            wallClockAtMs: 1_700_000_000_100,
+            clockUncertaintyMs: 1
+        )
+
+        XCTAssertNil(secondOutcome)
+        XCTAssertEqual(coordinator.nowPlaying?.artwork?.data, updatedArtwork)
+        XCTAssertEqual(coordinator.recordedEvents, recordedEvents)
+        XCTAssertEqual(coordinator.recordedEvents.count, 1)
     }
 
     private func nowPlaying(trackID: String) -> MusicNowPlaying {
