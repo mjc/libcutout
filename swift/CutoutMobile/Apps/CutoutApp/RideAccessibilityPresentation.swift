@@ -30,6 +30,8 @@ extension VescRideWarning {
             localizedAppText("accessibility.vesc_warning.current")
         case .dutyPushback:
             localizedAppText("accessibility.vesc_warning.duty_pushback")
+        case .speedPushback:
+            localizedAppText("accessibility.vesc_warning.speed_pushback")
         case .temperaturePushback:
             localizedAppText("accessibility.vesc_warning.temperature_pushback")
         case .wheelslip:
@@ -40,6 +42,8 @@ extension VescRideWarning {
             localizedAppText("accessibility.vesc_warning.low_battery")
         case .error:
             localizedAppText("accessibility.vesc_warning.error")
+        case .bmsConnection:
+            localizedAppText("accessibility.vesc_warning.bms_connection")
         case .none, .unknown:
             nil
         }

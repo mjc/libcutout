@@ -1032,6 +1032,40 @@ fn connection_summary_selects_session_endpoints() {
     );
 }
 
+#[test]
+fn connection_summary_strict_vesc_selector_rejects_decoy_endpoints() {
+    let service = Uuid::from_u128(0x6e400001_b5a3_f393_e0a9_e50e24dcca9e);
+    let summary = crate::ConnectionSummary {
+        observation: crate::PeripheralObservation {
+            identifier: "vesc".to_owned(),
+            address: None,
+            name: Some("VESC".to_owned()),
+            rssi: Some(rssi(-40)),
+            advertised_services: smallvec![],
+            manufacturer_data: crate::ManufacturerDataSummaries::new(),
+        },
+        services: vec![crate::ServiceSummary {
+            uuid: service,
+            primary: true,
+            characteristics: vec![
+                crate::CharacteristicSummary {
+                    uuid: Uuid::from_u128(0x6e400002_b5a3_f393_e0a9_e50e24dcca9e),
+                    service_uuid: service,
+                    properties: CharPropFlags::WRITE,
+                },
+                crate::CharacteristicSummary {
+                    uuid: Uuid::from_u128(0x6e400003_b5a3_f393_e0a9_e50e24dcca9e),
+                    service_uuid: service,
+                    properties: CharPropFlags::NOTIFY,
+                },
+            ]
+            .into(),
+        }]
+        .into(),
+    };
+    assert!(summary.select_vesc_nordic_endpoints().is_none());
+}
+
 #[tokio::test]
 async fn drive_session_reports_hints_only_identity_from_host_observer() {
     let peripheral = RecordingPeripheral::default();
@@ -1223,6 +1257,119 @@ async fn drive_session_accepts_split_write_and_notify_channels() {
             Bytes::from_static(b"split:write"),
             WriteMode::WithoutResponse,
         )]
+    );
+}
+
+#[tokio::test]
+async fn drive_session_rejects_same_characteristic_from_wrong_service() {
+    let notify = Uuid::from_u128(0x0000_ffe1_0000_1000_8000_0080_5f9b_34fb);
+    let expected_service = Uuid::from_u128(0x0000_ffe0_0000_1000_8000_0080_5f9b_34fb);
+    let decoy_service = Uuid::from_u128(0x0000_fff0_0000_1000_8000_0080_5f9b_34fb);
+    let peripheral =
+        RecordingPeripheral::with_notification(crate::BtleNotification::from_raw_bytes(
+            notify,
+            decoy_service,
+            Bytes::from_static(b"\x13\x37"),
+        ));
+    let mut session = BridgeSession::default();
+    let summary = shared_write_notify_summary("VESC BLE UART");
+
+    let report = crate::drive_session_with_channel_pair(
+        &peripheral,
+        &mut session,
+        crate::SessionChannelPair::new(
+            GattChannel::from_bytes([0xA1; 16]),
+            GattChannel::from_bytes([0xA1; 16]),
+        )
+        .with_endpoint_admission(),
+        &summary,
+        summary
+            .select_session_endpoints()
+            .expect("summary has session endpoints"),
+        crate::NotificationWindow::from_millis(10),
+        &[],
+    )
+    .await
+    .expect("bridge records rejected notifications");
+
+    assert_eq!(
+        *session
+            .notification_count
+            .lock()
+            .expect("notification count"),
+        0
+    );
+    assert!(report.events.iter().any(|event| matches!(
+        event,
+        crate::SessionBridgeEvent::NotificationIngest {
+            outcome: NotificationIngestOutcome::Ignored { reason, .. },
+            ..
+        } if *reason == cutout_core::IgnoredNotificationReason::WrongChannel
+    )));
+    assert_eq!(
+        summary
+            .select_session_endpoints()
+            .unwrap()
+            .notify
+            .unwrap()
+            .service_uuid,
+        expected_service
+    );
+}
+
+#[tokio::test]
+async fn drive_session_emits_deadline_ticks_during_quiet_notifications() {
+    let peripheral = RecordingPeripheral::with_open_notifications(Vec::new());
+    let mut session = TickCountingSession::default();
+    let summary = shared_write_notify_summary("VESC BLE UART");
+
+    crate::drive_session(
+        &peripheral,
+        &mut session,
+        GattChannel::from_bytes([0xA1; 16]),
+        &summary,
+        summary
+            .select_session_endpoints()
+            .expect("summary has session endpoints"),
+        crate::NotificationWindow::from_millis(250),
+    )
+    .await
+    .expect("quiet notification window completes");
+
+    let ticks = session.ticks.lock().expect("tick log");
+    assert!(
+        ticks.len() >= 2,
+        "quiet windows must receive recurring ticks"
+    );
+    assert!(ticks.iter().any(|tick| tick.get() >= 100));
+}
+
+#[tokio::test]
+async fn drive_session_rebases_deadline_after_transport_submission() {
+    let peripheral = RecordingPeripheral::with_open_notifications_and_write_delay(
+        Vec::new(),
+        Duration::from_millis(150),
+    );
+    let mut session = WriteOnTickSession { ticks: 0 };
+    let summary = shared_write_notify_summary("VESC BLE UART");
+
+    crate::drive_session(
+        &peripheral,
+        &mut session,
+        GattChannel::from_bytes([0xA1; 16]),
+        &summary,
+        summary
+            .select_session_endpoints()
+            .expect("summary has session endpoints"),
+        crate::NotificationWindow::from_millis(320),
+    )
+    .await
+    .expect("slow transport window completes");
+
+    assert_eq!(
+        peripheral.writes.lock().expect("write log").len(),
+        1,
+        "a delayed submission must start the next deadline after completion"
     );
 }
 
@@ -2091,18 +2238,27 @@ async fn capture_reconnecting_session_retries_after_external_notification_idle()
     assert_eq!(*session.link_ups.lock().expect("link ups"), 2);
     assert_eq!(*session.link_downs.lock().expect("link downs"), 2);
     assert_eq!(*first.disconnects.lock().expect("first disconnects"), 0);
+    let first_link_down_ms = capture
+        .records
+        .iter()
+        .find_map(|record| match record {
+            crate::SessionCaptureRecord::LinkDown { monotonic_ms } => Some(monotonic_ms.get()),
+            _ => None,
+        })
+        .expect("idle timeout records link down");
+    assert!(first_link_down_ms >= 1_500);
     assert!(capture.records.iter().any(|record| matches!(
         record,
         crate::SessionCaptureRecord::LinkDown {
             monotonic_ms,
-        } if *monotonic_ms == crate::MonotonicMs::new(3)
+        } if monotonic_ms.get() == first_link_down_ms
     )));
     assert!(capture.records.iter().any(|record| matches!(
         record,
         crate::SessionCaptureRecord::Link {
             monotonic_ms,
             ..
-        } if *monotonic_ms == crate::MonotonicMs::new(4)
+        } if monotonic_ms.get() > first_link_down_ms
     )));
 }
 
@@ -2157,6 +2313,59 @@ async fn capture_reconnecting_session_cancels_commands_after_reconnect() {
 struct BridgeSession {
     notification_count: Arc<Mutex<usize>>,
     last_notification_channel: Arc<Mutex<Option<GattChannel>>>,
+}
+
+#[derive(Default)]
+struct TickCountingSession {
+    ticks: Arc<Mutex<Vec<cutout_core::MonotonicTimestamp>>>,
+}
+
+struct WriteOnTickSession {
+    ticks: usize,
+}
+
+impl ProtocolSession for WriteOnTickSession {
+    fn handle(&mut self, input: SessionInput<'_>, output: &mut Vec<SessionOutput>) {
+        match input {
+            SessionInput::LinkUp(_) => {
+                output.push(SessionOutput::Transport(TransportAction::Subscribe {
+                    channel: GattChannel::from_bytes([0xA1; 16]),
+                }))
+            }
+            SessionInput::Tick { .. } => {
+                self.ticks += 1;
+                if self.ticks > 1 {
+                    output.push(SessionOutput::Transport(TransportAction::Write {
+                        channel: GattChannel::from_bytes([0xA1; 16]),
+                        bytes: cutout_core::WritePayload::try_from_slice(b"tick")
+                            .expect("fixture payload fits"),
+                        mode: WriteMode::WithoutResponse,
+                    }))
+                }
+            }
+            SessionInput::LinkDown
+            | SessionInput::Notification { .. }
+            | SessionInput::Command(_) => {}
+        }
+    }
+}
+
+impl ProtocolSession for TickCountingSession {
+    fn handle(&mut self, input: SessionInput<'_>, output: &mut Vec<SessionOutput>) {
+        match input {
+            SessionInput::LinkUp(_) => {
+                output.push(SessionOutput::Transport(TransportAction::Subscribe {
+                    channel: GattChannel::from_bytes([0xA1; 16]),
+                }))
+            }
+            SessionInput::Tick { monotonic_ms } => {
+                self.ticks.lock().expect("tick log").push(monotonic_ms)
+            }
+            SessionInput::LinkDown
+            | SessionInput::Notification { .. }
+            | SessionInput::Command(_) => {}
+        }
+    }
 }
 
 #[derive(Default)]
@@ -2482,6 +2691,7 @@ struct RecordingPeripheral {
     disconnects: Arc<Mutex<usize>>,
     mtu: u16,
     keep_notifications_open: bool,
+    write_delay: Duration,
 }
 
 impl Default for RecordingPeripheral {
@@ -2493,6 +2703,7 @@ impl Default for RecordingPeripheral {
             disconnects: Arc::new(Mutex::new(0)),
             mtu: 185,
             keep_notifications_open: false,
+            write_delay: Duration::ZERO,
         }
     }
 }
@@ -2520,6 +2731,18 @@ impl RecordingPeripheral {
         Self {
             notifications: Arc::new(Mutex::new(notifications)),
             keep_notifications_open: true,
+            ..Self::default()
+        }
+    }
+
+    fn with_open_notifications_and_write_delay(
+        notifications: Vec<crate::BtleNotification>,
+        write_delay: Duration,
+    ) -> Self {
+        Self {
+            notifications: Arc::new(Mutex::new(notifications)),
+            keep_notifications_open: true,
+            write_delay,
             ..Self::default()
         }
     }
@@ -2602,6 +2825,9 @@ impl crate::SessionPeripheral for RecordingPeripheral {
         chunk: crate::BtleWriteChunk<'_>,
         mode: WriteMode,
     ) -> Result<(), crate::BtleError> {
+        if !self.write_delay.is_zero() {
+            tokio::time::sleep(self.write_delay).await;
+        }
         self.writes.lock().expect("write log").push((
             characteristic.uuid,
             Bytes::copy_from_slice(chunk.as_slice()),

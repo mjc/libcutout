@@ -36,6 +36,12 @@ const REFLOAT_MAX_FRAME_LEN: usize = 512;
 const INFO_STRING_LEN: usize = 20;
 const INFO_V2_BODY_LEN: usize = 58;
 const REFLOAT_BEEP_DUTY: u8 = 6;
+const REFLOAT_SAT_PUSHBACK_SPEED: u8 = 5;
+const REFLOAT_SAT_PUSHBACK_ERROR: u8 = 7;
+const REFLOAT_BEEP_PUSHBACK_SPEED: u8 = 11;
+const REFLOAT_BEEP_BMS_ERROR: u8 = 17;
+const REFLOAT_BEEP_BOARD_IDLE: u8 = 9;
+const REFLOAT_BEEP_FIRMWARE_FAULT: u8 = 19;
 
 /// Refloat read-only package request.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -211,36 +217,44 @@ impl RefloatRealtimeData {
     ) -> TelemetryDelta {
         let stop_reason = refloat_stop_reason(self.stop_condition);
         TelemetryDelta {
-            speed: self.value("motor.speed").map(|metres_per_second| {
-                Measured::reported(Speed::from_metres_per_second(metres_per_second))
-            }),
+            speed: self
+                .value("speed")
+                .or_else(|| self.value("motor.speed"))
+                .map(|kilometres_per_hour| {
+                    Measured::reported(Speed::from_metres_per_second(kilometres_per_hour / 3.6))
+                }),
             battery_current: reports_battery_current
-                .then(|| self.value("motor.batt_current"))
+                .then(|| self.value_with_legacy("batt_current", "motor.batt_current"))
                 .flatten()
                 .map(|amps| Measured::reported(BatteryCurrent::from_milliamps(milliscale(amps)))),
             voltage: self
-                .value("motor.batt_voltage")
+                .value_with_legacy("batt_voltage", "motor.batt_voltage")
                 .map(|volts| Measured::reported(Voltage::from_millivolts(milliscale(volts)))),
             motor_current: self
-                .value("motor.current")
+                .value_with_legacy("current", "filt_current")
+                .or_else(|| self.value_with_legacy("motor.current", "motor.filt_current"))
                 .map(|amps| Measured::reported(PhaseCurrent::from_milliamps(milliscale(amps)))),
-            controller_temperature: self.value("motor.mosfet_temp").map(|celsius| {
-                Measured::reported(Temperature::from_millicelsius(milliscale(celsius)))
-            }),
-            motor_temperature: self.value("motor.motor_temp").map(|celsius| {
-                Measured::reported(Temperature::from_millicelsius(milliscale(celsius)))
-            }),
+            controller_temperature: self
+                .value_with_legacy("mosfet_temp", "motor.mosfet_temp")
+                .map(|celsius| {
+                    Measured::reported(Temperature::from_millicelsius(milliscale(celsius)))
+                }),
+            motor_temperature: self
+                .value_with_legacy("motor_temp", "motor.motor_temp")
+                .map(|celsius| {
+                    Measured::reported(Temperature::from_millicelsius(milliscale(celsius)))
+                }),
             pwm: self
-                .value("motor.duty_cycle")
+                .value_with_legacy("duty_cycle", "motor.duty_cycle")
                 .map(|duty| Measured::reported(DutyCycle::from_permille(permille(duty)))),
             pitch: self
-                .value("imu.pitch")
+                .value_with_legacy("pitch", "imu.pitch")
                 .map(|degrees| Measured::reported(Angle::from_millidegrees(milliscale(degrees)))),
             balance_angle: self
-                .value("imu.balance_pitch")
+                .value_with_legacy("balance_pitch", "imu.balance_pitch")
                 .map(|degrees| Measured::reported(Angle::from_millidegrees(milliscale(degrees)))),
             roll: self
-                .value("imu.roll")
+                .value_with_legacy("roll", "imu.roll")
                 .map(|degrees| Measured::reported(Angle::from_millidegrees(milliscale(degrees)))),
             operating_state: Some(refloat_operating_state(self.package_state, self.charging)),
             operating_mode: Some(refloat_operating_mode(self.package_mode, self.darkride)),
@@ -257,8 +271,12 @@ impl RefloatRealtimeData {
             footpad: Some(FootpadTelemetry {
                 state: self.footpad_state,
                 contact_state: refloat_footpad_contact_state(self.footpad_state),
-                adc1_milliunits: self.value("footpad.adc1").map(milliscale),
-                adc2_milliunits: self.value("footpad.adc2").map(milliscale),
+                adc1_milliunits: self
+                    .value_with_legacy("adc_left", "footpad.adc1")
+                    .map(milliscale),
+                adc2_milliunits: self
+                    .value_with_legacy("adc_right", "footpad.adc2")
+                    .map(milliscale),
             }),
             ..TelemetryDelta::empty(at_ms)
         }
@@ -270,6 +288,10 @@ impl RefloatRealtimeData {
             .chain(self.runtime_values.iter())
             .find(|value| value.id.as_str() == id)
             .map(|value| value.value)
+    }
+
+    fn value_with_legacy(&self, current: &str, legacy: &str) -> Option<f32> {
+        self.value(current).or_else(|| self.value(legacy))
     }
 }
 
@@ -297,7 +319,9 @@ const fn refloat_operating_mode(package_mode: u8, darkride: bool) -> RideOperati
 
 const fn refloat_ride_warning(sat: u8, beep_reason: u8) -> RideWarning {
     match sat {
+        REFLOAT_SAT_PUSHBACK_SPEED => return RideWarning::SpeedPushback,
         6 => return RideWarning::DutyPushback,
+        REFLOAT_SAT_PUSHBACK_ERROR => return RideWarning::Error,
         10 => return RideWarning::HighVoltage,
         11 => return RideWarning::LowVoltage,
         12 => return RideWarning::TemperaturePushback,
@@ -312,7 +336,11 @@ const fn refloat_ride_warning(sat: u8, beep_reason: u8) -> RideWarning {
         REFLOAT_BEEP_DUTY => RideWarning::DutyPushback,
         7 => RideWarning::Sensors,
         8 => RideWarning::LowBattery,
-        10 => RideWarning::Error,
+        10 | REFLOAT_BEEP_FIRMWARE_FAULT => RideWarning::Error,
+        REFLOAT_BEEP_BOARD_IDLE => RideWarning::None,
+        REFLOAT_BEEP_PUSHBACK_SPEED => RideWarning::SpeedPushback,
+        REFLOAT_BEEP_BMS_ERROR => RideWarning::BmsConnection,
+        _ if sat != 0 || beep_reason != 0 => RideWarning::Unknown,
         _ => RideWarning::None,
     }
 }
@@ -425,6 +453,14 @@ impl RefloatStreamDecoder {
         self.field_ids.as_ref()
     }
 
+    /// Returns the number of bytes needed to complete the buffered frame.
+    pub(crate) fn pending_frame_bytes(&self) -> Option<usize> {
+        self.header_frame_len()
+            .ok()
+            .flatten()
+            .map(|frame_len| frame_len.saturating_sub(self.buffer.len()))
+    }
+
     /// Feeds BLE UART bytes and returns decoded Refloat replies.
     ///
     /// # Errors
@@ -436,16 +472,24 @@ impl RefloatStreamDecoder {
         bytes: &[u8],
         mut on_reply: impl FnMut(RefloatReply<'_>),
     ) -> Result<RefloatStreamResult, RefloatCodecError> {
-        for byte in bytes {
-            self.buffer
-                .try_push(*byte)
-                .map_err(|_byte| RefloatCodecError::FrameTooLong)?;
-        }
-
         let mut reply_count = 0;
-        while let Some(frame) = self.take_next_frame()? {
-            self.decode_frame(&frame, &mut on_reply)?;
-            reply_count += 1;
+        let mut first_error = None;
+        for byte in bytes {
+            if self.buffer.try_push(*byte).is_err() {
+                self.buffer.remove(0);
+                self.buffer
+                    .try_push(*byte)
+                    .expect("removing one byte makes room in the bounded buffer");
+                first_error.get_or_insert(RefloatCodecError::FrameTooLong);
+            }
+            self.decode_pending(&mut on_reply, &mut reply_count, &mut first_error);
+        }
+        self.decode_pending(&mut on_reply, &mut reply_count, &mut first_error);
+
+        if reply_count == 0 {
+            if let Some(error) = first_error {
+                return Err(error);
+            }
         }
 
         Ok(if reply_count == 0 {
@@ -453,6 +497,29 @@ impl RefloatStreamDecoder {
         } else {
             RefloatStreamResult::Replies(reply_count)
         })
+    }
+
+    fn decode_pending(
+        &mut self,
+        on_reply: &mut impl FnMut(RefloatReply<'_>),
+        reply_count: &mut usize,
+        first_error: &mut Option<RefloatCodecError>,
+    ) {
+        loop {
+            match self.take_next_frame() {
+                Ok(Some(frame)) => match self.decode_frame(&frame, on_reply) {
+                    Ok(()) => *reply_count += 1,
+                    Err(error) if is_foreign_frame(error) => {}
+                    Err(error) => {
+                        first_error.get_or_insert(error);
+                    }
+                },
+                Ok(None) => break,
+                Err(error) => {
+                    first_error.get_or_insert(error);
+                }
+            }
+        }
     }
 
     fn take_next_frame(
@@ -466,6 +533,32 @@ impl RefloatStreamDecoder {
             self.buffer.remove(0);
         }
 
+        let frame_len = match self.header_frame_len() {
+            Ok(Some(frame_len)) => frame_len,
+            Ok(None) => return Ok(None),
+            Err(error) => {
+                self.buffer.remove(0);
+                return Err(error);
+            }
+        };
+        if self.buffer.len() < frame_len {
+            return Ok(None);
+        }
+        if self.buffer.get(frame_len - 1).copied() != Some(FRAME_END) {
+            self.buffer.remove(0);
+            return Err(RefloatCodecError::MalformedFrame);
+        }
+
+        let mut frame = ArrayVec::new();
+        for byte in self.buffer.drain(0..frame_len) {
+            frame
+                .try_push(byte)
+                .map_err(|_byte| RefloatCodecError::FrameTooLong)?;
+        }
+        Ok(Some(frame))
+    }
+
+    fn header_frame_len(&self) -> Result<Option<usize>, RefloatCodecError> {
         let Some(start) = self.buffer.first().copied() else {
             return Ok(None);
         };
@@ -493,21 +586,7 @@ impl RefloatStreamDecoder {
         if payload_len == 0 || header_len >= frame_len || frame_len > REFLOAT_MAX_FRAME_LEN {
             return Err(RefloatCodecError::FrameTooLong);
         }
-        if self.buffer.len() < frame_len {
-            return Ok(None);
-        }
-        if self.buffer.get(frame_len - 1).copied() != Some(FRAME_END) {
-            self.buffer.remove(0);
-            return Err(RefloatCodecError::MalformedFrame);
-        }
-
-        let mut frame = ArrayVec::new();
-        for byte in self.buffer.drain(0..frame_len) {
-            frame
-                .try_push(byte)
-                .map_err(|_byte| RefloatCodecError::FrameTooLong)?;
-        }
-        Ok(Some(frame))
+        Ok(Some(frame_len))
     }
 
     fn decode_frame(
@@ -581,6 +660,15 @@ impl RefloatStreamDecoder {
         }
         Ok(())
     }
+}
+
+const fn is_foreign_frame(error: RefloatCodecError) -> bool {
+    matches!(
+        error,
+        RefloatCodecError::UnexpectedVescCommand
+            | RefloatCodecError::UnexpectedPackageInterface
+            | RefloatCodecError::UnsupportedCommand
+    )
 }
 
 /// Encodes a Refloat read-only request as a complete VESC UART frame.
@@ -718,10 +806,7 @@ fn parse_realtime_data(
     let mask = cursor.read_u8()?;
     let extra_flags = cursor.read_u8()?;
     let time_ticks = cursor.read_u32()?;
-    let state_and_mode = cursor.read_u8()?;
-    let flags_and_footpad = cursor.read_u8()?;
-    let stop_cond_and_sat = cursor.read_u8()?;
-    let beep_reason = cursor.read_u8()?;
+    let state_flags = cursor.read_u32()?;
     let values = read_values(&mut cursor, &ids.always)?;
     let runtime_values = if mask & 0x1 == 0x1 {
         read_values(&mut cursor, &ids.runtime)?
@@ -751,16 +836,16 @@ fn parse_realtime_data(
         mask,
         extra_flags,
         time_ticks,
-        package_state: state_and_mode & 0x0f,
-        package_mode: (state_and_mode >> 4) & 0x0f,
-        footpad_state: flags_and_footpad >> 6,
-        charging: flags_and_footpad & 0x20 == 0x20,
-        fatal_error: (flags_and_footpad & 0x10 == 0x10).then_some(RefloatFatalError::FirmwareFault),
-        darkride: flags_and_footpad & 0x02 == 0x02,
-        wheelslip: flags_and_footpad & 0x01 == 0x01,
-        stop_condition: stop_cond_and_sat & 0x0f,
-        sat: stop_cond_and_sat >> 4,
-        beep_reason,
+        package_state: ((state_flags >> 24) & 0x0f) as u8,
+        package_mode: ((state_flags >> 28) & 0x0f) as u8,
+        footpad_state: ((state_flags >> 22) & 0x03) as u8,
+        charging: state_flags & (1 << 21) != 0,
+        fatal_error: (state_flags & (1 << 20) != 0).then_some(RefloatFatalError::FirmwareFault),
+        darkride: state_flags & (1 << 17) != 0,
+        wheelslip: state_flags & (1 << 16) != 0,
+        stop_condition: ((state_flags >> 8) & 0x0f) as u8,
+        sat: ((state_flags >> 12) & 0x0f) as u8,
+        beep_reason: (state_flags & 0xff) as u8,
         values,
         runtime_values,
         charging_current,
@@ -860,7 +945,6 @@ fn float16_to_f32(bits: u16) -> f32 {
             frac &= 0x03ff;
             sign | (u32::try_from(exp + 127).unwrap_or(0) << 23) | (frac << 13)
         }
-        0x1f => sign | 0x7f80_0000 | (fraction << 13),
         _ => sign | ((exponent + 112) << 23) | (fraction << 13),
     };
     f32::from_bits(output)
@@ -1070,7 +1154,10 @@ mod tests {
         assert_eq!(data.package_state, 3);
         assert_eq!(data.package_mode, 1);
         assert_eq!(data.footpad_state, 3);
+        assert!(!data.charging);
         assert_eq!(data.fatal_error, Some(RefloatFatalError::FirmwareFault));
+        assert!(!data.darkride);
+        assert!(!data.wheelslip);
         assert_eq!(data.stop_condition, 6);
         assert_eq!(data.sat, 10);
         assert_eq!(data.beep_reason, 8);
@@ -1125,10 +1212,96 @@ mod tests {
         assert_eq!(
             data.to_delta(MonotonicTimestamp::from_milliseconds(42), true)
                 .speed,
-            Some(Measured::reported(Speed::from_millimetres_per_second(
-                1_000
-            )))
+            Some(Measured::reported(Speed::from_millimetres_per_second(278)))
         );
+    }
+
+    #[test]
+    fn realtime_data_maps_refloat_1_3_short_field_ids() {
+        let mut values = ArrayVec::new();
+        for (id, value) in [
+            ("speed", 36.0),
+            ("current", 3.0),
+            ("batt_current", -4.0),
+            ("batt_voltage", 75.5),
+            ("mosfet_temp", 32.0),
+            ("motor_temp", 48.0),
+            ("duty_cycle", 0.25),
+            ("pitch", -1.5),
+            ("balance_pitch", 0.5),
+            ("roll", 2.0),
+            ("adc_left", 10.0),
+            ("adc_right", 11.0),
+        ] {
+            values.push(RefloatRealtimeValue {
+                id: field_id(id),
+                value,
+            });
+        }
+        let data = RefloatRealtimeData {
+            mask: 0,
+            extra_flags: 0,
+            time_ticks: 0,
+            package_state: REFLOAT_PACKAGE_STATE_RUNNING,
+            package_mode: 0,
+            footpad_state: 3,
+            charging: false,
+            fatal_error: None,
+            darkride: false,
+            wheelslip: false,
+            stop_condition: 0,
+            sat: 0,
+            beep_reason: 0,
+            values,
+            runtime_values: ArrayVec::new(),
+            charging_current: None,
+            charging_voltage: None,
+            active_alert_mask_low: None,
+            active_alert_mask_high: None,
+            firmware_fault_code: None,
+        };
+
+        let delta = data.to_delta(MonotonicTimestamp::from_milliseconds(42), true);
+        assert_eq!(
+            delta
+                .speed
+                .map(|value| value.value.as_millimetres_per_second()),
+            Some(10_000)
+        );
+        assert_eq!(
+            delta.voltage.map(|value| value.value.as_millivolts()),
+            Some(75_500)
+        );
+        assert_eq!(
+            delta.pitch.map(|value| value.value.as_millidegrees()),
+            Some(-1_500)
+        );
+        assert_eq!(delta.footpad.unwrap().adc1_milliunits, Some(10_000));
+        assert_eq!(delta.footpad.unwrap().adc2_milliunits, Some(11_000));
+    }
+
+    #[test]
+    fn realtime_data_uses_filtered_current_when_raw_current_is_missing() {
+        let mut data = realtime_data_fixture();
+        data.values.push(RefloatRealtimeValue {
+            id: field_id("filt_current"),
+            value: 2.5,
+        });
+
+        assert_eq!(
+            data.to_delta(MonotonicTimestamp::from_milliseconds(42), false)
+                .motor_current
+                .map(|value| value.value.as_milliamps()),
+            Some(2_500)
+        );
+    }
+
+    #[test]
+    fn finite_refloat_float16_keeps_extended_exponent_values_finite() {
+        assert_eq!(float16_to_f32(0x7c00), 65_536.0);
+        assert_eq!(float16_to_f32(0x7fff), 131_008.0);
+        assert_eq!(float16_to_f32(0xfc00), -65_536.0);
+        assert_eq!(float16_to_f32(0xffff), -131_008.0);
     }
 
     #[test]
@@ -1259,11 +1432,15 @@ mod tests {
             (4, RideWarning::MotorTemperature),
             (5, RideWarning::Current),
             (REFLOAT_BEEP_DUTY, RideWarning::DutyPushback),
+            (REFLOAT_BEEP_PUSHBACK_SPEED, RideWarning::SpeedPushback),
+            (REFLOAT_BEEP_BMS_ERROR, RideWarning::BmsConnection),
             (7, RideWarning::Sensors),
             (8, RideWarning::LowBattery),
             (9, RideWarning::None),
             (10, RideWarning::Error),
-            (u8::MAX, RideWarning::None),
+            (12, RideWarning::Unknown),
+            (19, RideWarning::Error),
+            (u8::MAX, RideWarning::Unknown),
         ] {
             data.beep_reason = beep_reason;
             let delta = data.to_delta(MonotonicTimestamp::from_milliseconds(43), false);
@@ -1287,7 +1464,9 @@ mod tests {
 
         data.wheelslip = false;
         for (sat, warning) in [
+            (REFLOAT_SAT_PUSHBACK_SPEED, RideWarning::SpeedPushback),
             (6, RideWarning::DutyPushback),
+            (REFLOAT_SAT_PUSHBACK_ERROR, RideWarning::Error),
             (10, RideWarning::HighVoltage),
             (11, RideWarning::LowVoltage),
             (12, RideWarning::TemperaturePushback),
@@ -1362,6 +1541,37 @@ mod tests {
         );
     }
 
+    #[test]
+    fn ignores_foreign_vesc_frame_and_decodes_following_refloat_frame() {
+        let foreign = [2, 1, 1, 0x10, 0x21, 3];
+        let refloat = custom_app_frame(&ids_payload());
+        let mut bytes = Vec::from(foreign);
+        bytes.extend_from_slice(&refloat);
+        let mut decoder = RefloatStreamDecoder::new();
+
+        let (_, replies) = feed_captured(&mut decoder, &bytes).expect("mixed stream decodes");
+
+        assert!(matches!(
+            replies.as_slice(),
+            [CapturedReply::RealtimeFieldIds(_)]
+        ));
+    }
+
+    #[test]
+    fn oversized_frame_does_not_block_following_refloat_frame() {
+        let refloat = custom_app_frame(&ids_payload());
+        let mut bytes = vec![FRAME_START_LONG, 0xff, 0xff];
+        bytes.extend_from_slice(&refloat);
+        let mut decoder = RefloatStreamDecoder::new();
+
+        let (_, replies) = feed_captured(&mut decoder, &bytes).expect("decoder recovers");
+
+        assert!(matches!(
+            replies.as_slice(),
+            [CapturedReply::RealtimeFieldIds(_)]
+        ));
+    }
+
     fn custom_app_frame(app_data: &[u8]) -> ArrayVec<u8, VESC_MAX_FRAME_LEN> {
         let mut frame = ArrayVec::new();
         encode_custom_app_frame(app_data, &mut frame).expect("frame encodes");
@@ -1412,7 +1622,7 @@ mod tests {
             .try_extend_from_slice(&42_u32.to_be_bytes())
             .expect("time fits");
         payload
-            .try_extend_from_slice(&[0x13, 0xd1, 0xa6, 8])
+            .try_extend_from_slice(&0x13d0_a608_u32.to_be_bytes())
             .expect("state fits");
         payload
             .try_extend_from_slice(&0x3c00_u16.to_be_bytes())
@@ -1463,7 +1673,7 @@ mod tests {
             .try_extend_from_slice(&42_u32.to_be_bytes())
             .expect("time fits");
         payload
-            .try_extend_from_slice(&[0x13, 0xc1, 0xa6, 8])
+            .try_extend_from_slice(&0x13c0_a608_u32.to_be_bytes())
             .expect("state fits");
         for half in [
             0x3c00_u16, // 1.0 m/s

@@ -4,7 +4,9 @@ use cutout_core::{
     NotificationEvidence, NotificationIngestOutcome, ProtocolSession, SessionInput, SessionOutput,
     TransportAction, TransportWriteLimit, WriteMode, WritePayload,
 };
-use futures_util::StreamExt;
+use futures_util::{Stream, StreamExt};
+use std::pin::Pin;
+use std::time::{Duration, Instant};
 use tracing::{debug, info};
 
 use crate::{
@@ -16,18 +18,33 @@ use crate::{
     units::{MonotonicMs, NegotiatedWriteLimit, NotificationWindow, WriteProvenance},
 };
 
+/// Reusable notification stream for serialized protocol probes.
+pub type BtleNotificationStream = Pin<Box<dyn Stream<Item = BtleNotification> + Send>>;
+
 /// Write and notification channels used by a protocol session.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct SessionChannelPair {
     write: GattChannel,
     subscribe: GattChannel,
+    admit_notifications: bool,
 }
 
 impl SessionChannelPair {
     /// Creates a pair with distinct write and notification channels.
     #[must_use]
     pub const fn new(write: GattChannel, subscribe: GattChannel) -> Self {
-        Self { write, subscribe }
+        Self {
+            write,
+            subscribe,
+            admit_notifications: false,
+        }
+    }
+
+    /// Requires incoming notifications to match the selected endpoint UUIDs.
+    #[must_use]
+    pub const fn with_endpoint_admission(mut self) -> Self {
+        self.admit_notifications = true;
+        self
     }
 
     const fn shared(channel: GattChannel) -> Self {
@@ -91,6 +108,7 @@ where
         DriveSessionConfig {
             write_channel: channel,
             subscribe_channel: channel,
+            admit_notifications: false,
             summary,
             endpoints,
             notification_window,
@@ -166,6 +184,7 @@ where
         DriveSessionConfig {
             write_channel: channels.write,
             subscribe_channel: channels.subscribe,
+            admit_notifications: channels.admit_notifications,
             summary,
             endpoints,
             notification_window,
@@ -208,6 +227,7 @@ where
         DriveSessionConfig {
             write_channel: channel,
             subscribe_channel: channel,
+            admit_notifications: false,
             summary,
             endpoints,
             notification_window,
@@ -282,6 +302,7 @@ where
         DriveSessionConfig {
             write_channel: channels.write,
             subscribe_channel: channels.subscribe,
+            admit_notifications: channels.admit_notifications,
             summary,
             endpoints,
             notification_window,
@@ -298,9 +319,60 @@ where
     Ok(SessionCapture { records, report })
 }
 
+/// Captures one session window using an already-open notification stream.
+///
+/// Returning the stream allows callers to serialize multiple request windows
+/// without losing notifications between probes.
+pub async fn capture_session_with_channel_pair_and_stream<P, S>(
+    peripheral: &P,
+    session: &mut S,
+    channels: SessionChannelPair,
+    summary: &ConnectionSummary,
+    endpoints: SessionEndpoints<'_>,
+    notification_window: NotificationWindow,
+    commands: &[DeviceCommand],
+    notifications: BtleNotificationStream,
+) -> Result<(SessionCapture, BtleNotificationStream), BtleError>
+where
+    P: SessionPeripheral + Sync + ?Sized,
+    S: ProtocolSession + Send,
+{
+    let mut records = Vec::new();
+    let (report, notifications) = drive_session_inner_with_stream(
+        peripheral,
+        session,
+        DriveSessionConfig {
+            write_channel: channels.write,
+            subscribe_channel: channels.subscribe,
+            admit_notifications: channels.admit_notifications,
+            summary,
+            endpoints,
+            notification_window,
+            commands,
+            write_provenance: WriteProvenance::Stable,
+            monotonic_start: MonotonicMs::default(),
+            stream_end_is_link_down: false,
+            link_loss_idle_window: None,
+        },
+        Some(&mut records),
+        None,
+        Some(notifications),
+    )
+    .await?;
+    Ok((
+        SessionCapture { records, report },
+        notifications.ok_or_else(|| {
+            BtleError::from(SessionBridgeError::MissingNotifyEndpoint {
+                channel: channels.subscribe,
+            })
+        })?,
+    ))
+}
+
 pub(crate) struct DriveSessionConfig<'a> {
     pub(crate) write_channel: GattChannel,
     pub(crate) subscribe_channel: GattChannel,
+    pub(crate) admit_notifications: bool,
     pub(crate) summary: &'a ConnectionSummary,
     pub(crate) endpoints: SessionEndpoints<'a>,
     pub(crate) notification_window: NotificationWindow,
@@ -315,9 +387,33 @@ pub(crate) async fn drive_session_inner<P, S>(
     peripheral: &P,
     session: &mut S,
     config: DriveSessionConfig<'_>,
+    capture: Option<&mut Vec<SessionCaptureRecord>>,
+    identity_observer: Option<&mut dyn BridgeIdentityObserver>,
+) -> Result<SessionBridgeReport, BtleError>
+where
+    P: SessionPeripheral + Sync + ?Sized,
+    S: ProtocolSession + Send,
+{
+    drive_session_inner_with_stream(
+        peripheral,
+        session,
+        config,
+        capture,
+        identity_observer,
+        None,
+    )
+    .await
+    .map(|(report, _)| report)
+}
+
+async fn drive_session_inner_with_stream<P, S>(
+    peripheral: &P,
+    session: &mut S,
+    config: DriveSessionConfig<'_>,
     mut capture: Option<&mut Vec<SessionCaptureRecord>>,
     mut identity_observer: Option<&mut dyn BridgeIdentityObserver>,
-) -> Result<SessionBridgeReport, BtleError>
+    mut notification_stream: Option<BtleNotificationStream>,
+) -> Result<(SessionBridgeReport, Option<BtleNotificationStream>), BtleError>
 where
     P: SessionPeripheral + Sync + ?Sized,
     S: ProtocolSession + Send,
@@ -329,6 +425,7 @@ where
         "session bridge drive inner entered"
     );
     let mut report = SessionBridgeReport::default();
+    let monotonic_origin = Instant::now();
     if let Some(observer) = identity_observer.as_deref_mut() {
         observer.observe_connection(config.summary);
         report.identity = observer.resolution();
@@ -356,8 +453,17 @@ where
     )
     .await?;
 
+    let mut notifications =
+        if config.notification_window.is_zero() || bindings.notify_characteristic.is_none() {
+            notification_stream.take()
+        } else if let Some(stream) = notification_stream.take() {
+            Some(stream)
+        } else {
+            Some(peripheral.notifications().await?)
+        };
+
     for command in config.commands {
-        monotonic_ms = monotonic_ms.next();
+        monotonic_ms = elapsed_or_next(monotonic_ms, monotonic_origin);
         session.handle(SessionInput::Command(*command), &mut outputs);
         process_session_outputs(
             SessionOutputContext {
@@ -377,7 +483,7 @@ where
         .await?;
     }
 
-    monotonic_ms = monotonic_ms.next();
+    monotonic_ms = elapsed_or_next(monotonic_ms, monotonic_origin);
     session.handle(
         SessionInput::Tick {
             monotonic_ms: monotonic_ms.into_core(),
@@ -401,15 +507,16 @@ where
     )
     .await?;
 
-    if config.notification_window.is_zero() || bindings.notify_characteristic.is_none() {
-        return Ok(report);
-    }
+    let Some(notifications) = notifications.take() else {
+        return Ok((report, None));
+    };
 
-    process_notification_window(
+    let notifications = process_notification_window(
         NotificationLoopContext {
             peripheral,
             write_channel: config.write_channel,
             subscribe_channel: config.subscribe_channel,
+            admit_notifications: config.admit_notifications,
             bindings: &bindings,
             identity_observer,
             report: &mut report,
@@ -417,15 +524,23 @@ where
             write_provenance: config.write_provenance,
             stream_end_is_link_down: config.stream_end_is_link_down,
             link_loss_idle_window: config.link_loss_idle_window,
+            monotonic_origin,
         },
         session,
         &mut outputs,
         &mut monotonic_ms,
         config.notification_window,
+        notifications,
     )
     .await?;
 
-    Ok(report)
+    Ok((report, Some(notifications)))
+}
+
+fn elapsed_or_next(previous: MonotonicMs, origin: Instant) -> MonotonicMs {
+    previous.next().max(MonotonicMs::from_elapsed_millis(
+        origin.elapsed().as_millis(),
+    ))
 }
 
 struct BridgeBindings {
@@ -502,6 +617,7 @@ struct NotificationLoopContext<'a, 'observer, P: ?Sized> {
     peripheral: &'a P,
     write_channel: GattChannel,
     subscribe_channel: GattChannel,
+    admit_notifications: bool,
     bindings: &'a BridgeBindings,
     identity_observer: Option<&'observer mut dyn BridgeIdentityObserver>,
     report: &'a mut SessionBridgeReport,
@@ -509,7 +625,10 @@ struct NotificationLoopContext<'a, 'observer, P: ?Sized> {
     write_provenance: WriteProvenance,
     stream_end_is_link_down: bool,
     link_loss_idle_window: Option<NotificationWindow>,
+    monotonic_origin: Instant,
 }
+
+const SESSION_DEADLINE_TICK: Duration = Duration::from_millis(100);
 
 async fn process_notification_window<P, S>(
     mut context: NotificationLoopContext<'_, '_, P>,
@@ -517,7 +636,8 @@ async fn process_notification_window<P, S>(
     outputs: &mut Vec<SessionOutput>,
     monotonic_ms: &mut MonotonicMs,
     notification_window: NotificationWindow,
-) -> Result<(), BtleError>
+    mut notifications: BtleNotificationStream,
+) -> Result<BtleNotificationStream, BtleError>
 where
     P: SessionPeripheral + Sync + ?Sized,
     S: ProtocolSession + Send,
@@ -527,20 +647,27 @@ where
         "session notification window starting"
     );
     info!("session notifications stream await starting");
-    let mut notifications = context.peripheral.notifications().await?;
-    info!("session notifications stream await completed");
+    info!("session notifications stream ready before protocol polling");
     let deadline = tokio::time::Instant::now() + notification_window.as_duration();
+    let mut next_tick = tokio::time::Instant::now() + SESSION_DEADLINE_TICK;
+    let mut last_notification_at = tokio::time::Instant::now();
+    let mut link_down_recorded = false;
     while tokio::time::Instant::now() < deadline {
         let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
         let wait = link_loss_next_wait(remaining, context.link_loss_idle_window);
+        let wait_deadline = tokio::time::Instant::now() + wait;
+        let tick_due = next_tick <= wait_deadline;
+        let tick_deadline = if tick_due { next_tick } else { wait_deadline };
         debug!(
             remaining_ms = remaining.as_millis(),
             wait_ms = wait.as_millis(),
             "session notification next await starting"
         );
-        match tokio::time::timeout(wait, notifications.next()).await {
-            Ok(Some(notification)) => {
-                *monotonic_ms = monotonic_ms.next();
+        tokio::select! {
+            result = notifications.next() => match result {
+                Some(notification) => {
+                last_notification_at = tokio::time::Instant::now();
+                *monotonic_ms = elapsed_or_next(*monotonic_ms, context.monotonic_origin);
                 let decode_outcome = ingest_notification(
                     &mut context,
                     session,
@@ -577,7 +704,7 @@ where
                     );
                 context.report.latest_notification_len = Some(notification_len);
             }
-            Ok(None) => {
+                None => {
                 debug!("session notification stream ended");
                 if context.stream_end_is_link_down {
                     *monotonic_ms = monotonic_ms.next();
@@ -588,11 +715,44 @@ where
                         outputs,
                         *monotonic_ms,
                     )?;
+                    link_down_recorded = true;
                 }
                 break;
-            }
-            Err(_) => {
-                if link_loss_idle_elapsed(remaining, context.link_loss_idle_window) {
+                }
+            },
+            _ = tokio::time::sleep_until(tick_deadline), if tick_due => {
+                *monotonic_ms = elapsed_or_next(*monotonic_ms, context.monotonic_origin);
+                session.handle(
+                    SessionInput::Tick {
+                        monotonic_ms: monotonic_ms.into_core(),
+                    },
+                    outputs,
+                );
+                process_session_outputs(
+                    SessionOutputContext {
+                        peripheral: context.peripheral,
+                        write_channel: context.write_channel,
+                        subscribe_channel: context.subscribe_channel,
+                        write_characteristic: &context.bindings.write_characteristic,
+                        notify_characteristic: context.bindings.notify_characteristic.as_ref(),
+                        report: context.report,
+                        capture: context.capture.as_deref_mut(),
+                        write_provenance: context.write_provenance,
+                    },
+                    session,
+                    outputs,
+                    *monotonic_ms,
+                )
+                .await?;
+                // A tick can produce a write that waits for the transport to
+                // accept it (for example while a no-response BLE queue is
+                // full). Rebase the next response deadline after that write
+                // completes instead of catching up from the old timer slot.
+                // This keeps requests serialized at the transport boundary.
+                next_tick = tokio::time::Instant::now() + SESSION_DEADLINE_TICK;
+            },
+            _ = tokio::time::sleep_until(wait_deadline) => {
+                if link_loss_idle_elapsed(last_notification_at, context.link_loss_idle_window) {
                     debug!("session notification idle window elapsed; recording link down");
                     *monotonic_ms = monotonic_ms.next();
                     record_external_link_down(
@@ -602,12 +762,26 @@ where
                         outputs,
                         *monotonic_ms,
                     )?;
+                    link_down_recorded = true;
                 } else {
                     debug!("session notification window elapsed");
                 }
                 break;
             }
         }
+    }
+    if !link_down_recorded
+        && context.stream_end_is_link_down
+        && link_loss_idle_elapsed(last_notification_at, context.link_loss_idle_window)
+    {
+        *monotonic_ms = monotonic_ms.next();
+        record_external_link_down(
+            context.report,
+            context.capture.as_deref_mut(),
+            session,
+            outputs,
+            *monotonic_ms,
+        )?;
     }
     debug!(
         notifications = context.report.notifications.as_events(),
@@ -616,7 +790,7 @@ where
         "session notification window completed"
     );
 
-    Ok(())
+    Ok(notifications)
 }
 
 fn ingest_notification<P, S>(
@@ -642,6 +816,28 @@ where
         observer.observe_notification(notification);
         context.report.identity = observer.resolution();
     }
+    let admitted = !context.admit_notifications
+        || context
+            .bindings
+            .notify_characteristic
+            .as_ref()
+            .is_some_and(|expected| {
+                notification.characteristic == expected.uuid
+                    && notification.service == expected.service_uuid
+            });
+    if !admitted {
+        let outcome = NotificationIngestOutcome::Ignored {
+            evidence: IgnoredNotificationEvidence::with_retained_payload(
+                None,
+                context.subscribe_channel,
+                notification.as_raw_bytes(),
+                monotonic_ms.into_core(),
+            ),
+            reason: IgnoredNotificationReason::WrongChannel,
+        };
+        outputs.push(SessionOutput::NotificationIngest(outcome));
+        return notification_decode_outcome(outputs);
+    }
     session.handle(
         SessionInput::Notification {
             channel: context.subscribe_channel,
@@ -654,19 +850,22 @@ where
 }
 
 fn link_loss_next_wait(
-    remaining: std::time::Duration,
+    remaining: Duration,
     link_loss_idle_window: Option<NotificationWindow>,
-) -> std::time::Duration {
+) -> Duration {
     link_loss_idle_window.map_or(remaining, |idle_window| {
         remaining.min(idle_window.as_duration())
     })
 }
 
 fn link_loss_idle_elapsed(
-    remaining: std::time::Duration,
+    last_notification_at: tokio::time::Instant,
     link_loss_idle_window: Option<NotificationWindow>,
 ) -> bool {
-    link_loss_idle_window.is_some_and(|idle_window| idle_window.as_duration() < remaining)
+    link_loss_idle_window.is_some_and(|idle_window| {
+        tokio::time::Instant::now().saturating_duration_since(last_notification_at)
+            >= idle_window.as_duration()
+    })
 }
 
 fn record_external_link_down<S>(

@@ -41,6 +41,10 @@
       "comment" : "VoiceOver announcement when a VESC reports duty-based pushback.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Warning. Pushback soon. Reduce acceleration." } } }
     },
+    "accessibility.vesc_warning.speed_pushback" : {
+      "comment" : "VoiceOver announcement when Refloat reports speed-based pushback.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Warning. Speed pushback. Reduce speed." } } }
+    },
     "accessibility.vesc_warning.wheelslip" : {
       "comment" : "VoiceOver announcement when a VESC reports active wheel slip.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Warning. Wheel slip detected. Reduce acceleration and regain control." } } }
@@ -48,6 +52,10 @@
     "accessibility.vesc_warning.error" : {
       "comment" : "VoiceOver announcement when a VESC package reports an error.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Critical warning. Controller error. Stop safely." } } }
+    },
+    "accessibility.vesc_warning.bms_connection" : {
+      "comment" : "VoiceOver announcement when Refloat cannot communicate with its BMS.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Critical warning. Battery-management connection failed. Stop safely." } } }
     },
     "accessibility.vesc_warning.high_voltage" : {
       "comment" : "VoiceOver announcement when a VESC reports high input voltage.",

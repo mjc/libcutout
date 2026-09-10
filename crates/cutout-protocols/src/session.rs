@@ -19,14 +19,15 @@ use crate::{
     BegodeFrameReassembler, BegodeLiveATelemetry, BegodeLiveBTelemetry, BegodePackVoltageProfile,
     BegodeTelemetryContext, BegodeTelemetryError, EncodedRequest, FalconProbe,
     FalconRequestEncoder, RefloatCodecError, RefloatReadOnlyRequest, RefloatReply,
-    RefloatStreamDecoder, RefloatStreamResult, RequestDisposition, VESC_NOTIFY_CHANNEL,
-    VESC_WRITE_CHANNEL, VETERAN_DATA_CHANNEL, VescBoardProfile, VescCodecError, VescReadOnlyCodec,
-    VescReadOnlyReply, VescReadOnlyRequest, VescReadOnlyStreamDecoder, VescReadOnlyStreamResult,
-    VescRequestEncoder, VescStatsTelemetry, VescValuesMask, VescValuesTelemetry,
-    VeteranBmsCellPage, VeteranBmsMetadataPage, VeteranBmsPageEvidence, VeteranBmsTemperaturePage,
-    VeteranFrame, VeteranFrameParseResult, VeteranFrameReassembler, VeteranReassemblyError,
-    VeteranTelemetry, VeteranTelemetryError, begode_falcon_target_voltage_profile,
-    decode_veteran_bms_page, util::u64_to_i64_saturating,
+    RefloatStreamDecoder, RefloatStreamResult, RequestDisposition, VESC_COMM_CUSTOM_APP_DATA,
+    VESC_MAX_FRAME_LEN, VESC_NOTIFY_CHANNEL, VESC_WRITE_CHANNEL, VETERAN_DATA_CHANNEL,
+    VescBoardProfile, VescCodecError, VescReadOnlyCodec, VescReadOnlyReply, VescReadOnlyRequest,
+    VescReadOnlyStreamDecoder, VescReadOnlyStreamResult, VescRequestEncoder, VescStatsMask,
+    VescStatsTelemetry, VescValuesMask, VescValuesTelemetry, VeteranBmsCellPage,
+    VeteranBmsMetadataPage, VeteranBmsPageEvidence, VeteranBmsTemperaturePage, VeteranFrame,
+    VeteranFrameParseResult, VeteranFrameReassembler, VeteranReassemblyError, VeteranTelemetry,
+    VeteranTelemetryError, begode_falcon_target_voltage_profile, decode_veteran_bms_page,
+    util::u64_to_i64_saturating,
 };
 
 /// Raw VESC electrical RPM telemetry field id.
@@ -162,6 +163,14 @@ pub trait SupportsReadRequests: ProtocolModelSpec {
 pub trait ReadOnlyNotificationDecoder {
     /// Resets model-specific parser state.
     fn reset(&mut self);
+
+    /// Gives a decoder a chance to issue a bounded periodic read request.
+    fn on_tick(&mut self, _monotonic_ms: MonotonicTimestamp, _output: &mut Vec<SessionOutput>) {}
+
+    /// Handles a read whose scheduling is owned by the model, returning whether it was handled.
+    fn on_read_command(&mut self, _kind: CommandKind, _output: &mut Vec<SessionOutput>) -> bool {
+        false
+    }
 
     /// Handles an accepted notification payload.
     fn handle_notification(
@@ -497,17 +506,39 @@ impl ReadOnlyNotificationDecoder for BegodeNotificationDecoder {
 pub struct VescNotificationDecoder {
     stream: VescReadOnlyStreamDecoder,
     refloat_stream: RefloatStreamDecoder,
-    board_profile: Option<VescBoardProfile>,
+    configured_board_profile: Option<VescBoardProfile>,
+    learned_board_profile: Option<VescBoardProfile>,
+    last_poll_ms: Option<u64>,
+    now_ms: u64,
+    polling: bool,
+    motor_config_received: bool,
+    refloat_info_received: bool,
+    refloat_stream_pending: bool,
+    generic_stream_pending: bool,
+    generic_prefix: ArrayVec<u8, 4>,
 }
 
 impl VescNotificationDecoder {
+    fn board_profile(&self) -> Option<VescBoardProfile> {
+        self.configured_board_profile.or(self.learned_board_profile)
+    }
+
     /// Creates a VESC decoder that can calculate speed from explicit board geometry.
     #[must_use]
     pub fn with_board_profile(board_profile: VescBoardProfile) -> Self {
         Self {
             stream: VescReadOnlyStreamDecoder::new(),
             refloat_stream: RefloatStreamDecoder::new(),
-            board_profile: Some(board_profile),
+            configured_board_profile: Some(board_profile),
+            learned_board_profile: None,
+            last_poll_ms: None,
+            now_ms: 0,
+            polling: false,
+            motor_config_received: false,
+            refloat_info_received: false,
+            refloat_stream_pending: false,
+            generic_stream_pending: false,
+            generic_prefix: ArrayVec::new_const(),
         }
     }
 
@@ -520,15 +551,20 @@ impl VescNotificationDecoder {
         output: &mut Vec<SessionOutput>,
     ) -> bool {
         let reports_battery_current = self
-            .board_profile
+            .board_profile()
             .is_some_and(|profile| profile.reports_battery_current);
+        let mut info_received = false;
         let result = self.refloat_stream.feed_result(bytes, |reply| {
+            if matches!(reply, RefloatReply::Info(_)) {
+                info_received = true;
+            }
             push_refloat_reply(reply, monotonic_ms, reports_battery_current, output);
         });
+        self.refloat_info_received |= info_received;
 
         match result {
             Ok(RefloatStreamResult::Replies(reply_count)) => {
-                self.stream = VescReadOnlyStreamDecoder::new();
+                self.refloat_stream_pending = false;
                 output.push(SessionOutput::NotificationIngest(
                     NotificationIngestOutcome::semantic_events(
                         family,
@@ -540,13 +576,20 @@ impl VescNotificationDecoder {
                 ));
                 true
             }
-            Ok(RefloatStreamResult::Buffered)
-            | Err(
+            Ok(RefloatStreamResult::Buffered) => {
+                self.refloat_stream_pending = true;
+                false
+            }
+            Err(
                 RefloatCodecError::UnexpectedVescCommand
                 | RefloatCodecError::UnexpectedPackageInterface
                 | RefloatCodecError::UnsupportedCommand,
-            ) => false,
+            ) => {
+                self.refloat_stream_pending = false;
+                false
+            }
             Err(_) => {
+                self.refloat_stream_pending = false;
                 push_parser_error(ParserError::MalformedFrame, output);
                 output.push(SessionOutput::NotificationIngest(
                     NotificationIngestOutcome::parser_diagnostic(
@@ -567,6 +610,30 @@ impl ReadOnlyNotificationDecoder for VescNotificationDecoder {
     fn reset(&mut self) {
         self.stream = VescReadOnlyStreamDecoder::new();
         self.refloat_stream = RefloatStreamDecoder::new();
+        self.last_poll_ms = None;
+        self.now_ms = 0;
+        self.polling = false;
+        self.motor_config_received = false;
+        self.refloat_info_received = false;
+        self.refloat_stream_pending = false;
+        self.generic_stream_pending = false;
+        self.generic_prefix.clear();
+    }
+
+    fn on_tick(&mut self, monotonic_ms: MonotonicTimestamp, output: &mut Vec<SessionOutput>) {
+        self.now_ms = monotonic_ms.as_milliseconds();
+        if self.polling {
+            self.poll_if_due(output);
+        }
+    }
+
+    fn on_read_command(&mut self, kind: CommandKind, output: &mut Vec<SessionOutput>) -> bool {
+        if kind != CommandKind::RequestTelemetry {
+            return false;
+        }
+        self.polling = true;
+        self.poll_if_due(output);
+        true
     }
 
     fn handle_notification(
@@ -577,10 +644,252 @@ impl ReadOnlyNotificationDecoder for VescNotificationDecoder {
         monotonic_ms: MonotonicTimestamp,
         output: &mut Vec<SessionOutput>,
     ) {
-        if self.handle_refloat_notification(family, channel, bytes, monotonic_ms, output) {
+        if (self.refloat_stream_pending && complete_vesc_frame_len(bytes).is_none())
+            || self.generic_stream_pending
+            || !self.generic_prefix.is_empty()
+        {
+            self.handle_notification_chunk(family, channel, bytes, monotonic_ms, output);
             return;
         }
+        if !matches!(bytes.first(), Some(2 | 3)) {
+            if let Some(start) = bytes.iter().position(|byte| *byte == 2 || *byte == 3) {
+                let candidate = &bytes[start..];
+                if let Some(frame_len) = complete_vesc_frame_len(candidate) {
+                    self.handle_notification(
+                        family,
+                        channel,
+                        &candidate[..frame_len],
+                        monotonic_ms,
+                        output,
+                    );
+                    if frame_len < candidate.len() {
+                        self.handle_notification(
+                            family,
+                            channel,
+                            &candidate[frame_len..],
+                            monotonic_ms,
+                            output,
+                        );
+                    }
+                    return;
+                }
+                self.handle_notification_chunk(family, channel, candidate, monotonic_ms, output);
+                return;
+            }
+        }
+        if let Some(frame_len) = complete_vesc_frame_len(bytes) {
+            let frame = &bytes[..frame_len];
+            self.handle_notification_chunk(family, channel, frame, monotonic_ms, output);
+            if frame_len < bytes.len() {
+                self.handle_notification(
+                    family,
+                    channel,
+                    &bytes[frame_len..],
+                    monotonic_ms,
+                    output,
+                );
+            }
+            return;
+        }
+        self.handle_notification_chunk(family, channel, bytes, monotonic_ms, output);
+    }
+}
 
+impl VescNotificationDecoder {
+    fn poll_if_due(&mut self, output: &mut Vec<SessionOutput>) {
+        if self
+            .last_poll_ms
+            .is_some_and(|last| self.now_ms.saturating_sub(last) < 100)
+        {
+            return;
+        }
+        self.last_poll_ms = Some(self.now_ms);
+        let package_request = if !self.refloat_info_received {
+            RefloatReadOnlyRequest::Info
+        } else if self.refloat_stream.field_ids().is_some() {
+            RefloatReadOnlyRequest::RealtimeData
+        } else {
+            RefloatReadOnlyRequest::RealtimeDataIds
+        };
+        push_vesc_read_request(VescReadOnlyRequest::Refloat(package_request), output);
+        if !self.motor_config_received {
+            push_vesc_read_request(VescReadOnlyRequest::MotorConfig, output);
+        }
+        push_vesc_read_request(VescReadOnlyRequest::Values, output);
+    }
+
+    fn handle_notification_chunk(
+        &mut self,
+        family: ProtocolFamily,
+        channel: GattChannel,
+        bytes: &[u8],
+        monotonic_ms: MonotonicTimestamp,
+        output: &mut Vec<SessionOutput>,
+    ) {
+        self.now_ms = monotonic_ms.as_milliseconds();
+        if self.refloat_stream_pending
+            && !self.generic_stream_pending
+            && self.generic_prefix.is_empty()
+        {
+            if let Some(refloat_bytes) = self.refloat_stream.pending_frame_bytes()
+                && bytes.len() > refloat_bytes
+            {
+                let refloat_handled = self.handle_refloat_notification(
+                    family,
+                    channel,
+                    &bytes[..refloat_bytes],
+                    monotonic_ms,
+                    output,
+                );
+                if refloat_handled || !self.refloat_stream_pending {
+                    self.handle_notification(
+                        family,
+                        channel,
+                        &bytes[refloat_bytes..],
+                        monotonic_ms,
+                        output,
+                    );
+                }
+                return;
+            }
+            let refloat_handled =
+                self.handle_refloat_notification(family, channel, bytes, monotonic_ms, output);
+            if refloat_handled || self.refloat_stream_pending {
+                return;
+            }
+        }
+        let mut refloat_handled = false;
+        let mut refloat_buffered = false;
+        let mut generic_bytes = ArrayVec::<u8, VESC_MAX_FRAME_LEN>::new();
+        let feed_generic = if self.generic_stream_pending {
+            generic_bytes
+                .try_extend_from_slice(bytes)
+                .expect("notification fits bounded VESC frame");
+            true
+        } else if !self.generic_prefix.is_empty() {
+            generic_bytes
+                .try_extend_from_slice(&self.generic_prefix)
+                .expect("generic prefix fits bounded VESC frame");
+            generic_bytes
+                .try_extend_from_slice(bytes)
+                .expect("notification fits bounded VESC frame");
+            match generic_frame_kind(&generic_bytes) {
+                Some(is_generic) => {
+                    self.generic_prefix.clear();
+                    if !is_generic {
+                        if let Some(frame_len) = complete_vesc_frame_len(&generic_bytes)
+                            .filter(|frame_len| *frame_len < generic_bytes.len())
+                        {
+                            let mut refloat_frame = ArrayVec::<u8, VESC_MAX_FRAME_LEN>::new();
+                            refloat_frame
+                                .try_extend_from_slice(&generic_bytes[..frame_len])
+                                .expect("Refloat frame fits bounded VESC frame");
+                            let mut trailing = ArrayVec::<u8, VESC_MAX_FRAME_LEN>::new();
+                            trailing
+                                .try_extend_from_slice(&generic_bytes[frame_len..])
+                                .expect("trailing VESC bytes fit bounded frame");
+                            self.handle_refloat_notification(
+                                family,
+                                channel,
+                                &refloat_frame,
+                                monotonic_ms,
+                                output,
+                            );
+                            self.handle_notification(
+                                family,
+                                channel,
+                                &trailing,
+                                monotonic_ms,
+                                output,
+                            );
+                            return;
+                        }
+                        refloat_handled = self.handle_refloat_notification(
+                            family,
+                            channel,
+                            &generic_bytes,
+                            monotonic_ms,
+                            output,
+                        );
+                        refloat_buffered = !refloat_handled;
+                    }
+                    is_generic
+                }
+                None => {
+                    self.generic_prefix.clear();
+                    self.generic_prefix
+                        .try_extend_from_slice(&generic_bytes)
+                        .expect("generic prefix remains bounded");
+                    false
+                }
+            }
+        } else {
+            match generic_frame_kind(bytes) {
+                Some(is_generic) => {
+                    generic_bytes
+                        .try_extend_from_slice(bytes)
+                        .expect("notification fits bounded VESC frame");
+                    if !is_generic {
+                        refloat_handled = self.handle_refloat_notification(
+                            family,
+                            channel,
+                            bytes,
+                            monotonic_ms,
+                            output,
+                        );
+                        refloat_buffered = !refloat_handled;
+                    }
+                    is_generic
+                }
+                None if matches!(bytes.first(), Some(2 | 3)) => {
+                    self.generic_prefix
+                        .try_extend_from_slice(bytes)
+                        .expect("generic prefix remains bounded");
+                    false
+                }
+                None => {
+                    generic_bytes
+                        .try_extend_from_slice(bytes)
+                        .expect("notification fits bounded VESC frame");
+                    true
+                }
+            }
+        };
+        if feed_generic {
+            let (replied, buffered) = self.handle_vesc_notification(
+                family,
+                channel,
+                &generic_bytes,
+                monotonic_ms,
+                output,
+                NotificationByteLen::from_bytes(bytes.len()),
+                !refloat_handled,
+                !refloat_handled,
+            );
+            self.generic_stream_pending = buffered && !replied;
+        } else if refloat_buffered || !self.generic_prefix.is_empty() {
+            output.push(SessionOutput::NotificationIngest(
+                NotificationIngestOutcome::buffered_fragment(
+                    family,
+                    channel,
+                    NotificationByteLen::from_bytes(bytes.len()),
+                    monotonic_ms,
+                ),
+            ));
+        }
+    }
+
+    fn handle_vesc_notification(
+        &mut self,
+        family: ProtocolFamily,
+        channel: GattChannel,
+        bytes: &[u8],
+        monotonic_ms: MonotonicTimestamp,
+        output: &mut Vec<SessionOutput>,
+        source_len: NotificationByteLen,
+        report_errors: bool,
+        emit_ingest: bool,
+    ) -> (bool, bool) {
         match self.stream.feed_result(bytes) {
             Ok(VescReadOnlyStreamResult::Replies(replies)) => {
                 let event_count = replies
@@ -591,68 +900,110 @@ impl ReadOnlyNotificationDecoder for VescNotificationDecoder {
                 for reply in &replies {
                     match reply {
                         VescReadOnlyReply::MotorConfig(config) => {
-                            self.board_profile = Some(VescBoardProfile::from_motor_config(*config));
+                            self.motor_config_received = true;
+                            if self.configured_board_profile.is_none() {
+                                self.learned_board_profile =
+                                    Some(VescBoardProfile::from_motor_config(*config));
+                            }
                         }
                         VescReadOnlyReply::MotorSetupConfig(geometry) => {
-                            self.board_profile =
-                                Some(VescBoardProfile::from_speed_geometry(*geometry));
+                            self.motor_config_received = true;
+                            if self.configured_board_profile.is_none() {
+                                self.learned_board_profile =
+                                    Some(VescBoardProfile::from_speed_geometry(*geometry));
+                            }
                         }
                         VescReadOnlyReply::FirmwareInfo { .. }
                         | VescReadOnlyReply::Values(_)
                         | VescReadOnlyReply::Stats(_) => {}
                     }
-                    push_vesc_reply(reply, monotonic_ms, self.board_profile, output);
+                    push_vesc_reply(reply, monotonic_ms, self.board_profile(), output);
                 }
-                output.push(SessionOutput::NotificationIngest(
-                    NotificationIngestOutcome::semantic_events(
-                        family,
-                        channel,
-                        NotificationByteLen::from_bytes(bytes.len()),
-                        monotonic_ms,
-                        event_count,
-                    ),
-                ));
+                if emit_ingest {
+                    output.push(SessionOutput::NotificationIngest(
+                        NotificationIngestOutcome::semantic_events(
+                            family,
+                            channel,
+                            source_len,
+                            monotonic_ms,
+                            event_count,
+                        ),
+                    ));
+                }
+                (true, false)
             }
-            Err(VescCodecError::UnsupportedReply) => {
+            Err(VescCodecError::UnsupportedReply) if report_errors => {
                 push_parser_error(ParserError::UnmatchedReply, output);
-                output.push(SessionOutput::NotificationIngest(
-                    NotificationIngestOutcome::parser_diagnostic(
-                        family,
-                        channel,
-                        NotificationByteLen::from_bytes(bytes.len()),
-                        monotonic_ms,
-                        ParserError::UnmatchedReply,
-                    ),
-                ));
+                if emit_ingest {
+                    output.push(SessionOutput::NotificationIngest(
+                        NotificationIngestOutcome::parser_diagnostic(
+                            family,
+                            channel,
+                            source_len,
+                            monotonic_ms,
+                            ParserError::UnmatchedReply,
+                        ),
+                    ));
+                }
+                (false, false)
             }
             Err(
                 VescCodecError::DecodeFailed
                 | VescCodecError::EncodedFrameTooLong
                 | VescCodecError::EncodeFailed,
-            ) => {
+            ) if report_errors => {
                 push_parser_error(ParserError::MalformedFrame, output);
-                output.push(SessionOutput::NotificationIngest(
-                    NotificationIngestOutcome::parser_diagnostic(
-                        family,
-                        channel,
-                        NotificationByteLen::from_bytes(bytes.len()),
-                        monotonic_ms,
-                        ParserError::MalformedFrame,
-                    ),
-                ));
+                if emit_ingest {
+                    output.push(SessionOutput::NotificationIngest(
+                        NotificationIngestOutcome::parser_diagnostic(
+                            family,
+                            channel,
+                            source_len,
+                            monotonic_ms,
+                            ParserError::MalformedFrame,
+                        ),
+                    ));
+                }
+                (false, false)
             }
-            Ok(VescReadOnlyStreamResult::Buffered) => {
-                output.push(SessionOutput::NotificationIngest(
-                    NotificationIngestOutcome::buffered_fragment(
-                        family,
-                        channel,
-                        NotificationByteLen::from_bytes(bytes.len()),
-                        monotonic_ms,
-                    ),
-                ));
+            Ok(VescReadOnlyStreamResult::Buffered) if report_errors => {
+                if emit_ingest {
+                    output.push(SessionOutput::NotificationIngest(
+                        NotificationIngestOutcome::buffered_fragment(
+                            family,
+                            channel,
+                            source_len,
+                            monotonic_ms,
+                        ),
+                    ));
+                }
+                (false, true)
             }
+            Err(_) | Ok(VescReadOnlyStreamResult::Buffered) => (false, false),
         }
     }
+}
+
+fn complete_vesc_frame_len(bytes: &[u8]) -> Option<usize> {
+    let (header_len, payload_len) = match bytes.first().copied()? {
+        2 => (2_usize, usize::from(*bytes.get(1)?)),
+        3 => (
+            3_usize,
+            usize::from(u16::from_be_bytes([*bytes.get(1)?, *bytes.get(2)?])),
+        ),
+        _ => return None,
+    };
+    let total_len = header_len.checked_add(payload_len)?.checked_add(3)?;
+    (bytes.len() >= total_len && bytes.get(total_len - 1) == Some(&3)).then_some(total_len)
+}
+
+fn generic_frame_kind(bytes: &[u8]) -> Option<bool> {
+    let command_index = match bytes.first().copied()? {
+        2 => 2,
+        3 => 3,
+        _ => return None,
+    };
+    Some(bytes.get(command_index).copied()? != VESC_COMM_CUSTOM_APP_DATA)
 }
 
 const fn vesc_reply_event_count(reply: &VescReadOnlyReply) -> SemanticEventCount {
@@ -713,21 +1064,14 @@ fn push_refloat_reply(
             output.push(SessionOutput::Event(DeviceEvent::Telemetry(
                 data.to_delta(monotonic_ms, reports_battery_current),
             )));
-            push_refloat_realtime_request(output);
         }
-        RefloatReply::RealtimeFieldIds(_) => push_refloat_realtime_request(output),
-        RefloatReply::Info(_) => {}
+        RefloatReply::RealtimeFieldIds(_) | RefloatReply::Info(_) => {}
     }
 }
 
-fn push_refloat_realtime_request(output: &mut Vec<SessionOutput>) {
+fn push_vesc_read_request(request: VescReadOnlyRequest, output: &mut Vec<SessionOutput>) {
     let mut payload = ArrayVec::new();
-    if VescReadOnlyCodec::encode_request(
-        VescReadOnlyRequest::Refloat(RefloatReadOnlyRequest::RealtimeData),
-        &mut payload,
-    )
-    .is_ok()
-    {
+    if VescReadOnlyCodec::encode_request(request, &mut payload).is_ok() {
         let Ok(bytes) = WritePayload::try_from_slice(payload.as_slice()) else {
             return;
         };
@@ -841,22 +1185,34 @@ fn vesc_values_to_raw_telemetry(values: &VescValuesTelemetry) -> RawTelemetryRea
 fn vesc_stats_to_diagnostics(stats: VescStatsTelemetry) -> DiagnosticReadback {
     DiagnosticReadback {
         details: [
-            Some(vesc_diagnostic_detail(
-                VESC_RAW_STATS_SPEED_AVG_FIELD_ID,
-                i64::from(stats.speed_avg.as_millimetres_per_second()),
-            )),
-            Some(vesc_diagnostic_detail(
-                VESC_RAW_STATS_POWER_AVG_FIELD_ID,
-                stats.power_avg.as_milliwatts(),
-            )),
-            Some(vesc_diagnostic_detail(
-                VESC_RAW_STATS_CURRENT_AVG_FIELD_ID,
-                i64::from(stats.current_avg.as_milliamps()),
-            )),
-            Some(vesc_diagnostic_detail(
-                VESC_RAW_STATS_COUNT_TIME_FIELD_ID,
-                u64_to_i64_saturating(stats.count_time.as_milliseconds()),
-            )),
+            stats
+                .present_fields
+                .contains(VescStatsMask::SPEED_AVG)
+                .then_some(vesc_diagnostic_detail(
+                    VESC_RAW_STATS_SPEED_AVG_FIELD_ID,
+                    i64::from(stats.speed_avg.as_millimetres_per_second()),
+                )),
+            stats
+                .present_fields
+                .contains(VescStatsMask::POWER_AVG)
+                .then_some(vesc_diagnostic_detail(
+                    VESC_RAW_STATS_POWER_AVG_FIELD_ID,
+                    stats.power_avg.as_milliwatts(),
+                )),
+            stats
+                .present_fields
+                .contains(VescStatsMask::CURRENT_AVG)
+                .then_some(vesc_diagnostic_detail(
+                    VESC_RAW_STATS_CURRENT_AVG_FIELD_ID,
+                    i64::from(stats.current_avg.as_milliamps()),
+                )),
+            stats
+                .present_fields
+                .contains(VescStatsMask::COUNT_TIME)
+                .then_some(vesc_diagnostic_detail(
+                    VESC_RAW_STATS_COUNT_TIME_FIELD_ID,
+                    u64_to_i64_saturating(stats.count_time.as_milliseconds()),
+                )),
         ],
     }
 }
@@ -1300,6 +1656,7 @@ fn handle_read_only_session<M: ReadOnlyModelSpec, const ACCEPT_ANY_NOTIFICATION:
         SessionInput::LinkUp(info) => {
             *connected = true;
             decoder.reset();
+            decoder.on_tick(info.monotonic_ms, output);
             output.push(SessionOutput::Event(DeviceEvent::LinkUp(info)));
             output.push(SessionOutput::Transport(TransportAction::Subscribe {
                 channel: M::SUBSCRIBE_CHANNEL,
@@ -1311,6 +1668,9 @@ fn handle_read_only_session<M: ReadOnlyModelSpec, const ACCEPT_ANY_NOTIFICATION:
             output.push(SessionOutput::Event(DeviceEvent::LinkDown));
         }
         SessionInput::Tick { monotonic_ms } => {
+            if *connected {
+                decoder.on_tick(monotonic_ms, output);
+            }
             output.push(SessionOutput::Event(DeviceEvent::Tick { monotonic_ms }));
         }
         SessionInput::Notification {
@@ -1334,7 +1694,13 @@ fn handle_read_only_session<M: ReadOnlyModelSpec, const ACCEPT_ANY_NOTIFICATION:
             }
         }
         SessionInput::Command(command) => match gate_read_only_command::<M>(command) {
-            ReadOnlyCommandGate::SupportedRead(kind) => push_read_request::<M>(kind, output),
+            ReadOnlyCommandGate::SupportedRead(kind) => {
+                if (*connected || M::PROTOCOL != ProtocolFamily::Vesc)
+                    && !decoder.on_read_command(kind, output)
+                {
+                    push_read_request::<M>(kind, output);
+                }
+            }
             ReadOnlyCommandGate::Unsupported(CommandKind::RequestSettings) => {
                 output.push(SessionOutput::Event(DeviceEvent::ReadOnlyResponse(
                     ReadOnlyResponse::Settings(cutout_core::SettingsReadback::unsupported()),
@@ -2360,6 +2726,14 @@ mod tests {
     fn generic_vesc_session_writes_refloat_ids_motor_config_and_values_for_telemetry() {
         let mut session = ReadOnlySession::<VescGenericModel, true>::default();
         let mut output = Vec::new();
+        session.handle(
+            SessionInput::LinkUp(LinkInfo {
+                monotonic_ms: ms(0),
+                max_write_len: None,
+            }),
+            &mut output,
+        );
+        output.clear();
 
         session.handle(
             SessionInput::Command(DeviceCommand::RequestTelemetry),
@@ -2371,8 +2745,8 @@ mod tests {
             vec![
                 SessionOutput::Transport(TransportAction::Write {
                     channel: VESC_WRITE_CHANNEL,
-                    bytes: WritePayload::try_from_slice(&[2, 3, 36, 101, 32, 138, 187, 3])
-                        .expect("Refloat ids request fits"),
+                    bytes: WritePayload::try_from_slice(&[2, 5, 36, 101, 0, 2, 0, 2, 71, 3])
+                        .expect("Refloat info request fits"),
                     mode: WriteMode::WithoutResponse,
                 }),
                 SessionOutput::Transport(TransportAction::Write {
@@ -2395,6 +2769,14 @@ mod tests {
     fn generic_vesc_session_writes_stats_request_for_diagnostics() {
         let mut session = ReadOnlySession::<VescGenericModel, true>::default();
         let mut output = Vec::new();
+        session.handle(
+            SessionInput::LinkUp(LinkInfo {
+                monotonic_ms: ms(0),
+                max_write_len: None,
+            }),
+            &mut output,
+        );
+        output.clear();
 
         session.handle(
             SessionInput::Command(DeviceCommand::RequestDiagnostics),
@@ -2542,7 +2924,7 @@ mod tests {
         assert_eq!(
             delta.speed,
             Some(Measured::reported(
-                cutout_core::Speed::from_millimetres_per_second(1_000)
+                cutout_core::Speed::from_millimetres_per_second(278)
             ))
         );
         assert_eq!(
@@ -2555,19 +2937,413 @@ mod tests {
             delta.battery_current, None,
             "default VESC sessions must not claim battery current without explicit profile evidence"
         );
+        assert_eq!(
+            vesc_request_count(&output),
+            0,
+            "notifications must not spawn unpaced polling loops"
+        );
+    }
+
+    #[test]
+    fn generic_vesc_session_recovers_mixed_noise_and_frames() {
+        let vesc = vesc_selective_values_frame();
+        let refloat_ids = refloat_realtime_ids_frame();
+        let refloat_data = refloat_realtime_data_frame();
+        let mut mixed = vec![0xa5, 0x5a, 0x00];
+        mixed.extend_from_slice(&vesc);
+        mixed.extend_from_slice(&refloat_ids);
+        mixed.extend_from_slice(&refloat_data);
+
+        let output = vesc_output_for_notification_chunks(&[mixed.as_slice()]);
+
         assert!(
-            output
+            read_only_response_events(&output)
                 .iter()
-                .filter(|event| matches!(
-                    event,
-                    SessionOutput::Transport(TransportAction::Write {
-                        bytes,
-                        ..
-                    }) if bytes.as_slice() == [2, 3, 36, 101, 31, 77, 7, 3]
-                ))
-                .count()
-                >= 2,
-            "field ids should schedule realtime data, and realtime data should schedule the next sample"
+                .any(|response| matches!(response, ReadOnlyResponse::RawTelemetry(_))),
+            "the VESC frame survives noise and a coalesced Refloat frame"
+        );
+        assert!(
+            telemetry_events(&output)
+                .iter()
+                .any(|delta| delta.speed.is_some()),
+            "the Refloat stream remains usable after the mixed frame"
+        );
+    }
+
+    #[test]
+    fn generic_vesc_session_keeps_noisy_split_vesc_frame() {
+        let vesc = vesc_selective_values_frame();
+        let split_at = 5;
+        let mut first = vec![0xa5, 0x5a];
+        first.extend_from_slice(&vesc[..split_at]);
+
+        let output = vesc_output_for_notification_chunks(&[first.as_slice(), &vesc[split_at..]]);
+
+        assert!(
+            read_only_response_events(&output)
+                .iter()
+                .any(|response| matches!(response, ReadOnlyResponse::RawTelemetry(_))),
+            "a generic VESC frame split after leading noise must survive"
+        );
+    }
+
+    #[test]
+    fn generic_vesc_session_keeps_split_vesc_frame_before_refloat_reply() {
+        let vesc = vesc_selective_values_frame();
+        let refloat_ids = refloat_realtime_ids_frame();
+        let split_at = 4;
+        let mut remainder = Vec::with_capacity(vesc.len() - split_at + refloat_ids.len());
+        remainder.extend_from_slice(&vesc[split_at..]);
+        remainder.extend_from_slice(&refloat_ids);
+
+        let output = vesc_output_for_notification_chunks(&[&vesc[..split_at], &remainder]);
+
+        assert!(
+            read_only_response_events(&output)
+                .iter()
+                .any(|response| matches!(response, ReadOnlyResponse::RawTelemetry(_))),
+            "the split generic VESC frame must survive a following Refloat reply"
+        );
+        assert!(
+            telemetry_events(&output)
+                .iter()
+                .all(|delta| delta.speed.is_none() && delta.pitch.is_none()),
+            "field-id discovery alone must not fabricate Refloat telemetry"
+        );
+    }
+
+    #[test]
+    fn generic_vesc_session_does_not_poison_generic_stream_with_split_refloat_frame() {
+        let refloat_ids = refloat_realtime_ids_frame();
+        let generic = vesc_selective_values_frame();
+        let output = vesc_output_for_notification_chunks(&[
+            &refloat_ids[..2],
+            &refloat_ids[2..],
+            generic.as_slice(),
+        ]);
+
+        assert!(
+            telemetry_events(&output)
+                .iter()
+                .all(|delta| delta.speed.is_none() && delta.pitch.is_none()),
+            "field-id discovery alone must not fabricate Refloat telemetry"
+        );
+        assert!(
+            read_only_response_events(&output)
+                .iter()
+                .any(|response| matches!(response, ReadOnlyResponse::RawTelemetry(_))),
+            "a split Refloat frame must not poison the following generic VESC reply"
+        );
+    }
+
+    #[test]
+    fn generic_vesc_session_keeps_trailing_generic_frame_after_split_refloat_frame() {
+        let refloat_ids = refloat_realtime_ids_frame();
+        let generic = vesc_selective_values_frame();
+        let split_at = 2;
+        let mut remainder = Vec::with_capacity(refloat_ids.len() - split_at + generic.len());
+        remainder.extend_from_slice(&refloat_ids[split_at..]);
+        remainder.extend_from_slice(&generic);
+
+        let output =
+            vesc_output_for_notification_chunks(&[&refloat_ids[..split_at], remainder.as_slice()]);
+
+        assert!(
+            read_only_response_events(&output)
+                .iter()
+                .any(|response| matches!(response, ReadOnlyResponse::RawTelemetry(_))),
+            "a generic VESC frame coalesced after a split Refloat frame must survive"
+        );
+    }
+
+    #[test]
+    fn generic_vesc_polling_recovers_missing_descriptors_and_paces_overlap() {
+        let mut session = ReadOnlySession::<VescGenericModel, true>::default();
+        let mut output = Vec::new();
+        session.handle(
+            SessionInput::LinkUp(LinkInfo {
+                monotonic_ms: ms(0),
+                max_write_len: None,
+            }),
+            &mut output,
+        );
+        session.handle(
+            SessionInput::Command(DeviceCommand::RequestTelemetry),
+            &mut output,
+        );
+        assert_eq!(vesc_request_count(&output), 3);
+        output.clear();
+        session.handle(
+            SessionInput::Notification {
+                channel: VESC_NOTIFY_CHANNEL,
+                bytes: &vesc_selective_values_frame(),
+                monotonic_ms: ms(50),
+            },
+            &mut output,
+        );
+        session.handle(
+            SessionInput::Tick {
+                monotonic_ms: ms(100),
+            },
+            &mut output,
+        );
+        assert_eq!(
+            vesc_request_count(&output),
+            3,
+            "generic values, missing config and missing package descriptors must be retried independently"
+        );
+        output.clear();
+        session.handle(
+            SessionInput::Command(DeviceCommand::RequestTelemetry),
+            &mut output,
+        );
+        session.handle(
+            SessionInput::Tick {
+                monotonic_ms: ms(199),
+            },
+            &mut output,
+        );
+        assert_eq!(
+            vesc_request_count(&output),
+            0,
+            "manual overlap cannot bypass cadence"
+        );
+        session.handle(
+            SessionInput::Tick {
+                monotonic_ms: ms(200),
+            },
+            &mut output,
+        );
+        assert_eq!(vesc_request_count(&output), 3);
+    }
+
+    #[test]
+    fn generic_vesc_delayed_replies_do_not_multiply_polling_and_reconnect_rediscovers() {
+        let mut session = ReadOnlySession::<VescGenericModel, true>::default();
+        let mut output = Vec::new();
+        session.handle(
+            SessionInput::LinkUp(LinkInfo {
+                monotonic_ms: ms(0),
+                max_write_len: None,
+            }),
+            &mut output,
+        );
+        session.handle(
+            SessionInput::Command(DeviceCommand::RequestTelemetry),
+            &mut output,
+        );
+        output.clear();
+        for at in [50, 75] {
+            session.handle(
+                SessionInput::Notification {
+                    channel: VESC_NOTIFY_CHANNEL,
+                    bytes: refloat_realtime_ids_frame().as_slice(),
+                    monotonic_ms: ms(at),
+                },
+                &mut output,
+            );
+        }
+        assert_eq!(
+            vesc_request_count(&output),
+            0,
+            "late/duplicate descriptors must not spawn request loops"
+        );
+        session.handle(
+            SessionInput::Tick {
+                monotonic_ms: ms(100),
+            },
+            &mut output,
+        );
+        assert_eq!(vesc_request_count(&output), 3);
+        output.clear();
+        for at in [110, 120] {
+            session.handle(
+                SessionInput::Notification {
+                    channel: VESC_NOTIFY_CHANNEL,
+                    bytes: refloat_realtime_data_frame().as_slice(),
+                    monotonic_ms: ms(at),
+                },
+                &mut output,
+            );
+        }
+        assert_eq!(telemetry_events(&output).len(), 2);
+        assert_eq!(
+            vesc_request_count(&output),
+            0,
+            "replies must not restart polling deadlines"
+        );
+        session.handle(SessionInput::LinkDown, &mut output);
+        output.clear();
+        session.handle(
+            SessionInput::Tick {
+                monotonic_ms: ms(500),
+            },
+            &mut output,
+        );
+        session.handle(
+            SessionInput::Command(DeviceCommand::RequestTelemetry),
+            &mut output,
+        );
+        assert_eq!(
+            vesc_request_count(&output),
+            0,
+            "disconnected generations must issue no writes"
+        );
+        session.handle(
+            SessionInput::LinkUp(LinkInfo {
+                monotonic_ms: ms(1_000),
+                max_write_len: None,
+            }),
+            &mut output,
+        );
+        session.handle(
+            SessionInput::Command(DeviceCommand::RequestTelemetry),
+            &mut output,
+        );
+        let mut expected = ArrayVec::new();
+        VescReadOnlyCodec::encode_request(
+            VescReadOnlyRequest::Refloat(RefloatReadOnlyRequest::Info),
+            &mut expected,
+        )
+        .unwrap();
+        assert!(output.iter().any(|item| matches!(item, SessionOutput::Transport(TransportAction::Write { bytes, .. }) if bytes.as_slice() == expected.as_slice())), "new connection must rediscover descriptors");
+    }
+
+    fn vesc_request_count(output: &[SessionOutput]) -> usize {
+        output
+            .iter()
+            .filter(|item| {
+                matches!(
+                    item,
+                    SessionOutput::Transport(TransportAction::Write { .. })
+                )
+            })
+            .count()
+    }
+
+    #[test]
+    fn generic_vesc_session_repolls_refloat_after_a_missed_reply() {
+        let mut session = ReadOnlySession::<VescGenericModel, true>::default();
+        let mut output = Vec::new();
+        session.handle(
+            SessionInput::LinkUp(LinkInfo {
+                monotonic_ms: ms(0),
+                max_write_len: Some(write_len(20)),
+            }),
+            &mut output,
+        );
+        session.handle(
+            SessionInput::Command(DeviceCommand::RequestTelemetry),
+            &mut output,
+        );
+        output.clear();
+        session.handle(
+            SessionInput::Notification {
+                channel: VESC_NOTIFY_CHANNEL,
+                bytes: refloat_realtime_ids_frame().as_slice(),
+                monotonic_ms: ms(1),
+            },
+            &mut output,
+        );
+        output.clear();
+        session.handle(
+            SessionInput::Tick {
+                monotonic_ms: ms(101),
+            },
+            &mut output,
+        );
+        assert!(output.iter().any(|item| matches!(
+            item,
+            SessionOutput::Transport(TransportAction::Write { .. })
+        )));
+    }
+
+    #[test]
+    fn generic_vesc_values_after_reconnect_do_not_cancel_refloat_recovery() {
+        let mut session = ReadOnlySession::<VescGenericModel, true>::default();
+        let mut output = Vec::new();
+        session.handle(
+            SessionInput::LinkUp(LinkInfo {
+                monotonic_ms: ms(0),
+                max_write_len: Some(write_len(20)),
+            }),
+            &mut output,
+        );
+        session.handle(
+            SessionInput::Command(DeviceCommand::RequestTelemetry),
+            &mut output,
+        );
+        output.clear();
+        session.handle(
+            SessionInput::Notification {
+                channel: VESC_NOTIFY_CHANNEL,
+                bytes: refloat_realtime_ids_frame().as_slice(),
+                monotonic_ms: ms(1),
+            },
+            &mut output,
+        );
+        session.handle(
+            SessionInput::Notification {
+                channel: VESC_NOTIFY_CHANNEL,
+                bytes: refloat_realtime_data_frame().as_slice(),
+                monotonic_ms: ms(2),
+            },
+            &mut output,
+        );
+        assert!(
+            telemetry_events(&output)
+                .iter()
+                .any(|delta| delta.pitch.is_some())
+        );
+
+        session.handle(SessionInput::LinkDown, &mut output);
+        output.clear();
+        session.handle(
+            SessionInput::LinkUp(LinkInfo {
+                monotonic_ms: ms(1_000),
+                max_write_len: Some(write_len(20)),
+            }),
+            &mut output,
+        );
+        session.handle(
+            SessionInput::Command(DeviceCommand::RequestTelemetry),
+            &mut output,
+        );
+        output.clear();
+        session.handle(
+            SessionInput::Notification {
+                channel: VESC_NOTIFY_CHANNEL,
+                bytes: &vesc_selective_values_frame(),
+                monotonic_ms: ms(1_001),
+            },
+            &mut output,
+        );
+        assert!(
+            telemetry_events(&output)
+                .iter()
+                .all(|delta| delta.pitch.is_none() && delta.footpad.is_none()),
+            "generic VESC values may refresh retained voltage but not Refloat fields"
+        );
+        output.clear();
+        session.handle(
+            SessionInput::Tick {
+                monotonic_ms: ms(1_100),
+            },
+            &mut output,
+        );
+        let mut expected = ArrayVec::new();
+        VescReadOnlyCodec::encode_request(
+            VescReadOnlyRequest::Refloat(RefloatReadOnlyRequest::Info),
+            &mut expected,
+        )
+        .expect("Refloat descriptor request fits");
+        assert!(
+            output.iter().any(|item| matches!(
+                item,
+                SessionOutput::Transport(TransportAction::Write { bytes, .. })
+                    if bytes.as_slice() == expected.as_slice()
+            )),
+            "a generic values reply after reconnect must not stop descriptor recovery"
         );
     }
 
@@ -2809,6 +3585,18 @@ mod tests {
             diagnostics.details[3].expect("count time").field,
             RawFieldValue::new(VESC_RAW_STATS_COUNT_TIME_FIELD_ID, 11_000)
         );
+    }
+
+    #[test]
+    fn generic_vesc_stats_diagnostics_preserve_selective_presence() {
+        let diagnostics = vesc_stats_to_diagnostics(VescStatsTelemetry {
+            present_fields: VescStatsMask::SPEED_AVG,
+            speed_avg: cutout_core::Speed::from_millimetres_per_second(1_250),
+            ..VescStatsTelemetry::default()
+        });
+
+        assert!(diagnostics.details[0].is_some());
+        assert!(diagnostics.details[1..].iter().all(Option::is_none));
     }
 
     #[test]

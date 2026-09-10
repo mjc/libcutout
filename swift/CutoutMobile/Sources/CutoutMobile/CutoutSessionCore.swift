@@ -377,6 +377,8 @@ public final class CutoutSessionCore: NSObject {
     private var isRecordOnly = false
     private var isProbeOnly = false
     private var subscribedCharacteristics: [BluetoothUuid: CBCharacteristic] = [:]
+    private var pendingWithoutResponseWrites: [(CBCharacteristic, Data)] = []
+    private static let maximumPendingWithoutResponseWrites = 64
     private var pendingServiceDiscoveries = Set<CBUUID>()
     private var suppressReconnect = false
     private let reconnectController: ConnectionReconnectController
@@ -1361,6 +1363,7 @@ public final class CutoutSessionCore: NSObject {
         selectedRoute = nil
         liveOwner = nil
         subscribedCharacteristics.removeAll()
+        pendingWithoutResponseWrites.removeAll()
         pendingServiceDiscoveries.removeAll()
 
         guard !suppressReconnect else {
@@ -1577,15 +1580,15 @@ public final class CutoutSessionCore: NSObject {
         }
     }
 
-    private func captureFrame(
+    func captureFrame(
         direction: String,
         characteristic: CBUUID,
         service: CBUUID? = nil,
         bytes: Data,
         telemetry: RawTelemetryReadback? = nil
-    ) {
+    ) -> Bool {
         guard let channel = BluetoothUuid(coreBluetoothUuid: characteristic) else {
-            return
+            return false
         }
 
         switch direction {
@@ -1594,10 +1597,12 @@ public final class CutoutSessionCore: NSObject {
                 record("capture_error=notification_missing_service characteristic=\(characteristic.uuidString)")
                 publishCaptureEvent(.failed)
                 setPhase(.failed(.notificationFailed("missing service UUID for \(characteristic.uuidString)")))
-                return
+                finishCaptureWriter()
+                return false
             }
+            guard let builder = captureBuilder else { return true }
             let location = phoneLocationState.currentSnapshot().latestSample
-            _ = captureBuilder?.recordNotificationWithContext(
+            let accepted = builder.recordNotificationWithContext(
                 monotonicMs: MobileMonotonicMillisDto(milliseconds: captureElapsedMilliseconds()),
                 characteristic: channel.bytes,
                 service: serviceUuid.bytes,
@@ -1605,18 +1610,21 @@ public final class CutoutSessionCore: NSObject {
                 telemetry: telemetry?.dto,
                 phoneLocation: location
             )
+            guard acceptCaptureWrite(accepted) else { return false }
             record("capture_queue_depth=\(captureBuilder?.writerStatus().queuedMessages ?? 0)")
         case "write_without_response":
-            let accepted = captureBuilder?.recordWriteWithoutResponse(
+            guard let builder = captureBuilder else { return true }
+            let accepted = builder.recordWriteWithoutResponse(
                 monotonicMs: MobileMonotonicMillisDto(milliseconds: captureElapsedMilliseconds()),
                 characteristic: channel.bytes,
                 bytes: bytes
-            ) ?? false
-            guard acceptCaptureWrite(accepted) else { return }
+            )
+            guard acceptCaptureWrite(accepted) else { return false }
             record("capture_queue_depth=\(captureBuilder?.writerStatus().queuedMessages ?? 0)")
         default:
-            return
+            return false
         }
+        return true
     }
 
     private func startCapture(
@@ -2002,7 +2010,7 @@ private extension CutoutSessionCore {
             }
             for characteristic in characteristics {
                 if let channel = BluetoothUuid(coreBluetoothUuid: characteristic.uuid) {
-                    subscribedCharacteristics[channel] = characteristic
+                    bindDiscoveredCharacteristic(channel, characteristic)
                 }
             }
             pendingServiceDiscoveries.remove(service.uuid)
@@ -2151,6 +2159,12 @@ extension CutoutSessionCore: CBCentralManagerDelegate {
 }
 
 extension CutoutSessionCore: CBPeripheralDelegate {
+    public func peripheralIsReady(toSendWriteWithoutResponse peripheral: CBPeripheral) {
+        assertOnBleQueue()
+        guard self.peripheral === peripheral else { return }
+        flushPendingWithoutResponseWrites()
+    }
+
     public func peripheral(_ peripheral: CBPeripheral, didDiscoverServices error: Error?) {
         assertOnBleQueue()
         if let error {
@@ -2177,7 +2191,7 @@ extension CutoutSessionCore: CBPeripheralDelegate {
         }
         service.characteristics?.forEach { characteristic in
             if let channel = BluetoothUuid(coreBluetoothUuid: characteristic.uuid) {
-                subscribedCharacteristics[channel] = characteristic
+                bindDiscoveredCharacteristic(channel, characteristic)
             }
         }
         recordGattFingerprints(service: service)
@@ -2217,27 +2231,31 @@ extension CutoutSessionCore: CBPeripheralDelegate {
         else {
             return
         }
+        guard subscribedCharacteristics[channel] === characteristic else {
+            record("notification_ignored=unbound_characteristic service=\(characteristic.service?.uuid.uuidString ?? "unknown") characteristic=\(characteristic.uuid.uuidString)")
+            return
+        }
         let detectionResolution = observeDetectionNotification(channel: channel, bytes: value)
         if isProbeOnly {
             guard promoteProbeIfResolved(detectionResolution, on: characteristic.service?.peripheral) else {
-                captureFrame(
+                guard captureFrame(
                     direction: "notify",
                     characteristic: characteristic.uuid,
                     service: characteristic.service?.uuid,
                     bytes: value
-                )
+                ) else { return }
                 captureNotificationCount += 1
                 publishCaptureEvent(.progress(captureProgress()))
                 return
             }
         }
         if isRecordOnly {
-            captureFrame(
+            guard captureFrame(
                 direction: "notify",
                 characteristic: characteristic.uuid,
                 service: characteristic.service?.uuid,
                 bytes: value
-            )
+            ) else { return }
             record("record_only_notification=\(characteristic.uuid.uuidString) bytes=\(value.count)")
             captureNotificationCount += 1
             publishCaptureEvent(.progress(captureProgress()))
@@ -2258,13 +2276,13 @@ extension CutoutSessionCore: CBPeripheralDelegate {
             let ingestMilliseconds = ingestFinishedAt.rawValue >= ingestStartedAt.rawValue
                 ? ingestFinishedAt.rawValue - ingestStartedAt.rawValue
                 : 0
-            captureFrame(
+            guard captureFrame(
                 direction: "notify",
                 characteristic: characteristic.uuid,
                 service: characteristic.service?.uuid,
                 bytes: value,
                 telemetry: step.actions.compactMap(\.rawTelemetry).last
-            )
+            ) else { return }
             record("notification=\(characteristic.uuid.uuidString) bytes=\(value.count)")
             captureNotificationCount += 1
             publishCaptureEvent(.progress(captureProgress()))
@@ -2288,6 +2306,10 @@ extension CutoutSessionCore: CBPeripheralDelegate {
     ) {
         assertOnBleQueue()
         guard let channel = BluetoothUuid(coreBluetoothUuid: characteristic.uuid) else {
+            return
+        }
+        guard subscribedCharacteristics[channel] === characteristic else {
+            record("notification_state_ignored=unbound_characteristic service=\(characteristic.service?.uuid.uuidString ?? "unknown") characteristic=\(characteristic.uuid.uuidString)")
             return
         }
         if let error {
@@ -2321,6 +2343,32 @@ extension CutoutSessionCore: CBPeripheralDelegate {
 }
 
 private extension CutoutSessionCore {
+    func bindDiscoveredCharacteristic(_ channel: BluetoothUuid, _ characteristic: CBCharacteristic) {
+        guard let existing = subscribedCharacteristics[channel] else {
+            subscribedCharacteristics[channel] = characteristic
+            return
+        }
+        guard preferredServiceUuid(for: selectedRoute) == characteristic.service?.uuid else {
+            return
+        }
+        if existing.service?.uuid != characteristic.service?.uuid {
+            subscribedCharacteristics[channel] = characteristic
+        }
+    }
+
+    func preferredServiceUuid(for route: DevicePickerConnectionRoute?) -> CBUUID? {
+        switch route {
+        case .vescOnewheel:
+            return BluetoothUuid.vescNordicUartService.coreBluetoothUuid
+        case .electricUnicycle:
+            return BluetoothUuid.bluetooth16(0xffe0).coreBluetoothUuid
+        case nil:
+            return nil
+        }
+    }
+}
+
+private extension CutoutSessionCore {
     func assertOnBleQueue() {
         dispatchPrecondition(condition: .onQueue(bleQueue))
     }
@@ -2332,18 +2380,55 @@ extension CutoutSessionCore: CoreBluetoothOperationSink {
             setPhase(.failed(.missingNotifyChannel))
             return
         }
+        guard characteristic.properties.contains(.notify) || characteristic.properties.contains(.indicate) else {
+            setPhase(.failed(.missingNotifyChannel))
+            return
+        }
         peripheral?.setNotifyValue(true, for: characteristic)
     }
 
     public func writeWithoutResponse(channel: BluetoothUuid, bytes: Data) {
         observeDetectionProbeWrite(channel: channel, bytes: bytes)
-        captureFrame(direction: "write_without_response", characteristic: channel.coreBluetoothUuid, bytes: bytes)
         guard let characteristic = subscribedCharacteristics[channel] else {
             setPhase(.failed(.missingWriteChannel))
             return
         }
-        peripheral?.writeValue(bytes, for: characteristic, type: .withoutResponse)
+        guard characteristic.properties.contains(.writeWithoutResponse) else {
+            setPhase(.failed(.missingWriteChannel))
+            return
+        }
+        guard let peripheral else { return }
+        guard captureFrame(
+            direction: "write_without_response",
+            characteristic: channel.coreBluetoothUuid,
+            bytes: bytes
+        ) else {
+            return
+        }
+        guard peripheral.canSendWriteWithoutResponse else {
+            if pendingWithoutResponseWrites.count >= Self.maximumPendingWithoutResponseWrites {
+                pendingWithoutResponseWrites.removeFirst()
+                record("write_without_response_dropped=queue_full_oldest")
+            }
+            pendingWithoutResponseWrites.append((characteristic, bytes))
+            record("write_without_response_queued=\(channel.coreBluetoothUuid.uuidString) bytes=\(bytes.count)")
+            return
+        }
+        peripheral.writeValue(bytes, for: characteristic, type: .withoutResponse)
         record("write_without_response=\(channel.coreBluetoothUuid.uuidString) bytes=\(bytes.count)")
+    }
+
+    public func canSubmitWithoutResponse() -> Bool {
+        peripheral?.canSendWriteWithoutResponse ?? false
+    }
+
+    private func flushPendingWithoutResponseWrites() {
+        guard let peripheral else { return }
+        while peripheral.canSendWriteWithoutResponse, !pendingWithoutResponseWrites.isEmpty {
+            let (characteristic, bytes) = pendingWithoutResponseWrites.removeFirst()
+            peripheral.writeValue(bytes, for: characteristic, type: .withoutResponse)
+            record("write_without_response_flush=\(characteristic.uuid.uuidString) bytes=\(bytes.count)")
+        }
     }
 
     public func disconnect() {

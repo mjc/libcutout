@@ -516,11 +516,13 @@ final class CutoutAppRouteTests: XCTestCase {
             (.motorTemperature, "Warning. Motor temperature is high. Stop safely and let it cool."),
             (.current, "Warning. Current limit reached. Reduce acceleration."),
             (.dutyPushback, "Warning. Pushback soon. Reduce acceleration."),
+            (.speedPushback, "Warning. Speed pushback. Reduce speed."),
             (.temperaturePushback, "Warning. Temperature pushback. Stop safely and let the board cool."),
             (.wheelslip, "Warning. Wheel slip detected. Reduce acceleration and regain control."),
             (.sensors, "Warning. Stop safely and check the board sensors."),
             (.lowBattery, "Warning. Battery is low. Slow down and stop safely."),
             (.error, "Critical warning. Controller error. Stop safely."),
+            (.bmsConnection, "Critical warning. Battery-management connection failed. Stop safely."),
         ]
         for (warning, announcement) in vescAnnouncements {
             XCTAssertEqual(warning.accessibilityAnnouncement, announcement)
