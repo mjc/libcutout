@@ -1,3 +1,4 @@
+import CoreLocation
 import XCTest
 @testable import CutoutApp
 @testable import CutoutMobile
@@ -3197,6 +3198,44 @@ final class CutoutAppModelTests: XCTestCase {
             XCTAssertEqual(fixture?.testScript.telemetryUpdateDelayMilliseconds, 1_500)
         }
     }
+    @MainActor
+    func testProductionRideMapDecisionReachesAppModelWithoutMapMounted() async throws {
+        let fixture = CutoutUITestSessionFixture.autoVescLiveActivity
+        let core = CutoutSessionCore(
+            testScript: fixture.testScript,
+            rideMapState: MobileRideMapState()
+        )
+        let model = CutoutAppModel(core: core)
+
+        core.start()
+        XCTAssertTrue(core.pair(platformIdentifier: fixture.candidate.platformIdentifier))
+        await Self.waitUntil("production ride-map recording") {
+            model.phase == .live && model.rideMapSnapshot?.state == .active
+        }
+
+        core.locationManager(
+            CLLocationManager(),
+            didUpdateLocations: [
+                CLLocation(
+                    coordinate: CLLocationCoordinate2D(latitude: 39.7392, longitude: -104.9903),
+                    altitude: 1_600,
+                    horizontalAccuracy: 4,
+                    verticalAccuracy: 4,
+                    course: 0,
+                    speed: 8,
+                    timestamp: Date()
+                )
+            ]
+        )
+        await Self.waitUntil("app-model ride-map decision") {
+            guard case .accepted? = model.rideMapLastDecision else { return false }
+            return true
+        }
+        await Self.waitUntil("app-model live projection") {
+            !model.rideMapLiveDisplayPoints.isEmpty
+        }
+    }
+
 }
 
 @MainActor

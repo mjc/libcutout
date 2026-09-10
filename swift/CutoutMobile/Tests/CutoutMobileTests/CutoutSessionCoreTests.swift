@@ -422,9 +422,40 @@ final class CutoutSessionCoreTests: XCTestCase {
         wait(for: [pointAccepted], timeout: 2)
     }
 
-    func testReconnectDoesNotCreateSecondAutomaticallyStartedRide() throws {
+    func testProductionLocationPathPersistsRouteAcrossDatabaseReopen() async throws {
+        let temporaryPath = FileManager.default.temporaryDirectory
+            .appendingPathComponent("cutout-production-route-\(UUID().uuidString).sqlite")
+            .path
+        var path: String
+        let database: RideDatabaseHandle
+        do {
+            path = temporaryPath
+            database = try openRideDatabase(path: path)
+        } catch {
+            // The Rust service is intentionally process-global. If another test acquired the
+            // canonical service first, reuse that service so the full suite remains order-safe.
+            let applicationSupport = try XCTUnwrap(
+                FileManager.default.urls(
+                    for: .applicationSupportDirectory,
+                    in: .userDomainMask
+                ).first
+            )
+            try FileManager.default.createDirectory(
+                at: applicationSupport.appendingPathComponent("Cutout", isDirectory: true),
+                withIntermediateDirectories: true
+            )
+            path = applicationSupport
+                .appendingPathComponent("Cutout/ride.sqlite")
+                .path
+            do {
+                database = try openRideDatabase(path: path)
+            } catch {
+                throw XCTSkip("Rust ride database is unavailable in this test environment")
+            }
+        }
+        let state = MobileRideMapState(database: database)
         let live = expectation(description: "scripted session reaches live")
-        let state = MobileRideMapState()
+        let pointAccepted = expectation(description: "ride-map point is accepted")
         let core = CutoutSessionCore(
             testScript: CutoutSessionTestScript(
                 candidate: scriptedVescCandidate,
@@ -434,29 +465,89 @@ final class CutoutSessionCoreTests: XCTestCase {
             ),
             rideMapState: state
         )
-        var liveObserved = false
         core.onPhaseChange = { phase in
-            if phase == .live && !liveObserved {
-                liveObserved = true
+            if phase == .live {
                 live.fulfill()
+            }
+        }
+        core.onRideMapDecisionChange = { _, decision in
+            if case .accepted = decision {
+                pointAccepted.fulfill()
             }
         }
 
         core.start()
         XCTAssertTrue(core.pair(platformIdentifier: scriptedVescCandidate.platformIdentifier))
-        wait(for: [live], timeout: 1)
-
-        let rideID = try XCTUnwrap(state.currentSnapshot(atMs: 1_000)?.rideID)
-        core.applyNotificationStep(
-            CoreBluetoothSessionStep(
-                operations: [],
-                snapshot: TelemetrySnapshot(speed: speedValue(8_000))
-            ),
-            receivedAt: MonotonicMilliseconds(2_000)
+        await fulfillment(of: [live], timeout: 1)
+        core.locationManager(
+            CLLocationManager(),
+            didUpdateLocations: [
+                CLLocation(
+                    coordinate: CLLocationCoordinate2D(latitude: 39.7392, longitude: -104.9903),
+                    altitude: 1_600,
+                    horizontalAccuracy: 4,
+                    verticalAccuracy: 4,
+                    course: 0,
+                    speed: 8,
+                    timestamp: Date()
+                )
+            ]
         )
+        await fulfillment(of: [pointAccepted], timeout: 2)
 
-        XCTAssertEqual(state.currentSnapshot(atMs: 2_000)?.rideID, rideID)
-        XCTAssertEqual(state.currentSnapshot(atMs: 2_000)?.state, .active)
+        let rideID = try XCTUnwrap(state.currentSnapshot()?.rideID)
+        XCTAssertEqual(try state.storedPointsAfter(rideId: rideID, afterCursor: nil, limit: 10).points.count, 1)
+
+        let reopenedState = MobileRideMapState(database: try openRideDatabase(path: path))
+        let reopenedPoints = try reopenedState.storedPointsAfter(
+            rideId: rideID,
+            afterCursor: nil,
+            limit: 10
+        )
+        XCTAssertEqual(reopenedPoints.points.count, 1)
+        XCTAssertEqual(reopenedPoints.points.first?.latitudeDegrees, 39.7392)
+    }
+
+    func testReconnectDoesNotCreateSecondAutomaticallyStartedRide() async throws {
+        let live = expectation(description: "scripted session reaches live")
+        let reconnectScheduled = expectation(description: "scripted reconnect is scheduled")
+        let reconnected = expectation(description: "scripted session returns live")
+        let state = MobileRideMapState()
+        let core = CutoutSessionCore(
+            testScript: CutoutSessionTestScript(
+                candidate: scriptedVescCandidate,
+                telemetry: TelemetrySnapshot(speed: speedValue(8_000)),
+                startsLive: true,
+                reconnectsAfterFirstLive: true,
+                reconnectAfterLiveMilliseconds: 0,
+                reconnectDelayMilliseconds: 0,
+                connectionDelayMilliseconds: 0
+            ),
+            rideMapState: state
+        )
+        var liveCount = 0
+        core.onPhaseChange = { phase in
+            guard phase == .live else { return }
+            liveCount += 1
+            if liveCount == 1 {
+                live.fulfill()
+            } else if liveCount == 2 {
+                reconnected.fulfill()
+            }
+        }
+        core.onReconnectScheduled = { _ in
+            reconnectScheduled.fulfill()
+        }
+
+        core.start()
+        XCTAssertTrue(core.pair(platformIdentifier: scriptedVescCandidate.platformIdentifier))
+        await fulfillment(of: [live], timeout: 1)
+
+        let rideID = try XCTUnwrap(state.currentSnapshot()?.rideID)
+        await fulfillment(of: [reconnectScheduled, reconnected], timeout: 2)
+
+        XCTAssertEqual(state.currentSnapshot()?.rideID, rideID)
+        XCTAssertEqual(state.currentSnapshot()?.state, .active)
     }
 
     func testExplicitlyStoppedRideRequiresExplicitStartBeforeLaterTelemetry() throws {
@@ -485,7 +576,7 @@ final class CutoutSessionCoreTests: XCTestCase {
         wait(for: [live], timeout: 1)
 
         let rideID = try XCTUnwrap(state.currentSnapshot(atMs: 1_000)?.rideID)
-        _ = try state.stop(atMs: 2_000)
+        _ = try core.stopRideMap(atMs: 2_000)
         core.applyNotificationStep(
             CoreBluetoothSessionStep(
                 operations: [],
@@ -496,7 +587,7 @@ final class CutoutSessionCoreTests: XCTestCase {
         XCTAssertEqual(state.currentSnapshot(atMs: 2_100)?.rideID, rideID)
         XCTAssertEqual(state.currentSnapshot(atMs: 2_100)?.state, .stopped)
 
-        let newRide = try state.startGpsOnly(atMs: 2_500, lastConnectedVehicle: nil)
+        let newRide = try core.startRideMapGpsOnly(atMs: 2_500, lastConnectedVehicle: nil)
         core.applyNotificationStep(
             CoreBluetoothSessionStep(
                 operations: [],
