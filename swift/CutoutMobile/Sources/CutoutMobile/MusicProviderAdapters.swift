@@ -20,6 +20,7 @@ public final class SpotifyProviderAdapter: NSObject {
     public static let providerURL = URL(string: "spotify://")!
     private static let defaultRedirectURI = "cutout-spotify://spotify-login-callback"
     private static let artworkSize = CGSize(width: 256, height: 256)
+    private static let artworkRequestTimeout = Duration.seconds(5)
     private static let accessTokenKey = "io.cutout.music.spotify.access-token"
     private static let sessionKey = "io.cutout.music.spotify.session-v1"
     private static let accessTokenAccount = "default"
@@ -94,18 +95,21 @@ public final class SpotifyProviderAdapter: NSObject {
     private let configuration: SPTConfiguration?
     private var sessionManager: SPTSessionManager?
     private var sessionManagerBridge: SessionManagerBridge?
-    private var sessionManagerGeneration: UInt64 = 0
+    private let authorizationTransaction = MobileMusicAuthorizationTransaction()
+    private var authorizationGeneration: UInt64?
     private var appRemote: SPTAppRemote?
     private var appRemoteBridge: AppRemoteBridge?
+    private let appRemoteEpoch = MobileMusicCallbackEpoch()
     private var accessToken: String?
     private var session: SPTSession?
     private var playerState: SPTAppRemotePlayerState?
     private var artwork: MusicArtwork?
     private var artworkGeneration: UInt64 = 0
     private var artworkCache = MusicArtworkCache()
-    private var artworkRequestID: UInt64 = 0
-    private var artworkRequest: (id: UInt64, trackURI: String, generation: UInt64, attempt: Int)?
+    private let artworkRequestPolicy = MobileMusicArtworkRequest()
+    private var artworkRequest: (id: UInt64, trackURI: String, generation: UInt64)?
     private var artworkRetryTask: Task<Void, Never>?
+    private var artworkDeadlineTask: Task<Void, Never>?
     private var onChange: (@MainActor () -> Void)?
     private var lifecycleState: MobileMusicPlaybackStateDto = .disconnected
     private var monitoringGeneration: UInt64 = 0
@@ -114,8 +118,6 @@ public final class SpotifyProviderAdapter: NSObject {
     private let playerStateRequest = MobileMusicPlayerRequest()
     private var connection = MobileMusicConnection()
     private var authorizationTimeoutTask: Task<Void, Never>?
-    private var authorizationInFlight = false
-    private var renewingSession = false
     private var authorizationNeedsUserAction = false
     private var connectionNowMs: UInt64 { UInt64(ProcessInfo.processInfo.systemUptime * 1_000) }
 #if DEBUG
@@ -251,7 +253,7 @@ public final class SpotifyProviderAdapter: NSObject {
         // A scene transition can stop and restart observation while the SDK's
         // authorization callback is still in flight. Keep that transaction
         // alive and let the single monitor loop observe its completion.
-        if authorizationInFlight, sessionManager != nil {
+        if authorizationGeneration != nil, sessionManager != nil {
             lifecycleState = .buffering
             emitChange()
             return true
@@ -263,50 +265,55 @@ public final class SpotifyProviderAdapter: NSObject {
             return false
         }
         if let session {
-            let sessionManager = makeSessionManager(configuration: configuration)
-            sessionManager.session = session
             if session.isExpired {
-                authorizationInFlight = true
-                renewingSession = true
+                let (sessionManager, generation) = makeSessionManager(
+                    configuration: configuration,
+                    kind: .renewing
+                )
+                sessionManager.session = session
+                accessToken = nil
+                authorizationGeneration = generation
                 lifecycleState = .buffering
                 emitChange()
                 sessionManager.renewSession()
-                beginAuthorizationTimeout()
+                beginAuthorizationTimeout(generation: generation)
             } else {
-                renewingSession = false
                 accessToken = session.accessToken
                 connect(with: session.accessToken)
             }
             return true
         } else if let accessToken {
-            renewingSession = false
             authorizationTimeoutTask?.cancel()
             authorizationTimeoutTask = nil
             connect(with: accessToken)
             return true
         } else {
-            renewingSession = false
             lifecycleState = .buffering
             emitChange()
-            authorizationInFlight = true
-            let sessionManager = makeSessionManager(configuration: configuration)
+            let (sessionManager, generation) = makeSessionManager(
+                configuration: configuration,
+                kind: .authorizing
+            )
+            authorizationGeneration = generation
             sessionManager.initiateSession(with: .appRemoteControl, options: .default, campaign: nil)
-            beginAuthorizationTimeout()
+            beginAuthorizationTimeout(generation: generation)
             return true
         }
     }
 
-    private func makeSessionManager(configuration: SPTConfiguration) -> SPTSessionManager {
-        sessionManagerGeneration &+= 1
-        let bridge = SessionManagerBridge(owner: self, generation: sessionManagerGeneration)
+    private func makeSessionManager(
+        configuration: SPTConfiguration,
+        kind: MobileMusicAuthorizationKind
+    ) -> (SPTSessionManager, UInt64) {
+        let generation = authorizationTransaction.begin(kind: kind)
+        let bridge = SessionManagerBridge(owner: self, generation: generation)
         let manager = SPTSessionManager(configuration: configuration, delegate: bridge)
         sessionManagerBridge = bridge
         sessionManager = manager
-        return manager
+        return (manager, generation)
     }
 
-    private func beginAuthorizationTimeout() {
-        let generation = sessionManagerGeneration
+    private func beginAuthorizationTimeout(generation: UInt64) {
         authorizationTimeoutTask?.cancel()
         authorizationTimeoutTask = Task { @MainActor [weak self] in
             do {
@@ -314,17 +321,19 @@ public final class SpotifyProviderAdapter: NSObject {
             } catch {
                 return
             }
-            guard let self,
-                  self.sessionManagerGeneration == generation,
-                  self.authorizationInFlight else { return }
-            self.authorizationInFlight = false
-            self.renewingSession = false
+            guard let self else { return }
+            let transaction = self.finishAuthorizationTransaction(generation: generation)
+            guard transaction != .stale else { return }
             self.authorizationNeedsUserAction = true
-            self.session = nil
-            self.accessToken = nil
-            Self.storeSession(nil)
-            Self.storeAccessToken(nil)
-            self.lifecycleState = .unauthorized
+            if transaction == .renewing {
+                self.lifecycleState = .stale
+            } else {
+                self.session = nil
+                self.accessToken = nil
+                Self.storeSession(nil)
+                Self.storeAccessToken(nil)
+                self.lifecycleState = .unauthorized
+            }
             self.emitChange()
         }
     }
@@ -338,7 +347,7 @@ public final class SpotifyProviderAdapter: NSObject {
         appRemote = nil
         appRemoteBridge = nil
         connectionAttemptID = nil
-        appRemoteGeneration &+= 1
+        appRemoteEpoch.invalidate()
         playerStateRequest.reset()
         playerState = nil
         artwork = nil
@@ -346,7 +355,7 @@ public final class SpotifyProviderAdapter: NSObject {
         invalidateArtworkRequest()
         // Stopping observation must not cancel an authorization handoff. A
         // foreground/background transition can happen while Spotify is open.
-        if !authorizationInFlight {
+        if authorizationGeneration == nil {
             authorizationTimeoutTask?.cancel()
             authorizationTimeoutTask = nil
         }
@@ -358,6 +367,7 @@ public final class SpotifyProviderAdapter: NSObject {
     /// the next explicit setup starts authorization again.
     public func ensureConnection() {
         guard onChange != nil,
+              authorizationGeneration == nil,
               appRemote?.isConnected != true,
               let accessToken
         else { return }
@@ -369,11 +379,11 @@ public final class SpotifyProviderAdapter: NSObject {
     /// next explicit setup/foreground action can start a fresh transaction.
     public var shouldContinueMonitoring: Bool {
         onChange != nil && !authorizationNeedsUserAction
-            && (authorizationInFlight || accessToken != nil)
+            && (authorizationGeneration != nil || accessToken != nil)
     }
 
     private func makeAppRemote(_ configuration: SPTConfiguration) -> SPTAppRemote {
-        appRemoteGeneration &+= 1
+        appRemoteGeneration = appRemoteEpoch.begin()
         invalidateArtworkRequest()
         if let previous = appRemote {
             appRemote = nil
@@ -420,7 +430,7 @@ public final class SpotifyProviderAdapter: NSObject {
             Task { @MainActor [weak self] in
                 guard let self,
                       self.monitoringGeneration == generation,
-                      self.appRemoteGeneration == appRemoteGeneration else { return }
+                      self.appRemoteEpoch.classify(id: appRemoteGeneration) == .current else { return }
                 guard self.playerStateRequest.complete(requestId: requestID) == .accepted else { return }
                 if let playerState, errorInfo == nil {
                     self.handlePlayerStateDidChange(playerState, appRemoteGeneration: appRemoteGeneration)
@@ -446,7 +456,9 @@ public final class SpotifyProviderAdapter: NSObject {
         // SessionManager owns the authorization-code/PKCE callback. It never
         // asks Spotify to start playback; the returned session is connected to
         // App Remote below after the callback delegate fires.
-        let sessionManager = self.sessionManager ?? makeSessionManager(configuration: configuration)
+        guard let generation = authorizationGeneration,
+              authorizationTransaction.classify(id: generation) != .stale,
+              let sessionManager else { return false }
         return sessionManager.application(UIApplication.shared, open: url, options: [:])
     }
 
@@ -473,15 +485,10 @@ public final class SpotifyProviderAdapter: NSObject {
     }
 
     private func acceptSession(generation: UInt64, session: SPTSession) {
-        guard generation == sessionManagerGeneration else { return }
-        authorizationTimeoutTask?.cancel()
-        authorizationTimeoutTask = nil
-        authorizationInFlight = false
+        guard finishAuthorizationTransaction(generation: generation) != .stale else { return }
         self.session = session
-        sessionManager?.session = session
         Self.storeSession(session)
         self.accessToken = session.accessToken
-        renewingSession = false
         authorizationNeedsUserAction = false
         guard onChange != nil else { return }
         connection = MobileMusicConnection()
@@ -495,20 +502,16 @@ public final class SpotifyProviderAdapter: NSObject {
         code: Int,
         description: String
     ) {
-        guard generation == sessionManagerGeneration else { return }
-        authorizationTimeoutTask?.cancel()
-        authorizationTimeoutTask = nil
-        authorizationInFlight = false
+        let transaction = finishAuthorizationTransaction(generation: generation)
+        guard transaction != .stale else { return }
         let permanent = isPermanentAuthorizationFailure(domain: domain, code: code, description: description)
-        if renewingSession, !permanent {
+        if transaction == .renewing, !permanent {
             // Transport failures during renewal are recoverable. Keep the
             // refresh credential and stop this loop so a later foreground or
             // explicit setup can retry without forcing a reauthorization.
-            renewingSession = false
             authorizationNeedsUserAction = true
             lifecycleState = .stale
         } else {
-            renewingSession = false
             authorizationNeedsUserAction = true
             session = nil
             accessToken = nil
@@ -520,6 +523,29 @@ public final class SpotifyProviderAdapter: NSObject {
         print("spotify_authorization_failed domain=\(domain) code=\(code) description=\(description)")
 #endif
         emitChange()
+    }
+
+    private func finishAuthorizationTransaction(generation: UInt64) -> MobileMusicAuthorizationMatch {
+        guard authorizationGeneration == generation else { return .stale }
+        let outcome = authorizationTransaction.finish(id: generation)
+        guard outcome != .stale else { return .stale }
+        authorizationTimeoutTask?.cancel()
+        authorizationTimeoutTask = nil
+        sessionManagerBridge?.owner = nil
+        sessionManagerBridge = nil
+        sessionManager = nil
+        authorizationGeneration = nil
+        return outcome
+    }
+
+    private func invalidateAuthorizationTransaction() {
+        authorizationTransaction.invalidate()
+        authorizationTimeoutTask?.cancel()
+        authorizationTimeoutTask = nil
+        sessionManagerBridge?.owner = nil
+        sessionManagerBridge = nil
+        sessionManager = nil
+        authorizationGeneration = nil
     }
 
     private func isPermanentAuthorizationFailure(domain: String, code: Int, description: String) -> Bool {
@@ -645,7 +671,7 @@ public final class SpotifyProviderAdapter: NSObject {
 
     private func handleAppRemoteDidEstablishConnection(generation: UInt64) {
         guard let appRemote = self.appRemote,
-              self.appRemoteGeneration == generation,
+              appRemoteEpoch.classify(id: generation) == .current,
               onChange != nil else { return }
         guard let attemptID = connectionAttemptID,
               connection.establishedFor(attemptId: attemptID) == .accepted else { return }
@@ -653,8 +679,6 @@ public final class SpotifyProviderAdapter: NSObject {
         print("spotify_connection_established")
 #endif
         monitoringGeneration &+= 1
-        authorizationTimeoutTask?.cancel()
-        authorizationTimeoutTask = nil
         playerStateRequest.reset()
         // A connected session that never returns player state must not remain
         // in buffering forever. Verified callbacks refresh this same window.
@@ -669,7 +693,7 @@ public final class SpotifyProviderAdapter: NSObject {
             Task { @MainActor [weak self] in
                 guard let self,
                       self.monitoringGeneration == generation,
-                      self.appRemoteGeneration == appRemoteGeneration else { return }
+                      self.appRemoteEpoch.classify(id: appRemoteGeneration) == .current else { return }
                 if hasError {
                     self.lifecycleState = .stale
                     self.emitChange()
@@ -688,21 +712,15 @@ public final class SpotifyProviderAdapter: NSObject {
         errorCode: Int?
     ) {
         guard self.appRemote != nil,
-              self.appRemoteGeneration == generation,
-              onChange != nil else { return }
-        guard let attemptID = connectionAttemptID,
-              connection.failedFor(attemptId: attemptID, nowMs: connectionNowMs) == .accepted else { return }
-        connectionAttemptID = nil
-        monitoringGeneration &+= 1
-        authorizationTimeoutTask?.cancel()
-        authorizationTimeoutTask = nil
+              appRemoteEpoch.classify(id: generation) == .current else { return }
+        let attemptID = connectionAttemptID
+        retireAppRemote(generation: generation)
+        if let attemptID {
+            _ = connection.failedFor(attemptId: attemptID, nowMs: connectionNowMs)
+        }
         // App Remote reports transport and wakeup failures here too. A generic
         // connection failure is not evidence that the credential was rejected.
         lifecycleState = .disconnected
-        playerStateRequest.reset()
-        invalidateArtworkRequest()
-        self.appRemote = nil
-        appRemoteBridge = nil
 #if DEBUG
         if let errorDomain, let errorCode {
             print("spotify_connection_failed domain=\(errorDomain) code=\(errorCode)")
@@ -716,17 +734,13 @@ public final class SpotifyProviderAdapter: NSObject {
         errorDomain: String?,
         errorCode: Int?
     ) {
-        guard let appRemote = self.appRemote,
-              self.appRemoteGeneration == generation,
-              onChange != nil else { return }
-        guard let attemptID = connectionAttemptID,
-              connection.disconnectedFor(attemptId: attemptID, nowMs: connectionNowMs) == .accepted else { return }
-        connectionAttemptID = nil
-        monitoringGeneration &+= 1
-        self.appRemote = nil
-        appRemoteBridge = nil
-        playerStateRequest.reset()
-        invalidateArtworkRequest()
+        guard self.appRemote != nil,
+              appRemoteEpoch.classify(id: generation) == .current else { return }
+        let attemptID = connectionAttemptID
+        retireAppRemote(generation: generation)
+        if let attemptID {
+            _ = connection.disconnectedFor(attemptId: attemptID, nowMs: connectionNowMs)
+        }
         lifecycleState = errorDomain == nil ? .disconnected : .stale
 #if DEBUG
         if let errorDomain, let errorCode {
@@ -738,11 +752,28 @@ public final class SpotifyProviderAdapter: NSObject {
         emitChange()
     }
 
+    private func retireAppRemote(generation: UInt64) {
+        guard appRemoteEpoch.finish(id: generation) == .current else { return }
+        connectionAttemptID = nil
+        monitoringGeneration &+= 1
+        appRemote?.playerAPI?.delegate = nil
+        appRemote?.delegate = nil
+        appRemoteBridge?.owner = nil
+        appRemote = nil
+        appRemoteBridge = nil
+        playerStateRequest.reset()
+        invalidateArtworkRequest()
+        playerState = nil
+        artwork = nil
+    }
+
     private func handlePlayerStateDidChange(
         _ playerState: SPTAppRemotePlayerState,
         appRemoteGeneration: UInt64
     ) {
-        guard onChange != nil, self.appRemoteGeneration == appRemoteGeneration else { return }
+        guard onChange != nil,
+              appRemote != nil,
+              appRemoteEpoch.classify(id: appRemoteGeneration) == .current else { return }
         let trackChanged = self.playerState?.track.uri != playerState.track.uri
 #if DEBUG
         if trackChanged {
@@ -764,25 +795,26 @@ public final class SpotifyProviderAdapter: NSObject {
     }
 
     private func invalidateArtworkRequest() {
-        artworkRequestID &+= 1
+        artworkRequestPolicy.reset()
         artworkRequest = nil
         artworkRetryTask?.cancel()
         artworkRetryTask = nil
+        artworkDeadlineTask?.cancel()
+        artworkDeadlineTask = nil
     }
 
     private func requestArtwork(
         for track: SPTAppRemoteTrack,
-        generation: UInt64,
-        attempt: Int = 1
+        generation: UInt64
     ) {
-        guard generation == appRemoteGeneration,
+        guard appRemoteEpoch.classify(id: generation) == .current,
               artworkRequest == nil,
               artworkRetryTask == nil,
-              let imageAPI = appRemote?.imageAPI else { return }
-        let requestID = artworkRequestID &+ 1
-        artworkRequestID = requestID
+              let imageAPI = appRemote?.imageAPI,
+              let requestID = artworkRequestPolicy.begin() else { return }
         let trackURI = track.uri
-        artworkRequest = (requestID, trackURI, generation, attempt)
+        artworkRequest = (requestID, trackURI, generation)
+        beginArtworkDeadline(requestID: requestID, track: track, generation: generation)
         imageAPI.fetchImage(forItem: track, with: Self.artworkSize) { [weak self] image, error in
             let data = (image as? UIImage)?.jpegData(compressionQuality: 0.8)
             let failed = error != nil
@@ -792,24 +824,52 @@ public final class SpotifyProviderAdapter: NSObject {
                       request.id == requestID,
                       request.trackURI == trackURI,
                       request.generation == generation,
-                      self.appRemoteGeneration == generation,
+                      self.appRemoteEpoch.classify(id: generation) == .current,
                       self.playerState?.track.uri == trackURI else { return }
+                guard self.artworkRequestPolicy.complete(requestId: requestID) == .accepted else { return }
                 self.artworkRequest = nil
+                self.artworkDeadlineTask?.cancel()
+                self.artworkDeadlineTask = nil
                 if !failed, let data, let artwork = MusicArtwork(data: data) {
                     self.artworkCache.insert(artwork, for: trackURI)
                     self.artwork = artwork
                     self.emitChange()
-                } else if attempt < 3 {
-                    self.scheduleArtworkRetry(track: track, generation: generation, attempt: attempt + 1)
+                } else if self.artworkRequestPolicy.canRetry() {
+                    self.scheduleArtworkRetry(track: track, generation: generation)
                 }
+            }
+        }
+    }
+
+    private func beginArtworkDeadline(
+        requestID: UInt64,
+        track: SPTAppRemoteTrack,
+        generation: UInt64
+    ) {
+        artworkDeadlineTask?.cancel()
+        artworkDeadlineTask = Task { @MainActor [weak self] in
+            do {
+                try await Task.sleep(for: Self.artworkRequestTimeout)
+            } catch {
+                return
+            }
+            guard let self,
+                  let request = self.artworkRequest,
+                  request.id == requestID,
+                  request.trackURI == track.uri,
+                  request.generation == generation,
+                  self.artworkRequestPolicy.complete(requestId: requestID) == .accepted else { return }
+            self.artworkRequest = nil
+            self.artworkDeadlineTask = nil
+            if self.artworkRequestPolicy.canRetry() {
+                self.scheduleArtworkRetry(track: track, generation: generation)
             }
         }
     }
 
     private func scheduleArtworkRetry(
         track: SPTAppRemoteTrack,
-        generation: UInt64,
-        attempt: Int
+        generation: UInt64
     ) {
         artworkRetryTask?.cancel()
         artworkRetryTask = Task { @MainActor [weak self] in
@@ -819,26 +879,21 @@ public final class SpotifyProviderAdapter: NSObject {
                 return
             }
             guard let self,
-                  self.appRemoteGeneration == generation,
+                  self.appRemoteEpoch.classify(id: generation) == .current,
                   self.playerState?.track.uri == track.uri else { return }
             self.artworkRetryTask = nil
-            self.requestArtwork(for: track, generation: generation, attempt: attempt)
+            self.requestArtwork(for: track, generation: generation)
         }
     }
 
     /// Called only by the explicit Reauthorize Spotify account action.
     public func clearAuthorization() {
         stopMonitoring()
-        sessionManager = nil
-        sessionManagerBridge = nil
-        authorizationTimeoutTask?.cancel()
-        authorizationTimeoutTask = nil
+        invalidateAuthorizationTransaction()
         accessToken = nil
         session = nil
         Self.storeAccessToken(nil)
         Self.storeSession(nil)
-        authorizationInFlight = false
-        renewingSession = false
         authorizationNeedsUserAction = true
     }
 
