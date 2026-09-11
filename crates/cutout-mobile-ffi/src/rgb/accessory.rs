@@ -9,8 +9,42 @@ use cutout_core::{
     RgbLightingProfileKind, RgbLightingRecordError as CoreRgbLightingRecordError,
     RgbLightingRequestedState,
 };
+use uuid::Uuid;
 
 use super::melk::{MobileLightingPlaybackDto, MobileMelkLightingRestoreStateDto};
+
+/// A lossless Bluetooth UUID crossing the `UniFFI` boundary.
+///
+/// `UniFFI` does not directly lower `uuid::Uuid`. Keeping the two network-order
+/// 64-bit words avoids an untyped byte vector or textual UUID at the mobile
+/// boundary while Rust continues to use `Uuid` internally.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct MobileBluetoothUuid {
+    /// The most-significant 64 bits in network order.
+    pub most_significant_bits: u64,
+    /// The least-significant 64 bits in network order.
+    pub least_significant_bits: u64,
+}
+
+impl From<Uuid> for MobileBluetoothUuid {
+    fn from(uuid: Uuid) -> Self {
+        let value = uuid.as_u128();
+        Self {
+            most_significant_bits: (value >> 64) as u64,
+            least_significant_bits: u64::try_from(value & u128::from(u64::MAX))
+                .expect("UUID low word is masked to u64"),
+        }
+    }
+}
+
+impl From<MobileBluetoothUuid> for Uuid {
+    fn from(uuid: MobileBluetoothUuid) -> Self {
+        Self::from_u128(
+            (u128::from(uuid.most_significant_bits) << 64)
+                | u128::from(uuid.least_significant_bits),
+        )
+    }
+}
 
 /// Supported persisted RGB-controller profile.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Enum)]

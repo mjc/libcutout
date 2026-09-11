@@ -2,6 +2,7 @@
 
 use std::sync::Arc;
 
+use crate::MobileBluetoothUuid;
 use cutout_core::{
     LightingBrightness, LightingPowerState, RgbColor, RgbLightingCommand,
     RgbLightingRequestedState, RgbLightingRestoreDecision,
@@ -43,7 +44,7 @@ pub struct MobileMelkLightingGattEvidence {
 #[derive(Clone, Debug, Eq, PartialEq, uniffi::Record)]
 pub struct MobileMelkLightingWriteDto {
     /// Characteristic receiving the command frame.
-    pub characteristic: Vec<u8>,
+    pub characteristic: MobileBluetoothUuid,
 
     /// Candidate protocol frame emitted by Rust.
     pub payload: Vec<u8>,
@@ -52,7 +53,7 @@ pub struct MobileMelkLightingWriteDto {
     pub mode: MobileMelkLightingWriteModeDto,
 
     /// Characteristic whose notifications may confirm the command.
-    pub confirmation_characteristic: Vec<u8>,
+    pub confirmation_characteristic: MobileBluetoothUuid,
 
     /// Capture-backed minimum command interval, when known.
     pub minimum_interval_ms: Option<u16>,
@@ -328,10 +329,10 @@ pub(crate) fn mobile_melk_transport_action(action: TransportAction) -> MobileMel
     };
     let policy = MelkLightingProfile::write_policy();
     MobileMelkLightingWriteDto {
-        characteristic: channel.as_bytes().to_vec(),
+        characteristic: channel.as_uuid().into(),
         payload: bytes.as_slice().to_vec(),
         mode: mobile_melk_write_mode(mode),
-        confirmation_characteristic: policy.confirmation_channel.as_bytes().to_vec(),
+        confirmation_characteristic: policy.confirmation_channel.as_uuid().into(),
         minimum_interval_ms: policy.minimum_interval_ms,
     }
 }

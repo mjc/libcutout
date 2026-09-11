@@ -21,22 +21,22 @@ fn ready_core() -> std::sync::Arc<MobileMelkLightingSessionCore> {
     });
     core.drain_actions();
     core.handle(MobileMelkLightingSessionEventDto::ServicesDiscovered {
-        service_uuids: vec![cutout_protocols::MELK_SERVICE_CHANNEL.as_bytes().to_vec()],
+        service_uuids: vec![cutout_protocols::MELK_SERVICE_CHANNEL.as_uuid().into()],
         error: None,
     });
     core.drain_actions();
     core.handle(
         MobileMelkLightingSessionEventDto::CharacteristicsDiscovered {
             name: Some("MELK-OC21  6A".into()),
-            service_uuid: cutout_protocols::MELK_SERVICE_CHANNEL.as_bytes().to_vec(),
+            service_uuid: cutout_protocols::MELK_SERVICE_CHANNEL.as_uuid().into(),
             characteristics: vec![
                 MobileMelkLightingCharacteristicEvidenceDto {
-                    uuid: cutout_protocols::MELK_WRITE_CHANNEL.as_bytes().to_vec(),
+                    uuid: cutout_protocols::MELK_WRITE_CHANNEL.as_uuid().into(),
                     write_without_response: true,
                     notify_or_indicate: false,
                 },
                 MobileMelkLightingCharacteristicEvidenceDto {
-                    uuid: cutout_protocols::MELK_NOTIFY_CHANNEL.as_bytes().to_vec(),
+                    uuid: cutout_protocols::MELK_NOTIFY_CHANNEL.as_uuid().into(),
                     write_without_response: false,
                     notify_or_indicate: true,
                 },
@@ -46,7 +46,7 @@ fn ready_core() -> std::sync::Arc<MobileMelkLightingSessionCore> {
     );
     core.drain_actions();
     core.handle(MobileMelkLightingSessionEventDto::NotificationState {
-        characteristic: cutout_protocols::MELK_NOTIFY_CHANNEL.as_bytes().to_vec(),
+        characteristic: cutout_protocols::MELK_NOTIFY_CHANNEL.as_uuid().into(),
         ready: true,
         can_send: true,
         error: None,

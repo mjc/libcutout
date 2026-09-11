@@ -1,12 +1,22 @@
 use super::{
-    MobileMelkLightingError, MobileMelkLightingGattEvidence, MobileMelkLightingProfile,
-    MobileMelkLightingRestoreDecisionKindDto, MobileMelkLightingRestoreMarker,
-    MobileMelkLightingRestoreStateDto, MobileMelkLightingWriteModeDto,
-    MobileRgbLightingAccessoryRecord, MobileRgbLightingConfirmationStateDto,
-    MobileRgbLightingConnectionStateDto, MobileRgbLightingProfileKindDto,
-    MobileRgbLightingRecordError, mobile_melk_lighting_capabilities,
+    MobileBluetoothUuid, MobileMelkLightingError, MobileMelkLightingGattEvidence,
+    MobileMelkLightingProfile, MobileMelkLightingRestoreDecisionKindDto,
+    MobileMelkLightingRestoreMarker, MobileMelkLightingRestoreStateDto,
+    MobileMelkLightingWriteModeDto, MobileRgbLightingAccessoryRecord,
+    MobileRgbLightingConfirmationStateDto, MobileRgbLightingConnectionStateDto,
+    MobileRgbLightingProfileKindDto, MobileRgbLightingRecordError,
+    mobile_melk_lighting_capabilities,
 };
 use cutout_protocols::{MELK_NOTIFY_CHANNEL, MELK_WRITE_CHANNEL};
+
+#[test]
+fn mobile_bluetooth_uuid_round_trips_the_core_uuid_without_bytes_or_text() {
+    let mobile_uuid = MobileBluetoothUuid::from(MELK_WRITE_CHANNEL.as_uuid());
+
+    assert_eq!(mobile_uuid.most_significant_bits, 0x0000_fff3_0000_1000);
+    assert_eq!(mobile_uuid.least_significant_bits, 0x8000_0080_5f9b_34fb);
+    assert_eq!(uuid::Uuid::from(mobile_uuid), MELK_WRITE_CHANNEL.as_uuid());
+}
 
 fn observed_profile() -> std::sync::Arc<MobileMelkLightingProfile> {
     MobileMelkLightingProfile::new(
@@ -67,10 +77,10 @@ fn writes_include_transport_and_confirmation_policy() {
     let profile = observed_profile();
     let write = profile.set_power(true);
 
-    assert_eq!(write.characteristic, MELK_WRITE_CHANNEL.as_bytes());
+    assert_eq!(write.characteristic, MELK_WRITE_CHANNEL.as_uuid().into());
     assert_eq!(
         write.confirmation_characteristic,
-        MELK_NOTIFY_CHANNEL.as_bytes()
+        MELK_NOTIFY_CHANNEL.as_uuid().into()
     );
     assert_eq!(write.mode, MobileMelkLightingWriteModeDto::WithoutResponse);
     assert_eq!(write.minimum_interval_ms, Some(50));
@@ -85,7 +95,7 @@ fn initialization_writes_use_the_melk_write_channel() {
     assert!(
         writes
             .iter()
-            .all(|write| write.characteristic == MELK_WRITE_CHANNEL.as_bytes())
+            .all(|write| write.characteristic == MELK_WRITE_CHANNEL.as_uuid().into())
     );
     assert!(
         writes

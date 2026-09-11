@@ -320,7 +320,9 @@ public final class MelkLightingPeripheralSession: NSObject, CBCentralManagerDele
     public func peripheral(_ peripheral: CBPeripheral, didDiscoverServices error: Error?) {
         onQueue {
             guard peripheral === self.peripheral else { return }
-            let services = peripheral.services?.map(\.uuid.data) ?? []
+            let services = peripheral.services?.compactMap { service in
+                MobileBluetoothUuid(coreBluetoothUuid: service.uuid)
+            } ?? []
             core.handle(event: .servicesDiscovered(serviceUuids: services, error: error.map(String.init(describing:))))
             syncCore()
         }
@@ -333,16 +335,19 @@ public final class MelkLightingPeripheralSession: NSObject, CBCentralManagerDele
     ) {
         onQueue {
             guard peripheral === self.peripheral else { return }
-            let characteristics = service.characteristics?.map {
-                MobileMelkLightingCharacteristicEvidenceDto(
-                    uuid: $0.uuid.data,
-                    writeWithoutResponse: $0.properties.contains(.writeWithoutResponse),
-                    notifyOrIndicate: $0.properties.contains(.notify) || $0.properties.contains(.indicate)
-                )
+            let characteristics = service.characteristics?.compactMap { characteristic in
+                MobileBluetoothUuid(coreBluetoothUuid: characteristic.uuid).map {
+                    MobileMelkLightingCharacteristicEvidenceDto(
+                        uuid: $0,
+                        writeWithoutResponse: characteristic.properties.contains(.writeWithoutResponse),
+                        notifyOrIndicate: characteristic.properties.contains(.notify) || characteristic.properties.contains(.indicate)
+                    )
+                }
             } ?? []
+            guard let serviceUuid = MobileBluetoothUuid(coreBluetoothUuid: service.uuid) else { return }
             core.handle(event: .characteristicsDiscovered(
                 name: peripheralName ?? peripheral.name,
-                serviceUuid: service.uuid.data,
+                serviceUuid: serviceUuid,
                 characteristics: characteristics,
                 error: error.map(String.init(describing:))
             ))
@@ -357,8 +362,9 @@ public final class MelkLightingPeripheralSession: NSObject, CBCentralManagerDele
     ) {
         onQueue {
             guard peripheral === self.peripheral else { return }
+            guard let uuid = MobileBluetoothUuid(coreBluetoothUuid: characteristic.uuid) else { return }
             core.handle(event: .notificationState(
-                characteristic: characteristic.uuid.data,
+                characteristic: uuid,
                 ready: characteristic.isNotifying,
                 canSend: peripheral.canSendWriteWithoutResponse,
                 error: error.map(String.init(describing:))
@@ -375,8 +381,12 @@ public final class MelkLightingPeripheralSession: NSObject, CBCentralManagerDele
         onQueue {
             guard peripheral === self.peripheral,
                   error == nil,
+                  let uuid = MobileBluetoothUuid(coreBluetoothUuid: characteristic.uuid),
                   let value = characteristic.value else { return }
-            core.handle(event: .notification(characteristic: characteristic.uuid.data, bytes: value))
+            core.handle(event: .notification(
+                characteristic: uuid,
+                bytes: value
+            ))
             syncCore()
         }
     }
@@ -431,20 +441,18 @@ public final class MelkLightingPeripheralSession: NSObject, CBCentralManagerDele
                 if let candidate = discoveredPeripherals[identifier] { central.cancelPeripheralConnection(candidate) }
             case let .discoverServices(identifier, service):
                 guard peripheral?.identifier.uuidString == identifier else { continue }
-                peripheral?.discoverServices([CBUUID(data: service)])
+                peripheral?.discoverServices([service.coreBluetoothUuid])
             case let .discoverCharacteristics(identifier, service):
                 guard peripheral?.identifier.uuidString == identifier,
-                      let gattService = peripheral?.services?.first(where: { $0.uuid == CBUUID(data: service) }) else { continue }
+                      let gattService = peripheral?.services?.first(where: { $0.uuid == service.coreBluetoothUuid }) else { continue }
                 peripheral?.discoverCharacteristics(nil, for: gattService)
             case let .subscribe(identifier, characteristic):
                 guard peripheral?.identifier.uuidString == identifier,
-                      let value = characteristicUuid(characteristic),
-                      let target = peripheral?.services?.flatMap({ $0.characteristics ?? [] }).first(where: { $0.uuid == value }) else { continue }
+                      let target = peripheral?.services?.flatMap({ $0.characteristics ?? [] }).first(where: { $0.uuid == characteristic.coreBluetoothUuid }) else { continue }
                 peripheral?.setNotifyValue(true, for: target)
             case let .write(identifier, write):
                 guard peripheral?.identifier.uuidString == identifier,
-                      let target = characteristicUuid(write.characteristic) else { continue }
-                guard let targetCharacteristic = peripheral?.services?.flatMap({ $0.characteristics ?? [] }).first(where: { $0.uuid == target }),
+                      let targetCharacteristic = peripheral?.services?.flatMap({ $0.characteristics ?? [] }).first(where: { $0.uuid == write.characteristic.coreBluetoothUuid }),
                       targetCharacteristic.properties.contains(.writeWithoutResponse) else { continue }
                 peripheral?.writeValue(Data(write.payload), for: targetCharacteristic, type: .withoutResponse)
             case let .armTimer(timer, delayMilliseconds):
@@ -474,11 +482,6 @@ public final class MelkLightingPeripheralSession: NSObject, CBCentralManagerDele
         onIdentity?(MelkLightingPeripheralIdentity(name: peripheralName, platformIdentifier: peripheralIdentifier, rssi: rssi))
     }
 
-    private func characteristicUuid(_ bytes: Data) -> CBUUID? {
-        guard bytes.count == 16 else { return nil }
-        return CBUUID(data: Data(bytes))
-    }
-
     private static func state(_ dto: MobileMelkLightingSessionStateDto) -> MelkLightingPeripheralState {
         switch dto {
         case .idle: .idle
@@ -499,5 +502,39 @@ public final class MelkLightingPeripheralSession: NSObject, CBCentralManagerDele
 }
 
 extension MelkLightingPeripheralSession: MelkLightingPeripheralSessionProtocol {}
+
+extension MobileBluetoothUuid {
+    init?(coreBluetoothUuid: CBUUID) {
+        let bytes: [UInt8]
+        switch coreBluetoothUuid.data.count {
+        case 2:
+            let short = Array(coreBluetoothUuid.data)
+            bytes = [
+                0, 0, short[0], short[1], 0, 0, 0x10, 0,
+                0x80, 0, 0, 0x80, 0x5f, 0x9b, 0x34, 0xfb,
+            ]
+        case 16:
+            bytes = Array(coreBluetoothUuid.data)
+        default:
+            return nil
+        }
+        self.init(
+            mostSignificantBits: Self.word(bytes[0 ..< 8]),
+            leastSignificantBits: Self.word(bytes[8 ..< 16])
+        )
+    }
+
+    var coreBluetoothUuid: CBUUID {
+        CBUUID(data: Data(Self.bytes(mostSignificantBits) + Self.bytes(leastSignificantBits)))
+    }
+
+    private static func word(_ bytes: ArraySlice<UInt8>) -> UInt64 {
+        bytes.reduce(0) { ($0 << 8) | UInt64($1) }
+    }
+
+    private static func bytes(_ word: UInt64) -> [UInt8] {
+        (0 ..< 8).map { UInt8(truncatingIfNeeded: word >> (56 - ($0 * 8))) }
+    }
+}
 
 #endif

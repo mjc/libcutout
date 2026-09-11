@@ -1,6 +1,6 @@
 //! Typed facts and operations exchanged with the CoreBluetooth adapter.
 
-use crate::MobileMelkLightingWriteDto;
+use crate::{MobileBluetoothUuid, MobileMelkLightingWriteDto};
 
 /// Rust-owned lifecycle state for the standalone MELK transport.
 #[derive(Clone, Debug, Eq, PartialEq, uniffi::Enum)]
@@ -56,26 +56,26 @@ pub enum MobileMelkLightingSessionEventDto {
     ConnectTimeout,
     /// Services were discovered and the required service was present.
     ServicesDiscovered {
-        service_uuids: Vec<Vec<u8>>,
+        service_uuids: Vec<MobileBluetoothUuid>,
         error: Option<String>,
     },
     /// Characteristics were discovered with their typed GATT roles.
     CharacteristicsDiscovered {
         name: Option<String>,
-        service_uuid: Vec<u8>,
+        service_uuid: MobileBluetoothUuid,
         characteristics: Vec<MobileMelkLightingCharacteristicEvidenceDto>,
         error: Option<String>,
     },
     /// Notification subscription state changed.
     NotificationState {
-        characteristic: Vec<u8>,
+        characteristic: MobileBluetoothUuid,
         ready: bool,
         can_send: bool,
         error: Option<String>,
     },
     /// A notification arrived on the verified FFF4 channel.
     Notification {
-        characteristic: Vec<u8>,
+        characteristic: MobileBluetoothUuid,
         bytes: Vec<u8>,
     },
     /// CoreBluetooth can accept another no-response write.
@@ -116,17 +116,17 @@ pub enum MobileMelkLightingSessionActionDto {
     /// Discover the verified FFF0 service.
     DiscoverServices {
         platform_identifier: String,
-        service: Vec<u8>,
+        service: MobileBluetoothUuid,
     },
     /// Discover all characteristics for FFF0.
     DiscoverCharacteristics {
         platform_identifier: String,
-        service: Vec<u8>,
+        service: MobileBluetoothUuid,
     },
     /// Subscribe to FFF4 notifications.
     Subscribe {
         platform_identifier: String,
-        characteristic: Vec<u8>,
+        characteristic: MobileBluetoothUuid,
     },
     /// Execute one typed FFF3 write.
     Write {
@@ -143,8 +143,8 @@ pub enum MobileMelkLightingSessionActionDto {
 /// One characteristic's UUID and native CoreBluetooth properties.
 #[derive(Clone, Debug, Eq, PartialEq, uniffi::Record)]
 pub struct MobileMelkLightingCharacteristicEvidenceDto {
-    /// Full 128-bit UUID bytes in canonical CoreBluetooth order.
-    pub uuid: Vec<u8>,
+    /// GATT UUID.
+    pub uuid: MobileBluetoothUuid,
     /// Whether the characteristic supports write-without-response.
     pub write_without_response: bool,
     /// Whether the characteristic supports notifications or indications.

@@ -415,7 +415,7 @@ impl SessionReducer {
                     self.actions
                         .push_back(MobileMelkLightingSessionActionDto::DiscoverServices {
                             platform_identifier,
-                            service: cutout_protocols::MELK_SERVICE_CHANNEL.as_bytes().to_vec(),
+                            service: cutout_protocols::MELK_SERVICE_CHANNEL.as_uuid().into(),
                         });
                 } else {
                     self.connect_selected();
@@ -435,7 +435,7 @@ impl SessionReducer {
                 self.actions
                     .push_back(MobileMelkLightingSessionActionDto::DiscoverServices {
                         platform_identifier,
-                        service: cutout_protocols::MELK_SERVICE_CHANNEL.as_bytes().to_vec(),
+                        service: cutout_protocols::MELK_SERVICE_CHANNEL.as_uuid().into(),
                     });
             }
             MobileMelkLightingSessionEventDto::ConnectFailed { reason } => {
@@ -471,7 +471,7 @@ impl SessionReducer {
                 if let Some(reason) = error {
                     self.reject_candidate(reason);
                 } else if !service_uuids.iter().any(|uuid| {
-                    uuid.as_slice() == cutout_protocols::MELK_SERVICE_CHANNEL.as_bytes()
+                    uuid::Uuid::from(*uuid) == cutout_protocols::MELK_SERVICE_CHANNEL.as_uuid()
                 }) {
                     self.record("gatt=missing FFF0 service");
                     self.reject_candidate("missing FFF0 service".into());
@@ -479,7 +479,7 @@ impl SessionReducer {
                     self.actions.push_back(
                         MobileMelkLightingSessionActionDto::DiscoverCharacteristics {
                             platform_identifier: identifier,
-                            service: cutout_protocols::MELK_SERVICE_CHANNEL.as_bytes().to_vec(),
+                            service: cutout_protocols::MELK_SERVICE_CHANNEL.as_uuid().into(),
                         },
                     );
                 }
@@ -497,17 +497,19 @@ impl SessionReducer {
                 });
                 if let Some(reason) = error {
                     self.reject_candidate(reason);
-                } else if service_uuid != cutout_protocols::MELK_SERVICE_CHANNEL.as_bytes() {
+                } else if uuid::Uuid::from(service_uuid)
+                    != cutout_protocols::MELK_SERVICE_CHANNEL.as_uuid()
+                {
                     self.reject_candidate("missing FFF0 service".into());
                 } else if !characteristics.iter().any(|characteristic| {
-                    characteristic.uuid.as_slice()
-                        == cutout_protocols::MELK_WRITE_CHANNEL.as_bytes()
+                    uuid::Uuid::from(characteristic.uuid)
+                        == cutout_protocols::MELK_WRITE_CHANNEL.as_uuid()
                         && characteristic.write_without_response
                 }) {
                     self.reject_candidate("missing FFF3 write characteristic".into());
                 } else if !characteristics.iter().any(|characteristic| {
-                    characteristic.uuid.as_slice()
-                        == cutout_protocols::MELK_NOTIFY_CHANNEL.as_bytes()
+                    uuid::Uuid::from(characteristic.uuid)
+                        == cutout_protocols::MELK_NOTIFY_CHANNEL.as_uuid()
                         && characteristic.notify_or_indicate
                 }) {
                     self.reject_candidate("missing FFF4 notification characteristic".into());
@@ -531,8 +533,8 @@ impl SessionReducer {
                                 platform_identifier: identifier,
                                 characteristic: MelkLightingProfile::write_policy()
                                     .confirmation_channel
-                                    .as_bytes()
-                                    .to_vec(),
+                                    .as_uuid()
+                                    .into(),
                             });
                     }
                 }
@@ -543,7 +545,9 @@ impl SessionReducer {
                 can_send,
                 error,
             } => {
-                if characteristic.as_slice() != cutout_protocols::MELK_NOTIFY_CHANNEL.as_bytes() {
+                if uuid::Uuid::from(characteristic)
+                    != cutout_protocols::MELK_NOTIFY_CHANNEL.as_uuid()
+                {
                     return;
                 }
                 if let Some(reason) = error {
@@ -561,7 +565,9 @@ impl SessionReducer {
                 characteristic,
                 bytes,
             } => {
-                if characteristic.as_slice() == cutout_protocols::MELK_NOTIFY_CHANNEL.as_bytes() {
+                if uuid::Uuid::from(characteristic)
+                    == cutout_protocols::MELK_NOTIFY_CHANNEL.as_uuid()
+                {
                     self.notifications.push_back(bytes);
                 }
             }
@@ -633,11 +639,12 @@ impl SessionReducer {
 }
 
 fn is_coalescible_color_write(write: &MobileMelkLightingWriteDto) -> bool {
-    write.confirmation_characteristic
+    uuid::Uuid::from(write.confirmation_characteristic)
         == MelkLightingProfile::write_policy()
             .confirmation_channel
-            .as_bytes()
-        && write.characteristic == MelkLightingProfile::write_policy().channel.as_bytes()
+            .as_uuid()
+        && uuid::Uuid::from(write.characteristic)
+            == MelkLightingProfile::write_policy().channel.as_uuid()
         && write.payload.len() == 9
         && write.payload[0] == 0x7e
         && write.payload[1] == 0
