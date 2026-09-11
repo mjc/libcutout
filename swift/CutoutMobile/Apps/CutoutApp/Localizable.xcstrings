@@ -145,6 +145,418 @@
       "comment" : "Fallback name for an advertisement without a local name.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Unknown lighting accessory" } } }
     },
+    "lighting.accessory.details" : {
+      "comment" : "Accessibility label for lighting accessory details.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Lighting accessory details" } } }
+    },
+    "lighting.default_name" : {
+      "comment" : "Fallback name for the verified MELK accessory.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "MELK-OC21 6A" } } }
+    },
+    "lighting.connection.connected" : {
+      "comment" : "Lighting connection summary.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Connected" } } }
+    },
+    "lighting.connection.scanning" : {
+      "comment" : "Lighting connection summary.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Scanning for MELK-OC21" } } }
+    },
+    "lighting.connection.connecting" : {
+      "comment" : "Lighting connection summary.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Connecting…" } } }
+    },
+    "lighting.connection.retrying" : {
+      "comment" : "Lighting retry summary. Placeholders are attempt and delay seconds.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Retrying (%lld) in %llds…" } } }
+    },
+    "lighting.connection.not_connected" : {
+      "comment" : "Lighting connection summary.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Not connected" } } }
+    },
+    "lighting.connection.failed" : {
+      "comment" : "Lighting connection summary.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Connection failed" } } }
+    },
+    "lighting.connection.ready_to_scan" : {
+      "comment" : "Lighting connection summary.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Ready to scan" } } }
+    },
+    "lighting.connection.ride_independent" : {
+      "comment" : "Explains that lighting uses its own Bluetooth connection. Placeholder is ride status.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Ride stays %@; lighting uses an independent Bluetooth connection." } } }
+    },
+    "lighting.patterns" : {
+      "comment" : "Lighting effects heading.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Patterns" } } }
+    },
+    "lighting.pattern_group" : {
+      "comment" : "Lighting effect group picker label.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Pattern group" } } }
+    },
+    "lighting.quick_picks" : {
+      "comment" : "Heading for favorite lighting effects.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Quick picks" } } }
+    },
+    "lighting.group_patterns" : {
+      "comment" : "Heading for effects in a selected group. Placeholder is the group name.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "%@ patterns" } } }
+    },
+    "lighting.pattern" : {
+      "comment" : "Lighting effect picker label.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Pattern" } } }
+    },
+    "lighting.effect.id" : {
+      "comment" : "Reference effect identifier. Placeholder is the numeric ID.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "ID %lld" } } }
+    },
+    "lighting.effect.speed" : {
+      "comment" : "Lighting effect speed label.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Effect speed" } } }
+    },
+    "lighting.speed" : {
+      "comment" : "Lighting speed heading.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Speed" } } }
+    },
+    "lighting.slower" : {
+      "comment" : "Lighting speed scale lower endpoint.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Slower" } } }
+    },
+    "lighting.faster" : {
+      "comment" : "Lighting speed scale upper endpoint.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Faster" } } }
+    },
+    "lighting.reference_names" : {
+      "comment" : "Explanation that effect names are reference labels.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Reference names may vary by firmware." } } }
+    },
+    "lighting.reference_effects" : {
+      "comment" : "Explanation of capture-backed effect availability.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Only capture-backed effects are enabled for MELK-OC21. Reference names and previews remain visible for future verification." } } }
+    },
+    "lighting.music.reference" : {
+      "comment" : "Explanation of unverified controller-local music modes.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Controller-local microphone modes are shown for reference and remain unavailable until physically verified." } } }
+    },
+    "lighting.music.effect" : {
+      "comment" : "Controller-local music effect picker label.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Music effect" } } }
+    },
+    "lighting.sensitivity" : {
+      "comment" : "Controller-local music sensitivity heading.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Sensitivity" } } }
+    },
+    "lighting.microphone_sensitivity" : {
+      "comment" : "Controller-local microphone sensitivity slider label.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Microphone sensitivity" } } }
+    },
+    "lighting.play_pattern" : {
+      "comment" : "Starts a controller-local lighting pattern.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Play pattern" } } }
+    },
+    "lighting.start_music" : {
+      "comment" : "Starts controller-local music mode.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Start music mode" } } }
+    },
+    "lighting.stop_music" : {
+      "comment" : "Stops controller-local music mode.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Stop music mode" } } }
+    },
+    "lighting.schedule.unverified" : {
+      "comment" : "Explanation of unverified controller schedule support.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Manual local-time timers are not physically verified for MELK-OC21, so timer writes are unavailable. The controller protocol shape is retained here for future capture-backed support." } } }
+    },
+    "lighting.schedule.turn_on" : {
+      "comment" : "Schedule row label.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Turn on" } } }
+    },
+    "lighting.schedule.turn_off" : {
+      "comment" : "Schedule row label.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Turn off" } } }
+    },
+    "lighting.schedule.enabled" : {
+      "comment" : "Schedule enabled toggle accessibility label.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Enabled" } } }
+    },
+    "lighting.schedule.time" : {
+      "comment" : "Schedule time picker label. Placeholder is turn-on or turn-off.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "%@ time" } } }
+    },
+    "lighting.schedule.save" : {
+      "comment" : "Schedule save action. Placeholder is turn-on or turn-off.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Save %@ timer" } } }
+    },
+    "lighting.schedule.requested_on" : {
+      "comment" : "Schedule request feedback.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Turn-on timer requested" } } }
+    },
+    "lighting.schedule.requested_off" : {
+      "comment" : "Schedule request feedback.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Turn-off timer requested" } } }
+    },
+    "lighting.repeat_days" : {
+      "comment" : "Accessibility label for schedule weekday selection.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Repeat days" } } }
+    },
+    "lighting.preset.scenes" : {
+      "comment" : "Lighting scenes and presets heading.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Scenes & presets" } } }
+    },
+    "lighting.preset.helper" : {
+      "comment" : "Lighting preset helper copy.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Save your color, effect, or music settings as a named scene." } } }
+    },
+    "lighting.preset.replace" : {
+      "comment" : "Lighting preset context action.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Replace with current" } } }
+    },
+    "lighting.preset.delete" : {
+      "comment" : "Lighting preset destructive context action.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Delete scene" } } }
+    },
+    "lighting.preset.name" : {
+      "comment" : "Lighting preset name text field placeholder.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Preset name" } } }
+    },
+    "lighting.save" : {
+      "comment" : "Lighting preset save action.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Save" } } }
+    },
+    "lighting.error.preset_save" : {
+      "comment" : "User-friendly lighting preset save error.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Could not save this preset. Check the connection and try again." } } }
+    },
+    "lighting.error.preset_update" : {
+      "comment" : "User-friendly lighting preset update error.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Could not update this preset. Check the connection and try again." } } }
+    },
+    "lighting.effect.verified" : {
+      "comment" : "Accessibility value for a physically verified effect.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Verified and available" } } }
+    },
+    "lighting.effect.reference_unavailable" : {
+      "comment" : "Accessibility value for an unverified reference effect.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Reference, unavailable until physically verified" } } }
+    },
+    "lighting.effect.unmapped_unavailable" : {
+      "comment" : "Accessibility value for an unmapped effect.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Unmapped, unavailable" } } }
+    },
+    "lighting.effect.option" : {
+      "comment" : "Effect picker option. Placeholders are numeric ID and reference name.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "%lld · %@" } } }
+    },
+    "lighting.percent" : {
+      "comment" : "Lighting percentage display.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "%lld%%" } } }
+    },
+    "lighting.percent_accessibility" : {
+      "comment" : "Lighting percentage accessibility value.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "%lld percent" } } }
+    },
+    "lighting.dbm" : {
+      "comment" : "Bluetooth signal strength display.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "%lld dBm" } } }
+    },
+    "lighting.color_wheel" : {
+      "comment" : "Accessibility label for the lighting color wheel.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Solid color" } } }
+    },
+    "lighting.color_wheel.hint" : {
+      "comment" : "Accessibility hint for the lighting color wheel.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Drag around the color wheel to choose a color" } } }
+    },
+    "lighting.hue" : {
+      "comment" : "Accessibility label for hue adjustment.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Hue" } } }
+    },
+    "lighting.saturation" : {
+      "comment" : "Accessibility label for saturation adjustment.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Saturation" } } }
+    },
+    "lighting.color_wheel.value" : {
+      "comment" : "Color wheel accessibility value. Placeholders are hue degrees and saturation percentage.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Hue %lld degrees, saturation %lld percent" } } }
+    },
+    "lighting.preset.red" : {
+      "comment" : "Quick lighting preset label.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Red" } } }
+    },
+    "lighting.preset.blue" : {
+      "comment" : "Quick lighting preset label.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Blue" } } }
+    },
+    "lighting.preset.night" : {
+      "comment" : "Quick lighting preset label.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Night" } } }
+    },
+    "lighting.preset.accessibility" : {
+      "comment" : "Accessibility label for a quick lighting preset. Placeholder is preset name.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Preset %@" } } }
+    },
+    "lighting.preset.effect_summary" : {
+      "comment" : "Lighting effect preset summary. Placeholders are name and speed.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Effect %@ · speed %lld" } } }
+    },
+    "lighting.preset.music_summary" : {
+      "comment" : "Lighting music preset summary. Placeholder is sensitivity.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Controller music · sensitivity %lld%%" } } }
+    },
+    "lighting.preset.solid_summary" : {
+      "comment" : "Lighting solid-color preset summary. Placeholder is brightness.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Solid RGB · %lld%%" } } }
+    },
+    "lighting.connect" : {
+      "comment" : "Connect action for a lighting accessory.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Connect" } } }
+    },
+    "lighting.restore.toggle" : {
+      "comment" : "Lighting restore opt-in toggle.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Restore last lighting settings" } } }
+    },
+    "lighting.restore.explanation" : {
+      "comment" : "Lighting restore explanation.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Re-apply your last color, effect, brightness, and power setting when this same accessory reconnects." } } }
+    },
+    "lighting.forget" : {
+      "comment" : "Forget lighting accessory action.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Forget accessory" } } }
+    },
+    "lighting.add" : {
+      "comment" : "Lighting accessory pairing screen title.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Add lighting" } } }
+    },
+    "lighting.back" : {
+      "comment" : "Dismisses lighting pairing screen.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Back" } } }
+    },
+    "lighting.forget.confirm_title" : {
+      "comment" : "Lighting accessory forget confirmation title.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Forget this RGB accessory?" } } }
+    },
+    "lighting.forget.confirm_message" : {
+      "comment" : "Lighting accessory forget confirmation message.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Its alias, vehicle association, presets, and automatic restore preference will be removed." } } }
+    },
+    "lighting.scanning" : {
+      "comment" : "Lighting pairing scan status.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Scanning" } } }
+    },
+    "lighting.connection.looking_nearby" : {
+      "comment" : "Lighting pairing scan status.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Looking for nearby accessories…" } } }
+    },
+    "lighting.independent_connection" : {
+      "comment" : "Explains that lighting uses its own Bluetooth connection.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Lighting stays connected independently of your ride." } } }
+    },
+    "lighting.alias" : {
+      "comment" : "Lighting accessory alias field heading.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Alias (optional)" } } }
+    },
+    "lighting.alias.placeholder" : {
+      "comment" : "Lighting accessory alias field placeholder.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Help identify this accessory" } } }
+    },
+    "lighting.vehicle_identifier" : {
+      "comment" : "Lighting accessory vehicle association field placeholder.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Installed vehicle identifier" } } }
+    },
+    "lighting.use_current_ride" : {
+      "comment" : "Associates lighting accessory with current ride.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Use current ride" } } }
+    },
+    "lighting.save_details" : {
+      "comment" : "Saves lighting accessory metadata.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Save details" } } }
+    },
+    "lighting.competing_client" : {
+      "comment" : "Warning heading when another app may own the controller.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Competing client" } } }
+    },
+    "lighting.competing_client.explanation" : {
+      "comment" : "Warning about another app connected to the controller.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "If another app is connected to this controller, disconnect it there before connecting in Cutout." } } }
+    },
+    "lighting.schedule.enabled_for" : {
+      "comment" : "Accessibility label for a schedule enabled toggle. Placeholder is turn-on or turn-off.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "%@ timer enabled" } } }
+    },
+    "lighting.on" : {
+      "comment" : "Accessibility state for an enabled control.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "On" } } }
+    },
+    "lighting.off" : {
+      "comment" : "Accessibility state for a disabled control.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Off" } } }
+    },
+    "lighting.effect.group.basic" : {
+      "comment" : "Reference MELK effect group name.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Basic" } } }
+    },
+    "lighting.effect.group.curtain" : {
+      "comment" : "Reference MELK effect group name.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Curtain" } } }
+    },
+    "lighting.effect.group.trans" : {
+      "comment" : "Reference MELK effect group name.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Trans" } } }
+    },
+    "lighting.effect.group.water" : {
+      "comment" : "Reference MELK effect group name.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Water" } } }
+    },
+    "lighting.effect.group.flow" : {
+      "comment" : "Reference MELK effect group name.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Flow" } } }
+    },
+    "lighting.effect.group.tail" : {
+      "comment" : "Reference MELK effect group name.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Tail" } } }
+    },
+    "lighting.effect.group.run" : {
+      "comment" : "Reference MELK effect group name.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Run" } } }
+    },
+    "lighting.effect.group.run_back" : {
+      "comment" : "Reference MELK effect group name.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Run Back" } } }
+    },
+    "lighting.effect.group.unmapped" : {
+      "comment" : "Reference MELK effect group name.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Unmapped" } } }
+    },
+    "lighting.music.effect.flow_flash" : {
+      "comment" : "Reference controller-local music effect name.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Music Flow Flash (reference)" } } }
+    },
+    "lighting.music.effect.flash" : {
+      "comment" : "Reference controller-local music effect name.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Music Flash (reference)" } } }
+    },
+    "lighting.music.effect.rainbow" : {
+      "comment" : "Reference controller-local music effect name.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Music Rainbow (reference)" } } }
+    },
+    "lighting.music.effect.snake" : {
+      "comment" : "Reference controller-local music effect name.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Music Snake (reference)" } } }
+    },
+    "lighting.music.effect.rainbow_2" : {
+      "comment" : "Reference controller-local music effect name.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Music Rainbow 2 (reference)" } } }
+    },
+    "lighting.music.effect.pulse" : {
+      "comment" : "Reference controller-local music effect name.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Music Pulse (reference)" } } }
+    },
+    "lighting.music.effect.flow" : {
+      "comment" : "Reference controller-local music effect name.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Music Flow (reference)" } } }
+    },
+    "lighting.music.effect.pulse_2" : {
+      "comment" : "Reference controller-local music effect name.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Music Pulse 2 (reference)" } } }
+    },
     "app.command.disconnect" : {
       "comment" : "App command that disconnects the current device.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Disconnect" } } }

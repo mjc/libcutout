@@ -213,7 +213,7 @@ private struct LightingConnectionCard: View {
                     .background(PevColors.cyan.opacity(0.14), in: Circle())
                     .accessibilityHidden(true)
                 VStack(alignment: .leading, spacing: 3) {
-                    Text(model.accessoryAlias ?? model.peripheralName ?? "MELK-OC21 6A")
+                    Text(model.accessoryAlias ?? model.peripheralName ?? localizedAppText("lighting.default_name"))
                         .font(.headline)
                     Text(connectionSummary)
                         .font(.subheadline)
@@ -226,11 +226,11 @@ private struct LightingConnectionCard: View {
                         .font(.title3)
                 }
                 .buttonStyle(.plain)
-                .accessibilityLabel("Lighting accessory details")
+                .accessibilityLabel(localizedAppText("lighting.accessory.details"))
                 .accessibilityIdentifier("lighting.accessory-details")
             }
             Label(
-                "Ride stays \(rideModel.connectionStatusText); lighting uses an independent Bluetooth connection.",
+                localizedAppText("lighting.connection.ride_independent", rideModel.connectionStatusText),
                 systemImage: "figure.roll"
             )
             .font(.footnote)
@@ -238,16 +238,20 @@ private struct LightingConnectionCard: View {
         }
     }
 
-    private var connectionSummary: LocalizedStringResource {
+    private var connectionSummary: String {
         switch model.connectionState {
-        case .ready: "Connected"
-        case .scanning: "Scanning for nearby accessories…"
-        case .connecting, .discovering: "Connecting…"
+        case .ready: localizedAppText("lighting.connection.connected")
+        case .scanning: localizedAppText("lighting.connection.scanning")
+        case .connecting, .discovering: localizedAppText("lighting.connection.connecting")
         case let .retrying(attempt, delayMilliseconds):
-            "Retrying (\(attempt)) in \(max(1, Int((delayMilliseconds + 999) / 1000)))s…"
-        case .disconnected: "Not connected"
-        case .failed: "Connection failed"
-        case .idle: "Ready to scan"
+            localizedAppText(
+                "lighting.connection.retrying",
+                Int64(attempt),
+                Int64(max(1, Int((delayMilliseconds + 999) / 1000)))
+            )
+        case .disconnected: localizedAppText("lighting.connection.not_connected")
+        case .failed: localizedAppText("lighting.connection.failed")
+        case .idle: localizedAppText("lighting.connection.ready_to_scan")
         }
     }
 
@@ -330,7 +334,7 @@ private struct LightingBrightnessControl: View {
             HStack {
                 Text(localizedAppText("lighting.brightness")).font(.headline)
                 Spacer()
-                Text("\(Int(brightness))%")
+                Text(localizedAppText("lighting.percent", Int64(brightness)))
                     .monospacedDigit()
                     .foregroundStyle(PevColors.muted)
             }
@@ -344,7 +348,7 @@ private struct LightingBrightnessControl: View {
                 .disabled(!isEnabled)
                 .tint(PevColors.primaryText)
                 .accessibilityIdentifier("lighting.brightness")
-                .accessibilityValue("\(Int(brightness)) percent")
+                .accessibilityValue(localizedAppText("lighting.percent_accessibility", Int64(brightness)))
                 Image(systemName: "sun.max")
                     .foregroundStyle(PevColors.muted)
                     .accessibilityHidden(true)
@@ -363,15 +367,15 @@ private struct LightingPresetsCard: View {
 
     var body: some View {
         LightingCard {
-            Label("Scenes & presets", systemImage: "square.stack.3d.up.fill").font(.headline)
+            Label(localizedAppText("lighting.preset.scenes"), systemImage: "square.stack.3d.up.fill").font(.headline)
             VStack(alignment: .leading, spacing: 10) {
                 HStack(spacing: 12) {
-                    quickColorPreset("Red", color: .red, red: 255, green: 0, blue: 0)
-                    quickColorPreset("Blue", color: .blue, red: 0, green: 0, blue: 255)
-                    quickColorPreset("Night", color: .black, red: 16, green: 20, blue: 32)
+                    quickColorPreset("lighting.preset.red", color: .red, red: 255, green: 0, blue: 0)
+                    quickColorPreset("lighting.preset.blue", color: .blue, red: 0, green: 0, blue: 255)
+                    quickColorPreset("lighting.preset.night", color: .black, red: 16, green: 20, blue: 32)
                 }
                 if model.presets.isEmpty {
-                    Text("Save your color, effect, or music settings as a named scene.")
+                    Text(localizedAppText("lighting.preset.helper"))
                         .font(.footnote)
                         .foregroundStyle(PevColors.muted)
                 } else {
@@ -394,11 +398,11 @@ private struct LightingPresetsCard: View {
                         .disabled(!isEnabled)
                         .accessibilityIdentifier("lighting.preset.\(preset.name)")
                         .contextMenu {
-                            Button("Replace with current") {
+                            Button(localizedAppText("lighting.preset.replace")) {
                                 _ = model.replacePreset(named: preset.name)
                             }
                             .disabled(!model.canSavePreset)
-                            Button("Delete scene", role: .destructive) {
+                            Button(localizedAppText("lighting.preset.delete"), role: .destructive) {
                                 _ = model.deletePreset(named: preset.name)
                             }
                         }
@@ -408,12 +412,12 @@ private struct LightingPresetsCard: View {
             .contentShape(Rectangle())
             .onTapGesture { isPresetNameFocused = false }
             HStack {
-                TextField("Preset name", text: $presetName)
+                TextField(localizedAppText("lighting.preset.name"), text: $presetName)
                     .textFieldStyle(.roundedBorder)
                     .focused($isPresetNameFocused)
                     .submitLabel(.done)
                     .onSubmit { isPresetNameFocused = false }
-                Button("Save", action: save)
+                Button(localizedAppText("lighting.save"), action: save)
                     .buttonStyle(.borderedProminent)
                     .disabled(!model.canSavePreset || presetName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                     .accessibilityIdentifier("lighting.preset.save")
@@ -427,14 +431,18 @@ private struct LightingPresetsCard: View {
         }
     }
 
-    private func sceneSummary(for requested: MobileMelkLightingRestoreStateDto) -> LocalizedStringResource {
+    private func sceneSummary(for requested: MobileMelkLightingRestoreStateDto) -> String {
         switch requested.playback {
         case let .effect(pattern, speed):
-            return "Effect \(LightingPatternCatalog.name(for: Int(pattern))) · speed \(speed)"
+            return localizedAppText(
+                "lighting.preset.effect_summary",
+                LightingPatternCatalog.name(for: Int(pattern)),
+                Int64(speed)
+            )
         case let .music(_, sensitivity):
-            return "Controller music · sensitivity \(sensitivity)%"
+            return localizedAppText("lighting.preset.music_summary", Int64(sensitivity))
         case .solid, nil:
-            return "Solid RGB · \(requested.brightness)%"
+            return localizedAppText("lighting.preset.solid_summary", Int64(requested.brightness))
         }
     }
 
@@ -454,14 +462,14 @@ private struct LightingPresetsCard: View {
                     .fill(color)
                     .frame(width: 42, height: 42)
                     .overlay(Circle().stroke(PevColors.cardStroke, lineWidth: 1))
-                Text(title).font(.caption)
+                Text(localizedAppText(title)).font(.caption)
             }
             .frame(maxWidth: .infinity)
         }
         .buttonStyle(.plain)
         .disabled(!isEnabled)
-        .accessibilityLabel("Preset \(title)")
-        .accessibilityIdentifier("lighting.quick-preset.\(title.lowercased())")
+        .accessibilityLabel(localizedAppText("lighting.preset.accessibility", localizedAppText(title)))
+        .accessibilityIdentifier("lighting.quick-preset.\(title.split(separator: ".").last ?? "preset")")
     }
 
     private func apply(_ preset: MobileRgbLightingPresetDto) {
@@ -536,16 +544,16 @@ private struct LightingColorWheel: View {
                 update(at: value.location, in: size, isFinal: true)
             })
             .accessibilityElement(children: .ignore)
-            .accessibilityLabel("Solid color")
+            .accessibilityLabel(localizedAppText("lighting.color_wheel"))
             .accessibilityValue(accessibilityValueText)
-            .accessibilityHint("Drag around the color wheel to choose a color")
+            .accessibilityHint(localizedAppText("lighting.color_wheel.hint"))
             .accessibilityIdentifier("lighting.color-wheel.control")
             .accessibilityRepresentation {
                 VStack {
                     Slider(value: hueAccessibilityBinding, in: 0...1)
-                        .accessibilityLabel("Hue")
+                        .accessibilityLabel(localizedAppText("lighting.hue"))
                     Slider(value: saturationAccessibilityBinding, in: 0...1)
-                        .accessibilityLabel("Saturation")
+                        .accessibilityLabel(localizedAppText("lighting.saturation"))
                 }
             }
         }
@@ -603,7 +611,7 @@ private struct LightingColorWheel: View {
     private var accessibilityValueText: String {
         let hueDegrees = Int(hue * 360)
         let saturationPercent = Int(saturation * 100)
-        return "Hue \(hueDegrees) degrees, saturation \(saturationPercent) percent"
+        return localizedAppText("lighting.color_wheel.value", Int64(hueDegrees), Int64(saturationPercent))
     }
 
     private var hueAccessibilityBinding: Binding<Double> {
@@ -666,7 +674,10 @@ private struct LightingPairingSheet: View {
                     Button {
                         if model.canReconnect { model.reconnect() } else { model.start() }
                     } label: {
-                        Label(model.isReady ? "Connected" : "Connect", systemImage: "link")
+                        Label(
+                            localizedAppText(model.isReady ? "lighting.connection.connected" : "lighting.connect"),
+                            systemImage: "link"
+                        )
                             .frame(maxWidth: .infinity)
                     }
                     .buttonStyle(.borderedProminent)
@@ -687,7 +698,7 @@ private struct LightingPairingSheet: View {
                                     HStack {
                                         Label(candidate.name ?? localizedAppText("lighting.pairing.unknown_name"), systemImage: "lightbulb.led.fill")
                                         Spacer()
-                                        Text("\(candidate.rssi) dBm")
+                                        Text(localizedAppText("lighting.dbm", Int64(candidate.rssi)))
                                             .monospacedDigit()
                                             .foregroundStyle(PevColors.muted)
                                     }
@@ -700,7 +711,7 @@ private struct LightingPairingSheet: View {
                     }
 
                     Toggle(
-                        "Restore last lighting settings",
+                        localizedAppText("lighting.restore.toggle"),
                         isOn: Binding(
                             get: { model.restoreEnabled },
                             set: { model.setRestoreEnabled($0) }
@@ -708,7 +719,7 @@ private struct LightingPairingSheet: View {
                     )
                     .tint(PevColors.cyan)
                     .accessibilityIdentifier("lighting.restore-toggle")
-                    Text("Re-apply your last color, effect, brightness, and power setting when this same accessory reconnects.")
+                    Text(localizedAppText("lighting.restore.explanation"))
                         .font(.footnote)
                         .foregroundStyle(PevColors.muted)
 
@@ -716,7 +727,7 @@ private struct LightingPairingSheet: View {
                     warningCard
 
                     if model.canEditMetadata {
-                        Button("Forget accessory", role: .destructive) {
+                        Button(localizedAppText("lighting.forget"), role: .destructive) {
                             showsForgetConfirmation = true
                         }
                         .buttonStyle(.bordered)
@@ -727,13 +738,13 @@ private struct LightingPairingSheet: View {
                 .padding(20)
             }
             .background(PevColors.pageBackground.ignoresSafeArea())
-            .navigationTitle("Add lighting")
+            .navigationTitle(localizedAppText("lighting.add"))
 #if os(iOS)
             .navigationBarTitleDisplayMode(.inline)
 #endif
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("Back") { dismiss() }
+                    Button(localizedAppText("lighting.back")) { dismiss() }
                 }
             }
         }
@@ -742,16 +753,16 @@ private struct LightingPairingSheet: View {
             vehicleIdentifier = model.vehicleIdentifier ?? ""
         }
         .confirmationDialog(
-            "Forget this RGB accessory?",
+            localizedAppText("lighting.forget.confirm_title"),
             isPresented: $showsForgetConfirmation,
             titleVisibility: .visible
         ) {
-            Button("Forget accessory", role: .destructive) {
+            Button(localizedAppText("lighting.forget"), role: .destructive) {
                 model.forgetAccessory()
                 dismiss()
             }
         } message: {
-            Text("Its alias, vehicle association, presets, and automatic restore preference will be removed.")
+            Text(localizedAppText("lighting.forget.confirm_message"))
         }
     }
 
@@ -761,16 +772,20 @@ private struct LightingPairingSheet: View {
                 Image(systemName: "lightbulb.led.fill")
                     .foregroundStyle(PevColors.cyan)
                 VStack(alignment: .leading, spacing: 3) {
-                    Text(model.peripheralName ?? "Scanning")
+                    Text(model.peripheralName ?? localizedAppText("lighting.scanning"))
                         .font(.headline)
-                    Text(model.connectionState == .scanning ? "Looking for nearby accessories…" : model.connectionState.displayText)
+                    Text(
+                        model.connectionState == .scanning
+                            ? localizedAppText("lighting.connection.looking_nearby")
+                            : model.connectionState.displayText
+                    )
                         .font(.subheadline)
                         .foregroundStyle(PevColors.muted)
                 }
                 Spacer()
                 connectionPill
             }
-            Text("Lighting stays connected independently of your ride.")
+            Text(localizedAppText("lighting.independent_connection"))
                 .font(.footnote)
                 .foregroundStyle(PevColors.muted)
         }
@@ -778,18 +793,18 @@ private struct LightingPairingSheet: View {
 
     private var metadataCard: some View {
         LightingCard {
-            Text("Alias (optional)")
+            Text(localizedAppText("lighting.alias"))
                 .font(.headline)
-            TextField("Help identify this accessory", text: $accessoryAlias)
+            TextField(localizedAppText("lighting.alias.placeholder"), text: $accessoryAlias)
                 .textFieldStyle(.roundedBorder)
                 .accessibilityIdentifier("lighting.accessory-alias")
 
             HStack(spacing: 10) {
-                TextField("Installed vehicle identifier", text: $vehicleIdentifier)
+                TextField(localizedAppText("lighting.vehicle_identifier"), text: $vehicleIdentifier)
                     .textFieldStyle(.roundedBorder)
                     .accessibilityIdentifier("lighting.vehicle-association")
                 if let selectedRideIdentifier = rideModel.selectedRideIdentifier {
-                    Button("Use current ride") {
+                    Button(localizedAppText("lighting.use_current_ride")) {
                         vehicleIdentifier = selectedRideIdentifier
                     }
                     .buttonStyle(.bordered)
@@ -797,7 +812,7 @@ private struct LightingPairingSheet: View {
                 }
             }
 
-            Button("Save details") {
+            Button(localizedAppText("lighting.save_details")) {
                 model.saveAccessoryMetadata(alias: accessoryAlias, vehicleIdentifier: vehicleIdentifier)
             }
             .buttonStyle(.bordered)
@@ -809,9 +824,9 @@ private struct LightingPairingSheet: View {
 
     private var warningCard: some View {
         LightingCard {
-            Label("Competing client", systemImage: "exclamationmark.triangle")
+            Label(localizedAppText("lighting.competing_client"), systemImage: "exclamationmark.triangle")
                 .foregroundStyle(PevColors.yellow)
-            Text("If another app is connected to this controller, disconnect it there before connecting in Cutout.")
+            Text(localizedAppText("lighting.competing_client.explanation"))
                 .font(.footnote)
                 .foregroundStyle(PevColors.muted)
         }

@@ -23,17 +23,10 @@ enum LightingPatternCatalog {
         let ids: [Int]
     }
 
-    static let groups: [Group] = [
-        Group(name: "Basic", ids: [1, 2, 212] + Array(193...211) + Array(77...88) + Array(181...192)),
-        Group(name: "Curtain", ids: Array(57...76)),
-        Group(name: "Trans", ids: Array(3...22)),
-        Group(name: "Water", ids: Array(39...56)),
-        Group(name: "Flow", ids: Array(143...166)),
-        Group(name: "Tail", ids: Array(23...38)),
-        Group(name: "Run", ids: Array(stride(from: 89, through: 141, by: 2)) + Array(stride(from: 167, through: 179, by: 2))),
-        Group(name: "Run Back", ids: Array(stride(from: 90, through: 142, by: 2)) + Array(stride(from: 168, through: 180, by: 2))),
-        Group(name: "Unmapped", ids: [0] + Array(213...227)),
-    ]
+    /// Group membership is protocol metadata owned by Rust; this view only adapts it for layout.
+    static let groups: [Group] = mobileMelkLightingEffectGroups().map { group in
+        Group(name: group.name, ids: group.effectIds.map(Int.init))
+    }
 
     static func name(for id: Int) -> String {
         let name = id > 0 && id < names.count
@@ -55,6 +48,13 @@ enum LightingPatternCatalog {
 
     static func isMapped(_ id: Int) -> Bool {
         (1...212).contains(id)
+    }
+
+    static func groupName(for name: String) -> String {
+        let key = name
+            .lowercased()
+            .replacingOccurrences(of: " ", with: "_")
+        return localizedAppText("lighting.effect.group.\(key)")
     }
 
     /// Generic STRIPX labels from the pinned upstream catalog; not OC21 verification.
@@ -441,7 +441,7 @@ private struct LightingEffectGrid: View {
                             .font(.subheadline)
                             .multilineTextAlignment(.center)
                             .lineLimit(2)
-                        Text("ID \(id)")
+                        Text(localizedAppText("lighting.effect.id", Int64(id)))
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }
@@ -463,10 +463,10 @@ private struct LightingEffectGrid: View {
                 .disabled(!LightingPatternCatalog.isVerified(id))
                 .accessibilityValue(
                     LightingPatternCatalog.isVerified(id)
-                        ? "verified and available"
+                        ? localizedAppText("lighting.effect.verified")
                         : LightingPatternCatalog.isMapped(id)
-                            ? "reference, unavailable until physically verified"
-                            : "unmapped, unavailable"
+                            ? localizedAppText("lighting.effect.reference_unavailable")
+                            : localizedAppText("lighting.effect.unmapped_unavailable")
                 )
                 .accessibilityIdentifier("lighting.effect.\(id)")
             }
@@ -491,28 +491,28 @@ struct LightingPlaybackControls: View {
 
     private let favorites = [1, 16, 22, 75]
     private let musicNames = [
-        "Music Flow Flash (reference)",
-        "Music Flash (reference)",
-        "Music Rainbow (reference)",
-        "Music Snake (reference)",
-        "Music Rainbow 2 (reference)",
-        "Music Pulse (reference)",
-        "Music Flow (reference)",
-        "Music Pulse 2 (reference)",
+        "lighting.music.effect.flow_flash",
+        "lighting.music.effect.flash",
+        "lighting.music.effect.rainbow",
+        "lighting.music.effect.snake",
+        "lighting.music.effect.rainbow_2",
+        "lighting.music.effect.pulse",
+        "lighting.music.effect.flow",
+        "lighting.music.effect.pulse_2",
     ]
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
             if page == .effects {
-                Label("Patterns", systemImage: "sparkles").font(.headline)
-                Picker("Pattern group", selection: $group) {
+                Label(localizedAppText("lighting.patterns"), systemImage: "sparkles").font(.headline)
+                Picker(localizedAppText("lighting.pattern_group"), selection: $group) {
                     ForEach(LightingPatternCatalog.groups, id: \.name) { group in
-                        Text(group.name).tag(group.name)
+                        Text(LightingPatternCatalog.groupName(for: group.name)).tag(group.name)
                     }
                 }
                 .pickerStyle(.menu)
                 .accessibilityIdentifier("lighting.pattern-group")
-                Text("Quick picks")
+                Text(localizedAppText("lighting.quick_picks"))
                     .font(.subheadline.weight(.semibold))
                     .foregroundStyle(PevColors.muted)
                 LightingEffectGrid(
@@ -520,7 +520,7 @@ struct LightingPlaybackControls: View {
                     selectedPattern: pattern,
                     onSelect: selectPattern
                 )
-                Text("\(group) patterns")
+                Text(localizedAppText("lighting.group_patterns", LightingPatternCatalog.groupName(for: group)))
                     .font(.subheadline.weight(.semibold))
                     .foregroundStyle(PevColors.muted)
                 LightingEffectGrid(
@@ -528,7 +528,7 @@ struct LightingPlaybackControls: View {
                     selectedPattern: pattern,
                     onSelect: selectPattern
                 )
-                Picker("Pattern", selection: $pattern) {
+                Picker(localizedAppText("lighting.pattern"), selection: $pattern) {
                     ForEach(patternIDs, id: \.self) { id in
                         Text("\(id) · \(LightingPatternCatalog.name(for: id))").tag(id)
                     }
@@ -536,7 +536,7 @@ struct LightingPlaybackControls: View {
                 .pickerStyle(.menu)
                 .accessibilityIdentifier("lighting.pattern")
                 HStack {
-                    Label("Speed", systemImage: "speedometer")
+                    Label(localizedAppText("lighting.speed"), systemImage: "speedometer")
                     Spacer()
                     Text("\(Int(((255 - speed) * 100 / 255).rounded()))%").monospacedDigit().foregroundStyle(.secondary)
                 }
@@ -544,7 +544,7 @@ struct LightingPlaybackControls: View {
                     get: { 255 - speed },
                     set: { speed = 255 - $0 }
                 ), in: 0...255, step: 1) {
-                    Text("Effect speed")
+                    Text(localizedAppText("lighting.effect.speed"))
                 } onEditingChanged: { editing in
                     if !editing, case let .effect(activePattern, _) = model.requestedPlayback,
                        Int(activePattern) == pattern {
@@ -555,36 +555,36 @@ struct LightingPlaybackControls: View {
                 .accessibilityIdentifier("lighting.effect-speed")
                 .accessibilityValue("\(Int(((255 - speed) * 100 / 255).rounded())) percent")
                 HStack {
-                    Text("Slower")
+                    Text(localizedAppText("lighting.slower"))
                     Spacer()
-                    Text("Faster")
+                    Text(localizedAppText("lighting.faster"))
                 }
                 .font(.caption).foregroundStyle(PevColors.muted)
-                Text("Reference names may vary by firmware.")
+                Text(localizedAppText("lighting.reference_names"))
                     .font(.caption)
                     .foregroundStyle(PevColors.muted)
-                Text("Only capture-backed effects are enabled for MELK-OC21. Reference names and previews remain visible for future verification.")
+                Text(localizedAppText("lighting.reference_effects"))
                     .font(.caption)
                     .foregroundStyle(PevColors.muted)
             } else {
-                Label("Music", systemImage: "waveform").font(.headline)
-                Text("Controller-local microphone modes are shown for reference and remain unavailable until physically verified.")
+                Label(localizedAppText("lighting.page.music"), systemImage: "waveform").font(.headline)
+                Text(localizedAppText("lighting.music.reference"))
                     .font(.subheadline).foregroundStyle(PevColors.muted)
-                Picker("Music effect", selection: $musicEffect) {
+                Picker(localizedAppText("lighting.music.effect"), selection: $musicEffect) {
                     ForEach(musicNames.indices, id: \.self) { index in
-                        Text(musicNames[index]).tag(index)
+                        Text(localizedAppText(musicNames[index])).tag(index)
                     }
                 }
                 .pickerStyle(.menu)
                 .disabled(!LightingPatternCatalog.controllerMicrophoneVerified)
                 .accessibilityIdentifier("lighting.music-effect")
                 HStack {
-                    Label("Sensitivity", systemImage: "mic")
+                    Label(localizedAppText("lighting.sensitivity"), systemImage: "mic")
                     Spacer()
                     Text("\(Int(sensitivity))%").monospacedDigit().foregroundStyle(.secondary)
                 }
                 Slider(value: $sensitivity, in: 0...100, step: 1) {
-                    Text("Microphone sensitivity")
+                    Text(localizedAppText("lighting.microphone_sensitivity"))
                 } onEditingChanged: { editing in
                     if !editing, case .music = model.requestedPlayback { play() }
                 }
@@ -593,7 +593,10 @@ struct LightingPlaybackControls: View {
                 .accessibilityIdentifier("lighting.music-sensitivity")
             }
             Button(action: play) {
-                Label(page == .effects ? "Play pattern" : "Start music mode", systemImage: "play.fill")
+                Label(
+                    localizedAppText(page == .effects ? "lighting.play_pattern" : "lighting.start_music"),
+                    systemImage: "play.fill"
+                )
                     .frame(maxWidth: .infinity)
             }
             .buttonStyle(.borderedProminent)
@@ -601,7 +604,7 @@ struct LightingPlaybackControls: View {
             .disabled(page == .effects ? !canSendPattern(pattern) : !LightingPatternCatalog.controllerMicrophoneVerified)
             .accessibilityIdentifier("lighting.play-mode")
             if page == .music {
-                Button("Stop music mode") { model.stopMusic() }
+                Button(localizedAppText("lighting.stop_music")) { model.stopMusic() }
                     .buttonStyle(.bordered)
                     .frame(maxWidth: .infinity)
                     .accessibilityIdentifier("lighting.stop-music")
@@ -669,12 +672,12 @@ struct LightingScheduleControls: View {
     var body: some View {
         DisclosureGroup(isExpanded: $isExpanded) {
             VStack(alignment: .leading, spacing: 16) {
-                Text("Manual local-time timers are not physically verified for MELK-OC21, so timer writes are unavailable. The controller protocol shape is retained here for future capture-backed support.")
+                Text(localizedAppText("lighting.schedule.unverified"))
                     .font(.footnote)
                     .foregroundStyle(PevColors.muted)
 
                 timerRow(
-                    title: "Turn on",
+                    title: localizedAppText("lighting.schedule.turn_on"),
                     powerOn: true,
                     time: $onTime,
                     days: $onDays,
@@ -682,7 +685,7 @@ struct LightingScheduleControls: View {
                 )
                 Divider()
                 timerRow(
-                    title: "Turn off",
+                    title: localizedAppText("lighting.schedule.turn_off"),
                     powerOn: false,
                     time: $offTime,
                     days: $offDays,
@@ -697,7 +700,7 @@ struct LightingScheduleControls: View {
             }
             .padding(.top, 12)
         } label: {
-            Label("Schedule", systemImage: "clock").font(.headline)
+            Label(localizedAppText("lighting.page.schedule"), systemImage: "clock").font(.headline)
         }
         .padding(16)
         .background(PevDashboardCardBackground(cornerRadius: 20))
@@ -717,13 +720,13 @@ struct LightingScheduleControls: View {
                 Label(title, systemImage: powerOn ? "lightbulb.fill" : "lightbulb.slash")
                     .font(.subheadline.weight(.semibold))
                 Spacer()
-                Toggle("Enabled", isOn: enabled)
+                Toggle(localizedAppText("lighting.schedule.enabled"), isOn: enabled)
                     .labelsHidden()
                     .tint(PevColors.cyan)
-                    .accessibilityLabel("\(title) timer enabled")
+                    .accessibilityLabel(localizedAppText("lighting.schedule.enabled_for", title))
             }
             DatePicker(
-                "\(title) time",
+                localizedAppText("lighting.schedule.time", title),
                 selection: time,
                 displayedComponents: .hourAndMinute
             )
@@ -731,7 +734,7 @@ struct LightingScheduleControls: View {
             .accessibilityIdentifier("lighting.schedule.\(powerOn ? "on" : "off").time")
 
             WeekdayMaskPicker(days: days, identifier: powerOn ? "on" : "off")
-            Button("Save \(title.lowercased()) timer") {
+            Button(localizedAppText("lighting.schedule.save", title.lowercased())) {
                 save(powerOn: powerOn, time: time.wrappedValue, days: days.wrappedValue, enabled: enabled.wrappedValue)
             }
             .buttonStyle(.bordered)
@@ -754,7 +757,9 @@ struct LightingScheduleControls: View {
             feedback = nil
             return
         }
-        feedback = "\(powerOn ? "Turn-on" : "Turn-off") timer requested"
+        feedback = localizedAppText(
+            powerOn ? "lighting.schedule.requested_on" : "lighting.schedule.requested_off"
+        )
     }
 
     private static func defaultTime(hour: Int) -> Date {
@@ -795,11 +800,11 @@ private struct WeekdayMaskPicker: View {
                 }
                 .buttonStyle(.plain)
                 .accessibilityLabel(weekdayNames[index])
-                .accessibilityValue(days & bit == 0 ? "off" : "on")
+                .accessibilityValue(localizedAppText(days & bit == 0 ? "lighting.off" : "lighting.on"))
                 .accessibilityIdentifier("lighting.schedule.\(identifier).day.\(index + 1)")
             }
         }
         .accessibilityElement(children: .contain)
-        .accessibilityLabel("Repeat days")
+        .accessibilityLabel(localizedAppText("lighting.repeat_days"))
     }
 }

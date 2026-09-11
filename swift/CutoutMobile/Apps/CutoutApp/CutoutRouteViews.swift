@@ -612,7 +612,7 @@ final class LightingRouteModel {
             controlError = nil
             return true
         } catch {
-            controlError = "Could not save this preset: \(error.localizedDescription)"
+            controlError = localizedAppText("lighting.error.preset_save")
             return false
         }
     }
@@ -635,7 +635,7 @@ final class LightingRouteModel {
             controlError = nil
             return true
         } catch {
-            controlError = "Could not update this preset: \(error.localizedDescription)"
+            controlError = localizedAppText("lighting.error.preset_update")
             return false
         }
     }
