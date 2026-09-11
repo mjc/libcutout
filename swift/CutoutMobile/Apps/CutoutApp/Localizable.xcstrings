@@ -25,6 +25,26 @@
       "comment" : "Explains when the headlight command is sent.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Changes are sent immediately to the connected wheel." } } }
     },
+    "settings.headlight.turn_on" : {
+      "comment" : "Action button that requests the headlight to turn on.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Turn On" } } }
+    },
+    "settings.headlight.turn_off" : {
+      "comment" : "Action button that requests the headlight to turn off.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Turn Off" } } }
+    },
+    "settings.headlight.state_unknown" : {
+      "comment" : "Headlight status when the app has no device readback.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "State unknown" } } }
+    },
+    "settings.headlight.last_request_on" : {
+      "comment" : "Headlight status after an on command was accepted but not confirmed by readback.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Last request: On (unconfirmed)" } } }
+    },
+    "settings.headlight.last_request_off" : {
+      "comment" : "Headlight status after an off command was accepted but not confirmed by readback.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Last request: Off (unconfirmed)" } } }
+    },
     "settings.lights.title" : {
       "comment" : "Section title for EUC light settings.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Lights" } } }

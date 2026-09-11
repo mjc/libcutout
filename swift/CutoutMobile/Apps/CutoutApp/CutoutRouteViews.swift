@@ -160,15 +160,19 @@ struct EucTuneRouteView: View {
     var body: some View {
         Form {
             Section {
-                Toggle(
-                    localizedAppText("settings.headlight.title"),
-                    isOn: Binding(
-                        get: { model.headlightOn },
-                        set: { model.setHeadlight($0) }
-                    )
-                )
+                HStack {
+                    Button(localizedAppText("settings.headlight.turn_on")) {
+                        _ = model.setHeadlight(true)
+                    }
+                    Button(localizedAppText("settings.headlight.turn_off")) {
+                        _ = model.setHeadlight(false)
+                    }
+                }
                 .disabled(model.phase != .live)
                 .accessibilityHint(localizedAppText("settings.headlight.help"))
+
+                Text(headlightStatus)
+                    .foregroundStyle(.secondary)
             } header: {
                 Text(localizedAppText("settings.lights.title"))
             } footer: {
@@ -176,6 +180,17 @@ struct EucTuneRouteView: View {
             }
         }
         .accessibilityIdentifier("settings.screen.eucTune")
+    }
+
+    private var headlightStatus: String {
+        switch model.headlightRequestedState {
+        case .none:
+            localizedAppText("settings.headlight.state_unknown")
+        case .some(.off):
+            localizedAppText("settings.headlight.last_request_off")
+        case .some(.on):
+            localizedAppText("settings.headlight.last_request_on")
+        }
     }
 }
 

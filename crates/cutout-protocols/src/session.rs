@@ -892,6 +892,7 @@ impl VescNotificationDecoder {
     }
 
     fn reject_oversized_generic_notification(&mut self, output: &mut Vec<SessionOutput>) {
+        self.stream = VescReadOnlyStreamDecoder::new();
         self.generic_prefix.clear();
         self.generic_stream_pending = false;
         push_parser_error(ParserError::MalformedFrame, output);
@@ -2840,6 +2841,22 @@ mod tests {
             vec![cutout_core::DiagnosticError::from_parser_error(
                 ParserError::MalformedFrame,
             )]
+        );
+    }
+
+    #[test]
+    fn oversized_vesc_notification_resets_decoder_before_next_frame() {
+        let prefix = [0x03, 0x03, 0xfa, 0x04];
+        let oversized = vec![0; VESC_MAX_FRAME_LEN + 1];
+        let values = vesc_selective_values_frame();
+
+        let output = vesc_output_for_notification_chunks(&[&prefix, oversized.as_slice(), &values]);
+
+        assert!(
+            read_only_response_events(&output)
+                .iter()
+                .any(|response| matches!(response, ReadOnlyResponse::RawTelemetry(_))),
+            "a valid VESC frame must decode after an oversized discarded frame"
         );
     }
 

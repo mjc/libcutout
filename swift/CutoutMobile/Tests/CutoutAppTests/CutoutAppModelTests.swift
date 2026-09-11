@@ -699,18 +699,18 @@ final class CutoutAppModelTests: XCTestCase {
         let model = CutoutAppModel(core: driver)
 
         XCTAssertFalse(model.setHeadlight(true))
-        XCTAssertFalse(model.headlightOn)
+        XCTAssertNil(model.headlightRequestedState)
         XCTAssertEqual(driver.headlightStates, [])
 
         driver.headlightWriteSucceeds = true
         driver.isLive = true
 
         XCTAssertTrue(model.setHeadlight(true))
-        XCTAssertTrue(model.headlightOn)
+        XCTAssertEqual(model.headlightRequestedState, .on)
         XCTAssertEqual(driver.headlightStates, [.on])
 
         model.disconnectTransport()
-        XCTAssertFalse(model.headlightOn)
+        XCTAssertNil(model.headlightRequestedState)
     }
 
     @MainActor
