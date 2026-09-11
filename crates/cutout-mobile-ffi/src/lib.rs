@@ -11782,14 +11782,7 @@ fn mobile_melk_transport_action(action: TransportAction) -> MobileMelkLightingWr
         mode,
     } = action
     else {
-        debug_assert!(false, "MELK lighting commands always produce writes");
-        return MobileMelkLightingWriteDto {
-            characteristic: Vec::new(),
-            payload: Vec::new(),
-            mode: MobileMelkLightingWriteModeDto::WithoutResponse,
-            confirmation_characteristic: Vec::new(),
-            minimum_interval_ms: None,
-        };
+        unreachable!("MELK lighting commands always produce writes");
     };
     let policy = MelkLightingProfile::write_policy();
     MobileMelkLightingWriteDto {
@@ -11812,10 +11805,7 @@ fn mobile_melk_control(command: cutout_core::MelkControl) -> MobileMelkLightingW
 fn mobile_melk_write_mode(mode: WriteMode) -> MobileMelkLightingWriteModeDto {
     match mode {
         WriteMode::WithoutResponse => MobileMelkLightingWriteModeDto::WithoutResponse,
-        WriteMode::WithResponse => {
-            debug_assert!(false, "MELK policy is write without response");
-            MobileMelkLightingWriteModeDto::WithoutResponse
-        }
+        WriteMode::WithResponse => unreachable!("MELK policy is write without response"),
     }
 }
 

@@ -119,8 +119,8 @@ fn power(on: bool) -> cutout_core::LightingPowerState {
 
 #[uniffi::export]
 impl MobileMelkLightingProfile {
-    /// Plans a complete state atomically, including leaving microphone mode.
-    /// Power is applied last so restoring an off preset cannot finish with the lights on.
+    /// Plans a complete state atomically. Solid/effect playback does not claim microphone state
+    /// because OC21 readback is unavailable.
     ///
     /// # Errors
     /// Returns `InvalidState` without any writes for invalid brightness, pattern, or microphone settings.
