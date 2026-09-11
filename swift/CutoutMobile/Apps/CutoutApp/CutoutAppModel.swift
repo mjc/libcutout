@@ -2343,6 +2343,9 @@ final class CutoutAppModel {
             }
         }
         self.phase = phase
+        if phase != .live {
+            headlightCommandStatus = .unknown
+        }
         switch phase {
         case .connecting, .discoveringServices, .subscribing:
             if let selection = connectionState.selection {

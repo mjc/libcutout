@@ -720,6 +720,7 @@ public final class CutoutSessionCore: NSObject {
             guard phase == .live, let liveOwner else { return nil }
             do {
                 try liveOwner.handleCommand(.setLights(state), at: clock.now())
+                guard phase == .live else { return nil }
                 return liveOwner.lightCommandStatus
             } catch {
                 record("set_lights_error=\(error)")

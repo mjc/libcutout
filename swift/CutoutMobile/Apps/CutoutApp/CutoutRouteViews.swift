@@ -186,6 +186,7 @@ private struct HeadlightControlSection: View {
                     submit(.off)
                 }
             }
+            .buttonStyle(.bordered)
             .disabled(!isAvailable)
             .accessibilityHint(localizedAppText("settings.headlight.help"))
 

@@ -698,18 +698,48 @@ final class CutoutAppModelTests: XCTestCase {
         let driver = SessionDriverSpy(rows: [])
         let model = CutoutAppModel(core: driver)
 
+        driver.isLive = true
         XCTAssertFalse(model.setHeadlight(.on))
         XCTAssertEqual(model.headlightCommandStatus, .unknown)
         XCTAssertEqual(driver.headlightStates, [])
 
         driver.headlightWriteSucceeds = true
-        driver.isLive = true
 
         XCTAssertTrue(model.setHeadlight(.on))
         XCTAssertEqual(model.headlightCommandStatus, .requested(.on))
         XCTAssertEqual(driver.headlightStates, [.on])
 
         model.disconnectTransport()
+        XCTAssertEqual(model.headlightCommandStatus, .unknown)
+    }
+
+    @MainActor
+    func testHeadlightCommandStatusIsClearedDuringReconnect() {
+        let row = DevicePickerRow(
+            id: "euc-1234",
+            title: "EUC",
+            subtitle: "Electric unicycle",
+            detail: "Device 1234",
+            state: DevicePickerRowState(action: .use),
+            symbolName: "circle.hexagongrid.circle",
+            connectionRoute: .electricUnicycle
+        )
+        let driver = SessionDriverSpy(rows: [row])
+        let model = CutoutAppModel(core: driver)
+
+        model.start()
+        XCTAssertTrue(model.pair(platformIdentifier: row.id))
+        driver.onPhaseChange?(.subscribing)
+        driver.onPhaseChange?(.live)
+        driver.isLive = true
+        XCTAssertTrue(model.setHeadlight(.on))
+        XCTAssertEqual(model.headlightCommandStatus, .requested(.on))
+
+        driver.onPhaseChange?(.discoveringServices)
+        XCTAssertEqual(model.headlightCommandStatus, .unknown)
+
+        driver.onPhaseChange?(.subscribing)
+        driver.onPhaseChange?(.live)
         XCTAssertEqual(model.headlightCommandStatus, .unknown)
     }
 
