@@ -316,15 +316,44 @@ struct ContentView: View {
 
     private var tabAccent: Color {
         #if os(iOS)
-        switch route {
-        case .vescRide, .vescDebug, .lighting(.vesc):
-            Color.purple
+        switch Self.accentKind(selectedConnectionRoute: model.selectedConnectionRoute, route: route) {
+        case .purple:
+            Color(uiColor: UIColor { traits in
+                traits.userInterfaceStyle == .dark
+                    ? .systemPurple
+                    : UIColor(red: 0.34, green: 0.08, blue: 0.52, alpha: 1)
+            })
+        case .yellow:
+            Color(uiColor: UIColor { traits in
+                traits.userInterfaceStyle == .dark
+                    ? .systemYellow
+                    : UIColor(red: 0.45, green: 0.25, blue: 0.0, alpha: 1)
+            })
         default:
-            Color.yellow
+            .primary
         }
         #else
         .primary
         #endif
+    }
+
+    static func accentKind(
+        selectedConnectionRoute: DevicePickerConnectionRoute?,
+        route: CutoutAppRoute
+    ) -> PevAccent {
+        switch selectedConnectionRoute {
+        case .vescOnewheel:
+            .purple
+        case .electricUnicycle:
+            .yellow
+        case nil:
+            switch route {
+            case .vescRide, .vescDebug, .lighting(.vesc):
+                .purple
+            default:
+                .yellow
+            }
+        }
     }
 
 }

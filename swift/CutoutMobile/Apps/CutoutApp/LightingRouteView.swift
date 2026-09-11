@@ -62,6 +62,9 @@ struct LightingRouteView: View {
         .task {
             startLighting()
         }
+        .onDisappear {
+            model.stopIfUnpaired()
+        }
         .sheet(isPresented: $showsPairing) {
             LightingPairingSheet(model: model, rideModel: rideModel)
         }

@@ -631,10 +631,9 @@ struct LightingPlaybackControls: View {
         }
     }
 
-    private func selectPattern(_ id: Int) {
+    func selectPattern(_ id: Int) {
         pattern = id
         selectGroup(for: id)
-        play()
     }
 
     private func selectGroup(for id: Int) {

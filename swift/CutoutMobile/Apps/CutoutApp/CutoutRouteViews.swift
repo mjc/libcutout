@@ -365,31 +365,14 @@ final class LightingRouteModel {
         } else if let requested = persistence.requestedState {
             requestedState = requested
         }
-        session.onStateChange = { [weak self] state in
-            self?.enqueueCallback { $0.handleStateChange(state) }
-        }
-        session.onIdentity = { [weak self] identity in
-            self?.enqueueCallback { $0.handleIdentity(identity) }
-        }
-        session.onRecord = { [weak self] record in
-            self?.enqueueCallback { $0.handleRecord(record) }
-        }
-        session.onNotification = { [weak self] data in
-            self?.enqueueCallback { $0.append("notification=FFF4 (\(data.count) bytes)") }
-        }
-        session.onCandidate = { [weak self] candidate in
-            self?.enqueueCallback { model in
-                model.candidates.removeAll { $0.id == candidate.id }
-                model.candidates.append(candidate)
-                model.candidates.sort { $0.rssi > $1.rssi }
-            }
-        }
+        installSessionCallbacks(for: callbackGeneration)
     }
 
     func start() {
         guard !isRunning else { return }
         isRunning = true
         callbackGeneration &+= 1
+        installSessionCallbacks(for: callbackGeneration)
         candidates.removeAll()
         session.start(preferredPlatformIdentifier: persistence.platformIdentifier)
     }
@@ -407,6 +390,13 @@ final class LightingRouteModel {
         callbackGeneration &+= 1
         candidates.removeAll()
         session.stop()
+    }
+
+    /// A first-pairing scan is owned by the Lighting route. Remembered accessories are
+    /// intentionally kept alive so reconnect and restore can continue outside the route.
+    func stopIfUnpaired() {
+        guard persistence.platformIdentifier == nil else { return }
+        stop()
     }
 
     func forgetAccessory() {
@@ -428,11 +418,38 @@ final class LightingRouteModel {
         restoreAttempted = true
     }
 
-    private func enqueueCallback(_ operation: @escaping @MainActor (LightingRouteModel) -> Void) {
-        let generation = callbackGeneration
-        Task { @MainActor [weak self] in
-            guard let self, self.isRunning, self.callbackGeneration == generation else { return }
-            operation(self)
+    private func installSessionCallbacks(for generation: Int) {
+        session.onStateChange = { [weak self] state in
+            Task { @MainActor [weak self] in
+                guard let self, self.isRunning, self.callbackGeneration == generation else { return }
+                self.handleStateChange(state)
+            }
+        }
+        session.onIdentity = { [weak self] identity in
+            Task { @MainActor [weak self] in
+                guard let self, self.isRunning, self.callbackGeneration == generation else { return }
+                self.handleIdentity(identity)
+            }
+        }
+        session.onRecord = { [weak self] record in
+            Task { @MainActor [weak self] in
+                guard let self, self.isRunning, self.callbackGeneration == generation else { return }
+                self.handleRecord(record)
+            }
+        }
+        session.onNotification = { [weak self] data in
+            Task { @MainActor [weak self] in
+                guard let self, self.isRunning, self.callbackGeneration == generation else { return }
+                self.append("notification=FFF4 (\(data.count) bytes)")
+            }
+        }
+        session.onCandidate = { [weak self] candidate in
+            Task { @MainActor [weak self] in
+                guard let self, self.isRunning, self.callbackGeneration == generation else { return }
+                self.candidates.removeAll { $0.id == candidate.id }
+                self.candidates.append(candidate)
+                self.candidates.sort { $0.rssi > $1.rssi }
+            }
         }
     }
 
@@ -737,23 +754,24 @@ final class LightingRouteModel {
     private func restoreIfEligible() {
         guard restoreEnabled, !restoreAttempted,
               let peripheralIdentifier,
-              persistence.platformIdentifier == peripheralIdentifier,
-              persistence.confirmation == .confirmed,
-              let requested = persistence.confirmedState else {
+              persistence.platformIdentifier == peripheralIdentifier else {
             return
         }
-        guard persistence.isCompatibleWithCurrentProfile else {
-            restoreAttempted = true
-            controlError = localizedAppText("lighting.error.restore_incompatible")
-            append("restore=skipped incompatible-profile")
+        guard let candidate = persistence.restoreCandidate(),
+              candidate.platformIdentifier == peripheralIdentifier else {
+            if !persistence.isCompatibleWithCurrentProfile {
+                restoreAttempted = true
+                controlError = localizedAppText("lighting.error.restore_incompatible")
+                append("restore=skipped incompatible-profile")
+            }
             return
         }
         restoreAttempted = true
-        guard (try? session.applyState(requested)) == true else {
+        guard (try? session.applyState(candidate.requestedState)) == true else {
             restoreAttempted = false
             return
         }
-        requestedState = requested
+        requestedState = candidate.requestedState
         commandStatus = .requested
         records = Array((records + [MelkLightingLogEntry(text: "restore=requested")]).suffix(12))
     }

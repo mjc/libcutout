@@ -17,6 +17,22 @@ final class CutoutAppRouteTests: XCTestCase {
         XCTAssertEqual(CutoutAppRoute.route(for: .vescDebug), .vescDebug)
     }
 
+    @MainActor
+    func testTabAccentFollowsConnectedVehicleAcrossMap() {
+        XCTAssertEqual(
+            ContentView.accentKind(selectedConnectionRoute: .vescOnewheel, route: .rideMap),
+            .purple
+        )
+        XCTAssertEqual(
+            ContentView.accentKind(selectedConnectionRoute: .electricUnicycle, route: .rideMap),
+            .yellow
+        )
+        XCTAssertEqual(
+            ContentView.accentKind(selectedConnectionRoute: nil, route: .lighting(.vesc)),
+            .purple
+        )
+    }
+
     func testNavigationLabelsResolveFromTheAppCatalog() {
         XCTAssertEqual(localizedAppText("navigation.tab.cells"), "Cells")
         XCTAssertEqual(localizedAppText("lighting.power"), "Power")
@@ -662,8 +678,28 @@ final class CutoutAppRouteTests: XCTestCase {
 
         model.start()
         XCTAssertEqual(fake.startCalls, [nil])
-        model.stop()
+        model.stopIfUnpaired()
         XCTAssertEqual(fake.stopCalls, 1)
+    }
+
+    @MainActor
+    func testLightingEffectTileSelectionIsDraftUntilPlay() throws {
+        let suiteName = "CutoutAppRouteTests.lightingEffectDraft"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defaults.removePersistentDomain(forName: suiteName)
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        let fake = TestLightingSession()
+        let model = LightingRouteModel(
+            session: fake,
+            persistence: LightingAccessoryPersistence(defaults: defaults)
+        )
+        model.start()
+        let controls = LightingPlaybackControls(model: model, page: .effects)
+
+        controls.selectPattern(16)
+
+        XCTAssertTrue(fake.stateRequests.isEmpty)
     }
 
     @MainActor
