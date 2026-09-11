@@ -6,7 +6,7 @@ public struct LightingAccessoryRestoreCandidate: Equatable, Sendable {
     public let platformIdentifier: String
     public let requestedState: MobileMelkLightingRestoreStateDto
 
-    public init(platformIdentifier: String, requestedState: MobileMelkLightingRestoreStateDto) {
+    init(platformIdentifier: String, requestedState: MobileMelkLightingRestoreStateDto) {
         self.platformIdentifier = platformIdentifier
         self.requestedState = requestedState
     }
@@ -88,14 +88,16 @@ public final class LightingAccessoryPersistence {
     public func restoreCandidate() -> LightingAccessoryRestoreCandidate? {
         guard let record,
               let identifier = canonicalIdentifier(record.platformIdentifier()),
-              let requestedState = record.requestedState(),
               record.restoreEnabled(),
-              isCompatibleWithCurrentProfile else {
+              isCompatibleWithCurrentProfile,
+              record.confirmation() == .confirmed,
+              let confirmedState = record.confirmedState(),
+              record.requestedState() == confirmedState else {
             return nil
         }
         return LightingAccessoryRestoreCandidate(
             platformIdentifier: identifier,
-            requestedState: requestedState
+            requestedState: confirmedState
         )
     }
 

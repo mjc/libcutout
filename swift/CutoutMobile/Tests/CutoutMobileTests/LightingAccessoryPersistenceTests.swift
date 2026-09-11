@@ -72,11 +72,31 @@ final class LightingAccessoryPersistenceTests: XCTestCase {
             profile: .melkOc21,
             profileVersion: LightingAccessoryPersistence.currentProfileVersion
         )
-        defaults.set(try rawRecord.encode(), forKey: "lighting.accessory.record")
-        defaults.set("stale-capabilities", forKey: "lighting.accessory.capabilitiesFingerprint")
+        let state = MobileMelkLightingRestoreStateDto(
+            powerOn: true, red: 1, green: 2, blue: 3, brightness: 4
+        )
+        try rawRecord.setRequestedState(state: state)
+        try rawRecord.setConfirmedState(state: state)
+        rawRecord.setConfirmation(state: .confirmed)
+        rawRecord.setRestoreEnabled(enabled: true)
+        struct Envelope: Encodable {
+            let record: Data
+            let capabilitiesFingerprint: String
+        }
+        let envelope = Envelope(
+            record: Data(try rawRecord.encode()),
+            capabilitiesFingerprint: "stale-capabilities"
+        )
+        defaults.set(try JSONEncoder().encode(envelope), forKey: "lighting.accessory.record")
         let reopened = LightingAccessoryPersistence(defaults: defaults)
 
         XCTAssertFalse(reopened.isCompatibleWithCurrentProfile)
+        XCTAssertNil(reopened.restoreCandidate())
+        XCTAssertFalse(reopened.ensureRecord(platformIdentifier: "33333333-3333-3333-3333-333333333333"))
+
+        let reopenedAgain = LightingAccessoryPersistence(defaults: defaults)
+        XCTAssertFalse(reopenedAgain.isCompatibleWithCurrentProfile)
+        XCTAssertNil(reopenedAgain.restoreCandidate())
     }
 
     func testLegacySeparateCurrentFingerprintCannotBlessRawRecord() throws {
@@ -320,6 +340,8 @@ final class LightingAccessoryPersistenceTests: XCTestCase {
         XCTAssertNil(store.restoreCandidate())
 
         store.setRestoreEnabled(true)
+        XCTAssertNil(store.restoreCandidate())
+        try store.confirm(state)
         let candidate = try XCTUnwrap(store.restoreCandidate())
         XCTAssertEqual(candidate.platformIdentifier, "CCCCCCCC-CCCC-CCCC-CCCC-CCCCCCCCCCCC")
         XCTAssertEqual(candidate.requestedState, state)
