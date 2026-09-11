@@ -1,16 +1,17 @@
-//! Rust-owned state machine for the standalone MELK CoreBluetooth adapter.
+//! Pure Rust session reducer for the MELK CoreBluetooth adapter.
 
 use std::collections::{BTreeMap, VecDeque};
 
-use super::{
-    MobileMelkLightingError, MobileMelkLightingWriteDto, MobileMelkLightingWriteModeDto,
-    mobile_melk_transport_action,
-};
-use cutout_core::{
-    LightingBrightness, LightingPowerState, MelkClock, MelkControl, MelkSchedule, RgbColor,
-    RgbLightingCommand,
-};
 use cutout_protocols::{MelkGattEvidence, MelkLightingProfile};
+
+use super::contract::{
+    MobileMelkLightingSessionActionDto, MobileMelkLightingSessionCandidateDto,
+    MobileMelkLightingSessionEventDto, MobileMelkLightingSessionSnapshotDto,
+    MobileMelkLightingSessionStateDto, MobileMelkLightingTimerDto,
+};
+use crate::{
+    MobileMelkLightingWriteDto, MobileMelkLightingWriteModeDto, mobile_melk_transport_action,
+};
 
 const MAX_CANDIDATES: usize = 32;
 const CONNECTION_TIMEOUT_MS: u64 = 15_000;
@@ -18,183 +19,8 @@ const INITIALIZATION_DELAY_MS: u64 = 1_000;
 const MAX_RECONNECT_ATTEMPTS: u8 = 3;
 const FALLBACK_WRITE_INTERVAL_MS: u16 = 50;
 
-/// Rust-owned lifecycle state for the standalone MELK transport.
-#[derive(Clone, Debug, Eq, PartialEq, uniffi::Enum)]
-pub enum MobileMelkLightingSessionStateDto {
-    /// No transport has been started.
-    Idle,
-    /// The adapter is discovering candidates.
-    Scanning,
-    /// A candidate connection is in flight.
-    Connecting,
-    /// A retry is waiting for its timer.
-    Retrying {
-        attempt: u8,
-        delay_milliseconds: u64,
-    },
-    /// GATT roles and notifications are being prepared.
-    Discovering,
-    /// The verified profile is ready for commands.
-    Ready,
-    /// The adapter was explicitly stopped or cannot reconnect.
-    Disconnected,
-    /// A terminal error with a user-visible explanation.
-    Failed { reason: String },
-}
-
-/// CoreBluetooth facts submitted to the Rust MELK reducer.
-#[derive(Clone, Debug, Eq, PartialEq, uniffi::Enum)]
-pub enum MobileMelkLightingSessionEventDto {
-    /// CoreBluetooth changed power state.
-    BluetoothState { powered_on: bool, state_code: i32 },
-    /// A peripheral was observed while scanning.
-    Discovered {
-        name: Option<String>,
-        platform_identifier: String,
-        rssi: i32,
-    },
-    /// The platform selected or restored a peripheral.
-    Restored {
-        name: Option<String>,
-        platform_identifier: String,
-        connected: bool,
-    },
-    /// No remembered peripheral was available for the selected identity.
-    RestoreUnavailable,
-    /// A connection completed.
-    Connected {
-        name: Option<String>,
-        platform_identifier: String,
-    },
-    /// A connection failed.
-    ConnectFailed { reason: String },
-    /// The connection attempt timer fired.
-    ConnectTimeout,
-    /// Services were discovered and the required service was present.
-    ServicesDiscovered {
-        service_uuids: Vec<Vec<u8>>,
-        error: Option<String>,
-    },
-    /// Characteristics were discovered with their typed GATT roles.
-    CharacteristicsDiscovered {
-        name: Option<String>,
-        service_uuid: Vec<u8>,
-        characteristics: Vec<MobileMelkLightingCharacteristicEvidenceDto>,
-        error: Option<String>,
-    },
-    /// Notification subscription state changed.
-    NotificationState {
-        characteristic: Vec<u8>,
-        ready: bool,
-        can_send: bool,
-        error: Option<String>,
-    },
-    /// A notification arrived on the verified FFF4 channel.
-    Notification {
-        characteristic: Vec<u8>,
-        bytes: Vec<u8>,
-    },
-    /// CoreBluetooth can accept another no-response write.
-    WriteReady { can_send: bool },
-    /// A reducer timer fired.
-    TimerFired {
-        timer: MobileMelkLightingTimerDto,
-        can_send: bool,
-    },
-    /// The selected peripheral disconnected.
-    Disconnected { reason: String, powered_on: bool },
-}
-
-/// Timers requested by the Rust reducer and scheduled by the platform adapter.
-#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Enum)]
-pub enum MobileMelkLightingTimerDto {
-    /// Bounds a pending connection attempt.
-    ConnectionAttempt,
-    /// Starts the next reconnect attempt.
-    Reconnect,
-    /// Advances the initialization sequence.
-    Initialization,
-    /// Advances the bounded user-write queue.
-    WriteDrain,
-}
-
-/// CoreBluetooth operation requested by the Rust reducer.
-#[derive(Clone, Debug, Eq, PartialEq, uniffi::Enum)]
-pub enum MobileMelkLightingSessionActionDto {
-    /// Scan without a service filter; MELK does not advertise FFF0.
-    Scan,
-    /// Stop scanning before connecting to a selected candidate.
-    StopScan,
-    /// Connect to a platform-local peripheral identifier.
-    Connect { platform_identifier: String },
-    /// Cancel a failed first-pairing candidate.
-    CancelConnect { platform_identifier: String },
-    /// Discover the verified FFF0 service.
-    DiscoverServices {
-        platform_identifier: String,
-        service: Vec<u8>,
-    },
-    /// Discover all characteristics for FFF0.
-    DiscoverCharacteristics {
-        platform_identifier: String,
-        service: Vec<u8>,
-    },
-    /// Subscribe to FFF4 notifications.
-    Subscribe {
-        platform_identifier: String,
-        characteristic: Vec<u8>,
-    },
-    /// Execute one typed FFF3 write.
-    Write {
-        platform_identifier: String,
-        write: MobileMelkLightingWriteDto,
-    },
-    /// Arm a reducer timer on the platform queue.
-    ArmTimer {
-        timer: MobileMelkLightingTimerDto,
-        delay_milliseconds: u64,
-    },
-}
-
-/// One characteristic's UUID and native CoreBluetooth properties.
-#[derive(Clone, Debug, Eq, PartialEq, uniffi::Record)]
-pub struct MobileMelkLightingCharacteristicEvidenceDto {
-    /// Full 128-bit UUID bytes in canonical CoreBluetooth order.
-    pub uuid: Vec<u8>,
-    /// Whether the characteristic supports write-without-response.
-    pub write_without_response: bool,
-    /// Whether the characteristic supports notifications or indications.
-    pub notify_or_indicate: bool,
-}
-
-/// A bounded candidate surfaced during first pairing.
-#[derive(Clone, Debug, Eq, PartialEq, uniffi::Record)]
-pub struct MobileMelkLightingSessionCandidateDto {
-    /// Platform-local CoreBluetooth identifier.
-    pub platform_identifier: String,
-    /// Advertised local name, when present.
-    pub name: Option<String>,
-    /// Last observed RSSI.
-    pub rssi: i32,
-}
-
-/// Snapshot of Rust-owned session state for the thin platform wrapper.
-#[derive(Clone, Debug, Eq, PartialEq, uniffi::Record)]
-pub struct MobileMelkLightingSessionSnapshotDto {
-    /// Current lifecycle state.
-    pub state: MobileMelkLightingSessionStateDto,
-    /// Selected platform identifier, when one is active.
-    pub platform_identifier: Option<String>,
-    /// Selected advertised name, when one is known.
-    pub name: Option<String>,
-    /// Last command evidence state: 0 idle, 1 requested, 2 confirmed, 3 unconfirmed.
-    pub command_status: u8,
-    /// Whether FFF4 notifications are ready.
-    pub notification_ready: bool,
-}
-
 #[derive(Clone, Debug)]
-struct SessionCore {
+pub(crate) struct SessionReducer {
     state: MobileMelkLightingSessionStateDto,
     preferred_identifier: Option<String>,
     invalid_preferred_identifier: bool,
@@ -214,7 +40,7 @@ struct SessionCore {
     candidates_out: VecDeque<MobileMelkLightingSessionCandidateDto>,
 }
 
-impl Default for SessionCore {
+impl Default for SessionReducer {
     fn default() -> Self {
         Self {
             state: MobileMelkLightingSessionStateDto::Idle,
@@ -238,8 +64,30 @@ impl Default for SessionCore {
     }
 }
 
-impl SessionCore {
-    fn snapshot(&self) -> MobileMelkLightingSessionSnapshotDto {
+impl SessionReducer {
+    pub(crate) fn start(&mut self, preferred_identifier: Option<String>) {
+        self.preferred_identifier = preferred_identifier.clone();
+        self.invalid_preferred_identifier = preferred_identifier
+            .as_deref()
+            .is_some_and(|value| uuid::Uuid::parse_str(value).is_err());
+        self.reconnect_enabled = true;
+        self.reconnect_attempt = 0;
+        self.candidates.clear();
+        self.selected_identifier = None;
+        self.selected_name = None;
+        self.transition(MobileMelkLightingSessionStateDto::Idle);
+    }
+
+    pub(crate) fn stop(&mut self) {
+        self.reconnect_enabled = false;
+        self.timer = None;
+        if self.command_status == 1 {
+            self.command_status = 3;
+        }
+        self.transition(MobileMelkLightingSessionStateDto::Disconnected);
+    }
+
+    pub(crate) fn snapshot(&self) -> MobileMelkLightingSessionSnapshotDto {
         MobileMelkLightingSessionSnapshotDto {
             state: self.state.clone(),
             platform_identifier: self.selected_identifier.clone(),
@@ -315,7 +163,7 @@ impl SessionCore {
         }
     }
 
-    fn select(&mut self, identifier: String) {
+    pub(crate) fn select(&mut self, identifier: String) {
         if self.preferred_identifier.is_some()
             || self.invalid_preferred_identifier
             || self.selected_identifier.is_some()
@@ -388,7 +236,7 @@ impl SessionCore {
         self.arm(MobileMelkLightingTimerDto::Reconnect, delay);
     }
 
-    fn queue_writes<I>(&mut self, writes: I) -> bool
+    pub(crate) fn queue_writes<I>(&mut self, writes: I) -> bool
     where
         I: IntoIterator<Item = MobileMelkLightingWriteDto>,
     {
@@ -417,7 +265,7 @@ impl SessionCore {
         true
     }
 
-    fn queue_write(&mut self, write: MobileMelkLightingWriteDto) -> bool {
+    pub(crate) fn queue_write(&mut self, write: MobileMelkLightingWriteDto) -> bool {
         self.queue_writes([write])
     }
 
@@ -446,7 +294,7 @@ impl SessionCore {
         }
     }
 
-    fn drain_writes(&mut self, can_send: bool) {
+    pub(crate) fn drain_writes(&mut self, can_send: bool) {
         if !can_send
             || !matches!(self.state, MobileMelkLightingSessionStateDto::Ready)
             || self.timer.is_some()
@@ -475,7 +323,7 @@ impl SessionCore {
             });
     }
 
-    fn handle(&mut self, event: MobileMelkLightingSessionEventDto) {
+    pub(crate) fn handle(&mut self, event: MobileMelkLightingSessionEventDto) {
         match event {
             MobileMelkLightingSessionEventDto::BluetoothState {
                 powered_on,
@@ -750,6 +598,38 @@ impl SessionCore {
             }
         }
     }
+
+    pub(crate) fn mark_last_command_confirmed(&mut self) {
+        if self.command_status == 1 {
+            self.command_status = 2;
+        }
+    }
+
+    pub(crate) fn mark_last_command_unconfirmed(&mut self) {
+        if self.command_status == 1 {
+            self.command_status = 3;
+        }
+    }
+
+    pub(crate) fn drain_actions(&mut self) -> Vec<MobileMelkLightingSessionActionDto> {
+        self.actions.drain(..).collect()
+    }
+
+    pub(crate) fn drain_records(&mut self) -> Vec<String> {
+        self.records.drain(..).collect()
+    }
+
+    pub(crate) fn drain_candidates(&mut self) -> Vec<MobileMelkLightingSessionCandidateDto> {
+        self.candidates_out.drain(..).collect()
+    }
+
+    pub(crate) fn drain_notifications(&mut self) -> Vec<Vec<u8>> {
+        self.notifications.drain(..).collect()
+    }
+
+    pub(crate) fn is_ready(&self) -> bool {
+        matches!(self.state, MobileMelkLightingSessionStateDto::Ready)
+    }
 }
 
 fn is_coalescible_color_write(write: &MobileMelkLightingWriteDto) -> bool {
@@ -768,378 +648,4 @@ fn is_coalescible_color_write(write: &MobileMelkLightingWriteDto) -> bool {
 
 fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|byte| format!("{byte:02x}")).collect()
-}
-
-/// Rust-owned MELK session core exposed to the thin CoreBluetooth wrapper.
-#[derive(Debug, uniffi::Object)]
-pub struct MobileMelkLightingSessionCore {
-    inner: std::sync::Mutex<SessionCore>,
-}
-
-#[uniffi::export]
-impl MobileMelkLightingSessionCore {
-    /// Creates an idle session core.
-    #[uniffi::constructor]
-    pub fn new() -> std::sync::Arc<Self> {
-        std::sync::Arc::new(Self {
-            inner: std::sync::Mutex::new(SessionCore::default()),
-        })
-    }
-
-    /// Starts the session with an optional remembered platform identifier.
-    pub fn start(&self, preferred_platform_identifier: Option<String>) {
-        let mut inner = self
-            .inner
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        inner.preferred_identifier = preferred_platform_identifier.clone();
-        inner.invalid_preferred_identifier = preferred_platform_identifier
-            .as_deref()
-            .is_some_and(|value| uuid::Uuid::parse_str(value).is_err());
-        inner.reconnect_enabled = true;
-        inner.reconnect_attempt = 0;
-        inner.candidates.clear();
-        inner.selected_identifier = None;
-        inner.selected_name = None;
-        inner.transition(MobileMelkLightingSessionStateDto::Idle);
-    }
-
-    /// Stops the session and prevents future reconnects.
-    pub fn stop(&self) {
-        let mut inner = self
-            .inner
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        inner.reconnect_enabled = false;
-        inner.timer = None;
-        if inner.command_status == 1 {
-            inner.command_status = 3;
-        }
-        inner.transition(MobileMelkLightingSessionStateDto::Disconnected);
-    }
-
-    /// Submits one CoreBluetooth event.
-    pub fn handle(&self, event: MobileMelkLightingSessionEventDto) {
-        self.inner
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .handle(event);
-    }
-
-    /// Selects a first-pairing candidate.
-    pub fn select_candidate(&self, platform_identifier: String) {
-        self.inner
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .select(platform_identifier);
-    }
-
-    /// Enqueues a power command if the verified profile is ready.
-    pub fn set_power(&self, on: bool) -> bool {
-        self.command(mobile_melk_transport_action(
-            MelkLightingProfile::write_action(RgbLightingCommand::SetPower(if on {
-                LightingPowerState::On
-            } else {
-                LightingPowerState::Off
-            })),
-        ))
-    }
-
-    /// Enqueues a solid-color command if the verified profile is ready.
-    pub fn set_solid_color(&self, red: u8, green: u8, blue: u8) -> bool {
-        self.command(mobile_melk_transport_action(
-            MelkLightingProfile::write_action(RgbLightingCommand::SetSolidColor(RgbColor::new(
-                red, green, blue,
-            ))),
-        ))
-    }
-
-    /// Enqueues a brightness command if the value is valid and the profile is ready.
-    pub fn set_brightness(&self, percentage: u8) -> Result<bool, MobileMelkLightingError> {
-        let brightness = LightingBrightness::try_from_percent(percentage)
-            .map_err(|_| MobileMelkLightingError::InvalidBrightness)?;
-        let write = mobile_melk_transport_action(MelkLightingProfile::write_action(
-            RgbLightingCommand::SetBrightness(brightness),
-        ));
-        Ok(self.command(write))
-    }
-
-    /// Enqueues an effect-speed command.
-    pub fn set_effect_speed(&self, speed: u8) -> bool {
-        self.command(super::mobile_melk_control(MelkControl::Speed(speed)))
-    }
-
-    /// Enqueues a complete restore state.
-    pub fn apply_state(
-        &self,
-        state: super::MobileMelkLightingRestoreStateDto,
-    ) -> Result<bool, MobileMelkLightingError> {
-        let state = state
-            .try_into()
-            .map_err(|_| MobileMelkLightingError::InvalidPlayback)?;
-        let writes = MelkLightingProfile::plan_state(state)
-            .into_iter()
-            .map(mobile_melk_transport_action)
-            .collect::<Vec<_>>();
-        let mut inner = self
-            .inner
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        if !matches!(inner.state, MobileMelkLightingSessionStateDto::Ready)
-            || writes
-                .iter()
-                .any(|write| write.mode != MobileMelkLightingWriteModeDto::WithoutResponse)
-        {
-            return Ok(false);
-        }
-        Ok(inner.queue_writes(writes))
-    }
-
-    /// Enqueues a controller-local schedule after synchronizing its local clock.
-    pub fn set_schedule(
-        &self,
-        schedule: super::MobileMelkScheduleDto,
-        clock: super::MobileMelkClockDto,
-    ) -> Result<bool, MobileMelkLightingError> {
-        let schedule = MelkSchedule::new(
-            if schedule.power_on {
-                LightingPowerState::On
-            } else {
-                LightingPowerState::Off
-            },
-            schedule.hour,
-            schedule.minute,
-            schedule.days,
-            schedule.enabled,
-        )
-        .map_err(|_| MobileMelkLightingError::InvalidSchedule)?;
-        let clock = MelkClock::new(clock.hour, clock.minute, clock.second, clock.weekday)
-            .map_err(|_| MobileMelkLightingError::InvalidClock)?;
-        if !MelkLightingProfile::capabilities().schedules {
-            return Err(MobileMelkLightingError::UnsupportedCapability);
-        }
-        let writes = [
-            mobile_melk_transport_action(MelkLightingProfile::control_action(MelkControl::Clock(
-                clock,
-            ))),
-            mobile_melk_transport_action(MelkLightingProfile::control_action(
-                MelkControl::Schedule(schedule),
-            )),
-        ];
-        let mut inner = self
-            .inner
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        if !matches!(inner.state, MobileMelkLightingSessionStateDto::Ready) {
-            return Ok(false);
-        }
-        Ok(inner.queue_writes(writes))
-    }
-
-    /// Marks the latest requested command as physically confirmed.
-    pub fn mark_last_command_confirmed(&self) {
-        let mut inner = self
-            .inner
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        if inner.command_status == 1 {
-            inner.command_status = 2;
-        }
-    }
-
-    /// Marks the latest requested command as explicitly unconfirmed.
-    pub fn mark_last_command_unconfirmed(&self) {
-        let mut inner = self
-            .inner
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        if inner.command_status == 1 {
-            inner.command_status = 3;
-        }
-    }
-
-    /// Returns the current Rust-owned snapshot.
-    pub fn snapshot(&self) -> MobileMelkLightingSessionSnapshotDto {
-        self.inner
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .snapshot()
-    }
-
-    /// Drains requested platform operations.
-    pub fn drain_actions(&self) -> Vec<MobileMelkLightingSessionActionDto> {
-        self.inner
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .actions
-            .drain(..)
-            .collect()
-    }
-
-    /// Drains bounded diagnostic records.
-    pub fn drain_records(&self) -> Vec<String> {
-        self.inner
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .records
-            .drain(..)
-            .collect()
-    }
-
-    /// Drains first-pairing candidates.
-    pub fn drain_candidates(&self) -> Vec<MobileMelkLightingSessionCandidateDto> {
-        self.inner
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .candidates_out
-            .drain(..)
-            .collect()
-    }
-
-    /// Drains raw FFF4 notifications for the app-level observer.
-    pub fn drain_notifications(&self) -> Vec<Vec<u8>> {
-        self.inner
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .notifications
-            .drain(..)
-            .collect()
-    }
-
-    /// Drains one pending user write when CoreBluetooth reports available capacity.
-    pub fn flush_writes(&self, can_send: bool) {
-        self.inner
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .drain_writes(can_send);
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    const ID: &str = "11111111-1111-1111-1111-111111111111";
-
-    fn ready_core() -> std::sync::Arc<MobileMelkLightingSessionCore> {
-        let core = MobileMelkLightingSessionCore::new();
-        core.start(Some(ID.into()));
-        core.handle(MobileMelkLightingSessionEventDto::BluetoothState {
-            powered_on: true,
-            state_code: 5,
-        });
-        core.handle(MobileMelkLightingSessionEventDto::Discovered {
-            name: Some("MELK-OC21  6A".into()),
-            platform_identifier: ID.into(),
-            rssi: -60,
-        });
-        core.drain_actions();
-        core.handle(MobileMelkLightingSessionEventDto::Connected {
-            name: Some("MELK-OC21  6A".into()),
-            platform_identifier: ID.into(),
-        });
-        core.drain_actions();
-        core.handle(MobileMelkLightingSessionEventDto::ServicesDiscovered {
-            service_uuids: vec![cutout_protocols::MELK_SERVICE_CHANNEL.as_bytes().to_vec()],
-            error: None,
-        });
-        core.drain_actions();
-        core.handle(
-            MobileMelkLightingSessionEventDto::CharacteristicsDiscovered {
-                name: Some("MELK-OC21  6A".into()),
-                service_uuid: cutout_protocols::MELK_SERVICE_CHANNEL.as_bytes().to_vec(),
-                characteristics: vec![
-                    MobileMelkLightingCharacteristicEvidenceDto {
-                        uuid: cutout_protocols::MELK_WRITE_CHANNEL.as_bytes().to_vec(),
-                        write_without_response: true,
-                        notify_or_indicate: false,
-                    },
-                    MobileMelkLightingCharacteristicEvidenceDto {
-                        uuid: cutout_protocols::MELK_NOTIFY_CHANNEL.as_bytes().to_vec(),
-                        write_without_response: false,
-                        notify_or_indicate: true,
-                    },
-                ],
-                error: None,
-            },
-        );
-        core.drain_actions();
-        core.handle(MobileMelkLightingSessionEventDto::NotificationState {
-            characteristic: cutout_protocols::MELK_NOTIFY_CHANNEL.as_bytes().to_vec(),
-            ready: true,
-            can_send: true,
-            error: None,
-        });
-        core.drain_actions();
-        core.handle(MobileMelkLightingSessionEventDto::TimerFired {
-            timer: MobileMelkLightingTimerDto::Initialization,
-            can_send: true,
-        });
-        core.drain_actions();
-        assert_eq!(
-            core.snapshot().state,
-            MobileMelkLightingSessionStateDto::Ready
-        );
-        core
-    }
-
-    #[test]
-    fn reducer_owns_gatt_initialization_and_ready_gate() {
-        let core = ready_core();
-        let snapshot = core.snapshot();
-        assert_eq!(snapshot.platform_identifier.as_deref(), Some(ID));
-        assert!(snapshot.notification_ready);
-    }
-
-    #[test]
-    fn reducer_coalesces_color_preview_writes_and_waits_for_capacity() {
-        let core = ready_core();
-        assert!(core.set_solid_color(255, 0, 0));
-        assert!(core.set_solid_color(0, 255, 0));
-        assert!(core.drain_actions().is_empty());
-        core.flush_writes(true);
-        let actions = core.drain_actions();
-        assert_eq!(actions.len(), 2);
-        let MobileMelkLightingSessionActionDto::Write { write, .. } = &actions[0] else {
-            panic!("expected a color write")
-        };
-        assert_eq!(write.payload, [0x7e, 0, 5, 3, 0, 255, 0, 0, 0xef]);
-        assert!(matches!(
-            actions[1],
-            MobileMelkLightingSessionActionDto::ArmTimer {
-                timer: MobileMelkLightingTimerDto::WriteDrain,
-                ..
-            }
-        ));
-    }
-
-    #[test]
-    fn reducer_rejects_malformed_remembered_identity_before_scanning() {
-        let core = MobileMelkLightingSessionCore::new();
-        core.start(Some("not-a-uuid".into()));
-        core.handle(MobileMelkLightingSessionEventDto::BluetoothState {
-            powered_on: true,
-            state_code: 5,
-        });
-        assert_eq!(
-            core.snapshot().state,
-            MobileMelkLightingSessionStateDto::Failed {
-                reason: "Remembered lighting identity is invalid".into()
-            }
-        );
-        assert!(core.drain_actions().is_empty());
-    }
-}
-
-impl MobileMelkLightingSessionCore {
-    fn command(&self, write: MobileMelkLightingWriteDto) -> bool {
-        let mut inner = self
-            .inner
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        if !matches!(inner.state, MobileMelkLightingSessionStateDto::Ready) {
-            return false;
-        }
-        inner.queue_write(write)
-    }
 }
