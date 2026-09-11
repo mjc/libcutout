@@ -2,6 +2,8 @@
 
 mod melk_controls;
 pub use melk_controls::*;
+mod melk_session;
+pub use melk_session::*;
 
 use std::{
     collections::VecDeque,
