@@ -100,6 +100,8 @@ struct MelkLightingLiveValidator {
         case "unconfirm":
             session.markLastCommandUnconfirmed()
             print("evidence=unconfirmed")
+        case "quit", "exit":
+            break
         default:
             print("invalid command; use help")
         }

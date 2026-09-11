@@ -442,7 +442,7 @@ public final class MelkLightingPeripheralSession: NSObject, CBCentralManagerDele
         }
     }
 
-    /// Returns `InvalidBrightness` without issuing a write when the percentage is out of range.
+    /// Throws `InvalidBrightness` without issuing a write when the percentage is out of range.
     @discardableResult
     public func setBrightness(_ percentage: UInt8) throws -> Bool {
         try onQueue {
