@@ -763,17 +763,20 @@ impl VescNotificationDecoder {
         let mut refloat_buffered = false;
         let mut generic_bytes = ArrayVec::<u8, VESC_MAX_FRAME_LEN>::new();
         let feed_generic = if self.generic_stream_pending {
-            generic_bytes
-                .try_extend_from_slice(bytes)
-                .expect("notification fits bounded VESC frame");
+            if generic_bytes.try_extend_from_slice(bytes).is_err() {
+                self.reject_oversized_generic_notification(output);
+                return;
+            }
             true
         } else if !self.generic_prefix.is_empty() {
-            generic_bytes
+            if generic_bytes
                 .try_extend_from_slice(&self.generic_prefix)
-                .expect("generic prefix fits bounded VESC frame");
-            generic_bytes
-                .try_extend_from_slice(bytes)
-                .expect("notification fits bounded VESC frame");
+                .and_then(|()| generic_bytes.try_extend_from_slice(bytes))
+                .is_err()
+            {
+                self.reject_oversized_generic_notification(output);
+                return;
+            }
             match generic_frame_kind(&generic_bytes) {
                 Some(is_generic) => {
                     self.generic_prefix.clear();
@@ -818,18 +821,24 @@ impl VescNotificationDecoder {
                 }
                 None => {
                     self.generic_prefix.clear();
-                    self.generic_prefix
+                    if self
+                        .generic_prefix
                         .try_extend_from_slice(&generic_bytes)
-                        .expect("generic prefix remains bounded");
+                        .is_err()
+                    {
+                        self.reject_oversized_generic_notification(output);
+                        return;
+                    }
                     false
                 }
             }
         } else {
             match generic_frame_kind(bytes) {
                 Some(is_generic) => {
-                    generic_bytes
-                        .try_extend_from_slice(bytes)
-                        .expect("notification fits bounded VESC frame");
+                    if generic_bytes.try_extend_from_slice(bytes).is_err() {
+                        self.reject_oversized_generic_notification(output);
+                        return;
+                    }
                     if !is_generic {
                         refloat_handled = self.handle_refloat_notification(
                             family,
@@ -843,15 +852,17 @@ impl VescNotificationDecoder {
                     is_generic
                 }
                 None if matches!(bytes.first(), Some(2 | 3)) => {
-                    self.generic_prefix
-                        .try_extend_from_slice(bytes)
-                        .expect("generic prefix remains bounded");
+                    if self.generic_prefix.try_extend_from_slice(bytes).is_err() {
+                        self.reject_oversized_generic_notification(output);
+                        return;
+                    }
                     false
                 }
                 None => {
-                    generic_bytes
-                        .try_extend_from_slice(bytes)
-                        .expect("notification fits bounded VESC frame");
+                    if generic_bytes.try_extend_from_slice(bytes).is_err() {
+                        self.reject_oversized_generic_notification(output);
+                        return;
+                    }
                     true
                 }
             }
@@ -878,6 +889,12 @@ impl VescNotificationDecoder {
                 ),
             ));
         }
+    }
+
+    fn reject_oversized_generic_notification(&mut self, output: &mut Vec<SessionOutput>) {
+        self.generic_prefix.clear();
+        self.generic_stream_pending = false;
+        push_parser_error(ParserError::MalformedFrame, output);
     }
 
     fn handle_vesc_notification(
@@ -2809,6 +2826,20 @@ mod tests {
         assert_eq!(
             decoder.pack_voltage_profile(),
             begode_falcon_target_voltage_profile()
+        );
+    }
+
+    #[test]
+    fn oversized_vesc_notification_emits_diagnostic_without_panicking() {
+        let bytes = vec![0; VESC_MAX_FRAME_LEN + 1];
+
+        let output = vesc_output_for_notification_chunks(&[bytes.as_slice()]);
+
+        assert_eq!(
+            diagnostic_error_events(&output),
+            vec![cutout_core::DiagnosticError::from_parser_error(
+                ParserError::MalformedFrame,
+            )]
         );
     }
 

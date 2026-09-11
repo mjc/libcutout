@@ -986,6 +986,7 @@ public final class CutoutSessionCore: NSObject {
         chargeEstimateProfile = nil
         vescBoardProfile = nil
         liveOwner = nil
+        pendingWithoutResponseWrites.removeAll()
         deviceDetectionSession.reset()
         clearPendingBegodeProbeResponses()
         subscribedCharacteristics.removeAll()
