@@ -1236,7 +1236,7 @@ public enum LightState: Equatable, Hashable, Sendable {
         switch dto {
         case .off:
             self = .off
-        case .on, .strobe:
+        case .on:
             self = .on
         }
     }

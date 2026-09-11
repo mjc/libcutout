@@ -1984,6 +1984,7 @@ final class CutoutAppModel {
             title: selectedRow.title,
             route: route
         )
+        headlightOn = false
         liveActivityError = nil
         connectionState = .connecting(selection, phase: .discoveringServices)
         permitsStoredDeviceAutoPairing = true
@@ -2226,6 +2227,7 @@ final class CutoutAppModel {
         activeCaptureLabels.removeAll()
         captureLabel = nil
         recordOnlyDeviceKind = nil
+        headlightOn = false
         connectionState = .picker
         phase = .scanning
         liveActivityIdentity = nil

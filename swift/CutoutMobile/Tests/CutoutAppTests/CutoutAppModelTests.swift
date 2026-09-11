@@ -703,10 +703,14 @@ final class CutoutAppModelTests: XCTestCase {
         XCTAssertEqual(driver.headlightStates, [])
 
         driver.headlightWriteSucceeds = true
+        driver.isLive = true
 
         XCTAssertTrue(model.setHeadlight(true))
         XCTAssertTrue(model.headlightOn)
         XCTAssertEqual(driver.headlightStates, [.on])
+
+        model.disconnectTransport()
+        XCTAssertFalse(model.headlightOn)
     }
 
     @MainActor
@@ -3344,6 +3348,7 @@ private final class SessionDriverSpy: CutoutSessionDriving {
     private(set) var resetRideMapLocationAdmissionCount = 0
     private(set) var headlightStates = [LightState]()
     var headlightWriteSucceeds = false
+    var isLive = false
 
     init(
         rows: [DevicePickerRow],
@@ -3418,7 +3423,7 @@ private final class SessionDriverSpy: CutoutSessionDriving {
     }
 
     func setLights(_ state: LightState) -> Bool {
-        guard headlightWriteSucceeds else { return false }
+        guard isLive, headlightWriteSucceeds else { return false }
         headlightStates.append(state)
         return true
     }

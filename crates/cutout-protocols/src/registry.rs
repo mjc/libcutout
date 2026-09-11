@@ -6,8 +6,8 @@ use cutout_core::{
 };
 
 use crate::{
-    BegodeFalconModel, BegodeNotificationDecoder, BegodePackVoltageProfile, NosfetAeroModel,
-    ReadOnlySession,
+    BegodeFalconModel, BegodeNotificationDecoder, BegodePackVoltageProfile, BenignControlSession,
+    NosfetAeroModel,
 };
 
 mod begode_falcon;
@@ -113,15 +113,15 @@ impl SessionRegistration {
 
 include!(concat!(env!("OUT_DIR"), "/registry_models.rs"));
 
-/// Allocation-free read-only session sum type for statically registered models.
+/// Allocation-free session sum type for statically registered models.
 #[allow(clippy::large_enum_variant)]
 #[derive(Clone, Debug)]
 pub enum RegisteredReadOnlySession {
-    /// NOSFET Aero read-only protocol session.
-    NosfetAero(ReadOnlySession<NosfetAeroModel, false>),
+    /// NOSFET Aero session with read-only telemetry and benign controls.
+    NosfetAero(BenignControlSession<NosfetAeroModel, false>),
 
-    /// Begode Falcon read-only protocol session.
-    BegodeFalcon(ReadOnlySession<BegodeFalconModel, true>),
+    /// Begode Falcon session with read-only telemetry and benign controls.
+    BegodeFalcon(BenignControlSession<BegodeFalconModel, true>),
 }
 
 impl ProtocolSession for RegisteredReadOnlySession {
@@ -134,20 +134,22 @@ impl ProtocolSession for RegisteredReadOnlySession {
 }
 
 pub(super) fn nosfet_aero_read_only_session() -> RegisteredReadOnlySession {
-    RegisteredReadOnlySession::NosfetAero(ReadOnlySession::<NosfetAeroModel, false>::default())
+    RegisteredReadOnlySession::NosfetAero(BenignControlSession::<NosfetAeroModel, false>::default())
 }
 
 pub(super) fn begode_falcon_read_only_session() -> RegisteredReadOnlySession {
-    RegisteredReadOnlySession::BegodeFalcon(ReadOnlySession::<BegodeFalconModel, true>::default())
+    RegisteredReadOnlySession::BegodeFalcon(
+        BenignControlSession::<BegodeFalconModel, true>::default(),
+    )
 }
 
-/// Constructs a registered Begode Falcon read-only session with explicit pack-voltage evidence.
+/// Constructs a registered Begode Falcon session with explicit pack-voltage evidence.
 #[must_use]
 pub fn begode_falcon_read_only_session_with_voltage_profile(
     profile: BegodePackVoltageProfile,
 ) -> RegisteredReadOnlySession {
     RegisteredReadOnlySession::BegodeFalcon(
-        ReadOnlySession::<BegodeFalconModel, true>::with_decoder(
+        BenignControlSession::<BegodeFalconModel, true>::with_decoder(
             BegodeNotificationDecoder::with_pack_voltage_profile(profile),
         ),
     )

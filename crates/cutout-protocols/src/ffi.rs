@@ -49,14 +49,14 @@ pub enum ConcreteFalconProfileDto {
     Unsupported,
 }
 
-/// Concrete mobile-binding read-only session wrapper for NOSFET Aero.
+/// Concrete mobile-binding session wrapper for NOSFET Aero with read-only telemetry and benign light control.
 #[derive(Clone, Debug)]
 pub struct ConcreteAeroReadOnlySession {
     host: AeroReadOnlyHost,
 }
 
 impl ConcreteAeroReadOnlySession {
-    /// Creates a read-only session wrapper.
+    /// Creates a session wrapper with read-only telemetry and benign light control.
     #[must_use]
     pub fn new() -> Self {
         Self {
@@ -105,14 +105,14 @@ impl Default for ConcreteAeroReadOnlySession {
     }
 }
 
-/// Concrete mobile-binding read-only session wrapper for Begode Falcon.
+/// Concrete mobile-binding session wrapper for Begode Falcon with read-only telemetry and benign light control.
 #[derive(Clone, Debug)]
 pub struct ConcreteFalconReadOnlySession {
     host: FalconReadOnlyHost,
 }
 
 impl ConcreteFalconReadOnlySession {
-    /// Creates a read-only session wrapper.
+    /// Creates a session wrapper with read-only telemetry and benign light control.
     #[must_use]
     pub fn new() -> Self {
         Self {
@@ -242,7 +242,7 @@ impl Default for VescReadOnlySession {
     }
 }
 
-/// Creates a NOSFET Aero read-only session wrapper.
+/// Creates a NOSFET Aero session wrapper with read-only telemetry and benign light control.
 #[must_use]
 pub fn new_nosfet_aero_read_only_session() -> ConcreteAeroReadOnlySession {
     ConcreteAeroReadOnlySession {
@@ -250,7 +250,7 @@ pub fn new_nosfet_aero_read_only_session() -> ConcreteAeroReadOnlySession {
     }
 }
 
-/// Creates a Begode Falcon read-only session wrapper.
+/// Creates a Begode Falcon session wrapper with read-only telemetry and benign light control.
 #[must_use]
 pub fn new_begode_falcon_read_only_session() -> ConcreteFalconReadOnlySession {
     ConcreteFalconReadOnlySession {
