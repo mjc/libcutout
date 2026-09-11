@@ -87,9 +87,6 @@ impl SessionReducer {
     pub(crate) fn stop(&mut self) {
         self.reconnect_enabled = false;
         self.timer = None;
-        if self.command_status == 1 {
-            self.command_status = 3;
-        }
         self.transition(MobileMelkLightingSessionStateDto::Disconnected);
     }
 
@@ -109,10 +106,19 @@ impl SessionReducer {
 
     fn transition(&mut self, state: MobileMelkLightingSessionStateDto) {
         if !matches!(state, MobileMelkLightingSessionStateDto::Ready) {
+            if self.command_status == 1 {
+                self.command_status = 3;
+            }
             self.writes.clear();
             self.reset_initialization();
         }
         self.state = state;
+    }
+
+    fn forget_selected_connection(&mut self) {
+        self.timer = None;
+        self.selected_identifier = None;
+        self.selected_name = None;
     }
 
     fn reset_initialization(&mut self) {
@@ -269,12 +275,16 @@ impl SessionReducer {
             return false;
         }
         let coalescible = writes.iter().any(is_coalescible_color_write);
-        let retained = self.writes.len().saturating_sub(
-            self.writes
-                .iter()
-                .filter(|item| is_coalescible_color_write(item))
-                .count(),
-        );
+        let retained = if coalescible {
+            self.writes.len().saturating_sub(
+                self.writes
+                    .iter()
+                    .filter(|item| is_coalescible_color_write(item))
+                    .count(),
+            )
+        } else {
+            self.writes.len()
+        };
         if retained + writes.len() > 32 {
             return false;
         }
@@ -356,6 +366,7 @@ impl SessionReducer {
                     });
                     self.record("scan=refused invalid remembered identity");
                 } else if !powered_on {
+                    self.forget_selected_connection();
                     self.transition(MobileMelkLightingSessionStateDto::Failed {
                         reason: format!("Bluetooth unavailable: {state_code}"),
                     });
@@ -607,13 +618,11 @@ impl SessionReducer {
                 }
             }
             MobileMelkLightingSessionEventDto::Disconnected { reason, powered_on } => {
-                self.notification_ready = false;
-                self.initialization.clear();
-                self.writes.clear();
                 self.record(format!("disconnected error={reason}"));
                 if self.reconnect_enabled && powered_on {
                     self.schedule_reconnect(reason);
                 } else {
+                    self.forget_selected_connection();
                     self.transition(MobileMelkLightingSessionStateDto::Disconnected);
                 }
             }

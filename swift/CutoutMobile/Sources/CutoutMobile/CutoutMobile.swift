@@ -5687,13 +5687,6 @@ public struct CoreBluetoothScanPolicy: Equatable, Hashable, Sendable {
         .bluetooth16(0xfff0),
     ])
 
-    /// Scan policy for standalone MELK lighting controllers.
-    ///
-    /// MELK is not an EUC model, so discovery must not require an EUC model hint before connecting.
-    public static let melk = CoreBluetoothScanPolicy(
-        serviceUuids: [.bluetooth16(0xfff0)],
-        requiresKnownRideModel: false
-    )
 }
 
 public enum CoreBluetoothCharacteristicProperty: Equatable, Hashable, Sendable {

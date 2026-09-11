@@ -50,6 +50,7 @@ public struct MelkLightingPeripheralCandidate: Equatable, Sendable, Identifiable
 
 /// The app-facing seam for an independent MELK lighting connection.
 public protocol MelkLightingPeripheralSessionProtocol: AnyObject {
+    var commandStatus: MelkLightingCommandStatus { get }
     var onIdentity: ((MelkLightingPeripheralIdentity) -> Void)? { get set }
     var onStateChange: ((MelkLightingPeripheralState) -> Void)? { get set }
     var onNotification: ((Data) -> Void)? { get set }
@@ -87,6 +88,7 @@ public final class MelkLightingPeripheralSession: NSObject, CBCentralManagerDele
     )
 
     public private(set) var connectionState: MelkLightingPeripheralState = .idle
+    public private(set) var commandStatus: MelkLightingCommandStatus = .idle
     public private(set) var peripheralName: String?
     public private(set) var peripheralIdentifier: String?
 
@@ -221,6 +223,9 @@ public final class MelkLightingPeripheralSession: NSObject, CBCentralManagerDele
                 poweredOn: central.state == .poweredOn,
                 stateCode: Int32(central.state.rawValue)
             ))
+            if central.state != .poweredOn {
+                clearActivePeripheral()
+            }
             if central.state == .poweredOn, let preferredPlatformIdentifier {
                 if let uuid = UUID(uuidString: preferredPlatformIdentifier),
                    let restored = central.retrievePeripherals(withIdentifiers: [uuid]).first
@@ -255,11 +260,6 @@ public final class MelkLightingPeripheralSession: NSObject, CBCentralManagerDele
             onAdvertisement?(name, identifier, rssi.intValue)
             guard preferredPlatformIdentifier != nil
                 || name?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false else { return }
-            if discoveredPeripherals.count >= 32, discoveredPeripherals[identifier] == nil {
-                if let first = discoveredPeripherals.keys.first {
-                    discoveredPeripherals.removeValue(forKey: first)
-                }
-            }
             discoveredPeripherals[identifier] = peripheral
             core.handle(event: .discovered(name: name, platformIdentifier: identifier, rssi: Int32(rssi.intValue)))
             syncCore()
@@ -298,6 +298,9 @@ public final class MelkLightingPeripheralSession: NSObject, CBCentralManagerDele
                 reason: error.map(String.init(describing:)) ?? "link lost",
                 poweredOn: central.state == .poweredOn
             ))
+            if central.state != .poweredOn {
+                clearActivePeripheral()
+            }
             syncCore()
         }
     }
@@ -425,6 +428,7 @@ public final class MelkLightingPeripheralSession: NSObject, CBCentralManagerDele
     private func syncCore() {
         let snapshot = core.snapshot()
         let nextState = Self.state(snapshot.state)
+        commandStatus = Self.commandStatus(snapshot.commandStatus)
         if nextState != connectionState {
             connectionState = nextState
             onStateChange?(nextState)
@@ -501,6 +505,12 @@ public final class MelkLightingPeripheralSession: NSObject, CBCentralManagerDele
         return service.characteristics?.first(where: { $0.uuid == uuid.coreBluetoothUuid })
     }
 
+    private func clearActivePeripheral() {
+        peripheral = nil
+        peripheralName = nil
+        peripheralIdentifier = nil
+    }
+
     private func arm(_ timer: MobileMelkLightingTimerDto, delayMilliseconds: UInt64) {
         timerTask?.cancel()
         let task = DispatchWorkItem { [weak self] in
@@ -532,6 +542,15 @@ public final class MelkLightingPeripheralSession: NSObject, CBCentralManagerDele
         case .ready: .ready
         case .disconnected: .disconnected
         case let .failed(reason): .failed(reason)
+        }
+    }
+
+    private static func commandStatus(_ value: UInt8) -> MelkLightingCommandStatus {
+        switch value {
+        case 0: .idle
+        case 1: .requested
+        case 2: .confirmed
+        default: .unconfirmed
         }
     }
 

@@ -103,6 +103,8 @@ impl MobileMelkLightingSessionCore {
         &self,
         state: MobileMelkLightingRestoreStateDto,
     ) -> Result<bool, MobileMelkLightingError> {
+        LightingBrightness::try_from_percent(state.brightness)
+            .map_err(|_| MobileMelkLightingError::InvalidBrightness)?;
         let state = state
             .try_into()
             .map_err(|_| MobileMelkLightingError::InvalidPlayback)?;

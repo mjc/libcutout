@@ -1,4 +1,5 @@
 use super::*;
+use crate::{MobileMelkLightingError, MobileMelkLightingRestoreStateDto};
 
 const ID: &str = "11111111-1111-1111-1111-111111111111";
 
@@ -173,5 +174,84 @@ fn connection_attempt_timeout_cancels_and_returns_to_scanning() {
         actions
             .iter()
             .any(|action| matches!(action, MobileMelkLightingSessionActionDto::Scan))
+    );
+}
+
+#[test]
+fn first_pairing_rescans_after_bluetooth_recovers() {
+    let core = MobileMelkLightingSessionCore::new();
+    core.start(None);
+    core.handle(MobileMelkLightingSessionEventDto::BluetoothState {
+        powered_on: true,
+        state_code: 5,
+    });
+    core.drain_actions();
+    core.handle(MobileMelkLightingSessionEventDto::Discovered {
+        name: Some("MELK-OC21  6A".into()),
+        platform_identifier: ID.into(),
+        rssi: -60,
+    });
+    core.drain_actions();
+    core.select_candidate(ID.into());
+    core.drain_actions();
+
+    core.handle(MobileMelkLightingSessionEventDto::BluetoothState {
+        powered_on: false,
+        state_code: 4,
+    });
+    core.handle(MobileMelkLightingSessionEventDto::Disconnected {
+        reason: "Bluetooth unavailable".into(),
+        powered_on: false,
+    });
+    core.handle(MobileMelkLightingSessionEventDto::BluetoothState {
+        powered_on: true,
+        state_code: 5,
+    });
+
+    assert!(
+        core.drain_actions()
+            .iter()
+            .any(|action| matches!(action, MobileMelkLightingSessionActionDto::Scan))
+    );
+}
+
+#[test]
+fn disconnect_marks_pending_command_unconfirmed() {
+    let core = ready_core();
+    assert!(core.set_power(true));
+    assert_eq!(core.snapshot().command_status, 1);
+
+    core.handle(MobileMelkLightingSessionEventDto::Disconnected {
+        reason: "link lost".into(),
+        powered_on: false,
+    });
+
+    assert_eq!(core.snapshot().command_status, 3);
+}
+
+#[test]
+fn non_color_writes_cannot_exceed_the_queue_limit() {
+    let core = ready_core();
+    for _ in 0..31 {
+        assert!(core.set_power(true));
+    }
+    assert!(core.set_solid_color(1, 2, 3));
+
+    assert!(!core.set_power(false));
+}
+
+#[test]
+fn restore_rejects_invalid_brightness_as_brightness_error() {
+    let core = ready_core();
+    assert_eq!(
+        core.apply_state(MobileMelkLightingRestoreStateDto {
+            power_on: true,
+            red: 1,
+            green: 2,
+            blue: 3,
+            brightness: 101,
+            playback: None,
+        }),
+        Err(MobileMelkLightingError::InvalidBrightness)
     );
 }
