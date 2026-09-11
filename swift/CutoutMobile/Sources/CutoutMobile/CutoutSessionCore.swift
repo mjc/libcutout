@@ -715,15 +715,15 @@ public final class CutoutSessionCore: NSObject {
     }
 
     @discardableResult
-    public func setLights(_ state: LightState) -> Bool {
+    public func setLights(_ state: LightState) -> LightCommandStatus? {
         onBleQueue {
-            guard phase == .live, let liveOwner else { return false }
+            guard phase == .live, let liveOwner else { return nil }
             do {
                 try liveOwner.handleCommand(.setLights(state), at: clock.now())
-                return phase == .live
+                return liveOwner.lightCommandStatus
             } catch {
                 record("set_lights_error=\(error)")
-                return false
+                return nil
             }
         }
     }

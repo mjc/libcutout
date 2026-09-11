@@ -698,19 +698,19 @@ final class CutoutAppModelTests: XCTestCase {
         let driver = SessionDriverSpy(rows: [])
         let model = CutoutAppModel(core: driver)
 
-        XCTAssertFalse(model.setHeadlight(true))
-        XCTAssertNil(model.headlightRequestedState)
+        XCTAssertFalse(model.setHeadlight(.on))
+        XCTAssertEqual(model.headlightCommandStatus, .unknown)
         XCTAssertEqual(driver.headlightStates, [])
 
         driver.headlightWriteSucceeds = true
         driver.isLive = true
 
-        XCTAssertTrue(model.setHeadlight(true))
-        XCTAssertEqual(model.headlightRequestedState, .on)
+        XCTAssertTrue(model.setHeadlight(.on))
+        XCTAssertEqual(model.headlightCommandStatus, .requested(.on))
         XCTAssertEqual(driver.headlightStates, [.on])
 
         model.disconnectTransport()
-        XCTAssertNil(model.headlightRequestedState)
+        XCTAssertEqual(model.headlightCommandStatus, .unknown)
     }
 
     @MainActor
@@ -3422,10 +3422,10 @@ private final class SessionDriverSpy: CutoutSessionDriving {
         resetRideMapLocationAdmissionCount += 1
     }
 
-    func setLights(_ state: LightState) -> Bool {
-        guard isLive, headlightWriteSucceeds else { return false }
+    func setLights(_ state: LightState) -> LightCommandStatus? {
+        guard isLive, headlightWriteSucceeds else { return nil }
         headlightStates.append(state)
-        return true
+        return .requested(state)
     }
     func now() -> MonotonicMilliseconds {
         MonotonicMilliseconds(0)

@@ -1630,6 +1630,7 @@ func testVescRideSnapshotProjectsBatteryLevelAndUpdateTime() throws {
             _ = try owner.handleCommand(.setLights(state), at: MonotonicMilliseconds(1))
 
             XCTAssertEqual(sink.writes, [expectedBytes])
+            XCTAssertEqual(owner.lightCommandStatus, .requested(state))
         }
     }
 

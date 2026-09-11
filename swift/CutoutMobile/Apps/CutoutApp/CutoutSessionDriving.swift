@@ -34,7 +34,7 @@ protocol CutoutSessionDriving: AnyObject {
     func updateMusicCaptureObservation(_ observation: MobilePevcapMusicEventDto?)
     func flushCapture() async -> Bool
     func disconnectAndScan()
-    func setLights(_ state: LightState) -> Bool
+    func setLights(_ state: LightState) -> LightCommandStatus?
     func now() -> MonotonicMilliseconds
 
     func resetRideMapLocationAdmission()

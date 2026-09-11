@@ -139,8 +139,9 @@ final class CutoutAppModel {
     private(set) var activeCaptureLabels = Set<CaptureQuickLabel>()
     private(set) var recordOnlyDeviceKind: String?
     private(set) var hasSavedDevice = false
-    /// Last submitted headlight command. A command acceptance is not device readback.
-    private(set) var headlightRequestedState: LightState?
+    /// Rust-owned status of the last accepted headlight command.
+    /// A requested state is not device readback.
+    private(set) var headlightCommandStatus: LightCommandStatus = .unknown
 
     var selectedRideTitle: String? {
         connectionState.selection?.title
@@ -1955,10 +1956,9 @@ final class CutoutAppModel {
     }
 
     @discardableResult
-    func setHeadlight(_ enabled: Bool) -> Bool {
-        let state = enabled ? LightState.on : .off
-        guard core.setLights(state) else { return false }
-        headlightRequestedState = state
+    func setHeadlight(_ state: LightState) -> Bool {
+        guard let status = core.setLights(state) else { return false }
+        headlightCommandStatus = status
         return true
     }
     func pair(platformIdentifier: String) -> Bool {
@@ -1985,7 +1985,7 @@ final class CutoutAppModel {
             title: selectedRow.title,
             route: route
         )
-        headlightRequestedState = nil
+        headlightCommandStatus = .unknown
         liveActivityError = nil
         connectionState = .connecting(selection, phase: .discoveringServices)
         permitsStoredDeviceAutoPairing = true
@@ -2228,7 +2228,7 @@ final class CutoutAppModel {
         activeCaptureLabels.removeAll()
         captureLabel = nil
         recordOnlyDeviceKind = nil
-        headlightRequestedState = nil
+        headlightCommandStatus = .unknown
         connectionState = .picker
         phase = .scanning
         liveActivityIdentity = nil

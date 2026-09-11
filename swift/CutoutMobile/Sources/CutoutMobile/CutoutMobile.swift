@@ -1246,6 +1246,23 @@ public enum LightState: Equatable, Hashable, Sendable {
     }
 }
 
+/// Rust-owned knowledge about the current built-in-light command.
+///
+/// A requested state is accepted for transport, not controller readback.
+public enum LightCommandStatus: Equatable, Hashable, Sendable {
+    case unknown
+    case requested(LightState)
+
+    fileprivate init(_ dto: MobileLightCommandStateDto) {
+        switch dto {
+        case .unknown:
+            self = .unknown
+        case .requested(let state):
+            self = .requested(LightState(state))
+        }
+    }
+}
+
 public enum DeviceCommand: Equatable, Hashable, Sendable {
     case requestIdentity
     case requestTelemetry
@@ -4643,6 +4660,15 @@ public final class ElectricUnicycleSession: @unchecked Sendable {
         chargeEstimateState
     }
 
+    public var lightCommandStatus: LightCommandStatus {
+        switch inner {
+        case .aero(let session):
+            LightCommandStatus(session.lightCommandState())
+        case .falcon(let session):
+            LightCommandStatus(session.lightCommandState())
+        }
+    }
+
     public func configureChargeEstimate(profile: ChargeEstimateProfile) {
         let hadVoltageSagModel = chargeEstimator.voltageSagModel() != nil
         chargeEstimator.configureProfile(profile: profile.dto)
@@ -5095,6 +5121,15 @@ public enum CoreBluetoothSession: Sendable {
         }
     }
 
+    fileprivate var lightCommandStatus: LightCommandStatus? {
+        switch self {
+        case .electricUnicycle(let session):
+            session.lightCommandStatus
+        case .vescOnewheel:
+            nil
+        }
+    }
+
     fileprivate func startupProbeOperations(
         at monotonicMilliseconds: MonotonicMilliseconds,
         detectionSession: DeviceDetectionSession
@@ -5221,6 +5256,10 @@ public final class CoreBluetoothSessionRunner: @unchecked Sendable {
     /// Removes the charge estimate profile and clears its bounded history.
     public func clearChargeEstimateProfile() {
         session.clearChargeEstimateProfile()
+    }
+
+    fileprivate var lightCommandStatus: LightCommandStatus? {
+        session.lightCommandStatus
     }
 
     public func handle(_ event: CoreBluetoothSessionEvent) throws -> CoreBluetoothSessionStep {
@@ -5462,6 +5501,10 @@ public final class CoreBluetoothLiveSessionOwner: @unchecked Sendable {
     /// Removes the charge estimate profile and clears its bounded history.
     public func clearChargeEstimateProfile() {
         runner.clearChargeEstimateProfile()
+    }
+
+    var lightCommandStatus: LightCommandStatus? {
+        runner.lightCommandStatus
     }
 
     @discardableResult
