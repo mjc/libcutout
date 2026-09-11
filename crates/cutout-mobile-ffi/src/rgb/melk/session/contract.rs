@@ -42,6 +42,8 @@ pub enum MobileMelkLightingSessionEventDto {
         name: Option<String>,
         platform_identifier: String,
         connected: bool,
+        /// Whether CoreBluetooth is already maintaining a pending connection.
+        pending: bool,
     },
     /// No remembered peripheral was available for the selected identity.
     RestoreUnavailable,

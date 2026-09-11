@@ -1,8 +1,8 @@
 //! Typed mobile controls for the MELK accessory; no raw-payload API.
 
 use crate::{
-    MobileMelkLightingProfile, MobileMelkLightingRestoreStateDto, MobileMelkLightingWriteDto,
-    MobileRgbLightingRecordError,
+    MobileMelkLightingError, MobileMelkLightingProfile, MobileMelkLightingRestoreStateDto,
+    MobileMelkLightingWriteDto, MobileRgbLightingRecordError,
 };
 use cutout_core::{LightingPlayback, MelkClock, MelkControl, MelkSchedule};
 use cutout_protocols::MelkLightingProfile;
@@ -117,6 +117,32 @@ fn power(on: bool) -> cutout_core::LightingPowerState {
     }
 }
 
+pub(crate) fn plan_schedule(
+    schedule: MobileMelkScheduleDto,
+    clock: MobileMelkClockDto,
+) -> Result<Vec<MobileMelkLightingWriteDto>, MobileMelkLightingError> {
+    let schedule = MelkSchedule::new(
+        power(schedule.power_on),
+        schedule.hour,
+        schedule.minute,
+        schedule.days,
+        schedule.enabled,
+    )
+    .map_err(|_| MobileMelkLightingError::InvalidSchedule)?;
+    let clock = MelkClock::new(clock.hour, clock.minute, clock.second, clock.weekday)
+        .map_err(|_| MobileMelkLightingError::InvalidClock)?;
+    if !MelkLightingProfile::capabilities().schedules {
+        return Err(MobileMelkLightingError::UnsupportedCapability);
+    }
+    Ok([
+        MelkLightingProfile::control_action(MelkControl::Clock(clock)),
+        MelkLightingProfile::control_action(MelkControl::Schedule(schedule)),
+    ]
+    .into_iter()
+    .map(crate::mobile_melk_transport_action)
+    .collect())
+}
+
 #[uniffi::export]
 impl MobileMelkLightingProfile {
     /// Plans a complete state atomically. Solid/effect playback does not claim microphone state
@@ -149,27 +175,8 @@ impl MobileMelkLightingProfile {
         &self,
         schedule: MobileMelkScheduleDto,
         clock: MobileMelkClockDto,
-    ) -> Result<Vec<MobileMelkLightingWriteDto>, crate::MobileMelkLightingError> {
-        let schedule = MelkSchedule::new(
-            power(schedule.power_on),
-            schedule.hour,
-            schedule.minute,
-            schedule.days,
-            schedule.enabled,
-        )
-        .map_err(|_| crate::MobileMelkLightingError::InvalidSchedule)?;
-        let clock = MelkClock::new(clock.hour, clock.minute, clock.second, clock.weekday)
-            .map_err(|_| crate::MobileMelkLightingError::InvalidClock)?;
-        if !MelkLightingProfile::capabilities().schedules {
-            return Err(crate::MobileMelkLightingError::UnsupportedCapability);
-        }
-        Ok([
-            MelkLightingProfile::control_action(MelkControl::Clock(clock)),
-            MelkLightingProfile::control_action(MelkControl::Schedule(schedule)),
-        ]
-        .into_iter()
-        .map(crate::mobile_melk_transport_action)
-        .collect())
+    ) -> Result<Vec<MobileMelkLightingWriteDto>, MobileMelkLightingError> {
+        plan_schedule(schedule, clock)
     }
 }
 
@@ -241,7 +248,7 @@ mod tests {
             });
             assert!(matches!(
                 crate::MobileMelkLightingRestoreMarker::new("controller".into(), state),
-                Err(crate::MobileMelkLightingError::InvalidPlayback)
+                Err(MobileMelkLightingError::InvalidPlayback)
             ));
         }
         state.playback = Some(MobileLightingPlaybackDto::Music {
@@ -250,7 +257,7 @@ mod tests {
         });
         assert!(matches!(
             crate::MobileMelkLightingRestoreMarker::new("controller".into(), state),
-            Err(crate::MobileMelkLightingError::InvalidPlayback)
+            Err(MobileMelkLightingError::InvalidPlayback)
         ));
     }
 
@@ -325,15 +332,15 @@ mod tests {
 
         assert_eq!(
             profile().set_schedule(invalid_schedule, valid_clock),
-            Err(crate::MobileMelkLightingError::InvalidSchedule)
+            Err(MobileMelkLightingError::InvalidSchedule)
         );
         assert_eq!(
             profile().set_schedule(valid_schedule, invalid_clock),
-            Err(crate::MobileMelkLightingError::InvalidClock)
+            Err(MobileMelkLightingError::InvalidClock)
         );
         assert_eq!(
             profile().set_schedule(valid_schedule, valid_clock),
-            Err(crate::MobileMelkLightingError::UnsupportedCapability)
+            Err(MobileMelkLightingError::UnsupportedCapability)
         );
     }
 }
