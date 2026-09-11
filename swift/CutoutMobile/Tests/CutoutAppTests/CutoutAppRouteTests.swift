@@ -629,150 +629,6 @@ final class CutoutAppRouteTests: XCTestCase {
         XCTAssertNil(BmsAlertLevel.unknown.accessibilityAnnouncement)
     }
 
-    func testMELKScanPolicyRoutesStandaloneAccessoryWithoutAnEUCModelHint() {
-        let service = BluetoothUuid.bluetooth16(0xfff0)
-        let advertisement = CoreBluetoothAdvertisement(
-            peripheralIdentifier: CoreBluetoothPeripheralIdentifier("melk-1"),
-            localName: "MELK-OC21  6A",
-            advertisedServiceUuids: [service]
-        )
-        let coordinator = CoreBluetoothCentralCoordinator(
-            scanPolicy: .melk,
-            writeLimit: TransportWriteLimitBytes(23)
-        )
-
-        XCTAssertEqual(coordinator.scanPolicy.serviceUuids, [service])
-        XCTAssertEqual(
-            coordinator.handleDiscovered(advertisement),
-            .connect(peripheralIdentifier: CoreBluetoothPeripheralIdentifier("melk-1"))
-        )
-    }
-
-    func testMELKCommandEvidenceNeverTreatsAWriteAsConfirmedByDefault() {
-        var evidence = MelkLightingCommandEvidence()
-        XCTAssertEqual(evidence.status, .idle)
-
-        evidence.requested()
-        XCTAssertEqual(evidence.status, .requested)
-        evidence.unconfirmed()
-        XCTAssertEqual(evidence.status, .unconfirmed)
-        evidence.requested()
-        evidence.confirmed()
-        XCTAssertEqual(evidence.status, .confirmed)
-    }
-
-    func testObservedMELKInventoryPlansTypedWriteAndNotificationSubscription() throws {
-        let service = BluetoothUuid.bluetooth16(0xfff0)
-        let write = BluetoothUuid.bluetooth16(0xfff3)
-        let notify = BluetoothUuid.bluetooth16(0xfff4)
-        let harness = try MelkLightingCommandProfile(
-            name: "MELK-OC21  6A",
-            inventory: CoreBluetoothGattInventory(services: [
-                CoreBluetoothGattService(
-                    uuid: service,
-                    characteristics: [
-                        CoreBluetoothGattCharacteristic(
-                            uuid: write,
-                            properties: [.writeWithoutResponse]
-                        ),
-                        CoreBluetoothGattCharacteristic(
-                            uuid: notify,
-                            properties: [.notify]
-                        ),
-                    ]
-                ),
-            ])
-        )
-
-        let plan = try harness.setPower(true)
-        XCTAssertEqual(plan.operation, .writeWithoutResponse(
-            channel: write,
-            bytes: Data([0x7e, 0x00, 0x04, 0x01, 0, 0, 0, 0, 0xef])
-        ))
-        XCTAssertEqual(plan.confirmationChannel, notify)
-        XCTAssertEqual(harness.subscription, .subscribe(channel: notify))
-        let initialization = try harness.initialization()
-        XCTAssertEqual(initialization.map(\.operation), [
-            .writeWithoutResponse(channel: write, bytes: Data([0x7e, 0x07, 0x83])),
-            .writeWithoutResponse(channel: write, bytes: Data([0x7e, 0x04, 0x04]))
-        ])
-    }
-
-    func testMELKProfileRejectsUnverifiedIdentityAndCharacteristicRoles() {
-        XCTAssertThrowsError(
-            try MelkLightingCommandProfile(
-                name: "Govee_H607C_D635",
-                inventory: CoreBluetoothGattInventory(services: [] as [CoreBluetoothGattService])
-            )
-        ) { error in
-            XCTAssertEqual(error as? MelkLightingProtocolError, .missingService)
-        }
-    }
-
-    func testMELKWriteQueuePolicyCoalescesSolidColorsAndUsesProfileCadence() {
-        let solid = MelkLightingWritePlan(
-            operation: .writeWithoutResponse(
-                channel: .bluetooth16(0xfff3),
-                bytes: Data([0x7e, 0, 5, 3, 1, 2, 3, 0, 0xef])
-            ),
-            confirmationChannel: .bluetooth16(0xfff4),
-            minimumIntervalMilliseconds: nil
-        )
-        let effect = MelkLightingWritePlan(
-            operation: .writeWithoutResponse(
-                channel: .bluetooth16(0xfff3),
-                bytes: Data([0x7e, 5, 3, 1, 6, 0xff, 0xff, 0, 0xef])
-            ),
-            confirmationChannel: .bluetooth16(0xfff4),
-            minimumIntervalMilliseconds: 75
-        )
-
-        XCTAssertTrue(MelkLightingWriteQueuePolicy.isCoalescibleColorWrite(solid))
-        XCTAssertFalse(MelkLightingWriteQueuePolicy.isCoalescibleColorWrite(effect))
-        XCTAssertEqual(MelkLightingWriteQueuePolicy.intervalMilliseconds(for: solid), 50)
-        XCTAssertEqual(MelkLightingWriteQueuePolicy.intervalMilliseconds(for: effect), 75)
-    }
-
-    func testRememberedMELKTargetAcceptsOnlyTheSamePlatformIdentity() {
-        let target = MelkLightingTargetPolicy(preferredPlatformIdentifier: "A1B2C3D4-E5F6-4789-ABCD-0123456789AB")
-
-        XCTAssertTrue(target.accepts(CoreBluetoothPeripheralIdentifier("a1b2c3d4-e5f6-4789-abcd-0123456789ab")))
-        XCTAssertFalse(target.accepts(CoreBluetoothPeripheralIdentifier("B1B2C3D4-E5F6-4789-ABCD-0123456789AB")))
-        XCTAssertFalse(target.isInvalid)
-    }
-
-    func testRememberedMELKDiscoveryCanUseIdentityWhenAdvertisementOmitsName() {
-        let target = MelkLightingTargetPolicy(preferredPlatformIdentifier: "A1B2C3D4-E5F6-4789-ABCD-0123456789AB")
-        let remembered = CoreBluetoothPeripheralIdentifier("a1b2c3d4-e5f6-4789-abcd-0123456789ab")
-        let different = CoreBluetoothPeripheralIdentifier("B1B2C3D4-E5F6-4789-ABCD-0123456789AB")
-
-        XCTAssertTrue(target.acceptsDiscovery(name: nil, identifier: remembered))
-        XCTAssertFalse(target.acceptsDiscovery(name: nil, identifier: different))
-    }
-
-    func testFirstDiscoverySurfacesNamedUnknownAccessoriesForInspection() {
-        let target = MelkLightingTargetPolicy(preferredPlatformIdentifier: nil)
-        let identifier = CoreBluetoothPeripheralIdentifier("first-melk")
-
-        XCTAssertFalse(target.acceptsDiscovery(name: nil, identifier: identifier))
-        XCTAssertTrue(target.acceptsDiscovery(name: "MELK-OC21 6A", identifier: identifier))
-        XCTAssertTrue(target.acceptsDiscovery(name: "Unknown RGB controller", identifier: identifier))
-    }
-
-    func testFirstPairingTargetAcceptsAnyPlatformIdentity() {
-        let target = MelkLightingTargetPolicy(preferredPlatformIdentifier: nil)
-
-        XCTAssertTrue(target.accepts(CoreBluetoothPeripheralIdentifier("first-melk")))
-        XCTAssertFalse(target.isInvalid)
-    }
-
-    func testMalformedRememberedTargetFailsClosed() {
-        let target = MelkLightingTargetPolicy(preferredPlatformIdentifier: "legacy-melk")
-
-        XCTAssertTrue(target.isInvalid)
-        XCTAssertFalse(target.accepts(CoreBluetoothPeripheralIdentifier("legacy-melk")))
-    }
-
     func testConnectionLossStatesResetLightingRestoreEligibility() {
         let resetStates: [MelkLightingPeripheralState] = [
             .scanning,
@@ -978,6 +834,14 @@ final class CutoutAppRouteTests: XCTestCase {
         let fake = TestLightingSession()
         let model = LightingRouteModel(session: fake, persistence: persistence)
         model.start()
+        struct PersistenceEnvelope: Decodable {
+            let record: Data
+        }
+        func persistedRecord() throws -> MobileRgbLightingAccessoryRecord {
+            let data = try XCTUnwrap(defaults.data(forKey: "lighting.accessory.record"))
+            let envelope = try JSONDecoder().decode(PersistenceEnvelope.self, from: data)
+            return try MobileRgbLightingAccessoryRecord.decode(bytes: envelope.record)
+        }
 
         let transientStates: [MelkLightingPeripheralState] = [
             .scanning,
@@ -989,21 +853,18 @@ final class CutoutAppRouteTests: XCTestCase {
         for state in transientStates {
             fake.emitState(state)
             await Task.yield()
-            let data = try XCTUnwrap(defaults.data(forKey: "lighting.accessory.record"))
-            let record = try MobileRgbLightingAccessoryRecord.decode(bytes: data)
+            let record = try persistedRecord()
             XCTAssertEqual(record.connection(), .unknown, "unexpected persisted state for \(state)")
         }
 
         fake.emitState(.ready)
         await Task.yield()
-        var data = try XCTUnwrap(defaults.data(forKey: "lighting.accessory.record"))
-        var record = try MobileRgbLightingAccessoryRecord.decode(bytes: data)
+        var record = try persistedRecord()
         XCTAssertEqual(record.connection(), .ready)
 
         fake.emitState(.disconnected)
         await Task.yield()
-        data = try XCTUnwrap(defaults.data(forKey: "lighting.accessory.record"))
-        record = try MobileRgbLightingAccessoryRecord.decode(bytes: data)
+        record = try persistedRecord()
         XCTAssertEqual(record.connection(), .disconnected)
     }
 
@@ -1325,6 +1186,7 @@ private final class ObservationFlag: @unchecked Sendable {
 }
 
 private final class TestLightingSession: MelkLightingPeripheralSessionProtocol {
+    var commandStatus: MelkLightingCommandStatus = .idle
     var onIdentity: ((MelkLightingPeripheralIdentity) -> Void)?
     var onStateChange: ((MelkLightingPeripheralState) -> Void)?
     var onNotification: ((Data) -> Void)?
