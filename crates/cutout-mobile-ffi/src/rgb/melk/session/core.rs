@@ -3,11 +3,11 @@
 use std::sync::{Arc, Mutex, PoisonError};
 
 use cutout_core::{
-    LightingBrightness, LightingPowerState, MelkClock, MelkControl, MelkSchedule, RgbColor,
-    RgbLightingCommand,
+    LightingBrightness, LightingPowerState, MelkControl, RgbColor, RgbLightingCommand,
 };
 use cutout_protocols::MelkLightingProfile;
 
+use super::super::commands::plan_schedule;
 use super::{contract::*, reducer::SessionReducer};
 use crate::{
     MobileMelkClockDto, MobileMelkLightingError, MobileMelkLightingRestoreStateDto,
@@ -129,31 +129,7 @@ impl MobileMelkLightingSessionCore {
         schedule: MobileMelkScheduleDto,
         clock: MobileMelkClockDto,
     ) -> Result<bool, MobileMelkLightingError> {
-        let schedule = MelkSchedule::new(
-            if schedule.power_on {
-                LightingPowerState::On
-            } else {
-                LightingPowerState::Off
-            },
-            schedule.hour,
-            schedule.minute,
-            schedule.days,
-            schedule.enabled,
-        )
-        .map_err(|_| MobileMelkLightingError::InvalidSchedule)?;
-        let clock = MelkClock::new(clock.hour, clock.minute, clock.second, clock.weekday)
-            .map_err(|_| MobileMelkLightingError::InvalidClock)?;
-        if !MelkLightingProfile::capabilities().schedules {
-            return Err(MobileMelkLightingError::UnsupportedCapability);
-        }
-        let writes = [
-            mobile_melk_transport_action(MelkLightingProfile::control_action(MelkControl::Clock(
-                clock,
-            ))),
-            mobile_melk_transport_action(MelkLightingProfile::control_action(
-                MelkControl::Schedule(schedule),
-            )),
-        ];
+        let writes = plan_schedule(schedule, clock)?;
         let mut inner = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
         if !inner.is_ready() {
             return Ok(false);

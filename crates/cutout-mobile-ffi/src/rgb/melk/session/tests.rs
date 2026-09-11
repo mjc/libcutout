@@ -3,7 +3,7 @@ use crate::{MobileMelkLightingError, MobileMelkLightingRestoreStateDto};
 
 const ID: &str = "11111111-1111-1111-1111-111111111111";
 
-fn ready_core() -> std::sync::Arc<MobileMelkLightingSessionCore> {
+fn initializing_core() -> std::sync::Arc<MobileMelkLightingSessionCore> {
     let core = MobileMelkLightingSessionCore::new();
     core.start(Some(ID.into()));
     core.handle(MobileMelkLightingSessionEventDto::BluetoothState {
@@ -51,6 +51,16 @@ fn ready_core() -> std::sync::Arc<MobileMelkLightingSessionCore> {
         ready: true,
         can_send: true,
         error: None,
+    });
+    core.drain_actions();
+    core
+}
+
+fn ready_core() -> std::sync::Arc<MobileMelkLightingSessionCore> {
+    let core = initializing_core();
+    core.handle(MobileMelkLightingSessionEventDto::TimerFired {
+        timer: MobileMelkLightingTimerDto::Initialization,
+        can_send: true,
     });
     core.drain_actions();
     core.handle(MobileMelkLightingSessionEventDto::TimerFired {
@@ -254,4 +264,60 @@ fn restore_rejects_invalid_brightness_as_brightness_error() {
         }),
         Err(MobileMelkLightingError::InvalidBrightness)
     );
+}
+
+#[test]
+fn stop_discards_pending_platform_actions() {
+    let core = MobileMelkLightingSessionCore::new();
+    core.start(None);
+    core.handle(MobileMelkLightingSessionEventDto::BluetoothState {
+        powered_on: true,
+        state_code: 5,
+    });
+    core.stop();
+
+    assert!(core.drain_actions().is_empty());
+}
+
+#[test]
+fn final_initialization_write_waits_before_ready() {
+    let core = initializing_core();
+    core.handle(MobileMelkLightingSessionEventDto::TimerFired {
+        timer: MobileMelkLightingTimerDto::Initialization,
+        can_send: true,
+    });
+    core.drain_actions();
+    assert!(matches!(
+        core.snapshot().state,
+        MobileMelkLightingSessionStateDto::Discovering
+    ));
+    assert!(!core.set_power(true));
+}
+
+#[test]
+fn preferred_connection_timeouts_are_bounded() {
+    let core = MobileMelkLightingSessionCore::new();
+    core.start(Some(ID.into()));
+    core.handle(MobileMelkLightingSessionEventDto::BluetoothState {
+        powered_on: true,
+        state_code: 5,
+    });
+    core.drain_actions();
+
+    for _ in 0..4 {
+        core.handle(MobileMelkLightingSessionEventDto::Discovered {
+            name: Some("MELK-OC21  6A".into()),
+            platform_identifier: ID.into(),
+            rssi: -60,
+        });
+        core.handle(MobileMelkLightingSessionEventDto::TimerFired {
+            timer: MobileMelkLightingTimerDto::ConnectionAttempt,
+            can_send: false,
+        });
+    }
+
+    assert!(matches!(
+        core.snapshot().state,
+        MobileMelkLightingSessionStateDto::Failed { .. }
+    ));
 }

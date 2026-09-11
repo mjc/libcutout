@@ -87,6 +87,7 @@ impl SessionReducer {
     pub(crate) fn stop(&mut self) {
         self.reconnect_enabled = false;
         self.timer = None;
+        self.actions.clear();
         self.transition(MobileMelkLightingSessionStateDto::Disconnected);
     }
 
@@ -111,6 +112,8 @@ impl SessionReducer {
             }
             self.writes.clear();
             self.reset_initialization();
+        } else {
+            self.reconnect_attempt = 0;
         }
         self.state = state;
     }
@@ -257,6 +260,18 @@ impl SessionReducer {
                 });
         }
         self.selected_name = None;
+        if self.preferred_identifier.is_some() {
+            self.reconnect_attempt = self.reconnect_attempt.saturating_add(1);
+            if self.reconnect_attempt > MAX_RECONNECT_ATTEMPTS {
+                self.transition(MobileMelkLightingSessionStateDto::Failed {
+                    reason: format!(
+                        "Accessory reconnect exhausted after {MAX_RECONNECT_ATTEMPTS} attempts"
+                    ),
+                });
+                self.record("connect_timeout reconnect_exhausted");
+                return;
+            }
+        }
         self.transition(MobileMelkLightingSessionStateDto::Scanning);
         self.actions
             .push_back(MobileMelkLightingSessionActionDto::Scan);
@@ -313,10 +328,15 @@ impl SessionReducer {
             self.record("notify_state=true");
             return;
         };
+        let interval = write
+            .minimum_interval_ms
+            .unwrap_or(FALLBACK_WRITE_INTERVAL_MS);
         self.emit_write(write);
         if self.initialization.is_empty() {
-            self.transition(MobileMelkLightingSessionStateDto::Ready);
-            self.record("notify_state=true");
+            self.arm(
+                MobileMelkLightingTimerDto::Initialization,
+                u64::from(interval),
+            );
         } else {
             self.arm(
                 MobileMelkLightingTimerDto::Initialization,
@@ -434,6 +454,7 @@ impl SessionReducer {
                 name,
                 platform_identifier,
                 connected,
+                pending,
             } => {
                 if !self.accepts(&platform_identifier) {
                     self.record("restore=melk ignored different identity");
@@ -449,6 +470,12 @@ impl SessionReducer {
                             platform_identifier,
                             service: cutout_protocols::MELK_SERVICE_CHANNEL.as_uuid().into(),
                         });
+                } else if pending {
+                    self.transition(MobileMelkLightingSessionStateDto::Connecting);
+                    self.arm(
+                        MobileMelkLightingTimerDto::ConnectionAttempt,
+                        CONNECTION_TIMEOUT_MS,
+                    );
                 } else {
                     self.connect_selected();
                 }
@@ -461,7 +488,6 @@ impl SessionReducer {
                     return;
                 }
                 self.selected_name = name;
-                self.reconnect_attempt = 0;
                 self.timer = None;
                 self.transition(MobileMelkLightingSessionStateDto::Discovering);
                 self.actions

@@ -88,7 +88,10 @@ public final class MelkLightingPeripheralSession: NSObject, CBCentralManagerDele
     )
 
     public private(set) var connectionState: MelkLightingPeripheralState = .idle
-    public private(set) var commandStatus: MelkLightingCommandStatus = .idle
+    private var commandStatusValue: MelkLightingCommandStatus = .idle
+    public var commandStatus: MelkLightingCommandStatus {
+        onQueue { commandStatusValue }
+    }
     public private(set) var peripheralName: String?
     public private(set) var peripheralIdentifier: String?
 
@@ -226,7 +229,7 @@ public final class MelkLightingPeripheralSession: NSObject, CBCentralManagerDele
             if central.state != .poweredOn {
                 clearActivePeripheral()
             }
-            if central.state == .poweredOn, let preferredPlatformIdentifier {
+            if central.state == .poweredOn, peripheral == nil, let preferredPlatformIdentifier {
                 if let uuid = UUID(uuidString: preferredPlatformIdentifier),
                    let restored = central.retrievePeripherals(withIdentifiers: [uuid]).first
                 {
@@ -237,7 +240,8 @@ public final class MelkLightingPeripheralSession: NSObject, CBCentralManagerDele
                     core.handle(event: .restored(
                         name: restored.name,
                         platformIdentifier: restored.identifier.uuidString,
-                        connected: restored.state == .connected
+                        connected: restored.state == .connected,
+                        pending: restored.state == .connecting
                     ))
                 } else {
                     core.handle(event: .restoreUnavailable)
@@ -325,7 +329,8 @@ public final class MelkLightingPeripheralSession: NSObject, CBCentralManagerDele
             core.handle(event: .restored(
                 name: restoredPeripheral.name,
                 platformIdentifier: restoredPeripheral.identifier.uuidString,
-                connected: restoredPeripheral.state == .connected
+                connected: restoredPeripheral.state == .connected,
+                pending: restoredPeripheral.state == .connecting
             ))
             guard core.snapshot().platformIdentifier == restoredPeripheral.identifier.uuidString else {
                 peripheral = nil
@@ -428,7 +433,7 @@ public final class MelkLightingPeripheralSession: NSObject, CBCentralManagerDele
     private func syncCore() {
         let snapshot = core.snapshot()
         let nextState = Self.state(snapshot.state)
-        commandStatus = Self.commandStatus(snapshot.commandStatus)
+        commandStatusValue = Self.commandStatus(snapshot.commandStatus)
         if nextState != connectionState {
             connectionState = nextState
             onStateChange?(nextState)
