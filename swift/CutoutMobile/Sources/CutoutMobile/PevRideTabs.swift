@@ -3,10 +3,11 @@ import Foundation
 public enum PevRideTabs {
     public static func eucRideTabs(
         selected: PevScreenID? = nil,
-        lightingSelected: Bool = false
+        lightingSelected: Bool = false,
+        isTuneSelected: Bool = false
     ) -> [PevScreenTab] {
         [
-            PevScreenTab(id: .ride, title: pevLocalizedText("tab.ride"), isSelected: !lightingSelected && (selected == nil || selected == .eucRide), destinationTarget: .screen(.eucRide)),
+            PevScreenTab(id: .ride, title: pevLocalizedText("tab.ride"), isSelected: !lightingSelected && (selected == .eucRide || (selected == nil && !isTuneSelected)), destinationTarget: .screen(.eucRide)),
             PevScreenTab(id: .lighting, title: pevLocalizedText("tab.lighting"), isSelected: lightingSelected, destinationTarget: .lighting),
             PevScreenTab(id: .pack, title: pevLocalizedText("tab.pack"), isSelected: selected == .bmsOverview || selected == .bmsCellMap6S || selected == .bmsCellMap40S || selected == .bmsCellDetail || selected == .bmsUnknownTopology || selected == .bmsNoData, destinationTarget: .eucPack),
             PevScreenTab(id: .map, title: pevLocalizedText("tab.map"), isSelected: false, destinationTarget: .rideMap),
