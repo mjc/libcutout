@@ -58,6 +58,11 @@ pub use identification::{
     ProtocolModelIdentityEvidence, StagedIdentityInput, StagedIdentityOutcome,
     StagedIdentityResolution, identify_known_model, identify_model, parse_model_banner,
 };
+mod melk_lighting;
+pub use melk_lighting::{
+    MELK_FRAME_LEN, MELK_NOTIFY_CHANNEL, MELK_SERVICE_CHANNEL, MELK_WRITE_CHANNEL,
+    MelkGattEvidence, MelkLightingProfile, MelkWritePolicy,
+};
 mod probe;
 pub use probe::{AeroProbe, FalconProbe, ProtocolProbe};
 mod parser;
