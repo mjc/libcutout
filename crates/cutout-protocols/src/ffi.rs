@@ -1,7 +1,7 @@
 use cutout_core::{
     Capabilities, ControlRefusal, ControlRefusalDto, ControlRefusalReason, DeviceCommand,
-    HostSession, ParserDiagnosticsDto, SessionEventDto, SessionInputDto, SessionOutputDto,
-    TelemetrySnapshotDto,
+    HostSession, LightCommandState, ParserDiagnosticsDto, SessionEventDto, SessionInputDto,
+    SessionOutputDto, TelemetrySnapshotDto,
 };
 
 use crate::{
@@ -97,6 +97,12 @@ impl ConcreteAeroReadOnlySession {
     pub fn diagnostics(&self) -> ParserDiagnosticsDto {
         self.host.diagnostics().into()
     }
+
+    /// Returns the last accepted light request for the current transport link.
+    #[must_use]
+    pub const fn light_command_state(&self) -> LightCommandState {
+        self.host.protocol_session().light_command_state()
+    }
 }
 
 impl Default for ConcreteAeroReadOnlySession {
@@ -167,6 +173,12 @@ impl ConcreteFalconReadOnlySession {
     #[must_use]
     pub fn diagnostics(&self) -> ParserDiagnosticsDto {
         self.host.diagnostics().into()
+    }
+
+    /// Returns the last accepted light request for the current transport link.
+    #[must_use]
+    pub const fn light_command_state(&self) -> LightCommandState {
+        self.host.protocol_session().light_command_state()
     }
 }
 

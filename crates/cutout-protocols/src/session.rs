@@ -5,13 +5,13 @@ use cutout_core::{
     BatteryPageMetadata, BatteryPagePayload, BatterySpec, Capabilities, CommandKind,
     ControlRefusal, ControlRefusalReason, Count, DeviceCommand, DeviceEvent, DiagnosticDetail,
     DiagnosticReadback, DiagnosticSeverity, FirmwareInfo, GattChannel, GattFingerprint, GattRoles,
-    Measured, ModelRegistryEntry, MonotonicTimestamp, NotificationByteLen,
+    LightCommandState, Measured, ModelRegistryEntry, MonotonicTimestamp, NotificationByteLen,
     NotificationIngestOutcome, ParserDiagnostics, ParserError, ParserGapEvidence, PayloadBodyLen,
     PayloadClassifier, ProtocolFamily, ProtocolSelector, ProtocolSession, Quantity, RawFieldValue,
-    RawTelemetryReadback, ReadOnlyResponse, ReservedPayloadEvidence, RetainedNotificationPayload,
-    SafetyClass, SemanticEventCount, SeriesCount, SessionInput, SessionOutput, Temperature,
-    TransportAction, Unit, ValueQuality, VerificationStatus, VerifiedValue, Voltage, WriteMode,
-    WritePayload,
+    RawTelemetryReadback, ReadOnlyResponse, RequestedLightState, ReservedPayloadEvidence,
+    RetainedNotificationPayload, SafetyClass, SemanticEventCount, SeriesCount, SessionInput,
+    SessionOutput, Temperature, TransportAction, Unit, ValueQuality, VerificationStatus,
+    VerifiedValue, Voltage, WriteMode, WritePayload,
 };
 
 use crate::{
@@ -1895,6 +1895,7 @@ pub struct BenignControlSession<
     const ACCEPT_ANY_NOTIFICATION: bool,
 > {
     read_only: ReadOnlySession<M, ACCEPT_ANY_NOTIFICATION>,
+    light_command_state: LightCommandState,
 }
 
 impl<M: ReadOnlyModelSpec + SupportsBenignControls, const ACCEPT_ANY_NOTIFICATION: bool> fmt::Debug
@@ -1915,6 +1916,7 @@ where
     fn clone(&self) -> Self {
         Self {
             read_only: self.read_only.clone(),
+            light_command_state: self.light_command_state,
         }
     }
 }
@@ -1925,6 +1927,7 @@ impl<M: ReadOnlyModelSpec + SupportsBenignControls, const ACCEPT_ANY_NOTIFICATIO
     fn default() -> Self {
         Self {
             read_only: ReadOnlySession::default(),
+            light_command_state: LightCommandState::Unknown,
         }
     }
 }
@@ -1937,6 +1940,7 @@ impl<M: ReadOnlyModelSpec + SupportsBenignControls, const ACCEPT_ANY_NOTIFICATIO
     pub const fn with_decoder(decoder: M::NotificationDecoder) -> Self {
         Self {
             read_only: ReadOnlySession::with_decoder(decoder),
+            light_command_state: LightCommandState::Unknown,
         }
     }
 
@@ -1945,12 +1949,21 @@ impl<M: ReadOnlyModelSpec + SupportsBenignControls, const ACCEPT_ANY_NOTIFICATIO
     pub const fn capabilities() -> Capabilities {
         M::READ_CAPABILITIES.union(M::CONTROL_CAPABILITIES)
     }
+
+    /// Returns the last accepted light request for the current transport link.
+    #[must_use]
+    pub const fn light_command_state(&self) -> LightCommandState {
+        self.light_command_state
+    }
 }
 
 impl<M: ReadOnlyModelSpec + SupportsBenignControls, const ACCEPT_ANY_NOTIFICATION: bool>
     ProtocolSession for BenignControlSession<M, ACCEPT_ANY_NOTIFICATION>
 {
     fn handle(&mut self, input: SessionInput<'_>, output: &mut Vec<SessionOutput>) {
+        if matches!(input, SessionInput::LinkUp(_) | SessionInput::LinkDown) {
+            self.light_command_state = LightCommandState::Unknown;
+        }
         let SessionInput::Command(command) = input else {
             self.read_only.handle(input, output);
             return;
@@ -1963,6 +1976,10 @@ impl<M: ReadOnlyModelSpec + SupportsBenignControls, const ACCEPT_ANY_NOTIFICATIO
         let kind = command.kind();
         if M::CONTROL_CAPABILITIES.supports_command_kind(kind) {
             if let Some(encoded) = M::encode_benign_control(command) {
+                if let DeviceCommand::SetLights(state) = command {
+                    self.light_command_state =
+                        LightCommandState::Requested(RequestedLightState::new(state));
+                }
                 output.push(SessionOutput::Transport(TransportAction::Write {
                     channel: M::WRITE_CHANNEL,
                     bytes: encoded.payload,
@@ -4672,6 +4689,28 @@ mod tests {
                 mode: WriteMode::WithoutResponse,
             })]
         );
+    }
+
+    #[test]
+    fn benign_control_session_tracks_accepted_light_request_without_claiming_readback() {
+        let mut session = BenignControlSession::<NosfetAeroModel, false>::default();
+        let mut output = Vec::new();
+
+        assert_eq!(session.light_command_state(), LightCommandState::Unknown);
+
+        session.handle(
+            SessionInput::Command(DeviceCommand::SetLights(cutout_core::LightState::On)),
+            &mut output,
+        );
+
+        assert_eq!(
+            session.light_command_state(),
+            LightCommandState::Requested(RequestedLightState::new(cutout_core::LightState::On))
+        );
+
+        session.handle(SessionInput::LinkDown, &mut output);
+
+        assert_eq!(session.light_command_state(), LightCommandState::Unknown);
     }
 
     #[test]

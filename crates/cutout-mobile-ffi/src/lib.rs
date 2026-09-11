@@ -37,7 +37,7 @@ use cutout_core::{
     FaultHistoryAvailabilityDto, FaultHistoryEntry, FaultHistoryEntryDto, FaultHistoryReadback,
     FaultHistoryReadbackDto, FootpadContactStateDto, FootpadTelemetryDto, GattChannel,
     GattFingerprint, GattRoles, IgnoredNotificationEvidenceDto, IgnoredNotificationReasonDto,
-    LightStateDto, Measured, MonotonicMillisDto, MonotonicTimestamp,
+    LightCommandState, LightStateDto, Measured, MonotonicMillisDto, MonotonicTimestamp,
     MusicProvider as CorePevcapMusicProvider, NotificationByteLenDto, NotificationEvidenceDto,
     NotificationIngestOutcomeDto, ParserDiagnosticCountDto, ParserDiagnosticsDto,
     ParserDroppedBytesDto, ParserErrorDto, ParserFrameLenDto, ParserGapEvidenceDto,
@@ -2039,11 +2039,36 @@ pub enum MobileLightStateDto {
     On,
 }
 
+/// What the Rust protocol session knows about the current light command.
+///
+/// `Requested` means the session accepted the command for transport; it does
+/// not assert controller readback or delivery.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Enum)]
+pub enum MobileLightCommandStateDto {
+    /// No accepted request is associated with the current link.
+    Unknown,
+
+    /// A light request was accepted for transport.
+    Requested(MobileLightStateDto),
+}
+
 impl From<MobileLightStateDto> for LightStateDto {
     fn from(state: MobileLightStateDto) -> Self {
         match state {
             MobileLightStateDto::Off => Self::Off,
             MobileLightStateDto::On => Self::On,
+        }
+    }
+}
+
+impl From<LightCommandState> for MobileLightCommandStateDto {
+    fn from(state: LightCommandState) -> Self {
+        match state {
+            LightCommandState::Unknown => Self::Unknown,
+            LightCommandState::Requested(requested) => Self::Requested(match requested.state() {
+                cutout_core::LightState::Off => MobileLightStateDto::Off,
+                cutout_core::LightState::On => MobileLightStateDto::On,
+            }),
         }
     }
 }
@@ -10818,6 +10843,11 @@ impl AeroReadOnlySession {
     pub fn diagnostics(&self) -> MobileParserDiagnosticsDto {
         self.lock_inner().diagnostics().into()
     }
+
+    /// Returns the Rust-owned status of the current light request.
+    pub fn light_command_state(&self) -> MobileLightCommandStateDto {
+        self.lock_inner().light_command_state().into()
+    }
 }
 
 impl AeroReadOnlySession {
@@ -12150,6 +12180,11 @@ impl FalconReadOnlySession {
     /// Returns accumulated parser diagnostics as an owned DTO.
     pub fn diagnostics(&self) -> MobileParserDiagnosticsDto {
         self.lock_inner().diagnostics().into()
+    }
+
+    /// Returns the Rust-owned status of the current light request.
+    pub fn light_command_state(&self) -> MobileLightCommandStateDto {
+        self.lock_inner().light_command_state().into()
     }
 }
 
@@ -15023,10 +15058,18 @@ mod tests {
         let falcon_result = falcon.ingest_checked(command_input(MobileLightStateDto::Off));
 
         assert_eq!(aero_result.error, None);
+        assert_eq!(
+            aero.light_command_state(),
+            MobileLightCommandStateDto::Requested(MobileLightStateDto::On)
+        );
         assert!(aero_result.outputs.iter().any(|output| {
             output.kind == MobileSessionOutputKindDto::Write && output.bytes == b"SetLightON"
         }));
         assert_eq!(falcon_result.error, None);
+        assert_eq!(
+            falcon.light_command_state(),
+            MobileLightCommandStateDto::Requested(MobileLightStateDto::Off)
+        );
         assert!(falcon_result.outputs.iter().any(|output| {
             output.kind == MobileSessionOutputKindDto::Write && output.bytes == b"E"
         }));
