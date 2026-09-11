@@ -1,33 +1,34 @@
 use arrayvec::ArrayVec;
-use core::marker::PhantomData;
+use core::{fmt, marker::PhantomData};
 use cutout_core::{
     BATTERY_TEMPERATURE_VALUES_PER_PAGE, BatteryCurrent, BatteryInfo, BatteryPageKind,
-    BatteryPageMetadata, BatteryPagePayload, BatterySpec, Capabilities, CommandKind, Count,
-    DeviceCommand, DeviceEvent, DiagnosticDetail, DiagnosticReadback, DiagnosticSeverity,
-    FirmwareInfo, GattChannel, GattFingerprint, GattRoles, Measured, ModelRegistryEntry,
-    MonotonicTimestamp, NotificationByteLen, NotificationIngestOutcome, ParserDiagnostics,
-    ParserError, ParserGapEvidence, PayloadBodyLen, PayloadClassifier, ProtocolFamily,
-    ProtocolSelector, ProtocolSession, Quantity, RawFieldValue, RawTelemetryReadback,
-    ReadOnlyResponse, ReservedPayloadEvidence, RetainedNotificationPayload, SafetyClass,
-    SemanticEventCount, SeriesCount, SessionInput, SessionOutput, Temperature, TransportAction,
-    Unit, ValueQuality, VerificationStatus, VerifiedValue, Voltage, WriteMode, WritePayload,
+    BatteryPageMetadata, BatteryPagePayload, BatterySpec, Capabilities, CommandKind,
+    ControlRefusal, ControlRefusalReason, Count, DeviceCommand, DeviceEvent, DiagnosticDetail,
+    DiagnosticReadback, DiagnosticSeverity, FirmwareInfo, GattChannel, GattFingerprint, GattRoles,
+    LightCommandState, Measured, ModelRegistryEntry, MonotonicTimestamp, NotificationByteLen,
+    NotificationIngestOutcome, ParserDiagnostics, ParserError, ParserGapEvidence, PayloadBodyLen,
+    PayloadClassifier, ProtocolFamily, ProtocolSelector, ProtocolSession, Quantity, RawFieldValue,
+    RawTelemetryReadback, ReadOnlyResponse, RequestedLightState, ReservedPayloadEvidence,
+    RetainedNotificationPayload, SafetyClass, SemanticEventCount, SeriesCount, SessionInput,
+    SessionOutput, Temperature, TransportAction, Unit, ValueQuality, VerificationStatus,
+    VerifiedValue, Voltage, WriteMode, WritePayload,
 };
 
 use crate::{
-    AeroProbe, AeroRequestEncoder, BEGODE_DATA_CHANNEL, BEGODE_SERVICE_CHANNEL, BegodeBmsCellPage,
-    BegodeBmsPageError, BegodeBmsSummary, BegodeFrame, BegodeFrameError, BegodeFrameParseResult,
-    BegodeFrameReassembler, BegodeLiveATelemetry, BegodeLiveBTelemetry, BegodePackVoltageProfile,
-    BegodeTelemetryContext, BegodeTelemetryError, EncodedRequest, FalconProbe,
-    FalconRequestEncoder, RefloatCodecError, RefloatReadOnlyRequest, RefloatReply,
-    RefloatStreamDecoder, RefloatStreamResult, RequestDisposition, VESC_COMM_CUSTOM_APP_DATA,
-    VESC_MAX_FRAME_LEN, VESC_NOTIFY_CHANNEL, VESC_WRITE_CHANNEL, VETERAN_DATA_CHANNEL,
-    VescBoardProfile, VescCodecError, VescReadOnlyCodec, VescReadOnlyReply, VescReadOnlyRequest,
-    VescReadOnlyStreamDecoder, VescReadOnlyStreamResult, VescRequestEncoder, VescStatsMask,
-    VescStatsTelemetry, VescValuesMask, VescValuesTelemetry, VeteranBmsCellPage,
-    VeteranBmsMetadataPage, VeteranBmsPageEvidence, VeteranBmsTemperaturePage, VeteranFrame,
-    VeteranFrameParseResult, VeteranFrameReassembler, VeteranReassemblyError, VeteranTelemetry,
-    VeteranTelemetryError, begode_falcon_target_voltage_profile, decode_veteran_bms_page,
-    util::u64_to_i64_saturating,
+    AeroControlEncoder, AeroProbe, AeroRequestEncoder, BEGODE_DATA_CHANNEL, BEGODE_SERVICE_CHANNEL,
+    BegodeBmsCellPage, BegodeBmsPageError, BegodeBmsSummary, BegodeFrame, BegodeFrameError,
+    BegodeFrameParseResult, BegodeFrameReassembler, BegodeLiveATelemetry, BegodeLiveBTelemetry,
+    BegodePackVoltageProfile, BegodeTelemetryContext, BegodeTelemetryError, EncodedControl,
+    EncodedRequest, FalconControlEncoder, FalconProbe, FalconRequestEncoder, RefloatCodecError,
+    RefloatReadOnlyRequest, RefloatReply, RefloatStreamDecoder, RefloatStreamResult,
+    RequestDisposition, VESC_COMM_CUSTOM_APP_DATA, VESC_MAX_FRAME_LEN, VESC_NOTIFY_CHANNEL,
+    VESC_WRITE_CHANNEL, VETERAN_DATA_CHANNEL, VescBoardProfile, VescCodecError, VescReadOnlyCodec,
+    VescReadOnlyReply, VescReadOnlyRequest, VescReadOnlyStreamDecoder, VescReadOnlyStreamResult,
+    VescRequestEncoder, VescStatsMask, VescStatsTelemetry, VescValuesMask, VescValuesTelemetry,
+    VeteranBmsCellPage, VeteranBmsMetadataPage, VeteranBmsPageEvidence, VeteranBmsTemperaturePage,
+    VeteranFrame, VeteranFrameParseResult, VeteranFrameReassembler, VeteranReassemblyError,
+    VeteranTelemetry, VeteranTelemetryError, begode_falcon_target_voltage_profile,
+    decode_veteran_bms_page, util::u64_to_i64_saturating,
 };
 
 /// Raw VESC electrical RPM telemetry field id.
@@ -762,17 +763,20 @@ impl VescNotificationDecoder {
         let mut refloat_buffered = false;
         let mut generic_bytes = ArrayVec::<u8, VESC_MAX_FRAME_LEN>::new();
         let feed_generic = if self.generic_stream_pending {
-            generic_bytes
-                .try_extend_from_slice(bytes)
-                .expect("notification fits bounded VESC frame");
+            if generic_bytes.try_extend_from_slice(bytes).is_err() {
+                self.reject_oversized_generic_notification(output);
+                return;
+            }
             true
         } else if !self.generic_prefix.is_empty() {
-            generic_bytes
+            if generic_bytes
                 .try_extend_from_slice(&self.generic_prefix)
-                .expect("generic prefix fits bounded VESC frame");
-            generic_bytes
-                .try_extend_from_slice(bytes)
-                .expect("notification fits bounded VESC frame");
+                .and_then(|()| generic_bytes.try_extend_from_slice(bytes))
+                .is_err()
+            {
+                self.reject_oversized_generic_notification(output);
+                return;
+            }
             match generic_frame_kind(&generic_bytes) {
                 Some(is_generic) => {
                     self.generic_prefix.clear();
@@ -817,18 +821,24 @@ impl VescNotificationDecoder {
                 }
                 None => {
                     self.generic_prefix.clear();
-                    self.generic_prefix
+                    if self
+                        .generic_prefix
                         .try_extend_from_slice(&generic_bytes)
-                        .expect("generic prefix remains bounded");
+                        .is_err()
+                    {
+                        self.reject_oversized_generic_notification(output);
+                        return;
+                    }
                     false
                 }
             }
         } else {
             match generic_frame_kind(bytes) {
                 Some(is_generic) => {
-                    generic_bytes
-                        .try_extend_from_slice(bytes)
-                        .expect("notification fits bounded VESC frame");
+                    if generic_bytes.try_extend_from_slice(bytes).is_err() {
+                        self.reject_oversized_generic_notification(output);
+                        return;
+                    }
                     if !is_generic {
                         refloat_handled = self.handle_refloat_notification(
                             family,
@@ -842,15 +852,17 @@ impl VescNotificationDecoder {
                     is_generic
                 }
                 None if matches!(bytes.first(), Some(2 | 3)) => {
-                    self.generic_prefix
-                        .try_extend_from_slice(bytes)
-                        .expect("generic prefix remains bounded");
+                    if self.generic_prefix.try_extend_from_slice(bytes).is_err() {
+                        self.reject_oversized_generic_notification(output);
+                        return;
+                    }
                     false
                 }
                 None => {
-                    generic_bytes
-                        .try_extend_from_slice(bytes)
-                        .expect("notification fits bounded VESC frame");
+                    if generic_bytes.try_extend_from_slice(bytes).is_err() {
+                        self.reject_oversized_generic_notification(output);
+                        return;
+                    }
                     true
                 }
             }
@@ -877,6 +889,13 @@ impl VescNotificationDecoder {
                 ),
             ));
         }
+    }
+
+    fn reject_oversized_generic_notification(&mut self, output: &mut Vec<SessionOutput>) {
+        self.stream = VescReadOnlyStreamDecoder::new();
+        self.generic_prefix.clear();
+        self.generic_stream_pending = false;
+        push_parser_error(ParserError::MalformedFrame, output);
     }
 
     fn handle_vesc_notification(
@@ -1471,6 +1490,9 @@ pub trait SupportsSettingsWrites: ProtocolModelSpec {
 pub trait SupportsBenignControls: ProtocolModelSpec {
     /// Commands this model can control through benign write paths.
     const CONTROL_CAPABILITIES: Capabilities;
+
+    /// Encodes a supported benign control.
+    fn encode_benign_control(command: DeviceCommand) -> Option<EncodedControl>;
 }
 
 /// Type-level dangerous-actuation capability.
@@ -1543,7 +1565,8 @@ impl RegisteredModelSpec for NosfetAeroModel {
         }),
         bms: None,
         gatt: &NOSFET_AERO_MODEL_GATT,
-        capabilities: <Self as SupportsReadRequests>::READ_CAPABILITIES,
+        capabilities: <Self as SupportsReadRequests>::READ_CAPABILITIES
+            .union(<Self as SupportsBenignControls>::CONTROL_CAPABILITIES),
         verification: VerificationStatus::HardwareVerified,
     };
 }
@@ -1564,6 +1587,15 @@ impl SupportsReadRequests for NosfetAeroModel {
 
     fn encode_read_command(kind: CommandKind) -> Option<RequestDisposition<Self::Probe>> {
         AeroRequestEncoder::encode_command(kind)
+    }
+}
+
+impl SupportsBenignControls for NosfetAeroModel {
+    const CONTROL_CAPABILITIES: Capabilities =
+        Capabilities::from_supported_commands([CommandKind::SetLights]);
+
+    fn encode_benign_control(command: DeviceCommand) -> Option<EncodedControl> {
+        AeroControlEncoder::encode(command)
     }
 }
 
@@ -1596,7 +1628,8 @@ impl RegisteredModelSpec for BegodeFalconModel {
         battery: None,
         bms: None,
         gatt: &BEGODE_FALCON_MODEL_GATT,
-        capabilities: <Self as SupportsReadRequests>::READ_CAPABILITIES,
+        capabilities: <Self as SupportsReadRequests>::READ_CAPABILITIES
+            .union(<Self as SupportsBenignControls>::CONTROL_CAPABILITIES),
         verification: VerificationStatus::Inferred,
     };
 }
@@ -1616,6 +1649,15 @@ impl SupportsReadRequests for BegodeFalconModel {
 
     fn encode_read_command(kind: CommandKind) -> Option<RequestDisposition<Self::Probe>> {
         FalconRequestEncoder::encode_command(kind)
+    }
+}
+
+impl SupportsBenignControls for BegodeFalconModel {
+    const CONTROL_CAPABILITIES: Capabilities =
+        Capabilities::from_supported_commands([CommandKind::SetLights]);
+
+    fn encode_benign_control(command: DeviceCommand) -> Option<EncodedControl> {
+        FalconControlEncoder::encode(command)
     }
 }
 
@@ -1844,6 +1886,116 @@ impl<M: ReadOnlyModelSpec, const ACCEPT_ANY_NOTIFICATION: bool> ProtocolSession
             input,
             output,
         );
+    }
+}
+
+/// Session shell that preserves model read behavior and admits allow-listed benign controls.
+pub struct BenignControlSession<
+    M: ReadOnlyModelSpec + SupportsBenignControls,
+    const ACCEPT_ANY_NOTIFICATION: bool,
+> {
+    read_only: ReadOnlySession<M, ACCEPT_ANY_NOTIFICATION>,
+    light_command_state: LightCommandState,
+}
+
+impl<M: ReadOnlyModelSpec + SupportsBenignControls, const ACCEPT_ANY_NOTIFICATION: bool> fmt::Debug
+    for BenignControlSession<M, ACCEPT_ANY_NOTIFICATION>
+{
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("BenignControlSession")
+            .finish_non_exhaustive()
+    }
+}
+
+impl<M: ReadOnlyModelSpec + SupportsBenignControls, const ACCEPT_ANY_NOTIFICATION: bool> Clone
+    for BenignControlSession<M, ACCEPT_ANY_NOTIFICATION>
+where
+    ReadOnlySession<M, ACCEPT_ANY_NOTIFICATION>: Clone,
+{
+    fn clone(&self) -> Self {
+        Self {
+            read_only: self.read_only.clone(),
+            light_command_state: self.light_command_state,
+        }
+    }
+}
+
+impl<M: ReadOnlyModelSpec + SupportsBenignControls, const ACCEPT_ANY_NOTIFICATION: bool> Default
+    for BenignControlSession<M, ACCEPT_ANY_NOTIFICATION>
+{
+    fn default() -> Self {
+        Self {
+            read_only: ReadOnlySession::default(),
+            light_command_state: LightCommandState::Unknown,
+        }
+    }
+}
+
+impl<M: ReadOnlyModelSpec + SupportsBenignControls, const ACCEPT_ANY_NOTIFICATION: bool>
+    BenignControlSession<M, ACCEPT_ANY_NOTIFICATION>
+{
+    /// Creates a benign-control session with an explicitly configured notification decoder.
+    #[must_use]
+    pub const fn with_decoder(decoder: M::NotificationDecoder) -> Self {
+        Self {
+            read_only: ReadOnlySession::with_decoder(decoder),
+            light_command_state: LightCommandState::Unknown,
+        }
+    }
+
+    /// Returns the read and benign-control commands this session can schedule.
+    #[must_use]
+    pub const fn capabilities() -> Capabilities {
+        M::READ_CAPABILITIES.union(M::CONTROL_CAPABILITIES)
+    }
+
+    /// Returns the last accepted light request for the current transport link.
+    #[must_use]
+    pub const fn light_command_state(&self) -> LightCommandState {
+        self.light_command_state
+    }
+}
+
+impl<M: ReadOnlyModelSpec + SupportsBenignControls, const ACCEPT_ANY_NOTIFICATION: bool>
+    ProtocolSession for BenignControlSession<M, ACCEPT_ANY_NOTIFICATION>
+{
+    fn handle(&mut self, input: SessionInput<'_>, output: &mut Vec<SessionOutput>) {
+        if matches!(input, SessionInput::LinkUp(_) | SessionInput::LinkDown) {
+            self.light_command_state = LightCommandState::Unknown;
+        }
+        let SessionInput::Command(command) = input else {
+            self.read_only.handle(input, output);
+            return;
+        };
+        if command.safety_class() != SafetyClass::BenignControl {
+            self.read_only.handle(input, output);
+            return;
+        }
+
+        let kind = command.kind();
+        if M::CONTROL_CAPABILITIES.supports_command_kind(kind) {
+            if let Some(encoded) = M::encode_benign_control(command) {
+                if let DeviceCommand::SetLights(state) = command {
+                    self.light_command_state =
+                        LightCommandState::Requested(RequestedLightState::new(state));
+                }
+                output.push(SessionOutput::Transport(TransportAction::Write {
+                    channel: M::WRITE_CHANNEL,
+                    bytes: encoded.payload,
+                    mode: encoded.mode,
+                }));
+                return;
+            }
+        }
+
+        output.push(SessionOutput::Event(DeviceEvent::ControlRefusal(
+            ControlRefusal {
+                command: kind,
+                safety_class: command.safety_class(),
+                reason: ControlRefusalReason::UnsupportedCommand,
+            },
+        )));
     }
 }
 
@@ -2692,6 +2844,36 @@ mod tests {
         assert_eq!(
             decoder.pack_voltage_profile(),
             begode_falcon_target_voltage_profile()
+        );
+    }
+
+    #[test]
+    fn oversized_vesc_notification_emits_diagnostic_without_panicking() {
+        let bytes = vec![0; VESC_MAX_FRAME_LEN + 1];
+
+        let output = vesc_output_for_notification_chunks(&[bytes.as_slice()]);
+
+        assert_eq!(
+            diagnostic_error_events(&output),
+            vec![cutout_core::DiagnosticError::from_parser_error(
+                ParserError::MalformedFrame,
+            )]
+        );
+    }
+
+    #[test]
+    fn oversized_vesc_notification_resets_decoder_before_next_frame() {
+        let prefix = [0x03, 0x03, 0xfa, 0x04];
+        let oversized = vec![0; VESC_MAX_FRAME_LEN + 1];
+        let values = vesc_selective_values_frame();
+
+        let output = vesc_output_for_notification_chunks(&[&prefix, oversized.as_slice(), &values]);
+
+        assert!(
+            read_only_response_events(&output)
+                .iter()
+                .any(|response| matches!(response, ReadOnlyResponse::RawTelemetry(_))),
+            "a valid VESC frame must decode after an oversized discarded frame"
         );
     }
 
@@ -4487,6 +4669,91 @@ mod tests {
             }),
             ReadOnlyCommandGate::Unsupported(CommandKind::SetRawMotorCurrent)
         );
+    }
+
+    #[test]
+    fn aero_benign_control_session_writes_typed_light_state() {
+        let mut session = BenignControlSession::<NosfetAeroModel, false>::default();
+        let mut output = Vec::new();
+
+        session.handle(
+            SessionInput::Command(DeviceCommand::SetLights(cutout_core::LightState::On)),
+            &mut output,
+        );
+
+        assert_eq!(
+            output,
+            vec![SessionOutput::Transport(TransportAction::Write {
+                channel: VETERAN_DATA_CHANNEL,
+                bytes: WritePayload::try_from_slice(b"SetLightON").expect("fixture payload fits"),
+                mode: WriteMode::WithoutResponse,
+            })]
+        );
+    }
+
+    #[test]
+    fn benign_control_session_tracks_accepted_light_request_without_claiming_readback() {
+        let mut session = BenignControlSession::<NosfetAeroModel, false>::default();
+        let mut output = Vec::new();
+
+        assert_eq!(session.light_command_state(), LightCommandState::Unknown);
+
+        session.handle(
+            SessionInput::Command(DeviceCommand::SetLights(cutout_core::LightState::On)),
+            &mut output,
+        );
+
+        assert_eq!(
+            session.light_command_state(),
+            LightCommandState::Requested(RequestedLightState::new(cutout_core::LightState::On))
+        );
+
+        session.handle(SessionInput::LinkDown, &mut output);
+
+        assert_eq!(session.light_command_state(), LightCommandState::Unknown);
+    }
+
+    #[test]
+    fn falcon_benign_control_session_writes_typed_light_state() {
+        let mut session = BenignControlSession::<BegodeFalconModel, true>::default();
+        let mut output = Vec::new();
+
+        session.handle(
+            SessionInput::Command(DeviceCommand::SetLights(cutout_core::LightState::Off)),
+            &mut output,
+        );
+
+        assert_eq!(
+            output,
+            vec![SessionOutput::Transport(TransportAction::Write {
+                channel: BEGODE_DATA_CHANNEL,
+                bytes: WritePayload::try_from_slice(b"E").expect("fixture payload fits"),
+                mode: WriteMode::WithoutResponse,
+            })]
+        );
+    }
+
+    #[test]
+    fn benign_control_session_preserves_read_requests_and_refuses_unsupported_controls() {
+        let mut session = BenignControlSession::<BegodeFalconModel, true>::default();
+        let mut output = Vec::new();
+
+        session.handle(
+            SessionInput::Command(DeviceCommand::RequestIdentity),
+            &mut output,
+        );
+        session.handle(SessionInput::Command(DeviceCommand::SoundHorn), &mut output);
+
+        assert!(output.iter().any(|item| matches!(
+            item,
+            SessionOutput::Transport(TransportAction::Write { bytes, .. })
+                if bytes.as_slice() == b"N"
+        )));
+        assert!(output.iter().any(|item| matches!(
+            item,
+            SessionOutput::Event(DeviceEvent::ControlRefusal(refusal))
+                if refusal.command == CommandKind::SoundHorn
+        )));
     }
 
     #[test]

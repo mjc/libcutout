@@ -89,13 +89,14 @@ pub use refloat_codec::{
     RefloatStreamResult, VESC_COMM_CUSTOM_APP_DATA, encode_refloat_request,
 };
 pub use request_encoder::{
-    AeroRequestEncoder, EncodedIdentificationProbe, EncodedRequest, FalconRequestEncoder,
-    RequestDisposition, VescCanTarget, VescRequestEncoder, begode_identification_probes,
+    AeroControlEncoder, AeroRequestEncoder, EncodedControl, EncodedIdentificationProbe,
+    EncodedRequest, FalconControlEncoder, FalconRequestEncoder, RequestDisposition, VescCanTarget,
+    VescRequestEncoder, begode_identification_probes,
 };
 #[cfg(feature = "dangerous-controls")]
 pub use session::DangerousControlSession;
 pub use session::{
-    BegodeFalconModel, BegodeNotificationDecoder, BenignControlOperation,
+    BegodeFalconModel, BegodeNotificationDecoder, BenignControlOperation, BenignControlSession,
     DangerousActuationOperation, Manufacturer, NoopNotificationDecoder, NosfetAeroModel,
     ProtocolModelSpec, ProtocolOperation, ReadOnlyModelSpec, ReadOnlyNotificationDecoder,
     ReadOnlyOperation, ReadOnlySession, RegisteredModelSpec, SettingsWriteOperation,

@@ -13,6 +13,42 @@
       "comment" : "App command menu that contains navigation destinations.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Navigate" } } }
     },
+    "navigation.section.tune" : {
+      "comment" : "Title for the EUC settings and tuning section.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Tune" } } }
+    },
+    "settings.headlight.title" : {
+      "comment" : "Label for the EUC headlight setting.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Headlight" } } }
+    },
+    "settings.headlight.help" : {
+      "comment" : "Explains that the app submits the request immediately, while Bluetooth transport may queue it.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Requests are submitted immediately to the connected wheel." } } }
+    },
+    "settings.headlight.turn_on" : {
+      "comment" : "Action button that requests the headlight to turn on.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Turn On" } } }
+    },
+    "settings.headlight.turn_off" : {
+      "comment" : "Action button that requests the headlight to turn off.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Turn Off" } } }
+    },
+    "settings.headlight.state_unknown" : {
+      "comment" : "Headlight status when the app has no device readback.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "State unknown" } } }
+    },
+    "settings.headlight.last_request_on" : {
+      "comment" : "Headlight status after an on command was accepted but not confirmed by readback.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Last request: On (unconfirmed)" } } }
+    },
+    "settings.headlight.last_request_off" : {
+      "comment" : "Headlight status after an off command was accepted but not confirmed by readback.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Last request: Off (unconfirmed)" } } }
+    },
+    "settings.lights.title" : {
+      "comment" : "Section title for EUC light settings.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Lights" } } }
+    },
     "accessibility.bms_alert.critical" : {
       "comment" : "VoiceOver announcement for a critical BMS alert.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Critical battery warning. Check BMS details." } } }

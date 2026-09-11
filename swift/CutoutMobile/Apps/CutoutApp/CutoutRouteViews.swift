@@ -154,6 +154,63 @@ struct EucPackRouteView: View {
     }
 }
 
+struct EucTuneRouteView: View {
+    let model: CutoutAppModel
+
+    var body: some View {
+        Form {
+            HeadlightControlSection(
+                status: model.headlightCommandStatus,
+                isAvailable: model.phase == .live,
+                submit: { state in
+                    _ = model.setHeadlight(state)
+                }
+            )
+        }
+        .accessibilityIdentifier("settings.screen.eucTune")
+    }
+}
+
+private struct HeadlightControlSection: View {
+    let status: LightCommandStatus
+    let isAvailable: Bool
+    let submit: (LightState) -> Void
+
+    var body: some View {
+        Section {
+            HStack {
+                Button(localizedAppText("settings.headlight.turn_on")) {
+                    submit(.on)
+                }
+                Button(localizedAppText("settings.headlight.turn_off")) {
+                    submit(.off)
+                }
+            }
+            .buttonStyle(.bordered)
+            .disabled(!isAvailable)
+            .accessibilityHint(localizedAppText("settings.headlight.help"))
+
+            Text(statusText)
+                .foregroundStyle(.secondary)
+        } header: {
+            Text(localizedAppText("settings.lights.title"))
+        } footer: {
+            Text(localizedAppText("settings.headlight.help"))
+        }
+    }
+
+    private var statusText: String {
+        switch status {
+        case .unknown:
+            localizedAppText("settings.headlight.state_unknown")
+        case .requested(.off):
+            localizedAppText("settings.headlight.last_request_off")
+        case .requested(.on):
+            localizedAppText("settings.headlight.last_request_on")
+        }
+    }
+}
+
 struct VescRideRouteView: View {
     let model: CutoutAppModel
 

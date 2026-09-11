@@ -37,15 +37,16 @@ use cutout_core::{
     FaultHistoryAvailabilityDto, FaultHistoryEntry, FaultHistoryEntryDto, FaultHistoryReadback,
     FaultHistoryReadbackDto, FootpadContactStateDto, FootpadTelemetryDto, GattChannel,
     GattFingerprint, GattRoles, IgnoredNotificationEvidenceDto, IgnoredNotificationReasonDto,
-    Measured, MonotonicMillisDto, MonotonicTimestamp, MusicProvider as CorePevcapMusicProvider,
-    NotificationByteLenDto, NotificationEvidenceDto, NotificationIngestOutcomeDto,
-    ParserDiagnosticCountDto, ParserDiagnosticsDto, ParserDroppedBytesDto, ParserErrorDto,
-    ParserFrameLenDto, ParserGapEvidenceDto, PayloadBodyLenDto,
-    PevcapEncoding as CorePevcapEncoding, PevcapHeader, PevcapLocationSample, PevcapMusicEvent,
-    PevcapPhoneLocation, PevcapRecord, PevcapResolvedIdentity, PhaseCurrentReadingDto,
-    PowerReadingDto, ProtocolFamily, ProtocolFamilyDto, ProtocolTag, RIDE_SESSION_STALE_AFTER,
-    RawFieldValue, RawFieldValueDto, RawTelemetryReadback, RawTelemetryReadbackDto,
-    ReadOnlyOutputPayload, ReservedPayloadEvidenceDto, RideOperatingModeDto, RideOperatingStateDto,
+    LightCommandState, LightStateDto, Measured, MonotonicMillisDto, MonotonicTimestamp,
+    MusicProvider as CorePevcapMusicProvider, NotificationByteLenDto, NotificationEvidenceDto,
+    NotificationIngestOutcomeDto, ParserDiagnosticCountDto, ParserDiagnosticsDto,
+    ParserDroppedBytesDto, ParserErrorDto, ParserFrameLenDto, ParserGapEvidenceDto,
+    PayloadBodyLenDto, PevcapEncoding as CorePevcapEncoding, PevcapHeader, PevcapLocationSample,
+    PevcapMusicEvent, PevcapPhoneLocation, PevcapRecord, PevcapResolvedIdentity,
+    PhaseCurrentReadingDto, PowerReadingDto, ProtocolFamily, ProtocolFamilyDto, ProtocolTag,
+    RIDE_SESSION_STALE_AFTER, RawFieldValue, RawFieldValueDto, RawTelemetryReadback,
+    RawTelemetryReadbackDto, ReadOnlyOutputPayload, ReservedPayloadEvidenceDto,
+    RideOperatingModeDto, RideOperatingStateDto,
     RideSessionAppPresence as CoreRideSessionAppPresence,
     RideSessionDecision as CoreRideSessionDecision, RideSessionEffect as CoreRideSessionEffect,
     RideSessionEndReason as CoreRideSessionEndReason,
@@ -2021,8 +2022,55 @@ pub enum MobileCommandDto {
     /// Request current settings without changing device state.
     RequestSettings,
 
+    /// Set the device lights.
+    SetLights(MobileLightStateDto),
+
     /// Sound a horn or alert.
     SoundHorn,
+}
+
+/// Mobile DTO light state.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Enum)]
+pub enum MobileLightStateDto {
+    /// Lights off.
+    Off,
+
+    /// Lights on.
+    On,
+}
+
+/// What the Rust protocol session knows about the current light command.
+///
+/// `Requested` means the session accepted the command for transport; it does
+/// not assert controller readback or delivery.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Enum)]
+pub enum MobileLightCommandStateDto {
+    /// No accepted request is associated with the current link.
+    Unknown,
+
+    /// A light request was accepted for transport.
+    Requested(MobileLightStateDto),
+}
+
+impl From<MobileLightStateDto> for LightStateDto {
+    fn from(state: MobileLightStateDto) -> Self {
+        match state {
+            MobileLightStateDto::Off => Self::Off,
+            MobileLightStateDto::On => Self::On,
+        }
+    }
+}
+
+impl From<LightCommandState> for MobileLightCommandStateDto {
+    fn from(state: LightCommandState) -> Self {
+        match state {
+            LightCommandState::Unknown => Self::Unknown,
+            LightCommandState::Requested(requested) => Self::Requested(match requested.state() {
+                cutout_core::LightState::Off => MobileLightStateDto::Off,
+                cutout_core::LightState::On => MobileLightStateDto::On,
+            }),
+        }
+    }
 }
 
 /// Mobile DTO input kind.
@@ -10795,6 +10843,11 @@ impl AeroReadOnlySession {
     pub fn diagnostics(&self) -> MobileParserDiagnosticsDto {
         self.lock_inner().diagnostics().into()
     }
+
+    /// Returns the Rust-owned status of the current light request.
+    pub fn light_command_state(&self) -> MobileLightCommandStateDto {
+        self.lock_inner().light_command_state().into()
+    }
 }
 
 impl AeroReadOnlySession {
@@ -10856,6 +10909,7 @@ impl From<MobileCommandDto> for DeviceCommandDto {
             MobileCommandDto::RequestDiagnostics => Self::RequestDiagnostics,
             MobileCommandDto::RequestFaultHistory => Self::RequestFaultHistory,
             MobileCommandDto::RequestSettings => Self::RequestSettings,
+            MobileCommandDto::SetLights(state) => Self::SetLights(state.into()),
             MobileCommandDto::SoundHorn => Self::SoundHorn,
         }
     }
@@ -12126,6 +12180,11 @@ impl FalconReadOnlySession {
     /// Returns accumulated parser diagnostics as an owned DTO.
     pub fn diagnostics(&self) -> MobileParserDiagnosticsDto {
         self.lock_inner().diagnostics().into()
+    }
+
+    /// Returns the Rust-owned status of the current light request.
+    pub fn light_command_state(&self) -> MobileLightCommandStateDto {
+        self.lock_inner().light_command_state().into()
     }
 }
 
@@ -14979,6 +15038,41 @@ mod tests {
             result,
             Err(MobileSessionConstructorError::UnsupportedFalconProfile)
         ));
+    }
+
+    #[test]
+    fn euc_wrappers_expose_typed_headlight_writes() {
+        let aero = AeroReadOnlySession::new();
+        let falcon = FalconReadOnlySession::new().expect("default profile should construct");
+
+        let command_input = |state| MobileSessionInputDto {
+            kind: MobileSessionInputKindDto::Command,
+            monotonic_ms: ms(0),
+            max_write_len: None,
+            channel: Vec::new(),
+            bytes: Vec::new(),
+            command: Some(MobileCommandDto::SetLights(state)),
+        };
+
+        let aero_result = aero.ingest_checked(command_input(MobileLightStateDto::On));
+        let falcon_result = falcon.ingest_checked(command_input(MobileLightStateDto::Off));
+
+        assert_eq!(aero_result.error, None);
+        assert_eq!(
+            aero.light_command_state(),
+            MobileLightCommandStateDto::Requested(MobileLightStateDto::On)
+        );
+        assert!(aero_result.outputs.iter().any(|output| {
+            output.kind == MobileSessionOutputKindDto::Write && output.bytes == b"SetLightON"
+        }));
+        assert_eq!(falcon_result.error, None);
+        assert_eq!(
+            falcon.light_command_state(),
+            MobileLightCommandStateDto::Requested(MobileLightStateDto::Off)
+        );
+        assert!(falcon_result.outputs.iter().any(|output| {
+            output.kind == MobileSessionOutputKindDto::Write && output.bytes == b"E"
+        }));
     }
 
     #[test]

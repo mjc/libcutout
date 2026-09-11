@@ -1,16 +1,16 @@
 use cutout_core::{
     Capabilities, ControlRefusal, ControlRefusalDto, ControlRefusalReason, DeviceCommand,
-    HostSession, ParserDiagnosticsDto, SessionEventDto, SessionInputDto, SessionOutputDto,
-    TelemetrySnapshotDto,
+    HostSession, LightCommandState, ParserDiagnosticsDto, SessionEventDto, SessionInputDto,
+    SessionOutputDto, TelemetrySnapshotDto,
 };
 
 use crate::{
-    BegodeFalconModel, NosfetAeroModel, ReadOnlySession, VescBoardProfile, VescGenericModel,
-    VescNotificationDecoder,
+    BegodeFalconModel, BenignControlSession, NosfetAeroModel, ReadOnlySession, VescBoardProfile,
+    VescGenericModel, VescNotificationDecoder,
 };
 
-type AeroReadOnlyHost = HostSession<ReadOnlySession<NosfetAeroModel, false>>;
-type FalconReadOnlyHost = HostSession<ReadOnlySession<BegodeFalconModel, true>>;
+type AeroReadOnlyHost = HostSession<BenignControlSession<NosfetAeroModel, false>>;
+type FalconReadOnlyHost = HostSession<BenignControlSession<BegodeFalconModel, true>>;
 type VescReadOnlyHost = HostSession<ReadOnlySession<VescGenericModel, true>>;
 
 /// Owned result of one concrete mobile session step.
@@ -49,18 +49,18 @@ pub enum ConcreteFalconProfileDto {
     Unsupported,
 }
 
-/// Concrete mobile-binding read-only session wrapper for NOSFET Aero.
+/// Concrete mobile-binding session wrapper for NOSFET Aero with read-only telemetry and benign light control.
 #[derive(Clone, Debug)]
 pub struct ConcreteAeroReadOnlySession {
     host: AeroReadOnlyHost,
 }
 
 impl ConcreteAeroReadOnlySession {
-    /// Creates a read-only session wrapper.
+    /// Creates a session wrapper with read-only telemetry and benign light control.
     #[must_use]
     pub fn new() -> Self {
         Self {
-            host: HostSession::new(ReadOnlySession::<NosfetAeroModel, false>::default()),
+            host: HostSession::new(BenignControlSession::<NosfetAeroModel, false>::default()),
         }
     }
 
@@ -76,7 +76,7 @@ impl ConcreteAeroReadOnlySession {
         checked_drain_outputs(
             &mut self.host,
             input,
-            ReadOnlySession::<NosfetAeroModel, false>::capabilities(),
+            BenignControlSession::<NosfetAeroModel, false>::capabilities(),
         )
     }
 
@@ -97,6 +97,12 @@ impl ConcreteAeroReadOnlySession {
     pub fn diagnostics(&self) -> ParserDiagnosticsDto {
         self.host.diagnostics().into()
     }
+
+    /// Returns the last accepted light request for the current transport link.
+    #[must_use]
+    pub const fn light_command_state(&self) -> LightCommandState {
+        self.host.protocol_session().light_command_state()
+    }
 }
 
 impl Default for ConcreteAeroReadOnlySession {
@@ -105,18 +111,18 @@ impl Default for ConcreteAeroReadOnlySession {
     }
 }
 
-/// Concrete mobile-binding read-only session wrapper for Begode Falcon.
+/// Concrete mobile-binding session wrapper for Begode Falcon with read-only telemetry and benign light control.
 #[derive(Clone, Debug)]
 pub struct ConcreteFalconReadOnlySession {
     host: FalconReadOnlyHost,
 }
 
 impl ConcreteFalconReadOnlySession {
-    /// Creates a read-only session wrapper.
+    /// Creates a session wrapper with read-only telemetry and benign light control.
     #[must_use]
     pub fn new() -> Self {
         Self {
-            host: HostSession::new(ReadOnlySession::<BegodeFalconModel, true>::default()),
+            host: HostSession::new(BenignControlSession::<BegodeFalconModel, true>::default()),
         }
     }
 
@@ -147,7 +153,7 @@ impl ConcreteFalconReadOnlySession {
         checked_drain_outputs(
             &mut self.host,
             input,
-            ReadOnlySession::<BegodeFalconModel, true>::capabilities(),
+            BenignControlSession::<BegodeFalconModel, true>::capabilities(),
         )
     }
 
@@ -167,6 +173,12 @@ impl ConcreteFalconReadOnlySession {
     #[must_use]
     pub fn diagnostics(&self) -> ParserDiagnosticsDto {
         self.host.diagnostics().into()
+    }
+
+    /// Returns the last accepted light request for the current transport link.
+    #[must_use]
+    pub const fn light_command_state(&self) -> LightCommandState {
+        self.host.protocol_session().light_command_state()
     }
 }
 
@@ -242,19 +254,19 @@ impl Default for VescReadOnlySession {
     }
 }
 
-/// Creates a NOSFET Aero read-only session wrapper.
+/// Creates a NOSFET Aero session wrapper with read-only telemetry and benign light control.
 #[must_use]
 pub fn new_nosfet_aero_read_only_session() -> ConcreteAeroReadOnlySession {
     ConcreteAeroReadOnlySession {
-        host: HostSession::new(ReadOnlySession::<NosfetAeroModel, false>::default()),
+        host: HostSession::new(BenignControlSession::<NosfetAeroModel, false>::default()),
     }
 }
 
-/// Creates a Begode Falcon read-only session wrapper.
+/// Creates a Begode Falcon session wrapper with read-only telemetry and benign light control.
 #[must_use]
 pub fn new_begode_falcon_read_only_session() -> ConcreteFalconReadOnlySession {
     ConcreteFalconReadOnlySession {
-        host: HostSession::new(ReadOnlySession::<BegodeFalconModel, true>::default()),
+        host: HostSession::new(BenignControlSession::<BegodeFalconModel, true>::default()),
     }
 }
 
@@ -401,6 +413,38 @@ mod tests {
             output,
             SessionOutputDto::Transport(TransportActionDto::Write { channel, bytes, .. })
                 if *channel == BEGODE_DATA_CHANNEL.as_bytes() && bytes == b"N"
+        )));
+    }
+
+    #[test]
+    fn concrete_aero_session_maps_set_lights_to_control_write() {
+        let mut session = new_nosfet_aero_read_only_session();
+
+        let result = session.ingest_checked(&SessionInputDto::Command(
+            DeviceCommandDto::SetLights(cutout_core::LightStateDto::On),
+        ));
+
+        assert_eq!(result.error, None);
+        assert!(result.outputs.iter().any(|output| matches!(
+            output,
+            SessionOutputDto::Transport(TransportActionDto::Write { channel, bytes, .. })
+                if *channel == VETERAN_DATA_CHANNEL.as_bytes() && bytes == b"SetLightON"
+        )));
+    }
+
+    #[test]
+    fn concrete_falcon_session_maps_set_lights_to_control_write() {
+        let mut session = new_begode_falcon_read_only_session();
+
+        let result = session.ingest_checked(&SessionInputDto::Command(
+            DeviceCommandDto::SetLights(cutout_core::LightStateDto::Off),
+        ));
+
+        assert_eq!(result.error, None);
+        assert!(result.outputs.iter().any(|output| matches!(
+            output,
+            SessionOutputDto::Transport(TransportActionDto::Write { channel, bytes, .. })
+                if *channel == BEGODE_DATA_CHANNEL.as_bytes() && bytes == b"E"
         )));
     }
 

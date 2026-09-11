@@ -714,6 +714,21 @@ public final class CutoutSessionCore: NSObject {
         onBleQueue { disconnectAndScanOnBleQueue() }
     }
 
+    @discardableResult
+    public func setLights(_ state: LightState) -> LightCommandStatus? {
+        onBleQueue {
+            guard phase == .live, let liveOwner else { return nil }
+            do {
+                try liveOwner.handleCommand(.setLights(state), at: clock.now())
+                guard phase == .live else { return nil }
+                return liveOwner.lightCommandStatus
+            } catch {
+                record("set_lights_error=\(error)")
+                return nil
+            }
+        }
+    }
+
     /// Configures the Rust-owned charge estimate profile for the active or next connection.
     public func configureChargeEstimate(profile: ChargeEstimateProfile) {
         onBleQueue {
@@ -972,6 +987,7 @@ public final class CutoutSessionCore: NSObject {
         chargeEstimateProfile = nil
         vescBoardProfile = nil
         liveOwner = nil
+        pendingWithoutResponseWrites.removeAll()
         deviceDetectionSession.reset()
         clearPendingBegodeProbeResponses()
         subscribedCharacteristics.removeAll()
@@ -2554,13 +2570,14 @@ extension CutoutSessionCore: CoreBluetoothOperationSink {
         ) else {
             return
         }
-        guard peripheral.canSendWriteWithoutResponse else {
+        guard pendingWithoutResponseWrites.isEmpty, peripheral.canSendWriteWithoutResponse else {
             if pendingWithoutResponseWrites.count >= Self.maximumPendingWithoutResponseWrites {
                 pendingWithoutResponseWrites.removeFirst()
                 record("write_without_response_dropped=queue_full_oldest")
             }
             pendingWithoutResponseWrites.append((characteristic, bytes))
             record("write_without_response_queued=\(channel.coreBluetoothUuid.uuidString) bytes=\(bytes.count)")
+            flushPendingWithoutResponseWrites()
             return
         }
         peripheral.writeValue(bytes, for: characteristic, type: .withoutResponse)

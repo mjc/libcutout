@@ -250,6 +250,39 @@ pub enum LightState {
     On,
 }
 
+/// A light state accepted for submission by the protocol session.
+///
+/// This is intentionally distinct from device readback: a write accepted by
+/// the session may still be queued or sent without a controller response.
+#[repr(transparent)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct RequestedLightState(LightState);
+
+impl RequestedLightState {
+    /// Creates a requested light state from the submitted value.
+    #[must_use]
+    pub const fn new(state: LightState) -> Self {
+        Self(state)
+    }
+
+    /// Returns the submitted light state.
+    #[must_use]
+    pub const fn state(self) -> LightState {
+        self.0
+    }
+}
+
+/// What the session knows about its most recent light command.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum LightCommandState {
+    /// No accepted light request is associated with the current link.
+    #[default]
+    Unknown,
+
+    /// A command was accepted for transport, without asserting device readback.
+    Requested(RequestedLightState),
+}
+
 /// A 24-bit RGB color for a standalone lighting accessory.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct RgbColor {
@@ -2150,6 +2183,14 @@ impl Capabilities {
     #[must_use]
     pub const fn supports_command_kind(self, kind: CommandKind) -> bool {
         self.supported_commands.contains(kind)
+    }
+
+    /// Combines two capability sets.
+    #[must_use]
+    pub const fn union(self, other: Self) -> Self {
+        Self {
+            supported_commands: CommandSet(self.supported_commands.0 | other.supported_commands.0),
+        }
     }
 
     /// Checks whether a command is supported and returns metadata for it.
@@ -7289,6 +7330,12 @@ where
         self.state.as_ref()
     }
 
+    /// Returns the wrapped protocol session.
+    #[must_use]
+    pub const fn protocol_session(&self) -> &S {
+        &self.session
+    }
+
     fn handle(&mut self, input: SessionInput<'_>) {
         let start = self.output.len();
         self.session.handle(input, &mut self.output);
@@ -10290,6 +10337,19 @@ mod tests {
                 crate::CommandKind::SoundHorn
             ))
         );
+    }
+
+    #[test]
+    fn capability_union_combines_read_and_control_commands() {
+        let read =
+            crate::Capabilities::from_supported_commands([crate::CommandKind::RequestTelemetry]);
+        let control = crate::Capabilities::from_supported_commands([crate::CommandKind::SetLights]);
+
+        let combined = read.union(control);
+
+        assert!(combined.supports_command_kind(crate::CommandKind::RequestTelemetry));
+        assert!(combined.supports_command_kind(crate::CommandKind::SetLights));
+        assert!(!combined.supports_command_kind(crate::CommandKind::SoundHorn));
     }
 
     #[test]

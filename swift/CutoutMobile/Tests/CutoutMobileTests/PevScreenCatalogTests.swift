@@ -235,6 +235,10 @@ final class PevScreenCatalogTests: XCTestCase {
         XCTAssertTrue(PevRideTabs.vescRideTabs(selected: .vescRide)[0].isSelected)
         XCTAssertFalse(PevRideTabs.vescRideTabs(selected: .vescDebug)[0].isSelected)
         XCTAssertTrue(PevRideTabs.vescRideTabs(selected: .vescDebug)[1].isSelected)
+
+        let explicitRide = PevRideTabs.eucRideTabs(selected: .eucRide, isTuneSelected: true)
+        XCTAssertTrue(explicitRide[0].isSelected)
+        XCTAssertFalse(explicitRide[3].isSelected)
     }
 
     func testTabIdentityDoesNotDependOnVisibleTitle() {

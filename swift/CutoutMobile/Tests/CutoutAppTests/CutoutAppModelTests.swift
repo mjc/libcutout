@@ -694,6 +694,56 @@ final class CutoutAppModelTests: XCTestCase {
     }
 
     @MainActor
+    func testHeadlightToggleSendsOnlyWhileConnected() {
+        let driver = SessionDriverSpy(rows: [])
+        let model = CutoutAppModel(core: driver)
+
+        driver.isLive = true
+        XCTAssertFalse(model.setHeadlight(.on))
+        XCTAssertEqual(model.headlightCommandStatus, .unknown)
+        XCTAssertEqual(driver.headlightStates, [])
+
+        driver.headlightWriteSucceeds = true
+
+        XCTAssertTrue(model.setHeadlight(.on))
+        XCTAssertEqual(model.headlightCommandStatus, .requested(.on))
+        XCTAssertEqual(driver.headlightStates, [.on])
+
+        model.disconnectTransport()
+        XCTAssertEqual(model.headlightCommandStatus, .unknown)
+    }
+
+    @MainActor
+    func testHeadlightCommandStatusIsClearedDuringReconnect() {
+        let row = DevicePickerRow(
+            id: "euc-1234",
+            title: "EUC",
+            subtitle: "Electric unicycle",
+            detail: "Device 1234",
+            state: DevicePickerRowState(action: .use),
+            symbolName: "circle.hexagongrid.circle",
+            connectionRoute: .electricUnicycle
+        )
+        let driver = SessionDriverSpy(rows: [row])
+        let model = CutoutAppModel(core: driver)
+
+        model.start()
+        XCTAssertTrue(model.pair(platformIdentifier: row.id))
+        driver.onPhaseChange?(.subscribing)
+        driver.onPhaseChange?(.live)
+        driver.isLive = true
+        XCTAssertTrue(model.setHeadlight(.on))
+        XCTAssertEqual(model.headlightCommandStatus, .requested(.on))
+
+        driver.onPhaseChange?(.discoveringServices)
+        XCTAssertEqual(model.headlightCommandStatus, .unknown)
+
+        driver.onPhaseChange?(.subscribing)
+        driver.onPhaseChange?(.live)
+        XCTAssertEqual(model.headlightCommandStatus, .unknown)
+    }
+
+    @MainActor
     func testAvailableBmsRouteDoesNotObserveRideTelemetry() {
         let driver = SessionDriverSpy(rows: [])
         let model = CutoutAppModel(core: driver)
@@ -3326,6 +3376,9 @@ private final class SessionDriverSpy: CutoutSessionDriving {
     private(set) var flushCaptureCount = 0
     private(set) var disconnectCount = 0
     private(set) var resetRideMapLocationAdmissionCount = 0
+    private(set) var headlightStates = [LightState]()
+    var headlightWriteSucceeds = false
+    var isLive = false
 
     init(
         rows: [DevicePickerRow],
@@ -3399,6 +3452,11 @@ private final class SessionDriverSpy: CutoutSessionDriving {
         resetRideMapLocationAdmissionCount += 1
     }
 
+    func setLights(_ state: LightState) -> LightCommandStatus? {
+        guard isLive, headlightWriteSucceeds else { return nil }
+        headlightStates.append(state)
+        return .requested(state)
+    }
     func now() -> MonotonicMilliseconds {
         MonotonicMilliseconds(0)
     }

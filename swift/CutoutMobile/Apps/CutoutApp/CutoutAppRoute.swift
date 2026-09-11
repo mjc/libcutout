@@ -46,6 +46,7 @@ enum CutoutAppRoute: Hashable {
     case devicePicker
     case eucRide
     case eucPack(EucPackScreen)
+    case eucTune
     case vescRide
     case vescDebug
     case capture
@@ -86,6 +87,8 @@ enum CutoutAppRoute: Hashable {
             route(for: screenID)
         case .eucPack:
             .eucPack(.root)
+        case .eucTune:
+            .eucTune
         case .vescRide:
             .vescRide
         case .rideMap:
@@ -121,6 +124,8 @@ enum CutoutAppRoute: Hashable {
             PevRideTabs.eucRideTabs(selected: .eucRide)
         case .eucPack(let screen):
             PevRideTabs.eucRideTabs(selected: screen.screenID ?? .bmsOverview)
+        case .eucTune:
+            PevRideTabs.eucRideTabs(isTuneSelected: true)
         case .vescRide:
             PevRideTabs.vescRideTabs(selected: .vescRide)
         case .vescDebug:
