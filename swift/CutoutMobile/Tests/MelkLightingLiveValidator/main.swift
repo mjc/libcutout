@@ -13,10 +13,9 @@ struct MelkLightingLiveValidator {
         let preferredPlatformIdentifier = arguments.dropFirst().first
         let session = MelkLightingPeripheralSession()
         let startedAt = Date()
-        var ready = false
         var advertisedIdentifiers = Set<String>()
-        var finished = false
         let input = InputBuffer()
+        let validationState = ValidationState()
 
         session.onCandidate = { candidate in
             print("candidate name=\(candidate.name ?? "unknown") id=\(candidate.id) rssi=\(candidate.rssi); enter `select \(candidate.id)`")
@@ -31,8 +30,7 @@ struct MelkLightingLiveValidator {
         }
         session.onStateChange = { state in
             print("state=\(state)")
-            if case .ready = state { ready = true }
-            if case .failed = state { finished = true }
+            validationState.apply(state)
         }
         session.onNotification = { data in
             print("notification=\(data.map { String(format: "%02x", $0) }.joined(separator: " "))")
@@ -51,26 +49,31 @@ struct MelkLightingLiveValidator {
             print("target=melk id=\(preferredPlatformIdentifier)")
         }
         session.start(preferredPlatformIdentifier: preferredPlatformIdentifier)
-        while !ready, !finished, Date().timeIntervalSince(startedAt) < timeout {
+        while true {
+            let snapshot = validationState.snapshot()
+            guard !snapshot.ready, !snapshot.finished,
+                  Date().timeIntervalSince(startedAt) < timeout else { break }
             for line in input.drain() {
-                if handle(line, session: session) { finished = true }
+                if handle(line, session: session) { validationState.finish() }
             }
             RunLoop.current.run(mode: .default, before: Date(timeIntervalSinceNow: 0.1))
         }
-        if ready {
+        let discoveryResult = validationState.snapshot()
+        if discoveryResult.ready, !discoveryResult.failed {
             print("ready: enter commands (help for list, quit to disconnect)")
-            while !finished {
+            while !validationState.snapshot().finished {
                 for line in input.drain() {
-                    if handle(line, session: session) { finished = true }
+                    if handle(line, session: session) { validationState.finish() }
                 }
                 RunLoop.current.run(mode: .default, before: Date(timeIntervalSinceNow: 0.1))
             }
         } else {
-            print("validation=timeout")
+            print(discoveryResult.failed ? "validation=failed" : "validation=timeout")
             session.stop()
             exit(EXIT_FAILURE)
         }
         session.stop()
+        if validationState.snapshot().failed { exit(EXIT_FAILURE) }
     }
 
     private static let verifiedEffectIDs = Set(mobileMelkLightingCapabilities().verifiedEffectIds)
@@ -154,6 +157,35 @@ private final class InputBuffer: @unchecked Sendable {
         let drained = lines
         lines.removeAll(keepingCapacity: true)
         return drained
+    }
+}
+
+private final class ValidationState: @unchecked Sendable {
+    private let lock = NSLock()
+    private var ready = false
+    private var failed = false
+    private var finished = false
+
+    func apply(_ state: MelkLightingPeripheralState) {
+        lock.lock()
+        defer { lock.unlock() }
+        if case .ready = state { ready = true }
+        if case .failed = state {
+            failed = true
+            finished = true
+        }
+    }
+
+    func finish() {
+        lock.lock()
+        finished = true
+        lock.unlock()
+    }
+
+    func snapshot() -> (ready: Bool, failed: Bool, finished: Bool) {
+        lock.lock()
+        defer { lock.unlock() }
+        return (ready, failed, finished)
     }
 }
 #else

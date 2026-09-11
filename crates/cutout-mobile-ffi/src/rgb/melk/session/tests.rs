@@ -110,3 +110,68 @@ fn reducer_rejects_malformed_remembered_identity_before_scanning() {
     );
     assert!(core.drain_actions().is_empty());
 }
+
+#[test]
+fn restarting_discards_output_from_the_previous_session() {
+    let core = MobileMelkLightingSessionCore::new();
+    core.start(None);
+    core.handle(MobileMelkLightingSessionEventDto::BluetoothState {
+        powered_on: true,
+        state_code: 5,
+    });
+    core.handle(MobileMelkLightingSessionEventDto::Discovered {
+        name: Some("MELK-OC21  6A".into()),
+        platform_identifier: ID.into(),
+        rssi: -60,
+    });
+    core.handle(MobileMelkLightingSessionEventDto::Notification {
+        characteristic: cutout_protocols::MELK_NOTIFY_CHANNEL.as_uuid().into(),
+        bytes: vec![1],
+    });
+
+    core.stop();
+    core.start(None);
+
+    assert!(core.drain_actions().is_empty());
+    assert!(core.drain_records().is_empty());
+    assert!(core.drain_candidates().is_empty());
+    assert!(core.drain_notifications().is_empty());
+}
+
+#[test]
+fn connection_attempt_timeout_cancels_and_returns_to_scanning() {
+    let core = MobileMelkLightingSessionCore::new();
+    core.start(Some(ID.into()));
+    core.handle(MobileMelkLightingSessionEventDto::BluetoothState {
+        powered_on: true,
+        state_code: 5,
+    });
+    core.handle(MobileMelkLightingSessionEventDto::Discovered {
+        name: Some("MELK-OC21  6A".into()),
+        platform_identifier: ID.into(),
+        rssi: -60,
+    });
+    core.drain_actions();
+
+    core.handle(MobileMelkLightingSessionEventDto::TimerFired {
+        timer: MobileMelkLightingTimerDto::ConnectionAttempt,
+        can_send: false,
+    });
+
+    assert_eq!(
+        core.snapshot().state,
+        MobileMelkLightingSessionStateDto::Scanning
+    );
+    assert_eq!(core.snapshot().platform_identifier, None);
+    let actions = core.drain_actions();
+    assert!(actions.iter().any(|action| matches!(
+        action,
+        MobileMelkLightingSessionActionDto::CancelConnect { platform_identifier }
+            if platform_identifier == ID
+    )));
+    assert!(
+        actions
+            .iter()
+            .any(|action| matches!(action, MobileMelkLightingSessionActionDto::Scan))
+    );
+}

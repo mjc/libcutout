@@ -66,6 +66,10 @@ impl Default for SessionReducer {
 
 impl SessionReducer {
     pub(crate) fn start(&mut self, preferred_identifier: Option<String>) {
+        self.actions.clear();
+        self.records.clear();
+        self.notifications.clear();
+        self.candidates_out.clear();
         self.preferred_identifier = preferred_identifier.clone();
         self.invalid_preferred_identifier = preferred_identifier
             .as_deref()
@@ -75,6 +79,8 @@ impl SessionReducer {
         self.candidates.clear();
         self.selected_identifier = None;
         self.selected_name = None;
+        self.timer = None;
+        self.command_status = 0;
         self.transition(MobileMelkLightingSessionStateDto::Idle);
     }
 
@@ -234,6 +240,21 @@ impl SessionReducer {
             self.reconnect_attempt
         ));
         self.arm(MobileMelkLightingTimerDto::Reconnect, delay);
+    }
+
+    fn connection_timed_out(&mut self) {
+        self.timer = None;
+        if let Some(identifier) = self.selected_identifier.take() {
+            self.actions
+                .push_back(MobileMelkLightingSessionActionDto::CancelConnect {
+                    platform_identifier: identifier,
+                });
+        }
+        self.selected_name = None;
+        self.transition(MobileMelkLightingSessionStateDto::Scanning);
+        self.actions
+            .push_back(MobileMelkLightingSessionActionDto::Scan);
+        self.record("connect_timeout");
     }
 
     pub(crate) fn queue_writes<I>(&mut self, writes: I) -> bool
@@ -451,17 +472,7 @@ impl SessionReducer {
                     self.timer,
                     Some(MobileMelkLightingTimerDto::ConnectionAttempt)
                 ) {
-                    self.timer = None;
-                    if let Some(identifier) = self.selected_identifier.clone() {
-                        self.actions
-                            .push_back(MobileMelkLightingSessionActionDto::CancelConnect {
-                                platform_identifier: identifier,
-                            });
-                    }
-                    self.transition(MobileMelkLightingSessionStateDto::Scanning);
-                    self.actions
-                        .push_back(MobileMelkLightingSessionActionDto::Scan);
-                    self.record("connect_timeout");
+                    self.connection_timed_out();
                 }
             }
             MobileMelkLightingSessionEventDto::ServicesDiscovered {
@@ -579,16 +590,20 @@ impl SessionReducer {
                 if self.timer != Some(timer) {
                     return;
                 }
-                self.timer = None;
                 match timer {
-                    MobileMelkLightingTimerDto::ConnectionAttempt => {
-                        self.handle(MobileMelkLightingSessionEventDto::ConnectTimeout);
+                    MobileMelkLightingTimerDto::ConnectionAttempt => self.connection_timed_out(),
+                    MobileMelkLightingTimerDto::Reconnect => {
+                        self.timer = None;
+                        self.connect_selected();
                     }
-                    MobileMelkLightingTimerDto::Reconnect => self.connect_selected(),
                     MobileMelkLightingTimerDto::Initialization => {
+                        self.timer = None;
                         self.drain_initialization(can_send)
                     }
-                    MobileMelkLightingTimerDto::WriteDrain => self.drain_writes(can_send),
+                    MobileMelkLightingTimerDto::WriteDrain => {
+                        self.timer = None;
+                        self.drain_writes(can_send);
+                    }
                 }
             }
             MobileMelkLightingSessionEventDto::Disconnected { reason, powered_on } => {

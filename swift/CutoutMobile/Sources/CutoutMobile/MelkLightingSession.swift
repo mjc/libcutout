@@ -81,6 +81,10 @@ public final class MelkLightingPeripheralSession: NSObject, CBCentralManagerDele
     private var discoveredPeripherals: [String: CBPeripheral] = [:]
     private var timerTask: DispatchWorkItem?
     private var preferredPlatformIdentifier: String?
+    private static let melkServiceUuid = MobileBluetoothUuid(
+        mostSignificantBits: 0x0000_fff0_0000_1000,
+        leastSignificantBits: 0x8000_0080_5f9b_34fb
+    )
 
     public private(set) var connectionState: MelkLightingPeripheralState = .idle
     public private(set) var peripheralName: String?
@@ -301,17 +305,36 @@ public final class MelkLightingPeripheralSession: NSObject, CBCentralManagerDele
     public func centralManager(_ central: CBCentralManager, willRestoreState dict: [String: Any]) {
         onQueue {
             guard central === self.central,
-                  let restored = dict[CBCentralManagerRestoredStatePeripheralsKey] as? [CBPeripheral],
-                  let restoredPeripheral = restored.first else { return }
-            peripheral = restoredPeripheral
-            peripheralName = restoredPeripheral.name
-            peripheralIdentifier = restoredPeripheral.identifier.uuidString
-            restoredPeripheral.delegate = self
+                  let restored = dict[CBCentralManagerRestoredStatePeripheralsKey] as? [CBPeripheral]
+            else { return }
+            let preferred = preferredPlatformIdentifier.flatMap(UUID.init(uuidString:))
+            let restoredPeripheral = preferred.flatMap { identifier in
+                restored.first(where: { $0.identifier == identifier })
+            } ?? (preferredPlatformIdentifier == nil ? restored.first : nil)
+            guard let restoredPeripheral else {
+                peripheral = nil
+                peripheralName = nil
+                peripheralIdentifier = nil
+                core.handle(event: .restoreUnavailable)
+                syncCore()
+                return
+            }
             core.handle(event: .restored(
                 name: restoredPeripheral.name,
                 platformIdentifier: restoredPeripheral.identifier.uuidString,
                 connected: restoredPeripheral.state == .connected
             ))
+            guard core.snapshot().platformIdentifier == restoredPeripheral.identifier.uuidString else {
+                peripheral = nil
+                peripheralName = nil
+                peripheralIdentifier = nil
+                syncCore()
+                return
+            }
+            peripheral = restoredPeripheral
+            peripheralName = restoredPeripheral.name
+            peripheralIdentifier = restoredPeripheral.identifier.uuidString
+            restoredPeripheral.delegate = self
             emitIdentity(rssi: nil)
             syncCore()
         }
@@ -438,7 +461,15 @@ public final class MelkLightingPeripheralSession: NSObject, CBCentralManagerDele
                 central.connect(candidate)
                 emitIdentity(rssi: nil)
             case let .cancelConnect(identifier):
-                if let candidate = discoveredPeripherals[identifier] { central.cancelPeripheralConnection(candidate) }
+                if let activePeripheral = peripheral,
+                   activePeripheral.identifier.uuidString == identifier {
+                    central.cancelPeripheralConnection(activePeripheral)
+                    peripheral = nil
+                    peripheralName = nil
+                    peripheralIdentifier = nil
+                } else if let candidate = discoveredPeripherals[identifier] {
+                    central.cancelPeripheralConnection(candidate)
+                }
             case let .discoverServices(identifier, service):
                 guard peripheral?.identifier.uuidString == identifier else { continue }
                 peripheral?.discoverServices([service.coreBluetoothUuid])
@@ -447,18 +478,27 @@ public final class MelkLightingPeripheralSession: NSObject, CBCentralManagerDele
                       let gattService = peripheral?.services?.first(where: { $0.uuid == service.coreBluetoothUuid }) else { continue }
                 peripheral?.discoverCharacteristics(nil, for: gattService)
             case let .subscribe(identifier, characteristic):
-                guard peripheral?.identifier.uuidString == identifier,
-                      let target = peripheral?.services?.flatMap({ $0.characteristics ?? [] }).first(where: { $0.uuid == characteristic.coreBluetoothUuid }) else { continue }
+                guard let target = melkCharacteristic(identifier, uuid: characteristic) else { continue }
                 peripheral?.setNotifyValue(true, for: target)
             case let .write(identifier, write):
-                guard peripheral?.identifier.uuidString == identifier,
-                      let targetCharacteristic = peripheral?.services?.flatMap({ $0.characteristics ?? [] }).first(where: { $0.uuid == write.characteristic.coreBluetoothUuid }),
+                guard let targetCharacteristic = melkCharacteristic(identifier, uuid: write.characteristic),
                       targetCharacteristic.properties.contains(.writeWithoutResponse) else { continue }
                 peripheral?.writeValue(Data(write.payload), for: targetCharacteristic, type: .withoutResponse)
             case let .armTimer(timer, delayMilliseconds):
                 arm(timer, delayMilliseconds: delayMilliseconds)
             }
         }
+    }
+
+    private func melkCharacteristic(
+        _ identifier: String,
+        uuid: MobileBluetoothUuid
+    ) -> CBCharacteristic? {
+        guard peripheral?.identifier.uuidString == identifier,
+              let service = peripheral?.services?.first(where: {
+                  $0.uuid == Self.melkServiceUuid.coreBluetoothUuid
+              }) else { return nil }
+        return service.characteristics?.first(where: { $0.uuid == uuid.coreBluetoothUuid })
     }
 
     private func arm(_ timer: MobileMelkLightingTimerDto, delayMilliseconds: UInt64) {
