@@ -92,6 +92,13 @@ pub fn mobile_melk_lighting_capabilities() -> MobileMelkLightingCapabilitiesDto 
     }
 }
 
+/// Returns the Rust-owned persisted MELK lighting profile version.
+#[uniffi::export]
+#[must_use]
+pub fn mobile_melk_lighting_profile_version() -> u16 {
+    cutout_core::rgb_lighting_profile_version()
+}
+
 /// Invalid input presented to the MELK lighting boundary.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, thiserror::Error, uniffi::Error)]
 pub enum MobileMelkLightingError {

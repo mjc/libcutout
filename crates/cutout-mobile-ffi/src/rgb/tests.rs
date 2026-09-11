@@ -5,7 +5,7 @@ use super::{
     MobileMelkLightingWriteModeDto, MobileRgbLightingAccessoryRecord,
     MobileRgbLightingConfirmationStateDto, MobileRgbLightingConnectionStateDto,
     MobileRgbLightingProfileKindDto, MobileRgbLightingRecordError,
-    mobile_melk_lighting_capabilities,
+    mobile_melk_lighting_capabilities, mobile_melk_lighting_profile_version,
 };
 use cutout_protocols::{MELK_NOTIFY_CHANNEL, MELK_WRITE_CHANNEL};
 
@@ -41,6 +41,11 @@ fn mobile_capabilities_match_the_melk_evidence_record() {
     assert!(!capabilities.schedules);
     assert!(!capabilities.addressable_zones);
     assert!(!capabilities.scenes);
+}
+
+#[test]
+fn profile_version_is_owned_by_rust() {
+    assert_eq!(mobile_melk_lighting_profile_version(), 1);
 }
 
 #[test]

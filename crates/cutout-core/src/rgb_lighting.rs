@@ -111,6 +111,12 @@ pub struct RgbLightingAccessoryRecord {
 
 const RGB_LIGHTING_PROFILE_VERSION: u16 = 1;
 
+/// Returns the current persisted RGB lighting profile version.
+#[must_use]
+pub const fn rgb_lighting_profile_version() -> u16 {
+    RGB_LIGHTING_PROFILE_VERSION
+}
+
 impl RgbLightingAccessoryRecord {
     /// Creates a record for a verified profile and platform-scoped identity.
     ///

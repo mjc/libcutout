@@ -1,11 +1,33 @@
 import CutoutMobileFFI
 import Foundation
 
+/// The only state shape permitted to cross the persistence-to-restore boundary.
+public struct LightingAccessoryRestoreCandidate: Equatable, Sendable {
+    public let platformIdentifier: String
+    public let requestedState: MobileMelkLightingRestoreStateDto
+
+    public init(platformIdentifier: String, requestedState: MobileMelkLightingRestoreStateDto) {
+        self.platformIdentifier = platformIdentifier
+        self.requestedState = requestedState
+    }
+}
+
 /// Rust-backed persistence for the selected Aero-installed MELK controller.
 ///
 /// The store owns the versioned record and its one-time migration boundary. UI models only
 /// coordinate transport events and render the typed values exposed here.
 public final class LightingAccessoryPersistence {
+    private struct Envelope: Codable {
+        let record: Data
+        let capabilitiesFingerprint: String?
+    }
+
+    private enum LoadResult {
+        case missing
+        case valid(MobileRgbLightingAccessoryRecord, fingerprint: String?)
+        case invalid
+    }
+
     private enum Key {
         static let record = "lighting.accessory.record"
         static let capabilitiesFingerprint = "lighting.accessory.capabilitiesFingerprint"
@@ -30,12 +52,23 @@ public final class LightingAccessoryPersistence {
 
     private let defaults: UserDefaults
     private var record: MobileRgbLightingAccessoryRecord?
+    private var recordCapabilitiesFingerprint: String?
+    public private(set) var lastPersistenceError: String?
 
     public init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
-        record = Self.loadRecord(from: defaults)
-        if record == nil {
+        lastPersistenceError = nil
+        switch Self.loadRecord(from: defaults) {
+        case .missing:
+            record = nil
+            recordCapabilitiesFingerprint = nil
             migrateLegacyRecord()
+        case let .valid(record, fingerprint):
+            self.record = record
+            recordCapabilitiesFingerprint = fingerprint
+        case .invalid:
+            record = nil
+            recordCapabilitiesFingerprint = nil
         }
     }
 
@@ -49,6 +82,21 @@ public final class LightingAccessoryPersistence {
 
     public var vehicleIdentifier: String? {
         record?.vehicleIdentifier()
+    }
+
+    /// Returns a restore request only when every safety prerequisite is satisfied.
+    public func restoreCandidate() -> LightingAccessoryRestoreCandidate? {
+        guard let record,
+              let identifier = canonicalIdentifier(record.platformIdentifier()),
+              let requestedState = record.requestedState(),
+              record.restoreEnabled(),
+              isCompatibleWithCurrentProfile else {
+            return nil
+        }
+        return LightingAccessoryRestoreCandidate(
+            platformIdentifier: identifier,
+            requestedState: requestedState
+        )
     }
 
     public var requestedState: MobileMelkLightingRestoreStateDto? {
@@ -74,18 +122,21 @@ public final class LightingAccessoryPersistence {
         guard let record,
               record.profile() == .melkOc21,
               record.profileVersion() == Self.currentProfileVersion,
-              let fingerprint = defaults.string(forKey: Key.capabilitiesFingerprint) else {
+              let fingerprint = recordCapabilitiesFingerprint else {
             return false
         }
         return fingerprint == Self.currentCapabilitiesFingerprint
     }
 
-    public static let currentProfileVersion: UInt16 = 1
+    public static var currentProfileVersion: UInt16 {
+        mobileMelkLightingProfileVersion()
+    }
 
     private static var currentCapabilitiesFingerprint: String {
         let capabilities = mobileMelkLightingCapabilities()
+        let effectIds = capabilities.verifiedEffectIds.sorted()
         return [
-            capabilities.verifiedEffectIds.map(String.init).joined(separator: ","),
+            effectIds.map(String.init).joined(separator: ","),
             capabilities.controllerMicrophone ? "1" : "0",
             capabilities.schedules ? "1" : "0",
             capabilities.addressableZones ? "1" : "0",
@@ -101,10 +152,11 @@ public final class LightingAccessoryPersistence {
     /// - Returns: `true` only when a new record was created.
     @discardableResult
     public func ensureRecord(platformIdentifier: String) -> Bool {
-        guard !platformIdentifier.isEmpty else {
+        guard let platformIdentifier = canonicalIdentifier(platformIdentifier) else {
             return false
         }
-        if record?.platformIdentifier() == platformIdentifier {
+        if let existing = record?.platformIdentifier(),
+           canonicalIdentifier(existing) == platformIdentifier {
             backfillMissingCapabilitiesFingerprint()
             return false
         }
@@ -116,7 +168,7 @@ public final class LightingAccessoryPersistence {
             return false
         }
         record = newRecord
-        defaults.set(Self.currentCapabilitiesFingerprint, forKey: Key.capabilitiesFingerprint)
+        recordCapabilitiesFingerprint = Self.currentCapabilitiesFingerprint
         persist()
         return true
     }
@@ -127,10 +179,11 @@ public final class LightingAccessoryPersistence {
     private func backfillMissingCapabilitiesFingerprint() {
         guard record?.profile() == .melkOc21,
               record?.profileVersion() == Self.currentProfileVersion,
-              defaults.string(forKey: Key.capabilitiesFingerprint) == nil else {
+              recordCapabilitiesFingerprint == nil else {
             return
         }
-        defaults.set(Self.currentCapabilitiesFingerprint, forKey: Key.capabilitiesFingerprint)
+        recordCapabilitiesFingerprint = Self.currentCapabilitiesFingerprint
+        persist()
     }
 
     public func setConnection(_ state: MobileRgbLightingConnectionStateDto) {
@@ -213,9 +266,25 @@ public final class LightingAccessoryPersistence {
     }
 
 
-    private static func loadRecord(from defaults: UserDefaults) -> MobileRgbLightingAccessoryRecord? {
-        guard let data = defaults.data(forKey: Key.record) else { return nil }
-        return try? MobileRgbLightingAccessoryRecord.decode(bytes: data)
+    private static func loadRecord(from defaults: UserDefaults) -> LoadResult {
+        guard let data = defaults.data(forKey: Key.record) else { return .missing }
+        if let envelope = try? JSONDecoder().decode(Envelope.self, from: data) {
+            guard let record = try? MobileRgbLightingAccessoryRecord.decode(bytes: envelope.record) else {
+                return .invalid
+            }
+            guard canonicalIdentifier(record.platformIdentifier()) != nil else {
+                return .invalid
+            }
+            return .valid(record, fingerprint: envelope.capabilitiesFingerprint)
+        }
+        guard let record = try? MobileRgbLightingAccessoryRecord.decode(bytes: data) else {
+            return .invalid
+        }
+        guard canonicalIdentifier(record.platformIdentifier()) != nil else {
+            return .invalid
+        }
+        // Raw records predate the atomic envelope. Never trust their separate fingerprint key.
+        return .valid(record, fingerprint: nil)
     }
 
     private static func legacyByte(_ defaults: UserDefaults, key: String) -> UInt8? {
@@ -226,7 +295,8 @@ public final class LightingAccessoryPersistence {
     }
 
     private func migrateLegacyRecord() {
-        guard let identifier = defaults.string(forKey: Key.legacyPlatformIdentifier),
+        guard let rawIdentifier = defaults.string(forKey: Key.legacyPlatformIdentifier),
+              let identifier = canonicalIdentifier(rawIdentifier),
               let migrated = try? MobileRgbLightingAccessoryRecord(
                   platformIdentifier: identifier,
                   profile: .melkOc21,
@@ -254,20 +324,38 @@ public final class LightingAccessoryPersistence {
         )
         do {
             try migrated.setRequestedState(state: state)
-            try migrated.setConfirmedState(state: state)
         } catch {
             return
         }
-        migrated.setConfirmation(state: .confirmed)
+        // Legacy values are requests, not controller acknowledgement evidence.
+        migrated.setConfirmation(state: .unknown)
         migrated.setRestoreEnabled(enabled: defaults.bool(forKey: Key.legacyEnabled))
         record = migrated
-        defaults.set(Self.currentCapabilitiesFingerprint, forKey: Key.capabilitiesFingerprint)
-        persist()
-        Key.legacy.forEach(defaults.removeObject(forKey:))
+        recordCapabilitiesFingerprint = nil
+        if persist() {
+            Key.legacy.forEach(defaults.removeObject(forKey:))
+        }
     }
 
-    private func persist() {
-        guard let record, let data = try? record.encode() else { return }
-        defaults.set(data, forKey: Key.record)
+    @discardableResult
+    private func persist() -> Bool {
+        guard let record else { return false }
+        do {
+            let envelope = Envelope(
+                record: try record.encode(),
+                capabilitiesFingerprint: recordCapabilitiesFingerprint
+            )
+            defaults.set(try JSONEncoder().encode(envelope), forKey: Key.record)
+            defaults.removeObject(forKey: Key.capabilitiesFingerprint)
+            lastPersistenceError = nil
+            return true
+        } catch {
+            lastPersistenceError = String(describing: error)
+            return false
+        }
     }
+}
+
+private func canonicalIdentifier(_ identifier: String) -> String? {
+    UUID(uuidString: identifier)?.uuidString
 }
