@@ -351,10 +351,16 @@ final class LightingRouteModel {
     private var callbackGeneration = 0
     private enum PendingCommandScope: Equatable {
         case none
-        case partial
+        case power
+        case color
+        case brightness
+        case effectSpeed
+        case schedule
         case completeState
     }
     private var pendingCommandScope: PendingCommandScope = .none
+
+    private var hasPersistedAccessory: Bool { persistence.platformIdentifier != nil }
 
     init(
         session: any MelkLightingPeripheralSessionProtocol = MelkLightingPeripheralSession(),
@@ -474,31 +480,51 @@ final class LightingRouteModel {
     }
 
     func setPower(_ on: Bool) {
-        guard session.setPower(on) else {
+        var state = requestedState
+        state.powerOn = on
+        let hasBaseline = persistence.confirmedState != nil
+        let establishBaseline = hasPersistedAccessory && !hasBaseline
+        let sent: Bool
+        if establishBaseline {
+            sent = (try? session.applyState(state)) == true
+        } else {
+            sent = session.setPower(on)
+        }
+        guard sent else {
             controlError = localizedAppText("lighting.error.power_not_ready")
             return
         }
         controlError = nil
-        requestedState.powerOn = on
+        requestedState = state
         updatePersistedRequestedState()
         commandStatus = .requested
-        pendingCommandScope = .partial
+        pendingCommandScope = establishBaseline ? .completeState : .power
     }
 
     func setSolidColor(red: UInt8, green: UInt8, blue: UInt8) {
         let wasSolid = requestedPlayback == .solid
-        guard sendSolidColor(red: red, green: green, blue: blue) else {
+        var state = requestedState
+        state.playback = nil
+        state.red = red
+        state.green = green
+        state.blue = blue
+        let hasBaseline = persistence.confirmedState != nil
+        let establishBaseline = hasPersistedAccessory && !hasBaseline
+        let sent: Bool
+        if establishBaseline || !wasSolid {
+            sent = (try? session.applyState(state)) == true
+        } else {
+            sent = session.setSolidColor(red: red, green: green, blue: blue)
+        }
+        guard sent else {
             controlError = localizedAppText("lighting.error.color_not_ready")
             return
         }
         controlError = nil
-        requestedState.playback = nil
-        requestedState.red = red
-        requestedState.green = green
-        requestedState.blue = blue
+        requestedState = state
         updatePersistedRequestedState()
         commandStatus = .requested
-        pendingCommandScope = wasSolid ? .partial : .completeState
+        pendingCommandScope = establishBaseline || !wasSolid ? .completeState : .color
     }
 
     func previewSolidColor(red: UInt8, green: UInt8, blue: UInt8) {
@@ -513,19 +539,29 @@ final class LightingRouteModel {
         requestedState.green = green
         requestedState.blue = blue
         commandStatus = .requested
-        pendingCommandScope = wasSolid ? .partial : .completeState
+        pendingCommandScope = wasSolid ? .color : .completeState
     }
 
     func setBrightness(_ percentage: UInt8) {
-        guard (try? session.setBrightness(percentage)) == true else {
+        var state = requestedState
+        state.brightness = percentage
+        let hasBaseline = persistence.confirmedState != nil
+        let establishBaseline = hasPersistedAccessory && !hasBaseline
+        let sent: Bool
+        if establishBaseline {
+            sent = (try? session.applyState(state)) == true
+        } else {
+            sent = (try? session.setBrightness(percentage)) == true
+        }
+        guard sent else {
             controlError = localizedAppText("lighting.error.brightness_not_ready")
             return
         }
         controlError = nil
-        requestedState.brightness = percentage
+        requestedState = state
         updatePersistedRequestedState()
         commandStatus = .requested
-        pendingCommandScope = .partial
+        pendingCommandScope = establishBaseline ? .completeState : .brightness
     }
 
     var requestedPlayback: MobileLightingPlaybackDto { requestedState.playback ?? .solid }
@@ -558,15 +594,25 @@ final class LightingRouteModel {
 
     func setEffectSpeed(_ speed: UInt8) {
         guard case let .effect(pattern, _) = requestedPlayback else { return }
-        guard session.setEffectSpeed(speed) else {
+        var state = requestedState
+        state.playback = .effect(pattern: pattern, speed: speed)
+        let hasBaseline = persistence.confirmedState != nil
+        let establishBaseline = hasPersistedAccessory && !hasBaseline
+        let sent: Bool
+        if establishBaseline {
+            sent = (try? session.applyState(state)) == true
+        } else {
+            sent = session.setEffectSpeed(speed)
+        }
+        guard sent else {
             controlError = localizedAppText("lighting.error.effect_speed_failed")
             return
         }
         controlError = nil
-        requestedState.playback = .effect(pattern: pattern, speed: speed)
+        requestedState = state
         updatePersistedRequestedState()
         commandStatus = .requested
-        pendingCommandScope = .partial
+        pendingCommandScope = establishBaseline ? .completeState : .effectSpeed
     }
 
     private func applyState(_ state: MobileMelkLightingRestoreStateDto) {
@@ -596,7 +642,7 @@ final class LightingRouteModel {
         }
         controlError = nil
         commandStatus = .requested
-        pendingCommandScope = .partial
+        pendingCommandScope = .schedule
         return true
     }
 
@@ -607,16 +653,28 @@ final class LightingRouteModel {
         switch pendingCommandScope {
         case .none:
             break
-        case .partial:
-            // A partial frame can be externally confirmed, but it cannot prove the
-            // complete restore snapshot. Keep restore fail-closed until a full-state
-            // request is observed.
-            persistence.markUnconfirmed()
+        case .power:
+            confirmPartialState(field: .power)
+        case .color:
+            confirmPartialState(field: .color)
+        case .brightness:
+            confirmPartialState(field: .brightness)
+        case .effectSpeed:
+            confirmPartialState(field: .effectSpeed)
+        case .schedule:
+            break
         case .completeState:
             try? persistence.confirm(requestedState)
         }
         pendingCommandScope = .none
         restoreAttempted = true
+    }
+
+    private func confirmPartialState(field: MobileRgbLightingPartialStateDto) {
+        guard (try? persistence.confirmPartialState(requestedState, field: field)) == true else {
+            persistence.markUnconfirmed()
+            return
+        }
     }
 
     func markUnconfirmed() {

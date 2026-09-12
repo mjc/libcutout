@@ -1101,7 +1101,7 @@ final class CutoutAppRouteTests: XCTestCase {
         let preset = try XCTUnwrap(model.presets.first)
         XCTAssertEqual(preset.requested.playback, .effect(pattern: 16, speed: 75))
         model.setSolidColor(red: 255, green: 0, blue: 0)
-        XCTAssertEqual(fake.stateRequests.last?.playback, .solid)
+        XCTAssertNil(fake.stateRequests.last?.playback)
         model.applyPreset(preset)
         XCTAssertEqual(fake.stateRequests.last, preset.requested)
         fake.stateResult = false
@@ -1168,6 +1168,7 @@ final class CutoutAppRouteTests: XCTestCase {
         model.setEffectSpeed(0)
         XCTAssertTrue(fake.speedRequests.isEmpty)
         model.setPlayback(.effect(pattern: 16, speed: 128))
+        model.markConfirmed()
         model.setPower(false)
         let batches = fake.stateRequests.count
         for speed: UInt8 in [0, 255] {
@@ -1254,6 +1255,7 @@ final class CutoutAppRouteTests: XCTestCase {
         let persistence = LightingAccessoryPersistence(defaults: defaults)
         let identifier = "A1B2C3D4-E5F6-4789-ABCD-0123456789AB"
         XCTAssertTrue(persistence.ensureRecord(platformIdentifier: identifier))
+        persistence.setRestoreEnabled(true)
         let fake = TestLightingSession()
         let model = LightingRouteModel(session: fake, persistence: persistence)
 
