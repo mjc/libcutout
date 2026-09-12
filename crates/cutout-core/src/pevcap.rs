@@ -326,7 +326,10 @@ impl PevcapFormatVersion {
     }
 }
 
-#[cfg(feature = "serde")]
+#[allow(
+    dead_code,
+    reason = "Used by serde-enabled PEVCAP readers and writers."
+)]
 fn ensure_music_supported<E>(
     has_music: bool,
     version: PevcapFormatVersion,
