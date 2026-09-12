@@ -59,13 +59,13 @@ is no implemented timer readback: the editor presents drafts, not controller sta
 
 ## Pattern names and speed
 
-The UI displays wire IDs 1–212 from the [MELK OA21 reference catalog](https://gist.github.com/clienthax/5b3cc5fa68f7c4c943f2252eaa21d804), and the current Aero-installed MELK-OC21 evidence record enables IDs 1–10, 16, 22, and 75; these remain candidate templates until exact OC21 traffic is captured.
+The UI displays wire IDs 1–212 from the [MELK OA21 reference catalog](https://gist.github.com/clienthax/5b3cc5fa68f7c4c943f2252eaa21d804), and the current Aero-installed MELK-OC21 evidence record observes IDs 1–10, 16, 22, and 75; these remain candidate templates until exact OC21 traffic is captured.
 These are reference names, not a claim that OC21 renders every mode identically.
 The catalog contains duplicate names at different wire IDs; those IDs are
 preserved, not collapsed by parsing names as unique dictionary keys. The UI gives
 ID 0 and 213–227 generic STRIPX reference labels marked “(reference)” so every
-wire ID has a human-readable name; these entries remain unverified and disabled
-until exact OC21 capture.
+wire ID has a human-readable name; these entries remain unverified reference
+labels until exact OC21 capture, but their bounded commands are still sendable.
 The official-app screenshot labels its first Basic card “Auto Play”; the UI
 preserves that as an ID 0 reference label until an OC21 capture ties the name to
 a wire ID.
@@ -112,11 +112,11 @@ not establish speed parity with the official app.
 - Color drag retains the existing 30 Hz preview path; queued superseded solid-color frames are coalesced so the newest drag value is preserved under BLE backpressure. Complete playback changes
   are validated in Rust and admitted together to a bounded Bluetooth write queue.
   CoreBluetooth backpressure pauses draining; writes are also paced at 50 ms because a burst can exhaust the controller-side queue. Disconnect discards pending writes.
-- App-local scenes support the complete save, replace-from-current-state, and delete lifecycle through the versioned Rust-backed record. Effects are saved with named presets only when their IDs are enabled by the current evidence record (currently 1–10, 16, 22, and 75). Controller-native named scenes are not claimed; controller-microphone music and schedules remain visible as future design surfaces but are disabled until physical verification.
+- App-local scenes support the complete save, replace-from-current-state, and delete lifecycle through the versioned Rust-backed record. Effects are saved with named presets across the bounded 0–227 ID domain. Controller-native named scenes are not claimed; controller-microphone music and schedules are exposed and sent as bounded protocol commands, while physical observations remain diagnostic evidence rather than an admission gate.
   Schema version 2 reads version 1 records as solid RGB.
 - Optional reconnect restore uses the last confirmed settings for the same
   accessory identity. Requested state is not a claim of physical confirmation.
-- Manual clock scheduling is retained as a future controller-local design surface; this MELK-OC21 profile does not send schedule writes until physical verification. The editor shows the protocol shape without claiming device state.
+- Manual clock scheduling sends validated controller-local clock and slot writes. The editor shows the protocol shape without claiming timer readback or physical device state.
 - The Mac-only MelkLightingLiveValidator executable uses CoreBluetooth to discover the Aero-installed MELK-OC21, verify FFF0/FFF3/FFF4, and exercise candidate commands without sharing the ride telemetry connection. Run `nix develop -c ./scripts/validate-melk-corebluetooth.sh [timeout-seconds] [platform-UUID]`; the optional UUID retries a previously observed CoreBluetooth identity and is parsed fail-closed. For a fresh pairing, enter `select <UUID>` for the printed candidate before the timeout expires.
   If recovery and the subsequent scan do not reach `ready` before timeout, the
   validator exits nonzero.

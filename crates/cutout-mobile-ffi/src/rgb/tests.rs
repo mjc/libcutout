@@ -204,6 +204,8 @@ fn persisted_rgb_record_round_trips_through_mobile_boundary() {
         .set_confirmed_state(Some(state))
         .expect("confirmed state should be valid");
     record.set_confirmation(MobileRgbLightingConfirmationStateDto::Confirmed);
+    assert_eq!(record.last_schedule_confirmation(), None);
+    record.set_last_schedule_confirmation(MobileRgbLightingConfirmationStateDto::Unconfirmed);
     record.set_connection(MobileRgbLightingConnectionStateDto::Ready);
     record.set_restore_enabled(true);
     record
@@ -221,6 +223,10 @@ fn persisted_rgb_record_round_trips_through_mobile_boundary() {
     assert_eq!(
         restored.confirmation(),
         MobileRgbLightingConfirmationStateDto::Confirmed
+    );
+    assert_eq!(
+        restored.last_schedule_confirmation(),
+        Some(MobileRgbLightingConfirmationStateDto::Unconfirmed)
     );
     assert_eq!(
         restored.connection(),

@@ -482,6 +482,23 @@ impl MobileRgbLightingAccessoryRecord {
             .set_confirmation(state.into());
     }
 
+    /// Returns the latest persisted schedule-command confirmation.
+    pub fn last_schedule_confirmation(&self) -> Option<MobileRgbLightingConfirmationStateDto> {
+        self.inner
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .last_schedule_confirmation()
+            .map(Into::into)
+    }
+
+    /// Records schedule-command confirmation without affecting lighting restore eligibility.
+    pub fn set_last_schedule_confirmation(&self, state: MobileRgbLightingConfirmationStateDto) {
+        self.inner
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .set_last_schedule_confirmation(state.into());
+    }
+
     /// Returns the persisted transport status.
     pub fn connection(&self) -> MobileRgbLightingConnectionStateDto {
         self.inner

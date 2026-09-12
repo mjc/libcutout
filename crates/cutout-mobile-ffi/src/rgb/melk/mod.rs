@@ -59,18 +59,18 @@ pub struct MobileMelkLightingWriteDto {
     pub minimum_interval_ms: Option<u16>,
 }
 
-/// Evidence-record capabilities exposed to the mobile lighting UI.
+/// Evidence-record metadata exposed to the mobile lighting UI.
 #[derive(Clone, Debug, Eq, PartialEq, uniffi::Record)]
 #[allow(
     clippy::struct_excessive_bools,
     reason = "independent capability flags mirror the typed protocol evidence"
 )]
 pub struct MobileMelkLightingCapabilitiesDto {
-    /// Effect IDs with physical evidence on the MELK-OC21 controller.
+    /// Effect IDs physically observed on the MELK-OC21 controller; this does not gate writes.
     pub verified_effect_ids: Vec<u8>,
-    /// Whether controller-local microphone modes are verified.
+    /// Whether controller-local microphone modes have been physically observed.
     pub controller_microphone: bool,
-    /// Whether controller-local schedules are verified.
+    /// Whether controller-local schedules have been physically observed.
     pub schedules: bool,
     /// Whether independently addressable zones are verified.
     pub addressable_zones: bool,
@@ -186,10 +186,6 @@ pub enum MobileMelkLightingError {
     /// The scheduler slot is outside the controller's supported ranges.
     #[error("invalid MELK schedule")]
     InvalidSchedule,
-
-    /// The capability is known by protocol shape but lacks capture-backed physical evidence.
-    #[error("unsupported MELK lighting capability")]
-    UnsupportedCapability,
 
     /// The controller clock is outside the supported ranges.
     #[error("invalid MELK clock")]

@@ -113,6 +113,10 @@ public final class LightingAccessoryPersistence {
         record?.confirmation() ?? .unknown
     }
 
+    public var lastScheduleConfirmation: MobileRgbLightingConfirmationStateDto? {
+        record?.lastScheduleConfirmation()
+    }
+
     public var restoreEnabled: Bool {
         record?.restoreEnabled() ?? false
     }
@@ -249,6 +253,16 @@ public final class LightingAccessoryPersistence {
     /// Persists optional user-observed success without changing the requested lighting state.
     public func markConfirmed() {
         record?.setConfirmation(state: .confirmed)
+        persist()
+    }
+
+    public func markScheduleConfirmed() {
+        record?.setLastScheduleConfirmation(state: .confirmed)
+        persist()
+    }
+
+    public func markScheduleUnconfirmed() {
+        record?.setLastScheduleConfirmation(state: .unconfirmed)
         persist()
     }
 

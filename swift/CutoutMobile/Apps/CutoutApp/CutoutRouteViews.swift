@@ -2008,7 +2008,7 @@ final class LightingRouteModel {
         case .effectSpeed:
             confirmPartialState(field: .effectSpeed)
         case .schedule:
-            persistence.markConfirmed()
+            persistence.markScheduleConfirmed()
         case .completeState:
             try? persistence.confirm(requestedState)
         }
@@ -2030,7 +2030,7 @@ final class LightingRouteModel {
         case .none:
             break
         case .schedule:
-            persistence.markUnconfirmed()
+            persistence.markScheduleUnconfirmed()
         }
     }
 

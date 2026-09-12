@@ -14,7 +14,7 @@ pub enum MobileLightingPlaybackDto {
     Solid,
     /// Reference pattern ID and native speed.
     Effect {
-        /// Capture-backed MELK-OC21 pattern ID. Reference entries fail closed until verified.
+        /// Bounded MELK-OC21 pattern ID (0..=227).
         pattern: u8,
         /// Native speed (0..=255).
         speed: u8,
@@ -136,7 +136,7 @@ pub(crate) fn plan_schedule(
 
 #[uniffi::export]
 impl MobileMelkLightingProfile {
-    /// Plans a complete state atomically. Solid/effect playback does not claim microphone state
+    /// Plans a complete bounded state. Solid/effect playback does not claim microphone state
     /// because OC21 readback is unavailable.
     ///
     /// # Errors
@@ -207,10 +207,8 @@ mod tests {
             assert_eq!(writes[0].payload, profile.set_power(false).payload);
             assert_eq!(writes[1].payload, [0x7e, 5, 3, 16, 6, 255, 255, 0, 0xef]);
             assert_eq!(writes[2], write);
-            assert_eq!(
-                writes.last().unwrap().payload,
-                [0x7e, 4, 1, 50, 255, 0, 255, 0, 0xef]
-            );
+            assert_eq!(writes[3].payload, [0x7e, 4, 1, 50, 255, 0, 255, 0, 0xef]);
+            assert_eq!(writes[4].payload, profile.set_power(false).payload);
         }
     }
 
@@ -250,7 +248,7 @@ mod tests {
     }
 
     #[test]
-    fn complete_playback_accepts_every_defined_mode_and_powers_on_first() {
+    fn complete_playback_accepts_every_defined_mode_and_reasserts_requested_power() {
         let mut state = MobileMelkLightingRestoreStateDto {
             power_on: false,
             red: 1,
@@ -263,10 +261,12 @@ mod tests {
             }),
         };
         let writes = profile().apply_state(state).unwrap();
-        assert_eq!(writes.len(), 4);
+        assert_eq!(writes.len(), 5);
         assert_eq!(writes[0].payload, profile().set_power(false).payload);
         assert_eq!(writes[1].payload, [0x7e, 5, 3, 16, 6, 255, 255, 0, 0xef]);
         assert_eq!(writes[2].payload, [0x7e, 4, 2, 50, 255, 255, 255, 0, 0xef]);
+        assert_eq!(writes[3].payload, [0x7e, 4, 1, 50, 255, 0, 255, 0, 0xef]);
+        assert_eq!(writes[4].payload, profile().set_power(false).payload);
         for pattern in [0, 11, 212, 213, 227] {
             state.playback = Some(MobileLightingPlaybackDto::Effect { pattern, speed: 50 });
             assert!(profile().apply_state(state).is_ok());

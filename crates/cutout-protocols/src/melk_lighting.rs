@@ -1,8 +1,8 @@
 //! Candidate ELK-BLEDOM/MELK protocol support for the `MELK-OC21` controller.
 
 use cutout_core::{
-    GattChannel, LightingPlayback, MelkControl, RgbLightingCommand, RgbLightingRequestedState,
-    TransportAction, WriteMode, WritePayload,
+    GattChannel, LightingPlayback, LightingPowerState, MelkControl, RgbLightingCommand,
+    RgbLightingRequestedState, TransportAction, WriteMode, WritePayload,
 };
 
 /// Candidate ELK-BLEDOM/MELK command encoder.
@@ -46,10 +46,10 @@ pub struct MelkLightingEffectGroup {
     pub ids: &'static [u8],
 }
 
-/// User-observed capabilities for the current MELK-OC21 profile.
+/// User-observed evidence for the current MELK-OC21 profile.
 ///
-/// The protocol encoder can represent additional reference commands, but only these
-/// capabilities have physical evidence for this controller so far.
+/// These observations describe what has been physically checked. Typed command bounds, not this
+/// evidence record, determine which defined commands may be sent.
 ///
 /// IDs 1-10 are enabled from the user's first ten-device trial; names remain
 /// reference-catalog labels until each visual mapping is independently matched.
@@ -59,11 +59,11 @@ pub struct MelkLightingEffectGroup {
     reason = "these independent capability flags mirror protocol evidence"
 )]
 pub struct MelkLightingCapabilities {
-    /// Effect IDs observed working on the user's controller.
+    /// Effect IDs physically observed working on the user's controller.
     pub verified_effect_ids: &'static [u8],
-    /// Whether controller-local microphone modes have been physically verified.
+    /// Whether controller-local microphone modes have been physically observed.
     pub controller_microphone: bool,
-    /// Whether controller-local schedules have been physically verified.
+    /// Whether controller-local schedules have been physically observed.
     pub schedules: bool,
     /// Whether independently addressable zones have been physically verified.
     pub addressable_zones: bool,
@@ -90,7 +90,7 @@ impl MelkLightingCapabilities {
         &MELK_OC21_EFFECT_FIXTURES
     }
 
-    /// Returns whether the effect ID is enabled from the current OC21 evidence record.
+    /// Returns whether the effect ID appears in the current OC21 evidence record.
     #[must_use]
     pub fn supports_effect(self, pattern: u8) -> bool {
         self.verified_effect_ids.contains(&pattern)
@@ -499,7 +499,7 @@ impl MelkLightingProfile {
         cutout_core::rgb_lighting_profile_version()
     }
 
-    /// Stable fingerprint for the profile's capability contract.
+    /// Stable fingerprint for the profile's evidence record.
     #[must_use]
     pub fn capabilities_fingerprint() -> String {
         let capabilities = Self::capabilities();
@@ -647,6 +647,7 @@ impl MelkLightingProfile {
     /// Plans the ordered writes needed to restore one requested controller state.
     ///
     /// Power is applied first so a selected mode is accepted even when the controller was off.
+    /// An explicitly off state is reasserted last because mode writes can turn output back on.
     /// Music playback emits its sensitivity/effect/microphone sequence; solid and effect
     /// playback do not claim microphone state because OC21 readback is unavailable.
     #[must_use]
@@ -674,6 +675,11 @@ impl MelkLightingProfile {
         actions.push(Self::write_action(RgbLightingCommand::SetBrightness(
             state.brightness(),
         )));
+        if state.power() == LightingPowerState::Off {
+            actions.push(Self::write_action(RgbLightingCommand::SetPower(
+                LightingPowerState::Off,
+            )));
+        }
         actions
     }
 
@@ -759,7 +765,7 @@ mod tests {
 
         let actions = MelkLightingProfile::plan_state(state);
 
-        assert_eq!(actions.len(), 4);
+        assert_eq!(actions.len(), 5);
         assert_eq!(payload(&actions[0]), [0x7e, 0, 4, 0, 0, 0, 255, 0, 0xef]);
         assert_eq!(payload(&actions[1]), [0x7e, 5, 3, 16, 6, 255, 255, 0, 0xef]);
         assert_eq!(
@@ -767,6 +773,7 @@ mod tests {
             [0x7e, 4, 2, 200, 255, 255, 255, 0, 0xef]
         );
         assert_eq!(payload(&actions[3]), [0x7e, 4, 1, 42, 255, 0, 255, 0, 0xef]);
+        assert_eq!(payload(&actions[4]), [0x7e, 0, 4, 0, 0, 0, 255, 0, 0xef]);
     }
 
     #[test]

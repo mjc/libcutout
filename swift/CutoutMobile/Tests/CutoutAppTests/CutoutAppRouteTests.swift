@@ -1429,8 +1429,9 @@ final class CutoutAppRouteTests: XCTestCase {
 
         XCTAssertTrue(model.setSchedule(schedule))
         model.markUnconfirmed()
-        XCTAssertEqual(persistence.confirmation, .unconfirmed)
-        XCTAssertNil(persistence.restoreCandidate())
+        XCTAssertEqual(persistence.confirmation, .confirmed)
+        XCTAssertEqual(persistence.lastScheduleConfirmation, .unconfirmed)
+        XCTAssertEqual(persistence.restoreCandidate()?.requestedState, powerConfirmed)
         model.setPlayback(.effect(pattern: 212, speed: 0))
         XCTAssertEqual(fake.stateRequests.last?.playback, .effect(pattern: 212, speed: 0))
     }

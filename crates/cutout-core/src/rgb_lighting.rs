@@ -117,6 +117,7 @@ pub struct RgbLightingAccessoryRecord {
     requested_state: Option<RgbLightingRequestedState>,
     confirmed_state: Option<RgbLightingRequestedState>,
     confirmation: RgbLightingConfirmationState,
+    last_schedule_confirmation: Option<RgbLightingConfirmationState>,
     connection: RgbLightingConnectionState,
     restore_enabled: bool,
     presets: Vec<RgbLightingPreset>,
@@ -155,6 +156,7 @@ impl RgbLightingAccessoryRecord {
             requested_state: None,
             confirmed_state: None,
             confirmation: RgbLightingConfirmationState::Unknown,
+            last_schedule_confirmation: None,
             connection: RgbLightingConnectionState::Unknown,
             restore_enabled: false,
             presets: Vec::new(),
@@ -311,6 +313,17 @@ impl RgbLightingAccessoryRecord {
         self.confirmation = state;
     }
 
+    /// Returns the latest persisted schedule-command confirmation, when one exists.
+    #[must_use]
+    pub const fn last_schedule_confirmation(&self) -> Option<RgbLightingConfirmationState> {
+        self.last_schedule_confirmation
+    }
+
+    /// Records schedule-command confirmation without affecting lighting restore eligibility.
+    pub const fn set_last_schedule_confirmation(&mut self, state: RgbLightingConfirmationState) {
+        self.last_schedule_confirmation = Some(state);
+    }
+
     /// Returns the current transport state.
     #[must_use]
     pub const fn connection(&self) -> RgbLightingConnectionState {
@@ -456,6 +469,8 @@ struct WireRecord {
     requested_state: Option<WireState>,
     confirmed_state: Option<WireState>,
     confirmation: WireConfirmation,
+    #[serde(default)]
+    last_schedule_confirmation: Option<WireConfirmation>,
     connection: WireConnection,
     restore_enabled: bool,
     presets: Vec<WirePreset>,
@@ -513,6 +528,7 @@ impl From<&RgbLightingAccessoryRecord> for WireRecord {
             requested_state: record.requested_state.map(WireState::from),
             confirmed_state: record.confirmed_state.map(WireState::from),
             confirmation: record.confirmation.into(),
+            last_schedule_confirmation: record.last_schedule_confirmation.map(Into::into),
             connection: record.connection.into(),
             restore_enabled: record.restore_enabled,
             presets: record
@@ -549,6 +565,7 @@ impl TryFrom<WireRecord> for RgbLightingAccessoryRecord {
             .map(RgbLightingRequestedState::try_from)
             .transpose()?;
         record.confirmation = wire.confirmation.into();
+        record.last_schedule_confirmation = wire.last_schedule_confirmation.map(Into::into);
         record.connection = wire.connection.into();
         record.restore_enabled = wire.restore_enabled;
         for preset in wire.presets {
@@ -703,6 +720,7 @@ mod tests {
         record.set_requested_state(Some(state()));
         record.set_confirmed_state(Some(state()));
         record.set_confirmation(RgbLightingConfirmationState::Confirmed);
+        record.set_last_schedule_confirmation(RgbLightingConfirmationState::Unconfirmed);
         record.set_connection(RgbLightingConnectionState::Ready);
         record.set_restore_enabled(true);
         record

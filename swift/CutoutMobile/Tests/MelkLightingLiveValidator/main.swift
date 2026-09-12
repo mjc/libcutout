@@ -107,8 +107,6 @@ struct MelkLightingLiveValidator {
         if validationState.snapshot().failed { exit(EXIT_FAILURE) }
     }
 
-    private static let verifiedEffectIDs = Set(mobileMelkLightingCapabilities().verifiedEffectIds)
-
     private static func handle(
         _ line: String,
         session: MelkLightingPeripheralSession,
@@ -119,7 +117,7 @@ struct MelkLightingLiveValidator {
         guard let command = parts.first else { return false }
         switch command {
         case "help":
-            print("select <UUID>; retry; power on|off; color R G B; brightness 0-100; speed 0-255; effect <verified-id> [speed]; confirm; unconfirm; quit")
+            print("select <UUID>; retry; power on|off; color R G B; brightness 0-100; speed 0-255; effect 0-227 [speed]; confirm; unconfirm; quit")
         case "select" where parts.count == 2:
             session.selectCandidate(platformIdentifier: parts[1])
         case "retry":
@@ -163,7 +161,10 @@ struct MelkLightingLiveValidator {
             guard let value = UInt8(parts[1]) else { print("invalid speed"); return }
             print("requested=\(session.setEffectSpeed(value))")
         case "effect":
-            guard let pattern = UInt8(parts[1]), verifiedEffectIDs.contains(pattern) else { print("unverified effect; use a capture-backed effect ID"); return }
+            guard let pattern = UInt8(parts[1]), pattern <= 227 else {
+                print("invalid effect; use 0-227")
+                return
+            }
             let speed: UInt8
             if parts.count == 3 {
                 guard let suppliedSpeed = UInt8(parts[2]) else {
