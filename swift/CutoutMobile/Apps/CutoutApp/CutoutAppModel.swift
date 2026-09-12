@@ -531,6 +531,23 @@ final class CutoutAppModel {
         self.core.onPhoneLocationSnapshotChange = { [weak self] snapshot, receivedAt in
             self?.phoneLocationReadback = PhoneLocationReadback(snapshot: snapshot, receivedAt: receivedAt)
         }
+        self.core.onRideMapDecisionChange = { [weak self] snapshot, decision in
+            self?.applyRideMapDecision(snapshot: snapshot, decision: decision)
+        }
+        self.core.onRideMapSnapshotChange = { [weak self] snapshot in
+            guard let self else { return }
+            self.rideMapSnapshot = snapshot
+            self.rideMapLiveTelemetryState = snapshot.associatedVehicle == nil
+                ? .gpsOnly
+                : .associatedNoTelemetry
+            self.updateRideMapDurationTicker()
+        }
+        self.core.onRideMapErrorChange = { [weak self] error in
+            self?.rideMapLiveError = error
+        }
+        self.core.onRideMapAvailabilityChange = { [weak self] availability in
+            self?.rideMapAvailability = availability
+        }
         self.core.onProtocolIdentityCandidateChange = { [weak self] candidate in
             self?.applyProtocolIdentityCandidate(candidate)
         }
