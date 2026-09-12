@@ -14,6 +14,17 @@ use cutout_core::{
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct MelkLightingProfile;
 
+/// One user-visible MELK pattern in the profile catalog.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct MelkPatternDescriptor {
+    /// Wire pattern identifier.
+    pub id: u8,
+    /// Stable display name from the reference catalog.
+    pub name: &'static str,
+    /// Reference catalog group used to organize the mobile UI.
+    pub group: &'static str,
+}
+
 /// Candidate nine-byte effect command examples retained for every effect currently exposed by
 /// the MELK-OC21 UI. These encode the public MELK template; they are not traffic captures and do
 /// not replace exact-controller capture evidence.
@@ -110,6 +121,254 @@ const MELK_OC21_EFFECT_FIXTURES: [MelkLightingEffectFixture; 13] = [
     candidate_fixture(16),
     candidate_fixture(22),
     candidate_fixture(75),
+];
+
+fn pattern_group(id: u8) -> &'static str {
+    match id {
+        1 | 2 | 212 | 193..=211 | 77..=88 | 181..=192 => "Basic",
+        57..=76 => "Curtain",
+        3..=22 => "Trans",
+        39..=56 => "Water",
+        143..=166 => "Flow",
+        23..=38 => "Tail",
+        89..=141 if id % 2 == 1 => "Run",
+        89..=141 => "Run Back",
+        167..=179 if id % 2 == 1 => "Run",
+        167..=179 => "Run Back",
+        0 | 213..=227 => "Unmapped",
+        _ => "Unmapped",
+    }
+}
+
+const MELK_PATTERN_NAMES: [&str; 228] = [
+    "Auto Play (reference)",
+    "Magic Forward",
+    "Magic Back",
+    "7-Color Trans",
+    "7-Color Trans Back",
+    "R-G-B Trans",
+    "R-G-B Trans Back",
+    "Y-C-P Trans",
+    "Y-C-P Trans Back",
+    "6-Color to Red",
+    "6-Color to Red Back",
+    "6-Color to Green",
+    "6-Color to Green Back",
+    "6-Color to Blue",
+    "6-Color to Blue Back",
+    "6-Color to Cyan",
+    "6-Color to Cyan Back",
+    "6-Color to Yellow",
+    "6-Color to Yellow Back",
+    "6-Color to Purple",
+    "6-Color to Purple Back",
+    "6-Color to White",
+    "6-Color to White Back",
+    "7-Color Tail",
+    "7-Color Tail Back",
+    "Red Tail",
+    "Red Tail Back",
+    "Green Tail",
+    "Green Tail Back",
+    "Blue Tail",
+    "Blue Tail Back",
+    "Yellow Tail",
+    "Yellow Tail Back",
+    "Cyan Tail",
+    "Cyan Tail Back",
+    "Purple Tail",
+    "Purple Tail Back",
+    "White Tail",
+    "White Tail Back",
+    "7-Color Water",
+    "7-Color Water Back",
+    "R-G-B Water",
+    "R-G-B Water Back",
+    "Y-C-P Water",
+    "Y-C-P Water Back",
+    "R-G Water",
+    "R-G Water Back",
+    "G-B Water",
+    "G-B Water Back",
+    "Y-B Water",
+    "Y-B Water Back",
+    "Y-C Water",
+    "Y-C Water Back",
+    "C-P Water",
+    "C-P Water Back",
+    "White Water",
+    "White Water Back",
+    "7-Color Close",
+    "7-Color Open",
+    "R-G-B Close",
+    "R-G-B Open",
+    "Y-C-P Close",
+    "Y-C-P Open",
+    "Red Close",
+    "Red Open",
+    "Green Close",
+    "Green Open",
+    "Blue Close",
+    "Blue Open",
+    "Yellow Close",
+    "Yellow Open",
+    "Cyan Close",
+    "Cyan Open",
+    "Purple Close",
+    "Purple Open",
+    "White Close",
+    "White Open",
+    "7-Color Race",
+    "7-Color Race Back",
+    "R-G-B Race",
+    "R-G-B Race Back",
+    "Y-C-P Race",
+    "Y-C-P Race Back",
+    "7-Color Wave",
+    "7-Color Wave Back",
+    "R-G-B Wave",
+    "R-G-B Wave Back",
+    "Y-C-P Wave",
+    "Y-C-P Wave Back",
+    "Red Running",
+    "Red Run Back",
+    "Green Running",
+    "Green Run Back",
+    "Blue Running",
+    "Blue Run Back",
+    "Yellow Running",
+    "Yellow Run Back",
+    "Cyan Running",
+    "Cyan Run Back",
+    "Purple Running",
+    "Purple Run Back",
+    "White Running",
+    "White Run Back",
+    "7-Color Running",
+    "7-Color Run Back",
+    "R-G-B Running",
+    "R-G-B Run Back",
+    "Y-C-P Running",
+    "Y-C-P Run Back",
+    "B-P-C-Y Running",
+    "B-P-C-Y Run Back",
+    "B-G-C-Y Running",
+    "B-G-C-Y Run Back",
+    "Red-Dot in White Running",
+    "Red-Dot in White Run Back",
+    "Green-Dot in Red Running",
+    "Green-Dot in Red Run Back",
+    "Blue-Dot in Green Running",
+    "Blue-Dot in Green Run Back",
+    "Yellow-Dot in Blue Running",
+    "Yellow-Dot in Blue Run Back",
+    "Cyan-Dot in Yellow Running",
+    "Cyan-Dot in Yellow Run Back",
+    "Purple-Dot in Cyan Running",
+    "Purple-Dot in Cyan Run Back",
+    "White-Dot in Purple Running",
+    "White-Dot in Purple Run Back",
+    "White-Dot in Red Running",
+    "White-Dot in Red Run Back",
+    "7-Color in Red Running",
+    "7-Color in Red Run Back",
+    "7-Color in Green Running",
+    "7-Color in Green Run Back",
+    "7-Color in Blue Running",
+    "7-Color in Blue Run Back",
+    "7-Color in Yellow Running",
+    "7-Color in Yellow Run Back",
+    "7-Color in Cyan Running",
+    "7-Color in Cyan Run Back",
+    "7-Color in Purple Running",
+    "7-Color in Purple Run Back",
+    "7-Color in White Running",
+    "7-Color in White Run Back",
+    "W-R-W Flow",
+    "W-R-W Flow Back",
+    "W-G-W Flow",
+    "W-G-W Flow Back",
+    "W-B-W Flow",
+    "W-B-W Flow Back",
+    "W-Y-W Flow",
+    "W-Y-W Flow Back",
+    "W-C-W Flow",
+    "W-C-W Flow Back",
+    "W-P-W Flow",
+    "W-P-W Flow Back",
+    "R-W-R Flow",
+    "R-W-R Flow Back",
+    "G-W-G Flow",
+    "G-W-G Flow Back",
+    "B-W-B Flow",
+    "B-W-B Flow Back",
+    "Y-W-Y Flow",
+    "Y-W-Y Flow Back",
+    "C-W-C Flow",
+    "C-W-C Flow Back",
+    "P-W-P Flow",
+    "P-W-P Flow Back",
+    "Green-Dot in Blue Running",
+    "Green-Dot in Blue Run Back",
+    "Green-Dot in Red Running",
+    "Green-Dot in Red Run Back",
+    "Red-Dot in Blue Running",
+    "Red-Dot in Blue Run Back",
+    "Cyan-Dot in Yellow Running",
+    "Cyan-Dot in Yellow Run Back",
+    "Yellow-Dot in Purple Running",
+    "Yellow-Dot in Purple Run Back",
+    "White-Dot in Yellow Running",
+    "White-Dot in Yellow Run Back",
+    "Yellow-Dot in White Running",
+    "Yellow-Dot in White Run Back",
+    "7-Color Flush",
+    "7-Color Flush Back",
+    "R-G-B Flush",
+    "R-G-B Flush Back",
+    "Y-C-P Flush",
+    "Y-C-P Flush Back",
+    "7-Color Flush Close",
+    "7-Color Flush Open",
+    "R-G-B Flush Close",
+    "R-G-B Flush Open",
+    "Y-C-P Flush Close",
+    "Y-C-P Flush Open",
+    "7-Color Jump",
+    "R-G-B Jump",
+    "Y-C-P Jump",
+    "7-Color Strobe",
+    "R-G-B Strobe",
+    "Y-C-P Strobe",
+    "7-Color Gradual",
+    "R-Y Gradual",
+    "R-P Gradual",
+    "G-C Gradual",
+    "G-Y Gradual",
+    "B-P Gradual",
+    "Red Marquee",
+    "Green Marquee",
+    "Blue Marquee",
+    "Yellow Marquee",
+    "Cyan Marquee",
+    "Purple Marquee",
+    "White Marquee",
+    "7-Color Energy",
+    "Fade 73 (reference)",
+    "Fade 74 (reference)",
+    "Fade 75 (reference)",
+    "Fade 76 (reference)",
+    "Fade 77 (reference)",
+    "Fade 78 (reference)",
+    "Fade Bar (reference)",
+    "Music Flow Flash (reference)",
+    "Music Flash (reference)",
+    "Music Rainbow (reference)",
+    "Music Snake (reference)",
+    "Music Rainbow 2 (reference)",
+    "Music Pulse (reference)",
+    "Music Flow (reference)",
+    "Music Pulse 2 (reference)",
 ];
 
 const BASIC_EFFECT_IDS: [u8; 46] = [
@@ -244,10 +503,64 @@ pub struct MelkWritePolicy {
 }
 
 impl MelkLightingProfile {
+    /// Current persisted MELK profile schema version.
+    #[must_use]
+    pub const fn profile_version() -> u16 {
+        1
+    }
+
+    /// Stable fingerprint for the profile's capability contract.
+    #[must_use]
+    pub fn capabilities_fingerprint() -> String {
+        let capabilities = Self::capabilities();
+        let mut ids = capabilities
+            .verified_effect_ids
+            .iter()
+            .copied()
+            .collect::<Vec<_>>();
+        ids.sort_unstable();
+        let ids = ids
+            .into_iter()
+            .map(|id| id.to_string())
+            .collect::<Vec<_>>()
+            .join(",");
+        format!(
+            "melk_oc21:v{}:effects={ids}:microphone={}:schedules={}:zones={}:scenes={}",
+            Self::profile_version(),
+            capabilities.controller_microphone as u8,
+            capabilities.schedules as u8,
+            capabilities.addressable_zones as u8,
+            capabilities.scenes as u8,
+        )
+    }
+
     /// Returns the current evidence-record capabilities for the Aero-installed MELK-OC21.
     #[must_use]
     pub const fn capabilities() -> MelkLightingCapabilities {
         MelkLightingCapabilities::melk_oc21()
+    }
+
+    /// Returns the complete reference pattern catalog, including unverified entries.
+    #[must_use]
+    pub fn pattern_catalog() -> Vec<MelkPatternDescriptor> {
+        (0..=227u8)
+            .map(|id| MelkPatternDescriptor {
+                id,
+                name: MELK_PATTERN_NAMES[id as usize],
+                group: pattern_group(id),
+            })
+            .collect()
+    }
+
+    /// Returns whether an advertised name belongs to this profile family.
+    #[must_use]
+    pub fn name_matches(name: &str) -> bool {
+        let bytes = name.trim().as_bytes();
+        let Some(model) = bytes.get(..9) else {
+            return false;
+        };
+        model.eq_ignore_ascii_case(b"MELK-OC21")
+            && matches!(bytes.get(9), None | Some(b' ' | b'\t'))
     }
 
     /// Returns the Rust-owned reference effect grouping for mobile clients.
@@ -258,15 +571,7 @@ impl MelkLightingProfile {
     /// Selects the candidate profile only when family name and GATT evidence agree.
     #[must_use]
     pub fn identify(name: &str, evidence: MelkGattEvidence) -> Option<Self> {
-        let name = name.trim();
-        let bytes = name.as_bytes();
-        let model = bytes.get(..9)?;
-        if !model.eq_ignore_ascii_case(b"MELK-OC21")
-            || !matches!(bytes.get(9), None | Some(b' ' | b'\t'))
-        {
-            return None;
-        }
-        (evidence == MelkGattEvidence::observed()).then_some(Self)
+        (Self::name_matches(name) && evidence == MelkGattEvidence::observed()).then_some(Self)
     }
 
     /// Returns the candidate write and confirmation policy.
@@ -475,6 +780,21 @@ mod tests {
         );
         assert_eq!(payload(&actions[2]), [0x7e, 4, 1, 42, 255, 0, 255, 0, 0xef]);
         assert_eq!(payload(&actions[3]), [0x7e, 0, 4, 0, 0, 0, 255, 0, 0xef]);
+    }
+
+    #[test]
+    fn profile_catalog_and_fingerprint_are_stable() {
+        let catalog = MelkLightingProfile::pattern_catalog();
+        assert_eq!(catalog.len(), 228);
+        assert_eq!(catalog[1].name, "Magic Forward");
+        assert_eq!(catalog[1].group, "Basic");
+        assert_eq!(catalog[213].name, "Fade 73 (reference)");
+        assert_eq!(catalog[213].group, "Unmapped");
+        assert_eq!(MelkLightingProfile::profile_version(), 1);
+        assert_eq!(
+            MelkLightingProfile::capabilities_fingerprint(),
+            "melk_oc21:v1:effects=1,2,3,4,5,6,7,8,9,10,16,22,75:microphone=0:schedules=0:zones=0:scenes=0"
+        );
     }
 
     #[test]

@@ -54,7 +54,12 @@ struct MelkLightingLiveValidator {
             guard !snapshot.ready, !snapshot.finished,
                   Date().timeIntervalSince(startedAt) < timeout else { break }
             for line in input.drain() {
-                if handle(line, session: session) { validationState.finish() }
+                if handle(
+                    line,
+                    session: session,
+                    preferredPlatformIdentifier: preferredPlatformIdentifier,
+                    validationState: validationState
+                ) { validationState.finish() }
             }
             RunLoop.current.run(mode: .default, before: Date(timeIntervalSinceNow: 0.1))
         }
@@ -63,7 +68,12 @@ struct MelkLightingLiveValidator {
             print("ready: enter commands (help for list, quit to disconnect)")
             while !validationState.snapshot().finished {
                 for line in input.drain() {
-                    if handle(line, session: session) { validationState.finish() }
+                    if handle(
+                        line,
+                        session: session,
+                        preferredPlatformIdentifier: preferredPlatformIdentifier,
+                        validationState: validationState
+                    ) { validationState.finish() }
                 }
                 RunLoop.current.run(mode: .default, before: Date(timeIntervalSinceNow: 0.1))
             }
@@ -78,14 +88,23 @@ struct MelkLightingLiveValidator {
 
     private static let verifiedEffectIDs = Set(mobileMelkLightingCapabilities().verifiedEffectIds)
 
-    private static func handle(_ line: String, session: MelkLightingPeripheralSession) -> Bool {
+    private static func handle(
+        _ line: String,
+        session: MelkLightingPeripheralSession,
+        preferredPlatformIdentifier: String?,
+        validationState: ValidationState
+    ) -> Bool {
         let parts = line.split(separator: " ").map(String.init)
         guard let command = parts.first else { return false }
         switch command {
         case "help":
-            print("select <UUID>; power on|off; color R G B; brightness 0-100; speed 0-255; effect <verified-id> [speed]; confirm; unconfirm; quit")
+            print("select <UUID>; retry; power on|off; color R G B; brightness 0-100; speed 0-255; effect <verified-id> [speed]; confirm; unconfirm; quit")
         case "select" where parts.count == 2:
             session.selectCandidate(platformIdentifier: parts[1])
+        case "retry":
+            validationState.resetForRetry()
+            session.stop()
+            session.start(preferredPlatformIdentifier: preferredPlatformIdentifier)
         case "power" where parts.count == 2:
             guard parts[1] == "on" || parts[1] == "off" else {
                 print("invalid power; use on or off")
@@ -172,13 +191,19 @@ private final class ValidationState: @unchecked Sendable {
         if case .ready = state { ready = true }
         if case .failed = state {
             failed = true
-            finished = true
         }
     }
 
     func finish() {
         lock.lock()
         finished = true
+        lock.unlock()
+    }
+
+    func resetForRetry() {
+        lock.lock()
+        ready = false
+        failed = false
         lock.unlock()
     }
 

@@ -104,11 +104,11 @@ the official app.
 - MELK readiness is gated on both the FFF4 notification subscription and the
   documented two-frame initialization handshake. Reconnect and failure paths
   cancel any delayed second frame before clearing the session.
-- When CoreBluetooth already has a connected MELK peripheral, the session
-  recovers it by the FFF0 service and the remembered platform identity (or the
-  MELK name on first pairing) before starting a broad advertisement scan. This
-  covers restored/system-managed links without treating an arbitrary FFF0
-  device as the controller.
+- When CoreBluetooth restores a remembered MELK peripheral, the session
+  recovers it by its platform identity before starting a broad advertisement
+  scan. First pairing requires an advertisement; the current adapter does not
+  claim recovery of an already-connected, never-advertising peripheral. This
+  keeps arbitrary FFF0 devices from being treated as the controller.
 - Color drag retains the existing 30 Hz preview path; queued superseded solid-color frames are coalesced so the newest drag value is preserved under BLE backpressure. Complete playback changes
   are validated in Rust and admitted together to a bounded Bluetooth write queue.
   CoreBluetooth backpressure pauses draining; writes are also paced at 50 ms because a burst can exhaust the controller-side queue. Disconnect discards pending writes.
@@ -118,21 +118,24 @@ the official app.
   accessory identity. Requested state is not a claim of physical confirmation.
 - Manual clock scheduling is retained as a future controller-local design surface; this MELK-OC21 profile does not send schedule writes until physical verification. The editor shows the protocol shape without claiming device state.
 - The Mac-only MelkLightingLiveValidator executable uses CoreBluetooth to discover the Aero-installed MELK-OC21, verify FFF0/FFF3/FFF4, and exercise candidate commands without sharing the ride telemetry connection. Run `nix develop -c ./scripts/validate-melk-corebluetooth.sh [timeout-seconds] [platform-UUID]`; the optional UUID retries a previously observed CoreBluetooth identity and is parsed fail-closed. For a fresh pairing, enter `select <UUID>` for the printed candidate before the timeout expires.
-  A timeout or failed remembered-identity check exits nonzero.
+  If recovery and the subsequent scan do not reach `ready` before timeout, the
+  validator exits nonzero.
 - When scheduling is enabled in a future profile, saving will send a clock sync followed by the selected slot; opening the editor never writes. The controller has no timer readback, so future profiles must retain drafts rather than claim device state.
 - A future capture-backed profile may use the accessory microphone for music modes; this MELK-OC21 profile keeps music unavailable, with no phone recording or audio permission.
-- Unknown zone, pixel-count, calibration, and status-query commands are not sent.
+- Unknown zone, pixel-count, calibration, status-query, and turn-signal-topology
+  commands are not sent.
   The reference does not establish these capabilities for this exact controller.
 
 ## Physical checks still required for the extension
 
-Try several pattern IDs and both ends of speed, all eight microphone effects and
-sensitivity endpoints, and transitions back to solid color. Save an effect and
-a music preset, reconnect, and check the opted-in restore and final power state.
-Test on/off timers shortly ahead of local time, disable both slots afterward, and
-check repeat-day behavior separately. Confirm lighting interactions do not
-interrupt the wheel telemetry connection. Automated payload tests do not replace
-these observations.
+Try several supported pattern IDs and both ends of speed, transitions back to
+solid color, save an effect, reconnect, and check the opted-in restore and final
+power state. Confirm lighting interactions do not interrupt the wheel telemetry
+connection. Automated payload tests do not replace these observations.
+
+For a future capture-backed profile, test all eight microphone effects and
+sensitivity endpoints, save a music preset, and test on/off timers shortly ahead
+of local time, including disabling both slots and checking repeat-day behavior.
 
 On 2026-09-07, the Mac validator confirmed that CoreBluetooth was powered on
 and scanning, but observed neither a connected MELK link nor a `MELK-OC21`
@@ -146,9 +149,9 @@ observation, not evidence that the controller is unsupported.
 
 The validator advertisement trace also observed unrelated nearby names (including Govee, GAFVent, `uac088`, and iPhone) and repeated RSSI updates during that run. This confirms the Mac callback path is active while the exact MELK controller remains absent from the radio environment.
 
-A later Mac validator run on 2026-09-07 found `MELK-OC21   6A` at RSSI -68 and connected successfully. It discovered the expected `FFF0` service with `FFF3` write and `FFF4` notify characteristics, completed the `7e0783` / `7e0404` initialization handshake, enabled notifications, and reached `ready`. Live writes for power, solid red (`255,0,0`), brightness 50%, and effect ID 1 at speed 0 emitted the expected `7e…ef` frames; confirmation remained an explicit operator action. A rapid burst of effect IDs 2–10 then exhausted the controller link and produced a CoreBluetooth timeout, and a remembered-UUID retry later timed out while the device was no longer advertising. This is evidence for a paced/coalesced write follow-up, not proof that every effect in the burst was physically observed.
+A later Mac validator run on 2026-09-07 found `MELK-OC21   6A` at RSSI -68 and connected successfully. It discovered the expected `FFF0` service with `FFF3` write and `FFF4` notify characteristics, completed the `7e 07 83` / `7e 04 04` initialization handshake, subscribed to FFF4 notifications, and reached `ready`. The run did not record an FFF4 payload receipt, so notification receipt and command confirmation remained unverified. Live writes for power, solid red (`255,0,0`), brightness 50%, and effect ID 1 at speed 0 emitted the expected `7e…ef` frames; confirmation remained an explicit operator action. A rapid burst of effect IDs 2–10 was followed by a CoreBluetooth timeout; controller queue exhaustion is a hypothesis, not a measured cause. A remembered-UUID retry later timed out while the device was no longer advertising. This is evidence for a paced/coalesced write follow-up, not proof that every effect in the burst was physically observed.
 
-On 2026-09-08, a Mac validator retry using the remembered identity reached `connecting` but did not receive `didConnect` within 15 seconds. The session emitted `connect_timeout`, canceled the stale attempt, resumed the MELK-filtered scan, and ended without a MELK advertisement. This validates bounded recovery from a stale CoreBluetooth identity; it is not evidence that the controller is unsupported.
+On 2026-09-08, a Mac validator retry using the remembered identity reached `connecting` but did not receive `didConnect` within 15 seconds. The session emitted `connect_timeout`, canceled the stale attempt, resumed the broad scan, and ended without a MELK advertisement. This validates bounded recovery from a stale CoreBluetooth identity; it is not evidence that the controller is unsupported.
 
 The same 2026-09-08 scan observed a nearby `ELK-BLEDOB 44` identity, but it did
 not connect or expose GATT evidence during the bounded retry. The name is not
