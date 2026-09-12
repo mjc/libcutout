@@ -5,7 +5,8 @@ use super::{
     MobileMelkLightingWriteModeDto, MobileRgbLightingAccessoryRecord,
     MobileRgbLightingConfirmationStateDto, MobileRgbLightingConnectionStateDto,
     MobileRgbLightingProfileKindDto, MobileRgbLightingRecordError,
-    mobile_melk_lighting_capabilities, mobile_melk_lighting_profile_version,
+    mobile_melk_lighting_capabilities, mobile_melk_lighting_capabilities_fingerprint,
+    mobile_melk_lighting_pattern_catalog, mobile_melk_lighting_profile_version,
 };
 use cutout_protocols::{MELK_NOTIFY_CHANNEL, MELK_WRITE_CHANNEL};
 
@@ -46,6 +47,19 @@ fn mobile_capabilities_match_the_melk_evidence_record() {
 #[test]
 fn profile_version_is_owned_by_rust() {
     assert_eq!(mobile_melk_lighting_profile_version(), 1);
+}
+
+#[test]
+fn profile_catalog_and_fingerprint_are_owned_by_rust() {
+    let catalog = mobile_melk_lighting_pattern_catalog();
+    assert_eq!(catalog.len(), 228);
+    assert_eq!(catalog[1].name, "Magic Forward");
+    assert!(catalog[1].verified);
+    assert!(!catalog[11].verified);
+    assert_eq!(
+        mobile_melk_lighting_capabilities_fingerprint(),
+        "melk_oc21:v1:effects=1,2,3,4,5,6,7,8,9,10,16,22,75:microphone=0:schedules=0:zones=0:scenes=0"
+    );
 }
 
 #[test]

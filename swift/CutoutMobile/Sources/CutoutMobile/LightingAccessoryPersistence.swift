@@ -135,15 +135,7 @@ public final class LightingAccessoryPersistence {
     }
 
     private static var currentCapabilitiesFingerprint: String {
-        let capabilities = mobileMelkLightingCapabilities()
-        let effectIds = capabilities.verifiedEffectIds.sorted()
-        return [
-            effectIds.map(String.init).joined(separator: ","),
-            capabilities.controllerMicrophone ? "1" : "0",
-            capabilities.schedules ? "1" : "0",
-            capabilities.addressableZones ? "1" : "0",
-            capabilities.scenes ? "1" : "0",
-        ].joined(separator: "|")
+        mobileMelkLightingCapabilitiesFingerprint()
     }
 
     public var presets: [MobileRgbLightingPresetDto] {

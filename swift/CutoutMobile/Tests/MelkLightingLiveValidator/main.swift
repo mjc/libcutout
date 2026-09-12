@@ -12,7 +12,7 @@ struct MelkLightingLiveValidator {
         let timeout = arguments.first.flatMap(Double.init) ?? 60
         let preferredPlatformIdentifier = arguments.dropFirst().first
         let session = MelkLightingPeripheralSession()
-        let startedAt = Date()
+        var startedAt = Date()
         var advertisedIdentifiers = Set<String>()
         let input = InputBuffer()
         let validationState = ValidationState()
@@ -49,28 +49,59 @@ struct MelkLightingLiveValidator {
             print("target=melk id=\(preferredPlatformIdentifier)")
         }
         session.start(preferredPlatformIdentifier: preferredPlatformIdentifier)
-        while true {
-            let snapshot = validationState.snapshot()
-            guard !snapshot.ready, !snapshot.finished,
-                  Date().timeIntervalSince(startedAt) < timeout else { break }
-            for line in input.drain() {
-                if handle(line, session: session) { validationState.finish() }
-            }
-            RunLoop.current.run(mode: .default, before: Date(timeIntervalSinceNow: 0.1))
-        }
-        let discoveryResult = validationState.snapshot()
-        if discoveryResult.ready, !discoveryResult.failed {
-            print("ready: enter commands (help for list, quit to disconnect)")
-            while !validationState.snapshot().finished {
+        while !validationState.snapshot().finished {
+            while true {
+                let snapshot = validationState.snapshot()
+                guard !snapshot.ready, !snapshot.finished,
+                      Date().timeIntervalSince(startedAt) < timeout else { break }
+                var retried = false
                 for line in input.drain() {
-                    if handle(line, session: session) { validationState.finish() }
+                    if handle(
+                        line,
+                        session: session,
+                        preferredPlatformIdentifier: preferredPlatformIdentifier,
+                        validationState: validationState
+                    ) { validationState.finish() }
+                    if validationState.consumeRetry() {
+                        retried = true
+                        break
+                    }
+                }
+                if retried {
+                    startedAt = Date()
+                    continue
                 }
                 RunLoop.current.run(mode: .default, before: Date(timeIntervalSinceNow: 0.1))
             }
-        } else {
-            print(discoveryResult.failed ? "validation=failed" : "validation=timeout")
-            session.stop()
-            exit(EXIT_FAILURE)
+
+            let discoveryResult = validationState.snapshot()
+            if discoveryResult.ready, !discoveryResult.failed {
+                print("ready: enter commands (help for list, retry to rediscover, quit to disconnect)")
+                var retried = false
+                while !validationState.snapshot().finished {
+                    for line in input.drain() {
+                        if handle(
+                            line,
+                            session: session,
+                            preferredPlatformIdentifier: preferredPlatformIdentifier,
+                            validationState: validationState
+                        ) { validationState.finish() }
+                        if validationState.consumeRetry() {
+                            retried = true
+                            break
+                        }
+                    }
+                    if retried {
+                        startedAt = Date()
+                        break
+                    }
+                    RunLoop.current.run(mode: .default, before: Date(timeIntervalSinceNow: 0.1))
+                }
+            } else {
+                print(discoveryResult.failed ? "validation=failed" : "validation=timeout")
+                session.stop()
+                exit(EXIT_FAILURE)
+            }
         }
         session.stop()
         if validationState.snapshot().failed { exit(EXIT_FAILURE) }
@@ -78,14 +109,23 @@ struct MelkLightingLiveValidator {
 
     private static let verifiedEffectIDs = Set(mobileMelkLightingCapabilities().verifiedEffectIds)
 
-    private static func handle(_ line: String, session: MelkLightingPeripheralSession) -> Bool {
+    private static func handle(
+        _ line: String,
+        session: MelkLightingPeripheralSession,
+        preferredPlatformIdentifier: String?,
+        validationState: ValidationState
+    ) -> Bool {
         let parts = line.split(separator: " ").map(String.init)
         guard let command = parts.first else { return false }
         switch command {
         case "help":
-            print("select <UUID>; power on|off; color R G B; brightness 0-100; speed 0-255; effect <verified-id> [speed]; confirm; unconfirm; quit")
+            print("select <UUID>; retry; power on|off; color R G B; brightness 0-100; speed 0-255; effect <verified-id> [speed]; confirm; unconfirm; quit")
         case "select" where parts.count == 2:
             session.selectCandidate(platformIdentifier: parts[1])
+        case "retry":
+            session.stop()
+            validationState.resetForRetry()
+            session.start(preferredPlatformIdentifier: preferredPlatformIdentifier)
         case "power" where parts.count == 2:
             guard parts[1] == "on" || parts[1] == "off" else {
                 print("invalid power; use on or off")
@@ -165,6 +205,7 @@ private final class ValidationState: @unchecked Sendable {
     private var ready = false
     private var failed = false
     private var finished = false
+    private var retryRequested = false
 
     func apply(_ state: MelkLightingPeripheralState) {
         lock.lock()
@@ -172,7 +213,6 @@ private final class ValidationState: @unchecked Sendable {
         if case .ready = state { ready = true }
         if case .failed = state {
             failed = true
-            finished = true
         }
     }
 
@@ -180,6 +220,22 @@ private final class ValidationState: @unchecked Sendable {
         lock.lock()
         finished = true
         lock.unlock()
+    }
+
+    func resetForRetry() {
+        lock.lock()
+        ready = false
+        failed = false
+        retryRequested = true
+        lock.unlock()
+    }
+
+    func consumeRetry() -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        guard retryRequested else { return false }
+        retryRequested = false
+        return true
     }
 
     func snapshot() -> (ready: Bool, failed: Bool, finished: Bool) {

@@ -87,6 +87,19 @@ pub struct MobileMelkLightingEffectGroupDto {
     pub effect_ids: Vec<u8>,
 }
 
+/// One reference MELK pattern entry for the mobile effects catalog.
+#[derive(Clone, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct MobileMelkLightingPatternDto {
+    /// Wire pattern identifier.
+    pub id: u8,
+    /// Stable reference display name.
+    pub name: String,
+    /// Reference catalog group.
+    pub group: String,
+    /// Whether this effect has physical evidence for MELK-OC21.
+    pub verified: bool,
+}
+
 /// Returns the conservative, capture-backed MELK-OC21 capability set.
 #[uniffi::export]
 #[must_use]
@@ -114,11 +127,41 @@ pub fn mobile_melk_lighting_effect_groups() -> Vec<MobileMelkLightingEffectGroup
         .collect()
 }
 
+/// Returns the complete Rust-owned MELK reference effect catalog.
+#[uniffi::export]
+#[must_use]
+pub fn mobile_melk_lighting_pattern_catalog() -> Vec<MobileMelkLightingPatternDto> {
+    let capabilities = MelkLightingProfile::capabilities();
+    MelkLightingProfile::pattern_catalog()
+        .into_iter()
+        .map(|pattern| MobileMelkLightingPatternDto {
+            id: pattern.id,
+            name: pattern.name.to_owned(),
+            group: pattern.group.to_owned(),
+            verified: capabilities.supports_effect(pattern.id),
+        })
+        .collect()
+}
+
+/// Returns whether an advertised name belongs to the MELK-OC21 family.
+#[uniffi::export]
+#[must_use]
+pub fn mobile_melk_lighting_name_matches(name: String) -> bool {
+    MelkLightingProfile::name_matches(&name)
+}
+
 /// Returns the Rust-owned persisted MELK lighting profile version.
 #[uniffi::export]
 #[must_use]
 pub fn mobile_melk_lighting_profile_version() -> u16 {
-    cutout_core::rgb_lighting_profile_version()
+    MelkLightingProfile::profile_version()
+}
+
+/// Returns a stable fingerprint for the current MELK capability contract.
+#[uniffi::export]
+#[must_use]
+pub fn mobile_melk_lighting_capabilities_fingerprint() -> String {
+    MelkLightingProfile::capabilities_fingerprint()
 }
 
 /// Invalid input presented to the MELK lighting boundary.
