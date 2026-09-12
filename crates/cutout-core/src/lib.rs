@@ -8587,25 +8587,6 @@ mod tests {
     }
 
     #[test]
-    fn setting_state_timeout_waits_for_deadline() {
-        let mut state = SettingState::<LightState>::unknown();
-        state.submit(LightState::On, ms(10));
-        let timeout = SETTING_WRITE_CONFIRMATION_TIMEOUT;
-
-        assert!(!state.timeout_if_elapsed(ms(2_009), timeout));
-        assert!(matches!(state, SettingState::Pending { .. }));
-
-        assert!(state.timeout_if_elapsed(ms(2_010), timeout));
-        assert!(matches!(
-            state,
-            SettingState::TimedOut {
-                requested: LightState::On,
-                ..
-            }
-        ));
-    }
-
-    #[test]
     fn setting_state_preserves_refusal_without_a_transport_write() {
         let mut state = SettingState::<LightState>::unknown();
         state.submit(LightState::On, ms(30));

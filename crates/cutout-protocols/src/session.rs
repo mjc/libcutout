@@ -23,13 +23,13 @@ use crate::{
     FalconRequestEncoder, RefloatCodecError, RefloatReadOnlyRequest, RefloatReply,
     RefloatStreamDecoder, RefloatStreamResult, RequestDisposition, VESC_COMM_CUSTOM_APP_DATA,
     VESC_MAX_FRAME_LEN, VESC_NOTIFY_CHANNEL, VESC_WRITE_CHANNEL, VETERAN_DATA_CHANNEL,
-    VescBoardProfile, VescCodecError, VescReadOnlyCodec, VescReadOnlyReply, VescReadOnlyRequest,
-    VescReadOnlyStreamDecoder, VescReadOnlyStreamResult, VescRequestEncoder, VescStatsMask,
-    VescStatsTelemetry, VescValuesMask, VescValuesTelemetry, VeteranBmsCellPage,
-    VeteranBmsMetadataPage, VeteranBmsPageEvidence, VeteranBmsTemperaturePage, VeteranFrame,
-    VeteranFrameParseResult, VeteranFrameReassembler, VeteranReassemblyError, VeteranTelemetry,
-    VeteranTelemetryError, begode_falcon_target_voltage_profile, decode_veteran_bms_page,
-    util::u64_to_i64_saturating,
+    VETERAN_SERVICE_CHANNEL, VescBoardProfile, VescCodecError, VescReadOnlyCodec,
+    VescReadOnlyReply, VescReadOnlyRequest, VescReadOnlyStreamDecoder, VescReadOnlyStreamResult,
+    VescRequestEncoder, VescStatsMask, VescStatsTelemetry, VescValuesMask, VescValuesTelemetry,
+    VeteranBmsCellPage, VeteranBmsMetadataPage, VeteranBmsPageEvidence, VeteranBmsTemperaturePage,
+    VeteranFrame, VeteranFrameParseResult, VeteranFrameReassembler, VeteranReassemblyError,
+    VeteranTelemetry, VeteranTelemetryError, begode_falcon_target_voltage_profile,
+    decode_veteran_bms_page, util::u64_to_i64_saturating,
 };
 
 /// Raw VESC electrical RPM telemetry field id.
@@ -2010,12 +2010,6 @@ fn handle_benign_control<M: ReadOnlyModelSpec + SupportsBenignControls>(
             reason: ControlRefusalReason::UnsupportedCommand,
         },
     )));
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-struct PendingSettingsSequence {
-    remaining: ArrayVec<EncodedControlStep, 4>,
-    next_at: MonotonicTimestamp,
 }
 
 impl<M: ReadOnlyModelSpec + SupportsBenignControls, const ACCEPT_ANY_NOTIFICATION: bool> fmt::Debug
