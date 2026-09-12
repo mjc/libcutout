@@ -478,6 +478,12 @@ impl GearRatioDenominator {
 
     /// Creates a denominator from a finite positive VESC ratio.
     #[must_use]
+    #[allow(
+        clippy::cast_precision_loss,
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss,
+        reason = "The wire representation is a validated positive ratio in thousandths."
+    )]
     pub fn from_ratio(value: f32) -> Option<Self> {
         if !value.is_finite() || value <= 0.0 {
             return None;
@@ -491,6 +497,10 @@ impl GearRatioDenominator {
 
     /// Returns the gear-reduction denominator.
     #[must_use]
+    #[allow(
+        clippy::cast_possible_truncation,
+        reason = "The public denominator is intentionally represented as a controller-sized u8."
+    )]
     pub const fn get(self) -> u8 {
         (self.0 / 1_000) as u8
     }
@@ -1163,6 +1173,10 @@ fn decode_typed_reply(frame: &[u8]) -> Result<Option<VescReadOnlyReply>, VescCod
     }
 }
 
+#[allow(
+    clippy::cast_possible_truncation,
+    reason = "VESC temperature fields are rounded into the bounded telemetry integer type."
+)]
 fn decode_stats(body: &[u8]) -> Result<VescStatsTelemetry, VescCodecError> {
     let mut reader = VescValuesReader::new(body);
     let raw_mask = reader.read_u32()?;
@@ -1526,6 +1540,10 @@ fn vesc_crc16(bytes: &[u8]) -> u16 {
     })
 }
 
+#[allow(
+    clippy::cast_possible_truncation,
+    reason = "The value is clamped to the i32 range before conversion."
+)]
 fn round_div_i64_to_i32(numerator: i64, denominator: i64) -> i32 {
     if denominator == 0 {
         return 0;
@@ -1598,6 +1616,10 @@ fn bounded_string(value: &str) -> ArrayString<VESC_MAX_HASH_LEN> {
     output
 }
 
+#[allow(
+    clippy::cast_possible_truncation,
+    reason = "VESC temperature fields are rounded into the bounded telemetry integer type."
+)]
 impl From<vesc::Stats> for VescStatsTelemetry {
     fn from(stats: vesc::Stats) -> Self {
         Self {
@@ -2255,7 +2277,7 @@ mod tests {
     fn stream_decoder_keeps_replies_after_bounded_batch_is_full() {
         let frame = selective_values_frame();
         let mut input = ArrayVec::<u8, 160>::new();
-        for _ in 0..(VESC_MAX_STREAM_REPLIES + 1) {
+        for _ in 0..=VESC_MAX_STREAM_REPLIES {
             input.try_extend_from_slice(&frame).unwrap();
         }
         let mut decoder = VescReadOnlyStreamDecoder::new();

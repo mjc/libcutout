@@ -110,13 +110,13 @@ mod tests {
     fn mobile_connection_preserves_bounded_domain_retry_behavior() {
         let connection = MobileMusicConnection::new();
         assert!(connection.begin_attempt_id(0).is_some());
-        assert!(!connection.begin_attempt_id(9_999).is_some());
+        assert!(connection.begin_attempt_id(9_999).is_none());
         assert!(connection.begin_attempt_id(10_000).is_some());
         connection.failed(10_000);
-        assert!(!connection.begin_attempt_id(11_999).is_some());
+        assert!(connection.begin_attempt_id(11_999).is_none());
         assert!(connection.begin_attempt_id(12_000).is_some());
         connection.disconnected(12_000);
-        assert!(!connection.begin_attempt_id(14_000).is_some());
+        assert!(connection.begin_attempt_id(14_000).is_none());
         connection.established();
         assert!(connection.begin_attempt_id(14_000).is_some());
     }

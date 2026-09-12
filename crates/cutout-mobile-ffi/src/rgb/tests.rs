@@ -58,7 +58,7 @@ fn profile_catalog_and_fingerprint_are_owned_by_rust() {
     assert!(!catalog[11].verified);
     assert_eq!(
         mobile_melk_lighting_capabilities_fingerprint(),
-        "melk_oc21:v1:effects=1,2,3,4,5,6,7,8,9,10,16,22,75:microphone=0:schedules=0:zones=0:scenes=0"
+        "1,2,3,4,5,6,7,8,9,10,16,22,75|0|0|0|0"
     );
 }
 

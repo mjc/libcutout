@@ -1,4 +1,4 @@
-//! Typed facts and operations exchanged with the CoreBluetooth adapter.
+//! Typed facts and operations exchanged with the `CoreBluetooth` adapter.
 
 use crate::{MobileBluetoothUuid, MobileMelkLightingWriteDto};
 
@@ -26,10 +26,10 @@ pub enum MobileMelkLightingSessionStateDto {
     Failed { reason: String },
 }
 
-/// CoreBluetooth facts submitted to the Rust MELK reducer.
+/// `CoreBluetooth` facts submitted to the Rust MELK reducer.
 #[derive(Clone, Debug, Eq, PartialEq, uniffi::Enum)]
 pub enum MobileMelkLightingSessionEventDto {
-    /// CoreBluetooth changed power state.
+    /// `CoreBluetooth` changed power state.
     BluetoothState { powered_on: bool, state_code: i32 },
     /// A peripheral was observed while scanning.
     Discovered {
@@ -42,7 +42,7 @@ pub enum MobileMelkLightingSessionEventDto {
         name: Option<String>,
         platform_identifier: String,
         connected: bool,
-        /// Whether CoreBluetooth is already maintaining a pending connection.
+        /// Whether `CoreBluetooth` is already maintaining a pending connection.
         pending: bool,
     },
     /// No remembered peripheral was available for the selected identity.
@@ -80,7 +80,7 @@ pub enum MobileMelkLightingSessionEventDto {
         characteristic: MobileBluetoothUuid,
         bytes: Vec<u8>,
     },
-    /// CoreBluetooth can accept another no-response write.
+    /// `CoreBluetooth` can accept another no-response write.
     WriteReady { can_send: bool },
     /// A reducer timer fired.
     TimerFired {
@@ -104,7 +104,7 @@ pub enum MobileMelkLightingTimerDto {
     WriteDrain,
 }
 
-/// CoreBluetooth operation requested by the Rust reducer.
+/// `CoreBluetooth` operation requested by the Rust reducer.
 #[derive(Clone, Debug, Eq, PartialEq, uniffi::Enum)]
 pub enum MobileMelkLightingSessionActionDto {
     /// Scan without a service filter; MELK does not advertise FFF0.
@@ -142,7 +142,7 @@ pub enum MobileMelkLightingSessionActionDto {
     },
 }
 
-/// One characteristic's UUID and native CoreBluetooth properties.
+/// One characteristic's UUID and native `CoreBluetooth` properties.
 #[derive(Clone, Debug, Eq, PartialEq, uniffi::Record)]
 pub struct MobileMelkLightingCharacteristicEvidenceDto {
     /// GATT UUID.
@@ -156,7 +156,7 @@ pub struct MobileMelkLightingCharacteristicEvidenceDto {
 /// A bounded candidate surfaced during first pairing.
 #[derive(Clone, Debug, Eq, PartialEq, uniffi::Record)]
 pub struct MobileMelkLightingSessionCandidateDto {
-    /// Platform-local CoreBluetooth identifier.
+    /// Platform-local `CoreBluetooth` identifier.
     pub platform_identifier: String,
     /// Advertised local name, when present.
     pub name: Option<String>,

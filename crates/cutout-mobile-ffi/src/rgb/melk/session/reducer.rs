@@ -1,6 +1,9 @@
-//! Pure Rust session reducer for the MELK CoreBluetooth adapter.
+//! Pure Rust session reducer for the MELK `CoreBluetooth` adapter.
 
-use std::collections::{BTreeMap, VecDeque};
+use std::{
+    collections::{BTreeMap, VecDeque},
+    fmt::Write as _,
+};
 
 use cutout_protocols::{MelkGattEvidence, MelkLightingProfile};
 
@@ -65,15 +68,14 @@ impl Default for SessionReducer {
 }
 
 impl SessionReducer {
-    pub(crate) fn start(&mut self, preferred_identifier: Option<String>) {
+    pub(crate) fn start(&mut self, preferred_identifier: Option<&str>) {
         self.actions.clear();
         self.records.clear();
         self.notifications.clear();
         self.candidates_out.clear();
-        self.preferred_identifier = preferred_identifier.clone();
-        self.invalid_preferred_identifier = preferred_identifier
-            .as_deref()
-            .is_some_and(|value| uuid::Uuid::parse_str(value).is_err());
+        self.preferred_identifier = preferred_identifier.map(str::to_owned);
+        self.invalid_preferred_identifier =
+            preferred_identifier.is_some_and(|value| uuid::Uuid::parse_str(value).is_err());
         self.reconnect_enabled = true;
         self.reconnect_attempt = 0;
         self.candidates.clear();
@@ -106,14 +108,14 @@ impl SessionReducer {
     }
 
     fn transition(&mut self, state: MobileMelkLightingSessionStateDto) {
-        if !matches!(state, MobileMelkLightingSessionStateDto::Ready) {
+        if matches!(state, MobileMelkLightingSessionStateDto::Ready) {
+            self.reconnect_attempt = 0;
+        } else {
             if self.command_status == 1 {
                 self.command_status = 3;
             }
             self.writes.clear();
             self.reset_initialization();
-        } else {
-            self.reconnect_attempt = 0;
         }
         self.state = state;
     }
@@ -133,9 +135,7 @@ impl SessionReducer {
     }
 
     fn is_melk_name(name: Option<&str>) -> bool {
-        name.map(str::trim)
-            .map(|value| value.to_ascii_lowercase().starts_with("melk"))
-            .unwrap_or(false)
+        name.is_some_and(|value| value.trim().to_ascii_lowercase().starts_with("melk"))
     }
 
     fn accepts(&self, identifier: &str) -> bool {
@@ -143,10 +143,9 @@ impl SessionReducer {
             && self
                 .preferred_identifier
                 .as_deref()
-                .map(|preferred| {
+                .is_none_or(|preferred| {
                     uuid::Uuid::parse_str(preferred).ok() == uuid::Uuid::parse_str(identifier).ok()
                 })
-                .unwrap_or(true)
     }
 
     fn accepts_discovery(&self, name: Option<&str>, identifier: &str) -> bool {
@@ -178,23 +177,23 @@ impl SessionReducer {
         }
     }
 
-    pub(crate) fn select(&mut self, identifier: String) {
+    pub(crate) fn select(&mut self, identifier: &str) {
         if self.preferred_identifier.is_some()
             || self.invalid_preferred_identifier
             || self.selected_identifier.is_some()
         {
             return;
         }
-        let Some(candidate) = self.candidates.get(&identifier).cloned() else {
+        let Some(candidate) = self.candidates.get(identifier).cloned() else {
             return;
         };
-        self.selected_identifier = Some(identifier.clone());
-        self.selected_name = candidate.name.clone();
+        self.selected_identifier = Some(identifier.to_owned());
+        self.selected_name.clone_from(&candidate.name);
         self.actions
             .push_back(MobileMelkLightingSessionActionDto::StopScan);
         self.actions
             .push_back(MobileMelkLightingSessionActionDto::Connect {
-                platform_identifier: identifier.clone(),
+                platform_identifier: identifier.to_owned(),
             });
         self.transition(MobileMelkLightingSessionStateDto::Connecting);
         self.arm(
@@ -228,7 +227,7 @@ impl SessionReducer {
         );
     }
 
-    fn schedule_reconnect(&mut self, reason: String) {
+    fn schedule_reconnect(&mut self, reason: &str) {
         self.reconnect_attempt = self.reconnect_attempt.saturating_add(1);
         if self.reconnect_attempt > MAX_RECONNECT_ATTEMPTS {
             self.transition(MobileMelkLightingSessionStateDto::Failed {
@@ -374,6 +373,10 @@ impl SessionReducer {
             });
     }
 
+    #[allow(
+        clippy::too_many_lines,
+        reason = "The reducer keeps event transitions explicit and auditable."
+    )]
     pub(crate) fn handle(&mut self, event: MobileMelkLightingSessionEventDto) {
         match event {
             MobileMelkLightingSessionEventDto::BluetoothState {
@@ -499,7 +502,7 @@ impl SessionReducer {
             MobileMelkLightingSessionEventDto::ConnectFailed { reason } => {
                 self.timer = None;
                 if self.reconnect_enabled {
-                    self.schedule_reconnect(reason);
+                    self.schedule_reconnect(&reason);
                 } else {
                     self.transition(MobileMelkLightingSessionStateDto::Failed { reason });
                 }
@@ -635,7 +638,7 @@ impl SessionReducer {
                     }
                     MobileMelkLightingTimerDto::Initialization => {
                         self.timer = None;
-                        self.drain_initialization(can_send)
+                        self.drain_initialization(can_send);
                     }
                     MobileMelkLightingTimerDto::WriteDrain => {
                         self.timer = None;
@@ -646,7 +649,7 @@ impl SessionReducer {
             MobileMelkLightingSessionEventDto::Disconnected { reason, powered_on } => {
                 self.record(format!("disconnected error={reason}"));
                 if self.reconnect_enabled && powered_on {
-                    self.schedule_reconnect(reason);
+                    self.schedule_reconnect(&reason);
                 } else {
                     self.forget_selected_connection();
                     self.transition(MobileMelkLightingSessionStateDto::Disconnected);
@@ -704,5 +707,9 @@ fn is_coalescible_color_write(write: &MobileMelkLightingWriteDto) -> bool {
 }
 
 fn hex(bytes: &[u8]) -> String {
-    bytes.iter().map(|byte| format!("{byte:02x}")).collect()
+    let mut output = String::with_capacity(bytes.len() * 2);
+    for byte in bytes {
+        let _ = write!(output, "{byte:02x}");
+    }
+    output
 }

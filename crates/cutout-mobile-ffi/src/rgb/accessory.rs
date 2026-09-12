@@ -448,6 +448,10 @@ impl MobileRgbLightingAccessoryRecord {
     ///
     /// Returns `false` when no complete baseline exists or the field cannot be merged with the
     /// stored playback mode.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`MobileRgbLightingRecordError::InvalidState`] when the supplied state is invalid.
     pub fn confirm_partial_state(
         &self,
         state: MobileMelkLightingRestoreStateDto,

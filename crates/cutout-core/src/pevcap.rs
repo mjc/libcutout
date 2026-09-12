@@ -326,6 +326,7 @@ impl PevcapFormatVersion {
     }
 }
 
+#[cfg(feature = "serde")]
 fn ensure_music_supported<E>(
     has_music: bool,
     version: PevcapFormatVersion,

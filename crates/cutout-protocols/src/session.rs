@@ -503,6 +503,10 @@ impl ReadOnlyNotificationDecoder for BegodeNotificationDecoder {
 }
 
 /// Generic VESC notification decoder for read-only UART replies.
+#[allow(
+    clippy::struct_excessive_bools,
+    reason = "These flags represent independent decoder streams and observations."
+)]
 #[derive(Clone, Debug, Default)]
 pub struct VescNotificationDecoder {
     stream: VescReadOnlyStreamDecoder,
@@ -654,23 +658,19 @@ impl ReadOnlyNotificationDecoder for VescNotificationDecoder {
         }
         if !matches!(bytes.first(), Some(2 | 3)) {
             if let Some(start) = bytes.iter().position(|byte| *byte == 2 || *byte == 3) {
-                let candidate = &bytes[start..];
+                let Some(candidate) = bytes.get(start..) else {
+                    return;
+                };
                 if let Some(frame_len) = complete_vesc_frame_len(candidate) {
-                    self.handle_notification(
-                        family,
-                        channel,
-                        &candidate[..frame_len],
-                        monotonic_ms,
-                        output,
-                    );
+                    let Some(frame) = candidate.get(..frame_len) else {
+                        return;
+                    };
+                    self.handle_notification(family, channel, frame, monotonic_ms, output);
                     if frame_len < candidate.len() {
-                        self.handle_notification(
-                            family,
-                            channel,
-                            &candidate[frame_len..],
-                            monotonic_ms,
-                            output,
-                        );
+                        let Some(trailing) = candidate.get(frame_len..) else {
+                            return;
+                        };
+                        self.handle_notification(family, channel, trailing, monotonic_ms, output);
                     }
                     return;
                 }
@@ -679,16 +679,15 @@ impl ReadOnlyNotificationDecoder for VescNotificationDecoder {
             }
         }
         if let Some(frame_len) = complete_vesc_frame_len(bytes) {
-            let frame = &bytes[..frame_len];
+            let Some(frame) = bytes.get(..frame_len) else {
+                return;
+            };
             self.handle_notification_chunk(family, channel, frame, monotonic_ms, output);
             if frame_len < bytes.len() {
-                self.handle_notification(
-                    family,
-                    channel,
-                    &bytes[frame_len..],
-                    monotonic_ms,
-                    output,
-                );
+                let Some(trailing) = bytes.get(frame_len..) else {
+                    return;
+                };
+                self.handle_notification(family, channel, trailing, monotonic_ms, output);
             }
             return;
         }
@@ -719,6 +718,10 @@ impl VescNotificationDecoder {
         push_vesc_read_request(VescReadOnlyRequest::Values, output);
     }
 
+    #[allow(
+        clippy::too_many_lines,
+        reason = "This parser keeps stream state in one transaction."
+    )]
     fn handle_notification_chunk(
         &mut self,
         family: ProtocolFamily,
@@ -735,21 +738,21 @@ impl VescNotificationDecoder {
             if let Some(refloat_bytes) = self.refloat_stream.pending_frame_bytes()
                 && bytes.len() > refloat_bytes
             {
+                let Some(refloat_chunk) = bytes.get(..refloat_bytes) else {
+                    return;
+                };
                 let refloat_handled = self.handle_refloat_notification(
                     family,
                     channel,
-                    &bytes[..refloat_bytes],
+                    refloat_chunk,
                     monotonic_ms,
                     output,
                 );
                 if refloat_handled || !self.refloat_stream_pending {
-                    self.handle_notification(
-                        family,
-                        channel,
-                        &bytes[refloat_bytes..],
-                        monotonic_ms,
-                        output,
-                    );
+                    let Some(trailing) = bytes.get(refloat_bytes..) else {
+                        return;
+                    };
+                    self.handle_notification(family, channel, trailing, monotonic_ms, output);
                 }
                 return;
             }
@@ -777,6 +780,10 @@ impl VescNotificationDecoder {
                 self.reject_oversized_generic_notification(output);
                 return;
             }
+            #[allow(
+                clippy::single_match_else,
+                reason = "The None branch buffers an incomplete frame prefix."
+            )]
             match generic_frame_kind(&generic_bytes) {
                 Some(is_generic) => {
                     self.generic_prefix.clear();
@@ -785,13 +792,21 @@ impl VescNotificationDecoder {
                             .filter(|frame_len| *frame_len < generic_bytes.len())
                         {
                             let mut refloat_frame = ArrayVec::<u8, VESC_MAX_FRAME_LEN>::new();
-                            refloat_frame
-                                .try_extend_from_slice(&generic_bytes[..frame_len])
-                                .expect("Refloat frame fits bounded VESC frame");
+                            let Some(refloat_bytes) = generic_bytes.get(..frame_len) else {
+                                return;
+                            };
+                            if refloat_frame.try_extend_from_slice(refloat_bytes).is_err() {
+                                self.reject_oversized_generic_notification(output);
+                                return;
+                            }
                             let mut trailing = ArrayVec::<u8, VESC_MAX_FRAME_LEN>::new();
-                            trailing
-                                .try_extend_from_slice(&generic_bytes[frame_len..])
-                                .expect("trailing VESC bytes fit bounded frame");
+                            let Some(trailing_bytes) = generic_bytes.get(frame_len..) else {
+                                return;
+                            };
+                            if trailing.try_extend_from_slice(trailing_bytes).is_err() {
+                                self.reject_oversized_generic_notification(output);
+                                return;
+                            }
                             self.handle_refloat_notification(
                                 family,
                                 channel,
@@ -898,6 +913,10 @@ impl VescNotificationDecoder {
         push_parser_error(ParserError::MalformedFrame, output);
     }
 
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "Parser metadata is passed together for one notification."
+    )]
     fn handle_vesc_notification(
         &mut self,
         family: ProtocolFamily,
@@ -2031,10 +2050,10 @@ impl<M: SupportsDangerousActuation> DangerousControlSession<M> {
         output: &mut Vec<SessionOutput>,
         command: CommandKind,
         safety_class: SafetyClass,
-        reason: cutout_core::ControlRefusalReason,
+        reason: ControlRefusalReason,
     ) {
         output.push(SessionOutput::Event(DeviceEvent::ControlRefusal(
-            cutout_core::ControlRefusal {
+            ControlRefusal {
                 command,
                 safety_class,
                 reason,
@@ -2058,7 +2077,7 @@ impl<M: SupportsDangerousActuation> ProtocolSession for DangerousControlSession<
                         output,
                         kind,
                         safety_class,
-                        cutout_core::ControlRefusalReason::UnsupportedCommand,
+                        ControlRefusalReason::UnsupportedCommand,
                     );
                     return;
                 }
@@ -2068,13 +2087,13 @@ impl<M: SupportsDangerousActuation> ProtocolSession for DangerousControlSession<
                         output,
                         metadata.kind,
                         metadata.safety_class,
-                        cutout_core::ControlRefusalReason::UnsupportedCommand,
+                        ControlRefusalReason::UnsupportedCommand,
                     ),
                     Err(reason) => Self::push_refusal(
                         output,
                         kind,
                         safety_class,
-                        cutout_core::ControlRefusalReason::from(reason),
+                        ControlRefusalReason::from(reason),
                     ),
                 }
             }
@@ -5022,10 +5041,10 @@ mod tests {
         assert_eq!(
             output,
             vec![SessionOutput::Event(DeviceEvent::ControlRefusal(
-                cutout_core::ControlRefusal {
+                ControlRefusal {
                     command: CommandKind::SetRawMotorCurrent,
                     safety_class: SafetyClass::Actuation,
-                    reason: cutout_core::ControlRefusalReason::MissingArm,
+                    reason: ControlRefusalReason::MissingArm,
                 }
             ))]
         );
@@ -5063,10 +5082,10 @@ mod tests {
         );
         assert!(
             output.contains(&SessionOutput::Event(DeviceEvent::ControlRefusal(
-                cutout_core::ControlRefusal {
+                ControlRefusal {
                     command: CommandKind::SetRawMotorCurrent,
                     safety_class: SafetyClass::Actuation,
-                    reason: cutout_core::ControlRefusalReason::ExpiredArm,
+                    reason: ControlRefusalReason::ExpiredArm,
                 }
             )))
         );
@@ -5109,10 +5128,10 @@ mod tests {
         );
         assert!(
             output.contains(&SessionOutput::Event(DeviceEvent::ControlRefusal(
-                cutout_core::ControlRefusal {
+                ControlRefusal {
                     command: CommandKind::SetRawMotorCurrent,
                     safety_class: SafetyClass::Actuation,
-                    reason: cutout_core::ControlRefusalReason::WrongModel,
+                    reason: ControlRefusalReason::WrongModel,
                 }
             )))
         );
@@ -5150,10 +5169,10 @@ mod tests {
         );
         assert!(
             output.contains(&SessionOutput::Event(DeviceEvent::ControlRefusal(
-                cutout_core::ControlRefusal {
+                ControlRefusal {
                     command: CommandKind::SetRawMotorCurrent,
                     safety_class: SafetyClass::Actuation,
-                    reason: cutout_core::ControlRefusalReason::CurrentLimitExceeded,
+                    reason: ControlRefusalReason::CurrentLimitExceeded,
                 }
             )))
         );

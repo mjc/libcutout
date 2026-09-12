@@ -477,9 +477,9 @@ impl RefloatStreamDecoder {
         for byte in bytes {
             if self.buffer.try_push(*byte).is_err() {
                 self.buffer.remove(0);
-                self.buffer
-                    .try_push(*byte)
-                    .expect("removing one byte makes room in the bounded buffer");
+                if self.buffer.try_push(*byte).is_err() {
+                    return Err(RefloatCodecError::FrameTooLong);
+                }
                 first_error.get_or_insert(RefloatCodecError::FrameTooLong);
             }
             self.decode_pending(&mut on_reply, &mut reply_count, &mut first_error);
@@ -1298,10 +1298,10 @@ mod tests {
 
     #[test]
     fn finite_refloat_float16_keeps_extended_exponent_values_finite() {
-        assert_eq!(float16_to_f32(0x7c00), 65_536.0);
-        assert_eq!(float16_to_f32(0x7fff), 131_008.0);
-        assert_eq!(float16_to_f32(0xfc00), -65_536.0);
-        assert_eq!(float16_to_f32(0xffff), -131_008.0);
+        assert_eq!(float16_to_f32(0x7c00).to_bits(), 65_536.0_f32.to_bits());
+        assert_eq!(float16_to_f32(0x7fff).to_bits(), 131_008.0_f32.to_bits());
+        assert_eq!(float16_to_f32(0xfc00).to_bits(), (-65_536.0_f32).to_bits());
+        assert_eq!(float16_to_f32(0xffff).to_bits(), (-131_008.0_f32).to_bits());
     }
 
     #[test]
