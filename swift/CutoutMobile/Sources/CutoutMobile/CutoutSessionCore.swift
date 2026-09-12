@@ -796,6 +796,7 @@ public final class CutoutSessionCore: NSObject {
             }
             do {
                 try liveOwner.handleCommand(command, at: clock.now())
+                guard phase == .live else { return .failed }
                 return .accepted
             } catch let error as CutoutSessionError {
                 record("\(name)_error=\(error)")

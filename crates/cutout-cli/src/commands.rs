@@ -1303,7 +1303,7 @@ async fn run_dashboard_live_updates(
     }
     info!("dashboard live update selected session endpoints");
 
-    let selected_session = match dashboard_session_profile_from_summary(&connection.summary) {
+    let selected_session = match dashboard_session_profile_from_protocol(&connection).await {
         Ok(selected_session) => selected_session,
         Err(error) => {
             let _ = tx.send(DashboardUpdate::Log {
@@ -1356,6 +1356,44 @@ async fn run_dashboard_live_updates(
 
         iteration = iteration.wrapping_add(1);
     }
+}
+
+/// Probes each registered read-only protocol until one produces typed telemetry
+/// or a read-only response. Advertised names are never used for selection.
+async fn dashboard_session_profile_from_protocol(
+    connection: &ConnectedPeripheral,
+) -> Result<SelectedSessionProfile> {
+    let endpoints = connection
+        .summary
+        .select_session_endpoints()
+        .context("dashboard session endpoints unavailable")?;
+    let probes = [
+        DeviceCommand::RequestIdentity,
+        DeviceCommand::RequestFirmwareInfo,
+        DeviceCommand::RequestTelemetry,
+    ];
+    for profile in [SessionProfile::Aero, SessionProfile::Falcon] {
+        let selected = selected_session_profile(profile);
+        let registration = selected.session_registration()?;
+        let mut session = registration.construct();
+        let report = drive_session_with_commands(
+            &connection.peripheral,
+            &mut session,
+            registration.data_channel,
+            &connection.summary,
+            endpoints,
+            DASHBOARD_LIVE_WINDOW.into(),
+            &probes,
+        )
+        .await?;
+        if report.telemetry.as_events() > 0
+            || report.read_only_responses.as_events() > 0
+            || report.firmware.is_some()
+        {
+            return Ok(selected);
+        }
+    }
+    bail!("dashboard protocol probe produced no typed identity evidence")
 }
 
 async fn run_dashboard_live_iteration(

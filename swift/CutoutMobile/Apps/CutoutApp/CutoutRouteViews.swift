@@ -456,9 +456,9 @@ private struct EucBegodeMaxSpeedControl: View {
             value: Binding(
                 get: { selectedSpeed },
                 set: { newValue in
-                    selectedSpeed = newValue
                     if let speed = BegodeMaxSpeed(kilometresPerHour: UInt8(newValue)) {
-                        _ = model.setBegodeMaxSpeed(speed)
+                        let result = model.setBegodeMaxSpeed(speed)
+                        if case .accepted = result { selectedSpeed = newValue }
                     }
                 }
             ),
@@ -479,9 +479,9 @@ private struct EucBegodeBeeperVolumeControl: View {
         Picker(localizedAppText("settings.begode_beeper_volume.title"), selection: Binding(
             get: { selectedVolume },
             set: { newValue in
-                selectedVolume = newValue
                 if let volume = BegodeBeeperVolume(level: UInt8(newValue)) {
-                    _ = model.setBegodeBeeperVolume(volume)
+                    let result = model.setBegodeBeeperVolume(volume)
+                    if case .accepted = result { selectedVolume = newValue }
                 }
             }
         )) {
@@ -503,9 +503,9 @@ private struct EucBegodeLedModeControl: View {
         Picker(localizedAppText("settings.begode_led_mode.title"), selection: Binding(
             get: { selectedMode },
             set: { newValue in
-                selectedMode = newValue
                 if let mode = BegodeLedMode(mode: UInt8(newValue)) {
-                    _ = model.setBegodeLedMode(mode)
+                    let result = model.setBegodeLedMode(mode)
+                    if case .accepted = result { selectedMode = newValue }
                 }
             }
         )) {
