@@ -14,6 +14,13 @@ type AeroBenignControlHost = HostSession<StationarySettingsWriteSession<NosfetAe
 type FalconBenignControlHost = HostSession<StationarySettingsWriteSession<BegodeFalconModel, true>>;
 type VescReadOnlyHost = HostSession<ReadOnlySession<VescGenericModel, true>>;
 
+fn output_is_telemetry(output: &SessionOutputDto) -> bool {
+    matches!(
+        output,
+        SessionOutputDto::Event(SessionEventDto::Telemetry(_))
+    )
+}
+
 /// Owned result of one concrete mobile session step.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ConcreteSessionStepResultDto {
@@ -54,6 +61,7 @@ pub enum ConcreteFalconProfileDto {
 #[derive(Clone, Debug)]
 pub struct ConcreteAeroBenignControlSession {
     host: AeroBenignControlHost,
+    last_telemetry_ms: Option<u64>,
 }
 
 impl ConcreteAeroBenignControlSession {
@@ -64,6 +72,7 @@ impl ConcreteAeroBenignControlSession {
             host: HostSession::new(
                 StationarySettingsWriteSession::<NosfetAeroModel, false>::default(),
             ),
+            last_telemetry_ms: None,
         }
     }
 
@@ -74,6 +83,15 @@ impl ConcreteAeroBenignControlSession {
         speed_mm_per_second: Option<i32>,
         monotonic_ms: u64,
     ) -> bool {
+        if matches!(
+            state,
+            RideOperatingStateDto::Standing | RideOperatingStateDto::Riding
+        ) && self
+            .last_telemetry_ms
+            .is_some_and(|observed| monotonic_ms.saturating_sub(observed) > 5_000)
+        {
+            return false;
+        }
         arm_stationary_settings::<NosfetAeroModel, false>(
             &mut self.host,
             state,
@@ -87,15 +105,34 @@ impl ConcreteAeroBenignControlSession {
         self.host.ingest(input.as_session_input());
     }
 
+    /// Sets the host timestamp before a command input that carries no core timestamp.
+    pub fn set_monotonic(&mut self, monotonic_ms: u64) {
+        self.host
+            .session_mut()
+            .set_monotonic(cutout_core::MonotonicTimestamp::new(monotonic_ms));
+    }
+
     /// Drives one DTO input and returns owned outputs plus any stable error DTO.
     #[must_use]
     pub fn ingest_checked(&mut self, input: &SessionInputDto) -> ConcreteSessionStepResultDto {
         self.ingest(input);
-        checked_drain_outputs(
+        let result = checked_drain_outputs(
             &mut self.host,
             input,
             StationarySettingsWriteSession::<NosfetAeroModel, false>::capabilities(),
-        )
+        );
+        if matches!(
+            input,
+            SessionInputDto::LinkUp { .. } | SessionInputDto::LinkDown
+        ) {
+            self.last_telemetry_ms = None;
+        }
+        if let SessionInputDto::Notification { monotonic_ms, .. } = input {
+            if result.outputs.iter().any(output_is_telemetry) {
+                self.last_telemetry_ms = Some(monotonic_ms.milliseconds);
+            }
+        }
+        result
     }
 
     /// Drains owned output DTOs accumulated since the previous drain.
@@ -127,6 +164,7 @@ impl Default for ConcreteAeroBenignControlSession {
 #[derive(Clone, Debug)]
 pub struct ConcreteFalconBenignControlSession {
     host: FalconBenignControlHost,
+    last_telemetry_ms: Option<u64>,
 }
 
 impl ConcreteFalconBenignControlSession {
@@ -137,6 +175,7 @@ impl ConcreteFalconBenignControlSession {
             host: HostSession::new(
                 StationarySettingsWriteSession::<BegodeFalconModel, true>::default(),
             ),
+            last_telemetry_ms: None,
         }
     }
 
@@ -147,6 +186,15 @@ impl ConcreteFalconBenignControlSession {
         speed_mm_per_second: Option<i32>,
         monotonic_ms: u64,
     ) -> bool {
+        if matches!(
+            state,
+            RideOperatingStateDto::Standing | RideOperatingStateDto::Riding
+        ) && self
+            .last_telemetry_ms
+            .is_some_and(|observed| monotonic_ms.saturating_sub(observed) > 5_000)
+        {
+            return false;
+        }
         arm_stationary_settings::<BegodeFalconModel, true>(
             &mut self.host,
             state,
@@ -175,15 +223,34 @@ impl ConcreteFalconBenignControlSession {
         self.host.ingest(input.as_session_input());
     }
 
+    /// Sets the host timestamp before a command input that carries no core timestamp.
+    pub fn set_monotonic(&mut self, monotonic_ms: u64) {
+        self.host
+            .session_mut()
+            .set_monotonic(cutout_core::MonotonicTimestamp::new(monotonic_ms));
+    }
+
     /// Drives one DTO input and returns owned outputs plus any stable error DTO.
     #[must_use]
     pub fn ingest_checked(&mut self, input: &SessionInputDto) -> ConcreteSessionStepResultDto {
         self.ingest(input);
-        checked_drain_outputs(
+        let result = checked_drain_outputs(
             &mut self.host,
             input,
             StationarySettingsWriteSession::<BegodeFalconModel, true>::capabilities(),
-        )
+        );
+        if matches!(
+            input,
+            SessionInputDto::LinkUp { .. } | SessionInputDto::LinkDown
+        ) {
+            self.last_telemetry_ms = None;
+        }
+        if let SessionInputDto::Notification { monotonic_ms, .. } = input {
+            if result.outputs.iter().any(output_is_telemetry) {
+                self.last_telemetry_ms = Some(monotonic_ms.milliseconds);
+            }
+        }
+        result
     }
 
     /// Drains owned output DTOs accumulated since the previous drain.
@@ -282,6 +349,7 @@ impl Default for VescReadOnlySession {
 pub fn new_nosfet_aero_benign_control_session() -> ConcreteAeroBenignControlSession {
     ConcreteAeroBenignControlSession {
         host: HostSession::new(StationarySettingsWriteSession::<NosfetAeroModel, false>::default()),
+        last_telemetry_ms: None,
     }
 }
 
@@ -292,6 +360,7 @@ pub fn new_begode_falcon_benign_control_session() -> ConcreteFalconBenignControl
         host: HostSession::new(
             StationarySettingsWriteSession::<BegodeFalconModel, true>::default(),
         ),
+        last_telemetry_ms: None,
     }
 }
 

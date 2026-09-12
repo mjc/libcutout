@@ -3074,12 +3074,17 @@ impl<Value> MobileSettingTracker<Value>
 where
     Value: Copy + Eq,
 {
-    fn observe_step(&mut self, kind: MobileSessionInputKindDto, now: MonotonicTimestamp) {
+    fn observe_step(
+        &mut self,
+        kind: MobileSessionInputKindDto,
+        now: MonotonicTimestamp,
+        confirmation_supported: bool,
+    ) {
         if kind == MobileSessionInputKindDto::LinkDown {
             self.state = CoreSettingState::unknown();
         }
 
-        if kind == MobileSessionInputKindDto::Tick {
+        if kind == MobileSessionInputKindDto::Tick && confirmation_supported {
             self.state
                 .timeout_if_elapsed(now, SETTING_WRITE_CONFIRMATION_TIMEOUT);
         }
@@ -3112,14 +3117,20 @@ struct MobileEucSettingTrackers {
 }
 
 impl MobileEucSettingTrackers {
-    fn observe_step(&mut self, input: &MobileSessionInputDto, result: &MobileSessionStepResultDto) {
+    fn observe_step(
+        &mut self,
+        input: &MobileSessionInputDto,
+        result: &MobileSessionStepResultDto,
+        headlight_confirmation_supported: bool,
+    ) {
         let now = input.monotonic_ms.into_core();
-        self.headlight.observe_step(input.kind, now);
-        self.pedal_mode.observe_step(input.kind, now);
-        self.roll_angle.observe_step(input.kind, now);
-        self.speed_alarm_mode.observe_step(input.kind, now);
-        self.acceleration_assist.observe_step(input.kind, now);
-        self.taillight.observe_step(input.kind, now);
+        self.headlight
+            .observe_step(input.kind, now, headlight_confirmation_supported);
+        self.pedal_mode.observe_step(input.kind, now, true);
+        self.roll_angle.observe_step(input.kind, now, true);
+        self.speed_alarm_mode.observe_step(input.kind, now, true);
+        self.acceleration_assist.observe_step(input.kind, now, true);
+        self.taillight.observe_step(input.kind, now, true);
 
         match input.command {
             Some(MobileCommandDto::SetLights(requested)) => {
@@ -12038,12 +12049,17 @@ impl AeroBenignControlSession {
     /// Drives one input and returns owned outputs plus any stable error DTO.
     pub fn ingest_checked(&self, input: MobileSessionInputDto) -> MobileSessionStepResultDto {
         let tracked_input = input.clone();
+        if tracked_input.kind == MobileSessionInputKindDto::Command {
+            self.lock_inner()
+                .set_monotonic(tracked_input.monotonic_ms.milliseconds);
+        }
         let input = SessionInputDto::from(input);
         let result = preserve_refused_command(
             mobile_aero_session_step_result(self.lock_inner().ingest_checked(&input)),
             tracked_input.command,
         );
-        self.lock_settings().observe_step(&tracked_input, &result);
+        self.lock_settings()
+            .observe_step(&tracked_input, &result, false);
         result
     }
 
@@ -13519,12 +13535,17 @@ impl FalconBenignControlSession {
     /// Drives one input and returns owned outputs plus any stable error DTO.
     pub fn ingest_checked(&self, input: MobileSessionInputDto) -> MobileSessionStepResultDto {
         let tracked_input = input.clone();
+        if tracked_input.kind == MobileSessionInputKindDto::Command {
+            self.lock_inner()
+                .set_monotonic(tracked_input.monotonic_ms.milliseconds);
+        }
         let input = SessionInputDto::from(input);
         let result = preserve_refused_command(
             MobileSessionStepResultDto::from(self.lock_inner().ingest_checked(&input)),
             tracked_input.command,
         );
-        self.lock_settings().observe_step(&tracked_input, &result);
+        self.lock_settings()
+            .observe_step(&tracked_input, &result, true);
         result
     }
 
@@ -16949,6 +16970,87 @@ mod tests {
     }
 
     #[test]
+    fn begode_submenu_delay_starts_at_command_timestamp() {
+        let session = FalconBenignControlSession::new().expect("default profile should construct");
+        let tick = |at| MobileSessionInputDto {
+            kind: MobileSessionInputKindDto::Tick,
+            monotonic_ms: ms(at),
+            max_write_len: None,
+            channel: Vec::new(),
+            bytes: Vec::new(),
+            command: None,
+        };
+        let command = |at| MobileSessionInputDto {
+            kind: MobileSessionInputKindDto::Command,
+            monotonic_ms: ms(at),
+            max_write_len: None,
+            channel: Vec::new(),
+            bytes: Vec::new(),
+            command: Some(MobileCommandDto::SetBegodeMaxSpeed(
+                MobileBegodeMaxSpeedDto {
+                    kilometres_per_hour: 31,
+                },
+            )),
+        };
+
+        let _ = session.ingest_checked(tick(1_000));
+        assert!(session.arm_settings_writes(RideOperatingState::Standing, ms(1_249)));
+        let first = session.ingest_checked(command(1_249));
+        assert!(
+            first
+                .outputs
+                .iter()
+                .any(|output| output.kind == MobileSessionOutputKindDto::Write
+                    && output.bytes == b"W")
+        );
+        let early = session.ingest_checked(tick(1_250));
+        assert!(!early.outputs.iter().any(|output| output.bytes == b"Y"));
+    }
+
+    #[test]
+    fn stale_telemetry_cannot_authorize_stationary_settings() {
+        let session = AeroBenignControlSession::new();
+        let mut link = MobileSessionInputDto {
+            kind: MobileSessionInputKindDto::LinkUp,
+            monotonic_ms: ms(1),
+            max_write_len: Some(MobileTransportWriteLimitDto { bytes: 185 }),
+            channel: Vec::new(),
+            bytes: Vec::new(),
+            command: None,
+        };
+        let linked = session.ingest_checked(link.clone());
+        link.kind = MobileSessionInputKindDto::Notification;
+        link.monotonic_ms = ms(2);
+        link.channel = linked
+            .outputs
+            .iter()
+            .find(|output| output.kind == MobileSessionOutputKindDto::Subscribe)
+            .expect("Aero subscribes to its data channel")
+            .channel
+            .clone();
+        link.bytes = hex_literal::hex!(
+            "dc5a5c532a7c000000000000ab41001700000cff
+             000000000226021ca8f607801afa000080c80000
+             808080808080022880803080800e310e310e2f0e
+             2f0e300e2a0e320e2e0e300e310e300e2d0e2f0e
+             310e2e9e05e3ad"
+        )
+        .to_vec();
+        let _ = session.ingest_checked(link);
+        let _ = session.ingest_checked(MobileSessionInputDto {
+            kind: MobileSessionInputKindDto::Tick,
+            monotonic_ms: ms(60_000),
+            max_write_len: None,
+            channel: Vec::new(),
+            bytes: Vec::new(),
+            command: None,
+        });
+        assert!(
+            !session.arm_settings_writes(session.current_snapshot().operating_state, ms(60_000))
+        );
+    }
+
+    #[test]
     fn mobile_light_state_tracks_accepted_write_until_matching_readback() {
         let session = AeroBenignControlSession::new();
 
@@ -16978,7 +17080,7 @@ mod tests {
     }
 
     #[test]
-    fn mobile_light_state_times_out_on_tick() {
+    fn aero_light_state_remains_unconfirmed_without_readback() {
         let session = AeroBenignControlSession::new();
 
         let _ = session.ingest_checked(MobileSessionInputDto {
@@ -17004,7 +17106,7 @@ mod tests {
         });
 
         let state = session.headlight_state();
-        assert_eq!(state.kind, MobileSettingStateKindDto::TimedOut);
+        assert_eq!(state.kind, MobileSettingStateKindDto::Pending);
         assert_eq!(state.requested, Some(MobileLightStateDto::On));
     }
 
@@ -17026,6 +17128,7 @@ mod tests {
                 command: Some(MobileCommandDto::SetPedalMode(MobilePedalModeKindDto::Hard)),
             },
             &accepted,
+            true,
         );
         assert_eq!(
             trackers.pedal_mode().kind,
@@ -17042,6 +17145,7 @@ mod tests {
                 command: None,
             },
             &accepted,
+            true,
         );
 
         let state = trackers.pedal_mode();

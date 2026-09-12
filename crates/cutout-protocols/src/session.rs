@@ -2157,6 +2157,11 @@ impl<
         self.arm = Some(arm);
     }
 
+    /// Updates the host timestamp used for command sequencing and arm expiry.
+    pub const fn set_monotonic(&mut self, monotonic_ms: MonotonicTimestamp) {
+        self.monotonic_ms = monotonic_ms;
+    }
+
     fn handle_tick(&mut self, monotonic_ms: MonotonicTimestamp, output: &mut Vec<SessionOutput>) {
         self.monotonic_ms = monotonic_ms;
         self.read_only
