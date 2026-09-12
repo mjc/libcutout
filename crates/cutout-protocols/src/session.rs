@@ -2016,12 +2016,6 @@ pub struct BenignControlSession<
     light_command_state: LightCommandState,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
-struct PendingSettingsSequence {
-    remaining: ArrayVec<EncodedControlStep, 4>,
-    next_at: MonotonicTimestamp,
-}
-
 fn handle_benign_control<M: ReadOnlyModelSpec + SupportsBenignControls>(
     command: DeviceCommand,
     output: &mut Vec<SessionOutput>,

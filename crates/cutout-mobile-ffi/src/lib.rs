@@ -71,17 +71,17 @@ use cutout_core::{
     RideSessionMarkerError as CoreRideSessionMarkerError, RideSessionPhase as CoreRideSessionPhase,
     RideStopReasonDto, RideWarningDto, RollAngle as CoreRollAngle,
     SETTING_WRITE_CONFIRMATION_TIMEOUT, SemanticEventCountDto, SeriesCount, SessionEventDto,
-    SessionInputDto, SessionOutput, SessionOutputDto, SettingCommandStatus as CoreSettingCommandStatus,
-    SettingState as CoreSettingState, SettingValueSource as CoreSettingValueSource, SettingsEntry,
-    SettingsEntryDto, SettingsReadback, SettingsReadbackAvailability,
-    SettingsReadbackAvailabilityDto, SettingsReadbackDto, Speed as CoreSpeed,
-    SpeedAlarmMode as CoreSpeedAlarmMode, SpeedReadingDto, TelemetryFreshness,
-    TelemetrySnapshotDto, TemperatureReadingDto, TransportActionDto, TransportWriteLimit,
-    TransportWriteLimitDto, UsablePackCapacity, ValueQuality, ValueQuality as CoreValueQuality,
-    ValueQualityDto, ValueSource, ValueSource as CoreValueSource, ValueSourceDto,
-    VerificationStatus, VerificationStatusDto, VerifiedValue, Voltage as CoreVoltage,
-    VoltageReadingDto, VoltageSagEstimate, VoltageSagEstimator, VoltageSagInput, VoltageSagModel,
-    WallClockUnixTimestamp, WriteMode,
+    SessionInputDto, SessionOutput, SessionOutputDto,
+    SettingCommandStatus as CoreSettingCommandStatus, SettingState as CoreSettingState,
+    SettingValueSource as CoreSettingValueSource, SettingsEntry, SettingsEntryDto,
+    SettingsReadback, SettingsReadbackAvailability, SettingsReadbackAvailabilityDto,
+    SettingsReadbackDto, Speed as CoreSpeed, SpeedAlarmMode as CoreSpeedAlarmMode, SpeedReadingDto,
+    TelemetryFreshness, TelemetrySnapshotDto, TemperatureReadingDto, TransportActionDto,
+    TransportWriteLimit, TransportWriteLimitDto, UsablePackCapacity, ValueQuality,
+    ValueQuality as CoreValueQuality, ValueQualityDto, ValueSource, ValueSource as CoreValueSource,
+    ValueSourceDto, VerificationStatus, VerificationStatusDto, VerifiedValue,
+    Voltage as CoreVoltage, VoltageReadingDto, VoltageSagEstimate, VoltageSagEstimator,
+    VoltageSagInput, VoltageSagModel, WallClockUnixTimestamp, WriteMode,
 };
 use cutout_music::{
     MusicCapabilities as CoreMusicCapabilities, MusicCommand as CoreMusicCommand,
@@ -3885,32 +3885,42 @@ impl MobileEucSettingTrackers {
         let now = input.monotonic_ms.into_core();
         self.headlight
             .observe_step(input.kind, now, headlight_confirmation_supported);
-        self.aero_high_beam.observe_step(input.kind, now);
-        self.aero_tiltback_speed.observe_step(input.kind, now);
-        self.aero_pwm_percent.observe_step(input.kind, now);
-        self.aero_gyro_calibration.observe_step(input.kind, now);
-        self.aero_riding_mode.observe_step(input.kind, now);
-        self.aero_brake_overpressure_alarm.observe_step(input.kind, now);
-        self.aero_pedal_hardness.observe_step(input.kind, now);
-        self.aero_display_backlight.observe_step(input.kind, now);
-        self.aero_beeper_volume.observe_step(input.kind, now);
-        self.aero_dynamic_assist.observe_step(input.kind, now);
-        self.aero_pedal_dip_compensation.observe_step(input.kind, now);
-        self.aero_lateral_tilt_limit.observe_step(input.kind, now);
-        self.aero_voltage_correction.observe_step(input.kind, now);
-        self.aero_max_charge_voltage_raw.observe_step(input.kind, now);
-        self.aero_wheel_units.observe_step(input.kind, now);
-        self.aero_high_speed_mode.observe_step(input.kind, now);
-        self.aero_low_battery_mode.observe_step(input.kind, now);
-        self.aero_transport_mode.observe_step(input.kind, now);
-        self.aero_alarm_speed.observe_step(input.kind, now);
-        self.aero_angle_adjustment.observe_step(input.kind, now);
+        self.aero_high_beam.observe_step(input.kind, now, true);
+        self.aero_tiltback_speed.observe_step(input.kind, now, true);
+        self.aero_pwm_percent.observe_step(input.kind, now, true);
+        self.aero_gyro_calibration
+            .observe_step(input.kind, now, true);
+        self.aero_riding_mode.observe_step(input.kind, now, true);
+        self.aero_brake_overpressure_alarm
+            .observe_step(input.kind, now, true);
+        self.aero_pedal_hardness.observe_step(input.kind, now, true);
+        self.aero_display_backlight
+            .observe_step(input.kind, now, true);
+        self.aero_beeper_volume.observe_step(input.kind, now, true);
+        self.aero_dynamic_assist.observe_step(input.kind, now, true);
+        self.aero_pedal_dip_compensation
+            .observe_step(input.kind, now, true);
+        self.aero_lateral_tilt_limit
+            .observe_step(input.kind, now, true);
+        self.aero_voltage_correction
+            .observe_step(input.kind, now, true);
+        self.aero_max_charge_voltage_raw
+            .observe_step(input.kind, now, true);
+        self.aero_wheel_units.observe_step(input.kind, now, true);
+        self.aero_high_speed_mode
+            .observe_step(input.kind, now, true);
+        self.aero_low_battery_mode
+            .observe_step(input.kind, now, true);
+        self.aero_transport_mode.observe_step(input.kind, now, true);
+        self.aero_alarm_speed.observe_step(input.kind, now, true);
+        self.aero_angle_adjustment
+            .observe_step(input.kind, now, true);
         self.pedal_mode.observe_step(input.kind, now, true);
         self.roll_angle.observe_step(input.kind, now, true);
         self.speed_alarm_mode.observe_step(input.kind, now, true);
         self.acceleration_assist.observe_step(input.kind, now, true);
         self.taillight.observe_step(input.kind, now, true);
-        self.trip_meter_reset.observe_step(input.kind, now);
+        self.trip_meter_reset.observe_step(input.kind, now, true);
 
         if input.kind == MobileSessionInputKindDto::Command {
             self.observe_command(input.command, now, result);
@@ -14072,7 +14082,8 @@ impl AeroBenignControlSession {
                     None
                 };
                 if let Some(result) = result {
-                    self.lock_settings().observe_step(&tracked_input, &result, false);
+                    self.lock_settings()
+                        .observe_step(&tracked_input, &result, false);
                     return result;
                 }
             }
@@ -14228,6 +14239,11 @@ impl AeroBenignControlSession {
         self.lock_settings().aero_alarm_speed()
     }
 
+    /// Returns the Rust-owned Aero angle-adjustment lifecycle state.
+    pub fn aero_angle_adjustment_state(&self) -> MobileAeroAngleAdjustmentStateDto {
+        self.lock_settings().aero_angle_adjustment()
+    }
+
     /// Records a transport failure for the latest headlight command.
     pub fn fail_headlight_command(&self) {
         self.lock_settings().fail_headlight();
@@ -14261,7 +14277,6 @@ impl AeroBenignControlSession {
     pub fn trip_meter_reset_state(&self) -> MobileTripMeterResetStateDto {
         self.lock_settings().trip_meter_reset()
     }
-
 }
 
 fn mobile_aero_setting_support(
@@ -15908,7 +15923,8 @@ impl FalconBenignControlSession {
             && !mobile_command_is_valid(command)
         {
             let result = mobile_command_refusal(command);
-            self.lock_settings().observe_step(&tracked_input, &result);
+            self.lock_settings()
+                .observe_step(&tracked_input, &result, true);
             return result;
         }
         let input = SessionInputDto::from(input);
@@ -16063,7 +16079,6 @@ impl FalconBenignControlSession {
     /// Returns the Rust-owned Aero angle-adjustment lifecycle state.
     pub fn aero_angle_adjustment_state(&self) -> MobileAeroAngleAdjustmentStateDto {
         self.lock_settings().aero_angle_adjustment()
-    }
     }
 
     /// Returns the Rust-owned pedal-mode setting lifecycle state.
@@ -19581,7 +19596,7 @@ mod tests {
             )],
             error: None,
         };
-        trackers.observe_step(&input, &accepted);
+        trackers.observe_step(&input, &accepted, true);
         assert_eq!(
             trackers.trip_meter_reset().kind,
             MobileSettingStateKindDto::Pending
@@ -19596,6 +19611,7 @@ mod tests {
                 outputs: Vec::new(),
                 error: None,
             },
+            true,
         );
         assert_eq!(
             trackers.trip_meter_reset().kind,
@@ -19606,6 +19622,7 @@ mod tests {
         trackers.observe_step(
             &input,
             &mobile_command_refusal(MobileCommandDto::ResetTripMeter),
+            true,
         );
         assert_eq!(
             trackers.trip_meter_reset().kind,
@@ -19623,6 +19640,7 @@ mod tests {
                 outputs: Vec::new(),
                 error: None,
             },
+            true,
         );
         assert_eq!(
             trackers.trip_meter_reset().kind,
@@ -20272,7 +20290,15 @@ mod tests {
             )),
         };
 
-        let _ = session.ingest_checked(tick(1_000));
+        let mut link = tick(1);
+        link.kind = MobileSessionInputKindDto::LinkUp;
+        link.max_write_len = Some(MobileTransportWriteLimitDto { bytes: 185 });
+        let _ = session.ingest_checked(link);
+        let mut notification = tick(1_000);
+        notification.kind = MobileSessionInputKindDto::Notification;
+        notification.bytes =
+            hex_literal::hex!("55aa17750000007602eefb64f4941481000900185a5a5a5a").to_vec();
+        let _ = session.ingest_checked(notification);
         assert!(session.arm_settings_writes(RideOperatingState::Standing, ms(1_249)));
         let first = session.ingest_checked(command(1_249));
         assert!(
