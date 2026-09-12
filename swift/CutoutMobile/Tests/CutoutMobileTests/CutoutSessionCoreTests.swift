@@ -441,6 +441,66 @@ final class CutoutSessionCoreTests: XCTestCase {
         XCTAssertNil(core.displayState.speed.millimetersPerSecond)
     }
 
+    func testScriptedLiveConnectionStartsRideMapAndPublishesSnapshot() {
+        let live = expectation(description: "scripted session reaches live")
+        let rideStarted = expectation(description: "ride-map recording starts")
+        let core = CutoutSessionCore(
+            testScript: CutoutSessionTestScript(
+                candidate: scriptedVescCandidate,
+                telemetry: TelemetrySnapshot(speed: speedValue(8_000)),
+                startsLive: true,
+                connectionDelayMilliseconds: 0
+            ),
+            rideMapState: MobileRideMapState()
+        )
+        core.onPhaseChange = { phase in
+            if phase == .live { live.fulfill() }
+        }
+        core.onRideMapSnapshotChange = { snapshot in
+            if snapshot.state == .active { rideStarted.fulfill() }
+        }
+
+        core.start()
+        XCTAssertTrue(core.pair(platformIdentifier: scriptedVescCandidate.platformIdentifier))
+        wait(for: [live, rideStarted], timeout: 1)
+        XCTAssertEqual(core.rideMapStateHandle?.currentSnapshot()?.state, .active)
+    }
+
+    func testProductionLocationPathPublishesAcceptedRideMapPoint() {
+        let live = expectation(description: "scripted session reaches live")
+        let pointAccepted = expectation(description: "ride-map point is accepted")
+        let core = CutoutSessionCore(
+            testScript: CutoutSessionTestScript(
+                candidate: scriptedVescCandidate,
+                telemetry: TelemetrySnapshot(speed: speedValue(8_000)),
+                startsLive: true,
+                connectionDelayMilliseconds: 0
+            ),
+            rideMapState: MobileRideMapState()
+        )
+        core.onPhaseChange = { phase in
+            if phase == .live { live.fulfill() }
+        }
+        core.onRideMapDecisionChange = { _, decision in
+            if case .accepted = decision { pointAccepted.fulfill() }
+        }
+
+        core.start()
+        XCTAssertTrue(core.pair(platformIdentifier: scriptedVescCandidate.platformIdentifier))
+        wait(for: [live], timeout: 1)
+        let location = CLLocation(
+            coordinate: CLLocationCoordinate2D(latitude: 39.7392, longitude: -104.9903),
+            altitude: 1_600,
+            horizontalAccuracy: 4,
+            verticalAccuracy: 4,
+            course: 0,
+            speed: 8,
+            timestamp: Date()
+        )
+        core.locationManager(CLLocationManager(), didUpdateLocations: [location])
+        wait(for: [pointAccepted], timeout: 2)
+    }
+
     func testScriptedSessionPublishesReconnectAndReturnsLive() {
         let retry = expectation(description: "scripted session schedules reconnect")
         let live = expectation(description: "scripted session returns live")
@@ -618,6 +678,55 @@ final class CutoutSessionCoreTests: XCTestCase {
         XCTAssertFalse(capture.contains("capture_evidence=hardware_tested"))
 
         core.disconnectAndScan()
+    }
+
+    func testMusicObservationBeforeCaptureIsRetainedUntilWriterStarts() async {
+        let started = expectation(description: "real capture writer starts")
+        let core = CutoutSessionCore(testScript: CutoutSessionTestScript(
+            candidate: scriptedVescCandidate,
+            telemetry: nil,
+            connectionDelayMilliseconds: 0
+        ))
+        core.onCaptureEvent = { event in
+            if case .started = event {
+                started.fulfill()
+            }
+        }
+        let observation = MobilePevcapMusicEventDto(
+            provider: .appleMusic,
+            trackId: "pre-capture-track",
+            monotonicAtMs: 10,
+            wallClockUnixMs: 1_700_000_000_010,
+            clockUncertaintyMs: 5,
+            rideSequence: nil
+        )
+
+        core.updateMusicCaptureObservation(observation)
+        XCTAssertEqual(core.musicCaptureObservationForTesting, observation)
+        XCTAssertTrue(core.recordOnly(platformIdentifier: scriptedVescCandidate.platformIdentifier))
+        await fulfillment(of: [started], timeout: 1)
+        XCTAssertNil(core.musicCaptureObservationForTesting)
+        core.disconnectAndScan()
+    }
+
+    func testCaptureMusicContextTakesAndResetsTheLatestObservation() {
+        var context = CaptureMusicContext()
+        let observation = MobilePevcapMusicEventDto(
+            provider: .appleMusic,
+            trackId: "track-1",
+            monotonicAtMs: 10,
+            wallClockUnixMs: 1_700_000_000_010,
+            clockUncertaintyMs: 5,
+            rideSequence: nil
+        )
+
+        context.update(observation)
+        XCTAssertEqual(context.current, observation)
+        XCTAssertEqual(context.take(), observation)
+        XCTAssertNil(context.current)
+        context.update(observation)
+        context.reset()
+        XCTAssertNil(context.current)
     }
 
     func testObservedAdvertisementsReplaceDuplicatePeripheralRows() {
