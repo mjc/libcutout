@@ -74,9 +74,28 @@ final class CutoutAppRouteTests: XCTestCase {
         XCTAssertEqual(localizedAppText("navigation.section.tune"), "Tune")
         XCTAssertEqual(localizedAppText("settings.lights.title"), "Lights")
         XCTAssertEqual(localizedAppText("settings.headlight.title"), "Headlight")
+        XCTAssertEqual(localizedAppText("settings.high_beam.title"), "High beam")
+        XCTAssertEqual(localizedAppText("settings.capabilities.title"), "Other settings")
+        XCTAssertEqual(localizedAppText("settings.capabilities.unverified"), "Needs validation")
+        XCTAssertEqual(localizedAppText("settings.capabilities.unsupported"), "Not supported")
+        XCTAssertEqual(localizedAppText("settings.pedal_mode.title"), "Pedal mode")
+        XCTAssertEqual(localizedAppText("settings.acceleration_assist.title"), "Acceleration assist")
+        XCTAssertEqual(localizedAppText("settings.taillight.title"), "Taillight")
         XCTAssertEqual(
             localizedAppText("settings.headlight.help"),
-            "Changes are sent immediately to the connected wheel."
+            "Requests are submitted immediately to the connected wheel."
+        )
+        XCTAssertEqual(
+            localizedAppText("settings.headlight.waiting"),
+            "Waiting for wheel confirmation."
+        )
+        XCTAssertEqual(
+            localizedAppText("settings.headlight.confirmed"),
+            "Confirmed by wheel telemetry."
+        )
+        XCTAssertEqual(
+            localizedAppText("settings.high_beam.sent_unconfirmed"),
+            "Command sent. This wheel does not report high-beam state."
         )
         XCTAssertEqual(
             localizedAppText("bms.no_data.pack_estimate_accessibility_value", "71", "Derived from voltage curve"),
@@ -179,7 +198,7 @@ final class CutoutAppRouteTests: XCTestCase {
                 .first(where: { $0.id == .debug })?.isSelected == true
         )
         XCTAssertEqual(
-            CutoutAppRoute.eucTune.navigationTabs.filter(\.isSelected).map(\.id),
+            CutoutAppRoute.eucTune.navigationTabs(for: .electricUnicycle).filter(\.isSelected).map(\.id),
             [.tune]
         )
         XCTAssertEqual(CutoutAppRoute.route(forNavigationTarget: .vescRide), .vescRide)
@@ -238,7 +257,7 @@ final class CutoutAppRouteTests: XCTestCase {
         let vescTabs = CutoutAppRoute.rideMapDetail(rideID: "ride-1")
             .availableNavigationTabs(for: .vescOnewheel)
 
-        XCTAssertEqual(eucTabs.map(\.id), [.ride, .pack, .map])
+        XCTAssertEqual(eucTabs.map(\.id), [.ride, .pack, .map, .tune])
         XCTAssertEqual(vescTabs.map(\.id), [.ride, .debug, .map])
         XCTAssertEqual(eucTabs.first(where: { $0.isSelected })?.id, .map)
         XCTAssertEqual(vescTabs.first(where: { $0.isSelected })?.id, .map)

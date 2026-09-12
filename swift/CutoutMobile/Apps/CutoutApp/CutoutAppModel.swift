@@ -21,6 +21,29 @@ struct MusicHistoryQueryResult: Equatable, Sendable {
     let error: MobileRideMapError?
 }
 
+struct MusicMonitorSceneState: Equatable {
+    private(set) var isSceneActive = true
+    private(set) var isRequested = false
+
+    mutating func request() {
+        isRequested = true
+    }
+
+    mutating func cancel() {
+        isRequested = false
+    }
+
+    mutating func suspend() {
+        isSceneActive = false
+    }
+
+    mutating func resumeIfNeeded() -> Bool {
+        let shouldResume = isRequested && !isSceneActive
+        isSceneActive = true
+        return shouldResume
+    }
+}
+
 @MainActor
 @Observable
 final class CutoutAppModel {
@@ -139,9 +162,27 @@ final class CutoutAppModel {
     private(set) var activeCaptureLabels = Set<CaptureQuickLabel>()
     private(set) var recordOnlyDeviceKind: String?
     private(set) var hasSavedDevice = false
-    /// Rust-owned status of the last accepted headlight command.
-    /// A requested state is not device readback.
-    private(set) var headlightCommandStatus: LightCommandStatus = .unknown
+    var headlightOn: Bool {
+        guard let state = core.headlightState else { return false }
+        return switch headlightCommandStatus {
+        case .waitingForConfirmation, .sentWithoutConfirmation:
+            (state.requested ?? state.current) == .on
+        case .idle, .failed, .refused, .timedOut, .confirmed:
+            state.current == .on
+        }
+    }
+
+    var headlightCommandStatus: LightCommandStatus {
+        core.headlightCommandStatus ?? lastHeadlightSubmissionStatus ?? .idle
+    }
+
+    var headlightControlAvailable: Bool {
+        headlightWriteSupport == .supported
+    }
+
+    var settingsCapabilities: EucSettingsCapabilities? {
+        core.settingsCapabilities
+    }
 
     var selectedRideTitle: String? {
         connectionState.selection?.title
@@ -248,6 +289,37 @@ final class CutoutAppModel {
         connectionState.statusText ?? phase.displayText
     }
 
+    var headlightControlTitle: String {
+        localizedAppText(core.electricUnicycleModel == .aero
+            ? "settings.high_beam.title"
+            : "settings.headlight.title")
+    }
+
+    var headlightStatusText: String {
+        if !headlightControlAvailable, headlightCommandStatus == .idle {
+            if headlightWriteSupport == .unverified {
+                return localizedAppText("settings.headlight.unverified")
+            }
+            return localizedAppText("settings.headlight.unavailable")
+        }
+        return switch headlightCommandStatus {
+        case .idle:
+            localizedAppText("settings.headlight.help")
+        case .failed:
+            localizedAppText("settings.headlight.failed")
+        case .refused:
+            localizedAppText("settings.headlight.refused")
+        case .waitingForConfirmation:
+            localizedAppText("settings.headlight.waiting")
+        case .timedOut:
+            localizedAppText("settings.headlight.timed_out")
+        case .confirmed:
+            localizedAppText("settings.headlight.confirmed")
+        case .sentWithoutConfirmation:
+            localizedAppText("settings.high_beam.sent_unconfirmed")
+        }
+    }
+
     private let core: any CutoutSessionDriving
     private let liveActivityCoordinator: LiveActivityRideLifecycleCoordinator
     private let selectedDeviceStore: DevicePickerSelectionStore
@@ -269,6 +341,7 @@ final class CutoutAppModel {
     private var captureFileName: String?
     private var captureNotificationCount = 0
     private var captureLabel: String?
+    private var lastHeadlightSubmissionStatus: LightCommandStatus?
     private var hasStarted = false
     private var permitsStoredDeviceAutoPairing = true
     private var rideSessionRestorationState = RideSessionRestorationState.complete
@@ -298,6 +371,10 @@ final class CutoutAppModel {
 
     isolated deinit {
         stopMusicMonitoring()
+    }
+
+    private var headlightWriteSupport: SettingWriteSupport? {
+        core.settingsCapabilities?.headlight
     }
 
     convenience init() {
@@ -391,7 +468,7 @@ final class CutoutAppModel {
             self?.handleScanStateChange(scanState)
         }
         self.core.onSettingsReadbackChange = { [weak self] settingsReadback in
-            self?.settingsReadback = settingsReadback
+            self?.handleSettingsReadback(settingsReadback)
         }
         self.core.onFaultHistoryReadbackChange = { [weak self] faultHistoryReadback in
             self?.faultHistoryReadback = faultHistoryReadback
@@ -1956,10 +2033,28 @@ final class CutoutAppModel {
     }
 
     @discardableResult
-    func setHeadlight(_ state: LightState) -> Bool {
-        guard let status = core.setLights(state) else { return false }
-        headlightCommandStatus = status
-        return true
+    func setHeadlight(_ enabled: Bool) -> LightCommandResult {
+        let state: LightState = enabled ? .on : .off
+        guard headlightWriteSupport == .supported else {
+            lastHeadlightSubmissionStatus = .failed
+            return .failed
+        }
+        let result = core.setLights(state)
+        switch result {
+        case .accepted:
+            lastHeadlightSubmissionStatus = nil
+            return .accepted
+        case let .refused(reason):
+            lastHeadlightSubmissionStatus = .refused
+            return .refused(reason)
+        case .failed:
+            lastHeadlightSubmissionStatus = .failed
+            return .failed
+        }
+    }
+
+    private func handleSettingsReadback(_ readback: SettingsReadback?) {
+        settingsReadback = readback
     }
     func pair(platformIdentifier: String) -> Bool {
         switch connectionState {
@@ -1985,7 +2080,7 @@ final class CutoutAppModel {
             title: selectedRow.title,
             route: route
         )
-        headlightCommandStatus = .unknown
+        resetHeadlightState()
         liveActivityError = nil
         connectionState = .connecting(selection, phase: .discoveringServices)
         permitsStoredDeviceAutoPairing = true
@@ -2228,13 +2323,17 @@ final class CutoutAppModel {
         activeCaptureLabels.removeAll()
         captureLabel = nil
         recordOnlyDeviceKind = nil
-        headlightCommandStatus = .unknown
         connectionState = .picker
         phase = .scanning
         liveActivityIdentity = nil
         liveActivityGlyph = .electricUnicycle
         permitsStoredDeviceAutoPairing = false
+        resetHeadlightState()
         core.disconnectAndScan()
+    }
+
+    private func resetHeadlightState() {
+        lastHeadlightSubmissionStatus = nil
     }
 
     func forgetSavedDevice() {
@@ -2344,7 +2443,7 @@ final class CutoutAppModel {
         }
         self.phase = phase
         if phase != .live {
-            headlightCommandStatus = .unknown
+            resetHeadlightState()
         }
         switch phase {
         case .connecting, .discoveringServices, .subscribing:

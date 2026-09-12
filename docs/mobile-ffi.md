@@ -27,7 +27,7 @@ Regenerate the package after changing Rust code that ships in the app (the
 output remains ignored):
 
 ```console
-nix develop -c ./scripts/regenerate-swift-ffi.sh
+nix develop -c cargo cutout swift-ffi
 ```
 
 Cargo Swift 0.11 cannot spell the Xcode 27 platform enum in its generated
@@ -100,13 +100,15 @@ Useful app commands are:
 ```console
 nix develop -c ./scripts/smoke-ios-app-metadata.sh
 nix develop -c ./scripts/run-ios-app-on-mac.sh
-CUTOUT_IOS_DEVELOPMENT_TEAM=YOURTEAM nix develop -c ./scripts/run-ios-app-on-phone.sh
+CUTOUT_IOS_DEVELOPMENT_TEAM=YOURTEAM nix develop -c cargo cutout ios deploy
 ```
 
 The Mac command builds the iPhone app for Apple Silicon Mac and opens it. The
 phone command builds, installs, and launches on a connected unlocked device.
-Signing stays local through `CUTOUT_IOS_DEVELOPMENT_TEAM` and optional
-`CUTOUT_IOS_APP_BUNDLE_ID`; the project does not commit a personal team.
+`CUTOUT_IOS_DEVELOPMENT_TEAM` is required; `CUTOUT_IOS_APP_BUNDLE_ID` is
+forwarded when set. Additional app launch arguments can follow `--`, for
+example `cargo cutout ios deploy -- --launch-smoke`. The project does not
+commit a personal team.
 
 `scripts/export-ios-ad-hoc.sh` archives and exports a release-testing IPA. It
 uses Xcode's current export method and the signing environment documented in

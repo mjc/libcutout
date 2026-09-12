@@ -22,6 +22,10 @@ protocol CutoutSessionDriving: AnyObject {
     var onProtocolIdentityCandidateChange: ((DevicePickerDiscoveryCandidate?) -> Void)? { get set }
     var onBluetoothRestorationResolved: ((String?) -> Void)? { get set }
     var protocolIdentityCandidate: DevicePickerDiscoveryCandidate? { get }
+    var electricUnicycleModel: ElectricUnicycleModel? { get }
+    var settingsCapabilities: EucSettingsCapabilities? { get }
+    var headlightState: LightSettingState? { get }
+    var headlightCommandStatus: LightCommandStatus? { get }
 
     func start()
     func pair(platformIdentifier: String) -> Bool
@@ -34,7 +38,7 @@ protocol CutoutSessionDriving: AnyObject {
     func updateMusicCaptureObservation(_ observation: MobilePevcapMusicEventDto?)
     func flushCapture() async -> Bool
     func disconnectAndScan()
-    func setLights(_ state: LightState) -> LightCommandStatus?
+    func setLights(_ state: LightState) -> LightCommandResult
     func now() -> MonotonicMilliseconds
 
     func resetRideMapLocationAdmission()

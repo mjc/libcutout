@@ -1,7 +1,7 @@
 use cutout_core::{
     Capabilities, ControlRefusal, ControlRefusalDto, ControlRefusalReason, DeviceCommand,
-    HostSession, LightCommandState, ParserDiagnosticsDto, SessionEventDto, SessionInputDto,
-    SessionOutputDto, TelemetrySnapshotDto,
+    HostSession, ParserDiagnosticsDto, SessionEventDto, SessionInputDto, SessionOutputDto,
+    TelemetrySnapshotDto,
 };
 
 use crate::{
@@ -9,8 +9,8 @@ use crate::{
     VescGenericModel, VescNotificationDecoder,
 };
 
-type AeroReadOnlyHost = HostSession<BenignControlSession<NosfetAeroModel, false>>;
-type FalconReadOnlyHost = HostSession<BenignControlSession<BegodeFalconModel, true>>;
+type AeroBenignControlHost = HostSession<BenignControlSession<NosfetAeroModel, false>>;
+type FalconBenignControlHost = HostSession<BenignControlSession<BegodeFalconModel, true>>;
 type VescReadOnlyHost = HostSession<ReadOnlySession<VescGenericModel, true>>;
 
 /// Owned result of one concrete mobile session step.
@@ -49,14 +49,14 @@ pub enum ConcreteFalconProfileDto {
     Unsupported,
 }
 
-/// Concrete mobile-binding session wrapper for NOSFET Aero with read-only telemetry and benign light control.
+/// Concrete NOSFET Aero telemetry wrapper with allow-listed headlight control.
 #[derive(Clone, Debug)]
-pub struct ConcreteAeroReadOnlySession {
-    host: AeroReadOnlyHost,
+pub struct ConcreteAeroBenignControlSession {
+    host: AeroBenignControlHost,
 }
 
-impl ConcreteAeroReadOnlySession {
-    /// Creates a session wrapper with read-only telemetry and benign light control.
+impl ConcreteAeroBenignControlSession {
+    /// Creates a telemetry session wrapper with allow-listed headlight control.
     #[must_use]
     pub fn new() -> Self {
         Self {
@@ -97,28 +97,22 @@ impl ConcreteAeroReadOnlySession {
     pub fn diagnostics(&self) -> ParserDiagnosticsDto {
         self.host.diagnostics().into()
     }
-
-    /// Returns the last accepted light request for the current transport link.
-    #[must_use]
-    pub const fn light_command_state(&self) -> LightCommandState {
-        self.host.protocol_session().light_command_state()
-    }
 }
 
-impl Default for ConcreteAeroReadOnlySession {
+impl Default for ConcreteAeroBenignControlSession {
     fn default() -> Self {
         Self::new()
     }
 }
 
-/// Concrete mobile-binding session wrapper for Begode Falcon with read-only telemetry and benign light control.
+/// Concrete Begode Falcon telemetry wrapper with allow-listed headlight control.
 #[derive(Clone, Debug)]
-pub struct ConcreteFalconReadOnlySession {
-    host: FalconReadOnlyHost,
+pub struct ConcreteFalconBenignControlSession {
+    host: FalconBenignControlHost,
 }
 
-impl ConcreteFalconReadOnlySession {
-    /// Creates a session wrapper with read-only telemetry and benign light control.
+impl ConcreteFalconBenignControlSession {
+    /// Creates a telemetry session wrapper with allow-listed headlight control.
     #[must_use]
     pub fn new() -> Self {
         Self {
@@ -126,7 +120,7 @@ impl ConcreteFalconReadOnlySession {
         }
     }
 
-    /// Creates a read-only session wrapper for a selected Falcon profile.
+    /// Creates a telemetry and headlight-control session for a selected Falcon profile.
     ///
     /// # Errors
     ///
@@ -174,15 +168,9 @@ impl ConcreteFalconReadOnlySession {
     pub fn diagnostics(&self) -> ParserDiagnosticsDto {
         self.host.diagnostics().into()
     }
-
-    /// Returns the last accepted light request for the current transport link.
-    #[must_use]
-    pub const fn light_command_state(&self) -> LightCommandState {
-        self.host.protocol_session().light_command_state()
-    }
 }
 
-impl Default for ConcreteFalconReadOnlySession {
+impl Default for ConcreteFalconBenignControlSession {
     fn default() -> Self {
         Self::new()
     }
@@ -254,32 +242,32 @@ impl Default for VescReadOnlySession {
     }
 }
 
-/// Creates a NOSFET Aero session wrapper with read-only telemetry and benign light control.
+/// Creates the NOSFET Aero telemetry wrapper with allow-listed headlight control.
 #[must_use]
-pub fn new_nosfet_aero_read_only_session() -> ConcreteAeroReadOnlySession {
-    ConcreteAeroReadOnlySession {
+pub fn new_nosfet_aero_benign_control_session() -> ConcreteAeroBenignControlSession {
+    ConcreteAeroBenignControlSession {
         host: HostSession::new(BenignControlSession::<NosfetAeroModel, false>::default()),
     }
 }
 
-/// Creates a Begode Falcon session wrapper with read-only telemetry and benign light control.
+/// Creates the Begode Falcon telemetry wrapper with allow-listed headlight control.
 #[must_use]
-pub fn new_begode_falcon_read_only_session() -> ConcreteFalconReadOnlySession {
-    ConcreteFalconReadOnlySession {
+pub fn new_begode_falcon_benign_control_session() -> ConcreteFalconBenignControlSession {
+    ConcreteFalconBenignControlSession {
         host: HostSession::new(BenignControlSession::<BegodeFalconModel, true>::default()),
     }
 }
 
-/// Creates a Begode Falcon read-only session wrapper for a selected profile.
+/// Creates the Begode Falcon telemetry wrapper for a selected profile.
 ///
 /// # Errors
 ///
 /// Returns [`ConcreteSessionErrorDto::UnsupportedFalconProfile`] when the
 /// selected profile is not supported by the concrete wrapper.
-pub fn try_new_begode_falcon_read_only_session(
+pub fn try_new_begode_falcon_benign_control_session(
     profile: ConcreteFalconProfileDto,
-) -> Result<ConcreteFalconReadOnlySession, ConcreteSessionErrorDto> {
-    ConcreteFalconReadOnlySession::try_new(profile)
+) -> Result<ConcreteFalconBenignControlSession, ConcreteSessionErrorDto> {
+    ConcreteFalconBenignControlSession::try_new(profile)
 }
 
 /// Creates a generic VESC read-only session wrapper.
@@ -363,9 +351,9 @@ mod tests {
     use crate::{BEGODE_DATA_CHANNEL, VESC_NOTIFY_CHANNEL, VETERAN_DATA_CHANNEL};
 
     use super::{
-        ConcreteFalconProfileDto, ConcreteSessionErrorDto, new_begode_falcon_read_only_session,
-        new_nosfet_aero_read_only_session, new_vesc_read_only_session,
-        try_new_begode_falcon_read_only_session,
+        ConcreteFalconProfileDto, ConcreteSessionErrorDto,
+        new_begode_falcon_benign_control_session, new_nosfet_aero_benign_control_session,
+        new_vesc_read_only_session, try_new_begode_falcon_benign_control_session,
     };
 
     const fn ms(value: u64) -> MonotonicMillisDto {
@@ -384,7 +372,7 @@ mod tests {
 
     #[test]
     fn concrete_aero_session_drives_link_up_and_drains_owned_outputs() {
-        let mut session = new_nosfet_aero_read_only_session();
+        let mut session = new_nosfet_aero_benign_control_session();
 
         session.ingest(&SessionInputDto::LinkUp {
             monotonic_ms: ms(1),
@@ -400,7 +388,7 @@ mod tests {
 
     #[test]
     fn concrete_falcon_session_maps_command_dto_to_write_output() {
-        let mut session = new_begode_falcon_read_only_session();
+        let mut session = new_begode_falcon_benign_control_session();
         session.ingest(&SessionInputDto::LinkUp {
             monotonic_ms: ms(1),
             max_write_len: Some(write_len_dto(185)),
@@ -418,7 +406,7 @@ mod tests {
 
     #[test]
     fn concrete_aero_session_maps_set_lights_to_control_write() {
-        let mut session = new_nosfet_aero_read_only_session();
+        let mut session = new_nosfet_aero_benign_control_session();
 
         let result = session.ingest_checked(&SessionInputDto::Command(
             DeviceCommandDto::SetLights(cutout_core::LightStateDto::On),
@@ -428,23 +416,32 @@ mod tests {
         assert!(result.outputs.iter().any(|output| matches!(
             output,
             SessionOutputDto::Transport(TransportActionDto::Write { channel, bytes, .. })
-                if *channel == VETERAN_DATA_CHANNEL.as_bytes() && bytes == b"SetLightON"
+                if *channel == VETERAN_DATA_CHANNEL.as_bytes()
+                    && bytes == b"SetLightON"
         )));
     }
 
     #[test]
-    fn concrete_falcon_session_maps_set_lights_to_control_write() {
-        let mut session = new_begode_falcon_read_only_session();
+    fn concrete_falcon_session_refuses_unverified_set_lights() {
+        let mut session = new_begode_falcon_benign_control_session();
 
         let result = session.ingest_checked(&SessionInputDto::Command(
             DeviceCommandDto::SetLights(cutout_core::LightStateDto::Off),
         ));
 
-        assert_eq!(result.error, None);
-        assert!(result.outputs.iter().any(|output| matches!(
+        assert_eq!(
+            result.error,
+            Some(ConcreteSessionErrorDto::CommandRefused {
+                refusal: ControlRefusalDto {
+                    command: CommandKindDto::SetLights,
+                    safety_class: SafetyClassDto::BenignControl,
+                    reason: ControlRefusalReasonDto::UnsupportedCommand,
+                }
+            })
+        );
+        assert!(result.outputs.iter().all(|output| !matches!(
             output,
-            SessionOutputDto::Transport(TransportActionDto::Write { channel, bytes, .. })
-                if *channel == BEGODE_DATA_CHANNEL.as_bytes() && bytes == b"E"
+            SessionOutputDto::Transport(TransportActionDto::Write { .. })
         )));
     }
 
@@ -467,7 +464,7 @@ mod tests {
 
     #[test]
     fn checked_ingest_surfaces_unsupported_command_as_error_dto() {
-        let mut session = new_begode_falcon_read_only_session();
+        let mut session = new_begode_falcon_benign_control_session();
         session.ingest(&SessionInputDto::LinkUp {
             monotonic_ms: ms(1),
             max_write_len: Some(write_len_dto(185)),
@@ -496,7 +493,7 @@ mod tests {
     #[test]
     fn falcon_profile_constructor_rejects_unsupported_profile_with_error_dto() {
         assert_eq!(
-            try_new_begode_falcon_read_only_session(ConcreteFalconProfileDto::Unsupported)
+            try_new_begode_falcon_benign_control_session(ConcreteFalconProfileDto::Unsupported)
                 .expect_err("unsupported profile should return typed error"),
             ConcreteSessionErrorDto::UnsupportedFalconProfile {
                 profile: ConcreteFalconProfileDto::Unsupported
@@ -507,7 +504,7 @@ mod tests {
     #[test]
     fn falcon_profile_constructor_accepts_default_profile() {
         let mut session =
-            try_new_begode_falcon_read_only_session(ConcreteFalconProfileDto::Default)
+            try_new_begode_falcon_benign_control_session(ConcreteFalconProfileDto::Default)
                 .expect("default Falcon profile should construct");
 
         let result = session.ingest_checked(&SessionInputDto::LinkUp {
@@ -525,7 +522,7 @@ mod tests {
 
     #[test]
     fn concrete_session_exposes_snapshot_and_diagnostics_dtos() {
-        let mut session = new_begode_falcon_read_only_session();
+        let mut session = new_begode_falcon_benign_control_session();
         let channel = BEGODE_DATA_CHANNEL.as_bytes();
         let mut malformed = hex_literal::hex!("55aa17750538007602eefb64f4941481000900185a5a5a5a");
         malformed[20] = 0;
@@ -557,7 +554,7 @@ mod tests {
 
     #[test]
     fn concrete_session_accepts_core_link_info_roundtrip_inputs() {
-        let mut session = new_begode_falcon_read_only_session();
+        let mut session = new_begode_falcon_benign_control_session();
         let link = LinkInfo {
             monotonic_ms: MonotonicTimestamp::new(7),
             max_write_len: Some(write_len(20)),

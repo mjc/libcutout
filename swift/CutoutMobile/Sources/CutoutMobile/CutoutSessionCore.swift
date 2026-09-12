@@ -101,6 +101,7 @@ struct CaptureMusicContext: Equatable {
         current = nil
     }
 }
+
 struct ConnectionReconnectPolicy {
     static let maximumAttempts = 3
 
@@ -196,28 +197,14 @@ private final class DispatchReconnectCancellation: ConnectionReconnectCancellabl
     }
 }
 
-final class DispatchQueueReconnectScheduler: ConnectionReconnectScheduling {
-    private let queue: DispatchQueue
-
-    init(queue: DispatchQueue) {
-        self.queue = queue
-    }
-
+private final class MainQueueReconnectScheduler: ConnectionReconnectScheduling {
     func schedule(after delayMilliseconds: UInt64, operation: @escaping () -> Void) -> any ConnectionReconnectCancellable {
         let workItem = DispatchWorkItem(block: operation)
-        queue.asyncAfter(
+        DispatchQueue.main.asyncAfter(
             deadline: .now() + .milliseconds(Int(delayMilliseconds)),
             execute: workItem
         )
         return DispatchReconnectCancellation(workItem: workItem)
-    }
-}
-
-private final class MainQueueReconnectScheduler: ConnectionReconnectScheduling {
-    private let scheduler = DispatchQueueReconnectScheduler(queue: .main)
-
-    func schedule(after delayMilliseconds: UInt64, operation: @escaping () -> Void) -> any ConnectionReconnectCancellable {
-        scheduler.schedule(after: delayMilliseconds, operation: operation)
     }
 }
 
@@ -241,6 +228,7 @@ enum CoreBluetoothRestorationPolicy {
         return savedPlatformIdentifier
     }
 }
+
 #if DEBUG
 public enum CutoutSessionTestInitialBluetoothState: Sendable {
     case scanning
@@ -358,6 +346,18 @@ public final class CutoutSessionCore: NSObject {
     public private(set) var bmsSnapshot: BmsSnapshot?
     public private(set) var phoneLocationSnapshot = MobilePhoneLocationSnapshotDto(latestSample: nil, gpsSpeed: nil)
     public private(set) var protocolIdentityCandidate: DevicePickerDiscoveryCandidate?
+    public var electricUnicycleModel: ElectricUnicycleModel? {
+        onBleQueue { selectedModel }
+    }
+    public var settingsCapabilities: EucSettingsCapabilities? {
+        onBleQueue { liveOwner?.settingsCapabilities }
+    }
+    public var headlightState: LightSettingState? {
+        onBleQueue { liveOwner?.headlightState }
+    }
+    public var headlightCommandStatus: LightCommandStatus? {
+        onBleQueue { liveOwner?.headlightCommandStatus(at: clock.now()) }
+    }
 
 #if DEBUG
     var musicCaptureObservationForTesting: MobilePevcapMusicEventDto? {
@@ -375,12 +375,12 @@ public final class CutoutSessionCore: NSObject {
     public var onFaultHistoryReadbackChange: ((FaultHistoryReadback?) -> Void)?
     public var onBmsSnapshotChange: ((BmsSnapshot?) -> Void)?
     public var onPhoneLocationSnapshotChange: ((MobilePhoneLocationSnapshotDto, MonotonicMilliseconds) -> Void)?
-    public var onProtocolIdentityCandidateChange: ((DevicePickerDiscoveryCandidate?) -> Void)?
-    public var onBluetoothRestorationResolved: ((String?) -> Void)?
     public var onRideMapDecisionChange: ((MobileRideMapSnapshotDto, MobileRideMapDecisionDto) -> Void)?
     public var onRideMapSnapshotChange: ((MobileRideMapSnapshotDto) -> Void)?
     public var onRideMapErrorChange: ((MobileRideMapError) -> Void)?
     public var onRideMapAvailabilityChange: ((MobileRideMapAvailability) -> Void)?
+    public var onProtocolIdentityCandidateChange: ((DevicePickerDiscoveryCandidate?) -> Void)?
+    public var onBluetoothRestorationResolved: ((String?) -> Void)?
 
 
     private let clock: MonotonicClock
@@ -715,16 +715,25 @@ public final class CutoutSessionCore: NSObject {
     }
 
     @discardableResult
-    public func setLights(_ state: LightState) -> LightCommandStatus? {
+    public func setLights(_ state: LightState) -> LightCommandResult {
         onBleQueue {
-            guard phase == .live, let liveOwner else { return nil }
+            guard phase == .live, let liveOwner else { return .failed }
             do {
                 try liveOwner.handleCommand(.setLights(state), at: clock.now())
-                guard phase == .live else { return nil }
-                return liveOwner.lightCommandStatus
+                guard phase == .live else {
+                    liveOwner.failHeadlightCommand()
+                    return .failed
+                }
+                return .accepted
+            } catch let error as CutoutSessionError {
+                record("set_lights_error=\(error)")
+                if case let .commandRefused(_, reason) = error {
+                    return .refused(reason)
+                }
+                return .failed
             } catch {
                 record("set_lights_error=\(error)")
-                return nil
+                return .failed
             }
         }
     }
@@ -965,8 +974,6 @@ public final class CutoutSessionCore: NSObject {
 #endif
         suppressReconnect = true
         cancelPendingReconnect()
-        // A teardown must not carry a pending provider observation into the
-        // next capture, including the synthetic/debug writer path below.
         musicCaptureContext.reset()
 #if DEBUG
         if testScript != nil, isRecordOnly, captureBuilder != nil {
@@ -1039,6 +1046,9 @@ public final class CutoutSessionCore: NSObject {
     }
 
     func applyNotificationStep(_ step: CoreBluetoothSessionStep, receivedAt: MonotonicMilliseconds) {
+        if case .failed = phase {
+            return
+        }
         cancelPendingReconnect()
         step.actions.forEach(applySessionAction)
         observeRideMapConnection(at: receivedAt)
@@ -1502,8 +1512,9 @@ public final class CutoutSessionCore: NSObject {
     }
 
     private func recordRideMapDiagnostic(_ message: String) {
-        bleQueue.async { [weak self] in
-            self?.record(message)
+        let reference = WeakCutoutSessionCoreReference(self)
+        bleQueue.async {
+            reference.value?.record(message)
         }
     }
 
@@ -1745,6 +1756,7 @@ public final class CutoutSessionCore: NSObject {
         }
     }
 
+    @discardableResult
     func captureFrame(
         direction: String,
         characteristic: CBUUID,
@@ -1797,8 +1809,7 @@ public final class CutoutSessionCore: NSObject {
         annotations extraAnnotations: [String] = [],
         evidence: String = "hardware_tested"
     ) {
-        let captureStart = clock.now()
-        captureStartedAt = captureStart
+        captureStartedAt = clock.now()
         captureNotificationCount = 0
 
         let directory = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
@@ -1809,7 +1820,7 @@ public final class CutoutSessionCore: NSObject {
             writeLimit: MobileTransportWriteLimitDto(bytes: 23)
         )
         _ = builder.setMusicHistoryPolicy(policy: captureMusicHistoryPolicy)
-        _ = builder.setMusicCaptureStartMonotonicMs(monotonicMs: captureStart.rawValue)
+        _ = builder.setMusicCaptureStartMonotonicMs(monotonicMs: captureStartedAt?.rawValue ?? 0)
         (advertisement?.advertisedServiceUuids ?? []).forEach { service in
             _ = builder.addAdvertisedService(service: service.bytes)
         }
@@ -1826,6 +1837,7 @@ public final class CutoutSessionCore: NSObject {
             record("capture_error=writer_start_failed")
             captureBuilder = nil
             captureFileURL = nil
+            captureStartedAt = nil
             publishCaptureEvent(.failed)
             setPhase(.failed(.sessionFailed("capture writer failed to start")))
             return
@@ -2531,9 +2543,7 @@ private extension CutoutSessionCore {
             return nil
         }
     }
-}
 
-private extension CutoutSessionCore {
     func assertOnBleQueue() {
         dispatchPrecondition(condition: .onQueue(bleQueue))
     }
@@ -2870,7 +2880,6 @@ extension CutoutSessionCore: CLLocationManagerDelegate {
         }
     }
 
-
     private func onRideMapQueue<T>(_ operation: () throws -> T) rethrows -> T {
         if DispatchQueue.getSpecific(key: rideMapQueueKey) != nil {
             return try operation()
@@ -2922,7 +2931,6 @@ extension CutoutSessionCore: CLLocationManagerDelegate {
         phoneLocationState.clear()
     }
 }
-
 
 private extension MobilePhoneLocationSampleDto {
     init?(location: CLLocation) {
