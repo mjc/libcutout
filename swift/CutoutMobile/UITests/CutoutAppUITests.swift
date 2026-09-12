@@ -909,6 +909,11 @@ final class CutoutAppUITests: XCTestCase {
         XCTAssertTrue(headlight.exists)
         XCTAssertTrue(headlight.isEnabled)
 
+        XCTAssertTrue(
+            app.descendants(matching: .any)["settings.control.aeroDynamicAssist"]
+                .waitForExistence(timeout: 5)
+        )
+
         XCTAssertEqual(
             app.descendants(matching: .any)["settings.capability.pedalMode"].label,
             "Pedal mode, Needs validation"

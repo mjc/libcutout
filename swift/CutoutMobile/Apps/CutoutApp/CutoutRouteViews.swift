@@ -889,7 +889,7 @@ private struct EucAeroAdditionalSettingsControls: View {
             }
             if model.aeroDynamicAssistControlAvailable {
                 EucAeroNumericSettingControl(
-                    title: localizedAppText("settings.aero.dynamic_assist.title"),
+                    title: localizedAppText("settings.acceleration_assist.title"),
                     id: "aeroDynamicAssist",
                     range: 0...100,
                     currentValue: model.aeroDynamicAssistState?.current.map { Int($0.percent) },
