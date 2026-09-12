@@ -95,7 +95,7 @@ final class CutoutAppRouteTests: XCTestCase {
         XCTAssertEqual(localizedAppText("settings.headlight.title"), "Headlight")
         XCTAssertEqual(
             localizedAppText("settings.headlight.help"),
-            "Changes are sent immediately to the connected wheel."
+            "Requests are submitted immediately to the connected wheel."
         )
         XCTAssertEqual(
             localizedAppText("bms.no_data.pack_estimate_accessibility_value", "71", "Derived from voltage curve"),
