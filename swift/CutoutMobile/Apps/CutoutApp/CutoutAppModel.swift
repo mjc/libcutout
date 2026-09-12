@@ -44,52 +44,6 @@ struct MusicMonitorSceneState: Equatable {
     }
 }
 
-enum HeadlightCommandStatus: Equatable {
-    case idle
-    case failed
-    case refused
-    case waitingForConfirmation
-    case timedOut
-    case confirmed
-    case sentWithoutConfirmation
-}
-
-private extension LightSettingState {
-    var lightState: LightState? {
-        switch kind {
-        case .pending:
-            requested ?? current
-        case .unknown, .current, .confirmed, .refused, .timedOut, .failed:
-            current
-        }
-    }
-
-    func commandStatus(
-        for model: ElectricUnicycleModel?,
-        at now: MonotonicMilliseconds,
-        timeout: MonotonicMilliseconds
-    ) -> HeadlightCommandStatus {
-        switch kind {
-        case .unknown, .current:
-            return .idle
-        case .pending:
-            guard model != .aero else { return .sentWithoutConfirmation }
-            guard let submittedAt else { return .waitingForConfirmation }
-            return now.elapsed(since: submittedAt).rawValue >= timeout.rawValue
-                ? .timedOut
-                : .waitingForConfirmation
-        case .confirmed:
-            return .confirmed
-        case .refused:
-            return .refused
-        case .timedOut:
-            return .timedOut
-        case .failed:
-            return .failed
-        }
-    }
-}
-
 @MainActor
 @Observable
 final class CutoutAppModel {
@@ -209,22 +163,17 @@ final class CutoutAppModel {
     private(set) var recordOnlyDeviceKind: String?
     private(set) var hasSavedDevice = false
     var headlightOn: Bool {
-        guard let effectiveHeadlightState else { return false }
+        guard let state = core.headlightState else { return false }
         return switch headlightCommandStatus {
         case .waitingForConfirmation, .sentWithoutConfirmation:
-            (effectiveHeadlightState.requested ?? effectiveHeadlightState.current) == .on
+            (state.requested ?? state.current) == .on
         case .idle, .failed, .refused, .timedOut, .confirmed:
-            effectiveHeadlightState.current == .on
+            state.current == .on
         }
     }
 
-    var headlightCommandStatus: HeadlightCommandStatus {
-        guard let effectiveHeadlightState else { return .idle }
-        return effectiveHeadlightState.commandStatus(
-            for: core.electricUnicycleModel,
-            at: core.now(),
-            timeout: Self.headlightConfirmationTimeout
-        )
+    var headlightCommandStatus: LightCommandStatus {
+        core.headlightCommandStatus ?? lastHeadlightSubmissionStatus ?? .idle
     }
 
     var headlightControlAvailable: Bool {
@@ -392,7 +341,7 @@ final class CutoutAppModel {
     private var captureFileName: String?
     private var captureNotificationCount = 0
     private var captureLabel: String?
-    private var fallbackHeadlightState: LightSettingState?
+    private var lastHeadlightSubmissionStatus: LightCommandStatus?
     private var hasStarted = false
     private var permitsStoredDeviceAutoPairing = true
     private var rideSessionRestorationState = RideSessionRestorationState.complete
@@ -419,7 +368,6 @@ final class CutoutAppModel {
     private var rideMapLiveProjectionGeneration: UInt64 = 0
     private var rideMapLiveProjectionEnabled = false
     private static let liveActivityUpdateIntervalMilliseconds: UInt64 = 1_000
-    private static let headlightConfirmationTimeout = MonotonicMilliseconds(2_000)
 
     isolated deinit {
         stopMusicMonitoring()
@@ -2088,88 +2036,25 @@ final class CutoutAppModel {
     func setHeadlight(_ enabled: Bool) -> LightCommandResult {
         let state: LightState = enabled ? .on : .off
         guard headlightWriteSupport == .supported else {
-            fallbackHeadlightState = LightSettingState(
-                kind: .failed,
-                current: effectiveHeadlightState?.current
-            )
+            lastHeadlightSubmissionStatus = .failed
             return .failed
         }
-        return applyHeadlightSubmission(core.setLights(state), for: state)
-    }
-
-    private func applyHeadlightSubmission(
-        _ result: LightCommandResult,
-        for state: LightState
-    ) -> LightCommandResult {
+        let result = core.setLights(state)
         switch result {
         case .accepted:
-            recordHeadlightCommand(state, sentAt: core.now())
+            lastHeadlightSubmissionStatus = nil
             return .accepted
         case let .refused(reason):
-            fallbackHeadlightState = LightSettingState(
-                kind: .refused,
-                current: effectiveHeadlightState?.current,
-                requested: state,
-                source: .userRequest,
-                refusalReason: reason
-            )
+            lastHeadlightSubmissionStatus = .refused
             return .refused(reason)
         case .failed:
-            fallbackHeadlightState = LightSettingState(
-                kind: .failed,
-                current: core.electricUnicycleModel == .aero
-                    ? effectiveHeadlightState?.lightState
-                    : effectiveHeadlightState?.current,
-                requested: state,
-                source: .userRequest
-            )
+            lastHeadlightSubmissionStatus = .failed
             return .failed
         }
-    }
-
-    private func recordHeadlightCommand(_ state: LightState, sentAt: MonotonicMilliseconds) {
-        guard core.headlightState == nil else { return }
-        fallbackHeadlightState = LightSettingState(
-            kind: .pending,
-            current: fallbackHeadlightState?.lightState,
-            requested: state,
-            source: .userRequest,
-            submittedAt: sentAt
-        )
-    }
-
-    private var effectiveHeadlightState: LightSettingState? {
-        core.headlightState ?? fallbackHeadlightState
-    }
-
-    private func updateFallbackHeadlightState(from readback: SettingsReadback?) {
-        guard core.headlightState == nil else { return }
-        guard let reportedState = readback?.eucGarageSettings.lightState else {
-            if fallbackHeadlightState?.kind == .pending {
-                fallbackHeadlightState = LightSettingState(
-                    kind: .failed,
-                    current: fallbackHeadlightState?.current
-                )
-            }
-            return
-        }
-        if let requestedState = fallbackHeadlightState?.requested,
-           fallbackHeadlightState?.kind == .pending,
-           requestedState != reportedState
-        {
-            return
-        }
-        fallbackHeadlightState = LightSettingState(
-            kind: .confirmed,
-            current: reportedState,
-            source: .liveReadback,
-            confirmedAt: core.now()
-        )
     }
 
     private func handleSettingsReadback(_ readback: SettingsReadback?) {
         settingsReadback = readback
-        updateFallbackHeadlightState(from: readback)
     }
     func pair(platformIdentifier: String) -> Bool {
         switch connectionState {
@@ -2448,7 +2333,7 @@ final class CutoutAppModel {
     }
 
     private func resetHeadlightState() {
-        fallbackHeadlightState = nil
+        lastHeadlightSubmissionStatus = nil
     }
 
     func forgetSavedDevice() {

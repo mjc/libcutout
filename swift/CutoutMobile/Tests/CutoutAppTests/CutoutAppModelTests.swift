@@ -349,6 +349,12 @@ final class CutoutAppModelTests: XCTestCase {
     func testAeroHighBeamToggleReportsSentWithoutClaimingConfirmation() {
         let driver = SessionDriverSpy(rows: [])
         driver.electricUnicycleModel = .aero
+        driver.settingsCapabilitiesOverride = EucSettingsCapabilities(
+            pedalMode: .unsupported,
+            accelerationAssist: .unsupported,
+            headlight: .supported,
+            taillight: .unsupported
+        )
         let model = CutoutAppModel(core: driver)
 
         XCTAssertEqual(model.setHeadlight(true), .failed)
@@ -370,7 +376,7 @@ final class CutoutAppModelTests: XCTestCase {
 
         driver.headlightWriteSucceeds = false
         XCTAssertEqual(model.setHeadlight(false), .failed)
-        XCTAssertTrue(model.headlightOn)
+        XCTAssertFalse(model.headlightOn)
         XCTAssertEqual(model.headlightCommandStatus, .failed)
     }
 
@@ -378,6 +384,12 @@ final class CutoutAppModelTests: XCTestCase {
     func testUnverifiedFalconHeadlightToggleStaysUnavailable() {
         let driver = SessionDriverSpy(rows: [])
         driver.electricUnicycleModel = .falcon
+        driver.settingsCapabilitiesOverride = EucSettingsCapabilities(
+            pedalMode: .unsupported,
+            accelerationAssist: .unsupported,
+            headlight: .unverified,
+            taillight: .unsupported
+        )
         let model = CutoutAppModel(core: driver)
 
         XCTAssertFalse(model.headlightControlAvailable)
@@ -395,6 +407,12 @@ final class CutoutAppModelTests: XCTestCase {
     func testSettingsCapabilitiesAreExposedToTuneSurface() {
         let driver = SessionDriverSpy(rows: [])
         driver.electricUnicycleModel = .falcon
+        driver.settingsCapabilitiesOverride = EucSettingsCapabilities(
+            pedalMode: .unsupported,
+            accelerationAssist: .unsupported,
+            headlight: .unverified,
+            taillight: .unsupported
+        )
         let model = CutoutAppModel(core: driver)
 
         XCTAssertEqual(
@@ -444,7 +462,7 @@ final class CutoutAppModelTests: XCTestCase {
         XCTAssertEqual(model.headlightControlTitle, "Headlight")
         XCTAssertEqual(model.headlightStatusText, "Waiting for wheel confirmation.")
 
-        driver.onSettingsReadbackChange?(
+        driver.emitSettingsReadback(
             SettingsReadback(
                 entries: [],
                 eucGarageSettings: EucGarageSettingsSnapshot(lightState: .off)
@@ -452,7 +470,7 @@ final class CutoutAppModelTests: XCTestCase {
         )
         XCTAssertEqual(model.headlightCommandStatus, .waitingForConfirmation)
 
-        driver.onSettingsReadbackChange?(
+        driver.emitSettingsReadback(
             SettingsReadback(
                 entries: [],
                 eucGarageSettings: EucGarageSettingsSnapshot(lightState: .on)
@@ -466,7 +484,7 @@ final class CutoutAppModelTests: XCTestCase {
         XCTAssertFalse(model.headlightOn)
         XCTAssertEqual(model.headlightCommandStatus, .waitingForConfirmation)
 
-        driver.onSettingsReadbackChange?(
+        driver.emitSettingsReadback(
             SettingsReadback(
                 entries: [],
                 eucGarageSettings: EucGarageSettingsSnapshot(lightState: .off)
@@ -492,7 +510,7 @@ final class CutoutAppModelTests: XCTestCase {
         XCTAssertEqual(model.setHeadlight(true), .accepted)
         XCTAssertEqual(model.headlightCommandStatus, .waitingForConfirmation)
 
-        driver.onSettingsReadbackChange?(
+        driver.emitSettingsReadback(
             SettingsReadback(entries: [], availability: .unsupported)
         )
 
@@ -559,6 +577,12 @@ final class CutoutAppModelTests: XCTestCase {
         )
         let driver = SessionDriverSpy(rows: [row])
         driver.electricUnicycleModel = .aero
+        driver.settingsCapabilitiesOverride = EucSettingsCapabilities(
+            pedalMode: .unsupported,
+            accelerationAssist: .unsupported,
+            headlight: .supported,
+            taillight: .unsupported
+        )
         driver.headlightWriteSucceeds = true
         let model = CutoutAppModel(core: driver)
         model.start()
@@ -3168,9 +3192,30 @@ private final class SessionDriverSpy: CutoutSessionDriving {
     var protocolIdentityCandidate: DevicePickerDiscoveryCandidate?
     var electricUnicycleModel: ElectricUnicycleModel?
     var headlightState: LightSettingState?
+    var headlightCommandStatus: LightCommandStatus? {
+        get {
+            if let headlightCommandStatusOverride { return headlightCommandStatusOverride }
+            guard let state = headlightState else { return nil }
+            switch state.kind {
+            case .pending:
+                guard electricUnicycleModel != .aero else { return .sentWithoutConfirmation }
+                guard let submittedAt = state.submittedAt else { return .waitingForConfirmation }
+                return now().elapsed(since: submittedAt).rawValue >= 2_000
+                    ? .timedOut
+                    : .waitingForConfirmation
+            case .unknown, .current: return .idle
+            case .confirmed: return .confirmed
+            case .refused: return .refused
+            case .timedOut: return .timedOut
+            case .failed: return .failed
+            }
+        }
+        set { headlightCommandStatusOverride = newValue }
+    }
+    private var headlightCommandStatusOverride: LightCommandStatus?
     var settingsCapabilitiesOverride: EucSettingsCapabilities?
     var settingsCapabilities: EucSettingsCapabilities? {
-        settingsCapabilitiesOverride ?? electricUnicycleModel?.settingsCapabilities
+        settingsCapabilitiesOverride
     }
     private let scanState: DevicePickerScanState
     private let pairingSucceeds: Bool
@@ -3222,6 +3267,8 @@ private final class SessionDriverSpy: CutoutSessionDriving {
 
     func pair(platformIdentifier: String) -> Bool {
         pairedPlatformIdentifiers.append(platformIdentifier)
+        headlightState = nil
+        headlightCommandStatusOverride = nil
         return pairingSucceeds
     }
 
@@ -3251,6 +3298,8 @@ private final class SessionDriverSpy: CutoutSessionDriving {
 
     func disconnectAndScan() {
         disconnectCount += 1
+        headlightState = nil
+        headlightCommandStatusOverride = nil
     }
 
     func resetRideMapLocationAdmission() {
@@ -3258,10 +3307,50 @@ private final class SessionDriverSpy: CutoutSessionDriving {
     }
 
     func setLights(_ state: LightState) -> LightCommandResult {
-        guard headlightWriteSucceeds else { return .failed }
-        guard headlightCommandResult == .accepted else { return headlightCommandResult }
+        guard headlightWriteSucceeds else {
+            headlightState = LightSettingState(kind: .failed, requested: state, source: .userRequest)
+            headlightCommandStatus = .failed
+            return .failed
+        }
+        guard headlightCommandResult == .accepted else {
+            if case .refused = headlightCommandResult {
+                headlightCommandStatus = .refused
+            } else {
+                headlightCommandStatus = .failed
+            }
+            return headlightCommandResult
+        }
         headlightStates.append(state)
+        headlightState = LightSettingState(
+            kind: .pending,
+            requested: state,
+            source: .userRequest,
+            submittedAt: now()
+        )
+        headlightCommandStatusOverride = nil
         return .accepted
+    }
+
+    func emitSettingsReadback(_ readback: SettingsReadback) {
+        if let reportedState = readback.eucGarageSettings.lightState {
+            if headlightState?.kind == .pending,
+               headlightState?.requested != reportedState
+            {
+                // Rust keeps a pending request until matching readback arrives.
+            } else {
+                headlightState = LightSettingState(
+                    kind: .confirmed,
+                    current: reportedState,
+                    source: .liveReadback,
+                    confirmedAt: now()
+                )
+                headlightCommandStatus = .confirmed
+            }
+        } else if headlightState?.kind == .pending {
+            headlightState = LightSettingState(kind: .failed)
+            headlightCommandStatus = .failed
+        }
+        onSettingsReadbackChange?(readback)
     }
     func now() -> MonotonicMilliseconds {
         MonotonicMilliseconds(nowValue)

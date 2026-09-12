@@ -1265,6 +1265,28 @@ public enum SettingStateKind: Equatable, Hashable, Sendable {
     }
 }
 
+public enum LightCommandStatus: Equatable, Hashable, Sendable {
+    case idle
+    case waitingForConfirmation
+    case sentWithoutConfirmation
+    case timedOut
+    case confirmed
+    case refused
+    case failed
+
+    fileprivate init(_ dto: MobileLightCommandStatusDto) {
+        switch dto {
+        case .idle: self = .idle
+        case .waitingForConfirmation: self = .waitingForConfirmation
+        case .sentWithoutConfirmation: self = .sentWithoutConfirmation
+        case .timedOut: self = .timedOut
+        case .confirmed: self = .confirmed
+        case .refused: self = .refused
+        case .failed: self = .failed
+        }
+    }
+}
+
 public enum SettingValueSource: Equatable, Hashable, Sendable {
     case liveReadback
     case captureReplay
@@ -4613,25 +4635,6 @@ public extension ElectricUnicycleModel {
         }
     }
 
-    var settingsCapabilities: EucSettingsCapabilities {
-        switch self {
-        case .aero:
-            EucSettingsCapabilities(
-                pedalMode: .unsupported,
-                accelerationAssist: .unsupported,
-                headlight: .supported,
-                taillight: .unsupported
-            )
-        case .falcon:
-            EucSettingsCapabilities(
-                pedalMode: .unsupported,
-                accelerationAssist: .unsupported,
-                headlight: .unverified,
-                taillight: .unsupported
-            )
-        }
-    }
-
     var dto: DiscoveryElectricUnicycleModel {
         switch self {
         case .aero:
@@ -4826,6 +4829,24 @@ public final class ElectricUnicycleSession: @unchecked Sendable {
             LightSettingState(session.headlightState())
         case .falcon(let session):
             LightSettingState(session.headlightState())
+        }
+    }
+
+    public func headlightCommandStatus(at monotonicMilliseconds: MonotonicMilliseconds) -> LightCommandStatus {
+        switch inner {
+        case .aero(let session):
+            LightCommandStatus(session.headlightCommandStatus(monotonicMs: monotonicMilliseconds.dto))
+        case .falcon(let session):
+            LightCommandStatus(session.headlightCommandStatus(monotonicMs: monotonicMilliseconds.dto))
+        }
+    }
+
+    public func failHeadlightCommand() {
+        switch inner {
+        case .aero(let session):
+            session.failHeadlightCommand()
+        case .falcon(let session):
+            session.failHeadlightCommand()
         }
     }
 
@@ -5294,6 +5315,24 @@ public enum CoreBluetoothSession: Sendable {
         }
     }
 
+    public func headlightCommandStatus(at monotonicMilliseconds: MonotonicMilliseconds) -> LightCommandStatus? {
+        switch self {
+        case .electricUnicycle(let session):
+            session.headlightCommandStatus(at: monotonicMilliseconds)
+        case .vescOnewheel:
+            nil
+        }
+    }
+
+    public func failHeadlightCommand() {
+        switch self {
+        case .electricUnicycle(let session):
+            session.failHeadlightCommand()
+        case .vescOnewheel:
+            break
+        }
+    }
+
     fileprivate var currentSnapshot: TelemetrySnapshot {
         switch self {
         case .electricUnicycle(let session):
@@ -5437,6 +5476,14 @@ public final class CoreBluetoothSessionRunner: @unchecked Sendable {
 
     public var headlightState: LightSettingState? {
         session.headlightState
+    }
+
+    public func headlightCommandStatus(at monotonicMilliseconds: MonotonicMilliseconds) -> LightCommandStatus? {
+        session.headlightCommandStatus(at: monotonicMilliseconds)
+    }
+
+    public func failHeadlightCommand() {
+        session.failHeadlightCommand()
     }
 
     public func handle(_ event: CoreBluetoothSessionEvent) throws -> CoreBluetoothSessionStep {
@@ -5667,6 +5714,14 @@ public final class CoreBluetoothLiveSessionOwner: @unchecked Sendable {
 
     public var headlightState: LightSettingState? {
         runner.headlightState
+    }
+
+    public func headlightCommandStatus(at monotonicMilliseconds: MonotonicMilliseconds) -> LightCommandStatus? {
+        runner.headlightCommandStatus(at: monotonicMilliseconds)
+    }
+
+    public func failHeadlightCommand() {
+        runner.failHeadlightCommand()
     }
 
     /// Configures the Rust-owned charge estimate profile for this connection.

@@ -333,10 +333,13 @@ public final class CutoutSessionCore: NSObject {
         onBleQueue { selectedModel }
     }
     public var settingsCapabilities: EucSettingsCapabilities? {
-        onBleQueue { liveOwner?.settingsCapabilities ?? selectedModel?.settingsCapabilities }
+        onBleQueue { liveOwner?.settingsCapabilities }
     }
     public var headlightState: LightSettingState? {
         onBleQueue { liveOwner?.headlightState }
+    }
+    public var headlightCommandStatus: LightCommandStatus? {
+        onBleQueue { liveOwner?.headlightCommandStatus(at: clock.now()) }
     }
 
     public var onDisplayStateChange: ((RideDisplayState) -> Void)?
@@ -693,7 +696,10 @@ public final class CutoutSessionCore: NSObject {
             guard phase == .live, let liveOwner else { return .failed }
             do {
                 try liveOwner.handleCommand(.setLights(state), at: clock.now())
-                guard phase == .live else { return .failed }
+                guard phase == .live else {
+                    liveOwner.failHeadlightCommand()
+                    return .failed
+                }
                 return .accepted
             } catch let error as CutoutSessionError {
                 record("set_lights_error=\(error)")

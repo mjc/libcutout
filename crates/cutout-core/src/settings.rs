@@ -1,6 +1,9 @@
 //! Shared state for typed settings writes.
 
-use crate::{ControlRefusalReason, MonotonicTimestamp};
+use crate::{ControlRefusalReason, Duration, MonotonicTimestamp};
+
+/// Time allowed for a supported setting write to receive matching readback.
+pub const SETTING_CONFIRMATION_TIMEOUT: Duration = Duration::from_milliseconds(2_000);
 
 /// Provenance for a setting value held by the state reducer.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -16,6 +19,31 @@ pub enum SettingValueSource {
 
     /// The source of the value is not known.
     Unknown,
+}
+
+/// Host-facing status of a setting command.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum SettingCommandStatus {
+    /// No setting value or command is known.
+    Idle,
+
+    /// A write is waiting for matching readback.
+    WaitingForConfirmation,
+
+    /// A write was accepted for a protocol without readable confirmation.
+    SentWithoutConfirmation,
+
+    /// No matching readback arrived before the confirmation timeout.
+    TimedOut,
+
+    /// Matching readback confirmed the requested value.
+    Confirmed,
+
+    /// The command was refused before transport.
+    Refused,
+
+    /// Transport or session failure prevented completion.
+    Failed,
 }
 
 /// A setting value paired with its provenance.
@@ -197,6 +225,31 @@ where
         *self = Self::Failed { current, requested };
     }
 
+    /// Classifies the current command state at a host monotonic timestamp.
+    #[must_use]
+    pub fn command_status(
+        self,
+        now: MonotonicTimestamp,
+        confirmation_supported: bool,
+    ) -> SettingCommandStatus {
+        match self {
+            Self::Unknown | Self::Current(_) => SettingCommandStatus::Idle,
+            Self::Pending { .. } if !confirmation_supported => {
+                SettingCommandStatus::SentWithoutConfirmation
+            }
+            Self::Pending { submitted_at, .. }
+                if now.saturating_duration_since(submitted_at) >= SETTING_CONFIRMATION_TIMEOUT =>
+            {
+                SettingCommandStatus::TimedOut
+            }
+            Self::Pending { .. } => SettingCommandStatus::WaitingForConfirmation,
+            Self::Confirmed { .. } => SettingCommandStatus::Confirmed,
+            Self::Refused { .. } => SettingCommandStatus::Refused,
+            Self::TimedOut { .. } => SettingCommandStatus::TimedOut,
+            Self::Failed { .. } => SettingCommandStatus::Failed,
+        }
+    }
+
     fn current_readback(self) -> Option<SettingValue<Value>> {
         match self {
             Self::Unknown => None,
@@ -206,5 +259,34 @@ where
             | Self::TimedOut { current, .. }
             | Self::Failed { current, .. } => current,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{SettingCommandStatus, SettingState};
+    use crate::{LightState, MonotonicTimestamp};
+
+    #[test]
+    fn command_status_is_owned_by_rust_setting_state() {
+        let mut state = SettingState::unknown();
+        assert_eq!(
+            state.command_status(MonotonicTimestamp::new(0), true),
+            SettingCommandStatus::Idle
+        );
+
+        state.submit(LightState::On, MonotonicTimestamp::new(10));
+        assert_eq!(
+            state.command_status(MonotonicTimestamp::new(10), true),
+            SettingCommandStatus::WaitingForConfirmation
+        );
+        assert_eq!(
+            state.command_status(MonotonicTimestamp::new(2_010), true),
+            SettingCommandStatus::TimedOut
+        );
+        assert_eq!(
+            state.command_status(MonotonicTimestamp::new(2_010), false),
+            SettingCommandStatus::SentWithoutConfirmation
+        );
     }
 }

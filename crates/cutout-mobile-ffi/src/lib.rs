@@ -55,16 +55,16 @@ use cutout_core::{
     RideSessionLifecycle as CoreRideSessionLifecycle, RideSessionMarker as CoreRideSessionMarker,
     RideSessionMarkerError as CoreRideSessionMarkerError, RideSessionPhase as CoreRideSessionPhase,
     RideStopReasonDto, RideWarningDto, SemanticEventCountDto, SeriesCount, SessionEventDto,
-    SessionInputDto, SessionOutputDto, SettingState as CoreSettingState,
-    SettingValueSource as CoreSettingValueSource, SettingsEntry, SettingsEntryDto,
-    SettingsReadback, SettingsReadbackAvailability, SettingsReadbackAvailabilityDto,
-    SettingsReadbackDto, Speed as CoreSpeed, SpeedReadingDto, TelemetryFreshness,
-    TelemetrySnapshotDto, TemperatureReadingDto, TransportActionDto, TransportWriteLimit,
-    TransportWriteLimitDto, UsablePackCapacity, ValueQuality, ValueQuality as CoreValueQuality,
-    ValueQualityDto, ValueSource, ValueSource as CoreValueSource, ValueSourceDto,
-    VerificationStatus, VerificationStatusDto, VerifiedValue, Voltage as CoreVoltage,
-    VoltageReadingDto, VoltageSagEstimate, VoltageSagEstimator, VoltageSagInput, VoltageSagModel,
-    WallClockUnixTimestamp, WriteMode,
+    SessionInputDto, SessionOutputDto, SettingCommandStatus as CoreSettingCommandStatus,
+    SettingState as CoreSettingState, SettingValueSource as CoreSettingValueSource, SettingsEntry,
+    SettingsEntryDto, SettingsReadback, SettingsReadbackAvailability,
+    SettingsReadbackAvailabilityDto, SettingsReadbackDto, Speed as CoreSpeed, SpeedReadingDto,
+    TelemetryFreshness, TelemetrySnapshotDto, TemperatureReadingDto, TransportActionDto,
+    TransportWriteLimit, TransportWriteLimitDto, UsablePackCapacity, ValueQuality,
+    ValueQuality as CoreValueQuality, ValueQualityDto, ValueSource, ValueSource as CoreValueSource,
+    ValueSourceDto, VerificationStatus, VerificationStatusDto, VerifiedValue,
+    Voltage as CoreVoltage, VoltageReadingDto, VoltageSagEstimate, VoltageSagEstimator,
+    VoltageSagInput, VoltageSagModel, WallClockUnixTimestamp, WriteMode,
 };
 use cutout_music::{
     MusicCapabilities as CoreMusicCapabilities, MusicCommand as CoreMusicCommand,
@@ -2102,6 +2102,31 @@ pub enum MobileSettingStateKindDto {
     Failed,
 }
 
+/// Host-facing status of a mobile setting command.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Enum)]
+pub enum MobileLightCommandStatusDto {
+    /// No setting value or command is known.
+    Idle,
+
+    /// A write is waiting for matching readback.
+    WaitingForConfirmation,
+
+    /// A write was accepted for a protocol without readable confirmation.
+    SentWithoutConfirmation,
+
+    /// No matching readback arrived before the confirmation timeout.
+    TimedOut,
+
+    /// Matching readback confirmed the requested value.
+    Confirmed,
+
+    /// The command was refused before transport.
+    Refused,
+
+    /// Transport or session failure prevented completion.
+    Failed,
+}
+
 /// Provenance for the current value in a mobile setting state.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Enum)]
 pub enum MobileSettingValueSourceDto {
@@ -2623,20 +2648,34 @@ pub struct MobileSessionStepResultDto {
     pub error: Option<MobileSessionStepErrorDto>,
 }
 
-#[derive(Clone, Copy, Debug)]
-struct MobileLightSettingTracker {
-    state: CoreSettingState<CoreLightState>,
-}
-
-impl Default for MobileLightSettingTracker {
-    fn default() -> Self {
-        Self {
-            state: CoreSettingState::unknown(),
+impl From<CoreSettingCommandStatus> for MobileLightCommandStatusDto {
+    fn from(status: CoreSettingCommandStatus) -> Self {
+        match status {
+            CoreSettingCommandStatus::Idle => Self::Idle,
+            CoreSettingCommandStatus::WaitingForConfirmation => Self::WaitingForConfirmation,
+            CoreSettingCommandStatus::SentWithoutConfirmation => Self::SentWithoutConfirmation,
+            CoreSettingCommandStatus::TimedOut => Self::TimedOut,
+            CoreSettingCommandStatus::Confirmed => Self::Confirmed,
+            CoreSettingCommandStatus::Refused => Self::Refused,
+            CoreSettingCommandStatus::Failed => Self::Failed,
         }
     }
 }
 
+#[derive(Clone, Copy, Debug)]
+struct MobileLightSettingTracker {
+    state: CoreSettingState<CoreLightState>,
+    confirmation_supported: bool,
+}
+
 impl MobileLightSettingTracker {
+    const fn new(confirmation_supported: bool) -> Self {
+        Self {
+            state: CoreSettingState::unknown(),
+            confirmation_supported,
+        }
+    }
+
     fn observe_step(&mut self, input: &MobileSessionInputDto, result: &MobileSessionStepResultDto) {
         if input.kind == MobileSessionInputKindDto::LinkDown {
             self.state = CoreSettingState::unknown();
@@ -2675,6 +2714,16 @@ impl MobileLightSettingTracker {
 
     fn snapshot(&self) -> MobileLightSettingStateDto {
         mobile_light_setting_state(self.state)
+    }
+
+    fn command_status(&self, now: MobileMonotonicMillisDto) -> MobileLightCommandStatusDto {
+        self.state
+            .command_status(now.into_core(), self.confirmation_supported)
+            .into()
+    }
+
+    fn fail(&mut self) {
+        self.state.fail();
     }
 }
 
@@ -11099,7 +11148,7 @@ impl AeroBenignControlSession {
     pub fn new() -> Arc<Self> {
         Arc::new(Self {
             inner: Mutex::new(new_nosfet_aero_benign_control_session()),
-            light_state: Mutex::new(MobileLightSettingTracker::default()),
+            light_state: Mutex::new(MobileLightSettingTracker::new(false)),
         })
     }
 
@@ -11141,6 +11190,19 @@ impl AeroBenignControlSession {
     pub fn headlight_state(&self) -> MobileLightSettingStateDto {
         self.lock_light_state().snapshot()
     }
+
+    /// Returns the Rust-owned status of the latest headlight command.
+    pub fn headlight_command_status(
+        &self,
+        monotonic_ms: MobileMonotonicMillisDto,
+    ) -> MobileLightCommandStatusDto {
+        self.lock_light_state().command_status(monotonic_ms)
+    }
+
+    /// Records a transport failure for the latest headlight command.
+    pub fn fail_headlight_command(&self) {
+        self.lock_light_state().fail();
+    }
 }
 
 impl AeroBenignControlSession {
@@ -11159,7 +11221,7 @@ impl Default for AeroBenignControlSession {
     fn default() -> Self {
         Self {
             inner: Mutex::new(new_nosfet_aero_benign_control_session()),
-            light_state: Mutex::new(MobileLightSettingTracker::default()),
+            light_state: Mutex::new(MobileLightSettingTracker::new(false)),
         }
     }
 }
@@ -12459,7 +12521,7 @@ impl FalconBenignControlSession {
             inner: Mutex::new(try_new_begode_falcon_benign_control_session(
                 profile.into(),
             )?),
-            light_state: Mutex::new(MobileLightSettingTracker::default()),
+            light_state: Mutex::new(MobileLightSettingTracker::new(true)),
         }))
     }
 
@@ -12500,6 +12562,19 @@ impl FalconBenignControlSession {
     /// Returns the Rust-owned headlight write lifecycle state.
     pub fn headlight_state(&self) -> MobileLightSettingStateDto {
         self.lock_light_state().snapshot()
+    }
+
+    /// Returns the Rust-owned status of the latest headlight command.
+    pub fn headlight_command_status(
+        &self,
+        monotonic_ms: MobileMonotonicMillisDto,
+    ) -> MobileLightCommandStatusDto {
+        self.lock_light_state().command_status(monotonic_ms)
+    }
+
+    /// Records a transport failure for the latest headlight command.
+    pub fn fail_headlight_command(&self) {
+        self.lock_light_state().fail();
     }
 }
 
