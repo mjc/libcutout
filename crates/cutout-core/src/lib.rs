@@ -285,6 +285,24 @@ pub enum DeviceCommand {
     /// Request current settings without changing device state.
     RequestSettings,
 
+    /// Reset the device trip meter; this command is stationary-only.
+    ResetTripMeter,
+
+    /// Set the NOSFET/Veteran tilt-back speed in whole km/h.
+    SetAeroTiltbackSpeed(AeroSpeedSetting),
+
+    /// Set the NOSFET/Veteran PWT (PWM tilt-back alarm) percentage.
+    SetAeroPwmPercent(AeroPwmPercent),
+
+    /// Set the NOSFET/Veteran speed alarm in whole km/h.
+    SetAeroAlarmSpeed(AeroSpeedSetting),
+
+    /// Set the NOSFET/Veteran ANG (vertical angle) adjustment in tenths of a degree.
+    SetAeroAngleAdjustment(AeroAngleAdjustment),
+
+    /// Set the NOSFET/Veteran high beam through its paired binary frames.
+    SetAeroHighBeam(LightState),
+
     /// Set the device lights.
     SetLights(LightState),
 
@@ -334,6 +352,12 @@ impl DeviceCommand {
             Self::RequestDiagnostics => CommandKind::RequestDiagnostics,
             Self::RequestFaultHistory => CommandKind::RequestFaultHistory,
             Self::RequestSettings => CommandKind::RequestSettings,
+            Self::ResetTripMeter => CommandKind::ResetTripMeter,
+            Self::SetAeroTiltbackSpeed(_) => CommandKind::SetAeroTiltbackSpeed,
+            Self::SetAeroPwmPercent(_) => CommandKind::SetAeroPwmPercent,
+            Self::SetAeroAlarmSpeed(_) => CommandKind::SetAeroAlarmSpeed,
+            Self::SetAeroAngleAdjustment(_) => CommandKind::SetAeroAngleAdjustment,
+            Self::SetAeroHighBeam(_) => CommandKind::SetAeroHighBeam,
             Self::SetLights(_) => CommandKind::SetLights,
             Self::SetPedalMode(_) => CommandKind::SetPedalMode,
             Self::SetRollAngle(_) => CommandKind::SetRollAngle,
@@ -375,6 +399,71 @@ pub enum LightState {
 
     /// Begode strobe/running-light mode.
     Strobe,
+}
+
+/// NOSFET/Veteran speed setting accepted by the documented binary frame.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct AeroSpeedSetting(u8);
+
+impl AeroSpeedSetting {
+    /// Creates a speed setting in the wheel's documented 1..=99 km/h range.
+    #[must_use]
+    pub const fn new(kilometres_per_hour: u8) -> Option<Self> {
+        match kilometres_per_hour {
+            1..=99 => Some(Self(kilometres_per_hour)),
+            _ => None,
+        }
+    }
+
+    /// Returns the whole-kilometres-per-hour wire value.
+    #[must_use]
+    pub const fn kilometres_per_hour(self) -> u8 {
+        self.0
+    }
+}
+
+/// NOSFET/Veteran PWT (PWM tilt-back alarm) percentage.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct AeroPwmPercent(u8);
+
+impl AeroPwmPercent {
+    /// Creates a PWM percentage in the documented 0..=100 range.
+    #[must_use]
+    pub const fn new(percent: u8) -> Option<Self> {
+        if percent <= 100 {
+            Some(Self(percent))
+        } else {
+            None
+        }
+    }
+
+    /// Returns the percentage wire value.
+    #[must_use]
+    pub const fn percent(self) -> u8 {
+        self.0
+    }
+}
+
+/// NOSFET/Veteran ANG (vertical angle) adjustment in tenths of a degree.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct AeroAngleAdjustment(i8);
+
+impl AeroAngleAdjustment {
+    /// Creates an angle adjustment in the captured -10.0..=10.0 degree range.
+    #[must_use]
+    pub const fn new(tenths_of_degree: i8) -> Option<Self> {
+        if tenths_of_degree < -100 || tenths_of_degree > 100 {
+            None
+        } else {
+            Some(Self(tenths_of_degree))
+        }
+    }
+
+    /// Returns the signed tenths-of-a-degree wire value.
+    #[must_use]
+    pub const fn tenths_of_degree(self) -> i8 {
+        self.0
+    }
 }
 
 /// Begode max-speed setting accepted by the documented `W` submenu.
@@ -720,6 +809,24 @@ pub enum CommandKind {
     /// Request current settings without changing device state.
     RequestSettings,
 
+    /// Reset the device trip meter.
+    ResetTripMeter,
+
+    /// Set the NOSFET/Veteran tilt-back speed.
+    SetAeroTiltbackSpeed,
+
+    /// Set the NOSFET/Veteran PWT (PWM tilt-back alarm) percentage.
+    SetAeroPwmPercent,
+
+    /// Set the NOSFET/Veteran speed alarm.
+    SetAeroAlarmSpeed,
+
+    /// Set the NOSFET/Veteran ANG (vertical angle) adjustment.
+    SetAeroAngleAdjustment,
+
+    /// Set the NOSFET/Veteran high beam.
+    SetAeroHighBeam,
+
     /// Set the device lights.
     SetLights,
 
@@ -767,7 +874,13 @@ impl CommandKind {
             | Self::RequestFaultHistory
             | Self::RequestSettings => SafetyClass::ReadOnly,
             Self::SetLights | Self::SetTaillight | Self::SoundHorn => SafetyClass::BenignControl,
-            Self::SetPedalMode
+            Self::ResetTripMeter
+            | Self::SetAeroTiltbackSpeed
+            | Self::SetAeroPwmPercent
+            | Self::SetAeroAlarmSpeed
+            | Self::SetAeroAngleAdjustment
+            | Self::SetAeroHighBeam
+            | Self::SetPedalMode
             | Self::SetRollAngle
             | Self::SetSpeedAlarmMode
             | Self::SetBegodeMaxSpeed
@@ -920,6 +1033,7 @@ impl DangerousActuationPolicy {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct StationarySettingsArm {
     model: &'static str,
+    issued_at_ms: MonotonicTimestamp,
     expires_at_ms: MonotonicTimestamp,
 }
 
@@ -928,6 +1042,12 @@ impl StationarySettingsArm {
     #[must_use]
     pub const fn model(self) -> &'static str {
         self.model
+    }
+
+    /// Returns the monotonic timestamp at which this token was issued.
+    #[must_use]
+    pub const fn issued_at_ms(self) -> MonotonicTimestamp {
+        self.issued_at_ms
     }
 
     /// Returns the monotonic expiry timestamp for this token.
@@ -965,6 +1085,7 @@ impl StationarySettingsPolicy {
             RideOperatingState::Parked | RideOperatingState::Standing => {
                 Some(StationarySettingsArm {
                     model: self.model,
+                    issued_at_ms: monotonic_ms,
                     expires_at_ms: monotonic_ms.saturating_add_duration(self.arm_duration),
                 })
             }
@@ -984,12 +1105,16 @@ impl StationarySettingsPolicy {
         monotonic_ms: MonotonicTimestamp,
     ) -> Option<StationarySettingsArm> {
         self.arm(state, monotonic_ms).or_else(|| {
+            if !matches!(state, RideOperatingState::Riding) {
+                return None;
+            }
             let speed = speed?;
             let max_speed = max_speed?;
             (speed.as_millimetres_per_second().unsigned_abs()
                 <= max_speed.as_millimetres_per_second().unsigned_abs())
             .then_some(StationarySettingsArm {
                 model: self.model,
+                issued_at_ms: monotonic_ms,
                 expires_at_ms: monotonic_ms.saturating_add_duration(self.arm_duration),
             })
         })
@@ -2417,7 +2542,7 @@ impl RegistryHashBuilder {
     }
 }
 
-const ALL_COMMAND_KINDS: [CommandKind; 10] = [
+const ALL_COMMAND_KINDS: [CommandKind; 24] = [
     CommandKind::RequestIdentity,
     CommandKind::RequestTelemetry,
     CommandKind::RequestFirmwareInfo,
@@ -2425,7 +2550,21 @@ const ALL_COMMAND_KINDS: [CommandKind; 10] = [
     CommandKind::RequestDiagnostics,
     CommandKind::RequestFaultHistory,
     CommandKind::RequestSettings,
+    CommandKind::ResetTripMeter,
+    CommandKind::SetAeroTiltbackSpeed,
+    CommandKind::SetAeroPwmPercent,
+    CommandKind::SetAeroAlarmSpeed,
+    CommandKind::SetAeroAngleAdjustment,
+    CommandKind::SetAeroHighBeam,
     CommandKind::SetLights,
+    CommandKind::SetPedalMode,
+    CommandKind::SetRollAngle,
+    CommandKind::SetSpeedAlarmMode,
+    CommandKind::SetBegodeMaxSpeed,
+    CommandKind::SetBegodeBeeperVolume,
+    CommandKind::SetBegodeLedMode,
+    CommandKind::SetAccelerationAssist,
+    CommandKind::SetTaillight,
     CommandKind::SoundHorn,
     CommandKind::SetRawMotorCurrent,
 ];
@@ -7102,6 +7241,9 @@ pub struct TelemetryDelta {
     /// Total or trip distance in millimeters.
     pub distance: Option<Measured<Distance>>,
 
+    /// Trip distance in millimeters when the protocol reports it separately.
+    pub trip_distance: Option<Measured<Distance>>,
+
     /// Pitch in millidegrees.
     pub pitch: Option<Measured<Angle>>,
 
@@ -7142,6 +7284,7 @@ impl TelemetryDelta {
             battery_temperature: None,
             pwm: None,
             distance: None,
+            trip_distance: None,
             pitch: None,
             balance_angle: None,
             roll: None,
@@ -7235,6 +7378,9 @@ pub struct TelemetrySnapshot {
     /// Latest known total or trip distance in millimeters.
     pub distance: Option<Measured<Distance>>,
 
+    /// Latest known trip distance in millimeters when the protocol reports it separately.
+    pub trip_distance: Option<Measured<Distance>>,
+
     /// Latest known pitch in millidegrees.
     pub pitch: Option<Measured<Angle>>,
 
@@ -7303,6 +7449,9 @@ impl TelemetrySnapshot {
         }
         if delta.distance.is_some() {
             self.distance = delta.distance;
+        }
+        if delta.trip_distance.is_some() {
+            self.trip_distance = delta.trip_distance;
         }
         if delta.pitch.is_some() {
             self.pitch = delta.pitch;
@@ -8877,6 +9026,12 @@ mod tests {
                     | DeviceCommand::RequestDiagnostics
                     | DeviceCommand::RequestFaultHistory
                     | DeviceCommand::RequestSettings
+                    | DeviceCommand::ResetTripMeter
+                    | DeviceCommand::SetAeroTiltbackSpeed(_)
+                    | DeviceCommand::SetAeroPwmPercent(_)
+                    | DeviceCommand::SetAeroAlarmSpeed(_)
+                    | DeviceCommand::SetAeroAngleAdjustment(_)
+                    | DeviceCommand::SetAeroHighBeam(_)
                     | DeviceCommand::SetLights(_)
                     | DeviceCommand::SetPedalMode(_)
                     | DeviceCommand::SetRollAngle(_)
@@ -10663,6 +10818,8 @@ mod tests {
             model: "NOSFET Aero",
             arm_duration: Duration::from_milliseconds(100),
         };
+        let low_speed = Speed::from_millimetres_per_second(500);
+        let max_speed = Speed::from_millimetres_per_second(500);
 
         assert!(
             policy
@@ -10687,6 +10844,36 @@ mod tests {
         assert!(
             policy
                 .arm(crate::RideOperatingState::Parked, ms(10))
+                .is_some()
+        );
+        assert!(
+            policy
+                .arm_with_speed(
+                    crate::RideOperatingState::Unknown,
+                    Some(low_speed),
+                    Some(max_speed),
+                    ms(10)
+                )
+                .is_none()
+        );
+        assert!(
+            policy
+                .arm_with_speed(
+                    crate::RideOperatingState::Charging,
+                    Some(low_speed),
+                    Some(max_speed),
+                    ms(10)
+                )
+                .is_none()
+        );
+        assert!(
+            policy
+                .arm_with_speed(
+                    crate::RideOperatingState::Riding,
+                    Some(low_speed),
+                    Some(max_speed),
+                    ms(10)
+                )
                 .is_some()
         );
     }

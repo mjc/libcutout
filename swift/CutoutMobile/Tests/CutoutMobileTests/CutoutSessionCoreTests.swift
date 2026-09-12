@@ -1392,10 +1392,10 @@ func testVescRideSnapshotProjectsBatteryLevelAndUpdateTime() throws {
         XCTAssertEqual(sink.writes, [Data("SetLightON".utf8)])
     }
 
-    func testEucLiveOwnerTimesOutPendingHeadlightOnTick() throws {
+    func testFalconLiveOwnerTimesOutPendingHeadlightOnTick() throws {
         let sink = RecordingOperationSink()
         let owner = CoreBluetoothLiveSessionOwner(
-            session: try .electricUnicycle(model: .aero),
+            session: try .electricUnicycle(model: .falcon),
             advertisement: CoreBluetoothAdvertisement(
                 peripheralIdentifier: CoreBluetoothPeripheralIdentifier("headlight-timeout-test"),
                 localName: ElectricUnicycleModel.aero.displayName,
@@ -1436,6 +1436,8 @@ func testVescRideSnapshotProjectsBatteryLevelAndUpdateTime() throws {
         let falcon = try ElectricUnicycleSession(model: .falcon)
 
         XCTAssertEqual(aero.settingsCapabilities.headlight, .supported)
+        XCTAssertEqual(aero.settingsCapabilities.aeroHighBeam, .supported)
+        XCTAssertEqual(falcon.settingsCapabilities.aeroHighBeam, .unsupported)
         XCTAssertEqual(falcon.settingsCapabilities.headlight, .supported)
         XCTAssertEqual(aero.settingsCapabilities.taillight, .unsupported)
         XCTAssertEqual(aero.settingsCapabilities.pedalMode, .supported)
@@ -1486,12 +1488,49 @@ func testVescRideSnapshotProjectsBatteryLevelAndUpdateTime() throws {
         let session = try ElectricUnicycleSession(model: .aero)
 
         XCTAssertEqual(session.headlightState.kind, .unknown)
+        XCTAssertEqual(session.aeroHighBeamState.kind, .unknown)
 
         _ = try session.perform(.setLights(.on), at: MonotonicMilliseconds(10))
 
         XCTAssertEqual(session.headlightState.kind, .pending)
         XCTAssertEqual(session.headlightState.requested, .on)
         XCTAssertEqual(session.headlightState.submittedAt, MonotonicMilliseconds(10))
+
+        XCTAssertThrowsError(
+            try session.perform(.setAeroHighBeam(.on), at: MonotonicMilliseconds(10))
+        )
+        XCTAssertEqual(session.aeroHighBeamState.kind, .refused)
+        XCTAssertEqual(session.aeroHighBeamState.requested, .on)
+    }
+
+    func testElectricUnicycleSessionExposesAeroSettingStates() throws {
+        let session = try ElectricUnicycleSession(model: .aero)
+        let speed = try XCTUnwrap(AeroSpeedSetting(kilometresPerHour: 30))
+        let pwm = try XCTUnwrap(AeroPwmPercent(percent: 64))
+        let angle = try XCTUnwrap(AeroAngleAdjustment(tenthsOfDegree: -36))
+
+        XCTAssertEqual(session.aeroTiltbackSpeedState.kind, .unknown)
+        XCTAssertEqual(session.aeroPwmPercentState.kind, .unknown)
+        XCTAssertEqual(session.aeroAlarmSpeedState.kind, .unknown)
+        XCTAssertEqual(session.aeroAngleAdjustmentState.kind, .unknown)
+
+        for command in [
+            DeviceCommand.setAeroTiltbackSpeed(speed),
+            .setAeroPwmPercent(pwm),
+            .setAeroAlarmSpeed(speed),
+            .setAeroAngleAdjustment(angle),
+        ] {
+            XCTAssertThrowsError(try session.perform(command, at: MonotonicMilliseconds(10)))
+        }
+
+        XCTAssertEqual(session.aeroTiltbackSpeedState.kind, .refused)
+        XCTAssertEqual(session.aeroTiltbackSpeedState.requested, speed)
+        XCTAssertEqual(session.aeroPwmPercentState.kind, .refused)
+        XCTAssertEqual(session.aeroPwmPercentState.requested, pwm)
+        XCTAssertEqual(session.aeroAlarmSpeedState.kind, .refused)
+        XCTAssertEqual(session.aeroAlarmSpeedState.requested, speed)
+        XCTAssertEqual(session.aeroAngleAdjustmentState.kind, .refused)
+        XCTAssertEqual(session.aeroAngleAdjustmentState.requested, angle)
     }
 
     func testElectricUnicycleSessionKeepsPedalModeWriteGuardedUntilArmed() throws {
@@ -1831,6 +1870,8 @@ func testVescRideSnapshotProjectsBatteryLevelAndUpdateTime() throws {
                 beepMargin: .unsupported,
                 tiltback: .unsupported,
                 pedalMode: .unsupported,
+                rollAngle: .unsupported,
+                speedAlarmMode: .unsupported,
                 autoShutdownSeconds: .unsupported,
                 chargeMode: .unsupported
             )
@@ -1854,6 +1895,8 @@ func testVescRideSnapshotProjectsBatteryLevelAndUpdateTime() throws {
                 beepMargin: .unsupported,
                 tiltback: .unsupported,
                 pedalMode: .unsupported,
+                rollAngle: .unsupported,
+                speedAlarmMode: .unsupported,
                 autoShutdownSeconds: .unsupported,
                 chargeMode: .unsupported
             )

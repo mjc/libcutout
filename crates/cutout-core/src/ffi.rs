@@ -1,21 +1,21 @@
 use crate::{
-    AccelerationAssistState, Angle, BatteryCurrent, BatteryInfo, BatteryLevel, BatteryPageKind,
-    BatteryPageMetadata, BatteryPagePayload, BatteryReadback, BatteryReadbackAvailability,
-    BegodeBeeperVolume, BegodeLedModeSetting, BegodeMaxSpeed, BmsPackCurrents, ChargeMode,
-    CommandKind, ControlRefusal, ControlRefusalReason, DeviceCommand, DeviceEvent,
-    DiagnosticDetail, DiagnosticError, DiagnosticErrorKind, DiagnosticReadback, DiagnosticSeverity,
-    Distance, DutyCycle, FaultCode, FaultHistoryAvailability, FaultHistoryEntry,
-    FaultHistoryReadback, FirmwareInfo, FootpadContactState, FootpadTelemetry,
-    IgnoredNotificationEvidence, IgnoredNotificationReason, LightState, Measured,
-    MonotonicTimestamp, NotificationByteLen, NotificationEvidence, NotificationIngestOutcome,
-    ParserDiagnosticCount, ParserDiagnostics, ParserDroppedBytes, ParserError, ParserFrameLen,
-    ParserGapEvidence, PayloadBodyLen, PedalMode, PhaseCurrent, Power, ProtocolFamily, ProtocolTag,
-    RawFieldValue, RawTelemetryReadback, ReadOnlyResponse, ReservedPayloadEvidence,
-    RideOperatingMode, RideOperatingState, RideStopReason, RideWarning, RollAngle, SafetyClass,
-    SemanticEventCount, SessionInput, SessionOutput, SettingsEntry, SettingsReadback,
-    SettingsReadbackAvailability, Speed, SpeedAlarmMode, TelemetryDelta, TelemetrySnapshot,
-    Temperature, TransportAction, TransportWriteLimit, ValueQuality, ValueSource,
-    VerificationStatus, Voltage, WriteMode,
+    AccelerationAssistState, AeroAngleAdjustment, AeroPwmPercent, AeroSpeedSetting, Angle,
+    BatteryCurrent, BatteryInfo, BatteryLevel, BatteryPageKind, BatteryPageMetadata,
+    BatteryPagePayload, BatteryReadback, BatteryReadbackAvailability, BegodeBeeperVolume,
+    BegodeLedModeSetting, BegodeMaxSpeed, BmsPackCurrents, ChargeMode, CommandKind, ControlRefusal,
+    ControlRefusalReason, DeviceCommand, DeviceEvent, DiagnosticDetail, DiagnosticError,
+    DiagnosticErrorKind, DiagnosticReadback, DiagnosticSeverity, Distance, DutyCycle, FaultCode,
+    FaultHistoryAvailability, FaultHistoryEntry, FaultHistoryReadback, FirmwareInfo,
+    FootpadContactState, FootpadTelemetry, IgnoredNotificationEvidence, IgnoredNotificationReason,
+    LightState, Measured, MonotonicTimestamp, NotificationByteLen, NotificationEvidence,
+    NotificationIngestOutcome, ParserDiagnosticCount, ParserDiagnostics, ParserDroppedBytes,
+    ParserError, ParserFrameLen, ParserGapEvidence, PayloadBodyLen, PedalMode, PhaseCurrent, Power,
+    ProtocolFamily, ProtocolTag, RawFieldValue, RawTelemetryReadback, ReadOnlyResponse,
+    ReservedPayloadEvidence, RideOperatingMode, RideOperatingState, RideStopReason, RideWarning,
+    RollAngle, SafetyClass, SemanticEventCount, SessionInput, SessionOutput, SettingsEntry,
+    SettingsReadback, SettingsReadbackAvailability, Speed, SpeedAlarmMode, TelemetryDelta,
+    TelemetrySnapshot, Temperature, TransportAction, TransportWriteLimit, ValueQuality,
+    ValueSource, VerificationStatus, Voltage, WriteMode,
 };
 
 /// UniFFI-ready owned read-only output.
@@ -224,6 +224,24 @@ pub enum CommandKindDto {
     /// Request current settings without changing device state.
     RequestSettings,
 
+    /// Reset the device trip meter.
+    ResetTripMeter,
+
+    /// Set the NOSFET/Veteran tilt-back speed.
+    SetAeroTiltbackSpeed,
+
+    /// Set the NOSFET/Veteran PWT (PWM tilt-back alarm) percentage.
+    SetAeroPwmPercent,
+
+    /// Set the NOSFET/Veteran speed alarm.
+    SetAeroAlarmSpeed,
+
+    /// Set the NOSFET/Veteran ANG (vertical angle) adjustment.
+    SetAeroAngleAdjustment,
+
+    /// Set the NOSFET/Veteran high beam.
+    SetAeroHighBeam,
+
     /// Set the device lights.
     SetLights,
 
@@ -268,6 +286,12 @@ impl From<CommandKind> for CommandKindDto {
             CommandKind::RequestDiagnostics => Self::RequestDiagnostics,
             CommandKind::RequestFaultHistory => Self::RequestFaultHistory,
             CommandKind::RequestSettings => Self::RequestSettings,
+            CommandKind::ResetTripMeter => Self::ResetTripMeter,
+            CommandKind::SetAeroTiltbackSpeed => Self::SetAeroTiltbackSpeed,
+            CommandKind::SetAeroPwmPercent => Self::SetAeroPwmPercent,
+            CommandKind::SetAeroAlarmSpeed => Self::SetAeroAlarmSpeed,
+            CommandKind::SetAeroAngleAdjustment => Self::SetAeroAngleAdjustment,
+            CommandKind::SetAeroHighBeam => Self::SetAeroHighBeam,
             CommandKind::SetLights => Self::SetLights,
             CommandKind::SetPedalMode => Self::SetPedalMode,
             CommandKind::SetRollAngle => Self::SetRollAngle,
@@ -306,6 +330,24 @@ pub enum DeviceCommandDto {
 
     /// Request current settings without changing device state.
     RequestSettings,
+
+    /// Reset the device trip meter.
+    ResetTripMeter,
+
+    /// Set the NOSFET/Veteran tilt-back speed.
+    SetAeroTiltbackSpeed(AeroSpeedSetting),
+
+    /// Set the NOSFET/Veteran PWT (PWM tilt-back alarm) percentage.
+    SetAeroPwmPercent(AeroPwmPercent),
+
+    /// Set the NOSFET/Veteran speed alarm.
+    SetAeroAlarmSpeed(AeroSpeedSetting),
+
+    /// Set the NOSFET/Veteran ANG (vertical angle) adjustment.
+    SetAeroAngleAdjustment(AeroAngleAdjustment),
+
+    /// Set the NOSFET/Veteran high beam.
+    SetAeroHighBeam(LightState),
 
     /// Set the device lights.
     SetLights(LightStateDto),
@@ -354,6 +396,12 @@ impl From<DeviceCommand> for DeviceCommandDto {
             DeviceCommand::RequestDiagnostics => Self::RequestDiagnostics,
             DeviceCommand::RequestFaultHistory => Self::RequestFaultHistory,
             DeviceCommand::RequestSettings => Self::RequestSettings,
+            DeviceCommand::ResetTripMeter => Self::ResetTripMeter,
+            DeviceCommand::SetAeroTiltbackSpeed(speed) => Self::SetAeroTiltbackSpeed(speed),
+            DeviceCommand::SetAeroPwmPercent(percent) => Self::SetAeroPwmPercent(percent),
+            DeviceCommand::SetAeroAlarmSpeed(speed) => Self::SetAeroAlarmSpeed(speed),
+            DeviceCommand::SetAeroAngleAdjustment(angle) => Self::SetAeroAngleAdjustment(angle),
+            DeviceCommand::SetAeroHighBeam(state) => Self::SetAeroHighBeam(state),
             DeviceCommand::SetLights(state) => Self::SetLights(state.into()),
             DeviceCommand::SetPedalMode(mode) => Self::SetPedalMode(mode.into()),
             DeviceCommand::SetRollAngle(angle) => Self::SetRollAngle(angle.into()),
@@ -383,6 +431,12 @@ impl From<DeviceCommandDto> for DeviceCommand {
             DeviceCommandDto::RequestDiagnostics => Self::RequestDiagnostics,
             DeviceCommandDto::RequestFaultHistory => Self::RequestFaultHistory,
             DeviceCommandDto::RequestSettings => Self::RequestSettings,
+            DeviceCommandDto::ResetTripMeter => Self::ResetTripMeter,
+            DeviceCommandDto::SetAeroTiltbackSpeed(speed) => Self::SetAeroTiltbackSpeed(speed),
+            DeviceCommandDto::SetAeroPwmPercent(percent) => Self::SetAeroPwmPercent(percent),
+            DeviceCommandDto::SetAeroAlarmSpeed(speed) => Self::SetAeroAlarmSpeed(speed),
+            DeviceCommandDto::SetAeroAngleAdjustment(angle) => Self::SetAeroAngleAdjustment(angle),
+            DeviceCommandDto::SetAeroHighBeam(state) => Self::SetAeroHighBeam(state),
             DeviceCommandDto::SetLights(state) => Self::SetLights(state.into()),
             DeviceCommandDto::SetPedalMode(mode) => Self::SetPedalMode(mode.into()),
             DeviceCommandDto::SetRollAngle(angle) => Self::SetRollAngle(angle.into()),
@@ -2200,6 +2254,9 @@ pub struct TelemetryDeltaDto {
     /// Total or trip distance in millimeters.
     pub distance: Option<DistanceReadingDto>,
 
+    /// Trip distance in millimeters when the protocol reports it separately.
+    pub trip_distance: Option<DistanceReadingDto>,
+
     /// Pitch in millidegrees.
     pub pitch: Option<AngleReadingDto>,
 
@@ -2236,6 +2293,7 @@ impl From<TelemetryDelta> for TelemetryDeltaDto {
             battery_temperature: delta.battery_temperature.map(Into::into),
             pwm: delta.pwm.map(Into::into),
             distance: delta.distance.map(Into::into),
+            trip_distance: delta.trip_distance.map(Into::into),
             pitch: delta.pitch.map(Into::into),
             balance_angle: delta.balance_angle.map(Into::into),
             roll: delta.roll.map(Into::into),
@@ -2351,6 +2409,9 @@ pub struct TelemetrySnapshotDto {
     /// Total or trip distance in millimeters.
     pub distance: Option<DistanceReadingDto>,
 
+    /// Trip distance in millimeters when the protocol reports it separately.
+    pub trip_distance: Option<DistanceReadingDto>,
+
     /// Pitch in millidegrees.
     pub pitch: Option<AngleReadingDto>,
 
@@ -2389,6 +2450,7 @@ impl From<TelemetrySnapshot> for TelemetrySnapshotDto {
             battery_temperature: snapshot.battery_temperature.map(Into::into),
             pwm: snapshot.pwm.map(Into::into),
             distance: snapshot.distance.map(Into::into),
+            trip_distance: snapshot.trip_distance.map(Into::into),
             pitch: snapshot.pitch.map(Into::into),
             balance_angle: snapshot.balance_angle.map(Into::into),
             roll: snapshot.roll.map(Into::into),
@@ -2958,6 +3020,7 @@ mod tests {
             battery_temperature: None,
             pwm: Some(Measured::reported(DutyCycle::from_permille(250))),
             distance: Some(Measured::reported(Distance::from_millimetres(12_345))),
+            trip_distance: Some(Measured::reported(Distance::from_millimetres(678))),
             pitch: None,
             balance_angle: None,
             roll: None,
@@ -2998,6 +3061,7 @@ mod tests {
             RideStopReasonDto::Pitch
         );
         assert_eq!(dto.motor_current.expect("current").value, -1_500);
+        assert_eq!(dto.trip_distance.expect("trip distance").value, 678);
         assert_eq!(
             dto.footpad,
             Some(FootpadTelemetryDto {

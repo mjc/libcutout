@@ -379,6 +379,21 @@ public final class CutoutSessionCore: NSObject {
     public var taillightState: LightSettingState? {
         onBleQueue { liveOwner?.taillightState }
     }
+    public var aeroHighBeamState: LightSettingState? {
+        onBleQueue { liveOwner?.aeroHighBeamState }
+    }
+    public var aeroTiltbackSpeedState: AeroSpeedSettingState? {
+        onBleQueue { liveOwner?.aeroTiltbackSpeedState }
+    }
+    public var aeroPwmPercentState: AeroPwmSettingState? {
+        onBleQueue { liveOwner?.aeroPwmPercentState }
+    }
+    public var aeroAlarmSpeedState: AeroSpeedSettingState? {
+        onBleQueue { liveOwner?.aeroAlarmSpeedState }
+    }
+    public var aeroAngleAdjustmentState: AeroAngleAdjustmentSettingState? {
+        onBleQueue { liveOwner?.aeroAngleAdjustmentState }
+    }
 
     public var onDisplayStateChange: ((RideDisplayState) -> Void)?
     public var onPhaseChange: ((SessionConnectionPhase) -> Void)?
@@ -756,6 +771,11 @@ public final class CutoutSessionCore: NSObject {
     }
 
     @discardableResult
+    public func setAeroHighBeam(_ state: LightState) -> SettingCommandResult {
+        setStationarySetting("set_aero_high_beam", command: .setAeroHighBeam(state))
+    }
+
+    @discardableResult
     public func setPedalMode(_ mode: PedalMode.Kind) -> SettingCommandResult {
         setStationarySetting("set_pedal_mode", command: .setPedalMode(mode))
     }
@@ -783,6 +803,31 @@ public final class CutoutSessionCore: NSObject {
     @discardableResult
     public func setBegodeLedMode(_ mode: BegodeLedMode) -> SettingCommandResult {
         setStationarySetting("set_begode_led_mode", command: .setBegodeLedMode(mode))
+    }
+
+    @discardableResult
+    public func resetTripMeter() -> SettingCommandResult {
+        setStationarySetting("reset_trip_meter", command: .resetTripMeter)
+    }
+
+    @discardableResult
+    public func setAeroTiltbackSpeed(_ speed: AeroSpeedSetting) -> SettingCommandResult {
+        setStationarySetting("set_aero_tiltback_speed", command: .setAeroTiltbackSpeed(speed))
+    }
+
+    @discardableResult
+    public func setAeroPwmPercent(_ percent: AeroPwmPercent) -> SettingCommandResult {
+        setStationarySetting("set_aero_pwm_percent", command: .setAeroPwmPercent(percent))
+    }
+
+    @discardableResult
+    public func setAeroAlarmSpeed(_ speed: AeroSpeedSetting) -> SettingCommandResult {
+        setStationarySetting("set_aero_alarm_speed", command: .setAeroAlarmSpeed(speed))
+    }
+
+    @discardableResult
+    public func setAeroAngleAdjustment(_ angle: AeroAngleAdjustment) -> SettingCommandResult {
+        setStationarySetting("set_aero_angle_adjustment", command: .setAeroAngleAdjustment(angle))
     }
 
     private func setStationarySetting(
@@ -1288,6 +1333,7 @@ public final class CutoutSessionCore: NSObject {
         self.advertisement = advertisement
         selectedModel = model
         selectedRoute = .electricUnicycle
+        liveOwner = nil
         deviceDetectionSession.reset()
         _ = deviceDetectionSession.observeAdvertisement(name: advertisement.localName.map { Data($0.utf8) })
         startCapture(reason: "pair", annotations: ["route=electric_unicycle"])

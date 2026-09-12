@@ -31,6 +31,11 @@ protocol CutoutSessionDriving: AnyObject {
     var speedAlarmModeState: SpeedAlarmModeSettingState? { get }
     var accelerationAssistState: AccelerationAssistSettingState? { get }
     var taillightState: LightSettingState? { get }
+    var aeroHighBeamState: LightSettingState? { get }
+    var aeroTiltbackSpeedState: AeroSpeedSettingState? { get }
+    var aeroPwmPercentState: AeroPwmSettingState? { get }
+    var aeroAlarmSpeedState: AeroSpeedSettingState? { get }
+    var aeroAngleAdjustmentState: AeroAngleAdjustmentSettingState? { get }
 
     func start()
     func pair(platformIdentifier: String) -> Bool
@@ -44,12 +49,18 @@ protocol CutoutSessionDriving: AnyObject {
     func flushCapture() async -> Bool
     func disconnectAndScan()
     func setLights(_ state: LightState) -> SettingCommandResult
+    func setAeroHighBeam(_ state: LightState) -> SettingCommandResult
     func setPedalMode(_ mode: PedalMode.Kind) -> SettingCommandResult
     func setRollAngle(_ angle: RollAngle.Kind) -> SettingCommandResult
     func setSpeedAlarmMode(_ mode: SpeedAlarmMode.Kind) -> SettingCommandResult
     func setBegodeMaxSpeed(_ speed: BegodeMaxSpeed) -> SettingCommandResult
     func setBegodeBeeperVolume(_ volume: BegodeBeeperVolume) -> SettingCommandResult
     func setBegodeLedMode(_ mode: BegodeLedMode) -> SettingCommandResult
+    func resetTripMeter() -> SettingCommandResult
+    func setAeroTiltbackSpeed(_ speed: AeroSpeedSetting) -> SettingCommandResult
+    func setAeroPwmPercent(_ percent: AeroPwmPercent) -> SettingCommandResult
+    func setAeroAlarmSpeed(_ speed: AeroSpeedSetting) -> SettingCommandResult
+    func setAeroAngleAdjustment(_ angle: AeroAngleAdjustment) -> SettingCommandResult
     func now() -> MonotonicMilliseconds
 
     func resetRideMapLocationAdmission()
@@ -65,6 +76,11 @@ extension CutoutSessionCore: CutoutSessionDriving {}
 
 extension CutoutSessionDriving {
     var rideMapStateHandle: MobileRideMapState? { nil }
+    var aeroHighBeamState: LightSettingState? { nil }
+    var aeroTiltbackSpeedState: AeroSpeedSettingState? { nil }
+    var aeroPwmPercentState: AeroPwmSettingState? { nil }
+    var aeroAlarmSpeedState: AeroSpeedSettingState? { nil }
+    var aeroAngleAdjustmentState: AeroAngleAdjustmentSettingState? { nil }
 
     var rideMapStorageError: String? {
         guard let state = rideMapStateHandle else { return "Rust ride database is unavailable" }

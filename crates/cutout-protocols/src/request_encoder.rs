@@ -1,4 +1,5 @@
 use arrayvec::ArrayVec;
+use crc32fast::hash as crc32;
 use cutout_core::{
     CommandKind, DeviceCommand, LightState, PedalMode, PendingProbe, RequestKey, RequestTarget,
     RollAngle, SpeedAlarmMode, VescControllerId, WriteMode, WritePayload,
@@ -88,6 +89,51 @@ impl AeroControlEncoder {
             DeviceCommand::SetPedalMode(PedalMode::Hard) => b"SETh".as_slice(),
             DeviceCommand::SetPedalMode(PedalMode::Medium) => b"SETm".as_slice(),
             DeviceCommand::SetPedalMode(PedalMode::Soft) => b"SETs".as_slice(),
+            DeviceCommand::ResetTripMeter => b"CLEARMETER".as_slice(),
+            DeviceCommand::SetAeroTiltbackSpeed(speed) => {
+                return Some(EncodedControl {
+                    command: command.kind(),
+                    payload: aero_binary_frame(
+                        *b"LdAp",
+                        &[0x01, 0x02, 0x80, 0x80, 0x80, 0x80, 0x80],
+                        speed.kilometres_per_hour(),
+                    )?,
+                    mode: WriteMode::WithoutResponse,
+                });
+            }
+            DeviceCommand::SetAeroPwmPercent(percent) => {
+                return Some(EncodedControl {
+                    command: command.kind(),
+                    payload: aero_binary_frame(
+                        *b"LdAp",
+                        &[0x01, 0x02, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80],
+                        percent.percent(),
+                    )?,
+                    mode: WriteMode::WithoutResponse,
+                });
+            }
+            DeviceCommand::SetAeroAlarmSpeed(speed) => {
+                return Some(EncodedControl {
+                    command: command.kind(),
+                    payload: aero_binary_frame(
+                        *b"LkAp",
+                        &[0x01, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80],
+                        speed.kilometres_per_hour(),
+                    )?,
+                    mode: WriteMode::WithoutResponse,
+                });
+            }
+            DeviceCommand::SetAeroAngleAdjustment(angle) => {
+                return Some(EncodedControl {
+                    command: command.kind(),
+                    payload: aero_binary_frame(
+                        *b"LkAp",
+                        &[0x01, 0x80, 0x80, 0x80, 0x80, 0x80],
+                        u8::from_ne_bytes(angle.tenths_of_degree().to_ne_bytes()),
+                    )?,
+                    mode: WriteMode::WithoutResponse,
+                });
+            }
             _ => return None,
         };
         Some(EncodedControl {
@@ -96,6 +142,44 @@ impl AeroControlEncoder {
             mode: WriteMode::WithoutResponse,
         })
     }
+
+    /// Encodes the paired `LeaperKim` high-beam frames.
+    #[must_use]
+    pub fn encode_settings_sequence(command: DeviceCommand) -> Option<EncodedControlSequence> {
+        let state = match command {
+            DeviceCommand::SetAeroHighBeam(LightState::On) => 1,
+            DeviceCommand::SetAeroHighBeam(LightState::Off) => 0,
+            _ => return None,
+        };
+        let mut steps = ArrayVec::new();
+        for (magic, payload_head) in [
+            (*b"LkAp", [0x01, 0x80, 0x80]),
+            (*b"LdAp", [0x01, 0x00, 0x80]),
+        ] {
+            steps.push(EncodedControlStep {
+                delay_ms: 0,
+                payload: aero_binary_frame(magic, &payload_head, state)?,
+                mode: WriteMode::WithoutResponse,
+            });
+        }
+        Some(EncodedControlSequence {
+            command: command.kind(),
+            steps,
+        })
+    }
+}
+
+fn aero_binary_frame(magic: [u8; 4], payload_head: &[u8], value: u8) -> Option<WritePayload> {
+    let length = payload_head.len() + 10;
+    let length = u8::try_from(length).ok()?;
+    let mut frame = ArrayVec::<u8, 18>::new();
+    frame.try_extend_from_slice(&magic).ok()?;
+    frame.push(length);
+    frame.try_extend_from_slice(payload_head).ok()?;
+    frame.push(value);
+    let crc = crc32(frame.as_slice()).to_be_bytes();
+    frame.try_extend_from_slice(&crc).ok()?;
+    Some(request_payload(frame.as_slice()))
 }
 
 /// Begode Falcon benign-control encoder.
@@ -298,6 +382,12 @@ impl VescRequestEncoder {
             | CommandKind::RequestBatteryInfo
             | CommandKind::RequestFaultHistory
             | CommandKind::RequestSettings
+            | CommandKind::ResetTripMeter
+            | CommandKind::SetAeroTiltbackSpeed
+            | CommandKind::SetAeroPwmPercent
+            | CommandKind::SetAeroAlarmSpeed
+            | CommandKind::SetAeroAngleAdjustment
+            | CommandKind::SetAeroHighBeam
             | CommandKind::SetAccelerationAssist
             | CommandKind::SetLights
             | CommandKind::SetPedalMode
@@ -370,6 +460,12 @@ impl VescCanTarget {
             | CommandKind::RequestBatteryInfo
             | CommandKind::RequestFaultHistory
             | CommandKind::RequestSettings
+            | CommandKind::ResetTripMeter
+            | CommandKind::SetAeroTiltbackSpeed
+            | CommandKind::SetAeroPwmPercent
+            | CommandKind::SetAeroAlarmSpeed
+            | CommandKind::SetAeroAngleAdjustment
+            | CommandKind::SetAeroHighBeam
             | CommandKind::SetAccelerationAssist
             | CommandKind::SetLights
             | CommandKind::SetPedalMode
@@ -429,6 +525,97 @@ mod tests {
             None
         );
         assert_eq!(AeroControlEncoder::encode(DeviceCommand::SoundHorn), None);
+    }
+
+    #[test]
+    fn aero_control_encoder_resets_the_trip_meter_with_the_documented_command() {
+        let reset = AeroControlEncoder::encode(DeviceCommand::ResetTripMeter)
+            .expect("trip reset is a supported Aero settings write");
+
+        assert_eq!(reset.command, CommandKind::ResetTripMeter);
+        assert_eq!(reset.payload.as_slice(), b"CLEARMETER");
+        assert_eq!(reset.mode, WriteMode::WithoutResponse);
+    }
+
+    #[test]
+    fn aero_binary_settings_match_the_captured_frame_shapes_and_crc() {
+        let cases = [
+            (
+                DeviceCommand::SetAeroTiltbackSpeed(
+                    cutout_core::AeroSpeedSetting::new(21).expect("21 km/h fits"),
+                ),
+                *b"LdAp",
+                17,
+                &[0x01, 0x02, 0x80, 0x80, 0x80, 0x80, 0x80, 21][..],
+            ),
+            (
+                DeviceCommand::SetAeroPwmPercent(
+                    cutout_core::AeroPwmPercent::new(64).expect("64 percent fits"),
+                ),
+                *b"LdAp",
+                18,
+                &[0x01, 0x02, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 64][..],
+            ),
+            (
+                DeviceCommand::SetAeroAlarmSpeed(
+                    cutout_core::AeroSpeedSetting::new(20).expect("20 km/h fits"),
+                ),
+                *b"LkAp",
+                17,
+                &[0x01, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 20][..],
+            ),
+            (
+                DeviceCommand::SetAeroAngleAdjustment(
+                    cutout_core::AeroAngleAdjustment::new(-36).expect("-3.6 degrees fits"),
+                ),
+                *b"LkAp",
+                16,
+                &[0x01, 0x80, 0x80, 0x80, 0x80, 0x80, 220][..],
+            ),
+        ];
+
+        for (command, magic, length, body) in cases {
+            let encoded = AeroControlEncoder::encode(command).expect("Aero setting encodes");
+            assert_eq!(encoded.command, command.kind());
+            assert_eq!(encoded.mode, WriteMode::WithoutResponse);
+            assert_eq!(&encoded.payload.as_slice()[..4], &magic);
+            assert_eq!(encoded.payload.as_slice()[4], length);
+            let body_len = usize::from(length) - 4;
+            assert_eq!(&encoded.payload.as_slice()[5..body_len], body);
+            let expected_crc = crc32(&encoded.payload.as_slice()[..body_len]).to_be_bytes();
+            assert_eq!(&encoded.payload.as_slice()[body_len..], &expected_crc);
+        }
+    }
+
+    #[test]
+    fn aero_high_beam_encodes_the_documented_lkap_and_ldap_pair() {
+        let sequence = AeroControlEncoder::encode_settings_sequence(
+            DeviceCommand::SetAeroHighBeam(LightState::On),
+        )
+        .expect("Aero high beam sequence encodes");
+
+        assert_eq!(sequence.command, CommandKind::SetAeroHighBeam);
+        assert_eq!(sequence.steps.len(), 2);
+        assert_eq!(sequence.steps[0].delay_ms, 0);
+        assert_eq!(sequence.steps[1].delay_ms, 0);
+        assert_eq!(&sequence.steps[0].payload.as_slice()[..5], b"LkAp\r");
+        assert_eq!(&sequence.steps[1].payload.as_slice()[..5], b"LdAp\r");
+        assert_eq!(
+            &sequence.steps[0].payload.as_slice()[5..9],
+            &[1, 0x80, 0x80, 1]
+        );
+        assert_eq!(
+            &sequence.steps[1].payload.as_slice()[5..9],
+            &[1, 0, 0x80, 1]
+        );
+
+        for step in sequence.steps {
+            let frame_len = usize::from(step.payload.as_slice()[4]);
+            let crc_offset = frame_len - 4;
+            let expected_crc = crc32(&step.payload.as_slice()[..crc_offset]).to_be_bytes();
+            assert_eq!(&step.payload.as_slice()[crc_offset..], &expected_crc);
+            assert_eq!(step.mode, WriteMode::WithoutResponse);
+        }
     }
 
     #[test]

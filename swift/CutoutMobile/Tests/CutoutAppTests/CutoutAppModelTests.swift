@@ -353,6 +353,7 @@ final class CutoutAppModelTests: XCTestCase {
             pedalMode: .unsupported,
             accelerationAssist: .unsupported,
             headlight: .supported,
+            aeroHighBeam: .supported,
             taillight: .unsupported
         )
         let model = CutoutAppModel(core: driver)
@@ -368,6 +369,7 @@ final class CutoutAppModelTests: XCTestCase {
         XCTAssertTrue(model.headlightOn)
         XCTAssertEqual(model.headlightCommandStatus, .sentWithoutConfirmation)
         XCTAssertEqual(model.headlightControlTitle, "High beam")
+        XCTAssertEqual(driver.aeroHighBeamStates, [.on])
         XCTAssertEqual(
             model.headlightStatusText,
             "Command sent. This wheel does not report high-beam state."
@@ -536,6 +538,7 @@ final class CutoutAppModelTests: XCTestCase {
             pedalMode: .unsupported,
             accelerationAssist: .unsupported,
             headlight: .supported,
+            aeroHighBeam: .supported,
             taillight: .unsupported
         )
         driver.headlightWriteSucceeds = true
@@ -587,6 +590,7 @@ final class CutoutAppModelTests: XCTestCase {
             pedalMode: .unsupported,
             accelerationAssist: .unsupported,
             headlight: .supported,
+            aeroHighBeam: .supported,
             taillight: .unsupported
         )
         driver.headlightWriteSucceeds = true
@@ -666,6 +670,7 @@ final class CutoutAppModelTests: XCTestCase {
             pedalMode: .unsupported,
             accelerationAssist: .unsupported,
             headlight: .supported,
+            aeroHighBeam: .supported,
             taillight: .unsupported
         )
         driver.headlightWriteSucceeds = true
@@ -1946,6 +1951,18 @@ final class CutoutAppModelTests: XCTestCase {
         XCTAssertEqual(store.platformIdentifier, "saved-device")
         XCTAssertTrue(model.hasSavedDevice)
         XCTAssertEqual(model.connectionState.navigationIntent(isRecordOnlyCapture: true), .stay)
+    }
+
+    @MainActor
+    func testRecordOnlyLabelNeverSelectsAProtocolModel() {
+        let driver = SessionDriverSpy(rows: [])
+        let model = CutoutAppModel(core: driver)
+
+        XCTAssertTrue(model.recordOnly(platformIdentifier: "unknown-device", deviceKind: "EUC falcon"))
+        XCTAssertEqual(driver.recordedPlatformIdentifiers, ["unknown-device"])
+        XCTAssertTrue(driver.pairedPlatformIdentifiers.isEmpty)
+        XCTAssertTrue(model.isRecordOnlyCapture)
+        XCTAssertEqual(CutoutModelHint(deviceKind: "NOSFET Aero"), .unknown)
     }
 
     @MainActor
@@ -3371,6 +3388,7 @@ private final class SessionDriverSpy: CutoutSessionDriving {
     private(set) var disconnectCount = 0
     private(set) var resetRideMapLocationAdmissionCount = 0
     private(set) var headlightStates = [LightState]()
+    private(set) var aeroHighBeamStates = [LightState]()
     private(set) var pedalModes = [PedalMode.Kind]()
     private(set) var rollAngles = [RollAngle.Kind]()
     private(set) var speedAlarmModes = [SpeedAlarmMode.Kind]()
@@ -3379,6 +3397,8 @@ private final class SessionDriverSpy: CutoutSessionDriving {
     private(set) var begodeLedModes = [BegodeLedMode]()
     var headlightWriteSucceeds = false
     var headlightCommandResult: SettingCommandResult = .accepted
+    var aeroHighBeamWriteSucceeds = false
+    var aeroHighBeamCommandResult: SettingCommandResult = .accepted
     var pedalModeCommandResult: SettingCommandResult = .accepted
     var nowValue: UInt64 = 0
 
@@ -3531,6 +3551,36 @@ private final class SessionDriverSpy: CutoutSessionDriving {
         begodeLedModes.append(mode)
         return .accepted
     }
+    func setAeroHighBeam(_ state: LightState) -> SettingCommandResult {
+        let succeeds = aeroHighBeamWriteSucceeds || headlightWriteSucceeds
+        guard succeeds else {
+            headlightState = LightSettingState(kind: .failed, requested: state, source: .userRequest)
+            headlightCommandStatusOverride = .failed
+            return .failed
+        }
+        let commandResult = aeroHighBeamWriteSucceeds
+            ? aeroHighBeamCommandResult
+            : headlightCommandResult
+        guard commandResult == .accepted else { return commandResult }
+        aeroHighBeamStates.append(state)
+        headlightStates.append(state)
+        headlightState = LightSettingState(
+            kind: .pending,
+            requested: state,
+            source: .userRequest,
+            submittedAt: now()
+        )
+        headlightCommandStatusOverride = .sentWithoutConfirmation
+        return .accepted
+    }
+    func resetTripMeter() -> SettingCommandResult { .accepted }
+    func setAeroTiltbackSpeed(_ speed: AeroSpeedSetting) -> SettingCommandResult { .accepted }
+
+    func setAeroPwmPercent(_ percent: AeroPwmPercent) -> SettingCommandResult { .accepted }
+
+    func setAeroAlarmSpeed(_ speed: AeroSpeedSetting) -> SettingCommandResult { .accepted }
+
+    func setAeroAngleAdjustment(_ angle: AeroAngleAdjustment) -> SettingCommandResult { .accepted }
     func now() -> MonotonicMilliseconds {
         MonotonicMilliseconds(nowValue)
     }

@@ -13,6 +13,10 @@
       "comment" : "App command menu that contains navigation destinations.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Navigate" } } }
     },
+    "app.command.cancel" : {
+      "comment" : "Generic cancel action label.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Cancel" } } }
+    },
     "navigation.section.tune" : {
       "comment" : "Title for the EUC settings and tuning section.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Tune" } } }
@@ -113,9 +117,89 @@
       "comment" : "Explains that a high-beam command was sent but cannot be confirmed from telemetry.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Command sent. This wheel does not report high-beam state." } } }
     },
+    "settings.headlight.failed" : {
+      "comment" : "Shown when the headlight command could not be sent.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Headlight command failed." } } }
+    },
+    "settings.headlight.refused" : {
+      "comment" : "Shown when the wheel refuses a headlight command before transport.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Wheel refused the headlight command." } } }
+    },
+    "settings.headlight.waiting" : {
+      "comment" : "Shown while waiting for wheel telemetry to confirm a headlight command.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Waiting for wheel confirmation." } } }
+    },
+    "settings.headlight.timed_out" : {
+      "comment" : "Shown when the wheel does not confirm a headlight command before the timeout.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Wheel did not confirm the headlight command." } } }
+    },
+    "settings.headlight.confirmed" : {
+      "comment" : "Shown when wheel telemetry confirms the requested headlight state.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Confirmed by wheel telemetry." } } }
+    },
+    "settings.headlight.confirmed_ago" : {
+      "comment" : "Shown when wheel telemetry confirmed the requested headlight state, with elapsed whole seconds.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Confirmed by wheel telemetry %llds ago." } } }
+    },
+    "settings.high_beam.title" : {
+      "comment" : "Label for a wheel protocol that controls the high beam.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "High beam" } } }
+    },
+    "settings.high_beam.sent_unconfirmed" : {
+      "comment" : "Explains that a high-beam command was sent but cannot be confirmed from telemetry.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Command sent. This wheel does not report high-beam state." } } }
+    },
     "settings.lights.title" : {
       "comment" : "Section title for EUC light settings.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Lights" } } }
+    },
+    "settings.trip_meter.reset" : {
+      "comment" : "Button that sends the documented NOSFET Aero trip-meter reset command.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Reset trip meter" } } }
+    },
+    "settings.trip_meter.title" : {
+      "comment" : "Section title for the NOSFET Aero trip-meter readback and reset control.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Trip meter" } } }
+    },
+    "settings.trip_meter.distance_title" : {
+      "comment" : "Current protocol-reported trip distance shown above the reset control.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Trip distance" } } }
+    },
+    "settings.trip_meter.footer" : {
+      "comment" : "Safety guidance for resetting the NOSFET Aero trip meter.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Available on NOSFET Aero while parked or below 500 mm/s." } } }
+    },
+    "settings.trip_meter.confirm_title" : {
+      "comment" : "Confirmation title shown before resetting the NOSFET Aero trip meter.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Reset the trip meter?" } } }
+    },
+    "settings.aero.title" : {
+      "comment" : "Section title for captured NOSFET Aero binary settings writes.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Aero controls" } } }
+    },
+    "settings.aero.footer" : {
+      "comment" : "Safety note for NOSFET Aero settings writes.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Writes are available only while parked; verify each change on the wheel." } } }
+    },
+    "settings.aero.send" : {
+      "comment" : "Button that sends a selected NOSFET Aero setting.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Send" } } }
+    },
+    "settings.aero.tiltback.title" : {
+      "comment" : "NOSFET Aero tilt-back speed setting.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Tilt-back" } } }
+    },
+    "settings.aero.pwm.title" : {
+      "comment" : "NOSFET Aero PWT (PWM tilt-back alarm) setting.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "PWT (PWM tilt-back)" } } }
+    },
+    "settings.aero.alarm.title" : {
+      "comment" : "NOSFET Aero alarm speed setting.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Alarm speed" } } }
+    },
+    "settings.aero.angle.title" : {
+      "comment" : "NOSFET Aero ANG (vertical angle) adjustment setting.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "ANG (vertical angle)" } } }
     },
     "settings.capabilities.title" : {
       "comment" : "Section title for settings that are not currently editable.",

@@ -3,6 +3,34 @@ import XCTest
 import CutoutMobile
 
 final class CutoutAppRouteTests: XCTestCase {
+    func testAeroSettingsFormUsesCurrentValuesWhenAvailable() {
+        let values = AeroSettingsFormValues(
+            tiltback: AeroSpeedSetting(kilometresPerHour: 31),
+            pwm: AeroPwmPercent(percent: 74),
+            alarm: AeroSpeedSetting(kilometresPerHour: 42),
+            angle: AeroAngleAdjustment(tenthsOfDegree: -12)
+        )
+
+        XCTAssertEqual(values.tiltbackSpeed, 31)
+        XCTAssertEqual(values.pwmPercent, 74)
+        XCTAssertEqual(values.alarmSpeed, 42)
+        XCTAssertEqual(values.angleTenths, -12)
+    }
+
+    func testAeroSettingsFormKeepsSafeDefaultsWhenValuesAreUnavailable() {
+        let values = AeroSettingsFormValues(
+            tiltback: nil,
+            pwm: nil,
+            alarm: nil,
+            angle: nil
+        )
+
+        XCTAssertEqual(values.tiltbackSpeed, 20)
+        XCTAssertEqual(values.pwmPercent, 60)
+        XCTAssertEqual(values.alarmSpeed, 20)
+        XCTAssertEqual(values.angleTenths, 0)
+    }
+
     func testScreenRoutesMatchTopLevelSections() {
         XCTAssertEqual(CutoutAppRoute.route(for: .eucRide), .eucRide)
         XCTAssertEqual(CutoutAppRoute.route(for: .vescRide), .vescRide)
@@ -123,6 +151,22 @@ final class CutoutAppRouteTests: XCTestCase {
             "Command sent. This wheel does not report high-beam state."
         )
         XCTAssertEqual(
+            localizedAppText("settings.headlight.waiting"),
+            "Waiting for wheel confirmation."
+        )
+        XCTAssertEqual(
+            localizedAppText("settings.headlight.confirmed"),
+            "Confirmed by wheel telemetry."
+        )
+        XCTAssertEqual(
+            localizedAppText("settings.headlight.confirmed_ago", Int64(2)),
+            "Confirmed by wheel telemetry 2s ago."
+        )
+        XCTAssertEqual(
+            localizedAppText("settings.high_beam.sent_unconfirmed"),
+            "Command sent. This wheel does not report high-beam state."
+        )
+        XCTAssertEqual(
             localizedAppText("bms.no_data.pack_estimate_accessibility_value", "71", "Derived from voltage curve"),
             "71%. Derived from voltage curve"
         )
@@ -161,6 +205,34 @@ final class CutoutAppRouteTests: XCTestCase {
             "Hard"
         )
         XCTAssertEqual(
+            EucSettingReadbackPresentation.rollAngle(
+                RollAngleSettingState(kind: .pending, requested: .high),
+                fallback: .available(.documented(.low))
+            ),
+            "Low"
+        )
+        XCTAssertEqual(
+            EucSettingReadbackPresentation.rollAngle(
+                RollAngleSettingState(kind: .refused, requested: .high),
+                fallback: .available(.documented(.low))
+            ),
+            "Low"
+        )
+        XCTAssertEqual(
+            EucSettingReadbackPresentation.rollAngle(
+                RollAngleSettingState(kind: .timedOut, requested: .high),
+                fallback: .available(.documented(.low))
+            ),
+            "Low"
+        )
+        XCTAssertEqual(
+            EucSettingReadbackPresentation.rollAngle(
+                RollAngleSettingState(kind: .failed, requested: .high),
+                fallback: .available(.documented(.low))
+            ),
+            "Low"
+        )
+        XCTAssertEqual(
             EucSettingReadbackPresentation.speed(.unavailable),
             "Unavailable"
         )
@@ -175,6 +247,14 @@ final class CutoutAppRouteTests: XCTestCase {
         XCTAssertEqual(
             EucSettingReadbackPresentation.chargeMode(.available(.charging)),
             "Charging"
+        )
+        XCTAssertEqual(
+            EucSettingReadbackPresentation.tripDistance(1_609_344),
+            "1.0 mi"
+        )
+        XCTAssertEqual(
+            EucSettingReadbackPresentation.tripDistance(nil),
+            "Unavailable"
         )
     }
 

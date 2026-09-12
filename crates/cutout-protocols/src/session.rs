@@ -23,13 +23,13 @@ use crate::{
     FalconRequestEncoder, RefloatCodecError, RefloatReadOnlyRequest, RefloatReply,
     RefloatStreamDecoder, RefloatStreamResult, RequestDisposition, VESC_COMM_CUSTOM_APP_DATA,
     VESC_MAX_FRAME_LEN, VESC_NOTIFY_CHANNEL, VESC_WRITE_CHANNEL, VETERAN_DATA_CHANNEL,
-    VescBoardProfile, VescCodecError, VescReadOnlyCodec, VescReadOnlyReply, VescReadOnlyRequest,
-    VescReadOnlyStreamDecoder, VescReadOnlyStreamResult, VescRequestEncoder, VescStatsMask,
-    VescStatsTelemetry, VescValuesMask, VescValuesTelemetry, VeteranBmsCellPage,
-    VeteranBmsMetadataPage, VeteranBmsPageEvidence, VeteranBmsTemperaturePage, VeteranFrame,
-    VeteranFrameParseResult, VeteranFrameReassembler, VeteranReassemblyError, VeteranTelemetry,
-    VeteranTelemetryError, begode_falcon_target_voltage_profile, decode_veteran_bms_page,
-    util::u64_to_i64_saturating,
+    VETERAN_SERVICE_CHANNEL, VescBoardProfile, VescCodecError, VescReadOnlyCodec,
+    VescReadOnlyReply, VescReadOnlyRequest, VescReadOnlyStreamDecoder, VescReadOnlyStreamResult,
+    VescRequestEncoder, VescStatsMask, VescStatsTelemetry, VescValuesMask, VescValuesTelemetry,
+    VeteranBmsCellPage, VeteranBmsMetadataPage, VeteranBmsPageEvidence, VeteranBmsTemperaturePage,
+    VeteranFrame, VeteranFrameParseResult, VeteranFrameReassembler, VeteranReassemblyError,
+    VeteranTelemetry, VeteranTelemetryError, begode_falcon_target_voltage_profile,
+    decode_veteran_bms_page, util::u64_to_i64_saturating,
 };
 
 /// Raw VESC electrical RPM telemetry field id.
@@ -1559,7 +1559,7 @@ fn gate_read_only_command<M: SupportsReadRequests>(command: DeviceCommand) -> Re
 pub struct NosfetAeroModel;
 
 const NOSFET_AERO_MODEL_GATT: [GattFingerprint; 1] = [GattFingerprint {
-    service: VETERAN_DATA_CHANNEL,
+    service: VETERAN_SERVICE_CHANNEL,
     characteristic: VETERAN_DATA_CHANNEL,
     roles: GattRoles::empty()
         .with_read()
@@ -1628,13 +1628,24 @@ impl SupportsBenignControls for NosfetAeroModel {
 }
 
 impl SupportsSettingsWrites for NosfetAeroModel {
-    const WRITE_CAPABILITIES: Capabilities =
-        Capabilities::from_supported_commands([CommandKind::SetPedalMode]);
+    const WRITE_CAPABILITIES: Capabilities = Capabilities::from_supported_commands([
+        CommandKind::SetPedalMode,
+        CommandKind::ResetTripMeter,
+        CommandKind::SetAeroTiltbackSpeed,
+        CommandKind::SetAeroPwmPercent,
+        CommandKind::SetAeroAlarmSpeed,
+        CommandKind::SetAeroAngleAdjustment,
+        CommandKind::SetAeroHighBeam,
+    ]);
     const MAX_SETTINGS_SPEED: Option<cutout_core::Speed> =
         Some(cutout_core::Speed::from_millimetres_per_second(500));
 
     fn encode_settings_write(command: DeviceCommand) -> Option<EncodedControl> {
         AeroControlEncoder::encode(command)
+    }
+
+    fn encode_settings_sequence(command: DeviceCommand) -> Option<EncodedControlSequence> {
+        AeroControlEncoder::encode_settings_sequence(command)
     }
 }
 
@@ -1836,6 +1847,12 @@ fn unavailable_readback_response(kind: CommandKind) -> Option<ReadOnlyResponse> 
         | CommandKind::RequestFirmwareInfo
         | CommandKind::RequestTelemetry
         | CommandKind::RequestDiagnostics
+        | CommandKind::ResetTripMeter
+        | CommandKind::SetAeroTiltbackSpeed
+        | CommandKind::SetAeroPwmPercent
+        | CommandKind::SetAeroAlarmSpeed
+        | CommandKind::SetAeroAngleAdjustment
+        | CommandKind::SetAeroHighBeam
         | CommandKind::SetAccelerationAssist
         | CommandKind::SetLights
         | CommandKind::SetPedalMode
@@ -1968,6 +1985,31 @@ pub struct BenignControlSession<
 struct PendingSettingsSequence {
     remaining: ArrayVec<EncodedControlStep, 4>,
     next_at: MonotonicTimestamp,
+}
+
+fn handle_benign_control<M: ReadOnlyModelSpec + SupportsBenignControls>(
+    command: DeviceCommand,
+    output: &mut Vec<SessionOutput>,
+) {
+    let kind = command.kind();
+    if M::CONTROL_CAPABILITIES.supports_command_kind(kind) {
+        if let Some(encoded) = M::encode_benign_control(command) {
+            output.push(SessionOutput::Transport(TransportAction::Write {
+                channel: M::WRITE_CHANNEL,
+                bytes: encoded.payload,
+                mode: encoded.mode,
+            }));
+            return;
+        }
+    }
+
+    output.push(SessionOutput::Event(DeviceEvent::ControlRefusal(
+        ControlRefusal {
+            command: kind,
+            safety_class: command.safety_class(),
+            reason: ControlRefusalReason::UnsupportedCommand,
+        },
+    )));
 }
 
 impl<M: ReadOnlyModelSpec + SupportsBenignControls, const ACCEPT_ANY_NOTIFICATION: bool> fmt::Debug
@@ -2154,6 +2196,7 @@ impl<
 
     /// Installs a short-lived authorization issued from stationary evidence.
     pub const fn arm(&mut self, arm: cutout_core::StationarySettingsArm) {
+        self.monotonic_ms = arm.issued_at_ms();
         self.arm = Some(arm);
     }
 
@@ -2308,24 +2351,7 @@ impl<
             SessionInput::Command(command)
                 if command.safety_class() == SafetyClass::BenignControl =>
             {
-                let kind = command.kind();
-                if M::CONTROL_CAPABILITIES.supports_command_kind(kind) {
-                    if let Some(encoded) = M::encode_benign_control(command) {
-                        output.push(SessionOutput::Transport(TransportAction::Write {
-                            channel: M::WRITE_CHANNEL,
-                            bytes: encoded.payload,
-                            mode: encoded.mode,
-                        }));
-                        return;
-                    }
-                }
-                output.push(SessionOutput::Event(DeviceEvent::ControlRefusal(
-                    ControlRefusal {
-                        command: kind,
-                        safety_class: SafetyClass::BenignControl,
-                        reason: ControlRefusalReason::UnsupportedCommand,
-                    },
-                )));
+                handle_benign_control::<M>(command, output);
             }
             input => self.read_only.handle(input, output),
         }
@@ -5023,7 +5049,7 @@ mod tests {
     }
 
     #[test]
-    fn aero_benign_control_session_writes_typed_light_state() {
+    fn aero_benign_control_session_writes_silent_high_beam_state() {
         let mut session = BenignControlSession::<NosfetAeroModel, false>::default();
         let mut output = Vec::new();
 
@@ -5091,6 +5117,142 @@ mod tests {
             item,
             SessionOutput::Transport(TransportAction::Write { bytes, .. })
                 if bytes.as_slice() == b"SETh"
+        )));
+    }
+
+    #[test]
+    fn aero_stationary_settings_session_writes_documented_trip_reset() {
+        let mut session = StationarySettingsWriteSession::<NosfetAeroModel, false>::default();
+        let mut output = Vec::new();
+        session.arm(
+            StationarySettingsPolicy {
+                model: NosfetAeroModel::MODEL,
+                arm_duration: Duration::from_milliseconds(100),
+            }
+            .arm(RideOperatingState::Parked, ms(10))
+            .expect("parked state arms settings writes"),
+        );
+        session.handle(
+            SessionInput::Tick {
+                monotonic_ms: ms(10),
+            },
+            &mut output,
+        );
+        session.handle(
+            SessionInput::Command(DeviceCommand::ResetTripMeter),
+            &mut output,
+        );
+
+        assert!(output.iter().any(|item| matches!(
+            item,
+            SessionOutput::Transport(TransportAction::Write { bytes, .. })
+                if bytes.as_slice() == b"CLEARMETER"
+        )));
+    }
+
+    #[test]
+    fn aero_stationary_settings_session_schedules_tlt_pwt_alm_and_ang() {
+        let cases = [
+            (
+                DeviceCommand::SetAeroTiltbackSpeed(
+                    cutout_core::AeroSpeedSetting::new(53).expect("53 km/h fits"),
+                ),
+                *b"LdAp",
+                12,
+                53,
+            ),
+            (
+                DeviceCommand::SetAeroPwmPercent(
+                    cutout_core::AeroPwmPercent::new(64).expect("64 percent fits"),
+                ),
+                *b"LdAp",
+                13,
+                64,
+            ),
+            (
+                DeviceCommand::SetAeroAlarmSpeed(
+                    cutout_core::AeroSpeedSetting::new(56).expect("56 km/h fits"),
+                ),
+                *b"LkAp",
+                12,
+                56,
+            ),
+            (
+                DeviceCommand::SetAeroAngleAdjustment(
+                    cutout_core::AeroAngleAdjustment::new(-12).expect("-1.2 degrees fits"),
+                ),
+                *b"LkAp",
+                11,
+                244,
+            ),
+        ];
+
+        for (command, magic, value_index, expected_value) in cases {
+            let mut session = StationarySettingsWriteSession::<NosfetAeroModel, false>::default();
+            let mut output = Vec::new();
+            session.arm(
+                StationarySettingsPolicy {
+                    model: NosfetAeroModel::MODEL,
+                    arm_duration: Duration::from_milliseconds(100),
+                }
+                .arm(RideOperatingState::Parked, ms(10))
+                .expect("parked state arms settings writes"),
+            );
+            session.handle(SessionInput::Command(command), &mut output);
+
+            let bytes = output.iter().find_map(|item| match item {
+                SessionOutput::Transport(TransportAction::Write { bytes, .. }) => {
+                    Some(bytes.as_slice())
+                }
+                _ => None,
+            });
+            let bytes = bytes.expect("Aero setting should schedule a transport write");
+            assert_eq!(&bytes[..4], &magic);
+            assert_eq!(bytes[value_index], expected_value);
+        }
+    }
+
+    #[test]
+    fn aero_stationary_settings_session_schedules_high_beam_pair() {
+        let mut session = StationarySettingsWriteSession::<NosfetAeroModel, false>::default();
+        let mut output = Vec::new();
+        session.arm(
+            StationarySettingsPolicy {
+                model: NosfetAeroModel::MODEL,
+                arm_duration: Duration::from_milliseconds(100),
+            }
+            .arm(RideOperatingState::Parked, ms(10))
+            .expect("parked state arms settings writes"),
+        );
+        session.handle(
+            SessionInput::Tick {
+                monotonic_ms: ms(10),
+            },
+            &mut output,
+        );
+        output.clear();
+
+        session.handle(
+            SessionInput::Command(DeviceCommand::SetAeroHighBeam(cutout_core::LightState::On)),
+            &mut output,
+        );
+        assert!(matches!(
+            output.as_slice(),
+            [SessionOutput::Transport(TransportAction::Write { bytes, .. })]
+                if bytes.as_slice().starts_with(b"LkAp")
+        ));
+
+        output.clear();
+        session.handle(
+            SessionInput::Tick {
+                monotonic_ms: ms(10),
+            },
+            &mut output,
+        );
+        assert!(output.iter().any(|item| matches!(
+            item,
+            SessionOutput::Transport(TransportAction::Write { bytes, .. })
+                if bytes.as_slice().starts_with(b"LdAp")
         )));
     }
 
@@ -5301,6 +5463,7 @@ mod tests {
         .arm(RideOperatingState::Standing, MonotonicTimestamp::new(10))
         .expect("standing state arms settings writes");
         session.arm(arm);
+        assert_eq!(session.monotonic_ms, MonotonicTimestamp::new(10));
         session.handle(
             SessionInput::Tick {
                 monotonic_ms: MonotonicTimestamp::new(10),

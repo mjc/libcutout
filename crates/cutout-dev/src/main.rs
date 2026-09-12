@@ -13,6 +13,40 @@ use serde_json::Value;
 use sha2::{Digest, Sha256};
 
 const GENERATED_PACKAGE: &str = "target/swift-ffi/CutoutMobileFFI";
+const CARGO_SWIFT_PACKAGE: &str = "crates/cutout-mobile-ffi/CutoutMobileFFI";
+const SWIFT_FFI_LOCK: &str = "target/swift-ffi/.cutout-swift-ffi.lock";
+
+struct SwiftFfiLock {
+    path: PathBuf,
+}
+
+impl SwiftFfiLock {
+    fn acquire(root: &Path) -> Result<Self> {
+        let path = root.join(SWIFT_FFI_LOCK);
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        let mut lock = fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&path)
+            .with_context(|| {
+                format!(
+                    "acquire Swift FFI generation lock {}; another generation may be running",
+                    path.display()
+                )
+            })?;
+        use std::io::Write as _;
+        writeln!(lock, "{}", std::process::id())?;
+        Ok(Self { path })
+    }
+}
+
+impl Drop for SwiftFfiLock {
+    fn drop(&mut self) {
+        let _ = fs::remove_file(&self.path);
+    }
+}
 
 #[derive(Debug, Eq, PartialEq)]
 enum DevCommand {
@@ -53,6 +87,7 @@ fn workspace_root() -> PathBuf {
 }
 
 fn ensure_swift_ffi(root: &Path) -> Result<()> {
+    let _lock = SwiftFfiLock::acquire(root)?;
     let package = root.join(GENERATED_PACKAGE);
     let expected = source_fingerprint(root)?;
     let current = fs::read_to_string(package.join(".cutout-source.sha256"))
@@ -81,63 +116,76 @@ fn regenerate_swift_ffi(root: &Path, package: &Path) -> Result<()> {
     ensure_empty_wrapper("RUSTC_WRAPPER")?;
     ensure_empty_wrapper("RUSTC_WORKSPACE_WRAPPER")?;
 
-    let crate_dir = root.join("crates/cutout-mobile-ffi");
-    let stage = crate_dir.join("CutoutMobileFFI");
-    if stage.exists() {
-        fs::remove_dir_all(&stage)
-            .with_context(|| format!("cleaning stale generated package {}", stage.display()))?;
-    }
-    fs::create_dir_all(
-        package
-            .parent()
-            .expect("generated package path must have a parent"),
-    )?;
-
-    let result = run(
-        command("cargo").current_dir(&crate_dir).args([
-            "swift",
-            "package",
-            "--platforms",
-            "ios@18",
-            "macos@15",
-            "--release",
-            "--name",
-            "CutoutMobileFFI",
-            "--lib-type",
-            "static",
-            "--skip-toolchains-check",
-            "--accept-all",
-            "--swift-tools-version",
-            "6.0",
-            "--silent",
-        ]),
-        "generate Swift FFI package",
-    )
-    .and_then(|()| sort_xcframework_plist(&stage))
-    .and_then(|()| trim_generated_sources(&stage));
-
-    if let Err(error) = result {
-        if stage.exists() {
-            fs::remove_dir_all(&stage)?;
-        }
-        return Err(error);
-    }
-
+    let cargo_package = root.join(CARGO_SWIFT_PACKAGE);
     let backup = package.with_file_name(format!(".CutoutMobileFFI.backup.{}", std::process::id()));
+    let cargo_backup = cargo_package.with_file_name(format!(
+        ".CutoutMobileFFI.cargo-backup.{}",
+        std::process::id()
+    ));
     ensure!(
         !backup.exists(),
         "generated-package backup already exists: {}",
         backup.display()
     );
+    ensure!(
+        !cargo_backup.exists(),
+        "cargo-swift backup already exists: {}",
+        cargo_backup.display()
+    );
+    if let Some(parent) = package.parent() {
+        fs::create_dir_all(parent)?;
+    }
     if package.exists() {
         fs::rename(package, &backup)
             .with_context(|| format!("backing up {}", package.display()))?;
     }
+    if cargo_package.exists() {
+        fs::rename(&cargo_package, &cargo_backup)
+            .with_context(|| format!("backing up {}", cargo_package.display()))?;
+    }
 
-    match fs::rename(&stage, package) {
+    let result = run(
+        command("cargo")
+            .current_dir(root.join("crates/cutout-mobile-ffi"))
+            .args([
+                "swift",
+                "package",
+                "--platforms",
+                "ios@18",
+                "macos@15",
+                "--release",
+                "--name",
+                "CutoutMobileFFI",
+                "--lib-type",
+                "static",
+                "--skip-toolchains-check",
+                "--accept-all",
+                "--swift-tools-version",
+                "6.0",
+                "--silent",
+            ]),
+        "generate Swift FFI package",
+    )
+    .and_then(|()| sort_xcframework_plist(&cargo_package))
+    .and_then(|()| trim_generated_sources(&cargo_package))
+    .and_then(|()| {
+        fs::rename(&cargo_package, package).with_context(|| {
+            format!(
+                "moving generated Swift FFI package from {} to {}",
+                cargo_package.display(),
+                package.display()
+            )
+        })
+    })
+    .and_then(|()| verify_swift_ffi(package));
+
+    match result {
         Ok(()) => {
             if backup.exists() {
                 fs::remove_dir_all(&backup)?;
+            }
+            if cargo_backup.exists() {
+                fs::remove_dir_all(&cargo_backup)?;
             }
             Ok(())
         }
@@ -148,13 +196,13 @@ fn regenerate_swift_ffi(root: &Path, package: &Path) -> Result<()> {
             if backup.exists() {
                 fs::rename(&backup, package)?;
             }
-            Err(error).with_context(|| {
-                format!(
-                    "installing generated Swift FFI package from {} to {}",
-                    stage.display(),
-                    package.display()
-                )
-            })
+            if cargo_package.exists() {
+                fs::remove_dir_all(&cargo_package)?;
+            }
+            if cargo_backup.exists() {
+                fs::rename(&cargo_backup, cargo_package)?;
+            }
+            Err(error)
         }
     }
 }
