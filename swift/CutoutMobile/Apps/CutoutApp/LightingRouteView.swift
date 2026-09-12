@@ -388,7 +388,7 @@ private struct LightingPresetsCard: View {
                                 HStack {
                                     Text(preset.name)
                                     Spacer()
-                                    Text("\(preset.requested.brightness)%")
+                                    Text(localizedAppText("lighting.percent", Int64(preset.requested.brightness)))
                                         .monospacedDigit()
                                         .foregroundStyle(.secondary)
                                 }

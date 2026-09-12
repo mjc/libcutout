@@ -530,7 +530,7 @@ struct LightingPlaybackControls: View {
                 )
                 Picker(localizedAppText("lighting.pattern"), selection: $pattern) {
                     ForEach(patternIDs, id: \.self) { id in
-                        Text("\(id) · \(LightingPatternCatalog.name(for: id))").tag(id)
+                        Text(localizedAppText("lighting.effect.option", Int64(id), LightingPatternCatalog.name(for: id))).tag(id)
                     }
                 }
                 .pickerStyle(.menu)
@@ -538,7 +538,8 @@ struct LightingPlaybackControls: View {
                 HStack {
                     Label(localizedAppText("lighting.speed"), systemImage: "speedometer")
                     Spacer()
-                    Text("\(Int(((255 - speed) * 100 / 255).rounded()))%").monospacedDigit().foregroundStyle(.secondary)
+                    Text(localizedAppText("lighting.percent", Int64(((255 - speed) * 100 / 255).rounded())))
+                        .monospacedDigit().foregroundStyle(.secondary)
                 }
                 Slider(value: Binding(
                     get: { 255 - speed },
@@ -553,7 +554,7 @@ struct LightingPlaybackControls: View {
                 }
                 .tint(.purple)
                 .accessibilityIdentifier("lighting.effect-speed")
-                .accessibilityValue("\(Int(((255 - speed) * 100 / 255).rounded())) percent")
+                .accessibilityValue(localizedAppText("lighting.percent_accessibility", Int64(((255 - speed) * 100 / 255).rounded())))
                 HStack {
                     Text(localizedAppText("lighting.slower"))
                     Spacer()
@@ -581,7 +582,8 @@ struct LightingPlaybackControls: View {
                 HStack {
                     Label(localizedAppText("lighting.sensitivity"), systemImage: "mic")
                     Spacer()
-                    Text("\(Int(sensitivity))%").monospacedDigit().foregroundStyle(.secondary)
+                    Text(localizedAppText("lighting.percent", Int64(sensitivity)))
+                        .monospacedDigit().foregroundStyle(.secondary)
                 }
                 Slider(value: $sensitivity, in: 0...100, step: 1) {
                     Text(localizedAppText("lighting.microphone_sensitivity"))

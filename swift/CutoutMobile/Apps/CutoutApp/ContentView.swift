@@ -2,6 +2,9 @@ import Accessibility
 import CutoutMobile
 import Foundation
 import SwiftUI
+#if os(iOS)
+import UIKit
+#endif
 
 struct ContentView: View {
     let model: CutoutAppModel

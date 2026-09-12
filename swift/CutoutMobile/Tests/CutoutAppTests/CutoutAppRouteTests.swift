@@ -833,7 +833,7 @@ final class CutoutAppRouteTests: XCTestCase {
     @MainActor
     func testLightingRouteModelMarksPendingCommandUnconfirmedAfterLinkLoss() async throws {
         let suiteName = "CutoutAppRouteTests.lightingPendingCommand"
-        let defaults = try! XCTUnwrap(UserDefaults(suiteName: suiteName))
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
         defaults.removePersistentDomain(forName: suiteName)
         defer { defaults.removePersistentDomain(forName: suiteName) }
         let persistence = LightingAccessoryPersistence(defaults: defaults)
@@ -1021,9 +1021,9 @@ final class CutoutAppRouteTests: XCTestCase {
     }
 
     @MainActor
-    func testLightingRouteModelStopsMusicThroughTheValidatedStatePath() {
+    func testLightingRouteModelStopsMusicThroughTheValidatedStatePath() throws {
         let suiteName = "CutoutAppRouteTests.lightingMusic"
-        let defaults = try! XCTUnwrap(UserDefaults(suiteName: suiteName))
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
         defaults.removePersistentDomain(forName: suiteName)
         defer { defaults.removePersistentDomain(forName: suiteName) }
         let persistence = LightingAccessoryPersistence(defaults: defaults)
@@ -1191,7 +1191,7 @@ final class CutoutAppRouteTests: XCTestCase {
     @MainActor
     func testLightingScheduleDoesNotChangePlaybackOrSaveOnOpening() throws {
         let suiteName = "CutoutAppRouteTests.lightingSchedule"
-        let defaults = try! XCTUnwrap(UserDefaults(suiteName: suiteName))
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
         defaults.removePersistentDomain(forName: suiteName)
         defer { defaults.removePersistentDomain(forName: suiteName) }
         let persistence = LightingAccessoryPersistence(defaults: defaults)
@@ -1204,6 +1204,33 @@ final class CutoutAppRouteTests: XCTestCase {
         XCTAssertEqual(model.commandStatus, .requested)
         XCTAssertEqual(model.requestedPlayback, .solid)
         XCTAssertTrue(fake.stateRequests.isEmpty)
+    }
+
+    @MainActor
+    func testPartialCommandConfirmationCannotPromoteRestoreSnapshot() throws {
+        let suiteName = "CutoutAppRouteTests.partialConfirmation"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defaults.removePersistentDomain(forName: suiteName)
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        let persistence = LightingAccessoryPersistence(defaults: defaults)
+        let identifier = "A1B2C3D4-E5F6-4789-ABCD-0123456789AB"
+        XCTAssertTrue(persistence.ensureRecord(platformIdentifier: identifier))
+        let fake = TestLightingSession()
+        let model = LightingRouteModel(session: fake, persistence: persistence)
+        model.setPlayback(.effect(pattern: 16, speed: 128))
+        model.markConfirmed()
+        let confirmedState = try XCTUnwrap(persistence.confirmedState)
+        persistence.setRestoreEnabled(true)
+        XCTAssertNotNil(persistence.restoreCandidate())
+
+        let schedule = MobileMelkScheduleDto(powerOn: false, hour: 23, minute: 15, days: 31, enabled: true)
+        XCTAssertTrue(model.setSchedule(schedule))
+        model.markConfirmed()
+
+        XCTAssertEqual(model.commandStatus, .confirmed)
+        XCTAssertNil(persistence.restoreCandidate())
+        XCTAssertEqual(persistence.confirmedState, confirmedState)
     }
 
     @MainActor
@@ -1240,9 +1267,9 @@ final class CutoutAppRouteTests: XCTestCase {
     }
 
     @MainActor
-    func testLightingRouteModelConsumesTypedIdentityEvents() async {
+    func testLightingRouteModelConsumesTypedIdentityEvents() async throws {
         let suiteName = "CutoutAppRouteTests.lightingIdentity"
-        let defaults = try! XCTUnwrap(UserDefaults(suiteName: suiteName))
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
         defaults.removePersistentDomain(forName: suiteName)
         defer { defaults.removePersistentDomain(forName: suiteName) }
         let persistence = LightingAccessoryPersistence(defaults: defaults)

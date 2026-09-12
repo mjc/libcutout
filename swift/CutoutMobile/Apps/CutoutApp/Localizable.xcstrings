@@ -15,7 +15,7 @@
     },
     "lighting.state.retrying" : {
       "comment" : "Lighting retry state. Placeholders are attempt and delay seconds.",
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Retrying (%lld) in %llds" } } }
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Retrying (%1$lld) in %2$llds" } } }
     },
     "lighting.state.discovering" : {
       "comment" : "Lighting connection state.",
@@ -167,7 +167,7 @@
     },
     "lighting.connection.retrying" : {
       "comment" : "Lighting retry summary. Placeholders are attempt and delay seconds.",
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Retrying (%lld) in %llds…" } } }
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Retrying (%1$lld) in %2$llds…" } } }
     },
     "lighting.connection.not_connected" : {
       "comment" : "Lighting connection summary.",
@@ -375,7 +375,7 @@
     },
     "lighting.color_wheel.value" : {
       "comment" : "Color wheel accessibility value. Placeholders are hue degrees and saturation percentage.",
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Hue %lld degrees, saturation %lld percent" } } }
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Hue %1$lld degrees, saturation %2$lld percent" } } }
     },
     "lighting.preset.red" : {
       "comment" : "Quick lighting preset label.",
@@ -395,7 +395,7 @@
     },
     "lighting.preset.effect_summary" : {
       "comment" : "Lighting effect preset summary. Placeholders are name and speed.",
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Effect %@ · speed %lld" } } }
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Effect %1$@ · speed %2$lld" } } }
     },
     "lighting.preset.music_summary" : {
       "comment" : "Lighting music preset summary. Placeholder is sensitivity.",

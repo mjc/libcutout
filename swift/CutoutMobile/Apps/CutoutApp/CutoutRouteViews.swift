@@ -349,6 +349,12 @@ final class LightingRouteModel {
     private var restoreAttempted = false
     private var lastColorPreviewAt: TimeInterval = 0
     private var callbackGeneration = 0
+    private enum PendingCommandScope: Equatable {
+        case none
+        case partial
+        case completeState
+    }
+    private var pendingCommandScope: PendingCommandScope = .none
 
     init(
         session: any MelkLightingPeripheralSessionProtocol = MelkLightingPeripheralSession(),
@@ -417,6 +423,7 @@ final class LightingRouteModel {
             brightness: 100
         )
         commandStatus = .idle
+        pendingCommandScope = .none
         candidates.removeAll()
         restoreAttempted = true
     }
@@ -475,9 +482,11 @@ final class LightingRouteModel {
         requestedState.powerOn = on
         updatePersistedRequestedState()
         commandStatus = .requested
+        pendingCommandScope = .partial
     }
 
     func setSolidColor(red: UInt8, green: UInt8, blue: UInt8) {
+        let wasSolid = requestedPlayback == .solid
         guard sendSolidColor(red: red, green: green, blue: blue) else {
             controlError = localizedAppText("lighting.error.color_not_ready")
             return
@@ -489,11 +498,13 @@ final class LightingRouteModel {
         requestedState.blue = blue
         updatePersistedRequestedState()
         commandStatus = .requested
+        pendingCommandScope = wasSolid ? .partial : .completeState
     }
 
     func previewSolidColor(red: UInt8, green: UInt8, blue: UInt8) {
         let now = ProcessInfo.processInfo.systemUptime
         guard now - lastColorPreviewAt >= 1.0 / 30.0 else { return }
+        let wasSolid = requestedPlayback == .solid
         guard sendSolidColor(red: red, green: green, blue: blue) else { return }
         controlError = nil
         requestedState.playback = nil
@@ -502,6 +513,7 @@ final class LightingRouteModel {
         requestedState.green = green
         requestedState.blue = blue
         commandStatus = .requested
+        pendingCommandScope = wasSolid ? .partial : .completeState
     }
 
     func setBrightness(_ percentage: UInt8) {
@@ -513,6 +525,7 @@ final class LightingRouteModel {
         requestedState.brightness = percentage
         updatePersistedRequestedState()
         commandStatus = .requested
+        pendingCommandScope = .partial
     }
 
     var requestedPlayback: MobileLightingPlaybackDto { requestedState.playback ?? .solid }
@@ -553,6 +566,7 @@ final class LightingRouteModel {
         requestedState.playback = .effect(pattern: pattern, speed: speed)
         updatePersistedRequestedState()
         commandStatus = .requested
+        pendingCommandScope = .partial
     }
 
     private func applyState(_ state: MobileMelkLightingRestoreStateDto) {
@@ -564,6 +578,7 @@ final class LightingRouteModel {
         requestedState = state
         updatePersistedRequestedState()
         commandStatus = .requested
+        pendingCommandScope = .completeState
     }
 
     @discardableResult
@@ -581,14 +596,26 @@ final class LightingRouteModel {
         }
         controlError = nil
         commandStatus = .requested
+        pendingCommandScope = .partial
         return true
     }
 
     func markConfirmed() {
-        guard commandStatus == .requested else { return }
+        guard commandStatus == .requested, pendingCommandScope != .none else { return }
         session.markLastCommandConfirmed()
         commandStatus = .confirmed
-        try? persistence.confirm(requestedState)
+        switch pendingCommandScope {
+        case .none:
+            break
+        case .partial:
+            // A partial frame can be externally confirmed, but it cannot prove the
+            // complete restore snapshot. Keep restore fail-closed until a full-state
+            // request is observed.
+            persistence.markUnconfirmed()
+        case .completeState:
+            try? persistence.confirm(requestedState)
+        }
+        pendingCommandScope = .none
         restoreAttempted = true
     }
 
@@ -597,6 +624,7 @@ final class LightingRouteModel {
         session.markLastCommandUnconfirmed()
         persistence.markUnconfirmed()
         commandStatus = .unconfirmed
+        pendingCommandScope = .none
     }
 
     var isReady: Bool { connectionState == .ready }
@@ -711,6 +739,7 @@ final class LightingRouteModel {
         if state.invalidatesPendingCommand, commandStatus == .requested {
             commandStatus = .unconfirmed
             persistence.markUnconfirmed()
+            pendingCommandScope = .none
         }
         if state == .ready {
             ensureRecordForConnectedAccessory()
@@ -776,6 +805,7 @@ final class LightingRouteModel {
         }
         requestedState = candidate.requestedState
         commandStatus = .requested
+        pendingCommandScope = .completeState
         records = Array((records + [MelkLightingLogEntry(text: "restore=requested")]).suffix(12))
     }
 }
