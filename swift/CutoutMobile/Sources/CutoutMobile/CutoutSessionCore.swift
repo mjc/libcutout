@@ -379,6 +379,21 @@ public final class CutoutSessionCore: NSObject {
     public var taillightState: LightSettingState? {
         onBleQueue { liveOwner?.taillightState }
     }
+    public var aeroHighBeamState: LightSettingState? {
+        onBleQueue { liveOwner?.aeroHighBeamState }
+    }
+    public var aeroTiltbackSpeedState: AeroSpeedSettingState? {
+        onBleQueue { liveOwner?.aeroTiltbackSpeedState }
+    }
+    public var aeroPwmPercentState: AeroPwmSettingState? {
+        onBleQueue { liveOwner?.aeroPwmPercentState }
+    }
+    public var aeroAlarmSpeedState: AeroSpeedSettingState? {
+        onBleQueue { liveOwner?.aeroAlarmSpeedState }
+    }
+    public var aeroAngleAdjustmentState: AeroAngleAdjustmentSettingState? {
+        onBleQueue { liveOwner?.aeroAngleAdjustmentState }
+    }
 
     public var onDisplayStateChange: ((RideDisplayState) -> Void)?
     public var onPhaseChange: ((SessionConnectionPhase) -> Void)?

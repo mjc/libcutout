@@ -353,6 +353,7 @@ final class CutoutAppModelTests: XCTestCase {
             pedalMode: .unsupported,
             accelerationAssist: .unsupported,
             headlight: .supported,
+            aeroHighBeam: .supported,
             taillight: .unsupported
         )
         let model = CutoutAppModel(core: driver)
@@ -537,6 +538,7 @@ final class CutoutAppModelTests: XCTestCase {
             pedalMode: .unsupported,
             accelerationAssist: .unsupported,
             headlight: .supported,
+            aeroHighBeam: .supported,
             taillight: .unsupported
         )
         driver.headlightWriteSucceeds = true
@@ -588,6 +590,7 @@ final class CutoutAppModelTests: XCTestCase {
             pedalMode: .unsupported,
             accelerationAssist: .unsupported,
             headlight: .supported,
+            aeroHighBeam: .supported,
             taillight: .unsupported
         )
         driver.headlightWriteSucceeds = true
@@ -667,6 +670,7 @@ final class CutoutAppModelTests: XCTestCase {
             pedalMode: .unsupported,
             accelerationAssist: .unsupported,
             headlight: .supported,
+            aeroHighBeam: .supported,
             taillight: .unsupported
         )
         driver.headlightWriteSucceeds = true
@@ -3549,18 +3553,24 @@ private final class SessionDriverSpy: CutoutSessionDriving {
     }
     func setAeroHighBeam(_ state: LightState) -> SettingCommandResult {
         let succeeds = aeroHighBeamWriteSucceeds || headlightWriteSucceeds
-        guard succeeds else { return .failed }
+        guard succeeds else {
+            headlightState = LightSettingState(kind: .failed, requested: state, source: .userRequest)
+            headlightCommandStatusOverride = .failed
+            return .failed
+        }
         let commandResult = aeroHighBeamWriteSucceeds
             ? aeroHighBeamCommandResult
             : headlightCommandResult
         guard commandResult == .accepted else { return commandResult }
         aeroHighBeamStates.append(state)
         headlightStates.append(state)
-        return .accepted
-    }
-    func setPedalMode(_ mode: PedalMode.Kind) -> SettingCommandResult {
-        guard pedalModeCommandResult == .accepted else { return pedalModeCommandResult }
-        pedalModes.append(mode)
+        headlightState = LightSettingState(
+            kind: .pending,
+            requested: state,
+            source: .userRequest,
+            submittedAt: now()
+        )
+        headlightCommandStatusOverride = .sentWithoutConfirmation
         return .accepted
     }
     func resetTripMeter() -> SettingCommandResult { .accepted }
@@ -3571,28 +3581,6 @@ private final class SessionDriverSpy: CutoutSessionDriving {
     func setAeroAlarmSpeed(_ speed: AeroSpeedSetting) -> SettingCommandResult { .accepted }
 
     func setAeroAngleAdjustment(_ angle: AeroAngleAdjustment) -> SettingCommandResult { .accepted }
-    func setRollAngle(_ angle: RollAngle.Kind) -> SettingCommandResult {
-        rollAngles.append(angle)
-        return .accepted
-    }
-    func setSpeedAlarmMode(_ mode: SpeedAlarmMode.Kind) -> SettingCommandResult {
-        speedAlarmModes.append(mode)
-        return .accepted
-    }
-    func setBegodeMaxSpeed(_ speed: BegodeMaxSpeed) -> SettingCommandResult {
-        begodeMaxSpeeds.append(speed)
-        return .accepted
-    }
-
-    func setBegodeBeeperVolume(_ volume: BegodeBeeperVolume) -> SettingCommandResult {
-        begodeBeeperVolumes.append(volume)
-        return .accepted
-    }
-
-    func setBegodeLedMode(_ mode: BegodeLedMode) -> SettingCommandResult {
-        begodeLedModes.append(mode)
-        return .accepted
-    }
     func now() -> MonotonicMilliseconds {
         MonotonicMilliseconds(nowValue)
     }

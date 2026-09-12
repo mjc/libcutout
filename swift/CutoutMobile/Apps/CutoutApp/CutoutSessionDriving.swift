@@ -31,6 +31,11 @@ protocol CutoutSessionDriving: AnyObject {
     var speedAlarmModeState: SpeedAlarmModeSettingState? { get }
     var accelerationAssistState: AccelerationAssistSettingState? { get }
     var taillightState: LightSettingState? { get }
+    var aeroHighBeamState: LightSettingState? { get }
+    var aeroTiltbackSpeedState: AeroSpeedSettingState? { get }
+    var aeroPwmPercentState: AeroPwmSettingState? { get }
+    var aeroAlarmSpeedState: AeroSpeedSettingState? { get }
+    var aeroAngleAdjustmentState: AeroAngleAdjustmentSettingState? { get }
 
     func start()
     func pair(platformIdentifier: String) -> Bool
@@ -71,6 +76,11 @@ extension CutoutSessionCore: CutoutSessionDriving {}
 
 extension CutoutSessionDriving {
     var rideMapStateHandle: MobileRideMapState? { nil }
+    var aeroHighBeamState: LightSettingState? { nil }
+    var aeroTiltbackSpeedState: AeroSpeedSettingState? { nil }
+    var aeroPwmPercentState: AeroPwmSettingState? { nil }
+    var aeroAlarmSpeedState: AeroSpeedSettingState? { nil }
+    var aeroAngleAdjustmentState: AeroAngleAdjustmentSettingState? { nil }
 
     var rideMapStorageError: String? {
         guard let state = rideMapStateHandle else { return "Rust ride database is unavailable" }

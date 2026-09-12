@@ -1291,19 +1291,6 @@ public enum AccelerationAssistState: Equatable, Hashable, Sendable {
     }
 }
 
-public enum AccelerationAssistState: Equatable, Hashable, Sendable {
-    case disabled
-    case enabled
-
-    fileprivate init(_ dto: MobileAccelerationAssistStateDto) {
-        self = dto == .enabled ? .enabled : .disabled
-    }
-
-    fileprivate var dto: MobileAccelerationAssistStateDto {
-        self == .enabled ? .enabled : .disabled
-    }
-}
-
 public enum SettingStateKind: Equatable, Hashable, Sendable {
     case unknown
     case current
@@ -5691,6 +5678,51 @@ public final class ElectricUnicycleSession: @unchecked Sendable {
         }
     }
 
+    public var aeroHighBeamState: LightSettingState {
+        switch inner {
+        case .aero(let session):
+            LightSettingState(session.aeroHighBeamState())
+        case .falcon(let session):
+            LightSettingState(session.aeroHighBeamState())
+        }
+    }
+
+    public var aeroTiltbackSpeedState: AeroSpeedSettingState {
+        switch inner {
+        case .aero(let session):
+            AeroSpeedSettingState(session.aeroTiltbackSpeedState())
+        case .falcon(let session):
+            AeroSpeedSettingState(session.aeroTiltbackSpeedState())
+        }
+    }
+
+    public var aeroPwmPercentState: AeroPwmSettingState {
+        switch inner {
+        case .aero(let session):
+            AeroPwmSettingState(session.aeroPwmPercentState())
+        case .falcon(let session):
+            AeroPwmSettingState(session.aeroPwmPercentState())
+        }
+    }
+
+    public var aeroAlarmSpeedState: AeroSpeedSettingState {
+        switch inner {
+        case .aero(let session):
+            AeroSpeedSettingState(session.aeroAlarmSpeedState())
+        case .falcon(let session):
+            AeroSpeedSettingState(session.aeroAlarmSpeedState())
+        }
+    }
+
+    public var aeroAngleAdjustmentState: AeroAngleAdjustmentSettingState {
+        switch inner {
+        case .aero(let session):
+            AeroAngleAdjustmentSettingState(session.aeroAngleAdjustmentState())
+        case .falcon(let session):
+            AeroAngleAdjustmentSettingState(session.aeroAngleAdjustmentState())
+        }
+    }
+
     /// Arms the Rust-owned stationary settings gate from the latest telemetry state.
     @discardableResult
     public func armSettingsWrites(at monotonicMilliseconds: MonotonicMilliseconds) -> Bool {
@@ -6246,6 +6278,52 @@ public enum CoreBluetoothSession: Sendable {
             nil
         }
     }
+
+    public var aeroHighBeamState: LightSettingState? {
+        switch self {
+        case .electricUnicycle(let session):
+            session.aeroHighBeamState
+        case .vescOnewheel:
+            nil
+        }
+    }
+
+    public var aeroTiltbackSpeedState: AeroSpeedSettingState? {
+        switch self {
+        case .electricUnicycle(let session):
+            session.aeroTiltbackSpeedState
+        case .vescOnewheel:
+            nil
+        }
+    }
+
+    public var aeroPwmPercentState: AeroPwmSettingState? {
+        switch self {
+        case .electricUnicycle(let session):
+            session.aeroPwmPercentState
+        case .vescOnewheel:
+            nil
+        }
+    }
+
+    public var aeroAlarmSpeedState: AeroSpeedSettingState? {
+        switch self {
+        case .electricUnicycle(let session):
+            session.aeroAlarmSpeedState
+        case .vescOnewheel:
+            nil
+        }
+    }
+
+    public var aeroAngleAdjustmentState: AeroAngleAdjustmentSettingState? {
+        switch self {
+        case .electricUnicycle(let session):
+            session.aeroAngleAdjustmentState
+        case .vescOnewheel:
+            nil
+        }
+    }
+
     fileprivate var currentSnapshot: TelemetrySnapshot {
         switch self {
         case .electricUnicycle(let session):
@@ -6345,23 +6423,6 @@ public enum CoreBluetoothSession: Sendable {
         }
     }
 
-    fileprivate func armSettingsWrites(at monotonicMilliseconds: MonotonicMilliseconds) -> Bool {
-        switch self {
-        case .electricUnicycle(let session):
-            session.armSettingsWrites(at: monotonicMilliseconds)
-        case .vescOnewheel:
-            false
-        }
-    }
-
-    fileprivate func tick(at monotonicMilliseconds: MonotonicMilliseconds) throws -> [SessionAction] {
-        switch self {
-        case .electricUnicycle(let session):
-            try session.tick(at: monotonicMilliseconds)
-        case .vescOnewheel(let session):
-            try session.tick(at: monotonicMilliseconds)
-        }
-    }
 }
 
 public enum CoreBluetoothSessionEvent: Equatable, Hashable, Sendable {
@@ -6459,6 +6520,27 @@ public final class CoreBluetoothSessionRunner: @unchecked Sendable {
     public var taillightState: LightSettingState? {
         session.taillightState
     }
+
+    public var aeroHighBeamState: LightSettingState? {
+        session.aeroHighBeamState
+    }
+
+    public var aeroTiltbackSpeedState: AeroSpeedSettingState? {
+        session.aeroTiltbackSpeedState
+    }
+
+    public var aeroPwmPercentState: AeroPwmSettingState? {
+        session.aeroPwmPercentState
+    }
+
+    public var aeroAlarmSpeedState: AeroSpeedSettingState? {
+        session.aeroAlarmSpeedState
+    }
+
+    public var aeroAngleAdjustmentState: AeroAngleAdjustmentSettingState? {
+        session.aeroAngleAdjustmentState
+    }
+
     public func handle(_ event: CoreBluetoothSessionEvent) throws -> CoreBluetoothSessionStep {
         switch event {
         case .linkUp(let monotonicMilliseconds):
@@ -6723,6 +6805,27 @@ public final class CoreBluetoothLiveSessionOwner: @unchecked Sendable {
     public var taillightState: LightSettingState? {
         runner.taillightState
     }
+
+    public var aeroHighBeamState: LightSettingState? {
+        runner.aeroHighBeamState
+    }
+
+    public var aeroTiltbackSpeedState: AeroSpeedSettingState? {
+        runner.aeroTiltbackSpeedState
+    }
+
+    public var aeroPwmPercentState: AeroPwmSettingState? {
+        runner.aeroPwmPercentState
+    }
+
+    public var aeroAlarmSpeedState: AeroSpeedSettingState? {
+        runner.aeroAlarmSpeedState
+    }
+
+    public var aeroAngleAdjustmentState: AeroAngleAdjustmentSettingState? {
+        runner.aeroAngleAdjustmentState
+    }
+
     /// Configures the Rust-owned charge estimate profile for this connection.
     public func configureChargeEstimate(profile: ChargeEstimateProfile) {
         runner.configureChargeEstimate(profile: profile)
