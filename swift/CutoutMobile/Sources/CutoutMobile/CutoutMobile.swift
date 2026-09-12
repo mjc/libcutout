@@ -6564,24 +6564,6 @@ public final class ElectricUnicycleSession: @unchecked Sendable {
         }
     }
 
-    public var aeroAlarmSpeedState: AeroSpeedSettingState {
-        switch inner {
-        case .aero(let session):
-            AeroSpeedSettingState(session.aeroAlarmSpeedState())
-        case .falcon(let session):
-            AeroSpeedSettingState(session.aeroAlarmSpeedState())
-        }
-    }
-
-    public var aeroAngleAdjustmentState: AeroAngleAdjustmentSettingState {
-        switch inner {
-        case .aero(let session):
-            AeroAngleAdjustmentSettingState(session.aeroAngleAdjustmentState())
-        case .falcon(let session):
-            AeroAngleAdjustmentSettingState(session.aeroAngleAdjustmentState())
-        }
-    }
-
     /// Arms the Rust-owned stationary settings gate from the latest telemetry state.
     @discardableResult
     public func armSettingsWrites(at monotonicMilliseconds: MonotonicMilliseconds) -> Bool {
@@ -7321,24 +7303,6 @@ public enum CoreBluetoothSession: Sendable {
         }
     }
 
-    public var aeroAlarmSpeedState: AeroSpeedSettingState? {
-        switch self {
-        case .electricUnicycle(let session):
-            session.aeroAlarmSpeedState
-        case .vescOnewheel:
-            nil
-        }
-    }
-
-    public var aeroAngleAdjustmentState: AeroAngleAdjustmentSettingState? {
-        switch self {
-        case .electricUnicycle(let session):
-            session.aeroAngleAdjustmentState
-        case .vescOnewheel:
-            nil
-        }
-    }
-
     fileprivate var currentSnapshot: TelemetrySnapshot {
         switch self {
         case .electricUnicycle(let session):
@@ -7618,14 +7582,6 @@ public final class CoreBluetoothSessionRunner: @unchecked Sendable {
 
     public var aeroPwmPercentState: AeroPwmSettingState? {
         session.aeroPwmPercentState
-    }
-
-    public var aeroAlarmSpeedState: AeroSpeedSettingState? {
-        session.aeroAlarmSpeedState
-    }
-
-    public var aeroAngleAdjustmentState: AeroAngleAdjustmentSettingState? {
-        session.aeroAngleAdjustmentState
     }
 
     public func handle(_ event: CoreBluetoothSessionEvent) throws -> CoreBluetoothSessionStep {
