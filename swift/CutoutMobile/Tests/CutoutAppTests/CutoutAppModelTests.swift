@@ -434,6 +434,12 @@ final class CutoutAppModelTests: XCTestCase {
     func testPedalModeWriteUsesTheSupportedCapability() {
         let driver = SessionDriverSpy(rows: [])
         driver.electricUnicycleModel = .aero
+        driver.settingsCapabilitiesOverride = EucSettingsCapabilities(
+            pedalMode: .supported,
+            accelerationAssist: .unsupported,
+            headlight: .supported,
+            taillight: .unsupported
+        )
         let model = CutoutAppModel(core: driver)
 
         XCTAssertTrue(model.pedalModeControlAvailable)
