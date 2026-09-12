@@ -1,6 +1,7 @@
 use crate::{
-    Angle, BatteryCurrent, BatteryInfo, BatteryLevel, BatteryPageKind, BatteryPageMetadata,
-    BatteryPagePayload, BatteryReadback, BatteryReadbackAvailability, BmsPackCurrents, ChargeMode,
+    AccelerationAssistState, Angle, BatteryCurrent, BatteryInfo, BatteryLevel, BatteryPageKind,
+    BatteryPageMetadata, BatteryPagePayload, BatteryReadback, BatteryReadbackAvailability,
+    BegodeBeeperVolume, BegodeLedModeSetting, BegodeMaxSpeed, BmsPackCurrents, ChargeMode,
     CommandKind, ControlRefusal, ControlRefusalReason, DeviceCommand, DeviceEvent,
     DiagnosticDetail, DiagnosticError, DiagnosticErrorKind, DiagnosticReadback, DiagnosticSeverity,
     Distance, DutyCycle, FaultCode, FaultHistoryAvailability, FaultHistoryEntry,
@@ -8,13 +9,13 @@ use crate::{
     IgnoredNotificationEvidence, IgnoredNotificationReason, LightState, Measured,
     MonotonicTimestamp, NotificationByteLen, NotificationEvidence, NotificationIngestOutcome,
     ParserDiagnosticCount, ParserDiagnostics, ParserDroppedBytes, ParserError, ParserFrameLen,
-    ParserGapEvidence, PayloadBodyLen, PhaseCurrent, Power, ProtocolFamily, ProtocolTag,
+    ParserGapEvidence, PayloadBodyLen, PedalMode, PhaseCurrent, Power, ProtocolFamily, ProtocolTag,
     RawFieldValue, RawTelemetryReadback, ReadOnlyResponse, ReservedPayloadEvidence,
-    RideOperatingMode, RideOperatingState, RideStopReason, RideWarning, SafetyClass,
+    RideOperatingMode, RideOperatingState, RideStopReason, RideWarning, RollAngle, SafetyClass,
     SemanticEventCount, SessionInput, SessionOutput, SettingsEntry, SettingsReadback,
-    SettingsReadbackAvailability, Speed, TelemetryDelta, TelemetrySnapshot, Temperature,
-    TransportAction, TransportWriteLimit, ValueQuality, ValueSource, VerificationStatus, Voltage,
-    WriteMode,
+    SettingsReadbackAvailability, Speed, SpeedAlarmMode, TelemetryDelta, TelemetrySnapshot,
+    Temperature, TransportAction, TransportWriteLimit, ValueQuality, ValueSource,
+    VerificationStatus, Voltage, WriteMode,
 };
 
 /// UniFFI-ready owned read-only output.
@@ -226,6 +227,30 @@ pub enum CommandKindDto {
     /// Set the device lights.
     SetLights,
 
+    /// Set pedal stiffness.
+    SetPedalMode,
+
+    /// Set Falcon roll-angle sensitivity.
+    SetRollAngle,
+
+    /// Set Begode speed-alarm mode.
+    SetSpeedAlarmMode,
+
+    /// Set Begode max speed.
+    SetBegodeMaxSpeed,
+
+    /// Set Begode beeper volume.
+    SetBegodeBeeperVolume,
+
+    /// Set Begode LED mode.
+    SetBegodeLedMode,
+
+    /// Enable or disable acceleration assist.
+    SetAccelerationAssist,
+
+    /// Set the taillight state.
+    SetTaillight,
+
     /// Sound a device horn or alert.
     SoundHorn,
 
@@ -244,6 +269,14 @@ impl From<CommandKind> for CommandKindDto {
             CommandKind::RequestFaultHistory => Self::RequestFaultHistory,
             CommandKind::RequestSettings => Self::RequestSettings,
             CommandKind::SetLights => Self::SetLights,
+            CommandKind::SetPedalMode => Self::SetPedalMode,
+            CommandKind::SetRollAngle => Self::SetRollAngle,
+            CommandKind::SetSpeedAlarmMode => Self::SetSpeedAlarmMode,
+            CommandKind::SetBegodeMaxSpeed => Self::SetBegodeMaxSpeed,
+            CommandKind::SetBegodeBeeperVolume => Self::SetBegodeBeeperVolume,
+            CommandKind::SetBegodeLedMode => Self::SetBegodeLedMode,
+            CommandKind::SetAccelerationAssist => Self::SetAccelerationAssist,
+            CommandKind::SetTaillight => Self::SetTaillight,
             CommandKind::SoundHorn => Self::SoundHorn,
             CommandKind::SetRawMotorCurrent => Self::SetRawMotorCurrent,
         }
@@ -277,6 +310,30 @@ pub enum DeviceCommandDto {
     /// Set the device lights.
     SetLights(LightStateDto),
 
+    /// Set pedal stiffness.
+    SetPedalMode(PedalModeDto),
+
+    /// Set Falcon roll-angle sensitivity.
+    SetRollAngle(RollAngleDto),
+
+    /// Set Begode speed-alarm mode.
+    SetSpeedAlarmMode(SpeedAlarmModeDto),
+
+    /// Set Begode max speed.
+    SetBegodeMaxSpeed(BegodeMaxSpeed),
+
+    /// Set Begode beeper volume.
+    SetBegodeBeeperVolume(BegodeBeeperVolume),
+
+    /// Set Begode LED mode.
+    SetBegodeLedMode(BegodeLedModeSetting),
+
+    /// Enable or disable acceleration assist.
+    SetAccelerationAssist(AccelerationAssistStateDto),
+
+    /// Set the taillight state.
+    SetTaillight(LightStateDto),
+
     /// Sound a device horn or alert.
     SoundHorn,
 
@@ -298,6 +355,16 @@ impl From<DeviceCommand> for DeviceCommandDto {
             DeviceCommand::RequestFaultHistory => Self::RequestFaultHistory,
             DeviceCommand::RequestSettings => Self::RequestSettings,
             DeviceCommand::SetLights(state) => Self::SetLights(state.into()),
+            DeviceCommand::SetPedalMode(mode) => Self::SetPedalMode(mode.into()),
+            DeviceCommand::SetRollAngle(angle) => Self::SetRollAngle(angle.into()),
+            DeviceCommand::SetSpeedAlarmMode(mode) => Self::SetSpeedAlarmMode(mode.into()),
+            DeviceCommand::SetBegodeMaxSpeed(speed) => Self::SetBegodeMaxSpeed(speed),
+            DeviceCommand::SetBegodeBeeperVolume(volume) => Self::SetBegodeBeeperVolume(volume),
+            DeviceCommand::SetBegodeLedMode(mode) => Self::SetBegodeLedMode(mode),
+            DeviceCommand::SetAccelerationAssist(state) => {
+                Self::SetAccelerationAssist(state.into())
+            }
+            DeviceCommand::SetTaillight(state) => Self::SetTaillight(state.into()),
             DeviceCommand::SoundHorn => Self::SoundHorn,
             DeviceCommand::SetRawMotorCurrent { current } => Self::SetRawMotorCurrent {
                 current: current.as_milliamps(),
@@ -317,6 +384,16 @@ impl From<DeviceCommandDto> for DeviceCommand {
             DeviceCommandDto::RequestFaultHistory => Self::RequestFaultHistory,
             DeviceCommandDto::RequestSettings => Self::RequestSettings,
             DeviceCommandDto::SetLights(state) => Self::SetLights(state.into()),
+            DeviceCommandDto::SetPedalMode(mode) => Self::SetPedalMode(mode.into()),
+            DeviceCommandDto::SetRollAngle(angle) => Self::SetRollAngle(angle.into()),
+            DeviceCommandDto::SetSpeedAlarmMode(mode) => Self::SetSpeedAlarmMode(mode.into()),
+            DeviceCommandDto::SetBegodeMaxSpeed(speed) => Self::SetBegodeMaxSpeed(speed),
+            DeviceCommandDto::SetBegodeBeeperVolume(volume) => Self::SetBegodeBeeperVolume(volume),
+            DeviceCommandDto::SetBegodeLedMode(mode) => Self::SetBegodeLedMode(mode),
+            DeviceCommandDto::SetAccelerationAssist(state) => {
+                Self::SetAccelerationAssist(state.into())
+            }
+            DeviceCommandDto::SetTaillight(state) => Self::SetTaillight(state.into()),
             DeviceCommandDto::SoundHorn => Self::SoundHorn,
             DeviceCommandDto::SetRawMotorCurrent { current } => Self::SetRawMotorCurrent {
                 current: PhaseCurrent::from_milliamps(current),
@@ -333,6 +410,138 @@ pub enum LightStateDto {
 
     /// Lights on.
     On,
+
+    /// Begode strobe/running-light mode.
+    Strobe,
+}
+
+/// UniFFI-ready acceleration-assist state.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum AccelerationAssistStateDto {
+    /// Acceleration assist is disabled.
+    Disabled,
+
+    /// Acceleration assist is enabled.
+    Enabled,
+}
+
+impl From<AccelerationAssistState> for AccelerationAssistStateDto {
+    fn from(state: AccelerationAssistState) -> Self {
+        match state {
+            AccelerationAssistState::Disabled => Self::Disabled,
+            AccelerationAssistState::Enabled => Self::Enabled,
+        }
+    }
+}
+
+impl From<AccelerationAssistStateDto> for AccelerationAssistState {
+    fn from(state: AccelerationAssistStateDto) -> Self {
+        match state {
+            AccelerationAssistStateDto::Disabled => Self::Disabled,
+            AccelerationAssistStateDto::Enabled => Self::Enabled,
+        }
+    }
+}
+
+/// UniFFI-ready pedal stiffness mode.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum PedalModeDto {
+    /// Firm pedal response.
+    Hard,
+
+    /// Mid-range pedal response.
+    Medium,
+
+    /// Soft pedal response.
+    Soft,
+}
+
+impl From<PedalMode> for PedalModeDto {
+    fn from(mode: PedalMode) -> Self {
+        match mode {
+            PedalMode::Hard => Self::Hard,
+            PedalMode::Medium => Self::Medium,
+            PedalMode::Soft => Self::Soft,
+        }
+    }
+}
+
+impl From<PedalModeDto> for PedalMode {
+    fn from(mode: PedalModeDto) -> Self {
+        match mode {
+            PedalModeDto::Hard => Self::Hard,
+            PedalModeDto::Medium => Self::Medium,
+            PedalModeDto::Soft => Self::Soft,
+        }
+    }
+}
+
+/// UniFFI-ready Falcon roll-angle sensitivity.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum RollAngleDto {
+    /// Low roll-angle sensitivity.
+    Low,
+
+    /// Medium roll-angle sensitivity.
+    Medium,
+
+    /// High roll-angle sensitivity.
+    High,
+}
+
+impl From<RollAngle> for RollAngleDto {
+    fn from(angle: RollAngle) -> Self {
+        match angle {
+            RollAngle::Low => Self::Low,
+            RollAngle::Medium => Self::Medium,
+            RollAngle::High => Self::High,
+        }
+    }
+}
+
+impl From<RollAngleDto> for RollAngle {
+    fn from(angle: RollAngleDto) -> Self {
+        match angle {
+            RollAngleDto::Low => Self::Low,
+            RollAngleDto::Medium => Self::Medium,
+            RollAngleDto::High => Self::High,
+        }
+    }
+}
+
+/// UniFFI-ready Begode speed-alarm mode.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum SpeedAlarmModeDto {
+    /// Both speed alarms are enabled.
+    Both,
+    /// Only the first-stage speed alarm is enabled.
+    StageOneOnly,
+    /// Speed alarms are disabled.
+    Off,
+    /// Firmware-controlled PWM tiltback mode.
+    PwmTiltback,
+}
+
+impl From<SpeedAlarmMode> for SpeedAlarmModeDto {
+    fn from(mode: SpeedAlarmMode) -> Self {
+        match mode {
+            SpeedAlarmMode::Both => Self::Both,
+            SpeedAlarmMode::StageOneOnly => Self::StageOneOnly,
+            SpeedAlarmMode::Off => Self::Off,
+            SpeedAlarmMode::PwmTiltback => Self::PwmTiltback,
+        }
+    }
+}
+
+impl From<SpeedAlarmModeDto> for SpeedAlarmMode {
+    fn from(mode: SpeedAlarmModeDto) -> Self {
+        match mode {
+            SpeedAlarmModeDto::Both => Self::Both,
+            SpeedAlarmModeDto::StageOneOnly => Self::StageOneOnly,
+            SpeedAlarmModeDto::Off => Self::Off,
+            SpeedAlarmModeDto::PwmTiltback => Self::PwmTiltback,
+        }
+    }
 }
 
 impl From<LightState> for LightStateDto {
@@ -340,6 +549,7 @@ impl From<LightState> for LightStateDto {
         match state {
             LightState::Off => Self::Off,
             LightState::On => Self::On,
+            LightState::Strobe => Self::Strobe,
         }
     }
 }
@@ -349,6 +559,7 @@ impl From<LightStateDto> for LightState {
         match state {
             LightStateDto::Off => Self::Off,
             LightStateDto::On => Self::On,
+            LightStateDto::Strobe => Self::Strobe,
         }
     }
 }
@@ -2231,6 +2442,9 @@ pub enum ControlRefusalReasonDto {
 
     /// Command is not supported by this model/session.
     UnsupportedCommand,
+
+    /// A previous timed settings sequence is still in progress.
+    Busy,
 }
 
 impl From<ControlRefusalReason> for ControlRefusalReasonDto {
@@ -2242,6 +2456,7 @@ impl From<ControlRefusalReason> for ControlRefusalReasonDto {
             ControlRefusalReason::ExpiredArm => Self::ExpiredArm,
             ControlRefusalReason::CurrentLimitExceeded => Self::CurrentLimitExceeded,
             ControlRefusalReason::UnsupportedCommand => Self::UnsupportedCommand,
+            ControlRefusalReason::Busy => Self::Busy,
         }
     }
 }

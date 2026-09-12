@@ -422,6 +422,55 @@ impl DiscoveryState {
     }
 }
 
+/// A normalized 128-bit Bluetooth service UUID.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub struct BluetoothServiceUuid([u8; 16]);
+
+impl BluetoothServiceUuid {
+    /// Serial service advertised by many EUC controllers.
+    pub const EUC_SERIAL_FFE0: Self = Self::from_bluetooth16(0xffe0);
+
+    /// Legacy VESC serial service.
+    pub const VESC_SERIAL_FFF0: Self = Self::from_bluetooth16(0xfff0);
+
+    /// Nordic UART service used by VESC controllers.
+    pub const VESC_NORDIC_UART: Self = Self([
+        0x6e, 0x40, 0x00, 0x01, 0xb5, 0xa3, 0xf3, 0x93, 0xe0, 0xa9, 0xe5, 0x0e, 0x24, 0xdc, 0xca,
+        0x9e,
+    ]);
+
+    /// Normalizes a standard 16-bit service UUID into the Bluetooth base UUID.
+    #[must_use]
+    pub const fn from_bluetooth16(value: u16) -> Self {
+        let [high, low] = value.to_be_bytes();
+        Self([
+            0x00, 0x00, high, low, 0x00, 0x00, 0x10, 0x00, 0x80, 0x00, 0x00, 0x80, 0x5f, 0x9b,
+            0x34, 0xfb,
+        ])
+    }
+
+    /// Returns the normalized UUID bytes in network order.
+    #[must_use]
+    pub const fn as_bytes(&self) -> &[u8; 16] {
+        &self.0
+    }
+}
+
+/// Length supplied for a Bluetooth service UUID was not 16 bytes.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct InvalidBluetoothServiceUuidLength(pub usize);
+
+impl TryFrom<Vec<u8>> for BluetoothServiceUuid {
+    type Error = InvalidBluetoothServiceUuidLength;
+
+    fn try_from(bytes: Vec<u8>) -> Result<Self, Self::Error> {
+        let length = bytes.len();
+        <[u8; 16]>::try_from(bytes)
+            .map(Self)
+            .map_err(|_| InvalidBluetoothServiceUuidLength(length))
+    }
+}
+
 /// Discovery facts observed for one platform peripheral.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct DiscoveryObservation {
@@ -431,8 +480,8 @@ pub struct DiscoveryObservation {
     /// Raw advertised-name bytes.
     pub advertised_name: Option<Vec<u8>>,
 
-    /// Advertised 16-bit service UUID values relevant to picker routing.
-    pub advertised_service_uuids: Vec<u16>,
+    /// Normalized advertised service UUIDs used as protocol evidence.
+    pub advertised_service_uuids: Vec<BluetoothServiceUuid>,
 
     /// Manufacturer data summaries without retaining opaque payload bytes.
     pub manufacturer_data: Vec<DiscoveryManufacturerDataSummary>,
@@ -548,76 +597,38 @@ impl DiscoveryCandidateSnapshot {
         let display_name = observation
             .advertised_name_text()
             .unwrap_or("Unknown Bluetooth device");
-        let lower_name = display_name.to_ascii_lowercase();
 
         match (
-            observation.advertised_service_uuids.contains(&0xffe0),
-            observation.advertised_service_uuids.contains(&0xfff0)
-                || lower_name.contains("vesc")
-                || lower_name.contains("focer")
-                || lower_name.contains("onewheel")
-                || lower_name.contains("floatwheel"),
+            observation
+                .advertised_service_uuids
+                .contains(&BluetoothServiceUuid::EUC_SERIAL_FFE0),
+            observation.advertised_service_uuids.iter().any(|uuid| {
+                *uuid == BluetoothServiceUuid::VESC_SERIAL_FFF0
+                    || *uuid == BluetoothServiceUuid::VESC_NORDIC_UART
+            }),
         ) {
-            (true, _) => Some(match discovery_electric_unicycle_model(&lower_name) {
-                Some(model) => Self {
-                    platform_identifier: observation.platform_identifier.clone(),
-                    display_name: display_name.to_owned(),
-                    product_category: "Electric unicycle".to_owned(),
-                    evidence: "advertisement hint".to_owned(),
-                    detail: discovery_electric_unicycle_detail(model).to_owned(),
-                    support: DiscoveryCandidateSupport::ProvisionalRoute,
-                    connection_route: Some(DiscoveryConnectionRoute::ElectricUnicycle),
-                    electric_unicycle_model: Some(model),
-                },
-                None => Self {
-                    platform_identifier: observation.platform_identifier.clone(),
-                    display_name: display_name.to_owned(),
-                    product_category: "Electric unicycle".to_owned(),
-                    evidence: "FFE0/FFE1 transport hint".to_owned(),
-                    detail: "Read-only probe recommended".to_owned(),
-                    support: DiscoveryCandidateSupport::ProbeRecommended,
-                    connection_route: None,
-                    electric_unicycle_model: None,
-                },
+            (true, _) => Some(Self {
+                platform_identifier: observation.platform_identifier.clone(),
+                display_name: display_name.to_owned(),
+                product_category: "Electric unicycle".to_owned(),
+                evidence: "FFE0/FFE1 transport hint".to_owned(),
+                detail: "Read-only protocol probe recommended".to_owned(),
+                support: DiscoveryCandidateSupport::ProbeRecommended,
+                connection_route: None,
+                electric_unicycle_model: None,
             }),
             (false, true) => Some(Self {
                 platform_identifier: observation.platform_identifier.clone(),
                 display_name: display_name.to_owned(),
                 product_category: "VESC Onewheel".to_owned(),
-                evidence: "VESC advertisement hint".to_owned(),
-                detail: "VESC read-only route".to_owned(),
+                evidence: "FFF0 transport hint".to_owned(),
+                detail: "VESC protocol route".to_owned(),
                 support: DiscoveryCandidateSupport::ProvisionalRoute,
                 connection_route: Some(DiscoveryConnectionRoute::VescOnewheel),
                 electric_unicycle_model: None,
             }),
             (false, false) => None,
         }
-    }
-}
-
-fn discovery_electric_unicycle_model(lower_name: &str) -> Option<DiscoveryElectricUnicycleModel> {
-    match lower_name {
-        name if ["falcon", "begode", "gotway"]
-            .into_iter()
-            .any(|needle| name.contains(needle)) =>
-        {
-            Some(DiscoveryElectricUnicycleModel::Falcon)
-        }
-        name if ["aero", "nosfet", "veteran"]
-            .into_iter()
-            .any(|needle| name.contains(needle))
-            || name.starts_with("nf") =>
-        {
-            Some(DiscoveryElectricUnicycleModel::Aero)
-        }
-        _ => None,
-    }
-}
-
-fn discovery_electric_unicycle_detail(model: DiscoveryElectricUnicycleModel) -> &'static str {
-    match model {
-        DiscoveryElectricUnicycleModel::Falcon => "Falcon provisional route",
-        DiscoveryElectricUnicycleModel::Aero => "Aero provisional route",
     }
 }
 
@@ -687,10 +698,25 @@ pub struct SessionDiagnosticsState {
 mod tests {
     use super::*;
 
+    #[test]
+    fn bluetooth_service_uuid_normalizes_standard_and_custom_services() {
+        assert_eq!(
+            BluetoothServiceUuid::from_bluetooth16(0xffe0).as_bytes(),
+            &[
+                0x00, 0x00, 0xff, 0xe0, 0x00, 0x00, 0x10, 0x00, 0x80, 0x00, 0x00, 0x80, 0x5f, 0x9b,
+                0x34, 0xfb,
+            ]
+        );
+        assert_eq!(
+            BluetoothServiceUuid::try_from(vec![0; 15]),
+            Err(InvalidBluetoothServiceUuidLength(15))
+        );
+    }
+
     fn discovery_observation(
         platform_identifier: &str,
         name: &[u8],
-        services: Vec<u16>,
+        services: Vec<BluetoothServiceUuid>,
         rssi_dbm: i16,
     ) -> DiscoveryObservation {
         DiscoveryObservation {
@@ -744,7 +770,7 @@ mod tests {
         state.observe_discovery(discovery_observation(
             "peripheral-a",
             b"GotWay_002441",
-            vec![0xffe0],
+            vec![BluetoothServiceUuid::EUC_SERIAL_FFE0],
             -42,
         ));
         state.select_discovered_platform("peripheral-a".to_owned());
@@ -778,19 +804,22 @@ mod tests {
         state.observe_discovery(discovery_observation(
             "peripheral-b",
             b"Later stale",
-            vec![0xffe0],
+            vec![BluetoothServiceUuid::EUC_SERIAL_FFE0],
             -60,
         ));
         state.observe_discovery(discovery_observation(
             "peripheral-a",
             b"Old",
-            vec![0xffe0],
+            vec![BluetoothServiceUuid::EUC_SERIAL_FFE0],
             -70,
         ));
         state.observe_discovery(discovery_observation(
             "peripheral-a",
             &[b'F', b'a', b'l', b'c', b'o', b'n', 0xff],
-            vec![0xffe0, 0x180f],
+            vec![
+                BluetoothServiceUuid::EUC_SERIAL_FFE0,
+                BluetoothServiceUuid::from_bluetooth16(0x180f),
+            ],
             -42,
         ));
 
@@ -815,7 +844,10 @@ mod tests {
         );
         assert_eq!(
             state.identity().discovery.observations[1].advertised_service_uuids,
-            [0xffe0, 0x180f]
+            [
+                BluetoothServiceUuid::EUC_SERIAL_FFE0,
+                BluetoothServiceUuid::from_bluetooth16(0x180f),
+            ]
         );
         assert_eq!(
             state.identity().discovery.observations[1].rssi_dbm,
@@ -830,25 +862,25 @@ mod tests {
         state.observe_discovery(discovery_observation(
             "falcon-id",
             b"Begode Falcon",
-            vec![0xffe0],
+            vec![BluetoothServiceUuid::EUC_SERIAL_FFE0],
             -50,
         ));
         state.observe_discovery(discovery_observation(
             "vesc-id",
             b"Floatwheel",
-            vec![0xfff0],
+            vec![BluetoothServiceUuid::VESC_NORDIC_UART],
             -60,
         ));
         state.observe_discovery(discovery_observation(
             "unknown-euc-id",
             b"EUC-unknown",
-            vec![0xffe0],
+            vec![BluetoothServiceUuid::EUC_SERIAL_FFE0],
             -55,
         ));
         state.observe_discovery(discovery_observation(
             "unknown-id",
             b"Keyboard",
-            vec![0x180f],
+            vec![BluetoothServiceUuid::from_bluetooth16(0x180f)],
             -65,
         ));
         state.select_discovered_platform("falcon-id".to_owned());
@@ -864,16 +896,10 @@ mod tests {
         assert_eq!(picker_candidates[0].platform_identifier, "falcon-id");
         assert_eq!(
             picker_candidates[0].support,
-            DiscoveryCandidateSupport::ProvisionalRoute
+            DiscoveryCandidateSupport::ProbeRecommended
         );
-        assert_eq!(
-            picker_candidates[0].electric_unicycle_model,
-            Some(DiscoveryElectricUnicycleModel::Falcon)
-        );
-        assert_eq!(
-            picker_candidates[0].connection_route,
-            Some(DiscoveryConnectionRoute::ElectricUnicycle)
-        );
+        assert_eq!(picker_candidates[0].electric_unicycle_model, None);
+        assert_eq!(picker_candidates[0].connection_route, None);
         assert_eq!(picker_candidates[1].platform_identifier, "vesc-id");
         assert_eq!(
             picker_candidates[1].support,
@@ -888,7 +914,10 @@ mod tests {
             picker_candidates[2].support,
             DiscoveryCandidateSupport::ProbeRecommended
         );
-        assert_eq!(picker_candidates[2].detail, "Read-only probe recommended");
+        assert_eq!(
+            picker_candidates[2].detail,
+            "Read-only protocol probe recommended"
+        );
         assert_eq!(picker_candidates[2].connection_route, None);
         assert_eq!(picker_candidates[2].electric_unicycle_model, None);
     }

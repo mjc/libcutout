@@ -3,7 +3,7 @@ set -euo pipefail
 
 usage() {
   echo "Usage: scripts/run-ios-ui-tests.sh [--clean] [--build-only] [--smoke] [--verbose] [--enumerate-tests output.json] [--timeout seconds] [--appearance light|dark] [--increase-contrast enabled|disabled] [--content-size size] [xcodebuild options]"
-  echo "  --smoke    Run seven production-root checks in their compatible simulator-settings groups."
+  echo "  --smoke    Run eight production-root checks in their compatible simulator-settings groups."
   echo "  --verbose  Show full xcodebuild output instead of the bounded default."
   echo "  --enumerate-tests writes Xcode's compiled test graph without executing tests."
   echo "  --timeout sets the outer deadline for this build-and-test invocation."

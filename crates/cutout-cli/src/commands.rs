@@ -1303,7 +1303,7 @@ async fn run_dashboard_live_updates(
     }
     info!("dashboard live update selected session endpoints");
 
-    let selected_session = match dashboard_session_profile_from_summary(&connection.summary) {
+    let selected_session = match dashboard_session_profile_from_protocol(&connection).await {
         Ok(selected_session) => selected_session,
         Err(error) => {
             let _ = tx.send(DashboardUpdate::Log {
@@ -1356,6 +1356,44 @@ async fn run_dashboard_live_updates(
 
         iteration = iteration.wrapping_add(1);
     }
+}
+
+/// Probes each registered read-only protocol until one produces typed telemetry
+/// or a read-only response. Advertised names are never used for selection.
+async fn dashboard_session_profile_from_protocol(
+    connection: &ConnectedPeripheral,
+) -> Result<SelectedSessionProfile> {
+    let endpoints = connection
+        .summary
+        .select_session_endpoints()
+        .context("dashboard session endpoints unavailable")?;
+    let probes = [
+        DeviceCommand::RequestIdentity,
+        DeviceCommand::RequestFirmwareInfo,
+        DeviceCommand::RequestTelemetry,
+    ];
+    for profile in [SessionProfile::Aero, SessionProfile::Falcon] {
+        let selected = selected_session_profile(profile);
+        let registration = selected.session_registration()?;
+        let mut session = registration.construct();
+        let report = drive_session_with_commands(
+            &connection.peripheral,
+            &mut session,
+            registration.data_channel,
+            &connection.summary,
+            endpoints,
+            DASHBOARD_LIVE_WINDOW.into(),
+            &probes,
+        )
+        .await?;
+        if report.telemetry.as_events() > 0
+            || report.read_only_responses.as_events() > 0
+            || report.firmware.is_some()
+        {
+            return Ok(selected);
+        }
+    }
+    bail!("dashboard protocol probe produced no typed identity evidence")
 }
 
 async fn run_dashboard_live_iteration(
@@ -2116,13 +2154,11 @@ struct SessionResolution {
 #[derive(Clone, Debug, Eq, PartialEq)]
 enum SessionResolutionSource {
     Explicit(SessionProfile),
-    AdvertisedName(String),
-    Fallback,
 }
 
 fn selected_session_resolution_for_summary(
     profile: SessionProfile,
-    summary: &cutout_btle::ConnectionSummary,
+    _summary: &cutout_btle::ConnectionSummary,
 ) -> Result<SessionResolution> {
     match profile {
         SessionProfile::Aero | SessionProfile::Falcon => Ok(SessionResolution {
@@ -2130,13 +2166,13 @@ fn selected_session_resolution_for_summary(
             resolved_identity: pevcap_identity_for_profile(profile),
             source: SessionResolutionSource::Explicit(profile),
         }),
-        SessionProfile::Auto => auto_session_resolution(summary.observation.name.as_deref()),
+        SessionProfile::Auto => auto_session_resolution(),
     }
 }
 
 fn selected_session_resolution_for_target(
     profile: SessionProfile,
-    target: &ConnectionTarget,
+    _target: &ConnectionTarget,
 ) -> Result<SessionResolution> {
     match profile {
         SessionProfile::Aero | SessionProfile::Falcon => Ok(SessionResolution {
@@ -2144,41 +2180,17 @@ fn selected_session_resolution_for_target(
             resolved_identity: pevcap_identity_for_profile(profile),
             source: SessionResolutionSource::Explicit(profile),
         }),
-        SessionProfile::Auto => auto_session_resolution(target.name_contains.as_deref()),
+        SessionProfile::Auto => auto_session_resolution(),
     }
 }
 
-fn auto_session_resolution(name: Option<&str>) -> Result<SessionResolution> {
-    let Some(name) = name else {
-        return Ok(SessionResolution {
-            selected_session: selected_aero_session_profile(),
-            resolved_identity: None,
-            source: SessionResolutionSource::Fallback,
-        });
-    };
-
-    match ModelCatalog::new(&MODEL_CATALOG).resolve_advertised_name(name) {
-        CatalogModelResolution::Matched(entry) => {
-            let selected_session = selected_session_profile_for_catalog_entry(entry)?;
-            Ok(SessionResolution {
-                selected_session,
-                resolved_identity: Some(pevcap_identity_for_catalog_entry(entry)),
-                source: SessionResolutionSource::AdvertisedName(name.to_owned()),
-            })
-        }
-        CatalogModelResolution::NoMatch => Ok(SessionResolution {
-            selected_session: selected_aero_session_profile(),
-            resolved_identity: None,
-            source: SessionResolutionSource::Fallback,
-        }),
-        CatalogModelResolution::Ambiguous => {
-            bail!(
-                "auto session resolution found ambiguous catalog entries for advertised name {name}"
-            )
-        }
-    }
+fn auto_session_resolution() -> Result<SessionResolution> {
+    bail!(
+        "auto session resolution requires protocol identity evidence; advertised BLE names are display-only"
+    )
 }
 
+#[cfg(test)]
 const fn selected_aero_session_profile() -> SelectedSessionProfile {
     selected_session_profile(SessionProfile::Aero)
 }
@@ -2253,21 +2265,9 @@ fn selected_session_profile_for_catalog_entry(
 }
 
 fn dashboard_session_profile_from_summary(
-    summary: &cutout_btle::ConnectionSummary,
+    _summary: &cutout_btle::ConnectionSummary,
 ) -> Result<SelectedSessionProfile> {
-    let Some(name) = summary.observation.name.as_deref() else {
-        bail!("dashboard cannot resolve a session profile from unnamed device evidence");
-    };
-
-    match ModelCatalog::new(&MODEL_CATALOG).resolve_advertised_name(name) {
-        CatalogModelResolution::Matched(entry) => selected_session_profile_for_catalog_entry(entry),
-        CatalogModelResolution::NoMatch => {
-            bail!("dashboard cannot resolve a session profile from device evidence: {name}")
-        }
-        CatalogModelResolution::Ambiguous => {
-            bail!("dashboard found ambiguous catalog entries for advertised name {name}")
-        }
-    }
+    bail!("dashboard requires protocol identity evidence before selecting a session profile")
 }
 
 fn pevcap_identity_for_profile(profile: SessionProfile) -> Option<PevcapResolvedIdentity> {
@@ -2289,19 +2289,6 @@ fn pevcap_identity_for_profile(profile: SessionProfile) -> Option<PevcapResolved
             }),
             firmware: None,
         }),
-    }
-}
-
-fn pevcap_identity_for_catalog_entry(
-    entry: &cutout_core::ModelCatalogEntry,
-) -> PevcapResolvedIdentity {
-    PevcapResolvedIdentity {
-        protocol_family: Some(entry.registry.protocol_family),
-        model: Some(VerifiedValue {
-            value: entry.registry.model.as_str().to_owned(),
-            verification: VerificationStatus::Inferred,
-        }),
-        firmware: None,
     }
 }
 
@@ -3298,7 +3285,15 @@ const fn command_kind_name(kind: CommandKind) -> &'static str {
         CommandKind::RequestDiagnostics => "request_diagnostics",
         CommandKind::RequestFaultHistory => "request_fault_history",
         CommandKind::RequestSettings => "request_settings",
+        CommandKind::SetAccelerationAssist => "set_acceleration_assist",
         CommandKind::SetLights => "set_lights",
+        CommandKind::SetPedalMode => "set_pedal_mode",
+        CommandKind::SetRollAngle => "set_roll_angle",
+        CommandKind::SetSpeedAlarmMode => "set_speed_alarm_mode",
+        CommandKind::SetBegodeMaxSpeed => "set_begode_max_speed",
+        CommandKind::SetBegodeBeeperVolume => "set_begode_beeper_volume",
+        CommandKind::SetBegodeLedMode => "set_begode_led_mode",
+        CommandKind::SetTaillight => "set_taillight",
         CommandKind::SoundHorn => "sound_horn",
         CommandKind::SetRawMotorCurrent => "set_raw_motor_current",
     }
@@ -5929,7 +5924,7 @@ mod tests {
     }
 
     #[test]
-    fn selected_session_profile_for_summary_uses_advertised_name_hints() {
+    fn auto_session_resolution_ignores_advertised_name_hints() {
         let falcon_summary = ConnectionSummary {
             observation: PeripheralObservation {
                 identifier: "GotWay_002441".to_owned(),
@@ -5953,22 +5948,15 @@ mod tests {
             services: Vec::new().into(),
         };
 
-        assert_eq!(
-            selected_session_resolution_for_summary(SessionProfile::Auto, &falcon_summary)
-                .expect("Falcon summary resolves")
-                .selected_session,
-            selected_falcon_session_profile()
-        );
-        assert_eq!(
-            selected_session_resolution_for_summary(SessionProfile::Auto, &aero_summary)
-                .expect("Aero summary resolves")
-                .selected_session,
-            selected_aero_session_profile()
-        );
+        for summary in [&falcon_summary, &aero_summary] {
+            let error = selected_session_resolution_for_summary(SessionProfile::Auto, summary)
+                .expect_err("auto resolution must not guess without protocol evidence");
+            assert!(error.to_string().contains("protocol identity"));
+        }
     }
 
     #[test]
-    fn dashboard_session_profile_from_summary_uses_catalog_identity() {
+    fn dashboard_session_profile_from_summary_requires_protocol_identity() {
         let falcon_summary = ConnectionSummary {
             observation: PeripheralObservation {
                 identifier: "GotWay_002441".to_owned(),
@@ -5992,15 +5980,11 @@ mod tests {
             services: Vec::new().into(),
         };
 
-        assert_eq!(
-            dashboard_session_profile_from_summary(&falcon_summary)
-                .expect("Falcon summary resolves"),
-            selected_falcon_session_profile()
-        );
-        assert_eq!(
-            dashboard_session_profile_from_summary(&aero_summary).expect("Aero summary resolves"),
-            selected_aero_session_profile()
-        );
+        for summary in [&falcon_summary, &aero_summary] {
+            let error = dashboard_session_profile_from_summary(summary)
+                .expect_err("advertised name must not select a session profile");
+            assert!(error.to_string().contains("protocol identity"));
+        }
     }
 
     #[test]
@@ -6019,11 +6003,7 @@ mod tests {
 
         let error = dashboard_session_profile_from_summary(&summary)
             .expect_err("unsupported device should not silently fall back");
-        assert!(
-            error
-                .to_string()
-                .contains("dashboard cannot resolve a session profile")
-        );
+        assert!(error.to_string().contains("protocol identity"));
     }
 
     #[test]

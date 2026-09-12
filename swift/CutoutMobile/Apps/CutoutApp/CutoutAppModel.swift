@@ -163,7 +163,7 @@ final class CutoutAppModel {
     private(set) var recordOnlyDeviceKind: String?
     private(set) var hasSavedDevice = false
     var headlightOn: Bool {
-        guard let state = core.headlightState else { return false }
+        guard let state = effectiveHeadlightState else { return false }
         return switch headlightCommandStatus {
         case .waitingForConfirmation, .sentWithoutConfirmation:
             (state.requested ?? state.current) == .on
@@ -182,6 +182,50 @@ final class CutoutAppModel {
 
     var settingsCapabilities: EucSettingsCapabilities? {
         core.settingsCapabilities
+    }
+
+    var pedalModeState: PedalModeSettingState? {
+        core.pedalModeState
+    }
+
+    var rollAngleState: RollAngleSettingState? {
+        core.rollAngleState
+    }
+
+    var speedAlarmModeState: SpeedAlarmModeSettingState? {
+        core.speedAlarmModeState
+    }
+
+    var pedalModeControlAvailable: Bool {
+        core.settingsCapabilities?.pedalMode == .supported
+    }
+
+    var rollAngleControlAvailable: Bool {
+        core.settingsCapabilities?.rollAngle == .supported
+    }
+
+    var speedAlarmModeControlAvailable: Bool {
+        core.settingsCapabilities?.speedAlarmMode == .supported
+    }
+
+    var begodeMaxSpeedControlAvailable: Bool {
+        core.settingsCapabilities?.begodeMaxSpeed == .supported
+    }
+
+    var begodeBeeperVolumeControlAvailable: Bool {
+        core.settingsCapabilities?.begodeBeeperVolume == .supported
+    }
+
+    var begodeLedModeControlAvailable: Bool {
+        core.settingsCapabilities?.begodeLedMode == .supported
+    }
+
+    var accelerationAssistState: AccelerationAssistSettingState? {
+        core.accelerationAssistState
+    }
+
+    var taillightState: LightSettingState? {
+        core.taillightState
     }
 
     var selectedRideTitle: String? {
@@ -314,7 +358,14 @@ final class CutoutAppModel {
         case .timedOut:
             localizedAppText("settings.headlight.timed_out")
         case .confirmed:
-            localizedAppText("settings.headlight.confirmed")
+            if let confirmedAt = effectiveHeadlightState?.confirmedAt {
+                localizedAppText(
+                    "settings.headlight.confirmed_ago",
+                    Int64(currentMonotonicTime.elapsed(since: confirmedAt).rawValue / 1_000)
+                )
+            } else {
+                localizedAppText("settings.headlight.confirmed")
+            }
         case .sentWithoutConfirmation:
             localizedAppText("settings.high_beam.sent_unconfirmed")
         }
@@ -342,6 +393,7 @@ final class CutoutAppModel {
     private var captureNotificationCount = 0
     private var captureLabel: String?
     private var lastHeadlightSubmissionStatus: LightCommandStatus?
+    private var fallbackHeadlightState: LightSettingState?
     private var hasStarted = false
     private var permitsStoredDeviceAutoPairing = true
     private var rideSessionRestorationState = RideSessionRestorationState.complete
@@ -2033,26 +2085,131 @@ final class CutoutAppModel {
     }
 
     @discardableResult
-    func setHeadlight(_ enabled: Bool) -> LightCommandResult {
-        let state: LightState = enabled ? .on : .off
+    func setHeadlight(_ enabled: Bool) -> SettingCommandResult {
+        let state = enabled ? LightState.on : .off
         guard headlightWriteSupport == .supported else {
             lastHeadlightSubmissionStatus = .failed
+            fallbackHeadlightState = LightSettingState(
+                kind: .failed,
+                current: displayedHeadlightState
+            )
             return .failed
         }
-        let result = core.setLights(state)
+        return applyHeadlightSubmission(core.setLights(state), for: state)
+    }
+
+    @discardableResult
+    func setPedalMode(_ mode: PedalMode.Kind) -> SettingCommandResult {
+        guard pedalModeControlAvailable else { return .failed }
+        return core.setPedalMode(mode)
+    }
+
+    @discardableResult
+    func setRollAngle(_ angle: RollAngle.Kind) -> SettingCommandResult {
+        guard rollAngleControlAvailable else { return .failed }
+        return core.setRollAngle(angle)
+    }
+
+    @discardableResult
+    func setSpeedAlarmMode(_ mode: SpeedAlarmMode.Kind) -> SettingCommandResult {
+        guard speedAlarmModeControlAvailable else { return .failed }
+        return core.setSpeedAlarmMode(mode)
+    }
+
+    @discardableResult
+    func setBegodeMaxSpeed(_ speed: BegodeMaxSpeed) -> SettingCommandResult {
+        guard begodeMaxSpeedControlAvailable else { return .failed }
+        return core.setBegodeMaxSpeed(speed)
+    }
+
+    @discardableResult
+    func setBegodeBeeperVolume(_ volume: BegodeBeeperVolume) -> SettingCommandResult {
+        guard begodeBeeperVolumeControlAvailable else { return .failed }
+        return core.setBegodeBeeperVolume(volume)
+    }
+
+    @discardableResult
+    func setBegodeLedMode(_ mode: BegodeLedMode) -> SettingCommandResult {
+        guard begodeLedModeControlAvailable else { return .failed }
+        return core.setBegodeLedMode(mode)
+    }
+
+    private func applyHeadlightSubmission(
+        _ result: SettingCommandResult,
+        for state: LightState
+    ) -> SettingCommandResult {
         switch result {
         case .accepted:
             lastHeadlightSubmissionStatus = nil
             return .accepted
         case let .refused(reason):
             lastHeadlightSubmissionStatus = .refused
+            fallbackHeadlightState = LightSettingState(
+                kind: .refused,
+                current: displayedHeadlightState,
+                requested: state,
+                source: .userRequest,
+                refusalReason: reason
+            )
             return .refused(reason)
         case .failed:
             lastHeadlightSubmissionStatus = .failed
+            fallbackHeadlightState = LightSettingState(
+                kind: .failed,
+                current: displayedHeadlightState,
+                requested: state,
+                source: .userRequest
+            )
             return .failed
         }
     }
 
+    private func recordHeadlightCommand(_ state: LightState, sentAt: MonotonicMilliseconds) {
+        guard core.headlightState == nil else { return }
+        fallbackHeadlightState = LightSettingState(
+            kind: .pending,
+            current: displayedHeadlightState,
+            requested: state,
+            source: .userRequest,
+            submittedAt: sentAt
+        )
+    }
+    private var effectiveHeadlightState: LightSettingState? {
+        core.headlightState ?? fallbackHeadlightState
+    }
+
+    private var displayedHeadlightState: LightState? {
+        guard let state = effectiveHeadlightState else { return nil }
+        if state.kind == .pending, core.electricUnicycleModel == .aero {
+            return state.requested
+        }
+        return state.current
+    }
+
+    private func updateFallbackHeadlightState(from readback: SettingsReadback?) {
+        guard core.headlightState == nil else { return }
+        guard let reportedState = readback?.eucGarageSettings.lightState else {
+            if fallbackHeadlightState?.kind == .pending {
+                fallbackHeadlightState = LightSettingState(
+                    kind: .failed,
+                    current: fallbackHeadlightState?.current
+                )
+            }
+            return
+        }
+        if let requestedState = fallbackHeadlightState?.requested,
+           fallbackHeadlightState?.kind == .pending,
+           requestedState != reportedState
+        {
+            return
+        }
+        fallbackHeadlightState = LightSettingState(
+            kind: .confirmed,
+            current: reportedState,
+            source: .liveReadback,
+            confirmedAt: core.now()
+        )
+    }
     private func handleSettingsReadback(_ readback: SettingsReadback?) {
         settingsReadback = readback
     }
@@ -2263,9 +2420,11 @@ final class CutoutAppModel {
         }
         liveActivityRequestID += 1
         let requestID = liveActivityRequestID
+        let atMs = core.now().rawValue
         Task { [weak self, liveActivityCoordinator] in
             await liveActivityCoordinator.appDidEnterBackground(
                 requestID: requestID,
+                atMs: atMs,
                 snapshot: snapshot,
                 captureFlush: { [weak self] in
                     await self?.flushCapture() ?? false
@@ -2532,12 +2691,21 @@ final class CutoutAppModel {
             guard let self else { return }
             rideSessionRestorationState = .complete
             liveActivityError = error
-            if case .adopted = recoveryResult,
-               error == nil,
-               core.rideSessionStateHandle.rideSessionSnapshot().phase == .active
-            {
-                lastLiveActivitySnapshot = snapshot
-                lastLiveActivityUpdate = snapshot == nil ? nil : core.now()
+            switch recoveryResult {
+            case .adopted:
+                if error == nil,
+                   core.rideSessionStateHandle.rideSessionSnapshot().phase == .active
+                {
+                    lastLiveActivitySnapshot = snapshot
+                    lastLiveActivityUpdate = snapshot == nil ? nil : core.now()
+                }
+            case .ended, .noPersistedRide:
+                if restoredPlatformIdentifier == nil,
+                   let scanState = devicePickerScanState
+                {
+                    permitsStoredDeviceAutoPairing = true
+                    handleScanStateChange(scanState)
+                }
             }
             syncLiveActivity()
         }

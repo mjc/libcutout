@@ -172,10 +172,102 @@ struct EucTuneRouteView: View {
                     .buttonStyle(.bordered)
                     .disabled(model.phase != .live || !model.headlightControlAvailable)
                     .accessibilityHint(model.headlightStatusText)
+                    .accessibilityIdentifier("settings.control.headlight")
+                    if model.pedalModeControlAvailable {
+                        EucPedalModeControl(model: model)
+                    }
+                    if model.rollAngleControlAvailable {
+                        EucRollAngleControl(model: model)
+                    }
+                    if model.speedAlarmModeControlAvailable {
+                        EucSpeedAlarmModeControl(model: model)
+                    }
+                    if model.begodeMaxSpeedControlAvailable {
+                        EucBegodeMaxSpeedControl(model: model)
+                    }
+                    if model.begodeBeeperVolumeControlAvailable {
+                        EucBegodeBeeperVolumeControl(model: model)
+                    }
+                    if model.begodeLedModeControlAvailable {
+                        EucBegodeLedModeControl(model: model)
+                    }
                 } header: {
                     Text(localizedAppText("settings.lights.title"))
                 } footer: {
-                    Text(model.headlightStatusText)
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(model.headlightStatusText)
+                        if model.pedalModeControlAvailable {
+                            Text(localizedAppText("settings.pedal_mode.footer"))
+                        }
+                        if model.rollAngleControlAvailable {
+                            Text(localizedAppText("settings.roll_angle.footer"))
+                        }
+                        if model.speedAlarmModeControlAvailable {
+                            Text(localizedAppText("settings.speed_alarm_mode.footer"))
+                        }
+                        if model.begodeMaxSpeedControlAvailable {
+                            Text(localizedAppText("settings.begode_max_speed.footer"))
+                        }
+                        if model.begodeBeeperVolumeControlAvailable {
+                            Text(localizedAppText("settings.begode_beeper_volume.footer"))
+                        }
+                        if model.begodeLedModeControlAvailable {
+                            Text(localizedAppText("settings.begode_led_mode.footer"))
+                        }
+                    }
+                }
+
+                if let settings = model.settingsReadback?.eucGarageSettings {
+                    Section {
+                        EucSettingReadbackRow(
+                            id: "beepMargin",
+                            title: localizedAppText("settings.beep_margin.title"),
+                            value: EucSettingReadbackPresentation.speed(settings.beepMargin)
+                        )
+                        EucSettingReadbackRow(
+                            id: "tiltback",
+                            title: localizedAppText("settings.tiltback.title"),
+                            value: EucSettingReadbackPresentation.speed(settings.tiltback)
+                        )
+                        EucSettingReadbackRow(
+                            id: "pedalMode",
+                            title: localizedAppText("settings.pedal_mode.title"),
+                            value: EucSettingReadbackPresentation.pedalMode(
+                                model.pedalModeState,
+                                fallback: settings.pedalMode
+                            )
+                        )
+                        EucSettingReadbackRow(
+                            id: "rollAngle",
+                            title: localizedAppText("settings.roll_angle.title"),
+                            value: EucSettingReadbackPresentation.rollAngle(
+                                model.rollAngleState,
+                                fallback: settings.rollAngle
+                            )
+                        )
+                        EucSettingReadbackRow(
+                            id: "speedAlarmMode",
+                            title: localizedAppText("settings.speed_alarm_mode.title"),
+                            value: EucSettingReadbackPresentation.speedAlarmMode(
+                                model.speedAlarmModeState,
+                                fallback: settings.speedAlarmMode
+                            )
+                        )
+                        EucSettingReadbackRow(
+                            id: "autoShutdown",
+                            title: localizedAppText("settings.auto_shutdown.title"),
+                            value: EucSettingReadbackPresentation.seconds(settings.autoShutdownSeconds)
+                        )
+                        EucSettingReadbackRow(
+                            id: "chargeMode",
+                            title: localizedAppText("settings.charge_mode.title"),
+                            value: EucSettingReadbackPresentation.chargeMode(settings.chargeMode)
+                        )
+                    } header: {
+                        Text(localizedAppText("settings.readback.title"))
+                    } footer: {
+                        Text(localizedAppText("settings.readback.footer"))
+                    }
                 }
 
                 if let capabilities = model.settingsCapabilities {
@@ -183,17 +275,66 @@ struct EucTuneRouteView: View {
                         EucSettingCapabilityRow(
                             id: "pedalMode",
                             title: localizedAppText("settings.pedal_mode.title"),
-                            support: capabilities.pedalMode
+                            support: capabilities.pedalMode,
+                            state: model.pedalModeState?.kind,
+                            confirmedAt: model.pedalModeState?.confirmedAt,
+                            now: model.currentMonotonicTime
+                        )
+                        EucSettingCapabilityRow(
+                            id: "rollAngle",
+                            title: localizedAppText("settings.roll_angle.title"),
+                            support: capabilities.rollAngle,
+                            state: model.rollAngleState?.kind,
+                            confirmedAt: model.rollAngleState?.confirmedAt,
+                            now: model.currentMonotonicTime
+                        )
+                        EucSettingCapabilityRow(
+                            id: "speedAlarmMode",
+                            title: localizedAppText("settings.speed_alarm_mode.title"),
+                            support: capabilities.speedAlarmMode,
+                            state: model.speedAlarmModeState?.kind,
+                            confirmedAt: model.speedAlarmModeState?.confirmedAt,
+                            now: model.currentMonotonicTime
+                        )
+                        EucSettingCapabilityRow(
+                            id: "begodeMaxSpeed",
+                            title: localizedAppText("settings.begode_max_speed.title"),
+                            support: capabilities.begodeMaxSpeed,
+                            state: nil,
+                            confirmedAt: nil,
+                            now: model.currentMonotonicTime
+                        )
+                        EucSettingCapabilityRow(
+                            id: "begodeBeeperVolume",
+                            title: localizedAppText("settings.begode_beeper_volume.title"),
+                            support: capabilities.begodeBeeperVolume,
+                            state: nil,
+                            confirmedAt: nil,
+                            now: model.currentMonotonicTime
+                        )
+                        EucSettingCapabilityRow(
+                            id: "begodeLedMode",
+                            title: localizedAppText("settings.begode_led_mode.title"),
+                            support: capabilities.begodeLedMode,
+                            state: nil,
+                            confirmedAt: nil,
+                            now: model.currentMonotonicTime
                         )
                         EucSettingCapabilityRow(
                             id: "accelerationAssist",
                             title: localizedAppText("settings.acceleration_assist.title"),
-                            support: capabilities.accelerationAssist
+                            support: capabilities.accelerationAssist,
+                            state: model.accelerationAssistState?.kind,
+                            confirmedAt: model.accelerationAssistState?.confirmedAt,
+                            now: model.currentMonotonicTime
                         )
                         EucSettingCapabilityRow(
                             id: "taillight",
                             title: localizedAppText("settings.taillight.title"),
-                            support: capabilities.taillight
+                            support: capabilities.taillight,
+                            state: model.taillightState?.kind,
+                            confirmedAt: model.taillightState?.confirmedAt,
+                            now: model.currentMonotonicTime
                         )
                     } header: {
                         Text(localizedAppText("settings.capabilities.title"))
@@ -207,23 +348,377 @@ struct EucTuneRouteView: View {
     }
 }
 
-private struct EucSettingCapabilityRow: View {
+private struct EucPedalModeControl: View {
+    let model: CutoutAppModel
+    @State private var selectedMode: PedalMode.Kind = .hard
+
+    private static let modes: [PedalMode.Kind] = [.hard, .medium, .soft]
+
+    var body: some View {
+        Picker(
+            localizedAppText("settings.pedal_mode.title"),
+            selection: Binding(
+                get: { model.pedalModeState?.current ?? readbackMode ?? selectedMode },
+                set: {
+                    selectedMode = $0
+                    _ = model.setPedalMode($0)
+                }
+            )
+        ) {
+            ForEach(Self.modes, id: \.self) { mode in
+                Text(localizedAppText("settings.pedal_mode.\(mode.localizationKey)"))
+                    .tag(mode)
+            }
+        }
+        .pickerStyle(.menu)
+        .disabled(model.phase != .live)
+        .accessibilityHint(localizedAppText("settings.pedal_mode.footer"))
+        .accessibilityIdentifier("settings.control.pedalMode")
+    }
+
+    private var readbackMode: PedalMode.Kind? {
+        model.settingsReadback?.eucGarageSettings.pedalMode.value?.documentedKind
+    }
+}
+
+private struct EucRollAngleControl: View {
+    let model: CutoutAppModel
+    @State private var selectedAngle: RollAngle.Kind = .medium
+
+    private static let angles: [RollAngle.Kind] = [.low, .medium, .high]
+
+    var body: some View {
+        Picker(
+            localizedAppText("settings.roll_angle.title"),
+            selection: Binding(
+                get: { model.rollAngleState?.current ?? readbackAngle ?? selectedAngle },
+                set: {
+                    selectedAngle = $0
+                    _ = model.setRollAngle($0)
+                }
+            )
+        ) {
+            ForEach(Self.angles, id: \.self) { angle in
+                Text(localizedAppText("settings.roll_angle.\(angle.localizationKey)"))
+                    .tag(angle)
+            }
+        }
+        .pickerStyle(.menu)
+        .disabled(model.phase != .live)
+        .accessibilityHint(localizedAppText("settings.roll_angle.footer"))
+        .accessibilityIdentifier("settings.control.rollAngle")
+    }
+
+    private var readbackAngle: RollAngle.Kind? {
+        model.settingsReadback?.eucGarageSettings.rollAngle.value?.documentedKind
+    }
+}
+
+private struct EucSpeedAlarmModeControl: View {
+    let model: CutoutAppModel
+    @State private var selectedMode: SpeedAlarmMode.Kind = .both
+
+    private static let modes: [SpeedAlarmMode.Kind] = [.both, .stageOneOnly]
+
+    var body: some View {
+        Picker(
+            localizedAppText("settings.speed_alarm_mode.title"),
+            selection: Binding(
+                get: { model.speedAlarmModeState?.current ?? readbackMode ?? selectedMode },
+                set: {
+                    selectedMode = $0
+                    _ = model.setSpeedAlarmMode($0)
+                }
+            )
+        ) {
+            ForEach(Self.modes, id: \.self) { mode in
+                Text(localizedAppText("settings.speed_alarm_mode.\(mode.localizationKey)"))
+                    .tag(mode)
+            }
+        }
+        .pickerStyle(.menu)
+        .disabled(model.phase != .live)
+        .accessibilityHint(localizedAppText("settings.speed_alarm_mode.footer"))
+        .accessibilityIdentifier("settings.control.speedAlarmMode")
+    }
+
+    private var readbackMode: SpeedAlarmMode.Kind? {
+        model.settingsReadback?.eucGarageSettings.speedAlarmMode.value?.documentedKind
+    }
+}
+
+private struct EucBegodeMaxSpeedControl: View {
+    let model: CutoutAppModel
+    @State private var selectedSpeed = 30
+
+    var body: some View {
+        Stepper(
+            value: Binding(
+                get: { selectedSpeed },
+                set: { newValue in
+                    if let speed = BegodeMaxSpeed(kilometresPerHour: UInt8(newValue)) {
+                        let result = model.setBegodeMaxSpeed(speed)
+                        if case .accepted = result { selectedSpeed = newValue }
+                    }
+                }
+            ),
+            in: 0...99
+        ) {
+            Text("\(localizedAppText("settings.begode_max_speed.title")): \(selectedSpeed) km/h")
+        }
+        .disabled(model.phase != .live)
+        .accessibilityIdentifier("settings.control.begodeMaxSpeed")
+    }
+}
+
+private struct EucBegodeBeeperVolumeControl: View {
+    let model: CutoutAppModel
+    @State private var selectedVolume = 5
+
+    var body: some View {
+        Picker(localizedAppText("settings.begode_beeper_volume.title"), selection: Binding(
+            get: { selectedVolume },
+            set: { newValue in
+                if let volume = BegodeBeeperVolume(level: UInt8(newValue)) {
+                    let result = model.setBegodeBeeperVolume(volume)
+                    if case .accepted = result { selectedVolume = newValue }
+                }
+            }
+        )) {
+            ForEach(1...9, id: \.self) { value in
+                Text("\(value)").tag(value)
+            }
+        }
+        .pickerStyle(.menu)
+        .disabled(model.phase != .live)
+        .accessibilityIdentifier("settings.control.begodeBeeperVolume")
+    }
+}
+
+private struct EucBegodeLedModeControl: View {
+    let model: CutoutAppModel
+    @State private var selectedMode = 0
+
+    var body: some View {
+        Picker(localizedAppText("settings.begode_led_mode.title"), selection: Binding(
+            get: { selectedMode },
+            set: { newValue in
+                if let mode = BegodeLedMode(mode: UInt8(newValue)) {
+                    let result = model.setBegodeLedMode(mode)
+                    if case .accepted = result { selectedMode = newValue }
+                }
+            }
+        )) {
+            ForEach(0...9, id: \.self) { value in
+                Text("\(value)").tag(value)
+            }
+        }
+        .pickerStyle(.menu)
+        .disabled(model.phase != .live)
+        .accessibilityIdentifier("settings.control.begodeLedMode")
+    }
+}
+
+private extension PedalMode.Kind {
+    var localizationKey: String {
+        switch self {
+        case .hard: "hard"
+        case .medium: "medium"
+        case .soft: "soft"
+        }
+    }
+}
+
+private extension RollAngle.Kind {
+    var localizationKey: String {
+        switch self {
+        case .low: "low"
+        case .medium: "medium"
+        case .high: "high"
+        }
+    }
+}
+
+private extension SpeedAlarmMode.Kind {
+    var localizationKey: String {
+        switch self {
+        case .both: "both"
+        case .stageOneOnly: "stage_one_only"
+        case .off: "off"
+        case .pwmTiltback: "pwm_tiltback"
+        }
+    }
+}
+
+private struct EucSettingReadbackRow: View {
     let id: String
     let title: String
-    let support: SettingWriteSupport
+    let value: String
 
     var body: some View {
         HStack {
             Text(title)
             Spacer()
-            Text(statusText)
+            Text(value)
+                .foregroundStyle(.secondary)
+        }
+        .accessibilityElement(children: .combine)
+        .accessibilityIdentifier("settings.readback.\(id)")
+    }
+}
+
+enum EucSettingReadbackPresentation {
+    static func speed(_ readback: ReadbackValue<Speed>) -> String {
+        guard let value = readback.value else {
+            return availabilityText(readback.availability)
+        }
+        let readout = SpeedReadout(millimetersPerSecond: value.value)
+        return "\(readout.displayValue) \(readout.displayUnit)"
+    }
+
+    static func pedalMode(
+        _ state: PedalModeSettingState?,
+        fallback readback: ReadbackValue<PedalMode>
+    ) -> String {
+        if let current = state?.current {
+            return current.displayName
+        }
+        return pedalMode(readback)
+    }
+
+    static func pedalMode(_ readback: ReadbackValue<PedalMode>) -> String {
+        guard let value = readback.value else {
+            return availabilityText(readback.availability)
+        }
+        if let kind = value.documentedKind {
+            return kind.displayName
+        }
+        if let percent = value.percent {
+            return "\(percent)%"
+        }
+        if let rawMode = value.rawMode {
+            return "Raw \(rawMode)"
+        }
+        return availabilityText(.unavailable)
+    }
+
+    static func rollAngle(
+        _ state: RollAngleSettingState?,
+        fallback readback: ReadbackValue<RollAngle>
+    ) -> String {
+        if let state, let value = state.current ?? state.requested {
+            return value.displayName
+        }
+        guard let value = readback.value else {
+            return readback.availability == .unsupported
+                ? localizedAppText("settings.readback.unsupported")
+                : localizedAppText("settings.readback.unavailable")
+        }
+        return value.documentedKind?.displayName ?? value.rawAngle.map(String.init) ?? "—"
+    }
+
+    static func speedAlarmMode(
+        _ state: SpeedAlarmModeSettingState?,
+        fallback readback: ReadbackValue<SpeedAlarmMode>
+    ) -> String {
+        if let state, let value = state.current ?? state.requested {
+            return value.displayName
+        }
+        guard let value = readback.value else {
+            return readback.availability == .unsupported
+                ? localizedAppText("settings.readback.unsupported")
+                : localizedAppText("settings.readback.unavailable")
+        }
+        return value.documentedKind?.displayName ?? value.rawMode.map(String.init) ?? "—"
+    }
+
+    static func seconds(_ readback: ReadbackValue<UInt64>) -> String {
+        guard let value = readback.value else {
+            return availabilityText(readback.availability)
+        }
+        return localizedAppText("settings.seconds.value", value)
+    }
+
+    static func chargeMode(_ readback: ReadbackValue<ChargeMode>) -> String {
+        guard let value = readback.value else {
+            return availabilityText(readback.availability)
+        }
+        switch value {
+        case .charging:
+            return localizedAppText("settings.charge_mode.charging")
+        case .notCharging:
+            return localizedAppText("settings.charge_mode.not_charging")
+        }
+    }
+
+    private static func availabilityText(_ availability: ReadbackAvailability) -> String {
+        switch availability {
+        case .available:
+            localizedAppText("settings.readback.unavailable")
+        case .unavailable:
+            localizedAppText("settings.readback.unavailable")
+        case .unsupported:
+            localizedAppText("settings.readback.unsupported")
+        }
+    }
+}
+
+private struct EucSettingCapabilityRow: View {
+    let id: String
+    let title: String
+    let support: SettingWriteSupport
+    let state: SettingStateKind?
+    let confirmedAt: MonotonicMilliseconds?
+    let now: MonotonicMilliseconds
+
+    var body: some View {
+        HStack {
+            Text(title)
+            Spacer()
+            Text(EucSettingCapabilityPresentation.statusText(
+                support: support,
+                state: state,
+                confirmedAt: confirmedAt,
+                now: now
+            ))
                 .foregroundStyle(.secondary)
         }
         .accessibilityElement(children: .combine)
         .accessibilityIdentifier("settings.capability.\(id)")
     }
 
-    private var statusText: String {
+}
+
+enum EucSettingCapabilityPresentation {
+    static func statusText(
+        support: SettingWriteSupport,
+        state: SettingStateKind?,
+        confirmedAt: MonotonicMilliseconds? = nil,
+        now: MonotonicMilliseconds? = nil
+    ) -> String {
+        switch state {
+        case .pending:
+            return localizedAppText("settings.state.pending")
+        case .confirmed:
+            if let confirmedAt, let now {
+                return localizedAppText(
+                    "settings.state.confirmed_ago",
+                    Int64(now.elapsed(since: confirmedAt).rawValue / 1_000)
+                )
+            }
+            return localizedAppText("settings.state.confirmed")
+        case .refused:
+            return localizedAppText("settings.state.refused")
+        case .timedOut:
+            return localizedAppText("settings.state.timed_out")
+        case .failed:
+            return localizedAppText("settings.state.failed")
+        case .unknown, .current, nil:
+            return supportText(support)
+        }
+    }
+
+    private static func supportText(_ support: SettingWriteSupport) -> String {
         switch support {
         case .supported:
             localizedAppText("settings.capabilities.supported")

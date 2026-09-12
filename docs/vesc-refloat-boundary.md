@@ -9,7 +9,7 @@ port.
 ## Sources Checked
 
 - `ikalnytskyi/vesc-rs`
-  - Clone used for audit: `.tmp/protocol-sources/vesc-rs`.
+  - Clone used for audit: `.protocol-references/vesc-rs`.
   - Commit: `5e154fe2b69dc6269bebd31a519d0b10782ff38b`.
   - License: MIT.
   - Rust edition: 2024.

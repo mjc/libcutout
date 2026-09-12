@@ -5,6 +5,9 @@ use crate::{ControlRefusalReason, Duration, MonotonicTimestamp};
 /// Time allowed for a supported setting write to receive matching readback.
 pub const SETTING_CONFIRMATION_TIMEOUT: Duration = Duration::from_milliseconds(2_000);
 
+/// Compatibility name used by typed settings callers.
+pub const SETTING_WRITE_CONFIRMATION_TIMEOUT: Duration = SETTING_CONFIRMATION_TIMEOUT;
+
 /// Provenance for a setting value held by the state reducer.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum SettingValueSource {
@@ -205,6 +208,20 @@ where
             requested,
             reason,
         };
+    }
+
+    /// Records a timeout when the pending request has reached its deadline.
+    ///
+    /// Returns whether the state transitioned to timed out.
+    pub fn timeout_if_elapsed(&mut self, now: MonotonicTimestamp, timeout: Duration) -> bool {
+        let Self::Pending { submitted_at, .. } = *self else {
+            return false;
+        };
+        if now.saturating_duration_since(submitted_at) < timeout {
+            return false;
+        }
+        self.timeout();
+        true
     }
 
     /// Records a timeout for the pending request.

@@ -78,7 +78,16 @@ final class CutoutAppRouteTests: XCTestCase {
         XCTAssertEqual(localizedAppText("settings.capabilities.title"), "Other settings")
         XCTAssertEqual(localizedAppText("settings.capabilities.unverified"), "Needs validation")
         XCTAssertEqual(localizedAppText("settings.capabilities.unsupported"), "Not supported")
+        XCTAssertEqual(localizedAppText("settings.state.pending"), "Pending")
+        XCTAssertEqual(localizedAppText("settings.state.confirmed"), "Confirmed")
+        XCTAssertEqual(localizedAppText("settings.state.confirmed_ago", Int64(2)), "Confirmed 2s ago")
+        XCTAssertEqual(localizedAppText("settings.state.refused"), "Refused")
+        XCTAssertEqual(localizedAppText("settings.state.timed_out"), "Timed out")
+        XCTAssertEqual(localizedAppText("settings.state.failed"), "Failed")
         XCTAssertEqual(localizedAppText("settings.pedal_mode.title"), "Pedal mode")
+        XCTAssertEqual(localizedAppText("settings.roll_angle.title"), "Roll angle")
+        XCTAssertEqual(localizedAppText("settings.roll_angle.footer"), "Change only while parked.")
+        XCTAssertEqual(localizedAppText("settings.roll_angle.high"), "High")
         XCTAssertEqual(localizedAppText("settings.acceleration_assist.title"), "Acceleration assist")
         XCTAssertEqual(localizedAppText("settings.taillight.title"), "Taillight")
         XCTAssertEqual(
@@ -92,6 +101,22 @@ final class CutoutAppRouteTests: XCTestCase {
         XCTAssertEqual(
             localizedAppText("settings.headlight.confirmed"),
             "Confirmed by wheel telemetry."
+        )
+        XCTAssertEqual(
+            localizedAppText("settings.high_beam.sent_unconfirmed"),
+            "Command sent. This wheel does not report high-beam state."
+        )
+        XCTAssertEqual(
+            localizedAppText("settings.headlight.waiting"),
+            "Waiting for wheel confirmation."
+        )
+        XCTAssertEqual(
+            localizedAppText("settings.headlight.confirmed"),
+            "Confirmed by wheel telemetry."
+        )
+        XCTAssertEqual(
+            localizedAppText("settings.headlight.confirmed_ago", Int64(2)),
+            "Confirmed by wheel telemetry 2s ago."
         )
         XCTAssertEqual(
             localizedAppText("settings.high_beam.sent_unconfirmed"),
@@ -112,6 +137,80 @@ final class CutoutAppRouteTests: XCTestCase {
         XCTAssertEqual(
             PevScreen(id: .bmsUnknownTopology, title: "", subtitle: "", secondaryValue: "").tabTitle,
             "Faults"
+        )
+    }
+
+    func testSettingReadbackPresentationKeepsKnownValuesAndUnknownStatesDistinct() {
+        XCTAssertEqual(
+            EucSettingReadbackPresentation.speed(.available(Speed(value: 11_666))),
+            "26.1 mph"
+        )
+        XCTAssertEqual(
+            EucSettingReadbackPresentation.pedalMode(.available(.rawMode(3))),
+            "Raw 3"
+        )
+        XCTAssertEqual(
+            EucSettingReadbackPresentation.pedalMode(.available(.documented(.medium))),
+            "Medium"
+        )
+        XCTAssertEqual(
+            EucSettingReadbackPresentation.pedalMode(
+                PedalModeSettingState(kind: .current, current: .hard),
+                fallback: .available(.documented(.soft))
+            ),
+            "Hard"
+        )
+        XCTAssertEqual(
+            EucSettingReadbackPresentation.speed(.unavailable),
+            "Unavailable"
+        )
+        XCTAssertEqual(
+            EucSettingReadbackPresentation.pedalMode(.unsupported),
+            "Not supported"
+        )
+        XCTAssertEqual(
+            EucSettingReadbackPresentation.seconds(.available(900)),
+            "900 s"
+        )
+        XCTAssertEqual(
+            EucSettingReadbackPresentation.chargeMode(.available(.charging)),
+            "Charging"
+        )
+    }
+
+    func testSettingCapabilityPresentationPrefersLifecycleStatusWhenActionable() {
+        XCTAssertEqual(
+            EucSettingCapabilityPresentation.statusText(support: .unverified, state: .pending),
+            "Pending"
+        )
+        XCTAssertEqual(
+            EucSettingCapabilityPresentation.statusText(support: .unsupported, state: .refused),
+            "Refused"
+        )
+        XCTAssertEqual(
+            EucSettingCapabilityPresentation.statusText(
+                support: .supported,
+                state: .confirmed,
+                confirmedAt: MonotonicMilliseconds(1_000),
+                now: MonotonicMilliseconds(3_999)
+            ),
+            "Confirmed 2s ago"
+        )
+        XCTAssertEqual(
+            EucSettingCapabilityPresentation.statusText(support: .supported, state: .timedOut),
+            "Timed out"
+        )
+        XCTAssertEqual(
+            EucSettingCapabilityPresentation.statusText(support: .supported, state: .failed),
+            "Failed"
+        )
+        XCTAssertEqual(
+            EucSettingCapabilityPresentation.statusText(support: .unverified, state: .unknown),
+            "Needs validation"
+        )
+        XCTAssertEqual(
+            EucSettingCapabilityPresentation.statusText(support: .unsupported, state: nil),
+            "Not supported"
         )
     }
 

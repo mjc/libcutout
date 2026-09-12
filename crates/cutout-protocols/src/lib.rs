@@ -89,9 +89,10 @@ pub use refloat_codec::{
     RefloatStreamResult, VESC_COMM_CUSTOM_APP_DATA, encode_refloat_request,
 };
 pub use request_encoder::{
-    AeroControlEncoder, AeroRequestEncoder, EncodedControl, EncodedIdentificationProbe,
-    EncodedRequest, FalconControlEncoder, FalconRequestEncoder, RequestDisposition, VescCanTarget,
-    VescRequestEncoder, begode_identification_probes,
+    AeroControlEncoder, AeroRequestEncoder, EncodedControl, EncodedControlSequence,
+    EncodedControlStep, EncodedIdentificationProbe, EncodedRequest, FalconControlEncoder,
+    FalconRequestEncoder, RequestDisposition, VescCanTarget, VescRequestEncoder,
+    begode_identification_probes,
 };
 #[cfg(feature = "dangerous-controls")]
 pub use session::DangerousControlSession;
@@ -100,9 +101,9 @@ pub use session::{
     DangerousActuationOperation, Manufacturer, NoopNotificationDecoder, NosfetAeroModel,
     ProtocolModelSpec, ProtocolOperation, ReadOnlyModelSpec, ReadOnlyNotificationDecoder,
     ReadOnlyOperation, ReadOnlySession, RegisteredModelSpec, SettingsWriteOperation,
-    SupportsBenignControls, SupportsDangerousActuation, SupportsReadRequests,
-    SupportsSettingsWrites, VESC_RAW_ABSOLUTE_TACHOMETER_FIELD_ID, VESC_RAW_CONTROLLER_ID_FIELD_ID,
-    VESC_RAW_CURRENT_FAULT_CODE_FIELD_ID, VESC_RAW_ERPM_FIELD_ID,
+    StationarySettingsWriteSession, SupportsBenignControls, SupportsDangerousActuation,
+    SupportsReadRequests, SupportsSettingsWrites, VESC_RAW_ABSOLUTE_TACHOMETER_FIELD_ID,
+    VESC_RAW_CONTROLLER_ID_FIELD_ID, VESC_RAW_CURRENT_FAULT_CODE_FIELD_ID, VESC_RAW_ERPM_FIELD_ID,
     VESC_RAW_STATS_COUNT_TIME_FIELD_ID, VESC_RAW_STATS_CURRENT_AVG_FIELD_ID,
     VESC_RAW_STATS_POWER_AVG_FIELD_ID, VESC_RAW_STATS_SPEED_AVG_FIELD_ID, VESC_RAW_STATUS_FIELD_ID,
     VESC_RAW_TACHOMETER_FIELD_ID, VescGenericModel, VescNotificationDecoder,
