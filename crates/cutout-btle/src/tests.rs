@@ -2330,7 +2330,7 @@ impl ProtocolSession for WriteOnTickSession {
             SessionInput::LinkUp(_) => {
                 output.push(SessionOutput::Transport(TransportAction::Subscribe {
                     channel: GattChannel::from_bytes([0xA1; 16]),
-                }))
+                }));
             }
             SessionInput::Tick { .. } => {
                 self.ticks += 1;
@@ -2340,7 +2340,7 @@ impl ProtocolSession for WriteOnTickSession {
                         bytes: cutout_core::WritePayload::try_from_slice(b"tick")
                             .expect("fixture payload fits"),
                         mode: WriteMode::WithoutResponse,
-                    }))
+                    }));
                 }
             }
             SessionInput::LinkDown
@@ -2356,10 +2356,10 @@ impl ProtocolSession for TickCountingSession {
             SessionInput::LinkUp(_) => {
                 output.push(SessionOutput::Transport(TransportAction::Subscribe {
                     channel: GattChannel::from_bytes([0xA1; 16]),
-                }))
+                }));
             }
             SessionInput::Tick { monotonic_ms } => {
-                self.ticks.lock().expect("tick log").push(monotonic_ms)
+                self.ticks.lock().expect("tick log").push(monotonic_ms);
             }
             SessionInput::LinkDown
             | SessionInput::Notification { .. }

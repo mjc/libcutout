@@ -16,7 +16,7 @@ mod session;
 pub use commands::*;
 pub use session::*;
 
-/// CoreBluetooth write mode required by the MELK protocol.
+/// `CoreBluetooth` write mode required by the MELK protocol.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Enum)]
 pub enum MobileMelkLightingWriteModeDto {
     /// Write without waiting for a transport acknowledgement.
@@ -146,6 +146,10 @@ pub fn mobile_melk_lighting_pattern_catalog() -> Vec<MobileMelkLightingPatternDt
 /// Returns whether an advertised name belongs to the MELK-OC21 family.
 #[uniffi::export]
 #[must_use]
+#[allow(
+    clippy::needless_pass_by_value,
+    reason = "UniFFI exports own String arguments at the FFI boundary."
+)]
 pub fn mobile_melk_lighting_name_matches(name: String) -> bool {
     MelkLightingProfile::name_matches(&name)
 }

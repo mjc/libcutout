@@ -118,23 +118,23 @@ mod tests {
         let mut connection = MusicConnection::default();
         assert!(connection.begin_attempt_id(0).is_some());
         connection.failed(100);
-        assert!(!connection.begin_attempt_id(2_099).is_some());
+        assert!(connection.begin_attempt_id(2_099).is_none());
         assert!(connection.begin_attempt_id(2_100).is_some());
         connection.failed(2_200);
         assert!(connection.begin_attempt_id(4_200).is_some());
         connection.failed(4_300);
-        assert!(!connection.begin_attempt_id(100_000).is_some());
+        assert!(connection.begin_attempt_id(100_000).is_none());
     }
 
     #[test]
     fn a_lost_callback_times_out_but_attempts_remain_bounded() {
         let mut connection = MusicConnection::default();
         assert!(connection.begin_attempt_id(0).is_some());
-        assert!(!connection.begin_attempt_id(9_999).is_some());
+        assert!(connection.begin_attempt_id(9_999).is_none());
         assert!(connection.begin_attempt_id(10_000).is_some());
-        assert!(!connection.begin_attempt_id(19_999).is_some());
+        assert!(connection.begin_attempt_id(19_999).is_none());
         assert!(connection.begin_attempt_id(20_000).is_some());
-        assert!(!connection.begin_attempt_id(30_000).is_some());
+        assert!(connection.begin_attempt_id(30_000).is_none());
     }
 
     #[test]
@@ -144,10 +144,10 @@ mod tests {
             assert!(connection.begin_attempt_id(now_ms).is_some());
             connection.disconnected(now_ms);
         }
-        assert!(!connection.begin_attempt_id(6_000).is_some());
+        assert!(connection.begin_attempt_id(6_000).is_none());
         connection.established();
         connection.disconnected(6_000);
-        assert!(!connection.begin_attempt_id(7_999).is_some());
+        assert!(connection.begin_attempt_id(7_999).is_none());
         assert!(connection.begin_attempt_id(8_000).is_some());
     }
 
@@ -155,8 +155,8 @@ mod tests {
     fn backwards_or_overflowing_clock_cannot_shorten_an_in_flight_attempt() {
         let mut connection = MusicConnection::default();
         assert!(connection.begin_attempt_id(u64::MAX - 1).is_some());
-        assert!(!connection.begin_attempt_id(0).is_some());
-        assert!(!connection.begin_attempt_id(u64::MAX).is_some());
+        assert!(connection.begin_attempt_id(0).is_none());
+        assert!(connection.begin_attempt_id(u64::MAX).is_none());
     }
 
     #[test]
@@ -177,12 +177,12 @@ mod tests {
             connection.failed_for(first, 2_200),
             MusicConnectionCallback::Stale
         );
-        assert!(!connection.begin_attempt_id(2_200).is_some());
+        assert!(connection.begin_attempt_id(2_200).is_none());
         assert_eq!(
             connection.failed_for(second, 2_200),
             MusicConnectionCallback::Accepted
         );
-        assert!(!connection.begin_attempt_id(4_199).is_some());
+        assert!(connection.begin_attempt_id(4_199).is_none());
         assert!(connection.begin_attempt_id(4_200).is_some());
     }
 
@@ -199,7 +199,7 @@ mod tests {
             connection.established_for(first),
             MusicConnectionCallback::Stale
         );
-        assert!(!connection.begin_attempt_id(2_200).is_some());
+        assert!(connection.begin_attempt_id(2_200).is_none());
         assert_eq!(
             connection.established_for(second),
             MusicConnectionCallback::Accepted
@@ -223,7 +223,7 @@ mod tests {
             connection.disconnected_for(attempt, 200),
             MusicConnectionCallback::Stale
         );
-        assert!(!connection.begin_attempt_id(2_099).is_some());
+        assert!(connection.begin_attempt_id(2_099).is_none());
         assert!(connection.begin_attempt_id(2_100).is_some());
     }
 

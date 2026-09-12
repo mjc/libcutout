@@ -40,7 +40,7 @@ static ALLOCATION_TEST_LOCK: Mutex<()> = Mutex::new(());
 #[global_allocator]
 static GLOBAL_ALLOCATOR: CountingAllocator = CountingAllocator;
 
-// SAFETY: this wrapper only increments atomic counters and delegates all
+// SAFETY: this wrapper only increments process-wide atomic counters and delegates all
 // allocation operations to `System` with the original pointers and layouts.
 unsafe impl GlobalAlloc for CountingAllocator {
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
@@ -87,9 +87,6 @@ fn reset_counts() {
 }
 
 fn assert_no_allocations(label: &str, action: impl FnOnce()) {
-    let _guard = ALLOCATION_TEST_LOCK
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
     reset_counts();
     action();
 
@@ -121,25 +118,19 @@ where
 }
 
 #[test]
-fn protocol_parser_owned_results_do_not_allocate() {
+fn allocation_hot_paths_do_not_allocate() {
+    let _guard = ALLOCATION_TEST_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     veteran_parser_owned_results_do_not_allocate();
     begode_parser_owned_results_do_not_allocate();
     vesc_parser_owned_results_do_not_allocate();
-}
-
-#[test]
-fn read_request_encoders_do_not_allocate() {
     assert_no_allocations("read request encoding", || {
         assert!(FalconRequestEncoder::encode_command(CommandKind::RequestIdentity).is_some());
         assert!(VescRequestEncoder::encode_command(CommandKind::RequestTelemetry).is_some());
         assert!(VescRequestEncoder::encode_command(CommandKind::RequestDiagnostics).is_some());
     });
-}
-
-#[test]
-fn refloat_parser_owned_results_do_not_allocate() {
     let mut decoder = RefloatStreamDecoder::new();
-
     assert_no_allocations("Refloat parser owned result", || {
         let result = decoder
             .feed_result(REFLOAT_IDS_FRAME, |_| {})

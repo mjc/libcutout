@@ -5075,6 +5075,10 @@ pub fn mobile_music_limits() -> MobileMusicLimitsDto {
 /// Platform adapters may use this before updating presentation state so malformed
 /// metadata never enters the UI or capture path.
 #[uniffi::export]
+///
+/// # Errors
+///
+/// Returns [`MobileRideMapCoreErrorDto::InvalidMusicInput`] when the observation is malformed.
 pub fn validate_music_snapshot(
     snapshot: MobileMusicSnapshotDto,
 ) -> Result<(), MobileRideMapCoreErrorDto> {
@@ -5085,6 +5089,10 @@ pub fn validate_music_snapshot(
 
 /// Normalizes optional display fields and validates one provider observation.
 #[uniffi::export]
+///
+/// # Errors
+///
+/// Returns [`MobileRideMapCoreErrorDto::InvalidMusicInput`] when the observation is malformed.
 pub fn normalize_music_snapshot(
     mut snapshot: MobileMusicSnapshotDto,
 ) -> Result<MobileMusicSnapshotDto, MobileRideMapCoreErrorDto> {
@@ -5111,6 +5119,7 @@ pub fn normalize_music_snapshot(
 /// Applies the Rust-owned monotonic observation watermark used by provider
 /// adapters before they update presentation or submit a ride transition.
 #[uniffi::export]
+#[must_use]
 pub fn accept_music_snapshot(
     previous_observed_at_ms: Option<u64>,
     current_observed_at_ms: u64,
@@ -5120,6 +5129,7 @@ pub fn accept_music_snapshot(
 
 /// Applies the Rust-owned PEVCAP music retention filter to one provider item.
 #[uniffi::export]
+#[must_use]
 pub fn pevcap_music_track_identifier(
     policy: MobileMusicHistoryPolicyDto,
     provider: MobileMusicProviderDto,
@@ -5140,6 +5150,14 @@ pub fn pevcap_music_track_identifier(
 /// The decision is portable domain logic; Swift only supplies observations and
 /// the fact that a skip command is awaiting provider confirmation.
 #[uniffi::export]
+#[allow(
+    clippy::needless_pass_by_value,
+    reason = "UniFFI exports own snapshot values at the FFI boundary."
+)]
+///
+/// # Errors
+///
+/// Returns [`MobileRideMapCoreErrorDto::InvalidMusicInput`] when either snapshot is malformed.
 pub fn music_transition_kind(
     previous: Option<MobileMusicSnapshotDto>,
     current: MobileMusicSnapshotDto,
@@ -9775,7 +9793,7 @@ const PEVCAP_MUSIC_CONTEXT_CAPACITY: usize = 8;
 const PEVCAP_MUSIC_CONTEXT_FRESHNESS_MS: u64 = 5_000;
 
 fn pevcap_music_event_for_policy(
-    music: MobilePevcapMusicEventDto,
+    music: &MobilePevcapMusicEventDto,
     policy: CoreMusicHistoryPolicy,
 ) -> Result<Option<PevcapMusicEvent>, String> {
     if policy == CoreMusicHistoryPolicy::Disabled {
@@ -9983,7 +10001,7 @@ impl MobilePevcapCaptureBuilder {
         let Some(music) = self.relative_music_event(music) else {
             return false;
         };
-        let event = match pevcap_music_event_for_policy(music.clone(), policy) {
+        let event = match pevcap_music_event_for_policy(&music, policy) {
             Ok(Some(event)) => event,
             Ok(None) => return true,
             Err(_) => return false,
@@ -10008,7 +10026,7 @@ impl MobilePevcapCaptureBuilder {
         let Some(music) = self.relative_music_event(music) else {
             return false;
         };
-        let event = match pevcap_music_event_for_policy(music, policy) {
+        let event = match pevcap_music_event_for_policy(&music, policy) {
             Ok(Some(event)) => event,
             Ok(None) => return true,
             Err(_) => return false,
@@ -10141,13 +10159,10 @@ impl MobilePevcapCaptureBuilder {
         if let Some(location) = phone_location.and_then(MobilePhoneLocationSampleDto::canonical) {
             record = record.with_phone_location(location.pevcap_location());
         }
-        match self.resolve_music_context(music, monotonic_ms.milliseconds) {
-            Ok(Some(music)) => {
-                record = record
-                    .with_music(music)
-                    .expect("inbound records accept music metadata");
-            }
-            Ok(None) | Err(()) => {}
+        if let Ok(Some(music)) = self.resolve_music_context(music, monotonic_ms.milliseconds) {
+            record = record
+                .with_music(music)
+                .expect("inbound records accept music metadata");
         }
         self.send_record(record)
     }
@@ -10185,37 +10200,34 @@ impl MobilePevcapCaptureBuilder {
         music: Option<MobilePevcapMusicEventDto>,
         frame_monotonic_ms: u64,
     ) -> Result<Option<PevcapMusicEvent>, ()> {
-        match music {
-            Some(music) => {
-                let policy = *self
-                    .music_history_policy
-                    .lock()
-                    .unwrap_or_else(PoisonError::into_inner);
-                let event = pevcap_music_event_for_policy(music, policy).map_err(|_| ())?;
-                self.music_context
-                    .lock()
-                    .unwrap_or_else(PoisonError::into_inner)
-                    .clear();
-                Ok(event)
-            }
-            None => {
-                let mut pending = self
-                    .music_context
-                    .lock()
-                    .unwrap_or_else(PoisonError::into_inner);
-                while let Some(candidate) = pending.front() {
-                    if candidate.monotonic_at_ms > frame_monotonic_ms {
-                        return Ok(None);
-                    }
-                    let candidate = pending.pop_front().expect("front exists");
-                    if frame_monotonic_ms.saturating_sub(candidate.monotonic_at_ms)
-                        <= PEVCAP_MUSIC_CONTEXT_FRESHNESS_MS
-                    {
-                        return Ok(Some(candidate.event));
-                    }
+        if let Some(music) = music {
+            let policy = *self
+                .music_history_policy
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner);
+            let event = pevcap_music_event_for_policy(&music, policy).map_err(|_| ())?;
+            self.music_context
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .clear();
+            Ok(event)
+        } else {
+            let mut pending = self
+                .music_context
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner);
+            while let Some(candidate) = pending.front() {
+                if candidate.monotonic_at_ms > frame_monotonic_ms {
+                    return Ok(None);
                 }
-                Ok(None)
+                let candidate = pending.pop_front().expect("front exists");
+                if frame_monotonic_ms.saturating_sub(candidate.monotonic_at_ms)
+                    <= PEVCAP_MUSIC_CONTEXT_FRESHNESS_MS
+                {
+                    return Ok(Some(candidate.event));
+                }
             }
+            Ok(None)
         }
     }
 

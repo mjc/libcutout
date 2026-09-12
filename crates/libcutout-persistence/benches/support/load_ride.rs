@@ -26,14 +26,14 @@ pub(super) struct Fixture {
 
 impl Fixture {
     pub(super) fn setup() -> Self {
-        Self::setup_for(RideSelection::MostPoints)
+        Self::setup_for(&RideSelection::MostPoints)
     }
 
     pub(super) fn setup_largest() -> Self {
-        Self::setup_for(RideSelection::LongestDistance)
+        Self::setup_for(&RideSelection::LongestDistance)
     }
 
-    fn setup_for(selection: RideSelection) -> Self {
+    fn setup_for(selection: &RideSelection) -> Self {
         let directory = tempfile::tempdir().expect("private benchmark directory");
         let path = directory.path().join("ride.sqlite");
         let (order_by, workload) = match selection {

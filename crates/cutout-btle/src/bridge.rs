@@ -323,6 +323,15 @@ where
 ///
 /// Returning the stream allows callers to serialize multiple request windows
 /// without losing notifications between probes.
+///
+/// # Errors
+///
+/// Returns [`BtleError`] when the session cannot be driven or the notification
+/// endpoint is unavailable.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "This public capture helper mirrors the transport API."
+)]
 pub async fn capture_session_with_channel_pair_and_stream<P, S>(
     peripheral: &P,
     session: &mut S,
@@ -406,6 +415,10 @@ where
     .map(|(report, _)| report)
 }
 
+#[allow(
+    clippy::too_many_lines,
+    reason = "The bridge loop keeps transport ordering in one place."
+)]
 async fn drive_session_inner_with_stream<P, S>(
     peripheral: &P,
     session: &mut S,
@@ -630,6 +643,11 @@ struct NotificationLoopContext<'a, 'observer, P: ?Sized> {
 
 const SESSION_DEADLINE_TICK: Duration = Duration::from_millis(100);
 
+#[allow(
+    clippy::too_many_lines,
+    clippy::single_match_else,
+    reason = "The notification loop must serialize stream, tick, and link-loss events."
+)]
 async fn process_notification_window<P, S>(
     mut context: NotificationLoopContext<'_, '_, P>,
     session: &mut S,
@@ -720,7 +738,7 @@ where
                 break;
                 }
             },
-            _ = tokio::time::sleep_until(tick_deadline), if tick_due => {
+            () = tokio::time::sleep_until(tick_deadline), if tick_due => {
                 *monotonic_ms = elapsed_or_next(*monotonic_ms, context.monotonic_origin);
                 session.handle(
                     SessionInput::Tick {
@@ -751,7 +769,7 @@ where
                 // This keeps requests serialized at the transport boundary.
                 next_tick = tokio::time::Instant::now() + SESSION_DEADLINE_TICK;
             },
-            _ = tokio::time::sleep_until(wait_deadline) => {
+            () = tokio::time::sleep_until(wait_deadline) => {
                 if link_loss_idle_elapsed(last_notification_at, context.link_loss_idle_window) {
                     debug!("session notification idle window elapsed; recording link down");
                     *monotonic_ms = monotonic_ms.next();

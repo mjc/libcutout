@@ -1,4 +1,4 @@
-//! Thread-safe UniFFI handle for the MELK session reducer.
+//! Thread-safe `UniFFI` handle for the MELK session reducer.
 
 use std::sync::{Arc, Mutex, PoisonError};
 
@@ -8,14 +8,20 @@ use cutout_core::{
 use cutout_protocols::MelkLightingProfile;
 
 use super::super::commands::plan_schedule;
-use super::{contract::*, reducer::SessionReducer};
+use super::{
+    contract::{
+        MobileMelkLightingSessionActionDto, MobileMelkLightingSessionCandidateDto,
+        MobileMelkLightingSessionEventDto, MobileMelkLightingSessionSnapshotDto,
+    },
+    reducer::SessionReducer,
+};
 use crate::{
     MobileMelkClockDto, MobileMelkLightingError, MobileMelkLightingRestoreStateDto,
     MobileMelkLightingWriteDto, MobileMelkLightingWriteModeDto, MobileMelkScheduleDto,
     mobile_melk_control, mobile_melk_transport_action,
 };
 
-/// Rust-owned MELK session exposed to the thin CoreBluetooth wrapper.
+/// Rust-owned MELK session exposed to the thin `CoreBluetooth` wrapper.
 #[derive(Debug, uniffi::Object)]
 pub struct MobileMelkLightingSessionCore {
     inner: Mutex<SessionReducer>,
@@ -25,6 +31,7 @@ pub struct MobileMelkLightingSessionCore {
 impl MobileMelkLightingSessionCore {
     /// Creates an idle session core.
     #[uniffi::constructor]
+    #[must_use]
     pub fn new() -> Arc<Self> {
         Arc::new(Self {
             inner: Mutex::new(SessionReducer::default()),
@@ -32,11 +39,15 @@ impl MobileMelkLightingSessionCore {
     }
 
     /// Starts the session with an optional remembered platform identifier.
+    #[allow(
+        clippy::needless_pass_by_value,
+        reason = "UniFFI owns optional String values at the FFI boundary."
+    )]
     pub fn start(&self, preferred_platform_identifier: Option<String>) {
         self.inner
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
-            .start(preferred_platform_identifier);
+            .start(preferred_platform_identifier.as_deref());
     }
 
     /// Stops the session and prevents future reconnects.
@@ -47,7 +58,7 @@ impl MobileMelkLightingSessionCore {
             .stop();
     }
 
-    /// Submits one CoreBluetooth event.
+    /// Submits one `CoreBluetooth` event.
     pub fn handle(&self, event: MobileMelkLightingSessionEventDto) {
         self.inner
             .lock()
@@ -56,11 +67,15 @@ impl MobileMelkLightingSessionCore {
     }
 
     /// Selects a first-pairing candidate.
+    #[allow(
+        clippy::needless_pass_by_value,
+        reason = "UniFFI owns String values at the FFI boundary."
+    )]
     pub fn select_candidate(&self, platform_identifier: String) {
         self.inner
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
-            .select(platform_identifier);
+            .select(&platform_identifier);
     }
 
     /// Enqueues a power command if the verified profile is ready.
@@ -84,6 +99,10 @@ impl MobileMelkLightingSessionCore {
     }
 
     /// Enqueues a brightness command if the value is valid and the profile is ready.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`MobileMelkLightingError::InvalidBrightness`] when `percentage` exceeds 100.
     pub fn set_brightness(&self, percentage: u8) -> Result<bool, MobileMelkLightingError> {
         let brightness = LightingBrightness::try_from_percent(percentage)
             .map_err(|_| MobileMelkLightingError::InvalidBrightness)?;
@@ -99,6 +118,10 @@ impl MobileMelkLightingSessionCore {
     }
 
     /// Enqueues a complete restore state.
+    ///
+    /// # Errors
+    ///
+    /// Returns a validation error when the restore state is invalid.
     pub fn apply_state(
         &self,
         state: MobileMelkLightingRestoreStateDto,
@@ -124,6 +147,10 @@ impl MobileMelkLightingSessionCore {
     }
 
     /// Enqueues a controller-local schedule after synchronizing its local clock.
+    ///
+    /// # Errors
+    ///
+    /// Returns a validation error when the schedule or clock is invalid.
     pub fn set_schedule(
         &self,
         schedule: MobileMelkScheduleDto,
@@ -193,7 +220,7 @@ impl MobileMelkLightingSessionCore {
             .drain_notifications()
     }
 
-    /// Drains one pending user write when CoreBluetooth reports available capacity.
+    /// Drains one pending user write when `CoreBluetooth` reports available capacity.
     pub fn flush_writes(&self, can_send: bool) {
         self.inner
             .lock()

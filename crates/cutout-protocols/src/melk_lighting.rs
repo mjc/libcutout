@@ -918,7 +918,12 @@ mod tests {
         );
         let mut sorted = ids;
         sorted.sort_unstable();
-        assert_eq!(sorted, (0..=227).map(|id| id as u8).collect::<Vec<_>>());
+        assert_eq!(
+            sorted,
+            (0..=227)
+                .map(|id| u8::try_from(id).expect("effect IDs fit in u8"))
+                .collect::<Vec<_>>()
+        );
     }
 
     #[test]

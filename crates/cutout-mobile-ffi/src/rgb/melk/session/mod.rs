@@ -1,4 +1,4 @@
-//! Rust-owned session boundary for the MELK CoreBluetooth adapter.
+//! Rust-owned session boundary for the MELK `CoreBluetooth` adapter.
 
 mod contract;
 mod core;
