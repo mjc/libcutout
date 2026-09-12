@@ -34,11 +34,11 @@ publish OC21 command bytes or replace a capture-backed write check.
 
 Power, solid RGB, and brightness were physically confirmed before this extension.
 On 2026-09-06 the user reported that effect IDs 1–10 and the four offered
-shortcuts (IDs 1, 16, 22, 75) visibly worked. The UI now enables those IDs.
-Names remain reference labels until each visual mapping is independently matched.
-Native speed 0 was the fastest observed, but it remains substantially slower
-than the official app. Music could not be tested; music and schedules remain
-physically unverified. Tests prove frame encoding and software behavior.
+shortcuts (IDs 1, 16, 22, 75) visibly worked. Native speed 0 was the fastest
+observed, but it remains substantially slower than the official app. Music and
+schedules have not been physically tested. That observation is diagnostic only:
+the production UI exposes and sends every bounded command the MELK protocol
+defines, and the user reports controller-specific failures for follow-up.
 The upstream catalog contains generic MELK and model-specific mappings; exposing
 pattern IDs 0–227 does not prove that this firmware implements every visual mode.
 
@@ -69,11 +69,11 @@ until exact OC21 capture.
 The official-app screenshot labels its first Basic card “Auto Play”; the UI
 preserves that as an ID 0 reference label until an OC21 capture ties the name to
 a wire ID.
-The mobile FFI restore and preset boundary permits the bounded OC21 effect set (IDs 1–10, 16, 22,
-and 75), reflecting the user's reported first-ten/four-shortcut trial. The Rust profile keeps
-candidate nine-byte templates for these IDs, but they are generated examples rather than captured
-traffic; exact OC21 ID/name/frame evidence remains a hardware acceptance gate. All other reference
-IDs, controller-microphone playback, and schedules fail closed as unavailable.
+The mobile FFI restore and preset boundary permits every bounded effect ID (0–227), all eight
+controller-local microphone modes, and validated controller timer values. The Rust profile keeps
+candidate nine-byte templates as generated examples rather than captured traffic. Observations
+remain useful diagnostic evidence, but they are not a hardware acceptance gate for sending a
+defined command.
 
 The production picker groups the reference IDs into Basic, Curtain, Trans, Water,
 Flow, Tail, Run, Run Back, and Unmapped. The grouping covers each ID 0–227 exactly
@@ -92,9 +92,9 @@ The eight controller-microphone choices use the pinned catalog's names: Music Fl
 Moving the speed slider right sends a lower native byte: 100% sends 0 and 0%
 sends 255. It spans the same full byte range as the reference. Changing speed
 sends only the speed frame, without reselecting the pattern or changing power.
-Complete effect restoration selects the pattern before applying speed. This
-removes a possible animation reset; it does not yet establish speed parity with
-the official app.
+Complete mode application powers the controller first, then selects the pattern before applying
+speed. This lets an effect replace an off or solid state without a separate Play action. It does
+not establish speed parity with the official app.
 
 ## Production behavior
 
@@ -120,13 +120,13 @@ the official app.
 - The Mac-only MelkLightingLiveValidator executable uses CoreBluetooth to discover the Aero-installed MELK-OC21, verify FFF0/FFF3/FFF4, and exercise candidate commands without sharing the ride telemetry connection. Run `nix develop -c ./scripts/validate-melk-corebluetooth.sh [timeout-seconds] [platform-UUID]`; the optional UUID retries a previously observed CoreBluetooth identity and is parsed fail-closed. For a fresh pairing, enter `select <UUID>` for the printed candidate before the timeout expires.
   If recovery and the subsequent scan do not reach `ready` before timeout, the
   validator exits nonzero.
-- When scheduling is enabled in a future profile, saving will send a clock sync followed by the selected slot; opening the editor never writes. The controller has no timer readback, so future profiles must retain drafts rather than claim device state.
-- A future capture-backed profile may use the accessory microphone for music modes; this MELK-OC21 profile keeps music unavailable, with no phone recording or audio permission.
+- Saving a schedule sends a clock sync followed by the selected slot; opening the editor never writes. The controller has no timer readback, so the editor retains drafts rather than claiming device state.
+- Music modes use the accessory controller's local microphone only; Cutout does not record or analyze phone audio and requests no audio permission.
 - Unknown zone, pixel-count, calibration, status-query, and turn-signal-topology
   commands are not sent.
   The reference does not establish these capabilities for this exact controller.
 
-## Physical checks still required for the extension
+## Follow-up controller diagnostics
 
 Try several supported pattern IDs and both ends of speed, transitions back to
 solid color, save an effect, reconnect, and check the opted-in restore and final
@@ -161,4 +161,4 @@ establish that it is the user's controller.
 A subsequent fresh 180-second Mac scan on 2026-09-08 again saw the CoreBluetooth
 callback path and many unrelated advertisements, but no `MELK-OC21` name. This
 extends the current discovery evidence without changing the controller profile
-or its fail-closed write policy.
+or the availability of its defined commands.

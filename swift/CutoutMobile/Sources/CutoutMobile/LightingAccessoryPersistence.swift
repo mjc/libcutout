@@ -246,6 +246,12 @@ public final class LightingAccessoryPersistence {
         persist()
     }
 
+    /// Persists optional user-observed success without changing the requested lighting state.
+    public func markConfirmed() {
+        record?.setConfirmation(state: .confirmed)
+        persist()
+    }
+
     public func addPreset(
         name: String,
         requested: MobileMelkLightingRestoreStateDto

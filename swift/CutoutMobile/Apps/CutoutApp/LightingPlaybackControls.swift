@@ -35,25 +35,7 @@ enum LightingPatternCatalog {
         guard let pattern = patternsByID[id] else {
             return "Unmapped effect \(id)"
         }
-        guard pattern.verified || pattern.name.hasSuffix(" (reference)") else {
-            return "\(pattern.name) (reference)"
-        }
         return pattern.name
-    }
-
-    /// Capture-backed capabilities come from the Rust profile so UI availability cannot drift
-    /// from the write boundary. Reference catalog entries remain visible but disabled.
-    private static let capabilities = mobileMelkLightingCapabilities()
-    static let verifiedEffectIDs = Set(capabilities.verifiedEffectIds.map(Int.init))
-    static let controllerMicrophoneVerified = capabilities.controllerMicrophone
-    static let schedulesVerified = capabilities.schedules
-
-    static func isVerified(_ id: Int) -> Bool {
-        verifiedEffectIDs.contains(id)
-    }
-
-    static func isMapped(_ id: Int) -> Bool {
-        (1...212).contains(id)
     }
 
     static func groupName(for name: String) -> String {
@@ -230,21 +212,13 @@ private struct LightingEffectGrid: View {
                     )
                 }
                 .buttonStyle(.plain)
-                .disabled(!LightingPatternCatalog.isVerified(id))
-                .accessibilityValue(
-                    LightingPatternCatalog.isVerified(id)
-                        ? localizedAppText("lighting.effect.verified")
-                        : LightingPatternCatalog.isMapped(id)
-                            ? localizedAppText("lighting.effect.reference_unavailable")
-                            : localizedAppText("lighting.effect.unmapped_unavailable")
-                )
                 .accessibilityIdentifier("lighting.effect.\(id)")
             }
         }
     }
 }
 
-/// Controller-local playback controls. Selection is a draft until the user presses Play.
+/// Controller-local playback controls. Selecting a mode sends it immediately.
 struct LightingPlaybackControls: View {
     let model: LightingRouteModel
     let page: LightingControlPage
@@ -298,7 +272,10 @@ struct LightingPlaybackControls: View {
                     selectedPattern: pattern,
                     onSelect: selectPattern
                 )
-                Picker(localizedAppText("lighting.pattern"), selection: $pattern) {
+                Picker(localizedAppText("lighting.pattern"), selection: Binding(
+                    get: { pattern },
+                    set: { selectPattern($0) }
+                )) {
                     ForEach(patternIDs, id: \.self) { id in
                         Text(localizedAppText("lighting.effect.option", Int64(id), LightingPatternCatalog.name(for: id))).tag(id)
                     }
@@ -334,23 +311,20 @@ struct LightingPlaybackControls: View {
                     Text(localizedAppText("lighting.faster"))
                 }
                 .font(.caption).foregroundStyle(PevColors.muted)
-                Text(localizedAppText("lighting.reference_names"))
-                    .font(.caption)
-                    .foregroundStyle(PevColors.muted)
-                Text(localizedAppText("lighting.reference_effects"))
-                    .font(.caption)
-                    .foregroundStyle(PevColors.muted)
             } else {
                 Label(localizedAppText("lighting.page.music"), systemImage: "waveform").font(.headline)
-                Text(localizedAppText("lighting.music.reference"))
-                    .font(.subheadline).foregroundStyle(PevColors.muted)
-                Picker(localizedAppText("lighting.music.effect"), selection: $musicEffect) {
+                Picker(localizedAppText("lighting.music.effect"), selection: Binding(
+                    get: { musicEffect },
+                    set: {
+                        musicEffect = $0
+                        applyMusic()
+                    }
+                )) {
                     ForEach(musicNames.indices, id: \.self) { index in
                         Text(localizedAppText(musicNames[index])).tag(index)
                     }
                 }
                 .pickerStyle(.menu)
-                .disabled(!LightingPatternCatalog.controllerMicrophoneVerified)
                 .accessibilityIdentifier("lighting.music-effect")
                 HStack {
                     Label(localizedAppText("lighting.sensitivity"), systemImage: "mic")
@@ -361,23 +335,11 @@ struct LightingPlaybackControls: View {
                 Slider(value: $sensitivity, in: 0...100, step: 1) {
                     Text(localizedAppText("lighting.microphone_sensitivity"))
                 } onEditingChanged: { editing in
-                    if !editing, case .music = model.requestedPlayback { play() }
+                    if !editing, case .music = model.requestedPlayback { applyMusic() }
                 }
                 .tint(.pink)
-                .disabled(!LightingPatternCatalog.controllerMicrophoneVerified)
                 .accessibilityIdentifier("lighting.music-sensitivity")
             }
-            Button(action: play) {
-                Label(
-                    localizedAppText(page == .effects ? "lighting.play_pattern" : "lighting.start_music"),
-                    systemImage: "play.fill"
-                )
-                    .frame(maxWidth: .infinity)
-            }
-            .buttonStyle(.borderedProminent)
-            .tint(page == .effects ? .purple : .pink)
-            .disabled(page == .effects ? !canSendPattern(pattern) : !LightingPatternCatalog.controllerMicrophoneVerified)
-            .accessibilityIdentifier("lighting.play-mode")
             if page == .music {
                 Button(localizedAppText("lighting.stop_music")) { model.stopMusic() }
                     .buttonStyle(.bordered)
@@ -409,6 +371,7 @@ struct LightingPlaybackControls: View {
     func selectPattern(_ id: Int) {
         pattern = id
         selectGroup(for: id)
+        model.setPlayback(.effect(pattern: UInt8(id), speed: UInt8(speed)))
     }
 
     private func selectGroup(for id: Int) {
@@ -417,17 +380,8 @@ struct LightingPlaybackControls: View {
         }
     }
 
-    private func canSendPattern(_ id: Int) -> Bool {
-        LightingPatternCatalog.isVerified(id)
-    }
-
-    private func play() {
-        if page == .effects {
-            guard canSendPattern(pattern) else { return }
-            model.setPlayback(.effect(pattern: UInt8(pattern), speed: UInt8(speed)))
-        } else {
-            model.setPlayback(.music(effect: UInt8(musicEffect), sensitivity: UInt8(sensitivity)))
-        }
+    private func applyMusic() {
+        model.setPlayback(.music(effect: UInt8(musicEffect), sensitivity: UInt8(sensitivity)))
     }
 }
 
@@ -446,10 +400,6 @@ struct LightingScheduleControls: View {
     var body: some View {
         DisclosureGroup(isExpanded: $isExpanded) {
             VStack(alignment: .leading, spacing: 16) {
-                Text(localizedAppText("lighting.schedule.unverified"))
-                    .font(.footnote)
-                    .foregroundStyle(PevColors.muted)
-
                 timerRow(
                     title: localizedAppText("lighting.schedule.turn_on"),
                     powerOn: true,
@@ -512,7 +462,7 @@ struct LightingScheduleControls: View {
                 save(powerOn: powerOn, time: time.wrappedValue, days: days.wrappedValue, enabled: enabled.wrappedValue)
             }
             .buttonStyle(.bordered)
-            .disabled(!model.isReady || !LightingPatternCatalog.schedulesVerified)
+            .disabled(!model.isReady)
             .accessibilityIdentifier("lighting.schedule.\(powerOn ? "on" : "off").save")
         }
     }

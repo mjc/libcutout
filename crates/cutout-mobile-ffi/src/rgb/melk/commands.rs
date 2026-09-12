@@ -36,18 +36,12 @@ impl TryFrom<MobileLightingPlaybackDto> for LightingPlayback {
             MobileLightingPlaybackDto::Effect { pattern, speed } => {
                 let pattern: cutout_core::MelkPattern =
                     pattern.try_into().map_err(|_| Self::Error::InvalidState)?;
-                if !MelkLightingProfile::capabilities().supports_effect(pattern.value()) {
-                    return Err(Self::Error::InvalidState);
-                }
                 Self::Effect { pattern, speed }
             }
             MobileLightingPlaybackDto::Music {
                 effect,
                 sensitivity,
             } => {
-                if !MelkLightingProfile::capabilities().controller_microphone {
-                    return Err(Self::Error::InvalidState);
-                }
                 let effect: cutout_core::MelkMusicEffect =
                     effect.try_into().map_err(|_| Self::Error::InvalidState)?;
                 let sensitivity: cutout_core::MelkSensitivity = sensitivity
@@ -131,9 +125,6 @@ pub(crate) fn plan_schedule(
     .map_err(|_| MobileMelkLightingError::InvalidSchedule)?;
     let clock = MelkClock::new(clock.hour, clock.minute, clock.second, clock.weekday)
         .map_err(|_| MobileMelkLightingError::InvalidClock)?;
-    if !MelkLightingProfile::capabilities().schedules {
-        return Err(MobileMelkLightingError::UnsupportedCapability);
-    }
     Ok([
         MelkLightingProfile::control_action(MelkControl::Clock(clock)),
         MelkLightingProfile::control_action(MelkControl::Schedule(schedule)),
@@ -213,17 +204,18 @@ mod tests {
                     playback: Some(MobileLightingPlaybackDto::Effect { pattern: 16, speed }),
                 })
                 .unwrap();
-            assert_eq!(writes[0].payload, [0x7e, 5, 3, 16, 6, 255, 255, 0, 0xef]);
-            assert_eq!(writes[1], write);
+            assert_eq!(writes[0].payload, profile.set_power(false).payload);
+            assert_eq!(writes[1].payload, [0x7e, 5, 3, 16, 6, 255, 255, 0, 0xef]);
+            assert_eq!(writes[2], write);
             assert_eq!(
                 writes.last().unwrap().payload,
-                profile.set_power(false).payload
+                [0x7e, 4, 1, 50, 255, 0, 255, 0, 0xef]
             );
         }
     }
 
     #[test]
-    fn restore_marker_keeps_playback_and_rejects_unverified_effects() {
+    fn restore_marker_keeps_every_bounded_playback_mode() {
         let mut state = MobileMelkLightingRestoreStateDto {
             power_on: true,
             red: 1,
@@ -246,23 +238,19 @@ mod tests {
                 pattern,
                 speed: 255,
             });
-            assert!(matches!(
-                crate::MobileMelkLightingRestoreMarker::new("controller".into(), state),
-                Err(MobileMelkLightingError::InvalidPlayback)
-            ));
+            assert!(
+                crate::MobileMelkLightingRestoreMarker::new("controller".into(), state).is_ok()
+            );
         }
         state.playback = Some(MobileLightingPlaybackDto::Music {
             effect: 7,
             sensitivity: 50,
         });
-        assert!(matches!(
-            crate::MobileMelkLightingRestoreMarker::new("controller".into(), state),
-            Err(MobileMelkLightingError::InvalidPlayback)
-        ));
+        assert!(crate::MobileMelkLightingRestoreMarker::new("controller".into(), state).is_ok());
     }
 
     #[test]
-    fn complete_playback_validates_before_planning_and_finishes_with_power() {
+    fn complete_playback_accepts_every_defined_mode_and_powers_on_first() {
         let mut state = MobileMelkLightingRestoreStateDto {
             power_on: false,
             red: 1,
@@ -276,30 +264,30 @@ mod tests {
         };
         let writes = profile().apply_state(state).unwrap();
         assert_eq!(writes.len(), 4);
-        assert_eq!(writes[0].payload, [0x7e, 5, 3, 16, 6, 255, 255, 0, 0xef]);
-        assert_eq!(writes[1].payload, [0x7e, 4, 2, 50, 255, 255, 255, 0, 0xef]);
-        assert_eq!(
-            writes.last().unwrap().payload,
-            profile().set_power(false).payload
-        );
-        for pattern in [0, 11, 212, 213, 227, 228] {
+        assert_eq!(writes[0].payload, profile().set_power(false).payload);
+        assert_eq!(writes[1].payload, [0x7e, 5, 3, 16, 6, 255, 255, 0, 0xef]);
+        assert_eq!(writes[2].payload, [0x7e, 4, 2, 50, 255, 255, 255, 0, 0xef]);
+        for pattern in [0, 11, 212, 213, 227] {
             state.playback = Some(MobileLightingPlaybackDto::Effect { pattern, speed: 50 });
-            assert_eq!(
-                profile().apply_state(state),
-                Err(MobileRgbLightingRecordError::InvalidState)
-            );
+            assert!(profile().apply_state(state).is_ok());
         }
-        state.playback = Some(MobileLightingPlaybackDto::Music {
-            effect: 7,
-            sensitivity: 100,
+        state.playback = Some(MobileLightingPlaybackDto::Effect {
+            pattern: 228,
+            speed: 50,
         });
         assert_eq!(
             profile().apply_state(state),
             Err(MobileRgbLightingRecordError::InvalidState)
         );
+        state.playback = Some(MobileLightingPlaybackDto::Music {
+            effect: 7,
+            sensitivity: 100,
+        });
+        assert!(profile().apply_state(state).is_ok());
         state.playback = None;
         let writes = profile().apply_state(state).unwrap();
-        assert_eq!(writes[0].payload, [0x7e, 0, 5, 3, 1, 2, 3, 0, 0xef]);
+        assert_eq!(writes[0].payload, profile().set_power(false).payload);
+        assert_eq!(writes[1].payload, [0x7e, 0, 5, 3, 1, 2, 3, 0, 0xef]);
     }
     #[test]
     fn schedule_and_clock_errors_remain_distinct() {
@@ -339,8 +327,11 @@ mod tests {
             Err(MobileMelkLightingError::InvalidClock)
         );
         assert_eq!(
-            profile().set_schedule(valid_schedule, valid_clock),
-            Err(MobileMelkLightingError::UnsupportedCapability)
+            profile()
+                .set_schedule(valid_schedule, valid_clock)
+                .unwrap()
+                .len(),
+            2
         );
     }
 }

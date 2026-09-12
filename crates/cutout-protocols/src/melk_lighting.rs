@@ -646,12 +646,15 @@ impl MelkLightingProfile {
 
     /// Plans the ordered writes needed to restore one requested controller state.
     ///
-    /// Brightness is applied before power so restoring an off state cannot finish lit. Music
-    /// playback emits its sensitivity/effect/microphone sequence; solid and effect playback do
-    /// not claim microphone state because OC21 readback is unavailable.
+    /// Power is applied first so a selected mode is accepted even when the controller was off.
+    /// Music playback emits its sensitivity/effect/microphone sequence; solid and effect
+    /// playback do not claim microphone state because OC21 readback is unavailable.
     #[must_use]
     pub fn plan_state(state: RgbLightingRequestedState) -> Vec<TransportAction> {
-        let mut actions = match state.playback() {
+        let mut actions = vec![Self::write_action(RgbLightingCommand::SetPower(
+            state.power(),
+        ))];
+        actions.extend(match state.playback() {
             LightingPlayback::Solid => vec![Self::write_action(RgbLightingCommand::SetSolidColor(
                 state.color(),
             ))],
@@ -667,12 +670,9 @@ impl MelkLightingProfile {
                 Self::control_action(MelkControl::MusicEffect(effect)),
                 Self::control_action(MelkControl::Microphone(true)),
             ],
-        };
+        });
         actions.push(Self::write_action(RgbLightingCommand::SetBrightness(
             state.brightness(),
-        )));
-        actions.push(Self::write_action(RgbLightingCommand::SetPower(
-            state.power(),
         )));
         actions
     }
@@ -760,13 +760,13 @@ mod tests {
         let actions = MelkLightingProfile::plan_state(state);
 
         assert_eq!(actions.len(), 4);
-        assert_eq!(payload(&actions[0]), [0x7e, 5, 3, 16, 6, 255, 255, 0, 0xef]);
+        assert_eq!(payload(&actions[0]), [0x7e, 0, 4, 0, 0, 0, 255, 0, 0xef]);
+        assert_eq!(payload(&actions[1]), [0x7e, 5, 3, 16, 6, 255, 255, 0, 0xef]);
         assert_eq!(
-            payload(&actions[1]),
+            payload(&actions[2]),
             [0x7e, 4, 2, 200, 255, 255, 255, 0, 0xef]
         );
-        assert_eq!(payload(&actions[2]), [0x7e, 4, 1, 42, 255, 0, 255, 0, 0xef]);
-        assert_eq!(payload(&actions[3]), [0x7e, 0, 4, 0, 0, 0, 255, 0, 0xef]);
+        assert_eq!(payload(&actions[3]), [0x7e, 4, 1, 42, 255, 0, 255, 0, 0xef]);
     }
 
     #[test]

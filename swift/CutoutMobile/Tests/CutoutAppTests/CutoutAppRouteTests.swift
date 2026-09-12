@@ -919,8 +919,8 @@ final class CutoutAppRouteTests: XCTestCase {
     }
 
     @MainActor
-    func testLightingEffectTileSelectionIsDraftUntilPlay() throws {
-        let suiteName = "CutoutAppRouteTests.lightingEffectDraft"
+    func testLightingEffectTileSelectionAppliesImmediately() throws {
+        let suiteName = "CutoutAppRouteTests.lightingEffectImmediate"
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
         defaults.removePersistentDomain(forName: suiteName)
         defer { defaults.removePersistentDomain(forName: suiteName) }
@@ -931,11 +931,12 @@ final class CutoutAppRouteTests: XCTestCase {
             persistence: LightingAccessoryPersistence(defaults: defaults)
         )
         model.start()
+        fake.emitState(.ready)
         let controls = LightingPlaybackControls(model: model, page: .effects)
 
         controls.selectPattern(16)
 
-        XCTAssertTrue(fake.stateRequests.isEmpty)
+        XCTAssertEqual(fake.stateRequests.last?.playback, .effect(pattern: 16, speed: 128))
     }
 
     @MainActor
@@ -1308,17 +1309,12 @@ final class CutoutAppRouteTests: XCTestCase {
         XCTAssertEqual(LightingControlPage.allCases.map(\.title), ["Color", "Effects", "Music", "Schedule"])
     }
 
-    func testLightingPatternNamesKeepWireIDsAndUnmappedModesExplicit() {
+    func testLightingPatternNamesKeepEveryWireIDAvailable() {
         let groups = LightingPatternCatalog.groups
         XCTAssertEqual(groups.flatMap(\.ids).sorted(), Array(0...227))
         XCTAssertEqual(groups.first?.name, "Basic")
         XCTAssertEqual(groups.first?.ids.prefix(3), [1, 2, 212])
         XCTAssertEqual(groups.first(where: { $0.name == "Curtain" })?.ids, Array(57...76))
-        XCTAssertTrue((1...212).allSatisfy { LightingPatternCatalog.isMapped($0) })
-        XCTAssertEqual(LightingPatternCatalog.verifiedEffectIDs, Set([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 16, 22, 75]))
-        XCTAssertTrue([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 16, 22, 75].allSatisfy { LightingPatternCatalog.isVerified($0) })
-        XCTAssertFalse([0, 11, 212, 213, 227].contains { LightingPatternCatalog.isVerified($0) })
-        XCTAssertFalse([0, 213, 220, 255, -1].contains { LightingPatternCatalog.isMapped($0) })
         for id in 1...212 {
             XCTAssertFalse(LightingPatternCatalog.name(for: id).isEmpty)
             XCTAssertFalse(LightingPatternCatalog.name(for: id).contains("Unmapped"))
@@ -1326,13 +1322,12 @@ final class CutoutAppRouteTests: XCTestCase {
         XCTAssertEqual(LightingPatternCatalog.name(for: 1), "Magic Forward")
         XCTAssertEqual(LightingPatternCatalog.name(for: 16), "6-Color to Cyan Back")
         XCTAssertEqual(LightingPatternCatalog.name(for: 75), "White Close")
-        XCTAssertEqual(LightingPatternCatalog.name(for: 115), "Green-Dot in Red Running (reference)")
-        XCTAssertEqual(LightingPatternCatalog.name(for: 169), "Green-Dot in Red Running (reference)")
-        XCTAssertEqual(LightingPatternCatalog.name(for: 212), "7-Color Energy (reference)")
+        XCTAssertEqual(LightingPatternCatalog.name(for: 115), "Green-Dot in Red Running")
+        XCTAssertEqual(LightingPatternCatalog.name(for: 169), "Green-Dot in Red Running")
+        XCTAssertEqual(LightingPatternCatalog.name(for: 212), "7-Color Energy")
         for id in [0] + Array(213...227) {
             XCTAssertFalse(LightingPatternCatalog.name(for: id).isEmpty)
             XCTAssertFalse(LightingPatternCatalog.name(for: id).contains("Unmapped"))
-            XCTAssertFalse(LightingPatternCatalog.isMapped(id))
         }
         XCTAssertEqual(LightingPatternCatalog.name(for: 0), "Auto Play (reference)")
         XCTAssertEqual(LightingPatternCatalog.name(for: 213), "Fade 73 (reference)")
@@ -1434,7 +1429,10 @@ final class CutoutAppRouteTests: XCTestCase {
 
         XCTAssertTrue(model.setSchedule(schedule))
         model.markUnconfirmed()
-        XCTAssertNotNil(persistence.restoreCandidate())
+        XCTAssertEqual(persistence.confirmation, .unconfirmed)
+        XCTAssertNil(persistence.restoreCandidate())
+        model.setPlayback(.effect(pattern: 212, speed: 0))
+        XCTAssertEqual(fake.stateRequests.last?.playback, .effect(pattern: 212, speed: 0))
     }
 
     @MainActor
