@@ -128,17 +128,10 @@ enum CutoutAppRoute: Hashable {
 
     private var routeTabs: [PevScreenTab] {
         switch self {
-        case .devicePicker, .capture, .rideMap, .rideMapDetail:
+        case .devicePicker, .capture, .rideMap, .rideMapDetail, .lighting:
             []
         case .eucRide:
             PevRideTabs.eucRideTabs(selected: .eucRide)
-        case .lighting(let context):
-            switch context {
-            case .euc:
-                PevRideTabs.eucRideTabs(lightingSelected: true)
-            case .vesc:
-                PevRideTabs.vescRideTabs(lightingSelected: true)
-            }
         case .eucPack(let screen):
             PevRideTabs.eucRideTabs(selected: screen.screenID ?? .bmsOverview)
         case .eucTune:

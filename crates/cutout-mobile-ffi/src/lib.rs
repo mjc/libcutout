@@ -10185,16 +10185,22 @@ impl MobileRideMapCore {
     ) -> Result<MobileMusicTimelineRecordResultDto, MobileRideMapCoreErrorDto> {
         let snapshot = CoreMusicSnapshot::try_from(snapshot)
             .map_err(MobileRideMapCoreErrorDto::InvalidMusicInput)?;
-        let state = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
-        let Some(ride_id) = state.active_ride_id.clone() else {
-            return Err(MobileRideMapCoreErrorDto::NoActiveRide);
+        let (ride_id, database) = {
+            let state = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
+            let Some(ride_id) = state.active_ride_id.clone() else {
+                return Err(MobileRideMapCoreErrorDto::NoActiveRide);
+            };
+            if state.recorder.state() != Some(ride_maps::RideLifecycleState::Active) {
+                return Ok(MobileMusicTimelineRecordResultDto {
+                    outcome: MobileMusicTimelineOutcomeDto::RideNotOpen,
+                    sequence: None,
+                });
+            }
+            let Some(database) = state.database.clone() else {
+                return Err(MobileRideMapCoreErrorDto::storage_unavailable());
+            };
+            (ride_id, database)
         };
-        if state.recorder.state() != Some(ride_maps::RideLifecycleState::Active) {
-            return Ok(MobileMusicTimelineRecordResultDto {
-                outcome: MobileMusicTimelineOutcomeDto::RideNotOpen,
-                sequence: None,
-            });
-        }
         if snapshot.state() == CoreMusicPlaybackState::Stale
             || snapshot.observed_at() > MonotonicTimestamp::from_milliseconds(monotonic_at_ms)
         {
@@ -10203,9 +10209,6 @@ impl MobileRideMapCore {
                 sequence: None,
             });
         }
-        let Some(database) = state.database.as_ref() else {
-            return Err(MobileRideMapCoreErrorDto::storage_unavailable());
-        };
         let ride_id = parse_mobile_ride_id(&ride_id).map_err(map_core_error)?;
         let policy = database
             .inner

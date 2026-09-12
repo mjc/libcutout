@@ -132,7 +132,7 @@ struct ContentView: View {
 
     @ViewBuilder
     private func destinationContent(for destination: CutoutAppRoute) -> some View {
-        if case .lighting = destination, model.selectedConnectionRoute == nil {
+        if case .lighting = destination {
             LightingRouteView(model: lighting, rideModel: model)
                 .toolbar {
                     ToolbarItem(placement: .navigation) {

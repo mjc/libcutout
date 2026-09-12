@@ -204,6 +204,15 @@ final class CutoutAppRouteTests: XCTestCase {
         )
     }
 
+    func testHomeLightingRouteHasNoPevTabsRegardlessOfConnection() {
+        let lighting = CutoutAppRoute.lighting(.euc)
+
+        XCTAssertEqual(CutoutAppRoute.navigationPath(for: lighting), [lighting])
+        XCTAssertTrue(lighting.navigationTabs(for: nil).isEmpty)
+        XCTAssertTrue(lighting.navigationTabs(for: .electricUnicycle).isEmpty)
+        XCTAssertTrue(lighting.navigationTabs(for: .vescOnewheel).isEmpty)
+    }
+
     func testLightingAutoStartRequiresRememberedIdentity() {
         XCTAssertTrue(shouldAutoStartLightingSession(platformIdentifier: "A1B2C3D4-E5F6-4789-ABCD-0123456789AB"))
         XCTAssertFalse(shouldAutoStartLightingSession(platformIdentifier: nil))
