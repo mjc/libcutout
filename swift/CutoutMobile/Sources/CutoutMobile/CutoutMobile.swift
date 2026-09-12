@@ -1254,6 +1254,7 @@ public struct FaultHistoryReadback: Equatable, Hashable, Sendable {
 public enum LightState: Equatable, Hashable, Sendable {
     case off
     case on
+    case strobe
 
     fileprivate init(_ dto: MobileLightStateDto) {
         switch dto {
@@ -1261,11 +1262,17 @@ public enum LightState: Equatable, Hashable, Sendable {
             self = .off
         case .on:
             self = .on
+        case .strobe:
+            self = .strobe
         }
     }
 
     fileprivate var dto: MobileLightStateDto {
-        self == .on ? .on : .off
+        switch self {
+        case .off: .off
+        case .on: .on
+        case .strobe: .strobe
+        }
     }
 }
 
@@ -6549,7 +6556,7 @@ public final class CoreBluetoothLiveSessionOwner: @unchecked Sendable {
         executeAndRecord(subscriptions + writes)
         scheduleRetryIfNeeded()
         scheduleSettingTick()
-        
+
         return step
     }
 

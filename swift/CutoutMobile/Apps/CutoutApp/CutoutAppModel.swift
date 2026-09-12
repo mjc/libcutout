@@ -2183,7 +2183,7 @@ final class CutoutAppModel {
         if state.kind == .pending, core.electricUnicycleModel == .aero {
             return state.requested
         }
-        return state.lightState
+        return state.current
     }
 
     private func updateFallbackHeadlightState(from readback: SettingsReadback?) {
@@ -2192,7 +2192,7 @@ final class CutoutAppModel {
             if fallbackHeadlightState?.kind == .pending {
                 fallbackHeadlightState = LightSettingState(
                     kind: .failed,
-                    current: fallbackHeadlightState?.lightState
+                    current: fallbackHeadlightState?.current
                 )
             }
             return

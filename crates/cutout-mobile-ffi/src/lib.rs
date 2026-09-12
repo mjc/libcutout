@@ -1,5 +1,8 @@
 //! Concrete `UniFFI` mobile binding surface for Cutout.
 
+mod rgb;
+pub use rgb::*;
+
 use std::{
     collections::VecDeque,
     convert::TryFrom,
@@ -55,22 +58,23 @@ use cutout_core::{
     RideSessionLifecycle as CoreRideSessionLifecycle, RideSessionMarker as CoreRideSessionMarker,
     RideSessionMarkerError as CoreRideSessionMarkerError, RideSessionPhase as CoreRideSessionPhase,
     RideStopReasonDto, RideWarningDto, RollAngle as CoreRollAngle,
-    SETTING_WRITE_CONFIRMATION_TIMEOUT, SemanticEventCountDto, SeriesCount, SessionInputDto,
-    SessionOutputDto, SettingState as CoreSettingState,
-    SettingValueSource as CoreSettingValueSource, SettingsEntry, SettingsEntryDto,
-    SettingsReadback, SettingsReadbackAvailability, SettingsReadbackAvailabilityDto,
-    SettingsReadbackDto, Speed as CoreSpeed, SpeedAlarmMode as CoreSpeedAlarmMode, SpeedReadingDto,
-    TelemetryFreshness, TelemetrySnapshotDto, TemperatureReadingDto, TransportActionDto,
-    TransportWriteLimit, TransportWriteLimitDto, UsablePackCapacity, ValueQuality,
-    ValueQuality as CoreValueQuality, ValueQualityDto, ValueSource, ValueSource as CoreValueSource,
-    ValueSourceDto, VerificationStatus, VerificationStatusDto, VerifiedValue,
-    Voltage as CoreVoltage, VoltageReadingDto, VoltageSagEstimate, VoltageSagEstimator,
-    VoltageSagInput, VoltageSagModel, WallClockUnixTimestamp, WriteMode,
+    SETTING_WRITE_CONFIRMATION_TIMEOUT, SemanticEventCountDto, SeriesCount, SessionEventDto,
+    SessionInputDto, SessionOutputDto, SettingCommandStatus as CoreSettingCommandStatus,
+    SettingState as CoreSettingState, SettingValueSource as CoreSettingValueSource, SettingsEntry,
+    SettingsEntryDto, SettingsReadback, SettingsReadbackAvailability,
+    SettingsReadbackAvailabilityDto, SettingsReadbackDto, Speed as CoreSpeed,
+    SpeedAlarmMode as CoreSpeedAlarmMode, SpeedReadingDto, TelemetryFreshness,
+    TelemetrySnapshotDto, TemperatureReadingDto, TransportActionDto, TransportWriteLimit,
+    TransportWriteLimitDto, UsablePackCapacity, ValueQuality, ValueQuality as CoreValueQuality,
+    ValueQualityDto, ValueSource, ValueSource as CoreValueSource, ValueSourceDto,
+    VerificationStatus, VerificationStatusDto, VerifiedValue, Voltage as CoreVoltage,
+    VoltageReadingDto, VoltageSagEstimate, VoltageSagEstimator, VoltageSagInput, VoltageSagModel,
+    WallClockUnixTimestamp, WriteMode,
 };
 use cutout_music::{
     MusicCapabilities as CoreMusicCapabilities, MusicCommand as CoreMusicCommand,
-    MusicHistoryPolicy as CoreMusicHistoryPolicy, MusicItem as CoreMusicItem,
-    MusicPlaybackPosition as CoreMusicPlaybackPosition,
+    MusicHistoryPolicy as CoreMusicHistoryPolicy, MusicHistoryState as CoreMusicHistoryState,
+    MusicItem as CoreMusicItem, MusicPlaybackPosition as CoreMusicPlaybackPosition,
     MusicPlaybackState as CoreMusicPlaybackState, MusicProvider as CoreMusicProvider,
     MusicRideEvent as CoreMusicRideEvent, MusicRideEventKind as CoreMusicRideEventKind,
     MusicSnapshot as CoreMusicSnapshot, MusicTimelineOutcome as CoreMusicTimelineOutcome,
@@ -94,6 +98,15 @@ use libcutout_persistence as persistence;
 use uuid::Uuid;
 
 uniffi::setup_scaffolding!();
+
+mod music_callback_epoch;
+mod music_connection;
+mod music_monitor;
+mod music_player_request;
+pub use music_callback_epoch::*;
+pub use music_connection::*;
+pub use music_monitor::*;
+pub use music_player_request::*;
 
 /// Mobile discovery candidate support state.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Enum)]
@@ -2321,6 +2334,31 @@ pub enum MobileSettingStateKindDto {
     Failed,
 }
 
+/// Host-facing status of a mobile setting command.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Enum)]
+pub enum MobileLightCommandStatusDto {
+    /// No setting value or command is known.
+    Idle,
+
+    /// A write is waiting for matching readback.
+    WaitingForConfirmation,
+
+    /// A write was accepted for a protocol without readable confirmation.
+    SentWithoutConfirmation,
+
+    /// No matching readback arrived before the confirmation timeout.
+    TimedOut,
+
+    /// Matching readback confirmed the requested value.
+    Confirmed,
+
+    /// The command was refused before transport.
+    Refused,
+
+    /// Transport or session failure prevented completion.
+    Failed,
+}
+
 /// Provenance for the current value in a mobile setting state.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Enum)]
 pub enum MobileSettingValueSourceDto {
@@ -2746,6 +2784,13 @@ pub struct MobileSessionOutputDto {
     /// Full protocol-native raw telemetry.
     pub raw_telemetry: Option<MobileRawTelemetryReadbackDto>,
 
+    /// A fresh Refloat realtime telemetry event was emitted for this output.
+    ///
+    /// This is event-scoped rather than inferred from the retained snapshot, so
+    /// reconnect retry logic cannot mistake stale Refloat fields for a new
+    /// realtime sample.
+    pub vesc_realtime_telemetry: bool,
+
     /// Veteran/NOSFET protocol model id when an Aero-family session decoded it.
     pub veteran_protocol_model_id: Option<u16>,
 }
@@ -2993,6 +3038,20 @@ pub struct MobileSessionStepResultDto {
 
     /// Stable error from the step, if any.
     pub error: Option<MobileSessionStepErrorDto>,
+}
+
+impl From<CoreSettingCommandStatus> for MobileLightCommandStatusDto {
+    fn from(status: CoreSettingCommandStatus) -> Self {
+        match status {
+            CoreSettingCommandStatus::Idle => Self::Idle,
+            CoreSettingCommandStatus::WaitingForConfirmation => Self::WaitingForConfirmation,
+            CoreSettingCommandStatus::SentWithoutConfirmation => Self::SentWithoutConfirmation,
+            CoreSettingCommandStatus::TimedOut => Self::TimedOut,
+            CoreSettingCommandStatus::Confirmed => Self::Confirmed,
+            CoreSettingCommandStatus::Refused => Self::Refused,
+            CoreSettingCommandStatus::Failed => Self::Failed,
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -4200,6 +4259,33 @@ pub enum MobileMusicHistoryPolicyDto {
     HumanReadable,
 }
 
+/// Durable state of a ride's music-history record.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Enum)]
+pub enum MobileMusicHistoryStateDto {
+    /// The ride has no music-history record yet.
+    Missing,
+    /// Music history was explicitly disabled.
+    Disabled,
+    /// Display metadata was redacted while opaque identifiers remain.
+    Redacted,
+    /// Bounded human-readable metadata is retained.
+    HumanReadable,
+    /// Music history was explicitly deleted while the ride was preserved.
+    Deleted,
+}
+
+impl From<CoreMusicHistoryState> for MobileMusicHistoryStateDto {
+    fn from(state: CoreMusicHistoryState) -> Self {
+        match state {
+            CoreMusicHistoryState::Missing => Self::Missing,
+            CoreMusicHistoryState::Disabled => Self::Disabled,
+            CoreMusicHistoryState::Redacted => Self::Redacted,
+            CoreMusicHistoryState::HumanReadable => Self::HumanReadable,
+            CoreMusicHistoryState::Deleted => Self::Deleted,
+        }
+    }
+}
+
 /// Low-rate transition retained with an opted-in ride.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Enum)]
 pub enum MobileMusicRideEventKindDto {
@@ -4280,7 +4366,7 @@ impl From<persistence::MusicHistory> for MobileMusicHistoryDto {
                 }
                 persistence::MusicHistoryStatus::Deleted => MobileMusicHistoryStatusDto::Deleted,
             },
-            events: history.events.iter().map(Into::into).collect(),
+            events: mobile_music_event_dtos(history.events),
         }
     }
 }
@@ -4288,6 +4374,8 @@ impl From<persistence::MusicHistory> for MobileMusicHistoryDto {
 /// One retained ride music transition.
 #[derive(Clone, Debug, Eq, PartialEq, uniffi::Record)]
 pub struct MobileMusicRideEventDto {
+    /// Zero-based ride-local event sequence.
+    pub sequence: u64,
     /// Provider identity.
     pub provider: MobileMusicProviderDto,
     /// Opaque provider item identifier, if retained.
@@ -4489,31 +4577,45 @@ impl TryFrom<MobileMusicSnapshotDto> for CoreMusicSnapshot {
     }
 }
 
-impl From<&CoreMusicRideEvent> for MobileMusicRideEventDto {
-    fn from(event: &CoreMusicRideEvent) -> Self {
-        Self {
-            provider: event.provider().into(),
-            item_identifier: event
-                .item_identifier()
-                .map(|identifier| identifier.as_str().to_owned()),
-            title: event.title().map(str::to_owned),
-            artist: event.artist().map(str::to_owned),
-            kind: match event.kind() {
-                CoreMusicRideEventKind::Play => MobileMusicRideEventKindDto::Play,
-                CoreMusicRideEventKind::Pause => MobileMusicRideEventKindDto::Pause,
-                CoreMusicRideEventKind::Skip => MobileMusicRideEventKindDto::Skip,
-                CoreMusicRideEventKind::ItemChanged => MobileMusicRideEventKindDto::ItemChanged,
-                CoreMusicRideEventKind::Stopped => MobileMusicRideEventKindDto::Stopped,
-                CoreMusicRideEventKind::ProviderDisconnected => {
-                    MobileMusicRideEventKindDto::ProviderDisconnected
-                }
-            },
-            observed_at_ms: event.observed_at().map(MonotonicTimestamp::as_milliseconds),
-            monotonic_at_ms: event.monotonic_at().as_milliseconds(),
-            wall_clock_at_ms: event.wall_clock_at().as_milliseconds(),
-            clock_uncertainty_ms: event.clock_uncertainty_milliseconds(),
-        }
+fn mobile_music_ride_event_dto(
+    event: &CoreMusicRideEvent,
+    sequence: u64,
+) -> MobileMusicRideEventDto {
+    MobileMusicRideEventDto {
+        sequence,
+        provider: event.provider().into(),
+        item_identifier: event
+            .item_identifier()
+            .map(|identifier| identifier.as_str().to_owned()),
+        title: event.title().map(str::to_owned),
+        artist: event.artist().map(str::to_owned),
+        kind: match event.kind() {
+            CoreMusicRideEventKind::Play => MobileMusicRideEventKindDto::Play,
+            CoreMusicRideEventKind::Pause => MobileMusicRideEventKindDto::Pause,
+            CoreMusicRideEventKind::Skip => MobileMusicRideEventKindDto::Skip,
+            CoreMusicRideEventKind::ItemChanged => MobileMusicRideEventKindDto::ItemChanged,
+            CoreMusicRideEventKind::Stopped => MobileMusicRideEventKindDto::Stopped,
+            CoreMusicRideEventKind::ProviderDisconnected => {
+                MobileMusicRideEventKindDto::ProviderDisconnected
+            }
+        },
+        observed_at_ms: event.observed_at().map(MonotonicTimestamp::as_milliseconds),
+        monotonic_at_ms: event.monotonic_at().as_milliseconds(),
+        wall_clock_at_ms: event.wall_clock_at().as_milliseconds(),
+        clock_uncertainty_ms: event.clock_uncertainty_milliseconds(),
     }
+}
+
+fn mobile_music_event_dtos(
+    events: impl IntoIterator<Item = CoreMusicRideEvent>,
+) -> Vec<MobileMusicRideEventDto> {
+    events
+        .into_iter()
+        .enumerate()
+        .map(|(sequence, event)| {
+            mobile_music_ride_event_dto(&event, u64::try_from(sequence).unwrap_or(u64::MAX))
+        })
+        .collect()
 }
 
 /// Rust-owned phone location state. Swift only gathers and forwards Core Location values.
@@ -4964,6 +5066,15 @@ pub struct MobileRideMapLimitsDto {
     pub history_context_total_point_budget: u32,
     /// Duration covered by the recent-history filter.
     pub history_recent_window_milliseconds: u64,
+}
+
+/// Rust-owned byte bounds for provider music metadata.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct MobileMusicLimitsDto {
+    /// Maximum provider/session/item identifier bytes.
+    pub identifier_max_bytes: u32,
+    /// Maximum title or artist bytes.
+    pub display_text_max_bytes: u32,
 }
 
 /// Inputs for a bounded history overview context projection.
@@ -6050,6 +6161,150 @@ pub fn mobile_ride_map_limits() -> MobileRideMapLimitsDto {
     }
 }
 
+/// Returns the Rust-owned byte bounds used by mobile music validation.
+#[uniffi::export]
+#[must_use]
+pub fn mobile_music_limits() -> MobileMusicLimitsDto {
+    MobileMusicLimitsDto {
+        identifier_max_bytes: u32::try_from(cutout_music::MAX_MUSIC_IDENTIFIER_BYTES)
+            .unwrap_or(u32::MAX),
+        display_text_max_bytes: u32::try_from(cutout_music::MAX_MUSIC_DISPLAY_TEXT_BYTES)
+            .unwrap_or(u32::MAX),
+    }
+}
+
+/// Validates one provider observation using the portable Rust music contract.
+///
+/// Platform adapters may use this before updating presentation state so malformed
+/// metadata never enters the UI or capture path.
+#[uniffi::export]
+pub fn validate_music_snapshot(
+    snapshot: MobileMusicSnapshotDto,
+) -> Result<(), MobileRideMapCoreErrorDto> {
+    CoreMusicSnapshot::try_from(snapshot)
+        .map(|_| ())
+        .map_err(MobileRideMapCoreErrorDto::InvalidMusicInput)
+}
+
+/// Normalizes optional display fields and validates one provider observation.
+#[uniffi::export]
+pub fn normalize_music_snapshot(
+    mut snapshot: MobileMusicSnapshotDto,
+) -> Result<MobileMusicSnapshotDto, MobileRideMapCoreErrorDto> {
+    if let Some(item) = snapshot.item.as_mut() {
+        if item
+            .title
+            .as_deref()
+            .is_some_and(|value| value.trim().is_empty())
+        {
+            item.title = None;
+        }
+        if item
+            .artist
+            .as_deref()
+            .is_some_and(|value| value.trim().is_empty())
+        {
+            item.artist = None;
+        }
+    }
+    validate_music_snapshot(snapshot.clone())?;
+    Ok(snapshot)
+}
+
+/// Applies the Rust-owned monotonic observation watermark used by provider
+/// adapters before they update presentation or submit a ride transition.
+#[uniffi::export]
+pub fn accept_music_snapshot(
+    previous_observed_at_ms: Option<u64>,
+    current_observed_at_ms: u64,
+) -> bool {
+    previous_observed_at_ms.is_none_or(|previous| current_observed_at_ms > previous)
+}
+
+/// Applies the Rust-owned PEVCAP music retention filter to one provider item.
+#[uniffi::export]
+pub fn pevcap_music_track_identifier(
+    policy: MobileMusicHistoryPolicyDto,
+    provider: MobileMusicProviderDto,
+    identifier: String,
+) -> Option<String> {
+    if policy == MobileMusicHistoryPolicyDto::OpaqueItem
+        && provider == MobileMusicProviderDto::Spotify
+        && identifier.starts_with("spotify:local:")
+    {
+        None
+    } else {
+        Some(identifier)
+    }
+}
+
+/// Classifies a validated provider observation against the last committed one.
+///
+/// The decision is portable domain logic; Swift only supplies observations and
+/// the fact that a skip command is awaiting provider confirmation.
+#[uniffi::export]
+pub fn music_transition_kind(
+    previous: Option<MobileMusicSnapshotDto>,
+    current: MobileMusicSnapshotDto,
+    skip_hint: bool,
+) -> Result<Option<MobileMusicRideEventKindDto>, MobileRideMapCoreErrorDto> {
+    validate_music_snapshot(current.clone())?;
+    let Some(previous) = previous else {
+        return Ok(current
+            .item
+            .as_ref()
+            .map(|_| MobileMusicRideEventKindDto::ItemChanged));
+    };
+    validate_music_snapshot(previous.clone())?;
+    if current.state == MobileMusicPlaybackStateDto::Disconnected {
+        return Ok(
+            (previous.state != MobileMusicPlaybackStateDto::Disconnected)
+                .then_some(MobileMusicRideEventKindDto::ProviderDisconnected),
+        );
+    }
+    if matches!(
+        current.state,
+        MobileMusicPlaybackStateDto::Unauthorized
+            | MobileMusicPlaybackStateDto::Unavailable
+            | MobileMusicPlaybackStateDto::Disconnected
+            | MobileMusicPlaybackStateDto::Stale
+    ) {
+        return Ok(None);
+    }
+    if previous.provider != current.provider {
+        return Ok(Some(MobileMusicRideEventKindDto::ItemChanged));
+    }
+    if current.state == MobileMusicPlaybackStateDto::Stopped
+        && previous.state != MobileMusicPlaybackStateDto::Stopped
+    {
+        return Ok(Some(MobileMusicRideEventKindDto::Stopped));
+    }
+    if previous.item.as_ref().map(|item| &item.identifier)
+        != current.item.as_ref().map(|item| &item.identifier)
+    {
+        return Ok(Some(
+            if skip_hint && previous.item.is_some() && current.item.is_some() {
+                MobileMusicRideEventKindDto::Skip
+            } else {
+                MobileMusicRideEventKindDto::ItemChanged
+            },
+        ));
+    }
+    Ok(match (previous.state, current.state) {
+        (_, MobileMusicPlaybackStateDto::Playing)
+            if previous.state != MobileMusicPlaybackStateDto::Playing =>
+        {
+            Some(MobileMusicRideEventKindDto::Play)
+        }
+        (_, MobileMusicPlaybackStateDto::Paused)
+            if previous.state != MobileMusicPlaybackStateDto::Paused =>
+        {
+            Some(MobileMusicRideEventKindDto::Pause)
+        }
+        _ => None,
+    })
+}
+
 /// Acquires the process-wide Rust-owned ride database service for `path`.
 ///
 /// # Errors
@@ -6269,7 +6524,30 @@ impl RideDatabaseHandle {
         let ride_id = parse_mobile_ride_id(&ride_id)?;
         self.inner
             .music_history(ride_id)
-            .map(|history| history.events.iter().map(Into::into).collect())
+            .map(|history| mobile_music_event_dtos(history.events))
+            .map_err(map_ride_database_error)
+    }
+
+    /// Loads the durable state of one ride's music-history record.
+    ///
+    /// The state distinguishes an unassociated ride, an explicit disabled choice,
+    /// redacted metadata, human-readable metadata, and explicit deletion.
+    ///
+    /// # Errors
+    ///
+    /// Returns a typed database error when the ride identifier, worker, or stored state is invalid.
+    #[allow(
+        clippy::needless_pass_by_value,
+        reason = "UniFFI owns boundary identifiers"
+    )]
+    pub fn music_history_state(
+        &self,
+        ride_id: MobileRideIdDto,
+    ) -> Result<MobileMusicHistoryStateDto, MobileRideDatabaseError> {
+        let ride_id = parse_mobile_ride_id(&ride_id)?;
+        self.inner
+            .music_history_state(ride_id)
+            .map(Into::into)
             .map_err(map_ride_database_error)
     }
 
@@ -7696,6 +7974,13 @@ fn map_ride_lifecycle_state(state: MobileRideLifecycleStateDto) -> ride_maps::Ri
     }
 }
 
+fn music_history_is_recordable(state: Option<ride_maps::RideLifecycleState>) -> bool {
+    matches!(
+        state,
+        Some(ride_maps::RideLifecycleState::Active | ride_maps::RideLifecycleState::Paused)
+    )
+}
+
 fn map_ride_telemetry_state(
     state: MobileRideMapCoreTelemetryStateDto,
 ) -> Result<ride_maps::RouteTelemetryState, &'static str> {
@@ -8006,7 +8291,7 @@ impl MobileRideMapCore {
         state.music_history_policy.into()
     }
 
-    /// Sets the bounded music-history policy for the active ride.
+    /// Sets the bounded music-history policy for the active or paused ride.
     ///
     /// Disabling the policy clears the authoritative durable music timeline.
     ///
@@ -8023,7 +8308,7 @@ impl MobileRideMapCore {
         let Some(ride_id) = state.active_ride_id.clone() else {
             return Err(MobileRideMapCoreErrorDto::NoActiveRide);
         };
-        if state.recorder.state() != Some(ride_maps::RideLifecycleState::Active) {
+        if !music_history_is_recordable(state.recorder.state()) {
             return Err(MobileRideMapCoreErrorDto::InvalidTransition);
         }
         let policy = CoreMusicHistoryPolicy::from(policy);
@@ -8067,6 +8352,11 @@ impl MobileRideMapCore {
 
     /// Records one transition and returns the authoritative sequence assigned
     /// by Rust when a new event is appended.
+    ///
+    /// # Errors
+    ///
+    /// Returns a typed ride-map error when the event is invalid, no ride is active,
+    /// or durable storage is unavailable.
     #[allow(clippy::needless_pass_by_value)]
     pub fn record_music_event_with_sequence(
         &self,
@@ -8182,7 +8472,7 @@ impl MobileRideMapCore {
         database
             .inner
             .music_history(ride_id)
-            .map(|history| history.events.iter().map(Into::into).collect())
+            .map(|history| mobile_music_event_dtos(history.events))
             .map_err(map_storage_core_error)
     }
 
@@ -8236,6 +8526,32 @@ impl MobileRideMapCore {
             .inner
             .save_music_history_policy(ride_id, CoreMusicHistoryPolicy::OpaqueItem)
             .map_err(map_storage_core_error)
+    }
+
+    /// Deletes music metadata for the current ride, including its in-memory timeline.
+    ///
+    /// This is available for terminal rides that remain selected until the user saves or
+    /// discards them; active and paused rides normally use the policy setter so their capture
+    /// context is updated by the app coordinator.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when no current ride exists, storage is unavailable, or the ride
+    /// identifier cannot be parsed.
+    pub fn delete_current_music_history(&self) -> Result<(), MobileRideMapCoreErrorDto> {
+        let mut state = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
+        let Some(ride_id) = state.active_ride_id.clone() else {
+            return Err(MobileRideMapCoreErrorDto::NoActiveRide);
+        };
+        let Some(database) = state.database.clone() else {
+            return Err(MobileRideMapCoreErrorDto::storage_unavailable());
+        };
+        database
+            .inner
+            .delete_music_history(parse_mobile_ride_id(&ride_id).map_err(map_core_error)?)
+            .map_err(map_storage_core_error)?;
+        state.reset_music_history_policy();
+        Ok(())
     }
 
     /// Associates a connected vehicle with the active recording.
@@ -8393,6 +8709,16 @@ impl MobileRideMapCore {
             }
         }
         Ok(decisions)
+    }
+
+    /// Returns whether a location write is waiting for its SQLite completion.
+    pub fn has_pending_location_writes(&self) -> bool {
+        !self
+            .inner
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .pending_location_writes
+            .is_empty()
     }
 
     ///
@@ -8819,6 +9145,8 @@ pub enum MobileVescRideWarningDto {
 
     /// The controller is applying duty-based pushback.
     DutyPushback,
+    /// The controller is applying speed-based pushback.
+    SpeedPushback,
     /// The controller is applying temperature-based pushback.
     TemperaturePushback,
     /// The controller reports active wheel slip.
@@ -8829,6 +9157,10 @@ pub enum MobileVescRideWarningDto {
     LowBattery,
     /// The package reports an error warning.
     Error,
+    /// The package cannot communicate with its battery-management system.
+    BmsConnection,
+    /// The controller reported a warning code this version does not know.
+    Unknown,
 }
 
 /// Reason a VESC float controller stopped balancing.
@@ -8874,11 +9206,14 @@ impl From<RideWarningDto> for MobileVescRideWarningDto {
             RideWarningDto::MotorTemperature => Self::MotorTemperature,
             RideWarningDto::Current => Self::Current,
             RideWarningDto::DutyPushback => Self::DutyPushback,
+            RideWarningDto::SpeedPushback => Self::SpeedPushback,
             RideWarningDto::TemperaturePushback => Self::TemperaturePushback,
             RideWarningDto::Wheelslip => Self::Wheelslip,
             RideWarningDto::Sensors => Self::Sensors,
             RideWarningDto::LowBattery => Self::LowBattery,
             RideWarningDto::Error => Self::Error,
+            RideWarningDto::BmsConnection => Self::BmsConnection,
+            RideWarningDto::Unknown => Self::Unknown,
         }
     }
 }
@@ -10573,6 +10908,7 @@ pub struct MobilePevcapCaptureBuilder {
     writer: Mutex<Option<CaptureWriter>>,
     writer_state: Mutex<Option<Arc<CaptureWriterState>>>,
     music_history_policy: Mutex<CoreMusicHistoryPolicy>,
+    music_capture_start_monotonic_ms: Mutex<Option<u64>>,
     music_context: Mutex<VecDeque<PendingPevcapMusicContext>>,
 }
 
@@ -10586,13 +10922,14 @@ fn pevcap_music_event_for_policy(
     if policy == CoreMusicHistoryPolicy::Disabled {
         return Ok(None);
     }
+    let event = PevcapMusicEvent::try_from(music.clone())?;
     if policy == CoreMusicHistoryPolicy::OpaqueItem
         && music.provider == MobileMusicProviderDto::Spotify
         && music.track_id.starts_with("spotify:local:")
     {
         return Ok(None);
     }
-    PevcapMusicEvent::try_from(music).map(Some)
+    Ok(Some(event))
 }
 
 #[derive(Clone, Debug)]
@@ -10622,6 +10959,7 @@ impl MobilePevcapCaptureBuilder {
             writer: Mutex::new(None),
             writer_state: Mutex::new(None),
             music_history_policy: Mutex::new(CoreMusicHistoryPolicy::Disabled),
+            music_capture_start_monotonic_ms: Mutex::new(None),
             music_context: Mutex::new(VecDeque::with_capacity(PEVCAP_MUSIC_CONTEXT_CAPACITY)),
         })
     }
@@ -10722,7 +11060,7 @@ impl MobilePevcapCaptureBuilder {
 
     /// Sets the ride music-history policy used for future PEVCAP metadata.
     ///
-    /// Disabled drops all music observations. OpaqueItem drops provider identifiers that embed
+    /// Disabled drops all music observations. `OpaqueItem` drops provider identifiers that embed
     /// display metadata. Changing policy clears queued context so an earlier, more permissive
     /// choice cannot leak into a later frame. Existing PEVCAP files remain separate private
     /// capture artifacts and are not rewritten by ride-history deletion.
@@ -10736,6 +11074,37 @@ impl MobilePevcapCaptureBuilder {
             .unwrap_or_else(PoisonError::into_inner)
             .clear();
         true
+    }
+
+    /// Sets the monotonic origin used for capture-relative music timestamps.
+    pub fn set_music_capture_start_monotonic_ms(&self, monotonic_ms: u64) -> bool {
+        *self
+            .music_capture_start_monotonic_ms
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner) = Some(monotonic_ms);
+        true
+    }
+
+    fn relative_music_event(
+        &self,
+        mut music: MobilePevcapMusicEventDto,
+    ) -> Option<MobilePevcapMusicEventDto> {
+        let start = *self
+            .music_capture_start_monotonic_ms
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        let Some(start) = start else {
+            return Some(music);
+        };
+        if music.monotonic_at_ms >= start {
+            music.monotonic_at_ms -= start;
+            Some(music)
+        } else if start - music.monotonic_at_ms <= PEVCAP_MUSIC_CONTEXT_FRESHNESS_MS {
+            music.monotonic_at_ms = 0;
+            Some(music)
+        } else {
+            None
+        }
     }
 
     /// Queues a bounded music observation for correlation with the next notifications.
@@ -10752,6 +11121,9 @@ impl MobilePevcapCaptureBuilder {
             .music_history_policy
             .lock()
             .unwrap_or_else(PoisonError::into_inner);
+        let Some(music) = self.relative_music_event(music) else {
+            return false;
+        };
         let event = match pevcap_music_event_for_policy(music.clone(), policy) {
             Ok(Some(event)) => event,
             Ok(None) => return true,
@@ -10774,6 +11146,9 @@ impl MobilePevcapCaptureBuilder {
             .music_history_policy
             .lock()
             .unwrap_or_else(PoisonError::into_inner);
+        let Some(music) = self.relative_music_event(music) else {
+            return false;
+        };
         let event = match pevcap_music_event_for_policy(music, policy) {
             Ok(Some(event)) => event,
             Ok(None) => return true,
@@ -10879,6 +11254,11 @@ impl MobilePevcapCaptureBuilder {
     }
 
     /// Records an inbound notification with optional music correlation metadata.
+    ///
+    /// # Panics
+    ///
+    /// Panics only if the internal record builder rejects music metadata for an inbound record;
+    /// the builder's invariant guarantees that this cannot occur.
     #[allow(clippy::needless_pass_by_value, clippy::too_many_arguments)]
     pub fn record_notification_with_context_and_music(
         &self,
@@ -10902,10 +11282,13 @@ impl MobilePevcapCaptureBuilder {
         if let Some(location) = phone_location.and_then(MobilePhoneLocationSampleDto::canonical) {
             record = record.with_phone_location(location.pevcap_location());
         }
-        if let Ok(Some(music)) = self.resolve_music_context(music, monotonic_ms.milliseconds) {
-            record = record
-                .with_music(music)
-                .expect("inbound records accept music metadata");
+        match self.resolve_music_context(music, monotonic_ms.milliseconds) {
+            Ok(Some(music)) => {
+                record = record
+                    .with_music(music)
+                    .expect("inbound records accept music metadata");
+            }
+            Ok(None) | Err(()) => {}
         }
         self.send_record(record)
     }
@@ -10945,15 +11328,16 @@ impl MobilePevcapCaptureBuilder {
     ) -> Result<Option<PevcapMusicEvent>, ()> {
         match music {
             Some(music) => {
-                self.music_context
-                    .lock()
-                    .unwrap_or_else(PoisonError::into_inner)
-                    .clear();
                 let policy = *self
                     .music_history_policy
                     .lock()
                     .unwrap_or_else(PoisonError::into_inner);
-                pevcap_music_event_for_policy(music, policy).map_err(|_| ())
+                let event = pevcap_music_event_for_policy(music, policy).map_err(|_| ())?;
+                self.music_context
+                    .lock()
+                    .unwrap_or_else(PoisonError::into_inner)
+                    .clear();
+                Ok(event)
             }
             None => {
                 let mut pending = self
@@ -11709,7 +12093,6 @@ impl AeroBenignControlSession {
     pub fn headlight_state(&self) -> MobileLightSettingStateDto {
         self.lock_settings().headlight()
     }
-
     /// Returns the Rust-owned status of the latest headlight command.
     pub fn headlight_command_status(
         &self,
@@ -11721,8 +12104,7 @@ impl AeroBenignControlSession {
 
     /// Records a transport failure for the latest headlight command.
     pub fn fail_headlight_command(&self) {
-        let mut settings = self.lock_settings();
-        settings.fail_headlight();
+        self.lock_settings().fail_headlight();
     }
 
     /// Returns the Rust-owned pedal-mode setting lifecycle state.
@@ -11885,6 +12267,7 @@ impl MobileSessionOutputDto {
             fault_history_readback: None,
             bms_snapshot: None,
             raw_telemetry: None,
+            vesc_realtime_telemetry: false,
             veteran_protocol_model_id: None,
         }
     }
@@ -11937,6 +12320,13 @@ impl From<SessionOutputDto> for MobileSessionOutputDto {
                 Self::empty(MobileSessionOutputKindDto::Disconnect)
             }
             SessionOutputDto::ReadOnly(response) => Self::read_only(response.payload),
+            SessionOutputDto::Event(SessionEventDto::Telemetry(delta)) => {
+                let mut output = Self::empty(MobileSessionOutputKindDto::Event);
+                output.vesc_realtime_telemetry = delta.operating_state.is_some()
+                    && delta.operating_mode.is_some()
+                    && delta.footpad.is_some();
+                output
+            }
             SessionOutputDto::Event(_) => Self::empty(MobileSessionOutputKindDto::Event),
             SessionOutputDto::NotificationIngest(outcome) => {
                 let mut output = Self::empty(MobileSessionOutputKindDto::NotificationIngest);
@@ -13184,7 +13574,6 @@ impl FalconBenignControlSession {
     pub fn headlight_state(&self) -> MobileLightSettingStateDto {
         self.lock_settings().headlight()
     }
-
     /// Returns the Rust-owned status of the latest headlight command.
     pub fn headlight_command_status(
         &self,
@@ -13196,8 +13585,7 @@ impl FalconBenignControlSession {
 
     /// Records a transport failure for the latest headlight command.
     pub fn fail_headlight_command(&self) {
-        let mut settings = self.lock_settings();
-        settings.fail_headlight();
+        self.lock_settings().fail_headlight();
     }
 
     /// Returns the Rust-owned pedal-mode setting lifecycle state.
@@ -16543,6 +16931,14 @@ mod tests {
         let falcon_result = falcon.ingest_checked(command_input(MobileLightStateDto::Off));
 
         assert_eq!(aero_result.error, None);
+        assert_eq!(
+            aero.headlight_state().kind,
+            MobileSettingStateKindDto::Pending
+        );
+        assert_eq!(
+            aero.headlight_state().requested,
+            Some(MobileLightStateDto::On)
+        );
         assert!(aero_result.outputs.iter().any(|output| {
             output.kind == MobileSessionOutputKindDto::Write && output.bytes == b"SetLightON"
         }));
@@ -17389,6 +17785,89 @@ mod tests {
         );
         assert!(capture.records[1].music.is_none());
         let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn invalid_explicit_music_context_does_not_consume_pending_context() {
+        let path = std::env::temp_dir().join(format!(
+            "cutout-mobile-writer-music-invalid-{}-{}.jsonl",
+            std::process::id(),
+            thread::current().name().unwrap_or("test")
+        ));
+        let _ = fs::remove_file(&path);
+        let builder = MobilePevcapCaptureBuilder::new(
+            wc(1_700_000_000_000),
+            "ios-corebluetooth".into(),
+            None,
+        );
+        assert!(builder.set_music_history_policy(MobileMusicHistoryPolicyDto::HumanReadable));
+        assert!(builder.set_music_context(Some(MobilePevcapMusicEventDto {
+            provider: MobileMusicProviderDto::AppleMusic,
+            track_id: "pending-song".into(),
+            monotonic_at_ms: 17,
+            wall_clock_unix_ms: 1_700_000_000_017,
+            clock_uncertainty_ms: 75,
+            ride_sequence: Some(1),
+        })));
+        assert!(builder.start_writer(path.to_string_lossy().into_owned()));
+        assert!(builder.record_notification_with_context_and_music(
+            ms(42),
+            vec![0; 16],
+            vec![1; 16],
+            vec![0xde, 0xad],
+            None,
+            None,
+            Some(MobilePevcapMusicEventDto {
+                provider: MobileMusicProviderDto::AppleMusic,
+                track_id: String::new(),
+                monotonic_at_ms: 18,
+                wall_clock_unix_ms: 1_700_000_000_018,
+                clock_uncertainty_ms: 75,
+                ride_sequence: Some(2),
+            }),
+        ));
+        assert!(builder.record_notification_with_context(
+            ms(43),
+            vec![0; 16],
+            vec![1; 16],
+            vec![0xbe, 0xef],
+            None,
+            None,
+        ));
+        assert!(builder.finish_writer());
+
+        let bytes = fs::read(&path).expect("music capture exists");
+        let capture =
+            PevcapCapture::decode(&bytes, PevcapEncoding::Jsonl).expect("music capture decodes");
+        assert_eq!(capture.records.len(), 2);
+        assert_eq!(
+            capture.records[1]
+                .music
+                .as_ref()
+                .expect("pending context survives rejected explicit context")
+                .track_id
+                .as_str(),
+            "pending-song"
+        );
+        assert!(capture.records[0].music.is_none());
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn disabled_music_policy_drops_invalid_capture_context() {
+        let builder = MobilePevcapCaptureBuilder::new(
+            wc(1_700_000_000_000),
+            "ios-corebluetooth".into(),
+            None,
+        );
+        assert!(builder.set_music_context(Some(MobilePevcapMusicEventDto {
+            provider: MobileMusicProviderDto::AppleMusic,
+            track_id: String::new(),
+            monotonic_at_ms: 18,
+            wall_clock_unix_ms: 1_700_000_000_018,
+            clock_uncertainty_ms: 75,
+            ride_sequence: Some(2),
+        })));
     }
 
     #[test]
@@ -19261,6 +19740,18 @@ mod tests {
     }
 
     #[test]
+    fn music_observation_watermark_accepts_only_newer_samples() {
+        assert!(accept_music_snapshot(None, 1));
+        assert!(accept_music_snapshot(Some(1), 2));
+        assert!(!accept_music_snapshot(Some(2), 2));
+        assert!(!accept_music_snapshot(Some(2), 1));
+    }
+
+    #[test]
+    #[allow(
+        clippy::too_many_lines,
+        reason = "the opt-in test exercises the complete ride and music transition contract"
+    )]
     fn music_transition_is_recorded_only_after_opt_in() {
         let _guard = RIDE_DATABASE_TEST_LOCK
             .lock()
@@ -19289,6 +19780,10 @@ mod tests {
             .set_music_history_policy(MobileMusicHistoryPolicyDto::HumanReadable)
             .expect("policy can be enabled while recording");
         assert_eq!(
+            state.current_music_history_policy(),
+            MobileMusicHistoryPolicyDto::HumanReadable
+        );
+        assert_eq!(
             state
                 .record_music_event(
                     snapshot.clone(),
@@ -19302,6 +19797,7 @@ mod tests {
         );
         let events = state.current_music_events().expect("active timeline");
         assert_eq!(events.len(), 1);
+        assert_eq!(events[0].sequence, 0);
         assert_eq!(events[0].title.as_deref(), Some("Song"));
         let mut stale_snapshot = snapshot.clone();
         stale_snapshot.observed_at_ms = 1_000;
@@ -19358,6 +19854,10 @@ mod tests {
         state
             .start_gps_only(4_000, None)
             .expect("next ride starts with a fresh timeline");
+        assert_eq!(
+            state.current_music_history_policy(),
+            MobileMusicHistoryPolicyDto::Disabled
+        );
         assert!(
             state
                 .current_music_events()
@@ -19402,6 +19902,7 @@ mod tests {
     #[test]
     fn invalid_music_event_input_is_typed() {
         let error = core_music_event(MobileMusicRideEventDto {
+            sequence: 0,
             provider: MobileMusicProviderDto::Spotify,
             item_identifier: Some(" ".to_owned()),
             title: None,
@@ -19436,6 +19937,79 @@ mod tests {
             Err(MobileRideMapCoreErrorDto::Storage(message))
                 if message == "Rust ride database is unavailable"
         ));
+    }
+
+    #[test]
+    fn stored_music_events_report_unavailable_storage() {
+        let state = MobileRideMapCore::new();
+
+        let error = state
+            .stored_music_events(MobileRideIdDto {
+                value: Uuid::new_v4().to_string(),
+            })
+            .expect_err("music history must not look empty when storage is unavailable");
+
+        assert_eq!(
+            error,
+            MobileRideMapCoreErrorDto::Storage("Rust ride database is unavailable".to_owned())
+        );
+    }
+
+    #[test]
+    fn music_transition_is_rejected_after_ride_stops() {
+        let _guard = RIDE_DATABASE_TEST_LOCK
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        let path = std::env::temp_dir().join(format!(
+            "cutout-mobile-music-stopped-{}-{}.sqlite3",
+            std::process::id(),
+            Uuid::new_v4()
+        ));
+        let _ = fs::remove_file(&path);
+        let database =
+            open_ride_database(path.to_string_lossy().into_owned()).expect("database opens");
+        let state = MobileRideMapCore::with_database(database.clone());
+        state.start_gps_only(1_000, None).expect("ride starts");
+        state
+            .set_music_history_policy(MobileMusicHistoryPolicyDto::OpaqueItem)
+            .expect("policy can be enabled while recording");
+        state.stop_at(2_000).expect("ride stops");
+
+        let result = state.record_music_event(
+            MobileMusicSnapshotDto {
+                provider: MobileMusicProviderDto::AppleMusic,
+                session_id: "session".to_owned(),
+                state: MobileMusicPlaybackStateDto::Playing,
+                item: Some(MobileMusicItemDto {
+                    identifier: "track-1".to_owned(),
+                    title: Some("Song".to_owned()),
+                    artist: Some("Artist".to_owned()),
+                }),
+                position_milliseconds: None,
+                duration_milliseconds: None,
+                observed_at_ms: 3_000,
+                capabilities: MobileMusicCapabilitiesDto {
+                    previous: false,
+                    play: false,
+                    pause: true,
+                    next: true,
+                    open_provider: true,
+                },
+            },
+            MobileMusicRideEventKindDto::Play,
+            3_000,
+            1_700_000_000_000,
+            5,
+        );
+
+        assert_eq!(result, Ok(MobileMusicTimelineOutcomeDto::RideNotOpen));
+        assert!(
+            state
+                .current_music_events()
+                .is_some_and(|events| events.is_empty())
+        );
+        database.shutdown().expect("database shuts down");
+        let _ = fs::remove_file(path);
     }
 
     #[test]
@@ -19492,9 +20066,81 @@ mod tests {
 
         let events = state.current_music_events().expect("active timeline");
         assert_eq!(events.len(), 1);
+        assert_eq!(events[0].sequence, 0);
         assert_eq!(events[0].item_identifier.as_deref(), Some("track-1"));
         assert_eq!(events[0].title, None);
         assert_eq!(events[0].artist, None);
+        database.shutdown().expect("database shuts down");
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn music_event_dtos_expose_ordered_sequences() {
+        let _guard = RIDE_DATABASE_TEST_LOCK
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        let path = std::env::temp_dir().join(format!(
+            "cutout-mobile-music-sequence-{}-{}.sqlite3",
+            std::process::id(),
+            Uuid::new_v4()
+        ));
+        let _ = fs::remove_file(&path);
+        let database =
+            open_ride_database(path.to_string_lossy().into_owned()).expect("database opens");
+        let state = MobileRideMapCore::with_database(database.clone());
+        state.start_gps_only(1_000, None).expect("ride starts");
+        state
+            .set_music_history_policy(MobileMusicHistoryPolicyDto::OpaqueItem)
+            .expect("policy can be enabled while recording");
+        for (state_value, kind, timestamp) in [
+            (
+                MobileMusicPlaybackStateDto::Playing,
+                MobileMusicRideEventKindDto::Play,
+                2_000,
+            ),
+            (
+                MobileMusicPlaybackStateDto::Paused,
+                MobileMusicRideEventKindDto::Pause,
+                2_001,
+            ),
+        ] {
+            state
+                .record_music_event(
+                    MobileMusicSnapshotDto {
+                        provider: MobileMusicProviderDto::AppleMusic,
+                        session_id: "session".to_owned(),
+                        state: state_value,
+                        item: Some(MobileMusicItemDto {
+                            identifier: "track-1".to_owned(),
+                            title: Some("Song".to_owned()),
+                            artist: Some("Artist".to_owned()),
+                        }),
+                        position_milliseconds: None,
+                        duration_milliseconds: None,
+                        observed_at_ms: timestamp,
+                        capabilities: MobileMusicCapabilitiesDto {
+                            previous: false,
+                            play: state_value == MobileMusicPlaybackStateDto::Paused,
+                            pause: state_value == MobileMusicPlaybackStateDto::Playing,
+                            next: true,
+                            open_provider: true,
+                        },
+                    },
+                    kind,
+                    timestamp,
+                    1_700_000_000_000 + timestamp,
+                    5,
+                )
+                .expect("music event is recorded");
+        }
+        let events = state.current_music_events().expect("active timeline");
+        assert_eq!(
+            events
+                .iter()
+                .map(|event| event.sequence)
+                .collect::<Vec<_>>(),
+            [0, 1]
+        );
         database.shutdown().expect("database shuts down");
         let _ = fs::remove_file(path);
     }

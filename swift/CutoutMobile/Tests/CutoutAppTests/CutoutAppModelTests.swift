@@ -384,12 +384,6 @@ final class CutoutAppModelTests: XCTestCase {
     func testFalconHeadlightToggleIsAvailableThroughTheGuardedSession() {
         let driver = SessionDriverSpy(rows: [])
         driver.electricUnicycleModel = .falcon
-        driver.settingsCapabilitiesOverride = EucSettingsCapabilities(
-            pedalMode: .unsupported,
-            accelerationAssist: .unsupported,
-            headlight: .unverified,
-            taillight: .unsupported
-        )
         driver.headlightWriteSucceeds = true
         let model = CutoutAppModel(core: driver)
 
@@ -403,12 +397,6 @@ final class CutoutAppModelTests: XCTestCase {
     func testSettingsCapabilitiesExposeGuardedWriteSupportToTuneSurface() {
         let driver = SessionDriverSpy(rows: [])
         driver.electricUnicycleModel = .falcon
-        driver.settingsCapabilitiesOverride = EucSettingsCapabilities(
-            pedalMode: .unsupported,
-            accelerationAssist: .unsupported,
-            headlight: .unverified,
-            taillight: .unsupported
-        )
         let model = CutoutAppModel(core: driver)
 
         XCTAssertEqual(
@@ -464,6 +452,15 @@ final class CutoutAppModelTests: XCTestCase {
     func testBegodeWSettingWritesUseTheSupportedCapabilities() {
         let driver = SessionDriverSpy(rows: [])
         driver.electricUnicycleModel = .falcon
+        driver.settingsCapabilitiesOverride = EucSettingsCapabilities(
+            pedalMode: .unsupported,
+            accelerationAssist: .unsupported,
+            headlight: .unsupported,
+            taillight: .unsupported,
+            begodeMaxSpeed: .supported,
+            begodeBeeperVolume: .supported,
+            begodeLedMode: .supported
+        )
         let model = CutoutAppModel(core: driver)
 
         let speed = BegodeMaxSpeed(kilometresPerHour: 30)!
@@ -3358,7 +3355,7 @@ private final class SessionDriverSpy: CutoutSessionDriving {
     var taillightState: LightSettingState?
     var settingsCapabilitiesOverride: EucSettingsCapabilities?
     var settingsCapabilities: EucSettingsCapabilities? {
-        settingsCapabilitiesOverride
+        settingsCapabilitiesOverride ?? electricUnicycleModel?.settingsCapabilities
     }
     private let scanState: DevicePickerScanState
     private let pairingSucceeds: Bool

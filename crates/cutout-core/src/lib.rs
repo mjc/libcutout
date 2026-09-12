@@ -8274,9 +8274,9 @@ mod tests {
         DeviceCommand, DeviceEvent, Distance, Duration, DutyCycle, Energy, FootpadTelemetry,
         GattChannel, LightState, LinkInfo, Measured, MonotonicTimestamp, ParallelCount,
         PeakCurrent, PhaseCurrent, Power, ProtocolSession, SETTING_WRITE_CONFIRMATION_TIMEOUT,
-        SeriesCount, SessionInput, SessionOutput, SettingState, SettingValue, SettingValueSource,
-        Speed, TelemetryDelta, TelemetrySnapshot, Temperature, TransportAction, UnsupportedReason,
-        ValueQuality, ValueSource, VerificationStatus, Voltage, WriteMode, WritePayload,
+        SeriesCount, SessionInput, SessionOutput, SettingState, Speed, TelemetryDelta,
+        TelemetrySnapshot, Temperature, TransportAction, UnsupportedReason, ValueQuality,
+        ValueSource, VerificationStatus, Voltage, WriteMode, WritePayload,
     };
     use core::mem::size_of;
     use proptest::prelude::*;
