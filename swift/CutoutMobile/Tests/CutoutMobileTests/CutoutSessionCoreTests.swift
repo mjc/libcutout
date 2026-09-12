@@ -1257,7 +1257,8 @@ func testVescRideSnapshotProjectsBatteryLevelAndUpdateTime() throws {
             writeLimit: TransportWriteLimitBytes(20)
         )
 
-        let step = try runner.handle(.command(.requestTelemetry, at: MonotonicMilliseconds(11)))
+        _ = try runner.handle(.linkUp(at: MonotonicMilliseconds(0)))
+        let step = try runner.handle(.command(.requestTelemetry, at: MonotonicMilliseconds(111)))
 
         assertVescTelemetryRequests(step.operations, includesSubscribe: false)
         XCTAssertNil(step.snapshot?.speed)
@@ -1328,7 +1329,7 @@ func testVescRideSnapshotProjectsBatteryLevelAndUpdateTime() throws {
         XCTAssertEqual(session.headlightState.submittedAt, MonotonicMilliseconds(10))
     }
 
-    func testVescLiveOwnerWritesRequestsBeforeSubscribing() throws {
+    func testVescLiveOwnerSubscribesBeforeWritingRequests() throws {
         let sink = RecordingOperationSink()
         let owner = CoreBluetoothLiveSessionOwner(
             session: .vescOnewheel(),
@@ -1343,7 +1344,14 @@ func testVescRideSnapshotProjectsBatteryLevelAndUpdateTime() throws {
 
         _ = try owner.handleLinkUp(at: MonotonicMilliseconds(1))
 
-        XCTAssertEqual(sink.events, [.write, .write, .write, .subscribe])
+        XCTAssertEqual(sink.events, [.subscribe])
+
+        owner.handleNotificationStateUpdate(
+            channel: .vescNordicUartNotify,
+            isNotifying: true,
+            error: nil
+        )
+        XCTAssertEqual(sink.events, [.subscribe, .write, .write, .write])
     }
 
     func testVescLiveOwnerRetriesTelemetryAfterLinkUp() throws {
@@ -1364,13 +1372,12 @@ func testVescRideSnapshotProjectsBatteryLevelAndUpdateTime() throws {
         )
 
         _ = try owner.handleLinkUp(at: MonotonicMilliseconds(1))
-        XCTAssertEqual(sink.writes.count, 3)
+        XCTAssertEqual(sink.writes.count, 0)
         owner.handleNotificationStateUpdate(
             channel: .vescNordicUartNotify,
             isNotifying: true,
             error: nil
         )
-        XCTAssertEqual(sink.writes.count, 3)
 
         waitForWrites(9, in: sink)
 
@@ -3054,7 +3061,7 @@ private func assertVescTelemetryRequests(
         return bytes
     }
     XCTAssertEqual(writes.count, expectedWriteCount, file: file, line: line)
-    XCTAssertTrue(writes.first.map { isRefloatRequest($0, command: 32) } ?? false, file: file, line: line)
+    XCTAssertTrue(writes.first.map { isRefloatRequest($0, command: 0) } ?? false, file: file, line: line)
     XCTAssertEqual(writes[1], Data([2, 1, 14, 225, 206, 3]), file: file, line: line)
     XCTAssertEqual(writes[2], Data([2, 1, 4, 64, 132, 3]), file: file, line: line)
 }
