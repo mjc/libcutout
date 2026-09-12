@@ -1,7 +1,8 @@
 use arrayvec::ArrayVec;
+use crc32fast::hash as crc32;
 use cutout_core::{
-    CommandKind, DeviceCommand, LightState, PendingProbe, RequestKey, RequestTarget,
-    VescControllerId, WriteMode, WritePayload,
+    CommandKind, DeviceCommand, LightState, PedalMode, PendingProbe, RequestKey, RequestTarget,
+    RollAngle, SpeedAlarmMode, VescControllerId, WriteMode, WritePayload,
 };
 
 use crate::{
@@ -51,6 +52,29 @@ pub struct EncodedControl {
     pub mode: WriteMode,
 }
 
+/// One delayed write in a multi-step settings command.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct EncodedControlStep {
+    /// Delay after the previous step before this write is sent.
+    pub delay_ms: u64,
+
+    /// Bounded command bytes.
+    pub payload: WritePayload,
+
+    /// GATT write mode required by this command.
+    pub mode: WriteMode,
+}
+
+/// Ordered, delayed Begode `W` submenu writes.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct EncodedControlSequence {
+    /// Generic command kind represented by this sequence.
+    pub command: CommandKind,
+
+    /// Writes in send order, including the immediate first write.
+    pub steps: ArrayVec<EncodedControlStep, 5>,
+}
+
 /// NOSFET Aero benign-control encoder.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct AeroControlEncoder;
@@ -62,6 +86,263 @@ impl AeroControlEncoder {
         let payload = match command {
             DeviceCommand::SetLights(LightState::On) => b"SetLightON".as_slice(),
             DeviceCommand::SetLights(LightState::Off) => b"SetLightOFF".as_slice(),
+            DeviceCommand::SetPedalMode(PedalMode::Hard) => b"SETh".as_slice(),
+            DeviceCommand::SetPedalMode(PedalMode::Medium) => b"SETm".as_slice(),
+            DeviceCommand::SetPedalMode(PedalMode::Soft) => b"SETs".as_slice(),
+            DeviceCommand::ResetTripMeter => b"CLEARMETER".as_slice(),
+            DeviceCommand::SetAeroDisplayBacklight(value) => {
+                return Some(EncodedControl {
+                    command: command.kind(),
+                    payload: aero_binary_frame(
+                        *b"LdAp",
+                        &[0x01, 0x02, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80],
+                        value.percent(),
+                    )?,
+                    mode: WriteMode::WithoutResponse,
+                });
+            }
+            DeviceCommand::SetAeroBeeperVolume(value) => {
+                return Some(EncodedControl {
+                    command: command.kind(),
+                    payload: aero_binary_frame(
+                        *b"LdAp",
+                        &[
+                            0x01, 0x02, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80,
+                            0x80, 0x80, 0x80, 0x80, 0x80, 0x80,
+                        ],
+                        value.percent(),
+                    )?,
+                    mode: WriteMode::WithoutResponse,
+                });
+            }
+            DeviceCommand::SetAeroDynamicAssist(value) => {
+                return Some(EncodedControl {
+                    command: command.kind(),
+                    payload: aero_binary_frame(
+                        *b"LdAp",
+                        &[
+                            0x01, 0x02, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80,
+                            0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80,
+                        ],
+                        value.percent(),
+                    )?,
+                    mode: WriteMode::WithoutResponse,
+                });
+            }
+            DeviceCommand::SetAeroPedalDipCompensation(value) => {
+                return Some(EncodedControl {
+                    command: command.kind(),
+                    payload: aero_binary_frame(
+                        *b"LdAp",
+                        &[
+                            0x01, 0x02, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80,
+                            0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80,
+                        ],
+                        value.percent(),
+                    )?,
+                    mode: WriteMode::WithoutResponse,
+                });
+            }
+            DeviceCommand::SetAeroLateralTiltLimit(value) => {
+                return Some(EncodedControl {
+                    command: command.kind(),
+                    payload: aero_binary_frame(
+                        *b"LkAp",
+                        &[
+                            0x01, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80,
+                        ],
+                        value.degrees(),
+                    )?,
+                    mode: WriteMode::WithoutResponse,
+                });
+            }
+            DeviceCommand::SetAeroVoltageCorrection(value) => {
+                return Some(EncodedControl {
+                    command: command.kind(),
+                    payload: aero_binary_frame(
+                        *b"LdAp",
+                        &[
+                            0x01, 0x02, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80,
+                            0x80, 0x80,
+                        ],
+                        u8::from_ne_bytes(value.tenths_of_percent().to_ne_bytes()),
+                    )?,
+                    mode: WriteMode::WithoutResponse,
+                });
+            }
+            DeviceCommand::SetAeroMaxChargeVoltageRaw(value) => {
+                return Some(EncodedControl {
+                    command: command.kind(),
+                    payload: aero_binary_frame(
+                        *b"LdAp",
+                        &[
+                            0x01, 0x02, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80,
+                            0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80,
+                        ],
+                        value.raw(),
+                    )?,
+                    mode: WriteMode::WithoutResponse,
+                });
+            }
+            DeviceCommand::SetAeroTiltbackSpeed(speed) => {
+                return Some(EncodedControl {
+                    command: command.kind(),
+                    payload: aero_binary_frame(
+                        *b"LdAp",
+                        &[0x01, 0x02, 0x80, 0x80, 0x80, 0x80, 0x80],
+                        speed.kilometres_per_hour(),
+                    )?,
+                    mode: WriteMode::WithoutResponse,
+                });
+            }
+            DeviceCommand::SetAeroPwmPercent(percent) => {
+                let wire_value = match percent {
+                    cutout_core::AeroPwmSetting::Off => 200,
+                    cutout_core::AeroPwmSetting::Margin(margin) => 100 - margin.percent(),
+                };
+                return Some(EncodedControl {
+                    command: command.kind(),
+                    payload: aero_binary_frame(
+                        *b"LdAp",
+                        &[0x01, 0x02, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80],
+                        wire_value,
+                    )?,
+                    mode: WriteMode::WithoutResponse,
+                });
+            }
+            DeviceCommand::SetAeroPwmOff => {
+                return Some(EncodedControl {
+                    command: command.kind(),
+                    payload: aero_binary_frame(
+                        *b"LdAp",
+                        &[0x01, 0x02, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80],
+                        200,
+                    )?,
+                    mode: WriteMode::WithoutResponse,
+                });
+            }
+            DeviceCommand::SetAeroGyroCalibration => {
+                return Some(EncodedControl {
+                    command: command.kind(),
+                    payload: aero_binary_frame(
+                        *b"LdAp",
+                        &[
+                            0x01, 0x02, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80,
+                        ],
+                        1,
+                    )?,
+                    mode: WriteMode::WithoutResponse,
+                });
+            }
+            DeviceCommand::SetAeroBrakeOverpressureAlarm(value) => {
+                return Some(EncodedControl {
+                    command: command.kind(),
+                    payload: aero_binary_frame(
+                        *b"LdAp",
+                        &[
+                            0x01, 0x02, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80,
+                            0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80,
+                        ],
+                        value.percent(),
+                    )?,
+                    mode: WriteMode::WithoutResponse,
+                });
+            }
+            DeviceCommand::SetAeroRidingMode(mode) => {
+                return Some(EncodedControl {
+                    command: command.kind(),
+                    payload: aero_binary_frame(*b"LkAp", &[0x01, 0x80], mode.wire_value())?,
+                    mode: WriteMode::WithoutResponse,
+                });
+            }
+            DeviceCommand::SetAeroPedalHardness(percent) => {
+                return Some(EncodedControl {
+                    command: command.kind(),
+                    payload: aero_binary_frame(
+                        *b"LdAp",
+                        &[0x01, 0x02, 0x80, 0x80, 0x80],
+                        percent.percent(),
+                    )?,
+                    mode: WriteMode::WithoutResponse,
+                });
+            }
+            DeviceCommand::SetAeroWheelUnits(units) => {
+                return Some(EncodedControl {
+                    command: command.kind(),
+                    payload: aero_binary_frame(
+                        *b"LdAp",
+                        &[
+                            0x01, 0x02, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80,
+                            0x80,
+                        ],
+                        units.display_mode(),
+                    )?,
+                    mode: WriteMode::WithoutResponse,
+                });
+            }
+            DeviceCommand::SetAeroHighSpeedMode(value) => {
+                return Some(EncodedControl {
+                    command: command.kind(),
+                    payload: aero_binary_frame(
+                        *b"LdAp",
+                        &[
+                            0x01, 0x02, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80,
+                            0x80, 0x80, 0x80, 0x80,
+                        ],
+                        u8::from(value.enabled()),
+                    )?,
+                    mode: WriteMode::WithoutResponse,
+                });
+            }
+            DeviceCommand::SetAeroLowBatteryMode(value) => {
+                return Some(EncodedControl {
+                    command: command.kind(),
+                    payload: aero_binary_frame(
+                        *b"LdAp",
+                        &[
+                            0x01, 0x02, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80,
+                            0x80, 0x80, 0x80,
+                        ],
+                        u8::from(value.enabled()),
+                    )?,
+                    mode: WriteMode::WithoutResponse,
+                });
+            }
+            DeviceCommand::SetAeroTransportMode(value) => {
+                return Some(EncodedControl {
+                    command: command.kind(),
+                    payload: aero_binary_frame(
+                        *b"LdAp",
+                        &[
+                            0x01, 0x02, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80,
+                        ],
+                        u8::from(value.enabled()),
+                    )?,
+                    mode: WriteMode::WithoutResponse,
+                });
+            }
+            DeviceCommand::SetAeroAlarmSpeed(speed) => {
+                return Some(EncodedControl {
+                    command: command.kind(),
+                    payload: aero_binary_frame(
+                        *b"LkAp",
+                        &[0x01, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80],
+                        speed.kilometres_per_hour(),
+                    )?,
+                    mode: WriteMode::WithoutResponse,
+                });
+            }
+            DeviceCommand::SetAeroAngleAdjustment(angle) => {
+                return Some(EncodedControl {
+                    command: command.kind(),
+                    payload: aero_binary_frame(
+                        *b"LkAp",
+                        &[0x01, 0x80, 0x80, 0x80, 0x80, 0x80],
+                        u8::from_ne_bytes(angle.tenths_of_degree().to_ne_bytes()),
+                    )?,
+                    mode: WriteMode::WithoutResponse,
+                });
+            }
             _ => return None,
         };
         Some(EncodedControl {
@@ -70,6 +351,44 @@ impl AeroControlEncoder {
             mode: WriteMode::WithoutResponse,
         })
     }
+
+    /// Encodes the official NOSFET high-beam frame.
+    ///
+    /// The official Android app writes only the `LkAp` frame here. The
+    /// `LdAp` frame used by older reverse-engineered captures is not a
+    /// companion for Aero's light command; sending it makes the wheel emit
+    /// an extra acknowledgement beep.
+    #[must_use]
+    pub fn encode_settings_sequence(command: DeviceCommand) -> Option<EncodedControlSequence> {
+        let state = match command {
+            DeviceCommand::SetAeroHighBeam(LightState::On) => 1,
+            DeviceCommand::SetAeroHighBeam(LightState::Off) => 0,
+            _ => return None,
+        };
+        let mut steps = ArrayVec::new();
+        steps.push(EncodedControlStep {
+            delay_ms: 0,
+            payload: aero_binary_frame(*b"LkAp", &[0x01, 0x80, 0x80], state)?,
+            mode: WriteMode::WithoutResponse,
+        });
+        Some(EncodedControlSequence {
+            command: command.kind(),
+            steps,
+        })
+    }
+}
+
+fn aero_binary_frame(magic: [u8; 4], payload_head: &[u8], value: u8) -> Option<WritePayload> {
+    let length = payload_head.len() + 10;
+    let length = u8::try_from(length).ok()?;
+    let mut frame = ArrayVec::<u8, 33>::new();
+    frame.try_extend_from_slice(&magic).ok()?;
+    frame.push(length);
+    frame.try_extend_from_slice(payload_head).ok()?;
+    frame.push(value);
+    let crc = crc32(frame.as_slice()).to_be_bytes();
+    frame.try_extend_from_slice(&crc).ok()?;
+    Some(request_payload(frame.as_slice()))
 }
 
 /// Begode Falcon benign-control encoder.
@@ -83,12 +402,61 @@ impl FalconControlEncoder {
         let payload = match command {
             DeviceCommand::SetLights(LightState::On) => b"Q".as_slice(),
             DeviceCommand::SetLights(LightState::Off) => b"E".as_slice(),
+            DeviceCommand::SetLights(LightState::Strobe) => b"T".as_slice(),
+            DeviceCommand::SetPedalMode(PedalMode::Hard) => b"h".as_slice(),
+            DeviceCommand::SetPedalMode(PedalMode::Medium) => b"f".as_slice(),
+            DeviceCommand::SetPedalMode(PedalMode::Soft) => b"s".as_slice(),
+            DeviceCommand::SetRollAngle(RollAngle::Low) => b">".as_slice(),
+            DeviceCommand::SetRollAngle(RollAngle::Medium) => b"=".as_slice(),
+            DeviceCommand::SetRollAngle(RollAngle::High) => b"<".as_slice(),
+            DeviceCommand::SetSpeedAlarmMode(SpeedAlarmMode::Both) => b"o".as_slice(),
+            DeviceCommand::SetSpeedAlarmMode(SpeedAlarmMode::StageOneOnly) => b"u".as_slice(),
             _ => return None,
         };
         Some(EncodedControl {
             command: command.kind(),
             payload: request_payload(payload),
             mode: WriteMode::WithoutResponse,
+        })
+    }
+
+    /// Encodes a documented Begode `W` submenu as timed transport writes.
+    #[must_use]
+    pub fn encode_settings_sequence(command: DeviceCommand) -> Option<EncodedControlSequence> {
+        let mut steps = ArrayVec::new();
+        let mut push = |delay_ms, payload: &[u8]| {
+            steps.push(EncodedControlStep {
+                delay_ms,
+                payload: request_payload(payload),
+                mode: WriteMode::WithoutResponse,
+            });
+        };
+        match command {
+            DeviceCommand::SetBegodeMaxSpeed(speed) => {
+                let value = speed.kilometres_per_hour();
+                push(0, b"W");
+                push(100, b"Y");
+                push(200, &[b'0' + value / 10]);
+                push(200, &[b'0' + value % 10]);
+                push(200, b"b");
+            }
+            DeviceCommand::SetBegodeBeeperVolume(volume) => {
+                push(0, b"W");
+                push(100, b"B");
+                push(200, &[b'0' + volume.level()]);
+                push(200, b"b");
+            }
+            DeviceCommand::SetBegodeLedMode(mode) => {
+                push(0, b"W");
+                push(100, b"M");
+                push(200, &[b'0' + mode.mode()]);
+                push(200, b"b");
+            }
+            _ => return None,
+        }
+        Some(EncodedControlSequence {
+            command: command.kind(),
+            steps,
         })
     }
 }
@@ -223,7 +591,37 @@ impl VescRequestEncoder {
             | CommandKind::RequestBatteryInfo
             | CommandKind::RequestFaultHistory
             | CommandKind::RequestSettings
+            | CommandKind::ResetTripMeter
+            | CommandKind::SetAeroTiltbackSpeed
+            | CommandKind::SetAeroPwmPercent
+            | CommandKind::SetAeroPwmOff
+            | CommandKind::SetAeroGyroCalibration
+            | CommandKind::SetAeroRidingMode
+            | CommandKind::SetAeroBrakeOverpressureAlarm
+            | CommandKind::SetAeroPedalHardness
+            | CommandKind::SetAeroDisplayBacklight
+            | CommandKind::SetAeroBeeperVolume
+            | CommandKind::SetAeroDynamicAssist
+            | CommandKind::SetAeroPedalDipCompensation
+            | CommandKind::SetAeroLateralTiltLimit
+            | CommandKind::SetAeroVoltageCorrection
+            | CommandKind::SetAeroMaxChargeVoltageRaw
+            | CommandKind::SetAeroWheelUnits
+            | CommandKind::SetAeroHighSpeedMode
+            | CommandKind::SetAeroLowBatteryMode
+            | CommandKind::SetAeroTransportMode
+            | CommandKind::SetAeroAlarmSpeed
+            | CommandKind::SetAeroAngleAdjustment
+            | CommandKind::SetAeroHighBeam
+            | CommandKind::SetAccelerationAssist
             | CommandKind::SetLights
+            | CommandKind::SetPedalMode
+            | CommandKind::SetRollAngle
+            | CommandKind::SetSpeedAlarmMode
+            | CommandKind::SetBegodeMaxSpeed
+            | CommandKind::SetBegodeBeeperVolume
+            | CommandKind::SetBegodeLedMode
+            | CommandKind::SetTaillight
             | CommandKind::SoundHorn
             | CommandKind::SetRawMotorCurrent => return None,
         };
@@ -287,7 +685,37 @@ impl VescCanTarget {
             | CommandKind::RequestBatteryInfo
             | CommandKind::RequestFaultHistory
             | CommandKind::RequestSettings
+            | CommandKind::ResetTripMeter
+            | CommandKind::SetAeroTiltbackSpeed
+            | CommandKind::SetAeroPwmPercent
+            | CommandKind::SetAeroPwmOff
+            | CommandKind::SetAeroGyroCalibration
+            | CommandKind::SetAeroRidingMode
+            | CommandKind::SetAeroBrakeOverpressureAlarm
+            | CommandKind::SetAeroPedalHardness
+            | CommandKind::SetAeroDisplayBacklight
+            | CommandKind::SetAeroBeeperVolume
+            | CommandKind::SetAeroDynamicAssist
+            | CommandKind::SetAeroPedalDipCompensation
+            | CommandKind::SetAeroLateralTiltLimit
+            | CommandKind::SetAeroVoltageCorrection
+            | CommandKind::SetAeroMaxChargeVoltageRaw
+            | CommandKind::SetAeroWheelUnits
+            | CommandKind::SetAeroHighSpeedMode
+            | CommandKind::SetAeroLowBatteryMode
+            | CommandKind::SetAeroTransportMode
+            | CommandKind::SetAeroAlarmSpeed
+            | CommandKind::SetAeroAngleAdjustment
+            | CommandKind::SetAeroHighBeam
+            | CommandKind::SetAccelerationAssist
             | CommandKind::SetLights
+            | CommandKind::SetPedalMode
+            | CommandKind::SetRollAngle
+            | CommandKind::SetSpeedAlarmMode
+            | CommandKind::SetBegodeMaxSpeed
+            | CommandKind::SetBegodeBeeperVolume
+            | CommandKind::SetBegodeLedMode
+            | CommandKind::SetTaillight
             | CommandKind::SoundHorn
             | CommandKind::SetRawMotorCurrent => return None,
         };
@@ -318,9 +746,10 @@ mod tests {
     use super::*;
     use crate::{DeviceFamily, ProtocolProbe, load_request_fixtures};
     use core::mem::size_of;
+    use cutout_core::{BegodeBeeperVolume, BegodeLedModeSetting, BegodeMaxSpeed};
 
     #[test]
-    fn aero_control_encoder_uses_nosfet_ascii_light_commands() {
+    fn aero_control_encoder_uses_silent_ascii_light_commands() {
         let on = AeroControlEncoder::encode(DeviceCommand::SetLights(LightState::On))
             .expect("NOSFET lights-on command encodes");
         let off = AeroControlEncoder::encode(DeviceCommand::SetLights(LightState::Off))
@@ -332,7 +761,314 @@ mod tests {
         assert_eq!(off.command, CommandKind::SetLights);
         assert_eq!(off.payload.as_slice(), b"SetLightOFF");
         assert_eq!(off.mode, WriteMode::WithoutResponse);
+        assert_eq!(
+            AeroControlEncoder::encode(DeviceCommand::SetLights(LightState::Strobe)),
+            None
+        );
         assert_eq!(AeroControlEncoder::encode(DeviceCommand::SoundHorn), None);
+    }
+
+    #[test]
+    fn aero_control_encoder_resets_the_trip_meter_with_the_documented_command() {
+        let reset = AeroControlEncoder::encode(DeviceCommand::ResetTripMeter)
+            .expect("trip reset is a supported Aero settings write");
+
+        assert_eq!(reset.command, CommandKind::ResetTripMeter);
+        assert_eq!(reset.payload.as_slice(), b"CLEARMETER");
+        assert_eq!(reset.mode, WriteMode::WithoutResponse);
+    }
+
+    #[test]
+    fn aero_binary_settings_match_the_captured_frame_shapes_and_crc() {
+        let cases = [
+            (
+                DeviceCommand::SetAeroTiltbackSpeed(
+                    cutout_core::AeroSpeedSetting::new(21).expect("21 km/h fits"),
+                ),
+                *b"LdAp",
+                17,
+                &[0x01, 0x02, 0x80, 0x80, 0x80, 0x80, 0x80, 21][..],
+            ),
+            (
+                DeviceCommand::SetAeroPwmPercent(
+                    cutout_core::AeroPwmPercent::new(64)
+                        .expect("64 percent fits")
+                        .into(),
+                ),
+                *b"LdAp",
+                18,
+                &[0x01, 0x02, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 36][..],
+            ),
+            (
+                DeviceCommand::SetAeroAlarmSpeed(
+                    cutout_core::AeroSpeedSetting::new(20).expect("20 km/h fits"),
+                ),
+                *b"LkAp",
+                17,
+                &[0x01, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 20][..],
+            ),
+            (
+                DeviceCommand::SetAeroAngleAdjustment(
+                    cutout_core::AeroAngleAdjustment::new(-36).expect("-3.6 degrees fits"),
+                ),
+                *b"LkAp",
+                16,
+                &[0x01, 0x80, 0x80, 0x80, 0x80, 0x80, 220][..],
+            ),
+        ];
+
+        for (command, magic, length, body) in cases {
+            let encoded = AeroControlEncoder::encode(command).expect("Aero setting encodes");
+            assert_eq!(encoded.command, command.kind());
+            assert_eq!(encoded.mode, WriteMode::WithoutResponse);
+            assert_eq!(&encoded.payload.as_slice()[..4], &magic);
+            assert_eq!(encoded.payload.as_slice()[4], length);
+            let body_len = usize::from(length) - 4;
+            assert_eq!(&encoded.payload.as_slice()[5..body_len], body);
+            let expected_crc = crc32(&encoded.payload.as_slice()[..body_len]).to_be_bytes();
+            assert_eq!(&encoded.payload.as_slice()[body_len..], &expected_crc);
+        }
+    }
+
+    #[test]
+    fn aero_pwm_off_is_distinct_from_zero_margin() {
+        let dedicated_off = AeroControlEncoder::encode(DeviceCommand::SetAeroPwmOff);
+        assert_eq!(
+            dedicated_off.unwrap().payload.as_slice(),
+            &hex_literal::hex!("4c644170120102808080808080c8d24c759e")
+        );
+        let off = AeroControlEncoder::encode(DeviceCommand::SetAeroPwmPercent(
+            cutout_core::AeroPwmSetting::Off,
+        ))
+        .unwrap();
+        assert_eq!(
+            off.payload.as_slice(),
+            &hex_literal::hex!("4c644170120102808080808080c8d24c759e")
+        );
+        let zero = AeroControlEncoder::encode(DeviceCommand::SetAeroPwmPercent(
+            cutout_core::AeroPwmPercent::new(0).unwrap().into(),
+        ))
+        .unwrap();
+        assert_eq!(zero.payload.as_slice()[13], 100);
+        assert_ne!(off.payload, zero.payload);
+    }
+
+    #[test]
+    fn aero_modern_riding_mode_uses_the_source_backed_lkap_t_frame() {
+        let cases = [
+            (
+                cutout_core::AeroRidingMode::Soft,
+                hex_literal::hex!("4c6b41700c018001a8e75480"),
+            ),
+            (
+                cutout_core::AeroRidingMode::Medium,
+                hex_literal::hex!("4c6b41700c01800231ee053a"),
+            ),
+            (
+                cutout_core::AeroRidingMode::Hard,
+                hex_literal::hex!("4c6b41700c01800346e935ac"),
+            ),
+        ];
+
+        for (mode, expected) in cases {
+            let encoded = AeroControlEncoder::encode(DeviceCommand::SetAeroRidingMode(mode))
+                .expect("modern binary T mode encodes");
+            assert_eq!(encoded.command, CommandKind::SetAeroRidingMode);
+            assert_eq!(encoded.mode, WriteMode::WithoutResponse);
+            assert_eq!(encoded.payload.as_slice(), expected);
+        }
+    }
+
+    #[test]
+    fn aero_extended_settings_match_euc_world_frames() {
+        let cases = [
+            (
+                DeviceCommand::SetAeroDisplayBacklight(
+                    cutout_core::AeroDisplayBacklight::new(50).unwrap(),
+                ),
+                hex_literal::hex!("4c644170140102808080808080808032ec9452c7").as_slice(),
+            ),
+            (
+                DeviceCommand::SetAeroBeeperVolume(cutout_core::AeroBeeperVolume::new(75).unwrap()),
+                hex_literal::hex!("4c6441701c0102808080808080808080808080808080804b930b4f71")
+                    .as_slice(),
+            ),
+            (
+                DeviceCommand::SetAeroDynamicAssist(
+                    cutout_core::AeroDynamicAssist::new(60).unwrap(),
+                ),
+                hex_literal::hex!("4c6441701f0102808080808080808080808080808080808080803c6831fed2")
+                    .as_slice(),
+            ),
+            (
+                DeviceCommand::SetAeroPedalDipCompensation(
+                    cutout_core::AeroPedalDipCompensation::new(40).unwrap(),
+                ),
+                hex_literal::hex!(
+                    "4c64417021010280808080808080808080808080808080808080808028c549a32e"
+                )
+                .as_slice(),
+            ),
+            (
+                DeviceCommand::SetAeroLateralTiltLimit(
+                    cutout_core::AeroLateralTiltLimit::new(55).unwrap(),
+                ),
+                hex_literal::hex!("4c6b41701601808080808080808080808037aef39e07").as_slice(),
+            ),
+            (
+                DeviceCommand::SetAeroVoltageCorrection(
+                    cutout_core::AeroVoltageCorrection::new(-15).unwrap(),
+                ),
+                hex_literal::hex!("4c644170180102808080808080808080808080f129076df6").as_slice(),
+            ),
+        ];
+        for (command, expected) in cases {
+            let encoded =
+                AeroControlEncoder::encode(command).expect("source-backed setting encodes");
+            assert_eq!(encoded.payload.as_slice(), expected);
+            assert_eq!(encoded.command, command.kind());
+            assert_eq!(encoded.mode, WriteMode::WithoutResponse);
+            assert_eq!(
+                command.safety_class(),
+                cutout_core::SafetyClass::StationaryOnly
+            );
+        }
+    }
+
+    #[test]
+    fn aero_safety_modes_match_documented_toggle_frames() {
+        let cases = [
+            (
+                DeviceCommand::SetAeroHighSpeedMode(cutout_core::AeroHighSpeedMode::new(true)),
+                hex_literal::hex!("4c6441701a01028080808080808080808080808080012c5fa11f")
+                    .as_slice(),
+            ),
+            (
+                DeviceCommand::SetAeroLowBatteryMode(cutout_core::AeroLowBatteryMode::new(false)),
+                hex_literal::hex!("4c644170190102808080808080808080808080800037773c3d").as_slice(),
+            ),
+            (
+                DeviceCommand::SetAeroTransportMode(cutout_core::AeroTransportMode::new(true)),
+                hex_literal::hex!("4c64417016010280808080808080808080012b37c934").as_slice(),
+            ),
+        ];
+
+        for (command, expected) in cases {
+            let encoded = AeroControlEncoder::encode(command).expect("Aero toggle encodes");
+            assert_eq!(encoded.payload.as_slice(), expected);
+            assert_eq!(encoded.command, command.kind());
+            assert_eq!(encoded.mode, WriteMode::WithoutResponse);
+        }
+    }
+
+    #[test]
+    fn aero_gyro_calibration_matches_the_official_frame_and_crc() {
+        let command = DeviceCommand::SetAeroGyroCalibration;
+        let encoded = AeroControlEncoder::encode(command).expect("gyro calibration encodes");
+        assert_eq!(
+            encoded.payload.as_slice(),
+            &hex_literal::hex!("4c64417015010280808080808080808001ab8c09e5")
+        );
+        assert_eq!(encoded.command, CommandKind::SetAeroGyroCalibration);
+        assert_eq!(encoded.mode, WriteMode::WithoutResponse);
+        assert_eq!(
+            command.safety_class(),
+            cutout_core::SafetyClass::StationaryOnly
+        );
+    }
+
+    #[test]
+    fn aero_brake_overpressure_alarm_matches_the_official_frame_and_crc() {
+        let command = DeviceCommand::SetAeroBrakeOverpressureAlarm(
+            cutout_core::AeroBrakeOverpressureAlarm::new(100).expect("100 percent fits"),
+        );
+        let encoded = AeroControlEncoder::encode(command).expect("brake alarm encodes");
+        assert_eq!(
+            encoded.payload.as_slice(),
+            &hex_literal::hex!("4c6441701e01028080808080808080808080808080808080806453681869")
+        );
+        assert_eq!(encoded.command, CommandKind::SetAeroBrakeOverpressureAlarm);
+        assert_eq!(encoded.mode, WriteMode::WithoutResponse);
+        assert_eq!(
+            command.safety_class(),
+            cutout_core::SafetyClass::StationaryOnly
+        );
+    }
+
+    #[test]
+    fn aero_max_charge_voltage_raw_matches_the_official_ldap_frame_and_crc() {
+        let command = DeviceCommand::SetAeroMaxChargeVoltageRaw(
+            cutout_core::AeroMaxChargeVoltageRaw::new(46).expect("official raw MxV value fits"),
+        );
+        let encoded = AeroControlEncoder::encode(command).expect("MxV encodes");
+        assert_eq!(encoded.command, CommandKind::SetAeroMaxChargeVoltageRaw);
+        assert_eq!(encoded.mode, WriteMode::WithoutResponse);
+        let bytes = encoded.payload.as_slice();
+        assert_eq!(&bytes[..5], b"LdAp\x1d");
+        assert_eq!(bytes[24], 46);
+        assert_eq!(bytes.len(), 29);
+        let declared_len = usize::from(bytes[4]);
+        assert_eq!(declared_len, 29);
+        assert_eq!(
+            &bytes[declared_len - 4..],
+            &crc32(&bytes[..declared_len - 4]).to_be_bytes()
+        );
+    }
+
+    #[test]
+    fn aero_md_hardness_matches_the_documented_frame_and_crc() {
+        let command = DeviceCommand::SetAeroPedalHardness(
+            cutout_core::AeroPedalHardness::new(100).expect("100 percent is documented"),
+        );
+        let encoded = AeroControlEncoder::encode(command).expect("MD is supported");
+        // Independent IEEE CRC32 fixture for EUC Planet's 15-byte ride-mode frame.
+        assert_eq!(
+            encoded.payload.as_slice(),
+            &hex_literal::hex!("4c6441700f01028080806430847887")
+        );
+        assert_eq!(encoded.mode, WriteMode::WithoutResponse);
+        assert_eq!(
+            command.safety_class(),
+            cutout_core::SafetyClass::StationaryOnly
+        );
+    }
+
+    #[test]
+    fn aero_wheel_units_have_a_distinct_crc_checked_display_command() {
+        let command = DeviceCommand::SetAeroWheelUnits(cutout_core::AeroWheelUnits::Imperial);
+        let encoded = AeroControlEncoder::encode(command).expect("wheel display units supported");
+        assert_eq!(
+            encoded.payload.as_slice(),
+            &hex_literal::hex!("4c6441701701028080808080808080808080011ff96e85")
+        );
+        assert_eq!(encoded.mode, WriteMode::WithoutResponse);
+        assert_eq!(
+            command.safety_class(),
+            cutout_core::SafetyClass::StationaryOnly
+        );
+    }
+
+    #[test]
+    fn aero_high_beam_encodes_the_official_single_lkap_frame() {
+        let sequence = AeroControlEncoder::encode_settings_sequence(
+            DeviceCommand::SetAeroHighBeam(LightState::On),
+        )
+        .expect("Aero high beam sequence encodes");
+
+        assert_eq!(sequence.command, CommandKind::SetAeroHighBeam);
+        assert_eq!(sequence.steps.len(), 1);
+        assert_eq!(sequence.steps[0].delay_ms, 0);
+        assert_eq!(&sequence.steps[0].payload.as_slice()[..5], b"LkAp\r");
+        assert_eq!(
+            &sequence.steps[0].payload.as_slice()[5..9],
+            &[1, 0x80, 0x80, 1]
+        );
+        let step = &sequence.steps[0];
+        let frame_len = usize::from(step.payload.as_slice()[4]);
+        let crc_offset = frame_len - 4;
+        let expected_crc = crc32(&step.payload.as_slice()[..crc_offset]).to_be_bytes();
+        assert_eq!(&step.payload.as_slice()[crc_offset..], &expected_crc);
+        assert_eq!(step.mode, WriteMode::WithoutResponse);
     }
 
     #[test]
@@ -348,7 +1084,127 @@ mod tests {
         assert_eq!(off.command, CommandKind::SetLights);
         assert_eq!(off.payload.as_slice(), b"E");
         assert_eq!(off.mode, WriteMode::WithoutResponse);
+        let strobe = FalconControlEncoder::encode(DeviceCommand::SetLights(LightState::Strobe))
+            .expect("Begode strobe command encodes");
+        assert_eq!(strobe.command, CommandKind::SetLights);
+        assert_eq!(strobe.payload.as_slice(), b"T");
+        assert_eq!(strobe.mode, WriteMode::WithoutResponse);
         assert_eq!(FalconControlEncoder::encode(DeviceCommand::SoundHorn), None);
+    }
+
+    #[test]
+    fn documented_pedal_mode_encoders_match_veteran_and_begode_bytes() {
+        let aero = AeroControlEncoder::encode(DeviceCommand::SetPedalMode(PedalMode::Hard))
+            .expect("documented Veteran pedal mode encoder");
+        assert_eq!(aero.command, CommandKind::SetPedalMode);
+        assert_eq!(aero.payload.as_slice(), b"SETh");
+
+        let falcon = FalconControlEncoder::encode(DeviceCommand::SetPedalMode(PedalMode::Soft))
+            .expect("documented Begode pedal mode encoder");
+        assert_eq!(falcon.command, CommandKind::SetPedalMode);
+        assert_eq!(falcon.payload.as_slice(), b"s");
+    }
+
+    #[test]
+    fn documented_falcon_roll_angle_encoders_match_protocol_bytes() {
+        let low = FalconControlEncoder::encode(DeviceCommand::SetRollAngle(RollAngle::Low))
+            .expect("Begode low roll-angle encoder");
+        let medium = FalconControlEncoder::encode(DeviceCommand::SetRollAngle(RollAngle::Medium))
+            .expect("Begode medium roll-angle encoder");
+        let high = FalconControlEncoder::encode(DeviceCommand::SetRollAngle(RollAngle::High))
+            .expect("Begode high roll-angle encoder");
+
+        assert_eq!(low.command, CommandKind::SetRollAngle);
+        assert_eq!(low.payload.as_slice(), b">");
+        assert_eq!(medium.payload.as_slice(), b"=");
+        assert_eq!(high.payload.as_slice(), b"<");
+        assert_eq!(low.mode, WriteMode::WithoutResponse);
+        assert_eq!(
+            AeroControlEncoder::encode(DeviceCommand::SetRollAngle(RollAngle::Low)),
+            None
+        );
+    }
+
+    #[test]
+    fn documented_falcon_speed_alarm_encoders_match_protocol_bytes() {
+        let both =
+            FalconControlEncoder::encode(DeviceCommand::SetSpeedAlarmMode(SpeedAlarmMode::Both))
+                .expect("Begode both-alarms encoder");
+        let stage_one = FalconControlEncoder::encode(DeviceCommand::SetSpeedAlarmMode(
+            SpeedAlarmMode::StageOneOnly,
+        ))
+        .expect("Begode stage-one-only encoder");
+
+        assert_eq!(both.command, CommandKind::SetSpeedAlarmMode);
+        assert_eq!(both.payload.as_slice(), b"o");
+        assert_eq!(stage_one.payload.as_slice(), b"u");
+        assert_eq!(both.mode, WriteMode::WithoutResponse);
+        assert_eq!(
+            AeroControlEncoder::encode(DeviceCommand::SetSpeedAlarmMode(SpeedAlarmMode::Both,)),
+            None
+        );
+    }
+
+    #[test]
+    fn falcon_w_settings_encode_as_delayed_ordered_writes() {
+        let max_speed =
+            FalconControlEncoder::encode_settings_sequence(DeviceCommand::SetBegodeMaxSpeed(
+                BegodeMaxSpeed::new(30).expect("30 km/h is encodable"),
+            ))
+            .expect("max-speed sequence encodes");
+        assert_eq!(max_speed.command, CommandKind::SetBegodeMaxSpeed);
+        assert_eq!(
+            max_speed
+                .steps
+                .iter()
+                .map(|step| (step.delay_ms, step.payload.as_slice()))
+                .collect::<Vec<_>>(),
+            vec![
+                (0, b"W".as_slice()),
+                (100, b"Y".as_slice()),
+                (200, b"3".as_slice()),
+                (200, b"0".as_slice()),
+                (200, b"b".as_slice())
+            ]
+        );
+
+        let volume =
+            FalconControlEncoder::encode_settings_sequence(DeviceCommand::SetBegodeBeeperVolume(
+                BegodeBeeperVolume::new(7).expect("volume 7 is encodable"),
+            ))
+            .expect("beeper sequence encodes");
+        assert_eq!(volume.command, CommandKind::SetBegodeBeeperVolume);
+        assert_eq!(
+            volume
+                .steps
+                .iter()
+                .map(|step| (step.delay_ms, step.payload.as_slice()))
+                .collect::<Vec<_>>(),
+            vec![
+                (0, b"W".as_slice()),
+                (100, b"B".as_slice()),
+                (200, b"7".as_slice()),
+                (200, b"b".as_slice())
+            ]
+        );
+
+        let led = FalconControlEncoder::encode_settings_sequence(DeviceCommand::SetBegodeLedMode(
+            BegodeLedModeSetting::new(4).expect("LED mode 4 is encodable"),
+        ))
+        .expect("LED sequence encodes");
+        assert_eq!(led.command, CommandKind::SetBegodeLedMode);
+        assert_eq!(
+            led.steps
+                .iter()
+                .map(|step| (step.delay_ms, step.payload.as_slice()))
+                .collect::<Vec<_>>(),
+            vec![
+                (0, b"W".as_slice()),
+                (100, b"M".as_slice()),
+                (200, b"4".as_slice()),
+                (200, b"b".as_slice())
+            ]
+        );
     }
 
     #[test]

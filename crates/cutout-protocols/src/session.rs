@@ -19,10 +19,11 @@ use crate::{
     BegodeBmsCellPage, BegodeBmsPageError, BegodeBmsSummary, BegodeFrame, BegodeFrameError,
     BegodeFrameParseResult, BegodeFrameReassembler, BegodeLiveATelemetry, BegodeLiveBTelemetry,
     BegodePackVoltageProfile, BegodeTelemetryContext, BegodeTelemetryError, EncodedControl,
-    EncodedRequest, FalconControlEncoder, FalconProbe, FalconRequestEncoder, RefloatCodecError,
-    RefloatReadOnlyRequest, RefloatReply, RefloatStreamDecoder, RefloatStreamResult,
-    RequestDisposition, VESC_COMM_CUSTOM_APP_DATA, VESC_MAX_FRAME_LEN, VESC_NOTIFY_CHANNEL,
-    VESC_WRITE_CHANNEL, VETERAN_DATA_CHANNEL, VescBoardProfile, VescCodecError, VescReadOnlyCodec,
+    EncodedControlSequence, EncodedControlStep, EncodedRequest, FalconControlEncoder, FalconProbe,
+    FalconRequestEncoder, RefloatCodecError, RefloatReadOnlyRequest, RefloatReply,
+    RefloatStreamDecoder, RefloatStreamResult, RequestDisposition, VESC_COMM_CUSTOM_APP_DATA,
+    VESC_MAX_FRAME_LEN, VESC_NOTIFY_CHANNEL, VESC_WRITE_CHANNEL, VETERAN_DATA_CHANNEL,
+    VETERAN_SERVICE_CHANNEL, VescBoardProfile, VescCodecError, VescReadOnlyCodec,
     VescReadOnlyReply, VescReadOnlyRequest, VescReadOnlyStreamDecoder, VescReadOnlyStreamResult,
     VescRequestEncoder, VescStatsMask, VescStatsTelemetry, VescValuesMask, VescValuesTelemetry,
     VeteranBmsCellPage, VeteranBmsMetadataPage, VeteranBmsPageEvidence, VeteranBmsTemperaturePage,
@@ -1388,14 +1389,17 @@ fn push_veteran_frame(
     match VeteranTelemetry::decode(frame) {
         Ok(telemetry) => {
             let settings_responses = telemetry.to_settings_responses();
-            let settings_count = SemanticEventCount::from_events(settings_responses.len());
+            let aero_settings = telemetry.to_aero_settings_page_response(frame);
+            let settings_count = SemanticEventCount::from_events(
+                settings_responses.len() + usize::from(aero_settings.is_some()),
+            );
             output.push(SessionOutput::Event(DeviceEvent::Telemetry(
                 telemetry.to_delta(monotonic_ms),
             )));
             output.push(SessionOutput::Event(DeviceEvent::ReadOnlyResponse(
                 telemetry.to_firmware_response(),
             )));
-            for response in settings_responses {
+            for response in settings_responses.into_iter().chain(aero_settings) {
                 output.push(SessionOutput::Event(DeviceEvent::ReadOnlyResponse(
                     response,
                 )));
@@ -1503,6 +1507,33 @@ fn push_parser_error(error: ParserError, output: &mut Vec<SessionOutput>) {
 pub trait SupportsSettingsWrites: ProtocolModelSpec {
     /// Commands this model can write after stationary-state validation.
     const WRITE_CAPABILITIES: Capabilities;
+
+    /// Optional sub-one-mph settings-write window for models that document it.
+    const MAX_SETTINGS_SPEED: Option<cutout_core::Speed> = None;
+
+    /// Encodes a supported settings write.
+    fn encode_settings_write(command: DeviceCommand) -> Option<EncodedControl>;
+
+    /// Encodes a supported multi-step settings write, when the protocol requires timing.
+    #[must_use]
+    fn encode_settings_sequence(command: DeviceCommand) -> Option<EncodedControlSequence> {
+        let _ = command;
+        None
+    }
+
+    /// Issues a short-lived settings arm from current ride-state evidence.
+    #[must_use]
+    fn arm_settings_write(
+        state: cutout_core::RideOperatingState,
+        speed: Option<cutout_core::Speed>,
+        monotonic_ms: MonotonicTimestamp,
+    ) -> Option<cutout_core::StationarySettingsArm> {
+        let policy = cutout_core::StationarySettingsPolicy {
+            model: Self::MODEL,
+            arm_duration: cutout_core::Duration::from_milliseconds(5_000),
+        };
+        policy.arm_with_speed(state, speed, Self::MAX_SETTINGS_SPEED, monotonic_ms)
+    }
 }
 
 /// Type-level benign-control capability.
@@ -1550,7 +1581,7 @@ fn gate_read_only_command<M: SupportsReadRequests>(command: DeviceCommand) -> Re
 pub struct NosfetAeroModel;
 
 const NOSFET_AERO_MODEL_GATT: [GattFingerprint; 1] = [GattFingerprint {
-    service: VETERAN_DATA_CHANNEL,
+    service: VETERAN_SERVICE_CHANNEL,
     characteristic: VETERAN_DATA_CHANNEL,
     roles: GattRoles::empty()
         .with_read()
@@ -1618,6 +1649,44 @@ impl SupportsBenignControls for NosfetAeroModel {
     }
 }
 
+impl SupportsSettingsWrites for NosfetAeroModel {
+    const WRITE_CAPABILITIES: Capabilities = Capabilities::from_supported_commands([
+        CommandKind::SetPedalMode,
+        CommandKind::ResetTripMeter,
+        CommandKind::SetAeroTiltbackSpeed,
+        CommandKind::SetAeroPwmPercent,
+        CommandKind::SetAeroPwmOff,
+        CommandKind::SetAeroGyroCalibration,
+        CommandKind::SetAeroRidingMode,
+        CommandKind::SetAeroBrakeOverpressureAlarm,
+        CommandKind::SetAeroPedalHardness,
+        CommandKind::SetAeroDisplayBacklight,
+        CommandKind::SetAeroBeeperVolume,
+        CommandKind::SetAeroDynamicAssist,
+        CommandKind::SetAeroPedalDipCompensation,
+        CommandKind::SetAeroLateralTiltLimit,
+        CommandKind::SetAeroVoltageCorrection,
+        CommandKind::SetAeroMaxChargeVoltageRaw,
+        CommandKind::SetAeroWheelUnits,
+        CommandKind::SetAeroHighSpeedMode,
+        CommandKind::SetAeroLowBatteryMode,
+        CommandKind::SetAeroTransportMode,
+        CommandKind::SetAeroAlarmSpeed,
+        CommandKind::SetAeroAngleAdjustment,
+        CommandKind::SetAeroHighBeam,
+    ]);
+    const MAX_SETTINGS_SPEED: Option<cutout_core::Speed> =
+        Some(cutout_core::Speed::from_millimetres_per_second(500));
+
+    fn encode_settings_write(command: DeviceCommand) -> Option<EncodedControl> {
+        AeroControlEncoder::encode(command)
+    }
+
+    fn encode_settings_sequence(command: DeviceCommand) -> Option<EncodedControlSequence> {
+        AeroControlEncoder::encode_settings_sequence(command)
+    }
+}
+
 /// Begode Falcon read-only model spec.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct BegodeFalconModel;
@@ -1677,6 +1746,25 @@ impl SupportsBenignControls for BegodeFalconModel {
 
     fn encode_benign_control(command: DeviceCommand) -> Option<EncodedControl> {
         FalconControlEncoder::encode(command)
+    }
+}
+
+impl SupportsSettingsWrites for BegodeFalconModel {
+    const WRITE_CAPABILITIES: Capabilities = Capabilities::from_supported_commands([
+        CommandKind::SetPedalMode,
+        CommandKind::SetRollAngle,
+        CommandKind::SetSpeedAlarmMode,
+        CommandKind::SetBegodeMaxSpeed,
+        CommandKind::SetBegodeBeeperVolume,
+        CommandKind::SetBegodeLedMode,
+    ]);
+
+    fn encode_settings_write(command: DeviceCommand) -> Option<EncodedControl> {
+        FalconControlEncoder::encode(command)
+    }
+
+    fn encode_settings_sequence(command: DeviceCommand) -> Option<EncodedControlSequence> {
+        FalconControlEncoder::encode_settings_sequence(command)
     }
 }
 
@@ -1797,7 +1885,37 @@ fn unavailable_readback_response(kind: CommandKind) -> Option<ReadOnlyResponse> 
         | CommandKind::RequestFirmwareInfo
         | CommandKind::RequestTelemetry
         | CommandKind::RequestDiagnostics
+        | CommandKind::ResetTripMeter
+        | CommandKind::SetAeroTiltbackSpeed
+        | CommandKind::SetAeroPwmPercent
+        | CommandKind::SetAeroPwmOff
+        | CommandKind::SetAeroGyroCalibration
+        | CommandKind::SetAeroRidingMode
+        | CommandKind::SetAeroBrakeOverpressureAlarm
+        | CommandKind::SetAeroPedalHardness
+        | CommandKind::SetAeroDisplayBacklight
+        | CommandKind::SetAeroBeeperVolume
+        | CommandKind::SetAeroDynamicAssist
+        | CommandKind::SetAeroPedalDipCompensation
+        | CommandKind::SetAeroLateralTiltLimit
+        | CommandKind::SetAeroVoltageCorrection
+        | CommandKind::SetAeroMaxChargeVoltageRaw
+        | CommandKind::SetAeroWheelUnits
+        | CommandKind::SetAeroHighSpeedMode
+        | CommandKind::SetAeroLowBatteryMode
+        | CommandKind::SetAeroTransportMode
+        | CommandKind::SetAeroAlarmSpeed
+        | CommandKind::SetAeroAngleAdjustment
+        | CommandKind::SetAeroHighBeam
+        | CommandKind::SetAccelerationAssist
         | CommandKind::SetLights
+        | CommandKind::SetPedalMode
+        | CommandKind::SetRollAngle
+        | CommandKind::SetSpeedAlarmMode
+        | CommandKind::SetBegodeMaxSpeed
+        | CommandKind::SetBegodeBeeperVolume
+        | CommandKind::SetBegodeLedMode
+        | CommandKind::SetTaillight
         | CommandKind::SoundHorn
         | CommandKind::SetRawMotorCurrent => None,
     }
@@ -1917,6 +2035,37 @@ pub struct BenignControlSession<
     light_command_state: LightCommandState,
 }
 
+fn handle_benign_control<M: ReadOnlyModelSpec + SupportsBenignControls>(
+    command: DeviceCommand,
+    output: &mut Vec<SessionOutput>,
+) {
+    let kind = command.kind();
+    if M::CONTROL_CAPABILITIES.supports_command_kind(kind) {
+        if let Some(encoded) = M::encode_benign_control(command) {
+            output.push(SessionOutput::Transport(TransportAction::Write {
+                channel: M::WRITE_CHANNEL,
+                bytes: encoded.payload,
+                mode: encoded.mode,
+            }));
+            return;
+        }
+    }
+
+    output.push(SessionOutput::Event(DeviceEvent::ControlRefusal(
+        ControlRefusal {
+            command: kind,
+            safety_class: command.safety_class(),
+            reason: ControlRefusalReason::UnsupportedCommand,
+        },
+    )));
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct PendingSettingsSequence {
+    remaining: ArrayVec<EncodedControlStep, 4>,
+    next_at: MonotonicTimestamp,
+    expires_at: MonotonicTimestamp,
+}
 impl<M: ReadOnlyModelSpec + SupportsBenignControls, const ACCEPT_ANY_NOTIFICATION: bool> fmt::Debug
     for BenignControlSession<M, ACCEPT_ANY_NOTIFICATION>
 {
@@ -1987,13 +2136,15 @@ impl<M: ReadOnlyModelSpec + SupportsBenignControls, const ACCEPT_ANY_NOTIFICATIO
             self.read_only.handle(input, output);
             return;
         };
-        if command.safety_class() != SafetyClass::BenignControl {
+        if command.safety_class() == SafetyClass::ReadOnly {
             self.read_only.handle(input, output);
             return;
         }
 
         let kind = command.kind();
-        if M::CONTROL_CAPABILITIES.supports_command_kind(kind) {
+        if command.safety_class() == SafetyClass::BenignControl
+            && M::CONTROL_CAPABILITIES.supports_command_kind(kind)
+        {
             if let Some(encoded) = M::encode_benign_control(command) {
                 if let DeviceCommand::SetLights(state) = command {
                     self.light_command_state =
@@ -2015,6 +2166,327 @@ impl<M: ReadOnlyModelSpec + SupportsBenignControls, const ACCEPT_ANY_NOTIFICATIO
                 reason: ControlRefusalReason::UnsupportedCommand,
             },
         )));
+    }
+}
+
+/// Session shell for settings writes that require an explicit stationary arm.
+pub struct StationarySettingsWriteSession<
+    M: ReadOnlyModelSpec + SupportsSettingsWrites + SupportsBenignControls,
+    const ACCEPT_ANY_NOTIFICATION: bool,
+> {
+    read_only: ReadOnlySession<M, ACCEPT_ANY_NOTIFICATION>,
+    arm: Option<cutout_core::StationarySettingsArm>,
+    monotonic_ms: MonotonicTimestamp,
+    pending_sequence: Option<PendingSettingsSequence>,
+    latest_settings_speed: Option<(cutout_core::Speed, MonotonicTimestamp)>,
+}
+
+impl<
+    M: ReadOnlyModelSpec + SupportsSettingsWrites + SupportsBenignControls,
+    const ACCEPT_ANY_NOTIFICATION: bool,
+> fmt::Debug for StationarySettingsWriteSession<M, ACCEPT_ANY_NOTIFICATION>
+{
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("StationarySettingsWriteSession")
+            .finish_non_exhaustive()
+    }
+}
+
+impl<
+    M: ReadOnlyModelSpec + SupportsSettingsWrites + SupportsBenignControls,
+    const ACCEPT_ANY_NOTIFICATION: bool,
+> Clone for StationarySettingsWriteSession<M, ACCEPT_ANY_NOTIFICATION>
+where
+    ReadOnlySession<M, ACCEPT_ANY_NOTIFICATION>: Clone,
+{
+    fn clone(&self) -> Self {
+        Self {
+            read_only: self.read_only.clone(),
+            arm: self.arm,
+            monotonic_ms: self.monotonic_ms,
+            pending_sequence: self.pending_sequence.clone(),
+            latest_settings_speed: self.latest_settings_speed,
+        }
+    }
+}
+
+impl<
+    M: ReadOnlyModelSpec + SupportsSettingsWrites + SupportsBenignControls,
+    const ACCEPT_ANY_NOTIFICATION: bool,
+> Default for StationarySettingsWriteSession<M, ACCEPT_ANY_NOTIFICATION>
+{
+    fn default() -> Self {
+        Self {
+            read_only: ReadOnlySession::default(),
+            arm: None,
+            monotonic_ms: MonotonicTimestamp::new(0),
+            pending_sequence: None,
+            latest_settings_speed: None,
+        }
+    }
+}
+
+impl<
+    M: ReadOnlyModelSpec + SupportsSettingsWrites + SupportsBenignControls,
+    const ACCEPT_ANY_NOTIFICATION: bool,
+> StationarySettingsWriteSession<M, ACCEPT_ANY_NOTIFICATION>
+{
+    /// Creates a settings-write session with an explicitly configured decoder.
+    #[must_use]
+    pub const fn with_decoder(decoder: M::NotificationDecoder) -> Self {
+        Self {
+            read_only: ReadOnlySession::with_decoder(decoder),
+            arm: None,
+            monotonic_ms: MonotonicTimestamp::new(0),
+            pending_sequence: None,
+            latest_settings_speed: None,
+        }
+    }
+
+    /// Returns the read and stationary-settings commands this session can schedule.
+    #[must_use]
+    pub const fn capabilities() -> Capabilities {
+        M::READ_CAPABILITIES
+            .union(M::WRITE_CAPABILITIES)
+            .union(M::CONTROL_CAPABILITIES)
+    }
+
+    /// Installs a short-lived authorization issued from stationary evidence.
+    pub fn arm(&mut self, arm: cutout_core::StationarySettingsArm) {
+        self.monotonic_ms = arm.issued_at_ms();
+        if self
+            .pending_sequence
+            .as_ref()
+            .is_some_and(|pending| self.monotonic_ms > pending.expires_at)
+        {
+            self.pending_sequence = None;
+        }
+        self.arm = Some(arm);
+    }
+
+    /// Updates the host timestamp used for command sequencing and arm expiry.
+    pub const fn set_monotonic(&mut self, monotonic_ms: MonotonicTimestamp) {
+        self.monotonic_ms = monotonic_ms;
+    }
+
+    /// Clears the current stationary-settings authorization.
+    pub fn clear_arm(&mut self) {
+        self.arm = None;
+        self.pending_sequence = None;
+    }
+
+    pub(crate) fn fresh_settings_speed(
+        &self,
+        now: MonotonicTimestamp,
+    ) -> Option<cutout_core::Speed> {
+        let (speed, observed_at) = self.latest_settings_speed?;
+        (now >= observed_at
+            && now.saturating_duration_since(observed_at) <= cutout_core::Duration::from_seconds(2))
+        .then_some(speed)
+    }
+
+    fn observe_settings_telemetry(&mut self, outputs: &[SessionOutput]) {
+        for output in outputs {
+            let SessionOutput::Event(DeviceEvent::Telemetry(delta)) = output else {
+                continue;
+            };
+            if let Some(speed) = delta.speed {
+                if self
+                    .latest_settings_speed
+                    .is_none_or(|(_, at)| delta.at_ms >= at)
+                {
+                    self.latest_settings_speed = Some((speed.value, delta.at_ms));
+                    let maximum = M::MAX_SETTINGS_SPEED
+                        .map_or(0, cutout_core::Speed::as_millimetres_per_second);
+                    if speed.value.as_millimetres_per_second().unsigned_abs()
+                        > maximum.unsigned_abs()
+                    {
+                        self.clear_arm();
+                    }
+                }
+            }
+            if delta.charge_mode.is_some_and(|mode| mode.value.is_active())
+                || delta.operating_state == Some(cutout_core::RideOperatingState::Charging)
+            {
+                self.clear_arm();
+            }
+        }
+    }
+
+    fn handle_tick(&mut self, monotonic_ms: MonotonicTimestamp, output: &mut Vec<SessionOutput>) {
+        self.monotonic_ms = monotonic_ms;
+        if self.latest_settings_speed.is_some() && self.fresh_settings_speed(monotonic_ms).is_none()
+        {
+            self.clear_arm();
+        }
+        self.read_only
+            .handle(SessionInput::Tick { monotonic_ms }, output);
+        let due = self
+            .pending_sequence
+            .as_ref()
+            .is_some_and(|pending| monotonic_ms >= pending.next_at);
+        if !due {
+            return;
+        }
+        if self
+            .arm
+            .is_none_or(|arm| !arm.is_valid_for(M::MODEL, monotonic_ms))
+            || self
+                .pending_sequence
+                .as_ref()
+                .is_some_and(|pending| monotonic_ms > pending.expires_at)
+        {
+            self.pending_sequence = None;
+            return;
+        }
+
+        let step = self
+            .pending_sequence
+            .as_mut()
+            .and_then(|pending| pending.remaining.first().cloned());
+        let Some(step) = step else { return };
+        let _ = self
+            .pending_sequence
+            .as_mut()
+            .map(|pending| pending.remaining.remove(0));
+        let next_delay = self
+            .pending_sequence
+            .as_ref()
+            .and_then(|pending| pending.remaining.first())
+            .map(|next| next.delay_ms);
+        if let Some(next_delay) = next_delay {
+            if let Some(pending) = self.pending_sequence.as_mut() {
+                pending.next_at = monotonic_ms
+                    .saturating_add_duration(cutout_core::Duration::from_milliseconds(next_delay));
+            }
+        } else {
+            self.pending_sequence = None;
+        }
+        output.push(SessionOutput::Transport(TransportAction::Write {
+            channel: M::WRITE_CHANNEL,
+            bytes: step.payload,
+            mode: step.mode,
+        }));
+    }
+
+    fn handle_stationary_command(
+        &mut self,
+        command: DeviceCommand,
+        output: &mut Vec<SessionOutput>,
+    ) {
+        let kind = command.kind();
+        let reason = if M::WRITE_CAPABILITIES.supports_command_kind(kind) {
+            if self.pending_sequence.is_some() {
+                Some(ControlRefusalReason::Busy)
+            } else {
+                match self.arm {
+                    None => Some(ControlRefusalReason::MissingArm),
+                    Some(arm) if arm.model() != M::MODEL => Some(ControlRefusalReason::WrongModel),
+                    Some(arm) if !arm.is_valid_for(M::MODEL, self.monotonic_ms) => {
+                        Some(ControlRefusalReason::ExpiredArm)
+                    }
+                    Some(_) => None,
+                }
+            }
+        } else {
+            Some(ControlRefusalReason::UnsupportedCommand)
+        };
+
+        if let Some(reason) = reason {
+            output.push(SessionOutput::Event(DeviceEvent::ControlRefusal(
+                ControlRefusal {
+                    command: kind,
+                    safety_class: command.safety_class(),
+                    reason,
+                },
+            )));
+            return;
+        }
+
+        if let Some(sequence) = M::encode_settings_sequence(command) {
+            let mut steps = sequence.steps.into_iter();
+            let Some(first) = steps.next() else {
+                output.push(SessionOutput::Event(DeviceEvent::ControlRefusal(
+                    ControlRefusal {
+                        command: kind,
+                        safety_class: command.safety_class(),
+                        reason: ControlRefusalReason::UnsupportedCommand,
+                    },
+                )));
+                return;
+            };
+            let mut remaining = ArrayVec::new();
+            remaining.extend(steps);
+            let next_delay = remaining.first().map(|next| next.delay_ms);
+            self.pending_sequence =
+                next_delay
+                    .zip(self.arm)
+                    .map(|(next_delay, arm)| PendingSettingsSequence {
+                        remaining,
+                        next_at: self.monotonic_ms.saturating_add_duration(
+                            cutout_core::Duration::from_milliseconds(next_delay),
+                        ),
+                        expires_at: arm.expires_at_ms(),
+                    });
+            output.push(SessionOutput::Transport(TransportAction::Write {
+                channel: M::WRITE_CHANNEL,
+                bytes: first.payload,
+                mode: first.mode,
+            }));
+            return;
+        }
+
+        if let Some(encoded) = M::encode_settings_write(command) {
+            output.push(SessionOutput::Transport(TransportAction::Write {
+                channel: M::WRITE_CHANNEL,
+                bytes: encoded.payload,
+                mode: encoded.mode,
+            }));
+            return;
+        }
+
+        output.push(SessionOutput::Event(DeviceEvent::ControlRefusal(
+            ControlRefusal {
+                command: kind,
+                safety_class: command.safety_class(),
+                reason: ControlRefusalReason::UnsupportedCommand,
+            },
+        )));
+    }
+}
+
+impl<
+    M: ReadOnlyModelSpec + SupportsSettingsWrites + SupportsBenignControls,
+    const ACCEPT_ANY_NOTIFICATION: bool,
+> ProtocolSession for StationarySettingsWriteSession<M, ACCEPT_ANY_NOTIFICATION>
+{
+    fn handle(&mut self, input: SessionInput<'_>, output: &mut Vec<SessionOutput>) {
+        match input {
+            SessionInput::Tick { monotonic_ms } => {
+                self.handle_tick(monotonic_ms, output);
+            }
+            SessionInput::LinkDown | SessionInput::LinkUp(_) => {
+                self.clear_arm();
+                self.latest_settings_speed = None;
+                self.read_only.handle(input, output);
+            }
+            SessionInput::Command(command)
+                if command.safety_class() == SafetyClass::StationaryOnly =>
+            {
+                self.handle_stationary_command(command, output);
+            }
+            SessionInput::Command(command)
+                if command.safety_class() == SafetyClass::BenignControl =>
+            {
+                handle_benign_control::<M>(command, output);
+            }
+            input => {
+                let start = output.len();
+                self.read_only.handle(input, output);
+                self.observe_settings_telemetry(output.get(start..).unwrap_or_default());
+            }
+        }
     }
 }
 
@@ -2123,8 +2595,9 @@ mod tests {
     use arrayvec::ArrayVec;
     use core::mem::size_of;
     use cutout_core::{
-        BatteryPageKind, LinkInfo, Measured, ProtocolTag, RawFieldValue, ReadOnlyResponse,
-        TelemetryDelta, TransportAction, VerificationStatus, WriteMode,
+        BatteryPageKind, BegodeMaxSpeed, Duration, LinkInfo, Measured, ProtocolTag, RawFieldValue,
+        ReadOnlyResponse, RideOperatingState, StationarySettingsPolicy, TelemetryDelta,
+        TransportAction, VerificationStatus, WriteMode,
     };
     use proptest::prelude::*;
 
@@ -2149,6 +2622,23 @@ mod tests {
 
         fn encode_read_command(kind: CommandKind) -> Option<RequestDisposition<Self::Probe>> {
             AeroRequestEncoder::encode_command(kind)
+        }
+    }
+
+    impl SupportsSettingsWrites for TestModel {
+        const WRITE_CAPABILITIES: Capabilities =
+            Capabilities::from_supported_commands([CommandKind::SetPedalMode]);
+
+        fn encode_settings_write(command: DeviceCommand) -> Option<EncodedControl> {
+            AeroControlEncoder::encode(command)
+        }
+    }
+
+    impl SupportsBenignControls for TestModel {
+        const CONTROL_CAPABILITIES: Capabilities = Capabilities::from_supported_commands([]);
+
+        fn encode_benign_control(_command: DeviceCommand) -> Option<EncodedControl> {
+            None
         }
     }
 
@@ -4083,7 +4573,7 @@ mod tests {
         );
 
         let responses = read_only_response_events(&output);
-        assert_eq!(responses.len(), 4);
+        assert_eq!(responses.len(), 5);
 
         let ReadOnlyResponse::Firmware(firmware) = responses[0] else {
             panic!("expected firmware response");
@@ -4096,7 +4586,7 @@ mod tests {
             .iter()
             .flat_map(|response| match response {
                 ReadOnlyResponse::Settings(settings) => settings.entries(),
-                _ => [None, None, None, None],
+                _ => [None; 18],
             })
             .flatten()
             .map(|entry| entry.field)
@@ -4691,7 +5181,7 @@ mod tests {
     }
 
     #[test]
-    fn aero_benign_control_session_writes_typed_light_state() {
+    fn aero_benign_control_session_writes_silent_high_beam_state() {
         let mut session = BenignControlSession::<NosfetAeroModel, false>::default();
         let mut output = Vec::new();
 
@@ -4733,7 +5223,574 @@ mod tests {
     }
 
     #[test]
-    fn falcon_benign_control_session_writes_typed_light_state() {
+    fn aero_stationary_settings_session_writes_documented_pedal_mode() {
+        let mut session = StationarySettingsWriteSession::<NosfetAeroModel, false>::default();
+        let mut output = Vec::new();
+        session.arm(
+            StationarySettingsPolicy {
+                model: NosfetAeroModel::MODEL,
+                arm_duration: Duration::from_milliseconds(100),
+            }
+            .arm(RideOperatingState::Parked, ms(10))
+            .expect("parked state arms settings writes"),
+        );
+        session.handle(
+            SessionInput::Tick {
+                monotonic_ms: ms(10),
+            },
+            &mut output,
+        );
+        session.handle(
+            SessionInput::Command(DeviceCommand::SetPedalMode(cutout_core::PedalMode::Hard)),
+            &mut output,
+        );
+
+        assert!(output.iter().any(|item| matches!(
+            item,
+            SessionOutput::Transport(TransportAction::Write { bytes, .. })
+                if bytes.as_slice() == b"SETh"
+        )));
+    }
+
+    #[test]
+    fn aero_stationary_settings_session_writes_documented_trip_reset() {
+        let mut session = StationarySettingsWriteSession::<NosfetAeroModel, false>::default();
+        let mut output = Vec::new();
+        session.arm(
+            StationarySettingsPolicy {
+                model: NosfetAeroModel::MODEL,
+                arm_duration: Duration::from_milliseconds(100),
+            }
+            .arm(RideOperatingState::Parked, ms(10))
+            .expect("parked state arms settings writes"),
+        );
+        session.handle(
+            SessionInput::Tick {
+                monotonic_ms: ms(10),
+            },
+            &mut output,
+        );
+        session.handle(
+            SessionInput::Command(DeviceCommand::ResetTripMeter),
+            &mut output,
+        );
+
+        assert!(output.iter().any(|item| matches!(
+            item,
+            SessionOutput::Transport(TransportAction::Write { bytes, .. })
+                if bytes.as_slice() == b"CLEARMETER"
+        )));
+    }
+
+    #[test]
+    fn aero_stationary_settings_session_schedules_tlt_pwt_alm_and_ang() {
+        let cases = [
+            (
+                DeviceCommand::SetAeroTiltbackSpeed(
+                    cutout_core::AeroSpeedSetting::new(53).expect("53 km/h fits"),
+                ),
+                *b"LdAp",
+                12,
+                53,
+            ),
+            (
+                DeviceCommand::SetAeroPwmPercent(
+                    cutout_core::AeroPwmPercent::new(64)
+                        .expect("64 percent fits")
+                        .into(),
+                ),
+                *b"LdAp",
+                13,
+                36,
+            ),
+            (
+                DeviceCommand::SetAeroAlarmSpeed(
+                    cutout_core::AeroSpeedSetting::new(56).expect("56 km/h fits"),
+                ),
+                *b"LkAp",
+                12,
+                56,
+            ),
+            (
+                DeviceCommand::SetAeroAngleAdjustment(
+                    cutout_core::AeroAngleAdjustment::new(-12).expect("-1.2 degrees fits"),
+                ),
+                *b"LkAp",
+                11,
+                244,
+            ),
+        ];
+
+        for (command, magic, value_index, expected_value) in cases {
+            let mut session = StationarySettingsWriteSession::<NosfetAeroModel, false>::default();
+            let mut output = Vec::new();
+            session.arm(
+                StationarySettingsPolicy {
+                    model: NosfetAeroModel::MODEL,
+                    arm_duration: Duration::from_milliseconds(100),
+                }
+                .arm(RideOperatingState::Parked, ms(10))
+                .expect("parked state arms settings writes"),
+            );
+            session.handle(SessionInput::Command(command), &mut output);
+
+            let bytes = output.iter().find_map(|item| match item {
+                SessionOutput::Transport(TransportAction::Write { bytes, .. }) => {
+                    Some(bytes.as_slice())
+                }
+                _ => None,
+            });
+            let bytes = bytes.expect("Aero setting should schedule a transport write");
+            assert_eq!(&bytes[..4], &magic);
+            assert_eq!(bytes[value_index], expected_value);
+        }
+    }
+
+    #[test]
+    fn aero_stationary_settings_session_schedules_single_high_beam_write() {
+        let mut session = StationarySettingsWriteSession::<NosfetAeroModel, false>::default();
+        let mut output = Vec::new();
+        session.arm(
+            StationarySettingsPolicy {
+                model: NosfetAeroModel::MODEL,
+                arm_duration: Duration::from_milliseconds(100),
+            }
+            .arm(RideOperatingState::Parked, ms(10))
+            .expect("parked state arms settings writes"),
+        );
+        session.handle(
+            SessionInput::Tick {
+                monotonic_ms: ms(10),
+            },
+            &mut output,
+        );
+        output.clear();
+
+        session.handle(
+            SessionInput::Command(DeviceCommand::SetAeroHighBeam(cutout_core::LightState::On)),
+            &mut output,
+        );
+        assert!(matches!(
+            output.as_slice(),
+            [SessionOutput::Transport(TransportAction::Write { bytes, .. })]
+                if bytes.as_slice().starts_with(b"LkAp")
+        ));
+
+        output.clear();
+        session.handle(
+            SessionInput::Tick {
+                monotonic_ms: ms(10),
+            },
+            &mut output,
+        );
+        assert!(output.iter().all(|item| !matches!(
+            item,
+            SessionOutput::Transport(TransportAction::Write { .. })
+        )));
+    }
+
+    #[test]
+    fn falcon_stationary_settings_session_writes_documented_pedal_mode() {
+        let mut session = StationarySettingsWriteSession::<BegodeFalconModel, true>::default();
+        let mut output = Vec::new();
+        session.arm(
+            StationarySettingsPolicy {
+                model: BegodeFalconModel::MODEL,
+                arm_duration: Duration::from_milliseconds(100),
+            }
+            .arm(RideOperatingState::Parked, ms(10))
+            .expect("parked state arms settings writes"),
+        );
+        session.handle(
+            SessionInput::Tick {
+                monotonic_ms: ms(10),
+            },
+            &mut output,
+        );
+        session.handle(
+            SessionInput::Command(DeviceCommand::SetPedalMode(cutout_core::PedalMode::Hard)),
+            &mut output,
+        );
+
+        assert!(output.iter().any(|item| matches!(
+            item,
+            SessionOutput::Transport(TransportAction::Write { bytes, .. })
+                if bytes.as_slice() == b"h"
+        )));
+    }
+
+    #[test]
+    fn falcon_stationary_settings_session_writes_documented_roll_angle() {
+        let mut session = StationarySettingsWriteSession::<BegodeFalconModel, true>::default();
+        let mut output = Vec::new();
+        session.arm(
+            StationarySettingsPolicy {
+                model: BegodeFalconModel::MODEL,
+                arm_duration: Duration::from_milliseconds(100),
+            }
+            .arm(RideOperatingState::Parked, ms(10))
+            .expect("parked state arms settings writes"),
+        );
+        session.handle(
+            SessionInput::Tick {
+                monotonic_ms: ms(10),
+            },
+            &mut output,
+        );
+        session.handle(
+            SessionInput::Command(DeviceCommand::SetRollAngle(cutout_core::RollAngle::High)),
+            &mut output,
+        );
+
+        assert!(output.iter().any(|item| matches!(
+            item,
+            SessionOutput::Transport(TransportAction::Write { bytes, .. })
+                if bytes.as_slice() == b"<"
+        )));
+    }
+
+    #[test]
+    fn falcon_stationary_settings_session_writes_documented_speed_alarm_mode() {
+        let mut session = StationarySettingsWriteSession::<BegodeFalconModel, true>::default();
+        let mut output = Vec::new();
+        session.arm(
+            StationarySettingsPolicy {
+                model: BegodeFalconModel::MODEL,
+                arm_duration: Duration::from_milliseconds(100),
+            }
+            .arm(RideOperatingState::Parked, ms(10))
+            .expect("parked state arms settings writes"),
+        );
+        session.handle(
+            SessionInput::Tick {
+                monotonic_ms: ms(10),
+            },
+            &mut output,
+        );
+        session.handle(
+            SessionInput::Command(DeviceCommand::SetSpeedAlarmMode(
+                cutout_core::SpeedAlarmMode::StageOneOnly,
+            )),
+            &mut output,
+        );
+
+        assert!(output.iter().any(|item| matches!(
+            item,
+            SessionOutput::Transport(TransportAction::Write { bytes, .. })
+                if bytes.as_slice() == b"u"
+        )));
+    }
+
+    #[test]
+    fn falcon_stationary_settings_session_schedules_w_sequence_on_ticks() {
+        let mut session = StationarySettingsWriteSession::<BegodeFalconModel, true>::default();
+        let mut output = Vec::new();
+        session.arm(
+            StationarySettingsPolicy {
+                model: BegodeFalconModel::MODEL,
+                arm_duration: Duration::from_milliseconds(1_000),
+            }
+            .arm(RideOperatingState::Parked, ms(10))
+            .expect("parked state arms settings writes"),
+        );
+        session.handle(
+            SessionInput::Tick {
+                monotonic_ms: ms(10),
+            },
+            &mut output,
+        );
+        output.clear();
+
+        session.handle(
+            SessionInput::Command(DeviceCommand::SetBegodeMaxSpeed(
+                BegodeMaxSpeed::new(30).expect("30 km/h is encodable"),
+            )),
+            &mut output,
+        );
+        assert!(matches!(
+            output.as_slice(),
+            [SessionOutput::Transport(TransportAction::Write { bytes, .. })]
+                if bytes.as_slice() == b"W"
+        ));
+
+        output.clear();
+        session.handle(
+            SessionInput::Tick {
+                monotonic_ms: ms(109),
+            },
+            &mut output,
+        );
+        assert!(output.iter().all(|item| !matches!(
+            item,
+            SessionOutput::Transport(TransportAction::Write { .. })
+        )));
+
+        for (at, expected) in [(110, b"Y"), (310, b"3"), (510, b"0"), (710, b"b")] {
+            output.clear();
+            session.handle(
+                SessionInput::Tick {
+                    monotonic_ms: ms(at),
+                },
+                &mut output,
+            );
+            assert!(output.iter().any(|item| matches!(
+                item,
+                SessionOutput::Transport(TransportAction::Write { bytes, .. })
+                    if bytes.as_slice() == expected
+            )));
+        }
+    }
+
+    #[test]
+    fn expired_stationary_arm_cancels_pending_sequence_without_writing() {
+        let mut session = StationarySettingsWriteSession::<BegodeFalconModel, true>::default();
+        let mut output = Vec::new();
+        session.arm(
+            StationarySettingsPolicy {
+                model: BegodeFalconModel::MODEL,
+                arm_duration: Duration::from_milliseconds(100),
+            }
+            .arm(RideOperatingState::Parked, ms(10))
+            .expect("parked state arms settings writes"),
+        );
+        session.handle(
+            SessionInput::Tick {
+                monotonic_ms: ms(10),
+            },
+            &mut output,
+        );
+        output.clear();
+
+        session.handle(
+            SessionInput::Command(DeviceCommand::SetBegodeMaxSpeed(
+                BegodeMaxSpeed::new(30).expect("30 km/h is encodable"),
+            )),
+            &mut output,
+        );
+        output.clear();
+
+        session.handle(
+            SessionInput::Tick {
+                monotonic_ms: ms(111),
+            },
+            &mut output,
+        );
+        assert!(output.iter().all(|item| !matches!(
+            item,
+            SessionOutput::Transport(TransportAction::Write { .. })
+        )));
+
+        output.clear();
+        session.handle(
+            SessionInput::Tick {
+                monotonic_ms: ms(1_000),
+            },
+            &mut output,
+        );
+        assert!(output.iter().all(|item| !matches!(
+            item,
+            SessionOutput::Transport(TransportAction::Write { .. })
+        )));
+    }
+
+    #[test]
+    fn renewing_an_arm_does_not_extend_a_pending_sequence_deadline() {
+        let mut session = StationarySettingsWriteSession::<NosfetAeroModel, false>::default();
+        let mut outputs = Vec::new();
+        let policy = StationarySettingsPolicy {
+            model: NosfetAeroModel::MODEL,
+            arm_duration: Duration::from_milliseconds(100),
+        };
+        session.arm(
+            policy
+                .arm(RideOperatingState::Parked, ms(10))
+                .expect("stationary"),
+        );
+        session.handle(
+            SessionInput::Command(DeviceCommand::SetAeroHighBeam(cutout_core::LightState::On)),
+            &mut outputs,
+        );
+        session.arm(
+            policy
+                .arm(RideOperatingState::Parked, ms(50))
+                .expect("stationary"),
+        );
+        outputs.clear();
+        session.handle(
+            SessionInput::Tick {
+                monotonic_ms: ms(111),
+            },
+            &mut outputs,
+        );
+        assert!(outputs.iter().all(|output| !matches!(
+            output,
+            SessionOutput::Transport(TransportAction::Write { .. })
+        )));
+    }
+
+    #[test]
+    fn moving_telemetry_cancels_pending_settings_frames() {
+        let mut session = StationarySettingsWriteSession::<NosfetAeroModel, false>::default();
+        let mut outputs = Vec::new();
+        session.handle(
+            SessionInput::LinkUp(LinkInfo {
+                monotonic_ms: ms(1),
+                max_write_len: Some(write_len(185)),
+            }),
+            &mut outputs,
+        );
+        session.arm(
+            NosfetAeroModel::arm_settings_write(RideOperatingState::Parked, None, ms(10))
+                .expect("stationary"),
+        );
+        session.handle(
+            SessionInput::Command(DeviceCommand::SetAeroHighBeam(cutout_core::LightState::On)),
+            &mut outputs,
+        );
+        let mut frame = live_aero_frame();
+        frame[6..8].copy_from_slice(&20_u16.to_be_bytes());
+        let length = usize::from(frame[3]);
+        let crc = crc32fast::hash(&frame[..length]);
+        frame[length..].copy_from_slice(&crc.to_be_bytes());
+        session.handle(
+            SessionInput::Notification {
+                channel: VETERAN_DATA_CHANNEL,
+                bytes: &frame,
+                monotonic_ms: ms(11),
+            },
+            &mut outputs,
+        );
+        outputs.clear();
+        session.handle(
+            SessionInput::Tick {
+                monotonic_ms: ms(12),
+            },
+            &mut outputs,
+        );
+        assert!(outputs.iter().all(|output| !matches!(
+            output,
+            SessionOutput::Transport(TransportAction::Write { .. })
+        )));
+        outputs.clear();
+        session.handle(
+            SessionInput::Command(DeviceCommand::ResetTripMeter),
+            &mut outputs,
+        );
+        assert!(
+            matches!(outputs.as_slice(), [SessionOutput::Event(DeviceEvent::ControlRefusal(refusal))] if refusal.reason == ControlRefusalReason::MissingArm)
+        );
+    }
+
+    #[test]
+    fn aero_settings_arm_allows_the_500_mm_per_second_window() {
+        let at = ms(10);
+        assert!(
+            NosfetAeroModel::arm_settings_write(
+                RideOperatingState::Riding,
+                Some(cutout_core::Speed::from_millimetres_per_second(500)),
+                at,
+            )
+            .is_some()
+        );
+        assert!(
+            NosfetAeroModel::arm_settings_write(
+                RideOperatingState::Riding,
+                Some(cutout_core::Speed::from_millimetres_per_second(501)),
+                at,
+            )
+            .is_none()
+        );
+        assert!(
+            BegodeFalconModel::arm_settings_write(
+                RideOperatingState::Riding,
+                Some(cutout_core::Speed::from_millimetres_per_second(1)),
+                at,
+            )
+            .is_none()
+        );
+    }
+
+    #[test]
+    fn stationary_settings_session_requires_fresh_stationary_arm() {
+        let mut session = StationarySettingsWriteSession::<TestModel, false>::default();
+        let mut output = Vec::new();
+        let command = DeviceCommand::SetPedalMode(cutout_core::PedalMode::Hard);
+
+        session.handle(SessionInput::Command(command), &mut output);
+
+        assert_eq!(
+            output,
+            vec![SessionOutput::Event(DeviceEvent::ControlRefusal(
+                ControlRefusal {
+                    command: CommandKind::SetPedalMode,
+                    safety_class: SafetyClass::StationaryOnly,
+                    reason: ControlRefusalReason::MissingArm,
+                }
+            ))]
+        );
+
+        let arm = StationarySettingsPolicy {
+            model: TestModel::MODEL,
+            arm_duration: Duration::from_milliseconds(100),
+        }
+        .arm(RideOperatingState::Standing, MonotonicTimestamp::new(10))
+        .expect("standing state arms settings writes");
+        session.arm(arm);
+        assert_eq!(session.monotonic_ms, MonotonicTimestamp::new(10));
+        session.handle(
+            SessionInput::Tick {
+                monotonic_ms: MonotonicTimestamp::new(10),
+            },
+            &mut output,
+        );
+        session.handle(SessionInput::Command(command), &mut output);
+
+        assert!(output.iter().any(|item| matches!(
+            item,
+            SessionOutput::Transport(TransportAction::Write { bytes, .. })
+                if bytes.as_slice() == b"SETh"
+        )));
+
+        session.handle(
+            SessionInput::Tick {
+                monotonic_ms: MonotonicTimestamp::new(111),
+            },
+            &mut output,
+        );
+        session.handle(SessionInput::Command(command), &mut output);
+        assert!(matches!(
+            output.last(),
+            Some(SessionOutput::Event(DeviceEvent::ControlRefusal(
+                ControlRefusal {
+                    reason: ControlRefusalReason::ExpiredArm,
+                    ..
+                }
+            )))
+        ));
+
+        session.arm(
+            StationarySettingsPolicy {
+                model: TestModel::MODEL,
+                arm_duration: Duration::from_milliseconds(100),
+            }
+            .arm(RideOperatingState::Parked, MonotonicTimestamp::new(120))
+            .expect("parked state arms settings writes"),
+        );
+        session.handle(SessionInput::LinkDown, &mut output);
+        session.handle(SessionInput::Command(command), &mut output);
+        assert!(matches!(
+            output.last(),
+            Some(SessionOutput::Event(DeviceEvent::ControlRefusal(
+                ControlRefusal {
+                    reason: ControlRefusalReason::MissingArm,
+                    ..
+                }
+            )))
+        ));
+    }
+
+    #[test]
+    fn falcon_benign_control_session_writes_source_backed_light_state() {
         let mut session = BenignControlSession::<BegodeFalconModel, true>::default();
         let mut output = Vec::new();
 
@@ -4742,13 +5799,56 @@ mod tests {
             &mut output,
         );
 
+        assert!(output.iter().any(|item| matches!(
+            item,
+            SessionOutput::Transport(TransportAction::Write { bytes, .. })
+                if bytes.as_slice() == b"E"
+        )));
+    }
+
+    #[test]
+    fn unverified_taillight_control_is_refused_without_writes() {
+        let mut session = BenignControlSession::<BegodeFalconModel, true>::default();
+        let mut output = Vec::new();
+
+        session.handle(
+            SessionInput::Command(DeviceCommand::SetTaillight(cutout_core::LightState::On)),
+            &mut output,
+        );
+
         assert_eq!(
             output,
-            vec![SessionOutput::Transport(TransportAction::Write {
-                channel: BEGODE_DATA_CHANNEL,
-                bytes: WritePayload::try_from_slice(b"E").expect("fixture payload fits"),
-                mode: WriteMode::WithoutResponse,
-            })]
+            vec![SessionOutput::Event(DeviceEvent::ControlRefusal(
+                ControlRefusal {
+                    command: CommandKind::SetTaillight,
+                    safety_class: SafetyClass::BenignControl,
+                    reason: ControlRefusalReason::UnsupportedCommand,
+                }
+            ))]
+        );
+    }
+
+    #[test]
+    fn unverified_acceleration_assist_is_refused_without_writes() {
+        let mut session = BenignControlSession::<NosfetAeroModel, false>::default();
+        let mut output = Vec::new();
+
+        session.handle(
+            SessionInput::Command(DeviceCommand::SetAccelerationAssist(
+                cutout_core::AccelerationAssistState::Enabled,
+            )),
+            &mut output,
+        );
+
+        assert_eq!(
+            output,
+            vec![SessionOutput::Event(DeviceEvent::ControlRefusal(
+                ControlRefusal {
+                    command: CommandKind::SetAccelerationAssist,
+                    safety_class: SafetyClass::StationaryOnly,
+                    reason: ControlRefusalReason::UnsupportedCommand,
+                }
+            ))]
         );
     }
 
@@ -5022,7 +6122,7 @@ mod tests {
             DangerousControlSession::<TestModel>::new(cutout_core::DangerousActuationPolicy {
                 model: TestModel::MODEL,
                 max_current: cutout_core::PhaseCurrent::from_milliamps(5_000),
-                arm_duration: cutout_core::Duration::from_milliseconds(1_000),
+                arm_duration: Duration::from_milliseconds(1_000),
             });
         let mut output = Vec::new();
 
@@ -5056,7 +6156,7 @@ mod tests {
         let policy = cutout_core::DangerousActuationPolicy {
             model: TestModel::MODEL,
             max_current: cutout_core::PhaseCurrent::from_milliamps(5_000),
-            arm_duration: cutout_core::Duration::from_milliseconds(1_000),
+            arm_duration: Duration::from_milliseconds(1_000),
         };
         let mut session = DangerousControlSession::<TestModel>::new(policy);
         let mut output = Vec::new();
@@ -5097,12 +6197,12 @@ mod tests {
         let policy = cutout_core::DangerousActuationPolicy {
             model: TestModel::MODEL,
             max_current: cutout_core::PhaseCurrent::from_milliamps(5_000),
-            arm_duration: cutout_core::Duration::from_milliseconds(1_000),
+            arm_duration: Duration::from_milliseconds(1_000),
         };
         let wrong_model_policy = cutout_core::DangerousActuationPolicy {
             model: "other model",
             max_current: cutout_core::PhaseCurrent::from_milliamps(5_000),
-            arm_duration: cutout_core::Duration::from_milliseconds(1_000),
+            arm_duration: Duration::from_milliseconds(1_000),
         };
         let mut session = DangerousControlSession::<TestModel>::new(policy);
         let mut output = Vec::new();
@@ -5143,7 +6243,7 @@ mod tests {
         let policy = cutout_core::DangerousActuationPolicy {
             model: TestModel::MODEL,
             max_current: cutout_core::PhaseCurrent::from_milliamps(5_000),
-            arm_duration: cutout_core::Duration::from_milliseconds(1_000),
+            arm_duration: Duration::from_milliseconds(1_000),
         };
         let mut session = DangerousControlSession::<TestModel>::new(policy);
         let mut output = Vec::new();

@@ -1,20 +1,24 @@
 use crate::{
+    AccelerationAssistState, AeroAngleAdjustment, AeroBeeperVolume, AeroBrakeOverpressureAlarm,
+    AeroDisplayBacklight, AeroDynamicAssist, AeroHighSpeedMode, AeroLateralTiltLimit,
+    AeroLowBatteryMode, AeroMaxChargeVoltageRaw, AeroPedalDipCompensation, AeroPedalHardness,
+    AeroPwmSetting, AeroRidingMode, AeroSpeedSetting, AeroTransportMode, AeroVoltageCorrection,
     Angle, BatteryCurrent, BatteryInfo, BatteryLevel, BatteryPageKind, BatteryPageMetadata,
-    BatteryPagePayload, BatteryReadback, BatteryReadbackAvailability, BmsPackCurrents, ChargeMode,
-    CommandKind, ControlRefusal, ControlRefusalReason, DeviceCommand, DeviceEvent,
-    DiagnosticDetail, DiagnosticError, DiagnosticErrorKind, DiagnosticReadback, DiagnosticSeverity,
-    Distance, DutyCycle, FaultCode, FaultHistoryAvailability, FaultHistoryEntry,
-    FaultHistoryReadback, FirmwareInfo, FootpadContactState, FootpadTelemetry,
-    IgnoredNotificationEvidence, IgnoredNotificationReason, LightState, Measured,
-    MonotonicTimestamp, NotificationByteLen, NotificationEvidence, NotificationIngestOutcome,
-    ParserDiagnosticCount, ParserDiagnostics, ParserDroppedBytes, ParserError, ParserFrameLen,
-    ParserGapEvidence, PayloadBodyLen, PhaseCurrent, Power, ProtocolFamily, ProtocolTag,
-    RawFieldValue, RawTelemetryReadback, ReadOnlyResponse, ReservedPayloadEvidence,
-    RideOperatingMode, RideOperatingState, RideStopReason, RideWarning, SafetyClass,
-    SemanticEventCount, SessionInput, SessionOutput, SettingsEntry, SettingsReadback,
-    SettingsReadbackAvailability, Speed, TelemetryDelta, TelemetrySnapshot, Temperature,
-    TransportAction, TransportWriteLimit, ValueQuality, ValueSource, VerificationStatus, Voltage,
-    WriteMode,
+    BatteryPagePayload, BatteryReadback, BatteryReadbackAvailability, BegodeBeeperVolume,
+    BegodeLedModeSetting, BegodeMaxSpeed, BmsPackCurrents, ChargeMode, CommandKind, ControlRefusal,
+    ControlRefusalReason, DeviceCommand, DeviceEvent, DiagnosticDetail, DiagnosticError,
+    DiagnosticErrorKind, DiagnosticReadback, DiagnosticSeverity, Distance, DutyCycle, FaultCode,
+    FaultHistoryAvailability, FaultHistoryEntry, FaultHistoryReadback, FirmwareInfo,
+    FootpadContactState, FootpadTelemetry, IgnoredNotificationEvidence, IgnoredNotificationReason,
+    LightState, Measured, MonotonicTimestamp, NotificationByteLen, NotificationEvidence,
+    NotificationIngestOutcome, ParserDiagnosticCount, ParserDiagnostics, ParserDroppedBytes,
+    ParserError, ParserFrameLen, ParserGapEvidence, PayloadBodyLen, PedalMode, PhaseCurrent, Power,
+    ProtocolFamily, ProtocolTag, RawFieldValue, RawTelemetryReadback, ReadOnlyResponse,
+    ReservedPayloadEvidence, RideOperatingMode, RideOperatingState, RideStopReason, RideWarning,
+    RollAngle, SafetyClass, SemanticEventCount, SessionInput, SessionOutput, SettingsEntry,
+    SettingsReadback, SettingsReadbackAvailability, Speed, SpeedAlarmMode, TelemetryDelta,
+    TelemetrySnapshot, Temperature, TransportAction, TransportWriteLimit, ValueQuality,
+    ValueSource, VerificationStatus, Voltage, WriteMode,
 };
 
 /// UniFFI-ready owned read-only output.
@@ -223,8 +227,98 @@ pub enum CommandKindDto {
     /// Request current settings without changing device state.
     RequestSettings,
 
+    /// Reset the device trip meter.
+    ResetTripMeter,
+
+    /// Set the NOSFET/Veteran tilt-back speed.
+    SetAeroTiltbackSpeed,
+
+    /// Set the NOSFET/Veteran PWT (PWM tilt-back alarm) percentage.
+    SetAeroPwmPercent,
+
+    /// Disable the NOSFET/Veteran PWT alarm.
+    SetAeroPwmOff,
+
+    /// Start or finish NOSFET Aero gyro calibration.
+    SetAeroGyroCalibration,
+
+    /// Set the NOSFET/Veteran modern binary T riding mode.
+    SetAeroRidingMode,
+
+    /// Set the NOSFET Aero brake overpressure alarm percentage.
+    SetAeroBrakeOverpressureAlarm,
+
+    /// Set the NOSFET/Veteran MD pedal hardness percentage.
+    SetAeroPedalHardness,
+
+    /// Set the Aero wheel display backlight brightness.
+    SetAeroDisplayBacklight,
+
+    /// Set the Aero wheel beeper volume.
+    SetAeroBeeperVolume,
+
+    /// Set the Aero dynamic assist.
+    SetAeroDynamicAssist,
+
+    /// Set the Aero pedal-dip compensation.
+    SetAeroPedalDipCompensation,
+
+    /// Set the Aero lateral tilt limit.
+    SetAeroLateralTiltLimit,
+
+    /// Set the Aero voltage correction.
+    SetAeroVoltageCorrection,
+
+    /// Set the NOSFET Aero maximum charge voltage.
+    SetAeroMaxChargeVoltageRaw,
+
+    /// Set wheel display units independently of host preferences.
+    SetAeroWheelUnits,
+
+    /// Enable or disable the Aero high-speed mode.
+    SetAeroHighSpeedMode,
+
+    /// Enable or disable the Aero low-battery mode.
+    SetAeroLowBatteryMode,
+
+    /// Enable or disable the Aero transportation mode.
+    SetAeroTransportMode,
+
+    /// Set the NOSFET/Veteran speed alarm.
+    SetAeroAlarmSpeed,
+
+    /// Set the NOSFET/Veteran ANG (vertical angle) adjustment.
+    SetAeroAngleAdjustment,
+
+    /// Set the NOSFET/Veteran high beam.
+    SetAeroHighBeam,
+
     /// Set the device lights.
     SetLights,
+
+    /// Set pedal stiffness.
+    SetPedalMode,
+
+    /// Set Falcon roll-angle sensitivity.
+    SetRollAngle,
+
+    /// Set Begode speed-alarm mode.
+    SetSpeedAlarmMode,
+
+    /// Set Begode max speed.
+    SetBegodeMaxSpeed,
+
+    /// Set Begode beeper volume.
+    SetBegodeBeeperVolume,
+
+    /// Set Begode LED mode.
+    SetBegodeLedMode,
+
+    /// Enable or disable acceleration assist.
+    SetAccelerationAssist,
+
+    /// Set the taillight state.
+    SetTaillight,
 
     /// Sound a device horn or alert.
     SoundHorn,
@@ -243,7 +337,37 @@ impl From<CommandKind> for CommandKindDto {
             CommandKind::RequestDiagnostics => Self::RequestDiagnostics,
             CommandKind::RequestFaultHistory => Self::RequestFaultHistory,
             CommandKind::RequestSettings => Self::RequestSettings,
+            CommandKind::ResetTripMeter => Self::ResetTripMeter,
+            CommandKind::SetAeroTiltbackSpeed => Self::SetAeroTiltbackSpeed,
+            CommandKind::SetAeroPwmPercent => Self::SetAeroPwmPercent,
+            CommandKind::SetAeroPwmOff => Self::SetAeroPwmOff,
+            CommandKind::SetAeroGyroCalibration => Self::SetAeroGyroCalibration,
+            CommandKind::SetAeroRidingMode => Self::SetAeroRidingMode,
+            CommandKind::SetAeroBrakeOverpressureAlarm => Self::SetAeroBrakeOverpressureAlarm,
+            CommandKind::SetAeroPedalHardness => Self::SetAeroPedalHardness,
+            CommandKind::SetAeroDisplayBacklight => Self::SetAeroDisplayBacklight,
+            CommandKind::SetAeroBeeperVolume => Self::SetAeroBeeperVolume,
+            CommandKind::SetAeroDynamicAssist => Self::SetAeroDynamicAssist,
+            CommandKind::SetAeroPedalDipCompensation => Self::SetAeroPedalDipCompensation,
+            CommandKind::SetAeroLateralTiltLimit => Self::SetAeroLateralTiltLimit,
+            CommandKind::SetAeroVoltageCorrection => Self::SetAeroVoltageCorrection,
+            CommandKind::SetAeroMaxChargeVoltageRaw => Self::SetAeroMaxChargeVoltageRaw,
+            CommandKind::SetAeroWheelUnits => Self::SetAeroWheelUnits,
+            CommandKind::SetAeroHighSpeedMode => Self::SetAeroHighSpeedMode,
+            CommandKind::SetAeroLowBatteryMode => Self::SetAeroLowBatteryMode,
+            CommandKind::SetAeroTransportMode => Self::SetAeroTransportMode,
+            CommandKind::SetAeroAlarmSpeed => Self::SetAeroAlarmSpeed,
+            CommandKind::SetAeroAngleAdjustment => Self::SetAeroAngleAdjustment,
+            CommandKind::SetAeroHighBeam => Self::SetAeroHighBeam,
             CommandKind::SetLights => Self::SetLights,
+            CommandKind::SetPedalMode => Self::SetPedalMode,
+            CommandKind::SetRollAngle => Self::SetRollAngle,
+            CommandKind::SetSpeedAlarmMode => Self::SetSpeedAlarmMode,
+            CommandKind::SetBegodeMaxSpeed => Self::SetBegodeMaxSpeed,
+            CommandKind::SetBegodeBeeperVolume => Self::SetBegodeBeeperVolume,
+            CommandKind::SetBegodeLedMode => Self::SetBegodeLedMode,
+            CommandKind::SetAccelerationAssist => Self::SetAccelerationAssist,
+            CommandKind::SetTaillight => Self::SetTaillight,
             CommandKind::SoundHorn => Self::SoundHorn,
             CommandKind::SetRawMotorCurrent => Self::SetRawMotorCurrent,
         }
@@ -274,8 +398,98 @@ pub enum DeviceCommandDto {
     /// Request current settings without changing device state.
     RequestSettings,
 
+    /// Reset the device trip meter.
+    ResetTripMeter,
+
+    /// Set the NOSFET/Veteran tilt-back speed.
+    SetAeroTiltbackSpeed(AeroSpeedSetting),
+
+    /// Set the NOSFET/Veteran PWT (PWM tilt-back alarm) percentage.
+    SetAeroPwmPercent(AeroPwmSetting),
+
+    /// Disable the NOSFET/Veteran PWT alarm.
+    SetAeroPwmOff,
+
+    /// Start or finish NOSFET Aero gyro calibration.
+    SetAeroGyroCalibration,
+
+    /// Set the NOSFET/Veteran modern binary T riding mode.
+    SetAeroRidingMode(AeroRidingModeDto),
+
+    /// Set the NOSFET Aero brake overpressure alarm percentage.
+    SetAeroBrakeOverpressureAlarm(AeroBrakeOverpressureAlarm),
+
+    /// Set the NOSFET/Veteran MD pedal hardness percentage.
+    SetAeroPedalHardness(AeroPedalHardness),
+
+    /// Set the Aero wheel display backlight brightness.
+    SetAeroDisplayBacklight(AeroDisplayBacklight),
+
+    /// Set the Aero wheel beeper volume.
+    SetAeroBeeperVolume(AeroBeeperVolume),
+
+    /// Set the Aero dynamic assist.
+    SetAeroDynamicAssist(AeroDynamicAssist),
+
+    /// Set the Aero pedal-dip compensation.
+    SetAeroPedalDipCompensation(AeroPedalDipCompensation),
+
+    /// Set the Aero lateral tilt limit.
+    SetAeroLateralTiltLimit(AeroLateralTiltLimit),
+
+    /// Set the Aero voltage correction.
+    SetAeroVoltageCorrection(AeroVoltageCorrection),
+
+    /// Set the NOSFET Aero maximum charge voltage.
+    SetAeroMaxChargeVoltageRaw(AeroMaxChargeVoltageRaw),
+
+    /// Set the wheel display units.
+    SetAeroWheelUnits(crate::AeroWheelUnits),
+
+    /// Enable or disable the Aero high-speed mode.
+    SetAeroHighSpeedMode(AeroHighSpeedMode),
+
+    /// Enable or disable the Aero low-battery mode.
+    SetAeroLowBatteryMode(AeroLowBatteryMode),
+
+    /// Enable or disable the Aero transportation mode.
+    SetAeroTransportMode(AeroTransportMode),
+
+    /// Set the NOSFET/Veteran speed alarm.
+    SetAeroAlarmSpeed(AeroSpeedSetting),
+
+    /// Set the NOSFET/Veteran ANG (vertical angle) adjustment.
+    SetAeroAngleAdjustment(AeroAngleAdjustment),
+
+    /// Set the NOSFET/Veteran high beam.
+    SetAeroHighBeam(LightState),
+
     /// Set the device lights.
     SetLights(LightStateDto),
+
+    /// Set pedal stiffness.
+    SetPedalMode(PedalModeDto),
+
+    /// Set Falcon roll-angle sensitivity.
+    SetRollAngle(RollAngleDto),
+
+    /// Set Begode speed-alarm mode.
+    SetSpeedAlarmMode(SpeedAlarmModeDto),
+
+    /// Set Begode max speed.
+    SetBegodeMaxSpeed(BegodeMaxSpeed),
+
+    /// Set Begode beeper volume.
+    SetBegodeBeeperVolume(BegodeBeeperVolume),
+
+    /// Set Begode LED mode.
+    SetBegodeLedMode(BegodeLedModeSetting),
+
+    /// Enable or disable acceleration assist.
+    SetAccelerationAssist(AccelerationAssistStateDto),
+
+    /// Set the taillight state.
+    SetTaillight(LightStateDto),
 
     /// Sound a device horn or alert.
     SoundHorn,
@@ -297,7 +511,45 @@ impl From<DeviceCommand> for DeviceCommandDto {
             DeviceCommand::RequestDiagnostics => Self::RequestDiagnostics,
             DeviceCommand::RequestFaultHistory => Self::RequestFaultHistory,
             DeviceCommand::RequestSettings => Self::RequestSettings,
+            DeviceCommand::ResetTripMeter => Self::ResetTripMeter,
+            DeviceCommand::SetAeroTiltbackSpeed(speed) => Self::SetAeroTiltbackSpeed(speed),
+            DeviceCommand::SetAeroPwmPercent(percent) => Self::SetAeroPwmPercent(percent),
+            DeviceCommand::SetAeroPwmOff => Self::SetAeroPwmOff,
+            DeviceCommand::SetAeroGyroCalibration => Self::SetAeroGyroCalibration,
+            DeviceCommand::SetAeroRidingMode(mode) => Self::SetAeroRidingMode(mode.into()),
+            DeviceCommand::SetAeroBrakeOverpressureAlarm(value) => {
+                Self::SetAeroBrakeOverpressureAlarm(value)
+            }
+            DeviceCommand::SetAeroPedalHardness(percent) => Self::SetAeroPedalHardness(percent),
+            DeviceCommand::SetAeroDisplayBacklight(value) => Self::SetAeroDisplayBacklight(value),
+            DeviceCommand::SetAeroBeeperVolume(value) => Self::SetAeroBeeperVolume(value),
+            DeviceCommand::SetAeroDynamicAssist(value) => Self::SetAeroDynamicAssist(value),
+            DeviceCommand::SetAeroPedalDipCompensation(value) => {
+                Self::SetAeroPedalDipCompensation(value)
+            }
+            DeviceCommand::SetAeroLateralTiltLimit(value) => Self::SetAeroLateralTiltLimit(value),
+            DeviceCommand::SetAeroVoltageCorrection(value) => Self::SetAeroVoltageCorrection(value),
+            DeviceCommand::SetAeroMaxChargeVoltageRaw(value) => {
+                Self::SetAeroMaxChargeVoltageRaw(value)
+            }
+            DeviceCommand::SetAeroWheelUnits(units) => Self::SetAeroWheelUnits(units),
+            DeviceCommand::SetAeroHighSpeedMode(value) => Self::SetAeroHighSpeedMode(value),
+            DeviceCommand::SetAeroLowBatteryMode(value) => Self::SetAeroLowBatteryMode(value),
+            DeviceCommand::SetAeroTransportMode(value) => Self::SetAeroTransportMode(value),
+            DeviceCommand::SetAeroAlarmSpeed(speed) => Self::SetAeroAlarmSpeed(speed),
+            DeviceCommand::SetAeroAngleAdjustment(angle) => Self::SetAeroAngleAdjustment(angle),
+            DeviceCommand::SetAeroHighBeam(state) => Self::SetAeroHighBeam(state),
             DeviceCommand::SetLights(state) => Self::SetLights(state.into()),
+            DeviceCommand::SetPedalMode(mode) => Self::SetPedalMode(mode.into()),
+            DeviceCommand::SetRollAngle(angle) => Self::SetRollAngle(angle.into()),
+            DeviceCommand::SetSpeedAlarmMode(mode) => Self::SetSpeedAlarmMode(mode.into()),
+            DeviceCommand::SetBegodeMaxSpeed(speed) => Self::SetBegodeMaxSpeed(speed),
+            DeviceCommand::SetBegodeBeeperVolume(volume) => Self::SetBegodeBeeperVolume(volume),
+            DeviceCommand::SetBegodeLedMode(mode) => Self::SetBegodeLedMode(mode),
+            DeviceCommand::SetAccelerationAssist(state) => {
+                Self::SetAccelerationAssist(state.into())
+            }
+            DeviceCommand::SetTaillight(state) => Self::SetTaillight(state.into()),
             DeviceCommand::SoundHorn => Self::SoundHorn,
             DeviceCommand::SetRawMotorCurrent { current } => Self::SetRawMotorCurrent {
                 current: current.as_milliamps(),
@@ -316,7 +568,51 @@ impl From<DeviceCommandDto> for DeviceCommand {
             DeviceCommandDto::RequestDiagnostics => Self::RequestDiagnostics,
             DeviceCommandDto::RequestFaultHistory => Self::RequestFaultHistory,
             DeviceCommandDto::RequestSettings => Self::RequestSettings,
+            DeviceCommandDto::ResetTripMeter => Self::ResetTripMeter,
+            DeviceCommandDto::SetAeroTiltbackSpeed(speed) => Self::SetAeroTiltbackSpeed(speed),
+            DeviceCommandDto::SetAeroPwmPercent(percent) => Self::SetAeroPwmPercent(percent),
+            DeviceCommandDto::SetAeroPwmOff => Self::SetAeroPwmOff,
+            DeviceCommandDto::SetAeroGyroCalibration => Self::SetAeroGyroCalibration,
+            DeviceCommandDto::SetAeroRidingMode(mode) => Self::SetAeroRidingMode(mode.into()),
+            DeviceCommandDto::SetAeroBrakeOverpressureAlarm(value) => {
+                Self::SetAeroBrakeOverpressureAlarm(value)
+            }
+            DeviceCommandDto::SetAeroPedalHardness(percent) => Self::SetAeroPedalHardness(percent),
+            DeviceCommandDto::SetAeroDisplayBacklight(value) => {
+                Self::SetAeroDisplayBacklight(value)
+            }
+            DeviceCommandDto::SetAeroBeeperVolume(value) => Self::SetAeroBeeperVolume(value),
+            DeviceCommandDto::SetAeroDynamicAssist(value) => Self::SetAeroDynamicAssist(value),
+            DeviceCommandDto::SetAeroPedalDipCompensation(value) => {
+                Self::SetAeroPedalDipCompensation(value)
+            }
+            DeviceCommandDto::SetAeroLateralTiltLimit(value) => {
+                Self::SetAeroLateralTiltLimit(value)
+            }
+            DeviceCommandDto::SetAeroVoltageCorrection(value) => {
+                Self::SetAeroVoltageCorrection(value)
+            }
+            DeviceCommandDto::SetAeroMaxChargeVoltageRaw(value) => {
+                Self::SetAeroMaxChargeVoltageRaw(value)
+            }
+            DeviceCommandDto::SetAeroWheelUnits(units) => Self::SetAeroWheelUnits(units),
+            DeviceCommandDto::SetAeroHighSpeedMode(value) => Self::SetAeroHighSpeedMode(value),
+            DeviceCommandDto::SetAeroLowBatteryMode(value) => Self::SetAeroLowBatteryMode(value),
+            DeviceCommandDto::SetAeroTransportMode(value) => Self::SetAeroTransportMode(value),
+            DeviceCommandDto::SetAeroAlarmSpeed(speed) => Self::SetAeroAlarmSpeed(speed),
+            DeviceCommandDto::SetAeroAngleAdjustment(angle) => Self::SetAeroAngleAdjustment(angle),
+            DeviceCommandDto::SetAeroHighBeam(state) => Self::SetAeroHighBeam(state),
             DeviceCommandDto::SetLights(state) => Self::SetLights(state.into()),
+            DeviceCommandDto::SetPedalMode(mode) => Self::SetPedalMode(mode.into()),
+            DeviceCommandDto::SetRollAngle(angle) => Self::SetRollAngle(angle.into()),
+            DeviceCommandDto::SetSpeedAlarmMode(mode) => Self::SetSpeedAlarmMode(mode.into()),
+            DeviceCommandDto::SetBegodeMaxSpeed(speed) => Self::SetBegodeMaxSpeed(speed),
+            DeviceCommandDto::SetBegodeBeeperVolume(volume) => Self::SetBegodeBeeperVolume(volume),
+            DeviceCommandDto::SetBegodeLedMode(mode) => Self::SetBegodeLedMode(mode),
+            DeviceCommandDto::SetAccelerationAssist(state) => {
+                Self::SetAccelerationAssist(state.into())
+            }
+            DeviceCommandDto::SetTaillight(state) => Self::SetTaillight(state.into()),
             DeviceCommandDto::SoundHorn => Self::SoundHorn,
             DeviceCommandDto::SetRawMotorCurrent { current } => Self::SetRawMotorCurrent {
                 current: PhaseCurrent::from_milliamps(current),
@@ -333,6 +629,171 @@ pub enum LightStateDto {
 
     /// Lights on.
     On,
+
+    /// Begode strobe/running-light mode.
+    Strobe,
+}
+
+/// UniFFI-ready acceleration-assist state.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum AccelerationAssistStateDto {
+    /// Acceleration assist is disabled.
+    Disabled,
+
+    /// Acceleration assist is enabled.
+    Enabled,
+}
+
+impl From<AccelerationAssistState> for AccelerationAssistStateDto {
+    fn from(state: AccelerationAssistState) -> Self {
+        match state {
+            AccelerationAssistState::Disabled => Self::Disabled,
+            AccelerationAssistState::Enabled => Self::Enabled,
+        }
+    }
+}
+
+impl From<AccelerationAssistStateDto> for AccelerationAssistState {
+    fn from(state: AccelerationAssistStateDto) -> Self {
+        match state {
+            AccelerationAssistStateDto::Disabled => Self::Disabled,
+            AccelerationAssistStateDto::Enabled => Self::Enabled,
+        }
+    }
+}
+
+/// UniFFI-ready pedal stiffness mode.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum PedalModeDto {
+    /// Firm pedal response.
+    Hard,
+
+    /// Mid-range pedal response.
+    Medium,
+
+    /// Soft pedal response.
+    Soft,
+}
+
+impl From<PedalMode> for PedalModeDto {
+    fn from(mode: PedalMode) -> Self {
+        match mode {
+            PedalMode::Hard => Self::Hard,
+            PedalMode::Medium => Self::Medium,
+            PedalMode::Soft => Self::Soft,
+        }
+    }
+}
+
+impl From<PedalModeDto> for PedalMode {
+    fn from(mode: PedalModeDto) -> Self {
+        match mode {
+            PedalModeDto::Hard => Self::Hard,
+            PedalModeDto::Medium => Self::Medium,
+            PedalModeDto::Soft => Self::Soft,
+        }
+    }
+}
+
+/// UniFFI-ready NOSFET/Veteran modern binary T riding mode.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum AeroRidingModeDto {
+    /// Firm riding response.
+    Hard,
+
+    /// Mid-range riding response.
+    Medium,
+
+    /// Soft riding response.
+    Soft,
+}
+
+impl From<AeroRidingMode> for AeroRidingModeDto {
+    fn from(mode: AeroRidingMode) -> Self {
+        match mode {
+            AeroRidingMode::Hard => Self::Hard,
+            AeroRidingMode::Medium => Self::Medium,
+            AeroRidingMode::Soft => Self::Soft,
+        }
+    }
+}
+
+impl From<AeroRidingModeDto> for AeroRidingMode {
+    fn from(mode: AeroRidingModeDto) -> Self {
+        match mode {
+            AeroRidingModeDto::Hard => Self::Hard,
+            AeroRidingModeDto::Medium => Self::Medium,
+            AeroRidingModeDto::Soft => Self::Soft,
+        }
+    }
+}
+
+/// UniFFI-ready Falcon roll-angle sensitivity.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum RollAngleDto {
+    /// Low roll-angle sensitivity.
+    Low,
+
+    /// Medium roll-angle sensitivity.
+    Medium,
+
+    /// High roll-angle sensitivity.
+    High,
+}
+
+impl From<RollAngle> for RollAngleDto {
+    fn from(angle: RollAngle) -> Self {
+        match angle {
+            RollAngle::Low => Self::Low,
+            RollAngle::Medium => Self::Medium,
+            RollAngle::High => Self::High,
+        }
+    }
+}
+
+impl From<RollAngleDto> for RollAngle {
+    fn from(angle: RollAngleDto) -> Self {
+        match angle {
+            RollAngleDto::Low => Self::Low,
+            RollAngleDto::Medium => Self::Medium,
+            RollAngleDto::High => Self::High,
+        }
+    }
+}
+
+/// UniFFI-ready Begode speed-alarm mode.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum SpeedAlarmModeDto {
+    /// Both speed alarms are enabled.
+    Both,
+    /// Only the first-stage speed alarm is enabled.
+    StageOneOnly,
+    /// Speed alarms are disabled.
+    Off,
+    /// Firmware-controlled PWM tiltback mode.
+    PwmTiltback,
+}
+
+impl From<SpeedAlarmMode> for SpeedAlarmModeDto {
+    fn from(mode: SpeedAlarmMode) -> Self {
+        match mode {
+            SpeedAlarmMode::Both => Self::Both,
+            SpeedAlarmMode::StageOneOnly => Self::StageOneOnly,
+            SpeedAlarmMode::Off => Self::Off,
+            SpeedAlarmMode::PwmTiltback => Self::PwmTiltback,
+        }
+    }
+}
+
+impl From<SpeedAlarmModeDto> for SpeedAlarmMode {
+    fn from(mode: SpeedAlarmModeDto) -> Self {
+        match mode {
+            SpeedAlarmModeDto::Both => Self::Both,
+            SpeedAlarmModeDto::StageOneOnly => Self::StageOneOnly,
+            SpeedAlarmModeDto::Off => Self::Off,
+            SpeedAlarmModeDto::PwmTiltback => Self::PwmTiltback,
+        }
+    }
 }
 
 impl From<LightState> for LightStateDto {
@@ -340,6 +801,7 @@ impl From<LightState> for LightStateDto {
         match state {
             LightState::Off => Self::Off,
             LightState::On => Self::On,
+            LightState::Strobe => Self::Strobe,
         }
     }
 }
@@ -349,6 +811,7 @@ impl From<LightStateDto> for LightState {
         match state {
             LightStateDto::Off => Self::Off,
             LightStateDto::On => Self::On,
+            LightStateDto::Strobe => Self::Strobe,
         }
     }
 }
@@ -1401,6 +1864,15 @@ pub enum SessionInputDto {
 
     /// Command requested by the host application.
     Command(DeviceCommandDto),
+
+    /// Command requested by the host application at an explicit host timestamp.
+    CommandAt {
+        /// Typed command requested by the host application.
+        command: DeviceCommandDto,
+
+        /// Host monotonic command timestamp.
+        monotonic_ms: MonotonicMillisDto,
+    },
 }
 
 impl From<SessionInput<'_>> for SessionInputDto {
@@ -1453,7 +1925,9 @@ impl SessionInputDto {
             Self::Tick { monotonic_ms } => SessionInput::Tick {
                 monotonic_ms: (*monotonic_ms).into_core(),
             },
-            Self::Command(command) => SessionInput::Command((*command).into()),
+            Self::Command(command) | Self::CommandAt { command, .. } => {
+                SessionInput::Command((*command).into())
+            }
         }
     }
 }
@@ -1989,6 +2463,9 @@ pub struct TelemetryDeltaDto {
     /// Total or trip distance in millimeters.
     pub distance: Option<DistanceReadingDto>,
 
+    /// Trip distance in millimeters when the protocol reports it separately.
+    pub trip_distance: Option<DistanceReadingDto>,
+
     /// Pitch in millidegrees.
     pub pitch: Option<AngleReadingDto>,
 
@@ -2025,6 +2502,7 @@ impl From<TelemetryDelta> for TelemetryDeltaDto {
             battery_temperature: delta.battery_temperature.map(Into::into),
             pwm: delta.pwm.map(Into::into),
             distance: delta.distance.map(Into::into),
+            trip_distance: delta.trip_distance.map(Into::into),
             pitch: delta.pitch.map(Into::into),
             balance_angle: delta.balance_angle.map(Into::into),
             roll: delta.roll.map(Into::into),
@@ -2140,6 +2618,9 @@ pub struct TelemetrySnapshotDto {
     /// Total or trip distance in millimeters.
     pub distance: Option<DistanceReadingDto>,
 
+    /// Trip distance in millimeters when the protocol reports it separately.
+    pub trip_distance: Option<DistanceReadingDto>,
+
     /// Pitch in millidegrees.
     pub pitch: Option<AngleReadingDto>,
 
@@ -2178,6 +2659,7 @@ impl From<TelemetrySnapshot> for TelemetrySnapshotDto {
             battery_temperature: snapshot.battery_temperature.map(Into::into),
             pwm: snapshot.pwm.map(Into::into),
             distance: snapshot.distance.map(Into::into),
+            trip_distance: snapshot.trip_distance.map(Into::into),
             pitch: snapshot.pitch.map(Into::into),
             balance_angle: snapshot.balance_angle.map(Into::into),
             roll: snapshot.roll.map(Into::into),
@@ -2231,6 +2713,9 @@ pub enum ControlRefusalReasonDto {
 
     /// Command is not supported by this model/session.
     UnsupportedCommand,
+
+    /// A previous timed settings sequence is still in progress.
+    Busy,
 }
 
 impl From<ControlRefusalReason> for ControlRefusalReasonDto {
@@ -2242,6 +2727,7 @@ impl From<ControlRefusalReason> for ControlRefusalReasonDto {
             ControlRefusalReason::ExpiredArm => Self::ExpiredArm,
             ControlRefusalReason::CurrentLimitExceeded => Self::CurrentLimitExceeded,
             ControlRefusalReason::UnsupportedCommand => Self::UnsupportedCommand,
+            ControlRefusalReason::Busy => Self::Busy,
         }
     }
 }
@@ -2743,6 +3229,7 @@ mod tests {
             battery_temperature: None,
             pwm: Some(Measured::reported(DutyCycle::from_permille(250))),
             distance: Some(Measured::reported(Distance::from_millimetres(12_345))),
+            trip_distance: Some(Measured::reported(Distance::from_millimetres(678))),
             pitch: None,
             balance_angle: None,
             roll: None,
@@ -2783,6 +3270,7 @@ mod tests {
             RideStopReasonDto::Pitch
         );
         assert_eq!(dto.motor_current.expect("current").value, -1_500);
+        assert_eq!(dto.trip_distance.expect("trip distance").value, 678);
         assert_eq!(
             dto.footpad,
             Some(FootpadTelemetryDto {

@@ -10,7 +10,7 @@ pub const BEGODE_FALCON_MODEL_DEFINITION: RegisteredModelDefinition =
         BEGODE_PARSER_KEY,
         BEGODE_FALCON_SESSION_KEY,
         crate::BEGODE_DATA_CHANNEL,
-        super::begode_falcon_read_only_session,
+        super::begode_falcon_session,
     );
 
 /// Source-backed initial registry entry for the Begode Falcon.

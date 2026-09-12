@@ -101,6 +101,7 @@ struct CaptureMusicContext: Equatable {
         current = nil
     }
 }
+
 struct ConnectionReconnectPolicy {
     static let maximumAttempts = 3
 
@@ -196,28 +197,14 @@ private final class DispatchReconnectCancellation: ConnectionReconnectCancellabl
     }
 }
 
-final class DispatchQueueReconnectScheduler: ConnectionReconnectScheduling {
-    private let queue: DispatchQueue
-
-    init(queue: DispatchQueue) {
-        self.queue = queue
-    }
-
+private final class MainQueueReconnectScheduler: ConnectionReconnectScheduling {
     func schedule(after delayMilliseconds: UInt64, operation: @escaping () -> Void) -> any ConnectionReconnectCancellable {
         let workItem = DispatchWorkItem(block: operation)
-        queue.asyncAfter(
+        DispatchQueue.main.asyncAfter(
             deadline: .now() + .milliseconds(Int(delayMilliseconds)),
             execute: workItem
         )
         return DispatchReconnectCancellation(workItem: workItem)
-    }
-}
-
-private final class MainQueueReconnectScheduler: ConnectionReconnectScheduling {
-    private let scheduler = DispatchQueueReconnectScheduler(queue: .main)
-
-    func schedule(after delayMilliseconds: UInt64, operation: @escaping () -> Void) -> any ConnectionReconnectCancellable {
-        scheduler.schedule(after: delayMilliseconds, operation: operation)
     }
 }
 
@@ -241,6 +228,7 @@ enum CoreBluetoothRestorationPolicy {
         return savedPlatformIdentifier
     }
 }
+
 #if DEBUG
 public enum CutoutSessionTestInitialBluetoothState: Sendable {
     case scanning
@@ -358,12 +346,96 @@ public final class CutoutSessionCore: NSObject {
     public private(set) var bmsSnapshot: BmsSnapshot?
     public private(set) var phoneLocationSnapshot = MobilePhoneLocationSnapshotDto(latestSample: nil, gpsSpeed: nil)
     public private(set) var protocolIdentityCandidate: DevicePickerDiscoveryCandidate?
+    public var electricUnicycleModel: ElectricUnicycleModel? {
+        onBleQueue { selectedModel }
+    }
+    public var settingsCapabilities: EucSettingsCapabilities? {
+        onBleQueue { liveOwner?.settingsCapabilities }
+    }
+    public var tripMeterResetState: TripMeterResetState? {
+        onBleQueue { liveOwner?.tripMeterResetState }
+    }
+    public var headlightState: LightSettingState? {
+        onBleQueue { liveOwner?.headlightState }
+    }
+    public var headlightCommandStatus: LightCommandStatus? {
+        onBleQueue { liveOwner?.headlightCommandStatus(at: clock.now()) }
+    }
 
 #if DEBUG
     var musicCaptureObservationForTesting: MobilePevcapMusicEventDto? {
         onBleQueue { musicCaptureContext.current }
     }
 #endif
+    public var pedalModeState: PedalModeSettingState? {
+        onBleQueue { liveOwner?.pedalModeState }
+    }
+    public var rollAngleState: RollAngleSettingState? {
+        onBleQueue { liveOwner?.rollAngleState }
+    }
+    public var speedAlarmModeState: SpeedAlarmModeSettingState? {
+        onBleQueue { liveOwner?.speedAlarmModeState }
+    }
+    public var accelerationAssistState: AccelerationAssistSettingState? {
+        onBleQueue { liveOwner?.accelerationAssistState }
+    }
+    public var taillightState: LightSettingState? {
+        onBleQueue { liveOwner?.taillightState }
+    }
+    public var aeroHighBeamState: LightSettingState? {
+        onBleQueue { liveOwner?.aeroHighBeamState }
+    }
+    public var aeroTiltbackSpeedState: AeroSpeedSettingState? {
+        onBleQueue { liveOwner?.aeroTiltbackSpeedState }
+    }
+    public var aeroPwmPercentState: AeroPwmSettingState? {
+        onBleQueue { liveOwner?.aeroPwmPercentState }
+    }
+    public var aeroGyroCalibrationState: AeroGyroCalibrationSettingState? {
+        onBleQueue { liveOwner?.aeroGyroCalibrationState }
+    }
+    public var aeroPedalHardnessState: AeroPedalHardnessSettingState? {
+        onBleQueue { liveOwner?.aeroPedalHardnessState }
+    }
+    public var aeroDisplayBacklightState: AeroDisplayBacklightSettingState? {
+        onBleQueue { liveOwner?.aeroDisplayBacklightState }
+    }
+    public var aeroWheelUnitsState: AeroWheelUnitsSettingState? {
+        onBleQueue { liveOwner?.aeroWheelUnitsState }
+    }
+    public var aeroBeeperVolumeState: AeroBeeperVolumeSettingState? {
+        onBleQueue { liveOwner?.aeroBeeperVolumeState }
+    }
+    public var aeroDynamicAssistState: AeroDynamicAssistSettingState? {
+        onBleQueue { liveOwner?.aeroDynamicAssistState }
+    }
+    public var aeroPedalDipCompensationState: AeroPedalDipCompensationSettingState? {
+        onBleQueue { liveOwner?.aeroPedalDipCompensationState }
+    }
+    public var aeroLateralTiltLimitState: AeroLateralTiltLimitSettingState? {
+        onBleQueue { liveOwner?.aeroLateralTiltLimitState }
+    }
+    public var aeroVoltageCorrectionState: AeroVoltageCorrectionSettingState? {
+        onBleQueue { liveOwner?.aeroVoltageCorrectionState }
+    }
+    public var aeroMaxChargeVoltageRawState: AeroMaxChargeVoltageRawSettingState? {
+        onBleQueue { liveOwner?.aeroMaxChargeVoltageRawState }
+    }
+    public var aeroHighSpeedModeState: AeroToggleSettingState? {
+        onBleQueue { liveOwner?.aeroHighSpeedModeState }
+    }
+    public var aeroLowBatteryModeState: AeroToggleSettingState? {
+        onBleQueue { liveOwner?.aeroLowBatteryModeState }
+    }
+    public var aeroTransportModeState: AeroToggleSettingState? {
+        onBleQueue { liveOwner?.aeroTransportModeState }
+    }
+    public var aeroAlarmSpeedState: AeroSpeedSettingState? {
+        onBleQueue { liveOwner?.aeroAlarmSpeedState }
+    }
+    public var aeroAngleAdjustmentState: AeroAngleAdjustmentSettingState? {
+        onBleQueue { liveOwner?.aeroAngleAdjustmentState }
+    }
 
     public var onDisplayStateChange: ((RideDisplayState) -> Void)?
     public var onPhaseChange: ((SessionConnectionPhase) -> Void)?
@@ -375,12 +447,12 @@ public final class CutoutSessionCore: NSObject {
     public var onFaultHistoryReadbackChange: ((FaultHistoryReadback?) -> Void)?
     public var onBmsSnapshotChange: ((BmsSnapshot?) -> Void)?
     public var onPhoneLocationSnapshotChange: ((MobilePhoneLocationSnapshotDto, MonotonicMilliseconds) -> Void)?
-    public var onProtocolIdentityCandidateChange: ((DevicePickerDiscoveryCandidate?) -> Void)?
-    public var onBluetoothRestorationResolved: ((String?) -> Void)?
     public var onRideMapDecisionChange: ((MobileRideMapSnapshotDto, MobileRideMapDecisionDto) -> Void)?
     public var onRideMapSnapshotChange: ((MobileRideMapSnapshotDto) -> Void)?
     public var onRideMapErrorChange: ((MobileRideMapError) -> Void)?
     public var onRideMapAvailabilityChange: ((MobileRideMapAvailability) -> Void)?
+    public var onProtocolIdentityCandidateChange: ((DevicePickerDiscoveryCandidate?) -> Void)?
+    public var onBluetoothRestorationResolved: ((String?) -> Void)?
 
 
     private let clock: MonotonicClock
@@ -447,7 +519,9 @@ public final class CutoutSessionCore: NSObject {
         manager.delegate = self
         manager.desiredAccuracy = kCLLocationAccuracyBestForNavigation
         manager.activityType = .fitness
+#if os(iOS)
         manager.allowsBackgroundLocationUpdates = true
+#endif
         return manager
     }()
 
@@ -715,16 +789,197 @@ public final class CutoutSessionCore: NSObject {
     }
 
     @discardableResult
-    public func setLights(_ state: LightState) -> LightCommandStatus? {
+    public func setLights(_ state: LightState) -> SettingCommandResult {
         onBleQueue {
-            guard phase == .live, let liveOwner else { return nil }
+            guard phase == .live, let liveOwner else { return .failed }
             do {
                 try liveOwner.handleCommand(.setLights(state), at: clock.now())
-                guard phase == .live else { return nil }
-                return liveOwner.lightCommandStatus
+                guard phase == .live else {
+                    liveOwner.failHeadlightCommand()
+                    return .failed
+                }
+                return .accepted
+            } catch let error as CutoutSessionError {
+                record("set_lights_error=\(error)")
+                if case let .commandRefused(_, reason) = error {
+                    return .refused(reason)
+                }
+                return .failed
             } catch {
                 record("set_lights_error=\(error)")
-                return nil
+                return .failed
+            }
+        }
+    }
+
+    @discardableResult
+    public func setAeroHighBeam(_ state: LightState) -> SettingCommandResult {
+        setStationarySetting("set_aero_high_beam", command: .setAeroHighBeam(state))
+    }
+
+    @discardableResult
+    public func setPedalMode(_ mode: PedalMode.Kind) -> SettingCommandResult {
+        setStationarySetting("set_pedal_mode", command: .setPedalMode(mode))
+    }
+
+    @discardableResult
+    public func setRollAngle(_ angle: RollAngle.Kind) -> SettingCommandResult {
+        setStationarySetting("set_roll_angle", command: .setRollAngle(angle))
+    }
+
+    @discardableResult
+    public func setSpeedAlarmMode(_ mode: SpeedAlarmMode.Kind) -> SettingCommandResult {
+        setStationarySetting("set_speed_alarm_mode", command: .setSpeedAlarmMode(mode))
+    }
+
+    @discardableResult
+    public func setBegodeMaxSpeed(_ speed: BegodeMaxSpeed) -> SettingCommandResult {
+        setStationarySetting("set_begode_max_speed", command: .setBegodeMaxSpeed(speed))
+    }
+
+    @discardableResult
+    public func setBegodeBeeperVolume(_ volume: BegodeBeeperVolume) -> SettingCommandResult {
+        setStationarySetting("set_begode_beeper_volume", command: .setBegodeBeeperVolume(volume))
+    }
+
+    @discardableResult
+    public func setBegodeLedMode(_ mode: BegodeLedMode) -> SettingCommandResult {
+        setStationarySetting("set_begode_led_mode", command: .setBegodeLedMode(mode))
+    }
+
+    @discardableResult
+    public func resetTripMeter() -> SettingCommandResult {
+        setStationarySetting("reset_trip_meter", command: .resetTripMeter)
+    }
+
+    @discardableResult
+    public func setAeroTiltbackSpeed(_ speed: AeroSpeedSetting) -> SettingCommandResult {
+        setStationarySetting("set_aero_tiltback_speed", command: .setAeroTiltbackSpeed(speed))
+    }
+
+    @discardableResult
+    public func setAeroPwmPercent(_ percent: AeroPwmPercent) -> SettingCommandResult {
+        setStationarySetting("set_aero_pwm_percent", command: .setAeroPwmPercent(percent))
+    }
+
+    @discardableResult
+    public func setAeroPwmOff() -> SettingCommandResult {
+        setStationarySetting("set_aero_pwm_off", command: .setAeroPwmOff)
+    }
+
+    @discardableResult
+    public func setAeroGyroCalibration() -> SettingCommandResult {
+        setStationarySetting("set_aero_gyro_calibration", command: .setAeroGyroCalibration)
+    }
+
+    @discardableResult
+    public func setAeroRidingMode(_ mode: AeroRidingMode) -> SettingCommandResult {
+        setStationarySetting("set_aero_riding_mode", command: .setAeroRidingMode(mode))
+    }
+
+    @discardableResult
+    public func setAeroBrakeOverpressureAlarm(
+        _ value: AeroBrakeOverpressureAlarm
+    ) -> SettingCommandResult {
+        setStationarySetting(
+            "set_aero_brake_overpressure_alarm",
+            command: .setAeroBrakeOverpressureAlarm(value)
+        )
+    }
+
+    @discardableResult
+    public func setAeroPedalHardness(_ hardness: AeroPedalHardness) -> SettingCommandResult {
+        setStationarySetting("set_aero_pedal_hardness", command: .setAeroPedalHardness(hardness))
+    }
+
+    @discardableResult
+    public func setAeroDisplayBacklight(_ value: AeroDisplayBacklight) -> SettingCommandResult {
+        setStationarySetting("set_aero_display_backlight", command: .setAeroDisplayBacklight(value))
+    }
+
+    @discardableResult
+    public func setAeroWheelUnits(_ value: AeroWheelUnits) -> SettingCommandResult {
+        setStationarySetting("set_aero_wheel_units", command: .setAeroWheelUnits(value))
+    }
+
+    @discardableResult
+    public func setAeroBeeperVolume(_ value: AeroBeeperVolume) -> SettingCommandResult {
+        setStationarySetting("set_aero_beeper_volume", command: .setAeroBeeperVolume(value))
+    }
+
+    @discardableResult
+    public func setAeroDynamicAssist(_ value: AeroDynamicAssist) -> SettingCommandResult {
+        setStationarySetting("set_aero_dynamic_assist", command: .setAeroDynamicAssist(value))
+    }
+
+    @discardableResult
+    public func setAeroPedalDipCompensation(_ value: AeroPedalDipCompensation) -> SettingCommandResult {
+        setStationarySetting("set_aero_pedal_dip_compensation", command: .setAeroPedalDipCompensation(value))
+    }
+
+    @discardableResult
+    public func setAeroLateralTiltLimit(_ value: AeroLateralTiltLimit) -> SettingCommandResult {
+        setStationarySetting("set_aero_lateral_tilt_limit", command: .setAeroLateralTiltLimit(value))
+    }
+
+    @discardableResult
+    public func setAeroVoltageCorrection(_ value: AeroVoltageCorrection) -> SettingCommandResult {
+        setStationarySetting("set_aero_voltage_correction", command: .setAeroVoltageCorrection(value))
+    }
+
+    @discardableResult
+    public func setAeroMaxChargeVoltageRaw(_ value: AeroMaxChargeVoltageRaw) -> SettingCommandResult {
+        setStationarySetting(
+            "set_aero_max_charge_voltage_raw",
+            command: .setAeroMaxChargeVoltageRaw(value)
+        )
+    }
+
+    @discardableResult
+    public func setAeroHighSpeedMode(_ value: AeroToggle) -> SettingCommandResult {
+        setStationarySetting("set_aero_high_speed_mode", command: .setAeroHighSpeedMode(value))
+    }
+
+    @discardableResult
+    public func setAeroLowBatteryMode(_ value: AeroToggle) -> SettingCommandResult {
+        setStationarySetting("set_aero_low_battery_mode", command: .setAeroLowBatteryMode(value))
+    }
+
+    @discardableResult
+    public func setAeroTransportMode(_ value: AeroToggle) -> SettingCommandResult {
+        setStationarySetting("set_aero_transport_mode", command: .setAeroTransportMode(value))
+    }
+
+    @discardableResult
+    public func setAeroAlarmSpeed(_ speed: AeroSpeedSetting) -> SettingCommandResult {
+        setStationarySetting("set_aero_alarm_speed", command: .setAeroAlarmSpeed(speed))
+    }
+
+    @discardableResult
+    public func setAeroAngleAdjustment(_ angle: AeroAngleAdjustment) -> SettingCommandResult {
+        setStationarySetting("set_aero_angle_adjustment", command: .setAeroAngleAdjustment(angle))
+    }
+
+    private func setStationarySetting(
+        _ name: String,
+        command: DeviceCommand
+    ) -> SettingCommandResult {
+        onBleQueue {
+            guard phase == .live, let liveOwner else { return .failed }
+            _ = liveOwner.armSettingsWrites(at: clock.now())
+            do {
+                try liveOwner.handleCommand(command, at: clock.now())
+                guard phase == .live else { return .failed }
+                return .accepted
+            } catch let error as CutoutSessionError {
+                record("\(name)_error=\(error)")
+                if case let .commandRefused(_, reason) = error {
+                    return .refused(reason)
+                }
+                return .failed
+            } catch {
+                record("\(name)_error=\(error)")
+                return .failed
             }
         }
     }
@@ -965,8 +1220,6 @@ public final class CutoutSessionCore: NSObject {
 #endif
         suppressReconnect = true
         cancelPendingReconnect()
-        // A teardown must not carry a pending provider observation into the
-        // next capture, including the synthetic/debug writer path below.
         musicCaptureContext.reset()
 #if DEBUG
         if testScript != nil, isRecordOnly, captureBuilder != nil {
@@ -1039,6 +1292,9 @@ public final class CutoutSessionCore: NSObject {
     }
 
     func applyNotificationStep(_ step: CoreBluetoothSessionStep, receivedAt: MonotonicMilliseconds) {
+        if case .failed = phase {
+            return
+        }
         cancelPendingReconnect()
         step.actions.forEach(applySessionAction)
         observeRideMapConnection(at: receivedAt)
@@ -1052,7 +1308,11 @@ public final class CutoutSessionCore: NSObject {
     private func applySessionAction(_ action: SessionAction) {
         switch action.kind {
         case .settingsReadback:
-            settingsReadback = action.settingsReadback
+            if let update = action.settingsReadback {
+                settingsReadback = settingsReadback?.merging(update) ?? update
+            } else {
+                settingsReadback = nil
+            }
             publishSettingsReadback()
         case .faultHistoryReadback:
             faultHistoryReadback = action.faultHistoryReadback
@@ -1201,6 +1461,7 @@ public final class CutoutSessionCore: NSObject {
         self.advertisement = advertisement
         selectedModel = model
         selectedRoute = .electricUnicycle
+        liveOwner = nil
         deviceDetectionSession.reset()
         _ = deviceDetectionSession.observeAdvertisement(name: advertisement.localName.map { Data($0.utf8) })
         startCapture(reason: "pair", annotations: ["route=electric_unicycle"])
@@ -1343,9 +1604,15 @@ public final class CutoutSessionCore: NSObject {
             guard let selectedModel else {
                 throw CutoutSessionError.unexpectedStepError("missing EUC model")
             }
+            #if DEBUG
+            let allowUnverifiedSettings = true
+            #else
+            let allowUnverifiedSettings = false
+            #endif
             return try .electricUnicycle(
                 model: selectedModel,
-                deviceIdentity: advertisement?.peripheralIdentifier.rawValue
+                deviceIdentity: advertisement?.peripheralIdentifier.rawValue,
+                allowUnverifiedSettings: allowUnverifiedSettings
             )
         case .vescOnewheel:
             if let vescBoardProfile {
@@ -1502,8 +1769,9 @@ public final class CutoutSessionCore: NSObject {
     }
 
     private func recordRideMapDiagnostic(_ message: String) {
-        bleQueue.async { [weak self] in
-            self?.record(message)
+        let reference = WeakCutoutSessionCoreReference(self)
+        bleQueue.async {
+            reference.value?.record(message)
         }
     }
 
@@ -1745,6 +2013,7 @@ public final class CutoutSessionCore: NSObject {
         }
     }
 
+    @discardableResult
     func captureFrame(
         direction: String,
         characteristic: CBUUID,
@@ -1797,8 +2066,7 @@ public final class CutoutSessionCore: NSObject {
         annotations extraAnnotations: [String] = [],
         evidence: String = "hardware_tested"
     ) {
-        let captureStart = clock.now()
-        captureStartedAt = captureStart
+        captureStartedAt = clock.now()
         captureNotificationCount = 0
 
         let directory = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
@@ -1809,7 +2077,7 @@ public final class CutoutSessionCore: NSObject {
             writeLimit: MobileTransportWriteLimitDto(bytes: 23)
         )
         _ = builder.setMusicHistoryPolicy(policy: captureMusicHistoryPolicy)
-        _ = builder.setMusicCaptureStartMonotonicMs(monotonicMs: captureStart.rawValue)
+        _ = builder.setMusicCaptureStartMonotonicMs(monotonicMs: captureStartedAt?.rawValue ?? 0)
         (advertisement?.advertisedServiceUuids ?? []).forEach { service in
             _ = builder.addAdvertisedService(service: service.bytes)
         }
@@ -1826,6 +2094,7 @@ public final class CutoutSessionCore: NSObject {
             record("capture_error=writer_start_failed")
             captureBuilder = nil
             captureFileURL = nil
+            captureStartedAt = nil
             publishCaptureEvent(.failed)
             setPhase(.failed(.sessionFailed("capture writer failed to start")))
             return
@@ -2531,9 +2800,7 @@ private extension CutoutSessionCore {
             return nil
         }
     }
-}
 
-private extension CutoutSessionCore {
     func assertOnBleQueue() {
         dispatchPrecondition(condition: .onQueue(bleQueue))
     }
@@ -2870,7 +3137,6 @@ extension CutoutSessionCore: CLLocationManagerDelegate {
         }
     }
 
-
     private func onRideMapQueue<T>(_ operation: () throws -> T) rethrows -> T {
         if DispatchQueue.getSpecific(key: rideMapQueueKey) != nil {
             return try operation()
@@ -2922,7 +3188,6 @@ extension CutoutSessionCore: CLLocationManagerDelegate {
         phoneLocationState.clear()
     }
 }
-
 
 private extension MobilePhoneLocationSampleDto {
     init?(location: CLLocation) {

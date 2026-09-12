@@ -5,6 +5,42 @@ import XCTest
 import CutoutMobileFFI
 
 final class CutoutAppRouteTests: XCTestCase {
+    func testAeroNumericControlsShowProtocolUnits() {
+        XCTAssertEqual(EucNumericSettingUnit.percent.text(75), "75%")
+        XCTAssertEqual(EucNumericSettingUnit.degrees.text(55), "55°")
+        XCTAssertEqual(EucNumericSettingUnit.tenthsOfPercent.text(-5), "-0.5%")
+    }
+
+    func testAeroSettingsFormUsesCurrentValuesWhenAvailable() {
+        let values = AeroSettingsFormValues(
+            tiltback: AeroSpeedSetting(kilometresPerHour: 31),
+            pwm: AeroPwmPercent(percent: 74),
+            pedalHardness: AeroPedalHardness(percent: 75),
+            alarm: AeroSpeedSetting(kilometresPerHour: 42),
+            angle: AeroAngleAdjustment(tenthsOfDegree: -12)
+        )
+
+        XCTAssertEqual(values.tiltbackSpeed, 31)
+        XCTAssertEqual(values.pwmPercent, 74)
+        XCTAssertEqual(values.pedalHardnessPercent, 75)
+        XCTAssertEqual(values.alarmSpeed, 42)
+        XCTAssertEqual(values.angleTenths, -12)
+    }
+
+    func testAeroSettingsFormKeepsSafeDefaultsWhenValuesAreUnavailable() {
+        let values = AeroSettingsFormValues(
+            tiltback: nil,
+            pwm: nil,
+            alarm: nil,
+            angle: nil
+        )
+
+        XCTAssertEqual(values.tiltbackSpeed, 20)
+        XCTAssertEqual(values.pwmPercent, 60)
+        XCTAssertEqual(values.alarmSpeed, 20)
+        XCTAssertEqual(values.angleTenths, 0)
+    }
+
     func testScreenRoutesMatchTopLevelSections() {
         XCTAssertEqual(CutoutAppRoute.route(for: .eucRide), .eucRide)
         XCTAssertEqual(CutoutAppRoute.route(for: .vescRide), .vescRide)
@@ -93,6 +129,23 @@ final class CutoutAppRouteTests: XCTestCase {
         XCTAssertEqual(localizedAppText("navigation.section.tune"), "Tune")
         XCTAssertEqual(localizedAppText("settings.lights.title"), "Lights")
         XCTAssertEqual(localizedAppText("settings.headlight.title"), "Headlight")
+        XCTAssertEqual(localizedAppText("settings.high_beam.title"), "High beam")
+        XCTAssertEqual(localizedAppText("settings.capabilities.title"), "Other settings")
+        XCTAssertEqual(localizedAppText("settings.capabilities.unverified"), "Needs validation")
+        XCTAssertEqual(localizedAppText("settings.capabilities.unsupported"), "Not supported")
+        XCTAssertEqual(localizedAppText("settings.aero.max_charge_raw.title"), "Max charge (raw)")
+        XCTAssertEqual(localizedAppText("settings.state.pending"), "Pending")
+        XCTAssertEqual(localizedAppText("settings.state.confirmed"), "Confirmed")
+        XCTAssertEqual(localizedAppText("settings.state.confirmed_ago", Int64(2)), "Confirmed 2s ago")
+        XCTAssertEqual(localizedAppText("settings.state.refused"), "Refused")
+        XCTAssertEqual(localizedAppText("settings.state.timed_out"), "Timed out")
+        XCTAssertEqual(localizedAppText("settings.state.failed"), "Failed")
+        XCTAssertEqual(localizedAppText("settings.pedal_mode.title"), "Pedal mode")
+        XCTAssertEqual(localizedAppText("settings.roll_angle.title"), "Roll angle")
+        XCTAssertEqual(localizedAppText("settings.roll_angle.footer"), "Change only while parked.")
+        XCTAssertEqual(localizedAppText("settings.roll_angle.high"), "High")
+        XCTAssertEqual(localizedAppText("settings.acceleration_assist.title"), "Acceleration assist")
+        XCTAssertEqual(localizedAppText("settings.taillight.title"), "Taillight")
         XCTAssertEqual(
             localizedAppText("settings.headlight.help"),
             "Requests are submitted immediately to the connected wheel."
@@ -170,6 +223,141 @@ final class CutoutAppRouteTests: XCTestCase {
         let white = lightingColorSelection(red: 255, green: 255, blue: 255)
         XCTAssertEqual(white.hue, 0, accuracy: 0.0001)
         XCTAssertEqual(white.saturation, 0, accuracy: 0.0001)
+    }
+
+    func testSettingReadbackPresentationKeepsKnownValuesAndUnknownStatesDistinct() {
+        XCTAssertEqual(
+            EucSettingReadbackPresentation.speed(.available(Speed(value: 11_666))),
+            "26.1 mph"
+        )
+        XCTAssertEqual(
+            EucSettingReadbackPresentation.pedalMode(.available(.rawMode(3))),
+            "Raw 3"
+        )
+        XCTAssertEqual(
+            EucSettingReadbackPresentation.pedalMode(.available(.documented(.medium))),
+            "Medium"
+        )
+        XCTAssertEqual(
+            EucSettingReadbackPresentation.pedalMode(
+                PedalModeSettingState(kind: .current, current: .hard),
+                fallback: .available(.documented(.soft))
+            ),
+            "Hard"
+        )
+        XCTAssertEqual(
+            EucSettingReadbackPresentation.rollAngle(
+                RollAngleSettingState(kind: .pending, requested: .high),
+                fallback: .available(.documented(.low))
+            ),
+            "Low"
+        )
+        XCTAssertEqual(
+            EucSettingReadbackPresentation.rollAngle(
+                RollAngleSettingState(kind: .refused, requested: .high),
+                fallback: .available(.documented(.low))
+            ),
+            "Low"
+        )
+        XCTAssertEqual(
+            EucSettingReadbackPresentation.rollAngle(
+                RollAngleSettingState(kind: .timedOut, requested: .high),
+                fallback: .available(.documented(.low))
+            ),
+            "Low"
+        )
+        XCTAssertEqual(
+            EucSettingReadbackPresentation.rollAngle(
+                RollAngleSettingState(kind: .failed, requested: .high),
+                fallback: .available(.documented(.low))
+            ),
+            "Low"
+        )
+        XCTAssertEqual(
+            EucSettingReadbackPresentation.speed(.unavailable),
+            "Unavailable"
+        )
+        XCTAssertEqual(
+            EucSettingReadbackPresentation.pedalMode(.unsupported),
+            "Not supported"
+        )
+        XCTAssertEqual(
+            EucSettingReadbackPresentation.seconds(.available(900)),
+            "900 s"
+        )
+        XCTAssertEqual(
+            EucSettingReadbackPresentation.chargeMode(.available(.charging)),
+            "Charging"
+        )
+        XCTAssertEqual(
+            EucSettingReadbackPresentation.tripDistance(1_609_344),
+            "1.0 mi"
+        )
+        XCTAssertEqual(
+            EucSettingReadbackPresentation.tripDistance(nil),
+            "Unavailable"
+        )
+    }
+
+    func testSettingCapabilityPresentationPrefersLifecycleStatusWhenActionable() {
+        XCTAssertEqual(
+            EucSettingCapabilityPresentation.statusText(support: .unverified, state: .pending),
+            "Pending"
+        )
+        XCTAssertEqual(
+            EucSettingCapabilityPresentation.statusText(support: .unsupported, state: .refused),
+            "Refused"
+        )
+        XCTAssertEqual(
+            EucSettingCapabilityPresentation.statusText(
+                support: .supported,
+                state: .confirmed,
+                confirmedAt: MonotonicMilliseconds(1_000),
+                now: MonotonicMilliseconds(3_999)
+            ),
+            "Confirmed 2s ago"
+        )
+        XCTAssertEqual(
+            EucSettingCapabilityPresentation.statusText(support: .supported, state: .timedOut),
+            "Timed out"
+        )
+        XCTAssertEqual(
+            EucSettingCapabilityPresentation.statusText(support: .supported, state: .failed),
+            "Failed"
+        )
+        XCTAssertEqual(
+            EucSettingCapabilityPresentation.statusText(support: .unverified, state: .unknown),
+            "Needs validation"
+        )
+        XCTAssertEqual(
+            EucSettingCapabilityPresentation.statusText(support: .unsupported, state: nil),
+            "Not supported"
+        )
+    }
+
+    func testTripResetFeedbackPreservesPendingRefusalAndTimeout() {
+        XCTAssertNil(EucTripMeterResetPresentation.statusText(nil))
+        XCTAssertNil(EucTripMeterResetPresentation.statusText(TripMeterResetState(kind: .unknown)))
+        XCTAssertEqual(
+            EucTripMeterResetPresentation.statusText(TripMeterResetState(kind: .pending)),
+            "Reset sent. Waiting for the wheel to confirm."
+        )
+        XCTAssertEqual(
+            EucTripMeterResetPresentation.statusText(TripMeterResetState(kind: .refused, refusalReason: .missingArm)),
+            "Trip reset was refused. Stop the wheel and wait for fresh telemetry before trying again."
+        )
+        XCTAssertEqual(
+            EucTripMeterResetPresentation.statusText(TripMeterResetState(kind: .refused, refusalReason: .busy)),
+            "Another setting is still being sent. Wait before resetting the trip meter."
+        )
+        XCTAssertEqual(
+            EucTripMeterResetPresentation.statusText(TripMeterResetState(kind: .timedOut)),
+            "The wheel did not confirm the trip reset. Check its trip distance before trying again."
+        )
+        XCTAssertEqual(
+            EucTripMeterResetPresentation.statusText(TripMeterResetState(kind: .confirmed)),
+            "Trip reset confirmed by the wheel."
+        )
     }
 
     func testEucPackRouteRejectsNonPackScreens() {

@@ -70,12 +70,14 @@ mod refloat_codec;
 mod registry;
 pub use registry::{
     BEGODE_FALCON_REGISTRY_ENTRY, BEGODE_FALCON_SESSION_KEY, BEGODE_PARSER_KEY, MODEL_CATALOG,
-    MODEL_REGISTRY, NOSFET_AERO_REGISTRY_ENTRY, NOSFET_AERO_SESSION_KEY, RegisteredModelDefinition,
-    RegisteredReadOnlySession, SESSION_REGISTRATIONS, SessionRegistration, VETERAN_PARSER_KEY,
-    begode_falcon_read_only_session_with_voltage_profile, find_session_registration,
+    MODEL_REGISTRY, NOSFET_AERO_REGISTRY_ENTRY, NOSFET_AERO_SESSION_KEY, RegisteredEucSession,
+    RegisteredModelDefinition, SESSION_REGISTRATIONS, SessionRegistration, VETERAN_PARSER_KEY,
+    begode_falcon_session_with_voltage_profile, find_session_registration,
 };
 mod request_encoder;
 mod session;
+mod simulator;
+pub use simulator::{AeroSettingsReadback, AeroSettingsSimulator, AeroSimulatorWrite};
 mod util;
 mod vesc_codec;
 mod veteran_bms;
@@ -89,9 +91,10 @@ pub use refloat_codec::{
     RefloatStreamResult, VESC_COMM_CUSTOM_APP_DATA, encode_refloat_request,
 };
 pub use request_encoder::{
-    AeroControlEncoder, AeroRequestEncoder, EncodedControl, EncodedIdentificationProbe,
-    EncodedRequest, FalconControlEncoder, FalconRequestEncoder, RequestDisposition, VescCanTarget,
-    VescRequestEncoder, begode_identification_probes,
+    AeroControlEncoder, AeroRequestEncoder, EncodedControl, EncodedControlSequence,
+    EncodedControlStep, EncodedIdentificationProbe, EncodedRequest, FalconControlEncoder,
+    FalconRequestEncoder, RequestDisposition, VescCanTarget, VescRequestEncoder,
+    begode_identification_probes,
 };
 #[cfg(feature = "dangerous-controls")]
 pub use session::DangerousControlSession;
@@ -100,9 +103,9 @@ pub use session::{
     DangerousActuationOperation, Manufacturer, NoopNotificationDecoder, NosfetAeroModel,
     ProtocolModelSpec, ProtocolOperation, ReadOnlyModelSpec, ReadOnlyNotificationDecoder,
     ReadOnlyOperation, ReadOnlySession, RegisteredModelSpec, SettingsWriteOperation,
-    SupportsBenignControls, SupportsDangerousActuation, SupportsReadRequests,
-    SupportsSettingsWrites, VESC_RAW_ABSOLUTE_TACHOMETER_FIELD_ID, VESC_RAW_CONTROLLER_ID_FIELD_ID,
-    VESC_RAW_CURRENT_FAULT_CODE_FIELD_ID, VESC_RAW_ERPM_FIELD_ID,
+    StationarySettingsWriteSession, SupportsBenignControls, SupportsDangerousActuation,
+    SupportsReadRequests, SupportsSettingsWrites, VESC_RAW_ABSOLUTE_TACHOMETER_FIELD_ID,
+    VESC_RAW_CONTROLLER_ID_FIELD_ID, VESC_RAW_CURRENT_FAULT_CODE_FIELD_ID, VESC_RAW_ERPM_FIELD_ID,
     VESC_RAW_STATS_COUNT_TIME_FIELD_ID, VESC_RAW_STATS_CURRENT_AVG_FIELD_ID,
     VESC_RAW_STATS_POWER_AVG_FIELD_ID, VESC_RAW_STATS_SPEED_AVG_FIELD_ID, VESC_RAW_STATUS_FIELD_ID,
     VESC_RAW_TACHOMETER_FIELD_ID, VescGenericModel, VescNotificationDecoder,
@@ -128,13 +131,19 @@ pub use veteran_frame::{
     VeteranReassemblyError,
 };
 pub use veteran_telemetry::{
-    NOSFET_AERO_MAX_VOLTAGE, NOSFET_AERO_MIN_VOLTAGE,
-    VETERAN_FIELD_AUTO_SHUTDOWN_TIME_REMAINING_SECONDS, VETERAN_FIELD_CHARGE_MODE,
-    VETERAN_FIELD_FIRMWARE_VERSION, VETERAN_FIELD_PEDALS_MODE, VETERAN_FIELD_SPEED_ALERT_DECI_KMH,
-    VETERAN_FIELD_SPEED_TILTBACK_DECI_KMH, VeteranFirmwareVersion, VeteranFirmwareVersionWord,
-    VeteranModelCapabilities, VeteranModelId, VeteranModelProfile, VeteranPedalsMode,
-    VeteranTelemetry, VeteranTelemetryError, estimate_nosfet_aero_battery_level,
-    estimate_veteran_battery_level,
+    AERO_FIELD_BEEPER_VOLUME_PERCENT, AERO_FIELD_BRAKE_OVERPRESSURE_ALARM_PERCENT,
+    AERO_FIELD_DISPLAY_BACKLIGHT_PERCENT, AERO_FIELD_DYNAMIC_ASSIST_PERCENT,
+    AERO_FIELD_GYRO_CALIBRATION_STATE, AERO_FIELD_HIGH_SPEED_MODE,
+    AERO_FIELD_LATERAL_TILT_LIMIT_DEGREES, AERO_FIELD_LOW_BATTERY_MODE,
+    AERO_FIELD_MAX_CHARGE_VOLTAGE_RAW, AERO_FIELD_PEDAL_DIP_COMPENSATION_PERCENT,
+    AERO_FIELD_PEDAL_HARDNESS_PERCENT, AERO_FIELD_PWM_PERCENT, AERO_FIELD_TRANSPORT_MODE,
+    AERO_FIELD_VOLTAGE_CORRECTION_TENTHS_PERCENT, AERO_FIELD_WHEEL_UNITS, NOSFET_AERO_MAX_VOLTAGE,
+    NOSFET_AERO_MIN_VOLTAGE, VETERAN_FIELD_AUTO_SHUTDOWN_TIME_REMAINING_SECONDS,
+    VETERAN_FIELD_CHARGE_MODE, VETERAN_FIELD_FIRMWARE_VERSION, VETERAN_FIELD_PEDALS_MODE,
+    VETERAN_FIELD_SPEED_ALERT_DECI_KMH, VETERAN_FIELD_SPEED_TILTBACK_DECI_KMH,
+    VeteranFirmwareVersion, VeteranFirmwareVersionWord, VeteranModelCapabilities, VeteranModelId,
+    VeteranModelProfile, VeteranPedalsMode, VeteranTelemetry, VeteranTelemetryError,
+    estimate_nosfet_aero_battery_level, estimate_veteran_battery_level,
 };
 
 /// Returns the crate name used by setup smoke tests.

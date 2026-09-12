@@ -32,6 +32,8 @@ mod rgb_lighting;
 pub use rgb_lighting::*;
 mod turn_signals;
 pub use turn_signals::*;
+mod settings;
+pub use settings::*;
 
 #[cfg(test)]
 mod gatt_channel_tests;
@@ -171,6 +173,135 @@ pub struct LinkInfo {
     pub max_write_len: Option<TransportWriteLimit>,
 }
 
+/// Documented pedal stiffness setting.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum PedalMode {
+    /// Firm pedal response.
+    Hard,
+
+    /// Mid-range pedal response.
+    Medium,
+
+    /// Soft pedal response.
+    Soft,
+}
+
+/// NOSFET/Veteran modern binary T riding mode.
+///
+/// This is deliberately separate from [`PedalMode`]: the wheel exposes the
+/// legacy ASCII pedal preset and the binary T setting as distinct controls.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum AeroRidingMode {
+    /// Firm riding response (wire value 3).
+    Hard,
+
+    /// Medium riding response (wire value 2).
+    Medium,
+
+    /// Soft riding response (wire value 1).
+    Soft,
+}
+
+impl AeroRidingMode {
+    /// Decodes the modern binary T wire value documented by EUC World.
+    #[must_use]
+    pub const fn from_wire(value: u8) -> Option<Self> {
+        match value {
+            1 => Some(Self::Soft),
+            2 => Some(Self::Medium),
+            3 => Some(Self::Hard),
+            _ => None,
+        }
+    }
+
+    /// Returns the modern binary T wire value documented by EUC World.
+    #[must_use]
+    pub const fn wire_value(self) -> u8 {
+        match self {
+            Self::Hard => 3,
+            Self::Medium => 2,
+            Self::Soft => 1,
+        }
+    }
+}
+
+impl PedalMode {
+    /// Decodes the documented Veteran/NOSFET pedal-mode field.
+    #[must_use]
+    pub const fn from_veteran_raw(raw: u16) -> Option<Self> {
+        match raw {
+            0 => Some(Self::Hard),
+            1 => Some(Self::Medium),
+            2 => Some(Self::Soft),
+            _ => None,
+        }
+    }
+
+    /// Decodes the documented Begode Live-B pedal-mode bitfield.
+    #[must_use]
+    pub const fn from_begode_settings_bits(raw: u16) -> Option<Self> {
+        match (raw >> 13) & 0x03 {
+            0 => Some(Self::Soft),
+            1 => Some(Self::Medium),
+            2 => Some(Self::Hard),
+            _ => None,
+        }
+    }
+}
+
+/// Documented roll-angle sensitivity setting for Begode wheels.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum RollAngle {
+    /// Low roll-angle sensitivity.
+    Low,
+
+    /// Medium roll-angle sensitivity.
+    Medium,
+
+    /// High roll-angle sensitivity.
+    High,
+}
+
+impl RollAngle {
+    /// Decodes the documented Begode Live-B roll-angle bitfield.
+    #[must_use]
+    pub const fn from_begode_settings_bits(raw: u16) -> Option<Self> {
+        match (raw >> 7) & 0x03 {
+            0 => Some(Self::Low),
+            1 => Some(Self::Medium),
+            2 => Some(Self::High),
+            _ => None,
+        }
+    }
+}
+
+/// Documented speed-alarm mode for Begode wheels.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum SpeedAlarmMode {
+    /// Both speed alarms are enabled.
+    Both,
+    /// Only the first-stage speed alarm is enabled.
+    StageOneOnly,
+    /// Speed alarms are disabled.
+    Off,
+    /// Firmware-controlled PWM tiltback mode.
+    PwmTiltback,
+}
+
+impl SpeedAlarmMode {
+    /// Decodes the documented Begode Live-B speed-alarm bitfield.
+    #[must_use]
+    pub const fn from_begode_settings_bits(raw: u16) -> Option<Self> {
+        match (raw >> 10) & 0x03 {
+            0 => Some(Self::Both),
+            1 => Some(Self::StageOneOnly),
+            2 => Some(Self::Off),
+            3 => Some(Self::PwmTiltback),
+            _ => None,
+        }
+    }
+}
+
 /// Command requested by the host application.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum DeviceCommand {
@@ -195,8 +326,98 @@ pub enum DeviceCommand {
     /// Request current settings without changing device state.
     RequestSettings,
 
+    /// Reset the device trip meter; this command is stationary-only.
+    ResetTripMeter,
+
+    /// Set the NOSFET/Veteran tilt-back speed in whole km/h.
+    SetAeroTiltbackSpeed(AeroSpeedSetting),
+
+    /// Set the NOSFET/Veteran PWT (PWM tilt-back alarm) percentage.
+    SetAeroPwmPercent(AeroPwmSetting),
+
+    /// Disable the NOSFET/Veteran PWT alarm using its distinct wire setting.
+    SetAeroPwmOff,
+
+    /// Start or finish NOSFET Aero gyro calibration; this command is stationary-only.
+    SetAeroGyroCalibration,
+
+    /// Set the NOSFET/Veteran modern binary T riding mode.
+    SetAeroRidingMode(AeroRidingMode),
+
+    /// Set the NOSFET Aero brake overpressure alarm percentage.
+    SetAeroBrakeOverpressureAlarm(AeroBrakeOverpressureAlarm),
+
+    /// Set the NOSFET/Veteran MD pedal hardness percentage.
+    SetAeroPedalHardness(AeroPedalHardness),
+
+    /// Set the Aero wheel display backlight brightness.
+    SetAeroDisplayBacklight(AeroDisplayBacklight),
+
+    /// Set the Aero wheel beeper volume.
+    SetAeroBeeperVolume(AeroBeeperVolume),
+
+    /// Set the Aero dynamic assist.
+    SetAeroDynamicAssist(AeroDynamicAssist),
+
+    /// Set the Aero pedal-dip compensation.
+    SetAeroPedalDipCompensation(AeroPedalDipCompensation),
+
+    /// Set the Aero lateral tilt limit.
+    SetAeroLateralTiltLimit(AeroLateralTiltLimit),
+
+    /// Set the Aero voltage correction.
+    SetAeroVoltageCorrection(AeroVoltageCorrection),
+
+    /// Set the NOSFET Aero maximum charge voltage using the official raw `MxV` value.
+    SetAeroMaxChargeVoltageRaw(AeroMaxChargeVoltageRaw),
+
+    /// Set the wheel display units independently of host display preferences.
+    SetAeroWheelUnits(AeroWheelUnits),
+
+    /// Enable or disable the Aero high-speed mode.
+    SetAeroHighSpeedMode(AeroHighSpeedMode),
+
+    /// Enable or disable the Aero low-battery mode.
+    SetAeroLowBatteryMode(AeroLowBatteryMode),
+
+    /// Enable or disable the Aero transportation mode.
+    SetAeroTransportMode(AeroTransportMode),
+
+    /// Set the NOSFET/Veteran speed alarm in whole km/h.
+    SetAeroAlarmSpeed(AeroSpeedSetting),
+
+    /// Set the NOSFET/Veteran ANG (vertical angle) adjustment in tenths of a degree.
+    SetAeroAngleAdjustment(AeroAngleAdjustment),
+
+    /// Set the NOSFET/Veteran high beam through the official binary frame.
+    SetAeroHighBeam(LightState),
+
     /// Set the device lights.
     SetLights(LightState),
+
+    /// Set pedal stiffness; this command is stationary-only.
+    SetPedalMode(PedalMode),
+
+    /// Set roll-angle sensitivity; this command is stationary-only.
+    SetRollAngle(RollAngle),
+
+    /// Set the speed-alarm mode; this command is stationary-only.
+    SetSpeedAlarmMode(SpeedAlarmMode),
+
+    /// Set the Begode max speed through its timed `W` submenu.
+    SetBegodeMaxSpeed(BegodeMaxSpeed),
+
+    /// Set the Begode beeper volume through its timed `W` submenu.
+    SetBegodeBeeperVolume(BegodeBeeperVolume),
+
+    /// Set the Begode LED mode through its timed `W` submenu.
+    SetBegodeLedMode(BegodeLedModeSetting),
+
+    /// Enable or disable acceleration assist; this command is stationary-only.
+    SetAccelerationAssist(AccelerationAssistState),
+
+    /// Set the taillight state independently of the existing light control.
+    SetTaillight(LightState),
 
     /// Sound a device horn or alert.
     SoundHorn,
@@ -220,7 +441,37 @@ impl DeviceCommand {
             Self::RequestDiagnostics => CommandKind::RequestDiagnostics,
             Self::RequestFaultHistory => CommandKind::RequestFaultHistory,
             Self::RequestSettings => CommandKind::RequestSettings,
+            Self::ResetTripMeter => CommandKind::ResetTripMeter,
+            Self::SetAeroTiltbackSpeed(_) => CommandKind::SetAeroTiltbackSpeed,
+            Self::SetAeroPwmPercent(_) => CommandKind::SetAeroPwmPercent,
+            Self::SetAeroPwmOff => CommandKind::SetAeroPwmOff,
+            Self::SetAeroGyroCalibration => CommandKind::SetAeroGyroCalibration,
+            Self::SetAeroRidingMode(_) => CommandKind::SetAeroRidingMode,
+            Self::SetAeroBrakeOverpressureAlarm(_) => CommandKind::SetAeroBrakeOverpressureAlarm,
+            Self::SetAeroPedalHardness(_) => CommandKind::SetAeroPedalHardness,
+            Self::SetAeroDisplayBacklight(_) => CommandKind::SetAeroDisplayBacklight,
+            Self::SetAeroBeeperVolume(_) => CommandKind::SetAeroBeeperVolume,
+            Self::SetAeroDynamicAssist(_) => CommandKind::SetAeroDynamicAssist,
+            Self::SetAeroPedalDipCompensation(_) => CommandKind::SetAeroPedalDipCompensation,
+            Self::SetAeroLateralTiltLimit(_) => CommandKind::SetAeroLateralTiltLimit,
+            Self::SetAeroVoltageCorrection(_) => CommandKind::SetAeroVoltageCorrection,
+            Self::SetAeroMaxChargeVoltageRaw(_) => CommandKind::SetAeroMaxChargeVoltageRaw,
+            Self::SetAeroWheelUnits(_) => CommandKind::SetAeroWheelUnits,
+            Self::SetAeroHighSpeedMode(_) => CommandKind::SetAeroHighSpeedMode,
+            Self::SetAeroLowBatteryMode(_) => CommandKind::SetAeroLowBatteryMode,
+            Self::SetAeroTransportMode(_) => CommandKind::SetAeroTransportMode,
+            Self::SetAeroAlarmSpeed(_) => CommandKind::SetAeroAlarmSpeed,
+            Self::SetAeroAngleAdjustment(_) => CommandKind::SetAeroAngleAdjustment,
+            Self::SetAeroHighBeam(_) => CommandKind::SetAeroHighBeam,
             Self::SetLights(_) => CommandKind::SetLights,
+            Self::SetPedalMode(_) => CommandKind::SetPedalMode,
+            Self::SetRollAngle(_) => CommandKind::SetRollAngle,
+            Self::SetSpeedAlarmMode(_) => CommandKind::SetSpeedAlarmMode,
+            Self::SetBegodeMaxSpeed(_) => CommandKind::SetBegodeMaxSpeed,
+            Self::SetBegodeBeeperVolume(_) => CommandKind::SetBegodeBeeperVolume,
+            Self::SetBegodeLedMode(_) => CommandKind::SetBegodeLedMode,
+            Self::SetAccelerationAssist(_) => CommandKind::SetAccelerationAssist,
+            Self::SetTaillight(_) => CommandKind::SetTaillight,
             Self::SoundHorn => CommandKind::SoundHorn,
             Self::SetRawMotorCurrent { .. } => CommandKind::SetRawMotorCurrent,
         }
@@ -250,6 +501,379 @@ pub enum LightState {
 
     /// Lights on.
     On,
+
+    /// Begode strobe/running-light mode.
+    Strobe,
+}
+
+/// NOSFET/Veteran speed setting accepted by the documented binary frame.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct AeroSpeedSetting(u8);
+
+impl AeroSpeedSetting {
+    /// Creates a speed setting in the wheel's documented 10..=200 km/h range.
+    #[must_use]
+    pub const fn new(kilometres_per_hour: u8) -> Option<Self> {
+        match kilometres_per_hour {
+            10..=200 => Some(Self(kilometres_per_hour)),
+            _ => None,
+        }
+    }
+
+    /// Returns the whole-kilometres-per-hour wire value.
+    #[must_use]
+    pub const fn kilometres_per_hour(self) -> u8 {
+        self.0
+    }
+}
+
+/// NOSFET Aero gyro-calibration lifecycle reported by page-8 settings.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum AeroGyroCalibrationState {
+    /// The wheel is ready to start calibration.
+    Idle,
+    /// Calibration has started and the wheel is waiting for completion.
+    Waiting,
+    /// Calibration completed successfully.
+    Complete,
+}
+
+/// NOSFET Aero brake overpressure alarm threshold, in percent.
+///
+/// The official NOSFET application exposes the inclusive 90..=125 range and
+/// writes the selected value directly into the command's final byte.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct AeroBrakeOverpressureAlarm(u8);
+
+impl AeroBrakeOverpressureAlarm {
+    /// Creates a brake overpressure threshold in the source-backed range.
+    #[must_use]
+    pub const fn new(percent: u8) -> Option<Self> {
+        match percent {
+            90..=125 => Some(Self(percent)),
+            _ => None,
+        }
+    }
+
+    /// Returns the threshold percentage written to the wheel.
+    #[must_use]
+    pub const fn percent(self) -> u8 {
+        self.0
+    }
+}
+
+impl AeroGyroCalibrationState {
+    /// Decodes the page-8 state byte documented by the official app.
+    #[must_use]
+    pub const fn from_wire(value: u8) -> Option<Self> {
+        match value {
+            0 => Some(Self::Idle),
+            1 => Some(Self::Waiting),
+            2 => Some(Self::Complete),
+            _ => None,
+        }
+    }
+
+    /// Returns the page-8 state byte.
+    #[must_use]
+    pub const fn wire_value(self) -> u8 {
+        match self {
+            Self::Idle => 0,
+            Self::Waiting => 1,
+            Self::Complete => 2,
+        }
+    }
+}
+
+/// NOSFET/Veteran PWT warning margin, measured as unused PWM percentage.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct AeroPwmPercent(u8);
+
+impl AeroPwmPercent {
+    /// Creates a PWM warning margin in EUC World's documented 0..=70 range.
+    #[must_use]
+    pub const fn new(percent: u8) -> Option<Self> {
+        if percent <= 70 {
+            Some(Self(percent))
+        } else {
+            None
+        }
+    }
+
+    /// Returns the unused PWM margin percentage.
+    #[must_use]
+    pub const fn percent(self) -> u8 {
+        self.0
+    }
+}
+
+/// NOSFET/Veteran PWT warning configuration.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum AeroPwmSetting {
+    /// Disable the PWM warning.
+    Off,
+    /// Warn when the unused PWM percentage reaches this margin.
+    Margin(AeroPwmPercent),
+}
+
+impl From<AeroPwmPercent> for AeroPwmSetting {
+    fn from(percent: AeroPwmPercent) -> Self {
+        Self::Margin(percent)
+    }
+}
+
+/// NOSFET/Veteran MD pedal hardness, independently of the three pedal modes.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct AeroPedalHardness(u8);
+
+impl AeroPedalHardness {
+    /// Creates the documented 0..=100 percent ride-mode setting.
+    #[must_use]
+    pub const fn new(percent: u8) -> Option<Self> {
+        if percent <= 100 {
+            Some(Self(percent))
+        } else {
+            None
+        }
+    }
+
+    /// Returns the percentage wire value.
+    #[must_use]
+    pub const fn percent(self) -> u8 {
+        self.0
+    }
+}
+
+/// Units shown by the NOSFET Aero wheel display.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum AeroWheelUnits {
+    /// Kilometres and kilometres per hour.
+    Metric,
+    /// Miles and miles per hour.
+    Imperial,
+}
+
+impl AeroWheelUnits {
+    /// Decodes the documented wheel-display mode; other values are unavailable.
+    #[must_use]
+    pub const fn from_display_mode(value: u8) -> Option<Self> {
+        match value {
+            0 => Some(Self::Metric),
+            1 => Some(Self::Imperial),
+            _ => None,
+        }
+    }
+
+    /// Returns the documented display-mode value.
+    #[must_use]
+    pub const fn display_mode(self) -> u8 {
+        match self {
+            Self::Metric => 0,
+            Self::Imperial => 1,
+        }
+    }
+}
+
+macro_rules! aero_toggle_setting {
+    ($(#[$doc:meta])* $name:ident) => {
+        $(#[$doc])*
+        #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+        pub struct $name(bool);
+
+        impl $name {
+            /// Creates a toggle setting from its documented binary value.
+            #[must_use]
+            pub const fn new(enabled: bool) -> Self {
+                Self(enabled)
+            }
+
+            /// Returns the binary value sent to the wheel.
+            #[must_use]
+            pub const fn enabled(self) -> bool {
+                self.0
+            }
+        }
+    };
+}
+
+aero_toggle_setting!(
+    /// Aero high-speed mode, which changes the wheel's high-speed behavior.
+    AeroHighSpeedMode
+);
+aero_toggle_setting!(
+    /// Aero low-battery mode, which changes the wheel's low-voltage behavior.
+    AeroLowBatteryMode
+);
+aero_toggle_setting!(
+    /// Aero transportation mode, which prevents normal motor startup.
+    AeroTransportMode
+);
+
+// Keep distinct setting domains without duplicating checked numeric constructors.
+macro_rules! aero_bounded_setting {
+    ($(#[$doc:meta])* $name:ident($primitive:ty), $minimum:literal..=$maximum:literal, $value:ident) => {
+        $(#[$doc])*
+        #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+        pub struct $name($primitive);
+
+        impl $name {
+            /// Creates a setting within the source-backed inclusive bounds.
+            #[must_use]
+            pub const fn new(value: $primitive) -> Option<Self> {
+                match value {
+                    $minimum..=$maximum => Some(Self(value)),
+                    _ => None,
+                }
+            }
+
+            /// Returns the setting value in its documented units.
+            #[must_use]
+            pub const fn $value(self) -> $primitive {
+                self.0
+            }
+        }
+    };
+}
+
+aero_bounded_setting!(
+    /// Aero wheel display backlight brightness, from 0 through 100 percent.
+    AeroDisplayBacklight(u8), 0..=100, percent
+);
+aero_bounded_setting!(
+    /// Aero wheel beeper volume, from 0 through 100 percent.
+    AeroBeeperVolume(u8), 0..=100, percent
+);
+aero_bounded_setting!(
+    /// Aero dynamic assist, from 0 through 100 percent.
+    AeroDynamicAssist(u8), 0..=100, percent
+);
+aero_bounded_setting!(
+    /// Aero pedal-dip compensation, from 0 through 100 percent.
+    AeroPedalDipCompensation(u8), 0..=100, percent
+);
+aero_bounded_setting!(
+    /// Aero lateral tilt limit, from 35 through 75 degrees.
+    AeroLateralTiltLimit(u8), 35..=75, degrees
+);
+aero_bounded_setting!(
+    /// Aero voltage correction, from -1.5 through +1.5 percent.
+    AeroVoltageCorrection(i8), -15..=15, tenths_of_percent
+);
+
+/// NOSFET/Veteran ANG (vertical angle) adjustment in tenths of a degree.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct AeroAngleAdjustment(i8);
+
+impl AeroAngleAdjustment {
+    /// Creates an angle adjustment in the documented -8.0..=8.0 degree range.
+    #[must_use]
+    pub const fn new(tenths_of_degree: i8) -> Option<Self> {
+        if tenths_of_degree < -80 || tenths_of_degree > 80 {
+            None
+        } else {
+            Some(Self(tenths_of_degree))
+        }
+    }
+
+    /// Returns the signed tenths-of-a-degree wire value.
+    #[must_use]
+    pub const fn tenths_of_degree(self) -> i8 {
+        self.0
+    }
+}
+
+/// NOSFET Aero maximum-charge voltage control.
+///
+/// The official NOSFET app exposes this as an integer raw progress value from
+/// 0 through 70. This API deliberately retains the raw value because the
+/// generic app's voltage display formula conflicts with Aero's model profile.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct AeroMaxChargeVoltageRaw(u8);
+
+impl AeroMaxChargeVoltageRaw {
+    /// Creates a maximum-charge setting in the official 0..=70 raw range.
+    #[must_use]
+    pub const fn new(raw: u8) -> Option<Self> {
+        if raw <= 70 { Some(Self(raw)) } else { None }
+    }
+
+    /// Returns the raw `MxV` value written to the wheel.
+    #[must_use]
+    pub const fn raw(self) -> u8 {
+        self.0
+    }
+}
+
+/// Begode max-speed setting accepted by the documented `W` submenu.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct BegodeMaxSpeed(u8);
+
+impl BegodeMaxSpeed {
+    /// Creates a max-speed setting in the protocol's two-digit range.
+    #[must_use]
+    pub const fn new(kilometres_per_hour: u8) -> Option<Self> {
+        if kilometres_per_hour <= 99 {
+            Some(Self(kilometres_per_hour))
+        } else {
+            None
+        }
+    }
+
+    /// Returns the whole-kilometres-per-hour wire value.
+    #[must_use]
+    pub const fn kilometres_per_hour(self) -> u8 {
+        self.0
+    }
+}
+
+/// Begode beeper volume accepted by the documented `W` submenu.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct BegodeBeeperVolume(u8);
+
+impl BegodeBeeperVolume {
+    /// Creates a beeper volume in the documented 1..=9 range.
+    #[must_use]
+    pub const fn new(level: u8) -> Option<Self> {
+        if level >= 1 && level <= 9 {
+            Some(Self(level))
+        } else {
+            None
+        }
+    }
+
+    /// Returns the protocol volume level.
+    #[must_use]
+    pub const fn level(self) -> u8 {
+        self.0
+    }
+}
+
+/// Begode LED mode accepted by the documented `W` submenu.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct BegodeLedModeSetting(u8);
+
+impl BegodeLedModeSetting {
+    /// Creates an LED mode in the documented 0..=9 range.
+    #[must_use]
+    pub const fn new(mode: u8) -> Option<Self> {
+        if mode <= 9 { Some(Self(mode)) } else { None }
+    }
+
+    /// Returns the protocol LED mode.
+    #[must_use]
+    pub const fn mode(self) -> u8 {
+        self.0
+    }
+}
+
+/// User-facing acceleration-assist state.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum AccelerationAssistState {
+    /// Acceleration assist is disabled.
+    Disabled,
+
+    /// Acceleration assist is enabled.
+    Enabled,
 }
 
 /// A light state accepted for submission by the protocol session.
@@ -523,8 +1147,98 @@ pub enum CommandKind {
     /// Request current settings without changing device state.
     RequestSettings,
 
+    /// Reset the device trip meter.
+    ResetTripMeter,
+
+    /// Set the NOSFET/Veteran tilt-back speed.
+    SetAeroTiltbackSpeed,
+
+    /// Set the NOSFET/Veteran PWT (PWM tilt-back alarm) percentage.
+    SetAeroPwmPercent,
+
+    /// Disable the NOSFET/Veteran PWT alarm.
+    SetAeroPwmOff,
+
+    /// Start or finish NOSFET Aero gyro calibration.
+    SetAeroGyroCalibration,
+
+    /// Set the NOSFET/Veteran modern binary T riding mode.
+    SetAeroRidingMode,
+
+    /// Set the NOSFET Aero brake overpressure alarm percentage.
+    SetAeroBrakeOverpressureAlarm,
+
+    /// Set the NOSFET/Veteran MD pedal hardness percentage.
+    SetAeroPedalHardness,
+
+    /// Set the Aero wheel display backlight brightness.
+    SetAeroDisplayBacklight,
+
+    /// Set the Aero wheel beeper volume.
+    SetAeroBeeperVolume,
+
+    /// Set the Aero dynamic assist.
+    SetAeroDynamicAssist,
+
+    /// Set the Aero pedal-dip compensation.
+    SetAeroPedalDipCompensation,
+
+    /// Set the Aero lateral tilt limit.
+    SetAeroLateralTiltLimit,
+
+    /// Set the Aero voltage correction.
+    SetAeroVoltageCorrection,
+
+    /// Set the NOSFET Aero maximum charge voltage.
+    SetAeroMaxChargeVoltageRaw,
+
+    /// Set the wheel display units.
+    SetAeroWheelUnits,
+
+    /// Enable or disable the Aero high-speed mode.
+    SetAeroHighSpeedMode,
+
+    /// Enable or disable the Aero low-battery mode.
+    SetAeroLowBatteryMode,
+
+    /// Enable or disable the Aero transportation mode.
+    SetAeroTransportMode,
+
+    /// Set the NOSFET/Veteran speed alarm.
+    SetAeroAlarmSpeed,
+
+    /// Set the NOSFET/Veteran ANG (vertical angle) adjustment.
+    SetAeroAngleAdjustment,
+
+    /// Set the NOSFET/Veteran high beam.
+    SetAeroHighBeam,
+
     /// Set the device lights.
     SetLights,
+
+    /// Set pedal stiffness.
+    SetPedalMode,
+
+    /// Set roll-angle sensitivity.
+    SetRollAngle,
+
+    /// Set the speed-alarm mode.
+    SetSpeedAlarmMode,
+
+    /// Set the Begode max speed.
+    SetBegodeMaxSpeed,
+
+    /// Set the Begode beeper volume.
+    SetBegodeBeeperVolume,
+
+    /// Set the Begode LED mode.
+    SetBegodeLedMode,
+
+    /// Enable or disable acceleration assist.
+    SetAccelerationAssist,
+
+    /// Set the taillight state.
+    SetTaillight,
 
     /// Sound a device horn or alert.
     SoundHorn,
@@ -545,7 +1259,36 @@ impl CommandKind {
             | Self::RequestDiagnostics
             | Self::RequestFaultHistory
             | Self::RequestSettings => SafetyClass::ReadOnly,
-            Self::SetLights | Self::SoundHorn => SafetyClass::BenignControl,
+            Self::SetLights | Self::SetTaillight | Self::SoundHorn => SafetyClass::BenignControl,
+            Self::ResetTripMeter
+            | Self::SetAeroTiltbackSpeed
+            | Self::SetAeroPwmPercent
+            | Self::SetAeroPwmOff
+            | Self::SetAeroGyroCalibration
+            | Self::SetAeroRidingMode
+            | Self::SetAeroBrakeOverpressureAlarm
+            | Self::SetAeroPedalHardness
+            | Self::SetAeroDisplayBacklight
+            | Self::SetAeroBeeperVolume
+            | Self::SetAeroDynamicAssist
+            | Self::SetAeroPedalDipCompensation
+            | Self::SetAeroLateralTiltLimit
+            | Self::SetAeroVoltageCorrection
+            | Self::SetAeroMaxChargeVoltageRaw
+            | Self::SetAeroWheelUnits
+            | Self::SetAeroHighSpeedMode
+            | Self::SetAeroLowBatteryMode
+            | Self::SetAeroTransportMode
+            | Self::SetAeroAlarmSpeed
+            | Self::SetAeroAngleAdjustment
+            | Self::SetAeroHighBeam
+            | Self::SetPedalMode
+            | Self::SetRollAngle
+            | Self::SetSpeedAlarmMode
+            | Self::SetBegodeMaxSpeed
+            | Self::SetBegodeBeeperVolume
+            | Self::SetBegodeLedMode
+            | Self::SetAccelerationAssist => SafetyClass::StationaryOnly,
             Self::SetRawMotorCurrent => SafetyClass::Actuation,
         }
     }
@@ -688,6 +1431,104 @@ impl DangerousActuationPolicy {
     }
 }
 
+/// Short-lived authorization for a settings write while the vehicle is stationary.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct StationarySettingsArm {
+    model: &'static str,
+    issued_at_ms: MonotonicTimestamp,
+    expires_at_ms: MonotonicTimestamp,
+}
+
+impl StationarySettingsArm {
+    /// Returns the model this token was issued for.
+    #[must_use]
+    pub const fn model(self) -> &'static str {
+        self.model
+    }
+
+    /// Returns the monotonic timestamp at which this token was issued.
+    #[must_use]
+    pub const fn issued_at_ms(self) -> MonotonicTimestamp {
+        self.issued_at_ms
+    }
+
+    /// Returns the monotonic expiry timestamp for this token.
+    #[must_use]
+    pub const fn expires_at_ms(self) -> MonotonicTimestamp {
+        self.expires_at_ms
+    }
+
+    /// Returns whether this token is still valid for the model and timestamp.
+    #[must_use]
+    pub const fn is_valid_for(self, model: &str, monotonic_ms: MonotonicTimestamp) -> bool {
+        str_eq(self.model, model) && monotonic_ms.get() <= self.expires_at_ms.get()
+    }
+}
+
+/// Policy for issuing a short-lived stationary settings authorization.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct StationarySettingsPolicy {
+    /// Model this policy allows.
+    pub model: &'static str,
+
+    /// Duration of newly issued authorizations.
+    pub arm_duration: Duration,
+}
+
+impl StationarySettingsPolicy {
+    /// Issues an authorization only from an explicitly stationary ride state.
+    #[must_use]
+    pub const fn arm(
+        self,
+        state: RideOperatingState,
+        monotonic_ms: MonotonicTimestamp,
+    ) -> Option<StationarySettingsArm> {
+        match state {
+            RideOperatingState::Parked | RideOperatingState::Standing => {
+                Some(StationarySettingsArm {
+                    model: self.model,
+                    issued_at_ms: monotonic_ms,
+                    expires_at_ms: monotonic_ms.saturating_add_duration(self.arm_duration),
+                })
+            }
+            RideOperatingState::Unknown
+            | RideOperatingState::Riding
+            | RideOperatingState::Charging => None,
+        }
+    }
+
+    /// Issues an authorization for a model-specific bounded low-speed window.
+    #[must_use]
+    pub fn arm_with_speed(
+        self,
+        state: RideOperatingState,
+        speed: Option<Speed>,
+        max_speed: Option<Speed>,
+        monotonic_ms: MonotonicTimestamp,
+    ) -> Option<StationarySettingsArm> {
+        let speed_limit =
+            max_speed.map_or(0, |speed| speed.as_millimetres_per_second().unsigned_abs());
+        if speed.is_some_and(|speed| speed.as_millimetres_per_second().unsigned_abs() > speed_limit)
+        {
+            return None;
+        }
+        self.arm(state, monotonic_ms).or_else(|| {
+            if !matches!(state, RideOperatingState::Riding) {
+                return None;
+            }
+            let speed = speed?;
+            let max_speed = max_speed?;
+            (speed.as_millimetres_per_second().unsigned_abs()
+                <= max_speed.as_millimetres_per_second().unsigned_abs())
+            .then_some(StationarySettingsArm {
+                model: self.model,
+                issued_at_ms: monotonic_ms,
+                expires_at_ms: monotonic_ms.saturating_add_duration(self.arm_duration),
+            })
+        })
+    }
+}
+
 /// Refusal reason for dangerous actuation authorization.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum DangerousActuationRefusal {
@@ -740,6 +1581,9 @@ pub enum ControlRefusalReason {
 
     /// Command is not supported by this model/session.
     UnsupportedCommand,
+
+    /// A previous timed settings sequence is still in progress.
+    Busy,
 }
 
 impl From<DangerousActuationRefusal> for ControlRefusalReason {
@@ -2106,7 +2950,7 @@ impl RegistryHashBuilder {
     }
 }
 
-const ALL_COMMAND_KINDS: [CommandKind; 10] = [
+const ALL_COMMAND_KINDS: [CommandKind; 37] = [
     CommandKind::RequestIdentity,
     CommandKind::RequestTelemetry,
     CommandKind::RequestFirmwareInfo,
@@ -2114,7 +2958,34 @@ const ALL_COMMAND_KINDS: [CommandKind; 10] = [
     CommandKind::RequestDiagnostics,
     CommandKind::RequestFaultHistory,
     CommandKind::RequestSettings,
+    CommandKind::ResetTripMeter,
+    CommandKind::SetAeroTiltbackSpeed,
+    CommandKind::SetAeroPwmPercent,
+    CommandKind::SetAeroPwmOff,
+    CommandKind::SetAeroGyroCalibration,
+    CommandKind::SetAeroRidingMode,
+    CommandKind::SetAeroBrakeOverpressureAlarm,
+    CommandKind::SetAeroPedalHardness,
+    CommandKind::SetAeroDisplayBacklight,
+    CommandKind::SetAeroBeeperVolume,
+    CommandKind::SetAeroDynamicAssist,
+    CommandKind::SetAeroPedalDipCompensation,
+    CommandKind::SetAeroLateralTiltLimit,
+    CommandKind::SetAeroVoltageCorrection,
+    CommandKind::SetAeroMaxChargeVoltageRaw,
+    CommandKind::SetAeroWheelUnits,
+    CommandKind::SetAeroAlarmSpeed,
+    CommandKind::SetAeroAngleAdjustment,
+    CommandKind::SetAeroHighBeam,
     CommandKind::SetLights,
+    CommandKind::SetPedalMode,
+    CommandKind::SetRollAngle,
+    CommandKind::SetSpeedAlarmMode,
+    CommandKind::SetBegodeMaxSpeed,
+    CommandKind::SetBegodeBeeperVolume,
+    CommandKind::SetBegodeLedMode,
+    CommandKind::SetAccelerationAssist,
+    CommandKind::SetTaillight,
     CommandKind::SoundHorn,
     CommandKind::SetRawMotorCurrent,
 ];
@@ -2216,7 +3087,7 @@ impl Capabilities {
 
 /// Compact command-kind set.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-struct CommandSet(u16);
+struct CommandSet(u64);
 
 impl CommandSet {
     const fn from_commands<const N: usize>(commands: [CommandKind; N]) -> Self {
@@ -2239,8 +3110,8 @@ impl CommandSet {
 }
 
 impl CommandKind {
-    const fn bit(self) -> u16 {
-        1 << (self as u16)
+    const fn bit(self) -> u64 {
+        1u64 << (self as u16)
     }
 }
 
@@ -6518,6 +7389,9 @@ pub enum SettingsReadbackAvailability {
     Unsupported,
 }
 
+/// Number of settings entries retained in a settings readback.
+const SETTINGS_READBACK_CAPACITY: usize = 18;
+
 /// Bounded settings readback response.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct SettingsReadback {
@@ -6525,16 +7399,20 @@ pub struct SettingsReadback {
     availability: SettingsReadbackAvailability,
 
     /// Settings entries.
-    entries: [Option<SettingsEntry>; 4],
+    entries: [Option<SettingsEntry>; SETTINGS_READBACK_CAPACITY],
 }
 
 impl SettingsReadback {
     /// Creates an available settings readback.
     #[must_use]
-    pub const fn available(entries: [Option<SettingsEntry>; 4]) -> Self {
+    pub fn available<const N: usize>(entries: [Option<SettingsEntry>; N]) -> Self {
+        let mut slots = [None; SETTINGS_READBACK_CAPACITY];
+        for (slot, entry) in slots.iter_mut().zip(entries) {
+            *slot = entry;
+        }
         Self {
             availability: SettingsReadbackAvailability::Available,
-            entries,
+            entries: slots,
         }
     }
 
@@ -6543,7 +7421,7 @@ impl SettingsReadback {
     pub const fn unavailable() -> Self {
         Self {
             availability: SettingsReadbackAvailability::Unavailable,
-            entries: [None, None, None, None],
+            entries: [None; SETTINGS_READBACK_CAPACITY],
         }
     }
 
@@ -6552,7 +7430,7 @@ impl SettingsReadback {
     pub const fn unsupported() -> Self {
         Self {
             availability: SettingsReadbackAvailability::Unsupported,
-            entries: [None, None, None, None],
+            entries: [None; SETTINGS_READBACK_CAPACITY],
         }
     }
 
@@ -6564,7 +7442,7 @@ impl SettingsReadback {
 
     /// Returns the bounded settings entries.
     #[must_use]
-    pub const fn entries(self) -> [Option<SettingsEntry>; 4] {
+    pub const fn entries(self) -> [Option<SettingsEntry>; SETTINGS_READBACK_CAPACITY] {
         self.entries
     }
 }
@@ -6791,6 +7669,9 @@ pub struct TelemetryDelta {
     /// Total or trip distance in millimeters.
     pub distance: Option<Measured<Distance>>,
 
+    /// Trip distance in millimeters when the protocol reports it separately.
+    pub trip_distance: Option<Measured<Distance>>,
+
     /// Pitch in millidegrees.
     pub pitch: Option<Measured<Angle>>,
 
@@ -6831,6 +7712,7 @@ impl TelemetryDelta {
             battery_temperature: None,
             pwm: None,
             distance: None,
+            trip_distance: None,
             pitch: None,
             balance_angle: None,
             roll: None,
@@ -6924,6 +7806,9 @@ pub struct TelemetrySnapshot {
     /// Latest known total or trip distance in millimeters.
     pub distance: Option<Measured<Distance>>,
 
+    /// Latest known trip distance in millimeters when the protocol reports it separately.
+    pub trip_distance: Option<Measured<Distance>>,
+
     /// Latest known pitch in millidegrees.
     pub pitch: Option<Measured<Angle>>,
 
@@ -6992,6 +7877,9 @@ impl TelemetrySnapshot {
         }
         if delta.distance.is_some() {
             self.distance = delta.distance;
+        }
+        if delta.trip_distance.is_some() {
+            self.trip_distance = delta.trip_distance;
         }
         if delta.pitch.is_some() {
             self.pitch = delta.pitch;
@@ -7280,6 +8168,11 @@ where
     /// Supplies one borrowed host input to the protocol session.
     pub fn ingest(&mut self, input: SessionInput<'_>) {
         self.handle(input);
+    }
+
+    /// Returns mutable access to the protocol session for typed host-side setup.
+    pub fn session_mut(&mut self) -> &mut S {
+        &mut self.session
     }
 
     /// Drains owned session outputs accumulated so far.
@@ -7954,10 +8847,11 @@ mod tests {
     use super::crate_name;
     use crate::round_div_i32;
     use crate::{
-        Angle, BatteryCurrent, BatteryLevel, Capacity, CellVoltage, Current, DeviceCommand,
-        DeviceEvent, Distance, Duration, DutyCycle, Energy, FootpadTelemetry, GattChannel,
-        LinkInfo, Measured, MonotonicTimestamp, ParallelCount, PeakCurrent, PhaseCurrent, Power,
-        ProtocolSession, SeriesCount, SessionInput, SessionOutput, Speed, TelemetryDelta,
+        Angle, BatteryCurrent, BatteryLevel, Capacity, CellVoltage, ControlRefusalReason, Current,
+        DeviceCommand, DeviceEvent, Distance, Duration, DutyCycle, Energy, FootpadTelemetry,
+        GattChannel, LightState, LinkInfo, Measured, MonotonicTimestamp, ParallelCount,
+        PeakCurrent, PhaseCurrent, Power, ProtocolSession, SETTING_WRITE_CONFIRMATION_TIMEOUT,
+        SeriesCount, SessionInput, SessionOutput, SettingState, Speed, TelemetryDelta,
         TelemetrySnapshot, Temperature, TransportAction, UnsupportedReason, ValueQuality,
         ValueSource, VerificationStatus, Voltage, WriteMode, WritePayload,
     };
@@ -8091,7 +8985,6 @@ mod tests {
             brightness,
         );
         let marker = crate::RgbLightingRestoreMarker::new(String::new(), requested);
-
         assert_eq!(
             marker.recover("", true),
             crate::RgbLightingRestoreDecision::DifferentAccessory
@@ -8100,6 +8993,32 @@ mod tests {
             crate::RgbLightingRestoreMarker::new("melk-1".to_owned(), requested).recover("", true),
             crate::RgbLightingRestoreDecision::DifferentAccessory
         );
+    }
+
+    #[test]
+    fn setting_state_timeout_waits_for_deadline() {
+        let mut state = SettingState::<LightState>::unknown();
+        state.submit(LightState::On, ms(10));
+        let timeout = SETTING_WRITE_CONFIRMATION_TIMEOUT;
+
+        assert!(!state.timeout_if_elapsed(ms(2_009), timeout));
+        assert!(matches!(state, SettingState::Pending { .. }));
+
+        assert!(state.timeout_if_elapsed(ms(2_010), timeout));
+        assert!(matches!(
+            state,
+            SettingState::TimedOut {
+                requested: LightState::On,
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn setting_state_preserves_refusal_without_a_transport_write() {
+        let mut state = SettingState::<LightState>::unknown();
+        state.submit(LightState::On, ms(30));
+        state.refuse(ControlRefusalReason::UnsupportedCommand);
     }
 
     #[test]
@@ -8535,7 +9454,37 @@ mod tests {
                     | DeviceCommand::RequestDiagnostics
                     | DeviceCommand::RequestFaultHistory
                     | DeviceCommand::RequestSettings
+                    | DeviceCommand::ResetTripMeter
+                    | DeviceCommand::SetAeroTiltbackSpeed(_)
+                    | DeviceCommand::SetAeroPwmPercent(_)
+                    | DeviceCommand::SetAeroPwmOff
+                    | DeviceCommand::SetAeroGyroCalibration
+                    | DeviceCommand::SetAeroRidingMode(_)
+                    | DeviceCommand::SetAeroBrakeOverpressureAlarm(_)
+                    | DeviceCommand::SetAeroPedalHardness(_)
+                    | DeviceCommand::SetAeroDisplayBacklight(_)
+                    | DeviceCommand::SetAeroBeeperVolume(_)
+                    | DeviceCommand::SetAeroDynamicAssist(_)
+                    | DeviceCommand::SetAeroPedalDipCompensation(_)
+                    | DeviceCommand::SetAeroLateralTiltLimit(_)
+                    | DeviceCommand::SetAeroVoltageCorrection(_)
+                    | DeviceCommand::SetAeroMaxChargeVoltageRaw(_)
+                    | DeviceCommand::SetAeroWheelUnits(_)
+                    | DeviceCommand::SetAeroHighSpeedMode(_)
+                    | DeviceCommand::SetAeroLowBatteryMode(_)
+                    | DeviceCommand::SetAeroTransportMode(_)
+                    | DeviceCommand::SetAeroAlarmSpeed(_)
+                    | DeviceCommand::SetAeroAngleAdjustment(_)
+                    | DeviceCommand::SetAeroHighBeam(_)
                     | DeviceCommand::SetLights(_)
+                    | DeviceCommand::SetPedalMode(_)
+                    | DeviceCommand::SetRollAngle(_)
+                    | DeviceCommand::SetSpeedAlarmMode(_)
+                    | DeviceCommand::SetBegodeMaxSpeed(_)
+                    | DeviceCommand::SetBegodeBeeperVolume(_)
+                    | DeviceCommand::SetBegodeLedMode(_)
+                    | DeviceCommand::SetAccelerationAssist(_)
+                    | DeviceCommand::SetTaillight(_)
                     | DeviceCommand::SoundHorn
                     | DeviceCommand::SetRawMotorCurrent { .. },
                 ) => {}
@@ -9138,6 +10087,22 @@ mod tests {
             response.entries()[0].map(|entry| entry.verification),
             Some(VerificationStatus::HardwareVerified)
         );
+    }
+
+    #[test]
+    fn settings_readback_preserves_the_eighteenth_entry() {
+        let entry = crate::SettingsEntry {
+            field: crate::RawFieldValue::new(0x11, 3),
+            source: ValueSource::Reported,
+            quality: ValueQuality::Known,
+            verification: VerificationStatus::SourceVerified,
+        };
+        let mut entries = [None; 18];
+        entries[17] = Some(entry);
+
+        let response = crate::SettingsReadback::available(entries);
+
+        assert_eq!(response.entries()[17], Some(entry));
     }
 
     #[test]
@@ -10173,13 +11138,102 @@ mod tests {
 
     #[test]
     fn benign_controls_are_distinct_from_read_only_requests() {
-        let lights = DeviceCommand::SetLights(crate::LightState::On);
+        let lights = DeviceCommand::SetLights(LightState::On);
         let horn = DeviceCommand::SoundHorn;
 
         assert_eq!(lights.kind(), crate::CommandKind::SetLights);
         assert_eq!(horn.kind(), crate::CommandKind::SoundHorn);
         assert_eq!(lights.safety_class(), crate::SafetyClass::BenignControl);
         assert_eq!(horn.safety_class(), crate::SafetyClass::BenignControl);
+    }
+
+    #[test]
+    fn remaining_euc_setting_intents_are_typed_and_safety_classified() {
+        let acceleration =
+            DeviceCommand::SetAccelerationAssist(crate::AccelerationAssistState::Enabled);
+        let taillight = DeviceCommand::SetTaillight(LightState::On);
+
+        assert_eq!(
+            acceleration.kind(),
+            crate::CommandKind::SetAccelerationAssist
+        );
+        assert_eq!(
+            acceleration.safety_class(),
+            crate::SafetyClass::StationaryOnly
+        );
+        assert_eq!(taillight.kind(), crate::CommandKind::SetTaillight);
+        assert_eq!(taillight.safety_class(), crate::SafetyClass::BenignControl);
+    }
+
+    #[test]
+    fn veteran_pedal_mode_raw_values_use_the_documented_mapping() {
+        assert_eq!(
+            crate::PedalMode::from_veteran_raw(0),
+            Some(crate::PedalMode::Hard)
+        );
+        assert_eq!(
+            crate::PedalMode::from_veteran_raw(1),
+            Some(crate::PedalMode::Medium)
+        );
+        assert_eq!(
+            crate::PedalMode::from_veteran_raw(2),
+            Some(crate::PedalMode::Soft)
+        );
+        assert_eq!(crate::PedalMode::from_veteran_raw(1920), None);
+    }
+
+    #[test]
+    fn begode_pedal_mode_settings_bits_use_documented_inverted_mapping() {
+        assert_eq!(
+            crate::PedalMode::from_begode_settings_bits(0x0000),
+            Some(crate::PedalMode::Soft)
+        );
+        assert_eq!(
+            crate::PedalMode::from_begode_settings_bits(0x2000),
+            Some(crate::PedalMode::Medium)
+        );
+        assert_eq!(
+            crate::PedalMode::from_begode_settings_bits(0x4000),
+            Some(crate::PedalMode::Hard)
+        );
+        assert_eq!(crate::PedalMode::from_begode_settings_bits(0x6000), None);
+    }
+
+    #[test]
+    fn begode_roll_angle_settings_bits_use_documented_mapping() {
+        assert_eq!(
+            crate::RollAngle::from_begode_settings_bits(0x0000),
+            Some(crate::RollAngle::Low)
+        );
+        assert_eq!(
+            crate::RollAngle::from_begode_settings_bits(0x0080),
+            Some(crate::RollAngle::Medium)
+        );
+        assert_eq!(
+            crate::RollAngle::from_begode_settings_bits(0x0100),
+            Some(crate::RollAngle::High)
+        );
+        assert_eq!(crate::RollAngle::from_begode_settings_bits(0x0180), None);
+    }
+
+    #[test]
+    fn begode_speed_alarm_settings_bits_use_documented_mapping() {
+        assert_eq!(
+            crate::SpeedAlarmMode::from_begode_settings_bits(0x0000),
+            Some(crate::SpeedAlarmMode::Both)
+        );
+        assert_eq!(
+            crate::SpeedAlarmMode::from_begode_settings_bits(0x0400),
+            Some(crate::SpeedAlarmMode::StageOneOnly)
+        );
+        assert_eq!(
+            crate::SpeedAlarmMode::from_begode_settings_bits(0x0800),
+            Some(crate::SpeedAlarmMode::Off)
+        );
+        assert_eq!(
+            crate::SpeedAlarmMode::from_begode_settings_bits(0x0c00),
+            Some(crate::SpeedAlarmMode::PwmTiltback)
+        );
     }
 
     #[test]
@@ -10202,6 +11256,10 @@ mod tests {
                 &[crate::CommandKind::SetLights, crate::CommandKind::SoundHorn][..],
             ),
             (
+                crate::SafetyClass::StationaryOnly,
+                &[crate::CommandKind::SetPedalMode][..],
+            ),
+            (
                 crate::SafetyClass::Actuation,
                 &[crate::CommandKind::SetRawMotorCurrent][..],
             ),
@@ -10211,6 +11269,198 @@ mod tests {
             for command in commands {
                 assert_eq!(command.safety_class(), safety_class);
             }
+        }
+    }
+
+    #[test]
+    fn aero_settings_ranges_match_euc_world_controls() {
+        assert!(crate::AeroSpeedSetting::new(9).is_none());
+        assert!(crate::AeroSpeedSetting::new(10).is_some());
+        assert!(crate::AeroSpeedSetting::new(200).is_some());
+        assert!(crate::AeroSpeedSetting::new(201).is_none());
+        assert!(crate::AeroPwmPercent::new(0).is_some());
+        assert!(crate::AeroPwmPercent::new(70).is_some());
+        assert!(crate::AeroPwmPercent::new(71).is_none());
+        assert_eq!(crate::AeroMaxChargeVoltageRaw::new(0).unwrap().raw(), 0);
+        assert_eq!(crate::AeroMaxChargeVoltageRaw::new(70).unwrap().raw(), 70);
+        assert!(crate::AeroMaxChargeVoltageRaw::new(71).is_none());
+        for (minimum, maximum, excessive) in [
+            (
+                crate::AeroDisplayBacklight::new(0).is_some(),
+                crate::AeroDisplayBacklight::new(100).is_some(),
+                crate::AeroDisplayBacklight::new(101).is_none(),
+            ),
+            (
+                crate::AeroBeeperVolume::new(0).is_some(),
+                crate::AeroBeeperVolume::new(100).is_some(),
+                crate::AeroBeeperVolume::new(101).is_none(),
+            ),
+            (
+                crate::AeroDynamicAssist::new(0).is_some(),
+                crate::AeroDynamicAssist::new(100).is_some(),
+                crate::AeroDynamicAssist::new(101).is_none(),
+            ),
+            (
+                crate::AeroPedalDipCompensation::new(0).is_some(),
+                crate::AeroPedalDipCompensation::new(100).is_some(),
+                crate::AeroPedalDipCompensation::new(101).is_none(),
+            ),
+        ] {
+            assert!(minimum && maximum && excessive);
+        }
+        assert!(crate::AeroLateralTiltLimit::new(34).is_none());
+        assert!(crate::AeroLateralTiltLimit::new(35).is_some());
+        assert!(crate::AeroLateralTiltLimit::new(75).is_some());
+        assert!(crate::AeroLateralTiltLimit::new(76).is_none());
+        assert!(crate::AeroVoltageCorrection::new(-16).is_none());
+        assert!(crate::AeroVoltageCorrection::new(-15).is_some());
+        assert!(crate::AeroVoltageCorrection::new(15).is_some());
+        assert!(crate::AeroVoltageCorrection::new(16).is_none());
+        assert!(crate::AeroAngleAdjustment::new(-81).is_none());
+        assert!(crate::AeroAngleAdjustment::new(-80).is_some());
+        assert!(crate::AeroAngleAdjustment::new(80).is_some());
+        assert!(crate::AeroAngleAdjustment::new(81).is_none());
+        assert!(crate::AeroBrakeOverpressureAlarm::new(89).is_none());
+        assert!(crate::AeroBrakeOverpressureAlarm::new(90).is_some());
+        assert!(crate::AeroBrakeOverpressureAlarm::new(125).is_some());
+        assert!(crate::AeroBrakeOverpressureAlarm::new(126).is_none());
+    }
+
+    #[test]
+    fn aero_modern_riding_mode_maps_source_wire_values() {
+        assert_eq!(
+            crate::AeroRidingMode::from_wire(1),
+            Some(crate::AeroRidingMode::Soft)
+        );
+        assert_eq!(
+            crate::AeroRidingMode::from_wire(2),
+            Some(crate::AeroRidingMode::Medium)
+        );
+        assert_eq!(
+            crate::AeroRidingMode::from_wire(3),
+            Some(crate::AeroRidingMode::Hard)
+        );
+        assert_eq!(crate::AeroRidingMode::from_wire(0), None);
+        assert_eq!(crate::AeroRidingMode::Hard.wire_value(), 3);
+        assert_eq!(crate::AeroRidingMode::Medium.wire_value(), 2);
+        assert_eq!(crate::AeroRidingMode::Soft.wire_value(), 1);
+    }
+
+    #[test]
+    fn aero_gyro_calibration_state_decodes_only_documented_values() {
+        assert_eq!(
+            crate::AeroGyroCalibrationState::from_wire(0),
+            Some(crate::AeroGyroCalibrationState::Idle)
+        );
+        assert_eq!(
+            crate::AeroGyroCalibrationState::from_wire(1),
+            Some(crate::AeroGyroCalibrationState::Waiting)
+        );
+        assert_eq!(
+            crate::AeroGyroCalibrationState::from_wire(2),
+            Some(crate::AeroGyroCalibrationState::Complete)
+        );
+        assert_eq!(crate::AeroGyroCalibrationState::from_wire(3), None);
+    }
+
+    #[test]
+    fn stationary_settings_policy_only_arms_stationary_states() {
+        let policy = crate::StationarySettingsPolicy {
+            model: "NOSFET Aero",
+            arm_duration: Duration::from_milliseconds(100),
+        };
+        let low_speed = Speed::from_millimetres_per_second(500);
+        let max_speed = Speed::from_millimetres_per_second(500);
+
+        assert!(
+            policy
+                .arm(crate::RideOperatingState::Unknown, ms(10))
+                .is_none()
+        );
+        assert!(
+            policy
+                .arm(crate::RideOperatingState::Riding, ms(10))
+                .is_none()
+        );
+        assert!(
+            policy
+                .arm(crate::RideOperatingState::Charging, ms(10))
+                .is_none()
+        );
+        assert!(
+            policy
+                .arm(crate::RideOperatingState::Standing, ms(10))
+                .is_some()
+        );
+        assert!(
+            policy
+                .arm(crate::RideOperatingState::Parked, ms(10))
+                .is_some()
+        );
+        assert!(
+            policy
+                .arm_with_speed(
+                    crate::RideOperatingState::Unknown,
+                    Some(low_speed),
+                    Some(max_speed),
+                    ms(10)
+                )
+                .is_none()
+        );
+        assert!(
+            policy
+                .arm_with_speed(
+                    crate::RideOperatingState::Charging,
+                    Some(low_speed),
+                    Some(max_speed),
+                    ms(10)
+                )
+                .is_none()
+        );
+        assert!(
+            policy
+                .arm_with_speed(
+                    crate::RideOperatingState::Riding,
+                    Some(low_speed),
+                    Some(max_speed),
+                    ms(10)
+                )
+                .is_some()
+        );
+    }
+
+    #[test]
+    fn stationary_settings_policy_rejects_speed_that_contradicts_stationary_state() {
+        let policy = crate::StationarySettingsPolicy {
+            model: "NOSFET Aero",
+            arm_duration: Duration::from_milliseconds(100),
+        };
+        for state in [
+            crate::RideOperatingState::Parked,
+            crate::RideOperatingState::Standing,
+        ] {
+            for raw_speed in [-501, 501] {
+                assert!(
+                    policy
+                        .arm_with_speed(
+                            state,
+                            Some(Speed::from_millimetres_per_second(raw_speed)),
+                            Some(Speed::from_millimetres_per_second(500)),
+                            ms(10),
+                        )
+                        .is_none()
+                );
+            }
+            assert!(
+                policy
+                    .arm_with_speed(
+                        state,
+                        Some(Speed::from_millimetres_per_second(1)),
+                        None,
+                        ms(10),
+                    )
+                    .is_none()
+            );
         }
     }
 

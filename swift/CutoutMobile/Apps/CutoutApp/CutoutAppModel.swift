@@ -21,6 +21,29 @@ struct MusicHistoryQueryResult: Equatable, Sendable {
     let error: MobileRideMapError?
 }
 
+struct MusicMonitorSceneState: Equatable {
+    private(set) var isSceneActive = true
+    private(set) var isRequested = false
+
+    mutating func request() {
+        isRequested = true
+    }
+
+    mutating func cancel() {
+        isRequested = false
+    }
+
+    mutating func suspend() {
+        isSceneActive = false
+    }
+
+    mutating func resumeIfNeeded() -> Bool {
+        let shouldResume = isRequested && !isSceneActive
+        isSceneActive = true
+        return shouldResume
+    }
+}
+
 @MainActor
 @Observable
 final class CutoutAppModel {
@@ -139,9 +162,248 @@ final class CutoutAppModel {
     private(set) var activeCaptureLabels = Set<CaptureQuickLabel>()
     private(set) var recordOnlyDeviceKind: String?
     private(set) var hasSavedDevice = false
-    /// Rust-owned status of the last accepted headlight command.
-    /// A requested state is not device readback.
-    private(set) var headlightCommandStatus: LightCommandStatus = .unknown
+    var headlightOn: Bool {
+        guard let state = effectiveHeadlightState else { return false }
+        return switch headlightCommandStatus {
+        case .waitingForConfirmation, .sentWithoutConfirmation:
+            (state.requested ?? state.current) == .on
+        case .idle, .failed, .refused, .timedOut, .confirmed:
+            state.current == .on
+        }
+    }
+
+    var manualHeadlightOn: Bool {
+        guard let state = core.headlightState else { return false }
+        return state.kind == .pending ? state.requested == .on : state.current == .on
+    }
+
+    var headlightCommandStatus: LightCommandStatus {
+        core.headlightCommandStatus ?? lastHeadlightSubmissionStatus ?? .idle
+    }
+
+    var headlightControlAvailable: Bool {
+        headlightWriteSupport == .supported
+    }
+
+    var manualHeadlightControlVisible: Bool {
+        core.electricUnicycleModel == .aero
+    }
+
+    var manualHeadlightControlAvailable: Bool {
+        manualHeadlightControlVisible && core.settingsCapabilities?.headlight == .supported
+    }
+
+    var settingsCapabilities: EucSettingsCapabilities? {
+        core.settingsCapabilities
+    }
+
+    var tripMeterResetState: TripMeterResetState? {
+        core.tripMeterResetState
+    }
+
+    var aeroTiltbackSpeedState: AeroSpeedSettingState? {
+        core.aeroTiltbackSpeedState
+    }
+
+    var aeroPwmPercentState: AeroPwmSettingState? {
+        core.aeroPwmPercentState
+    }
+
+    var aeroGyroCalibrationState: AeroGyroCalibrationSettingState? {
+        core.aeroGyroCalibrationState
+    }
+
+    var aeroRidingModeState: AeroRidingModeSettingState? {
+        core.aeroRidingModeState
+    }
+
+    var aeroBrakeOverpressureAlarmState: AeroBrakeOverpressureAlarmSettingState? {
+        core.aeroBrakeOverpressureAlarmState
+    }
+
+    var aeroPedalHardnessState: AeroPedalHardnessSettingState? {
+        core.aeroPedalHardnessState
+    }
+
+    var aeroDisplayBacklightState: AeroDisplayBacklightSettingState? {
+        core.aeroDisplayBacklightState
+    }
+
+    var aeroWheelUnitsState: AeroWheelUnitsSettingState? {
+        core.aeroWheelUnitsState
+    }
+
+    var aeroBeeperVolumeState: AeroBeeperVolumeSettingState? {
+        core.aeroBeeperVolumeState
+    }
+
+    var aeroDynamicAssistState: AeroDynamicAssistSettingState? {
+        core.aeroDynamicAssistState
+    }
+
+    var aeroPedalDipCompensationState: AeroPedalDipCompensationSettingState? {
+        core.aeroPedalDipCompensationState
+    }
+
+    var aeroLateralTiltLimitState: AeroLateralTiltLimitSettingState? {
+        core.aeroLateralTiltLimitState
+    }
+
+    var aeroVoltageCorrectionState: AeroVoltageCorrectionSettingState? {
+        core.aeroVoltageCorrectionState
+    }
+
+    var aeroMaxChargeVoltageRawState: AeroMaxChargeVoltageRawSettingState? {
+        core.aeroMaxChargeVoltageRawState
+    }
+
+    var aeroHighSpeedModeState: AeroToggleSettingState? { core.aeroHighSpeedModeState }
+    var aeroLowBatteryModeState: AeroToggleSettingState? { core.aeroLowBatteryModeState }
+    var aeroTransportModeState: AeroToggleSettingState? { core.aeroTransportModeState }
+
+    var aeroAlarmSpeedState: AeroSpeedSettingState? {
+        core.aeroAlarmSpeedState
+    }
+
+    var aeroAngleAdjustmentState: AeroAngleAdjustmentSettingState? {
+        core.aeroAngleAdjustmentState
+    }
+
+    var aeroHighBeamState: LightSettingState? {
+        core.aeroHighBeamState
+    }
+
+    var manualHeadlightState: LightSettingState? {
+        core.headlightState
+    }
+
+    var pedalModeState: PedalModeSettingState? {
+        core.pedalModeState
+    }
+
+    var rollAngleState: RollAngleSettingState? {
+        core.rollAngleState
+    }
+
+    var speedAlarmModeState: SpeedAlarmModeSettingState? {
+        core.speedAlarmModeState
+    }
+
+    var pedalModeControlAvailable: Bool {
+        core.settingsCapabilities?.canSubmit(\.pedalMode) == true
+    }
+
+    var rollAngleControlAvailable: Bool {
+        core.settingsCapabilities?.canSubmit(\.rollAngle) == true
+    }
+
+    var speedAlarmModeControlAvailable: Bool {
+        core.settingsCapabilities?.canSubmit(\.speedAlarmMode) == true
+    }
+
+    var begodeMaxSpeedControlAvailable: Bool {
+        core.settingsCapabilities?.canSubmit(\.begodeMaxSpeed) == true
+    }
+
+    var begodeBeeperVolumeControlAvailable: Bool {
+        core.settingsCapabilities?.canSubmit(\.begodeBeeperVolume) == true
+    }
+
+    var begodeLedModeControlAvailable: Bool {
+        core.settingsCapabilities?.canSubmit(\.begodeLedMode) == true
+    }
+
+    var resetTripMeterControlAvailable: Bool {
+        core.settingsCapabilities?.canSubmit(\.resetTripMeter) == true
+    }
+
+    var aeroTiltbackSpeedControlAvailable: Bool {
+        core.settingsCapabilities?.canSubmit(\.aeroTiltbackSpeed) == true
+    }
+
+    var aeroPwmPercentControlAvailable: Bool {
+        core.settingsCapabilities?.canSubmit(\.aeroPwmPercent) == true
+    }
+
+    var aeroGyroCalibrationControlAvailable: Bool {
+        core.settingsCapabilities?.canSubmit(\.aeroGyroCalibration) == true
+    }
+
+    var aeroRidingModeControlAvailable: Bool {
+        core.settingsCapabilities?.canSubmit(\.aeroRidingMode) == true
+    }
+
+    var aeroBrakeOverpressureAlarmControlAvailable: Bool {
+        core.settingsCapabilities?.canSubmit(\.aeroBrakeOverpressureAlarm) == true
+    }
+
+    var aeroPedalHardnessControlAvailable: Bool {
+        core.settingsCapabilities?.canSubmit(\.aeroPedalHardness) == true
+    }
+
+    var aeroDisplayBacklightControlAvailable: Bool {
+        core.settingsCapabilities?.canSubmit(\.aeroDisplayBacklight) == true
+    }
+
+    var aeroWheelUnitsControlAvailable: Bool {
+        core.settingsCapabilities?.canSubmit(\.aeroWheelUnits) == true
+    }
+
+    var aeroBeeperVolumeControlAvailable: Bool {
+        core.settingsCapabilities?.canSubmit(\.aeroBeeperVolume) == true
+    }
+
+    var aeroDynamicAssistControlAvailable: Bool {
+        core.settingsCapabilities?.canSubmit(\.aeroDynamicAssist) == true
+    }
+
+    var aeroPedalDipCompensationControlAvailable: Bool {
+        core.settingsCapabilities?.canSubmit(\.aeroPedalDipCompensation) == true
+    }
+
+    var aeroLateralTiltLimitControlAvailable: Bool {
+        core.settingsCapabilities?.canSubmit(\.aeroLateralTiltLimit) == true
+    }
+
+    var aeroVoltageCorrectionControlAvailable: Bool {
+        core.settingsCapabilities?.canSubmit(\.aeroVoltageCorrection) == true
+    }
+
+    var aeroMaxChargeVoltageRawControlAvailable: Bool {
+        core.settingsCapabilities?.canSubmit(\.aeroMaxChargeVoltageRaw) == true
+    }
+
+    var aeroAlarmSpeedControlAvailable: Bool {
+        core.settingsCapabilities?.canSubmit(\.aeroAlarmSpeed) == true
+    }
+
+    var aeroAngleAdjustmentControlAvailable: Bool {
+        core.settingsCapabilities?.canSubmit(\.aeroAngleAdjustment) == true
+    }
+
+    var aeroHighBeamControlAvailable: Bool {
+        core.settingsCapabilities?.canSubmit(\.aeroHighBeam) == true
+    }
+
+    var aeroHighSpeedModeControlAvailable: Bool {
+        core.settingsCapabilities?.canSubmit(\.aeroHighSpeedMode) == true
+    }
+
+    var aeroLowBatteryModeControlAvailable: Bool {
+        core.settingsCapabilities?.canSubmit(\.aeroLowBatteryMode) == true
+    }
+
+    var aeroTransportModeControlAvailable: Bool {
+        core.settingsCapabilities?.canSubmit(\.aeroTransportMode) == true
+    }
+
+    var accelerationAssistState: AccelerationAssistSettingState? {
+        core.accelerationAssistState
+    }
+
+    var taillightState: LightSettingState? {
+        core.taillightState
+    }
 
     var selectedRideTitle: String? {
         connectionState.selection?.title
@@ -251,6 +513,50 @@ final class CutoutAppModel {
         connectionState.statusText ?? phase.displayText
     }
 
+    var headlightControlTitle: String {
+        localizedAppText(core.electricUnicycleModel == .aero
+            ? "settings.high_beam.title"
+            : "settings.headlight.title")
+    }
+
+    var headlightStatusText: String {
+        if !headlightControlAvailable, headlightCommandStatus == .idle {
+            if headlightWriteSupport == .unverified {
+                return localizedAppText("settings.headlight.unverified")
+            }
+            return localizedAppText("settings.headlight.unavailable")
+        }
+        return switch headlightCommandStatus {
+        case .idle:
+            localizedAppText("settings.headlight.help")
+        case .failed:
+            localizedAppText("settings.headlight.failed")
+        case .refused:
+            localizedAppText("settings.headlight.refused")
+        case .waitingForConfirmation:
+            localizedAppText("settings.headlight.waiting")
+        case .timedOut:
+            localizedAppText("settings.headlight.timed_out")
+        case .confirmed:
+            if let confirmedAt = effectiveHeadlightState?.confirmedAt {
+                localizedAppText(
+                    "settings.headlight.confirmed_ago",
+                    Int64(currentMonotonicTime.elapsed(since: confirmedAt).rawValue / 1_000)
+                )
+            } else {
+                localizedAppText("settings.headlight.confirmed")
+            }
+        case .sentWithoutConfirmation:
+            localizedAppText("settings.high_beam.sent_unconfirmed")
+        }
+    }
+
+    var manualHeadlightStatusText: String {
+        manualHeadlightControlAvailable
+            ? localizedAppText("settings.headlight.sent_unconfirmed")
+            : localizedAppText("settings.headlight.unavailable")
+    }
+
     private let core: any CutoutSessionDriving
     private let liveActivityCoordinator: LiveActivityRideLifecycleCoordinator
     private let selectedDeviceStore: DevicePickerSelectionStore
@@ -272,6 +578,8 @@ final class CutoutAppModel {
     private var captureFileName: String?
     private var captureNotificationCount = 0
     private var captureLabel: String?
+    private var lastHeadlightSubmissionStatus: LightCommandStatus?
+    private var fallbackHeadlightState: LightSettingState?
     private var hasStarted = false
     private var permitsStoredDeviceAutoPairing = true
     private var rideSessionRestorationState = RideSessionRestorationState.complete
@@ -298,9 +606,26 @@ final class CutoutAppModel {
     private var rideMapLiveProjectionGeneration: UInt64 = 0
     private var rideMapLiveProjectionEnabled = false
     private static let liveActivityUpdateIntervalMilliseconds: UInt64 = 1_000
+    private static let headlightConfirmationTimeout = MonotonicMilliseconds(2_000)
 
     isolated deinit {
         stopMusicMonitoring()
+    }
+
+    private var headlightWriteSupport: SettingWriteSupport? {
+        usesAeroHighBeam
+            ? core.settingsCapabilities?.aeroHighBeam
+            : core.settingsCapabilities?.headlight
+    }
+
+    private var coreHeadlightState: LightSettingState? {
+        usesAeroHighBeam
+            ? (core.aeroHighBeamState ?? core.headlightState)
+            : core.headlightState
+    }
+
+    private var usesAeroHighBeam: Bool {
+        core.electricUnicycleModel == .aero
     }
 
     convenience init() {
@@ -394,7 +719,7 @@ final class CutoutAppModel {
             self?.handleScanStateChange(scanState)
         }
         self.core.onSettingsReadbackChange = { [weak self] settingsReadback in
-            self?.settingsReadback = settingsReadback
+            self?.handleSettingsReadback(settingsReadback)
         }
         self.core.onFaultHistoryReadbackChange = { [weak self] faultHistoryReadback in
             self?.faultHistoryReadback = faultHistoryReadback
@@ -1959,10 +2284,248 @@ final class CutoutAppModel {
     }
 
     @discardableResult
-    func setHeadlight(_ state: LightState) -> Bool {
-        guard let status = core.setLights(state) else { return false }
-        headlightCommandStatus = status
-        return true
+    func setHeadlight(_ enabled: Bool) -> SettingCommandResult {
+        let state = enabled ? LightState.on : .off
+        guard headlightWriteSupport == .supported else {
+            lastHeadlightSubmissionStatus = .failed
+            fallbackHeadlightState = LightSettingState(
+                kind: .failed,
+                current: displayedHeadlightState
+            )
+            return .failed
+        }
+        let result = usesAeroHighBeam
+            ? core.setAeroHighBeam(state)
+            : core.setLights(state)
+        return applyHeadlightSubmission(result, for: state)
+    }
+
+    @discardableResult
+    func setManualHeadlight(_ enabled: Bool) -> SettingCommandResult {
+        guard manualHeadlightControlAvailable else { return .failed }
+        return core.setLights(enabled ? .on : .off)
+    }
+
+    @discardableResult
+    func setPedalMode(_ mode: PedalMode.Kind) -> SettingCommandResult {
+        guard pedalModeControlAvailable else { return .failed }
+        return core.setPedalMode(mode)
+    }
+
+    @discardableResult
+    func setRollAngle(_ angle: RollAngle.Kind) -> SettingCommandResult {
+        guard rollAngleControlAvailable else { return .failed }
+        return core.setRollAngle(angle)
+    }
+
+    @discardableResult
+    func setSpeedAlarmMode(_ mode: SpeedAlarmMode.Kind) -> SettingCommandResult {
+        guard speedAlarmModeControlAvailable else { return .failed }
+        return core.setSpeedAlarmMode(mode)
+    }
+
+    @discardableResult
+    func setBegodeMaxSpeed(_ speed: BegodeMaxSpeed) -> SettingCommandResult {
+        guard begodeMaxSpeedControlAvailable else { return .failed }
+        return core.setBegodeMaxSpeed(speed)
+    }
+
+    @discardableResult
+    func setBegodeBeeperVolume(_ volume: BegodeBeeperVolume) -> SettingCommandResult {
+        guard begodeBeeperVolumeControlAvailable else { return .failed }
+        return core.setBegodeBeeperVolume(volume)
+    }
+
+    @discardableResult
+    func setBegodeLedMode(_ mode: BegodeLedMode) -> SettingCommandResult {
+        guard begodeLedModeControlAvailable else { return .failed }
+        return core.setBegodeLedMode(mode)
+    }
+
+    func resetTripMeter() -> SettingCommandResult {
+        guard resetTripMeterControlAvailable else { return .failed }
+        return core.resetTripMeter()
+    }
+
+    func setAeroTiltbackSpeed(_ speed: AeroSpeedSetting) -> SettingCommandResult {
+        guard aeroTiltbackSpeedControlAvailable else { return .failed }
+        return core.setAeroTiltbackSpeed(speed)
+    }
+
+    func setAeroPwmPercent(_ percent: AeroPwmPercent) -> SettingCommandResult {
+        guard aeroPwmPercentControlAvailable else { return .failed }
+        return core.setAeroPwmPercent(percent)
+    }
+
+    func setAeroPwmOff() -> SettingCommandResult {
+        guard aeroPwmPercentControlAvailable else { return .failed }
+        return core.setAeroPwmOff()
+    }
+
+    func setAeroGyroCalibration() -> SettingCommandResult {
+        guard aeroGyroCalibrationControlAvailable else { return .failed }
+        return core.setAeroGyroCalibration()
+    }
+
+    func setAeroRidingMode(_ mode: AeroRidingMode) -> SettingCommandResult {
+        guard aeroRidingModeControlAvailable else { return .failed }
+        return core.setAeroRidingMode(mode)
+    }
+
+    func setAeroBrakeOverpressureAlarm(_ value: AeroBrakeOverpressureAlarm) -> SettingCommandResult {
+        guard aeroBrakeOverpressureAlarmControlAvailable else { return .failed }
+        return core.setAeroBrakeOverpressureAlarm(value)
+    }
+
+    func setAeroPedalHardness(_ hardness: AeroPedalHardness) -> SettingCommandResult {
+        guard aeroPedalHardnessControlAvailable else { return .failed }
+        return core.setAeroPedalHardness(hardness)
+    }
+
+    func setAeroDisplayBacklight(_ value: AeroDisplayBacklight) -> SettingCommandResult {
+        guard aeroDisplayBacklightControlAvailable else { return .failed }
+        return core.setAeroDisplayBacklight(value)
+    }
+
+    func setAeroWheelUnits(_ value: AeroWheelUnits) -> SettingCommandResult {
+        guard aeroWheelUnitsControlAvailable else { return .failed }
+        return core.setAeroWheelUnits(value)
+    }
+
+    func setAeroBeeperVolume(_ value: AeroBeeperVolume) -> SettingCommandResult {
+        guard aeroBeeperVolumeControlAvailable else { return .failed }
+        return core.setAeroBeeperVolume(value)
+    }
+
+    func setAeroDynamicAssist(_ value: AeroDynamicAssist) -> SettingCommandResult {
+        guard aeroDynamicAssistControlAvailable else { return .failed }
+        return core.setAeroDynamicAssist(value)
+    }
+
+    func setAeroPedalDipCompensation(_ value: AeroPedalDipCompensation) -> SettingCommandResult {
+        guard aeroPedalDipCompensationControlAvailable else { return .failed }
+        return core.setAeroPedalDipCompensation(value)
+    }
+
+    func setAeroLateralTiltLimit(_ value: AeroLateralTiltLimit) -> SettingCommandResult {
+        guard aeroLateralTiltLimitControlAvailable else { return .failed }
+        return core.setAeroLateralTiltLimit(value)
+    }
+
+    func setAeroVoltageCorrection(_ value: AeroVoltageCorrection) -> SettingCommandResult {
+        guard aeroVoltageCorrectionControlAvailable else { return .failed }
+        return core.setAeroVoltageCorrection(value)
+    }
+
+    func setAeroMaxChargeVoltageRaw(_ value: AeroMaxChargeVoltageRaw) -> SettingCommandResult {
+        guard aeroMaxChargeVoltageRawControlAvailable else { return .failed }
+        return core.setAeroMaxChargeVoltageRaw(value)
+    }
+
+    func setAeroHighSpeedMode(_ value: AeroToggle) -> SettingCommandResult {
+        guard aeroHighSpeedModeControlAvailable else { return .failed }
+        return core.setAeroHighSpeedMode(value)
+    }
+
+    func setAeroLowBatteryMode(_ value: AeroToggle) -> SettingCommandResult {
+        guard aeroLowBatteryModeControlAvailable else { return .failed }
+        return core.setAeroLowBatteryMode(value)
+    }
+
+    func setAeroTransportMode(_ value: AeroToggle) -> SettingCommandResult {
+        guard aeroTransportModeControlAvailable else { return .failed }
+        return core.setAeroTransportMode(value)
+    }
+
+    func setAeroAlarmSpeed(_ speed: AeroSpeedSetting) -> SettingCommandResult {
+        guard aeroAlarmSpeedControlAvailable else { return .failed }
+        return core.setAeroAlarmSpeed(speed)
+    }
+
+    func setAeroAngleAdjustment(_ angle: AeroAngleAdjustment) -> SettingCommandResult {
+        guard aeroAngleAdjustmentControlAvailable else { return .failed }
+        return core.setAeroAngleAdjustment(angle)
+    }
+
+    private func applyHeadlightSubmission(
+        _ result: SettingCommandResult,
+        for state: LightState
+    ) -> SettingCommandResult {
+        switch result {
+        case .accepted:
+            lastHeadlightSubmissionStatus = nil
+            return .accepted
+        case let .refused(reason):
+            lastHeadlightSubmissionStatus = .refused
+            fallbackHeadlightState = LightSettingState(
+                kind: .refused,
+                current: displayedHeadlightState,
+                requested: state,
+                source: .userRequest,
+                refusalReason: reason
+            )
+            return .refused(reason)
+        case .failed:
+            lastHeadlightSubmissionStatus = .failed
+            fallbackHeadlightState = LightSettingState(
+                kind: .failed,
+                current: displayedHeadlightState,
+                requested: state,
+                source: .userRequest
+            )
+            return .failed
+        }
+    }
+
+    private func recordHeadlightCommand(_ state: LightState, sentAt: MonotonicMilliseconds) {
+        guard coreHeadlightState == nil else { return }
+        fallbackHeadlightState = LightSettingState(
+            kind: .pending,
+            current: displayedHeadlightState,
+            requested: state,
+            source: .userRequest,
+            submittedAt: sentAt
+        )
+    }
+    private var effectiveHeadlightState: LightSettingState? {
+        coreHeadlightState ?? fallbackHeadlightState
+    }
+
+    private var displayedHeadlightState: LightState? {
+        guard let state = effectiveHeadlightState else { return nil }
+        if state.kind == .pending, usesAeroHighBeam {
+            return state.requested
+        }
+        return state.current
+    }
+
+    private func updateFallbackHeadlightState(from readback: SettingsReadback?) {
+        guard !usesAeroHighBeam else { return }
+        guard coreHeadlightState == nil else { return }
+        guard let reportedState = readback?.eucGarageSettings.lightState else {
+            if fallbackHeadlightState?.kind == .pending {
+                fallbackHeadlightState = LightSettingState(
+                    kind: .failed,
+                    current: fallbackHeadlightState?.current
+                )
+            }
+            return
+        }
+        if let requestedState = fallbackHeadlightState?.requested,
+           fallbackHeadlightState?.kind == .pending,
+           requestedState != reportedState
+        {
+            return
+        }
+        fallbackHeadlightState = LightSettingState(
+            kind: .confirmed,
+            current: reportedState,
+            source: .liveReadback,
+            confirmedAt: core.now()
+        )
+    }
+    private func handleSettingsReadback(_ readback: SettingsReadback?) {
+        settingsReadback = readback
     }
     func pair(platformIdentifier: String) -> Bool {
         switch connectionState {
@@ -1988,7 +2551,7 @@ final class CutoutAppModel {
             title: selectedRow.title,
             route: route
         )
-        headlightCommandStatus = .unknown
+        resetHeadlightState()
         liveActivityError = nil
         connectionState = .connecting(selection, phase: .discoveringServices)
         permitsStoredDeviceAutoPairing = true
@@ -2043,7 +2606,6 @@ final class CutoutAppModel {
             .replacingOccurrences(of: "\r", with: " ")
             .replacingOccurrences(of: "=", with: " ")
         let annotations = ["device_kind=\(annotationKind)"]
-        let modelHint = CutoutModelHint(deviceKind: annotationKind)
         let previousCapture = (
             status: captureStatus,
             progress: captureProgress,
@@ -2055,18 +2617,11 @@ final class CutoutAppModel {
             deviceKind: recordOnlyDeviceKind
         )
         resetCaptureSession()
-        let didStart = switch modelHint {
-        case .falcon:
-            core.pair(platformIdentifier: platformIdentifier, model: .falcon)
-        case .aero:
-            core.pair(platformIdentifier: platformIdentifier, model: .aero)
-        case .unknown:
-            core.recordOnly(
-                platformIdentifier: platformIdentifier,
-                note: "unsupported picker row",
-                annotations: annotations
-            )
-        }
+        let didStart = core.recordOnly(
+            platformIdentifier: platformIdentifier,
+            note: "unsupported picker row",
+            annotations: annotations
+        )
         guard didStart else {
             captureStatus = previousCapture.status
             captureProgress = previousCapture.progress
@@ -2080,15 +2635,10 @@ final class CutoutAppModel {
         }
 
         permitsStoredDeviceAutoPairing = false
-        if modelHint != .unknown {
-            core.annotateCapture(key: "device_kind", value: annotationKind)
-        }
-        isRecordOnlyCapture = modelHint == .unknown
+        isRecordOnlyCapture = true
         recordOnlyDeviceKind = annotationKind
-        if modelHint == .unknown {
-            liveActivityIdentity = nil
-            liveActivityGlyph = .electricUnicycle
-        }
+        liveActivityIdentity = nil
+        liveActivityGlyph = .electricUnicycle
         syncLiveActivity()
         return true
     }
@@ -2171,9 +2721,11 @@ final class CutoutAppModel {
         }
         liveActivityRequestID += 1
         let requestID = liveActivityRequestID
+        let atMs = core.now().rawValue
         Task { [weak self, liveActivityCoordinator] in
             await liveActivityCoordinator.appDidEnterBackground(
                 requestID: requestID,
+                atMs: atMs,
                 snapshot: snapshot,
                 captureFlush: { [weak self] in
                     await self?.flushCapture() ?? false
@@ -2231,13 +2783,17 @@ final class CutoutAppModel {
         activeCaptureLabels.removeAll()
         captureLabel = nil
         recordOnlyDeviceKind = nil
-        headlightCommandStatus = .unknown
         connectionState = .picker
         phase = .scanning
         liveActivityIdentity = nil
         liveActivityGlyph = .electricUnicycle
         permitsStoredDeviceAutoPairing = false
+        resetHeadlightState()
         core.disconnectAndScan()
+    }
+
+    private func resetHeadlightState() {
+        lastHeadlightSubmissionStatus = nil
     }
 
     func forgetSavedDevice() {
@@ -2347,7 +2903,7 @@ final class CutoutAppModel {
         }
         self.phase = phase
         if phase != .live {
-            headlightCommandStatus = .unknown
+            resetHeadlightState()
         }
         switch phase {
         case .connecting, .discoveringServices, .subscribing:
@@ -2436,12 +2992,21 @@ final class CutoutAppModel {
             guard let self else { return }
             rideSessionRestorationState = .complete
             liveActivityError = error
-            if case .adopted = recoveryResult,
-               error == nil,
-               core.rideSessionStateHandle.rideSessionSnapshot().phase == .active
-            {
-                lastLiveActivitySnapshot = snapshot
-                lastLiveActivityUpdate = snapshot == nil ? nil : core.now()
+            switch recoveryResult {
+            case .adopted:
+                if error == nil,
+                   core.rideSessionStateHandle.rideSessionSnapshot().phase == .active
+                {
+                    lastLiveActivitySnapshot = snapshot
+                    lastLiveActivityUpdate = snapshot == nil ? nil : core.now()
+                }
+            case .ended, .noPersistedRide:
+                if restoredPlatformIdentifier == nil,
+                   let scanState = devicePickerScanState
+                {
+                    permitsStoredDeviceAutoPairing = true
+                    handleScanStateChange(scanState)
+                }
             }
             syncLiveActivity()
         }

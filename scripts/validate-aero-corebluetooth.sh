@@ -5,13 +5,12 @@ source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/swift-package-common.sh"
 
 root="$(cutout_repo_root)"
 cd "$root"
+cutout_ensure_swift_ffi_build_input "$root"
 
 if [[ "$(uname -s)" != Darwin ]]; then
   echo "Aero CoreBluetooth validation requires Darwin/CoreBluetooth" >&2
   exit 1
 fi
-
-cutout_ensure_swift_ffi_build_input "$root"
 
 timeout_seconds="${1:-45}"
 echo "libcutout_commit=$(git rev-parse HEAD)"

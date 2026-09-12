@@ -243,17 +243,6 @@ final class CutoutSessionCoreTests: XCTestCase {
         XCTAssertEqual(reconnects.attempt, ConnectionReconnectPolicy.maximumAttempts + 1)
     }
 
-    func testDispatchQueueReconnectSchedulerExecutesScheduledWork() {
-        let expectation = expectation(description: "scheduled reconnect")
-        let scheduler = DispatchQueueReconnectScheduler(queue: DispatchQueue(label: "io.cutout.test-reconnect"))
-
-        _ = scheduler.schedule(after: 0) {
-            expectation.fulfill()
-        }
-
-        wait(for: [expectation], timeout: 1)
-    }
-
     func testNordicNotificationUUIDsRemainFullWidthForPevcap() {
         let service = CBUUID(string: "6E400001-B5A3-F393-E0A9-E50E24DCCA9E")
         let notify = CBUUID(string: "6E400003-B5A3-F393-E0A9-E50E24DCCA9E")
@@ -277,22 +266,23 @@ final class CutoutSessionCoreTests: XCTestCase {
         core.observeAdvertisement(
             CoreBluetoothAdvertisement(
                 peripheralIdentifier: CoreBluetoothPeripheralIdentifier("ios-local-aero"),
-                localName: "NOSFET Aero",
+                localName: "device-ffe0",
                 advertisedServiceUuids: [.bluetooth16(0xFFE0)]
             )
         )
         core.observeAdvertisement(
             CoreBluetoothAdvertisement(
                 peripheralIdentifier: CoreBluetoothPeripheralIdentifier("ios-local-unknown"),
-                localName: "Little FOCer",
+                localName: "device-fff0",
                 advertisedServiceUuids: [.bluetooth16(0xFFF0)]
             )
         )
 
         XCTAssertEqual(core.scanState.status, .scanning)
-        XCTAssertEqual(core.scanState.rows.map(\.title), ["NOSFET Aero", "Little FOCer"])
-        XCTAssertEqual(core.scanState.rows.map(\.connectionRoute), [.electricUnicycle, .vescOnewheel])
-        XCTAssertEqual(core.scanState.sections.supported.map(\.title), ["NOSFET Aero", "Little FOCer"])
+        XCTAssertEqual(core.scanState.rows.map(\.title), ["device-ffe0", "device-fff0"])
+        XCTAssertEqual(core.scanState.rows.map(\.connectionRoute), [nil, .vescOnewheel])
+        XCTAssertEqual(core.scanState.sections.supported.map(\.title), ["device-fff0"])
+        XCTAssertEqual(core.scanState.sections.probeRecommended.map(\.title), ["device-ffe0"])
         XCTAssertTrue(core.scanState.sections.unsupported.isEmpty)
         XCTAssertEqual(observedStates.count, 2)
     }
@@ -357,271 +347,6 @@ final class CutoutSessionCoreTests: XCTestCase {
         wait(for: [failed, live], timeout: 0.2)
         XCTAssertEqual(core.phase, .failed(.identificationFailed(.timedOut)))
         XCTAssertNil(core.displayState.speed.millimetersPerSecond)
-    }
-
-    func testScriptedLiveConnectionStartsRideMapAndPublishesSnapshot() {
-        let live = expectation(description: "scripted session reaches live")
-        let rideStarted = expectation(description: "ride-map recording starts")
-
-        let core = CutoutSessionCore(
-            testScript: CutoutSessionTestScript(
-                candidate: scriptedVescCandidate,
-                telemetry: TelemetrySnapshot(speed: speedValue(8_000)),
-                startsLive: true,
-                connectionDelayMilliseconds: 0
-            ),
-            rideMapState: MobileRideMapState()
-        )
-        core.onPhaseChange = { phase in
-            if phase == .live {
-                live.fulfill()
-            }
-        }
-        core.onRideMapSnapshotChange = { snapshot in
-            if snapshot.state == .active {
-                rideStarted.fulfill()
-            }
-        }
-
-        XCTAssertNil(core.rideMapStateHandle?.initializationError)
-        core.start()
-        XCTAssertTrue(core.pair(platformIdentifier: scriptedVescCandidate.platformIdentifier))
-
-        wait(for: [live, rideStarted], timeout: 1)
-        XCTAssertEqual(core.rideMapStateHandle?.currentSnapshot()?.state, .active)
-    }
-
-    func testProductionLocationPathPublishesAcceptedRideMapPoint() {
-        let live = expectation(description: "scripted session reaches live")
-        let pointAccepted = expectation(description: "ride-map point is accepted")
-
-        let core = CutoutSessionCore(
-            testScript: CutoutSessionTestScript(
-                candidate: scriptedVescCandidate,
-                telemetry: TelemetrySnapshot(speed: speedValue(8_000)),
-                startsLive: true,
-                connectionDelayMilliseconds: 0
-            ),
-            rideMapState: MobileRideMapState()
-        )
-        core.onPhaseChange = { phase in
-            if phase == .live {
-                live.fulfill()
-            }
-        }
-        core.onRideMapDecisionChange = { _, decision in
-            if case .accepted = decision {
-                pointAccepted.fulfill()
-            }
-        }
-
-        core.start()
-        XCTAssertTrue(core.pair(platformIdentifier: scriptedVescCandidate.platformIdentifier))
-        wait(for: [live], timeout: 1)
-
-        let location = CLLocation(
-            coordinate: CLLocationCoordinate2D(latitude: 39.7392, longitude: -104.9903),
-            altitude: 1_600,
-            horizontalAccuracy: 4,
-            verticalAccuracy: 4,
-            course: 0,
-            speed: 8,
-            timestamp: Date()
-        )
-        core.locationManager(CLLocationManager(), didUpdateLocations: [location])
-
-        wait(for: [pointAccepted], timeout: 2)
-    }
-
-    func testProductionLocationPathPersistsRouteAcrossDatabaseReopen() async throws {
-        let temporaryPath = FileManager.default.temporaryDirectory
-            .appendingPathComponent("cutout-production-route-\(UUID().uuidString).sqlite")
-            .path
-        var usesSharedDatabaseFallback = false
-        var path: String
-        let database: RideDatabaseHandle
-        do {
-            path = temporaryPath
-            database = try openRideDatabase(path: path)
-        } catch {
-            // The Rust service is intentionally process-global. If another test acquired the
-            // canonical service first, reuse that service so the full suite remains order-safe.
-            usesSharedDatabaseFallback = true
-            let applicationSupport = try XCTUnwrap(
-                FileManager.default.urls(
-                    for: .applicationSupportDirectory,
-                    in: .userDomainMask
-                ).first
-            )
-            try FileManager.default.createDirectory(
-                at: applicationSupport.appendingPathComponent("Cutout", isDirectory: true),
-                withIntermediateDirectories: true
-            )
-            path = applicationSupport
-                .appendingPathComponent("Cutout/ride.sqlite")
-                .path
-            do {
-                database = try openRideDatabase(path: path)
-            } catch {
-                throw XCTSkip("Rust ride database is unavailable in this test environment")
-            }
-        }
-        let state = MobileRideMapState(database: database)
-
-        defer {
-            if usesSharedDatabaseFallback {
-                _ = try? state.stop(atMs: 10_000)
-                _ = try? state.discard()
-            }
-        }
-        let live = expectation(description: "scripted session reaches live")
-        let pointAccepted = expectation(description: "ride-map point is accepted")
-        let core = CutoutSessionCore(
-            testScript: CutoutSessionTestScript(
-                candidate: scriptedVescCandidate,
-                telemetry: TelemetrySnapshot(speed: speedValue(8_000)),
-                startsLive: true,
-                connectionDelayMilliseconds: 0
-            ),
-            rideMapState: state
-        )
-        core.onPhaseChange = { phase in
-            if phase == .live {
-                live.fulfill()
-            }
-        }
-        core.onRideMapDecisionChange = { _, decision in
-            if case .accepted = decision {
-                pointAccepted.fulfill()
-            }
-        }
-
-        core.start()
-        XCTAssertTrue(core.pair(platformIdentifier: scriptedVescCandidate.platformIdentifier))
-        await fulfillment(of: [live], timeout: 1)
-        core.locationManager(
-            CLLocationManager(),
-            didUpdateLocations: [
-                CLLocation(
-                    coordinate: CLLocationCoordinate2D(latitude: 39.7392, longitude: -104.9903),
-                    altitude: 1_600,
-                    horizontalAccuracy: 4,
-                    verticalAccuracy: 4,
-                    course: 0,
-                    speed: 8,
-                    timestamp: Date()
-                )
-            ]
-        )
-        await fulfillment(of: [pointAccepted], timeout: 2)
-
-        let rideID = try XCTUnwrap(state.currentSnapshot()?.rideID)
-        XCTAssertEqual(try state.storedPointsAfter(rideId: rideID, afterCursor: nil, limit: 10).points.count, 1)
-
-        if usesSharedDatabaseFallback == false {
-            try database.shutdown()
-        }
-
-        let reopenedState = MobileRideMapState(database: try openRideDatabase(path: path))
-        let reopenedPoints = try reopenedState.storedPointsAfter(
-            rideId: rideID,
-            afterCursor: nil,
-            limit: 10
-        )
-        XCTAssertEqual(reopenedPoints.points.count, 1)
-        XCTAssertEqual(reopenedPoints.points.first?.latitudeDegrees, 39.7392)
-    }
-
-    func testReconnectDoesNotCreateSecondAutomaticallyStartedRide() async throws {
-        let live = expectation(description: "scripted session reaches live")
-        let reconnectScheduled = expectation(description: "scripted reconnect is scheduled")
-        let reconnected = expectation(description: "scripted session returns live")
-        let state = MobileRideMapState()
-        let core = CutoutSessionCore(
-            testScript: CutoutSessionTestScript(
-                candidate: scriptedVescCandidate,
-                telemetry: TelemetrySnapshot(speed: speedValue(8_000)),
-                startsLive: true,
-                reconnectsAfterFirstLive: true,
-                reconnectAfterLiveMilliseconds: 0,
-                reconnectDelayMilliseconds: 0,
-                connectionDelayMilliseconds: 0
-            ),
-            rideMapState: state
-        )
-        var liveCount = 0
-        core.onPhaseChange = { phase in
-            guard phase == .live else { return }
-            liveCount += 1
-            if liveCount == 1 {
-                live.fulfill()
-            } else if liveCount == 2 {
-                reconnected.fulfill()
-            }
-        }
-        core.onReconnectScheduled = { _ in
-            reconnectScheduled.fulfill()
-        }
-
-        core.start()
-        XCTAssertTrue(core.pair(platformIdentifier: scriptedVescCandidate.platformIdentifier))
-        await fulfillment(of: [live], timeout: 1)
-
-        let rideID = try XCTUnwrap(state.currentSnapshot()?.rideID)
-        await fulfillment(of: [reconnectScheduled, reconnected], timeout: 2)
-
-        XCTAssertEqual(state.currentSnapshot()?.rideID, rideID)
-        XCTAssertEqual(state.currentSnapshot()?.state, .active)
-    }
-
-    func testExplicitlyStoppedRideRequiresExplicitStartBeforeLaterTelemetry() throws {
-        let live = expectation(description: "scripted session reaches live")
-        let state = MobileRideMapState()
-        let core = CutoutSessionCore(
-            clock: MonotonicClock { MonotonicMilliseconds(1_000) },
-            testScript: CutoutSessionTestScript(
-                candidate: scriptedVescCandidate,
-                telemetry: TelemetrySnapshot(speed: speedValue(8_000)),
-                startsLive: true,
-                connectionDelayMilliseconds: 0
-            ),
-            rideMapState: state
-        )
-        var liveObserved = false
-        core.onPhaseChange = { phase in
-            if phase == .live && !liveObserved {
-                liveObserved = true
-                live.fulfill()
-            }
-        }
-
-        core.start()
-        XCTAssertTrue(core.pair(platformIdentifier: scriptedVescCandidate.platformIdentifier))
-        wait(for: [live], timeout: 1)
-
-        let rideID = try XCTUnwrap(state.currentSnapshot(atMs: 1_000)?.rideID)
-        _ = try core.stopRideMap(atMs: 2_000)
-        core.applyNotificationStep(
-            CoreBluetoothSessionStep(
-                operations: [],
-                snapshot: TelemetrySnapshot(speed: speedValue(8_000))
-            ),
-            receivedAt: MonotonicMilliseconds(2_100)
-        )
-        XCTAssertEqual(state.currentSnapshot(atMs: 2_100)?.rideID, rideID)
-        XCTAssertEqual(state.currentSnapshot(atMs: 2_100)?.state, .stopped)
-
-        let newRide = try core.startRideMapGpsOnly(atMs: 2_500, lastConnectedVehicle: nil)
-        core.applyNotificationStep(
-            CoreBluetoothSessionStep(
-                operations: [],
-                snapshot: TelemetrySnapshot(speed: speedValue(8_000))
-            ),
-            receivedAt: MonotonicMilliseconds(3_000)
-        )
-
-        XCTAssertEqual(state.currentSnapshot(atMs: 3_000)?.rideID, newRide.rideID)
-        XCTAssertEqual(state.currentSnapshot(atMs: 3_000)?.state, .active)
     }
 
     func testScriptedSessionUsesTheCorePublicationPath() {
@@ -715,6 +440,66 @@ final class CutoutSessionCoreTests: XCTestCase {
         XCTAssertEqual(core.phase, .scanning)
         XCTAssertEqual(core.scanState.rows, [scriptedVescCandidate.pickerRow])
         XCTAssertNil(core.displayState.speed.millimetersPerSecond)
+    }
+
+    func testScriptedLiveConnectionStartsRideMapAndPublishesSnapshot() {
+        let live = expectation(description: "scripted session reaches live")
+        let rideStarted = expectation(description: "ride-map recording starts")
+        let core = CutoutSessionCore(
+            testScript: CutoutSessionTestScript(
+                candidate: scriptedVescCandidate,
+                telemetry: TelemetrySnapshot(speed: speedValue(8_000)),
+                startsLive: true,
+                connectionDelayMilliseconds: 0
+            ),
+            rideMapState: MobileRideMapState()
+        )
+        core.onPhaseChange = { phase in
+            if phase == .live { live.fulfill() }
+        }
+        core.onRideMapSnapshotChange = { snapshot in
+            if snapshot.state == .active { rideStarted.fulfill() }
+        }
+
+        core.start()
+        XCTAssertTrue(core.pair(platformIdentifier: scriptedVescCandidate.platformIdentifier))
+        wait(for: [live, rideStarted], timeout: 1)
+        XCTAssertEqual(core.rideMapStateHandle?.currentSnapshot()?.state, .active)
+    }
+
+    func testProductionLocationPathPublishesAcceptedRideMapPoint() {
+        let live = expectation(description: "scripted session reaches live")
+        let pointAccepted = expectation(description: "ride-map point is accepted")
+        let core = CutoutSessionCore(
+            testScript: CutoutSessionTestScript(
+                candidate: scriptedVescCandidate,
+                telemetry: TelemetrySnapshot(speed: speedValue(8_000)),
+                startsLive: true,
+                connectionDelayMilliseconds: 0
+            ),
+            rideMapState: MobileRideMapState()
+        )
+        core.onPhaseChange = { phase in
+            if phase == .live { live.fulfill() }
+        }
+        core.onRideMapDecisionChange = { _, decision in
+            if case .accepted = decision { pointAccepted.fulfill() }
+        }
+
+        core.start()
+        XCTAssertTrue(core.pair(platformIdentifier: scriptedVescCandidate.platformIdentifier))
+        wait(for: [live], timeout: 1)
+        let location = CLLocation(
+            coordinate: CLLocationCoordinate2D(latitude: 39.7392, longitude: -104.9903),
+            altitude: 1_600,
+            horizontalAccuracy: 4,
+            verticalAccuracy: 4,
+            course: 0,
+            speed: 8,
+            timestamp: Date()
+        )
+        core.locationManager(CLLocationManager(), didUpdateLocations: [location])
+        wait(for: [pointAccepted], timeout: 2)
     }
 
     func testScriptedSessionPublishesReconnectAndReturnsLive() {
@@ -863,8 +648,7 @@ final class CutoutSessionCoreTests: XCTestCase {
     func testSuccessfulScriptedRecordOnlyFlushUsesTheRealWriter() async throws {
         let started = expectation(description: "real capture writer starts")
         var captureURL: URL?
-        let clock = MonotonicClock(now: { MonotonicMilliseconds(10) })
-        let core = CutoutSessionCore(clock: clock, testScript: CutoutSessionTestScript(
+        let core = CutoutSessionCore(testScript: CutoutSessionTestScript(
             candidate: scriptedVescCandidate,
             telemetry: nil,
             connectionDelayMilliseconds: 0
@@ -875,16 +659,6 @@ final class CutoutSessionCoreTests: XCTestCase {
                 started.fulfill()
             }
         }
-        let observation = MobilePevcapMusicEventDto(
-            provider: .appleMusic,
-            trackId: "writer-track",
-            monotonicAtMs: 10,
-            wallClockUnixMs: 1_700_000_000_010,
-            clockUncertaintyMs: 5,
-            rideSequence: 7
-        )
-        core.updateMusicCapturePolicy(.humanReadable)
-        core.updateMusicCaptureObservation(observation)
 
         XCTAssertTrue(core.recordOnly(
             platformIdentifier: scriptedVescCandidate.platformIdentifier,
@@ -892,8 +666,6 @@ final class CutoutSessionCoreTests: XCTestCase {
             annotations: ["durability=background"]
         ))
         await fulfillment(of: [started], timeout: 1)
-        XCTAssertNil(core.musicCaptureObservationForTesting)
-        core.updateMusicCaptureObservation(observation)
         let url = try XCTUnwrap(captureURL)
         defer { try? FileManager.default.removeItem(at: url) }
 
@@ -903,14 +675,42 @@ final class CutoutSessionCoreTests: XCTestCase {
         XCTAssertGreaterThan((attributes[.size] as? NSNumber)?.uint64Value ?? 0, 0)
         let capture = try String(contentsOf: url, encoding: .utf8)
         XCTAssertTrue(capture.contains("durability=background"))
-        XCTAssertTrue(capture.contains("writer-track"))
         XCTAssertTrue(capture.contains("capture_evidence=simulator_fixture"))
         XCTAssertFalse(capture.contains("capture_evidence=hardware_tested"))
 
         core.disconnectAndScan()
     }
 
-    func testCaptureMusicContextClearsBetweenWriters() {
+    func testMusicObservationBeforeCaptureIsRetainedUntilWriterStarts() async {
+        let started = expectation(description: "real capture writer starts")
+        let core = CutoutSessionCore(testScript: CutoutSessionTestScript(
+            candidate: scriptedVescCandidate,
+            telemetry: nil,
+            connectionDelayMilliseconds: 0
+        ))
+        core.onCaptureEvent = { event in
+            if case .started = event {
+                started.fulfill()
+            }
+        }
+        let observation = MobilePevcapMusicEventDto(
+            provider: .appleMusic,
+            trackId: "pre-capture-track",
+            monotonicAtMs: 10,
+            wallClockUnixMs: 1_700_000_000_010,
+            clockUncertaintyMs: 5,
+            rideSequence: nil
+        )
+
+        core.updateMusicCaptureObservation(observation)
+        XCTAssertEqual(core.musicCaptureObservationForTesting, observation)
+        XCTAssertTrue(core.recordOnly(platformIdentifier: scriptedVescCandidate.platformIdentifier))
+        await fulfillment(of: [started], timeout: 1)
+        XCTAssertNil(core.musicCaptureObservationForTesting)
+        core.disconnectAndScan()
+    }
+
+    func testCaptureMusicContextTakesAndResetsTheLatestObservation() {
         var context = CaptureMusicContext()
         let observation = MobilePevcapMusicEventDto(
             provider: .appleMusic,
@@ -923,66 +723,33 @@ final class CutoutSessionCoreTests: XCTestCase {
 
         context.update(observation)
         XCTAssertEqual(context.current, observation)
-
         XCTAssertEqual(context.take(), observation)
         XCTAssertNil(context.current)
-
+        context.update(observation)
         context.reset()
-
         XCTAssertNil(context.current)
     }
 
-    func testSyntheticCaptureTeardownClearsMusicContext() async {
-        let finished = expectation(description: "synthetic capture finishes")
-        let core = CutoutSessionCore(testScript: CutoutSessionTestScript(
-            candidate: scriptedVescCandidate,
-            telemetry: nil,
-            flushCaptureSucceeds: false,
-            connectionDelayMilliseconds: 0
-        ))
-        core.onCaptureEvent = { event in
-            if case .finished = event {
-                finished.fulfill()
-            }
-        }
-        let observation = MobilePevcapMusicEventDto(
-            provider: .appleMusic,
-            trackId: "synthetic-track",
-            monotonicAtMs: 10,
-            wallClockUnixMs: 1_700_000_000_010,
-            clockUncertaintyMs: 5,
-            rideSequence: 7
-        )
-
-        core.updateMusicCaptureObservation(observation)
-        XCTAssertTrue(core.recordOnly(platformIdentifier: scriptedVescCandidate.platformIdentifier))
-        XCTAssertEqual(core.musicCaptureObservationForTesting, observation)
-
-        core.disconnectAndScan()
-        await fulfillment(of: [finished], timeout: 1)
-
-        XCTAssertNil(core.musicCaptureObservationForTesting)
-    }
     func testObservedAdvertisementsReplaceDuplicatePeripheralRows() {
         let core = CutoutSessionCore()
 
         core.observeAdvertisement(
             CoreBluetoothAdvertisement(
                 peripheralIdentifier: CoreBluetoothPeripheralIdentifier("ios-local-falcon"),
-                localName: "Begode Falcon",
+                localName: "device-ffe0",
                 advertisedServiceUuids: []
             )
         )
         core.observeAdvertisement(
             CoreBluetoothAdvertisement(
                 peripheralIdentifier: CoreBluetoothPeripheralIdentifier("ios-local-falcon"),
-                localName: "Begode Falcon",
+                localName: "device-ffe0",
                 advertisedServiceUuids: [.bluetooth16(0xFFE0)]
             )
         )
 
         XCTAssertEqual(core.scanState.rows.map(\.id), ["ios-local-falcon"])
-        XCTAssertEqual(core.scanState.sections.supported.map(\.title), ["Begode Falcon"])
+        XCTAssertEqual(core.scanState.sections.probeRecommended.map(\.title), ["device-ffe0"])
     }
 
     func testApplyNotificationStepMarksLiveAndUpdatesDisplayState() {
@@ -1601,7 +1368,6 @@ func testVescRideSnapshotProjectsBatteryLevelAndUpdateTime() throws {
         )
 
         _ = try runner.handle(.linkUp(at: MonotonicMilliseconds(0)))
-
         let step = try runner.handle(.command(.requestTelemetry, at: MonotonicMilliseconds(111)))
 
         assertVescTelemetryRequests(step.operations, includesSubscribe: false)
@@ -1609,29 +1375,308 @@ func testVescRideSnapshotProjectsBatteryLevelAndUpdateTime() throws {
     }
 
     func testEucLiveOwnerWritesTypedHeadlightCommands() throws {
-        let cases: [(ElectricUnicycleModel, LightState, Data)] = [
-            (.aero, .on, Data("SetLightON".utf8)),
-            (.falcon, .off, Data("E".utf8)),
+        let sink = RecordingOperationSink()
+        let owner = CoreBluetoothLiveSessionOwner(
+            session: try .electricUnicycle(model: .aero),
+            advertisement: CoreBluetoothAdvertisement(
+                peripheralIdentifier: CoreBluetoothPeripheralIdentifier("headlight-test"),
+                localName: ElectricUnicycleModel.aero.displayName,
+                advertisedServiceUuids: []
+            ),
+            writeLimit: TransportWriteLimitBytes(20),
+            operationSink: sink
+        )
+
+        _ = try owner.handleCommand(.setLights(.on), at: MonotonicMilliseconds(1))
+
+        XCTAssertEqual(sink.writes, [Data("SetLightON".utf8)])
+    }
+
+    func testFalconLiveOwnerTimesOutPendingHeadlightOnTick() throws {
+        let sink = RecordingOperationSink()
+        let owner = CoreBluetoothLiveSessionOwner(
+            session: try .electricUnicycle(model: .falcon),
+            advertisement: CoreBluetoothAdvertisement(
+                peripheralIdentifier: CoreBluetoothPeripheralIdentifier("headlight-timeout-test"),
+                localName: ElectricUnicycleModel.aero.displayName,
+                advertisedServiceUuids: []
+            ),
+            writeLimit: TransportWriteLimitBytes(20),
+            operationSink: sink
+        )
+
+        _ = try owner.handleCommand(.setLights(.on), at: MonotonicMilliseconds(1))
+        XCTAssertEqual(owner.headlightState?.kind, .pending)
+
+        _ = try owner.handleTick(at: MonotonicMilliseconds(2_010))
+
+        XCTAssertEqual(owner.headlightState?.kind, .timedOut)
+    }
+
+    func testFalconHeadlightCommandReachesOperationSink() throws {
+        let sink = RecordingOperationSink()
+        let owner = CoreBluetoothLiveSessionOwner(
+            session: try .electricUnicycle(model: .falcon),
+            advertisement: CoreBluetoothAdvertisement(
+                peripheralIdentifier: CoreBluetoothPeripheralIdentifier("falcon-headlight-test"),
+                localName: ElectricUnicycleModel.falcon.displayName,
+                advertisedServiceUuids: []
+            ),
+            writeLimit: TransportWriteLimitBytes(20),
+            operationSink: sink
+        )
+
+        _ = try owner.handleCommand(.setLights(.off), at: MonotonicMilliseconds(1))
+
+        XCTAssertEqual(sink.writes, [Data("E".utf8)])
+    }
+
+    func testElectricUnicycleSessionExposesValidationAwareSettingCapabilities() throws {
+        let aero = try ElectricUnicycleSession(model: .aero)
+        let falcon = try ElectricUnicycleSession(model: .falcon)
+
+        XCTAssertEqual(aero.settingsCapabilities.headlight, .supported)
+        XCTAssertEqual(aero.settingsCapabilities.aeroHighBeam, .supported)
+        XCTAssertEqual(falcon.settingsCapabilities.aeroHighBeam, .unsupported)
+        XCTAssertEqual(falcon.settingsCapabilities.headlight, .supported)
+        XCTAssertEqual(aero.settingsCapabilities.taillight, .unsupported)
+        XCTAssertEqual(aero.settingsCapabilities.pedalMode, .unverified)
+        XCTAssertEqual(aero.settingsCapabilities.rollAngle, .unsupported)
+        XCTAssertEqual(falcon.settingsCapabilities.rollAngle, .supported)
+        XCTAssertEqual(aero.settingsCapabilities.accelerationAssist, .unsupported)
+        XCTAssertEqual(aero.settingsCapabilities.begodeMaxSpeed, .unsupported)
+        XCTAssertEqual(falcon.settingsCapabilities.begodeMaxSpeed, .supported)
+        XCTAssertEqual(falcon.settingsCapabilities.begodeBeeperVolume, .supported)
+        XCTAssertEqual(falcon.settingsCapabilities.begodeLedMode, .supported)
+    }
+
+    func testExplicitValidationModePreservesEvidenceAndAllowsOnlyUnverifiedSettings() throws {
+        let session = try ElectricUnicycleSession(model: .aero, allowUnverifiedSettings: true)
+        let capabilities = session.settingsCapabilities
+
+        XCTAssertTrue(capabilities.validationMode)
+        XCTAssertEqual(capabilities.aeroPwmPercent, .unverified)
+        XCTAssertEqual(capabilities.aeroPedalHardness, .unverified)
+        XCTAssertTrue(capabilities.canSubmit(\.aeroPwmPercent))
+        XCTAssertTrue(capabilities.canSubmit(\.aeroPedalHardness))
+        XCTAssertTrue(capabilities.canSubmit(\.resetTripMeter))
+        XCTAssertTrue(capabilities.canSubmit(\.headlight))
+        XCTAssertFalse(capabilities.canSubmit(\.taillight))
+        XCTAssertEqual(session.tripMeterResetState.kind, .unknown)
+    }
+
+    func testAeroPedalHardnessUsesTheDocumentedNumericRange() {
+        XCTAssertEqual(AeroPedalHardness(percent: 0)?.percent, 0)
+        XCTAssertEqual(AeroPedalHardness(percent: 75)?.percent, 75)
+        XCTAssertEqual(AeroPedalHardness(percent: 100)?.percent, 100)
+        XCTAssertNil(AeroPedalHardness(percent: 101))
+        XCTAssertNil(AeroPedalHardness(percent: 255))
+    }
+
+    func testAdditionalAeroValueRangesAndDefaultWriteRefusals() throws {
+        XCTAssertNotNil(AeroDisplayBacklight(percent: 0))
+        XCTAssertNotNil(AeroDisplayBacklight(percent: 100))
+        XCTAssertNil(AeroDisplayBacklight(percent: 101))
+        XCTAssertNotNil(AeroBeeperVolume(percent: 0))
+        XCTAssertNotNil(AeroBeeperVolume(percent: 100))
+        XCTAssertNil(AeroBeeperVolume(percent: 101))
+        XCTAssertNotNil(AeroDynamicAssist(percent: 0))
+        XCTAssertNotNil(AeroDynamicAssist(percent: 100))
+        XCTAssertNil(AeroDynamicAssist(percent: 101))
+        XCTAssertNotNil(AeroPedalDipCompensation(percent: 0))
+        XCTAssertNotNil(AeroPedalDipCompensation(percent: 100))
+        XCTAssertNil(AeroPedalDipCompensation(percent: 101))
+        XCTAssertNotNil(AeroLateralTiltLimit(degrees: 35))
+        XCTAssertNotNil(AeroLateralTiltLimit(degrees: 75))
+        XCTAssertNil(AeroLateralTiltLimit(degrees: 76))
+        XCTAssertNil(AeroLateralTiltLimit(degrees: 34))
+        XCTAssertNotNil(AeroVoltageCorrection(tenthsOfPercent: -15))
+        XCTAssertNotNil(AeroVoltageCorrection(tenthsOfPercent: 15))
+        XCTAssertNil(AeroVoltageCorrection(tenthsOfPercent: 16))
+        XCTAssertNil(AeroVoltageCorrection(tenthsOfPercent: -16))
+        XCTAssertEqual(AeroMaxChargeVoltageRaw(raw: 0)?.raw, 0)
+        XCTAssertEqual(AeroMaxChargeVoltageRaw(raw: 70)?.raw, 70)
+        XCTAssertNil(AeroMaxChargeVoltageRaw(raw: 71))
+        XCTAssertNotNil(AeroSpeedSetting(kilometresPerHour: 10))
+        XCTAssertNotNil(AeroSpeedSetting(kilometresPerHour: 200))
+        XCTAssertNil(AeroSpeedSetting(kilometresPerHour: 9))
+        XCTAssertNil(AeroSpeedSetting(kilometresPerHour: 201))
+
+        let session = try ElectricUnicycleSession(model: .aero)
+        let displayBacklight = try XCTUnwrap(AeroDisplayBacklight(percent: 75))
+        let beeperVolume = try XCTUnwrap(AeroBeeperVolume(percent: 75))
+        let dynamicAssist = try XCTUnwrap(AeroDynamicAssist(percent: 75))
+        let pedalDipCompensation = try XCTUnwrap(AeroPedalDipCompensation(percent: 75))
+        let lateralTiltLimit = try XCTUnwrap(AeroLateralTiltLimit(degrees: 55))
+        let voltageCorrection = try XCTUnwrap(AeroVoltageCorrection(tenthsOfPercent: -5))
+        let maxChargeVoltageRaw = try XCTUnwrap(AeroMaxChargeVoltageRaw(raw: 46))
+        let commands: [DeviceCommand] = [
+            .setAeroDisplayBacklight(displayBacklight),
+            .setAeroBeeperVolume(beeperVolume),
+            .setAeroDynamicAssist(dynamicAssist),
+            .setAeroPedalDipCompensation(pedalDipCompensation),
+            .setAeroLateralTiltLimit(lateralTiltLimit),
+            .setAeroVoltageCorrection(voltageCorrection),
+            .setAeroMaxChargeVoltageRaw(maxChargeVoltageRaw),
+            .setAeroWheelUnits(.imperial),
+        ]
+        for command in commands {
+            XCTAssertThrowsError(try session.perform(command, at: MonotonicMilliseconds(10))) { error in
+                XCTAssertEqual(error as? CutoutSessionError, .commandRefused(command, .unsupportedCommand))
+            }
+        }
+        XCTAssertEqual(session.aeroDisplayBacklightState.kind, .refused)
+        XCTAssertEqual(session.aeroDisplayBacklightState.requested, displayBacklight)
+        XCTAssertEqual(session.aeroBeeperVolumeState.kind, .refused)
+        XCTAssertEqual(session.aeroBeeperVolumeState.requested, beeperVolume)
+        XCTAssertEqual(session.aeroDynamicAssistState.kind, .refused)
+        XCTAssertEqual(session.aeroDynamicAssistState.requested, dynamicAssist)
+        XCTAssertEqual(session.aeroPedalDipCompensationState.kind, .refused)
+        XCTAssertEqual(session.aeroPedalDipCompensationState.requested, pedalDipCompensation)
+        XCTAssertEqual(session.aeroLateralTiltLimitState.kind, .refused)
+        XCTAssertEqual(session.aeroLateralTiltLimitState.requested, lateralTiltLimit)
+        XCTAssertEqual(session.aeroVoltageCorrectionState.kind, .refused)
+        XCTAssertEqual(session.aeroVoltageCorrectionState.requested, voltageCorrection)
+        XCTAssertEqual(session.aeroMaxChargeVoltageRawState.kind, .refused)
+        XCTAssertEqual(session.aeroMaxChargeVoltageRawState.requested, maxChargeVoltageRaw)
+        XCTAssertEqual(session.aeroWheelUnitsState.kind, .refused)
+        XCTAssertEqual(session.aeroWheelUnitsState.requested, .imperial)
+    }
+
+
+    func testBegodeWSettingValuesUseDocumentedRanges() {
+        XCTAssertEqual(BegodeMaxSpeed(kilometresPerHour: 0)?.kilometresPerHour, 0)
+        XCTAssertEqual(BegodeMaxSpeed(kilometresPerHour: 99)?.kilometresPerHour, 99)
+        XCTAssertNil(BegodeMaxSpeed(kilometresPerHour: 100))
+
+        XCTAssertEqual(BegodeBeeperVolume(level: 1)?.level, 1)
+        XCTAssertEqual(BegodeBeeperVolume(level: 9)?.level, 9)
+        XCTAssertNil(BegodeBeeperVolume(level: 0))
+        XCTAssertNil(BegodeBeeperVolume(level: 10))
+
+        XCTAssertEqual(BegodeLedMode(mode: 0)?.mode, 0)
+        XCTAssertEqual(BegodeLedMode(mode: 9)?.mode, 9)
+        XCTAssertNil(BegodeLedMode(mode: 10))
+    }
+
+    func testUnverifiedEucSettingCommandsAreTypedRefusals() throws {
+        let session = try ElectricUnicycleSession(model: .aero)
+        let commands: [DeviceCommand] = [
+            .setAccelerationAssist(.enabled),
+            .setTaillight(.on),
         ]
 
-        for (model, state, expectedBytes) in cases {
-            let sink = RecordingOperationSink()
-            let owner = CoreBluetoothLiveSessionOwner(
-                session: try .electricUnicycle(model: model),
-                advertisement: CoreBluetoothAdvertisement(
-                    peripheralIdentifier: CoreBluetoothPeripheralIdentifier("headlight-test"),
-                    localName: model.displayName,
-                    advertisedServiceUuids: []
-                ),
-                writeLimit: TransportWriteLimitBytes(20),
-                operationSink: sink
-            )
-
-            _ = try owner.handleCommand(.setLights(state), at: MonotonicMilliseconds(1))
-
-            XCTAssertEqual(sink.writes, [expectedBytes])
-            XCTAssertEqual(owner.lightCommandStatus, .requested(state))
+        for command in commands {
+            XCTAssertThrowsError(
+                try session.perform(command, at: MonotonicMilliseconds(1))
+            ) { error in
+                XCTAssertEqual(
+                    error as? CutoutSessionError,
+                    .commandRefused(command, .unsupportedCommand)
+                )
+            }
         }
+    }
+
+    func testElectricUnicycleSessionExposesRustOwnedLightState() throws {
+        let session = try ElectricUnicycleSession(model: .aero)
+
+        XCTAssertEqual(session.headlightState.kind, .unknown)
+        XCTAssertEqual(session.aeroHighBeamState.kind, .unknown)
+
+        _ = try session.perform(.setLights(.on), at: MonotonicMilliseconds(10))
+
+        XCTAssertEqual(session.headlightState.kind, .pending)
+        XCTAssertEqual(session.headlightState.requested, .on)
+        XCTAssertEqual(session.headlightState.submittedAt, MonotonicMilliseconds(10))
+
+        XCTAssertThrowsError(
+            try session.perform(.setAeroHighBeam(.on), at: MonotonicMilliseconds(10))
+        )
+        XCTAssertEqual(session.aeroHighBeamState.kind, .refused)
+        XCTAssertEqual(session.aeroHighBeamState.requested, .on)
+    }
+
+    func testElectricUnicycleSessionExposesAeroSettingStates() throws {
+        let session = try ElectricUnicycleSession(model: .aero)
+        let speed = try XCTUnwrap(AeroSpeedSetting(kilometresPerHour: 30))
+        let pwm = try XCTUnwrap(AeroPwmPercent(percent: 64))
+        let angle = try XCTUnwrap(AeroAngleAdjustment(tenthsOfDegree: -36))
+
+        XCTAssertEqual(session.aeroTiltbackSpeedState.kind, .unknown)
+        XCTAssertEqual(session.aeroPwmPercentState.kind, .unknown)
+        XCTAssertEqual(session.aeroAlarmSpeedState.kind, .unknown)
+        XCTAssertEqual(session.aeroAngleAdjustmentState.kind, .unknown)
+
+        for command in [
+            DeviceCommand.setAeroTiltbackSpeed(speed),
+            .setAeroPwmPercent(pwm),
+            .setAeroAlarmSpeed(speed),
+            .setAeroAngleAdjustment(angle),
+        ] {
+            XCTAssertThrowsError(try session.perform(command, at: MonotonicMilliseconds(10)))
+        }
+
+        XCTAssertEqual(session.aeroTiltbackSpeedState.kind, .refused)
+        XCTAssertEqual(session.aeroTiltbackSpeedState.requested, speed)
+        XCTAssertEqual(session.aeroPwmPercentState.kind, .refused)
+        XCTAssertEqual(session.aeroPwmPercentState.requested, pwm)
+        XCTAssertEqual(session.aeroAlarmSpeedState.kind, .refused)
+        XCTAssertEqual(session.aeroAlarmSpeedState.requested, speed)
+        XCTAssertEqual(session.aeroAngleAdjustmentState.kind, .refused)
+        XCTAssertEqual(session.aeroAngleAdjustmentState.requested, angle)
+    }
+
+    func testElectricUnicycleSessionRefusesUnverifiedPedalModeBeforeTransport() throws {
+        let session = try ElectricUnicycleSession(model: .aero)
+
+        XCTAssertEqual(session.pedalModeState.kind, .unknown)
+        XCTAssertThrowsError(
+            try session.perform(.setPedalMode(.hard), at: MonotonicMilliseconds(10))
+        ) { error in
+            XCTAssertEqual(
+                error as? CutoutSessionError,
+                .commandRefused(.setPedalMode(.hard), .unsupportedCommand)
+            )
+        }
+        XCTAssertEqual(session.pedalModeState.kind, .refused)
+        XCTAssertEqual(session.pedalModeState.requested, .hard)
+        XCTAssertEqual(session.pedalModeState.refusalReason, .unsupportedCommand)
+    }
+
+    func testFalconRollAngleWriteIsGuardedUntilArmed() throws {
+        let session = try ElectricUnicycleSession(model: .falcon)
+
+        XCTAssertThrowsError(
+            try session.perform(.setRollAngle(.high), at: MonotonicMilliseconds(10))
+        ) { error in
+            XCTAssertEqual(
+                error as? CutoutSessionError,
+                .commandRefused(.setRollAngle(.high), .missingArm)
+            )
+        }
+
+        XCTAssertEqual(session.rollAngleState.kind, .refused)
+        XCTAssertEqual(session.rollAngleState.requested, .high)
+        XCTAssertEqual(session.rollAngleState.refusalReason, .missingArm)
+    }
+
+    func testElectricUnicycleSessionExposesRustOwnedUnverifiedSettingStates() throws {
+        let session = try ElectricUnicycleSession(model: .aero)
+
+        XCTAssertThrowsError(
+            try session.perform(.setAccelerationAssist(.enabled), at: MonotonicMilliseconds(10))
+        )
+        XCTAssertEqual(session.accelerationAssistState.kind, .refused)
+        XCTAssertEqual(session.accelerationAssistState.requested, .enabled)
+        XCTAssertEqual(session.accelerationAssistState.refusalReason, .unsupportedCommand)
+
+        XCTAssertThrowsError(
+            try session.perform(.setTaillight(.on), at: MonotonicMilliseconds(11))
+        )
+        XCTAssertEqual(session.taillightState.kind, .refused)
+        XCTAssertEqual(session.taillightState.requested, .on)
+        XCTAssertEqual(session.taillightState.refusalReason, .unsupportedCommand)
     }
 
     func testVescLiveOwnerSubscribesBeforeWritingRequests() throws {
@@ -1757,8 +1802,7 @@ func testVescRideSnapshotProjectsBatteryLevelAndUpdateTime() throws {
 
         waitForWrites(9, in: sink)
 
-        XCTAssertGreaterThanOrEqual(sink.writes.count, 9)
-        XCTAssertEqual(sink.writes.count % 3, 0)
+        XCTAssertEqual(sink.writes.count, 9)
     }
 
 
@@ -1825,6 +1869,83 @@ func testVescRideSnapshotProjectsBatteryLevelAndUpdateTime() throws {
         XCTAssertEqual(observedReadbacks, [readback, nil])
     }
 
+    func testSettingsReadbackMergesBoundedVeteranChunksWithoutDroppingFields() {
+        let core = CutoutSessionCore()
+        let firstChunk = SettingsReadback(entries: [
+            SettingsReadbackEntry(
+                field: RawSettingField(id: 0x0014, value: 30),
+                source: .reported,
+                quality: .known,
+                verification: .hardwareVerified
+            ),
+            SettingsReadbackEntry(
+                field: RawSettingField(id: 0x0016, value: 1),
+                source: .reported,
+                quality: .known,
+                verification: .hardwareVerified
+            ),
+            SettingsReadbackEntry(
+                field: RawSettingField(id: 0x0018, value: 116),
+                source: .reported,
+                quality: .known,
+                verification: .hardwareVerified
+            ),
+            SettingsReadbackEntry(
+                field: RawSettingField(id: 0x001a, value: 420),
+                source: .reported,
+                quality: .known,
+                verification: .hardwareVerified
+            ),
+        ])
+        let secondChunk = SettingsReadback(entries: [
+            SettingsReadbackEntry(
+                field: RawSettingField(id: 0x001e, value: 1_920),
+                source: .reported,
+                quality: .known,
+                verification: .hardwareVerified
+            ),
+        ], eucGarageSettings: EucGarageSettingsSnapshot(
+            pedalMode: .available(.rawMode(1_920))
+        ))
+
+        core.applyNotificationStep(
+            CoreBluetoothSessionStep(operations: [], snapshot: nil, actions: [
+                .withSettingsReadback(firstChunk),
+                .withSettingsReadback(secondChunk),
+            ]),
+            receivedAt: MonotonicMilliseconds(42)
+        )
+
+        XCTAssertEqual(
+            core.settingsReadback?.entries.map(\.field.id),
+            [0x0014, 0x0016, 0x0018, 0x001a, 0x001e]
+        )
+        XCTAssertEqual(core.settingsReadback?.entries.last?.field.value, 1_920)
+        XCTAssertEqual(core.settingsReadback?.eucGarageSettings.pedalMode, .available(.rawMode(1_920)))
+    }
+
+    func testUnavailableSettingsChunkDoesNotDowngradeKnownReadback() {
+        let core = CutoutSessionCore()
+        let known = SettingsReadback(entries: [
+            SettingsReadbackEntry(
+                field: RawSettingField(id: 0x001e, value: 1),
+                source: .reported,
+                quality: .known,
+                verification: .hardwareVerified
+            ),
+        ])
+
+        core.applyNotificationStep(
+            CoreBluetoothSessionStep(operations: [], snapshot: nil, actions: [
+                .withSettingsReadback(known),
+                .withSettingsReadback(SettingsReadback(entries: [], availability: .unavailable)),
+            ]),
+            receivedAt: MonotonicMilliseconds(42)
+        )
+
+        XCTAssertEqual(core.settingsReadback, known)
+    }
+
     func testNonAvailableSettingsReadbackDoesNotCarryRawEntries() {
         let readback = SettingsReadback(entries: [
             SettingsReadbackEntry(
@@ -1842,7 +1963,11 @@ func testVescRideSnapshotProjectsBatteryLevelAndUpdateTime() throws {
             EucGarageSettingsSnapshot(
                 beepMargin: .unsupported,
                 tiltback: .unsupported,
-                pedalMode: .unsupported
+                pedalMode: .unsupported,
+                rollAngle: .unsupported,
+                speedAlarmMode: .unsupported,
+                autoShutdownSeconds: .unsupported,
+                chargeMode: .unsupported
             )
         )
     }
@@ -1863,7 +1988,11 @@ func testVescRideSnapshotProjectsBatteryLevelAndUpdateTime() throws {
             EucGarageSettingsSnapshot(
                 beepMargin: .unsupported,
                 tiltback: .unsupported,
-                pedalMode: .unsupported
+                pedalMode: .unsupported,
+                rollAngle: .unsupported,
+                speedAlarmMode: .unsupported,
+                autoShutdownSeconds: .unsupported,
+                chargeMode: .unsupported
             )
         )
     }

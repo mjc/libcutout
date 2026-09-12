@@ -20,33 +20,45 @@ use cutout_btle::{
     TransportWriteCount, WriteProvenance, capture_raw_notifications,
     capture_reconnecting_session_with_commands, capture_session_with_channel_pair_and_stream,
     capture_session_with_commands, connect_and_discover, drive_session,
-    drive_session_with_commands, read_battery_level, scan_peripherals,
+    drive_session_with_channel_pair, drive_session_with_commands, read_battery_level,
+    scan_peripherals,
 };
 use cutout_core::{
-    BatteryPageKind, BatteryPagePayload, BatteryReadback, BatteryReadbackAvailability,
-    CaptureDistribution, CaptureEvidence, CapturePrivacy, CaptureSessionLabel,
-    CatalogModelResolution, CommandKind, DeviceCommand, DeviceEvent, DiagnosticError,
-    DiagnosticErrorKind, DiagnosticSnapshot, FirmwareInfo, GattChannel, HostSession, Measured,
-    ModelCatalog, MonotonicTimestamp, NotificationByteLen, ParserDiagnostics, PevcapCapture,
-    PevcapDirection, PevcapEncoding, PevcapHeader, PevcapReader, PevcapRecord, PevcapReplayMode,
-    PevcapReplayStats, PevcapResolvedIdentity, ProtocolFamily, ProtocolSession, ReadOnlyResponse,
-    ReplayChunkComparison, SessionInput, SessionKey, SessionOutput, SettingsReadback,
-    SettingsReadbackAvailability, TelemetrySnapshot, TransportAction, TransportWriteLimit,
-    ValueQuality, ValueSource, VerificationStatus, VerifiedValue, WallClockUnixTimestamp,
-    WriteMode, WritePayload,
+    AeroAngleAdjustment, AeroBeeperVolume, AeroBrakeOverpressureAlarm, AeroDisplayBacklight,
+    AeroDynamicAssist, AeroHighSpeedMode, AeroLateralTiltLimit, AeroLowBatteryMode,
+    AeroMaxChargeVoltageRaw, AeroPedalDipCompensation, AeroPedalHardness, AeroPwmPercent,
+    AeroPwmSetting, AeroRidingMode, AeroSpeedSetting, AeroTransportMode, AeroVoltageCorrection,
+    AeroWheelUnits, BatteryPageKind, BatteryPagePayload, BatteryReadback,
+    BatteryReadbackAvailability, CaptureDistribution, CaptureEvidence, CapturePrivacy,
+    CaptureSessionLabel, CatalogModelResolution, CommandKind, DeviceCommand, DeviceEvent,
+    DiagnosticError, DiagnosticErrorKind, DiagnosticSnapshot, FirmwareInfo, GattChannel,
+    GattFingerprint, HostSession, LightState, Measured, ModelCatalog, MonotonicTimestamp,
+    NotificationByteLen, ParserDiagnostics, PedalMode, PevcapCapture, PevcapDirection,
+    PevcapEncoding, PevcapHeader, PevcapReader, PevcapRecord, PevcapReplayMode, PevcapReplayStats,
+    PevcapResolvedIdentity, ProtocolFamily, ProtocolSession, ReadOnlyResponse,
+    ReplayChunkComparison, RideOperatingState, SessionInput, SessionKey, SessionOutput,
+    SettingsReadback, SettingsReadbackAvailability, TelemetrySnapshot, TransportAction,
+    TransportWriteLimit, ValueQuality, ValueSource, VerificationStatus, VerifiedValue,
+    WallClockUnixTimestamp, WriteMode, WritePayload,
 };
-#[cfg(test)]
-use cutout_protocols::VETERAN_DATA_CHANNEL;
 use cutout_protocols::{
-    BEGODE_DATA_CHANNEL, BEGODE_FALCON_REGISTRY_ENTRY, BEGODE_FALCON_SESSION_KEY, BegodeBmsSummary,
+    AERO_FIELD_BEEPER_VOLUME_PERCENT, AERO_FIELD_BRAKE_OVERPRESSURE_ALARM_PERCENT,
+    AERO_FIELD_DISPLAY_BACKLIGHT_PERCENT, AERO_FIELD_DYNAMIC_ASSIST_PERCENT,
+    AERO_FIELD_HIGH_SPEED_MODE, AERO_FIELD_LATERAL_TILT_LIMIT_DEGREES, AERO_FIELD_LOW_BATTERY_MODE,
+    AERO_FIELD_MAX_CHARGE_VOLTAGE_RAW, AERO_FIELD_PEDAL_DIP_COMPENSATION_PERCENT,
+    AERO_FIELD_PEDAL_HARDNESS_PERCENT, AERO_FIELD_PWM_PERCENT, AERO_FIELD_TRANSPORT_MODE,
+    AERO_FIELD_VOLTAGE_CORRECTION_TENTHS_PERCENT, AERO_FIELD_WHEEL_UNITS, BEGODE_DATA_CHANNEL,
+    BEGODE_FALCON_REGISTRY_ENTRY, BEGODE_FALCON_SESSION_KEY, BegodeBmsSummary,
     BegodeCapacityEvidence, BegodeCapacitySelection, BegodeFrameParseResult,
     BegodeFrameReassembler, BegodePackEvidenceConsistency, BegodePackLayoutEvidence,
     BegodePackLayoutSelection, BegodeVoltageEvidence, BegodeVoltageProfileSelection, MODEL_CATALOG,
-    NOSFET_AERO_SESSION_KEY, ReadOnlySession, RefloatReadOnlyRequest, RefloatRealtimeValue,
-    RefloatReply, RefloatStreamDecoder, RefloatStreamResult, RegisteredReadOnlySession,
-    VESC_MAX_FRAME_LEN, VESC_NOTIFY_CHANNEL, VESC_WRITE_CHANNEL, VescReadOnlyCodec,
+    NOSFET_AERO_REGISTRY_ENTRY, NOSFET_AERO_SESSION_KEY, ReadOnlySession, RefloatReadOnlyRequest,
+    RefloatRealtimeValue, RefloatReply, RefloatStreamDecoder, RefloatStreamResult,
+    RegisteredEucSession, StationarySettingsWriteSession, SupportsSettingsWrites,
+    VESC_MAX_FRAME_LEN, VESC_NOTIFY_CHANNEL, VESC_WRITE_CHANNEL, VETERAN_DATA_CHANNEL,
+    VETERAN_FIELD_SPEED_ALERT_DECI_KMH, VETERAN_FIELD_SPEED_TILTBACK_DECI_KMH, VescReadOnlyCodec,
     VescReadOnlyReply, VescReadOnlyRequest, VescReadOnlyStreamDecoder, VescReadOnlyStreamResult,
-    VescStatsMask, begode_falcon_read_only_session_with_voltage_profile, encode_refloat_request,
+    VescStatsMask, begode_falcon_session_with_voltage_profile, encode_refloat_request,
     find_session_registration, select_begode_pack_capacity_from_annotations,
     select_begode_pack_layout_from_annotations, select_begode_pack_voltage_profile,
     select_begode_pack_voltage_profile_from_annotations, validate_begode_pack_evidence,
@@ -55,9 +67,9 @@ use libcutout_persistence::RideDatabase;
 use tracing::{debug, info};
 
 use crate::cli::{
-    CaptureArgs, Cli, Command, DashboardArgs, PevcapArgs, PevcapCommand, PevcapConvertArgs,
-    PevcapFormat, PevcapImportArgs, PevcapReplayProfile, RawSubscribeArgs, ReadProbe,
-    SessionProfile, TargetedScanArgs, VescProbe, VescProbeArgs,
+    AeroSetting, AeroWriteArgs, CaptureArgs, Cli, Command, DashboardArgs, PevcapArgs,
+    PevcapCommand, PevcapConvertArgs, PevcapFormat, PevcapImportArgs, PevcapReplayProfile,
+    RawSubscribeArgs, ReadProbe, SessionProfile, TargetedScanArgs, VescProbe, VescProbeArgs,
 };
 use crate::dashboard::{
     DashboardCaptureProvenance, DashboardState, DashboardUpdate, firmware_summary_string,
@@ -85,6 +97,7 @@ pub async fn run(cli: Cli) -> Result<()> {
         Command::Pevcap(args) => pevcap(args)?,
         Command::Dashboard(args) => dashboard(args).await?,
         Command::VescProbe(args) => vesc_probe(args).await?,
+        Command::AeroWrite(args) => aero_write(args).await?,
     }
 
     Ok(())
@@ -536,7 +549,7 @@ fn replay_pevcap_capture(
 }
 
 #[cfg(test)]
-fn falcon_replay_session(capture: &PevcapCapture) -> Result<RegisteredReadOnlySession> {
+fn falcon_replay_session(capture: &PevcapCapture) -> Result<RegisteredEucSession> {
     falcon_replay_session_from_evidence(
         &capture.header,
         &falcon_replay_bms_voltage_evidence(capture),
@@ -546,11 +559,11 @@ fn falcon_replay_session(capture: &PevcapCapture) -> Result<RegisteredReadOnlySe
 fn falcon_replay_session_from_evidence(
     header: &PevcapHeader,
     bms_evidence: &[BegodeVoltageEvidence],
-) -> Result<RegisteredReadOnlySession> {
+) -> Result<RegisteredEucSession> {
     match select_falcon_replay_voltage_profile_from_evidence(header, bms_evidence) {
-        BegodeVoltageProfileSelection::Selected(profile) => Ok(
-            begode_falcon_read_only_session_with_voltage_profile(profile),
-        ),
+        BegodeVoltageProfileSelection::Selected(profile) => {
+            Ok(begode_falcon_session_with_voltage_profile(profile))
+        }
         BegodeVoltageProfileSelection::Missing => {
             bail!("Falcon PEVCAP replay requires explicit Falcon battery voltage evidence")
         }
@@ -1144,6 +1157,7 @@ async fn dashboard(args: DashboardArgs) -> Result<()> {
         seconds = args.seconds(),
         "scanning for dashboard device"
     );
+    require_explicit_live_profile(args.profile)?;
     let connection = connect_and_discover(&target, ScanWindow::from_secs(args.seconds())).await?;
     info!(
         observation = %connection.summary.observation,
@@ -1162,7 +1176,7 @@ async fn dashboard(args: DashboardArgs) -> Result<()> {
             info!("dashboard battery level unavailable from standard BLE characteristic");
         }
     }
-    run_live_dashboard(state, connection, tx, rx)
+    run_live_dashboard(state, connection, args.profile, tx, rx)
 }
 
 fn dashboard_live_target(args: &DashboardArgs) -> Result<ConnectionTarget> {
@@ -1180,6 +1194,7 @@ fn dashboard_live_target(args: &DashboardArgs) -> Result<ConnectionTarget> {
 fn run_live_dashboard(
     state: DashboardState,
     connection: ConnectedPeripheral,
+    profile: SessionProfile,
     tx: mpsc::Sender<DashboardUpdate>,
     rx: mpsc::Receiver<DashboardUpdate>,
 ) -> Result<()> {
@@ -1191,7 +1206,7 @@ fn run_live_dashboard(
         state,
         tx,
         rx,
-        move |tx| run_dashboard_live_updates(connection, tx),
+        move |tx| run_dashboard_live_updates(connection, profile, tx),
         |state, rx| run_dashboard_with_updates(state, &rx),
     )
 }
@@ -1289,6 +1304,7 @@ where
 
 async fn run_dashboard_live_updates(
     connection: ConnectedPeripheral,
+    profile: SessionProfile,
     tx: mpsc::Sender<DashboardUpdate>,
 ) {
     info!("dashboard live update task entered");
@@ -1303,7 +1319,7 @@ async fn run_dashboard_live_updates(
     }
     info!("dashboard live update selected session endpoints");
 
-    let selected_session = match dashboard_session_profile_from_summary(&connection.summary) {
+    let selected_session = match dashboard_session_profile_from_protocol(&connection).await {
         Ok(selected_session) => selected_session,
         Err(error) => {
             let _ = tx.send(DashboardUpdate::Log {
@@ -1358,10 +1374,48 @@ async fn run_dashboard_live_updates(
     }
 }
 
+/// Probes each registered read-only protocol until one produces typed telemetry
+/// or a read-only response. Advertised names are never used for selection.
+async fn dashboard_session_profile_from_protocol(
+    connection: &ConnectedPeripheral,
+) -> Result<SelectedSessionProfile> {
+    let endpoints = connection
+        .summary
+        .select_session_endpoints()
+        .context("dashboard session endpoints unavailable")?;
+    let probes = [
+        DeviceCommand::RequestIdentity,
+        DeviceCommand::RequestFirmwareInfo,
+        DeviceCommand::RequestTelemetry,
+    ];
+    for profile in [SessionProfile::Aero, SessionProfile::Falcon] {
+        let selected = selected_session_profile(profile);
+        let registration = selected.session_registration()?;
+        let mut session = registration.construct();
+        let report = drive_session_with_commands(
+            &connection.peripheral,
+            &mut session,
+            registration.data_channel,
+            &connection.summary,
+            endpoints,
+            DASHBOARD_LIVE_WINDOW.into(),
+            &probes,
+        )
+        .await?;
+        if report.telemetry.as_events() > 0
+            || report.read_only_responses.as_events() > 0
+            || report.firmware.is_some()
+        {
+            return Ok(selected);
+        }
+    }
+    bail!("dashboard protocol probe produced no typed identity evidence")
+}
+
 async fn run_dashboard_live_iteration(
     connection: &ConnectedPeripheral,
     tx: &mpsc::Sender<DashboardUpdate>,
-    session: &mut RegisteredReadOnlySession,
+    session: &mut RegisteredEucSession,
     data_channel: GattChannel,
     iteration: u64,
     refresh_battery: bool,
@@ -1590,13 +1644,18 @@ fn encode_hex(bytes: &[u8]) -> String {
 async fn connect(args: TargetedScanArgs, mode: SessionMode) -> Result<()> {
     let seconds = args.seconds();
     let requested_profile = args.profile();
+    require_explicit_live_profile(requested_profile)?;
     let commands = read_probe_commands(args.probes());
     let diagnostics_jsonl = args.diagnostics_jsonl();
     let read_only_jsonl = args.read_only_jsonl();
     let connection =
         connect_and_discover(&args.into_target(), ScanWindow::from_secs(seconds)).await?;
-    let resolution =
-        selected_session_resolution_for_summary(requested_profile, &connection.summary)?;
+    if !live_profile_gatt_compatible(requested_profile, &connection.summary) {
+        bail!(
+            "connected peripheral GATT fingerprint does not match the requested protocol profile; no session started"
+        );
+    }
+    let resolution = selected_session_resolution(requested_profile)?;
 
     info!("{}", connection.summary);
     if let Some(endpoints) = connection.summary.select_session_endpoints() {
@@ -1617,6 +1676,422 @@ async fn connect(args: TargetedScanArgs, mode: SessionMode) -> Result<()> {
     }
 
     Ok(())
+}
+
+async fn aero_write(args: AeroWriteArgs) -> Result<()> {
+    if !args.confirm_stationary {
+        bail!("aero-write requires --confirm-stationary");
+    }
+    if args.profile != SessionProfile::Aero {
+        bail!("aero-write requires --profile aero; auto-selection is refused for writes");
+    }
+    if args.target.name_contains.is_some() {
+        bail!("aero-write selects a peripheral by --id or --address, never by advertised name");
+    }
+    if args.target.identifier.is_none() && args.target.address.is_none() {
+        bail!("aero-write requires --id or --address");
+    }
+
+    let command = parse_aero_write_command(args.setting, &args.value)?;
+    let connection = connect_and_discover(
+        &args.target.into(),
+        ScanWindow::from_secs(args.scan.seconds()),
+    )
+    .await?;
+    if !aero_protocol_fingerprint_matches(&connection.summary) {
+        bail!(
+            "connected peripheral GATT fingerprint does not match the Aero protocol profile; no write issued"
+        );
+    }
+    let endpoints = connection
+        .summary
+        .select_session_endpoints()
+        .context("no writable and notification-capable Aero endpoints discovered")?;
+    let mut probe = ReadOnlySession::<cutout_protocols::NosfetAeroModel, true>::default();
+    let probe_report = drive_session_with_channel_pair(
+        &connection.peripheral,
+        &mut probe,
+        SessionChannelPair::new(VETERAN_DATA_CHANNEL, VETERAN_DATA_CHANNEL),
+        &connection.summary,
+        endpoints,
+        NotificationWindow::from_secs(args.scan.seconds()),
+        &AERO_WRITE_PREFLIGHT_COMMANDS,
+    )
+    .await?;
+    if !aero_protocol_model_id_matches(&probe_report) {
+        bail!(
+            "connected peripheral did not report the Aero protocol model id; no settings write issued"
+        );
+    }
+    info!("{}", connection.summary);
+    print_session_endpoints(endpoints);
+
+    let mut session =
+        StationarySettingsWriteSession::<cutout_protocols::NosfetAeroModel, true>::default();
+    let arm = aero_write_arm_from_probe(&probe_report)?;
+    session.arm(arm);
+    let commands = aero_write_commands(command);
+    let report = drive_session_with_channel_pair(
+        &connection.peripheral,
+        &mut session,
+        SessionChannelPair::new(VETERAN_DATA_CHANNEL, VETERAN_DATA_CHANNEL),
+        &connection.summary,
+        endpoints,
+        NotificationWindow::from_secs(args.scan.seconds()),
+        &commands,
+    )
+    .await?;
+    print_session_report(&report);
+    if !aero_write_was_sent(&report) {
+        bail!("Aero settings command was refused; no protocol or transport write was issued");
+    }
+    match aero_setting_readback_matches(command, &report.settings) {
+        Some(true) => {
+            info!(setting = ?args.setting, readback_confirmed = true, "Aero settings write completed");
+        }
+        Some(false) => bail!(
+            "Aero settings write emitted a protocol write but the device did not report the requested setting value"
+        ),
+        None => info!(
+            setting = ?args.setting,
+            readback_confirmed = false,
+            "Aero settings write emitted; no typed readback exists for this setting"
+        ),
+    }
+    Ok(())
+}
+
+const AERO_WRITE_PREFLIGHT_COMMANDS: [DeviceCommand; 3] = [
+    DeviceCommand::RequestFirmwareInfo,
+    DeviceCommand::RequestTelemetry,
+    DeviceCommand::RequestSettings,
+];
+
+fn aero_write_arm_from_probe(
+    report: &SessionBridgeReport,
+) -> Result<cutout_core::StationarySettingsArm> {
+    let snapshot = report.telemetry_snapshot;
+    let speed = snapshot
+        .speed
+        .map(|measured| measured.value)
+        .context("Aero settings write requires a fresh speed sample")?;
+    if snapshot
+        .charge_mode
+        .is_some_and(|mode| mode.value.is_active())
+        || snapshot.operating_state == Some(RideOperatingState::Charging)
+    {
+        bail!("Aero settings write is refused while the wheel is charging");
+    }
+    // Veteran telemetry reports speed and charge state, but not a distinct
+    // parked/standing bit. The explicit CLI confirmation supplies that state.
+    let state = snapshot
+        .operating_state
+        .unwrap_or(RideOperatingState::Parked);
+    let monotonic_ms = snapshot
+        .at_ms
+        .context("Aero settings write requires timestamped telemetry")?;
+    cutout_protocols::NosfetAeroModel::arm_settings_write(state, Some(speed), monotonic_ms)
+        .context("Aero settings write requires stationary telemetry at or below 500 mm/s")
+}
+
+/// Build the live write sequence, refreshing settings after the mutation so a
+/// matching readback can distinguish transport submission from device state.
+const fn aero_write_commands(command: DeviceCommand) -> [DeviceCommand; 3] {
+    [
+        DeviceCommand::RequestTelemetry,
+        command,
+        DeviceCommand::RequestSettings,
+    ]
+}
+
+fn aero_protocol_fingerprint_matches(summary: &cutout_btle::ConnectionSummary) -> bool {
+    registry_gatt_fingerprint_matches(NOSFET_AERO_REGISTRY_ENTRY.gatt, summary)
+}
+
+fn falcon_protocol_fingerprint_matches(summary: &cutout_btle::ConnectionSummary) -> bool {
+    registry_gatt_fingerprint_matches(BEGODE_FALCON_REGISTRY_ENTRY.gatt, summary)
+}
+
+fn live_profile_gatt_compatible(
+    profile: SessionProfile,
+    summary: &cutout_btle::ConnectionSummary,
+) -> bool {
+    match profile {
+        SessionProfile::Aero => aero_protocol_fingerprint_matches(summary),
+        SessionProfile::Falcon => falcon_protocol_fingerprint_matches(summary),
+        SessionProfile::Auto => false,
+    }
+}
+
+fn registry_gatt_fingerprint_matches(
+    expected_fingerprints: &[GattFingerprint],
+    summary: &cutout_btle::ConnectionSummary,
+) -> bool {
+    expected_fingerprints.iter().any(|expected| {
+        summary.iter_gatt_fingerprints().any(|observed| {
+            observed.service == expected.service
+                && observed.characteristic == expected.characteristic
+                && (!expected.roles.supports_read() || observed.roles.supports_read())
+                && (!expected.roles.supports_write() || observed.roles.supports_write())
+                && (!expected.roles.supports_write_without_response()
+                    || observed.roles.supports_write_without_response())
+                && (!expected.roles.supports_notify() || observed.roles.supports_notify())
+                && (!expected.roles.supports_indicate() || observed.roles.supports_indicate())
+        })
+    })
+}
+
+fn aero_protocol_model_id_matches(report: &SessionBridgeReport) -> bool {
+    let Some(expected) = NOSFET_AERO_REGISTRY_ENTRY.wire_model_id else {
+        return false;
+    };
+    report
+        .firmware
+        .and_then(|firmware| firmware.firmware_major)
+        .is_some_and(|observed| observed.value == expected.value)
+}
+
+fn aero_setting_readback_matches(
+    command: DeviceCommand,
+    after: &[SettingsReadback],
+) -> Option<bool> {
+    let (field_id, expected_value) = match command {
+        DeviceCommand::SetAeroAlarmSpeed(speed) => (
+            VETERAN_FIELD_SPEED_ALERT_DECI_KMH,
+            i64::from(speed.kilometres_per_hour()) * 10,
+        ),
+        DeviceCommand::SetAeroTiltbackSpeed(speed) => (
+            VETERAN_FIELD_SPEED_TILTBACK_DECI_KMH,
+            i64::from(speed.kilometres_per_hour()) * 10,
+        ),
+        DeviceCommand::SetAeroPwmPercent(setting) => (
+            AERO_FIELD_PWM_PERCENT,
+            match setting {
+                AeroPwmSetting::Off => 200,
+                AeroPwmSetting::Margin(margin) => 100 - i64::from(margin.percent()),
+            },
+        ),
+        DeviceCommand::SetAeroPwmOff => (AERO_FIELD_PWM_PERCENT, 200),
+        DeviceCommand::SetAeroBrakeOverpressureAlarm(value) => (
+            AERO_FIELD_BRAKE_OVERPRESSURE_ALARM_PERCENT,
+            i64::from(value.percent()),
+        ),
+        DeviceCommand::SetAeroPedalHardness(value) => (
+            AERO_FIELD_PEDAL_HARDNESS_PERCENT,
+            i64::from(value.percent()),
+        ),
+        DeviceCommand::SetAeroDisplayBacklight(value) => (
+            AERO_FIELD_DISPLAY_BACKLIGHT_PERCENT,
+            i64::from(value.percent()),
+        ),
+        DeviceCommand::SetAeroBeeperVolume(value) => {
+            (AERO_FIELD_BEEPER_VOLUME_PERCENT, i64::from(value.percent()))
+        }
+        DeviceCommand::SetAeroDynamicAssist(value) => (
+            AERO_FIELD_DYNAMIC_ASSIST_PERCENT,
+            i64::from(value.percent()),
+        ),
+        DeviceCommand::SetAeroPedalDipCompensation(value) => (
+            AERO_FIELD_PEDAL_DIP_COMPENSATION_PERCENT,
+            i64::from(value.percent()),
+        ),
+        DeviceCommand::SetAeroLateralTiltLimit(value) => (
+            AERO_FIELD_LATERAL_TILT_LIMIT_DEGREES,
+            i64::from(value.degrees()),
+        ),
+        DeviceCommand::SetAeroVoltageCorrection(value) => (
+            AERO_FIELD_VOLTAGE_CORRECTION_TENTHS_PERCENT,
+            i64::from(value.tenths_of_percent()),
+        ),
+        DeviceCommand::SetAeroMaxChargeVoltageRaw(value) => {
+            (AERO_FIELD_MAX_CHARGE_VOLTAGE_RAW, i64::from(value.raw()))
+        }
+        DeviceCommand::SetAeroWheelUnits(value) => {
+            (AERO_FIELD_WHEEL_UNITS, i64::from(value.display_mode()))
+        }
+        DeviceCommand::SetAeroHighSpeedMode(value) => (
+            AERO_FIELD_HIGH_SPEED_MODE,
+            i64::from(u8::from(value.enabled())),
+        ),
+        DeviceCommand::SetAeroLowBatteryMode(value) => (
+            AERO_FIELD_LOW_BATTERY_MODE,
+            i64::from(u8::from(value.enabled())),
+        ),
+        DeviceCommand::SetAeroTransportMode(value) => (
+            AERO_FIELD_TRANSPORT_MODE,
+            i64::from(u8::from(value.enabled())),
+        ),
+        _ => return None,
+    };
+
+    let latest = |readbacks: &[SettingsReadback]| {
+        readbacks.iter().rev().find_map(|readback| {
+            readback
+                .entries()
+                .into_iter()
+                .flatten()
+                .find(|entry| entry.field.id == field_id)
+                .map(|entry| entry.field.value)
+        })
+    };
+    Some(latest(after) == Some(expected_value))
+}
+
+fn aero_write_was_sent(report: &SessionBridgeReport) -> bool {
+    report.protocol_writes.get() > 0 && report.writes.get() > 0
+}
+
+fn parse_aero_write_command(setting: AeroSetting, value: &str) -> Result<DeviceCommand> {
+    match setting {
+        AeroSetting::Headlight => Ok(DeviceCommand::SetLights(parse_light_state(value)?)),
+        AeroSetting::HighBeam => Ok(DeviceCommand::SetAeroHighBeam(parse_light_state(value)?)),
+        AeroSetting::Pedal => Ok(DeviceCommand::SetPedalMode(match value {
+            "hard" => PedalMode::Hard,
+            "medium" => PedalMode::Medium,
+            "soft" => PedalMode::Soft,
+            _ => bail!("pedal value must be hard, medium, or soft"),
+        })),
+        AeroSetting::RidingMode => Ok(DeviceCommand::SetAeroRidingMode(parse_riding_mode(value)?)),
+        AeroSetting::TiltbackSpeed => Ok(DeviceCommand::SetAeroTiltbackSpeed(
+            AeroSpeedSetting::new(
+                value
+                    .parse()
+                    .context("tiltback speed must be 10..=200 km/h")?,
+            )
+            .context("tiltback speed must be 10..=200 km/h")?,
+        )),
+        AeroSetting::PedalHardness => Ok(DeviceCommand::SetAeroPedalHardness(
+            AeroPedalHardness::new(
+                value
+                    .parse()
+                    .context("MD hardness must be 0..=100 percent")?,
+            )
+            .context("MD hardness must be 0..=100 percent")?,
+        )),
+        AeroSetting::Pwm if value == "off" => Ok(DeviceCommand::SetAeroPwmOff),
+        AeroSetting::Pwm => Ok(DeviceCommand::SetAeroPwmPercent(
+            AeroPwmPercent::new(value.parse().context("PWT margin must be 0..=70")?)
+                .context("PWT margin must be 0..=70")?
+                .into(),
+        )),
+        AeroSetting::AlarmSpeed => Ok(DeviceCommand::SetAeroAlarmSpeed(
+            AeroSpeedSetting::new(value.parse().context("alarm speed must be 10..=200 km/h")?)
+                .context("alarm speed must be 10..=200 km/h")?,
+        )),
+        AeroSetting::Angle => Ok(DeviceCommand::SetAeroAngleAdjustment(
+            AeroAngleAdjustment::new(value.parse().context("angle must be -80..=80 tenths")?)
+                .context("angle must be -80..=80 tenths")?,
+        )),
+        AeroSetting::GyroCalibration if matches!(value, "start" | "calibrate") => {
+            Ok(DeviceCommand::SetAeroGyroCalibration)
+        }
+        AeroSetting::GyroCalibration => bail!("gyro-calibration value must be start or calibrate"),
+        AeroSetting::BrakeOverpressureAlarm => Ok(DeviceCommand::SetAeroBrakeOverpressureAlarm(
+            AeroBrakeOverpressureAlarm::new(
+                value
+                    .parse()
+                    .context("brake overpressure alarm must be 90..=125 percent")?,
+            )
+            .context("brake overpressure alarm must be 90..=125 percent")?,
+        )),
+        AeroSetting::DisplayBacklight => Ok(DeviceCommand::SetAeroDisplayBacklight(
+            AeroDisplayBacklight::new(
+                value
+                    .parse()
+                    .context("display backlight must be 0..=100 percent")?,
+            )
+            .context("display backlight must be 0..=100 percent")?,
+        )),
+        AeroSetting::BeeperVolume => Ok(DeviceCommand::SetAeroBeeperVolume(
+            AeroBeeperVolume::new(
+                value
+                    .parse()
+                    .context("beeper volume must be 0..=100 percent")?,
+            )
+            .context("beeper volume must be 0..=100 percent")?,
+        )),
+        AeroSetting::DynamicAssist => Ok(DeviceCommand::SetAeroDynamicAssist(
+            AeroDynamicAssist::new(
+                value
+                    .parse()
+                    .context("dynamic assist must be 0..=100 percent")?,
+            )
+            .context("dynamic assist must be 0..=100 percent")?,
+        )),
+        AeroSetting::PedalDipCompensation => Ok(DeviceCommand::SetAeroPedalDipCompensation(
+            AeroPedalDipCompensation::new(
+                value
+                    .parse()
+                    .context("pedal dip compensation must be 0..=100 percent")?,
+            )
+            .context("pedal dip compensation must be 0..=100 percent")?,
+        )),
+        AeroSetting::LateralTiltLimit => Ok(DeviceCommand::SetAeroLateralTiltLimit(
+            AeroLateralTiltLimit::new(
+                value
+                    .parse()
+                    .context("lateral tilt limit must be 35..=75 degrees")?,
+            )
+            .context("lateral tilt limit must be 35..=75 degrees")?,
+        )),
+        AeroSetting::VoltageCorrection => Ok(DeviceCommand::SetAeroVoltageCorrection(
+            AeroVoltageCorrection::new(
+                value
+                    .parse()
+                    .context("voltage correction must be -15..=15 tenths of a percent")?,
+            )
+            .context("voltage correction must be -15..=15 tenths of a percent")?,
+        )),
+        AeroSetting::MaxChargeVoltageRaw => Ok(DeviceCommand::SetAeroMaxChargeVoltageRaw(
+            AeroMaxChargeVoltageRaw::new(
+                value
+                    .parse()
+                    .context("maximum charge raw value must be 0..=70")?,
+            )
+            .context("maximum charge raw value must be 0..=70")?,
+        )),
+        AeroSetting::WheelUnits => Ok(DeviceCommand::SetAeroWheelUnits(match value {
+            "metric" => AeroWheelUnits::Metric,
+            "imperial" => AeroWheelUnits::Imperial,
+            _ => bail!("wheel units value must be metric or imperial"),
+        })),
+        AeroSetting::HighSpeedMode => Ok(DeviceCommand::SetAeroHighSpeedMode(
+            AeroHighSpeedMode::new(parse_toggle(value)?),
+        )),
+        AeroSetting::LowBatteryMode => Ok(DeviceCommand::SetAeroLowBatteryMode(
+            AeroLowBatteryMode::new(parse_toggle(value)?),
+        )),
+        AeroSetting::TransportMode => Ok(DeviceCommand::SetAeroTransportMode(
+            AeroTransportMode::new(parse_toggle(value)?),
+        )),
+        AeroSetting::TripReset if value == "reset" => Ok(DeviceCommand::ResetTripMeter),
+        AeroSetting::TripReset => bail!("trip-reset value must be reset"),
+    }
+}
+
+fn parse_riding_mode(value: &str) -> Result<AeroRidingMode> {
+    match value {
+        "hard" => Ok(AeroRidingMode::Hard),
+        "medium" => Ok(AeroRidingMode::Medium),
+        "soft" => Ok(AeroRidingMode::Soft),
+        _ => bail!("riding mode value must be hard, medium, or soft"),
+    }
+}
+
+fn parse_toggle(value: &str) -> Result<bool> {
+    match value {
+        "on" | "true" | "1" => Ok(true),
+        "off" | "false" | "0" => Ok(false),
+        _ => bail!("toggle value must be on or off"),
+    }
+}
+
+fn parse_light_state(value: &str) -> Result<LightState> {
+    match value {
+        "on" => Ok(LightState::On),
+        "off" => Ok(LightState::Off),
+        _ => bail!("light value must be on or off"),
+    }
 }
 
 async fn vesc_probe(args: VescProbeArgs) -> Result<()> {
@@ -1708,12 +2183,13 @@ fn capture_output(
 async fn capture_reconnecting(args: CaptureArgs, output: CaptureOutput) -> Result<()> {
     let seconds = args.target.seconds();
     let requested_profile = args.target.profile();
+    require_explicit_live_profile(requested_profile)?;
     let target = args.target.clone().into_target();
     let commands = read_probe_commands(args.target.probes());
     let diagnostics_jsonl = args.target.diagnostics_jsonl();
     let read_only_jsonl = args.target.read_only_jsonl();
     let mut host = BtleplugReconnectHost::new(target, ScanWindow::from_secs(seconds));
-    let resolution = selected_session_resolution_for_target(requested_profile, host.target())?;
+    let resolution = selected_session_resolution(requested_profile)?;
     let registration = resolution.selected_session.session_registration()?;
     let mut session = registration.construct();
     let reconnecting_capture = capture_reconnecting_session_with_commands(
@@ -1733,7 +2209,7 @@ async fn capture_reconnecting(args: CaptureArgs, output: CaptureOutput) -> Resul
             .map(|attempt| &attempt.summary),
     )
     .ok_or(BtleError::NoPeripheralMatched)?;
-    let summary_resolution = selected_session_resolution_for_summary(requested_profile, &summary)?;
+    let summary_resolution = selected_session_resolution(requested_profile)?;
     let resolved_identity = resolution
         .resolved_identity
         .or(summary_resolution.resolved_identity);
@@ -1930,6 +2406,7 @@ const fn read_probe_command(probe: ReadProbe) -> DeviceCommand {
         ReadProbe::Firmware => DeviceCommand::RequestFirmwareInfo,
         ReadProbe::Telemetry => DeviceCommand::RequestTelemetry,
         ReadProbe::Battery => DeviceCommand::RequestBatteryInfo,
+        ReadProbe::Settings => DeviceCommand::RequestSettings,
         ReadProbe::Diagnostics => DeviceCommand::RequestDiagnostics,
         ReadProbe::FaultHistory => DeviceCommand::RequestFaultHistory,
     }
@@ -2116,69 +2593,35 @@ struct SessionResolution {
 #[derive(Clone, Debug, Eq, PartialEq)]
 enum SessionResolutionSource {
     Explicit(SessionProfile),
-    AdvertisedName(String),
-    Fallback,
 }
 
-fn selected_session_resolution_for_summary(
-    profile: SessionProfile,
-    summary: &cutout_btle::ConnectionSummary,
-) -> Result<SessionResolution> {
+fn selected_session_resolution(profile: SessionProfile) -> Result<SessionResolution> {
     match profile {
         SessionProfile::Aero | SessionProfile::Falcon => Ok(SessionResolution {
             selected_session: selected_session_profile(profile),
             resolved_identity: pevcap_identity_for_profile(profile),
             source: SessionResolutionSource::Explicit(profile),
         }),
-        SessionProfile::Auto => auto_session_resolution(summary.observation.name.as_deref()),
+        SessionProfile::Auto => auto_session_resolution(),
     }
 }
 
-fn selected_session_resolution_for_target(
-    profile: SessionProfile,
-    target: &ConnectionTarget,
-) -> Result<SessionResolution> {
-    match profile {
-        SessionProfile::Aero | SessionProfile::Falcon => Ok(SessionResolution {
-            selected_session: selected_session_profile(profile),
-            resolved_identity: pevcap_identity_for_profile(profile),
-            source: SessionResolutionSource::Explicit(profile),
-        }),
-        SessionProfile::Auto => auto_session_resolution(target.name_contains.as_deref()),
-    }
+fn auto_session_resolution() -> Result<SessionResolution> {
+    bail!(
+        "auto session resolution requires protocol identity evidence; advertised BLE names are display-only"
+    )
 }
 
-fn auto_session_resolution(name: Option<&str>) -> Result<SessionResolution> {
-    let Some(name) = name else {
-        return Ok(SessionResolution {
-            selected_session: selected_aero_session_profile(),
-            resolved_identity: None,
-            source: SessionResolutionSource::Fallback,
-        });
-    };
-
-    match ModelCatalog::new(&MODEL_CATALOG).resolve_advertised_name(name) {
-        CatalogModelResolution::Matched(entry) => {
-            let selected_session = selected_session_profile_for_catalog_entry(entry)?;
-            Ok(SessionResolution {
-                selected_session,
-                resolved_identity: Some(pevcap_identity_for_catalog_entry(entry)),
-                source: SessionResolutionSource::AdvertisedName(name.to_owned()),
-            })
-        }
-        CatalogModelResolution::NoMatch => Ok(SessionResolution {
-            selected_session: selected_aero_session_profile(),
-            resolved_identity: None,
-            source: SessionResolutionSource::Fallback,
-        }),
-        CatalogModelResolution::Ambiguous => {
-            bail!(
-                "auto session resolution found ambiguous catalog entries for advertised name {name}"
-            )
-        }
+fn require_explicit_live_profile(profile: SessionProfile) -> Result<()> {
+    if matches!(profile, SessionProfile::Auto) {
+        bail!(
+            "live EUC sessions require protocol identity evidence; pass --profile aero or --profile falcon"
+        );
     }
+    Ok(())
 }
 
+#[cfg(test)]
 const fn selected_aero_session_profile() -> SelectedSessionProfile {
     selected_session_profile(SessionProfile::Aero)
 }
@@ -2252,22 +2695,9 @@ fn selected_session_profile_for_catalog_entry(
     })
 }
 
-fn dashboard_session_profile_from_summary(
-    summary: &cutout_btle::ConnectionSummary,
-) -> Result<SelectedSessionProfile> {
-    let Some(name) = summary.observation.name.as_deref() else {
-        bail!("dashboard cannot resolve a session profile from unnamed device evidence");
-    };
-
-    match ModelCatalog::new(&MODEL_CATALOG).resolve_advertised_name(name) {
-        CatalogModelResolution::Matched(entry) => selected_session_profile_for_catalog_entry(entry),
-        CatalogModelResolution::NoMatch => {
-            bail!("dashboard cannot resolve a session profile from device evidence: {name}")
-        }
-        CatalogModelResolution::Ambiguous => {
-            bail!("dashboard found ambiguous catalog entries for advertised name {name}")
-        }
-    }
+fn dashboard_session_profile(profile: SessionProfile) -> Result<SelectedSessionProfile> {
+    require_explicit_live_profile(profile)?;
+    Ok(selected_session_profile(profile))
 }
 
 fn pevcap_identity_for_profile(profile: SessionProfile) -> Option<PevcapResolvedIdentity> {
@@ -2292,19 +2722,6 @@ fn pevcap_identity_for_profile(profile: SessionProfile) -> Option<PevcapResolved
     }
 }
 
-fn pevcap_identity_for_catalog_entry(
-    entry: &cutout_core::ModelCatalogEntry,
-) -> PevcapResolvedIdentity {
-    PevcapResolvedIdentity {
-        protocol_family: Some(entry.registry.protocol_family),
-        model: Some(VerifiedValue {
-            value: entry.registry.model.as_str().to_owned(),
-            verification: VerificationStatus::Inferred,
-        }),
-        firmware: None,
-    }
-}
-
 fn pevcap_identity_from_protocol_report(
     profile: SelectedSessionProfile,
     report: &SessionBridgeReport,
@@ -2318,7 +2735,7 @@ fn pevcap_identity_from_protocol_report(
     let resolution =
         cutout_protocols::identify_known_model(&cutout_protocols::StagedIdentityInput {
             advertised_name: None,
-            gatt: core::iter::empty::<cutout_core::GattFingerprint>(),
+            gatt: core::iter::empty::<GattFingerprint>(),
             stream_family: cutout_protocols::ProtocolFamilyClassification::Pending,
             banner_model: cutout_protocols::IdentityBannerEvidence::Missing,
             protocol_model: cutout_protocols::ProtocolModelIdentityEvidence::model_id(
@@ -3298,7 +3715,37 @@ const fn command_kind_name(kind: CommandKind) -> &'static str {
         CommandKind::RequestDiagnostics => "request_diagnostics",
         CommandKind::RequestFaultHistory => "request_fault_history",
         CommandKind::RequestSettings => "request_settings",
+        CommandKind::ResetTripMeter => "reset_trip_meter",
+        CommandKind::SetAeroTiltbackSpeed => "set_aero_tiltback_speed",
+        CommandKind::SetAeroPwmPercent => "set_aero_pwm_percent",
+        CommandKind::SetAeroPwmOff => "set_aero_pwm_off",
+        CommandKind::SetAeroGyroCalibration => "set_aero_gyro_calibration",
+        CommandKind::SetAeroRidingMode => "set_aero_riding_mode",
+        CommandKind::SetAeroBrakeOverpressureAlarm => "set_aero_brake_overpressure_alarm",
+        CommandKind::SetAeroPedalHardness => "set_aero_pedal_hardness",
+        CommandKind::SetAeroDisplayBacklight => "set_aero_display_backlight",
+        CommandKind::SetAeroBeeperVolume => "set_aero_beeper_volume",
+        CommandKind::SetAeroDynamicAssist => "set_aero_dynamic_assist",
+        CommandKind::SetAeroPedalDipCompensation => "set_aero_pedal_dip_compensation",
+        CommandKind::SetAeroLateralTiltLimit => "set_aero_lateral_tilt_limit",
+        CommandKind::SetAeroVoltageCorrection => "set_aero_voltage_correction",
+        CommandKind::SetAeroMaxChargeVoltageRaw => "set_aero_max_charge_voltage_raw",
+        CommandKind::SetAeroWheelUnits => "set_aero_wheel_units",
+        CommandKind::SetAeroHighSpeedMode => "set_aero_high_speed_mode",
+        CommandKind::SetAeroLowBatteryMode => "set_aero_low_battery_mode",
+        CommandKind::SetAeroTransportMode => "set_aero_transport_mode",
+        CommandKind::SetAeroAlarmSpeed => "set_aero_alarm_speed",
+        CommandKind::SetAeroAngleAdjustment => "set_aero_angle_adjustment",
+        CommandKind::SetAeroHighBeam => "set_aero_high_beam",
+        CommandKind::SetAccelerationAssist => "set_acceleration_assist",
         CommandKind::SetLights => "set_lights",
+        CommandKind::SetPedalMode => "set_pedal_mode",
+        CommandKind::SetRollAngle => "set_roll_angle",
+        CommandKind::SetSpeedAlarmMode => "set_speed_alarm_mode",
+        CommandKind::SetBegodeMaxSpeed => "set_begode_max_speed",
+        CommandKind::SetBegodeBeeperVolume => "set_begode_beeper_volume",
+        CommandKind::SetBegodeLedMode => "set_begode_led_mode",
+        CommandKind::SetTaillight => "set_taillight",
         CommandKind::SoundHorn => "sound_horn",
         CommandKind::SetRawMotorCurrent => "set_raw_motor_current",
     }
@@ -3608,10 +4055,10 @@ mod tests {
         PeripheralObservation, RawNotificationRecord, ServiceSummary, SessionCaptureRecord,
     };
     use cutout_core::{
-        DeviceEvent, GattChannel, MonotonicTimestamp, NotificationByteLen, ParserDiagnosticCount,
-        ParserDroppedBytes, ParserFrameLen, PayloadBodyLen, PevcapHeader, PevcapRecord,
-        ProtocolFamily, ProtocolSelector, SemanticEventCount, SessionInput, SignalStrength,
-        TransportWriteLimit, VerificationStatus, VerifiedValue, WriteMode,
+        ChargeMode, DeviceEvent, GattChannel, MonotonicTimestamp, NotificationByteLen,
+        ParserDiagnosticCount, ParserDroppedBytes, ParserFrameLen, PayloadBodyLen, PevcapHeader,
+        PevcapRecord, ProtocolFamily, ProtocolSelector, SemanticEventCount, SessionInput,
+        SignalStrength, TransportWriteLimit, VerificationStatus, VerifiedValue, WriteMode,
     };
     use uuid::Uuid;
 
@@ -3636,6 +4083,149 @@ mod tests {
 
     const fn dropped_bytes(value: u64) -> ParserDroppedBytes {
         ParserDroppedBytes::from_bytes(value)
+    }
+
+    #[test]
+    fn aero_write_values_become_typed_commands() {
+        assert_eq!(
+            parse_aero_write_command(AeroSetting::Headlight, "off").expect("headlight parses"),
+            DeviceCommand::SetLights(LightState::Off)
+        );
+        assert_eq!(
+            parse_aero_write_command(AeroSetting::Pedal, "hard").expect("pedal parses"),
+            DeviceCommand::SetPedalMode(PedalMode::Hard)
+        );
+        assert_eq!(
+            parse_aero_write_command(AeroSetting::TiltbackSpeed, "31")
+                .expect("tiltback parses")
+                .kind(),
+            CommandKind::SetAeroTiltbackSpeed
+        );
+        assert_eq!(
+            parse_aero_write_command(AeroSetting::Pwm, "64")
+                .expect("PWM parses")
+                .kind(),
+            CommandKind::SetAeroPwmPercent
+        );
+        assert_eq!(
+            parse_aero_write_command(AeroSetting::Angle, "-12")
+                .expect("angle parses")
+                .kind(),
+            CommandKind::SetAeroAngleAdjustment
+        );
+        assert_eq!(
+            parse_aero_write_command(AeroSetting::TripReset, "reset").expect("trip reset parses"),
+            DeviceCommand::ResetTripMeter
+        );
+        assert!(parse_aero_write_command(AeroSetting::Pwm, "101").is_err());
+        for value in ["0", "30", "64", "100"] {
+            assert_eq!(
+                parse_aero_write_command(AeroSetting::PedalHardness, value).unwrap(),
+                DeviceCommand::SetAeroPedalHardness(
+                    AeroPedalHardness::new(value.parse().unwrap()).unwrap()
+                )
+            );
+        }
+        for value in ["101", "-1", "hard"] {
+            assert!(parse_aero_write_command(AeroSetting::PedalHardness, value).is_err());
+        }
+        assert!(parse_aero_write_command(AeroSetting::TripReset, "on").is_err());
+    }
+
+    #[test]
+    fn aero_write_requires_protocol_gatt_fingerprint() {
+        let summary = aero_connection_summary();
+        assert!(aero_protocol_fingerprint_matches(&summary));
+
+        let mut wrong = summary;
+        wrong.services[0].characteristics[0].uuid =
+            Uuid::from_u128(0x0000_ffe2_0000_1000_8000_0080_5f9b_34fb);
+        assert!(!aero_protocol_fingerprint_matches(&wrong));
+    }
+
+    #[test]
+    fn live_profile_requires_compatible_gatt_fingerprint() {
+        let aero = aero_connection_summary();
+        let falcon = falcon_connection_summary();
+        let mut wrong = aero.clone();
+        wrong.services[0].characteristics[0].uuid =
+            Uuid::from_u128(0x0000_ffe2_0000_1000_8000_0080_5f9b_34fb);
+
+        assert!(live_profile_gatt_compatible(SessionProfile::Aero, &aero));
+        assert!(!live_profile_gatt_compatible(SessionProfile::Aero, &falcon));
+        assert!(live_profile_gatt_compatible(
+            SessionProfile::Falcon,
+            &falcon
+        ));
+        assert!(live_profile_gatt_compatible(SessionProfile::Falcon, &aero));
+        assert!(!live_profile_gatt_compatible(SessionProfile::Aero, &wrong));
+        assert!(!live_profile_gatt_compatible(
+            SessionProfile::Falcon,
+            &wrong
+        ));
+    }
+
+    #[test]
+    fn aero_write_requires_protocol_model_id() {
+        let mut report = SessionBridgeReport {
+            firmware: Some(FirmwareInfo {
+                firmware_major: Some(Measured::reported(43)),
+                ..FirmwareInfo::default()
+            }),
+            ..SessionBridgeReport::default()
+        };
+        assert!(aero_protocol_model_id_matches(&report));
+
+        report.firmware.as_mut().expect("firmware").firmware_major = Some(Measured::reported(42));
+        assert!(!aero_protocol_model_id_matches(&report));
+    }
+
+    #[test]
+    fn aero_write_preflight_requests_firmware_and_settings() {
+        assert_eq!(
+            AERO_WRITE_PREFLIGHT_COMMANDS,
+            [
+                DeviceCommand::RequestFirmwareInfo,
+                DeviceCommand::RequestTelemetry,
+                DeviceCommand::RequestSettings
+            ]
+        );
+    }
+
+    #[test]
+    fn aero_write_arm_requires_fresh_stationary_telemetry() {
+        let mut report = SessionBridgeReport::default();
+        assert!(aero_write_arm_from_probe(&report).is_err());
+
+        report.telemetry_snapshot.at_ms = Some(ms(12));
+        report.telemetry_snapshot.speed = Some(Measured::reported(
+            cutout_core::Speed::from_millimetres_per_second(500),
+        ));
+        assert!(aero_write_arm_from_probe(&report).is_ok());
+
+        report.telemetry_snapshot.charge_mode = Some(Measured::reported(ChargeMode::Charging));
+        assert!(aero_write_arm_from_probe(&report).is_err());
+        report.telemetry_snapshot.charge_mode = Some(Measured::reported(ChargeMode::NotCharging));
+        report.telemetry_snapshot.speed = Some(Measured::reported(
+            cutout_core::Speed::from_millimetres_per_second(501),
+        ));
+        assert!(aero_write_arm_from_probe(&report).is_err());
+    }
+
+    #[test]
+    fn aero_write_refreshes_settings_after_the_mutation() {
+        assert_eq!(
+            aero_write_commands(DeviceCommand::SetAeroDisplayBacklight(
+                AeroDisplayBacklight::new(50).expect("50 percent fits"),
+            )),
+            [
+                DeviceCommand::RequestTelemetry,
+                DeviceCommand::SetAeroDisplayBacklight(
+                    AeroDisplayBacklight::new(50).expect("50 percent fits"),
+                ),
+                DeviceCommand::RequestSettings,
+            ]
+        );
     }
 
     const fn diag_count(value: u64) -> ParserDiagnosticCount {
@@ -3721,6 +4311,7 @@ mod tests {
             pevcap: None,
             pevcap_format: PevcapFormat::Jsonl,
             device: device.map(ToOwned::to_owned),
+            profile: SessionProfile::Auto,
             scan: ScanArgs { seconds: 5 },
         }
     }
@@ -3892,7 +4483,20 @@ mod tests {
                 .into(),
                 manufacturer_data: Vec::new().into(),
             },
-            services: Vec::new().into(),
+            services: vec![ServiceSummary {
+                uuid: Uuid::from_u128(0x0000_ffe0_0000_1000_8000_0080_5f9b_34fb),
+                primary: true,
+                characteristics: vec![cutout_btle::CharacteristicSummary {
+                    uuid: Uuid::from_u128(0x0000_ffe1_0000_1000_8000_0080_5f9b_34fb),
+                    service_uuid: Uuid::from_u128(0x0000_ffe0_0000_1000_8000_0080_5f9b_34fb),
+                    properties: CharPropFlags::READ
+                        | CharPropFlags::WRITE
+                        | CharPropFlags::WRITE_WITHOUT_RESPONSE
+                        | CharPropFlags::NOTIFY,
+                }]
+                .into(),
+            }]
+            .into(),
         }
     }
 
@@ -5740,7 +6344,7 @@ mod tests {
         assert_eq!(report.telemetry, ReplayTelemetryCount::new(591));
         assert_eq!(
             report.read_only_responses,
-            ReplayReadOnlyResponseCount::new(2_335)
+            ReplayReadOnlyResponseCount::new(2_434)
         );
         assert_eq!(report.diagnostics, ReplayDiagnosticCount::default());
         assert!(report.chunk_one_byte_matches);
@@ -5929,100 +6533,37 @@ mod tests {
     }
 
     #[test]
-    fn selected_session_profile_for_summary_uses_advertised_name_hints() {
-        let falcon_summary = ConnectionSummary {
-            observation: PeripheralObservation {
-                identifier: "GotWay_002441".to_owned(),
-                address: None,
-                name: Some("GotWay_002441".to_owned()),
-                rssi: None,
-                advertised_services: Vec::new().into(),
-                manufacturer_data: Vec::new().into(),
-            },
-            services: Vec::new().into(),
-        };
-        let aero_summary = ConnectionSummary {
-            observation: PeripheralObservation {
-                identifier: "NF2557".to_owned(),
-                address: None,
-                name: Some("NF2557".to_owned()),
-                rssi: None,
-                advertised_services: Vec::new().into(),
-                manufacturer_data: Vec::new().into(),
-            },
-            services: Vec::new().into(),
-        };
-
-        assert_eq!(
-            selected_session_resolution_for_summary(SessionProfile::Auto, &falcon_summary)
-                .expect("Falcon summary resolves")
-                .selected_session,
-            selected_falcon_session_profile()
-        );
-        assert_eq!(
-            selected_session_resolution_for_summary(SessionProfile::Auto, &aero_summary)
-                .expect("Aero summary resolves")
-                .selected_session,
-            selected_aero_session_profile()
-        );
+    fn auto_session_resolution_requires_protocol_evidence() {
+        let error = selected_session_resolution(SessionProfile::Auto)
+            .expect_err("auto resolution must not guess without protocol evidence");
+        assert!(error.to_string().contains("protocol identity"));
     }
 
     #[test]
-    fn dashboard_session_profile_from_summary_uses_catalog_identity() {
-        let falcon_summary = ConnectionSummary {
-            observation: PeripheralObservation {
-                identifier: "GotWay_002441".to_owned(),
-                address: None,
-                name: Some("GotWay_002441".to_owned()),
-                rssi: None,
-                advertised_services: Vec::new().into(),
-                manufacturer_data: Vec::new().into(),
-            },
-            services: Vec::new().into(),
-        };
-        let aero_summary = ConnectionSummary {
-            observation: PeripheralObservation {
-                identifier: "NF2557".to_owned(),
-                address: None,
-                name: Some("NF2557".to_owned()),
-                rssi: None,
-                advertised_services: Vec::new().into(),
-                manufacturer_data: Vec::new().into(),
-            },
-            services: Vec::new().into(),
-        };
-
-        assert_eq!(
-            dashboard_session_profile_from_summary(&falcon_summary)
-                .expect("Falcon summary resolves"),
-            selected_falcon_session_profile()
-        );
-        assert_eq!(
-            dashboard_session_profile_from_summary(&aero_summary).expect("Aero summary resolves"),
-            selected_aero_session_profile()
-        );
-    }
-
-    #[test]
-    fn dashboard_session_profile_from_summary_rejects_unsupported_devices() {
-        let summary = ConnectionSummary {
-            observation: PeripheralObservation {
-                identifier: "unknown".to_owned(),
-                address: None,
-                name: Some("unknown".to_owned()),
-                rssi: None,
-                advertised_services: Vec::new().into(),
-                manufacturer_data: Vec::new().into(),
-            },
-            services: Vec::new().into(),
-        };
-
-        let error = dashboard_session_profile_from_summary(&summary)
-            .expect_err("unsupported device should not silently fall back");
+    fn live_sessions_reject_auto_before_connecting() {
+        let error = require_explicit_live_profile(SessionProfile::Auto)
+            .expect_err("live sessions must not guess a protocol");
         assert!(
             error
                 .to_string()
-                .contains("dashboard cannot resolve a session profile")
+                .contains("--profile aero or --profile falcon")
+        );
+        require_explicit_live_profile(SessionProfile::Aero)
+            .expect("explicit protocol profile is accepted");
+    }
+
+    #[test]
+    fn dashboard_session_profile_requires_explicit_protocol() {
+        let error = dashboard_session_profile(SessionProfile::Auto)
+            .expect_err("dashboard must not guess a session from advertised names");
+        assert!(error.to_string().contains("protocol identity"));
+        assert_eq!(
+            dashboard_session_profile(SessionProfile::Aero).expect("Aero profile"),
+            selected_aero_session_profile()
+        );
+        assert_eq!(
+            dashboard_session_profile(SessionProfile::Falcon).expect("Falcon profile"),
+            selected_falcon_session_profile()
         );
     }
 
@@ -6061,6 +6602,7 @@ mod tests {
                 ReadProbe::Firmware,
                 ReadProbe::Telemetry,
                 ReadProbe::Battery,
+                ReadProbe::Settings,
                 ReadProbe::Diagnostics,
                 ReadProbe::FaultHistory,
             ]),
@@ -6069,6 +6611,7 @@ mod tests {
                 DeviceCommand::RequestFirmwareInfo,
                 DeviceCommand::RequestTelemetry,
                 DeviceCommand::RequestBatteryInfo,
+                DeviceCommand::RequestSettings,
                 DeviceCommand::RequestDiagnostics,
                 DeviceCommand::RequestFaultHistory,
             ]
@@ -6104,6 +6647,287 @@ mod tests {
                 "settings availability=unsupported",
             ]
         );
+    }
+
+    #[test]
+    fn aero_setting_readback_matches_typed_speed_fields() {
+        let entry = |id, value| cutout_core::SettingsEntry {
+            field: cutout_core::RawFieldValue::new(id, value),
+            source: ValueSource::Reported,
+            quality: ValueQuality::Known,
+            verification: VerificationStatus::HardwareVerified,
+        };
+        let readbacks = [SettingsReadback::available([
+            Some(entry(0x0018, 550)),
+            Some(entry(0x001a, 530)),
+            None,
+            None,
+        ])];
+        let before = [SettingsReadback::available([
+            Some(entry(0x0018, 550)),
+            Some(entry(0x001a, 540)),
+            None,
+            None,
+        ])];
+
+        assert_eq!(
+            aero_setting_readback_matches(
+                DeviceCommand::SetAeroTiltbackSpeed(
+                    AeroSpeedSetting::new(53).expect("53 km/h fits"),
+                ),
+                &readbacks,
+            ),
+            Some(true)
+        );
+        assert_eq!(
+            aero_setting_readback_matches(
+                DeviceCommand::SetAeroAlarmSpeed(AeroSpeedSetting::new(54).expect("54 km/h fits"),),
+                &readbacks,
+            ),
+            Some(false)
+        );
+        assert_eq!(
+            aero_setting_readback_matches(
+                DeviceCommand::SetAeroPwmPercent(AeroPwmSetting::Margin(
+                    AeroPwmPercent::new(64).expect("64 percent fits"),
+                )),
+                &readbacks,
+            ),
+            Some(false)
+        );
+
+        assert_eq!(
+            aero_setting_readback_matches(
+                DeviceCommand::SetAeroTiltbackSpeed(
+                    AeroSpeedSetting::new(54).expect("54 km/h fits"),
+                ),
+                &before,
+            ),
+            Some(true)
+        );
+    }
+
+    #[test]
+    fn aero_write_parser_exposes_every_source_backed_aero_setting() {
+        let cases = [
+            (
+                AeroSetting::RidingMode,
+                "hard",
+                CommandKind::SetAeroRidingMode,
+            ),
+            (
+                AeroSetting::TiltbackSpeed,
+                "200",
+                CommandKind::SetAeroTiltbackSpeed,
+            ),
+            (AeroSetting::Pwm, "off", CommandKind::SetAeroPwmOff),
+            (
+                AeroSetting::AlarmSpeed,
+                "10",
+                CommandKind::SetAeroAlarmSpeed,
+            ),
+            (
+                AeroSetting::GyroCalibration,
+                "start",
+                CommandKind::SetAeroGyroCalibration,
+            ),
+            (
+                AeroSetting::BrakeOverpressureAlarm,
+                "125",
+                CommandKind::SetAeroBrakeOverpressureAlarm,
+            ),
+            (
+                AeroSetting::DisplayBacklight,
+                "100",
+                CommandKind::SetAeroDisplayBacklight,
+            ),
+            (
+                AeroSetting::BeeperVolume,
+                "0",
+                CommandKind::SetAeroBeeperVolume,
+            ),
+            (
+                AeroSetting::DynamicAssist,
+                "42",
+                CommandKind::SetAeroDynamicAssist,
+            ),
+            (
+                AeroSetting::PedalDipCompensation,
+                "42",
+                CommandKind::SetAeroPedalDipCompensation,
+            ),
+            (
+                AeroSetting::LateralTiltLimit,
+                "35",
+                CommandKind::SetAeroLateralTiltLimit,
+            ),
+            (
+                AeroSetting::VoltageCorrection,
+                "-15",
+                CommandKind::SetAeroVoltageCorrection,
+            ),
+            (
+                AeroSetting::MaxChargeVoltageRaw,
+                "70",
+                CommandKind::SetAeroMaxChargeVoltageRaw,
+            ),
+            (
+                AeroSetting::WheelUnits,
+                "imperial",
+                CommandKind::SetAeroWheelUnits,
+            ),
+            (
+                AeroSetting::HighSpeedMode,
+                "on",
+                CommandKind::SetAeroHighSpeedMode,
+            ),
+            (
+                AeroSetting::LowBatteryMode,
+                "off",
+                CommandKind::SetAeroLowBatteryMode,
+            ),
+            (
+                AeroSetting::TransportMode,
+                "on",
+                CommandKind::SetAeroTransportMode,
+            ),
+        ];
+
+        for (setting, value, kind) in cases {
+            assert_eq!(
+                parse_aero_write_command(setting, value)
+                    .expect("source-backed setting value parses")
+                    .kind(),
+                kind
+            );
+        }
+        assert!(parse_aero_write_command(AeroSetting::TiltbackSpeed, "9").is_err());
+        assert!(parse_aero_write_command(AeroSetting::Pwm, "71").is_err());
+        assert!(parse_aero_write_command(AeroSetting::GyroCalibration, "stop").is_err());
+    }
+
+    #[test]
+    fn aero_setting_readback_matches_all_decoded_source_backed_fields() {
+        let entry = |id, value| cutout_core::SettingsEntry {
+            field: cutout_core::RawFieldValue::new(id, value),
+            source: ValueSource::Reported,
+            quality: ValueQuality::Known,
+            verification: VerificationStatus::HardwareVerified,
+        };
+        let cases = [
+            (
+                DeviceCommand::SetAeroPwmPercent(AeroPwmSetting::Margin(
+                    AeroPwmPercent::new(64).expect("64 percent fits"),
+                )),
+                0x0835,
+                36,
+            ),
+            (DeviceCommand::SetAeroPwmOff, 0x0835, 200),
+            (
+                DeviceCommand::SetAeroBrakeOverpressureAlarm(
+                    AeroBrakeOverpressureAlarm::new(110).expect("110 percent fits"),
+                ),
+                0x0841,
+                110,
+            ),
+            (
+                DeviceCommand::SetAeroPedalHardness(
+                    AeroPedalHardness::new(50).expect("50 percent fits"),
+                ),
+                0x0832,
+                50,
+            ),
+            (
+                DeviceCommand::SetAeroDisplayBacklight(
+                    AeroDisplayBacklight::new(75).expect("75 percent fits"),
+                ),
+                0x0837,
+                75,
+            ),
+            (
+                DeviceCommand::SetAeroBeeperVolume(
+                    AeroBeeperVolume::new(25).expect("25 percent fits"),
+                ),
+                0x083f,
+                25,
+            ),
+            (
+                DeviceCommand::SetAeroDynamicAssist(
+                    AeroDynamicAssist::new(42).expect("42 percent fits"),
+                ),
+                0x0842,
+                42,
+            ),
+            (
+                DeviceCommand::SetAeroPedalDipCompensation(
+                    AeroPedalDipCompensation::new(33).expect("33 percent fits"),
+                ),
+                0x0844,
+                33,
+            ),
+            (
+                DeviceCommand::SetAeroLateralTiltLimit(
+                    AeroLateralTiltLimit::new(55).expect("55 degrees fits"),
+                ),
+                0x022f,
+                55,
+            ),
+            (
+                DeviceCommand::SetAeroVoltageCorrection(
+                    AeroVoltageCorrection::new(-5).expect("-5 tenths fits"),
+                ),
+                0x083b,
+                -5,
+            ),
+            (
+                DeviceCommand::SetAeroMaxChargeVoltageRaw(
+                    AeroMaxChargeVoltageRaw::new(46).expect("46 raw fits"),
+                ),
+                0x0840,
+                46,
+            ),
+            (
+                DeviceCommand::SetAeroWheelUnits(AeroWheelUnits::Imperial),
+                0x083a,
+                1,
+            ),
+            (
+                DeviceCommand::SetAeroHighSpeedMode(AeroHighSpeedMode::new(true)),
+                0x083d,
+                1,
+            ),
+            (
+                DeviceCommand::SetAeroLowBatteryMode(AeroLowBatteryMode::new(false)),
+                0x083c,
+                0,
+            ),
+            (
+                DeviceCommand::SetAeroTransportMode(AeroTransportMode::new(true)),
+                0x0839,
+                1,
+            ),
+        ];
+
+        for (command, field_id, value) in cases {
+            let readback =
+                SettingsReadback::available([Some(entry(field_id, value)), None, None, None]);
+            assert_eq!(
+                aero_setting_readback_matches(command, &[readback]),
+                Some(true)
+            );
+        }
+    }
+
+    #[test]
+    fn aero_write_report_requires_protocol_and_transport_writes() {
+        let mut report = SessionBridgeReport::default();
+        assert!(!aero_write_was_sent(&report));
+
+        report.protocol_writes = ProtocolWriteCount::from_events(1);
+        assert!(!aero_write_was_sent(&report));
+
+        report.writes = TransportWriteCount::from_events(1);
+        assert!(aero_write_was_sent(&report));
     }
 
     #[test]
@@ -6264,7 +7088,7 @@ mod tests {
             constructed_rx.recv_timeout(Duration::from_secs(1)).expect(
                 "registered Aero session construction should not block the live update runner"
             ),
-            RegisteredReadOnlySession::NosfetAero(_)
+            RegisteredEucSession::NosfetAero(_)
         ));
     }
 
@@ -6372,6 +7196,28 @@ mod tests {
             assert_eq!(encoded.protocol, protocol);
             assert_eq!(encoded.command, command);
             assert!(!encoded.payload.is_empty());
+        }
+    }
+
+    #[test]
+    fn command_kind_names_cover_aero_settings_commands() {
+        for (kind, expected) in [
+            (CommandKind::ResetTripMeter, "reset_trip_meter"),
+            (CommandKind::SetAeroTiltbackSpeed, "set_aero_tiltback_speed"),
+            (CommandKind::SetAeroPwmPercent, "set_aero_pwm_percent"),
+            (
+                CommandKind::SetAeroGyroCalibration,
+                "set_aero_gyro_calibration",
+            ),
+            (CommandKind::SetAeroPedalHardness, "set_aero_pedal_hardness"),
+            (CommandKind::SetAeroAlarmSpeed, "set_aero_alarm_speed"),
+            (
+                CommandKind::SetAeroAngleAdjustment,
+                "set_aero_angle_adjustment",
+            ),
+            (CommandKind::SetAeroHighBeam, "set_aero_high_beam"),
+        ] {
+            assert_eq!(command_kind_name(kind), expected);
         }
     }
 }
