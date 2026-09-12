@@ -402,6 +402,9 @@ final class LightingRouteModel {
     func forgetAccessory() {
         stop()
         persistence.forget()
+        connectionState = .idle
+        peripheralName = nil
+        peripheralIdentifier = nil
         accessoryAlias = nil
         vehicleIdentifier = nil
         refreshPresets()

@@ -11,7 +11,12 @@ public enum PevRideTabs {
             PevScreenTab(id: .lighting, title: pevLocalizedText("tab.lighting"), isSelected: lightingSelected, destinationTarget: .lighting),
             PevScreenTab(id: .pack, title: pevLocalizedText("tab.pack"), isSelected: selected == .bmsOverview || selected == .bmsCellMap6S || selected == .bmsCellMap40S || selected == .bmsCellDetail || selected == .bmsUnknownTopology || selected == .bmsNoData, destinationTarget: .eucPack),
             PevScreenTab(id: .map, title: pevLocalizedText("tab.map"), isSelected: false, destinationTarget: .rideMap),
-            unavailableTab(id: .tune, title: pevLocalizedText("tab.tune"), reason: pevLocalizedText("tab.reason.tune_unavailable")),
+            PevScreenTab(
+                id: .tune,
+                title: pevLocalizedText("tab.tune"),
+                isSelected: !lightingSelected && selected == nil && isTuneSelected,
+                destinationTarget: .eucTune
+            ),
         ]
     }
 

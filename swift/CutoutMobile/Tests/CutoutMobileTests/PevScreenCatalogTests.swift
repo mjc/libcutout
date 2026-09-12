@@ -197,6 +197,7 @@ final class PevScreenCatalogTests: XCTestCase {
         XCTAssertEqual(DevicePickerRowState(action: .review).actionTitle, "Review")
         XCTAssertEqual(DevicePickerRowState(action: .later).actionTitle, "Later")
         XCTAssertEqual(PevRideTabs.eucRideTabs().map(\.title), ["Ride", "Lighting", "Pack", "Map", "Tune"])
+        XCTAssertEqual(PevRideTabs.eucRideTabs()[4].destinationTarget, .eucTune)
         XCTAssertEqual(PevRideTabs.vescRideTabs()[3].destinationTarget, .rideMap)
     }
 
@@ -226,6 +227,7 @@ final class PevScreenCatalogTests: XCTestCase {
         XCTAssertEqual(PevRideTabs.eucRideTabs().first?.destinationTarget, .screen(.eucRide))
         XCTAssertNil(PevRideTabs.eucRideTabs().first?.destinationScreenID)
         XCTAssertEqual(PevRideTabs.eucRideTabs()[2].destinationTarget, .eucPack)
+        XCTAssertEqual(PevRideTabs.eucRideTabs()[4].destinationTarget, .eucTune)
         XCTAssertEqual(PevRideTabs.vescRideTabs().first?.destinationTarget, .vescRide)
         XCTAssertEqual(PevRideTabs.vescRideTabs()[2].destinationTarget, .screen(.vescDebug))
     }
@@ -235,6 +237,19 @@ final class PevScreenCatalogTests: XCTestCase {
         XCTAssertTrue(PevRideTabs.vescRideTabs(selected: .vescRide)[0].isSelected)
         XCTAssertFalse(PevRideTabs.vescRideTabs(selected: .vescDebug)[0].isSelected)
         XCTAssertTrue(PevRideTabs.vescRideTabs(selected: .vescDebug)[2].isSelected)
+
+        let explicitTune = PevRideTabs.eucRideTabs(isTuneSelected: true)
+        XCTAssertTrue(explicitTune[4].isSelected)
+        XCTAssertEqual(explicitTune[4].destinationTarget, .eucTune)
+
+        let explicitRide = PevRideTabs.eucRideTabs(selected: .eucRide, isTuneSelected: true)
+        XCTAssertTrue(explicitRide[0].isSelected)
+        XCTAssertFalse(explicitRide[4].isSelected)
+
+        let lighting = PevRideTabs.eucRideTabs(lightingSelected: true, isTuneSelected: true)
+        XCTAssertTrue(lighting[1].isSelected)
+        XCTAssertFalse(lighting[0].isSelected)
+        XCTAssertFalse(lighting[4].isSelected)
     }
 
     func testTabIdentityDoesNotDependOnVisibleTitle() {

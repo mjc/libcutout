@@ -90,6 +90,7 @@ final class CutoutAppRouteTests: XCTestCase {
         XCTAssertEqual(localizedAppText("app.command.no_connected_device"), "No connected device")
         XCTAssertEqual(localizedAppText("app.command.disconnect"), "Disconnect")
         XCTAssertEqual(localizedAppText("app.command.navigate"), "Navigate")
+        XCTAssertEqual(localizedAppText("navigation.section.tune"), "Tune")
         XCTAssertEqual(
             localizedAppText("bms.no_data.pack_estimate_accessibility_value", "71", "Derived from voltage curve"),
             "71%. Derived from voltage curve"
@@ -175,6 +176,7 @@ final class CutoutAppRouteTests: XCTestCase {
         let routes: Set<CutoutAppRoute> = [
             .devicePicker,
             .eucRide,
+            .eucTune,
             .eucPack(.bmsOverview),
             .eucPack(.bmsCellMap6S),
             .eucPack(.bmsCellMap40S),
@@ -187,7 +189,7 @@ final class CutoutAppRouteTests: XCTestCase {
             .capture,
         ]
 
-        XCTAssertEqual(routes.count, 12)
+        XCTAssertEqual(routes.count, 13)
     }
 
     func testBmsDetailRouteStaysSelectedOnlyWhileItsGroupExists() {
@@ -207,6 +209,7 @@ final class CutoutAppRouteTests: XCTestCase {
     func testNavigationPathKeepsPickerAtRootAndReplacesConnectedDestinations() {
         XCTAssertEqual(CutoutAppRoute.navigationPath(for: .devicePicker), [])
         XCTAssertEqual(CutoutAppRoute.navigationPath(for: .eucRide), [.eucRide])
+        XCTAssertEqual(CutoutAppRoute.navigationPath(for: .eucTune), [.eucTune])
         XCTAssertEqual(CutoutAppRoute.navigationPath(for: .eucPack(.bmsOverview)), [.eucPack(.bmsOverview)])
         XCTAssertEqual(CutoutAppRoute.navigationPath(for: .vescDebug), [.vescDebug])
         XCTAssertEqual(CutoutAppRoute.navigationPath(for: .capture), [.capture])
@@ -245,6 +248,10 @@ final class CutoutAppRouteTests: XCTestCase {
                 .navigationTabs(for: .vescOnewheel)
                 .first(where: { $0.id == .debug })?.isSelected == true
         )
+        XCTAssertEqual(
+            CutoutAppRoute.eucTune.navigationTabs(for: .electricUnicycle).filter(\.isSelected).map(\.id),
+            [.tune]
+        )
         XCTAssertEqual(CutoutAppRoute.route(forNavigationTarget: .vescRide), .vescRide)
         XCTAssertEqual(CutoutAppRoute.route(forNavigationTarget: .screen(.bmsOverview)), .eucPack(.bmsOverview))
         XCTAssertEqual(CutoutNavigationCommands.shortcut(for: .ride), "1")
@@ -258,11 +265,11 @@ final class CutoutAppRouteTests: XCTestCase {
     func testNativeNavigationOmitsUnavailableDestinations() {
         XCTAssertEqual(
             CutoutAppRoute.eucRide.availableNavigationTabs(for: .electricUnicycle).map(\.id),
-            [.ride, .lighting, .pack, .map]
+            [.ride, .lighting, .pack, .map, .tune]
         )
         XCTAssertEqual(
             CutoutAppRoute.eucPack(.bmsOverview).availableNavigationTabs(for: .electricUnicycle).map(\.id),
-            [.ride, .lighting, .pack, .map]
+            [.ride, .lighting, .pack, .map, .tune]
         )
         XCTAssertEqual(
             CutoutAppRoute.vescRide.availableNavigationTabs(for: .vescOnewheel).map(\.id),
@@ -301,7 +308,7 @@ final class CutoutAppRouteTests: XCTestCase {
         let vescTabs = CutoutAppRoute.rideMapDetail(rideID: "ride-1")
             .availableNavigationTabs(for: .vescOnewheel)
 
-        XCTAssertEqual(eucTabs.map(\.id), [.ride, .lighting, .pack, .map])
+        XCTAssertEqual(eucTabs.map(\.id), [.ride, .lighting, .pack, .map, .tune])
         XCTAssertEqual(vescTabs.map(\.id), [.ride, .lighting, .debug, .map])
         XCTAssertEqual(eucTabs.first(where: { $0.isSelected })?.id, .map)
         XCTAssertEqual(vescTabs.first(where: { $0.isSelected })?.id, .map)
@@ -313,6 +320,8 @@ final class CutoutAppRouteTests: XCTestCase {
 
         XCTAssertEqual(nestedPackRoute.destination(for: tabs[0]), .eucRide)
         XCTAssertEqual(nestedPackRoute.destination(for: tabs[2]), nestedPackRoute)
+        XCTAssertEqual(nestedPackRoute.destination(for: tabs[3]), .rideMap)
+        XCTAssertEqual(nestedPackRoute.destination(for: tabs[4]), .eucTune)
         XCTAssertEqual(
             CutoutAppRoute.vescDebug.destination(
                 for: CutoutAppRoute.vescDebug.availableNavigationTabs(for: .vescOnewheel)[2]
@@ -680,6 +689,39 @@ final class CutoutAppRouteTests: XCTestCase {
         XCTAssertEqual(fake.startCalls, [nil])
         model.stopIfUnpaired()
         XCTAssertEqual(fake.stopCalls, 1)
+    }
+
+    @MainActor
+    func testLightingForgetClearsStoppedAccessoryPresentation() async throws {
+        let suiteName = "CutoutAppRouteTests.lightingForget"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defaults.removePersistentDomain(forName: suiteName)
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        let fake = TestLightingSession()
+        let model = LightingRouteModel(
+            session: fake,
+            persistence: LightingAccessoryPersistence(defaults: defaults)
+        )
+        model.start()
+        fake.emitIdentity(
+            MelkLightingPeripheralIdentity(
+                name: "MELK-OC21 6A",
+                platformIdentifier: "A1B2C3D4-E5F6-4789-ABCD-0123456789AB",
+                rssi: -40
+            )
+        )
+        fake.emitState(.ready)
+        await Task.yield()
+
+        XCTAssertTrue(model.isReady)
+        XCTAssertNotNil(model.peripheralIdentifier)
+        model.forgetAccessory()
+
+        XCTAssertFalse(model.isReady)
+        XCTAssertNil(model.peripheralIdentifier)
+        XCTAssertNil(model.peripheralName)
+        XCTAssertEqual(model.connectionState, .idle)
     }
 
     @MainActor
