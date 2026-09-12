@@ -167,10 +167,15 @@ where
         source: SettingValueSource,
         confirmed_at: MonotonicTimestamp,
     ) -> bool {
-        let Self::Pending { requested, .. } = *self else {
+        let Self::Pending {
+            requested,
+            submitted_at,
+            ..
+        } = *self
+        else {
             return false;
         };
-        if requested != value {
+        if requested != value || confirmed_at < submitted_at {
             return false;
         }
         *self = Self::Confirmed {
@@ -182,8 +187,8 @@ where
 
     /// Applies a readback, confirming a matching pending request or becoming current.
     ///
-    /// A mismatched readback never overwrites a pending request. The return value is true
-    /// only when the readback confirmed that request.
+    /// A mismatched readback refreshes the pending request's current value. The return value
+    /// is true only when the readback confirmed that request.
     pub fn observe(
         &mut self,
         value: Value,
@@ -193,8 +198,19 @@ where
         if self.confirm_from(value, source, observed_at) {
             return true;
         }
-        if !matches!(self, Self::Pending { .. }) {
-            *self = Self::Current(SettingValue { value, source });
+        if self.terminal_readback_matches(value) {
+            return false;
+        }
+        match self {
+            Self::Pending {
+                current,
+                submitted_at,
+                ..
+            } if observed_at >= *submitted_at => {
+                *current = Some(SettingValue { value, source });
+            }
+            Self::Pending { .. } => {}
+            _ => *self = Self::Current(SettingValue { value, source }),
         }
         false
     }
@@ -277,12 +293,35 @@ where
             | Self::Failed { current, .. } => current,
         }
     }
-}
 
+    fn terminal_readback_matches(self, value: Value) -> bool {
+        match self {
+            Self::Confirmed { value: current, .. }
+            | Self::Refused {
+                current: Some(current),
+                ..
+            }
+            | Self::TimedOut {
+                current: Some(current),
+                ..
+            }
+            | Self::Failed {
+                current: Some(current),
+                ..
+            } => current.value == value,
+            Self::Unknown
+            | Self::Current(_)
+            | Self::Pending { .. }
+            | Self::Refused { current: None, .. }
+            | Self::TimedOut { current: None, .. }
+            | Self::Failed { current: None, .. } => false,
+        }
+    }
+}
 #[cfg(test)]
 mod tests {
-    use super::{SettingCommandStatus, SettingState};
-    use crate::{LightState, MonotonicTimestamp};
+    use super::*;
+    use crate::LightState;
 
     #[test]
     fn command_status_is_owned_by_rust_setting_state() {
@@ -305,5 +344,30 @@ mod tests {
             state.command_status(MonotonicTimestamp::new(2_010), false),
             SettingCommandStatus::SentWithoutConfirmation
         );
+    }
+
+    #[test]
+    fn pending_readback_refreshes_current_without_replacing_request() {
+        let mut state = SettingState::current(20_u8, SettingValueSource::LiveReadback);
+        state.submit(53, MonotonicTimestamp::new(10));
+        assert!(!state.observe(
+            54,
+            SettingValueSource::LiveReadback,
+            MonotonicTimestamp::new(20)
+        ));
+        assert_eq!(state.current_value(), Some(54));
+        assert_eq!(state.requested_value(), Some(53));
+        assert!(!state.observe(
+            19,
+            SettingValueSource::LiveReadback,
+            MonotonicTimestamp::new(9)
+        ));
+        assert_eq!(state.current_value(), Some(54));
+        assert!(state.timeout_if_elapsed(
+            MonotonicTimestamp::new(2_010),
+            SETTING_WRITE_CONFIRMATION_TIMEOUT
+        ));
+        assert_eq!(state.current_value(), Some(54));
+        assert_eq!(state.requested_value(), Some(53));
     }
 }

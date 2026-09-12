@@ -1,7 +1,8 @@
 use cutout_core::{
     Capabilities, ControlRefusal, ControlRefusalDto, ControlRefusalReason, DeviceCommand,
-    HostSession, ParserDiagnosticsDto, RideOperatingState, RideOperatingStateDto, SessionEventDto,
-    SessionInputDto, SessionOutputDto, TelemetrySnapshotDto,
+    HostSession, MonotonicTimestamp, ParserDiagnosticsDto, RideOperatingState,
+    RideOperatingStateDto, SessionEventDto, SessionInput, SessionInputDto, SessionOutputDto,
+    TelemetrySnapshotDto,
 };
 
 use crate::{
@@ -102,7 +103,7 @@ impl ConcreteAeroBenignControlSession {
 
     /// Drives one owned DTO input through the wrapped protocol reactor.
     pub fn ingest(&mut self, input: &SessionInputDto) {
-        self.host.ingest(input.as_session_input());
+        ingest_timestamped_command(&mut self.host, input);
     }
 
     /// Sets the host timestamp before a command input that carries no core timestamp.
@@ -220,7 +221,7 @@ impl ConcreteFalconBenignControlSession {
 
     /// Drives one owned DTO input through the wrapped protocol reactor.
     pub fn ingest(&mut self, input: &SessionInputDto) {
-        self.host.ingest(input.as_session_input());
+        ingest_timestamped_command(&mut self.host, input);
     }
 
     /// Sets the host timestamp before a command input that carries no core timestamp.
@@ -305,7 +306,7 @@ impl VescReadOnlySession {
 
     /// Drives one owned DTO input through the wrapped protocol reactor.
     pub fn ingest(&mut self, input: &SessionInputDto) {
-        self.host.ingest(input.as_session_input());
+        ingest_timestamped_command(&mut self.host, input);
     }
 
     /// Drives one DTO input and returns owned outputs plus any stable error DTO.
@@ -373,6 +374,21 @@ fn arm_stationary_settings<
     speed_mm_per_second: Option<i32>,
     monotonic_ms: u64,
 ) -> bool {
+    let now = MonotonicTimestamp::new(monotonic_ms);
+    let snapshot = host.current_snapshot();
+    let Some(speed) = host.session_mut().fresh_settings_speed(now) else {
+        host.session_mut().clear_arm();
+        return false;
+    };
+    if snapshot
+        .charge_mode
+        .is_some_and(|mode| mode.value.is_active())
+        || snapshot.operating_state == Some(RideOperatingState::Charging)
+        || speed_mm_per_second.is_some_and(|reported| reported != speed.as_millimetres_per_second())
+    {
+        host.session_mut().clear_arm();
+        return false;
+    }
     let state = match state {
         RideOperatingStateDto::Unknown => RideOperatingState::Unknown,
         RideOperatingStateDto::Parked => RideOperatingState::Parked,
@@ -380,12 +396,9 @@ fn arm_stationary_settings<
         RideOperatingStateDto::Riding => RideOperatingState::Riding,
         RideOperatingStateDto::Charging => RideOperatingState::Charging,
     };
-    let speed = speed_mm_per_second.map(cutout_core::Speed::from_millimetres_per_second);
-    let Some(arm) = M::arm_settings_write(
-        state,
-        speed,
-        cutout_core::MonotonicTimestamp::new(monotonic_ms),
-    ) else {
+    let Some(arm) = M::arm_settings_write(state, Some(speed), now) else {
+        // Failed rearming also cancels work authorized by older ride evidence.
+        host.session_mut().clear_arm();
         return false;
     };
     host.session_mut().arm(arm);
@@ -452,7 +465,8 @@ fn input_command_refusal(
     input: &SessionInputDto,
     capabilities: Capabilities,
 ) -> Option<ControlRefusalDto> {
-    let SessionInputDto::Command(command) = input else {
+    let (SessionInputDto::Command(command) | SessionInputDto::CommandAt { command, .. }) = input
+    else {
         return None;
     };
     let command = DeviceCommand::from(*command);
@@ -466,6 +480,18 @@ fn input_command_refusal(
     })
 }
 
+fn ingest_timestamped_command<S>(host: &mut HostSession<S>, input: &SessionInputDto)
+where
+    S: cutout_core::ProtocolSession,
+{
+    if let SessionInputDto::CommandAt { monotonic_ms, .. } = input {
+        host.ingest(SessionInput::Tick {
+            monotonic_ms: MonotonicTimestamp::new(monotonic_ms.milliseconds),
+        });
+    }
+    host.ingest(input.as_session_input());
+}
+
 fn drain_host_outputs<S>(host: &mut HostSession<S>) -> Vec<SessionOutputDto>
 where
     S: cutout_core::ProtocolSession,
@@ -477,8 +503,8 @@ where
 mod tests {
     use cutout_core::{
         CommandKindDto, ControlRefusalDto, ControlRefusalReasonDto, DeviceCommandDto, LinkInfo,
-        MonotonicMillisDto, MonotonicTimestamp, ParserDiagnosticCountDto, SafetyClassDto,
-        SessionEventDto, SessionInputDto, SessionOutputDto, TransportActionDto,
+        MonotonicMillisDto, MonotonicTimestamp, ParserDiagnosticCountDto, RideOperatingStateDto,
+        SafetyClassDto, SessionEventDto, SessionInputDto, SessionOutputDto, TransportActionDto,
         TransportWriteLimit, TransportWriteLimitDto,
     };
 
@@ -553,6 +579,94 @@ mod tests {
                 if *channel == VETERAN_DATA_CHANNEL.as_bytes()
                     && bytes == b"SetLightON"
         )));
+    }
+
+    #[test]
+    fn failed_rearm_revokes_the_previous_stationary_write_authorization() {
+        let mut session = new_nosfet_aero_benign_control_session();
+        ingest_stationary_aero(&mut session, 10);
+        assert!(session.arm_settings_writes(RideOperatingStateDto::Parked, Some(0), 10));
+        assert!(!session.arm_settings_writes(RideOperatingStateDto::Riding, Some(501), 11));
+
+        let result =
+            session.ingest_checked(&SessionInputDto::Command(DeviceCommandDto::ResetTripMeter));
+
+        assert_eq!(
+            result.error,
+            Some(ConcreteSessionErrorDto::CommandRefused {
+                refusal: ControlRefusalDto {
+                    command: CommandKindDto::ResetTripMeter,
+                    safety_class: SafetyClassDto::StationaryOnly,
+                    reason: ControlRefusalReasonDto::MissingArm,
+                }
+            })
+        );
+        assert!(result.outputs.iter().all(|output| !matches!(
+            output,
+            SessionOutputDto::Transport(TransportActionDto::Write { .. })
+        )));
+    }
+
+    fn ingest_stationary_aero(session: &mut super::ConcreteAeroBenignControlSession, at: u64) {
+        let _ = session.ingest_checked(&SessionInputDto::LinkUp {
+            monotonic_ms: ms(at),
+            max_write_len: Some(write_len_dto(185)),
+        });
+        let frame = hex_literal::hex!(
+            "dc5a5c532a7c000000000000ab41001700000cff\
+             000000000226021ca8f607801afa000080c80000\
+             808080808080022880803080800e310e310e2f0e\
+             2f0e300e2a0e320e2e0e300e310e300e2d0e2f0e\
+             310e2e9e05e3ad"
+        );
+        let _ = session.ingest_checked(&SessionInputDto::Notification {
+            channel: VETERAN_DATA_CHANNEL.as_bytes(),
+            bytes: frame.to_vec(),
+            monotonic_ms: ms(at),
+        });
+    }
+
+    #[test]
+    fn concrete_settings_arm_requires_fresh_observed_speed() {
+        let mut session = new_nosfet_aero_benign_control_session();
+        assert!(!session.arm_settings_writes(RideOperatingStateDto::Parked, Some(0), 10));
+        ingest_stationary_aero(&mut session, 20);
+        assert!(session.arm_settings_writes(RideOperatingStateDto::Parked, Some(0), 20));
+        let _ = session.ingest_checked(&SessionInputDto::Tick {
+            monotonic_ms: ms(60_000),
+        });
+        assert!(!session.arm_settings_writes(RideOperatingStateDto::Parked, Some(0), 60_000));
+        let result =
+            session.ingest_checked(&SessionInputDto::Command(DeviceCommandDto::ResetTripMeter));
+        assert!(result.error.is_some());
+        assert!(result.outputs.iter().all(|output| !matches!(
+            output,
+            SessionOutputDto::Transport(TransportActionDto::Write { .. })
+        )));
+    }
+
+    #[test]
+    fn bms_refresh_does_not_renew_settings_speed_evidence() {
+        let mut session = new_begode_falcon_benign_control_session();
+        let _ = session.ingest_checked(&SessionInputDto::LinkUp {
+            monotonic_ms: ms(10),
+            max_write_len: Some(write_len_dto(185)),
+        });
+        let mut ride = hex_literal::hex!("55aa17750538007602eefb64f4941481000900185a5a5a5a");
+        ride[4..6].copy_from_slice(&[0, 0]);
+        let _ = session.ingest_checked(&SessionInputDto::Notification {
+            channel: BEGODE_DATA_CHANNEL.as_bytes(),
+            bytes: ride.to_vec(),
+            monotonic_ms: ms(20),
+        });
+        assert!(session.arm_settings_writes(RideOperatingStateDto::Parked, Some(0), 20));
+        let bms = hex_literal::hex!("55aa271000000320ff9c0019001a0190000001035a5a5a5a");
+        let _ = session.ingest_checked(&SessionInputDto::Notification {
+            channel: BEGODE_DATA_CHANNEL.as_bytes(),
+            bytes: bms.to_vec(),
+            monotonic_ms: ms(60_000),
+        });
+        assert!(!session.arm_settings_writes(RideOperatingStateDto::Parked, Some(0), 60_000));
     }
 
     #[test]

@@ -1,5 +1,9 @@
 # Control Safety Matrix
 
+User-visible confirmation, reversibility, disconnect, and accessibility policy
+for settings controls is defined in
+[`settings-safety-ux.md`](settings-safety-ux.md).
+
 Cutout command support is split by safety class before a protocol encoder can
 produce transport writes. Read-only sessions must fail closed for every
 non-read command.
@@ -7,7 +11,7 @@ non-read command.
 | Command class | Current commands | Required type bound | Required runtime gate | Live write status |
 | --- | --- | --- | --- | --- |
 | Read-only probes | `RequestIdentity`, `RequestTelemetry`, `RequestFirmwareInfo`, `RequestBatteryInfo`, `RequestDiagnostics`, `RequestSettings` | `SupportsReadRequests` / `ReadOnlyModelSpec` | Command kind must be in model `READ_CAPABILITIES`; unsupported read probes emit diagnostics without writes | Enabled for capture-backed read-only paths |
-| Stationary-only settings writes | `ResetTripMeter`, `SetAeroTiltbackSpeed`, `SetAeroPwmPercent`, `SetAeroAlarmSpeed`, `SetAeroAngleAdjustment`, `SetAeroHighBeam`, `SetPedalMode`, `SetRollAngle`, `SetSpeedAlarmMode`, `SetBegodeMaxSpeed`, `SetBegodeBeeperVolume`, `SetBegodeLedMode`, `SetAccelerationAssist` | `SupportsSettingsWrites` plus `StationarySettingsWriteSession` | A `StationarySettingsPolicy` may arm from `Parked` or `Standing` (or a model-specific bounded low-speed window); the session requires matching model/capability, seeds its monotonic clock from the arm, rejects expiry, and clears the arm on link-down | NOSFET Aero is registered for the explicit Rust `aero-write` path. Typed speed writes must transition from the preflight value to the requested reported value before success; other settings remain write-only/unverified until a typed readback exists |
+| Stationary-only settings writes | `ResetTripMeter`, all `SetAero*` settings commands (including explicit `SetAeroPwmOff`), `SetPedalMode`, `SetRollAngle`, `SetSpeedAlarmMode`, `SetBegodeMaxSpeed`, `SetBegodeBeeperVolume`, `SetBegodeLedMode`, `SetAccelerationAssist` | `SupportsSettingsWrites` plus `StationarySettingsWriteSession` | Live arming requires a speed sample at most two seconds old and within the model limit (500 mm/s for Aero). The arm is bound to the model and expires. Motion, charging, failed rearm, stale speed, and disconnect cancel pending work; rearming cannot extend an older sequence's deadline. | Explicit Rust CLI and mobile validation mode permit source-backed Aero writes while preserving Unverified capability evidence. The default mobile path retains the validated lighting subset. Settings without decoded live readback remain unverified; reset submission is not confirmation. The simulator covers every implemented source-backed Aero write, not physical effect. |
 | Benign controls | `SetLights`, `SetTaillight`, `SoundHorn` | `SupportsBenignControls` plus a benign-control session shell | Model allow-list, exact captured command bytes, command capability, explicit unsupported diagnostics | Aero headlight/high-beam writes are exposed through the guarded Rust/mobile wrappers; effect proof remains separate from encoder proof |
 | Dangerous actuation | `SetRawMotorCurrent` | `SupportsDangerousActuation` plus dangerous-control feature and session shell | Non-default build feature, explicit runtime arming token, short expiry, current limits, stationary/no-probing validation where applicable | Not enabled |
 | Firmware operations | No `DeviceCommand` variant yet | Separate firmware operation marker, not a control trait | Explicit firmware mode, image provenance, rollback/failsafe plan, hardware-specific acceptance | Not enabled |

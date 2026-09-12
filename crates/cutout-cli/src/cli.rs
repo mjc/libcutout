@@ -117,7 +117,9 @@ to a selected peripheral. The target is selected by its platform identifier or
 Bluetooth address; advertised names are never used for protocol identity.
 
 This command requires --confirm-stationary and is limited to the capture-backed
-Aero settings surface.";
+Aero settings surface. Before emitting the setting write it requests firmware,
+telemetry, and settings readbacks; it refuses without timestamped speed at or
+below the model's stationary-write limit and refuses while charging.";
 
 /// Parsed command-line arguments for the `cutout` binary.
 #[derive(Debug, Parser)]
@@ -277,6 +279,10 @@ pub(crate) enum AeroSetting {
     Headlight,
     HighBeam,
     Pedal,
+    #[value(alias = "md")]
+    PedalHardness,
+    #[value(alias = "t")]
+    RidingMode,
     #[value(alias = "tlt")]
     TiltbackSpeed,
     #[value(alias = "pwt")]
@@ -285,6 +291,32 @@ pub(crate) enum AeroSetting {
     AlarmSpeed,
     #[value(alias = "ang")]
     Angle,
+    #[value(alias = "cal", alias = "calibration")]
+    GyroCalibration,
+    #[value(alias = "brake-alarm")]
+    BrakeOverpressureAlarm,
+    #[value(alias = "j")]
+    DisplayBacklight,
+    #[value(alias = "f")]
+    BeeperVolume,
+    #[value(alias = "l")]
+    DynamicAssist,
+    #[value(alias = "q")]
+    PedalDipCompensation,
+    #[value(alias = "o")]
+    LateralTiltLimit,
+    #[value(alias = "x")]
+    VoltageCorrection,
+    #[value(alias = "mxv")]
+    MaxChargeVoltageRaw,
+    #[value(alias = "units", alias = "k")]
+    WheelUnits,
+    #[value(alias = "n")]
+    HighSpeedMode,
+    #[value(alias = "p")]
+    LowBatteryMode,
+    #[value(alias = "w", alias = "transportation-mode")]
+    TransportMode,
     TripReset,
 }
 
@@ -2043,6 +2075,10 @@ mod tests {
             Ok(AeroSetting::AlarmSpeed)
         );
         assert_eq!(AeroSetting::from_str("ang", true), Ok(AeroSetting::Angle));
+        assert_eq!(
+            AeroSetting::from_str("md", true),
+            Ok(AeroSetting::PedalHardness)
+        );
     }
 
     #[test]

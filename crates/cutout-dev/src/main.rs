@@ -4,11 +4,20 @@ use std::{
     ffi::OsStr,
     fmt::Write,
     fs,
+    io::Write as _,
     path::{Path, PathBuf},
     process::{Command, ExitStatus},
 };
 
 use anyhow::{Context, Result, bail, ensure};
+use cutout_core::{
+    AeroAngleAdjustment, AeroBeeperVolume, AeroBrakeOverpressureAlarm, AeroDisplayBacklight,
+    AeroDynamicAssist, AeroHighSpeedMode, AeroLateralTiltLimit, AeroLowBatteryMode,
+    AeroMaxChargeVoltageRaw, AeroPedalDipCompensation, AeroPedalHardness, AeroPwmPercent,
+    AeroPwmSetting, AeroRidingMode, AeroSpeedSetting, AeroTransportMode, AeroVoltageCorrection,
+    AeroWheelUnits, DeviceCommand, LightState, MonotonicTimestamp, PedalMode, RideOperatingState,
+};
+use cutout_protocols::AeroSettingsSimulator;
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 
@@ -36,7 +45,6 @@ impl SwiftFfiLock {
                     path.display()
                 )
             })?;
-        use std::io::Write as _;
         writeln!(lock, "{}", std::process::id())?;
         Ok(Self { path })
     }
@@ -50,6 +58,7 @@ impl Drop for SwiftFfiLock {
 
 #[derive(Debug, Eq, PartialEq)]
 enum DevCommand {
+    AeroSettingsSimulator,
     SwiftFfi,
     IosDeploy(Vec<String>),
 }
@@ -58,6 +67,7 @@ fn main() -> Result<()> {
     let root = workspace_root();
     let args = env::args().skip(1).collect::<Vec<_>>();
     match parse_cli(&args)? {
+        DevCommand::AeroSettingsSimulator => run_aero_settings_simulator(),
         DevCommand::SwiftFfi => ensure_swift_ffi(&root),
         DevCommand::IosDeploy(launch_args) => deploy_ios(&root, &launch_args),
     }
@@ -65,6 +75,9 @@ fn main() -> Result<()> {
 
 fn parse_cli(args: &[String]) -> Result<DevCommand> {
     match args {
+        [simulator, scenario] if simulator == "simulator" && scenario == "aero-settings" => {
+            Ok(DevCommand::AeroSettingsSimulator)
+        }
         [command] if command == "swift-ffi" => Ok(DevCommand::SwiftFfi),
         [ios, deploy] if ios == "ios" && deploy == "deploy" => {
             Ok(DevCommand::IosDeploy(Vec::new()))
@@ -74,8 +87,99 @@ fn parse_cli(args: &[String]) -> Result<DevCommand> {
         {
             Ok(DevCommand::IosDeploy(launch_args.to_vec()))
         }
-        _ => bail!("usage: cutout-dev swift-ffi | cutout-dev ios deploy [-- <launch args>...]"),
+        _ => bail!(
+            "usage: cutout-dev simulator aero-settings | cutout-dev swift-ffi | cutout-dev ios deploy [-- <launch args>...]"
+        ),
     }
+}
+
+fn run_aero_settings_simulator() -> Result<()> {
+    let commands = [
+        DeviceCommand::SetAeroTiltbackSpeed(
+            AeroSpeedSetting::new(53).context("53 km/h is a valid Aero tiltback speed")?,
+        ),
+        DeviceCommand::SetAeroPwmPercent(AeroPwmSetting::Margin(
+            AeroPwmPercent::new(64).context("64% is a valid Aero PWM setting")?,
+        )),
+        DeviceCommand::SetAeroAlarmSpeed(
+            AeroSpeedSetting::new(56).context("56 km/h is a valid Aero alarm speed")?,
+        ),
+        DeviceCommand::SetAeroAngleAdjustment(
+            AeroAngleAdjustment::new(-12).context("-1.2 degrees is a valid Aero angle")?,
+        ),
+        DeviceCommand::SetPedalMode(PedalMode::Hard),
+        DeviceCommand::SetAeroRidingMode(AeroRidingMode::Medium),
+        DeviceCommand::SetAeroPedalHardness(
+            AeroPedalHardness::new(64).context("64% is a source-documented MD hardness")?,
+        ),
+        DeviceCommand::SetAeroDisplayBacklight(
+            AeroDisplayBacklight::new(80).context("80% is a valid Aero backlight")?,
+        ),
+        DeviceCommand::SetAeroBeeperVolume(
+            AeroBeeperVolume::new(40).context("40% is a valid Aero beeper volume")?,
+        ),
+        DeviceCommand::SetAeroDynamicAssist(
+            AeroDynamicAssist::new(35).context("35% is a valid Aero dynamic assist")?,
+        ),
+        DeviceCommand::SetAeroPedalDipCompensation(
+            AeroPedalDipCompensation::new(25)
+                .context("25% is a valid Aero pedal-dip compensation")?,
+        ),
+        DeviceCommand::SetAeroLateralTiltLimit(
+            AeroLateralTiltLimit::new(55).context("55 degrees is a valid Aero lateral limit")?,
+        ),
+        DeviceCommand::SetAeroVoltageCorrection(
+            AeroVoltageCorrection::new(-5).context("-0.5% is a valid Aero voltage correction")?,
+        ),
+        DeviceCommand::SetAeroMaxChargeVoltageRaw(
+            AeroMaxChargeVoltageRaw::new(46).context("46 is a valid raw Aero MxV value")?,
+        ),
+        DeviceCommand::SetAeroWheelUnits(AeroWheelUnits::Imperial),
+        DeviceCommand::SetAeroHighSpeedMode(AeroHighSpeedMode::new(true)),
+        DeviceCommand::SetAeroLowBatteryMode(AeroLowBatteryMode::new(false)),
+        DeviceCommand::SetAeroTransportMode(AeroTransportMode::new(true)),
+        DeviceCommand::SetAeroBrakeOverpressureAlarm(
+            AeroBrakeOverpressureAlarm::new(110)
+                .context("110% is a valid Aero brake overpressure alarm")?,
+        ),
+        DeviceCommand::SetAeroGyroCalibration,
+        DeviceCommand::SetAeroHighBeam(LightState::On),
+        DeviceCommand::SetLights(LightState::On),
+        DeviceCommand::ResetTripMeter,
+    ];
+    let mut simulator = AeroSettingsSimulator::default();
+    println!("model={}", AeroSettingsSimulator::registry_entry().model);
+    println!(
+        "gatt_fingerprints={:?}",
+        AeroSettingsSimulator::gatt_fingerprints()
+    );
+
+    for (index, command) in commands.into_iter().enumerate() {
+        let high_beam = matches!(command, DeviceCommand::SetAeroHighBeam(_));
+        let before = simulator.writes().len();
+        let monotonic_ms =
+            10 + u64::try_from(index).context("scenario index fits in a timestamp")?;
+        let _ = simulator.issue(
+            command,
+            RideOperatingState::Parked,
+            None,
+            MonotonicTimestamp::new(monotonic_ms),
+        );
+        if high_beam {
+            let _ = simulator.tick(MonotonicTimestamp::new(monotonic_ms + 1));
+        }
+        println!("command={command:?}");
+        for write in &simulator.writes()[before..] {
+            println!(
+                "  write channel={:?} mode={:?} payload={}",
+                write.channel,
+                write.mode,
+                hex(write.payload.as_slice())
+            );
+        }
+        println!("  readback={:?}", simulator.readback());
+    }
+    Ok(())
 }
 
 fn workspace_root() -> PathBuf {
@@ -338,30 +442,22 @@ fn source_fingerprint(root: &Path) -> Result<String> {
         PathBuf::from("Cargo.lock"),
         PathBuf::from("Cargo.toml"),
         PathBuf::from("rust-toolchain.toml"),
-        PathBuf::from("crates/cutout-core/Cargo.toml"),
-        PathBuf::from("crates/cutout-music/Cargo.toml"),
-        PathBuf::from("crates/cutout-mobile-ffi/Cargo.toml"),
-        PathBuf::from("crates/cutout-ride-maps/Cargo.toml"),
-        PathBuf::from("crates/cutout-protocols/Cargo.toml"),
-        PathBuf::from("crates/libcutout-persistence/Cargo.toml"),
     ]);
-    for directory in [
-        "crates/cutout-core/src",
-        "crates/cutout-music/src",
-        "crates/cutout-mobile-ffi/src",
-        "crates/cutout-ride-maps/src",
-        "crates/cutout-protocols/src",
-        "crates/cutout-protocols/registry",
-        "crates/libcutout-persistence/src",
-    ] {
-        collect_files(root, Path::new(directory), &mut files)?;
-    }
-    for optional in [
-        "crates/cutout-protocols/build.rs",
-        "crates/cutout-mobile-ffi/uniffi.toml",
-    ] {
-        if root.join(optional).is_file() {
-            files.insert(optional.into());
+    // Include workspace sources, including transitive FFI dependencies and the
+    // generator itself. Generated packages and build artifacts are not inputs.
+    for entry in fs::read_dir(root.join("crates"))? {
+        let path = entry?.path();
+        if !path.join("Cargo.toml").is_file() {
+            continue;
+        }
+        let relative = path.strip_prefix(root)?;
+        for directory in ["src", "registry"] {
+            collect_files(root, &relative.join(directory), &mut files)?;
+        }
+        for name in ["Cargo.toml", "build.rs", "uniffi.toml"] {
+            if path.join(name).is_file() {
+                files.insert(relative.join(name));
+            }
         }
     }
 
@@ -565,6 +661,13 @@ mod tests {
     }
 
     #[test]
+    fn simulator_accepts_the_aero_settings_scenario() {
+        let args = ["simulator", "aero-settings"].map(str::to_owned);
+
+        assert_eq!(parse_cli(&args).unwrap(), DevCommand::AeroSettingsSimulator);
+    }
+
+    #[test]
     fn ios_signing_requires_a_team_and_forwards_bundle_id() {
         assert!(ios_signing_arguments(None, None).is_err());
         assert_eq!(
@@ -606,11 +709,11 @@ mod tests {
         let _ = fs::remove_dir_all(&root);
         for directory in [
             "crates/cutout-core/src",
-            "crates/cutout-music/src",
             "crates/cutout-mobile-ffi/src",
-            "crates/cutout-ride-maps/src",
             "crates/cutout-protocols/src",
+            "crates/cutout-ride-maps/src",
             "crates/libcutout-persistence/src",
+            "crates/cutout-uniffi-bindgen/src",
         ] {
             fs::create_dir_all(root.join(directory)).unwrap();
         }
@@ -619,22 +722,32 @@ mod tests {
             "Cargo.toml",
             "rust-toolchain.toml",
             "crates/cutout-core/Cargo.toml",
-            "crates/cutout-music/Cargo.toml",
             "crates/cutout-mobile-ffi/Cargo.toml",
-            "crates/cutout-ride-maps/Cargo.toml",
             "crates/cutout-protocols/Cargo.toml",
+            "crates/cutout-ride-maps/Cargo.toml",
             "crates/libcutout-persistence/Cargo.toml",
+            "crates/cutout-uniffi-bindgen/Cargo.toml",
             "crates/cutout-core/src/lib.rs",
-            "crates/cutout-music/src/lib.rs",
         ] {
             fs::write(root.join(file), "original\n").unwrap();
         }
 
+        for file in [
+            "crates/cutout-core/src/lib.rs",
+            "crates/cutout-ride-maps/src/lib.rs",
+            "crates/libcutout-persistence/src/lib.rs",
+            "crates/cutout-uniffi-bindgen/src/main.rs",
+            "crates/libcutout-persistence/build.rs",
+        ] {
+            let before = source_fingerprint(&root).unwrap();
+            fs::write(root.join(file), "changed\n").unwrap();
+            assert_ne!(before, source_fingerprint(&root).unwrap(), "{file}");
+        }
         let before = source_fingerprint(&root).unwrap();
-        fs::write(root.join("crates/cutout-music/src/lib.rs"), "changed\n").unwrap();
-        let after = source_fingerprint(&root).unwrap();
+        let artifact = root.join("crates/cutout-mobile-ffi/generated");
+        fs::create_dir_all(&artifact).unwrap();
+        fs::write(artifact.join("lib.a"), "generated").unwrap();
+        assert_eq!(before, source_fingerprint(&root).unwrap());
         fs::remove_dir_all(root).unwrap();
-
-        assert_ne!(before, after);
     }
 }

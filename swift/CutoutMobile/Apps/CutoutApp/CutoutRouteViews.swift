@@ -161,6 +161,14 @@ struct EucTuneRouteView: View {
     var body: some View {
         TimelineView(.periodic(from: .now, by: 1)) { _ in
             Form {
+                if model.settingsCapabilities?.validationMode == true {
+                    Section {
+                        Text(localizedAppText("settings.validation.description"))
+                    } header: {
+                        Text(localizedAppText("settings.validation.title"))
+                    }
+                    .accessibilityIdentifier("settings.validationMode")
+                }
                 Section {
                     HStack {
                         Button(localizedAppText("settings.headlight.turn_on")) {
@@ -174,6 +182,18 @@ struct EucTuneRouteView: View {
                     .disabled(model.phase != .live || !model.headlightControlAvailable)
                     .accessibilityHint(model.headlightStatusText)
                     .accessibilityIdentifier("settings.control.headlight")
+                    if model.manualHeadlightControlVisible {
+                        Toggle(
+                            localizedAppText("settings.headlight.title"),
+                            isOn: Binding(
+                                get: { model.manualHeadlightOn },
+                                set: { model.setManualHeadlight($0) }
+                            )
+                        )
+                        .disabled(model.phase != .live || !model.manualHeadlightControlAvailable)
+                        .accessibilityIdentifier("settings.manualHeadlight")
+                        .accessibilityHint(model.manualHeadlightStatusText)
+                    }
                     if model.pedalModeControlAvailable {
                         EucPedalModeControl(model: model)
                     }
@@ -230,12 +250,18 @@ struct EucTuneRouteView: View {
                         Button(localizedAppText("settings.trip_meter.reset"), role: .destructive) {
                             showingTripResetConfirmation = true
                         }
-                        .disabled(model.phase != .live)
+                        .disabled(model.phase != .live || model.tripMeterResetState?.kind == .pending)
                         .accessibilityIdentifier("settings.control.resetTripMeter")
                     } header: {
                         Text(localizedAppText("settings.trip_meter.title"))
                     } footer: {
-                        Text(localizedAppText("settings.trip_meter.footer"))
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text(localizedAppText("settings.trip_meter.footer"))
+                            if let status = EucTripMeterResetPresentation.statusText(model.tripMeterResetState) {
+                                Text(status)
+                                    .accessibilityIdentifier("settings.tripMeterReset.status")
+                            }
+                        }
                     }
                     .confirmationDialog(
                         localizedAppText("settings.trip_meter.confirm_title"),
@@ -251,9 +277,27 @@ struct EucTuneRouteView: View {
 
                 if model.aeroTiltbackSpeedControlAvailable
                     || model.aeroPwmPercentControlAvailable
+                    || model.aeroPedalHardnessControlAvailable
                     || model.aeroAlarmSpeedControlAvailable
                     || model.aeroAngleAdjustmentControlAvailable {
                     EucAeroSettingsControls(model: model)
+                }
+
+                if model.aeroDisplayBacklightControlAvailable
+                    || model.aeroWheelUnitsControlAvailable
+                    || model.aeroBeeperVolumeControlAvailable
+                    || model.aeroDynamicAssistControlAvailable
+                    || model.aeroPedalDipCompensationControlAvailable
+                    || model.aeroLateralTiltLimitControlAvailable
+                    || model.aeroVoltageCorrectionControlAvailable
+                    || model.aeroMaxChargeVoltageRawControlAvailable
+                    || model.aeroHighSpeedModeControlAvailable
+                    || model.aeroLowBatteryModeControlAvailable
+                    || model.aeroTransportModeControlAvailable
+                    || model.aeroGyroCalibrationControlAvailable
+                    || model.aeroRidingModeControlAvailable
+                    || model.aeroBrakeOverpressureAlarmControlAvailable {
+                    EucAeroAdditionalSettingsControls(model: model)
                 }
 
                 if let settings = model.settingsReadback?.eucGarageSettings {
@@ -364,6 +408,16 @@ struct EucTuneRouteView: View {
 
                 if let capabilities = model.settingsCapabilities {
                     Section {
+                        if model.manualHeadlightControlVisible {
+                            EucSettingCapabilityRow(
+                                id: "manualHeadlight",
+                                title: localizedAppText("settings.headlight.title"),
+                                support: capabilities.headlight,
+                                state: model.manualHeadlightState?.kind,
+                                confirmedAt: model.manualHeadlightState?.confirmedAt,
+                                now: model.currentMonotonicTime
+                            )
+                        }
                         EucSettingCapabilityRow(
                             id: "aeroHighBeam",
                             title: localizedAppText("settings.high_beam.title"),
@@ -437,6 +491,14 @@ struct EucTuneRouteView: View {
                             now: model.currentMonotonicTime
                         )
                         EucSettingCapabilityRow(
+                            id: "aeroPedalHardness",
+                            title: localizedAppText("settings.aero.pedal_hardness.title"),
+                            support: capabilities.aeroPedalHardness,
+                            state: model.aeroPedalHardnessState?.kind,
+                            confirmedAt: model.aeroPedalHardnessState?.confirmedAt,
+                            now: model.currentMonotonicTime
+                        )
+                        EucSettingCapabilityRow(
                             id: "aeroAlarmSpeed",
                             title: localizedAppText("settings.aero.alarm.title"),
                             support: capabilities.aeroAlarmSpeed,
@@ -450,6 +512,118 @@ struct EucTuneRouteView: View {
                             support: capabilities.aeroAngleAdjustment,
                             state: model.aeroAngleAdjustmentState?.kind,
                             confirmedAt: model.aeroAngleAdjustmentState?.confirmedAt,
+                            now: model.currentMonotonicTime
+                        )
+                        EucSettingCapabilityRow(
+                            id: "aeroDisplayBacklight",
+                            title: localizedAppText("settings.aero.display_backlight.title"),
+                            support: capabilities.aeroDisplayBacklight,
+                            state: model.aeroDisplayBacklightState?.kind,
+                            confirmedAt: model.aeroDisplayBacklightState?.confirmedAt,
+                            now: model.currentMonotonicTime
+                        )
+                        EucSettingCapabilityRow(
+                            id: "aeroBeeperVolume",
+                            title: localizedAppText("settings.aero.beeper_volume.title"),
+                            support: capabilities.aeroBeeperVolume,
+                            state: model.aeroBeeperVolumeState?.kind,
+                            confirmedAt: model.aeroBeeperVolumeState?.confirmedAt,
+                            now: model.currentMonotonicTime
+                        )
+                        EucSettingCapabilityRow(
+                            id: "aeroDynamicAssist",
+                            title: localizedAppText("settings.aero.dynamic_assist.title"),
+                            support: capabilities.aeroDynamicAssist,
+                            state: model.aeroDynamicAssistState?.kind,
+                            confirmedAt: model.aeroDynamicAssistState?.confirmedAt,
+                            now: model.currentMonotonicTime
+                        )
+                        EucSettingCapabilityRow(
+                            id: "aeroPedalDipCompensation",
+                            title: localizedAppText("settings.aero.pedal_dip_compensation.title"),
+                            support: capabilities.aeroPedalDipCompensation,
+                            state: model.aeroPedalDipCompensationState?.kind,
+                            confirmedAt: model.aeroPedalDipCompensationState?.confirmedAt,
+                            now: model.currentMonotonicTime
+                        )
+                        EucSettingCapabilityRow(
+                            id: "aeroLateralTiltLimit",
+                            title: localizedAppText("settings.aero.lateral_tilt_limit.title"),
+                            support: capabilities.aeroLateralTiltLimit,
+                            state: model.aeroLateralTiltLimitState?.kind,
+                            confirmedAt: model.aeroLateralTiltLimitState?.confirmedAt,
+                            now: model.currentMonotonicTime
+                        )
+                        EucSettingCapabilityRow(
+                            id: "aeroVoltageCorrection",
+                            title: localizedAppText("settings.aero.voltage_correction.title"),
+                            support: capabilities.aeroVoltageCorrection,
+                            state: model.aeroVoltageCorrectionState?.kind,
+                            confirmedAt: model.aeroVoltageCorrectionState?.confirmedAt,
+                            now: model.currentMonotonicTime
+                        )
+                        EucSettingCapabilityRow(
+                            id: "aeroMaxChargeVoltageRaw",
+                            title: localizedAppText("settings.aero.max_charge_raw.title"),
+                            support: capabilities.aeroMaxChargeVoltageRaw,
+                            state: model.aeroMaxChargeVoltageRawState?.kind,
+                            confirmedAt: model.aeroMaxChargeVoltageRawState?.confirmedAt,
+                            now: model.currentMonotonicTime
+                        )
+                        EucSettingCapabilityRow(
+                            id: "aeroGyroCalibration",
+                            title: localizedAppText("settings.aero.gyro_calibration.title"),
+                            support: capabilities.aeroGyroCalibration,
+                            state: model.aeroGyroCalibrationState?.kind,
+                            confirmedAt: model.aeroGyroCalibrationState?.confirmedAt,
+                            now: model.currentMonotonicTime
+                        )
+                        EucSettingCapabilityRow(
+                            id: "aeroWheelUnits",
+                            title: localizedAppText("settings.aero.wheel_units.title"),
+                            support: capabilities.aeroWheelUnits,
+                            state: model.aeroWheelUnitsState?.kind,
+                            confirmedAt: model.aeroWheelUnitsState?.confirmedAt,
+                            now: model.currentMonotonicTime
+                        )
+                        EucSettingCapabilityRow(
+                            id: "aeroHighSpeedMode",
+                            title: localizedAppText("settings.aero.high_speed_mode.title"),
+                            support: capabilities.aeroHighSpeedMode,
+                            state: model.aeroHighSpeedModeState?.kind,
+                            confirmedAt: model.aeroHighSpeedModeState?.confirmedAt,
+                            now: model.currentMonotonicTime
+                        )
+                        EucSettingCapabilityRow(
+                            id: "aeroLowBatteryMode",
+                            title: localizedAppText("settings.aero.low_battery_mode.title"),
+                            support: capabilities.aeroLowBatteryMode,
+                            state: model.aeroLowBatteryModeState?.kind,
+                            confirmedAt: model.aeroLowBatteryModeState?.confirmedAt,
+                            now: model.currentMonotonicTime
+                        )
+                        EucSettingCapabilityRow(
+                            id: "aeroTransportMode",
+                            title: localizedAppText("settings.aero.transport_mode.title"),
+                            support: capabilities.aeroTransportMode,
+                            state: model.aeroTransportModeState?.kind,
+                            confirmedAt: model.aeroTransportModeState?.confirmedAt,
+                            now: model.currentMonotonicTime
+                        )
+                        EucSettingCapabilityRow(
+                            id: "aeroRidingMode",
+                            title: localizedAppText("settings.aero.riding_mode.title"),
+                            support: capabilities.aeroRidingMode,
+                            state: model.aeroRidingModeState?.kind,
+                            confirmedAt: model.aeroRidingModeState?.confirmedAt,
+                            now: model.currentMonotonicTime
+                        )
+                        EucSettingCapabilityRow(
+                            id: "aeroBrakeOverpressureAlarm",
+                            title: localizedAppText("settings.aero.brake_overpressure.title"),
+                            support: capabilities.aeroBrakeOverpressureAlarm,
+                            state: model.aeroBrakeOverpressureAlarmState?.kind,
+                            confirmedAt: model.aeroBrakeOverpressureAlarmState?.confirmedAt,
                             now: model.currentMonotonicTime
                         )
                         EucSettingCapabilityRow(
@@ -471,7 +645,9 @@ struct EucTuneRouteView: View {
                     } header: {
                         Text(localizedAppText("settings.capabilities.title"))
                     } footer: {
-                        Text(localizedAppText("settings.capabilities.footer"))
+                        Text(localizedAppText(capabilities.validationMode
+                            ? "settings.validation.description"
+                            : "settings.capabilities.footer"))
                     }
                 }
             }
@@ -484,10 +660,12 @@ private struct EucAeroSettingsControls: View {
     let model: CutoutAppModel
     @State private var tiltbackSpeed: Int
     @State private var pwmPercent: Int
+    @State private var pedalHardnessPercent: Int
     @State private var alarmSpeed: Int
     @State private var angleTenths: Int
     @State private var seededTiltback = false
     @State private var seededPwm = false
+    @State private var seededPedalHardness = false
     @State private var seededAlarm = false
     @State private var seededAngle = false
 
@@ -497,10 +675,12 @@ private struct EucAeroSettingsControls: View {
         let values = AeroSettingsFormValues(model: model)
         _tiltbackSpeed = State(initialValue: values.tiltbackSpeed)
         _pwmPercent = State(initialValue: values.pwmPercent)
+        _pedalHardnessPercent = State(initialValue: values.pedalHardnessPercent)
         _alarmSpeed = State(initialValue: values.alarmSpeed)
         _angleTenths = State(initialValue: values.angleTenths)
         _seededTiltback = State(initialValue: values.tiltback != nil)
         _seededPwm = State(initialValue: values.pwm != nil)
+        _seededPedalHardness = State(initialValue: values.pedalHardness != nil)
         _seededAlarm = State(initialValue: values.alarm != nil)
         _seededAngle = State(initialValue: values.angle != nil)
     }
@@ -508,28 +688,51 @@ private struct EucAeroSettingsControls: View {
     var body: some View {
         Section {
             if model.aeroTiltbackSpeedControlAvailable {
-                Stepper(value: $tiltbackSpeed, in: 1...99) {
+                Stepper(value: $tiltbackSpeed, in: 10...200) {
                     Text("\(localizedAppText("settings.aero.tiltback.title")): \(tiltbackSpeed) km/h")
                 }
                 Button(localizedAppText("settings.aero.send"), action: sendTiltbackSpeed)
                 .accessibilityIdentifier("settings.control.aeroTiltbackSpeed")
             }
             if model.aeroPwmPercentControlAvailable {
-                Stepper(value: $pwmPercent, in: 0...100) {
+                Stepper(value: $pwmPercent, in: 0...70) {
                     Text("\(localizedAppText("settings.aero.pwm.title")): \(pwmPercent)%")
                 }
                 Button(localizedAppText("settings.aero.send"), action: sendPwmPercent)
                 .accessibilityIdentifier("settings.control.aeroPwmPercent")
+                Button(localizedAppText("settings.aero.pwm.off"), action: disablePwm)
+                    .accessibilityIdentifier("settings.control.aeroPwmOff")
+                EucSettingReadbackRow(
+                    id: "aeroPwm",
+                    title: localizedAppText("settings.aero.current_value"),
+                    value: model.aeroPwmPercentState?.currentIsOff == true
+                        ? localizedAppText("settings.aero.pwm.off")
+                        : model.aeroPwmPercentState?.current.map { "\($0.percent)%" }
+                            ?? localizedAppText("settings.readback.unavailable")
+                )
+            }
+            if model.aeroPedalHardnessControlAvailable {
+                Stepper(value: $pedalHardnessPercent, in: 0...100) {
+                    Text("\(localizedAppText("settings.aero.pedal_hardness.title")): \(pedalHardnessPercent)%")
+                }
+                Button(localizedAppText("settings.aero.send"), action: sendPedalHardness)
+                    .accessibilityIdentifier("settings.control.aeroPedalHardness")
+                EucSettingReadbackRow(
+                    id: "aeroPedalHardness",
+                    title: localizedAppText("settings.aero.pedal_hardness.current"),
+                    value: model.aeroPedalHardnessState?.current.map { "\($0.percent)%" }
+                        ?? localizedAppText("settings.readback.unavailable")
+                )
             }
             if model.aeroAlarmSpeedControlAvailable {
-                Stepper(value: $alarmSpeed, in: 1...99) {
+                Stepper(value: $alarmSpeed, in: 10...200) {
                     Text("\(localizedAppText("settings.aero.alarm.title")): \(alarmSpeed) km/h")
                 }
                 Button(localizedAppText("settings.aero.send"), action: sendAlarmSpeed)
                 .accessibilityIdentifier("settings.control.aeroAlarmSpeed")
             }
             if model.aeroAngleAdjustmentControlAvailable {
-                Stepper(value: $angleTenths, in: -100...100) {
+                Stepper(value: $angleTenths, in: -80...80) {
                     Text("\(localizedAppText("settings.aero.angle.title")): \(Double(angleTenths) / 10, specifier: "%.1f")°")
                 }
                 Button(localizedAppText("settings.aero.send"), action: sendAngleAdjustment)
@@ -545,6 +748,9 @@ private struct EucAeroSettingsControls: View {
             seedFromDeviceIfNeeded()
         }
         .onChange(of: model.aeroPwmPercentState?.current, initial: true) { _, _ in
+            seedFromDeviceIfNeeded()
+        }
+        .onChange(of: model.aeroPedalHardnessState?.current, initial: true) { _, _ in
             seedFromDeviceIfNeeded()
         }
         .onChange(of: model.aeroAlarmSpeedState?.current, initial: true) { _, _ in
@@ -563,6 +769,10 @@ private struct EucAeroSettingsControls: View {
         if !seededPwm, let current = model.aeroPwmPercentState?.current {
             pwmPercent = Int(current.percent)
             seededPwm = true
+        }
+        if !seededPedalHardness, let current = model.aeroPedalHardnessState?.current {
+            pedalHardnessPercent = Int(current.percent)
+            seededPedalHardness = true
         }
         if !seededAlarm, let current = model.aeroAlarmSpeedState?.current {
             alarmSpeed = Int(current.kilometresPerHour)
@@ -584,6 +794,15 @@ private struct EucAeroSettingsControls: View {
         _ = model.setAeroPwmPercent(setting)
     }
 
+    private func disablePwm() {
+        _ = model.setAeroPwmOff()
+    }
+
+    private func sendPedalHardness() {
+        guard let setting = AeroPedalHardness(percent: UInt8(pedalHardnessPercent)) else { return }
+        _ = model.setAeroPedalHardness(setting)
+    }
+
     private func sendAlarmSpeed() {
         guard let setting = AeroSpeedSetting(kilometresPerHour: UInt8(alarmSpeed)) else { return }
         _ = model.setAeroAlarmSpeed(setting)
@@ -593,30 +812,36 @@ private struct EucAeroSettingsControls: View {
         guard let setting = AeroAngleAdjustment(tenthsOfDegree: Int8(angleTenths)) else { return }
         _ = model.setAeroAngleAdjustment(setting)
     }
+
 }
 
 struct AeroSettingsFormValues: Equatable {
     let tiltbackSpeed: Int
     let pwmPercent: Int
+    let pedalHardnessPercent: Int
     let alarmSpeed: Int
     let angleTenths: Int
     let tiltback: AeroSpeedSetting?
     let pwm: AeroPwmPercent?
+    let pedalHardness: AeroPedalHardness?
     let alarm: AeroSpeedSetting?
     let angle: AeroAngleAdjustment?
 
     init(
         tiltback: AeroSpeedSetting?,
         pwm: AeroPwmPercent?,
+        pedalHardness: AeroPedalHardness? = nil,
         alarm: AeroSpeedSetting?,
         angle: AeroAngleAdjustment?
     ) {
         self.tiltback = tiltback
         self.pwm = pwm
+        self.pedalHardness = pedalHardness
         self.alarm = alarm
         self.angle = angle
         tiltbackSpeed = Int(tiltback?.kilometresPerHour ?? 20)
         pwmPercent = Int(pwm?.percent ?? 60)
+        pedalHardnessPercent = Int(pedalHardness?.percent ?? 60)
         alarmSpeed = Int(alarm?.kilometresPerHour ?? 20)
         angleTenths = Int(angle?.tenthsOfDegree ?? 0)
     }
@@ -626,11 +851,308 @@ struct AeroSettingsFormValues: Equatable {
         self.init(
             tiltback: model.aeroTiltbackSpeedState?.current,
             pwm: model.aeroPwmPercentState?.current,
+            pedalHardness: model.aeroPedalHardnessState?.current,
             alarm: model.aeroAlarmSpeedState?.current,
             angle: model.aeroAngleAdjustmentState?.current
         )
     }
 }
+
+private struct EucAeroAdditionalSettingsControls: View {
+    let model: CutoutAppModel
+
+    var body: some View {
+        Section {
+            if model.aeroWheelUnitsControlAvailable {
+                EucAeroWheelUnitsControl(model: model)
+            }
+            if model.aeroDisplayBacklightControlAvailable {
+                EucAeroNumericSettingControl(
+                    title: localizedAppText("settings.aero.display_backlight.title"),
+                    id: "aeroDisplayBacklight",
+                    range: 0...100,
+                    currentValue: model.aeroDisplayBacklightState?.current.map { Int($0.percent) },
+                    unit: .percent
+                ) { value in
+                    guard let setting = AeroDisplayBacklight(percent: UInt8(value)) else { return }
+                    _ = model.setAeroDisplayBacklight(setting)
+                }
+            }
+            if model.aeroBeeperVolumeControlAvailable {
+                EucAeroNumericSettingControl(
+                    title: localizedAppText("settings.aero.beeper_volume.title"),
+                    id: "aeroBeeperVolume",
+                    range: 0...100,
+                    currentValue: model.aeroBeeperVolumeState?.current.map { Int($0.percent) },
+                    unit: .percent
+                ) { value in
+                    guard let setting = AeroBeeperVolume(percent: UInt8(value)) else { return }
+                    _ = model.setAeroBeeperVolume(setting)
+                }
+            }
+            if model.aeroDynamicAssistControlAvailable {
+                EucAeroNumericSettingControl(
+                    title: localizedAppText("settings.aero.dynamic_assist.title"),
+                    id: "aeroDynamicAssist",
+                    range: 0...100,
+                    currentValue: model.aeroDynamicAssistState?.current.map { Int($0.percent) },
+                    unit: .percent
+                ) { value in
+                    guard let setting = AeroDynamicAssist(percent: UInt8(value)) else { return }
+                    _ = model.setAeroDynamicAssist(setting)
+                }
+            }
+            if model.aeroPedalDipCompensationControlAvailable {
+                EucAeroNumericSettingControl(
+                    title: localizedAppText("settings.aero.pedal_dip_compensation.title"),
+                    id: "aeroPedalDipCompensation",
+                    range: 0...100,
+                    currentValue: model.aeroPedalDipCompensationState?.current.map { Int($0.percent) },
+                    unit: .percent
+                ) { value in
+                    guard let setting = AeroPedalDipCompensation(percent: UInt8(value)) else { return }
+                    _ = model.setAeroPedalDipCompensation(setting)
+                }
+            }
+            if model.aeroLateralTiltLimitControlAvailable {
+                EucAeroNumericSettingControl(
+                    title: localizedAppText("settings.aero.lateral_tilt_limit.title"),
+                    id: "aeroLateralTiltLimit",
+                    range: 35...75,
+                    currentValue: model.aeroLateralTiltLimitState?.current.map { Int($0.degrees) },
+                    unit: .degrees
+                ) { value in
+                    guard let setting = AeroLateralTiltLimit(degrees: UInt8(value)) else { return }
+                    _ = model.setAeroLateralTiltLimit(setting)
+                }
+            }
+            if model.aeroVoltageCorrectionControlAvailable {
+                EucAeroNumericSettingControl(
+                    title: localizedAppText("settings.aero.voltage_correction.title"),
+                    id: "aeroVoltageCorrection",
+                    range: -15...15,
+                    currentValue: model.aeroVoltageCorrectionState?.current.map { Int($0.tenthsOfPercent) },
+                    unit: .tenthsOfPercent
+                ) { value in
+                    guard let setting = AeroVoltageCorrection(tenthsOfPercent: Int8(value)) else { return }
+                    _ = model.setAeroVoltageCorrection(setting)
+                }
+            }
+            if model.aeroMaxChargeVoltageRawControlAvailable {
+                EucAeroNumericSettingControl(
+                    title: localizedAppText("settings.aero.max_charge_raw.title"),
+                    id: "aeroMaxChargeVoltageRaw",
+                    range: 0...70,
+                    currentValue: model.aeroMaxChargeVoltageRawState?.current.map { Int($0.raw) },
+                    unit: .raw
+                ) { value in
+                    guard let setting = AeroMaxChargeVoltageRaw(raw: UInt8(value)) else { return }
+                    _ = model.setAeroMaxChargeVoltageRaw(setting)
+                }
+            }
+            if model.aeroHighSpeedModeControlAvailable {
+                EucAeroToggleControl(
+                    title: localizedAppText("settings.aero.high_speed_mode.title"),
+                    id: "aeroHighSpeedMode",
+                    currentValue: model.aeroHighSpeedModeState?.current,
+                    send: { _ = model.setAeroHighSpeedMode(AeroToggle(enabled: $0)) }
+                )
+            }
+            if model.aeroLowBatteryModeControlAvailable {
+                EucAeroToggleControl(
+                    title: localizedAppText("settings.aero.low_battery_mode.title"),
+                    id: "aeroLowBatteryMode",
+                    currentValue: model.aeroLowBatteryModeState?.current,
+                    send: { _ = model.setAeroLowBatteryMode(AeroToggle(enabled: $0)) }
+                )
+            }
+            if model.aeroTransportModeControlAvailable {
+                EucAeroToggleControl(
+                    title: localizedAppText("settings.aero.transport_mode.title"),
+                    id: "aeroTransportMode",
+                    currentValue: model.aeroTransportModeState?.current,
+                    send: { _ = model.setAeroTransportMode(AeroToggle(enabled: $0)) }
+                )
+            }
+            if model.aeroRidingModeControlAvailable {
+                EucAeroRidingModeControl(model: model)
+            }
+            if model.aeroBrakeOverpressureAlarmControlAvailable {
+                EucAeroNumericSettingControl(
+                    title: localizedAppText("settings.aero.brake_overpressure.title"),
+                    id: "aeroBrakeOverpressureAlarm",
+                    range: 90...125,
+                    currentValue: model.aeroBrakeOverpressureAlarmState?.current.map { Int($0.percent) },
+                    unit: .percent
+                ) { value in
+                    guard let setting = AeroBrakeOverpressureAlarm(percent: UInt8(value)) else { return }
+                    _ = model.setAeroBrakeOverpressureAlarm(setting)
+                }
+            }
+            if model.aeroGyroCalibrationControlAvailable {
+                VStack(alignment: .leading, spacing: 8) {
+                    let state = model.aeroGyroCalibrationState?.current
+                    Button(localizedAppText(
+                        state == .complete
+                            ? "settings.aero.gyro_calibration.stop"
+                            : "settings.aero.gyro_calibration.title"
+                    )) {
+                        _ = model.setAeroGyroCalibration()
+                    }
+                    .accessibilityIdentifier("settings.control.aeroGyroCalibration")
+                    .disabled(state == .waiting)
+                    if let state {
+                        Text(localizedAppText("settings.aero.gyro_calibration.\(state.localizationKey)"))
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+            }
+        } header: {
+            Text(localizedAppText("settings.aero.additional.title"))
+        } footer: {
+            Text(localizedAppText("settings.aero.footer"))
+        }
+        .disabled(model.phase != .live)
+    }
+}
+
+private struct EucAeroRidingModeControl: View {
+    let model: CutoutAppModel
+    @State private var draftValue: AeroRidingMode?
+
+    private var selectedValue: AeroRidingMode { draftValue ?? model.aeroRidingModeState?.current ?? .medium }
+
+    var body: some View {
+        Picker(localizedAppText("settings.aero.riding_mode.title"), selection: Binding(
+            get: { selectedValue },
+            set: { draftValue = $0 }
+        )) {
+            ForEach(AeroRidingMode.allCases, id: \.self) { mode in
+                Text(localizedAppText("settings.aero.riding_mode.\(mode.localizationKey)"))
+                    .tag(mode)
+            }
+        }
+        .pickerStyle(.menu)
+        Button(localizedAppText("settings.aero.send")) {
+            _ = model.setAeroRidingMode(selectedValue)
+        }
+        .accessibilityIdentifier("settings.control.aeroRidingMode")
+    }
+}
+
+private extension AeroRidingMode {
+    var localizationKey: String {
+        switch self {
+        case .hard: "hard"
+        case .medium: "medium"
+        case .soft: "soft"
+        }
+    }
+}
+
+private extension AeroGyroCalibrationState {
+    var localizationKey: String {
+        switch self {
+        case .idle: "idle"
+        case .waiting: "waiting"
+        case .complete: "complete"
+        }
+    }
+}
+
+private struct EucAeroToggleControl: View {
+    let title: String
+    let id: String
+    let currentValue: Bool?
+    let send: (Bool) -> Void
+    @State private var draftValue: Bool?
+
+    private var selectedValue: Bool { draftValue ?? currentValue ?? false }
+
+    var body: some View {
+        Toggle(title, isOn: Binding(
+            get: { selectedValue },
+            set: { draftValue = $0 }
+        ))
+        Button(localizedAppText("settings.aero.send")) {
+            send(selectedValue)
+        }
+        .accessibilityIdentifier("settings.control.\(id)")
+    }
+}
+
+private struct EucAeroWheelUnitsControl: View {
+    let model: CutoutAppModel
+    @State private var draftValue: AeroWheelUnits?
+
+    private var selectedValue: AeroWheelUnits? { draftValue ?? model.aeroWheelUnitsState?.current }
+
+    var body: some View {
+        Picker(localizedAppText("settings.aero.wheel_units.title"), selection: Binding(
+            get: { selectedValue },
+            set: { draftValue = $0 }
+        )) {
+            Text(localizedAppText("settings.readback.unavailable")).tag(AeroWheelUnits?.none)
+            Text(localizedAppText("settings.aero.wheel_units.metric")).tag(AeroWheelUnits?.some(.metric))
+            Text(localizedAppText("settings.aero.wheel_units.imperial")).tag(AeroWheelUnits?.some(.imperial))
+        }
+        .pickerStyle(.menu)
+        Button(localizedAppText("settings.aero.send")) {
+            guard let selectedValue else { return }
+            _ = model.setAeroWheelUnits(selectedValue)
+        }
+        .disabled(selectedValue == nil)
+        .accessibilityIdentifier("settings.control.aeroWheelUnits")
+    }
+}
+
+private struct EucAeroNumericSettingControl: View {
+    let title: String
+    let id: String
+    let range: ClosedRange<Int>
+    let currentValue: Int?
+    let unit: EucNumericSettingUnit
+    let send: (Int) -> Void
+    @State private var draftValue: Int?
+
+    private var selectedValue: Int { draftValue ?? currentValue ?? range.lowerBound }
+
+    var body: some View {
+        Stepper(
+            value: Binding(get: { selectedValue }, set: { draftValue = $0 }),
+            in: range
+        ) {
+            Text("\(title): \(unit.text(selectedValue))")
+        }
+        Button(localizedAppText("settings.aero.send")) {
+            send(selectedValue)
+        }
+        .accessibilityIdentifier("settings.control.\(id)")
+        EucSettingReadbackRow(
+            id: id,
+            title: localizedAppText("settings.aero.current_value"),
+            value: currentValue.map(unit.text) ?? localizedAppText("settings.readback.unavailable")
+        )
+    }
+}
+
+enum EucNumericSettingUnit {
+    case percent
+    case degrees
+    case tenthsOfPercent
+    case raw
+
+    func text(_ value: Int) -> String {
+        switch self {
+        case .percent: "\(value)%"
+        case .degrees: "\(value)°"
+        case .tenthsOfPercent: String(format: "%.1f%%", Double(value) / 10)
+        case .raw: "(value)"
+        }
+    }
+}
+
 
 private struct EucPedalModeControl: View {
     let model: CutoutAppModel
@@ -984,6 +1506,34 @@ private struct EucSettingCapabilityRow: View {
         .accessibilityIdentifier("settings.capability.\(id)")
     }
 
+}
+
+enum EucTripMeterResetPresentation {
+    static func statusText(_ state: TripMeterResetState?) -> String? {
+        switch state?.kind {
+        case .pending:
+            localizedAppText("settings.trip_meter.pending")
+        case .confirmed:
+            localizedAppText("settings.trip_meter.confirmed")
+        case .timedOut:
+            localizedAppText("settings.trip_meter.timed_out")
+        case .failed:
+            localizedAppText("settings.trip_meter.failed")
+        case .refused:
+            switch state?.refusalReason {
+            case .missingArm:
+                localizedAppText("settings.trip_meter.refused.stationary")
+            case .expiredArm:
+                localizedAppText("settings.trip_meter.refused.expired")
+            case .busy:
+                localizedAppText("settings.trip_meter.refused.busy")
+            default:
+                localizedAppText("settings.trip_meter.refused")
+            }
+        case .unknown, .current, nil:
+            nil
+        }
+    }
 }
 
 enum EucSettingCapabilityPresentation {

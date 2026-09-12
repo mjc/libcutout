@@ -1440,7 +1440,7 @@ func testVescRideSnapshotProjectsBatteryLevelAndUpdateTime() throws {
         XCTAssertEqual(falcon.settingsCapabilities.aeroHighBeam, .unsupported)
         XCTAssertEqual(falcon.settingsCapabilities.headlight, .supported)
         XCTAssertEqual(aero.settingsCapabilities.taillight, .unsupported)
-        XCTAssertEqual(aero.settingsCapabilities.pedalMode, .supported)
+        XCTAssertEqual(aero.settingsCapabilities.pedalMode, .unverified)
         XCTAssertEqual(aero.settingsCapabilities.rollAngle, .unsupported)
         XCTAssertEqual(falcon.settingsCapabilities.rollAngle, .supported)
         XCTAssertEqual(aero.settingsCapabilities.accelerationAssist, .unsupported)
@@ -1449,6 +1449,100 @@ func testVescRideSnapshotProjectsBatteryLevelAndUpdateTime() throws {
         XCTAssertEqual(falcon.settingsCapabilities.begodeBeeperVolume, .supported)
         XCTAssertEqual(falcon.settingsCapabilities.begodeLedMode, .supported)
     }
+
+    func testExplicitValidationModePreservesEvidenceAndAllowsOnlyUnverifiedSettings() throws {
+        let session = try ElectricUnicycleSession(model: .aero, allowUnverifiedSettings: true)
+        let capabilities = session.settingsCapabilities
+
+        XCTAssertTrue(capabilities.validationMode)
+        XCTAssertEqual(capabilities.aeroPwmPercent, .unverified)
+        XCTAssertEqual(capabilities.aeroPedalHardness, .unverified)
+        XCTAssertTrue(capabilities.canSubmit(\.aeroPwmPercent))
+        XCTAssertTrue(capabilities.canSubmit(\.aeroPedalHardness))
+        XCTAssertTrue(capabilities.canSubmit(\.resetTripMeter))
+        XCTAssertTrue(capabilities.canSubmit(\.headlight))
+        XCTAssertFalse(capabilities.canSubmit(\.taillight))
+        XCTAssertEqual(session.tripMeterResetState.kind, .unknown)
+    }
+
+    func testAeroPedalHardnessUsesTheDocumentedNumericRange() {
+        XCTAssertEqual(AeroPedalHardness(percent: 0)?.percent, 0)
+        XCTAssertEqual(AeroPedalHardness(percent: 75)?.percent, 75)
+        XCTAssertEqual(AeroPedalHardness(percent: 100)?.percent, 100)
+        XCTAssertNil(AeroPedalHardness(percent: 101))
+        XCTAssertNil(AeroPedalHardness(percent: 255))
+    }
+
+    func testAdditionalAeroValueRangesAndDefaultWriteRefusals() throws {
+        XCTAssertNotNil(AeroDisplayBacklight(percent: 0))
+        XCTAssertNotNil(AeroDisplayBacklight(percent: 100))
+        XCTAssertNil(AeroDisplayBacklight(percent: 101))
+        XCTAssertNotNil(AeroBeeperVolume(percent: 0))
+        XCTAssertNotNil(AeroBeeperVolume(percent: 100))
+        XCTAssertNil(AeroBeeperVolume(percent: 101))
+        XCTAssertNotNil(AeroDynamicAssist(percent: 0))
+        XCTAssertNotNil(AeroDynamicAssist(percent: 100))
+        XCTAssertNil(AeroDynamicAssist(percent: 101))
+        XCTAssertNotNil(AeroPedalDipCompensation(percent: 0))
+        XCTAssertNotNil(AeroPedalDipCompensation(percent: 100))
+        XCTAssertNil(AeroPedalDipCompensation(percent: 101))
+        XCTAssertNotNil(AeroLateralTiltLimit(degrees: 35))
+        XCTAssertNotNil(AeroLateralTiltLimit(degrees: 75))
+        XCTAssertNil(AeroLateralTiltLimit(degrees: 76))
+        XCTAssertNil(AeroLateralTiltLimit(degrees: 34))
+        XCTAssertNotNil(AeroVoltageCorrection(tenthsOfPercent: -15))
+        XCTAssertNotNil(AeroVoltageCorrection(tenthsOfPercent: 15))
+        XCTAssertNil(AeroVoltageCorrection(tenthsOfPercent: 16))
+        XCTAssertNil(AeroVoltageCorrection(tenthsOfPercent: -16))
+        XCTAssertEqual(AeroMaxChargeVoltageRaw(raw: 0)?.raw, 0)
+        XCTAssertEqual(AeroMaxChargeVoltageRaw(raw: 70)?.raw, 70)
+        XCTAssertNil(AeroMaxChargeVoltageRaw(raw: 71))
+        XCTAssertNotNil(AeroSpeedSetting(kilometresPerHour: 10))
+        XCTAssertNotNil(AeroSpeedSetting(kilometresPerHour: 200))
+        XCTAssertNil(AeroSpeedSetting(kilometresPerHour: 9))
+        XCTAssertNil(AeroSpeedSetting(kilometresPerHour: 201))
+
+        let session = try ElectricUnicycleSession(model: .aero)
+        let displayBacklight = try XCTUnwrap(AeroDisplayBacklight(percent: 75))
+        let beeperVolume = try XCTUnwrap(AeroBeeperVolume(percent: 75))
+        let dynamicAssist = try XCTUnwrap(AeroDynamicAssist(percent: 75))
+        let pedalDipCompensation = try XCTUnwrap(AeroPedalDipCompensation(percent: 75))
+        let lateralTiltLimit = try XCTUnwrap(AeroLateralTiltLimit(degrees: 55))
+        let voltageCorrection = try XCTUnwrap(AeroVoltageCorrection(tenthsOfPercent: -5))
+        let maxChargeVoltageRaw = try XCTUnwrap(AeroMaxChargeVoltageRaw(raw: 46))
+        let commands: [DeviceCommand] = [
+            .setAeroDisplayBacklight(displayBacklight),
+            .setAeroBeeperVolume(beeperVolume),
+            .setAeroDynamicAssist(dynamicAssist),
+            .setAeroPedalDipCompensation(pedalDipCompensation),
+            .setAeroLateralTiltLimit(lateralTiltLimit),
+            .setAeroVoltageCorrection(voltageCorrection),
+            .setAeroMaxChargeVoltageRaw(maxChargeVoltageRaw),
+            .setAeroWheelUnits(.imperial),
+        ]
+        for command in commands {
+            XCTAssertThrowsError(try session.perform(command, at: MonotonicMilliseconds(10))) { error in
+                XCTAssertEqual(error as? CutoutSessionError, .commandRefused(command, .unsupportedCommand))
+            }
+        }
+        XCTAssertEqual(session.aeroDisplayBacklightState.kind, .refused)
+        XCTAssertEqual(session.aeroDisplayBacklightState.requested, displayBacklight)
+        XCTAssertEqual(session.aeroBeeperVolumeState.kind, .refused)
+        XCTAssertEqual(session.aeroBeeperVolumeState.requested, beeperVolume)
+        XCTAssertEqual(session.aeroDynamicAssistState.kind, .refused)
+        XCTAssertEqual(session.aeroDynamicAssistState.requested, dynamicAssist)
+        XCTAssertEqual(session.aeroPedalDipCompensationState.kind, .refused)
+        XCTAssertEqual(session.aeroPedalDipCompensationState.requested, pedalDipCompensation)
+        XCTAssertEqual(session.aeroLateralTiltLimitState.kind, .refused)
+        XCTAssertEqual(session.aeroLateralTiltLimitState.requested, lateralTiltLimit)
+        XCTAssertEqual(session.aeroVoltageCorrectionState.kind, .refused)
+        XCTAssertEqual(session.aeroVoltageCorrectionState.requested, voltageCorrection)
+        XCTAssertEqual(session.aeroMaxChargeVoltageRawState.kind, .refused)
+        XCTAssertEqual(session.aeroMaxChargeVoltageRawState.requested, maxChargeVoltageRaw)
+        XCTAssertEqual(session.aeroWheelUnitsState.kind, .refused)
+        XCTAssertEqual(session.aeroWheelUnitsState.requested, .imperial)
+    }
+
 
     func testBegodeWSettingValuesUseDocumentedRanges() {
         XCTAssertEqual(BegodeMaxSpeed(kilometresPerHour: 0)?.kilometresPerHour, 0)
@@ -1533,7 +1627,7 @@ func testVescRideSnapshotProjectsBatteryLevelAndUpdateTime() throws {
         XCTAssertEqual(session.aeroAngleAdjustmentState.requested, angle)
     }
 
-    func testElectricUnicycleSessionKeepsPedalModeWriteGuardedUntilArmed() throws {
+    func testElectricUnicycleSessionRefusesUnverifiedPedalModeBeforeTransport() throws {
         let session = try ElectricUnicycleSession(model: .aero)
 
         XCTAssertEqual(session.pedalModeState.kind, .unknown)
@@ -1542,12 +1636,12 @@ func testVescRideSnapshotProjectsBatteryLevelAndUpdateTime() throws {
         ) { error in
             XCTAssertEqual(
                 error as? CutoutSessionError,
-                .commandRefused(.setPedalMode(.hard), .missingArm)
+                .commandRefused(.setPedalMode(.hard), .unsupportedCommand)
             )
         }
         XCTAssertEqual(session.pedalModeState.kind, .refused)
         XCTAssertEqual(session.pedalModeState.requested, .hard)
-        XCTAssertEqual(session.pedalModeState.refusalReason, .missingArm)
+        XCTAssertEqual(session.pedalModeState.refusalReason, .unsupportedCommand)
     }
 
     func testFalconRollAngleWriteIsGuardedUntilArmed() throws {

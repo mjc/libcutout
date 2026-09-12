@@ -22,8 +22,18 @@ use std::{
 use cutout_core::{
     AccelerationAssistState as CoreAccelerationAssistState, AccelerationAssistStateDto,
     ActivityProjectionState as CoreActivityProjectionState,
-    AeroAngleAdjustment as CoreAeroAngleAdjustment, AeroPwmPercent as CoreAeroPwmPercent,
-    AeroSpeedSetting as CoreAeroSpeedSetting, AngleReadingDto,
+    AeroAngleAdjustment as CoreAeroAngleAdjustment, AeroBeeperVolume as CoreAeroBeeperVolume,
+    AeroBrakeOverpressureAlarm as CoreAeroBrakeOverpressureAlarm,
+    AeroDisplayBacklight as CoreAeroDisplayBacklight, AeroDynamicAssist as CoreAeroDynamicAssist,
+    AeroGyroCalibrationState as CoreAeroGyroCalibrationState,
+    AeroHighSpeedMode as CoreAeroHighSpeedMode, AeroLateralTiltLimit as CoreAeroLateralTiltLimit,
+    AeroLowBatteryMode as CoreAeroLowBatteryMode,
+    AeroMaxChargeVoltageRaw as CoreAeroMaxChargeVoltageRaw,
+    AeroPedalDipCompensation as CoreAeroPedalDipCompensation,
+    AeroPedalHardness as CoreAeroPedalHardness, AeroPwmPercent as CoreAeroPwmPercent,
+    AeroPwmSetting as CoreAeroPwmSetting, AeroRidingMode as CoreAeroRidingMode,
+    AeroSpeedSetting as CoreAeroSpeedSetting, AeroTransportMode as CoreAeroTransportMode,
+    AeroVoltageCorrection as CoreAeroVoltageCorrection, AngleReadingDto,
     BatteryCurrent as CoreBatteryCurrent, BatteryCurrentReadingDto, BatteryInfoDto,
     BatteryLevel as CoreBatteryLevel, BatteryLevelBasis, BatteryLevelReadingDto,
     BatteryPageKindDto, BatteryReadbackAvailabilityDto, BatteryReadbackDto,
@@ -33,8 +43,8 @@ use cutout_core::{
     ChargeEstimateState, ChargeEstimateUnavailableReason, ChargeFlow, ChargeMode, ChargeModeDto,
     ChargeModeReadingDto, ChargeProfileIdentity, ChargeSessionIdentity, ChargeTimeEstimate,
     CommandKindDto, ControlRefusalReason as CoreControlRefusalReason, ControlRefusalReasonDto,
-    CutoutSessionState, DeviceCommandDto, DiscoveryCandidateSnapshot,
-    DiscoveryCandidateSupport as CoreDiscoveryCandidateSupport,
+    CutoutSessionState, DeviceCommand as CoreDeviceCommand, DeviceCommandDto, DeviceEvent,
+    DiscoveryCandidateSnapshot, DiscoveryCandidateSupport as CoreDiscoveryCandidateSupport,
     DiscoveryConnectionRoute as CoreDiscoveryConnectionRoute,
     DiscoveryElectricUnicycleModel as CoreDiscoveryElectricUnicycleModel,
     DiscoveryManufacturerDataSummary as CoreDiscoveryManufacturerDataSummary,
@@ -52,8 +62,8 @@ use cutout_core::{
     PevcapResolvedIdentity, PhaseCurrentReadingDto, PowerReadingDto, ProtocolFamily,
     ProtocolFamilyDto, ProtocolTag, RIDE_SESSION_STALE_AFTER, RawFieldValue, RawFieldValueDto,
     RawTelemetryReadback, RawTelemetryReadbackDto, ReadOnlyOutputPayload,
-    ReservedPayloadEvidenceDto, RideOperatingModeDto, RideOperatingStateDto,
-    RideSessionAppPresence as CoreRideSessionAppPresence,
+    ReservedPayloadEvidenceDto, RideOperatingModeDto, RideOperatingState as CoreRideOperatingState,
+    RideOperatingStateDto, RideSessionAppPresence as CoreRideSessionAppPresence,
     RideSessionDecision as CoreRideSessionDecision, RideSessionEffect as CoreRideSessionEffect,
     RideSessionEndReason as CoreRideSessionEndReason,
     RideSessionIdentity as CoreRideSessionIdentity, RideSessionInput as CoreRideSessionInput,
@@ -61,17 +71,17 @@ use cutout_core::{
     RideSessionMarkerError as CoreRideSessionMarkerError, RideSessionPhase as CoreRideSessionPhase,
     RideStopReasonDto, RideWarningDto, RollAngle as CoreRollAngle,
     SETTING_WRITE_CONFIRMATION_TIMEOUT, SemanticEventCountDto, SeriesCount, SessionEventDto,
-    SessionInputDto, SessionOutputDto, SettingCommandStatus as CoreSettingCommandStatus,
-    SettingState as CoreSettingState, SettingValueSource as CoreSettingValueSource, SettingsEntry,
-    SettingsEntryDto, SettingsReadback, SettingsReadbackAvailability,
-    SettingsReadbackAvailabilityDto, SettingsReadbackDto, Speed as CoreSpeed,
-    SpeedAlarmMode as CoreSpeedAlarmMode, SpeedReadingDto, TelemetryFreshness,
-    TelemetrySnapshotDto, TemperatureReadingDto, TransportActionDto, TransportWriteLimit,
-    TransportWriteLimitDto, UsablePackCapacity, ValueQuality, ValueQuality as CoreValueQuality,
-    ValueQualityDto, ValueSource, ValueSource as CoreValueSource, ValueSourceDto,
-    VerificationStatus, VerificationStatusDto, VerifiedValue, Voltage as CoreVoltage,
-    VoltageReadingDto, VoltageSagEstimate, VoltageSagEstimator, VoltageSagInput, VoltageSagModel,
-    WallClockUnixTimestamp, WriteMode,
+    SessionInputDto, SessionOutput, SessionOutputDto,
+    SettingCommandStatus as CoreSettingCommandStatus, SettingState as CoreSettingState,
+    SettingValueSource as CoreSettingValueSource, SettingsEntry, SettingsEntryDto,
+    SettingsReadback, SettingsReadbackAvailability, SettingsReadbackAvailabilityDto,
+    SettingsReadbackDto, Speed as CoreSpeed, SpeedAlarmMode as CoreSpeedAlarmMode, SpeedReadingDto,
+    TelemetryFreshness, TelemetrySnapshotDto, TemperatureReadingDto, TransportActionDto,
+    TransportWriteLimit, TransportWriteLimitDto, UsablePackCapacity, ValueQuality,
+    ValueQuality as CoreValueQuality, ValueQualityDto, ValueSource, ValueSource as CoreValueSource,
+    ValueSourceDto, VerificationStatus, VerificationStatusDto, VerifiedValue,
+    Voltage as CoreVoltage, VoltageReadingDto, VoltageSagEstimate, VoltageSagEstimator,
+    VoltageSagInput, VoltageSagModel, WallClockUnixTimestamp, WriteMode,
 };
 use cutout_music::{
     MusicCapabilities as CoreMusicCapabilities, MusicCommand as CoreMusicCommand,
@@ -82,12 +92,12 @@ use cutout_music::{
     MusicSnapshot as CoreMusicSnapshot, MusicTimelineOutcome as CoreMusicTimelineOutcome,
 };
 use cutout_protocols::{
-    BEGODE_DATA_CHANNEL, BEGODE_FIELD_LED_AND_LIGHT_MODE, BEGODE_FIELD_SETTINGS_BITS,
-    BEGODE_FIELD_TILTBACK_SPEED_KMH, ConcreteAeroBenignControlSession,
-    ConcreteFalconBenignControlSession, ConcreteFalconProfileDto, ConcreteSessionErrorDto,
-    ConcreteSessionStepResultDto, DeviceDetectionEvent, DeviceDetectionResolution,
-    DeviceDetectionSession, DeviceFamily, IdentityBannerEvidence, PendingProbe,
-    ProtocolFamilyClassification, ProtocolFamilyState, ProtocolModelIdentityEvidence,
+    AeroSettingsReadback, AeroSettingsSimulator as CoreAeroSettingsSimulator, BEGODE_DATA_CHANNEL,
+    BEGODE_FIELD_LED_AND_LIGHT_MODE, BEGODE_FIELD_SETTINGS_BITS, BEGODE_FIELD_TILTBACK_SPEED_KMH,
+    ConcreteAeroBenignControlSession, ConcreteFalconBenignControlSession, ConcreteFalconProfileDto,
+    ConcreteSessionErrorDto, ConcreteSessionStepResultDto, DeviceDetectionEvent,
+    DeviceDetectionResolution, DeviceDetectionSession, DeviceFamily, IdentityBannerEvidence,
+    PendingProbe, ProtocolFamilyClassification, ProtocolFamilyState, ProtocolModelIdentityEvidence,
     StagedIdentityInput, StagedIdentityOutcome, VETERAN_FIELD_AUTO_SHUTDOWN_TIME_REMAINING_SECONDS,
     VETERAN_FIELD_CHARGE_MODE, VETERAN_FIELD_PEDALS_MODE, VETERAN_FIELD_SPEED_ALERT_DECI_KMH,
     VETERAN_FIELD_SPEED_TILTBACK_DECI_KMH, VescBatteryType as CoreVescBatteryType,
@@ -2009,6 +2019,54 @@ pub enum MobileCommandDto {
     /// Set NOSFET/Veteran PWT (PWM tilt-back alarm) percentage.
     SetAeroPwmPercent(MobileAeroPwmPercentDto),
 
+    /// Disable the NOSFET/Veteran PWT alarm.
+    SetAeroPwmOff,
+
+    /// Start or finish NOSFET Aero gyro calibration.
+    SetAeroGyroCalibration,
+
+    /// Set the NOSFET/Veteran modern binary T riding mode.
+    SetAeroRidingMode(MobileAeroRidingModeDto),
+
+    /// Set the NOSFET Aero brake overpressure alarm threshold.
+    SetAeroBrakeOverpressureAlarm(MobileAeroBrakeOverpressureAlarmDto),
+
+    /// Set the NOSFET/Veteran MD pedal hardness percentage.
+    SetAeroPedalHardness(MobileAeroPedalHardnessDto),
+
+    /// Set the Aero display backlight percentage.
+    SetAeroDisplayBacklight(MobileAeroDisplayBacklightDto),
+
+    /// Set the Aero beeper volume percentage.
+    SetAeroBeeperVolume(MobileAeroBeeperVolumeDto),
+
+    /// Set the Aero dynamic-assist percentage.
+    SetAeroDynamicAssist(MobileAeroDynamicAssistDto),
+
+    /// Set the Aero pedal-dip compensation percentage.
+    SetAeroPedalDipCompensation(MobileAeroPedalDipCompensationDto),
+
+    /// Set the Aero lateral tilt limit in degrees.
+    SetAeroLateralTiltLimit(MobileAeroLateralTiltLimitDto),
+
+    /// Set the Aero voltage correction in tenths of a percent.
+    SetAeroVoltageCorrection(MobileAeroVoltageCorrectionDto),
+
+    /// Set the official NOSFET MxV raw maximum-charge value (0..=70).
+    SetAeroMaxChargeVoltageRaw(MobileAeroMaxChargeVoltageRawDto),
+
+    /// Set the wheel display units independently of phone formatting.
+    SetAeroWheelUnits(MobileAeroWheelUnitsDto),
+
+    /// Enable or disable Aero high-speed mode.
+    SetAeroHighSpeedMode(MobileAeroToggleDto),
+
+    /// Enable or disable Aero low-battery mode.
+    SetAeroLowBatteryMode(MobileAeroToggleDto),
+
+    /// Enable or disable Aero transportation mode.
+    SetAeroTransportMode(MobileAeroToggleDto),
+
     /// Set NOSFET/Veteran speed alarm in whole km/h.
     SetAeroAlarmSpeed(MobileAeroSpeedSettingDto),
 
@@ -2064,11 +2122,155 @@ impl From<CoreAeroSpeedSetting> for MobileAeroSpeedSettingDto {
     }
 }
 
-/// NOSFET/Veteran PWT (PWM tilt-back alarm) percentage.
+/// NOSFET/Veteran PWT (PWM tilt-back alarm) margin percentage.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Record)]
 pub struct MobileAeroPwmPercentDto {
-    /// PWM percentage, from 0 through 100.
+    /// PWM warning margin, from 0 through 70 percent.
     pub percent: u8,
+}
+
+/// Aero display backlight percentage.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct MobileAeroDisplayBacklightDto {
+    pub percent: u8,
+}
+
+/// Aero beeper volume percentage.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct MobileAeroBeeperVolumeDto {
+    pub percent: u8,
+}
+
+/// Aero dynamic assist percentage.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct MobileAeroDynamicAssistDto {
+    pub percent: u8,
+}
+
+/// Aero pedal-dip compensation percentage.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct MobileAeroPedalDipCompensationDto {
+    pub percent: u8,
+}
+
+/// Aero lateral tilt cutoff in degrees.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct MobileAeroLateralTiltLimitDto {
+    pub degrees: u8,
+}
+
+/// Aero voltage correction in tenths of a percent.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct MobileAeroVoltageCorrectionDto {
+    pub tenths_of_percent: i8,
+}
+
+/// Official NOSFET MxV raw maximum-charge value.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct MobileAeroMaxChargeVoltageRawDto {
+    /// Raw value accepted by the official 0..=70 progress control.
+    pub raw: u8,
+}
+
+impl From<CoreAeroMaxChargeVoltageRaw> for MobileAeroMaxChargeVoltageRawDto {
+    fn from(value: CoreAeroMaxChargeVoltageRaw) -> Self {
+        Self { raw: value.raw() }
+    }
+}
+
+/// NOSFET/Veteran modern binary T riding mode.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Enum)]
+pub enum MobileAeroRidingModeDto {
+    /// Firm response (wire value 3).
+    Hard,
+    /// Medium response (wire value 2).
+    Medium,
+    /// Soft response (wire value 1).
+    Soft,
+}
+
+impl From<CoreAeroRidingMode> for MobileAeroRidingModeDto {
+    fn from(value: CoreAeroRidingMode) -> Self {
+        match value {
+            CoreAeroRidingMode::Hard => Self::Hard,
+            CoreAeroRidingMode::Medium => Self::Medium,
+            CoreAeroRidingMode::Soft => Self::Soft,
+        }
+    }
+}
+
+impl From<MobileAeroRidingModeDto> for CoreAeroRidingMode {
+    fn from(value: MobileAeroRidingModeDto) -> Self {
+        match value {
+            MobileAeroRidingModeDto::Hard => Self::Hard,
+            MobileAeroRidingModeDto::Medium => Self::Medium,
+            MobileAeroRidingModeDto::Soft => Self::Soft,
+        }
+    }
+}
+
+/// NOSFET brake overpressure alarm threshold, in percent.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct MobileAeroBrakeOverpressureAlarmDto {
+    /// Alarm threshold in the source-backed 90...125 range.
+    pub percent: u8,
+}
+
+impl From<CoreAeroBrakeOverpressureAlarm> for MobileAeroBrakeOverpressureAlarmDto {
+    fn from(value: CoreAeroBrakeOverpressureAlarm) -> Self {
+        Self {
+            percent: value.percent(),
+        }
+    }
+}
+
+macro_rules! aero_percent_conversion {
+    ($dto:ident, $core:ident) => {
+        impl From<$core> for $dto {
+            fn from(value: $core) -> Self {
+                Self {
+                    percent: value.percent(),
+                }
+            }
+        }
+    };
+}
+aero_percent_conversion!(MobileAeroDisplayBacklightDto, CoreAeroDisplayBacklight);
+aero_percent_conversion!(MobileAeroBeeperVolumeDto, CoreAeroBeeperVolume);
+aero_percent_conversion!(MobileAeroDynamicAssistDto, CoreAeroDynamicAssist);
+aero_percent_conversion!(
+    MobileAeroPedalDipCompensationDto,
+    CoreAeroPedalDipCompensation
+);
+
+impl From<CoreAeroLateralTiltLimit> for MobileAeroLateralTiltLimitDto {
+    fn from(value: CoreAeroLateralTiltLimit) -> Self {
+        Self {
+            degrees: value.degrees(),
+        }
+    }
+}
+impl From<CoreAeroVoltageCorrection> for MobileAeroVoltageCorrectionDto {
+    fn from(value: CoreAeroVoltageCorrection) -> Self {
+        Self {
+            tenths_of_percent: value.tenths_of_percent(),
+        }
+    }
+}
+
+/// NOSFET/Veteran MD pedal hardness percentage.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct MobileAeroPedalHardnessDto {
+    /// Pedal hardness percentage, from 0 through 100.
+    pub percent: u8,
+}
+
+impl From<CoreAeroPedalHardness> for MobileAeroPedalHardnessDto {
+    fn from(setting: CoreAeroPedalHardness) -> Self {
+        Self {
+            percent: setting.percent(),
+        }
+    }
 }
 
 /// NOSFET/Veteran ANG (vertical angle) adjustment.
@@ -2285,6 +2487,8 @@ pub enum MobileSettingWriteSupportDto {
 /// Product-shaped write capabilities for an electric-unicycle session.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Record)]
 pub struct MobileEucSettingsCapabilitiesDto {
+    /// Whether this session explicitly enables local validation-mode writes.
+    pub validation_mode: bool,
     /// Pedal-mode/settings write support.
     pub pedal_mode: MobileSettingWriteSupportDto,
 
@@ -2324,6 +2528,40 @@ pub struct MobileEucSettingsCapabilitiesDto {
     /// NOSFET/Veteran PWT write support.
     pub aero_pwm_percent: MobileSettingWriteSupportDto,
 
+    /// NOSFET Aero gyro-calibration write support.
+    pub aero_gyro_calibration: MobileSettingWriteSupportDto,
+
+    /// NOSFET/Veteran modern binary riding-mode write support.
+    pub aero_riding_mode: MobileSettingWriteSupportDto,
+
+    /// NOSFET brake overpressure alarm write support.
+    pub aero_brake_overpressure_alarm: MobileSettingWriteSupportDto,
+
+    /// NOSFET Aero raw MxV maximum-charge write support.
+    pub aero_max_charge_voltage_raw: MobileSettingWriteSupportDto,
+
+    /// NOSFET/Veteran MD pedal-hardness write support.
+    pub aero_pedal_hardness: MobileSettingWriteSupportDto,
+
+    pub aero_display_backlight: MobileSettingWriteSupportDto,
+    pub aero_beeper_volume: MobileSettingWriteSupportDto,
+    pub aero_dynamic_assist: MobileSettingWriteSupportDto,
+    pub aero_pedal_dip_compensation: MobileSettingWriteSupportDto,
+    pub aero_lateral_tilt_limit: MobileSettingWriteSupportDto,
+    pub aero_voltage_correction: MobileSettingWriteSupportDto,
+
+    /// Wheel display unit write support.
+    pub aero_wheel_units: MobileSettingWriteSupportDto,
+
+    /// High-speed mode write support.
+    pub aero_high_speed_mode: MobileSettingWriteSupportDto,
+
+    /// Low-battery mode write support.
+    pub aero_low_battery_mode: MobileSettingWriteSupportDto,
+
+    /// Transportation mode write support.
+    pub aero_transport_mode: MobileSettingWriteSupportDto,
+
     /// NOSFET/Veteran speed-alarm write support.
     pub aero_alarm_speed: MobileSettingWriteSupportDto,
 
@@ -2334,7 +2572,11 @@ pub struct MobileEucSettingsCapabilitiesDto {
 impl MobileEucSettingsCapabilitiesDto {
     const fn aero() -> Self {
         Self {
-            pedal_mode: MobileSettingWriteSupportDto::Supported,
+            validation_mode: false,
+            // The encoders are available in the Rust simulator, but these
+            // settings stay out of the live mobile surface until capture and
+            // NF2557 hardware evidence proves their effects/readback.
+            pedal_mode: MobileSettingWriteSupportDto::Unverified,
             roll_angle: MobileSettingWriteSupportDto::Unsupported,
             speed_alarm_mode: MobileSettingWriteSupportDto::Unsupported,
             begode_max_speed: MobileSettingWriteSupportDto::Unsupported,
@@ -2344,16 +2586,38 @@ impl MobileEucSettingsCapabilitiesDto {
             headlight: MobileSettingWriteSupportDto::Supported,
             aero_high_beam: MobileSettingWriteSupportDto::Supported,
             taillight: MobileSettingWriteSupportDto::Unsupported,
-            reset_trip_meter: MobileSettingWriteSupportDto::Supported,
-            aero_tiltback_speed: MobileSettingWriteSupportDto::Supported,
-            aero_pwm_percent: MobileSettingWriteSupportDto::Supported,
-            aero_alarm_speed: MobileSettingWriteSupportDto::Supported,
-            aero_angle_adjustment: MobileSettingWriteSupportDto::Supported,
+            reset_trip_meter: MobileSettingWriteSupportDto::Unverified,
+            aero_tiltback_speed: MobileSettingWriteSupportDto::Unverified,
+            aero_pwm_percent: MobileSettingWriteSupportDto::Unverified,
+            aero_gyro_calibration: MobileSettingWriteSupportDto::Unverified,
+            aero_riding_mode: MobileSettingWriteSupportDto::Unverified,
+            aero_brake_overpressure_alarm: MobileSettingWriteSupportDto::Unverified,
+            aero_max_charge_voltage_raw: MobileSettingWriteSupportDto::Unverified,
+            aero_pedal_hardness: MobileSettingWriteSupportDto::Unverified,
+            aero_display_backlight: MobileSettingWriteSupportDto::Unverified,
+            aero_beeper_volume: MobileSettingWriteSupportDto::Unverified,
+            aero_dynamic_assist: MobileSettingWriteSupportDto::Unverified,
+            aero_pedal_dip_compensation: MobileSettingWriteSupportDto::Unverified,
+            aero_lateral_tilt_limit: MobileSettingWriteSupportDto::Unverified,
+            aero_voltage_correction: MobileSettingWriteSupportDto::Unverified,
+            aero_wheel_units: MobileSettingWriteSupportDto::Unverified,
+            aero_high_speed_mode: MobileSettingWriteSupportDto::Unverified,
+            aero_low_battery_mode: MobileSettingWriteSupportDto::Unverified,
+            aero_transport_mode: MobileSettingWriteSupportDto::Unverified,
+            aero_alarm_speed: MobileSettingWriteSupportDto::Unverified,
+            aero_angle_adjustment: MobileSettingWriteSupportDto::Unverified,
         }
+    }
+
+    const fn aero_validation() -> Self {
+        let mut capabilities = Self::aero();
+        capabilities.validation_mode = true;
+        capabilities
     }
 
     const fn falcon() -> Self {
         Self {
+            validation_mode: false,
             pedal_mode: MobileSettingWriteSupportDto::Supported,
             roll_angle: MobileSettingWriteSupportDto::Supported,
             speed_alarm_mode: MobileSettingWriteSupportDto::Supported,
@@ -2367,6 +2631,21 @@ impl MobileEucSettingsCapabilitiesDto {
             reset_trip_meter: MobileSettingWriteSupportDto::Unsupported,
             aero_tiltback_speed: MobileSettingWriteSupportDto::Unsupported,
             aero_pwm_percent: MobileSettingWriteSupportDto::Unsupported,
+            aero_gyro_calibration: MobileSettingWriteSupportDto::Unsupported,
+            aero_riding_mode: MobileSettingWriteSupportDto::Unsupported,
+            aero_brake_overpressure_alarm: MobileSettingWriteSupportDto::Unsupported,
+            aero_max_charge_voltage_raw: MobileSettingWriteSupportDto::Unsupported,
+            aero_pedal_hardness: MobileSettingWriteSupportDto::Unsupported,
+            aero_display_backlight: MobileSettingWriteSupportDto::Unsupported,
+            aero_beeper_volume: MobileSettingWriteSupportDto::Unsupported,
+            aero_dynamic_assist: MobileSettingWriteSupportDto::Unsupported,
+            aero_pedal_dip_compensation: MobileSettingWriteSupportDto::Unsupported,
+            aero_lateral_tilt_limit: MobileSettingWriteSupportDto::Unsupported,
+            aero_voltage_correction: MobileSettingWriteSupportDto::Unsupported,
+            aero_wheel_units: MobileSettingWriteSupportDto::Unsupported,
+            aero_high_speed_mode: MobileSettingWriteSupportDto::Unsupported,
+            aero_low_battery_mode: MobileSettingWriteSupportDto::Unsupported,
+            aero_transport_mode: MobileSettingWriteSupportDto::Unsupported,
             aero_alarm_speed: MobileSettingWriteSupportDto::Unsupported,
             aero_angle_adjustment: MobileSettingWriteSupportDto::Unsupported,
         }
@@ -2420,6 +2699,19 @@ pub enum MobileLightCommandStatusDto {
 
     /// Transport or session failure prevented completion.
     Failed,
+}
+
+/// Lifecycle state for a trip-meter reset request.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct MobileTripMeterResetStateDto {
+    /// Current lifecycle phase.
+    pub kind: MobileSettingStateKindDto,
+
+    /// Typed refusal reason, when the request was refused.
+    pub refusal_reason: Option<MobileControlRefusalReasonDto>,
+
+    /// Monotonic time at which the reset was accepted.
+    pub submitted_at_ms: Option<u64>,
 }
 
 /// Provenance for the current value in a mobile setting state.
@@ -2482,6 +2774,102 @@ impl MobileAeroSpeedSettingStateDto {
     }
 }
 
+/// Binary Aero setting shared by the high-speed, low-battery, and transport modes.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct MobileAeroToggleDto {
+    /// Whether the mode is enabled.
+    pub enabled: bool,
+}
+
+impl From<CoreAeroHighSpeedMode> for MobileAeroToggleDto {
+    fn from(value: CoreAeroHighSpeedMode) -> Self {
+        Self {
+            enabled: value.enabled(),
+        }
+    }
+}
+
+impl From<CoreAeroLowBatteryMode> for MobileAeroToggleDto {
+    fn from(value: CoreAeroLowBatteryMode) -> Self {
+        Self {
+            enabled: value.enabled(),
+        }
+    }
+}
+
+impl From<CoreAeroTransportMode> for MobileAeroToggleDto {
+    fn from(value: CoreAeroTransportMode) -> Self {
+        Self {
+            enabled: value.enabled(),
+        }
+    }
+}
+
+/// Units displayed by the wheel, independently of the phone's preferences.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Enum)]
+pub enum MobileAeroWheelUnitsDto {
+    /// Kilometres and kilometres per hour.
+    Metric,
+    /// Miles and miles per hour.
+    Imperial,
+}
+
+impl From<cutout_core::AeroWheelUnits> for MobileAeroWheelUnitsDto {
+    fn from(value: cutout_core::AeroWheelUnits) -> Self {
+        match value {
+            cutout_core::AeroWheelUnits::Metric => Self::Metric,
+            cutout_core::AeroWheelUnits::Imperial => Self::Imperial,
+        }
+    }
+}
+
+impl From<MobileAeroWheelUnitsDto> for cutout_core::AeroWheelUnits {
+    fn from(value: MobileAeroWheelUnitsDto) -> Self {
+        match value {
+            MobileAeroWheelUnitsDto::Metric => Self::Metric,
+            MobileAeroWheelUnitsDto::Imperial => Self::Imperial,
+        }
+    }
+}
+
+/// Rust-owned current/requested wheel-units state.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct MobileAeroWheelUnitsStateDto {
+    /// Current lifecycle phase.
+    pub kind: MobileSettingStateKindDto,
+    /// Most recent units reported by the wheel.
+    pub current: Option<MobileAeroWheelUnitsDto>,
+    /// Requested units while pending or terminal.
+    pub requested: Option<MobileAeroWheelUnitsDto>,
+    /// Provenance of the current value.
+    pub source: MobileSettingValueSourceDto,
+    /// Monotonic submission timestamp.
+    pub submitted_at_ms: Option<u64>,
+    /// Monotonic matching-readback timestamp.
+    pub confirmed_at_ms: Option<u64>,
+    /// Typed reason for a refused write.
+    pub refusal_reason: Option<MobileControlRefusalReasonDto>,
+}
+
+/// Typed NOSFET/Veteran MD pedal-hardness lifecycle state.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct MobileAeroPedalHardnessStateDto {
+    /// Current lifecycle phase.
+    pub kind: MobileSettingStateKindDto,
+    /// Most recent current pedal hardness, when known.
+    pub current: Option<MobileAeroPedalHardnessDto>,
+    /// Requested pedal hardness, when pending or terminal.
+    pub requested: Option<MobileAeroPedalHardnessDto>,
+    /// Provenance for the current value.
+    pub source: MobileSettingValueSourceDto,
+    /// Monotonic time at which the write was accepted.
+    pub submitted_at_ms: Option<u64>,
+    /// Monotonic time at which matching readback arrived.
+    pub confirmed_at_ms: Option<u64>,
+    /// Typed refusal reason, when the write was refused.
+    pub refusal_reason: Option<MobileControlRefusalReasonDto>,
+}
+
 /// Typed NOSFET/Veteran PWM-warning lifecycle state.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Record)]
 pub struct MobileAeroPwmSettingStateDto {
@@ -2491,8 +2879,14 @@ pub struct MobileAeroPwmSettingStateDto {
     /// Most recent current PWT percentage, when known.
     pub current: Option<MobileAeroPwmPercentDto>,
 
+    /// Whether the current PWT setting is explicitly disabled.
+    pub current_off: bool,
+
     /// Requested PWT percentage, when a write is pending or terminal.
     pub requested: Option<MobileAeroPwmPercentDto>,
+
+    /// Whether the requested PWT setting is explicitly disabled.
+    pub requested_off: bool,
 
     /// Provenance for the current value.
     pub source: MobileSettingValueSourceDto,
@@ -2512,6 +2906,62 @@ impl MobileAeroPwmSettingStateDto {
         Self {
             kind: MobileSettingStateKindDto::Unknown,
             current: None,
+            current_off: false,
+            requested: None,
+            requested_off: false,
+            source: MobileSettingValueSourceDto::Unknown,
+            submitted_at_ms: None,
+            confirmed_at_ms: None,
+            refusal_reason: None,
+        }
+    }
+}
+
+/// NOSFET Aero gyro-calibration phase reported by page-8 settings.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Enum)]
+pub enum MobileAeroGyroCalibrationStateDto {
+    /// The wheel is ready to start calibration.
+    Idle,
+    /// Calibration has started and the wheel is waiting for completion.
+    Waiting,
+    /// Calibration completed successfully.
+    Complete,
+}
+
+impl From<CoreAeroGyroCalibrationState> for MobileAeroGyroCalibrationStateDto {
+    fn from(value: CoreAeroGyroCalibrationState) -> Self {
+        match value {
+            CoreAeroGyroCalibrationState::Idle => Self::Idle,
+            CoreAeroGyroCalibrationState::Waiting => Self::Waiting,
+            CoreAeroGyroCalibrationState::Complete => Self::Complete,
+        }
+    }
+}
+
+/// Typed NOSFET Aero gyro-calibration lifecycle state.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct MobileAeroGyroCalibrationSettingStateDto {
+    /// Generic setting lifecycle phase.
+    pub kind: MobileSettingStateKindDto,
+    /// Most recent page-8 calibration phase.
+    pub current: Option<MobileAeroGyroCalibrationStateDto>,
+    /// Phase requested by the most recent accepted command.
+    pub requested: Option<MobileAeroGyroCalibrationStateDto>,
+    /// Provenance for the current phase.
+    pub source: MobileSettingValueSourceDto,
+    /// Monotonic time at which the command was accepted.
+    pub submitted_at_ms: Option<u64>,
+    /// Monotonic time at which matching readback arrived.
+    pub confirmed_at_ms: Option<u64>,
+    /// Typed refusal reason, when the command was refused.
+    pub refusal_reason: Option<MobileControlRefusalReasonDto>,
+}
+
+impl MobileAeroGyroCalibrationSettingStateDto {
+    fn unknown() -> Self {
+        Self {
+            kind: MobileSettingStateKindDto::Unknown,
+            current: None,
             requested: None,
             source: MobileSettingValueSourceDto::Unknown,
             submitted_at_ms: None,
@@ -2520,6 +2970,114 @@ impl MobileAeroPwmSettingStateDto {
         }
     }
 }
+
+/// NOSFET/Veteran modern binary T riding mode.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Enum)]
+pub enum MobileAeroRidingModeStateDto {
+    Hard,
+    Medium,
+    Soft,
+}
+
+impl From<CoreAeroRidingMode> for MobileAeroRidingModeStateDto {
+    fn from(value: CoreAeroRidingMode) -> Self {
+        match value {
+            CoreAeroRidingMode::Hard => Self::Hard,
+            CoreAeroRidingMode::Medium => Self::Medium,
+            CoreAeroRidingMode::Soft => Self::Soft,
+        }
+    }
+}
+
+/// Typed modern binary T riding-mode lifecycle state.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct MobileAeroRidingModeSettingStateDto {
+    pub kind: MobileSettingStateKindDto,
+    pub current: Option<MobileAeroRidingModeStateDto>,
+    pub requested: Option<MobileAeroRidingModeStateDto>,
+    pub source: MobileSettingValueSourceDto,
+    pub submitted_at_ms: Option<u64>,
+    pub confirmed_at_ms: Option<u64>,
+    pub refusal_reason: Option<MobileControlRefusalReasonDto>,
+}
+
+/// Typed NOSFET brake overpressure alarm lifecycle state.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct MobileAeroBrakeOverpressureAlarmStateDto {
+    pub kind: MobileSettingStateKindDto,
+    pub current: Option<MobileAeroBrakeOverpressureAlarmDto>,
+    pub requested: Option<MobileAeroBrakeOverpressureAlarmDto>,
+    pub source: MobileSettingValueSourceDto,
+    pub submitted_at_ms: Option<u64>,
+    pub confirmed_at_ms: Option<u64>,
+    pub refusal_reason: Option<MobileControlRefusalReasonDto>,
+}
+
+macro_rules! aero_setting_state_dto {
+    ($name:ident, $value:ident, $doc:literal) => {
+        #[doc = $doc]
+        #[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Record)]
+        pub struct $name {
+            pub kind: MobileSettingStateKindDto,
+            pub current: Option<$value>,
+            pub requested: Option<$value>,
+            pub source: MobileSettingValueSourceDto,
+            pub submitted_at_ms: Option<u64>,
+            pub confirmed_at_ms: Option<u64>,
+            pub refusal_reason: Option<MobileControlRefusalReasonDto>,
+        }
+    };
+}
+aero_setting_state_dto!(
+    MobileAeroDisplayBacklightStateDto,
+    MobileAeroDisplayBacklightDto,
+    "Aero display-backlight lifecycle state."
+);
+aero_setting_state_dto!(
+    MobileAeroBeeperVolumeStateDto,
+    MobileAeroBeeperVolumeDto,
+    "Aero beeper-volume lifecycle state."
+);
+aero_setting_state_dto!(
+    MobileAeroDynamicAssistStateDto,
+    MobileAeroDynamicAssistDto,
+    "Aero dynamic-assist lifecycle state."
+);
+aero_setting_state_dto!(
+    MobileAeroPedalDipCompensationStateDto,
+    MobileAeroPedalDipCompensationDto,
+    "Aero pedal-dip lifecycle state."
+);
+aero_setting_state_dto!(
+    MobileAeroLateralTiltLimitStateDto,
+    MobileAeroLateralTiltLimitDto,
+    "Aero lateral-tilt lifecycle state."
+);
+aero_setting_state_dto!(
+    MobileAeroVoltageCorrectionStateDto,
+    MobileAeroVoltageCorrectionDto,
+    "Aero voltage-correction lifecycle state."
+);
+aero_setting_state_dto!(
+    MobileAeroMaxChargeVoltageRawStateDto,
+    MobileAeroMaxChargeVoltageRawDto,
+    "Aero raw MxV maximum-charge lifecycle state."
+);
+aero_setting_state_dto!(
+    MobileAeroHighSpeedModeStateDto,
+    MobileAeroToggleDto,
+    "Aero high-speed-mode lifecycle state."
+);
+aero_setting_state_dto!(
+    MobileAeroLowBatteryModeStateDto,
+    MobileAeroToggleDto,
+    "Aero low-battery-mode lifecycle state."
+);
+aero_setting_state_dto!(
+    MobileAeroTransportModeStateDto,
+    MobileAeroToggleDto,
+    "Aero transportation-mode lifecycle state."
+);
 
 /// Typed NOSFET/Veteran angle-adjustment lifecycle state.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Record)]
@@ -3291,7 +3849,22 @@ struct MobileEucSettingTrackers {
     headlight: MobileSettingTracker<CoreLightState>,
     aero_high_beam: MobileSettingTracker<CoreLightState>,
     aero_tiltback_speed: MobileSettingTracker<CoreAeroSpeedSetting>,
-    aero_pwm_percent: MobileSettingTracker<CoreAeroPwmPercent>,
+    aero_pwm_percent: MobileSettingTracker<CoreAeroPwmSetting>,
+    aero_gyro_calibration: MobileSettingTracker<CoreAeroGyroCalibrationState>,
+    aero_riding_mode: MobileSettingTracker<CoreAeroRidingMode>,
+    aero_brake_overpressure_alarm: MobileSettingTracker<CoreAeroBrakeOverpressureAlarm>,
+    aero_pedal_hardness: MobileSettingTracker<CoreAeroPedalHardness>,
+    aero_display_backlight: MobileSettingTracker<CoreAeroDisplayBacklight>,
+    aero_beeper_volume: MobileSettingTracker<CoreAeroBeeperVolume>,
+    aero_dynamic_assist: MobileSettingTracker<CoreAeroDynamicAssist>,
+    aero_pedal_dip_compensation: MobileSettingTracker<CoreAeroPedalDipCompensation>,
+    aero_lateral_tilt_limit: MobileSettingTracker<CoreAeroLateralTiltLimit>,
+    aero_voltage_correction: MobileSettingTracker<CoreAeroVoltageCorrection>,
+    aero_max_charge_voltage_raw: MobileSettingTracker<CoreAeroMaxChargeVoltageRaw>,
+    aero_wheel_units: MobileSettingTracker<cutout_core::AeroWheelUnits>,
+    aero_high_speed_mode: MobileSettingTracker<CoreAeroHighSpeedMode>,
+    aero_low_battery_mode: MobileSettingTracker<CoreAeroLowBatteryMode>,
+    aero_transport_mode: MobileSettingTracker<CoreAeroTransportMode>,
     aero_alarm_speed: MobileSettingTracker<CoreAeroSpeedSetting>,
     aero_angle_adjustment: MobileSettingTracker<CoreAeroAngleAdjustment>,
     pedal_mode: MobileSettingTracker<CorePedalMode>,
@@ -3299,6 +3872,7 @@ struct MobileEucSettingTrackers {
     speed_alarm_mode: MobileSettingTracker<CoreSpeedAlarmMode>,
     acceleration_assist: MobileSettingTracker<CoreAccelerationAssistState>,
     taillight: MobileSettingTracker<CoreLightState>,
+    trip_meter_reset: MobileSettingTracker<()>,
 }
 
 impl MobileEucSettingTrackers {
@@ -3311,13 +3885,46 @@ impl MobileEucSettingTrackers {
         let now = input.monotonic_ms.into_core();
         self.headlight
             .observe_step(input.kind, now, headlight_confirmation_supported);
+        self.aero_high_beam.observe_step(input.kind, now, true);
+        self.aero_tiltback_speed.observe_step(input.kind, now, true);
+        self.aero_pwm_percent.observe_step(input.kind, now, true);
+        self.aero_gyro_calibration
+            .observe_step(input.kind, now, true);
+        self.aero_riding_mode.observe_step(input.kind, now, true);
+        self.aero_brake_overpressure_alarm
+            .observe_step(input.kind, now, true);
+        self.aero_pedal_hardness.observe_step(input.kind, now, true);
+        self.aero_display_backlight
+            .observe_step(input.kind, now, true);
+        self.aero_beeper_volume.observe_step(input.kind, now, true);
+        self.aero_dynamic_assist.observe_step(input.kind, now, true);
+        self.aero_pedal_dip_compensation
+            .observe_step(input.kind, now, true);
+        self.aero_lateral_tilt_limit
+            .observe_step(input.kind, now, true);
+        self.aero_voltage_correction
+            .observe_step(input.kind, now, true);
+        self.aero_max_charge_voltage_raw
+            .observe_step(input.kind, now, true);
+        self.aero_wheel_units.observe_step(input.kind, now, true);
+        self.aero_high_speed_mode
+            .observe_step(input.kind, now, true);
+        self.aero_low_battery_mode
+            .observe_step(input.kind, now, true);
+        self.aero_transport_mode.observe_step(input.kind, now, true);
+        self.aero_alarm_speed.observe_step(input.kind, now, true);
+        self.aero_angle_adjustment
+            .observe_step(input.kind, now, true);
         self.pedal_mode.observe_step(input.kind, now, true);
         self.roll_angle.observe_step(input.kind, now, true);
         self.speed_alarm_mode.observe_step(input.kind, now, true);
         self.acceleration_assist.observe_step(input.kind, now, true);
         self.taillight.observe_step(input.kind, now, true);
+        self.trip_meter_reset.observe_step(input.kind, now, true);
 
-        self.observe_command(input.command, now, result);
+        if input.kind == MobileSessionInputKindDto::Command {
+            self.observe_command(input.command, now, result);
+        }
         for output in &result.outputs {
             if let Some(readback) = output.settings_readback.as_ref() {
                 self.observe_readback(readback, now);
@@ -3332,6 +3939,31 @@ impl MobileEucSettingTrackers {
         result: &MobileSessionStepResultDto,
     ) {
         match command {
+            Some(MobileCommandDto::SetAeroWheelUnits(units)) => {
+                self.aero_wheel_units
+                    .observe_write(units.into(), now, result);
+            }
+            Some(MobileCommandDto::SetAeroHighSpeedMode(value)) => {
+                self.aero_high_speed_mode.observe_write(
+                    CoreAeroHighSpeedMode::new(value.enabled),
+                    now,
+                    result,
+                );
+            }
+            Some(MobileCommandDto::SetAeroLowBatteryMode(value)) => {
+                self.aero_low_battery_mode.observe_write(
+                    CoreAeroLowBatteryMode::new(value.enabled),
+                    now,
+                    result,
+                );
+            }
+            Some(MobileCommandDto::SetAeroTransportMode(value)) => {
+                self.aero_transport_mode.observe_write(
+                    CoreAeroTransportMode::new(value.enabled),
+                    now,
+                    result,
+                );
+            }
             Some(MobileCommandDto::SetLights(requested)) => {
                 self.headlight.observe_write(requested.into(), now, result);
             }
@@ -3347,7 +3979,86 @@ impl MobileEucSettingTrackers {
             }
             Some(MobileCommandDto::SetAeroPwmPercent(requested)) => {
                 if let Some(requested) = CoreAeroPwmPercent::new(requested.percent) {
-                    self.aero_pwm_percent.observe_write(requested, now, result);
+                    self.aero_pwm_percent.observe_write(
+                        CoreAeroPwmSetting::Margin(requested),
+                        now,
+                        result,
+                    );
+                }
+            }
+            Some(MobileCommandDto::SetAeroPwmOff) => {
+                self.aero_pwm_percent
+                    .observe_write(CoreAeroPwmSetting::Off, now, result);
+            }
+            Some(MobileCommandDto::SetAeroGyroCalibration) => {
+                let requested = match self.aero_gyro_calibration.state.current_value() {
+                    Some(CoreAeroGyroCalibrationState::Waiting) => {
+                        CoreAeroGyroCalibrationState::Complete
+                    }
+                    Some(CoreAeroGyroCalibrationState::Idle)
+                    | Some(CoreAeroGyroCalibrationState::Complete)
+                    | None => CoreAeroGyroCalibrationState::Waiting,
+                };
+                self.aero_gyro_calibration
+                    .observe_write(requested, now, result);
+            }
+            Some(MobileCommandDto::SetAeroRidingMode(requested)) => {
+                self.aero_riding_mode
+                    .observe_write(requested.into(), now, result);
+            }
+            Some(MobileCommandDto::SetAeroBrakeOverpressureAlarm(requested)) => {
+                if let Some(requested) = CoreAeroBrakeOverpressureAlarm::new(requested.percent) {
+                    self.aero_brake_overpressure_alarm
+                        .observe_write(requested, now, result);
+                }
+            }
+            Some(MobileCommandDto::SetAeroPedalHardness(requested)) => {
+                if let Some(requested) = CoreAeroPedalHardness::new(requested.percent) {
+                    self.aero_pedal_hardness
+                        .observe_write(requested, now, result);
+                }
+            }
+            Some(MobileCommandDto::SetAeroDisplayBacklight(requested)) => {
+                if let Some(requested) = CoreAeroDisplayBacklight::new(requested.percent) {
+                    self.aero_display_backlight
+                        .observe_write(requested, now, result);
+                }
+            }
+            Some(MobileCommandDto::SetAeroBeeperVolume(requested)) => {
+                if let Some(requested) = CoreAeroBeeperVolume::new(requested.percent) {
+                    self.aero_beeper_volume
+                        .observe_write(requested, now, result);
+                }
+            }
+            Some(MobileCommandDto::SetAeroDynamicAssist(requested)) => {
+                if let Some(requested) = CoreAeroDynamicAssist::new(requested.percent) {
+                    self.aero_dynamic_assist
+                        .observe_write(requested, now, result);
+                }
+            }
+            Some(MobileCommandDto::SetAeroPedalDipCompensation(requested)) => {
+                if let Some(requested) = CoreAeroPedalDipCompensation::new(requested.percent) {
+                    self.aero_pedal_dip_compensation
+                        .observe_write(requested, now, result);
+                }
+            }
+            Some(MobileCommandDto::SetAeroLateralTiltLimit(requested)) => {
+                if let Some(requested) = CoreAeroLateralTiltLimit::new(requested.degrees) {
+                    self.aero_lateral_tilt_limit
+                        .observe_write(requested, now, result);
+                }
+            }
+            Some(MobileCommandDto::SetAeroVoltageCorrection(requested)) => {
+                if let Some(requested) = CoreAeroVoltageCorrection::new(requested.tenths_of_percent)
+                {
+                    self.aero_voltage_correction
+                        .observe_write(requested, now, result);
+                }
+            }
+            Some(MobileCommandDto::SetAeroMaxChargeVoltageRaw(requested)) => {
+                if let Some(requested) = CoreAeroMaxChargeVoltageRaw::new(requested.raw) {
+                    self.aero_max_charge_voltage_raw
+                        .observe_write(requested, now, result);
                 }
             }
             Some(MobileCommandDto::SetAeroAlarmSpeed(requested)) => {
@@ -3378,11 +4089,157 @@ impl MobileEucSettingTrackers {
             Some(MobileCommandDto::SetTaillight(requested)) => {
                 self.taillight.observe_write(requested.into(), now, result);
             }
+            Some(MobileCommandDto::ResetTripMeter) => {
+                self.trip_meter_reset.observe_write((), now, result);
+            }
             _ => {}
         }
     }
 
     fn observe_readback(&mut self, readback: &MobileSettingsReadbackDto, now: MonotonicTimestamp) {
+        if let Some(value) =
+            settings_entry(&readback.entries, cutout_protocols::AERO_FIELD_WHEEL_UNITS)
+                .and_then(|entry| u8::try_from(entry.field.value).ok())
+                .and_then(cutout_core::AeroWheelUnits::from_display_mode)
+        {
+            self.aero_wheel_units.observe_readback(value, now);
+        }
+        if let Some(value) = settings_entry(
+            &readback.entries,
+            cutout_protocols::AERO_FIELD_GYRO_CALIBRATION_STATE,
+        )
+        .and_then(|entry| u8::try_from(entry.field.value).ok())
+        .and_then(CoreAeroGyroCalibrationState::from_wire)
+        {
+            self.aero_gyro_calibration.observe_readback(value, now);
+        }
+        if let Some(value) = settings_entry(
+            &readback.entries,
+            cutout_protocols::AERO_FIELD_BRAKE_OVERPRESSURE_ALARM_PERCENT,
+        )
+        .and_then(|entry| u8::try_from(entry.field.value).ok())
+        .and_then(CoreAeroBrakeOverpressureAlarm::new)
+        {
+            self.aero_brake_overpressure_alarm
+                .observe_readback(value, now);
+        }
+        if let Some(value) = settings_entry(
+            &readback.entries,
+            cutout_protocols::AERO_FIELD_PEDAL_HARDNESS_PERCENT,
+        )
+        .and_then(|entry| u8::try_from(entry.field.value).ok())
+        .and_then(CoreAeroPedalHardness::new)
+        {
+            self.aero_pedal_hardness.observe_readback(value, now);
+        }
+        if let Some(value) = settings_entry(
+            &readback.entries,
+            cutout_protocols::AERO_FIELD_DISPLAY_BACKLIGHT_PERCENT,
+        )
+        .and_then(|entry| u8::try_from(entry.field.value).ok())
+        .and_then(CoreAeroDisplayBacklight::new)
+        {
+            self.aero_display_backlight.observe_readback(value, now);
+        }
+        if let Some(value) = settings_entry(
+            &readback.entries,
+            cutout_protocols::AERO_FIELD_BEEPER_VOLUME_PERCENT,
+        )
+        .and_then(|entry| u8::try_from(entry.field.value).ok())
+        .and_then(CoreAeroBeeperVolume::new)
+        {
+            self.aero_beeper_volume.observe_readback(value, now);
+        }
+        if let Some(value) = settings_entry(
+            &readback.entries,
+            cutout_protocols::AERO_FIELD_DYNAMIC_ASSIST_PERCENT,
+        )
+        .and_then(|entry| u8::try_from(entry.field.value).ok())
+        .and_then(CoreAeroDynamicAssist::new)
+        {
+            self.aero_dynamic_assist.observe_readback(value, now);
+        }
+        if let Some(value) = settings_entry(
+            &readback.entries,
+            cutout_protocols::AERO_FIELD_PEDAL_DIP_COMPENSATION_PERCENT,
+        )
+        .and_then(|entry| u8::try_from(entry.field.value).ok())
+        .and_then(CoreAeroPedalDipCompensation::new)
+        {
+            self.aero_pedal_dip_compensation
+                .observe_readback(value, now);
+        }
+        if let Some(value) = settings_entry(
+            &readback.entries,
+            cutout_protocols::AERO_FIELD_VOLTAGE_CORRECTION_TENTHS_PERCENT,
+        )
+        .and_then(|entry| i8::try_from(entry.field.value).ok())
+        .and_then(CoreAeroVoltageCorrection::new)
+        {
+            self.aero_voltage_correction.observe_readback(value, now);
+        }
+        if let Some(value) = settings_entry(
+            &readback.entries,
+            cutout_protocols::AERO_FIELD_MAX_CHARGE_VOLTAGE_RAW,
+        )
+        .and_then(|entry| u8::try_from(entry.field.value).ok())
+        .and_then(CoreAeroMaxChargeVoltageRaw::new)
+        {
+            self.aero_max_charge_voltage_raw
+                .observe_readback(value, now);
+        }
+        if let Some(value) = settings_entry(
+            &readback.entries,
+            cutout_protocols::AERO_FIELD_LATERAL_TILT_LIMIT_DEGREES,
+        )
+        .and_then(|entry| u8::try_from(entry.field.value).ok())
+        .and_then(CoreAeroLateralTiltLimit::new)
+        {
+            self.aero_lateral_tilt_limit.observe_readback(value, now);
+        }
+        if let Some(value) =
+            settings_entry(&readback.entries, cutout_protocols::AERO_FIELD_PWM_PERCENT)
+                .and_then(|entry| u8::try_from(entry.field.value).ok())
+                .and_then(|wire| {
+                    if wire == 200 {
+                        Some(CoreAeroPwmSetting::Off)
+                    } else {
+                        100u8
+                            .checked_sub(wire)
+                            .and_then(CoreAeroPwmPercent::new)
+                            .map(CoreAeroPwmSetting::Margin)
+                    }
+                })
+        {
+            self.aero_pwm_percent.observe_readback(value, now);
+        }
+        if let Some(value) = settings_entry(
+            &readback.entries,
+            cutout_protocols::AERO_FIELD_HIGH_SPEED_MODE,
+        )
+        .and_then(|entry| bool_setting(entry.field.value))
+        {
+            self.aero_high_speed_mode
+                .observe_readback(CoreAeroHighSpeedMode::new(value), now);
+        }
+        if let Some(value) = settings_entry(
+            &readback.entries,
+            cutout_protocols::AERO_FIELD_LOW_BATTERY_MODE,
+        )
+        .and_then(|entry| bool_setting(entry.field.value))
+        {
+            self.aero_low_battery_mode
+                .observe_readback(CoreAeroLowBatteryMode::new(value), now);
+        }
+        if let Some(value) = settings_entry(
+            &readback.entries,
+            cutout_protocols::AERO_FIELD_TRANSPORT_MODE,
+        )
+        .and_then(|entry| bool_setting(entry.field.value))
+        {
+            self.aero_transport_mode
+                .observe_readback(CoreAeroTransportMode::new(value), now);
+        }
         if let Some(light_state) = readback.euc_garage.light_state {
             self.headlight.observe_readback(light_state.into(), now);
         }
@@ -3455,6 +4312,173 @@ impl MobileEucSettingTrackers {
         mobile_aero_pwm_setting_state(self.aero_pwm_percent.state)
     }
 
+    fn aero_gyro_calibration(&self) -> MobileAeroGyroCalibrationSettingStateDto {
+        mobile_aero_gyro_calibration_state(self.aero_gyro_calibration.state)
+    }
+
+    fn aero_riding_mode(&self) -> MobileAeroRidingModeSettingStateDto {
+        mobile_aero_riding_mode_state(self.aero_riding_mode.state)
+    }
+
+    fn aero_brake_overpressure_alarm(&self) -> MobileAeroBrakeOverpressureAlarmStateDto {
+        mobile_aero_brake_overpressure_alarm_state(self.aero_brake_overpressure_alarm.state)
+    }
+
+    fn aero_pedal_hardness(&self) -> MobileAeroPedalHardnessStateDto {
+        let mut dto = MobileAeroPedalHardnessStateDto {
+            kind: MobileSettingStateKindDto::Unknown,
+            current: self
+                .aero_pedal_hardness
+                .state
+                .current_value()
+                .map(Into::into),
+            requested: self
+                .aero_pedal_hardness
+                .state
+                .requested_value()
+                .map(Into::into),
+            source: MobileSettingValueSourceDto::Unknown,
+            submitted_at_ms: None,
+            confirmed_at_ms: None,
+            refusal_reason: None,
+        };
+        dto.kind = match self.aero_pedal_hardness.state {
+            CoreSettingState::Unknown => MobileSettingStateKindDto::Unknown,
+            CoreSettingState::Current(value) => {
+                dto.source = value.source.into();
+                MobileSettingStateKindDto::Current
+            }
+            CoreSettingState::Pending {
+                current,
+                submitted_at,
+                ..
+            } => {
+                dto.source = current.map_or(MobileSettingValueSourceDto::Unknown, |value| {
+                    value.source.into()
+                });
+                dto.submitted_at_ms = Some(submitted_at.as_milliseconds());
+                MobileSettingStateKindDto::Pending
+            }
+            CoreSettingState::Confirmed {
+                value,
+                confirmed_at,
+            } => {
+                dto.source = value.source.into();
+                dto.confirmed_at_ms = Some(confirmed_at.as_milliseconds());
+                MobileSettingStateKindDto::Confirmed
+            }
+            CoreSettingState::Refused {
+                current, reason, ..
+            } => {
+                dto.source = current.map_or(MobileSettingValueSourceDto::Unknown, |value| {
+                    value.source.into()
+                });
+                dto.refusal_reason = Some(reason.into());
+                MobileSettingStateKindDto::Refused
+            }
+            CoreSettingState::TimedOut { current, .. } => {
+                dto.source = current.map_or(MobileSettingValueSourceDto::Unknown, |value| {
+                    value.source.into()
+                });
+                MobileSettingStateKindDto::TimedOut
+            }
+            CoreSettingState::Failed { current, .. } => {
+                dto.source = current.map_or(MobileSettingValueSourceDto::Unknown, |value| {
+                    value.source.into()
+                });
+                MobileSettingStateKindDto::Failed
+            }
+        };
+        dto
+    }
+
+    fn aero_wheel_units(&self) -> MobileAeroWheelUnitsStateDto {
+        let state = self.aero_wheel_units.state;
+        let mut dto = MobileAeroWheelUnitsStateDto {
+            kind: MobileSettingStateKindDto::Unknown,
+            current: state.current_value().map(Into::into),
+            requested: state.requested_value().map(Into::into),
+            source: MobileSettingValueSourceDto::Unknown,
+            submitted_at_ms: None,
+            confirmed_at_ms: None,
+            refusal_reason: None,
+        };
+        let current = match state {
+            CoreSettingState::Unknown => None,
+            CoreSettingState::Current(value) => {
+                dto.kind = MobileSettingStateKindDto::Current;
+                Some(value)
+            }
+            CoreSettingState::Pending {
+                current,
+                submitted_at,
+                ..
+            } => {
+                dto.kind = MobileSettingStateKindDto::Pending;
+                dto.submitted_at_ms = Some(submitted_at.as_milliseconds());
+                current
+            }
+            CoreSettingState::Confirmed {
+                value,
+                confirmed_at,
+            } => {
+                dto.kind = MobileSettingStateKindDto::Confirmed;
+                dto.confirmed_at_ms = Some(confirmed_at.as_milliseconds());
+                Some(value)
+            }
+            CoreSettingState::Refused {
+                current, reason, ..
+            } => {
+                dto.kind = MobileSettingStateKindDto::Refused;
+                dto.refusal_reason = Some(reason.into());
+                current
+            }
+            CoreSettingState::TimedOut { current, .. } => {
+                dto.kind = MobileSettingStateKindDto::TimedOut;
+                current
+            }
+            CoreSettingState::Failed { current, .. } => {
+                dto.kind = MobileSettingStateKindDto::Failed;
+                current
+            }
+        };
+        dto.source = current.map_or(MobileSettingValueSourceDto::Unknown, |value| {
+            value.source.into()
+        });
+        dto
+    }
+
+    fn aero_display_backlight(&self) -> MobileAeroDisplayBacklightStateDto {
+        mobile_aero_display_backlight_state(self.aero_display_backlight.state)
+    }
+    fn aero_beeper_volume(&self) -> MobileAeroBeeperVolumeStateDto {
+        mobile_aero_beeper_volume_state(self.aero_beeper_volume.state)
+    }
+    fn aero_dynamic_assist(&self) -> MobileAeroDynamicAssistStateDto {
+        mobile_aero_dynamic_assist_state(self.aero_dynamic_assist.state)
+    }
+    fn aero_pedal_dip_compensation(&self) -> MobileAeroPedalDipCompensationStateDto {
+        mobile_aero_pedal_dip_compensation_state(self.aero_pedal_dip_compensation.state)
+    }
+    fn aero_lateral_tilt_limit(&self) -> MobileAeroLateralTiltLimitStateDto {
+        mobile_aero_lateral_tilt_limit_state(self.aero_lateral_tilt_limit.state)
+    }
+    fn aero_voltage_correction(&self) -> MobileAeroVoltageCorrectionStateDto {
+        mobile_aero_voltage_correction_state(self.aero_voltage_correction.state)
+    }
+    fn aero_max_charge_voltage_raw(&self) -> MobileAeroMaxChargeVoltageRawStateDto {
+        mobile_aero_max_charge_voltage_raw_state(self.aero_max_charge_voltage_raw.state)
+    }
+    fn aero_high_speed_mode(&self) -> MobileAeroHighSpeedModeStateDto {
+        mobile_aero_high_speed_mode_state(self.aero_high_speed_mode.state)
+    }
+    fn aero_low_battery_mode(&self) -> MobileAeroLowBatteryModeStateDto {
+        mobile_aero_low_battery_mode_state(self.aero_low_battery_mode.state)
+    }
+    fn aero_transport_mode(&self) -> MobileAeroTransportModeStateDto {
+        mobile_aero_transport_mode_state(self.aero_transport_mode.state)
+    }
+
     fn aero_alarm_speed(&self) -> MobileAeroSpeedSettingStateDto {
         mobile_aero_speed_setting_state(self.aero_alarm_speed.state)
     }
@@ -3482,6 +4506,30 @@ impl MobileEucSettingTrackers {
     fn taillight(&self) -> MobileLightSettingStateDto {
         mobile_light_setting_state(self.taillight.state)
     }
+
+    fn trip_meter_reset(&self) -> MobileTripMeterResetStateDto {
+        let mut snapshot = MobileTripMeterResetStateDto {
+            kind: MobileSettingStateKindDto::Unknown,
+            refusal_reason: None,
+            submitted_at_ms: None,
+        };
+        snapshot.kind = match self.trip_meter_reset.state {
+            CoreSettingState::Unknown => MobileSettingStateKindDto::Unknown,
+            CoreSettingState::Current(_) => MobileSettingStateKindDto::Current,
+            CoreSettingState::Pending { submitted_at, .. } => {
+                snapshot.submitted_at_ms = Some(submitted_at.as_milliseconds());
+                MobileSettingStateKindDto::Pending
+            }
+            CoreSettingState::Confirmed { .. } => MobileSettingStateKindDto::Confirmed,
+            CoreSettingState::Refused { reason, .. } => {
+                snapshot.refusal_reason = Some(reason.into());
+                MobileSettingStateKindDto::Refused
+            }
+            CoreSettingState::TimedOut { .. } => MobileSettingStateKindDto::TimedOut,
+            CoreSettingState::Failed { .. } => MobileSettingStateKindDto::Failed,
+        };
+        snapshot
+    }
 }
 
 fn observe_setting_write<Value>(
@@ -3505,6 +4553,166 @@ fn observe_setting_write<Value>(
         Some(_) => state.fail(),
     }
 }
+
+macro_rules! mobile_aero_numeric_state {
+    ($name:ident, $state:ty, $dto:ident) => {
+        fn $name(state: CoreSettingState<$state>) -> $dto {
+            let (
+                kind,
+                current,
+                requested,
+                source,
+                submitted_at_ms,
+                confirmed_at_ms,
+                refusal_reason,
+            ) = match state {
+                CoreSettingState::Unknown => (
+                    MobileSettingStateKindDto::Unknown,
+                    None,
+                    None,
+                    MobileSettingValueSourceDto::Unknown,
+                    None,
+                    None,
+                    None,
+                ),
+                CoreSettingState::Current(value) => (
+                    MobileSettingStateKindDto::Current,
+                    Some(value.value.into()),
+                    None,
+                    value.source.into(),
+                    None,
+                    None,
+                    None,
+                ),
+                CoreSettingState::Pending {
+                    current,
+                    requested,
+                    submitted_at,
+                } => (
+                    MobileSettingStateKindDto::Pending,
+                    current.map(|v| v.value.into()),
+                    Some(requested.into()),
+                    current.map_or(MobileSettingValueSourceDto::Unknown, |v| v.source.into()),
+                    Some(submitted_at.as_milliseconds()),
+                    None,
+                    None,
+                ),
+                CoreSettingState::Confirmed {
+                    value,
+                    confirmed_at,
+                } => (
+                    MobileSettingStateKindDto::Confirmed,
+                    Some(value.value.into()),
+                    None,
+                    value.source.into(),
+                    None,
+                    Some(confirmed_at.as_milliseconds()),
+                    None,
+                ),
+                CoreSettingState::Refused {
+                    current,
+                    requested,
+                    reason,
+                } => (
+                    MobileSettingStateKindDto::Refused,
+                    current.map(|v| v.value.into()),
+                    requested.map(Into::into),
+                    current.map_or(MobileSettingValueSourceDto::Unknown, |v| v.source.into()),
+                    None,
+                    None,
+                    Some(reason.into()),
+                ),
+                CoreSettingState::TimedOut { current, .. } => (
+                    MobileSettingStateKindDto::TimedOut,
+                    current.map(|v| v.value.into()),
+                    None,
+                    current.map_or(MobileSettingValueSourceDto::Unknown, |v| v.source.into()),
+                    None,
+                    None,
+                    None,
+                ),
+                CoreSettingState::Failed { current, .. } => (
+                    MobileSettingStateKindDto::Failed,
+                    current.map(|v| v.value.into()),
+                    None,
+                    current.map_or(MobileSettingValueSourceDto::Unknown, |v| v.source.into()),
+                    None,
+                    None,
+                    None,
+                ),
+            };
+            $dto {
+                kind,
+                current,
+                requested,
+                source,
+                submitted_at_ms,
+                confirmed_at_ms,
+                refusal_reason,
+            }
+        }
+    };
+}
+mobile_aero_numeric_state!(
+    mobile_aero_display_backlight_state,
+    CoreAeroDisplayBacklight,
+    MobileAeroDisplayBacklightStateDto
+);
+mobile_aero_numeric_state!(
+    mobile_aero_beeper_volume_state,
+    CoreAeroBeeperVolume,
+    MobileAeroBeeperVolumeStateDto
+);
+mobile_aero_numeric_state!(
+    mobile_aero_dynamic_assist_state,
+    CoreAeroDynamicAssist,
+    MobileAeroDynamicAssistStateDto
+);
+mobile_aero_numeric_state!(
+    mobile_aero_pedal_dip_compensation_state,
+    CoreAeroPedalDipCompensation,
+    MobileAeroPedalDipCompensationStateDto
+);
+mobile_aero_numeric_state!(
+    mobile_aero_lateral_tilt_limit_state,
+    CoreAeroLateralTiltLimit,
+    MobileAeroLateralTiltLimitStateDto
+);
+mobile_aero_numeric_state!(
+    mobile_aero_voltage_correction_state,
+    CoreAeroVoltageCorrection,
+    MobileAeroVoltageCorrectionStateDto
+);
+mobile_aero_numeric_state!(
+    mobile_aero_max_charge_voltage_raw_state,
+    CoreAeroMaxChargeVoltageRaw,
+    MobileAeroMaxChargeVoltageRawStateDto
+);
+mobile_aero_numeric_state!(
+    mobile_aero_high_speed_mode_state,
+    CoreAeroHighSpeedMode,
+    MobileAeroHighSpeedModeStateDto
+);
+mobile_aero_numeric_state!(
+    mobile_aero_low_battery_mode_state,
+    CoreAeroLowBatteryMode,
+    MobileAeroLowBatteryModeStateDto
+);
+mobile_aero_numeric_state!(
+    mobile_aero_transport_mode_state,
+    CoreAeroTransportMode,
+    MobileAeroTransportModeStateDto
+);
+mobile_aero_numeric_state!(
+    mobile_aero_riding_mode_state,
+    CoreAeroRidingMode,
+    MobileAeroRidingModeSettingStateDto
+);
+mobile_aero_numeric_state!(
+    mobile_aero_brake_overpressure_alarm_state,
+    CoreAeroBrakeOverpressureAlarm,
+    MobileAeroBrakeOverpressureAlarmStateDto
+);
 
 fn mobile_aero_speed_setting_state(
     state: CoreSettingState<CoreAeroSpeedSetting>,
@@ -3573,9 +4781,135 @@ fn mobile_aero_speed_setting_state(
 }
 
 fn mobile_aero_pwm_setting_state(
-    state: CoreSettingState<CoreAeroPwmPercent>,
+    state: CoreSettingState<CoreAeroPwmSetting>,
 ) -> MobileAeroPwmSettingStateDto {
     let mut snapshot = MobileAeroPwmSettingStateDto::unknown();
+    match state {
+        CoreSettingState::Unknown => {}
+        CoreSettingState::Current(value) => {
+            snapshot.kind = MobileSettingStateKindDto::Current;
+            snapshot.current = match value.value {
+                CoreAeroPwmSetting::Margin(percent) => Some(percent.into()),
+                CoreAeroPwmSetting::Off => {
+                    snapshot.current_off = true;
+                    None
+                }
+            };
+            snapshot.source = value.source.into();
+        }
+        CoreSettingState::Pending {
+            current,
+            requested,
+            submitted_at,
+        } => {
+            snapshot.kind = MobileSettingStateKindDto::Pending;
+            snapshot.current = current.and_then(|value| match value.value {
+                CoreAeroPwmSetting::Margin(percent) => Some(percent.into()),
+                CoreAeroPwmSetting::Off => {
+                    snapshot.current_off = true;
+                    None
+                }
+            });
+            snapshot.source = current
+                .map_or(CoreSettingValueSource::Unknown, |value| value.source)
+                .into();
+            snapshot.requested = match requested {
+                CoreAeroPwmSetting::Margin(percent) => Some(percent.into()),
+                CoreAeroPwmSetting::Off => {
+                    snapshot.requested_off = true;
+                    None
+                }
+            };
+            snapshot.submitted_at_ms = Some(submitted_at.as_milliseconds());
+        }
+        CoreSettingState::Confirmed {
+            value,
+            confirmed_at,
+        } => {
+            snapshot.kind = MobileSettingStateKindDto::Confirmed;
+            snapshot.current = match value.value {
+                CoreAeroPwmSetting::Margin(percent) => Some(percent.into()),
+                CoreAeroPwmSetting::Off => {
+                    snapshot.current_off = true;
+                    None
+                }
+            };
+            snapshot.source = value.source.into();
+            snapshot.confirmed_at_ms = Some(confirmed_at.as_milliseconds());
+        }
+        CoreSettingState::Refused {
+            current,
+            requested,
+            reason,
+        } => {
+            snapshot.kind = MobileSettingStateKindDto::Refused;
+            snapshot.current = current.and_then(|value| match value.value {
+                CoreAeroPwmSetting::Margin(percent) => Some(percent.into()),
+                CoreAeroPwmSetting::Off => {
+                    snapshot.current_off = true;
+                    None
+                }
+            });
+            snapshot.source = current
+                .map_or(CoreSettingValueSource::Unknown, |value| value.source)
+                .into();
+            snapshot.requested = requested.and_then(|value| match value {
+                CoreAeroPwmSetting::Margin(percent) => Some(percent.into()),
+                CoreAeroPwmSetting::Off => {
+                    snapshot.requested_off = true;
+                    None
+                }
+            });
+            snapshot.refusal_reason = Some(reason.into());
+        }
+        CoreSettingState::TimedOut { current, requested } => {
+            snapshot.kind = MobileSettingStateKindDto::TimedOut;
+            snapshot.current = current.and_then(|value| match value.value {
+                CoreAeroPwmSetting::Margin(percent) => Some(percent.into()),
+                CoreAeroPwmSetting::Off => {
+                    snapshot.current_off = true;
+                    None
+                }
+            });
+            snapshot.source = current
+                .map_or(CoreSettingValueSource::Unknown, |value| value.source)
+                .into();
+            snapshot.requested = match requested {
+                CoreAeroPwmSetting::Margin(percent) => Some(percent.into()),
+                CoreAeroPwmSetting::Off => {
+                    snapshot.requested_off = true;
+                    None
+                }
+            };
+        }
+        CoreSettingState::Failed { current, requested } => {
+            snapshot.kind = MobileSettingStateKindDto::Failed;
+            snapshot.current = current.and_then(|value| match value.value {
+                CoreAeroPwmSetting::Margin(percent) => Some(percent.into()),
+                CoreAeroPwmSetting::Off => {
+                    snapshot.current_off = true;
+                    None
+                }
+            });
+            snapshot.source = current
+                .map_or(CoreSettingValueSource::Unknown, |value| value.source)
+                .into();
+            snapshot.requested = requested.and_then(|value| match value {
+                CoreAeroPwmSetting::Margin(percent) => Some(percent.into()),
+                CoreAeroPwmSetting::Off => {
+                    snapshot.requested_off = true;
+                    None
+                }
+            });
+        }
+    }
+    snapshot
+}
+
+fn mobile_aero_gyro_calibration_state(
+    state: CoreSettingState<CoreAeroGyroCalibrationState>,
+) -> MobileAeroGyroCalibrationSettingStateDto {
+    let mut snapshot = MobileAeroGyroCalibrationSettingStateDto::unknown();
     match state {
         CoreSettingState::Unknown => {}
         CoreSettingState::Current(value) => {
@@ -3590,10 +4924,10 @@ fn mobile_aero_pwm_setting_state(
         } => {
             snapshot.kind = MobileSettingStateKindDto::Pending;
             snapshot.current = current.map(|value| value.value.into());
+            snapshot.requested = Some(requested.into());
             snapshot.source = current
                 .map_or(CoreSettingValueSource::Unknown, |value| value.source)
                 .into();
-            snapshot.requested = Some(requested.into());
             snapshot.submitted_at_ms = Some(submitted_at.as_milliseconds());
         }
         CoreSettingState::Confirmed {
@@ -3612,27 +4946,27 @@ fn mobile_aero_pwm_setting_state(
         } => {
             snapshot.kind = MobileSettingStateKindDto::Refused;
             snapshot.current = current.map(|value| value.value.into());
+            snapshot.requested = requested.map(Into::into);
             snapshot.source = current
                 .map_or(CoreSettingValueSource::Unknown, |value| value.source)
                 .into();
-            snapshot.requested = requested.map(Into::into);
             snapshot.refusal_reason = Some(reason.into());
         }
         CoreSettingState::TimedOut { current, requested } => {
             snapshot.kind = MobileSettingStateKindDto::TimedOut;
             snapshot.current = current.map(|value| value.value.into());
+            snapshot.requested = Some(requested.into());
             snapshot.source = current
                 .map_or(CoreSettingValueSource::Unknown, |value| value.source)
                 .into();
-            snapshot.requested = Some(requested.into());
         }
         CoreSettingState::Failed { current, requested } => {
             snapshot.kind = MobileSettingStateKindDto::Failed;
             snapshot.current = current.map(|value| value.value.into());
+            snapshot.requested = requested.map(Into::into);
             snapshot.source = current
                 .map_or(CoreSettingValueSource::Unknown, |value| value.source)
                 .into();
-            snapshot.requested = requested.map(Into::into);
         }
     }
     snapshot
@@ -12144,10 +13478,18 @@ fn settings_entry(
         .find(|entry| entry.field.id == field_id)
 }
 
+fn bool_setting(value: i64) -> Option<bool> {
+    match value {
+        0 => Some(false),
+        1 => Some(true),
+        _ => None,
+    }
+}
+
 fn aero_speed_setting_from_entry(entry: MobileSettingsEntryDto) -> Option<CoreAeroSpeedSetting> {
-    let deci_kmh = u8::try_from(entry.field.value).ok()?;
+    let deci_kmh = entry.field.value;
     (deci_kmh % 10 == 0).then_some(())?;
-    CoreAeroSpeedSetting::new(deci_kmh / 10)
+    CoreAeroSpeedSetting::new(u8::try_from(deci_kmh / 10).ok()?)
 }
 
 fn begode_pedal_mode(settings_bits: u16) -> MobilePedalModeDto {
@@ -12487,11 +13829,213 @@ fn mobile_gatt_channel(channel: &[u8]) -> GattChannel {
     GattChannel::from_bytes(mobile_channel_bytes(channel))
 }
 
+/// Typed readback returned by the Rust-owned Aero settings simulator.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct MobileAeroSettingsSimulatorReadbackDto {
+    /// Current TLT speed.
+    pub tiltback_speed: Option<MobileAeroSpeedSettingDto>,
+
+    /// Current PWT percentage.
+    pub pwm_percent: Option<MobileAeroPwmPercentDto>,
+
+    /// Current simulated MD pedal hardness, when set explicitly.
+    pub pedal_hardness: Option<MobileAeroPedalHardnessDto>,
+
+    pub display_backlight: Option<MobileAeroDisplayBacklightDto>,
+    pub beeper_volume: Option<MobileAeroBeeperVolumeDto>,
+    pub dynamic_assist: Option<MobileAeroDynamicAssistDto>,
+    pub pedal_dip_compensation: Option<MobileAeroPedalDipCompensationDto>,
+    pub lateral_tilt_limit: Option<MobileAeroLateralTiltLimitDto>,
+    pub voltage_correction: Option<MobileAeroVoltageCorrectionDto>,
+
+    /// Current official MxV raw maximum-charge value.
+    pub max_charge_voltage_raw: Option<MobileAeroMaxChargeVoltageRawDto>,
+
+    /// Simulated wheel display units.
+    pub wheel_units: Option<MobileAeroWheelUnitsDto>,
+
+    /// Simulated high-speed mode.
+    pub high_speed_mode: Option<MobileAeroToggleDto>,
+
+    /// Simulated low-battery mode.
+    pub low_battery_mode: Option<MobileAeroToggleDto>,
+
+    /// Simulated transportation mode.
+    pub transport_mode: Option<MobileAeroToggleDto>,
+
+    /// Current ALM speed.
+    pub alarm_speed: Option<MobileAeroSpeedSettingDto>,
+
+    /// Current ANG adjustment.
+    pub angle_adjustment: Option<MobileAeroAngleAdjustmentDto>,
+
+    /// Current page-8 gyro-calibration phase.
+    pub gyro_calibration_state: Option<MobileAeroGyroCalibrationStateDto>,
+
+    /// Current brake overpressure alarm threshold.
+    pub brake_overpressure_alarm: Option<MobileAeroBrakeOverpressureAlarmDto>,
+
+    /// Current pedal mode.
+    pub pedal_mode: Option<MobilePedalModeKindDto>,
+
+    /// Current high-beam state.
+    pub high_beam: Option<MobileLightStateDto>,
+
+    /// Current single-frame headlight state.
+    pub headlight: Option<MobileLightStateDto>,
+
+    /// Number of accepted trip-meter reset writes.
+    pub trip_meter_reset_count: u32,
+}
+
+impl From<AeroSettingsReadback> for MobileAeroSettingsSimulatorReadbackDto {
+    fn from(readback: AeroSettingsReadback) -> Self {
+        Self {
+            tiltback_speed: readback.tiltback_speed.map(Into::into),
+            pwm_percent: readback.pwm_percent.and_then(|setting| match setting {
+                CoreAeroPwmSetting::Margin(value) => Some(value.into()),
+                CoreAeroPwmSetting::Off => None,
+            }),
+            pedal_hardness: readback.pedal_hardness.map(Into::into),
+            display_backlight: readback.display_backlight.map(Into::into),
+            beeper_volume: readback.beeper_volume.map(Into::into),
+            dynamic_assist: readback.dynamic_assist.map(Into::into),
+            pedal_dip_compensation: readback.pedal_dip_compensation.map(Into::into),
+            lateral_tilt_limit: readback.lateral_tilt_limit.map(Into::into),
+            voltage_correction: readback.voltage_correction.map(Into::into),
+            max_charge_voltage_raw: readback.max_charge_voltage_raw.map(Into::into),
+            wheel_units: readback.wheel_units.map(Into::into),
+            high_speed_mode: readback.high_speed_mode.map(Into::into),
+            low_battery_mode: readback.low_battery_mode.map(Into::into),
+            transport_mode: readback.transport_mode.map(Into::into),
+            alarm_speed: readback.alarm_speed.map(Into::into),
+            angle_adjustment: readback.angle_adjustment.map(Into::into),
+            gyro_calibration_state: readback.gyro_calibration_state.map(Into::into),
+            brake_overpressure_alarm: readback.brake_overpressure_alarm.map(Into::into),
+            pedal_mode: readback.pedal_mode.map(Into::into),
+            high_beam: readback.high_beam.map(Into::into),
+            headlight: readback.headlight.map(Into::into),
+            trip_meter_reset_count: readback.trip_meter_reset_count,
+        }
+    }
+}
+
+/// Rust-owned, no-Bluetooth Aero settings simulator for mobile integration tests.
+///
+/// This is a thin FFI facade over [`cutout_protocols::AeroSettingsSimulator`].
+/// It intentionally exposes typed commands, typed readback, and the same mobile
+/// output DTOs as a live session; it does not expose a raw transport API.
+#[derive(Debug, uniffi::Object)]
+pub struct AeroSettingsSimulator {
+    inner: Mutex<CoreAeroSettingsSimulator>,
+}
+
+#[uniffi::export]
+impl AeroSettingsSimulator {
+    /// Creates a stationary NOSFET Aero simulator.
+    #[uniffi::constructor]
+    #[must_use]
+    pub fn new() -> Arc<Self> {
+        Arc::new(Self {
+            inner: Mutex::new(CoreAeroSettingsSimulator::default()),
+        })
+    }
+
+    /// Issues one typed command and returns the live-session-shaped outputs.
+    pub fn issue(
+        &self,
+        command: MobileCommandDto,
+        operating_state: RideOperatingState,
+        speed: Option<Speed>,
+        monotonic_ms: MobileMonotonicMillisDto,
+    ) -> Vec<MobileSessionOutputDto> {
+        self.issue_checked(command, operating_state, speed, monotonic_ms)
+            .outputs
+    }
+
+    /// Issues one typed command and preserves any typed refusal diagnostic.
+    pub fn issue_checked(
+        &self,
+        command: MobileCommandDto,
+        operating_state: RideOperatingState,
+        speed: Option<Speed>,
+        monotonic_ms: MobileMonotonicMillisDto,
+    ) -> MobileSessionStepResultDto {
+        if !mobile_command_is_valid(command) {
+            return mobile_command_refusal(command);
+        }
+        let core_command: CoreDeviceCommand = DeviceCommandDto::from(command).into();
+        let speed = speed.map(|speed| CoreSpeed::from_millimetres_per_second(speed.value));
+        let outputs = self.lock_inner().issue(
+            core_command,
+            simulator_operating_state(operating_state),
+            speed,
+            monotonic_ms.into_core(),
+        );
+        mobile_simulator_step_result(outputs, command)
+    }
+
+    /// Advances any delayed simulator output and returns live-session-shaped outputs.
+    pub fn tick(&self, monotonic_ms: MobileMonotonicMillisDto) -> Vec<MobileSessionOutputDto> {
+        self.lock_inner()
+            .tick(monotonic_ms.into_core())
+            .into_iter()
+            .map(|output| MobileSessionOutputDto::from(SessionOutputDto::from(output)))
+            .collect()
+    }
+
+    /// Returns the current typed simulator readback.
+    pub fn readback(&self) -> MobileAeroSettingsSimulatorReadbackDto {
+        self.lock_inner().readback().into()
+    }
+}
+
+impl AeroSettingsSimulator {
+    fn lock_inner(&self) -> MutexGuard<'_, CoreAeroSettingsSimulator> {
+        self.inner.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+}
+
+fn simulator_operating_state(state: RideOperatingState) -> CoreRideOperatingState {
+    match state {
+        RideOperatingState::Unknown => CoreRideOperatingState::Unknown,
+        RideOperatingState::Parked => CoreRideOperatingState::Parked,
+        RideOperatingState::Standing => CoreRideOperatingState::Standing,
+        RideOperatingState::Riding => CoreRideOperatingState::Riding,
+        RideOperatingState::Charging => CoreRideOperatingState::Charging,
+    }
+}
+
+fn mobile_simulator_step_result(
+    outputs: Vec<SessionOutput>,
+    command: MobileCommandDto,
+) -> MobileSessionStepResultDto {
+    let error = outputs.iter().find_map(|output| match output {
+        SessionOutput::Event(DeviceEvent::ControlRefusal(refusal)) => {
+            Some(MobileSessionStepErrorDto {
+                kind: MobileSessionStepErrorKindDto::CommandRefused,
+                command: Some(command),
+                reason: Some(refusal.reason.into()),
+            })
+        }
+        _ => None,
+    });
+
+    MobileSessionStepResultDto {
+        outputs: outputs
+            .into_iter()
+            .map(|output| MobileSessionOutputDto::from(SessionOutputDto::from(output)))
+            .collect(),
+        error,
+    }
+}
+
 /// Mobile-facing NOSFET Aero telemetry wrapper with allow-listed light control.
 #[derive(Debug, uniffi::Object)]
 pub struct AeroBenignControlSession {
     inner: Mutex<ConcreteAeroBenignControlSession>,
     settings: Mutex<MobileEucSettingTrackers>,
+    allow_unverified_settings: Mutex<bool>,
 }
 
 #[uniffi::export]
@@ -12503,7 +14047,16 @@ impl AeroBenignControlSession {
         Arc::new(Self {
             inner: Mutex::new(new_nosfet_aero_benign_control_session()),
             settings: Mutex::new(MobileEucSettingTrackers::default()),
+            allow_unverified_settings: Mutex::new(false),
         })
+    }
+
+    /// Enables the explicit local validation path for typed, unverified Aero settings.
+    pub fn enable_settings_validation(&self) {
+        *self
+            .allow_unverified_settings
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner) = true;
     }
 
     /// Drives one input and returns owned outputs plus any stable error DTO.
@@ -12512,6 +14065,28 @@ impl AeroBenignControlSession {
         if tracked_input.kind == MobileSessionInputKindDto::Command {
             self.lock_inner()
                 .set_monotonic(tracked_input.monotonic_ms.milliseconds);
+        }
+        if tracked_input.kind == MobileSessionInputKindDto::Command {
+            if let Some(command) = tracked_input.command {
+                let result = if !mobile_command_is_valid(command)
+                    || mobile_aero_setting_support(
+                        command,
+                        *self
+                            .allow_unverified_settings
+                            .lock()
+                            .unwrap_or_else(PoisonError::into_inner),
+                    ) != MobileSettingWriteSupportDto::Supported
+                {
+                    Some(mobile_command_refusal(command))
+                } else {
+                    None
+                };
+                if let Some(result) = result {
+                    self.lock_settings()
+                        .observe_step(&tracked_input, &result, false);
+                    return result;
+                }
+            }
         }
         let input = SessionInputDto::from(input);
         let result = preserve_refused_command(
@@ -12544,7 +14119,15 @@ impl AeroBenignControlSession {
 
     /// Returns the capture-backed EUC setting write capabilities.
     pub fn settings_capabilities(&self) -> MobileEucSettingsCapabilitiesDto {
-        MobileEucSettingsCapabilitiesDto::aero()
+        if *self
+            .allow_unverified_settings
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+        {
+            MobileEucSettingsCapabilitiesDto::aero_validation()
+        } else {
+            MobileEucSettingsCapabilitiesDto::aero()
+        }
     }
 
     /// Arms settings writes only when the latest Rust-owned ride state is stationary.
@@ -12553,12 +14136,10 @@ impl AeroBenignControlSession {
         state: RideOperatingState,
         monotonic_ms: MobileMonotonicMillisDto,
     ) -> bool {
-        let speed_mm_per_second = self
-            .lock_inner()
-            .current_snapshot()
-            .speed
-            .map(|speed| speed.value);
-        self.lock_inner().arm_settings_writes(
+        let mut session = self.lock_inner();
+        let snapshot = session.current_snapshot();
+        let speed_mm_per_second = snapshot.speed.map(|speed| speed.value);
+        session.arm_settings_writes(
             mobile_ride_operating_state_dto(state),
             speed_mm_per_second,
             monotonic_ms.milliseconds,
@@ -12576,6 +14157,91 @@ impl AeroBenignControlSession {
     ) -> MobileLightCommandStatusDto {
         self.lock_settings()
             .headlight_command_status(monotonic_ms, false)
+    }
+
+    /// Returns the Rust-owned Aero high-beam write lifecycle state.
+    pub fn aero_high_beam_state(&self) -> MobileLightSettingStateDto {
+        self.lock_settings().aero_high_beam()
+    }
+    /// Returns the Rust-owned Aero tilt-back speed lifecycle state.
+    pub fn aero_tiltback_speed_state(&self) -> MobileAeroSpeedSettingStateDto {
+        self.lock_settings().aero_tiltback_speed()
+    }
+    /// Returns the Rust-owned Aero PWM-warning lifecycle state.
+    pub fn aero_pwm_percent_state(&self) -> MobileAeroPwmSettingStateDto {
+        self.lock_settings().aero_pwm_percent()
+    }
+    /// Returns the Rust-owned Aero gyro-calibration lifecycle state.
+    pub fn aero_gyro_calibration_state(&self) -> MobileAeroGyroCalibrationSettingStateDto {
+        self.lock_settings().aero_gyro_calibration()
+    }
+
+    /// Returns the Rust-owned modern binary T riding-mode lifecycle state.
+    pub fn aero_riding_mode_state(&self) -> MobileAeroRidingModeSettingStateDto {
+        self.lock_settings().aero_riding_mode()
+    }
+
+    /// Returns the Rust-owned brake overpressure alarm lifecycle state.
+    pub fn aero_brake_overpressure_alarm_state(&self) -> MobileAeroBrakeOverpressureAlarmStateDto {
+        self.lock_settings().aero_brake_overpressure_alarm()
+    }
+
+    /// Returns the Rust-owned MD pedal-hardness lifecycle state.
+    pub fn aero_pedal_hardness_state(&self) -> MobileAeroPedalHardnessStateDto {
+        self.lock_settings().aero_pedal_hardness()
+    }
+
+    pub fn aero_display_backlight_state(&self) -> MobileAeroDisplayBacklightStateDto {
+        self.lock_settings().aero_display_backlight()
+    }
+    pub fn aero_beeper_volume_state(&self) -> MobileAeroBeeperVolumeStateDto {
+        self.lock_settings().aero_beeper_volume()
+    }
+    pub fn aero_dynamic_assist_state(&self) -> MobileAeroDynamicAssistStateDto {
+        self.lock_settings().aero_dynamic_assist()
+    }
+    pub fn aero_pedal_dip_compensation_state(&self) -> MobileAeroPedalDipCompensationStateDto {
+        self.lock_settings().aero_pedal_dip_compensation()
+    }
+    pub fn aero_lateral_tilt_limit_state(&self) -> MobileAeroLateralTiltLimitStateDto {
+        self.lock_settings().aero_lateral_tilt_limit()
+    }
+    pub fn aero_voltage_correction_state(&self) -> MobileAeroVoltageCorrectionStateDto {
+        self.lock_settings().aero_voltage_correction()
+    }
+    /// Returns the Rust-owned raw MxV maximum-charge lifecycle state.
+    pub fn aero_max_charge_voltage_raw_state(&self) -> MobileAeroMaxChargeVoltageRawStateDto {
+        self.lock_settings().aero_max_charge_voltage_raw()
+    }
+
+    /// Returns the Rust-owned wheel display-units lifecycle.
+    pub fn aero_wheel_units_state(&self) -> MobileAeroWheelUnitsStateDto {
+        self.lock_settings().aero_wheel_units()
+    }
+
+    /// Returns the Rust-owned Aero high-speed-mode lifecycle state.
+    pub fn aero_high_speed_mode_state(&self) -> MobileAeroHighSpeedModeStateDto {
+        self.lock_settings().aero_high_speed_mode()
+    }
+
+    /// Returns the Rust-owned Aero low-battery-mode lifecycle state.
+    pub fn aero_low_battery_mode_state(&self) -> MobileAeroLowBatteryModeStateDto {
+        self.lock_settings().aero_low_battery_mode()
+    }
+
+    /// Returns the Rust-owned Aero transportation-mode lifecycle state.
+    pub fn aero_transport_mode_state(&self) -> MobileAeroTransportModeStateDto {
+        self.lock_settings().aero_transport_mode()
+    }
+
+    /// Returns the Rust-owned Aero alarm-speed lifecycle state.
+    pub fn aero_alarm_speed_state(&self) -> MobileAeroSpeedSettingStateDto {
+        self.lock_settings().aero_alarm_speed()
+    }
+
+    /// Returns the Rust-owned Aero angle-adjustment lifecycle state.
+    pub fn aero_angle_adjustment_state(&self) -> MobileAeroAngleAdjustmentStateDto {
+        self.lock_settings().aero_angle_adjustment()
     }
 
     /// Records a transport failure for the latest headlight command.
@@ -12607,30 +14273,138 @@ impl AeroBenignControlSession {
     pub fn taillight_state(&self) -> MobileLightSettingStateDto {
         self.lock_settings().taillight()
     }
-
-    /// Returns the Rust-owned Aero high-beam write lifecycle state.
-    pub fn aero_high_beam_state(&self) -> MobileLightSettingStateDto {
-        self.lock_settings().aero_high_beam()
+    /// Returns the Rust-owned trip-meter reset lifecycle state.
+    pub fn trip_meter_reset_state(&self) -> MobileTripMeterResetStateDto {
+        self.lock_settings().trip_meter_reset()
     }
+}
 
-    /// Returns the Rust-owned Aero tilt-back speed lifecycle state.
-    pub fn aero_tiltback_speed_state(&self) -> MobileAeroSpeedSettingStateDto {
-        self.lock_settings().aero_tiltback_speed()
+fn mobile_aero_setting_support(
+    command: MobileCommandDto,
+    allow_unverified_settings: bool,
+) -> MobileSettingWriteSupportDto {
+    let capabilities = if allow_unverified_settings {
+        MobileEucSettingsCapabilitiesDto::aero_validation()
+    } else {
+        MobileEucSettingsCapabilitiesDto::aero()
+    };
+    let support = match command {
+        MobileCommandDto::SetPedalMode(_) => capabilities.pedal_mode,
+        MobileCommandDto::SetLights(_) => capabilities.headlight,
+        MobileCommandDto::SetAeroHighBeam(_) => capabilities.aero_high_beam,
+        MobileCommandDto::ResetTripMeter => capabilities.reset_trip_meter,
+        MobileCommandDto::SetAeroTiltbackSpeed(_) => capabilities.aero_tiltback_speed,
+        MobileCommandDto::SetAeroPwmPercent(_) => capabilities.aero_pwm_percent,
+        MobileCommandDto::SetAeroPwmOff => capabilities.aero_pwm_percent,
+        MobileCommandDto::SetAeroGyroCalibration => capabilities.aero_gyro_calibration,
+        MobileCommandDto::SetAeroRidingMode(_) => capabilities.aero_riding_mode,
+        MobileCommandDto::SetAeroBrakeOverpressureAlarm(_) => {
+            capabilities.aero_brake_overpressure_alarm
+        }
+        MobileCommandDto::SetAeroPedalHardness(_) => capabilities.aero_pedal_hardness,
+        MobileCommandDto::SetAeroDisplayBacklight(_) => capabilities.aero_display_backlight,
+        MobileCommandDto::SetAeroBeeperVolume(_) => capabilities.aero_beeper_volume,
+        MobileCommandDto::SetAeroDynamicAssist(_) => capabilities.aero_dynamic_assist,
+        MobileCommandDto::SetAeroPedalDipCompensation(_) => {
+            capabilities.aero_pedal_dip_compensation
+        }
+        MobileCommandDto::SetAeroLateralTiltLimit(_) => capabilities.aero_lateral_tilt_limit,
+        MobileCommandDto::SetAeroVoltageCorrection(_) => capabilities.aero_voltage_correction,
+        MobileCommandDto::SetAeroMaxChargeVoltageRaw(_) => capabilities.aero_max_charge_voltage_raw,
+        MobileCommandDto::SetAeroWheelUnits(_) => capabilities.aero_wheel_units,
+        MobileCommandDto::SetAeroHighSpeedMode(_) => capabilities.aero_high_speed_mode,
+        MobileCommandDto::SetAeroLowBatteryMode(_) => capabilities.aero_low_battery_mode,
+        MobileCommandDto::SetAeroTransportMode(_) => capabilities.aero_transport_mode,
+        MobileCommandDto::SetAeroAlarmSpeed(_) => capabilities.aero_alarm_speed,
+        MobileCommandDto::SetAeroAngleAdjustment(_) => capabilities.aero_angle_adjustment,
+        MobileCommandDto::SetRollAngle(_)
+        | MobileCommandDto::SetSpeedAlarmMode(_)
+        | MobileCommandDto::SetBegodeMaxSpeed(_)
+        | MobileCommandDto::SetBegodeBeeperVolume(_)
+        | MobileCommandDto::SetBegodeLedMode(_)
+        | MobileCommandDto::SetAccelerationAssist(_)
+        | MobileCommandDto::SetTaillight(_)
+        | MobileCommandDto::RequestFaultHistory
+        | MobileCommandDto::RequestIdentity
+        | MobileCommandDto::RequestTelemetry
+        | MobileCommandDto::RequestFirmwareInfo
+        | MobileCommandDto::RequestBatteryInfo
+        | MobileCommandDto::RequestDiagnostics
+        | MobileCommandDto::RequestSettings
+        | MobileCommandDto::SoundHorn => MobileSettingWriteSupportDto::Supported,
+    };
+    if capabilities.validation_mode && support == MobileSettingWriteSupportDto::Unverified {
+        MobileSettingWriteSupportDto::Supported
+    } else {
+        support
     }
+}
 
-    /// Returns the Rust-owned Aero PWM-warning lifecycle state.
-    pub fn aero_pwm_percent_state(&self) -> MobileAeroPwmSettingStateDto {
-        self.lock_settings().aero_pwm_percent()
+fn mobile_command_refusal(command: MobileCommandDto) -> MobileSessionStepResultDto {
+    MobileSessionStepResultDto {
+        outputs: Vec::new(),
+        error: Some(MobileSessionStepErrorDto {
+            kind: MobileSessionStepErrorKindDto::CommandRefused,
+            command: Some(command),
+            reason: Some(MobileControlRefusalReasonDto::UnsupportedCommand),
+        }),
     }
+}
 
-    /// Returns the Rust-owned Aero alarm-speed lifecycle state.
-    pub fn aero_alarm_speed_state(&self) -> MobileAeroSpeedSettingStateDto {
-        self.lock_settings().aero_alarm_speed()
-    }
-
-    /// Returns the Rust-owned Aero angle-adjustment lifecycle state.
-    pub fn aero_angle_adjustment_state(&self) -> MobileAeroAngleAdjustmentStateDto {
-        self.lock_settings().aero_angle_adjustment()
+fn mobile_command_is_valid(command: MobileCommandDto) -> bool {
+    match command {
+        MobileCommandDto::SetAeroTiltbackSpeed(value)
+        | MobileCommandDto::SetAeroAlarmSpeed(value) => {
+            CoreAeroSpeedSetting::new(value.kilometres_per_hour).is_some()
+        }
+        MobileCommandDto::SetAeroPwmPercent(value) => {
+            CoreAeroPwmPercent::new(value.percent).is_some()
+        }
+        MobileCommandDto::SetAeroPedalHardness(value) => {
+            CoreAeroPedalHardness::new(value.percent).is_some()
+        }
+        MobileCommandDto::SetAeroDisplayBacklight(value) => {
+            CoreAeroDisplayBacklight::new(value.percent).is_some()
+        }
+        MobileCommandDto::SetAeroBeeperVolume(value) => {
+            CoreAeroBeeperVolume::new(value.percent).is_some()
+        }
+        MobileCommandDto::SetAeroDynamicAssist(value) => {
+            CoreAeroDynamicAssist::new(value.percent).is_some()
+        }
+        MobileCommandDto::SetAeroPedalDipCompensation(value) => {
+            CoreAeroPedalDipCompensation::new(value.percent).is_some()
+        }
+        MobileCommandDto::SetAeroLateralTiltLimit(value) => {
+            CoreAeroLateralTiltLimit::new(value.degrees).is_some()
+        }
+        MobileCommandDto::SetAeroVoltageCorrection(value) => {
+            CoreAeroVoltageCorrection::new(value.tenths_of_percent).is_some()
+        }
+        MobileCommandDto::SetAeroMaxChargeVoltageRaw(value) => {
+            CoreAeroMaxChargeVoltageRaw::new(value.raw).is_some()
+        }
+        MobileCommandDto::SetAeroHighSpeedMode(_)
+        | MobileCommandDto::SetAeroLowBatteryMode(_)
+        | MobileCommandDto::SetAeroTransportMode(_) => true,
+        MobileCommandDto::SetAeroGyroCalibration => true,
+        MobileCommandDto::SetAeroRidingMode(_) => true,
+        MobileCommandDto::SetAeroBrakeOverpressureAlarm(value) => {
+            CoreAeroBrakeOverpressureAlarm::new(value.percent).is_some()
+        }
+        MobileCommandDto::SetAeroAngleAdjustment(value) => {
+            CoreAeroAngleAdjustment::new(value.tenths_of_degree).is_some()
+        }
+        MobileCommandDto::SetBegodeMaxSpeed(value) => {
+            CoreBegodeMaxSpeed::new(value.kilometres_per_hour).is_some()
+        }
+        MobileCommandDto::SetBegodeBeeperVolume(value) => {
+            CoreBegodeBeeperVolume::new(value.level).is_some()
+        }
+        MobileCommandDto::SetBegodeLedMode(value) => {
+            CoreBegodeLedModeSetting::new(value.mode).is_some()
+        }
+        _ => true,
     }
 }
 
@@ -12649,6 +14423,7 @@ impl Default for AeroBenignControlSession {
         Self {
             inner: Mutex::new(new_nosfet_aero_benign_control_session()),
             settings: Mutex::new(MobileEucSettingTrackers::default()),
+            allow_unverified_settings: Mutex::new(false),
         }
     }
 }
@@ -12671,12 +14446,13 @@ impl From<MobileSessionInputDto> for SessionInputDto {
             MobileSessionInputKindDto::Tick => Self::Tick {
                 monotonic_ms: input.monotonic_ms.into_core_ffi(),
             },
-            MobileSessionInputKindDto::Command => Self::Command(
-                input
+            MobileSessionInputKindDto::Command => Self::CommandAt {
+                command: input
                     .command
                     .unwrap_or(MobileCommandDto::RequestTelemetry)
                     .into(),
-            ),
+                monotonic_ms: input.monotonic_ms.into_core_ffi(),
+            },
         }
     }
 }
@@ -12706,10 +14482,78 @@ impl From<MobileCommandDto> for DeviceCommandDto {
                 )
             }
             MobileCommandDto::SetAeroPwmPercent(percent) => {
-                CoreAeroPwmPercent::new(percent.percent).map_or(
+                CoreAeroPwmPercent::new(percent.percent)
+                    .map_or(DeviceCommandDto::RequestSettings, |value| {
+                        DeviceCommandDto::SetAeroPwmPercent(CoreAeroPwmSetting::Margin(value))
+                    })
+            }
+            MobileCommandDto::SetAeroPwmOff => DeviceCommandDto::SetAeroPwmOff,
+            MobileCommandDto::SetAeroGyroCalibration => DeviceCommandDto::SetAeroGyroCalibration,
+            MobileCommandDto::SetAeroRidingMode(mode) => {
+                DeviceCommandDto::SetAeroRidingMode(CoreAeroRidingMode::from(mode).into())
+            }
+            MobileCommandDto::SetAeroBrakeOverpressureAlarm(value) => {
+                CoreAeroBrakeOverpressureAlarm::new(value.percent).map_or(
                     DeviceCommandDto::RequestSettings,
-                    DeviceCommandDto::SetAeroPwmPercent,
+                    DeviceCommandDto::SetAeroBrakeOverpressureAlarm,
                 )
+            }
+            MobileCommandDto::SetAeroPedalHardness(value) => {
+                CoreAeroPedalHardness::new(value.percent).map_or(
+                    DeviceCommandDto::RequestSettings,
+                    DeviceCommandDto::SetAeroPedalHardness,
+                )
+            }
+            MobileCommandDto::SetAeroDisplayBacklight(value) => {
+                CoreAeroDisplayBacklight::new(value.percent).map_or(
+                    DeviceCommandDto::RequestSettings,
+                    DeviceCommandDto::SetAeroDisplayBacklight,
+                )
+            }
+            MobileCommandDto::SetAeroBeeperVolume(value) => {
+                CoreAeroBeeperVolume::new(value.percent).map_or(
+                    DeviceCommandDto::RequestSettings,
+                    DeviceCommandDto::SetAeroBeeperVolume,
+                )
+            }
+            MobileCommandDto::SetAeroDynamicAssist(value) => {
+                CoreAeroDynamicAssist::new(value.percent).map_or(
+                    DeviceCommandDto::RequestSettings,
+                    DeviceCommandDto::SetAeroDynamicAssist,
+                )
+            }
+            MobileCommandDto::SetAeroPedalDipCompensation(value) => {
+                CoreAeroPedalDipCompensation::new(value.percent).map_or(
+                    DeviceCommandDto::RequestSettings,
+                    DeviceCommandDto::SetAeroPedalDipCompensation,
+                )
+            }
+            MobileCommandDto::SetAeroLateralTiltLimit(value) => {
+                CoreAeroLateralTiltLimit::new(value.degrees).map_or(
+                    DeviceCommandDto::RequestSettings,
+                    DeviceCommandDto::SetAeroLateralTiltLimit,
+                )
+            }
+            MobileCommandDto::SetAeroVoltageCorrection(value) => {
+                CoreAeroVoltageCorrection::new(value.tenths_of_percent).map_or(
+                    DeviceCommandDto::RequestSettings,
+                    DeviceCommandDto::SetAeroVoltageCorrection,
+                )
+            }
+            MobileCommandDto::SetAeroMaxChargeVoltageRaw(value) => {
+                CoreAeroMaxChargeVoltageRaw::new(value.raw).map_or(
+                    DeviceCommandDto::RequestSettings,
+                    DeviceCommandDto::SetAeroMaxChargeVoltageRaw,
+                )
+            }
+            MobileCommandDto::SetAeroHighSpeedMode(value) => {
+                DeviceCommandDto::SetAeroHighSpeedMode(CoreAeroHighSpeedMode::new(value.enabled))
+            }
+            MobileCommandDto::SetAeroLowBatteryMode(value) => {
+                DeviceCommandDto::SetAeroLowBatteryMode(CoreAeroLowBatteryMode::new(value.enabled))
+            }
+            MobileCommandDto::SetAeroTransportMode(value) => {
+                DeviceCommandDto::SetAeroTransportMode(CoreAeroTransportMode::new(value.enabled))
             }
             MobileCommandDto::SetAeroAlarmSpeed(speed) => {
                 CoreAeroSpeedSetting::new(speed.kilometres_per_hour).map_or(
@@ -12755,6 +14599,7 @@ impl From<MobileCommandDto> for DeviceCommandDto {
                 Self::SetAccelerationAssist(state.into())
             }
             MobileCommandDto::SetTaillight(state) => Self::SetTaillight(state.into()),
+            MobileCommandDto::SetAeroWheelUnits(units) => Self::SetAeroWheelUnits(units.into()),
             MobileCommandDto::SoundHorn => Self::SoundHorn,
         }
     }
@@ -12771,8 +14616,24 @@ fn mobile_command_from_command_kind(command: CommandKindDto) -> Option<MobileCom
         CommandKindDto::RequestSettings => Some(MobileCommandDto::RequestSettings),
         CommandKindDto::ResetTripMeter => Some(MobileCommandDto::ResetTripMeter),
         CommandKindDto::SoundHorn => Some(MobileCommandDto::SoundHorn),
+        CommandKindDto::SetAeroPwmOff => Some(MobileCommandDto::SetAeroPwmOff),
+        CommandKindDto::SetAeroGyroCalibration => Some(MobileCommandDto::SetAeroGyroCalibration),
+        CommandKindDto::SetAeroRidingMode => None,
+        CommandKindDto::SetAeroBrakeOverpressureAlarm => None,
         CommandKindDto::SetAeroTiltbackSpeed
         | CommandKindDto::SetAeroPwmPercent
+        | CommandKindDto::SetAeroPedalHardness
+        | CommandKindDto::SetAeroDisplayBacklight
+        | CommandKindDto::SetAeroBeeperVolume
+        | CommandKindDto::SetAeroDynamicAssist
+        | CommandKindDto::SetAeroPedalDipCompensation
+        | CommandKindDto::SetAeroLateralTiltLimit
+        | CommandKindDto::SetAeroVoltageCorrection
+        | CommandKindDto::SetAeroMaxChargeVoltageRaw
+        | CommandKindDto::SetAeroWheelUnits
+        | CommandKindDto::SetAeroHighSpeedMode
+        | CommandKindDto::SetAeroLowBatteryMode
+        | CommandKindDto::SetAeroTransportMode
         | CommandKindDto::SetAeroAlarmSpeed
         | CommandKindDto::SetAeroAngleAdjustment
         | CommandKindDto::SetAeroHighBeam
@@ -14057,6 +15918,15 @@ impl FalconBenignControlSession {
             self.lock_inner()
                 .set_monotonic(tracked_input.monotonic_ms.milliseconds);
         }
+        if tracked_input.kind == MobileSessionInputKindDto::Command
+            && let Some(command) = tracked_input.command
+            && !mobile_command_is_valid(command)
+        {
+            let result = mobile_command_refusal(command);
+            self.lock_settings()
+                .observe_step(&tracked_input, &result, true);
+            return result;
+        }
         let input = SessionInputDto::from(input);
         let result = preserve_refused_command(
             MobileSessionStepResultDto::from(self.lock_inner().ingest_checked(&input)),
@@ -14097,12 +15967,9 @@ impl FalconBenignControlSession {
         state: RideOperatingState,
         monotonic_ms: MobileMonotonicMillisDto,
     ) -> bool {
-        let speed_mm_per_second = self
-            .lock_inner()
-            .current_snapshot()
-            .speed
-            .map(|speed| speed.value);
-        self.lock_inner().arm_settings_writes(
+        let mut session = self.lock_inner();
+        let speed_mm_per_second = session.current_snapshot().speed.map(|speed| speed.value);
+        session.arm_settings_writes(
             mobile_ride_operating_state_dto(state),
             speed_mm_per_second,
             monotonic_ms.milliseconds,
@@ -14112,6 +15979,69 @@ impl FalconBenignControlSession {
     /// Returns the Rust-owned headlight write lifecycle state.
     pub fn headlight_state(&self) -> MobileLightSettingStateDto {
         self.lock_settings().headlight()
+    }
+
+    /// Returns the Rust-owned Aero high-beam write lifecycle state.
+    pub fn aero_high_beam_state(&self) -> MobileLightSettingStateDto {
+        self.lock_settings().aero_high_beam()
+    }
+
+    /// Returns the Rust-owned Aero tilt-back speed lifecycle state.
+    pub fn aero_tiltback_speed_state(&self) -> MobileAeroSpeedSettingStateDto {
+        self.lock_settings().aero_tiltback_speed()
+    }
+
+    /// Returns the Rust-owned Aero PWM-warning lifecycle state.
+    pub fn aero_pwm_percent_state(&self) -> MobileAeroPwmSettingStateDto {
+        self.lock_settings().aero_pwm_percent()
+    }
+
+    /// Returns the unsupported Aero gyro-calibration lifecycle for this model.
+    pub fn aero_gyro_calibration_state(&self) -> MobileAeroGyroCalibrationSettingStateDto {
+        self.lock_settings().aero_gyro_calibration()
+    }
+
+    /// Returns the unsupported modern binary T riding-mode lifecycle state.
+    pub fn aero_riding_mode_state(&self) -> MobileAeroRidingModeSettingStateDto {
+        self.lock_settings().aero_riding_mode()
+    }
+
+    /// Returns the unsupported brake overpressure alarm lifecycle state.
+    pub fn aero_brake_overpressure_alarm_state(&self) -> MobileAeroBrakeOverpressureAlarmStateDto {
+        self.lock_settings().aero_brake_overpressure_alarm()
+    }
+
+    /// Returns the Rust-owned MD pedal-hardness lifecycle state.
+    pub fn aero_pedal_hardness_state(&self) -> MobileAeroPedalHardnessStateDto {
+        self.lock_settings().aero_pedal_hardness()
+    }
+
+    pub fn aero_display_backlight_state(&self) -> MobileAeroDisplayBacklightStateDto {
+        self.lock_settings().aero_display_backlight()
+    }
+    pub fn aero_beeper_volume_state(&self) -> MobileAeroBeeperVolumeStateDto {
+        self.lock_settings().aero_beeper_volume()
+    }
+    pub fn aero_dynamic_assist_state(&self) -> MobileAeroDynamicAssistStateDto {
+        self.lock_settings().aero_dynamic_assist()
+    }
+    pub fn aero_pedal_dip_compensation_state(&self) -> MobileAeroPedalDipCompensationStateDto {
+        self.lock_settings().aero_pedal_dip_compensation()
+    }
+    pub fn aero_lateral_tilt_limit_state(&self) -> MobileAeroLateralTiltLimitStateDto {
+        self.lock_settings().aero_lateral_tilt_limit()
+    }
+    pub fn aero_voltage_correction_state(&self) -> MobileAeroVoltageCorrectionStateDto {
+        self.lock_settings().aero_voltage_correction()
+    }
+    /// Returns the unsupported raw MxV maximum-charge lifecycle state.
+    pub fn aero_max_charge_voltage_raw_state(&self) -> MobileAeroMaxChargeVoltageRawStateDto {
+        self.lock_settings().aero_max_charge_voltage_raw()
+    }
+
+    /// Returns the unsupported Aero wheel-units lifecycle for this model.
+    pub fn aero_wheel_units_state(&self) -> MobileAeroWheelUnitsStateDto {
+        self.lock_settings().aero_wheel_units()
     }
     /// Returns the Rust-owned status of the latest headlight command.
     pub fn headlight_command_status(
@@ -14125,6 +16055,30 @@ impl FalconBenignControlSession {
     /// Records a transport failure for the latest headlight command.
     pub fn fail_headlight_command(&self) {
         self.lock_settings().fail_headlight();
+    }
+    /// Returns the unsupported Aero high-speed-mode lifecycle for this model.
+    pub fn aero_high_speed_mode_state(&self) -> MobileAeroHighSpeedModeStateDto {
+        self.lock_settings().aero_high_speed_mode()
+    }
+
+    /// Returns the unsupported Aero low-battery-mode lifecycle for this model.
+    pub fn aero_low_battery_mode_state(&self) -> MobileAeroLowBatteryModeStateDto {
+        self.lock_settings().aero_low_battery_mode()
+    }
+
+    /// Returns the unsupported Aero transportation-mode lifecycle for this model.
+    pub fn aero_transport_mode_state(&self) -> MobileAeroTransportModeStateDto {
+        self.lock_settings().aero_transport_mode()
+    }
+
+    /// Returns the Rust-owned Aero alarm-speed lifecycle state.
+    pub fn aero_alarm_speed_state(&self) -> MobileAeroSpeedSettingStateDto {
+        self.lock_settings().aero_alarm_speed()
+    }
+
+    /// Returns the Rust-owned Aero angle-adjustment lifecycle state.
+    pub fn aero_angle_adjustment_state(&self) -> MobileAeroAngleAdjustmentStateDto {
+        self.lock_settings().aero_angle_adjustment()
     }
 
     /// Returns the Rust-owned pedal-mode setting lifecycle state.
@@ -14151,30 +16105,9 @@ impl FalconBenignControlSession {
     pub fn taillight_state(&self) -> MobileLightSettingStateDto {
         self.lock_settings().taillight()
     }
-
-    /// Returns the Rust-owned Aero high-beam write lifecycle state.
-    pub fn aero_high_beam_state(&self) -> MobileLightSettingStateDto {
-        self.lock_settings().aero_high_beam()
-    }
-
-    /// Returns the Rust-owned Aero tilt-back speed lifecycle state.
-    pub fn aero_tiltback_speed_state(&self) -> MobileAeroSpeedSettingStateDto {
-        self.lock_settings().aero_tiltback_speed()
-    }
-
-    /// Returns the Rust-owned Aero PWM-warning lifecycle state.
-    pub fn aero_pwm_percent_state(&self) -> MobileAeroPwmSettingStateDto {
-        self.lock_settings().aero_pwm_percent()
-    }
-
-    /// Returns the Rust-owned Aero alarm-speed lifecycle state.
-    pub fn aero_alarm_speed_state(&self) -> MobileAeroSpeedSettingStateDto {
-        self.lock_settings().aero_alarm_speed()
-    }
-
-    /// Returns the Rust-owned Aero angle-adjustment lifecycle state.
-    pub fn aero_angle_adjustment_state(&self) -> MobileAeroAngleAdjustmentStateDto {
-        self.lock_settings().aero_angle_adjustment()
+    /// Returns the Rust-owned trip-meter reset lifecycle state.
+    pub fn trip_meter_reset_state(&self) -> MobileTripMeterResetStateDto {
+        self.lock_settings().trip_meter_reset()
     }
 }
 
@@ -16853,6 +18786,35 @@ mod tests {
         }
     }
 
+    fn stationary_input(kind: MobileSessionInputKindDto, at_ms: u64) -> MobileSessionInputDto {
+        MobileSessionInputDto {
+            kind,
+            monotonic_ms: ms(at_ms),
+            max_write_len: None,
+            channel: Vec::new(),
+            bytes: Vec::new(),
+            command: None,
+        }
+    }
+
+    fn arm_stationary_aero(session: &AeroBenignControlSession) -> bool {
+        let _ = session.ingest_checked(stationary_input(MobileSessionInputKindDto::LinkUp, 0));
+        let mut notification = stationary_input(MobileSessionInputKindDto::Notification, 0);
+        notification.channel = cutout_protocols::VETERAN_DATA_CHANNEL.as_bytes().to_vec();
+        notification.bytes = synthetic_veteran_frame_with_model_id(43).to_vec();
+        let _ = session.ingest_checked(notification);
+        session.arm_settings_writes(RideOperatingState::Standing, ms(0))
+    }
+
+    fn arm_stationary_falcon(session: &FalconBenignControlSession) -> bool {
+        let _ = session.ingest_checked(stationary_input(MobileSessionInputKindDto::LinkUp, 0));
+        let mut notification = stationary_input(MobileSessionInputKindDto::Notification, 0);
+        notification.bytes =
+            hex_literal::hex!("55aa17750000007602eefb64f4941481000900185a5a5a5a").to_vec();
+        let _ = session.ingest_checked(notification);
+        session.arm_settings_writes(RideOperatingState::Standing, ms(0))
+    }
+
     const fn wc(value: u64) -> MobileWallClockUnixMillisDto {
         MobileWallClockUnixMillisDto {
             milliseconds: value,
@@ -17198,6 +19160,134 @@ mod tests {
     }
 
     #[test]
+    fn aero_settings_simulator_is_reusable_through_mobile_ffi() {
+        let simulator = AeroSettingsSimulator::new();
+        let outputs = simulator.issue(
+            MobileCommandDto::SetAeroTiltbackSpeed(MobileAeroSpeedSettingDto {
+                kilometres_per_hour: 42,
+            }),
+            RideOperatingState::Parked,
+            None,
+            ms(10),
+        );
+
+        assert!(outputs.iter().any(|output| {
+            output.kind == MobileSessionOutputKindDto::Write && output.bytes.starts_with(b"LdAp")
+        }));
+        assert!(outputs.iter().any(|output| {
+            output.kind == MobileSessionOutputKindDto::SettingsReadback
+                && output.settings_readback.as_ref().is_some_and(|readback| {
+                    readback.entries.iter().any(|entry| {
+                        entry.field.id == VETERAN_FIELD_SPEED_TILTBACK_DECI_KMH
+                            && entry.field.value == 420
+                    })
+                })
+        }));
+        assert_eq!(
+            simulator.readback().tiltback_speed,
+            Some(MobileAeroSpeedSettingDto {
+                kilometres_per_hour: 42,
+            })
+        );
+    }
+
+    #[test]
+    fn aero_mxv_raw_setting_stays_raw_through_mobile_ffi() {
+        let session = AeroBenignControlSession::new();
+        session.enable_settings_validation();
+        assert!(arm_stationary_aero(&session));
+        let mut input = stationary_input(MobileSessionInputKindDto::Command, 10);
+        input.command = Some(MobileCommandDto::SetAeroMaxChargeVoltageRaw(
+            MobileAeroMaxChargeVoltageRawDto { raw: 46 },
+        ));
+        let outputs = session.ingest_checked(input).outputs;
+
+        assert!(
+            outputs.iter().any(|output| {
+                output.kind == MobileSessionOutputKindDto::Write
+                    && output.bytes.starts_with(b"LdAp")
+                    && output.bytes.get(24) == Some(&46)
+            }),
+            "outputs: {outputs:?}"
+        );
+        assert_eq!(
+            session.aero_max_charge_voltage_raw_state().requested,
+            Some(MobileAeroMaxChargeVoltageRawDto { raw: 46 })
+        );
+    }
+
+    #[test]
+    fn aero_settings_simulator_accepts_explicit_pwm_off() {
+        let simulator = AeroSettingsSimulator::new();
+        let outputs = simulator.issue(
+            MobileCommandDto::SetAeroPwmOff,
+            RideOperatingState::Parked,
+            None,
+            ms(10),
+        );
+
+        assert!(outputs.iter().any(|output| {
+            output.kind == MobileSessionOutputKindDto::Write && output.bytes.starts_with(b"LdAp")
+        }));
+        assert_eq!(simulator.readback().pwm_percent, None);
+    }
+
+    #[test]
+    fn aero_settings_simulator_accepts_gyro_calibration_and_reports_waiting() {
+        let simulator = AeroSettingsSimulator::new();
+        let outputs = simulator.issue(
+            MobileCommandDto::SetAeroGyroCalibration,
+            RideOperatingState::Parked,
+            None,
+            ms(10),
+        );
+
+        assert!(outputs.iter().any(|output| {
+            output.kind == MobileSessionOutputKindDto::Write && output.bytes.starts_with(b"LdAp")
+        }));
+        assert!(outputs.iter().any(|output| {
+            output.kind == MobileSessionOutputKindDto::SettingsReadback
+                && output.settings_readback.as_ref().is_some_and(|readback| {
+                    readback.entries.iter().any(|entry| {
+                        entry.field.id == cutout_protocols::AERO_FIELD_GYRO_CALIBRATION_STATE
+                            && entry.field.value == 1
+                    })
+                })
+        }));
+        assert_eq!(
+            simulator.readback().gyro_calibration_state,
+            Some(MobileAeroGyroCalibrationStateDto::Waiting)
+        );
+    }
+
+    #[test]
+    fn aero_settings_simulator_preserves_typed_refusal_through_mobile_ffi() {
+        let simulator = AeroSettingsSimulator::new();
+        let command = MobileCommandDto::SetAeroPwmPercent(MobileAeroPwmPercentDto { percent: 71 });
+        let result = simulator.issue_checked(
+            command,
+            RideOperatingState::Riding,
+            Some(Speed { value: 501 }),
+            ms(10),
+        );
+
+        assert_eq!(
+            result.error,
+            Some(MobileSessionStepErrorDto {
+                kind: MobileSessionStepErrorKindDto::CommandRefused,
+                command: Some(command),
+                reason: Some(MobileControlRefusalReasonDto::UnsupportedCommand),
+            })
+        );
+        assert!(
+            result
+                .outputs
+                .iter()
+                .all(|output| output.kind != MobileSessionOutputKindDto::Write)
+        );
+    }
+
+    #[test]
     fn falcon_wrapper_surfaces_unsupported_command_error() {
         let session = FalconBenignControlSession::new().expect("default profile should construct");
 
@@ -17221,9 +19311,9 @@ mod tests {
     }
 
     #[test]
-    fn aero_wrapper_writes_documented_pedal_mode_after_stationary_arm() {
+    fn aero_wrapper_refuses_unverified_pedal_mode_before_transport() {
         let session = AeroBenignControlSession::new();
-        assert!(session.arm_settings_writes(RideOperatingState::Parked, ms(0)));
+        assert!(arm_stationary_aero(&session));
 
         let result = session.ingest_checked(MobileSessionInputDto {
             kind: MobileSessionInputKindDto::Command,
@@ -17234,16 +19324,335 @@ mod tests {
             command: Some(MobileCommandDto::SetPedalMode(MobilePedalModeKindDto::Hard)),
         });
 
-        assert_eq!(result.error, None);
-        assert!(result.outputs.iter().any(|output| {
-            output.kind == MobileSessionOutputKindDto::Write && output.bytes == b"SETh"
-        }));
+        assert_eq!(
+            result.error.and_then(|error| error.reason),
+            Some(MobileControlRefusalReasonDto::UnsupportedCommand)
+        );
+        assert!(
+            result
+                .outputs
+                .iter()
+                .all(|output| output.kind != MobileSessionOutputKindDto::Write)
+        );
     }
 
     #[test]
-    fn aero_wrapper_tracks_tiltback_write_until_readback() {
+    fn aero_wrapper_rejects_malformed_bounded_values() {
+        let simulator = AeroSettingsSimulator::new();
+        let command = MobileCommandDto::SetAeroPwmPercent(MobileAeroPwmPercentDto { percent: 255 });
+
+        let result = simulator.issue_checked(command, RideOperatingState::Parked, None, ms(0));
+
+        assert_eq!(
+            result.error,
+            Some(MobileSessionStepErrorDto {
+                kind: MobileSessionStepErrorKindDto::CommandRefused,
+                command: Some(command),
+                reason: Some(MobileControlRefusalReasonDto::UnsupportedCommand),
+            })
+        );
+        assert!(result.outputs.is_empty());
+    }
+
+    #[test]
+    fn aero_wrapper_processes_lifecycle_inputs_with_unused_command_fields() {
         let session = AeroBenignControlSession::new();
-        assert!(session.arm_settings_writes(RideOperatingState::Parked, ms(0)));
+        assert!(arm_stationary_aero(&session));
+        let _ = session.ingest_checked(MobileSessionInputDto {
+            kind: MobileSessionInputKindDto::Command,
+            monotonic_ms: ms(0),
+            max_write_len: None,
+            channel: Vec::new(),
+            bytes: Vec::new(),
+            command: Some(MobileCommandDto::SetAeroHighBeam(MobileLightStateDto::On)),
+        });
+
+        let link_down = session.ingest_checked(MobileSessionInputDto {
+            kind: MobileSessionInputKindDto::LinkDown,
+            monotonic_ms: ms(1),
+            max_write_len: None,
+            channel: Vec::new(),
+            bytes: Vec::new(),
+            command: Some(MobileCommandDto::SetAeroPwmPercent(
+                MobileAeroPwmPercentDto { percent: 60 },
+            )),
+        });
+        assert_eq!(link_down.error, None);
+        assert_eq!(session.aero_pwm_percent_state().requested, None);
+        let tick = session.ingest_checked(MobileSessionInputDto {
+            kind: MobileSessionInputKindDto::Tick,
+            monotonic_ms: ms(2),
+            max_write_len: None,
+            channel: Vec::new(),
+            bytes: Vec::new(),
+            command: None,
+        });
+        assert!(
+            tick.outputs
+                .iter()
+                .all(|output| output.kind != MobileSessionOutputKindDto::Write)
+        );
+    }
+
+    #[test]
+    fn aero_validation_mode_exposes_typed_unverified_controls() {
+        let session = AeroBenignControlSession::new();
+        assert_eq!(
+            session.settings_capabilities().aero_tiltback_speed,
+            MobileSettingWriteSupportDto::Unverified
+        );
+        session.enable_settings_validation();
+        assert!(session.settings_capabilities().validation_mode);
+        assert_eq!(
+            session.settings_capabilities().aero_tiltback_speed,
+            MobileSettingWriteSupportDto::Unverified
+        );
+        assert!(arm_stationary_aero(&session));
+        let result = session.ingest_checked(MobileSessionInputDto {
+            kind: MobileSessionInputKindDto::Command,
+            monotonic_ms: ms(0),
+            max_write_len: None,
+            channel: Vec::new(),
+            bytes: Vec::new(),
+            command: Some(MobileCommandDto::SetAeroTiltbackSpeed(
+                MobileAeroSpeedSettingDto {
+                    kilometres_per_hour: 21,
+                },
+            )),
+        });
+        assert!(
+            result
+                .outputs
+                .iter()
+                .any(|output| output.kind == MobileSessionOutputKindDto::Write)
+        );
+    }
+
+    #[test]
+    fn mobile_settings_arms_require_fresh_speed_and_revoke_older_authorization() {
+        let aero = AeroBenignControlSession::new();
+        let falcon = FalconBenignControlSession::new().unwrap();
+        assert!(!aero.arm_settings_writes(RideOperatingState::Parked, ms(0)));
+        assert!(!falcon.arm_settings_writes(RideOperatingState::Parked, ms(0)));
+        assert!(arm_stationary_aero(&aero));
+        assert!(arm_stationary_falcon(&falcon));
+        assert!(!aero.arm_settings_writes(RideOperatingState::Standing, ms(2_001)));
+        assert!(!falcon.arm_settings_writes(RideOperatingState::Standing, ms(2_001)));
+        let mut command = stationary_input(MobileSessionInputKindDto::Command, 2_002);
+        command.command = Some(MobileCommandDto::SetAeroHighBeam(MobileLightStateDto::On));
+        let aero_result = aero.ingest_checked(command.clone());
+        command.command = Some(MobileCommandDto::SetPedalMode(MobilePedalModeKindDto::Hard));
+        let falcon_result = falcon.ingest_checked(command);
+        for result in [aero_result, falcon_result] {
+            assert_eq!(
+                result.error.and_then(|error| error.reason),
+                Some(MobileControlRefusalReasonDto::MissingArm)
+            );
+            assert!(
+                result
+                    .outputs
+                    .iter()
+                    .all(|output| output.kind != MobileSessionOutputKindDto::Write)
+            );
+        }
+    }
+
+    #[test]
+    fn aero_settings_arm_rejects_parked_claim_when_observed_speed_exceeds_limit() {
+        let session = AeroBenignControlSession::new();
+        assert!(arm_stationary_aero(&session));
+        let mut moving = stationary_input(MobileSessionInputKindDto::Notification, 10);
+        moving.channel = cutout_protocols::VETERAN_DATA_CHANNEL.as_bytes().to_vec();
+        moving.bytes = synthetic_veteran_frame_with_model_id(43).to_vec();
+        moving.bytes[6..8].copy_from_slice(&19_i16.to_be_bytes());
+        let _ = session.ingest_checked(moving);
+        assert!(!session.arm_settings_writes(RideOperatingState::Parked, ms(10)));
+    }
+
+    #[test]
+    fn aero_pedal_hardness_stays_unverified_and_requires_validation_mode() {
+        let session = AeroBenignControlSession::new();
+        assert!(arm_stationary_aero(&session));
+        let mut input = stationary_input(MobileSessionInputKindDto::Command, 1);
+        input.command = Some(MobileCommandDto::SetAeroPedalHardness(
+            MobileAeroPedalHardnessDto { percent: 0 },
+        ));
+        let refused = session.ingest_checked(input.clone());
+        assert!(refused.outputs.is_empty());
+        assert_eq!(
+            session.aero_pedal_hardness_state().kind,
+            MobileSettingStateKindDto::Refused
+        );
+        session.enable_settings_validation();
+        assert!(session.settings_capabilities().validation_mode);
+        assert_eq!(
+            session.settings_capabilities().aero_pedal_hardness,
+            MobileSettingWriteSupportDto::Unverified
+        );
+        let accepted = session.ingest_checked(input);
+        assert_eq!(accepted.error, None);
+        assert!(
+            accepted
+                .outputs
+                .iter()
+                .any(|output| output.kind == MobileSessionOutputKindDto::Write)
+        );
+        assert_eq!(
+            session.aero_pedal_hardness_state().kind,
+            MobileSettingStateKindDto::Pending
+        );
+        assert_eq!(
+            session.aero_pedal_hardness_state().requested,
+            Some(MobileAeroPedalHardnessDto { percent: 0 })
+        );
+        assert_eq!(session.aero_pedal_hardness_state().current, None);
+        let _ = session.ingest_checked(stationary_input(MobileSessionInputKindDto::Tick, 2_001));
+        assert_eq!(
+            session.aero_pedal_hardness_state().kind,
+            MobileSettingStateKindDto::TimedOut
+        );
+        assert_eq!(session.aero_pedal_hardness_state().current, None);
+    }
+
+    #[test]
+    fn aero_pedal_hardness_simulator_rejects_invalid_values_and_keeps_state_unknown_until_written()
+    {
+        let simulator = AeroSettingsSimulator::new();
+        let session = AeroBenignControlSession::new();
+        session.enable_settings_validation();
+        assert!(arm_stationary_aero(&session));
+        assert_eq!(simulator.readback().pedal_hardness, None);
+        for percent in [101, 255] {
+            let command =
+                MobileCommandDto::SetAeroPedalHardness(MobileAeroPedalHardnessDto { percent });
+            let mut input = stationary_input(MobileSessionInputKindDto::Command, 1);
+            input.command = Some(command);
+            for result in [
+                session.ingest_checked(input),
+                simulator.issue_checked(command, RideOperatingState::Parked, None, ms(1)),
+            ] {
+                assert_eq!(result.error.and_then(|error| error.command), Some(command));
+                assert!(result.outputs.is_empty());
+            }
+        }
+        for percent in [0, 100] {
+            let result = simulator.issue_checked(
+                MobileCommandDto::SetAeroPedalHardness(MobileAeroPedalHardnessDto { percent }),
+                RideOperatingState::Parked,
+                None,
+                ms(2),
+            );
+            assert_eq!(result.error, None);
+            assert_eq!(
+                simulator.readback().pedal_hardness,
+                Some(MobileAeroPedalHardnessDto { percent })
+            );
+        }
+    }
+
+    #[test]
+    fn falcon_wrapper_rejects_invalid_settings_without_substituting_read_requests() {
+        let session = FalconBenignControlSession::new().unwrap();
+        for command in [
+            MobileCommandDto::SetBegodeMaxSpeed(MobileBegodeMaxSpeedDto {
+                kilometres_per_hour: 255,
+            }),
+            MobileCommandDto::SetBegodeBeeperVolume(MobileBegodeBeeperVolumeDto { level: 255 }),
+            MobileCommandDto::SetBegodeLedMode(MobileBegodeLedModeDto { mode: 255 }),
+            MobileCommandDto::SetAeroPwmPercent(MobileAeroPwmPercentDto { percent: 255 }),
+        ] {
+            let result = session.ingest_checked(MobileSessionInputDto {
+                kind: MobileSessionInputKindDto::Command,
+                monotonic_ms: ms(1),
+                max_write_len: None,
+                channel: Vec::new(),
+                bytes: Vec::new(),
+                command: Some(command),
+            });
+            assert_eq!(
+                result.error.as_ref().and_then(|error| error.command),
+                Some(command)
+            );
+            assert!(result.outputs.is_empty());
+        }
+    }
+
+    #[test]
+    fn trip_reset_tracks_acceptance_timeout_refusal_and_disconnect() {
+        let mut trackers = MobileEucSettingTrackers::default();
+        let mut input = MobileSessionInputDto {
+            kind: MobileSessionInputKindDto::Command,
+            monotonic_ms: ms(100),
+            max_write_len: None,
+            channel: Vec::new(),
+            bytes: Vec::new(),
+            command: Some(MobileCommandDto::ResetTripMeter),
+        };
+        let accepted = MobileSessionStepResultDto {
+            outputs: vec![MobileSessionOutputDto::transport(
+                MobileSessionOutputKindDto::Write,
+                Vec::new(),
+                b"CLEARMETER".to_vec(),
+            )],
+            error: None,
+        };
+        trackers.observe_step(&input, &accepted, true);
+        assert_eq!(
+            trackers.trip_meter_reset().kind,
+            MobileSettingStateKindDto::Pending
+        );
+        assert_eq!(trackers.trip_meter_reset().submitted_at_ms, Some(100));
+
+        input.kind = MobileSessionInputKindDto::Tick;
+        input.monotonic_ms = ms(2_100);
+        trackers.observe_step(
+            &input,
+            &MobileSessionStepResultDto {
+                outputs: Vec::new(),
+                error: None,
+            },
+            true,
+        );
+        assert_eq!(
+            trackers.trip_meter_reset().kind,
+            MobileSettingStateKindDto::TimedOut
+        );
+
+        input.kind = MobileSessionInputKindDto::Command;
+        trackers.observe_step(
+            &input,
+            &mobile_command_refusal(MobileCommandDto::ResetTripMeter),
+            true,
+        );
+        assert_eq!(
+            trackers.trip_meter_reset().kind,
+            MobileSettingStateKindDto::Refused
+        );
+        assert_eq!(
+            trackers.trip_meter_reset().refusal_reason,
+            Some(MobileControlRefusalReasonDto::UnsupportedCommand)
+        );
+
+        input.kind = MobileSessionInputKindDto::LinkDown;
+        trackers.observe_step(
+            &input,
+            &MobileSessionStepResultDto {
+                outputs: Vec::new(),
+                error: None,
+            },
+            true,
+        );
+        assert_eq!(
+            trackers.trip_meter_reset().kind,
+            MobileSettingStateKindDto::Unknown
+        );
+        assert_eq!(trackers.trip_meter_reset().submitted_at_ms, None);
+    }
+
+    #[test]
+    fn aero_wrapper_refuses_unverified_tiltback_before_transport() {
+        let session = AeroBenignControlSession::new();
+        assert!(arm_stationary_aero(&session));
 
         let result = session.ingest_checked(MobileSessionInputDto {
             kind: MobileSessionInputKindDto::Command,
@@ -17258,22 +19667,32 @@ mod tests {
             )),
         });
 
-        assert_eq!(result.error, None);
-        assert!(result.outputs.iter().any(|output| {
-            output.kind == MobileSessionOutputKindDto::Write && output.bytes.starts_with(b"LdAp")
-        }));
+        assert_eq!(
+            result.error.and_then(|error| error.reason),
+            Some(MobileControlRefusalReasonDto::UnsupportedCommand)
+        );
+        assert!(
+            result
+                .outputs
+                .iter()
+                .all(|output| output.kind != MobileSessionOutputKindDto::Write)
+        );
         assert_eq!(
             session.aero_tiltback_speed_state().requested,
             Some(MobileAeroSpeedSettingDto {
-                kilometres_per_hour: 21,
+                kilometres_per_hour: 21
             })
+        );
+        assert_eq!(
+            session.aero_tiltback_speed_state().kind,
+            MobileSettingStateKindDto::Refused
         );
     }
 
     #[test]
     fn aero_wrapper_tracks_high_beam_write() {
         let session = AeroBenignControlSession::new();
-        assert!(session.arm_settings_writes(RideOperatingState::Parked, ms(0)));
+        assert!(arm_stationary_aero(&session));
 
         let result = session.ingest_checked(MobileSessionInputDto {
             kind: MobileSessionInputKindDto::Command,
@@ -17292,6 +19711,171 @@ mod tests {
             session.aero_high_beam_state().requested,
             Some(MobileLightStateDto::On)
         );
+    }
+
+    #[test]
+    fn aero_captured_settings_page_updates_live_md_and_pwm_trackers() {
+        let session = AeroBenignControlSession::new();
+        assert!(arm_stationary_aero(&session));
+        let mut notification = stationary_input(MobileSessionInputKindDto::Notification, 10);
+        notification.channel = cutout_protocols::VETERAN_DATA_CHANNEL.as_bytes().to_vec();
+        notification.bytes = hex_literal::hex!(
+            "dc5a5c4729f2000000170000ab6c001700000be9\
+             045a00000226021ca8f607801b25000080c80000\
+             808080808080080000803200364f371e00000100\
+             808028062e7964800080801540e23a"
+        )
+        .to_vec();
+        let result = session.ingest_checked(notification.clone());
+        assert_eq!(result.error, None);
+        assert_eq!(
+            session.aero_pedal_hardness_state().current,
+            Some(MobileAeroPedalHardnessDto { percent: 50 })
+        );
+        assert_eq!(
+            session.aero_pwm_percent_state().current,
+            Some(MobileAeroPwmPercentDto { percent: 21 })
+        );
+        assert_eq!(
+            session.aero_pedal_hardness_state().kind,
+            MobileSettingStateKindDto::Current
+        );
+        assert_eq!(
+            session.aero_pedal_hardness_state().source,
+            MobileSettingValueSourceDto::LiveReadback
+        );
+        session.enable_settings_validation();
+        assert!(session.arm_settings_writes(RideOperatingState::Parked, ms(11)));
+        let mut command = stationary_input(MobileSessionInputKindDto::Command, 11);
+        command.command = Some(MobileCommandDto::SetAeroPedalHardness(
+            MobileAeroPedalHardnessDto { percent: 50 },
+        ));
+        assert_eq!(session.ingest_checked(command).error, None);
+        assert_eq!(
+            session.aero_pedal_hardness_state().kind,
+            MobileSettingStateKindDto::Pending
+        );
+        notification.monotonic_ms = ms(12);
+        assert_eq!(session.ingest_checked(notification).error, None);
+        assert_eq!(
+            session.aero_pedal_hardness_state().kind,
+            MobileSettingStateKindDto::Confirmed
+        );
+        assert_eq!(
+            session.aero_pedal_hardness_state().confirmed_at_ms,
+            Some(12)
+        );
+        assert_eq!(session.aero_angle_adjustment_state().current, None);
+    }
+
+    #[test]
+    fn aero_page_eight_controls_refresh_and_confirm_mobile_state() {
+        let session = AeroBenignControlSession::new();
+        assert!(arm_stationary_aero(&session));
+        let mut notification = stationary_input(MobileSessionInputKindDto::Notification, 10);
+        notification.channel = cutout_protocols::VETERAN_DATA_CHANNEL.as_bytes().to_vec();
+        notification.bytes = hex_literal::hex!(
+            "dc5a5c4729f2000000170000ab6c001700000be9\
+             045a00000226021ca8f607801b25000080c80000\
+             808080808080080000803200364f371e00000100\
+             808028062e7964800080801540e23a"
+        )
+        .to_vec();
+        assert_eq!(session.ingest_checked(notification.clone()).error, None);
+        assert_eq!(
+            session.aero_display_backlight_state().current,
+            Some(MobileAeroDisplayBacklightDto { percent: 30 })
+        );
+        assert_eq!(
+            session.aero_beeper_volume_state().current,
+            Some(MobileAeroBeeperVolumeDto { percent: 6 })
+        );
+        assert_eq!(
+            session.aero_dynamic_assist_state().current,
+            Some(MobileAeroDynamicAssistDto { percent: 100 })
+        );
+        assert_eq!(
+            session.aero_pedal_dip_compensation_state().current,
+            Some(MobileAeroPedalDipCompensationDto { percent: 0 })
+        );
+        assert_eq!(
+            session.aero_voltage_correction_state().current,
+            Some(MobileAeroVoltageCorrectionDto {
+                tenths_of_percent: 0
+            })
+        );
+        session.enable_settings_validation();
+        let commands = [
+            MobileCommandDto::SetAeroDisplayBacklight(MobileAeroDisplayBacklightDto {
+                percent: 30,
+            }),
+            MobileCommandDto::SetAeroBeeperVolume(MobileAeroBeeperVolumeDto { percent: 6 }),
+            MobileCommandDto::SetAeroDynamicAssist(MobileAeroDynamicAssistDto { percent: 100 }),
+            MobileCommandDto::SetAeroPedalDipCompensation(MobileAeroPedalDipCompensationDto {
+                percent: 0,
+            }),
+            MobileCommandDto::SetAeroVoltageCorrection(MobileAeroVoltageCorrectionDto {
+                tenths_of_percent: 0,
+            }),
+        ];
+        for (index, command) in commands.into_iter().enumerate() {
+            let at = 11 + u64::try_from(index).unwrap();
+            assert!(session.arm_settings_writes(RideOperatingState::Parked, ms(at)));
+            let mut input = stationary_input(MobileSessionInputKindDto::Command, at);
+            input.command = Some(command);
+            assert_eq!(session.ingest_checked(input).error, None);
+        }
+        notification.monotonic_ms = ms(20);
+        assert_eq!(session.ingest_checked(notification).error, None);
+        for (kind, source, confirmed_at) in [
+            (
+                session.aero_display_backlight_state().kind,
+                session.aero_display_backlight_state().source,
+                session.aero_display_backlight_state().confirmed_at_ms,
+            ),
+            (
+                session.aero_beeper_volume_state().kind,
+                session.aero_beeper_volume_state().source,
+                session.aero_beeper_volume_state().confirmed_at_ms,
+            ),
+            (
+                session.aero_dynamic_assist_state().kind,
+                session.aero_dynamic_assist_state().source,
+                session.aero_dynamic_assist_state().confirmed_at_ms,
+            ),
+            (
+                session.aero_pedal_dip_compensation_state().kind,
+                session.aero_pedal_dip_compensation_state().source,
+                session.aero_pedal_dip_compensation_state().confirmed_at_ms,
+            ),
+            (
+                session.aero_voltage_correction_state().kind,
+                session.aero_voltage_correction_state().source,
+                session.aero_voltage_correction_state().confirmed_at_ms,
+            ),
+        ] {
+            assert_eq!(kind, MobileSettingStateKindDto::Confirmed);
+            assert_eq!(source, MobileSettingValueSourceDto::LiveReadback);
+            assert_eq!(confirmed_at, Some(20));
+        }
+    }
+
+    #[test]
+    fn aero_speed_readback_scales_before_narrowing() {
+        for raw in [-1, 0, 10, 210, 260, 550, 990, 991, 1_000, i64::MAX] {
+            let entry = MobileSettingsEntryDto::from(SettingsEntry {
+                field: RawFieldValue::new(VETERAN_FIELD_SPEED_TILTBACK_DECI_KMH, raw),
+                source: ValueSource::Reported,
+                quality: ValueQuality::Known,
+                verification: VerificationStatus::HardwareVerified,
+            });
+            let expected = if (100..=2_000).contains(&raw) && raw % 10 == 0 {
+                CoreAeroSpeedSetting::new(u8::try_from(raw / 10).unwrap())
+            } else {
+                None
+            };
+            assert_eq!(aero_speed_setting_from_entry(entry), expected, "{raw}");
+        }
     }
 
     #[test]
@@ -17351,9 +19935,9 @@ mod tests {
     }
 
     #[test]
-    fn aero_wrapper_tracks_pwm_and_angle_writes() {
+    fn aero_wrapper_refuses_unverified_pwm_and_angle_before_transport() {
         let session = AeroBenignControlSession::new();
-        assert!(session.arm_settings_writes(RideOperatingState::Parked, ms(0)));
+        assert!(arm_stationary_aero(&session));
 
         for command in [
             MobileCommandDto::SetAeroPwmPercent(MobileAeroPwmPercentDto { percent: 64 }),
@@ -17369,12 +19953,15 @@ mod tests {
                 bytes: Vec::new(),
                 command: Some(command),
             });
-            assert_eq!(result.error, None);
+            assert_eq!(
+                result.error.and_then(|error| error.reason),
+                Some(MobileControlRefusalReasonDto::UnsupportedCommand)
+            );
             assert!(
                 result
                     .outputs
                     .iter()
-                    .any(|output| output.kind == MobileSessionOutputKindDto::Write)
+                    .all(|output| output.kind != MobileSessionOutputKindDto::Write)
             );
         }
 
@@ -17393,7 +19980,7 @@ mod tests {
     #[test]
     fn falcon_wrapper_writes_documented_roll_angle_after_stationary_arm() {
         let session = FalconBenignControlSession::new().expect("default profile should construct");
-        assert!(session.arm_settings_writes(RideOperatingState::Parked, ms(0)));
+        assert!(arm_stationary_falcon(&session));
 
         let result = session.ingest_checked(MobileSessionInputDto {
             kind: MobileSessionInputKindDto::Command,
@@ -17417,7 +20004,7 @@ mod tests {
     #[test]
     fn falcon_wrapper_writes_documented_speed_alarm_mode_after_stationary_arm() {
         let session = FalconBenignControlSession::new().expect("default profile should construct");
-        assert!(session.arm_settings_writes(RideOperatingState::Parked, ms(0)));
+        assert!(arm_stationary_falcon(&session));
 
         let result = session.ingest_checked(MobileSessionInputDto {
             kind: MobileSessionInputKindDto::Command,
@@ -17443,7 +20030,7 @@ mod tests {
     #[test]
     fn falcon_wrapper_schedules_typed_w_setting_sequence() {
         let session = FalconBenignControlSession::new().expect("default profile should construct");
-        assert!(session.arm_settings_writes(RideOperatingState::Parked, ms(0)));
+        assert!(arm_stationary_falcon(&session));
 
         let result = session.ingest_checked(MobileSessionInputDto {
             kind: MobileSessionInputKindDto::Command,
@@ -17478,7 +20065,7 @@ mod tests {
     #[test]
     fn falcon_wrapper_refuses_ambiguous_speed_alarm_off_command() {
         let session = FalconBenignControlSession::new().expect("default profile should construct");
-        assert!(session.arm_settings_writes(RideOperatingState::Parked, ms(0)));
+        assert!(arm_stationary_falcon(&session));
 
         let result = session.ingest_checked(MobileSessionInputDto {
             kind: MobileSessionInputKindDto::Command,
@@ -17592,7 +20179,7 @@ mod tests {
     }
 
     #[test]
-    fn aero_wrapper_reports_missing_arm_for_pedal_mode() {
+    fn aero_wrapper_reports_unverified_pedal_refusal() {
         let session = AeroBenignControlSession::new();
 
         let _ = session.ingest_checked(MobileSessionInputDto {
@@ -17609,7 +20196,37 @@ mod tests {
         assert_eq!(state.requested, Some(MobilePedalModeKindDto::Hard));
         assert_eq!(
             state.refusal_reason,
-            Some(MobileControlRefusalReasonDto::MissingArm)
+            Some(MobileControlRefusalReasonDto::UnsupportedCommand)
+        );
+    }
+
+    #[test]
+    fn aero_wrapper_uses_command_timestamp_for_arm_expiry() {
+        let session = AeroBenignControlSession::new();
+        assert!(arm_stationary_aero(&session));
+        let mut notification = stationary_input(MobileSessionInputKindDto::Notification, 5_000);
+        notification.channel = cutout_protocols::VETERAN_DATA_CHANNEL.as_bytes().to_vec();
+        notification.bytes = synthetic_veteran_frame_with_model_id(43).to_vec();
+        let _ = session.ingest_checked(notification);
+
+        let result = session.ingest_checked(MobileSessionInputDto {
+            kind: MobileSessionInputKindDto::Command,
+            monotonic_ms: ms(5_001),
+            max_write_len: None,
+            channel: Vec::new(),
+            bytes: Vec::new(),
+            command: Some(MobileCommandDto::SetAeroHighBeam(MobileLightStateDto::On)),
+        });
+
+        assert_eq!(
+            result.error.and_then(|error| error.reason),
+            Some(MobileControlRefusalReasonDto::ExpiredArm)
+        );
+        assert!(
+            !result
+                .outputs
+                .iter()
+                .any(|output| output.kind == MobileSessionOutputKindDto::Write)
         );
     }
 
@@ -17617,8 +20234,8 @@ mod tests {
     fn aero_and_falcon_wrappers_write_lights_after_stationary_arm() {
         let aero = AeroBenignControlSession::new();
         let falcon = FalconBenignControlSession::new().expect("default profile should construct");
-        assert!(aero.arm_settings_writes(RideOperatingState::Parked, ms(0)));
-        assert!(falcon.arm_settings_writes(RideOperatingState::Parked, ms(0)));
+        assert!(arm_stationary_aero(&aero));
+        assert!(arm_stationary_falcon(&falcon));
 
         let command_input = |state| MobileSessionInputDto {
             kind: MobileSessionInputKindDto::Command,
@@ -17673,7 +20290,15 @@ mod tests {
             )),
         };
 
-        let _ = session.ingest_checked(tick(1_000));
+        let mut link = tick(1);
+        link.kind = MobileSessionInputKindDto::LinkUp;
+        link.max_write_len = Some(MobileTransportWriteLimitDto { bytes: 185 });
+        let _ = session.ingest_checked(link);
+        let mut notification = tick(1_000);
+        notification.kind = MobileSessionInputKindDto::Notification;
+        notification.bytes =
+            hex_literal::hex!("55aa17750000007602eefb64f4941481000900185a5a5a5a").to_vec();
+        let _ = session.ingest_checked(notification);
         assert!(session.arm_settings_writes(RideOperatingState::Standing, ms(1_249)));
         let first = session.ingest_checked(command(1_249));
         assert!(
@@ -17852,7 +20477,27 @@ mod tests {
         );
         assert_eq!(
             aero.settings_capabilities().pedal_mode,
-            MobileSettingWriteSupportDto::Supported
+            MobileSettingWriteSupportDto::Unverified
+        );
+        assert_eq!(
+            aero.settings_capabilities().reset_trip_meter,
+            MobileSettingWriteSupportDto::Unverified
+        );
+        assert_eq!(
+            aero.settings_capabilities().aero_tiltback_speed,
+            MobileSettingWriteSupportDto::Unverified
+        );
+        assert_eq!(
+            aero.settings_capabilities().aero_pwm_percent,
+            MobileSettingWriteSupportDto::Unverified
+        );
+        assert_eq!(
+            aero.settings_capabilities().aero_alarm_speed,
+            MobileSettingWriteSupportDto::Unverified
+        );
+        assert_eq!(
+            aero.settings_capabilities().aero_angle_adjustment,
+            MobileSettingWriteSupportDto::Unverified
         );
         assert_eq!(
             falcon.settings_capabilities().pedal_mode,
@@ -17937,7 +20582,7 @@ mod tests {
         );
         assert_eq!(notification.len, mobile_notification_len(87));
         assert_eq!(notification.monotonic_ms, ms(2));
-        assert_eq!(ingest.event_count, Some(mobile_event_count(5)));
+        assert_eq!(ingest.event_count, Some(mobile_event_count(6)));
         assert_eq!(ingest.parser_error, None);
         assert_eq!(ingest.reserved, None);
         assert_eq!(ingest.gap, None);

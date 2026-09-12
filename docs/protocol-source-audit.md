@@ -136,13 +136,29 @@ decodes frame length, model id, firmware, voltage, and the fixed-header
 telemetry fields. The registered session and CLI write path require the
 protocol GATT fingerprint plus model id `43` before arming any write.
 
-The remaining settings boundary is evidence, not an encoder gap: a setting
-without a typed readback and controlled device observation stays provisional.
+The implemented source-backed EUC World Veteran menu has evidence gaps, but its
+wheel-setting write variants are represented by the Rust/mobile/Tune surface.
+The ignored Nosfet official Android source also provides the ANG TLT gyro
+calibration frame and page-8 state byte; Cutout now exposes that command in the
+Rust protocol boundary as stationary-only. Its calibration effect remains
+unverified until a physical Aero capture is recorded.
+Coverage of existing command variants does not establish physical device
+behavior. DarknessBot's recovered `VeteranAdapter` methods now corroborate the
+frame shapes for the implemented Aero controls; its model-gated legacy branches
+remain outside the generic write surface. See
+[Aero settings coverage](aero-settings-coverage.md) for the outstanding inventory.
+A setting without a typed readback and controlled device observation stays provisional.
 The CLI therefore reports transport acceptance separately and only calls the
 typed speed writes successful after a preflight-to-post-write readback
-transition. PWT, ANG, lights, pedal mode, and trip reset remain explicitly
-write-only or unconfirmed until the matching NF2557 effect/readback/rollback
-capture exists.
+transition. MD and PWT now have source-backed page-8 readback decoding, replayed
+against the existing NF2557 capture (50% and 79%). Their new write effects still
+need a controlled round trip. ANG, lights, legacy pedal mode, and trip reset
+remain write-only or unconfirmed until the matching NF2557 effect/readback/rollback
+capture exists. The [EUC World RE inventory](eucworld-aero-settings-re.md) records
+the recovered commands, ranges, menu mappings, and deliberate non-Aero/app-only
+exclusions.
 
 GPL repositories remain behavioral cross-checks only; the Rust implementation
-is based on the MIT documentation, our captures, and tests.
+is based on protocol facts, MIT documentation, our captures, and tests. The
+new page-8 mapping was cross-checked directly against EUC World 2.66.1 and
+NOSFET Android 1.1.3; no decompiled app source is included in the repository.

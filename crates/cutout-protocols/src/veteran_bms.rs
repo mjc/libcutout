@@ -260,14 +260,10 @@ impl VeteranBmsMetadataPage {
             selector,
             currents: BmsPackCurrents::reported(
                 BatteryCurrent::from_centiamps(i32::from(
-                    cursor
-                        .be_i16(ParserOffset::from_bytes(0))
-                        .map_or(0, |value| value),
+                    cursor.be_i16(ParserOffset::from_bytes(0)).unwrap_or(0),
                 )),
                 BatteryCurrent::from_centiamps(i32::from(
-                    cursor
-                        .be_i16(ParserOffset::from_bytes(2))
-                        .map_or(0, |value| value),
+                    cursor.be_i16(ParserOffset::from_bytes(2)).unwrap_or(0),
                 )),
             ),
         })

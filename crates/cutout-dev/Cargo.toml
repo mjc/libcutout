@@ -9,6 +9,8 @@ publish = false
 
 [dependencies]
 anyhow.workspace = true
+cutout-core = { path = "../cutout-core", version = "0.1.0" }
+cutout-protocols = { path = "../cutout-protocols", version = "0.1.0" }
 serde_json.workspace = true
 sha2.workspace = true
 

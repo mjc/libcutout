@@ -19,6 +19,7 @@ private final class CutoutLiveValidator {
     private let core = CutoutSessionCore()
     private var records: [String] = []
     private var candidateRecordCount = 0
+    private var candidateSamples: [String] = []
     private var didRequestProbe = false
     private(set) var didValidate = false
 
@@ -87,6 +88,9 @@ private final class CutoutLiveValidator {
     private func appendRecord(_ record: String) {
         guard !record.hasPrefix("candidate=") else {
             candidateRecordCount += 1
+            if candidateSamples.count < 16 {
+                candidateSamples.append(record)
+            }
             return
         }
 
@@ -102,6 +106,7 @@ private final class CutoutLiveValidator {
 
     private func printRecords() {
         print("candidate_records_seen=\(candidateRecordCount)")
+        candidateSamples.forEach { print($0) }
         records.forEach { print($0) }
     }
 }
