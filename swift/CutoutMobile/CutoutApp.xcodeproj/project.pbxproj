@@ -46,6 +46,8 @@
 		30000000000000000000001A /* Apps/CutoutApp/CutoutUITestSessionFixture.swift in Sources */ = {isa = PBXBuildFile; fileRef = 40000000000000000000001A /* Apps/CutoutApp/CutoutUITestSessionFixture.swift */; };
 		30000000000000000000001B /* Apps/CutoutApp/CutoutAppState.swift in Sources */ = {isa = PBXBuildFile; fileRef = 40000000000000000000001B /* Apps/CutoutApp/CutoutAppState.swift */; };
 		30000000000000000000001C /* Apps/CutoutApp/CutoutRouteViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = 40000000000000000000001C /* Apps/CutoutApp/CutoutRouteViews.swift */; };
+		AABBCC000000000000000001 /* Apps/CutoutApp/LightingPlaybackControls.swift in Sources */ = {isa = PBXBuildFile; fileRef = AABBCC000000000000000002 /* Apps/CutoutApp/LightingPlaybackControls.swift */; };
+		AABBCC000000000000000003 /* Apps/CutoutApp/LightingRouteView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AABBCC000000000000000004 /* Apps/CutoutApp/LightingRouteView.swift */; };
 		300000000000000000000025 /* Apps/CutoutApp/RideMapRouteView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 400000000000000000000025 /* Apps/CutoutApp/RideMapRouteView.swift */; };
 		300000000000000000000026 /* Apps/CutoutApp/RideMapCanvasView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 400000000000000000000026 /* Apps/CutoutApp/RideMapCanvasView.swift */; };
 		300000000000000000000027 /* Apps/CutoutApp/RideMapControlsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 400000000000000000000027 /* Apps/CutoutApp/RideMapControlsView.swift */; };
@@ -134,6 +136,8 @@
 		40000000000000000000001A /* Apps/CutoutApp/CutoutUITestSessionFixture.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Apps/CutoutApp/CutoutUITestSessionFixture.swift; sourceTree = SOURCE_ROOT; };
 		40000000000000000000001B /* Apps/CutoutApp/CutoutAppState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Apps/CutoutApp/CutoutAppState.swift; sourceTree = SOURCE_ROOT; };
 		40000000000000000000001C /* Apps/CutoutApp/CutoutRouteViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Apps/CutoutApp/CutoutRouteViews.swift; sourceTree = SOURCE_ROOT; };
+		AABBCC000000000000000002 /* Apps/CutoutApp/LightingPlaybackControls.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Apps/CutoutApp/LightingPlaybackControls.swift; sourceTree = SOURCE_ROOT; };
+		AABBCC000000000000000004 /* Apps/CutoutApp/LightingRouteView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Apps/CutoutApp/LightingRouteView.swift; sourceTree = SOURCE_ROOT; };
 		400000000000000000000025 /* Apps/CutoutApp/RideMapRouteView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Apps/CutoutApp/RideMapRouteView.swift; sourceTree = SOURCE_ROOT; };
 		400000000000000000000026 /* Apps/CutoutApp/RideMapCanvasView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Apps/CutoutApp/RideMapCanvasView.swift; sourceTree = SOURCE_ROOT; };
 		400000000000000000000027 /* Apps/CutoutApp/RideMapControlsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Apps/CutoutApp/RideMapControlsView.swift; sourceTree = SOURCE_ROOT; };
@@ -205,6 +209,8 @@
 				40000000000000000000001B /* Apps/CutoutApp/CutoutAppState.swift */,
 				40000000000000000000001C /* Apps/CutoutApp/CutoutRouteViews.swift */,
 				400000000000000000000041 /* Apps/CutoutApp/AppSetupView.swift */,
+				AABBCC000000000000000002 /* Apps/CutoutApp/LightingPlaybackControls.swift */,
+				AABBCC000000000000000004 /* Apps/CutoutApp/LightingRouteView.swift */,
 				400000000000000000000025 /* Apps/CutoutApp/RideMapRouteView.swift */,
 				400000000000000000000026 /* Apps/CutoutApp/RideMapCanvasView.swift */,
 				400000000000000000000027 /* Apps/CutoutApp/RideMapControlsView.swift */,
@@ -443,6 +449,8 @@
 				30000000000000000000001B /* Apps/CutoutApp/CutoutAppState.swift in Sources */,
 				30000000000000000000001C /* Apps/CutoutApp/CutoutRouteViews.swift in Sources */,
 				300000000000000000000041 /* Apps/CutoutApp/AppSetupView.swift in Sources */,
+				AABBCC000000000000000001 /* Apps/CutoutApp/LightingPlaybackControls.swift in Sources */,
+				AABBCC000000000000000003 /* Apps/CutoutApp/LightingRouteView.swift in Sources */,
 				300000000000000000000025 /* Apps/CutoutApp/RideMapRouteView.swift in Sources */,
 				300000000000000000000026 /* Apps/CutoutApp/RideMapCanvasView.swift in Sources */,
 				300000000000000000000027 /* Apps/CutoutApp/RideMapControlsView.swift in Sources */,

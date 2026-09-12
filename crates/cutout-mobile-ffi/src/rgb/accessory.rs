@@ -5,7 +5,8 @@ use std::sync::{Arc, Mutex, PoisonError};
 use cutout_core::{
     LightingBrightness, LightingPowerState, RgbColor, RgbLightingAccessoryRecord,
     RgbLightingConfirmationState as CoreRgbLightingConfirmationState,
-    RgbLightingConnectionState as CoreRgbLightingConnectionState, RgbLightingPreset,
+    RgbLightingConnectionState as CoreRgbLightingConnectionState,
+    RgbLightingPartialState as CoreRgbLightingPartialState, RgbLightingPreset,
     RgbLightingProfileKind, RgbLightingRecordError as CoreRgbLightingRecordError,
     RgbLightingRequestedState,
 };
@@ -62,6 +63,19 @@ pub enum MobileRgbLightingConfirmationStateDto {
     Confirmed,
     /// The command was explicitly left unconfirmed.
     Unconfirmed,
+}
+
+/// One field proven by a partial lighting command.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Enum)]
+pub enum MobileRgbLightingPartialStateDto {
+    /// Accessory power.
+    Power,
+    /// Solid RGB color.
+    Color,
+    /// Brightness percentage.
+    Brightness,
+    /// Speed of the selected controller effect.
+    EffectSpeed,
 }
 
 /// Persisted transport status for a standalone RGB accessory.
@@ -161,6 +175,17 @@ impl From<CoreRgbLightingConfirmationState> for MobileRgbLightingConfirmationSta
             CoreRgbLightingConfirmationState::Unknown => Self::Unknown,
             CoreRgbLightingConfirmationState::Confirmed => Self::Confirmed,
             CoreRgbLightingConfirmationState::Unconfirmed => Self::Unconfirmed,
+        }
+    }
+}
+
+impl From<MobileRgbLightingPartialStateDto> for CoreRgbLightingPartialState {
+    fn from(state: MobileRgbLightingPartialStateDto) -> Self {
+        match state {
+            MobileRgbLightingPartialStateDto::Power => Self::Power,
+            MobileRgbLightingPartialStateDto::Color => Self::Color,
+            MobileRgbLightingPartialStateDto::Brightness => Self::Brightness,
+            MobileRgbLightingPartialStateDto::EffectSpeed => Self::EffectSpeed,
         }
     }
 }
@@ -417,6 +442,23 @@ impl MobileRgbLightingAccessoryRecord {
             .unwrap_or_else(PoisonError::into_inner)
             .set_confirmed_state(state);
         Ok(())
+    }
+
+    /// Merges one confirmed partial field into the existing complete baseline.
+    ///
+    /// Returns `false` when no complete baseline exists or the field cannot be merged with the
+    /// stored playback mode.
+    pub fn confirm_partial_state(
+        &self,
+        state: MobileMelkLightingRestoreStateDto,
+        field: MobileRgbLightingPartialStateDto,
+    ) -> Result<bool, MobileRgbLightingRecordError> {
+        let state = state.try_into()?;
+        Ok(self
+            .inner
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .confirm_partial_state(state, field.into()))
     }
 
     /// Returns the latest command-confirmation evidence.

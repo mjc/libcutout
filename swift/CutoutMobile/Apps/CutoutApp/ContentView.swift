@@ -9,6 +9,7 @@ import UIKit
 struct ContentView: View {
     let model: CutoutAppModel
     let rideMapPresentation: RideMapPresentationState
+    let lighting: LightingRouteModel
     @Binding private var navigationPath: [CutoutAppRoute]
     @AccessibilityFocusState private var focusedRoute: CutoutAppRoute?
     @State private var connectionAnnouncements = ConnectionAccessibilityAnnouncements()
@@ -16,10 +17,12 @@ struct ContentView: View {
     init(
         model: CutoutAppModel,
         rideMapPresentation: RideMapPresentationState,
+        lighting: LightingRouteModel,
         navigationPath: Binding<[CutoutAppRoute]>
     ) {
         self.model = model
         self.rideMapPresentation = rideMapPresentation
+        self.lighting = lighting
         _navigationPath = navigationPath
     }
 
@@ -100,7 +103,7 @@ struct ContentView: View {
     }
 
     private func selectTarget(_ target: PevNavigationTarget) {
-        navigate(to: CutoutAppRoute.route(forNavigationTarget: target))
+        navigate(to: route.destination(forNavigationTarget: target, connectionRoute: model.selectedConnectionRoute))
     }
 
     private func navigate(to route: CutoutAppRoute) {
@@ -129,7 +132,15 @@ struct ContentView: View {
 
     @ViewBuilder
     private func destinationContent(for destination: CutoutAppRoute) -> some View {
-        if destination == .capture {
+        if case .lighting = destination, model.selectedConnectionRoute == nil {
+            LightingRouteView(model: lighting, rideModel: model)
+                .toolbar {
+                    ToolbarItem(placement: .navigation) {
+                        Button(localizedAppText("ride_map.detail_back"), systemImage: "chevron.left") { navigate(to: .devicePicker) }
+                    }
+                }
+                .accessibilityFocused($focusedRoute, equals: destination)
+        } else if destination == .capture {
             ZStack {
                 PevColors.pageBackground
                     .ignoresSafeArea()
@@ -142,7 +153,7 @@ struct ContentView: View {
         } else {
             let tabs = TabView(selection: tabSelection) {
                 ForEach(availableTabs) { tab in
-                    if let tabRoute = destination.destination(for: tab) {
+                    if let tabRoute = destination.destination(for: tab, connectionRoute: model.selectedConnectionRoute) {
                         Tab(value: tab.id) {
                             destinationSurface(
                                 for: tabRoute,
@@ -228,6 +239,8 @@ struct ContentView: View {
         switch destination {
         case .eucRide:
             EucRideRouteView(model: model)
+        case .lighting:
+            LightingRouteView(model: lighting, rideModel: model)
         case .eucPack(let packScreen):
             EucPackRouteView(
                 model: model,
@@ -268,6 +281,8 @@ struct ContentView: View {
         switch destination {
         case .eucRide, .vescRide:
             localizedAppText("navigation.section.ride")
+        case .lighting:
+            localizedAppText("navigation.section.lighting")
         case .eucPack:
             localizedAppText("navigation.section.pack")
         case .eucTune:
@@ -304,23 +319,44 @@ struct ContentView: View {
 
     private var tabAccent: Color {
         #if os(iOS)
-        switch model.selectedConnectionRoute {
-        case .vescOnewheel:
+        switch Self.accentKind(selectedConnectionRoute: model.selectedConnectionRoute, route: route) {
+        case .purple:
             Color(uiColor: UIColor { traits in
                 traits.userInterfaceStyle == .dark
                     ? .systemPurple
                     : UIColor(red: 0.34, green: 0.08, blue: 0.52, alpha: 1)
             })
-        default:
+        case .yellow:
             Color(uiColor: UIColor { traits in
                 traits.userInterfaceStyle == .dark
                     ? .systemYellow
                     : UIColor(red: 0.45, green: 0.25, blue: 0.0, alpha: 1)
             })
+        default:
+            .primary
         }
         #else
         .primary
         #endif
+    }
+
+    static func accentKind(
+        selectedConnectionRoute: DevicePickerConnectionRoute?,
+        route: CutoutAppRoute
+    ) -> PevAccent {
+        switch selectedConnectionRoute {
+        case .vescOnewheel:
+            .purple
+        case .electricUnicycle:
+            .yellow
+        case nil:
+            switch route {
+            case .vescRide, .vescDebug, .lighting(.vesc):
+                .purple
+            default:
+                .yellow
+            }
+        }
     }
 
 }
@@ -330,6 +366,8 @@ private extension PevScreenTabID {
         switch self {
         case .ride:
             "speedometer"
+        case .lighting:
+            "lightbulb.2"
         case .pack:
             "battery.100percent"
         case .debug:

@@ -233,6 +233,22 @@ public final class LightingAccessoryPersistence {
         persist()
     }
 
+    /// Merges one confirmed partial command into the complete restore baseline.
+    ///
+    /// Returns `false` when this accessory has no complete baseline or the field does not match
+    /// its stored playback mode. The requested state remains untouched until every changed field
+    /// has been independently confirmed.
+    @discardableResult
+    public func confirmPartialState(
+        _ state: MobileMelkLightingRestoreStateDto,
+        field: MobileRgbLightingPartialStateDto
+    ) throws -> Bool {
+        guard let record else { return false }
+        let merged = try record.confirmPartialState(state: state, field: field)
+        if merged { persist() }
+        return merged
+    }
+
     public func markUnconfirmed() {
         record?.setConfirmation(state: .unconfirmed)
         persist()

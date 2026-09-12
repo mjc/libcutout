@@ -17,6 +17,18 @@ public enum MelkLightingPeripheralState: Equatable, Sendable {
     case failed(String)
 }
 
+public extension MelkLightingPeripheralState {
+    /// Returns whether a state transition invalidates a one-shot restore attempt.
+    var resetsRestoreEligibility: Bool {
+        switch self {
+        case .scanning, .connecting, .retrying, .disconnected, .failed:
+            true
+        case .idle, .discovering, .ready:
+            false
+        }
+    }
+}
+
 public enum MelkLightingCommandStatus: Equatable, Sendable {
     case idle
     case requested

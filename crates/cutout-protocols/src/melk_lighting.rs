@@ -23,6 +23,18 @@ pub struct MelkLightingEffectFixture {
     pub frame: [u8; MELK_FRAME_LEN],
 }
 
+/// Reference effect grouping used by clients to present the controller catalog.
+///
+/// The IDs and grouping are protocol metadata, not SwiftUI state. Names remain reference labels
+/// until each controller firmware mapping has physical evidence.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct MelkLightingEffectGroup {
+    /// Human-readable reference group name.
+    pub name: &'static str,
+    /// Effect IDs in this group.
+    pub ids: &'static [u8],
+}
+
 /// User-observed capabilities for the current MELK-OC21 profile.
 ///
 /// The protocol encoder can represent additional reference commands, but only these
@@ -100,6 +112,78 @@ const MELK_OC21_EFFECT_FIXTURES: [MelkLightingEffectFixture; 13] = [
     candidate_fixture(75),
 ];
 
+const BASIC_EFFECT_IDS: [u8; 46] = [
+    1, 2, 212, 193, 194, 195, 196, 197, 198, 199, 200, 201, 202, 203, 204, 205, 206, 207, 208, 209,
+    210, 211, 77, 78, 79, 80, 81, 82, 83, 84, 85, 86, 87, 88, 181, 182, 183, 184, 185, 186, 187,
+    188, 189, 190, 191, 192,
+];
+const CURTAIN_EFFECT_IDS: [u8; 20] = [
+    57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76,
+];
+const TRANS_EFFECT_IDS: [u8; 20] = [
+    3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22,
+];
+const WATER_EFFECT_IDS: [u8; 18] = [
+    39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56,
+];
+const FLOW_EFFECT_IDS: [u8; 24] = [
+    143, 144, 145, 146, 147, 148, 149, 150, 151, 152, 153, 154, 155, 156, 157, 158, 159, 160, 161,
+    162, 163, 164, 165, 166,
+];
+const TAIL_EFFECT_IDS: [u8; 16] = [
+    23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38,
+];
+const RUN_EFFECT_IDS: [u8; 34] = [
+    89, 91, 93, 95, 97, 99, 101, 103, 105, 107, 109, 111, 113, 115, 117, 119, 121, 123, 125, 127,
+    129, 131, 133, 135, 137, 139, 141, 167, 169, 171, 173, 175, 177, 179,
+];
+const RUN_BACK_EFFECT_IDS: [u8; 34] = [
+    90, 92, 94, 96, 98, 100, 102, 104, 106, 108, 110, 112, 114, 116, 118, 120, 122, 124, 126, 128,
+    130, 132, 134, 136, 138, 140, 142, 168, 170, 172, 174, 176, 178, 180,
+];
+const UNMAPPED_EFFECT_IDS: [u8; 16] = [
+    0, 213, 214, 215, 216, 217, 218, 219, 220, 221, 222, 223, 224, 225, 226, 227,
+];
+
+const MELK_EFFECT_GROUPS: [MelkLightingEffectGroup; 9] = [
+    MelkLightingEffectGroup {
+        name: "Basic",
+        ids: &BASIC_EFFECT_IDS,
+    },
+    MelkLightingEffectGroup {
+        name: "Curtain",
+        ids: &CURTAIN_EFFECT_IDS,
+    },
+    MelkLightingEffectGroup {
+        name: "Trans",
+        ids: &TRANS_EFFECT_IDS,
+    },
+    MelkLightingEffectGroup {
+        name: "Water",
+        ids: &WATER_EFFECT_IDS,
+    },
+    MelkLightingEffectGroup {
+        name: "Flow",
+        ids: &FLOW_EFFECT_IDS,
+    },
+    MelkLightingEffectGroup {
+        name: "Tail",
+        ids: &TAIL_EFFECT_IDS,
+    },
+    MelkLightingEffectGroup {
+        name: "Run",
+        ids: &RUN_EFFECT_IDS,
+    },
+    MelkLightingEffectGroup {
+        name: "Run Back",
+        ids: &RUN_BACK_EFFECT_IDS,
+    },
+    MelkLightingEffectGroup {
+        name: "Unmapped",
+        ids: &UNMAPPED_EFFECT_IDS,
+    },
+];
+
 /// Length of a candidate MELK command frame.
 pub const MELK_FRAME_LEN: usize = 9;
 
@@ -164,6 +248,12 @@ impl MelkLightingProfile {
     #[must_use]
     pub const fn capabilities() -> MelkLightingCapabilities {
         MelkLightingCapabilities::melk_oc21()
+    }
+
+    /// Returns the Rust-owned reference effect grouping for mobile clients.
+    #[must_use]
+    pub const fn effect_groups() -> &'static [MelkLightingEffectGroup] {
+        &MELK_EFFECT_GROUPS
     }
     /// Selects the candidate profile only when family name and GATT evidence agree.
     #[must_use]
@@ -482,6 +572,31 @@ mod tests {
                 ))
             );
         }
+    }
+
+    #[test]
+    fn effect_groups_are_rust_owned_and_cover_reference_catalog() {
+        let groups = MelkLightingProfile::effect_groups();
+        assert_eq!(groups.len(), 9);
+        assert_eq!(groups[0].name, "Basic");
+        assert_eq!(groups[0].ids.first(), Some(&1));
+        assert_eq!(groups[7].name, "Run Back");
+        let ids = groups
+            .iter()
+            .flat_map(|group| group.ids)
+            .copied()
+            .collect::<Vec<_>>();
+        assert_eq!(ids.len(), 228);
+        assert_eq!(
+            ids.iter()
+                .copied()
+                .collect::<std::collections::BTreeSet<_>>()
+                .len(),
+            228
+        );
+        let mut sorted = ids;
+        sorted.sort_unstable();
+        assert_eq!(sorted, (0..=227).map(|id| id as u8).collect::<Vec<_>>());
     }
 
     #[test]

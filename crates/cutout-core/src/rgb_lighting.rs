@@ -1,6 +1,6 @@
 //! Typed persistence for standalone RGB lighting accessories.
 
-use crate::RgbLightingRequestedState;
+use crate::{LightingPlayback, RgbLightingRequestedState};
 
 /// Current version of the persisted standalone RGB accessory record.
 pub const RGB_LIGHTING_RECORD_VERSION: u8 = 2;
@@ -45,6 +45,19 @@ pub enum RgbLightingConfirmationState {
     Confirmed,
     /// The command was explicitly observed as unconfirmed.
     Unconfirmed,
+}
+
+/// A single lighting field proven by a partial controller command.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum RgbLightingPartialState {
+    /// Accessory power.
+    Power,
+    /// Solid RGB color.
+    Color,
+    /// Brightness percentage.
+    Brightness,
+    /// Speed of the currently selected controller effect.
+    EffectSpeed,
 }
 
 /// Persisted connection status, kept separate from requested and confirmed state.
@@ -229,6 +242,64 @@ impl RgbLightingAccessoryRecord {
         self.confirmed_state = state;
     }
 
+    /// Merges one independently confirmed field into the existing complete baseline.
+    ///
+    /// The requested state is deliberately left untouched. If it contains another unconfirmed
+    /// change, the record remains ineligible for restore until that change is confirmed too.
+    #[must_use]
+    pub fn confirm_partial_state(
+        &mut self,
+        state: RgbLightingRequestedState,
+        field: RgbLightingPartialState,
+    ) -> bool {
+        let Some(confirmed) = self.confirmed_state else {
+            return false;
+        };
+
+        let playback = match field {
+            RgbLightingPartialState::EffectSpeed => {
+                let LightingPlayback::Effect {
+                    pattern: confirmed_pattern,
+                    ..
+                } = confirmed.playback()
+                else {
+                    return false;
+                };
+                let LightingPlayback::Effect { speed, .. } = state.playback() else {
+                    return false;
+                };
+                LightingPlayback::Effect {
+                    pattern: confirmed_pattern,
+                    speed,
+                }
+            }
+            _ => confirmed.playback(),
+        };
+
+        let merged = RgbLightingRequestedState::new(
+            match field {
+                RgbLightingPartialState::Power => state.power(),
+                _ => confirmed.power(),
+            },
+            match field {
+                RgbLightingPartialState::Color => state.color(),
+                _ => confirmed.color(),
+            },
+            match field {
+                RgbLightingPartialState::Brightness => state.brightness(),
+                _ => confirmed.brightness(),
+            },
+        )
+        .with_playback(playback);
+        self.confirmed_state = Some(merged);
+        self.confirmation = if self.requested_state == Some(merged) {
+            RgbLightingConfirmationState::Confirmed
+        } else {
+            RgbLightingConfirmationState::Unknown
+        };
+        true
+    }
+
     /// Returns the latest command confirmation evidence.
     #[must_use]
     pub const fn confirmation(&self) -> RgbLightingConfirmationState {
@@ -400,7 +471,7 @@ struct WireState {
     blue: u8,
     brightness: u8,
     #[serde(default)]
-    playback: crate::LightingPlayback,
+    playback: LightingPlayback,
 }
 
 #[cfg(feature = "serde")]
@@ -586,11 +657,11 @@ mod tests {
             RgbLightingAccessoryRecord::new("melk-1".into(), RgbLightingProfileKind::MelkOc21, 1)
                 .unwrap();
         for playback in [
-            crate::LightingPlayback::Effect {
+            LightingPlayback::Effect {
                 pattern: 220.try_into().unwrap(),
                 speed: 255,
             },
-            crate::LightingPlayback::Music {
+            LightingPlayback::Music {
                 effect: 7.try_into().unwrap(),
                 sensitivity: 100.try_into().unwrap(),
             },
@@ -606,7 +677,7 @@ mod tests {
                 .requested_state()
                 .unwrap()
                 .playback(),
-            crate::LightingPlayback::Solid
+            LightingPlayback::Solid
         );
         let mut wire: serde_json::Value =
             serde_json::from_slice(&record.encode().unwrap()).unwrap();
@@ -708,5 +779,76 @@ mod tests {
         assert!(record.remove_preset("Night"));
         assert!(record.presets().is_empty());
         assert!(!record.remove_preset("Night"));
+    }
+
+    #[test]
+    fn partial_confirmation_merges_one_field_and_preserves_restore_safety() {
+        let baseline = state().with_playback(LightingPlayback::Effect {
+            pattern: 16.try_into().expect("valid pattern"),
+            speed: 128,
+        });
+        let changed = RgbLightingRequestedState::new(
+            crate::LightingPowerState::Off,
+            crate::RgbColor::new(9, 8, 7),
+            crate::LightingBrightness::try_from_percent(60).expect("bounded brightness"),
+        )
+        .with_playback(LightingPlayback::Effect {
+            pattern: 16.try_into().expect("valid pattern"),
+            speed: 32,
+        });
+        let mut record = RgbLightingAccessoryRecord::new(
+            "melk-1".to_owned(),
+            RgbLightingProfileKind::MelkOc21,
+            1,
+        )
+        .expect("valid record");
+        record.set_requested_state(Some(baseline));
+        record.set_confirmed_state(Some(baseline));
+        record.set_confirmation(RgbLightingConfirmationState::Confirmed);
+
+        record.set_requested_state(Some(changed));
+        record.set_confirmation(RgbLightingConfirmationState::Unknown);
+        assert!(record.confirm_partial_state(changed, RgbLightingPartialState::Power));
+        assert_eq!(
+            record.confirmed_state(),
+            Some(
+                RgbLightingRequestedState::new(
+                    crate::LightingPowerState::Off,
+                    baseline.color(),
+                    baseline.brightness(),
+                )
+                .with_playback(baseline.playback())
+            )
+        );
+        assert_eq!(record.confirmation(), RgbLightingConfirmationState::Unknown);
+
+        record.set_requested_state(Some(
+            RgbLightingRequestedState::new(
+                crate::LightingPowerState::Off,
+                baseline.color(),
+                baseline.brightness(),
+            )
+            .with_playback(baseline.playback()),
+        ));
+        assert!(record.confirm_partial_state(
+            record.requested_state().expect("requested state"),
+            RgbLightingPartialState::Power
+        ));
+        assert_eq!(
+            record.confirmation(),
+            RgbLightingConfirmationState::Confirmed
+        );
+    }
+
+    #[test]
+    fn partial_confirmation_requires_a_complete_baseline() {
+        let mut record = RgbLightingAccessoryRecord::new(
+            "melk-1".to_owned(),
+            RgbLightingProfileKind::MelkOc21,
+            1,
+        )
+        .expect("valid record");
+        assert!(!record.confirm_partial_state(state(), RgbLightingPartialState::Color));
+        assert_eq!(record.confirmed_state(), None);
     }
 }

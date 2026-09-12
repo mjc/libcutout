@@ -1,6 +1,8 @@
+import Observation
 import XCTest
 @testable import CutoutApp
-import CutoutMobile
+@testable import CutoutMobile
+import CutoutMobileFFI
 
 final class CutoutAppRouteTests: XCTestCase {
     func testScreenRoutesMatchTopLevelSections() {
@@ -15,8 +17,25 @@ final class CutoutAppRouteTests: XCTestCase {
         XCTAssertEqual(CutoutAppRoute.route(for: .vescDebug), .vescDebug)
     }
 
+    @MainActor
+    func testTabAccentFollowsConnectedVehicleAcrossMap() {
+        XCTAssertEqual(
+            ContentView.accentKind(selectedConnectionRoute: .vescOnewheel, route: .rideMap),
+            .purple
+        )
+        XCTAssertEqual(
+            ContentView.accentKind(selectedConnectionRoute: .electricUnicycle, route: .rideMap),
+            .yellow
+        )
+        XCTAssertEqual(
+            ContentView.accentKind(selectedConnectionRoute: nil, route: .lighting(.vesc)),
+            .purple
+        )
+    }
+
     func testNavigationLabelsResolveFromTheAppCatalog() {
         XCTAssertEqual(localizedAppText("navigation.tab.cells"), "Cells")
+        XCTAssertEqual(localizedAppText("lighting.power"), "Power")
         XCTAssertEqual(localizedAppText("navigation.tab.faults"), "Faults")
         XCTAssertEqual(localizedAppText("picker.title"), "Choose device")
         XCTAssertEqual(localizedAppText("picker.subtitle.nearby_devices"), "Nearby Bluetooth devices")
@@ -76,7 +95,7 @@ final class CutoutAppRouteTests: XCTestCase {
         XCTAssertEqual(localizedAppText("settings.headlight.title"), "Headlight")
         XCTAssertEqual(
             localizedAppText("settings.headlight.help"),
-            "Changes are sent immediately to the connected wheel."
+            "Requests are submitted immediately to the connected wheel."
         )
         XCTAssertEqual(
             localizedAppText("bms.no_data.pack_estimate_accessibility_value", "71", "Derived from voltage curve"),
@@ -94,6 +113,63 @@ final class CutoutAppRouteTests: XCTestCase {
             PevScreen(id: .bmsUnknownTopology, title: "", subtitle: "", secondaryValue: "").tabTitle,
             "Faults"
         )
+    }
+
+    func testLightingPresetSavingRequiresRequestedSettingsAndIdentity() {
+        XCTAssertTrue(
+            lightingPresetSaveEligibility(
+                platformIdentifier: "A1B2C3D4-E5F6-4789-ABCD-0123456789AB",
+                commandStatus: .confirmed
+            )
+        )
+        XCTAssertFalse(
+            lightingPresetSaveEligibility(
+                platformIdentifier: nil,
+                commandStatus: .confirmed
+            )
+        )
+        XCTAssertTrue(
+            lightingPresetSaveEligibility(
+                platformIdentifier: "A1B2C3D4-E5F6-4789-ABCD-0123456789AB",
+                commandStatus: .requested
+            )
+        )
+        XCTAssertFalse(
+            lightingPresetSaveEligibility(
+                platformIdentifier: "A1B2C3D4-E5F6-4789-ABCD-0123456789AB",
+                commandStatus: .idle
+            )
+        )
+    }
+
+    func testLightingNavigationSurvivesWheelLossAndKeepsMapDeviceFamily() {
+        XCTAssertTrue(CutoutAppRoute.lighting(.euc).preservesNavigationOnConnectionLoss)
+        XCTAssertTrue(CutoutAppRoute.lighting(.vesc).preservesNavigationOnConnectionLoss)
+        XCTAssertEqual(
+            CutoutAppRoute.rideMap.destination(forNavigationTarget: .lighting, connectionRoute: .vescOnewheel),
+            .lighting(.vesc)
+        )
+    }
+
+    func testLightingAutoStartRequiresRememberedIdentity() {
+        XCTAssertTrue(shouldAutoStartLightingSession(platformIdentifier: "A1B2C3D4-E5F6-4789-ABCD-0123456789AB"))
+        XCTAssertFalse(shouldAutoStartLightingSession(platformIdentifier: nil))
+        XCTAssertFalse(shouldAutoStartLightingSession(platformIdentifier: ""))
+        XCTAssertFalse(shouldAutoStartLightingSession(platformIdentifier: "legacy-melk"))
+    }
+
+    func testLightingColorSelectionKeepsPrimaryAndNeutralColorsStable() {
+        let red = lightingColorSelection(red: 255, green: 0, blue: 0)
+        XCTAssertEqual(red.hue, 0, accuracy: 0.0001)
+        XCTAssertEqual(red.saturation, 1, accuracy: 0.0001)
+
+        let cyan = lightingColorSelection(red: 0, green: 255, blue: 255)
+        XCTAssertEqual(cyan.hue, 0.5, accuracy: 0.0001)
+        XCTAssertEqual(cyan.saturation, 1, accuracy: 0.0001)
+
+        let white = lightingColorSelection(red: 255, green: 255, blue: 255)
+        XCTAssertEqual(white.hue, 0, accuracy: 0.0001)
+        XCTAssertEqual(white.saturation, 0, accuracy: 0.0001)
     }
 
     func testEucPackRouteRejectsNonPackScreens() {
@@ -157,11 +233,11 @@ final class CutoutAppRouteTests: XCTestCase {
         XCTAssertTrue(CutoutAppRoute.capture.navigationTabs(for: nil).isEmpty)
         XCTAssertEqual(
             CutoutAppRoute.eucRide.navigationTabs(for: .electricUnicycle).map(\.id),
-            [.ride, .pack, .map, .tune]
+            [.ride, .lighting, .pack, .map, .tune]
         )
         XCTAssertEqual(
             CutoutAppRoute.vescRide.navigationTabs(for: .vescOnewheel).map(\.id),
-            [.ride, .debug, .map, .logs]
+            [.ride, .lighting, .debug, .map, .logs]
         )
         XCTAssertTrue(
             CutoutAppRoute.eucPack(.bmsOverview)
@@ -179,7 +255,7 @@ final class CutoutAppRouteTests: XCTestCase {
                 .first(where: { $0.id == .debug })?.isSelected == true
         )
         XCTAssertEqual(
-            CutoutAppRoute.eucTune.navigationTabs.filter(\.isSelected).map(\.id),
+            CutoutAppRoute.eucTune.navigationTabs(for: .electricUnicycle).filter(\.isSelected).map(\.id),
             [.tune]
         )
         XCTAssertEqual(CutoutAppRoute.route(forNavigationTarget: .vescRide), .vescRide)
@@ -195,19 +271,19 @@ final class CutoutAppRouteTests: XCTestCase {
     func testNativeNavigationOmitsUnavailableDestinations() {
         XCTAssertEqual(
             CutoutAppRoute.eucRide.availableNavigationTabs(for: .electricUnicycle).map(\.id),
-            [.ride, .pack, .map, .tune]
+            [.ride, .lighting, .pack, .map, .tune]
         )
         XCTAssertEqual(
             CutoutAppRoute.eucPack(.bmsOverview).availableNavigationTabs(for: .electricUnicycle).map(\.id),
-            [.ride, .pack, .map, .tune]
+            [.ride, .lighting, .pack, .map, .tune]
         )
         XCTAssertEqual(
             CutoutAppRoute.vescRide.availableNavigationTabs(for: .vescOnewheel).map(\.id),
-            [.ride, .debug, .map]
+            [.ride, .lighting, .debug, .map]
         )
         XCTAssertEqual(
             CutoutAppRoute.vescDebug.availableNavigationTabs(for: .vescOnewheel).map(\.id),
-            [.ride, .debug, .map]
+            [.ride, .lighting, .debug, .map]
         )
         XCTAssertTrue(CutoutAppRoute.devicePicker.availableNavigationTabs(for: nil).isEmpty)
         XCTAssertTrue(CutoutAppRoute.capture.availableNavigationTabs(for: nil).isEmpty)
@@ -238,14 +314,10 @@ final class CutoutAppRouteTests: XCTestCase {
         let vescTabs = CutoutAppRoute.rideMapDetail(rideID: "ride-1")
             .availableNavigationTabs(for: .vescOnewheel)
 
-        XCTAssertEqual(eucTabs.map(\.id), [.ride, .pack, .map])
-        XCTAssertEqual(vescTabs.map(\.id), [.ride, .debug, .map])
+        XCTAssertEqual(eucTabs.map(\.id), [.ride, .lighting, .pack, .map, .tune])
+        XCTAssertEqual(vescTabs.map(\.id), [.ride, .lighting, .debug, .map])
         XCTAssertEqual(eucTabs.first(where: { $0.isSelected })?.id, .map)
         XCTAssertEqual(vescTabs.first(where: { $0.isSelected })?.id, .map)
-        XCTAssertEqual(
-            CutoutAppRoute.eucTune.availableNavigationTabs(for: .electricUnicycle).map(\.id),
-            [.ride, .pack, .map, .tune]
-        )
     }
 
     func testNestedPackRouteSurvivesSharedTabRendering() {
@@ -253,19 +325,19 @@ final class CutoutAppRouteTests: XCTestCase {
         let tabs = nestedPackRoute.availableNavigationTabs(for: .electricUnicycle)
 
         XCTAssertEqual(nestedPackRoute.destination(for: tabs[0]), .eucRide)
-        XCTAssertEqual(nestedPackRoute.destination(for: tabs[1]), nestedPackRoute)
-        XCTAssertEqual(nestedPackRoute.destination(for: tabs[2]), .rideMap)
-        XCTAssertEqual(nestedPackRoute.destination(for: tabs[3]), .eucTune)
+        XCTAssertEqual(nestedPackRoute.destination(for: tabs[2]), nestedPackRoute)
+        XCTAssertEqual(nestedPackRoute.destination(for: tabs[3]), .rideMap)
+        XCTAssertEqual(nestedPackRoute.destination(for: tabs[4]), .eucTune)
         XCTAssertEqual(
             CutoutAppRoute.vescDebug.destination(
-                for: CutoutAppRoute.vescDebug.availableNavigationTabs(for: .vescOnewheel)[1]
+                for: CutoutAppRoute.vescDebug.availableNavigationTabs(for: .vescOnewheel)[2]
             ),
             .vescDebug
         )
     }
 
     func testUnavailableTabHasNoDestination() {
-        let unavailableLogsTab = CutoutAppRoute.vescRide.navigationTabs(for: .vescOnewheel)[3]
+        let unavailableLogsTab = CutoutAppRoute.vescRide.navigationTabs(for: .vescOnewheel)[4]
 
         XCTAssertNil(CutoutAppRoute.vescRide.destination(for: unavailableLogsTab))
     }
@@ -588,4 +660,801 @@ final class CutoutAppRouteTests: XCTestCase {
         XCTAssertNil(BmsAlertLevel.unknown.accessibilityAnnouncement)
     }
 
+    func testConnectionLossStatesResetLightingRestoreEligibility() {
+        let resetStates: [MelkLightingPeripheralState] = [
+            .scanning,
+            .connecting,
+            .retrying(attempt: 1, delayMilliseconds: 250),
+            .disconnected,
+            .failed("Bluetooth unavailable"),
+        ]
+        let stableStates: [MelkLightingPeripheralState] = [
+            .idle,
+            .discovering,
+            .ready,
+        ]
+
+        XCTAssertTrue(resetStates.allSatisfy(\.resetsRestoreEligibility))
+        XCTAssertTrue(stableStates.allSatisfy { !$0.resetsRestoreEligibility })
+    }
+
+    @MainActor
+    func testLightingRouteModelUsesInjectedSessionLifecycle() throws {
+        let suiteName = "CutoutAppRouteTests.lightingSession"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defaults.removePersistentDomain(forName: suiteName)
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        let fake = TestLightingSession()
+        let model = LightingRouteModel(
+            session: fake,
+            persistence: LightingAccessoryPersistence(defaults: defaults)
+        )
+
+        model.start()
+        XCTAssertEqual(fake.startCalls, [nil])
+        model.stopIfUnpaired()
+        XCTAssertEqual(fake.stopCalls, 1)
+    }
+
+    @MainActor
+    func testLightingForgetClearsStoppedAccessoryPresentation() async throws {
+        let suiteName = "CutoutAppRouteTests.lightingForget"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defaults.removePersistentDomain(forName: suiteName)
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        let fake = TestLightingSession()
+        let model = LightingRouteModel(
+            session: fake,
+            persistence: LightingAccessoryPersistence(defaults: defaults)
+        )
+        model.start()
+        fake.emitIdentity(
+            MelkLightingPeripheralIdentity(
+                name: "MELK-OC21 6A",
+                platformIdentifier: "A1B2C3D4-E5F6-4789-ABCD-0123456789AB",
+                rssi: -40
+            )
+        )
+        fake.emitState(.ready)
+        await Task.yield()
+
+        XCTAssertTrue(model.isReady)
+        XCTAssertNotNil(model.peripheralIdentifier)
+        model.forgetAccessory()
+
+        XCTAssertFalse(model.isReady)
+        XCTAssertNil(model.peripheralIdentifier)
+        XCTAssertNil(model.peripheralName)
+        XCTAssertEqual(model.connectionState, .idle)
+    }
+
+    @MainActor
+    func testLightingEffectTileSelectionIsDraftUntilPlay() throws {
+        let suiteName = "CutoutAppRouteTests.lightingEffectDraft"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defaults.removePersistentDomain(forName: suiteName)
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        let fake = TestLightingSession()
+        let model = LightingRouteModel(
+            session: fake,
+            persistence: LightingAccessoryPersistence(defaults: defaults)
+        )
+        model.start()
+        let controls = LightingPlaybackControls(model: model, page: .effects)
+
+        controls.selectPattern(16)
+
+        XCTAssertTrue(fake.stateRequests.isEmpty)
+    }
+
+    @MainActor
+    func testLightingRouteModelsKeepSimultaneousControllersIsolated() throws {
+        let suiteNames = [
+            "CutoutAppRouteTests.lightingSessionA",
+            "CutoutAppRouteTests.lightingSessionB",
+        ]
+        let defaults = try suiteNames.map { name in
+            let defaults = try XCTUnwrap(UserDefaults(suiteName: name))
+            defaults.removePersistentDomain(forName: name)
+            return defaults
+        }
+        defer {
+            for (name, defaults) in zip(suiteNames, defaults) {
+                defaults.removePersistentDomain(forName: name)
+            }
+        }
+
+        let sessionA = TestLightingSession()
+        let sessionB = TestLightingSession()
+        let modelA = LightingRouteModel(
+            session: sessionA,
+            persistence: LightingAccessoryPersistence(defaults: defaults[0])
+        )
+        let modelB = LightingRouteModel(
+            session: sessionB,
+            persistence: LightingAccessoryPersistence(defaults: defaults[1])
+        )
+
+        modelA.start()
+        modelB.start()
+        modelA.setPower(true)
+        modelB.setSolidColor(red: 1, green: 2, blue: 3)
+
+        XCTAssertEqual(sessionA.startCalls, [nil])
+        XCTAssertEqual(sessionB.startCalls, [nil])
+        XCTAssertEqual(sessionA.powerRequests, [true])
+        XCTAssertTrue(sessionA.colorRequests.isEmpty)
+        XCTAssertEqual(sessionB.colorRequests, ["1,2,3"])
+        XCTAssertTrue(sessionB.powerRequests.isEmpty)
+
+        modelA.stop()
+        XCTAssertEqual(sessionA.stopCalls, 1)
+        XCTAssertEqual(sessionB.stopCalls, 0)
+        modelB.stop()
+        XCTAssertEqual(sessionB.stopCalls, 1)
+    }
+
+    @MainActor
+    func testLightingRouteModelPublishesPresetChanges() throws {
+        let suiteName = "CutoutAppRouteTests.lightingPresets"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defaults.removePersistentDomain(forName: suiteName)
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        let persistence = LightingAccessoryPersistence(defaults: defaults)
+        XCTAssertTrue(
+            persistence.ensureRecord(
+                platformIdentifier: "A1B2C3D4-E5F6-4789-ABCD-0123456789AB"
+            )
+        )
+        let model = LightingRouteModel(
+            session: TestLightingSession(),
+            persistence: persistence
+        )
+        model.setPower(true)
+        model.markConfirmed()
+
+        let flag = ObservationFlag()
+        withObservationTracking {
+            _ = model.presets
+        } onChange: {
+            flag.value = true
+        }
+
+        model.savePreset(named: "Night")
+
+        XCTAssertTrue(flag.value)
+        XCTAssertEqual(model.presets.map(\.name), ["Night"])
+    }
+
+    @MainActor
+    func testLightingRouteModelMarksPendingCommandUnconfirmedAfterLinkLoss() async throws {
+        let suiteName = "CutoutAppRouteTests.lightingPendingCommand"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defaults.removePersistentDomain(forName: suiteName)
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let persistence = LightingAccessoryPersistence(defaults: defaults)
+        let fake = TestLightingSession()
+        let model = LightingRouteModel(session: fake, persistence: persistence)
+        model.start()
+
+        fake.emitState(.ready)
+        await Task.yield()
+        model.setPower(true)
+        XCTAssertEqual(model.commandStatus, .requested)
+
+        fake.emitState(.retrying(attempt: 1, delayMilliseconds: 250))
+        await Task.yield()
+
+        XCTAssertEqual(model.commandStatus, .unconfirmed)
+    }
+
+    @MainActor
+    func testLightingRouteModelReportsCommandRefusalWhenDisconnected() throws {
+        let suiteName = "CutoutAppRouteTests.lightingRefusal"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defaults.removePersistentDomain(forName: suiteName)
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        let fake = TestLightingSession()
+        fake.powerResult = false
+        let model = LightingRouteModel(session: fake, persistence: LightingAccessoryPersistence(defaults: defaults))
+
+        model.setPower(true)
+
+        XCTAssertEqual(model.controlError, "Power was not sent because the lighting controller is not ready.")
+        XCTAssertEqual(model.commandStatus, .idle)
+    }
+
+    @MainActor
+    func testLightingRouteModelClearsCommandErrorAfterRecovery() throws {
+        let suiteName = "CutoutAppRouteTests.lightingRefusalRecovery-\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        let fake = TestLightingSession()
+        fake.powerResult = false
+        let model = LightingRouteModel(session: fake, persistence: LightingAccessoryPersistence(defaults: defaults))
+        model.setPower(true)
+        XCTAssertNotNil(model.controlError)
+
+        fake.powerResult = true
+        model.setPower(true)
+
+        XCTAssertNil(model.controlError)
+        XCTAssertEqual(model.commandStatus, .requested)
+    }
+
+    @MainActor
+    func testLightingRouteModelCountsOneNotificationOnce() async throws {
+        let suiteName = "CutoutAppRouteTests.lightingNotification"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defaults.removePersistentDomain(forName: suiteName)
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        let fake = TestLightingSession()
+        let model = LightingRouteModel(session: fake, persistence: LightingAccessoryPersistence(defaults: defaults))
+        model.start()
+
+        fake.emitNotification(Data([0x59, 0x42]))
+        await Task.yield()
+
+        XCTAssertEqual(model.notificationCount, 1)
+        XCTAssertEqual(model.records.filter { $0.text == "FFF4 notification received" }.count, 1)
+    }
+
+    @MainActor
+    func testLightingRouteModelPersistsOnlyStableConnectionStates() async throws {
+        let suiteName = "CutoutAppRouteTests.lightingConnectionState"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defaults.removePersistentDomain(forName: suiteName)
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        let persistence = LightingAccessoryPersistence(defaults: defaults)
+        XCTAssertTrue(persistence.ensureRecord(platformIdentifier: "A1B2C3D4-E5F6-4789-ABCD-0123456789AB"))
+        let fake = TestLightingSession()
+        let model = LightingRouteModel(session: fake, persistence: persistence)
+        model.start()
+        struct PersistenceEnvelope: Decodable {
+            let record: Data
+        }
+        func persistedRecord() throws -> MobileRgbLightingAccessoryRecord {
+            let data = try XCTUnwrap(defaults.data(forKey: "lighting.accessory.record"))
+            let envelope = try JSONDecoder().decode(PersistenceEnvelope.self, from: data)
+            return try MobileRgbLightingAccessoryRecord.decode(bytes: envelope.record)
+        }
+
+        let transientStates: [MelkLightingPeripheralState] = [
+            .scanning,
+            .connecting,
+            .discovering,
+            .retrying(attempt: 1, delayMilliseconds: 250),
+            .failed("Bluetooth unavailable"),
+        ]
+        for state in transientStates {
+            fake.emitState(state)
+            await Task.yield()
+            let record = try persistedRecord()
+            XCTAssertEqual(record.connection(), .unknown, "unexpected persisted state for \(state)")
+        }
+
+        fake.emitState(.ready)
+        await Task.yield()
+        var record = try persistedRecord()
+        XCTAssertEqual(record.connection(), .ready)
+
+        fake.emitState(.disconnected)
+        await Task.yield()
+        record = try persistedRecord()
+        XCTAssertEqual(record.connection(), .disconnected)
+    }
+
+    @MainActor
+    func testLightingRouteModelRestoresConfirmedStateForRememberedIdentity() async throws {
+        let suiteName = "CutoutAppRouteTests.lightingRestore"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defaults.removePersistentDomain(forName: suiteName)
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        let platformIdentifier = "A1B2C3D4-E5F6-4789-ABCD-0123456789AB"
+        let persistence = LightingAccessoryPersistence(defaults: defaults)
+        XCTAssertTrue(persistence.ensureRecord(platformIdentifier: platformIdentifier))
+        let requested = MobileMelkLightingRestoreStateDto(
+            powerOn: true,
+            red: 12,
+            green: 34,
+            blue: 56,
+            brightness: 78
+        )
+        try persistence.confirm(requested)
+        persistence.setRestoreEnabled(true)
+
+        let fake = TestLightingSession()
+        let model = LightingRouteModel(
+            session: fake,
+            persistence: LightingAccessoryPersistence(defaults: defaults)
+        )
+
+        model.start()
+        XCTAssertEqual(fake.startCalls, [platformIdentifier])
+        fake.emitIdentity(
+            MelkLightingPeripheralIdentity(
+                name: "MELK-OC21 6A",
+                platformIdentifier: platformIdentifier,
+                rssi: -40
+            )
+        )
+        fake.emitRecord("candidate=MELK-OC21 6A id=\(platformIdentifier) rssi=-40")
+        await Task.yield()
+        fake.emitState(.ready)
+        await Task.yield()
+
+        XCTAssertEqual(fake.stateRequests, [requested])
+        XCTAssertTrue(fake.powerRequests.isEmpty)
+        XCTAssertEqual(model.commandStatus, .requested)
+    }
+
+    @MainActor
+    func testLightingRouteModelUsesConfirmedPowerForInitialToggle() throws {
+        let suiteName = "CutoutAppRouteTests.lightingPowerState"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defaults.removePersistentDomain(forName: suiteName)
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        let persistence = LightingAccessoryPersistence(defaults: defaults)
+        XCTAssertTrue(persistence.ensureRecord(platformIdentifier: "A1B2C3D4-E5F6-4789-ABCD-0123456789AB"))
+        let confirmedOn = MobileMelkLightingRestoreStateDto(
+            powerOn: true, red: 1, green: 2, blue: 3, brightness: 50
+        )
+        try persistence.confirm(confirmedOn)
+        persistence.setRestoreEnabled(true)
+
+        let model = LightingRouteModel(
+            session: TestLightingSession(),
+            persistence: LightingAccessoryPersistence(defaults: defaults)
+        )
+
+        XCTAssertTrue(model.requestedPowerOn)
+    }
+
+    @MainActor
+    func testLightingRouteModelStopsMusicThroughTheValidatedStatePath() throws {
+        let suiteName = "CutoutAppRouteTests.lightingMusic"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defaults.removePersistentDomain(forName: suiteName)
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let persistence = LightingAccessoryPersistence(defaults: defaults)
+        let fake = TestLightingSession()
+        let model = LightingRouteModel(session: fake, persistence: persistence)
+
+        model.setPlayback(.music(effect: 1, sensitivity: 50))
+        model.stopMusic()
+
+        XCTAssertEqual(model.requestedPlayback, .solid)
+        XCTAssertEqual(fake.stateRequests.last?.playback, .solid)
+    }
+
+    @MainActor
+    func testLightingRouteModelRejectsRestoreBatchWithoutChangingState() async throws {
+        let suiteName = "CutoutAppRouteTests.lightingRestoreFailure"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defaults.removePersistentDomain(forName: suiteName)
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        let platformIdentifier = "B1C2D3E4-F5A6-4789-ABCD-0123456789AB"
+        let persistence = LightingAccessoryPersistence(defaults: defaults)
+        XCTAssertTrue(persistence.ensureRecord(platformIdentifier: platformIdentifier))
+        let requested = MobileMelkLightingRestoreStateDto(
+            powerOn: true,
+            red: 90,
+            green: 80,
+            blue: 70,
+            brightness: 60
+        )
+        try persistence.confirm(requested)
+        persistence.setRestoreEnabled(true)
+
+        let fake = TestLightingSession()
+        fake.stateResult = false
+        let model = LightingRouteModel(
+            session: fake,
+            persistence: LightingAccessoryPersistence(defaults: defaults)
+        )
+
+        model.start()
+        fake.emitIdentity(
+            MelkLightingPeripheralIdentity(
+                name: "MELK-OC21 6A",
+                platformIdentifier: platformIdentifier,
+                rssi: -40
+            )
+        )
+        fake.emitRecord("candidate=MELK-OC21 6A id=\(platformIdentifier) rssi=-40")
+        await Task.yield()
+        fake.emitState(.ready)
+        await Task.yield()
+
+        XCTAssertEqual(fake.stateRequests, [requested])
+        XCTAssertTrue(fake.powerRequests.isEmpty)
+        XCTAssertTrue(fake.colorRequests.isEmpty)
+        XCTAssertTrue(fake.brightnessRequests.isEmpty)
+        XCTAssertEqual(model.commandStatus, .idle)
+    }
+
+    @MainActor
+    func testLightingPlaybackPresetDoesNotRequireManualConfirmation() throws {
+        let suiteName = "CutoutAppRouteTests.playbackPreset"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let persistence = LightingAccessoryPersistence(defaults: defaults)
+        XCTAssertTrue(persistence.ensureRecord(platformIdentifier: "A1B2C3D4-E5F6-4789-ABCD-0123456789AB"))
+        let fake = TestLightingSession()
+        let model = LightingRouteModel(session: fake, persistence: persistence)
+        model.setPlayback(.effect(pattern: 16, speed: 75))
+        XCTAssertEqual(model.requestedPlayback, .effect(pattern: 16, speed: 75))
+        XCTAssertEqual(model.commandStatus, .requested)
+        XCTAssertTrue(model.canSavePreset)
+        model.savePreset(named: "Effect")
+        let preset = try XCTUnwrap(model.presets.first)
+        XCTAssertEqual(preset.requested.playback, .effect(pattern: 16, speed: 75))
+        model.setSolidColor(red: 255, green: 0, blue: 0)
+        XCTAssertNil(fake.stateRequests.last?.playback)
+        model.applyPreset(preset)
+        XCTAssertEqual(fake.stateRequests.last, preset.requested)
+        fake.stateResult = false
+        model.setPlayback(.effect(pattern: 1, speed: 255))
+        XCTAssertEqual(model.requestedPlayback, .effect(pattern: 16, speed: 75))
+        fake.stateResult = true
+        model.setSolidColor(red: 1, green: 2, blue: 3)
+        XCTAssertTrue(model.replacePreset(named: "Effect"))
+        XCTAssertNil(model.presets.first?.requested.playback)
+        XCTAssertTrue(model.deletePreset(named: "Effect"))
+        XCTAssertTrue(model.presets.isEmpty)
+        XCTAssertFalse(model.deletePreset(named: "Effect"))
+    }
+
+    func testLightingControlPagesResolveFromTheAppCatalog() {
+        XCTAssertEqual(LightingControlPage.allCases.map(\.title), ["Color", "Effects", "Music", "Schedule"])
+    }
+
+    func testLightingPatternNamesKeepWireIDsAndUnmappedModesExplicit() {
+        let groups = LightingPatternCatalog.groups
+        XCTAssertEqual(groups.flatMap(\.ids).sorted(), Array(0...227))
+        XCTAssertEqual(groups.first?.name, "Basic")
+        XCTAssertEqual(groups.first?.ids.prefix(3), [1, 2, 212])
+        XCTAssertEqual(groups.first(where: { $0.name == "Curtain" })?.ids, Array(57...76))
+        XCTAssertTrue((1...212).allSatisfy { LightingPatternCatalog.isMapped($0) })
+        XCTAssertEqual(LightingPatternCatalog.verifiedEffectIDs, Set([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 16, 22, 75]))
+        XCTAssertTrue([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 16, 22, 75].allSatisfy { LightingPatternCatalog.isVerified($0) })
+        XCTAssertFalse([0, 11, 212, 213, 227].contains { LightingPatternCatalog.isVerified($0) })
+        XCTAssertFalse([0, 213, 220, 255, -1].contains { LightingPatternCatalog.isMapped($0) })
+        for id in 1...212 {
+            XCTAssertFalse(LightingPatternCatalog.name(for: id).isEmpty)
+            XCTAssertFalse(LightingPatternCatalog.name(for: id).contains("Unmapped"))
+        }
+        XCTAssertEqual(LightingPatternCatalog.name(for: 1), "Magic Forward")
+        XCTAssertEqual(LightingPatternCatalog.name(for: 16), "6-Color to Cyan Back")
+        XCTAssertEqual(LightingPatternCatalog.name(for: 75), "White Close")
+        XCTAssertEqual(LightingPatternCatalog.name(for: 115), "Green-Dot in Red Running (reference)")
+        XCTAssertEqual(LightingPatternCatalog.name(for: 169), "Green-Dot in Red Running (reference)")
+        XCTAssertEqual(LightingPatternCatalog.name(for: 212), "7-Color Energy (reference)")
+        for id in [0] + Array(213...227) {
+            XCTAssertFalse(LightingPatternCatalog.name(for: id).isEmpty)
+            XCTAssertFalse(LightingPatternCatalog.name(for: id).contains("Unmapped"))
+            XCTAssertFalse(LightingPatternCatalog.isMapped(id))
+        }
+        XCTAssertEqual(LightingPatternCatalog.name(for: 0), "Auto Play (reference)")
+        XCTAssertEqual(LightingPatternCatalog.name(for: 213), "Fade 73 (reference)")
+        XCTAssertEqual(LightingPatternCatalog.name(for: 220), "Music Flow Flash (reference)")
+        XCTAssertEqual(LightingPatternCatalog.name(for: 221), "Music Flash (reference)")
+        XCTAssertEqual(LightingPatternCatalog.name(for: 227), "Music Pulse 2 (reference)")
+        for id in [255, -1] {
+            XCTAssertEqual(LightingPatternCatalog.name(for: id), "Unmapped effect \(id)")
+        }
+    }
+
+    @MainActor
+    func testLightingSpeedChangesDoNotRestartOrPowerOnAnEffect() throws {
+        let suiteName = "CutoutAppRouteTests.effectSpeed"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let persistence = LightingAccessoryPersistence(defaults: defaults)
+        XCTAssertTrue(persistence.ensureRecord(platformIdentifier: "A1B2C3D4-E5F6-4789-ABCD-0123456789AB"))
+        let fake = TestLightingSession()
+        let model = LightingRouteModel(session: fake, persistence: persistence)
+        model.setEffectSpeed(0)
+        XCTAssertTrue(fake.speedRequests.isEmpty)
+        model.setPlayback(.effect(pattern: 16, speed: 128))
+        model.markConfirmed()
+        model.setPower(false)
+        let batches = fake.stateRequests.count
+        for speed: UInt8 in [0, 255] {
+            model.setEffectSpeed(speed)
+            XCTAssertEqual(model.requestedPlayback, .effect(pattern: 16, speed: speed))
+            XCTAssertEqual(persistence.requestedState?.playback, .effect(pattern: 16, speed: speed))
+        }
+        XCTAssertEqual(fake.speedRequests, [0, 255])
+        XCTAssertEqual(fake.stateRequests.count, batches)
+        XCTAssertEqual(fake.powerRequests, [false])
+        XCTAssertFalse(model.requestedPowerOn)
+        fake.speedResult = false
+        model.setEffectSpeed(100)
+        XCTAssertEqual(model.requestedPlayback, .effect(pattern: 16, speed: 255))
+        XCTAssertNotNil(model.controlError)
+        model.setPlayback(.music(effect: 1, sensitivity: 50))
+        model.setEffectSpeed(0)
+        XCTAssertEqual(fake.speedRequests, [0, 255, 100])
+    }
+
+    @MainActor
+    func testLightingScheduleDoesNotChangePlaybackOrSaveOnOpening() throws {
+        let suiteName = "CutoutAppRouteTests.lightingSchedule"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defaults.removePersistentDomain(forName: suiteName)
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let persistence = LightingAccessoryPersistence(defaults: defaults)
+        let fake = TestLightingSession()
+        let model = LightingRouteModel(session: fake, persistence: persistence)
+        XCTAssertTrue(fake.scheduleRequests.isEmpty)
+        let schedule = MobileMelkScheduleDto(powerOn: false, hour: 23, minute: 15, days: 31, enabled: true)
+        XCTAssertTrue(model.setSchedule(schedule))
+        XCTAssertEqual(fake.scheduleRequests, [schedule])
+        XCTAssertEqual(model.commandStatus, .requested)
+        XCTAssertEqual(model.requestedPlayback, .solid)
+        XCTAssertTrue(fake.stateRequests.isEmpty)
+    }
+
+    @MainActor
+    func testPartialCommandConfirmationMergesOnlyConfirmedField() throws {
+        let suiteName = "CutoutAppRouteTests.partialConfirmation"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defaults.removePersistentDomain(forName: suiteName)
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        let persistence = LightingAccessoryPersistence(defaults: defaults)
+        let identifier = "A1B2C3D4-E5F6-4789-ABCD-0123456789AB"
+        XCTAssertTrue(persistence.ensureRecord(platformIdentifier: identifier))
+        let fake = TestLightingSession()
+        let model = LightingRouteModel(session: fake, persistence: persistence)
+        model.setPlayback(.effect(pattern: 16, speed: 128))
+        model.markConfirmed()
+        let confirmedState = try XCTUnwrap(persistence.confirmedState)
+        persistence.setRestoreEnabled(true)
+        XCTAssertNotNil(persistence.restoreCandidate())
+
+        model.setPower(false)
+        model.markConfirmed()
+
+        let powerConfirmed = try XCTUnwrap(persistence.confirmedState)
+        XCTAssertFalse(powerConfirmed.powerOn)
+        XCTAssertEqual(powerConfirmed.red, confirmedState.red)
+        XCTAssertEqual(powerConfirmed.green, confirmedState.green)
+        XCTAssertEqual(powerConfirmed.blue, confirmedState.blue)
+        XCTAssertEqual(powerConfirmed.brightness, confirmedState.brightness)
+        XCTAssertNotNil(persistence.restoreCandidate())
+
+        let schedule = MobileMelkScheduleDto(powerOn: false, hour: 23, minute: 15, days: 31, enabled: true)
+        XCTAssertTrue(model.setSchedule(schedule))
+        model.markConfirmed()
+
+        XCTAssertEqual(model.commandStatus, .confirmed)
+        XCTAssertEqual(persistence.restoreCandidate()?.requestedState, powerConfirmed)
+        XCTAssertEqual(persistence.confirmedState, powerConfirmed)
+
+        XCTAssertTrue(model.setSchedule(schedule))
+        model.markUnconfirmed()
+        XCTAssertNotNil(persistence.restoreCandidate())
+    }
+
+    @MainActor
+    func testFirstSolidColorConfirmationRemainsUnconfirmedWithoutCompleteBaseline() throws {
+        let suiteName = "CutoutAppRouteTests.firstSolidBaseline"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defaults.removePersistentDomain(forName: suiteName)
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        let persistence = LightingAccessoryPersistence(defaults: defaults)
+        let identifier = "A1B2C3D4-E5F6-4789-ABCD-0123456789AB"
+        XCTAssertTrue(persistence.ensureRecord(platformIdentifier: identifier))
+        persistence.setRestoreEnabled(true)
+        let fake = TestLightingSession()
+        let model = LightingRouteModel(session: fake, persistence: persistence)
+
+        model.setSolidColor(red: 12, green: 34, blue: 56)
+
+        XCTAssertTrue(fake.stateRequests.isEmpty)
+        XCTAssertEqual(fake.colorRequests, ["12,34,56"])
+        model.markConfirmed()
+        XCTAssertNil(persistence.restoreCandidate())
+        XCTAssertNil(persistence.confirmedState)
+    }
+
+    @MainActor
+    func testLightingModelPreservesUnconfirmedRequestedStateAcrossRestart() throws {
+        let suiteName = "CutoutAppRouteTests.restartConfirmation"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defaults.removePersistentDomain(forName: suiteName)
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        let persistence = LightingAccessoryPersistence(defaults: defaults)
+        let identifier = "A1B2C3D4-E5F6-4789-ABCD-0123456789AB"
+        XCTAssertTrue(persistence.ensureRecord(platformIdentifier: identifier))
+        let baseline = MobileMelkLightingRestoreStateDto(
+            powerOn: true,
+            red: 10,
+            green: 20,
+            blue: 30,
+            brightness: 50
+        )
+        try persistence.confirm(baseline)
+        persistence.setRestoreEnabled(true)
+
+        var requested = baseline
+        requested.brightness = 80
+        try persistence.updateRequestedState(requested)
+
+        let restartedPersistence = LightingAccessoryPersistence(defaults: defaults)
+        XCTAssertEqual(restartedPersistence.requestedState, requested)
+        XCTAssertEqual(restartedPersistence.confirmedState, baseline)
+        let fake = TestLightingSession()
+        let model = LightingRouteModel(session: fake, persistence: restartedPersistence)
+        XCTAssertTrue(model.setPower(false))
+        model.markConfirmed()
+
+        XCTAssertNil(restartedPersistence.restoreCandidate())
+        XCTAssertEqual(restartedPersistence.confirmation, .unknown)
+    }
+
+    @MainActor
+    func testLightingRouteModelPublishesCandidatesUntilExplicitSelection() async throws {
+        let suiteName = "CutoutAppRouteTests.lightingCandidates"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defaults.removePersistentDomain(forName: suiteName)
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let fake = TestLightingSession()
+        let model = LightingRouteModel(
+            session: fake,
+            persistence: LightingAccessoryPersistence(defaults: defaults)
+        )
+        model.start()
+
+        let farther = MelkLightingPeripheralCandidate(
+            name: "MELK-OC21 6A",
+            platformIdentifier: "A1B2C3D4-E5F6-4789-ABCD-0123456789AB",
+            rssi: -70
+        )
+        let nearer = MelkLightingPeripheralCandidate(
+            name: "MELK-OC21 6B",
+            platformIdentifier: "B1B2C3D4-E5F6-4789-ABCD-0123456789AB",
+            rssi: -40
+        )
+        fake.emitCandidate(farther)
+        fake.emitCandidate(nearer)
+        await Task.yield()
+
+        XCTAssertEqual(model.candidates, [nearer, farther])
+        XCTAssertTrue(model.peripheralIdentifier == nil)
+        model.selectCandidate(nearer)
+        XCTAssertEqual(fake.candidateSelections, [nearer.id])
+    }
+
+    @MainActor
+    func testLightingRouteModelConsumesTypedIdentityEvents() async throws {
+        let suiteName = "CutoutAppRouteTests.lightingIdentity"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defaults.removePersistentDomain(forName: suiteName)
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let persistence = LightingAccessoryPersistence(defaults: defaults)
+        let fake = TestLightingSession()
+        let model = LightingRouteModel(session: fake, persistence: persistence)
+        model.start()
+
+        fake.emitIdentity(
+            MelkLightingPeripheralIdentity(
+                name: "MELK-OC21 6A",
+                platformIdentifier: "A1B2C3D4-E5F6-4789-ABCD-0123456789AB",
+                rssi: -40
+            )
+        )
+        fake.emitRecord("candidate=MELK-OC21 6A id=legacy-melk rssi=-40")
+        await Task.yield()
+
+        XCTAssertEqual(model.peripheralName, "MELK-OC21 6A")
+        XCTAssertEqual(model.peripheralIdentifier, "A1B2C3D4-E5F6-4789-ABCD-0123456789AB")
+    }
+}
+
+private final class ObservationFlag: @unchecked Sendable {
+    var value = false
+}
+
+private final class TestLightingSession: MelkLightingPeripheralSessionProtocol {
+    var commandStatus: MelkLightingCommandStatus = .idle
+    var onIdentity: ((MelkLightingPeripheralIdentity) -> Void)?
+    var onStateChange: ((MelkLightingPeripheralState) -> Void)?
+    var onNotification: ((Data) -> Void)?
+    var onRecord: ((String) -> Void)?
+    var onCandidate: ((MelkLightingPeripheralCandidate) -> Void)?
+    var startCalls: [String?] = []
+    var stopCalls = 0
+    var candidateSelections: [String] = []
+    var speedRequests: [UInt8] = []
+    var speedResult = true
+    var stateResult = true
+    var stateRequests: [MobileMelkLightingRestoreStateDto] = []
+    var scheduleRequests: [MobileMelkScheduleDto] = []
+    var powerResult = true
+    var colorResult = true
+    var brightnessResult = true
+    var powerRequests: [Bool] = []
+    var colorRequests: [String] = []
+    var brightnessRequests: [UInt8] = []
+
+    func start(preferredPlatformIdentifier: String?) {
+        startCalls.append(preferredPlatformIdentifier)
+    }
+
+    func stop() {
+        stopCalls += 1
+    }
+
+    func selectCandidate(platformIdentifier: String) {
+        candidateSelections.append(platformIdentifier)
+    }
+
+    func setPower(_ on: Bool) -> Bool {
+        powerRequests.append(on)
+        return powerResult
+    }
+
+    func setSolidColor(red: UInt8, green: UInt8, blue: UInt8) -> Bool {
+        colorRequests.append("\(red),\(green),\(blue)")
+        return colorResult
+    }
+
+    func setBrightness(_ percentage: UInt8) throws -> Bool {
+        brightnessRequests.append(percentage)
+        return brightnessResult
+    }
+
+    func setEffectSpeed(_ speed: UInt8) -> Bool {
+        speedRequests.append(speed)
+        return speedResult
+    }
+
+    func applyState(_ state: MobileMelkLightingRestoreStateDto) throws -> Bool {
+        stateRequests.append(state)
+        return stateResult
+    }
+
+    func setSchedule(_ schedule: MobileMelkScheduleDto, clock: MobileMelkClockDto) throws -> Bool {
+        scheduleRequests.append(schedule)
+        return stateResult
+    }
+
+    func markLastCommandConfirmed() {}
+    func markLastCommandUnconfirmed() {}
+
+    func emitIdentity(_ identity: MelkLightingPeripheralIdentity) {
+        onIdentity?(identity)
+    }
+
+    func emitRecord(_ record: String) {
+        onRecord?(record)
+    }
+
+    func emitNotification(_ data: Data) {
+        onNotification?(data)
+    }
+
+    func emitState(_ state: MelkLightingPeripheralState) {
+        onStateChange?(state)
+    }
+
+    func emitCandidate(_ candidate: MelkLightingPeripheralCandidate) {
+        onCandidate?(candidate)
+    }
 }

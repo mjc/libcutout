@@ -78,6 +78,15 @@ pub struct MobileMelkLightingCapabilitiesDto {
     pub scenes: bool,
 }
 
+/// Reference effect group exposed by the Rust MELK profile.
+#[derive(Clone, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct MobileMelkLightingEffectGroupDto {
+    /// Human-readable reference group name.
+    pub name: String,
+    /// Effect IDs in this group.
+    pub effect_ids: Vec<u8>,
+}
+
 /// Returns the conservative, capture-backed MELK-OC21 capability set.
 #[uniffi::export]
 #[must_use]
@@ -90,6 +99,19 @@ pub fn mobile_melk_lighting_capabilities() -> MobileMelkLightingCapabilitiesDto 
         addressable_zones: capabilities.addressable_zones,
         scenes: capabilities.scenes,
     }
+}
+
+/// Returns the Rust-owned reference effect groups used by the lighting UI.
+#[uniffi::export]
+#[must_use]
+pub fn mobile_melk_lighting_effect_groups() -> Vec<MobileMelkLightingEffectGroupDto> {
+    MelkLightingProfile::effect_groups()
+        .iter()
+        .map(|group| MobileMelkLightingEffectGroupDto {
+            name: group.name.to_owned(),
+            effect_ids: group.ids.to_vec(),
+        })
+        .collect()
 }
 
 /// Returns the Rust-owned persisted MELK lighting profile version.

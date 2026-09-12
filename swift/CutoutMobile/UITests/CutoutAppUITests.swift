@@ -1102,6 +1102,47 @@ final class CutoutAppUITests: XCTestCase {
         try assertEssentialRideControlsRemainVisibleWithoutScrolling(for: .euc)
     }
 
+    func testEucLightingRouteUsesProductionControls() throws {
+        XCTAssertTrue(pairAvailableDevice(.euc))
+        guard connectedScreen(timeout: 20) != nil else {
+            XCTFail("The deterministic EUC fixture did not open its Ride screen")
+            return
+        }
+        defer { disconnectIfConnected() }
+
+        let lightingTab = app.tabBars.buttons["dashboard.nav.lighting"]
+        XCTAssertTrue(lightingTab.waitForExistence(timeout: 5), app.debugDescription)
+        XCTAssertTrue(lightingTab.isHittable)
+        lightingTab.tap()
+
+        let lighting = app.descendants(matching: .any)["dashboard.screen.lighting"]
+        XCTAssertTrue(lighting.waitForExistence(timeout: 5), app.debugDescription)
+        for identifier in [
+            "lighting.connection-state",
+            "lighting.control-page",
+            "lighting.power",
+            "lighting.color-wheel",
+            "lighting.brightness",
+            "lighting.accessory-details",
+        ] {
+            let element = app.descendants(matching: .any)[identifier]
+            XCTAssertTrue(element.waitForExistence(timeout: 5), "Missing live Lighting control: \(identifier)")
+        }
+        XCTAssertTrue(app.buttons["lighting.quick-preset.red"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["lighting.quick-preset.blue"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["lighting.quick-preset.night"].waitForExistence(timeout: 5))
+        XCTAssertFalse(app.buttons["lighting.mark-confirmed"].exists)
+        app.segmentedControls["lighting.control-page"].buttons["Effects"].tap()
+        XCTAssertTrue(app.buttons["lighting.play-mode"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.descendants(matching: .any)["lighting.effect-speed"].exists)
+        app.segmentedControls["lighting.control-page"].buttons["Music"].tap()
+        XCTAssertTrue(app.descendants(matching: .any)["lighting.music-sensitivity"].waitForExistence(timeout: 5))
+        app.segmentedControls["lighting.control-page"].buttons["Schedule"].tap()
+        XCTAssertTrue(app.descendants(matching: .any)["lighting.schedule"].waitForExistence(timeout: 5))
+        XCTAssertFalse(app.descendants(matching: .any)["lighting.music-sensitivity"].exists)
+        XCTAssertFalse(app.descendants(matching: .any)["melk.validation"].exists)
+    }
+
     private func assertEssentialRideControlsRemainVisibleWithoutScrolling(
         for family: ConnectedDeviceFamily
     ) throws {
@@ -3818,14 +3859,14 @@ private enum ConnectedDeviceFamily: Equatable {
 
     var tabNames: [String] {
         switch self {
-        case .euc: ["ride", "pack"]
-        case .vesc: ["ride", "debug", "map"]
+        case .euc: ["ride", "lighting", "pack", "map", "tune"]
+        case .vesc: ["ride", "lighting", "debug", "map"]
         }
     }
 
     var unavailableTabNames: [String] {
         switch self {
-        case .euc: ["map", "tune"]
+        case .euc: []
         case .vesc: ["logs"]
         }
     }

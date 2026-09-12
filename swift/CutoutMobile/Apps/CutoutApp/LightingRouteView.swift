@@ -1,0 +1,863 @@
+import CutoutMobile
+import CutoutMobileFFI
+import Foundation
+import SwiftUI
+
+struct LightingRouteView: View {
+    let model: LightingRouteModel
+    let rideModel: CutoutAppModel
+    @State private var page: LightingControlPage = .color
+    @State private var brightness = 100.0
+    @State private var hue = 0.0
+    @State private var saturation = 1.0
+    @State private var showsPairing = false
+    @FocusState private var isPresetNameFocused: Bool
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 16) {
+                LightingScreenHeader()
+                LightingConnectionCard(model: model, rideModel: rideModel) {
+                    showsPairing = true
+                }
+                LightingCommandEvidenceCard(model: model)
+                LightingPagePicker(selection: $page)
+                LightingControlSurface(
+                    model: model,
+                    page: page,
+                    hue: $hue,
+                    saturation: $saturation
+                )
+                if page != .schedule {
+                    LightingBrightnessControl(
+                        brightness: $brightness,
+                        isEnabled: model.isReady,
+                        onCommit: commitBrightness
+                    )
+                    LightingPresetsCard(
+                        model: model,
+                        isEnabled: model.isReady,
+                        hue: $hue,
+                        saturation: $saturation,
+                        isPresetNameFocused: $isPresetNameFocused
+                    )
+                }
+                if page == .schedule {
+                    LightingScheduleControls(model: model)
+                }
+                LightingErrorBanner(error: model.controlError)
+            }
+            .padding(.horizontal, 20)
+            .padding(.vertical, 16)
+        }
+        .background(PevColors.pageBackground.ignoresSafeArea())
+        .scrollDismissesKeyboard(.interactively)
+        .simultaneousGesture(TapGesture().onEnded { isPresetNameFocused = false })
+        .onChange(of: model.requestedBrightness) { _, value in
+            brightness = Double(value)
+        }
+        .onChange(of: model.requestedRed) { updateColorSelection() }
+        .onChange(of: model.requestedGreen) { updateColorSelection() }
+        .onChange(of: model.requestedBlue) { updateColorSelection() }
+        .task {
+            startLighting()
+        }
+        .onDisappear {
+            model.stopIfUnpaired()
+        }
+        .sheet(isPresented: $showsPairing) {
+            LightingPairingSheet(model: model, rideModel: rideModel)
+        }
+        .accessibilityIdentifier("dashboard.screen.lighting")
+    }
+
+    private func startLighting() {
+        model.start()
+        brightness = Double(model.requestedBrightness)
+        updateColorSelection()
+    }
+
+    private func commitBrightness() {
+        guard model.isReady else { return }
+        if !model.setBrightness(UInt8(brightness.rounded())) {
+            brightness = Double(model.requestedBrightness)
+        }
+    }
+
+    private func updateColorSelection() {
+        let selection = lightingColorSelection(
+            red: model.requestedRed,
+            green: model.requestedGreen,
+            blue: model.requestedBlue
+        )
+        hue = selection.hue
+        saturation = selection.saturation
+    }
+}
+
+private struct LightingCommandEvidenceCard: View {
+    let model: LightingRouteModel
+
+    var body: some View {
+        LightingCard {
+            Label(localizedAppText("lighting.command.evidence.title"), systemImage: "checkmark.seal")
+                .font(.headline)
+            Text(statusText)
+                .foregroundStyle(statusColor)
+            if model.commandStatus == .requested {
+                Text(localizedAppText("lighting.command.evidence.hint"))
+                    .font(.footnote)
+                    .foregroundStyle(PevColors.muted)
+                HStack {
+                    Button(localizedAppText("lighting.command.mark_confirmed")) { model.markConfirmed() }
+                    Button(localizedAppText("lighting.command.mark_unconfirmed")) { model.markUnconfirmed() }
+                }
+                .buttonStyle(.bordered)
+            }
+        }
+        .accessibilityIdentifier("lighting.command-evidence")
+    }
+
+    private var statusText: String {
+        switch model.commandStatus {
+        case .idle: localizedAppText("lighting.command.idle")
+        case .requested: localizedAppText("lighting.command.requested")
+        case .confirmed: localizedAppText("lighting.command.confirmed")
+        case .unconfirmed: localizedAppText("lighting.command.unconfirmed")
+        }
+    }
+
+    private var statusColor: Color {
+        switch model.commandStatus {
+        case .confirmed: PevColors.green
+        case .unconfirmed: PevColors.red
+        case .requested: PevColors.yellow
+        case .idle: PevColors.muted
+        }
+    }
+}
+
+private struct LightingScreenHeader: View {
+    var body: some View {
+        Text(localizedAppText("lighting.title"))
+            .font(.largeTitle.weight(.bold))
+            .foregroundStyle(PevColors.primaryText)
+            .accessibilityHeading(.h1)
+    }
+}
+
+private struct LightingPagePicker: View {
+    @Binding var selection: LightingControlPage
+
+    var body: some View {
+        Picker(localizedAppText("lighting.controls"), selection: $selection) {
+            ForEach(LightingControlPage.allCases, id: \.self) { page in
+                Text(page.title).tag(page)
+            }
+        }
+        .pickerStyle(.segmented)
+        .accessibilityIdentifier("lighting.control-page")
+    }
+}
+
+private struct LightingControlSurface: View {
+    let model: LightingRouteModel
+    let page: LightingControlPage
+    @Binding var hue: Double
+    @Binding var saturation: Double
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            switch page {
+            case .color:
+                LightingColorControls(model: model, hue: $hue, saturation: $saturation)
+            case .effects, .music:
+                LightingCard {
+                    LightingPowerToggle(model: model)
+                }
+                LightingPlaybackControls(model: model, page: page)
+            case .schedule:
+                LightingCard {
+                    LightingPowerToggle(model: model)
+                }
+            }
+        }
+    }
+}
+
+private struct LightingPowerToggle: View {
+    let model: LightingRouteModel
+
+    var body: some View {
+        Toggle(
+            localizedAppText("lighting.power"),
+            isOn: Binding(
+                get: { model.requestedPowerOn },
+                set: { _ = model.setPower($0) }
+            )
+        )
+        .font(.headline)
+        .tint(PevColors.cyan)
+        .disabled(!model.isReady)
+        .accessibilityIdentifier("lighting.power")
+    }
+}
+
+private struct LightingConnectionCard: View {
+    let model: LightingRouteModel
+    let rideModel: CutoutAppModel
+    let onDetails: () -> Void
+
+    var body: some View {
+        LightingCard {
+            HStack(alignment: .top, spacing: 12) {
+                Image(systemName: "lightbulb.led.fill")
+                    .font(.title2)
+                    .foregroundStyle(PevColors.cyan)
+                    .frame(width: 34, height: 34)
+                    .background(PevColors.cyan.opacity(0.14), in: Circle())
+                    .accessibilityHidden(true)
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(model.accessoryAlias ?? model.peripheralName ?? localizedAppText("lighting.default_name"))
+                        .font(.headline)
+                    Text(connectionSummary)
+                        .font(.subheadline)
+                        .foregroundStyle(connectionStatusColor)
+                }
+                Spacer(minLength: 8)
+                LightingConnectionPill(model: model, color: connectionStatusColor)
+                Button(action: onDetails) {
+                    Image(systemName: "info.circle")
+                        .font(.title3)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(localizedAppText("lighting.accessory.details"))
+                .accessibilityIdentifier("lighting.accessory-details")
+            }
+            Label(
+                localizedAppText("lighting.connection.ride_independent", rideModel.connectionStatusText),
+                systemImage: "figure.roll"
+            )
+            .font(.footnote)
+            .foregroundStyle(PevColors.muted)
+        }
+    }
+
+    private var connectionSummary: String {
+        switch model.connectionState {
+        case .ready: localizedAppText("lighting.connection.connected")
+        case .scanning: localizedAppText("lighting.connection.scanning")
+        case .connecting, .discovering: localizedAppText("lighting.connection.connecting")
+        case let .retrying(attempt, delayMilliseconds):
+            localizedAppText(
+                "lighting.connection.retrying",
+                Int64(attempt),
+                Int64(max(1, Int((delayMilliseconds + 999) / 1000)))
+            )
+        case .disconnected: localizedAppText("lighting.connection.not_connected")
+        case .failed: localizedAppText("lighting.connection.failed")
+        case .idle: localizedAppText("lighting.connection.ready_to_scan")
+        }
+    }
+
+    private var connectionStatusColor: Color {
+        switch model.connectionState {
+        case .ready: PevColors.green
+        case .failed: PevColors.red
+        default: PevColors.yellow
+        }
+    }
+}
+
+private struct LightingConnectionPill: View {
+    let model: LightingRouteModel
+    let color: Color
+
+    var body: some View {
+        Label(model.connectionState.displayText, systemImage: model.connectionState.symbolName)
+            .font(.footnote.weight(.semibold))
+            .foregroundStyle(color)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 6)
+            .background(color.opacity(0.14), in: Capsule())
+            .accessibilityIdentifier("lighting.connection-state")
+    }
+}
+
+private struct LightingColorControls: View {
+    let model: LightingRouteModel
+    @Binding var hue: Double
+    @Binding var saturation: Double
+
+    var body: some View {
+        LightingCard {
+            LightingPowerToggle(model: model)
+            VStack(alignment: .leading, spacing: 12) {
+                HStack {
+                    Text(localizedAppText("lighting.solid_color")).font(.headline)
+                    Spacer()
+                    Button(action: setWhite) {
+                        Image(systemName: "eyedropper")
+                    }
+                    .buttonStyle(.bordered)
+                    .disabled(!model.isReady)
+                    .accessibilityLabel(localizedAppText("lighting.set_white"))
+                    .accessibilityIdentifier("lighting.color-picker.reset")
+                }
+                LightingColorWheel(hue: $hue, saturation: $saturation, onUpdate: updateColor)
+                    .frame(maxWidth: .infinity)
+                    .opacity(model.isReady ? 1 : 0.45)
+                    .allowsHitTesting(model.isReady)
+                    .accessibilityIdentifier("lighting.color-wheel")
+            }
+        }
+    }
+
+    private func setWhite() {
+        if model.setSolidColor(red: 255, green: 255, blue: 255) {
+            hue = 0
+            saturation = 0
+        } else {
+            updateColorSelection()
+        }
+    }
+
+    private func updateColor(red: UInt8, green: UInt8, blue: UInt8, isFinal: Bool) {
+        guard model.isReady else { return }
+        if isFinal {
+            if !model.setSolidColor(red: red, green: green, blue: blue) {
+                updateColorSelection()
+            }
+        } else {
+            model.previewSolidColor(red: red, green: green, blue: blue)
+        }
+    }
+
+    private func updateColorSelection() {
+        let selection = lightingColorSelection(
+            red: model.requestedRed,
+            green: model.requestedGreen,
+            blue: model.requestedBlue
+        )
+        hue = selection.hue
+        saturation = selection.saturation
+    }
+}
+
+private struct LightingBrightnessControl: View {
+    @Binding var brightness: Double
+    let isEnabled: Bool
+    let onCommit: () -> Void
+
+    var body: some View {
+        LightingCard {
+            HStack {
+                Text(localizedAppText("lighting.brightness")).font(.headline)
+                Spacer()
+                Text(localizedAppText("lighting.percent", Int64(brightness)))
+                    .monospacedDigit()
+                    .foregroundStyle(PevColors.muted)
+            }
+            HStack(spacing: 10) {
+                Image(systemName: "sun.min")
+                    .foregroundStyle(PevColors.muted)
+                    .accessibilityHidden(true)
+                Slider(value: $brightness, in: 0...100, step: 1) { editing in
+                    if !editing, isEnabled { onCommit() }
+                }
+                .disabled(!isEnabled)
+                .tint(PevColors.primaryText)
+                .accessibilityIdentifier("lighting.brightness")
+                .accessibilityValue(localizedAppText("lighting.percent_accessibility", Int64(brightness)))
+                Image(systemName: "sun.max")
+                    .foregroundStyle(PevColors.muted)
+                    .accessibilityHidden(true)
+            }
+        }
+    }
+}
+
+private struct LightingPresetsCard: View {
+    let model: LightingRouteModel
+    let isEnabled: Bool
+    @Binding var hue: Double
+    @Binding var saturation: Double
+    @State private var presetName = ""
+    @FocusState.Binding var isPresetNameFocused: Bool
+
+    var body: some View {
+        LightingCard {
+            Label(localizedAppText("lighting.preset.scenes"), systemImage: "square.stack.3d.up.fill").font(.headline)
+            VStack(alignment: .leading, spacing: 10) {
+                HStack(spacing: 12) {
+                    quickColorPreset("lighting.preset.red", color: .red, red: 255, green: 0, blue: 0)
+                    quickColorPreset("lighting.preset.blue", color: .blue, red: 0, green: 0, blue: 255)
+                    quickColorPreset("lighting.preset.night", color: .black, red: 16, green: 20, blue: 32)
+                }
+                if model.presets.isEmpty {
+                    Text(localizedAppText("lighting.preset.helper"))
+                        .font(.footnote)
+                        .foregroundStyle(PevColors.muted)
+                } else {
+                    ForEach(model.presets, id: \.name) { preset in
+                        Button(action: { apply(preset) }) {
+                            VStack(alignment: .leading, spacing: 3) {
+                                HStack {
+                                    Text(preset.name)
+                                    Spacer()
+                                    Text(localizedAppText("lighting.percent", Int64(preset.requested.brightness)))
+                                        .monospacedDigit()
+                                        .foregroundStyle(.secondary)
+                                }
+                                Text(sceneSummary(for: preset.requested))
+                                    .font(.caption)
+                                    .foregroundStyle(PevColors.muted)
+                            }
+                        }
+                        .buttonStyle(.bordered)
+                        .disabled(!isEnabled)
+                        .accessibilityIdentifier("lighting.preset.\(preset.name)")
+                        .contextMenu {
+                            Button(localizedAppText("lighting.preset.replace")) {
+                                _ = model.replacePreset(named: preset.name)
+                            }
+                            .disabled(!model.canSavePreset)
+                            Button(localizedAppText("lighting.preset.delete"), role: .destructive) {
+                                _ = model.deletePreset(named: preset.name)
+                            }
+                        }
+                    }
+                }
+            }
+            .contentShape(Rectangle())
+            .onTapGesture { isPresetNameFocused = false }
+            HStack {
+                TextField(localizedAppText("lighting.preset.name"), text: $presetName)
+                    .textFieldStyle(.roundedBorder)
+                    .focused($isPresetNameFocused)
+                    .submitLabel(.done)
+                    .onSubmit { isPresetNameFocused = false }
+                Button(localizedAppText("lighting.save"), action: save)
+                    .buttonStyle(.borderedProminent)
+                    .disabled(!model.canSavePreset || presetName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    .accessibilityIdentifier("lighting.preset.save")
+            }
+        }
+        .background {
+            Rectangle()
+                .fill(.clear)
+                .contentShape(Rectangle())
+                .onTapGesture { isPresetNameFocused = false }
+        }
+    }
+
+    private func sceneSummary(for requested: MobileMelkLightingRestoreStateDto) -> String {
+        switch requested.playback {
+        case let .effect(pattern, speed):
+            return localizedAppText(
+                "lighting.preset.effect_summary",
+                LightingPatternCatalog.name(for: Int(pattern)),
+                Int64(speed)
+            )
+        case let .music(_, sensitivity):
+            return localizedAppText("lighting.preset.music_summary", Int64(sensitivity))
+        case .solid, nil:
+            return localizedAppText("lighting.preset.solid_summary", Int64(requested.brightness))
+        }
+    }
+
+    private func quickColorPreset(
+        _ title: String,
+        color: Color,
+        red: UInt8,
+        green: UInt8,
+        blue: UInt8
+    ) -> some View {
+        Button {
+            _ = model.setSolidColor(red: red, green: green, blue: blue)
+            updateColorSelection()
+        } label: {
+            VStack(spacing: 6) {
+                Circle()
+                    .fill(color)
+                    .frame(width: 42, height: 42)
+                    .overlay(Circle().stroke(PevColors.cardStroke, lineWidth: 1))
+                Text(localizedAppText(title)).font(.caption)
+            }
+            .frame(maxWidth: .infinity)
+        }
+        .buttonStyle(.plain)
+        .disabled(!isEnabled)
+        .accessibilityLabel(localizedAppText("lighting.preset.accessibility", localizedAppText(title)))
+        .accessibilityIdentifier("lighting.quick-preset.\(title.split(separator: ".").last ?? "preset")")
+    }
+
+    private func apply(_ preset: MobileRgbLightingPresetDto) {
+        model.applyPreset(preset)
+        updateColorSelection()
+    }
+
+    private func save() {
+        guard model.savePreset(named: presetName) else { return }
+        presetName = ""
+        isPresetNameFocused = false
+    }
+
+    private func updateColorSelection() {
+        let selection = lightingColorSelection(
+            red: model.requestedRed,
+            green: model.requestedGreen,
+            blue: model.requestedBlue
+        )
+        hue = selection.hue
+        saturation = selection.saturation
+    }
+}
+
+private struct LightingErrorBanner: View {
+    let error: String?
+
+    @ViewBuilder
+    var body: some View {
+        if let error {
+            Label(error, systemImage: "exclamationmark.triangle")
+                .font(.footnote)
+                .foregroundStyle(PevColors.orange)
+                .accessibilityIdentifier("lighting.control-error")
+        }
+    }
+}
+
+private struct LightingCard<Content: View>: View {
+    @ViewBuilder let content: Content
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            content
+        }
+        .padding(16)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(PevDashboardCardBackground(cornerRadius: 20))
+    }
+}
+
+private struct LightingColorWheel: View {
+    @Binding var hue: Double
+    @Binding var saturation: Double
+    let onUpdate: (UInt8, UInt8, UInt8, Bool) -> Void
+
+    var body: some View {
+        GeometryReader { proxy in
+            let size = min(proxy.size.width, proxy.size.height)
+            let radius = size / 2
+            let pointerRadius = max(0, radius - 14) * saturation
+            let pointerAngle = hue * 2 * .pi
+            let pointerX = radius + cos(pointerAngle) * pointerRadius
+            let pointerY = radius + sin(pointerAngle) * pointerRadius
+
+            wheelCanvas(size: size, radius: radius, pointerX: pointerX, pointerY: pointerY)
+            .frame(width: size, height: size)
+            .contentShape(Circle())
+            .gesture(DragGesture(minimumDistance: 0).onChanged { value in
+                update(at: value.location, in: size, isFinal: false)
+            }.onEnded { value in
+                update(at: value.location, in: size, isFinal: true)
+            })
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel(localizedAppText("lighting.color_wheel"))
+            .accessibilityValue(accessibilityValueText)
+            .accessibilityHint(localizedAppText("lighting.color_wheel.hint"))
+            .accessibilityIdentifier("lighting.color-wheel.control")
+            .accessibilityRepresentation {
+                VStack {
+                    Slider(value: hueAccessibilityBinding, in: 0...1)
+                        .accessibilityLabel(localizedAppText("lighting.hue"))
+                    Slider(value: saturationAccessibilityBinding, in: 0...1)
+                        .accessibilityLabel(localizedAppText("lighting.saturation"))
+                }
+            }
+        }
+        .aspectRatio(1, contentMode: .fit)
+        .frame(maxWidth: 300)
+        .frame(maxWidth: .infinity)
+    }
+
+    private func wheelCanvas(size: CGFloat, radius: CGFloat, pointerX: CGFloat, pointerY: CGFloat) -> some View {
+        ZStack {
+            Circle()
+                .fill(AngularGradient(
+                    gradient: Gradient(colors: [.red, .yellow, .green, .cyan, .blue, .purple, .red]),
+                    center: .center
+                ))
+            Circle()
+                .fill(RadialGradient(
+                    colors: [.white, .white.opacity(0)],
+                    center: .center,
+                    startRadius: 0,
+                    endRadius: radius
+                ))
+            Circle().stroke(PevColors.cardStroke, lineWidth: 1)
+            Circle()
+                .fill(Color(hue: hue, saturation: saturation, brightness: 1))
+                .frame(width: size * 0.44, height: size * 0.44)
+                .overlay(Circle().stroke(.white.opacity(0.35), lineWidth: 1))
+            Circle()
+                .fill(.white)
+                .frame(width: 28, height: 28)
+                .overlay(Circle().stroke(.black.opacity(0.5), lineWidth: 2))
+                .position(x: pointerX, y: pointerY)
+        }
+    }
+
+    private func update(at location: CGPoint, in size: CGFloat, isFinal: Bool) {
+        let center = CGPoint(x: size / 2, y: size / 2)
+        let dx = location.x - center.x
+        let dy = location.y - center.y
+        let radius = max(1, size / 2 - 14)
+        let distance = min(radius, hypot(dx, dy))
+        saturation = max(0, min(1, distance / radius))
+        var angle = atan2(dy, dx) / (2 * .pi)
+        if angle < 0 { angle += 1 }
+        hue = angle
+        let rgb = Self.rgb(hue: hue, saturation: saturation)
+        onUpdate(rgb.red, rgb.green, rgb.blue, isFinal)
+    }
+
+    private func emitAccessibleColor() {
+        let rgb = Self.rgb(hue: hue, saturation: saturation)
+        onUpdate(rgb.red, rgb.green, rgb.blue, true)
+    }
+
+    private var accessibilityValueText: String {
+        let hueDegrees = Int(hue * 360)
+        let saturationPercent = Int(saturation * 100)
+        return localizedAppText("lighting.color_wheel.value", Int64(hueDegrees), Int64(saturationPercent))
+    }
+
+    private var hueAccessibilityBinding: Binding<Double> {
+        Binding(
+            get: { hue },
+            set: { newValue in
+                hue = newValue
+                emitAccessibleColor()
+            }
+        )
+    }
+
+    private var saturationAccessibilityBinding: Binding<Double> {
+        Binding(
+            get: { saturation },
+            set: { newValue in
+                saturation = newValue
+                emitAccessibleColor()
+            }
+        )
+    }
+
+    private static func rgb(hue: Double, saturation: Double) -> (red: UInt8, green: UInt8, blue: UInt8) {
+        let scaled = hue * 6
+        let sector = Int(scaled.rounded(.down)) % 6
+        let fraction = scaled - floor(scaled)
+        let value = 1.0
+        let p = value * (1 - saturation)
+        let q = value * (1 - fraction * saturation)
+        let t = value * (1 - (1 - fraction) * saturation)
+        let channels: (Double, Double, Double) = switch sector {
+        case 0: (value, t, p)
+        case 1: (q, value, p)
+        case 2: (p, value, t)
+        case 3: (p, q, value)
+        case 4: (t, p, value)
+        default: (value, p, q)
+        }
+        return (
+            UInt8((channels.0 * 255).rounded()),
+            UInt8((channels.1 * 255).rounded()),
+            UInt8((channels.2 * 255).rounded())
+        )
+    }
+}
+
+private struct LightingPairingSheet: View {
+    let model: LightingRouteModel
+    let rideModel: CutoutAppModel
+    @Environment(\.dismiss) private var dismiss
+    @State private var accessoryAlias = ""
+    @State private var vehicleIdentifier = ""
+    @State private var showsForgetConfirmation = false
+
+    var body: some View {
+        NavigationStack {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 14) {
+                    pairingStatusCard
+                    Button {
+                        if model.canReconnect { model.reconnect() } else { model.start() }
+                    } label: {
+                        Label(
+                            localizedAppText(model.isReady ? "lighting.connection.connected" : "lighting.connect"),
+                            systemImage: "link"
+                        )
+                            .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(model.isReady)
+                    .accessibilityIdentifier("lighting.pairing.connect")
+
+                    if !model.candidates.isEmpty && model.canSelectCandidate {
+                        LightingCard {
+                            Text(localizedAppText("lighting.pairing.nearby_title"))
+                                .font(.headline)
+                            Text(localizedAppText("lighting.pairing.nearby_hint"))
+                                .font(.footnote)
+                                .foregroundStyle(PevColors.muted)
+                            ForEach(model.candidates) { candidate in
+                                Button {
+                                    model.selectCandidate(candidate)
+                                } label: {
+                                    HStack {
+                                        Label(candidate.name ?? localizedAppText("lighting.pairing.unknown_name"), systemImage: "lightbulb.led.fill")
+                                        Spacer()
+                                        Text(localizedAppText("lighting.dbm", Int64(candidate.rssi)))
+                                            .monospacedDigit()
+                                            .foregroundStyle(PevColors.muted)
+                                    }
+                                }
+                                .buttonStyle(.bordered)
+                                .disabled(!model.canSelectCandidate)
+                                .accessibilityIdentifier("lighting.candidate.\(candidate.id)")
+                            }
+                        }
+                    }
+
+                    Toggle(
+                        localizedAppText("lighting.restore.toggle"),
+                        isOn: Binding(
+                            get: { model.restoreEnabled },
+                            set: { model.setRestoreEnabled($0) }
+                        )
+                    )
+                    .tint(PevColors.cyan)
+                    .accessibilityIdentifier("lighting.restore-toggle")
+                    Text(localizedAppText("lighting.restore.explanation"))
+                        .font(.footnote)
+                        .foregroundStyle(PevColors.muted)
+
+                    metadataCard
+                    warningCard
+
+                    if model.canEditMetadata {
+                        Button(localizedAppText("lighting.forget"), role: .destructive) {
+                            showsForgetConfirmation = true
+                        }
+                        .buttonStyle(.bordered)
+                        .frame(maxWidth: .infinity)
+                        .accessibilityIdentifier("lighting.forget-accessory")
+                    }
+                }
+                .padding(20)
+            }
+            .background(PevColors.pageBackground.ignoresSafeArea())
+            .navigationTitle(localizedAppText("lighting.add"))
+#if os(iOS)
+            .navigationBarTitleDisplayMode(.inline)
+#endif
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button(localizedAppText("lighting.back")) { dismiss() }
+                }
+            }
+        }
+        .task {
+            accessoryAlias = model.accessoryAlias ?? ""
+            vehicleIdentifier = model.vehicleIdentifier ?? ""
+        }
+        .confirmationDialog(
+            localizedAppText("lighting.forget.confirm_title"),
+            isPresented: $showsForgetConfirmation,
+            titleVisibility: .visible
+        ) {
+            Button(localizedAppText("lighting.forget"), role: .destructive) {
+                model.forgetAccessory()
+                dismiss()
+            }
+        } message: {
+            Text(localizedAppText("lighting.forget.confirm_message"))
+        }
+    }
+
+    private var pairingStatusCard: some View {
+        LightingCard {
+            HStack(spacing: 12) {
+                Image(systemName: "lightbulb.led.fill")
+                    .foregroundStyle(PevColors.cyan)
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(model.peripheralName ?? localizedAppText("lighting.scanning"))
+                        .font(.headline)
+                    Text(
+                        model.connectionState == .scanning
+                            ? localizedAppText("lighting.connection.looking_nearby")
+                            : model.connectionState.displayText
+                    )
+                        .font(.subheadline)
+                        .foregroundStyle(PevColors.muted)
+                }
+                Spacer()
+                connectionPill
+            }
+            Text(localizedAppText("lighting.independent_connection"))
+                .font(.footnote)
+                .foregroundStyle(PevColors.muted)
+        }
+    }
+
+    private var metadataCard: some View {
+        LightingCard {
+            Text(localizedAppText("lighting.alias"))
+                .font(.headline)
+            TextField(localizedAppText("lighting.alias.placeholder"), text: $accessoryAlias)
+                .textFieldStyle(.roundedBorder)
+                .accessibilityIdentifier("lighting.accessory-alias")
+
+            HStack(spacing: 10) {
+                TextField(localizedAppText("lighting.vehicle_identifier"), text: $vehicleIdentifier)
+                    .textFieldStyle(.roundedBorder)
+                    .accessibilityIdentifier("lighting.vehicle-association")
+                if let selectedRideIdentifier = rideModel.selectedRideIdentifier {
+                    Button(localizedAppText("lighting.use_current_ride")) {
+                        vehicleIdentifier = selectedRideIdentifier
+                    }
+                    .buttonStyle(.bordered)
+                    .accessibilityIdentifier("lighting.use-current-ride")
+                }
+            }
+
+            Button(localizedAppText("lighting.save_details")) {
+                model.saveAccessoryMetadata(alias: accessoryAlias, vehicleIdentifier: vehicleIdentifier)
+            }
+            .buttonStyle(.bordered)
+            .frame(maxWidth: .infinity)
+            .disabled(!model.canEditMetadata)
+            .accessibilityIdentifier("lighting.save-accessory-details")
+        }
+    }
+
+    private var warningCard: some View {
+        LightingCard {
+            Label(localizedAppText("lighting.competing_client"), systemImage: "exclamationmark.triangle")
+                .foregroundStyle(PevColors.yellow)
+            Text(localizedAppText("lighting.competing_client.explanation"))
+                .font(.footnote)
+                .foregroundStyle(PevColors.muted)
+        }
+    }
+
+    private var connectionPill: some View {
+        Label(model.connectionState.displayText, systemImage: model.connectionState.symbolName)
+            .font(.caption.weight(.semibold))
+            .foregroundStyle(model.connectionState == .ready ? PevColors.green : PevColors.yellow)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 5)
+            .background((model.connectionState == .ready ? PevColors.green : PevColors.yellow).opacity(0.14), in: Capsule())
+    }
+}
