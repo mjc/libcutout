@@ -3504,9 +3504,12 @@ private final class SessionDriverSpy: CutoutSessionDriving {
     private var headlightCommandStatusOverride: LightCommandStatus?
     var tripMeterResetState: TripMeterResetState?
     var tripMeterResetCommandResult: SettingCommandResult = .accepted
+    private(set) var tripMeterResetCount = 0
     var aeroHighBeamState: LightSettingState?
     var aeroTiltbackSpeedState: AeroSpeedSettingState?
+    private(set) var aeroTiltbackSpeeds = [AeroSpeedSetting]()
     var aeroPwmPercentState: AeroPwmSettingState?
+    private(set) var aeroPwmPercents = [AeroPwmPercent]()
     var aeroPedalHardnessState: AeroPedalHardnessSettingState?
     var aeroDisplayBacklightState: AeroDisplayBacklightSettingState?
     private(set) var aeroDisplayBacklightValues = [AeroDisplayBacklight]()
@@ -3526,7 +3529,9 @@ private final class SessionDriverSpy: CutoutSessionDriving {
     private(set) var aeroWheelUnitsValues = [AeroWheelUnits]()
     private(set) var aeroPedalHardnesses = [AeroPedalHardness]()
     var aeroAlarmSpeedState: AeroSpeedSettingState?
+    private(set) var aeroAlarmSpeeds = [AeroSpeedSetting]()
     var aeroAngleAdjustmentState: AeroAngleAdjustmentSettingState?
+    private(set) var aeroAngleAdjustments = [AeroAngleAdjustment]()
     var pedalModeState: PedalModeSettingState?
     var rollAngleState: RollAngleSettingState?
     var speedAlarmModeState: SpeedAlarmModeSettingState?
@@ -3803,14 +3808,6 @@ private final class SessionDriverSpy: CutoutSessionDriving {
         headlightCommandStatusOverride = .sentWithoutConfirmation
         return .accepted
     }
-    func resetTripMeter() -> SettingCommandResult { .accepted }
-    func setAeroTiltbackSpeed(_ speed: AeroSpeedSetting) -> SettingCommandResult { .accepted }
-
-    func setAeroPwmPercent(_ percent: AeroPwmPercent) -> SettingCommandResult { .accepted }
-
-    func setAeroAlarmSpeed(_ speed: AeroSpeedSetting) -> SettingCommandResult { .accepted }
-
-    func setAeroAngleAdjustment(_ angle: AeroAngleAdjustment) -> SettingCommandResult { .accepted }
     func now() -> MonotonicMilliseconds {
         MonotonicMilliseconds(nowValue)
     }

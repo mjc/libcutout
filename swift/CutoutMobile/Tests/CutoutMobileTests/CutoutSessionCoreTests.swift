@@ -374,6 +374,47 @@ final class CutoutSessionCoreTests: XCTestCase {
         XCTAssertEqual(core.displayState.speed.millimetersPerSecond, 8_000)
     }
 
+    #if DEBUG
+    func testScriptedAeroSettingsSubmitThroughRustWithoutBluetooth() throws {
+        let live = expectation(description: "scripted Aero session reaches live")
+        let core = CutoutSessionCore(testScript: CutoutSessionTestScript(
+            candidate: scriptedAeroCandidate,
+            telemetry: TelemetrySnapshot(speed: speedValue(0)),
+            connectionDelayMilliseconds: 0
+        ))
+        core.onPhaseChange = { phase in
+            if phase == .live { live.fulfill() }
+        }
+
+        core.start()
+        XCTAssertTrue(core.pair(platformIdentifier: scriptedAeroCandidate.platformIdentifier))
+        wait(for: [live], timeout: 1)
+
+        let expectedRefusal: SettingCommandResult = .refused(.missingArm)
+        XCTAssertEqual(core.setAeroTiltbackSpeed(try XCTUnwrap(AeroSpeedSetting(kilometresPerHour: 80))), expectedRefusal)
+        XCTAssertEqual(core.setAeroPwmPercent(try XCTUnwrap(AeroPwmPercent(percent: 40))), expectedRefusal)
+        XCTAssertEqual(core.setAeroPwmOff(), expectedRefusal)
+        XCTAssertEqual(core.setAeroGyroCalibration(), expectedRefusal)
+        XCTAssertEqual(core.setAeroRidingMode(.medium), expectedRefusal)
+        XCTAssertEqual(core.setAeroBrakeOverpressureAlarm(try XCTUnwrap(AeroBrakeOverpressureAlarm(percent: 100))), expectedRefusal)
+        XCTAssertEqual(core.setAeroPedalHardness(try XCTUnwrap(AeroPedalHardness(percent: 50))), expectedRefusal)
+        XCTAssertEqual(core.setAeroDisplayBacklight(try XCTUnwrap(AeroDisplayBacklight(percent: 50))), expectedRefusal)
+        XCTAssertEqual(core.setAeroWheelUnits(.metric), expectedRefusal)
+        XCTAssertEqual(core.setAeroBeeperVolume(try XCTUnwrap(AeroBeeperVolume(percent: 50))), expectedRefusal)
+        XCTAssertEqual(core.setAeroDynamicAssist(try XCTUnwrap(AeroDynamicAssist(percent: 50))), expectedRefusal)
+        XCTAssertEqual(core.setAeroPedalDipCompensation(try XCTUnwrap(AeroPedalDipCompensation(percent: 50))), expectedRefusal)
+        XCTAssertEqual(core.setAeroLateralTiltLimit(try XCTUnwrap(AeroLateralTiltLimit(degrees: 55))), expectedRefusal)
+        XCTAssertEqual(core.setAeroVoltageCorrection(try XCTUnwrap(AeroVoltageCorrection(tenthsOfPercent: 0))), expectedRefusal)
+        XCTAssertEqual(core.setAeroMaxChargeVoltageRaw(try XCTUnwrap(AeroMaxChargeVoltageRaw(raw: 60))), expectedRefusal)
+        XCTAssertEqual(core.setAeroHighSpeedMode(AeroToggle(enabled: true)), expectedRefusal)
+        XCTAssertEqual(core.setAeroLowBatteryMode(AeroToggle(enabled: true)), expectedRefusal)
+        XCTAssertEqual(core.setAeroTransportMode(AeroToggle(enabled: false)), expectedRefusal)
+        XCTAssertEqual(core.setAeroAlarmSpeed(try XCTUnwrap(AeroSpeedSetting(kilometresPerHour: 30))), expectedRefusal)
+        XCTAssertEqual(core.setAeroAngleAdjustment(try XCTUnwrap(AeroAngleAdjustment(tenthsOfDegree: 5))), expectedRefusal)
+        XCTAssertEqual(core.phase, .live)
+    }
+    #endif
+
     func testScriptedBluetoothUnavailableSessionPublishesNoPickerRows() {
         assertScriptedInitialBluetoothState(
             .unavailable,
@@ -3448,6 +3489,18 @@ func testVescRideSnapshotProjectsBatteryLevelAndUpdateTime() throws {
             detail: "identification required",
             support: .probeRecommended(disabledReason: "Identity probe required"),
             symbolName: "magnifyingglass"
+        )
+    }
+
+    private var scriptedAeroCandidate: DevicePickerDiscoveryCandidate {
+        DevicePickerDiscoveryCandidate(
+            platformIdentifier: "scripted-aero",
+            displayName: "Scripted Aero",
+            productCategory: "Electric unicycle",
+            evidence: "test script",
+            detail: "settings crash fixture",
+            support: .supported(connectionRoute: .electricUnicycle, electricUnicycleModel: .aero),
+            symbolName: "circle.hexagongrid.circle"
         )
     }
     func testCoreLocationSentinelsBecomeTypedAbsenceBeforeForwarding() throws {

@@ -293,6 +293,19 @@ public struct CutoutSessionTestScript {
         self.connectionDelayMilliseconds = connectionDelayMilliseconds
     }
 }
+
+/// Deterministic transport for exercising the Rust-backed settings path without BLE.
+private final class CutoutSessionTestOperationSink: CoreBluetoothOperationSink {
+    private(set) var writes: [(BluetoothUuid, Data)] = []
+
+    func subscribe(channel _: BluetoothUuid) {}
+
+    func writeWithoutResponse(channel: BluetoothUuid, bytes: Data) {
+        writes.append((channel, bytes))
+    }
+
+    func disconnect() {}
+}
 #endif
 
 struct BoundedDiagnosticLog {
@@ -509,6 +522,7 @@ public final class CutoutSessionCore: NSObject {
     private var didResolveBluetoothRestoration = false
 #if DEBUG
     private let testScript: CutoutSessionTestScript?
+    private var testOperationSink: CutoutSessionTestOperationSink?
     private var testScriptWorkItem: DispatchWorkItem?
     private var testScriptUpdateWorkItem: DispatchWorkItem?
     private var testScriptDidReconnect = false
@@ -1024,6 +1038,8 @@ public final class CutoutSessionCore: NSObject {
             testScriptWorkItem?.cancel()
             testScriptUpdateWorkItem?.cancel()
             testScriptDidReconnect = false
+            testOperationSink = nil
+            liveOwner = nil
             displayState = RideDisplayState()
             publishDisplayState()
             switch testScript.initialBluetoothState {
@@ -1076,6 +1092,34 @@ public final class CutoutSessionCore: NSObject {
 
         self.selectedRoute = route
         self.selectedModel = selectedModel
+#if DEBUG
+        if route == .electricUnicycle, selectedModel == .aero {
+            do {
+                let sink = CutoutSessionTestOperationSink()
+                let advertisement = CoreBluetoothAdvertisement(
+                    peripheralIdentifier: CoreBluetoothPeripheralIdentifier(platformIdentifier),
+                    localName: testScript.candidate.displayName,
+                    advertisedServiceUuids: []
+                )
+                liveOwner = try CoreBluetoothLiveSessionOwner(
+                    session: .electricUnicycle(
+                        model: .aero,
+                        deviceIdentity: platformIdentifier,
+                        allowUnverifiedSettings: true
+                    ),
+                    advertisement: advertisement,
+                    writeLimit: TransportWriteLimitBytes(23),
+                    operationSink: sink,
+                    detectionSession: deviceDetectionSession,
+                    executionQueue: bleQueue
+                )
+                testOperationSink = sink
+            } catch {
+                setPhase(.failed(.sessionFailed(error.sessionMessage)))
+                return false
+            }
+        }
+#endif
         testScriptWorkItem?.cancel()
         testScriptUpdateWorkItem?.cancel()
         setPhase(.discoveringServices)
