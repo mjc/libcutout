@@ -62,6 +62,42 @@ final class LightingAccessoryPersistenceTests: XCTestCase {
         XCTAssertNil(defaults.string(forKey: "lighting.accessory.capabilitiesFingerprint"))
     }
 
+    func testStoreAcceptsMainEraAtomicCapabilitiesFingerprint() throws {
+        let suiteName = "LightingAccessoryPersistenceTests-fingerprint-upgrade-\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        let state = MobileMelkLightingRestoreStateDto(
+            powerOn: true, red: 1, green: 2, blue: 3, brightness: 50
+        )
+        let record = try MobileRgbLightingAccessoryRecord(
+            platformIdentifier: "77777777-7777-7777-7777-777777777777",
+            profile: .melkOc21,
+            profileVersion: LightingAccessoryPersistence.currentProfileVersion
+        )
+        try record.setRequestedState(state: state)
+        try record.setConfirmedState(state: state)
+        record.setConfirmation(state: .confirmed)
+        record.setRestoreEnabled(enabled: true)
+
+        struct Envelope: Encodable {
+            let record: Data
+            let capabilitiesFingerprint: String
+        }
+        let envelope = Envelope(
+            record: Data(try record.encode()),
+            capabilitiesFingerprint: "1,2,3,4,5,6,7,8,9,10,16,22,75|0|0|0|0"
+        )
+        defaults.set(
+            try JSONEncoder().encode(envelope),
+            forKey: "lighting.accessory.record"
+        )
+
+        let reopened = LightingAccessoryPersistence(defaults: defaults)
+        XCTAssertTrue(reopened.isCompatibleWithCurrentProfile)
+        XCTAssertEqual(reopened.restoreCandidate()?.requestedState, state)
+    }
+
     func testStoreRejectsRestoreWhenCapabilityFingerprintIsStale() throws {
         let suiteName = "LightingAccessoryPersistenceTests-compatibility-\(UUID().uuidString)"
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))

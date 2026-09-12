@@ -36,7 +36,7 @@ pub struct MelkLightingEffectFixture {
 
 /// Reference effect grouping used by clients to present the controller catalog.
 ///
-/// The IDs and grouping are protocol metadata, not SwiftUI state. Names remain reference labels
+/// The IDs and grouping are protocol metadata, not `SwiftUI` state. Names remain reference labels
 /// until each controller firmware mapping has physical evidence.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct MelkLightingEffectGroup {
@@ -124,20 +124,10 @@ const MELK_OC21_EFFECT_FIXTURES: [MelkLightingEffectFixture; 13] = [
 ];
 
 fn pattern_group(id: u8) -> &'static str {
-    match id {
-        1 | 2 | 212 | 193..=211 | 77..=88 | 181..=192 => "Basic",
-        57..=76 => "Curtain",
-        3..=22 => "Trans",
-        39..=56 => "Water",
-        143..=166 => "Flow",
-        23..=38 => "Tail",
-        89..=141 if id % 2 == 1 => "Run",
-        89..=141 => "Run Back",
-        167..=179 if id % 2 == 1 => "Run",
-        167..=179 => "Run Back",
-        0 | 213..=227 => "Unmapped",
-        _ => "Unmapped",
-    }
+    MELK_EFFECT_GROUPS
+        .iter()
+        .find(|group| group.ids.contains(&id))
+        .map_or("Unmapped", |group| group.name)
 }
 
 const MELK_PATTERN_NAMES: [&str; 228] = [
@@ -506,32 +496,28 @@ impl MelkLightingProfile {
     /// Current persisted MELK profile schema version.
     #[must_use]
     pub const fn profile_version() -> u16 {
-        1
+        cutout_core::rgb_lighting_profile_version()
     }
 
     /// Stable fingerprint for the profile's capability contract.
     #[must_use]
     pub fn capabilities_fingerprint() -> String {
         let capabilities = Self::capabilities();
-        let mut ids = capabilities
-            .verified_effect_ids
-            .iter()
-            .copied()
-            .collect::<Vec<_>>();
+        let mut ids = capabilities.verified_effect_ids.to_vec();
         ids.sort_unstable();
         let ids = ids
             .into_iter()
             .map(|id| id.to_string())
             .collect::<Vec<_>>()
             .join(",");
-        format!(
-            "melk_oc21:v{}:effects={ids}:microphone={}:schedules={}:zones={}:scenes={}",
-            Self::profile_version(),
-            capabilities.controller_microphone as u8,
-            capabilities.schedules as u8,
-            capabilities.addressable_zones as u8,
-            capabilities.scenes as u8,
-        )
+        [
+            ids,
+            u8::from(capabilities.controller_microphone).to_string(),
+            u8::from(capabilities.schedules).to_string(),
+            u8::from(capabilities.addressable_zones).to_string(),
+            u8::from(capabilities.scenes).to_string(),
+        ]
+        .join("|")
     }
 
     /// Returns the current evidence-record capabilities for the Aero-installed MELK-OC21.
@@ -544,9 +530,10 @@ impl MelkLightingProfile {
     #[must_use]
     pub fn pattern_catalog() -> Vec<MelkPatternDescriptor> {
         (0..=227u8)
-            .map(|id| MelkPatternDescriptor {
+            .zip(MELK_PATTERN_NAMES.iter())
+            .map(|(id, name)| MelkPatternDescriptor {
                 id,
-                name: MELK_PATTERN_NAMES[id as usize],
+                name,
                 group: pattern_group(id),
             })
             .collect()
@@ -788,13 +775,28 @@ mod tests {
         assert_eq!(catalog.len(), 228);
         assert_eq!(catalog[1].name, "Magic Forward");
         assert_eq!(catalog[1].group, "Basic");
+        assert_eq!(catalog[142].group, "Run Back");
+        assert_eq!(catalog[180].group, "Run Back");
         assert_eq!(catalog[213].name, "Fade 73 (reference)");
         assert_eq!(catalog[213].group, "Unmapped");
-        assert_eq!(MelkLightingProfile::profile_version(), 1);
+        assert_eq!(
+            MelkLightingProfile::profile_version(),
+            cutout_core::rgb_lighting_profile_version()
+        );
         assert_eq!(
             MelkLightingProfile::capabilities_fingerprint(),
-            "melk_oc21:v1:effects=1,2,3,4,5,6,7,8,9,10,16,22,75:microphone=0:schedules=0:zones=0:scenes=0"
+            "1,2,3,4,5,6,7,8,9,10,16,22,75|0|0|0|0"
         );
+    }
+
+    #[test]
+    fn pattern_catalog_groups_match_effect_groups() {
+        let catalog = MelkLightingProfile::pattern_catalog();
+        for group in MelkLightingProfile::effect_groups() {
+            for id in group.ids {
+                assert_eq!(catalog[usize::from(*id)].group, group.name);
+            }
+        }
     }
 
     #[test]
