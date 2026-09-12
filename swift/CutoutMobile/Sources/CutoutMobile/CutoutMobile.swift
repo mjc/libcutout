@@ -2410,6 +2410,71 @@ public struct EucSettingsCapabilities: Equatable, Hashable, Sendable {
     }
 }
 
+/// One coherent projection of every EUC setting lifecycle from Rust.
+///
+/// The mobile UI should read this snapshot rather than issuing a separate FFI
+/// call for each control. Rust owns lifecycle and validation policy; this type
+/// only adapts the generated DTOs to Swift value types.
+public struct EucSettingsState: Equatable, Hashable, Sendable {
+    public let headlight: LightSettingState
+    public let aeroHighBeam: LightSettingState
+    public let aeroTiltbackSpeed: AeroSpeedSettingState
+    public let aeroPwmPercent: AeroPwmSettingState
+    public let aeroGyroCalibration: AeroGyroCalibrationSettingState
+    public let aeroRidingMode: AeroRidingModeSettingState
+    public let aeroBrakeOverpressureAlarm: AeroBrakeOverpressureAlarmSettingState
+    public let aeroPedalHardness: AeroPedalHardnessSettingState
+    public let aeroDisplayBacklight: AeroDisplayBacklightSettingState
+    public let aeroBeeperVolume: AeroBeeperVolumeSettingState
+    public let aeroDynamicAssist: AeroDynamicAssistSettingState
+    public let aeroPedalDipCompensation: AeroPedalDipCompensationSettingState
+    public let aeroLateralTiltLimit: AeroLateralTiltLimitSettingState
+    public let aeroVoltageCorrection: AeroVoltageCorrectionSettingState
+    public let aeroMaxChargeVoltageRaw: AeroMaxChargeVoltageRawSettingState
+    public let aeroWheelUnits: AeroWheelUnitsSettingState
+    public let aeroHighSpeedMode: AeroToggleSettingState
+    public let aeroLowBatteryMode: AeroToggleSettingState
+    public let aeroTransportMode: AeroToggleSettingState
+    public let aeroAlarmSpeed: AeroSpeedSettingState
+    public let aeroAngleAdjustment: AeroAngleAdjustmentSettingState
+    public let pedalMode: PedalModeSettingState
+    public let rollAngle: RollAngleSettingState
+    public let speedAlarmMode: SpeedAlarmModeSettingState
+    public let accelerationAssist: AccelerationAssistSettingState
+    public let taillight: LightSettingState
+    public let tripMeterReset: TripMeterResetState
+
+    fileprivate init(_ dto: MobileEucSettingsStateDto) {
+        headlight = LightSettingState(dto.headlight)
+        aeroHighBeam = LightSettingState(dto.aeroHighBeam)
+        aeroTiltbackSpeed = AeroSpeedSettingState(dto.aeroTiltbackSpeed)
+        aeroPwmPercent = AeroPwmSettingState(dto.aeroPwmPercent)
+        aeroGyroCalibration = AeroGyroCalibrationSettingState(dto.aeroGyroCalibration)
+        aeroRidingMode = AeroRidingModeSettingState(dto.aeroRidingMode)
+        aeroBrakeOverpressureAlarm = AeroBrakeOverpressureAlarmSettingState(dto.aeroBrakeOverpressureAlarm)
+        aeroPedalHardness = AeroPedalHardnessSettingState(dto.aeroPedalHardness)
+        aeroDisplayBacklight = AeroDisplayBacklightSettingState(dto.aeroDisplayBacklight)
+        aeroBeeperVolume = AeroBeeperVolumeSettingState(dto.aeroBeeperVolume)
+        aeroDynamicAssist = AeroDynamicAssistSettingState(dto.aeroDynamicAssist)
+        aeroPedalDipCompensation = AeroPedalDipCompensationSettingState(dto.aeroPedalDipCompensation)
+        aeroLateralTiltLimit = AeroLateralTiltLimitSettingState(dto.aeroLateralTiltLimit)
+        aeroVoltageCorrection = AeroVoltageCorrectionSettingState(dto.aeroVoltageCorrection)
+        aeroMaxChargeVoltageRaw = AeroMaxChargeVoltageRawSettingState(dto.aeroMaxChargeVoltageRaw)
+        aeroWheelUnits = AeroWheelUnitsSettingState(dto.aeroWheelUnits)
+        aeroHighSpeedMode = AeroToggleSettingState(dto.aeroHighSpeedMode)
+        aeroLowBatteryMode = AeroToggleSettingState(dto.aeroLowBatteryMode)
+        aeroTransportMode = AeroToggleSettingState(dto.aeroTransportMode)
+        aeroAlarmSpeed = AeroSpeedSettingState(dto.aeroAlarmSpeed)
+        aeroAngleAdjustment = AeroAngleAdjustmentSettingState(dto.aeroAngleAdjustment)
+        pedalMode = PedalModeSettingState(dto.pedalMode)
+        rollAngle = RollAngleSettingState(dto.rollAngle)
+        speedAlarmMode = SpeedAlarmModeSettingState(dto.speedAlarmMode)
+        accelerationAssist = AccelerationAssistSettingState(dto.accelerationAssist)
+        taillight = LightSettingState(dto.taillight)
+        tripMeterReset = TripMeterResetState(dto.tripMeterReset)
+    }
+}
+
 /// Result of submitting a guarded setting command to the live session.
 public enum SettingCommandResult: Equatable, Hashable, Sendable {
     /// The command was accepted and scheduled for transport.
@@ -6311,6 +6376,16 @@ public final class ElectricUnicycleSession: @unchecked Sendable {
         }
     }
 
+    /// Reads all setting lifecycles through one Rust-owned snapshot.
+    public var settingsState: EucSettingsState {
+        switch inner {
+        case .aero(let session):
+            EucSettingsState(session.settingsState())
+        case .falcon(let session):
+            EucSettingsState(session.settingsState())
+        }
+    }
+
     public var tripMeterResetState: TripMeterResetState {
         switch inner {
         case .aero(let session):
@@ -7050,6 +7125,15 @@ public enum CoreBluetoothSession: Sendable {
         }
     }
 
+    public var settingsState: EucSettingsState? {
+        switch self {
+        case .electricUnicycle(let session):
+            session.settingsState
+        case .vescOnewheel:
+            nil
+        }
+    }
+
     public var tripMeterResetState: TripMeterResetState? {
         switch self {
         case .electricUnicycle(let session):
@@ -7463,6 +7547,10 @@ public final class CoreBluetoothSessionRunner: @unchecked Sendable {
         session.settingsCapabilities
     }
 
+    public var settingsState: EucSettingsState? {
+        session.settingsState
+    }
+
     public var tripMeterResetState: TripMeterResetState? {
         session.tripMeterResetState
     }
@@ -7810,6 +7898,10 @@ public final class CoreBluetoothLiveSessionOwner: @unchecked Sendable {
 
     public var settingsCapabilities: EucSettingsCapabilities? {
         runner.settingsCapabilities
+    }
+
+    public var settingsState: EucSettingsState? {
+        runner.settingsState
     }
 
     public var tripMeterResetState: TripMeterResetState? {

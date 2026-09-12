@@ -24,6 +24,7 @@ protocol CutoutSessionDriving: AnyObject {
     var protocolIdentityCandidate: DevicePickerDiscoveryCandidate? { get }
     var electricUnicycleModel: ElectricUnicycleModel? { get }
     var settingsCapabilities: EucSettingsCapabilities? { get }
+    var settingsState: EucSettingsState? { get }
     var tripMeterResetState: TripMeterResetState? { get }
     var headlightState: LightSettingState? { get }
     var headlightCommandStatus: LightCommandStatus? { get }
@@ -107,6 +108,8 @@ protocol CutoutSessionDriving: AnyObject {
 extension CutoutSessionCore: CutoutSessionDriving {}
 
 extension CutoutSessionDriving {
+    var settingsState: EucSettingsState? { nil }
+
     func setAeroPwmOff() -> SettingCommandResult { .failed }
     func setAeroGyroCalibration() -> SettingCommandResult { .failed }
     func setAeroMaxChargeVoltageRaw(_ value: AeroMaxChargeVoltageRaw) -> SettingCommandResult { .failed }

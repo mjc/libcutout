@@ -352,6 +352,10 @@ public final class CutoutSessionCore: NSObject {
     public var settingsCapabilities: EucSettingsCapabilities? {
         onBleQueue { liveOwner?.settingsCapabilities }
     }
+    /// One queue-confined read of every Rust-owned setting lifecycle.
+    public var settingsState: EucSettingsState? {
+        onBleQueue { liveOwner?.settingsState }
+    }
     public var tripMeterResetState: TripMeterResetState? {
         onBleQueue { liveOwner?.tripMeterResetState }
     }

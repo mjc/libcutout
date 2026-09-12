@@ -173,7 +173,7 @@ final class CutoutAppModel {
     }
 
     var manualHeadlightOn: Bool {
-        guard let state = core.headlightState else { return false }
+        guard let state = settingsState?.headlight else { return false }
         return state.kind == .pending ? state.requested == .on : state.current == .on
     }
 
@@ -202,207 +202,143 @@ final class CutoutAppModel {
     }
 
     var aeroTiltbackSpeedState: AeroSpeedSettingState? {
-        core.aeroTiltbackSpeedState
+        settingsState?.aeroTiltbackSpeed
     }
 
     var aeroPwmPercentState: AeroPwmSettingState? {
-        core.aeroPwmPercentState
+        settingsState?.aeroPwmPercent
     }
 
     var aeroGyroCalibrationState: AeroGyroCalibrationSettingState? {
-        core.aeroGyroCalibrationState
+        settingsState?.aeroGyroCalibration
     }
 
     var aeroRidingModeState: AeroRidingModeSettingState? {
-        core.aeroRidingModeState
+        settingsState?.aeroRidingMode
     }
 
     var aeroBrakeOverpressureAlarmState: AeroBrakeOverpressureAlarmSettingState? {
-        core.aeroBrakeOverpressureAlarmState
+        settingsState?.aeroBrakeOverpressureAlarm
     }
 
     var aeroPedalHardnessState: AeroPedalHardnessSettingState? {
-        core.aeroPedalHardnessState
+        settingsState?.aeroPedalHardness
     }
 
     var aeroDisplayBacklightState: AeroDisplayBacklightSettingState? {
-        core.aeroDisplayBacklightState
+        settingsState?.aeroDisplayBacklight
     }
 
     var aeroWheelUnitsState: AeroWheelUnitsSettingState? {
-        core.aeroWheelUnitsState
+        settingsState?.aeroWheelUnits
     }
 
     var aeroBeeperVolumeState: AeroBeeperVolumeSettingState? {
-        core.aeroBeeperVolumeState
+        settingsState?.aeroBeeperVolume
     }
 
     var aeroDynamicAssistState: AeroDynamicAssistSettingState? {
-        core.aeroDynamicAssistState
+        settingsState?.aeroDynamicAssist
     }
 
     var aeroPedalDipCompensationState: AeroPedalDipCompensationSettingState? {
-        core.aeroPedalDipCompensationState
+        settingsState?.aeroPedalDipCompensation
     }
 
     var aeroLateralTiltLimitState: AeroLateralTiltLimitSettingState? {
-        core.aeroLateralTiltLimitState
+        settingsState?.aeroLateralTiltLimit
     }
 
     var aeroVoltageCorrectionState: AeroVoltageCorrectionSettingState? {
-        core.aeroVoltageCorrectionState
+        settingsState?.aeroVoltageCorrection
     }
 
     var aeroMaxChargeVoltageRawState: AeroMaxChargeVoltageRawSettingState? {
-        core.aeroMaxChargeVoltageRawState
+        settingsState?.aeroMaxChargeVoltageRaw
     }
 
-    var aeroHighSpeedModeState: AeroToggleSettingState? { core.aeroHighSpeedModeState }
-    var aeroLowBatteryModeState: AeroToggleSettingState? { core.aeroLowBatteryModeState }
-    var aeroTransportModeState: AeroToggleSettingState? { core.aeroTransportModeState }
+    var aeroHighSpeedModeState: AeroToggleSettingState? { settingsState?.aeroHighSpeedMode }
+    var aeroLowBatteryModeState: AeroToggleSettingState? { settingsState?.aeroLowBatteryMode }
+    var aeroTransportModeState: AeroToggleSettingState? { settingsState?.aeroTransportMode }
 
     var aeroAlarmSpeedState: AeroSpeedSettingState? {
-        core.aeroAlarmSpeedState
+        settingsState?.aeroAlarmSpeed
     }
 
     var aeroAngleAdjustmentState: AeroAngleAdjustmentSettingState? {
-        core.aeroAngleAdjustmentState
+        settingsState?.aeroAngleAdjustment
     }
 
     var aeroHighBeamState: LightSettingState? {
-        core.aeroHighBeamState
+        settingsState?.aeroHighBeam
     }
 
     var manualHeadlightState: LightSettingState? {
-        core.headlightState
+        settingsState?.headlight
     }
 
     var pedalModeState: PedalModeSettingState? {
-        core.pedalModeState
+        settingsState?.pedalMode
     }
 
     var rollAngleState: RollAngleSettingState? {
-        core.rollAngleState
+        settingsState?.rollAngle
     }
 
     var speedAlarmModeState: SpeedAlarmModeSettingState? {
-        core.speedAlarmModeState
+        settingsState?.speedAlarmMode
     }
 
-    var pedalModeControlAvailable: Bool {
-        core.settingsCapabilities?.canSubmit(\.pedalMode) == true
+    private func canSubmit(
+        _ setting: KeyPath<EucSettingsCapabilities, SettingWriteSupport>
+    ) -> Bool {
+        settingsCapabilities?.canSubmit(setting) == true
     }
 
-    var rollAngleControlAvailable: Bool {
-        core.settingsCapabilities?.canSubmit(\.rollAngle) == true
-    }
-
-    var speedAlarmModeControlAvailable: Bool {
-        core.settingsCapabilities?.canSubmit(\.speedAlarmMode) == true
-    }
-
-    var begodeMaxSpeedControlAvailable: Bool {
-        core.settingsCapabilities?.canSubmit(\.begodeMaxSpeed) == true
-    }
-
-    var begodeBeeperVolumeControlAvailable: Bool {
-        core.settingsCapabilities?.canSubmit(\.begodeBeeperVolume) == true
-    }
-
-    var begodeLedModeControlAvailable: Bool {
-        core.settingsCapabilities?.canSubmit(\.begodeLedMode) == true
-    }
-
-    var resetTripMeterControlAvailable: Bool {
-        core.settingsCapabilities?.canSubmit(\.resetTripMeter) == true
-    }
-
-    var aeroTiltbackSpeedControlAvailable: Bool {
-        core.settingsCapabilities?.canSubmit(\.aeroTiltbackSpeed) == true
-    }
-
-    var aeroPwmPercentControlAvailable: Bool {
-        core.settingsCapabilities?.canSubmit(\.aeroPwmPercent) == true
-    }
-
-    var aeroGyroCalibrationControlAvailable: Bool {
-        core.settingsCapabilities?.canSubmit(\.aeroGyroCalibration) == true
-    }
-
-    var aeroRidingModeControlAvailable: Bool {
-        core.settingsCapabilities?.canSubmit(\.aeroRidingMode) == true
-    }
-
+    var pedalModeControlAvailable: Bool { canSubmit(\.pedalMode) }
+    var rollAngleControlAvailable: Bool { canSubmit(\.rollAngle) }
+    var speedAlarmModeControlAvailable: Bool { canSubmit(\.speedAlarmMode) }
+    var begodeMaxSpeedControlAvailable: Bool { canSubmit(\.begodeMaxSpeed) }
+    var begodeBeeperVolumeControlAvailable: Bool { canSubmit(\.begodeBeeperVolume) }
+    var begodeLedModeControlAvailable: Bool { canSubmit(\.begodeLedMode) }
+    var resetTripMeterControlAvailable: Bool { canSubmit(\.resetTripMeter) }
+    var aeroTiltbackSpeedControlAvailable: Bool { canSubmit(\.aeroTiltbackSpeed) }
+    var aeroPwmPercentControlAvailable: Bool { canSubmit(\.aeroPwmPercent) }
+    var aeroGyroCalibrationControlAvailable: Bool { canSubmit(\.aeroGyroCalibration) }
+    var aeroRidingModeControlAvailable: Bool { canSubmit(\.aeroRidingMode) }
     var aeroBrakeOverpressureAlarmControlAvailable: Bool {
-        core.settingsCapabilities?.canSubmit(\.aeroBrakeOverpressureAlarm) == true
+        canSubmit(\.aeroBrakeOverpressureAlarm)
     }
-
-    var aeroPedalHardnessControlAvailable: Bool {
-        core.settingsCapabilities?.canSubmit(\.aeroPedalHardness) == true
-    }
-
-    var aeroDisplayBacklightControlAvailable: Bool {
-        core.settingsCapabilities?.canSubmit(\.aeroDisplayBacklight) == true
-    }
-
-    var aeroWheelUnitsControlAvailable: Bool {
-        core.settingsCapabilities?.canSubmit(\.aeroWheelUnits) == true
-    }
-
-    var aeroBeeperVolumeControlAvailable: Bool {
-        core.settingsCapabilities?.canSubmit(\.aeroBeeperVolume) == true
-    }
-
-    var aeroDynamicAssistControlAvailable: Bool {
-        core.settingsCapabilities?.canSubmit(\.aeroDynamicAssist) == true
-    }
-
+    var aeroPedalHardnessControlAvailable: Bool { canSubmit(\.aeroPedalHardness) }
+    var aeroDisplayBacklightControlAvailable: Bool { canSubmit(\.aeroDisplayBacklight) }
+    var aeroWheelUnitsControlAvailable: Bool { canSubmit(\.aeroWheelUnits) }
+    var aeroBeeperVolumeControlAvailable: Bool { canSubmit(\.aeroBeeperVolume) }
+    var aeroDynamicAssistControlAvailable: Bool { canSubmit(\.aeroDynamicAssist) }
     var aeroPedalDipCompensationControlAvailable: Bool {
-        core.settingsCapabilities?.canSubmit(\.aeroPedalDipCompensation) == true
+        canSubmit(\.aeroPedalDipCompensation)
     }
-
-    var aeroLateralTiltLimitControlAvailable: Bool {
-        core.settingsCapabilities?.canSubmit(\.aeroLateralTiltLimit) == true
-    }
-
-    var aeroVoltageCorrectionControlAvailable: Bool {
-        core.settingsCapabilities?.canSubmit(\.aeroVoltageCorrection) == true
-    }
-
+    var aeroLateralTiltLimitControlAvailable: Bool { canSubmit(\.aeroLateralTiltLimit) }
+    var aeroVoltageCorrectionControlAvailable: Bool { canSubmit(\.aeroVoltageCorrection) }
     var aeroMaxChargeVoltageRawControlAvailable: Bool {
-        core.settingsCapabilities?.canSubmit(\.aeroMaxChargeVoltageRaw) == true
+        canSubmit(\.aeroMaxChargeVoltageRaw)
     }
-
-    var aeroAlarmSpeedControlAvailable: Bool {
-        core.settingsCapabilities?.canSubmit(\.aeroAlarmSpeed) == true
-    }
-
-    var aeroAngleAdjustmentControlAvailable: Bool {
-        core.settingsCapabilities?.canSubmit(\.aeroAngleAdjustment) == true
-    }
-
-    var aeroHighBeamControlAvailable: Bool {
-        core.settingsCapabilities?.canSubmit(\.aeroHighBeam) == true
-    }
-
-    var aeroHighSpeedModeControlAvailable: Bool {
-        core.settingsCapabilities?.canSubmit(\.aeroHighSpeedMode) == true
-    }
-
-    var aeroLowBatteryModeControlAvailable: Bool {
-        core.settingsCapabilities?.canSubmit(\.aeroLowBatteryMode) == true
-    }
-
-    var aeroTransportModeControlAvailable: Bool {
-        core.settingsCapabilities?.canSubmit(\.aeroTransportMode) == true
-    }
+    var aeroAlarmSpeedControlAvailable: Bool { canSubmit(\.aeroAlarmSpeed) }
+    var aeroAngleAdjustmentControlAvailable: Bool { canSubmit(\.aeroAngleAdjustment) }
+    var aeroHighBeamControlAvailable: Bool { canSubmit(\.aeroHighBeam) }
+    var aeroHighSpeedModeControlAvailable: Bool { canSubmit(\.aeroHighSpeedMode) }
+    var aeroLowBatteryModeControlAvailable: Bool { canSubmit(\.aeroLowBatteryMode) }
+    var aeroTransportModeControlAvailable: Bool { canSubmit(\.aeroTransportMode) }
 
     var accelerationAssistState: AccelerationAssistSettingState? {
-        core.accelerationAssistState
+        settingsState?.accelerationAssist
     }
 
     var taillightState: LightSettingState? {
-        core.taillightState
+        settingsState?.taillight
+    }
+
+    private var settingsState: EucSettingsState? {
+        core.settingsState
     }
 
     var selectedRideTitle: String? {
@@ -620,8 +556,8 @@ final class CutoutAppModel {
 
     private var coreHeadlightState: LightSettingState? {
         usesAeroHighBeam
-            ? (core.aeroHighBeamState ?? core.headlightState)
-            : core.headlightState
+            ? (settingsState?.aeroHighBeam ?? settingsState?.headlight)
+            : settingsState?.headlight
     }
 
     private var usesAeroHighBeam: Bool {
