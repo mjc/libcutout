@@ -1243,10 +1243,14 @@ final class CutoutAppRouteTests: XCTestCase {
         XCTAssertEqual(model.commandStatus, .confirmed)
         XCTAssertEqual(persistence.restoreCandidate()?.requestedState, powerConfirmed)
         XCTAssertEqual(persistence.confirmedState, powerConfirmed)
+
+        XCTAssertTrue(model.setSchedule(schedule))
+        model.markUnconfirmed()
+        XCTAssertNotNil(persistence.restoreCandidate())
     }
 
     @MainActor
-    func testFirstSolidColorConfirmationEstablishesRestoreBaseline() throws {
+    func testFirstSolidColorConfirmationRemainsUnconfirmedWithoutCompleteBaseline() throws {
         let suiteName = "CutoutAppRouteTests.firstSolidBaseline"
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
         defaults.removePersistentDomain(forName: suiteName)
@@ -1261,17 +1265,47 @@ final class CutoutAppRouteTests: XCTestCase {
 
         model.setSolidColor(red: 12, green: 34, blue: 56)
 
-        let expected = MobileMelkLightingRestoreStateDto(
-            powerOn: false,
-            red: 12,
-            green: 34,
-            blue: 56,
-            brightness: 100
-        )
-        XCTAssertEqual(fake.stateRequests, [expected])
-        XCTAssertTrue(fake.colorRequests.isEmpty)
+        XCTAssertTrue(fake.stateRequests.isEmpty)
+        XCTAssertEqual(fake.colorRequests, ["12,34,56"])
         model.markConfirmed()
-        XCTAssertEqual(persistence.restoreCandidate()?.requestedState, expected)
+        XCTAssertNil(persistence.restoreCandidate())
+        XCTAssertNil(persistence.confirmedState)
+    }
+
+    @MainActor
+    func testLightingModelPreservesUnconfirmedRequestedStateAcrossRestart() throws {
+        let suiteName = "CutoutAppRouteTests.restartConfirmation"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defaults.removePersistentDomain(forName: suiteName)
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        let persistence = LightingAccessoryPersistence(defaults: defaults)
+        let identifier = "A1B2C3D4-E5F6-4789-ABCD-0123456789AB"
+        XCTAssertTrue(persistence.ensureRecord(platformIdentifier: identifier))
+        let baseline = MobileMelkLightingRestoreStateDto(
+            powerOn: true,
+            red: 10,
+            green: 20,
+            blue: 30,
+            brightness: 50
+        )
+        try persistence.confirm(baseline)
+        persistence.setRestoreEnabled(true)
+
+        var requested = baseline
+        requested.brightness = 80
+        try persistence.updateRequestedState(requested)
+
+        let restartedPersistence = LightingAccessoryPersistence(defaults: defaults)
+        XCTAssertEqual(restartedPersistence.requestedState, requested)
+        XCTAssertEqual(restartedPersistence.confirmedState, baseline)
+        let fake = TestLightingSession()
+        let model = LightingRouteModel(session: fake, persistence: restartedPersistence)
+        XCTAssertTrue(model.setPower(false))
+        model.markConfirmed()
+
+        XCTAssertNil(restartedPersistence.restoreCandidate())
+        XCTAssertEqual(restartedPersistence.confirmation, .unknown)
     }
 
     @MainActor

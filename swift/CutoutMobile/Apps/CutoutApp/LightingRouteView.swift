@@ -79,7 +79,9 @@ struct LightingRouteView: View {
 
     private func commitBrightness() {
         guard model.isReady else { return }
-        model.setBrightness(UInt8(brightness.rounded()))
+        if !model.setBrightness(UInt8(brightness.rounded())) {
+            brightness = Double(model.requestedBrightness)
+        }
     }
 
     private func updateColorSelection() {
@@ -191,7 +193,7 @@ private struct LightingPowerToggle: View {
             localizedAppText("lighting.power"),
             isOn: Binding(
                 get: { model.requestedPowerOn },
-                set: model.setPower
+                set: { _ = model.setPower($0) }
             )
         )
         .font(.headline)
@@ -312,18 +314,33 @@ private struct LightingColorControls: View {
     }
 
     private func setWhite() {
-        model.setSolidColor(red: 255, green: 255, blue: 255)
-        hue = 0
-        saturation = 0
+        if model.setSolidColor(red: 255, green: 255, blue: 255) {
+            hue = 0
+            saturation = 0
+        } else {
+            updateColorSelection()
+        }
     }
 
     private func updateColor(red: UInt8, green: UInt8, blue: UInt8, isFinal: Bool) {
         guard model.isReady else { return }
         if isFinal {
-            model.setSolidColor(red: red, green: green, blue: blue)
+            if !model.setSolidColor(red: red, green: green, blue: blue) {
+                updateColorSelection()
+            }
         } else {
             model.previewSolidColor(red: red, green: green, blue: blue)
         }
+    }
+
+    private func updateColorSelection() {
+        let selection = lightingColorSelection(
+            red: model.requestedRed,
+            green: model.requestedGreen,
+            blue: model.requestedBlue
+        )
+        hue = selection.hue
+        saturation = selection.saturation
     }
 }
 
@@ -457,7 +474,7 @@ private struct LightingPresetsCard: View {
         blue: UInt8
     ) -> some View {
         Button {
-            model.setSolidColor(red: red, green: green, blue: blue)
+            _ = model.setSolidColor(red: red, green: green, blue: blue)
             updateColorSelection()
         } label: {
             VStack(spacing: 6) {

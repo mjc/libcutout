@@ -549,7 +549,10 @@ struct LightingPlaybackControls: View {
                 } onEditingChanged: { editing in
                     if !editing, case let .effect(activePattern, _) = model.requestedPlayback,
                        Int(activePattern) == pattern {
-                        model.setEffectSpeed(UInt8(speed))
+                        if !model.setEffectSpeed(UInt8(speed)),
+                           case let .effect(_, currentSpeed) = model.requestedPlayback {
+                            speed = Double(currentSpeed)
+                        }
                     }
                 }
                 .tint(.purple)

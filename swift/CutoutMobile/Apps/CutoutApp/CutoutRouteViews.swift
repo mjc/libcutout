@@ -360,8 +360,6 @@ final class LightingRouteModel {
     }
     private var pendingCommandScope: PendingCommandScope = .none
 
-    private var hasPersistedAccessory: Bool { persistence.platformIdentifier != nil }
-
     init(
         session: any MelkLightingPeripheralSessionProtocol = MelkLightingPeripheralSession(),
         persistence: LightingAccessoryPersistence = LightingAccessoryPersistence()
@@ -372,10 +370,10 @@ final class LightingRouteModel {
         accessoryAlias = persistence.alias
         vehicleIdentifier = persistence.vehicleIdentifier
         refreshPresets()
-        if let confirmed = persistence.confirmedState {
-            requestedState = confirmed
-        } else if let requested = persistence.requestedState {
+        if let requested = persistence.requestedState {
             requestedState = requested
+        } else if let confirmed = persistence.confirmedState {
+            requestedState = confirmed
         }
         installSessionCallbacks(for: callbackGeneration)
     }
@@ -479,52 +477,46 @@ final class LightingRouteModel {
         session.selectCandidate(platformIdentifier: candidate.id)
     }
 
-    func setPower(_ on: Bool) {
+    @discardableResult
+    func setPower(_ on: Bool) -> Bool {
         var state = requestedState
         state.powerOn = on
-        let hasBaseline = persistence.confirmedState != nil
-        let establishBaseline = hasPersistedAccessory && !hasBaseline
-        let sent: Bool
-        if establishBaseline {
-            sent = (try? session.applyState(state)) == true
-        } else {
-            sent = session.setPower(on)
-        }
-        guard sent else {
+        guard session.setPower(on) else {
             controlError = localizedAppText("lighting.error.power_not_ready")
-            return
+            return false
         }
         controlError = nil
         requestedState = state
         updatePersistedRequestedState()
         commandStatus = .requested
-        pendingCommandScope = establishBaseline ? .completeState : .power
+        pendingCommandScope = .power
+        return true
     }
 
-    func setSolidColor(red: UInt8, green: UInt8, blue: UInt8) {
+    @discardableResult
+    func setSolidColor(red: UInt8, green: UInt8, blue: UInt8) -> Bool {
         let wasSolid = requestedPlayback == .solid
         var state = requestedState
         state.playback = nil
         state.red = red
         state.green = green
         state.blue = blue
-        let hasBaseline = persistence.confirmedState != nil
-        let establishBaseline = hasPersistedAccessory && !hasBaseline
         let sent: Bool
-        if establishBaseline || !wasSolid {
+        if !wasSolid {
             sent = (try? session.applyState(state)) == true
         } else {
             sent = session.setSolidColor(red: red, green: green, blue: blue)
         }
         guard sent else {
             controlError = localizedAppText("lighting.error.color_not_ready")
-            return
+            return false
         }
         controlError = nil
         requestedState = state
         updatePersistedRequestedState()
         commandStatus = .requested
-        pendingCommandScope = establishBaseline || !wasSolid ? .completeState : .color
+        pendingCommandScope = !wasSolid ? .completeState : .color
+        return true
     }
 
     func previewSolidColor(red: UInt8, green: UInt8, blue: UInt8) {
@@ -542,26 +534,20 @@ final class LightingRouteModel {
         pendingCommandScope = wasSolid ? .color : .completeState
     }
 
-    func setBrightness(_ percentage: UInt8) {
+    @discardableResult
+    func setBrightness(_ percentage: UInt8) -> Bool {
         var state = requestedState
         state.brightness = percentage
-        let hasBaseline = persistence.confirmedState != nil
-        let establishBaseline = hasPersistedAccessory && !hasBaseline
-        let sent: Bool
-        if establishBaseline {
-            sent = (try? session.applyState(state)) == true
-        } else {
-            sent = (try? session.setBrightness(percentage)) == true
-        }
-        guard sent else {
+        guard (try? session.setBrightness(percentage)) == true else {
             controlError = localizedAppText("lighting.error.brightness_not_ready")
-            return
+            return false
         }
         controlError = nil
         requestedState = state
         updatePersistedRequestedState()
         commandStatus = .requested
-        pendingCommandScope = establishBaseline ? .completeState : .brightness
+        pendingCommandScope = .brightness
+        return true
     }
 
     var requestedPlayback: MobileLightingPlaybackDto { requestedState.playback ?? .solid }
@@ -592,27 +578,21 @@ final class LightingRouteModel {
         applyState(state)
     }
 
-    func setEffectSpeed(_ speed: UInt8) {
-        guard case let .effect(pattern, _) = requestedPlayback else { return }
+    @discardableResult
+    func setEffectSpeed(_ speed: UInt8) -> Bool {
+        guard case let .effect(pattern, _) = requestedPlayback else { return false }
         var state = requestedState
         state.playback = .effect(pattern: pattern, speed: speed)
-        let hasBaseline = persistence.confirmedState != nil
-        let establishBaseline = hasPersistedAccessory && !hasBaseline
-        let sent: Bool
-        if establishBaseline {
-            sent = (try? session.applyState(state)) == true
-        } else {
-            sent = session.setEffectSpeed(speed)
-        }
-        guard sent else {
+        guard session.setEffectSpeed(speed) else {
             controlError = localizedAppText("lighting.error.effect_speed_failed")
-            return
+            return false
         }
         controlError = nil
         requestedState = state
         updatePersistedRequestedState()
         commandStatus = .requested
-        pendingCommandScope = establishBaseline ? .completeState : .effectSpeed
+        pendingCommandScope = .effectSpeed
+        return true
     }
 
     private func applyState(_ state: MobileMelkLightingRestoreStateDto) {
@@ -677,10 +657,19 @@ final class LightingRouteModel {
         }
     }
 
+    private func markPendingCommandUnconfirmed() {
+        switch pendingCommandScope {
+        case .power, .color, .brightness, .effectSpeed, .completeState:
+            persistence.markUnconfirmed()
+        case .none, .schedule:
+            break
+        }
+    }
+
     func markUnconfirmed() {
         guard commandStatus == .requested else { return }
         session.markLastCommandUnconfirmed()
-        persistence.markUnconfirmed()
+        markPendingCommandUnconfirmed()
         commandStatus = .unconfirmed
         pendingCommandScope = .none
     }
@@ -796,7 +785,7 @@ final class LightingRouteModel {
         connectionState = state
         if state.invalidatesPendingCommand, commandStatus == .requested {
             commandStatus = .unconfirmed
-            persistence.markUnconfirmed()
+            markPendingCommandUnconfirmed()
             pendingCommandScope = .none
         }
         if state == .ready {
