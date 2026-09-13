@@ -2495,6 +2495,8 @@ func testVescRideSnapshotProjectsBatteryLevelAndUpdateTime() throws {
             pageKind: "cell voltage",
             pageVerification: .sourceVerified,
             voltage: Voltage(value: 95_800),
+            cellDelta: VoltageDelta(value: 0),
+            lowestGroupIndex: 1,
             groups: [
                 BmsGroupSnapshot(index: 1, voltage: Voltage(value: 4_090))
             ]
@@ -2512,6 +2514,8 @@ func testVescRideSnapshotProjectsBatteryLevelAndUpdateTime() throws {
             pageKind: "cell voltage",
             pageVerification: .sourceVerified,
             voltage: Voltage(value: 95_800),
+            cellDelta: VoltageDelta(value: 0),
+            lowestGroupIndex: 1,
             groups: [
                 BmsGroupSnapshot(index: 1, voltage: Voltage(value: 4_090))
             ]

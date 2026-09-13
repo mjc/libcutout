@@ -11541,6 +11541,48 @@ pub struct MobileBmsGroupSnapshotDto {
     pub detail: Option<String>,
 }
 
+/// Voltage and stable identity of one retained BMS group.
+#[derive(Clone, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct MobileBmsGroupVoltageDto {
+    /// Group identity shared with the displayed cell readings.
+    pub index: u16,
+    /// Group voltage when available.
+    pub voltage: Option<Voltage>,
+}
+
+/// Cell summary calculated across the currently retained BMS groups.
+#[derive(Clone, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct MobileBmsCellSummaryDto {
+    /// Difference between the highest and lowest available group voltage.
+    pub cell_delta: Option<VoltageDelta>,
+    /// Identity of the lowest-voltage group, breaking ties by group index.
+    pub lowest_group_index: Option<u16>,
+}
+
+/// Summarize retained cell readings after collecting or refreshing BMS pages.
+#[uniffi::export]
+#[must_use]
+pub fn mobile_bms_cell_summary(groups: Vec<MobileBmsGroupVoltageDto>) -> MobileBmsCellSummaryDto {
+    let mut voltages = groups
+        .into_iter()
+        .filter_map(|group| group.voltage.map(|voltage| (voltage.value, group.index)));
+    let Some(first) = voltages.next() else {
+        return MobileBmsCellSummaryDto {
+            cell_delta: None,
+            lowest_group_index: None,
+        };
+    };
+    let ((minimum, index), maximum) = voltages.fold((first, first.0), |(min, max), group| {
+        (min.min(group), max.max(group.0))
+    });
+    MobileBmsCellSummaryDto {
+        cell_delta: Some(VoltageDelta {
+            value: maximum.saturating_sub(minimum),
+        }),
+        lowest_group_index: Some(index),
+    }
+}
+
 /// Decoded BMS fault or advisory.
 #[derive(Clone, Debug, Eq, PartialEq, uniffi::Record)]
 pub struct MobileBmsFaultDto {
@@ -16544,6 +16586,51 @@ mod tests {
     use cutout_protocols::{
         BEGODE_DATA_CHANNEL, BEGODE_SERVICE_CHANNEL, VESC_COMM_CUSTOM_APP_DATA, VESC_NOTIFY_CHANNEL,
     };
+
+    #[test]
+    fn bms_cell_summary_uses_all_retained_groups_after_page_refresh() {
+        let group = |index, value| MobileBmsGroupVoltageDto {
+            index,
+            voltage: Some(Voltage { value }),
+        };
+        let mut groups = vec![
+            group(34, 4_110),
+            group(1, 3_900),
+            group(33, 4_100),
+            group(2, 4_000),
+        ];
+        let summary = mobile_bms_cell_summary(groups.clone());
+        assert_eq!(summary.cell_delta, Some(VoltageDelta { value: 210 }));
+        assert_eq!(summary.lowest_group_index, Some(1));
+
+        groups[1] = group(1, 4_150);
+        groups[3] = group(2, 4_160);
+        let summary = mobile_bms_cell_summary(groups);
+        assert_eq!(summary.cell_delta, Some(VoltageDelta { value: 60 }));
+        assert_eq!(summary.lowest_group_index, Some(33));
+    }
+
+    #[test]
+    fn bms_cell_summary_handles_missing_equal_and_single_voltages() {
+        let missing = MobileBmsGroupVoltageDto {
+            index: 1,
+            voltage: None,
+        };
+        for groups in [vec![], vec![missing.clone()]] {
+            let summary = mobile_bms_cell_summary(groups);
+            assert_eq!(summary.cell_delta, None);
+            assert_eq!(summary.lowest_group_index, None);
+        }
+        let equal = |index| MobileBmsGroupVoltageDto {
+            index,
+            voltage: Some(Voltage { value: 0 }),
+        };
+        for groups in [vec![equal(2)], vec![equal(33), missing, equal(2)]] {
+            let summary = mobile_bms_cell_summary(groups);
+            assert_eq!(summary.cell_delta, Some(VoltageDelta { value: 0 }));
+            assert_eq!(summary.lowest_group_index, Some(2));
+        }
+    }
 
     #[test]
     fn mobile_ride_map_limits_match_rust_bounds() {

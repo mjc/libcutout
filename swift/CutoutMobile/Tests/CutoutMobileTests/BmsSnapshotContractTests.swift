@@ -14,10 +14,6 @@ final class BmsSnapshotContractTests: XCTestCase {
         XCTAssertEqual(pevLocalizedText("bms.detail.unnamed_group", Int64(17)), "group 17")
         XCTAssertEqual(pevLocalizedText("bms.topology.layout_verified"), "layout verified")
         XCTAssertEqual(
-            pevLocalizedText("bms.topology.reported_groups_unverified", Int64(60)),
-            "60 reported cell groups · layout unverified"
-        )
-        XCTAssertEqual(
             pevLocalizedText("bms.cell_map.hint.resistance"),
             "tap a group for history, IR estimate, and BMS raw fields"
         )
@@ -151,68 +147,71 @@ final class BmsSnapshotContractTests: XCTestCase {
         XCTAssertEqual(cursorless.energyPercentSource, .reported)
     }
 
-    func testBmsPageMergePreservesCoreSummaryAndLocalizesObservationCount() {
-        let pageTopology = BmsTopology(
-            layoutLabel: "15 observed BMS groups",
-            seriesGroupCount: nil,
-            parallelCount: nil,
-            packCount: 1,
-            bmsCount: 1,
-            confidence: .unverified
+    func testBmsPageMergeSummarizesAllRetainedCellsAndRefreshedPages() {
+        let topology = BmsTopology(
+            layoutLabel: "observed groups", seriesGroupCount: nil, parallelCount: nil,
+            packCount: 1, bmsCount: 1, confidence: .unverified
         )
-        func page(
-            firstGroupIndex: Int,
-            millivolts: Int32,
-            lowestGroupIndex: Int,
-            overrides: [Int: Int32] = [:]
-        ) -> BmsSnapshot {
-            let groups = (0..<15).map { localIndex in
-                let index = firstGroupIndex + localIndex
-                return BmsGroupSnapshot(
-                    index: index,
-                    voltage: Voltage(value: overrides[index] ?? millivolts)
-                )
-            }
-            return BmsSnapshot(
-                topology: pageTopology,
-                cellDelta: VoltageDelta(value: 150),
-                lowestGroupIndex: lowestGroupIndex,
-                observedGroupCount: 60,
-                highestGroupIndex: 31,
-                groups: groups
-            )
-        }
-
-        let merged = [
-            page(firstGroupIndex: 31, millivolts: 3_850, lowestGroupIndex: 31),
-            page(firstGroupIndex: 1, millivolts: 3_810, lowestGroupIndex: 1, overrides: [1: 3_700]),
-            page(firstGroupIndex: 46, millivolts: 3_840, lowestGroupIndex: 46),
-            page(firstGroupIndex: 16, millivolts: 3_820, lowestGroupIndex: 1),
-        ].reduce(BmsSnapshot(topology: pageTopology)) { snapshot, update in
-            snapshot.mergingBmsPage(update)
-        }
-
-        XCTAssertEqual(merged.groups.map(\.index), Array(1...60))
-        XCTAssertEqual(merged.topologyDisplayLabel, "60 reported cell groups · layout unverified")
-        XCTAssertNil(merged.topology.seriesGroupCount)
-        XCTAssertNil(merged.topology.parallelCount)
-        XCTAssertEqual(merged.topology.confidence, .unverified)
-        XCTAssertEqual(merged.cellDelta, VoltageDelta(value: 150))
-        XCTAssertEqual(merged.lowestGroupIndex, 1)
-        XCTAssertEqual(merged.highestGroupIndex, 31)
-        XCTAssertEqual(merged.observedGroupCount, 60)
-        // Swift preserves a supplied summary even when it cannot reproduce it from this page.
-        let projected = page(firstGroupIndex: 16, millivolts: 3_820, lowestGroupIndex: 1).withoutPageCursor()
-        XCTAssertEqual(projected.cellDelta, VoltageDelta(value: 150))
-        XCTAssertEqual(projected.lowestGroupIndex, 1)
-        XCTAssertEqual(merged.overviewPresentation.lowestGroupVoltage, Voltage(value: 3_700))
-
-        let presented = PevScreenCatalog.live.presentedBmsScreen(liveBmsSnapshot: merged)
-        XCTAssertEqual(presented.id, .bmsCellMap40S)
-        XCTAssertEqual(
-            presented.bmsContent?.chips.first(where: { $0.id == .topology })?.title,
-            "60 reported cell groups · layout unverified"
+        let first = BmsSnapshot(
+            topology: topology, cellDelta: VoltageDelta(value: 100), lowestGroupIndex: 1,
+            groups: [
+                BmsGroupSnapshot(index: 1, voltage: Voltage(value: 3_900)),
+                BmsGroupSnapshot(index: 2, voltage: Voltage(value: 4_000))
+            ]
         )
+        let second = BmsSnapshot(
+            topology: topology, cellDelta: VoltageDelta(value: 10), lowestGroupIndex: 33,
+            groups: [
+                BmsGroupSnapshot(index: 33, voltage: Voltage(value: 4_100)),
+                BmsGroupSnapshot(index: 34, voltage: Voltage(value: 4_110))
+            ]
+        )
+        for collected in [first.mergingBmsPage(second), second.mergingBmsPage(first)] {
+            XCTAssertEqual(collected.cellDelta, VoltageDelta(value: 210))
+            XCTAssertEqual(collected.lowestGroupIndex, 1)
+            XCTAssertEqual(collected.groups.count, 4)
+
+            let refreshed = collected.mergingBmsPage(BmsSnapshot(
+                topology: topology, cellDelta: VoltageDelta(value: 10), lowestGroupIndex: 1,
+                groups: [
+                    BmsGroupSnapshot(index: 1, voltage: Voltage(value: 4_150)),
+                    BmsGroupSnapshot(index: 2, voltage: Voltage(value: 4_160))
+                ]
+            ))
+            XCTAssertEqual(refreshed.cellDelta, VoltageDelta(value: 60))
+            XCTAssertEqual(refreshed.lowestGroupIndex, 33)
+            XCTAssertEqual(refreshed.groups.count, 4)
+            let metadata = refreshed.mergingBmsPage(BmsSnapshot(topology: topology))
+            XCTAssertEqual(metadata.cellDelta, refreshed.cellDelta)
+            XCTAssertEqual(metadata.lowestGroupIndex, refreshed.lowestGroupIndex)
+
+            let unavailable = metadata.mergingBmsPage(BmsSnapshot(
+                topology: topology,
+                groups: metadata.groups.map { BmsGroupSnapshot(index: $0.index) }
+            ))
+            XCTAssertNil(unavailable.cellDelta)
+            XCTAssertNil(unavailable.lowestGroupIndex)
+        }
+    }
+
+    func testBmsPageMergePreservesSummaryWithoutCollectedGroups() {
+        let topology = BmsTopology(
+            layoutLabel: "reported summary", seriesGroupCount: nil, parallelCount: nil,
+            packCount: 1, bmsCount: 1, confidence: .unverified
+        )
+        let initial = BmsSnapshot(
+            topology: topology, cellDelta: VoltageDelta(value: 18), lowestGroupIndex: 7
+        )
+        let retained = initial.mergingBmsPage(BmsSnapshot(topology: topology))
+        XCTAssertEqual(retained.cellDelta, initial.cellDelta)
+        XCTAssertEqual(retained.lowestGroupIndex, initial.lowestGroupIndex)
+
+        let replacement = BmsSnapshot(
+            topology: topology, cellDelta: VoltageDelta(value: 12), lowestGroupIndex: 8
+        )
+        let replaced = retained.mergingBmsPage(replacement)
+        XCTAssertEqual(replaced.cellDelta, replacement.cellDelta)
+        XCTAssertEqual(replaced.lowestGroupIndex, replacement.lowestGroupIndex)
     }
 
     func testCellMapSummaryMetricValuesKeepStatusDistinctFromAvailableData() {

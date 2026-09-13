@@ -2291,8 +2291,7 @@ public struct AeroMaxChargeVoltageRawSettingState: Equatable, Hashable, Sendable
     }
 }
 
-/// NOSFET/Veteran PWT threshold as unused PWM percentage (headroom).
-/// For example, 20% headroom corresponds to 80% PWM usage.
+/// NOSFET/Veteran PWT (PWM tilt-back alarm) percentage.
 public struct AeroPwmPercent: Equatable, Hashable, Sendable {
     public let percent: UInt8
 
@@ -4483,13 +4482,8 @@ public struct BmsGroupSnapshot: Equatable, Hashable, Sendable, Identifiable {
     public var id: Int { index }
 
     public let index: Int
-    public let packNumber: Int?
-    public let packReadingIndex: Int?
     public let label: String?
     public let voltage: Voltage?
-    public let latestVoltage: Voltage?
-    public let recentVoltages: [Voltage]
-    public let recentObservationMilliseconds: [UInt64]
     public let temperature: Temperature?
     public let resistance: Resistance?
     public let isBalancing: Bool?
@@ -4498,13 +4492,8 @@ public struct BmsGroupSnapshot: Equatable, Hashable, Sendable, Identifiable {
 
     public init(
         index: Int,
-        packNumber: Int? = nil,
-        packReadingIndex: Int? = nil,
         label: String? = nil,
         voltage: Voltage? = nil,
-        latestVoltage: Voltage? = nil,
-        recentVoltages: [Voltage] = [],
-        recentObservationMilliseconds: [UInt64] = [],
         temperature: Temperature? = nil,
         resistance: Resistance? = nil,
         isBalancing: Bool? = nil,
@@ -4512,13 +4501,8 @@ public struct BmsGroupSnapshot: Equatable, Hashable, Sendable, Identifiable {
         detail: String? = nil
     ) {
         self.index = index
-        self.packNumber = packNumber
-        self.packReadingIndex = packReadingIndex
         self.label = label
         self.voltage = voltage
-        self.latestVoltage = latestVoltage ?? voltage
-        self.recentVoltages = recentVoltages.isEmpty ? voltage.map { [$0] } ?? [] : recentVoltages
-        self.recentObservationMilliseconds = recentObservationMilliseconds
         self.temperature = temperature
         self.resistance = resistance
         self.isBalancing = isBalancing
@@ -4529,13 +4513,8 @@ public struct BmsGroupSnapshot: Equatable, Hashable, Sendable, Identifiable {
     fileprivate init(_ dto: MobileBmsGroupSnapshotDto) {
         self.init(
             index: Int(dto.index),
-            packNumber: dto.packNumber.map(Int.init),
-            packReadingIndex: dto.packReadingIndex.map(Int.init),
             label: dto.label,
             voltage: dto.voltage?.value,
-            latestVoltage: dto.latestVoltage,
-            recentVoltages: dto.recentVoltages,
-            recentObservationMilliseconds: dto.recentObservationMilliseconds,
             temperature: dto.temperature?.value,
             resistance: dto.resistance,
             isBalancing: dto.isBalancing,
@@ -4642,9 +4621,6 @@ public struct BmsUnknownTopologyCapturePresentation: Equatable, Hashable, Sendab
 }
 
 public struct BmsSnapshot: Equatable, Hashable, Sendable {
-    /// Core-owned observation count and highest identity, independent of physical topology.
-    public let observedGroupCount: Int?
-    public let highestGroupIndex: Int?
     public let availability: ReadbackAvailability
     public let topology: BmsTopology
     public let pageSelector: UInt8?
@@ -4686,8 +4662,6 @@ public struct BmsSnapshot: Equatable, Hashable, Sendable {
         bmsPackCurrent1: BatteryCurrent? = nil,
         cellDelta: VoltageDelta? = nil,
         lowestGroupIndex: Int? = nil,
-        observedGroupCount: Int? = nil,
-        highestGroupIndex: Int? = nil,
         highestTemperature: Temperature? = nil,
         temperatureReadings: [Temperature] = [],
         highestTemperatureLabel: String? = nil,
@@ -4715,8 +4689,6 @@ public struct BmsSnapshot: Equatable, Hashable, Sendable {
         self.bmsPackCurrent1 = hasReadbackData ? bmsPackCurrent1 : nil
         self.cellDelta = hasReadbackData ? cellDelta : nil
         self.lowestGroupIndex = hasReadbackData ? lowestGroupIndex : nil
-        self.observedGroupCount = hasReadbackData ? observedGroupCount : nil
-        self.highestGroupIndex = hasReadbackData ? highestGroupIndex : nil
         self.highestTemperature = hasReadbackData ? highestTemperature : nil
         self.temperatureReadings = hasReadbackData ? temperatureReadings : []
         self.highestTemperatureLabel = hasReadbackData ? highestTemperatureLabel : nil
@@ -4746,8 +4718,6 @@ public struct BmsSnapshot: Equatable, Hashable, Sendable {
             bmsPackCurrent1: dto.bmsPackCurrent1?.value,
             cellDelta: dto.cellDelta?.value,
             lowestGroupIndex: dto.lowestGroupIndex.map(Int.init),
-            observedGroupCount: Int(dto.observedGroupCount),
-            highestGroupIndex: dto.highestGroupIndex.map(Int.init),
             highestTemperature: dto.highestTemperature?.value,
             temperatureReadings: dto.temperatures.map(\.value),
             highestTemperatureLabel: dto.highestTemperatureLabel,
@@ -4924,8 +4894,8 @@ public struct BmsSnapshot: Equatable, Hashable, Sendable {
                 id: "topology",
                 label: "topology",
                 metricValue: .status(
-                    display: topologyDisplayLabel,
-                    accessibility: topologyDisplayLabel
+                    display: topology.layoutLabel,
+                    accessibility: topology.layoutLabel
                 )
             ),
         ]
@@ -4938,6 +4908,10 @@ public struct BmsSnapshot: Equatable, Hashable, Sendable {
         }
 
         let mergedGroups = update.groups.isEmpty ? groups : mergeGroups(update.groups, into: groups)
+        let cellSummary = mobileBmsCellSummary(groups: mergedGroups.compactMap { group in
+            guard let index = UInt16(exactly: group.index) else { return nil }
+            return MobileBmsGroupVoltageDto(index: index, voltage: group.voltage)
+        })
 
         return BmsSnapshot(
             topology: topology.mergingBmsPage(update.topology),
@@ -4951,10 +4925,10 @@ public struct BmsSnapshot: Equatable, Hashable, Sendable {
             current: update.current ?? current,
             bmsPackCurrent0: update.bmsPackCurrent0 ?? bmsPackCurrent0,
             bmsPackCurrent1: update.bmsPackCurrent1 ?? bmsPackCurrent1,
-            cellDelta: update.observedGroupCount != nil ? update.cellDelta : update.cellDelta ?? cellDelta,
-            lowestGroupIndex: update.observedGroupCount != nil ? update.lowestGroupIndex : update.lowestGroupIndex ?? lowestGroupIndex,
-            observedGroupCount: update.observedGroupCount ?? observedGroupCount,
-            highestGroupIndex: update.observedGroupCount != nil ? update.highestGroupIndex : update.highestGroupIndex ?? highestGroupIndex,
+            cellDelta: mergedGroups.isEmpty ? (update.cellDelta ?? cellDelta) : cellSummary.cellDelta,
+            lowestGroupIndex: mergedGroups.isEmpty
+                ? (update.lowestGroupIndex ?? lowestGroupIndex)
+                : cellSummary.lowestGroupIndex.map(Int.init),
             highestTemperature: update.highestTemperature ?? highestTemperature,
             temperatureReadings: update.temperatureReadings.isEmpty ? temperatureReadings : update.temperatureReadings,
             highestTemperatureLabel: update.highestTemperatureLabel ?? highestTemperatureLabel,
@@ -4985,22 +4959,6 @@ public struct BmsSnapshot: Equatable, Hashable, Sendable {
         lowestGroupIndex.map { pevLocalizedText("bms.cell_map.group_label", Int64($0)) }
     }
 
-    /// User-facing description derived from the readings currently retained by the cell map.
-    ///
-    /// An unverified decoder layout must not turn the count of reported cell groups into a
-    /// physical series, parallel, bank, or pack claim.
-    public var topologyDisplayLabel: String {
-        guard
-            topology.confidence == .unverified,
-            topology.seriesGroupCount == nil,
-            topology.parallelCount == nil,
-            !groups.isEmpty
-        else {
-            return topology.layoutLabel
-        }
-        return pevLocalizedText("bms.topology.reported_groups_unverified", Int64(observedGroupCount ?? groups.count))
-    }
-
     public var overviewPresentation: BmsOverviewPresentation {
         let hasCellVoltageEvidence = groups.contains { group in
             group.voltage.map { $0.value > 0 } ?? false
@@ -5029,7 +4987,7 @@ public struct BmsSnapshot: Equatable, Hashable, Sendable {
                     ),
                     unit: RideUnits.percentUnit,
                     accessibilityUnit: "",
-                    detail: topologyDisplayLabel,
+                    detail: topology.layoutLabel,
                     progress: min(max(Double(energy.value) / 100, 0), 1)
                 )
             },
@@ -5061,7 +5019,7 @@ public struct BmsSnapshot: Equatable, Hashable, Sendable {
     public var cellMapFocusSummary: String {
         let flaggedIndices = flaggedGroups.map(\.index)
         guard !flaggedIndices.isEmpty else {
-            return lowestGroupLabel.map { pevLocalizedText("bms.cell_map.lowest", $0) } ?? topologyDisplayLabel
+            return lowestGroupLabel.map { pevLocalizedText("bms.cell_map.lowest", $0) } ?? topology.layoutLabel
         }
         return pevLocalizedText("bms.cell_map.flagged", flaggedIndices.map(String.init).joined(separator: ", "))
     }
@@ -5080,7 +5038,7 @@ public struct BmsSnapshot: Equatable, Hashable, Sendable {
 
     public func detailGroupStatus(for index: Int) -> String {
         guard let group = groups.first(where: { $0.index == index }) else {
-            return topologyDisplayLabel
+            return topology.layoutLabel
         }
 
         if lowestGroupIndex == group.index {
@@ -5110,13 +5068,13 @@ public struct BmsSnapshot: Equatable, Hashable, Sendable {
 
     public func detailGroupTrendDetail(for index: Int) -> String {
         guard groups.contains(where: { $0.index == index }) else {
-            return topologyDisplayLabel
+            return topology.layoutLabel
         }
         return cellMapSpreadSummary
     }
 
     public var unknownTopologyVoltageDetail: String {
-        topologyDisplayLabel
+        topology.layoutLabel
     }
 
     public var unknownTopologyVoltageMetricValue: PevDashboardMetricValue {
@@ -5188,7 +5146,7 @@ public struct BmsSnapshot: Equatable, Hashable, Sendable {
     }
 
     public var unknownTopologyCaptureDetail: String {
-        faultDetail ?? topologyDisplayLabel
+        faultDetail ?? topology.layoutLabel
     }
 
     public var unknownTopologyCapturePresentation: BmsUnknownTopologyCapturePresentation {
@@ -5232,7 +5190,7 @@ public struct BmsSnapshot: Equatable, Hashable, Sendable {
 
     public var scrollableCellMapRule: String {
         guard !groups.isEmpty else {
-            return topologyDisplayLabel
+            return topology.layoutLabel
         }
         return pevLocalizedText("bms.cell_map.overview_rule", Int64(groups.count))
     }
@@ -5292,7 +5250,7 @@ public struct BmsSnapshot: Equatable, Hashable, Sendable {
 
 public extension BmsSnapshot {
     func withoutPageCursor() -> BmsSnapshot {
-        return BmsSnapshot(
+        BmsSnapshot(
             availability: availability,
             topology: topology,
             pageSelector: nil,
@@ -5307,8 +5265,6 @@ public extension BmsSnapshot {
             bmsPackCurrent1: bmsPackCurrent1,
             cellDelta: cellDelta,
             lowestGroupIndex: lowestGroupIndex,
-            observedGroupCount: observedGroupCount,
-            highestGroupIndex: highestGroupIndex,
             highestTemperature: highestTemperature,
             temperatureReadings: temperatureReadings,
             highestTemperatureLabel: highestTemperatureLabel,
