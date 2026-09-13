@@ -135,19 +135,19 @@ impl DeviceSession {
 
     /// Selects semantic settings only for an exactly identified supported model.
     #[must_use]
-    pub fn settings_profile(&self) -> crate::SettingsProfile {
+    pub fn control_profile(&self) -> crate::DeviceControlProfile {
         match (&self.engine, self.identity.model) {
             (DeviceSessionEngine::Veteran(_), Some(model))
                 if model == &crate::NOSFET_AERO_REGISTRY_ENTRY =>
             {
-                crate::aero_settings_profile()
+                crate::aero_control_profile()
             }
             (DeviceSessionEngine::Begode(_), Some(model))
                 if model == &crate::BEGODE_FALCON_REGISTRY_ENTRY =>
             {
-                crate::falcon_settings_profile()
+                crate::falcon_control_profile()
             }
-            _ => crate::SettingsProfile::default(),
+            _ => crate::DeviceControlProfile::default(),
         }
     }
 
@@ -270,7 +270,7 @@ mod tests {
         assert_eq!(session.identity().protocol, ProtocolFamily::Vesc);
         assert_eq!(session.identity().vehicle_kind, VehicleKind::Unknown);
         assert_eq!(session.identity().model, None);
-        assert!(session.settings_profile().descriptors(true).is_empty());
+        assert!(session.control_profile().descriptors(true).is_empty());
     }
 
     #[test]
@@ -298,7 +298,7 @@ mod tests {
                 .all(|output| !matches!(output, SessionOutputDto::Transport(_)))
         );
         assert!(!session.arm_settings_writes(RideOperatingStateDto::Parked, Some(0), 1));
-        assert!(session.settings_profile().descriptors(true).is_empty());
+        assert!(session.control_profile().descriptors(true).is_empty());
     }
 
     #[test]
@@ -323,7 +323,7 @@ mod tests {
         );
         assert!(
             session
-                .settings_profile()
+                .control_profile()
                 .descriptors(false)
                 .iter()
                 .any(|descriptor| descriptor.id == cutout_core::SettingId::PwmTiltback)

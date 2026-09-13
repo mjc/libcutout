@@ -34,7 +34,7 @@ impl DeviceConnectionSession {
     #[must_use]
     pub fn settings_descriptors(&self, validation_mode: bool) -> Vec<SettingDescriptor> {
         self.device.as_ref().map_or_else(Vec::new, |device| {
-            device.settings_profile().descriptors(validation_mode)
+            device.control_profile().descriptors(validation_mode)
         })
     }
 
@@ -67,7 +67,7 @@ impl DeviceConnectionSession {
             .device
             .as_mut()
             .ok_or(DeviceSettingRequestError::ConnectionUnavailable)?;
-        let profile = device.settings_profile();
+        let profile = device.control_profile();
         let command = profile.command(id, value, validation_mode)?;
         let confirmation_supported = profile
             .descriptors(validation_mode)

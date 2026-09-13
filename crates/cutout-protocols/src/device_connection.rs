@@ -345,7 +345,7 @@ impl DeviceConnectionSession {
         let diagnostics = device.diagnostics();
         if let SessionInputDto::Notification { monotonic_ms, .. } = input {
             let received_at = MonotonicTimestamp::new(monotonic_ms.milliseconds);
-            let profile = device.settings_profile();
+            let profile = device.control_profile();
             for output in &result.outputs {
                 let SessionOutput::Event(DeviceEvent::ReadOnlyResponse(
                     ReadOnlyResponse::Settings(readback),
