@@ -111,7 +111,8 @@ private func cameraDownload(
     if let http = response as? HTTPURLResponse, !(200..<300).contains(http.statusCode) {
         throw CameraMediaDownloadError.unexpectedHTTPStatus(http.statusCode)
     }
-    if response.expectedContentLength > Int64(maximumBytes) {
+    if response.expectedContentLength >= 0,
+       UInt64(response.expectedContentLength) > maximumBytes {
         throw CameraMediaDownloadError.responseTooLarge
     }
     let temporaryURL = FileManager.default.temporaryDirectory
@@ -175,7 +176,7 @@ public typealias CameraMediaDownloadFetcher = @Sendable (URL) async throws -> UR
 /// A throwing handler reports that the consumer could not use the frame. The
 /// adapter treats that as an interrupted preview instead of claiming that a
 /// transport-delivered but undisplayable stream is live.
-public typealias CameraPreviewFrameHandler = @MainActor @Sendable (MobileCameraVideoFrameDto) async throws -> Void
+public typealias CameraPreviewFrameHandler = @MainActor @Sendable (MobileCameraVideoFrameDto) async throws -> Bool
 public typealias CameraPreviewConfigurationHandler = @MainActor @Sendable (MobileCameraVideoConfigurationDto) throws -> Void
 
 /// Maps Apple path evidence to a conservative camera connection state.
@@ -381,17 +382,43 @@ public final class CameraLocalNetworkAdapter {
             do {
                 while !Task.isCancelled {
                     guard let frame = try await session.nextVideoFrame() else { break }
-                    try fileSink?.writeFrame(frame: frame)
                     guard let self else { break }
-                    let savedURL = await MainActor.run { self.previewFileState.recordFrame() }
-                    if let savedURL {
-                        await MainActor.run { self.savedPreviewFileURL = savedURL }
+                    guard await MainActor.run(body: {
+                        self.isCurrentPreview(generation: generation)
+                    }) else { break }
+                    try fileSink?.writeFrame(frame: frame)
+                    let rendered = try await frameHandler?(frame) ?? true
+                    guard !Task.isCancelled else { break }
+                    let savedURL: URL? = await MainActor.run {
+                        guard self.isCurrentPreview(generation: generation) else { return nil }
+                        return self.previewFileState.recordFrame()
                     }
-                    try await frameHandler?(frame)
-                    await MainActor.run { self.recordPreviewFrame() }
+                    if let savedURL {
+                        await MainActor.run {
+                            guard self.isCurrentPreview(generation: generation) else { return }
+                            self.savedPreviewFileURL = savedURL
+                        }
+                    }
+                    guard rendered else { continue }
+                    await MainActor.run {
+                        guard self.isCurrentPreview(generation: generation) else { return }
+                        self.recordPreviewFrame()
+                    }
                 }
                 if !Task.isCancelled {
-                    await MainActor.run { self?.interruptPreview() }
+                    let terminated = await MainActor.run {
+                        self?.terminatePreviewAfterTaskEnd(
+                            generation: generation,
+                            session: session,
+                            fileSink: fileSink
+                        ) ?? false
+                    }
+                    if !terminated {
+                        session.stop()
+                        try? fileSink?.finish()
+                    }
+                } else {
+                    session.stop()
                 }
                 try? fileSink?.finish()
             } catch {
@@ -450,6 +477,25 @@ public final class CameraLocalNetworkAdapter {
         previewTask = nil
         reducePreviewEvent(.interrupted)
         return true
+    }
+
+    private func terminatePreviewAfterTaskEnd(
+        generation: UInt64,
+        session: MobileCameraPreviewSession,
+        fileSink: MobileCameraPreviewFileSink?
+    ) -> Bool {
+        guard generation == previewGeneration else { return false }
+        session.stop()
+        try? fileSink?.finish()
+        previewSession = nil
+        previewFileSink = nil
+        previewTask = nil
+        reducePreviewEvent(.interrupted)
+        return true
+    }
+
+    private func isCurrentPreview(generation: UInt64) -> Bool {
+        generation == previewGeneration
     }
 
     /// Stops the foreground preview lifecycle.

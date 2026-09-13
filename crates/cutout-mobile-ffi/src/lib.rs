@@ -342,7 +342,7 @@ impl From<RetinaRtspError> for MobileCameraPreviewError {
 #[derive(Debug, uniffi::Object)]
 pub struct MobileCameraPreviewSession {
     inner: Mutex<Option<RetinaRtspPreviewSession>>,
-    video_configuration: Option<RetinaVideoConfiguration>,
+    video_configuration: Mutex<Option<RetinaVideoConfiguration>>,
     stop: Arc<Notify>,
     stopped: AtomicBool,
     generation: AtomicU64,
@@ -559,11 +559,23 @@ impl MobileCameraPreviewSession {
             Ok(Some(frame)) => {
                 // A completed read belongs to the generation that started it.
                 // Do not resurrect a session after stop (or a future restart).
+                let configuration = session.video_configuration().cloned();
+                let mut inner = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
                 if !self.stopped.load(Ordering::Acquire)
                     && self.generation.load(Ordering::Acquire) == generation
                 {
-                    let mut inner = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
                     *inner = Some(session);
+                } else {
+                    // A stop raced the read. Do not leak the completed frame
+                    // into a newer consumer or retain the detached session.
+                    drop(inner);
+                    return Ok(None);
+                }
+                if let Some(configuration) = configuration {
+                    *self
+                        .video_configuration
+                        .lock()
+                        .unwrap_or_else(PoisonError::into_inner) = Some(configuration);
                 }
                 Ok(Some(frame.into()))
             }
@@ -575,7 +587,11 @@ impl MobileCameraPreviewSession {
     /// Returns codec configuration advertised during RTSP negotiation.
     #[must_use]
     pub fn video_configuration(&self) -> Option<MobileCameraVideoConfigurationDto> {
-        self.video_configuration.as_ref().map(Into::into)
+        self.video_configuration
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .as_ref()
+            .map(Into::into)
     }
 
     /// Stops the preview and releases the underlying RTSP session.
@@ -594,7 +610,7 @@ fn mobile_camera_preview_from_session(
     let video_configuration = session.video_configuration().cloned();
     Arc::new(MobileCameraPreviewSession {
         inner: Mutex::new(Some(session)),
-        video_configuration,
+        video_configuration: Mutex::new(video_configuration),
         stop: Arc::new(Notify::new()),
         stopped: AtomicBool::new(false),
         generation: AtomicU64::new(0),
@@ -4320,6 +4336,38 @@ impl From<MobileLightStateDto> for LightStateDto {
     }
 }
 
+/// Complete Rust-owned settings projection for an EUC session.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct MobileEucSettingsStateDto {
+    pub headlight: MobileLightSettingStateDto,
+    pub aero_high_beam: MobileLightSettingStateDto,
+    pub aero_tiltback_speed: MobileAeroSpeedSettingStateDto,
+    pub aero_pwm_percent: MobileAeroPwmSettingStateDto,
+    pub aero_gyro_calibration: MobileAeroGyroCalibrationSettingStateDto,
+    pub aero_riding_mode: MobileAeroRidingModeSettingStateDto,
+    pub aero_brake_overpressure_alarm: MobileAeroBrakeOverpressureAlarmStateDto,
+    pub aero_pedal_hardness: MobileAeroPedalHardnessStateDto,
+    pub aero_display_backlight: MobileAeroDisplayBacklightStateDto,
+    pub aero_beeper_volume: MobileAeroBeeperVolumeStateDto,
+    pub aero_dynamic_assist: MobileAeroDynamicAssistStateDto,
+    pub aero_pedal_dip_compensation: MobileAeroPedalDipCompensationStateDto,
+    pub aero_lateral_tilt_limit: MobileAeroLateralTiltLimitStateDto,
+    pub aero_voltage_correction: MobileAeroVoltageCorrectionStateDto,
+    pub aero_max_charge_voltage_raw: MobileAeroMaxChargeVoltageRawStateDto,
+    pub aero_wheel_units: MobileAeroWheelUnitsStateDto,
+    pub aero_high_speed_mode: MobileAeroHighSpeedModeStateDto,
+    pub aero_low_battery_mode: MobileAeroLowBatteryModeStateDto,
+    pub aero_transport_mode: MobileAeroTransportModeStateDto,
+    pub aero_alarm_speed: MobileAeroSpeedSettingStateDto,
+    pub aero_angle_adjustment: MobileAeroAngleAdjustmentStateDto,
+    pub pedal_mode: MobilePedalModeSettingStateDto,
+    pub roll_angle: MobileRollAngleSettingStateDto,
+    pub speed_alarm_mode: MobileSpeedAlarmModeSettingStateDto,
+    pub acceleration_assist: MobileAccelerationAssistSettingStateDto,
+    pub taillight: MobileLightSettingStateDto,
+    pub trip_meter_reset: MobileTripMeterResetStateDto,
+}
+
 /// Mobile DTO input kind.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Enum)]
 pub enum MobileSessionInputKindDto {
@@ -5551,6 +5599,38 @@ impl MobileEucSettingTrackers {
             CoreSettingState::Failed { .. } => MobileSettingStateKindDto::Failed,
         };
         snapshot
+    }
+
+    fn snapshot(&self) -> MobileEucSettingsStateDto {
+        MobileEucSettingsStateDto {
+            headlight: self.headlight(),
+            aero_high_beam: self.aero_high_beam(),
+            aero_tiltback_speed: self.aero_tiltback_speed(),
+            aero_pwm_percent: self.aero_pwm_percent(),
+            aero_gyro_calibration: self.aero_gyro_calibration(),
+            aero_riding_mode: self.aero_riding_mode(),
+            aero_brake_overpressure_alarm: self.aero_brake_overpressure_alarm(),
+            aero_pedal_hardness: self.aero_pedal_hardness(),
+            aero_display_backlight: self.aero_display_backlight(),
+            aero_beeper_volume: self.aero_beeper_volume(),
+            aero_dynamic_assist: self.aero_dynamic_assist(),
+            aero_pedal_dip_compensation: self.aero_pedal_dip_compensation(),
+            aero_lateral_tilt_limit: self.aero_lateral_tilt_limit(),
+            aero_voltage_correction: self.aero_voltage_correction(),
+            aero_max_charge_voltage_raw: self.aero_max_charge_voltage_raw(),
+            aero_wheel_units: self.aero_wheel_units(),
+            aero_high_speed_mode: self.aero_high_speed_mode(),
+            aero_low_battery_mode: self.aero_low_battery_mode(),
+            aero_transport_mode: self.aero_transport_mode(),
+            aero_alarm_speed: self.aero_alarm_speed(),
+            aero_angle_adjustment: self.aero_angle_adjustment(),
+            pedal_mode: self.pedal_mode(),
+            roll_angle: self.roll_angle(),
+            speed_alarm_mode: self.speed_alarm_mode(),
+            acceleration_assist: self.acceleration_assist(),
+            taillight: self.taillight(),
+            trip_meter_reset: self.trip_meter_reset(),
+        }
     }
 }
 
@@ -15164,6 +15244,11 @@ impl AeroBenignControlSession {
         }
     }
 
+    /// Returns one atomic snapshot of all Rust-owned setting lifecycles.
+    pub fn settings_state(&self) -> MobileEucSettingsStateDto {
+        self.lock_settings().snapshot()
+    }
+
     /// Arms settings writes only when the latest Rust-owned ride state is stationary.
     pub fn arm_settings_writes(
         &self,
@@ -16993,6 +17078,11 @@ impl FalconBenignControlSession {
     /// Returns the EUC setting write capabilities and their validation state.
     pub fn settings_capabilities(&self) -> MobileEucSettingsCapabilitiesDto {
         MobileEucSettingsCapabilitiesDto::falcon()
+    }
+
+    /// Returns one atomic snapshot of all Rust-owned setting lifecycles.
+    pub fn settings_state(&self) -> MobileEucSettingsStateDto {
+        self.lock_settings().snapshot()
     }
 
     /// Arms settings writes only when the latest Rust-owned ride state is stationary.
