@@ -19,8 +19,10 @@ use crate::{BegodeFalconModel, SupportsBenignControls, SupportsSettingsWrites};
 /// Meaning of a fixed-point numeric value before native display-unit conversion.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum SettingUnit {
-    /// Percentage, including PWM utilization (never remaining headroom).
+    /// Ordinary percentage.
     Percent,
+    /// Used PWM duty: 80 means 80% duty and 20% remaining headroom.
+    PwmDutyPercent,
     /// Speed in kilometres per hour.
     KilometresPerHour,
     /// Angle in degrees.
@@ -644,7 +646,7 @@ fn control(id: SettingId) -> SettingControl {
         | SettingId::AccelerationAssist
         | SettingId::Taillight => SettingControl::Boolean,
         SettingId::TiltbackSpeed | SettingId::SpeedAlarmThreshold => speed_control(10, 200),
-        SettingId::PwmTiltback => number(30, 100, 0, SettingUnit::Percent),
+        SettingId::PwmTiltback => number(30, 100, 0, SettingUnit::PwmDutyPercent),
         SettingId::PedalHardness
         | SettingId::DisplayBrightness
         | SettingId::BeeperVolumePercent
@@ -942,6 +944,13 @@ mod tests {
             .find(|entry| entry.id == SettingId::PwmTiltback)
             .unwrap();
         assert_eq!(pwm.label_key, "settings.pwm_tiltback.label");
+        assert!(matches!(
+            pwm.control,
+            SettingControl::Number {
+                unit: SettingUnit::PwmDutyPercent,
+                ..
+            }
+        ));
         assert_eq!(
             profile
                 .command(SettingId::PwmTiltback, DeviceSettingValue::Disabled, false)
