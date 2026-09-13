@@ -1,3 +1,4 @@
+import Charts
 import CutoutMobile
 import SwiftUI
 
@@ -9,90 +10,119 @@ struct BmsDetailLayout: View {
 
     private var snapshot: BmsSnapshot { content.snapshot }
     private var selectedGroup: BmsGroupSnapshot? {
-        if let selectedGroupIndex,
-           let selectedGroup = snapshot.groups.first(where: { $0.index == selectedGroupIndex }) {
-            return selectedGroup
-        }
-        if let contentGroupIndex = content.selectedGroupIndex,
-           let contentGroup = snapshot.groups.first(where: { $0.index == contentGroupIndex }) {
-            return contentGroup
-        }
-        return snapshot.groups.first
+        snapshot.groups.first { $0.index == (selectedGroupIndex ?? content.selectedGroupIndex) }
+            ?? snapshot.groups.first
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: 20) {
             Button(action: showCellMap) {
-                Label(localizedAppText("bms.detail.back_to_cell_map"), systemImage: "chevron.left")
+                Label(localizedAppText("bms.pack.back"), systemImage: "chevron.left")
                     .font(.body.weight(.semibold))
+                    .frame(minHeight: 44)
             }
-            .buttonStyle(.bordered)
-            .frame(minHeight: 44)
+            .buttonStyle(.plain)
             .accessibilityIdentifier("bms.detail.back")
 
-            PevDashboardGrid(
-                adaptiveMinimumColumnWidth: 52,
-                accessibilityMinimumColumnWidth: 240,
-                columnSpacing: 10,
-                spacing: 10
-            ) {
-                ForEach(snapshot.groups) { group in
-                    BmsGroupIndexCell(
-                        group: group,
-                        isSelected: group.index == selectedGroup?.index,
-                        action: { showGroupDetail(group.index) }
-                    )
-                }
-            }
-
-            if let selectedGroup {
-                VStack(alignment: .leading, spacing: 15) {
-                    Text(selectedGroup.accessibilityLabel)
+            if let group = selectedGroup {
+                VStack(alignment: .leading, spacing: 16) {
+                    Text(group.label ?? localizedAppText("bms.pack.reading", group.index))
                         .font(.headline)
-                        .foregroundStyle(PevColors.muted)
+                        .foregroundStyle(.secondary)
                         .accessibilityHeading(.h2)
                         .accessibilityIdentifier("bms.detail.selected-group")
-                    Text(selectedGroup.voltageMetricValue.displayText)
-                        .font(.largeTitle.weight(.black))
+                    Text("\(group.voltageMetricValue.displayText) V")
+                        .font(.largeTitle.weight(.semibold))
                         .monospacedDigit()
                         .fixedSize(horizontal: false, vertical: true)
                         .accessibilityLabel(localizedAppText("bms.detail.voltage"))
-                        .accessibilityValue(selectedGroup.accessibilityValue)
+                        .accessibilityValue(group.accessibilityValue)
                         .accessibilityIdentifier("bms.detail.voltage")
-                    Text(snapshot.detailGroupStatus(for: selectedGroup.index))
-                        .font(.headline.weight(.black))
-                        .foregroundStyle(PevColors.primaryText)
 
-                    PevDashboardGrid(
-                        adaptiveMinimumColumnWidth: 140,
-                        columnSpacing: 14,
-                        spacing: 14
-                    ) {
-                        PevDashboardMetricTile(
-                            label: localizedAppText("bms.detail.temperature"),
-                            metricValue: selectedGroup.temperatureMetricValue,
-                            unit: RideUnits.temperatureUnit,
-                            detail: ""
-                        )
-                        PevDashboardMetricTile(
-                            label: localizedAppText("bms.detail.resistance"),
-                            metricValue: selectedGroup.resistanceMetricValue,
-                            unit: "mΩ",
-                            detail: ""
-                        )
+                    if group.recentVoltages.count > 1 {
+                        recentHistory(group)
                     }
 
-                    PevDashboardWideCard(
-                        title: nil,
-                        metricValue: snapshot.detailGroupTrendMetricValue(for: selectedGroup.index),
-                        detail: snapshot.detailGroupTrendDetail(for: selectedGroup.index)
+                    if group.alertLevel == .critical || group.alertLevel == .warning {
+                        Label(localizedAppText("bms.pack.cell_warning"), systemImage: "exclamationmark.triangle")
+                            .foregroundStyle(group.alertLevel == .critical ? PevColors.red : PevColors.orange)
+                    }
+                    if group.isBalancing == true {
+                        Label(localizedAppText("bms.pack.balancing"), systemImage: "equal")
+                    }
+                    if group.temperature != nil {
+                        BmsReadingMetric(title: localizedAppText("bms.pack.temperature"), value: group.temperatureMetricValue.displayText, unit: RideUnits.temperatureUnit)
+                    }
+                    if group.resistance != nil {
+                        BmsReadingMetric(title: localizedAppText("bms.detail.resistance"), value: group.resistanceMetricValue.displayText, unit: "mΩ")
+                    }
+                }
+                .bmsPanel()
+
+                HStack {
+                    if let previous = snapshot.groups.last(where: { $0.index < group.index }) {
+                        Button { showGroupDetail(previous.index) } label: {
+                            Label(localizedAppText("bms.pack.previous"), systemImage: "chevron.left")
+                                .frame(minHeight: 44)
+                        }
+                        .accessibilityIdentifier("bms.detail.previous")
+                    }
+                    Spacer()
+                    if let next = snapshot.groups.first(where: { $0.index > group.index }) {
+                        Button { showGroupDetail(next.index) } label: {
+                            Label(localizedAppText("bms.pack.next"), systemImage: "chevron.right")
+                                .frame(minHeight: 44)
+                        }
+                        .accessibilityIdentifier("bms.detail.next")
+                    }
+                }
+                .buttonStyle(.plain)
+            }
+        }
+    }
+
+    private func recentHistory(_ group: BmsGroupSnapshot) -> some View {
+        let values = group.recentVoltages.map { Double($0.value) / 1_000 }
+        let low = values.min() ?? 0
+        let high = values.max() ?? low
+        return VStack(alignment: .leading, spacing: 14) {
+            Text(localizedAppText("bms.pack.recent_history"))
+                .font(.headline)
+                .accessibilityHeading(.h3)
+            Chart(Array(values.enumerated()), id: \.offset) { sample in
+                LineMark(
+                    x: .value(localizedAppText("bms.pack.sample"), sample.offset + 1),
+                    y: .value("V", sample.element)
+                )
+                .foregroundStyle(Color.accentColor)
+                PointMark(
+                    x: .value(localizedAppText("bms.pack.sample"), sample.offset + 1),
+                    y: .value("V", sample.element)
+                )
+                .foregroundStyle(Color.accentColor)
+            }
+            .chartYScale(domain: (low - 0.005) ... (high + 0.005))
+            .chartXAxis(.hidden)
+            .frame(height: 120)
+            .accessibilityLabel(localizedAppText("bms.pack.recent_history_accessibility", group.recentVoltages.count))
+
+            PevDashboardGrid(adaptiveMinimumColumnWidth: 120, columnSpacing: 16, spacing: 16) {
+                BmsReadingMetric(
+                    title: localizedAppText("bms.pack.recent_range"),
+                    value: "\(RideUnits.decimalString(low, fractionDigits: 3))–\(RideUnits.decimalString(high, fractionDigits: 3))",
+                    unit: "V"
+                )
+                if let latest = group.latestVoltage, latest != group.voltage {
+                    BmsReadingMetric(
+                        title: localizedAppText("bms.pack.latest_raw"),
+                        value: RideUnits.decimalString(Double(latest.value) / 1_000, fractionDigits: 3),
+                        unit: "V"
                     )
                 }
-                .padding(.horizontal, 18)
-                .padding(.vertical, 20)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .background(PevDashboardCardBackground(cornerRadius: 34, stroke: PevColors.yellow, lineWidth: 1.2))
             }
+            Text(localizedAppText("bms.pack.stabilized_explanation"))
+                .font(.caption)
+                .foregroundStyle(.secondary)
         }
     }
 }

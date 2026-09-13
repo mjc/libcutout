@@ -354,7 +354,28 @@ enum CutoutUITestSessionFixture: Equatable {
     }
 
     private var eucBmsSnapshot: BmsSnapshot {
-        makeEucBmsSnapshot(groups: [
+        if let flag = CommandLine.arguments.firstIndex(of: "-CUTOUT_UI_TEST_BMS_COUNT"),
+           CommandLine.arguments.indices.contains(flag + 1),
+           let count = Int(CommandLine.arguments[flag + 1]), count > 0 {
+            return BmsSnapshot(
+                topology: BmsTopology(layoutLabel: "15 observed BMS groups", seriesGroupCount: nil, parallelCount: nil, packCount: 1, bmsCount: 1, confidence: .unverified),
+                pageSelector: 6,
+                cellDelta: VoltageDelta(value: 16),
+                lowestGroupIndex: 1,
+                observedGroupCount: count,
+                highestGroupIndex: count,
+                highestTemperature: Temperature(value: 21_800),
+                temperatureReadings: [21_800, 21_600, 21_500, 21_700, 21_600, 21_800].map { Temperature(value: $0) },
+                groups: (1...count).map { index in
+                    BmsGroupSnapshot(
+                        index: index,
+                        label: "page \((index - 1) / 15 + 1) · group \((index - 1) % 15 + 1)",
+                        voltage: Voltage(value: index == 1 ? 4_177 : (index == count ? 4_193 : (index <= 15 || (31...45).contains(index) ? 4_181 : 4_192)))
+                    )
+                }
+            )
+        }
+        return makeEucBmsSnapshot(groups: [
             BmsGroupSnapshot(
                 index: 7,
                 label: "right pack group 7",
@@ -396,6 +417,8 @@ enum CutoutUITestSessionFixture: Equatable {
             current: BatteryCurrent(value: 8_000),
             cellDelta: VoltageDelta(value: 24),
             lowestGroupIndex: 7,
+            observedGroupCount: 2,
+            highestGroupIndex: 12,
             highestTemperature: Temperature(value: 38_000),
             temperatureReadings: [Temperature(value: 38_000), Temperature(value: 34_000)],
             highestTemperatureLabel: "right pack",

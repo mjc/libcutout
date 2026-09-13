@@ -26,19 +26,14 @@ struct BmsScreenView: View {
                 VStack(spacing: 0) {
                     ScrollView(.vertical, showsIndicators: false) {
                         VStack(alignment: .leading, spacing: 14) {
-                            PevScreenTitleBlock(
-                                title: screen.title,
-                                subtitle: localizedAppText("bms.screen.subtitle")
-                            )
-                            chipRow
+                            Text(localizedAppText("bms.pack.title"))
+                                .font(.largeTitle.bold())
+                                .accessibilityHeading(.h1)
                             contentSection()
-                            if let bmsSnapshot, bmsSnapshot.shouldRenderReadback {
-                                BmsDiagnosticsSection(snapshot: bmsSnapshot)
-                            }
                         }
                         .padding(.horizontal, 23)
-                        .padding(.top, 31)
-                        .padding(.bottom, 18)
+                        .padding(.top, 20)
+                        .padding(.bottom, 32)
                     }
                     .safeAreaPadding(.bottom)
                 }
@@ -52,12 +47,8 @@ struct BmsScreenView: View {
     @ViewBuilder
     private func contentSection() -> some View {
         switch content.kind {
-        case .overview:
-            BmsOverviewLayout(content: content)
-        case .cellMapInline:
-            BmsInlineLayout(content: content, showGroupDetail: showGroupDetail)
-        case .cellMapScrollable:
-            BmsScrollableLayout(content: content, showGroupDetail: showGroupDetail)
+        case .overview, .cellMapInline, .cellMapScrollable, .unknownTopology:
+            BmsPackLayout(snapshot: content.snapshot, showGroupDetail: showGroupDetail)
         case .cellDetail:
             BmsDetailLayout(
                 content: content,
@@ -65,26 +56,9 @@ struct BmsScreenView: View {
                 showGroupDetail: showGroupDetail,
                 showCellMap: showCellMap
             )
-        case .unknownTopology:
-            BmsUnknownLayout(content: content)
         case .noData:
             EmptyView()
         }
     }
 
-    private var chipRow: some View {
-        PevDashboardGrid(
-            adaptiveMinimumColumnWidth: 100,
-            columnSpacing: 10,
-            spacing: 10
-        ) {
-            ForEach(content.chips) { chip in
-                BmsChip(
-                    id: chip.id,
-                    title: chip.title,
-                    accent: chip.accent
-                )
-            }
-        }
-    }
 }

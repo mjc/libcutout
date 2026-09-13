@@ -23,90 +23,6 @@ private extension View {
     }
 }
 
-struct BmsChip: View {
-    @Environment(\.colorSchemeContrast) private var colorSchemeContrast
-    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
-    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
-
-    let id: PevBmsChip.ID
-    let title: String
-    let accent: PevAccent
-
-    static func usesGlassEffect(reduceTransparency: Bool, increasedContrast: Bool) -> Bool {
-        !reduceTransparency && !increasedContrast
-    }
-
-    var body: some View {
-        Text(title)
-            .font(.callout.weight(.bold))
-            .foregroundStyle(.black)
-            .padding(.horizontal, 16)
-            .frame(maxWidth: .infinity, minHeight: 44)
-            .background(chipBackground)
-            .accessibilityIdentifier("bms.chip.\(id.rawValue)")
-    }
-
-    @ViewBuilder
-    private var chipBackground: some View {
-        if dynamicTypeSize.isAccessibilitySize {
-            RoundedRectangle(cornerRadius: 16, style: .continuous).fill(accent.color)
-        } else if #available(iOS 26, macOS 26, *), Self.usesGlassEffect(
-            reduceTransparency: reduceTransparency,
-            increasedContrast: colorSchemeContrast == .increased
-        ) {
-            Capsule()
-                .fill(accent.color)
-                .glassEffect(.regular.tint(accent.color.opacity(0.78)), in: .capsule)
-        } else {
-            Capsule().fill(accent.color)
-        }
-    }
-}
-
-struct BmsGroupCell: View {
-    @ScaledMetric(relativeTo: .title3) private var minimumHeight = 70.0
-
-    let group: BmsGroupSnapshot
-    let isHighlighted: Bool
-    let action: () -> Void
-
-    var body: some View {
-        Button(action: action) {
-            VStack(spacing: 8) {
-                HStack(spacing: 4) {
-                    Text(group.index, format: .number)
-                    BmsAlertIndicator(alertLevel: group.alertLevel)
-                }
-                .font(.subheadline)
-                .foregroundStyle(PevColors.muted)
-                Text(group.voltageMetricValue.displayText)
-                    .font(.title3.weight(.black))
-                    .monospacedDigit()
-            }
-            .frame(maxWidth: .infinity)
-            .frame(minHeight: minimumHeight)
-            .background(PevDashboardCardBackground(cornerRadius: 10, stroke: strokeColor, lineWidth: 1.2))
-            .overlay(alignment: .topTrailing) {
-                if isHighlighted {
-                    Image(systemName: "scope")
-                        .font(.caption2.weight(.bold))
-                        .padding(5)
-                        .accessibilityHidden(true)
-                }
-            }
-        }
-        .buttonStyle(.plain)
-        .bmsGroupAccessibility(group, isHighlighted: isHighlighted)
-    }
-
-    private var strokeColor: Color {
-        if isHighlighted {
-            return PevColors.orange
-        }
-        return PevColors.green
-    }
-}
-
 struct BmsStripCell: View {
     @ScaledMetric(relativeTo: .caption) private var minimumHeight = 60.0
 
@@ -118,13 +34,17 @@ struct BmsStripCell: View {
         Button(action: action) {
             VStack(spacing: 2) {
                 HStack(spacing: 2) {
-                    Text(group.index, format: .number.precision(.integerLength(2...)))
+                    if let pack = group.packNumber, let reading = group.packReadingIndex {
+                        Text("P\(pack) · \(reading.formatted(.number.precision(.integerLength(2...))))")
+                    } else {
+                        Text(group.index, format: .number.precision(.integerLength(2...)))
+                    }
                     BmsAlertIndicator(alertLevel: group.alertLevel)
                 }
                 .font(.caption2)
                 .foregroundStyle(PevColors.muted)
                 Text(group.voltageMetricValue.displayText)
-                    .font(.caption.weight(.black))
+                    .font(.callout.weight(.semibold))
                     .monospacedDigit()
             }
             .frame(maxWidth: .infinity, minHeight: minimumHeight)
@@ -149,7 +69,7 @@ struct BmsStripCell: View {
         case .warning:
             PevColors.orange
         case .nominal, .unknown:
-            isHighlighted ? PevColors.orange : PevColors.green
+            PevColors.muted.opacity(0.2)
         }
     }
 }
@@ -183,66 +103,6 @@ struct BmsAlertIndicator: View {
         ) {
             Image(systemName: systemImageName)
                 .accessibilityHidden(true)
-        }
-    }
-}
-
-struct BmsGroupIndexCell: View {
-    @ScaledMetric(relativeTo: .body) private var minimumHeight = 44.0
-
-    let group: BmsGroupSnapshot
-    let isSelected: Bool
-    let action: () -> Void
-
-    var body: some View {
-        Button(action: action) {
-            Text(group.index, format: .number)
-                .font(.body)
-                .foregroundStyle(PevColors.muted)
-                .frame(maxWidth: .infinity)
-                .frame(minHeight: minimumHeight)
-                .background(PevDashboardCardBackground(cornerRadius: 8, stroke: isSelected ? PevColors.orange : PevColors.green, lineWidth: 1.2))
-                .overlay(alignment: .topTrailing) {
-                    if isSelected {
-                        Image(systemName: "checkmark.circle.fill")
-                            .font(.caption2.weight(.bold))
-                            .padding(4)
-                            .accessibilityHidden(true)
-                    }
-                }
-        }
-        .buttonStyle(.plain)
-        .bmsGroupAccessibility(group, isHighlighted: isSelected)
-    }
-}
-
-struct BmsModeChip: View {
-    @ScaledMetric(relativeTo: .body) private var minimumHeight = 44.0
-
-    let title: String
-
-    var body: some View {
-        Text(title)
-            .font(.body.weight(.bold))
-            .foregroundStyle(PevColors.primaryText)
-            .fixedSize(horizontal: false, vertical: true)
-            .frame(maxWidth: .infinity, minHeight: minimumHeight, alignment: .leading)
-    }
-}
-
-struct BmsModeGrid: View {
-    let modes: [PevBmsMode]
-
-    var body: some View {
-        PevDashboardGrid(
-            adaptiveMinimumColumnWidth: 100,
-            accessibilityMinimumColumnWidth: 280,
-            columnSpacing: 10,
-            spacing: 10
-        ) {
-            ForEach(modes) { mode in
-                BmsModeChip(title: mode.title)
-            }
         }
     }
 }

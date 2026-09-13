@@ -1950,21 +1950,64 @@ final class CutoutAppUITests: XCTestCase {
         try assertEucBmsAccessibility()
     }
 
-    func testEucBmsDiagnosticsExposeStableAccessibleDataRows() throws {
-        let bmsScreen = try XCTUnwrap(openEucBmsMap())
+    func testEucBmsShowsMeasurementsWithoutDeveloperDiagnostics() throws {
+        _ = try XCTUnwrap(openEucBmsMap())
         defer { disconnectIfConnected() }
+        XCTAssertTrue(app.buttons["bms.pack.lowest"].exists)
+        XCTAssertTrue(app.buttons["bms.pack.highest"].exists)
+        XCTAssertFalse(app.staticTexts["bms.diagnostics"].exists)
+        XCTAssertFalse(app.staticTexts["Display modes"].exists)
+    }
 
-        let diagnostics = app.staticTexts["bms.diagnostics"].firstMatch
-        scrollElementFrameIntoViewport(diagnostics, in: bmsScreen, maxScrolls: 20)
-        XCTAssertTrue(diagnostics.isHittable, bmsScreen.debugDescription)
-        diagnostics.tap()
+    func testEucBms252ReadingsCanFindLastReading() throws {
+        try assertLargeBmsSearch(count: 252)
+    }
 
-        let voltage = app.descendants(matching: .any)["dashboard.key-value.voltage"]
-        XCTAssertTrue(voltage.waitForExistence(timeout: 5), bmsScreen.debugDescription)
-        XCTAssertEqual(voltage.label, "voltage")
-        XCTAssertEqual(voltage.value as? String, "82.0 V")
-        XCTAssertFalse(app.descendants(matching: .any)["dashboard.key-value.page"].exists)
-        XCTAssertFalse(app.descendants(matching: .any)["dashboard.key-value.page-verification"].exists)
+    func testEucBms224ReadingsCanFindLastReading() throws {
+        try assertLargeBmsSearch(count: 224)
+    }
+
+    private func assertLargeBmsSearch(count: Int) throws {
+        let screen = try XCTUnwrap(openEucBmsScreen(identifier: "dashboard.screen.bmsCellMap40S"))
+        XCTAssertTrue(app.buttons["bms.pack.highest"].isHittable)
+        attachScreenshot(of: app, named: "Battery overview - \(count) readings")
+        let disclosure = app.buttons["All cell voltages"]
+        scrollElementFrameIntoViewport(disclosure, in: screen, maxScrolls: 8)
+        disclosure.tap()
+        let search = app.textFields["bms.pack.search"]
+        scrollElementFrameIntoViewport(search, in: screen, maxScrolls: 8)
+        search.tap()
+        search.typeText("\(count)\n")
+        let last = reachableBmsGroup(count, in: screen)
+        last.tap()
+        XCTAssertEqual(app.staticTexts["bms.detail.selected-group"].label, "Reading \(count)")
+        XCTAssertTrue(app.staticTexts["bms.detail.voltage"].isHittable)
+    }
+
+    func testEucBmsSixtyReadingsOverviewAndDetail() throws {
+        let screen = try XCTUnwrap(openEucBmsScreen(identifier: "dashboard.screen.bmsCellMap40S"))
+        XCTAssertTrue(app.buttons["bms.pack.lowest"].isHittable)
+        XCTAssertTrue(app.buttons["bms.pack.highest"].isHittable)
+        XCTAssertFalse(app.staticTexts["Display modes"].exists)
+        XCTAssertFalse(app.staticTexts["bms.diagnostics"].exists)
+        attachScreenshot(of: app, named: "Battery overview - 60 readings")
+        app.buttons["bms.pack.highest"].tap()
+        XCTAssertTrue(app.staticTexts["bms.detail.selected-group"].waitForExistence(timeout: 5))
+        XCTAssertEqual(app.staticTexts["bms.detail.selected-group"].label, "Reading 60")
+        XCTAssertTrue(app.staticTexts["bms.detail.voltage"].isHittable)
+        XCTAssertFalse(app.staticTexts["Resistance"].exists)
+        attachScreenshot(of: app, named: "Battery reading 60")
+        app.buttons["bms.detail.previous"].tap()
+        XCTAssertEqual(app.staticTexts["bms.detail.selected-group"].label, "Reading 59")
+        app.buttons["bms.detail.back"].tap()
+        let disclosure = app.buttons["All cell voltages"]
+        scrollElementFrameIntoViewport(disclosure, in: screen, maxScrolls: 8)
+        XCTAssertTrue(disclosure.isHittable)
+        disclosure.tap()
+        let last = reachableBmsGroup(60, in: screen)
+        attachScreenshot(of: app, named: "Battery all readings - last row")
+        last.tap()
+        XCTAssertEqual(app.staticTexts["bms.detail.selected-group"].label, "Reading 60")
     }
 
     func testEucBmsOverviewPassesAccessibilityAuditAtAccessibilityDynamicType() throws {
@@ -2022,14 +2065,14 @@ final class CutoutAppUITests: XCTestCase {
     func testEucBmsDetailPassesAccessibilityAuditInLightAppearanceAtAccessibilityDynamicType() throws {
         try assertEucBmsDetailAccessibility(
             ignoringClippedBmsDetailBoundaryWarnings: true,
-            auditTopTitle: "Cell detail"
+            auditTopTitle: "Battery"
         )
     }
 
     func testEucBmsDetailPassesAccessibilityAuditInDarkAppearanceAtAccessibilityDynamicType() throws {
         try assertEucBmsDetailAccessibility(
             ignoringClippedBmsDetailBoundaryWarnings: true,
-            auditTopTitle: "Cell detail"
+            auditTopTitle: "Battery"
         )
     }
 
@@ -2925,6 +2968,11 @@ final class CutoutAppUITests: XCTestCase {
 
     private var launchArguments: [String] {
         var arguments = fixture.launchArguments
+        if name.contains("SixtyReadings") {
+            arguments += ["-CUTOUT_UI_TEST_BMS_COUNT", "60"]
+        }
+        if name.contains("252Readings") { arguments += ["-CUTOUT_UI_TEST_BMS_COUNT", "252"] }
+        if name.contains("224Readings") { arguments += ["-CUTOUT_UI_TEST_BMS_COUNT", "224"] }
         if name.contains("Pseudolocalized") {
             arguments += ["-NSDoubleLocalizedStrings", "YES"]
         }
@@ -3776,7 +3824,7 @@ final class CutoutAppUITests: XCTestCase {
         let bmsScreen = try XCTUnwrap(openEucBmsMap())
         defer { disconnectIfConnected() }
 
-        XCTAssertTrue(app.descendants(matching: .any)["bms.diagnostics"].exists)
+        XCTAssertFalse(app.descendants(matching: .any)["bms.diagnostics"].exists)
         if assertsEnglishMetric {
             assertMetricIsReachable("Cell group 7, right pack group 7", in: bmsScreen)
         } else {
@@ -3797,11 +3845,11 @@ final class CutoutAppUITests: XCTestCase {
         let bmsScreen = try XCTUnwrap(openEucBmsScreen(identifier: "dashboard.screen.bmsOverview"))
         defer { disconnectIfConnected() }
 
-        let energyHero = app.progressIndicators["bms.energy.hero"]
+        let energyHero = app.descendants(matching: .any)["bms.pack.charge"]
         XCTAssertTrue(energyHero.waitForExistence(timeout: 5))
         if assertsEnglishEnergy {
-            XCTAssertEqual(energyHero.label, "Usable energy")
-            XCTAssertEqual(energyHero.value as? String, "64% and 20S4P test pack")
+            XCTAssertEqual(energyHero.label, "Charge")
+            XCTAssertEqual(energyHero.value as? String, "64%")
         } else {
             XCTAssertFalse(energyHero.label.isEmpty)
             XCTAssertFalse((energyHero.value as? String ?? "").isEmpty)
@@ -3858,9 +3906,10 @@ final class CutoutAppUITests: XCTestCase {
         let bmsScreen = try XCTUnwrap(openEucBmsScreen(identifier: "dashboard.screen.bmsUnknownTopology"))
         defer { disconnectIfConnected() }
 
-        let captureFlow = bmsScreen.descendants(matching: .any)["bms.unknown.capture-flow"]
-        XCTAssertTrue(captureFlow.waitForExistence(timeout: 5))
-        XCTAssertFalse(captureFlow.label.isEmpty)
+        let voltage = bmsScreen.descendants(matching: .any)["bms.pack.voltage"]
+        XCTAssertTrue(voltage.waitForExistence(timeout: 5))
+        XCTAssertFalse(voltage.label.isEmpty)
+        XCTAssertFalse(bmsScreen.descendants(matching: .any)["bms.unknown.capture-flow"].exists)
         try performVisibleLayoutAccessibilityAudit(
             excluding: auditExclusions
         )
