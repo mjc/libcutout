@@ -1001,7 +1001,7 @@ public final class CutoutSessionCore: NSObject {
         }
         let actions = testScript.bmsSnapshot.map { [SessionAction.withBmsSnapshot($0)] } ?? []
         applyNotificationStep(
-            CoreBluetoothSessionStep(operations: [], snapshot: telemetry, actions: actions),
+            CoreBluetoothSessionStep(operations: [], snapshot: telemetry, actions: actions, connectionAttempt: token),
             receivedAt: receivedAt
         )
         scheduleTestTelemetryUpdateIfNeeded(testScript, token: token)
@@ -1015,7 +1015,7 @@ public final class CutoutSessionCore: NSObject {
             self?.onBleQueue {
                 guard let self, self.rustSessionState.connectionAttemptIsCurrent(token: token) else { return }
                 self.applyNotificationStep(
-                    CoreBluetoothSessionStep(operations: [], snapshot: telemetry),
+                    CoreBluetoothSessionStep(operations: [], snapshot: telemetry, connectionAttempt: token),
                     receivedAt: self.clock.now()
                 )
             }
@@ -1188,7 +1188,7 @@ public final class CutoutSessionCore: NSObject {
         step.actions.forEach(applySessionAction)
         let snapshot = step.snapshot
         if snapshot != nil {
-            observeRideMapConnection(at: receivedAt)
+            observeRideMapConnection(token: step.connectionAttempt, at: receivedAt)
         }
         displayState = displayState.reducing(snapshot: snapshot, receivedAt: receivedAt)
         hasObservedSpeedSnapshot = hasObservedSpeedSnapshot || snapshot?.speed?.value != nil
@@ -1834,10 +1834,8 @@ public final class CutoutSessionCore: NSObject {
         publishRideMapDecisions(rideMapState.pollLocationWrites())
     }
 
-    private func observeRideMapConnection(at receivedAt: MonotonicMilliseconds) {
-        let connection = rideSessionStateHandle.connectionAttemptSnapshot()
-        guard connection.readiness == .verified,
-              let token = connection.token,
+    private func observeRideMapConnection(token: ConnectionAttemptToken?, at receivedAt: MonotonicMilliseconds) {
+        guard let token,
               let rideMapState,
               rideMapState.initializationError == nil
         else {

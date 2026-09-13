@@ -982,6 +982,29 @@ final class CutoutSessionCoreTests: XCTestCase {
         XCTAssertEqual(core.scanState.sections.probeRecommended.map(\.title), ["device-ffe0"])
     }
 
+    func testRideAdmissionUsesTheAttemptThatProducedTheDecodedStep() async throws {
+        let state = MobileRideMapState()
+        let core = CutoutSessionCore(clock: MonotonicClock(), rideMapState: state)
+        let owner = core.rideSessionStateHandle
+        func verify(_ identifier: String, atMs: UInt64) throws -> ConnectionAttemptToken {
+            let token = try XCTUnwrap(owner.beginConnectionAttempt(platformIdentifier: identifier, nowMs: atMs).token)
+            _ = owner.connectionLinkEstablished(token: token)
+            _ = owner.observeConnectionNotification(token: token, bytes: Data([
+                2, 20, 157, 7, 1, 2, 97, 98, 99, 49, 50, 51, 0, 117, 115, 101,
+                114, 104, 97, 115, 104, 0, 38, 208, 3,
+            ]))
+            _ = owner.resolveDeviceSession(token: token, identificationComplete: false, nowMs: atMs + 1)
+            XCTAssertTrue(owner.verifiedConnectionAttemptIsCurrent(token: token))
+            return token
+        }
+        let first = try verify("first", atMs: 1)
+        let decoded = CoreBluetoothSessionStep(operations: [], snapshot: TelemetrySnapshot(), connectionAttempt: first)
+        _ = try verify("replacement", atMs: 3)
+        core.applyNotificationStep(decoded, receivedAt: MonotonicMilliseconds(5))
+        let recording = await core.currentRideMapSnapshot(atMs: 5)
+        XCTAssertNil(recording, "an old decoded sample must not create a ride for the replacement attempt")
+    }
+
     func testApplyNotificationStepMarksLiveAndUpdatesDisplayState() {
         let core = CutoutSessionCore()
         let snapshot = TelemetrySnapshot(
