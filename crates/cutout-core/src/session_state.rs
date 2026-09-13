@@ -23,6 +23,9 @@ pub struct CutoutSessionState {
     /// Telemetry state accumulated from ride, charge, raw telemetry, and BMS packets.
     pub telemetry: TelemetryState,
 
+    /// Semantic setting observations and command lifecycle for this device.
+    pub settings: crate::DeviceSettingsState,
+
     /// Diagnostics accumulated from parser and protocol diagnostic events.
     pub diagnostics: SessionDiagnosticsState,
 }
