@@ -15,7 +15,7 @@ setting_enum!(
     MobileDeviceActionIdDto,
     DeviceActionId,
     "Semantic device action identity.",
-    [ResetTripMeter, GyroCalibration]
+    [Horn, ResetTripMeter, GyroCalibration]
 );
 setting_enum!(
     MobileDeviceActionProgressDto,
@@ -58,7 +58,7 @@ setting_enum!(
     MobileDeviceActionRoleDto,
     ActionRole,
     "Native action presentation role.",
-    [Destructive, Procedure]
+    [Momentary, Destructive, Procedure]
 );
 
 /// Native-neutral semantic action definition.

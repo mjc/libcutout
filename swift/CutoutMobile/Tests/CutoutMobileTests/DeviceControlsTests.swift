@@ -15,6 +15,27 @@ final class DeviceControlsTests: XCTestCase {
         XCTAssertTrue(actions.descriptors.isEmpty)
     }
 
+    func testHornDoesNotNeedTelemetryOrStationaryArming() throws {
+        let state = CutoutSessionStateHandle()
+        let token = try XCTUnwrap(state.beginConnectionAttempt(platformIdentifier: "A", nowMs: 0).token)
+        _ = state.connectionLinkEstablished(token: token)
+        var frame = Data(repeating: 0, count: 42)
+        frame.replaceSubrange(0..<4, with: [0xdc, 0x5a, 0x5c, 38])
+        frame.replaceSubrange(28..<30, with: [0xa7, 0xf8])
+        _ = state.observeConnectionNotification(token: token, bytes: frame)
+        _ = state.resolveDeviceSession(token: token, identificationComplete: false, nowMs: 1)
+        _ = state.ingestDeviceSession(token: token, input: MobileSessionInputDto(
+            kind: .linkUp, monotonicMs: .init(milliseconds: 1), maxWriteLen: nil,
+            channel: Data(), bytes: Data(), command: nil
+        ))
+        let result = try state.submitAction(token: token, id: .horn, validationMode: false, monotonicMs: 2)
+        XCTAssertNil(result.telemetry.speed)
+        XCTAssertNil(result.result.error)
+        XCTAssertTrue(result.result.outputs.contains { $0.kind == .write })
+        let horn = try XCTUnwrap(state.actionsSnapshot().actions.first { $0.id == .horn })
+        XCTAssertEqual(horn.status, .sentWithoutConfirmation)
+    }
+
     func testSemanticSubmissionKeepsRequestedValueAndOwningAttempt() throws {
         let state = CutoutSessionStateHandle()
         let token = try XCTUnwrap(state.beginConnectionAttempt(platformIdentifier: "A", nowMs: 0).token)
