@@ -106,6 +106,40 @@ mod tests {
     use super::*;
     use cutout_core::{DeviceActionStatus, SessionInputDto, SessionOutput, TransportAction};
 
+    #[test]
+    fn horn_is_available_without_a_speed_sample_or_stationary_arm() {
+        let mut owner = DeviceConnectionSession::default();
+        let token = super::super::tests::connected_aero(&mut owner);
+        assert!(
+            owner
+                .device
+                .as_ref()
+                .unwrap()
+                .current_snapshot()
+                .speed
+                .is_none()
+        );
+        let result = owner
+            .submit_action(
+                &token,
+                DeviceActionId::Horn,
+                false,
+                MonotonicTimestamp::new(2),
+            )
+            .unwrap();
+        assert_eq!(result.result.error, None);
+        assert!(result.result.outputs.iter().any(|output| matches!(
+            output,
+            SessionOutput::Transport(TransportAction::Write { .. })
+        )));
+        let snapshot = owner.actions_snapshot();
+        assert_eq!(snapshot.actions[0].id, DeviceActionId::Horn);
+        assert_eq!(
+            snapshot.actions[0].status,
+            DeviceActionStatus::SentWithoutConfirmation
+        );
+    }
+
     fn gyro_readback(phase: u8, at: u64) -> SessionInputDto {
         let mut frame = vec![0_u8; 75];
         frame[..4].copy_from_slice(&[0xdc, 0x5a, 0x5c, 71]);
