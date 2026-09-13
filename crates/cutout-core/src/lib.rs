@@ -594,6 +594,21 @@ impl AeroGyroCalibrationState {
 pub struct AeroPwmPercent(u8);
 
 impl AeroPwmPercent {
+    /// Creates a warning margin from the PWM utilization shown to the rider.
+    #[must_use]
+    pub const fn from_duty_percent(duty: u8) -> Option<Self> {
+        match 100_u8.checked_sub(duty) {
+            Some(margin) => Self::new(margin),
+            None => None,
+        }
+    }
+
+    /// Returns PWM utilization at the warning threshold.
+    #[must_use]
+    pub const fn duty_percent(self) -> u8 {
+        100 - self.0
+    }
+
     /// Creates a PWM warning margin in EUC World's documented 0..=70 range.
     #[must_use]
     pub const fn new(percent: u8) -> Option<Self> {
