@@ -1001,6 +1001,10 @@ public final class MobileRideMapState: @unchecked Sendable {
         }
     }
 
+    public func checkpoint() throws -> [MobileRideMapDecisionDto] {
+        try withCore { try $0.checkpoint().map(map) }
+    }
+
     /// Drains durable outcomes without waiting for the SQLite worker.
     ///
     /// A pending location is not part of the durable route until this method returns its accepted

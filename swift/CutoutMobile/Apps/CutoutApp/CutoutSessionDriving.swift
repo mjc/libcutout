@@ -49,6 +49,7 @@ protocol CutoutSessionDriving: AnyObject {
         atMs: UInt64, lastConnectedVehicle: String?
     ) async throws -> MobileRideMapSnapshotDto
     func currentRideMapSnapshot(atMs: UInt64) async -> MobileRideMapSnapshotDto?
+    func checkpointRideMap() async throws
 }
 
 extension CutoutSessionCore: CutoutSessionDriving {}
@@ -88,6 +89,10 @@ extension CutoutSessionDriving {
             expected: expected, event: event, atMs: atMs,
             lastConnectedVehicle: lastConnectedVehicle
         )
+    }
+
+    func checkpointRideMap() async throws {
+        _ = try requireRideMapState().checkpoint()
     }
 
     func currentRideMapSnapshot(atMs: UInt64) async -> MobileRideMapSnapshotDto? {

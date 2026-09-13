@@ -527,6 +527,37 @@ final class CutoutAppModelTests: XCTestCase {
     }
 
     @MainActor
+    func testGpsOnlyBackgroundCheckpointsWithoutLiveActivity() async throws {
+        let driver = SessionDriverSpy(rows: [])
+        let model = CutoutAppModel(core: driver)
+        let started = await model.startGpsOnlyRide()
+        XCTAssertTrue(started)
+        model.appDidEnterBackground()
+        await Self.waitUntil("GPS-only checkpoint") { driver.checkpointCount == 1 }
+        XCTAssertEqual(model.rideMapSnapshot?.state, .active)
+    }
+
+    @MainActor
+    func testRecordingCheckpointCoalescesAndIgnoresLateFailureAfterCancellation() async throws {
+        let driver = SessionDriverSpy(rows: [])
+        var completion: CheckedContinuation<Void, Error>?
+        driver.checkpointOperation = {
+            try await withCheckedThrowingContinuation { completion = $0 }
+        }
+        let recording = RideRecordingModel(core: driver)
+        recording.checkpoint()
+        recording.checkpoint()
+        await Self.waitUntil("pending checkpoint") { completion != nil }
+        XCTAssertEqual(driver.checkpointCount, 1)
+        XCTAssertTrue(recording.isCheckpointPending)
+        recording.cancel()
+        completion?.resume(throwing: MobileRideMapError.storageError("late failure"))
+        await Task.yield()
+        XCTAssertFalse(recording.isCheckpointPending)
+        XCTAssertNil(recording.error)
+    }
+
+    @MainActor
     func testRecordingOwnerRejectsDuplicateCommandsAndLateCompletionAfterCancellation() async throws {
         let driver = SessionDriverSpy(rows: [])
         let active = try XCTUnwrap(driver.rideMapStateHandle).startGpsOnly(
@@ -3282,6 +3313,13 @@ private final class SessionDriverSpy: CutoutSessionDriving {
     private(set) var recordedPlatformIdentifiers = [String]()
     private(set) var captureAnnotations = [String]()
     private(set) var flushCaptureCount = 0
+    private(set) var checkpointCount = 0
+    var checkpointOperation: (() async throws -> Void)?
+    func checkpointRideMap() async throws {
+        checkpointCount += 1
+        if let checkpointOperation { try await checkpointOperation() }
+        else { _ = try rideMapState.checkpoint() }
+    }
     private(set) var disconnectCount = 0
     private(set) var resetRideMapLocationAdmissionCount = 0
     var nowValue: UInt64 = 0

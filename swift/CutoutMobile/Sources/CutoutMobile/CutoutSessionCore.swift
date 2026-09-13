@@ -3219,6 +3219,24 @@ extension CutoutSessionCore {
         }
     }
 
+    public func checkpointRideMap() async throws {
+        guard let rideMapState else {
+            throw MobileRideMapError.storageError("Rust ride database is unavailable")
+        }
+        let reference = WeakCutoutSessionCoreReference(self)
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+            rideMapQueue.async {
+                do {
+                    let decisions = try rideMapState.checkpoint()
+                    reference.value?.publishRideMapDecisions(decisions)
+                    continuation.resume()
+                } catch {
+                    continuation.resume(throwing: error)
+                }
+            }
+        }
+    }
+
     private func performRideMapCommand(
         _ operation: @escaping @Sendable (MobileRideMapState) throws -> MobileRideMapSnapshotDto
     ) async throws -> MobileRideMapSnapshotDto {

@@ -1,5 +1,7 @@
 #if os(macOS)
 import AppKit
+#elseif os(iOS)
+import UIKit
 #endif
 import CutoutMobile
 import SwiftUI
@@ -35,6 +37,9 @@ struct CutoutApp: App {
                     if let model { _ = model.handleMusicURL(url) }
                     else { pendingMusicURL = url }
                 }
+                .onReceive(NotificationCenter.default.publisher(for: terminationNotification)) { _ in
+                    model?.appWillTerminate()
+                }
                 .onChange(of: scenePhase) {
                     switch scenePhase {
                     case .active:
@@ -60,6 +65,14 @@ struct CutoutApp: App {
                 )
             }
         }
+    }
+
+    private var terminationNotification: Notification.Name {
+#if os(macOS)
+        NSApplication.willTerminateNotification
+#else
+        UIApplication.willTerminateNotification
+#endif
     }
 
     @ViewBuilder

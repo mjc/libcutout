@@ -29,6 +29,10 @@ final class RideRecordingModel {
     private var durationTask: Task<Void, Never>?
     private var commandTask: Task<MobileRideMapSnapshotDto, Error>?
     private var commandGeneration: UInt64 = 0
+    private var checkpointTask: Task<Void, Never>?
+    private var checkpointGeneration: UInt64 = 0
+    private var backgroundLease: RideBackgroundTask?
+    var isCheckpointPending: Bool { checkpointTask != nil }
 
     init(core: any CutoutSessionDriving) {
         self.core = core
@@ -37,6 +41,7 @@ final class RideRecordingModel {
     isolated deinit { cancel() }
 
     func cancel() {
+        cancelCheckpoint()
         invalidateProjection(clearPoints: false)
         projectionTask?.cancel()
         durationTask?.cancel()
@@ -45,6 +50,38 @@ final class RideRecordingModel {
         commandTask?.cancel()
         commandTask = nil
         isCommandPending = false
+    }
+
+    /// Gives the existing worker time to settle writes queued before backgrounding.
+    func checkpoint() {
+        guard checkpointTask == nil else { return }
+        checkpointGeneration &+= 1
+        let generation = checkpointGeneration
+        backgroundLease = RideBackgroundTask { [weak self] in self?.cancelCheckpoint() }
+        let core = core
+        checkpointTask = Task { [weak self] in
+            do {
+                try await core.checkpointRideMap()
+            } catch let failure as MobileRideMapError {
+                guard !Task.isCancelled, self?.checkpointGeneration == generation else { return }
+                self?.error = failure
+            } catch {
+                guard !Task.isCancelled, self?.checkpointGeneration == generation else { return }
+                self?.error = .storageError(error.localizedDescription)
+            }
+            guard !Task.isCancelled, self?.checkpointGeneration == generation else { return }
+            self?.checkpointTask = nil
+            self?.backgroundLease?.end()
+            self?.backgroundLease = nil
+        }
+    }
+
+    private func cancelCheckpoint() {
+        checkpointGeneration &+= 1
+        checkpointTask?.cancel()
+        checkpointTask = nil
+        backgroundLease?.end()
+        backgroundLease = nil
     }
 
     var onRideChange: ((MobileRideMapSnapshotDto) -> Void)?

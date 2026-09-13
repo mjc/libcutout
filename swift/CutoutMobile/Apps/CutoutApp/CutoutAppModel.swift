@@ -1974,7 +1974,12 @@ final class CutoutAppModel {
         return didFlush
     }
 
+    func appWillTerminate() {
+        rideRecording.checkpoint()
+    }
+
     func appDidEnterBackground() {
+        rideRecording.checkpoint()
         musicMonitorSceneState.suspend()
         stopMusicMonitoring()
         if let nowPlaying = musicCoordinator.nowPlaying {
