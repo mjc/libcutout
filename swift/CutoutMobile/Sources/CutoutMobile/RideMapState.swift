@@ -30,6 +30,7 @@ public enum MobileRideMapError: Error, Equatable, Hashable, Sendable {
     case alreadyRecording
     case noActiveRide
     case invalidTransition
+    case staleCommand
     case invalidLocation
     case invalidRouteProjection
     case invalidMusicInput(String)
@@ -443,6 +444,7 @@ public struct MobileRideMapRouteEndpointMetadata: Equatable, Hashable, Sendable 
 public struct MobileRideMapSnapshotDto: Equatable, Hashable, Sendable {
     public let rideID: String
     public let revision: UInt64
+    public let commandToken: MobileRideMapRecordingTokenDto?
     public let recordingToken: MobileRideMapRecordingTokenDto?
     public let allowedActions: [MobileRideEventDto]
     public let telemetryState: MobileRideMapTelemetryStateDto
@@ -461,12 +463,14 @@ public struct MobileRideMapSnapshotDto: Equatable, Hashable, Sendable {
         recordedBoundsAvailable: Bool = false,
         revision: UInt64 = 0,
         recordingToken: MobileRideMapRecordingTokenDto? = nil,
+        commandToken: MobileRideMapRecordingTokenDto? = nil,
         allowedActions: [MobileRideEventDto] = [],
         telemetryState: MobileRideMapTelemetryStateDto = .gpsOnly
     ) {
         self.rideID = rideID
         self.revision = revision
         self.recordingToken = recordingToken
+        self.commandToken = commandToken
         self.allowedActions = allowedActions
         self.telemetryState = telemetryState
         self.state = state
@@ -759,6 +763,18 @@ public final class MobileRideMapState: @unchecked Sendable {
     public func startGpsOnly(atMs: UInt64, lastConnectedVehicle: String?) throws -> MobileRideMapSnapshotDto {
         try withCore {
             mapSnapshot(try $0.startGpsOnly(atMs: atMs, lastConnectedVehicle: lastConnectedVehicle))
+        }
+    }
+
+    public func applyCommand(
+        expected: MobileRideMapRecordingTokenDto?, event: MobileRideEventDto,
+        atMs: UInt64, lastConnectedVehicle: String? = nil
+    ) throws -> MobileRideMapSnapshotDto {
+        try withCore {
+            mapSnapshot(try $0.applyCommand(
+                expected: expected, event: event, atMs: atMs,
+                lastConnectedVehicle: lastConnectedVehicle
+            ))
         }
     }
 
@@ -1173,6 +1189,7 @@ public final class MobileRideMapState: @unchecked Sendable {
             recordedBoundsAvailable: snapshot.recordedBoundsAvailable,
             revision: snapshot.revision,
             recordingToken: snapshot.recordingToken,
+            commandToken: snapshot.commandToken,
             allowedActions: snapshot.allowedActions,
             telemetryState: map(snapshot.telemetryState)
         )
@@ -1401,6 +1418,7 @@ public final class MobileRideMapState: @unchecked Sendable {
         case .AlreadyRecording: return .alreadyRecording
         case .NoActiveRide: return .noActiveRide
         case .InvalidTransition: return .invalidTransition
+        case .StaleCommand: return .staleCommand
         case .InvalidLocation: return .invalidLocation
         case .InvalidRouteProjection: return .invalidRouteProjection
         case .Cancelled: return .cancelled

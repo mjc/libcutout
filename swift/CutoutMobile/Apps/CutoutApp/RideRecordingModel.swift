@@ -175,6 +175,19 @@ final class RideRecordingModel {
         }
     }
 
+    func command(_ event: MobileRideEventDto, lastConnectedVehicle: String? = nil) async -> Bool {
+        let expected = snapshot?.commandToken
+        let atMs = core.now().rawValue
+        let core = core
+        return await performCommand {
+            if event == .start { core.resetRideMapLocationAdmission() }
+            return try await core.applyRideMapCommand(
+                expected: expected, event: event, atMs: atMs,
+                lastConnectedVehicle: lastConnectedVehicle
+            )
+        }
+    }
+
     func performCommand(
         _ operation: @escaping @MainActor () async throws -> MobileRideMapSnapshotDto
     ) async -> Bool {

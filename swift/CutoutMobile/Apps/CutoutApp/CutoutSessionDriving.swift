@@ -43,12 +43,10 @@ protocol CutoutSessionDriving: AnyObject {
     func now() -> MonotonicMilliseconds
 
     func resetRideMapLocationAdmission()
-    func startRideMapGpsOnly(atMs: UInt64, lastConnectedVehicle: String?) async throws -> MobileRideMapSnapshotDto
-    func pauseRideMap(atMs: UInt64) async throws -> MobileRideMapSnapshotDto
-    func resumeRideMap(atMs: UInt64) async throws -> MobileRideMapSnapshotDto
-    func stopRideMap(atMs: UInt64) async throws -> MobileRideMapSnapshotDto
-    func saveRideMap() async throws -> MobileRideMapSnapshotDto
-    func discardRideMap() async throws -> MobileRideMapSnapshotDto
+    func applyRideMapCommand(
+        expected: MobileRideMapRecordingTokenDto?, event: MobileRideEventDto,
+        atMs: UInt64, lastConnectedVehicle: String?
+    ) async throws -> MobileRideMapSnapshotDto
     func currentRideMapSnapshot(atMs: UInt64) async -> MobileRideMapSnapshotDto?
 }
 
@@ -77,28 +75,14 @@ extension CutoutSessionDriving {
 
     func resetRideMapLocationAdmission() {}
 
-    func startRideMapGpsOnly(atMs: UInt64, lastConnectedVehicle: String?) async throws -> MobileRideMapSnapshotDto {
-        try requireRideMapState().startGpsOnly(atMs: atMs, lastConnectedVehicle: lastConnectedVehicle)
-    }
-
-    func pauseRideMap(atMs: UInt64) async throws -> MobileRideMapSnapshotDto {
-        try requireRideMapState().pause(atMs: atMs)
-    }
-
-    func resumeRideMap(atMs: UInt64) async throws -> MobileRideMapSnapshotDto {
-        try requireRideMapState().resume(atMs: atMs)
-    }
-
-    func stopRideMap(atMs: UInt64) async throws -> MobileRideMapSnapshotDto {
-        try requireRideMapState().stop(atMs: atMs)
-    }
-
-    func saveRideMap() async throws -> MobileRideMapSnapshotDto {
-        try requireRideMapState().save()
-    }
-
-    func discardRideMap() async throws -> MobileRideMapSnapshotDto {
-        try requireRideMapState().discard()
+    func applyRideMapCommand(
+        expected: MobileRideMapRecordingTokenDto?, event: MobileRideEventDto,
+        atMs: UInt64, lastConnectedVehicle: String?
+    ) async throws -> MobileRideMapSnapshotDto {
+        try requireRideMapState().applyCommand(
+            expected: expected, event: event, atMs: atMs,
+            lastConnectedVehicle: lastConnectedVehicle
+        )
     }
 
     func currentRideMapSnapshot(atMs: UInt64) async -> MobileRideMapSnapshotDto? {

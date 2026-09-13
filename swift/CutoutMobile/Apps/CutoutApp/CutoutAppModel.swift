@@ -991,13 +991,9 @@ final class CutoutAppModel {
 
     @discardableResult
     func startGpsOnlyRide() async -> Bool {
-        let started = await rideRecording.performCommand {
-            self.core.resetRideMapLocationAdmission()
-            return try await self.core.startRideMapGpsOnly(
-                atMs: self.currentMonotonicTime.rawValue,
-                lastConnectedVehicle: self.selectedDeviceStore.platformIdentifier
-            )
-        }
+        let started = await rideRecording.command(
+            .start, lastConnectedVehicle: selectedDeviceStore.platformIdentifier
+        )
         guard started else { return false }
         // Apply the user's default to the fresh Rust-owned ride timeline.
         core.updateMusicCaptureObservation(nil)
@@ -1066,23 +1062,17 @@ final class CutoutAppModel {
 
     @discardableResult
     func pauseRideMap() async -> Bool {
-        await rideRecording.performCommand {
-            try await self.core.pauseRideMap(atMs: self.currentMonotonicTime.rawValue)
-        }
+        await rideRecording.command(.pause)
     }
 
     @discardableResult
     func resumeRideMap() async -> Bool {
-        await rideRecording.performCommand {
-            try await self.core.resumeRideMap(atMs: self.currentMonotonicTime.rawValue)
-        }
+        await rideRecording.command(.resume)
     }
 
     @discardableResult
     func stopRideMap() async -> Bool {
-        let stopped = await rideRecording.performCommand {
-            try await self.core.stopRideMap(atMs: self.currentMonotonicTime.rawValue)
-        }
+        let stopped = await rideRecording.command(.stop)
         if stopped {
             rideRecording.invalidateProjection(clearPoints: false)
             clearMusicCaptureContext()
@@ -1096,7 +1086,7 @@ final class CutoutAppModel {
 
     @discardableResult
     func saveRideMap() async -> Bool {
-        guard await rideRecording.performCommand({ try await self.core.saveRideMap() }) else {
+        guard await rideRecording.command(.save) else {
             return false
         }
         rideRecording.invalidateProjection(clearPoints: false)
@@ -1108,7 +1098,7 @@ final class CutoutAppModel {
 
     @discardableResult
     func discardRideMap() async -> Bool {
-        guard await rideRecording.performCommand({ try await self.core.discardRideMap() }) else {
+        guard await rideRecording.command(.discard) else {
             return false
         }
         rideRecording.invalidateProjection(clearPoints: true)

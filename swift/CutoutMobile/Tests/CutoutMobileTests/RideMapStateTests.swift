@@ -3,6 +3,20 @@ import CutoutMobileFFI
 @testable import CutoutMobile
 
 final class RideMapStateTests: XCTestCase {
+    func testLifecycleCommandRejectsAReplacedRecordingThroughBindings() throws {
+        let state = MobileRideMapState()
+        let first = try state.applyCommand(expected: nil, event: .start, atMs: 1_000)
+        _ = try state.stop(atMs: 2_000)
+        _ = try state.save()
+        let replacement = try state.startGpsOnly(atMs: 3_000, lastConnectedVehicle: nil)
+        XCTAssertThrowsError(try state.applyCommand(
+            expected: first.commandToken, event: .pause, atMs: 4_000
+        )) { error in
+            XCTAssertEqual(error as? MobileRideMapError, .staleCommand)
+        }
+        XCTAssertEqual(state.currentSnapshot(atMs: 3_000), replacement)
+    }
+
     func testMusicHistoryProjectsRustRetentionAndObservationTime() throws {
         let state = MobileRideMapState()
         XCTAssertNil(state.currentMusicHistory())

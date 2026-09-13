@@ -3204,36 +3204,16 @@ extension CutoutSessionCore: CLLocationManagerDelegate {
         }
     }
 
-    public func startRideMapGpsOnly(
-        atMs: UInt64,
-        lastConnectedVehicle: String?
+    public func applyRideMapCommand(
+        expected: MobileRideMapRecordingTokenDto?, event: MobileRideEventDto,
+        atMs: UInt64, lastConnectedVehicle: String?
     ) async throws -> MobileRideMapSnapshotDto {
         try await performRideMapCommand {
-            try $0.startGpsOnly(
-                atMs: atMs,
+            try $0.applyCommand(
+                expected: expected, event: event, atMs: atMs,
                 lastConnectedVehicle: lastConnectedVehicle
             )
         }
-    }
-
-    public func pauseRideMap(atMs: UInt64) async throws -> MobileRideMapSnapshotDto {
-        try await performRideMapCommand { try $0.pause(atMs: atMs) }
-    }
-
-    public func resumeRideMap(atMs: UInt64) async throws -> MobileRideMapSnapshotDto {
-        try await performRideMapCommand { try $0.resume(atMs: atMs) }
-    }
-
-    public func stopRideMap(atMs: UInt64) async throws -> MobileRideMapSnapshotDto {
-        try await performRideMapCommand { try $0.stop(atMs: atMs) }
-    }
-
-    public func saveRideMap() async throws -> MobileRideMapSnapshotDto {
-        try await performRideMapCommand { try $0.save() }
-    }
-
-    public func discardRideMap() async throws -> MobileRideMapSnapshotDto {
-        try await performRideMapCommand { try $0.discard() }
     }
 
     public func currentRideMapSnapshot(atMs: UInt64) async -> MobileRideMapSnapshotDto? {
