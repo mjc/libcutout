@@ -95,6 +95,13 @@ impl DeviceSession {
     /// Constructs only from validated protocol evidence retained by the detector.
     #[must_use]
     pub fn from_detection(resolution: &DeviceDetectionResolution) -> Option<Self> {
+        Self::from_detection_with_vesc_profile(resolution, None)
+    }
+
+    pub(crate) fn from_detection_with_vesc_profile(
+        resolution: &DeviceDetectionResolution,
+        vesc_board_profile: Option<crate::VescBoardProfile>,
+    ) -> Option<Self> {
         let (protocol, vehicle_kind, engine) = match resolution.protocol {
             ProtocolFamilyState::Unknown | ProtocolFamilyState::Conflict => return None,
             ProtocolFamilyState::VeteranLeaperkimNosfet => (
@@ -110,7 +117,10 @@ impl DeviceSession {
             ProtocolFamilyState::Vesc => (
                 ProtocolFamily::Vesc,
                 VehicleKind::Unknown,
-                DeviceSessionEngine::Vesc(Box::default()),
+                DeviceSessionEngine::Vesc(Box::new(vesc_board_profile.map_or_else(
+                    VescReadOnlySession::default,
+                    VescReadOnlySession::with_board_profile,
+                ))),
             ),
         };
         let model = resolution.staged.model.filter(|model| {
@@ -180,7 +190,18 @@ impl DeviceSession {
         match &mut self.engine {
             DeviceSessionEngine::Veteran(session) => session.ingest_typed(input),
             DeviceSessionEngine::Begode(session) => session.ingest_typed(input),
-            DeviceSessionEngine::Vesc(session) => session.ingest_typed(input),
+            DeviceSessionEngine::Vesc(session) => {
+                let mut step = session.ingest_typed(input);
+                if let SessionInputDto::LinkUp { monotonic_ms, .. } = input {
+                    let startup = session.ingest_typed(&SessionInputDto::CommandAt {
+                        command: cutout_core::DeviceCommandDto::RequestTelemetry,
+                        monotonic_ms: *monotonic_ms,
+                    });
+                    step.outputs.extend(startup.outputs);
+                    step.error = step.error.or(startup.error);
+                }
+                step
+            }
         }
     }
 

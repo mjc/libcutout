@@ -127,6 +127,16 @@ impl CutoutSessionStateHandle {
         )
     }
 
+    /// Attaches saved controller geometry to the pending attempt without asserting identity.
+    pub fn configure_connection_vesc_profile(
+        &self,
+        token: MobileConnectionAttemptTokenDto,
+        profile: crate::VescBoardProfile,
+    ) -> bool {
+        self.lock_inner()
+            .configure_vesc_board_profile(&token.into(), profile.into())
+    }
+
     /// Returns the protocol-selected session without exposing a model constructor.
     #[must_use]
     pub fn device_session_snapshot(&self) -> MobileDeviceSessionSnapshotDto {
