@@ -3678,6 +3678,10 @@ final class CutoutAppModelTests: XCTestCase {
         await Self.waitUntil("production ride-map recording") {
             model.phase == .live && model.rideMapSnapshot?.state == .active
         }
+        let connection = core.rideSessionStateHandle.connectionAttemptSnapshot()
+        XCTAssertEqual(connection.readiness, .verified)
+        XCTAssertEqual(connection.transport, .connected)
+        XCTAssertEqual(connection.token?.platformIdentifier, fixture.candidate.platformIdentifier)
 
         core.locationManager(
             CLLocationManager(),

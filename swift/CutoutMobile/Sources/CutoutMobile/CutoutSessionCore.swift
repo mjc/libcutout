@@ -262,6 +262,7 @@ public enum CutoutSessionTestInitialBluetoothState: Sendable {
 
 public struct CutoutSessionTestScript {
     public let candidate: DevicePickerDiscoveryCandidate
+    public let protocolNotifications: [Data]
     public let telemetry: TelemetrySnapshot?
     public let telemetryUpdate: TelemetrySnapshot?
     public let telemetryUpdateDelayMilliseconds: UInt64
@@ -283,6 +284,7 @@ public struct CutoutSessionTestScript {
     public init(
         candidate: DevicePickerDiscoveryCandidate,
         telemetry: TelemetrySnapshot?,
+        protocolNotifications: [Data] = [],
         telemetryUpdate: TelemetrySnapshot? = nil,
         telemetryUpdateDelayMilliseconds: UInt64 = 0,
         bmsSnapshot: BmsSnapshot? = nil,
@@ -301,6 +303,7 @@ public struct CutoutSessionTestScript {
         connectionDelayMilliseconds: UInt64 = 1_000
     ) {
         self.candidate = candidate
+        self.protocolNotifications = protocolNotifications
         self.telemetry = telemetry
         self.telemetryUpdate = telemetryUpdate
         self.telemetryUpdateDelayMilliseconds = telemetryUpdateDelayMilliseconds
@@ -1166,11 +1169,14 @@ public final class CutoutSessionCore: NSObject {
 #endif
         testScriptWorkItem?.cancel()
         testScriptUpdateWorkItem?.cancel()
+        guard let token = rustSessionState.beginConnectionAttempt(
+            platformIdentifier: platformIdentifier, nowMs: clock.now().rawValue
+        ).token else { return false }
         setPhase(.discoveringServices)
         setPhase(.subscribing)
         let work = DispatchWorkItem { [weak self] in
             self?.onBleQueue {
-                self?.finish(testScript: testScript)
+                self?.finish(testScript: testScript, token: token)
             }
         }
         testScriptWorkItem = work
@@ -1181,7 +1187,12 @@ public final class CutoutSessionCore: NSObject {
         return true
     }
 
-    private func finish(testScript: CutoutSessionTestScript) {
+    private func finish(testScript: CutoutSessionTestScript, token: ConnectionAttemptToken) {
+        guard rustSessionState.connectionAttemptIsCurrent(token: token) else { return }
+        if testScript.identificationProbeFailure != nil || testScript.failsConnection {
+            _ = rustSessionState.connectionLinkDown(token: token)
+            _ = rustSessionState.connectionTransportFailed(token: token)
+        }
         if let failure = testScript.identificationProbeFailure {
             setPhase(.failed(.identificationFailed(failure)))
             return
@@ -1191,17 +1202,26 @@ public final class CutoutSessionCore: NSObject {
             guard testScript.emitsLateLiveAfterFailure else { return }
             let work = DispatchWorkItem { [weak self] in
                 self?.onBleQueue {
-                    self?.emit(testScript: testScript)
+                    self?.emit(testScript: testScript, token: token)
                 }
             }
             testScriptWorkItem = work
             DispatchQueue.main.asyncAfter(deadline: .now() + .milliseconds(500), execute: work)
             return
         }
-        emit(testScript: testScript)
+        _ = rustSessionState.connectionLinkEstablished(token: token)
+        for bytes in testScript.protocolNotifications {
+            _ = rustSessionState.observeConnectionNotification(token: token, bytes: bytes)
+        }
+        _ = rustSessionState.resolveDeviceSession(
+            token: token, identificationComplete: true, nowMs: clock.now().rawValue
+        )
+        emit(testScript: testScript, token: token)
     }
 
-    private func emit(testScript: CutoutSessionTestScript) {
+    private func emit(testScript: CutoutSessionTestScript, token: ConnectionAttemptToken) {
+        guard rustSessionState.connectionAttemptIsCurrent(token: token),
+              rustSessionState.connectionAttemptSnapshot().transport == .connected else { return }
         if testScript.startsLive {
             storedProtocolIdentityCandidate = testScript.candidate
             publishProtocolIdentityCandidate()
@@ -1225,16 +1245,16 @@ public final class CutoutSessionCore: NSObject {
             CoreBluetoothSessionStep(operations: [], snapshot: telemetry, actions: actions),
             receivedAt: receivedAt
         )
-        scheduleTestTelemetryUpdateIfNeeded(testScript)
-        scheduleTestReconnectIfNeeded(testScript)
-        scheduleTestBluetoothLossIfNeeded(testScript)
+        scheduleTestTelemetryUpdateIfNeeded(testScript, token: token)
+        scheduleTestReconnectIfNeeded(testScript, token: token)
+        scheduleTestBluetoothLossIfNeeded(testScript, token: token)
     }
 
-    private func scheduleTestTelemetryUpdateIfNeeded(_ testScript: CutoutSessionTestScript) {
+    private func scheduleTestTelemetryUpdateIfNeeded(_ testScript: CutoutSessionTestScript, token: ConnectionAttemptToken) {
         guard let telemetry = testScript.telemetryUpdate else { return }
         let update = DispatchWorkItem { [weak self] in
             self?.onBleQueue {
-                guard let self else { return }
+                guard let self, self.rustSessionState.connectionAttemptIsCurrent(token: token) else { return }
                 self.applyNotificationStep(
                     CoreBluetoothSessionStep(operations: [], snapshot: telemetry),
                     receivedAt: self.clock.now()
@@ -1248,12 +1268,17 @@ public final class CutoutSessionCore: NSObject {
         )
     }
 
-    private func scheduleTestReconnectIfNeeded(_ testScript: CutoutSessionTestScript) {
+    private func scheduleTestReconnectIfNeeded(_ testScript: CutoutSessionTestScript, token: ConnectionAttemptToken) {
         guard testScript.reconnectsAfterFirstLive, !testScriptDidReconnect else { return }
         testScriptDidReconnect = true
         let reconnect = DispatchWorkItem { [weak self] in
             self?.onBleQueue {
-                guard let self else { return }
+                guard let self, self.rustSessionState.connectionAttemptIsCurrent(token: token) else { return }
+                _ = self.rustSessionState.connectionLinkDown(token: token)
+                self.testScriptUpdateWorkItem?.cancel()
+                guard let retryToken = self.rustSessionState.beginConnectionAttempt(
+                    platformIdentifier: token.platformIdentifier, nowMs: self.clock.now().rawValue
+                ).token else { return }
                 self.setPhase(.discoveringServices)
                 self.publishOnMain {
                     self.onReconnectScheduled?(
@@ -1268,7 +1293,7 @@ public final class CutoutSessionCore: NSObject {
                 let resume = DispatchWorkItem { [weak self] in
                     self?.onBleQueue {
                         self?.setPhase(.subscribing)
-                        self?.emit(testScript: testScript)
+                        self?.finish(testScript: testScript, token: retryToken)
                     }
                 }
                 self.testScriptWorkItem = resume
@@ -1285,11 +1310,12 @@ public final class CutoutSessionCore: NSObject {
         )
     }
 
-    private func scheduleTestBluetoothLossIfNeeded(_ testScript: CutoutSessionTestScript) {
+    private func scheduleTestBluetoothLossIfNeeded(_ testScript: CutoutSessionTestScript, token: ConnectionAttemptToken) {
         guard let delay = testScript.bluetoothLossAfterFirstLiveMilliseconds else { return }
         let loss = DispatchWorkItem { [weak self] in
             self?.onBleQueue {
-                guard let self else { return }
+                guard let self, self.rustSessionState.connectionAttemptIsCurrent(token: token) else { return }
+                _ = self.rustSessionState.connectionLinkDown(token: token)
                 self.scanState = DevicePickerScanState(status: .bluetoothUnavailable, rows: [])
                 self.publishScanState()
                 self.setPhase(.bluetoothUnavailable(rawState: 4))
@@ -1309,6 +1335,7 @@ public final class CutoutSessionCore: NSObject {
         connectionAttempt = nil
         publishConnectionSnapshot()
 #if DEBUG
+        if testScript != nil { _ = rustSessionState.disconnectConnectionAttempt() }
         testScriptWorkItem?.cancel()
         testScriptWorkItem = nil
         testScriptUpdateWorkItem?.cancel()
