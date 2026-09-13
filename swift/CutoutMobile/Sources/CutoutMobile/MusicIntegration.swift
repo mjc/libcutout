@@ -1455,19 +1455,38 @@ import MediaPlayer
 public final class AppleMusicProviderAdapter {
     public static let providerURL = URL(string: "https://music.apple.com/")!
     private static let artworkSize = CGSize(width: 256, height: 256)
-    private let player = MPMusicPlayerController.systemMusicPlayer
+    private let makePlayer: () -> MPMusicPlayerController
+    private lazy var player = makePlayer()
 #if canImport(MusicKit) && os(iOS)
-    private let systemPlayer = SystemMusicPlayer.shared
+    private let makeSystemPlayer: () -> SystemMusicPlayer
+    private lazy var systemPlayer = makeSystemPlayer()
 #endif
     private var notificationTokens = [NSObjectProtocol]()
     private var artworkCache = MusicArtworkCache()
 
-    public init() {}
+    public init() {
+        makePlayer = { MPMusicPlayerController.systemMusicPlayer }
+#if canImport(MusicKit) && os(iOS)
+        makeSystemPlayer = { SystemMusicPlayer.shared }
+#endif
+    }
+
+#if canImport(MusicKit) && os(iOS)
+    init(
+        makePlayer: @escaping () -> MPMusicPlayerController,
+        makeSystemPlayer: @escaping () -> SystemMusicPlayer
+    ) {
+        self.makePlayer = makePlayer
+        self.makeSystemPlayer = makeSystemPlayer
+    }
+#endif
 
     isolated deinit {
-        let center = NotificationCenter.default
-        notificationTokens.forEach(center.removeObserver)
-        player.endGeneratingPlaybackNotifications()
+        if !notificationTokens.isEmpty {
+            let center = NotificationCenter.default
+            notificationTokens.forEach(center.removeObserver)
+            player.endGeneratingPlaybackNotifications()
+        }
     }
 
     /// Starts the system-player callbacks used to refresh bounded metadata.
@@ -1488,6 +1507,8 @@ public final class AppleMusicProviderAdapter {
     }
 
     public func stopMonitoring() {
+        // Cleanup of an unused adapter must not initialize an optional service.
+        guard !notificationTokens.isEmpty else { return }
         let center = NotificationCenter.default
         notificationTokens.forEach(center.removeObserver)
         notificationTokens.removeAll(keepingCapacity: true)

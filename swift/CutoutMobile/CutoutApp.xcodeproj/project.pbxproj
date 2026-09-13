@@ -69,6 +69,8 @@
 		444444444444444444444401 /* UITests/CutoutAppUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 444444444444444444444411 /* UITests/CutoutAppUITests.swift */; };
 		500000000000000000000101 /* Apps/Localizable.xcstrings in Resources */ = {isa = PBXBuildFile; fileRef = 500000000000000000000201 /* Apps/Localizable.xcstrings */; };
 		500000000000000000000102 /* Apps/Localizable.xcstrings in Resources */ = {isa = PBXBuildFile; fileRef = 500000000000000000000201 /* Apps/Localizable.xcstrings */; };
+		C00300000000000000000001 /* AppleMusicInitializationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C00300000000000000000011 /* AppleMusicInitializationTests.swift */; };
+		C00300000000000000000002 /* CutoutMobile in Frameworks */ = {isa = PBXBuildFile; productRef = C00300000000000000000012 /* CutoutMobile */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -159,6 +161,7 @@
 		444444444444444444444411 /* UITests/CutoutAppUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UITests/CutoutAppUITests.swift; sourceTree = SOURCE_ROOT; };
 		444444444444444444444412 /* CutoutAppUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = CutoutAppUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		500000000000000000000201 /* Apps/CutoutApp/Localizable.xcstrings */ = {isa = PBXFileReference; lastKnownFileType = text.json.xcstrings; path = Apps/CutoutApp/Localizable.xcstrings; sourceTree = SOURCE_ROOT; };
+		C00300000000000000000011 /* AppleMusicInitializationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UITests/AppleMusicInitializationTests.swift; sourceTree = SOURCE_ROOT; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -182,6 +185,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				C00300000000000000000002 /* CutoutMobile in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -300,6 +304,7 @@
 			isa = PBXGroup;
 			children = (
 				444444444444444444444411 /* UITests/CutoutAppUITests.swift */,
+				C00300000000000000000011 /* AppleMusicInitializationTests.swift */,
 			);
 			path = UITests;
 			sourceTree = "<group>";
@@ -363,6 +368,9 @@
 				444444444444444444444502 /* PBXTargetDependency */,
 			);
 			name = CutoutAppUITests;
+			packageProductDependencies = (
+				C00300000000000000000012 /* CutoutMobile */,
+			);
 			productName = CutoutAppUITests;
 			productReference = 444444444444444444444412 /* CutoutAppUITests.xctest */;
 			productType = "com.apple.product-type.bundle.ui-testing";
@@ -512,6 +520,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				444444444444444444444401 /* UITests/CutoutAppUITests.swift in Sources */,
+				C00300000000000000000001 /* AppleMusicInitializationTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -767,6 +776,11 @@
 			productName = CutoutMobile;
 		};
 		222222222222222222222181 /* CutoutMobile */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 111111111111111111111180 /* XCLocalSwiftPackageReference "." */;
+			productName = CutoutMobile;
+		};
+		C00300000000000000000012 /* CutoutMobile */ = {
 			isa = XCSwiftPackageProductDependency;
 			package = 111111111111111111111180 /* XCLocalSwiftPackageReference "." */;
 			productName = CutoutMobile;
