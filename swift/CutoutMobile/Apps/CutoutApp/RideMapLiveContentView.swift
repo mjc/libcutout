@@ -91,6 +91,7 @@ struct RideMapLiveContentView: View {
                     )
                     RideMapCameraControlsView(
                         followsLatestPoint: $followsLatestPoint,
+                        canRecenter: displayPoints.isEmpty == false && cameraRegion != nil,
                         recenter: recenterOnLatestPoint
                     )
                 }
@@ -331,6 +332,7 @@ private struct RideMapLiveStatusView: View {
 
 private struct RideMapCameraControlsView: View {
     @Binding var followsLatestPoint: Bool
+    let canRecenter: Bool
     let recenter: () -> Void
 
     var body: some View {
@@ -342,6 +344,7 @@ private struct RideMapCameraControlsView: View {
                 )
             }
             .buttonStyle(.bordered)
+            .disabled(!canRecenter)
             .accessibilityValue(
                 localizedAppText(
                     followsLatestPoint ? "ride_map.following" : "ride_map.not_following"
