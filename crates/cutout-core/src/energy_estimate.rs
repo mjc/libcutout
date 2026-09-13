@@ -130,6 +130,35 @@ impl UsablePackCapacity {
     }
 }
 
+/// Battery and current-direction basis selected for charge estimation.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ChargeProfile {
+    /// Stable identity for this battery profile.
+    pub identity: ChargeProfileIdentity,
+
+    /// Capacity and its evidence provenance.
+    pub usable_capacity: UsablePackCapacity,
+
+    /// Verification of the protocol's canonical charging-current direction.
+    pub charge_flow_verification: VerificationStatus,
+}
+
+impl ChargeProfile {
+    /// Creates a typed charge-estimation profile.
+    #[must_use]
+    pub const fn new(
+        identity: ChargeProfileIdentity,
+        usable_capacity: UsablePackCapacity,
+        charge_flow_verification: VerificationStatus,
+    ) -> Self {
+        Self {
+            identity,
+            usable_capacity,
+            charge_flow_verification,
+        }
+    }
+}
+
 /// The SOC evidence used by the estimator.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[non_exhaustive]

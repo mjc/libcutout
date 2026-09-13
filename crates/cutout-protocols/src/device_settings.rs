@@ -9,8 +9,9 @@ use cutout_core::{
     AeroLowBatteryMode, AeroPedalDipCompensation, AeroPedalHardness, AeroPwmPercent,
     AeroPwmSetting, AeroRidingMode, AeroSpeedSetting, AeroTransportMode, AeroVoltageCorrection,
     AeroWheelUnits, BegodeBeeperVolume, BegodeLedModeSetting, BegodeMaxSpeed, Capabilities,
-    CommandKind, DeviceCommand, DeviceSettingValue, LightState, PedalMode, RollAngle, SettingId,
-    SpeedAlarmMode,
+    Capacity, CapacitySource, ChargeProfile, ChargeProfileIdentity, CommandKind, DeviceCommand,
+    DeviceSettingValue, LightState, PedalMode, RollAngle, SettingId, SpeedAlarmMode,
+    UsablePackCapacity, VerificationStatus,
 };
 
 use crate::{BegodeFalconModel, SupportsBenignControls, SupportsSettingsWrites};
@@ -160,6 +161,7 @@ pub struct DeviceControlProfile {
     pub(crate) verified: Capabilities,
     confirmation: Capabilities,
     readable: &'static [SettingId],
+    default_charge_profile: Option<ChargeProfile>,
 }
 
 impl DeviceControlProfile {
@@ -175,6 +177,7 @@ impl DeviceControlProfile {
             verified,
             confirmation,
             readable: &[],
+            default_charge_profile: None,
         }
     }
 
@@ -183,6 +186,19 @@ impl DeviceControlProfile {
     pub const fn with_readable_settings(mut self, readable: &'static [SettingId]) -> Self {
         self.readable = readable;
         self
+    }
+
+    /// Adds the protocol-selected default charge-estimation basis.
+    #[must_use]
+    pub const fn with_default_charge_profile(mut self, profile: ChargeProfile) -> Self {
+        self.default_charge_profile = Some(profile);
+        self
+    }
+
+    /// Returns the protocol-selected default charge-estimation basis.
+    #[must_use]
+    pub const fn default_charge_profile(self) -> Option<ChargeProfile> {
+        self.default_charge_profile
     }
 
     /// Returns supported controls, retaining diagnostic-only and unverified definitions.
@@ -311,6 +327,15 @@ pub const fn aero_control_profile() -> DeviceControlProfile {
         ]),
     )
     .with_readable_settings(&[SettingId::AutoShutdownRemaining, SettingId::ChargeMode])
+    .with_default_charge_profile(ChargeProfile::new(
+        ChargeProfileIdentity::new(43),
+        UsablePackCapacity::new(
+            Capacity::from_milliamp_hours(10_000),
+            CapacitySource::ProtocolProfile,
+            VerificationStatus::SourceVerified,
+        ),
+        VerificationStatus::Unverified,
+    ))
 }
 
 /// Falcon writes with no readable acknowledgement remain explicitly unconfirmed.
@@ -328,6 +353,15 @@ pub const fn falcon_control_profile() -> DeviceControlProfile {
         ]),
     )
     .with_readable_settings(&[SettingId::PowerOffDelay])
+    .with_default_charge_profile(ChargeProfile::new(
+        ChargeProfileIdentity::new(44),
+        UsablePackCapacity::new(
+            Capacity::from_milliamp_hours(10_000),
+            CapacitySource::ProtocolProfile,
+            VerificationStatus::SourceVerified,
+        ),
+        VerificationStatus::Unverified,
+    ))
 }
 
 const CATALOG: &[(SettingId, &str, SettingGroup, u16)] = &[
@@ -806,8 +840,37 @@ const fn light(on: bool) -> LightState {
 mod tests {
     use super::*;
     use cutout_core::{
-        AeroPwmSetting, Capabilities, CommandKind, DeviceCommand, DeviceSettingValue, SettingId,
+        AeroPwmSetting, Capabilities, CapacitySource, CommandKind, DeviceCommand,
+        DeviceSettingValue, SettingId, VerificationStatus,
     };
+
+    #[test]
+    fn euc_profiles_publish_their_typed_default_charge_basis() {
+        let aero = aero_control_profile()
+            .default_charge_profile()
+            .expect("Aero charge profile");
+        assert_eq!(aero.identity.get(), 43);
+        assert_eq!(aero.usable_capacity.as_milliamp_hours(), 10_000);
+        assert_eq!(aero.usable_capacity.source, CapacitySource::ProtocolProfile);
+        assert_eq!(
+            aero.usable_capacity.verification,
+            VerificationStatus::SourceVerified
+        );
+        assert_eq!(
+            aero.charge_flow_verification,
+            VerificationStatus::Unverified
+        );
+
+        let falcon = falcon_control_profile()
+            .default_charge_profile()
+            .expect("Falcon charge profile");
+        assert_eq!(falcon.identity.get(), 44);
+        assert_eq!(falcon.usable_capacity.as_milliamp_hours(), 10_000);
+        assert_eq!(
+            DeviceControlProfile::default().default_charge_profile(),
+            None
+        );
+    }
 
     #[test]
     fn aero_profile_exposes_one_descriptor_per_physical_control() {
