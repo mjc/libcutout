@@ -21,8 +21,9 @@ final class RideMapStateTests: XCTestCase {
         let state = MobileRideMapState()
         XCTAssertNil(state.currentMusicHistory())
         _ = try state.startGpsOnly(atMs: 1_000, lastConnectedVehicle: nil)
-        XCTAssertEqual(state.currentMusicHistory()?.status, .missing)
+        XCTAssertEqual(state.currentMusicHistory()?.status, .disabled)
         try state.setMusicHistoryPolicy(.humanReadable)
+        XCTAssertEqual(state.currentMusicHistory()?.status, .available)
         let snapshot = MobileMusicSnapshotDto(
             provider: .spotify, sessionId: "session", state: .playing,
             item: MobileMusicItemDto(identifier: "track", title: "Song", artist: "Artist"),
