@@ -593,7 +593,9 @@ pub struct DiscoveryCandidateSnapshot {
 }
 
 impl DiscoveryCandidateSnapshot {
-    fn from_observation(observation: &DiscoveryObservation) -> Option<Self> {
+    /// Classifies transport hints for probing without claiming a verified protocol.
+    #[must_use]
+    pub fn from_observation(observation: &DiscoveryObservation) -> Option<Self> {
         let display_name = observation
             .advertised_name_text()
             .unwrap_or("Unknown Bluetooth device");
@@ -620,11 +622,11 @@ impl DiscoveryCandidateSnapshot {
             (false, true) => Some(Self {
                 platform_identifier: observation.platform_identifier.clone(),
                 display_name: display_name.to_owned(),
-                product_category: "VESC Onewheel".to_owned(),
-                evidence: "FFF0 transport hint".to_owned(),
-                detail: "VESC protocol route".to_owned(),
-                support: DiscoveryCandidateSupport::Supported,
-                connection_route: Some(DiscoveryConnectionRoute::VescOnewheel),
+                product_category: "UART device".to_owned(),
+                evidence: "FFF0/Nordic UART transport hint".to_owned(),
+                detail: "Read-only protocol probe recommended".to_owned(),
+                support: DiscoveryCandidateSupport::ProbeRecommended,
+                connection_route: None,
                 electric_unicycle_model: None,
             }),
             (false, false) => None,
@@ -856,6 +858,31 @@ mod tests {
     }
 
     #[test]
+    fn advertisement_transport_hints_never_establish_ride_route() {
+        for service in [
+            BluetoothServiceUuid::EUC_SERIAL_FFE0,
+            BluetoothServiceUuid::VESC_SERIAL_FFF0,
+            BluetoothServiceUuid::VESC_NORDIC_UART,
+        ] {
+            let mut state = CutoutSessionState::default();
+            state.observe_discovery(discovery_observation(
+                "unverified",
+                b"Claimed rideable",
+                vec![service],
+                -50,
+            ));
+            let candidates = state.discovery().picker_candidates();
+            assert_eq!(candidates.len(), 1);
+            assert_eq!(
+                candidates[0].support,
+                DiscoveryCandidateSupport::ProbeRecommended
+            );
+            assert_eq!(candidates[0].connection_route, None);
+            assert_eq!(candidates[0].electric_unicycle_model, None);
+        }
+    }
+
+    #[test]
     fn discovery_snapshot_projects_picker_candidates_from_identity_state() {
         let mut state = CutoutSessionState::default();
 
@@ -903,12 +930,9 @@ mod tests {
         assert_eq!(picker_candidates[1].platform_identifier, "vesc-id");
         assert_eq!(
             picker_candidates[1].support,
-            DiscoveryCandidateSupport::Supported
+            DiscoveryCandidateSupport::ProbeRecommended
         );
-        assert_eq!(
-            picker_candidates[1].connection_route,
-            Some(DiscoveryConnectionRoute::VescOnewheel)
-        );
+        assert_eq!(picker_candidates[1].connection_route, None);
         assert_eq!(picker_candidates[2].platform_identifier, "unknown-euc-id");
         assert_eq!(
             picker_candidates[2].support,

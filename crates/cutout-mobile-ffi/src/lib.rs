@@ -105,8 +105,8 @@ use cutout_protocols::{
     VETERAN_FIELD_CHARGE_MODE, VETERAN_FIELD_PEDALS_MODE, VETERAN_FIELD_SPEED_ALERT_DECI_KMH,
     VETERAN_FIELD_SPEED_TILTBACK_DECI_KMH, VescBatteryType as CoreVescBatteryType,
     VescBoardProfile as CoreVescBoardProfile, VescReadOnlySession as CoreVescReadOnlySession,
-    begode_identification_probes, closest_known_model, identify_known_model,
-    new_nosfet_aero_benign_control_session, try_new_begode_falcon_benign_control_session,
+    closest_known_model, identify_known_model, new_nosfet_aero_benign_control_session,
+    try_new_begode_falcon_benign_control_session,
 };
 use cutout_ride_maps as ride_maps;
 use libcutout_persistence as persistence;
@@ -1187,60 +1187,23 @@ impl CutoutSessionStateHandle {
         &self,
         started_at_ms: u64,
     ) -> MobileIdentificationProbeOutcomeDto {
-        let probes = begode_identification_probes();
-        let mut state = self.lock_inner();
-        let selected_identifier = state
-            .state
-            .discovery()
-            .selected_platform_identifier
-            .as_deref();
-        let selected_candidate = selected_identifier.and_then(|identifier| {
-            state
-                .state
-                .discovery()
-                .picker_candidates()
-                .into_iter()
-                .find(|candidate| candidate.platform_identifier == identifier)
-        });
-        match selected_candidate {
-            Some(candidate)
-                if candidate.connection_route
-                    == Some(CoreDiscoveryConnectionRoute::VescOnewheel) =>
-            {
-                return MobileIdentificationProbeOutcomeDto::Unsupported;
+        let mut inner = self.lock_inner();
+        let MobileSessionState { state, detector } = &mut *inner;
+        match detector.begin_identification_probes(state, MonotonicTimestamp::new(started_at_ms)) {
+            cutout_protocols::IdentificationProbePlan::Unsupported => {
+                MobileIdentificationProbeOutcomeDto::Unsupported
             }
-            Some(candidate)
-                if candidate.connection_route
-                    == Some(CoreDiscoveryConnectionRoute::ElectricUnicycle)
-                    || candidate.support == CoreDiscoveryCandidateSupport::ProbeRecommended => {}
-            Some(_) => {
-                return MobileIdentificationProbeOutcomeDto::Unsupported;
+            cutout_protocols::IdentificationProbePlan::AlreadyPending => {
+                MobileIdentificationProbeOutcomeDto::AlreadyPending
             }
-            None if selected_identifier.is_some() => {
-                return MobileIdentificationProbeOutcomeDto::Unsupported;
+            cutout_protocols::IdentificationProbePlan::Writes(probes) => {
+                MobileIdentificationProbeOutcomeDto::Writes {
+                    writes: probes
+                        .iter()
+                        .map(MobileIdentificationProbeWriteDto::from_begode_probe)
+                        .collect(),
+                }
             }
-            None => {}
-        }
-        if state
-            .detector
-            .next_probe_expiry(&state.state, CoreDuration::from_milliseconds(0))
-            .is_some()
-        {
-            return MobileIdentificationProbeOutcomeDto::AlreadyPending;
-        }
-        let MobileSessionState { state, detector } = &mut *state;
-        for probe in &probes {
-            let _ = detector.observe_probe_write_at(
-                state,
-                probe.probe,
-                MonotonicTimestamp::new(started_at_ms),
-            );
-        }
-        MobileIdentificationProbeOutcomeDto::Writes {
-            writes: probes
-                .iter()
-                .map(MobileIdentificationProbeWriteDto::from_begode_probe)
-                .collect(),
         }
     }
 
@@ -1434,47 +1397,20 @@ pub fn mobile_discovery_candidate_from_advertisement(
     local_name: Option<String>,
     advertised_service_uuids: Vec<DiscoveryServiceUuid>,
 ) -> DiscoveryCandidate {
+    let observation = CoreDiscoveryObservation {
+        platform_identifier: platform_identifier.clone(),
+        advertised_name: local_name.as_deref().map(|name| name.as_bytes().to_vec()),
+        advertised_service_uuids: advertised_service_uuids
+            .into_iter()
+            .filter_map(|uuid| CoreBluetoothServiceUuid::try_from(uuid.bytes).ok())
+            .collect(),
+        manufacturer_data: Vec::new(),
+        rssi_dbm: None,
+    };
+    if let Some(candidate) = DiscoveryCandidateSnapshot::from_observation(&observation) {
+        return candidate.into();
+    }
     let display_name = local_name.unwrap_or_else(|| "Unknown Bluetooth device".to_owned());
-    let advertised_service_uuids = advertised_service_uuids
-        .into_iter()
-        .filter_map(|uuid| CoreBluetoothServiceUuid::try_from(uuid.bytes).ok())
-        .collect::<Vec<_>>();
-    if advertised_service_uuids.contains(&CoreBluetoothServiceUuid::EUC_SERIAL_FFE0) {
-        return DiscoveryCandidate {
-            platform_identifier,
-            display_name,
-            product_category: "Electric unicycle".to_owned(),
-            evidence: "FFE0/FFE1 transport hint".to_owned(),
-            detail: "Read-only protocol probe recommended".to_owned(),
-            is_picker_candidate: true,
-            support: DiscoveryCandidateSupport::ProbeRecommended,
-            recommended_action: DiscoveryCandidateSupport::ProbeRecommended.recommended_action(),
-            section: DiscoveryCandidateSupport::ProbeRecommended.picker_section(),
-            connection_route: None,
-            electric_unicycle_model: None,
-            disabled_reason: Some("Read-only protocol probe recommended".to_owned()),
-        };
-    }
-
-    if advertised_service_uuids.iter().any(|uuid| {
-        *uuid == CoreBluetoothServiceUuid::VESC_SERIAL_FFF0
-            || *uuid == CoreBluetoothServiceUuid::VESC_NORDIC_UART
-    }) {
-        return DiscoveryCandidate {
-            platform_identifier,
-            display_name,
-            product_category: "VESC Onewheel".to_owned(),
-            evidence: "FFF0 transport hint".to_owned(),
-            detail: "VESC protocol route".to_owned(),
-            is_picker_candidate: true,
-            support: DiscoveryCandidateSupport::Supported,
-            recommended_action: DiscoveryCandidateSupport::Supported.recommended_action(),
-            section: DiscoveryCandidateSupport::Supported.picker_section(),
-            connection_route: Some(DiscoveryConnectionRoute::VescOnewheel),
-            electric_unicycle_model: None,
-            disabled_reason: None,
-        };
-    }
 
     DiscoveryCandidate {
         platform_identifier,
@@ -19022,7 +18958,7 @@ mod tests {
     }
 
     #[test]
-    fn mobile_discovery_candidate_routes_vesc_advertisement() {
+    fn mobile_discovery_candidate_keeps_uart_advertisement_unverified() {
         let candidate = mobile_discovery_candidate_from_advertisement(
             "ios-local-unknown".to_owned(),
             Some("Little FOCer".to_owned()),
@@ -19032,14 +18968,16 @@ mod tests {
         );
 
         assert!(candidate.is_picker_candidate);
-        assert_eq!(candidate.product_category, "VESC Onewheel");
-        assert_eq!(candidate.support, DiscoveryCandidateSupport::Supported);
         assert_eq!(
-            candidate.connection_route,
-            Some(DiscoveryConnectionRoute::VescOnewheel)
+            candidate.support,
+            DiscoveryCandidateSupport::ProbeRecommended
         );
+        assert_eq!(candidate.connection_route, None);
         assert_eq!(candidate.electric_unicycle_model, None);
-        assert_eq!(candidate.disabled_reason, None);
+        assert_eq!(
+            candidate.disabled_reason,
+            Some("Read-only protocol probe recommended".to_owned())
+        );
     }
 
     #[test]
