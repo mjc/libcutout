@@ -414,7 +414,7 @@ mod tests {
         let mut frame = vec![0_u8; 42];
         frame[..4].copy_from_slice(&[0xdc, 0x5a, 0x5c, 38]);
         frame[28..30].copy_from_slice(&43_000_u16.to_be_bytes());
-        handle.observe_connection_notification(token.clone(), frame);
+        handle.observe_connection_notification(token.clone(), frame.clone());
         handle.resolve_device_session(token.clone(), false, 1);
         let _ = handle.lock_inner().ingest(
             &token.clone().into(),
@@ -423,18 +423,26 @@ mod tests {
                 max_write_len: None,
             },
         );
+        let _ = handle.lock_inner().ingest(
+            &token.clone().into(),
+            &cutout_core::SessionInputDto::Notification {
+                channel: cutout_protocols::VETERAN_DATA_CHANNEL.as_bytes(),
+                bytes: frame,
+                monotonic_ms: cutout_core::MonotonicMillisDto { milliseconds: 1 },
+            },
+        );
         let descriptors = handle.settings_descriptors(false);
         assert_eq!(descriptors.connection.token, Some(token.clone()));
         assert!(
             descriptors
                 .descriptors
                 .iter()
-                .any(|descriptor| descriptor.id == MobileSettingIdDto::Headlight)
+                .any(|descriptor| descriptor.id == MobileSettingIdDto::HighBeam)
         );
         handle
             .submit_setting(
                 token.clone(),
-                MobileSettingIdDto::Headlight,
+                MobileSettingIdDto::HighBeam,
                 MobileSettingValueDto::Boolean { value: true },
                 false,
                 2,
@@ -444,7 +452,7 @@ mod tests {
         let headlight = before
             .settings
             .iter()
-            .find(|setting| setting.id == MobileSettingIdDto::Headlight)
+            .find(|setting| setting.id == MobileSettingIdDto::HighBeam)
             .unwrap();
         assert_eq!(
             headlight.requested,
@@ -459,7 +467,7 @@ mod tests {
             handle
                 .submit_setting(
                     token.clone(),
-                    MobileSettingIdDto::Headlight,
+                    MobileSettingIdDto::HighBeam,
                     MobileSettingValueDto::Number { value: 80 },
                     false,
                     3
@@ -473,7 +481,7 @@ mod tests {
             handle
                 .submit_setting(
                     token,
-                    MobileSettingIdDto::Headlight,
+                    MobileSettingIdDto::HighBeam,
                     MobileSettingValueDto::Boolean { value: false },
                     false,
                     5

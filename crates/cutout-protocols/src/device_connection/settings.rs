@@ -149,10 +149,11 @@ mod tests {
     fn semantic_submission_uses_live_session_and_records_unconfirmed_outcome() {
         let mut owner = DeviceConnectionSession::default();
         let token = super::super::tests::connected_aero(&mut owner);
+        let _ = owner.ingest(&token, &super::super::tests::aero_mode_telemetry(1));
         let result = owner
             .submit_setting(
                 &token,
-                SettingId::Headlight,
+                SettingId::HighBeam,
                 DeviceSettingValue::Boolean(true),
                 false,
                 MonotonicTimestamp::new(2),
@@ -167,7 +168,7 @@ mod tests {
         let headlight = snapshot
             .settings
             .iter()
-            .find(|setting| setting.id == SettingId::Headlight)
+            .find(|setting| setting.id == SettingId::HighBeam)
             .unwrap();
         assert_eq!(headlight.requested, Some(DeviceSettingValue::Boolean(true)));
         assert_eq!(
@@ -180,10 +181,11 @@ mod tests {
     fn invalid_or_stale_requests_do_not_replace_a_pending_request() {
         let mut owner = DeviceConnectionSession::default();
         let token = super::super::tests::connected_aero(&mut owner);
+        let _ = owner.ingest(&token, &super::super::tests::aero_mode_telemetry(1));
         owner
             .submit_setting(
                 &token,
-                SettingId::Headlight,
+                SettingId::HighBeam,
                 DeviceSettingValue::Boolean(true),
                 false,
                 MonotonicTimestamp::new(2),
@@ -193,7 +195,7 @@ mod tests {
         assert_eq!(
             owner.submit_setting(
                 &token,
-                SettingId::Headlight,
+                SettingId::HighBeam,
                 DeviceSettingValue::Number(7),
                 false,
                 MonotonicTimestamp::new(3)
@@ -207,7 +209,7 @@ mod tests {
         assert_eq!(
             owner.submit_setting(
                 &token,
-                SettingId::Headlight,
+                SettingId::HighBeam,
                 DeviceSettingValue::Boolean(false),
                 false,
                 MonotonicTimestamp::new(5)

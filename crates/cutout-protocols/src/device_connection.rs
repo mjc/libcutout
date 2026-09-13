@@ -132,6 +132,17 @@ mod tests {
         token
     }
 
+    pub(super) fn aero_mode_telemetry(at: u64) -> SessionInputDto {
+        let mut frame = vec![0_u8; 42];
+        frame[..4].copy_from_slice(&[0xdc, 0x5a, 0x5c, 38]);
+        frame[28..30].copy_from_slice(&43_000_u16.to_be_bytes());
+        SessionInputDto::Notification {
+            channel: crate::VETERAN_DATA_CHANNEL.as_bytes(),
+            bytes: frame,
+            monotonic_ms: cutout_core::MonotonicMillisDto { milliseconds: at },
+        }
+    }
+
     fn pwm_duty_readback(pwm: u8, at: u64) -> SessionInputDto {
         let mut frame = vec![0x80; 58];
         frame[..4].copy_from_slice(&[0xdc, 0x5a, 0x5c, 54]);
