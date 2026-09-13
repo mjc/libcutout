@@ -3204,6 +3204,12 @@ extension CutoutSessionCore: CLLocationManagerDelegate {
         }
     }
 
+    /// Orders future-ride preferences with automatic and manual recording work.
+    public func updateRideMapDefaultMusicHistoryPolicy(_ policy: MobileMusicHistoryPolicyDto) {
+        guard let rideMapState else { return }
+        rideMapQueue.async { rideMapState.setDefaultMusicHistoryPolicy(policy) }
+    }
+
     public func applyRideMapCommand(
         expected: MobileRideMapRecordingTokenDto?, event: MobileRideEventDto,
         atMs: UInt64, lastConnectedVehicle: String?

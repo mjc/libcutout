@@ -427,6 +427,7 @@ final class CutoutAppModel {
         self.selectedMusicProvider = musicProviderSelectionStore.provider
         self.musicHistoryPolicyStore = musicHistoryPolicyStore
         self.musicHistoryPolicy = musicHistoryPolicyStore.policy
+        core.updateRideMapDefaultMusicHistoryPolicy(musicHistoryPolicyStore.policy)
         self.musicCoordinator = MusicIntegrationCoordinator(rideMapState: core.rideMapStateHandle)
         self.musicTimelineEvents = []
         if let initialPersistence {
@@ -440,6 +441,9 @@ final class CutoutAppModel {
                let name = selectedDeviceStore.displayName(for: identity) {
                 rideMapVehicleNameCache[identity] = name
             }
+        }
+        rideRecording.onRideChange = { [weak self] snapshot in
+            self?.adoptNewRideListeningPolicy(snapshot)
         }
         restoreRideMapState(initialPersistence: initialPersistence)
         self.core.onDisplayStateChange = { [weak self] displayState in
@@ -766,6 +770,7 @@ final class CutoutAppModel {
 
     private func rememberMusicHistoryPolicy(_ policy: MobileMusicHistoryPolicyDto) {
         musicHistoryPolicyStore.set(policy)
+        core.updateRideMapDefaultMusicHistoryPolicy(policy)
         musicHistoryPolicy = policy
         musicHistoryUnavailable = false
         musicHistorySaveError = nil
@@ -991,33 +996,19 @@ final class CutoutAppModel {
 
     @discardableResult
     func startGpsOnlyRide() async -> Bool {
-        let started = await rideRecording.command(
+        await rideRecording.command(
             .start, lastConnectedVehicle: selectedDeviceStore.platformIdentifier
         )
-        guard started else { return false }
-        // Apply the user's default to the fresh Rust-owned ride timeline.
+    }
+
+    private func adoptNewRideListeningPolicy(_ snapshot: MobileRideMapSnapshotDto) {
         core.updateMusicCaptureObservation(nil)
-        let defaultPolicy = musicHistoryPolicyStore.policy
-        musicHistoryPolicy = defaultPolicy
-        do {
-            try musicCoordinator.setHistoryPolicy(defaultPolicy)
-            synchronizeMusicHistory(core.rideMapStateHandle?.currentMusicHistory())
-        } catch {
-            rideRecording.error = Self.mapRideMapError(error)
-            guard let state = core.rideMapStateHandle,
-                  state.currentSnapshot() != nil
-            else {
-                musicHistoryPolicy = .disabled
-                musicHistoryUnavailable = false
-                musicCoordinator.restoreHistoryPolicy(.disabled)
-                musicTimelineEvents = []
-                return false
-            }
-            synchronizeMusicHistory(state.currentMusicHistory())
-            return true
-        }
-        musicTimelineEvents = musicCoordinator.recordedEvents
-        return true
+        musicHistoryPolicy = snapshot.musicHistoryPolicy
+        musicHistoryUnavailable = false
+        musicHistorySaveError = nil
+        musicCoordinator.restoreHistoryPolicy(snapshot.musicHistoryPolicy)
+        musicTimelineEvents = []
+        core.updateMusicCapturePolicy(snapshot.musicHistoryPolicy)
     }
 
     private func synchronizeMusicHistory(_ history: MobileMusicHistoryDto?) {

@@ -444,6 +444,7 @@ public struct MobileRideMapRouteEndpointMetadata: Equatable, Hashable, Sendable 
 public struct MobileRideMapSnapshotDto: Equatable, Hashable, Sendable {
     public let rideID: String
     public let revision: UInt64
+    public let musicHistoryPolicy: MobileMusicHistoryPolicyDto
     public let commandToken: MobileRideMapRecordingTokenDto?
     public let recordingToken: MobileRideMapRecordingTokenDto?
     public let allowedActions: [MobileRideEventDto]
@@ -465,12 +466,14 @@ public struct MobileRideMapSnapshotDto: Equatable, Hashable, Sendable {
         recordingToken: MobileRideMapRecordingTokenDto? = nil,
         commandToken: MobileRideMapRecordingTokenDto? = nil,
         allowedActions: [MobileRideEventDto] = [],
-        telemetryState: MobileRideMapTelemetryStateDto = .gpsOnly
+        telemetryState: MobileRideMapTelemetryStateDto = .gpsOnly,
+        musicHistoryPolicy: MobileMusicHistoryPolicyDto = .disabled
     ) {
         self.rideID = rideID
         self.revision = revision
         self.recordingToken = recordingToken
         self.commandToken = commandToken
+        self.musicHistoryPolicy = musicHistoryPolicy
         self.allowedActions = allowedActions
         self.telemetryState = telemetryState
         self.state = state
@@ -824,7 +827,11 @@ public final class MobileRideMapState: @unchecked Sendable {
         try withCore { mapSnapshot(try $0.observeConnectionTelemetry(connection: connection, atMs: atMs)) }
     }
 
-    /// Sets the active ride's bounded music-history retention policy.
+    /// Supplies the saved preference for future ride creation.
+    public func setDefaultMusicHistoryPolicy(_ policy: MobileMusicHistoryPolicyDto) {
+        core?.setDefaultMusicHistoryPolicy(policy: policy)
+    }
+
     public func setMusicHistoryPolicy(_ policy: MobileMusicHistoryPolicyDto) throws {
         try withCore { try $0.setMusicHistoryPolicy(policy: policy) }
     }
@@ -1191,7 +1198,8 @@ public final class MobileRideMapState: @unchecked Sendable {
             recordingToken: snapshot.recordingToken,
             commandToken: snapshot.commandToken,
             allowedActions: snapshot.allowedActions,
-            telemetryState: map(snapshot.telemetryState)
+            telemetryState: map(snapshot.telemetryState),
+            musicHistoryPolicy: snapshot.musicHistoryPolicy
         )
     }
 

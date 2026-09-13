@@ -47,6 +47,8 @@ final class RideRecordingModel {
         isCommandPending = false
     }
 
+    var onRideChange: ((MobileRideMapSnapshotDto) -> Void)?
+
     func restore() {
         guard let snapshot = core.rideMapStateHandle?.currentSnapshot() else { return }
         applySnapshot(snapshot)
@@ -66,6 +68,7 @@ final class RideRecordingModel {
         let changedRoute = changedRide || prior?.summary.pointCount != incoming.summary.pointCount
         if changedRide { invalidateProjection(clearPoints: true) }
         snapshot = incoming
+        if changedRide { onRideChange?(incoming) }
         if prior?.state != incoming.state { updateDurationTicker() }
         if changedRoute { requestProjection() }
         return true

@@ -34,6 +34,7 @@ protocol CutoutSessionDriving: AnyObject {
     func recordOnly(platformIdentifier: String, note: String?, annotations: [String]) -> Bool
     func annotateCapture(label: String)
     func annotateCapture(key: String, value: String)
+    func updateRideMapDefaultMusicHistoryPolicy(_ policy: MobileMusicHistoryPolicyDto)
     func updateMusicCapturePolicy(_ policy: MobileMusicHistoryPolicyDto)
     func updateMusicCaptureObservation(_ observation: MobilePevcapMusicEventDto?)
     func flushCapture() async -> Bool
@@ -71,6 +72,10 @@ extension CutoutSessionDriving {
             throw MobileRideMapError.storageError("Rust ride database is unavailable")
         }
         return state
+    }
+
+    func updateRideMapDefaultMusicHistoryPolicy(_ policy: MobileMusicHistoryPolicyDto) {
+        rideMapStateHandle?.setDefaultMusicHistoryPolicy(policy)
     }
 
     func resetRideMapLocationAdmission() {}

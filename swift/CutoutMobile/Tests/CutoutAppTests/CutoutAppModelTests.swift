@@ -144,6 +144,28 @@ final class CutoutAppModelTests: XCTestCase {
     }
 
     @MainActor
+    func testProductionAutomaticRideUsesSavedListeningDefault() async throws {
+        let suiteName = "CutoutAppAutomaticMusicHistoryTests-\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let policyStore = MusicHistoryPolicyStore(defaults: defaults)
+        policyStore.set(.humanReadable)
+        let fixture = CutoutUITestSessionFixture.autoVescLiveActivity
+        let state = MobileRideMapState()
+        let core = CutoutSessionCore(testScript: fixture.testScript, rideMapState: state)
+        let model = CutoutAppModel(core: core, musicHistoryPolicyStore: policyStore)
+
+        core.start()
+        XCTAssertTrue(core.pair(platformIdentifier: fixture.candidate.platformIdentifier))
+        await Self.waitUntil("automatic recording with saved music preference") {
+            model.rideMapSnapshot?.state == .active
+        }
+        XCTAssertEqual(state.currentMusicHistoryPolicy(), .humanReadable)
+        XCTAssertEqual(model.musicHistoryPolicy, .humanReadable)
+        core.disconnectAndScan()
+    }
+
+    @MainActor
     func testMusicHistoryDefaultIsLoadedForFutureRides() throws {
         let suiteName = "CutoutAppMusicHistoryTests-\(UUID().uuidString)"
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
