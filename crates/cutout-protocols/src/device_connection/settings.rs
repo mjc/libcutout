@@ -73,21 +73,6 @@ impl DeviceConnectionSession {
             .descriptors(validation_mode)
             .iter()
             .any(|descriptor| descriptor.id == id && descriptor.confirmation_supported);
-        if command.safety_class() == cutout_core::SafetyClass::StationaryOnly {
-            let snapshot = device.current_snapshot();
-            let operating_state = cutout_core::RideOperatingState::resolve(
-                snapshot.operating_state.map(Into::into),
-                snapshot.charge_mode.map(|mode| mode.value.into()),
-                snapshot
-                    .speed
-                    .map(|speed| cutout_core::Speed::from_millimetres_per_second(speed.value)),
-            );
-            let _ = device.arm_settings_writes(
-                operating_state.into(),
-                snapshot.speed.map(|speed| speed.value),
-                at.get(),
-            );
-        }
         let step = self
             .ingest_validated(
                 token,
