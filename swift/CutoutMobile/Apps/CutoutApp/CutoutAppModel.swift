@@ -2916,6 +2916,14 @@ final class CutoutAppModel {
             }
             return
         }
+        if let platformIdentifier {
+            connectionState = .identified(ConnectionSelection(
+                platformIdentifier: platformIdentifier,
+                title: selectedDeviceStore.displayName(for: platformIdentifier)
+                    ?? localizedAppText("setup.device"),
+                route: .electricUnicycle
+            ))
+        }
         if platformIdentifier != nil, marker == nil {
             permitsStoredDeviceAutoPairing = false
             rideSessionRestorationState = .complete
@@ -2927,7 +2935,7 @@ final class CutoutAppModel {
                     marker: marker,
                     platformIdentifier: platformIdentifier
                 )) == true
-            permitsStoredDeviceAutoPairing = markerMatches
+            permitsStoredDeviceAutoPairing = false
             if !markerMatches {
                 beginRideSessionRecovery(
                     restoredPlatformIdentifier: platformIdentifier,
@@ -2963,9 +2971,7 @@ final class CutoutAppModel {
             liveActivityError = error
             switch recoveryResult {
             case .adopted:
-                if error == nil,
-                   core.rideSessionStateHandle.rideSessionSnapshot().phase == .active
-                {
+                if error == nil {
                     lastLiveActivitySnapshot = snapshot
                     lastLiveActivityUpdate = snapshot == nil ? nil : core.now()
                 }

@@ -3107,7 +3107,10 @@ final class CutoutAppModelTests: XCTestCase {
         let selectedDeviceStore = DevicePickerSelectionStore(defaults: defaults)
         let fixture = CutoutUITestSessionFixture.vesc
         let platformIdentifier = fixture.candidate.platformIdentifier
-        selectedDeviceStore.save(platformIdentifier: platformIdentifier)
+        selectedDeviceStore.save(
+            platformIdentifier: platformIdentifier,
+            displayName: fixture.candidate.displayName
+        )
         let source = CutoutSessionStateHandle()
         let started = try source.reduceRideSession(
             input: .start(platformIdentifier: platformIdentifier)
@@ -3126,8 +3129,19 @@ final class CutoutAppModelTests: XCTestCase {
         )
 
         model.start()
-        await Self.waitUntil("restored ride reconnecting phase") {
-            driver.rideSessionStateHandle.rideSessionSnapshot().phase == .reconnecting
+        XCTAssertEqual(driver.pairedPlatformIdentifiers, [])
+        XCTAssertEqual(driver.disconnectCount, 0)
+        XCTAssertEqual(model.selectedRideIdentifier, platformIdentifier)
+
+        driver.protocolIdentityCandidate = fixture.candidate
+        driver.onProtocolIdentityCandidateChange?(fixture.candidate)
+        await Self.waitUntil("restored ride identity") {
+            let snapshot = driver.rideSessionStateHandle.rideSessionSnapshot()
+            guard snapshot.identity == started.snapshot.identity,
+                  snapshot.phase == .active,
+                  markerStore.marker != nil
+            else { return false }
+            return await manager.startCount == 1
         }
         driver.onPhaseChange?(.subscribing)
         driver.onPhaseChange?(.live)
@@ -3147,14 +3161,17 @@ final class CutoutAppModelTests: XCTestCase {
     }
 
     @MainActor
-    func testRestoredPeripheralWithoutAPersistedRideRequiresUserAction() async throws {
+    func testRestoredPeripheralWithoutAPersistedRideResumesTheConnection() async throws {
         let suiteName = "CutoutAppModelTests.unmarkedRestoredRide.\(UUID().uuidString)"
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
         defer { defaults.removePersistentDomain(forName: suiteName) }
         let selectedDeviceStore = DevicePickerSelectionStore(defaults: defaults)
         let fixture = CutoutUITestSessionFixture.vesc
         let platformIdentifier = fixture.candidate.platformIdentifier
-        selectedDeviceStore.save(platformIdentifier: platformIdentifier)
+        selectedDeviceStore.save(
+            platformIdentifier: platformIdentifier,
+            displayName: fixture.candidate.displayName
+        )
         let driver = SessionDriverSpy(
             rows: [fixture.candidate.pickerRow],
             restoredPlatformIdentifier: platformIdentifier
@@ -3170,9 +3187,25 @@ final class CutoutAppModelTests: XCTestCase {
         model.start()
 
         XCTAssertEqual(driver.pairedPlatformIdentifiers, [])
+        XCTAssertEqual(driver.disconnectCount, 0)
+        XCTAssertEqual(model.selectedRideIdentifier, platformIdentifier)
+        XCTAssertEqual(model.selectedRideTitle, fixture.candidate.displayName)
+
+        driver.protocolIdentityCandidate = fixture.candidate
+        driver.onProtocolIdentityCandidateChange?(fixture.candidate)
+        driver.onPhaseChange?(.subscribing)
+        driver.onPhaseChange?(.live)
+
+        XCTAssertEqual(model.phase, .live)
+        XCTAssertEqual(
+            model.connectionState.navigationIntent(isRecordOnlyCapture: false),
+            .openRide(.vescOnewheel)
+        )
+        await Self.waitUntil("restored connection starts a ride") {
+            await manager.startCount == 1
+        }
         let startCount = await manager.startCount
-        XCTAssertEqual(startCount, 0)
-        XCTAssertTrue(model.pair(platformIdentifier: platformIdentifier))
+        XCTAssertEqual(startCount, 1)
     }
 
     @MainActor
@@ -3212,7 +3245,7 @@ final class CutoutAppModelTests: XCTestCase {
     }
 
     @MainActor
-    func testRestoredPeripheralDifferentFromPersistedRideRequiresUserAction() async throws {
+    func testRestoredPeripheralDifferentFromPersistedRideEndsTheStaleRideAndResumes() async throws {
         let suiteName = "CutoutAppModelTests.replacedRestoredRide.\(UUID().uuidString)"
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
         defer { defaults.removePersistentDomain(forName: suiteName) }
@@ -3248,16 +3281,26 @@ final class CutoutAppModelTests: XCTestCase {
         let initialStartCount = await manager.startCount
         XCTAssertEqual(endReason, .sessionEnded)
         XCTAssertEqual(driver.pairedPlatformIdentifiers, [])
+        XCTAssertEqual(driver.disconnectCount, 0)
+        XCTAssertEqual(model.selectedRideIdentifier, restoredPlatformIdentifier)
         XCTAssertEqual(driver.rideSessionStateHandle.rideSessionSnapshot().phase, .ended(reason: .appReset))
         XCTAssertEqual(initialStartCount, 0)
         XCTAssertNil(markerStore.marker)
 
-        XCTAssertTrue(model.pair(platformIdentifier: restoredPlatformIdentifier))
+        driver.protocolIdentityCandidate = fixture.candidate
+        driver.onProtocolIdentityCandidateChange?(fixture.candidate)
+        driver.onPhaseChange?(.subscribing)
+        driver.onPhaseChange?(.live)
         await Self.waitUntil("user-selected replacement ride activity") {
             await manager.startCount == 1
         }
         let userActionStartCount = await manager.startCount
         XCTAssertEqual(userActionStartCount, 1)
+        XCTAssertEqual(model.phase, .live)
+        XCTAssertEqual(
+            model.connectionState.navigationIntent(isRecordOnlyCapture: false),
+            .openRide(.vescOnewheel)
+        )
     }
 
     @MainActor
