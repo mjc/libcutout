@@ -5,16 +5,16 @@ use crate::{
     ProtocolTag, Temperature, VerificationStatus, Voltage,
 };
 
-/// Maximum recent samples retained for one BMS voltage observation.
-pub const BMS_OBSERVATION_HISTORY_MAX: usize = 7;
+/// Complete BMS page cycles retained for stabilizing cell-voltage observations.
+pub(crate) const BMS_OBSERVATION_HISTORY_CYCLES: usize = 7;
 
 /// One raw sample retained behind a stabilized BMS voltage observation.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct BmsVoltageSample {
     /// Raw voltage reported by the BMS.
     pub voltage: Voltage,
-    /// Host monotonic receipt time, when the readback passed through a host session.
-    pub observed_at: Option<crate::MonotonicTimestamp>,
+    /// Host monotonic receipt time attached before the readback entered retained state.
+    pub observed_at: crate::MonotonicTimestamp,
 }
 
 /// Current stabilized value and recent raw history for one protocol-assigned observation.
@@ -52,13 +52,17 @@ pub struct BmsObservationSummary {
 impl BmsObservationSummary {
     /// Summarizes retained readbacks in oldest-to-newest replacement order.
     ///
-    /// Non-cell pages have no voltage observations. Later values replace earlier values
-    /// with the same identity. An unassigned page uses page-local indices, as in its DTO.
-    /// This does not imply the readings were measured simultaneously or cover a full pack.
+    /// Untimestamped decoder-local and non-cell pages have no retained voltage observations.
+    /// Later timestamped values extend the raw history for the same identity. An unassigned page
+    /// uses page-local indices, as in its DTO. This does not imply the readings were measured
+    /// simultaneously or cover a full pack.
     #[must_use]
     pub fn from_readbacks(readbacks: &[crate::BatteryReadback]) -> Self {
         let mut observations = std::collections::BTreeMap::new();
         for readback in readbacks {
+            let Some(observed_at) = readback.observed_at() else {
+                continue;
+            };
             let Some(BatteryPagePayload::CellVoltage(page)) = readback.page() else {
                 continue;
             };
@@ -76,22 +80,31 @@ impl BmsObservationSummary {
                             .and_then(|first| first.get().checked_add(slot))
                             .map(crate::BmsCellIndex::new)
                     });
-                    observations.insert(
-                        index,
-                        BmsVoltageObservation {
+                    let sample = BmsVoltageSample {
+                        voltage: *voltage,
+                        observed_at,
+                    };
+                    observations
+                        .entry(index)
+                        .and_modify(|observation: &mut BmsVoltageObservation| {
+                            observation.pack_index = readback.observation_pack_index();
+                            observation.pack_observation_index = pack_observation_index;
+                            observation.latest_voltage = *voltage;
+                            observation.samples.push(sample);
+                        })
+                        .or_insert_with(|| BmsVoltageObservation {
                             index: crate::BmsObservationIndex::new(index),
                             pack_index: readback.observation_pack_index(),
                             pack_observation_index,
                             voltage: *voltage,
                             latest_voltage: *voltage,
-                            samples: vec![BmsVoltageSample {
-                                voltage: *voltage,
-                                observed_at: readback.observed_at(),
-                            }],
-                        },
-                    );
+                            samples: vec![sample],
+                        });
                 }
             }
+        }
+        for observation in observations.values_mut() {
+            observation.voltage = stabilized_voltage(&observation.samples);
         }
         let lowest = observations
             .iter()
@@ -117,6 +130,17 @@ impl BmsObservationSummary {
             observations: observations.into_values().collect(),
         }
     }
+}
+
+fn stabilized_voltage(samples: &[BmsVoltageSample]) -> Voltage {
+    let seed = samples
+        .first()
+        .expect("an observation is created with one sample")
+        .voltage;
+    let mut values: Vec<_> = samples.iter().map(|sample| sample.voltage).collect();
+    values.resize(BMS_OBSERVATION_HISTORY_CYCLES, seed);
+    values.sort_unstable_by_key(|value| value.as_millivolts());
+    values[values.len().saturating_sub(1) / 2]
 }
 
 /// Maximum number of cell or cell-group voltage values carried by one typed BMS page.

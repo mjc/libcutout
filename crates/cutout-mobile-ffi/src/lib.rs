@@ -11484,7 +11484,7 @@ pub struct MobileBmsGroupSnapshotDto {
     pub recent_voltages: Vec<Voltage>,
 
     /// Host monotonic receipt times parallel to `recent_voltages`.
-    pub recent_observation_milliseconds: Vec<Option<u64>>,
+    pub recent_observation_milliseconds: Vec<u64>,
 
     /// Group temperature.
     pub temperature: Option<TemperatureReading>,
@@ -11736,7 +11736,7 @@ fn bms_groups_from_cell_voltages(
                 recent_voltages: vec![Voltage {
                     value: voltage.value,
                 }],
-                recent_observation_milliseconds: vec![None],
+                recent_observation_milliseconds: Vec::new(),
                 temperature: None,
                 resistance: None,
                 is_balancing: None,
@@ -11790,7 +11790,7 @@ fn bms_groups_from_observations(
                 recent_observation_milliseconds: observation
                     .samples
                     .iter()
-                    .map(|sample| sample.observed_at.map(|at| at.as_milliseconds()))
+                    .map(|sample| sample.observed_at.as_milliseconds())
                     .collect(),
                 temperature: None,
                 resistance: None,
@@ -18870,7 +18870,8 @@ mod tests {
             cutout_core::BatteryInfo::default(),
             VerificationStatus::HardwareVerified,
         )
-        .expect("documented Veteran cell page");
+        .expect("documented Veteran cell page")
+        .with_observed_at(cutout_core::MonotonicTimestamp::new(42));
 
         let snapshot = MobileBmsSnapshotDto::from(BatteryReadbackDto::from(readback));
 

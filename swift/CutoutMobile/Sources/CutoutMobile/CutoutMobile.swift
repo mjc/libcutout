@@ -4488,7 +4488,7 @@ public struct BmsGroupSnapshot: Equatable, Hashable, Sendable, Identifiable {
     public let voltage: Voltage?
     public let latestVoltage: Voltage?
     public let recentVoltages: [Voltage]
-    public let recentObservationMilliseconds: [UInt64?]
+    public let recentObservationMilliseconds: [UInt64]
     public let temperature: Temperature?
     public let resistance: Resistance?
     public let isBalancing: Bool?
@@ -4503,7 +4503,7 @@ public struct BmsGroupSnapshot: Equatable, Hashable, Sendable, Identifiable {
         voltage: Voltage? = nil,
         latestVoltage: Voltage? = nil,
         recentVoltages: [Voltage] = [],
-        recentObservationMilliseconds: [UInt64?] = [],
+        recentObservationMilliseconds: [UInt64] = [],
         temperature: Temperature? = nil,
         resistance: Resistance? = nil,
         isBalancing: Bool? = nil,
