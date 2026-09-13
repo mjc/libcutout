@@ -898,45 +898,34 @@ final class CutoutAppUITests: XCTestCase {
         try assertRidePublishesDynamicTelemetryAfterRouteMounts(.euc)
     }
 
-    func testEucTuneShowsValidatedControlsAndCapabilityStates() throws {
+    func testEucTuneUsesOrdinaryGenericControlsWithoutInventedValues() throws {
         XCTAssertTrue(pairAvailableDevice(.euc))
         guard connectedScreen(timeout: 20) != nil else {
             XCTFail("The deterministic EUC fixture did not open its Ride screen")
             return
         }
         defer { disconnectIfConnected() }
-
         let tuneTab = app.tabBars.buttons["dashboard.nav.tune"]
         XCTAssertTrue(tuneTab.waitForExistence(timeout: 5))
-        XCTAssertTrue(tuneTab.isHittable)
         tuneTab.tap()
+        let screen = app.descendants(matching: .any)["settings.screen.eucTune"]
+        XCTAssertTrue(screen.waitForExistence(timeout: 5))
 
-        XCTAssertTrue(
-            app.descendants(matching: .any)["settings.screen.eucTune"]
-                .waitForExistence(timeout: 5)
-        )
+        let highBeamDraft = app.buttons["settings.draft.highBeam"]
+        XCTAssertTrue(highBeamDraft.waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["High beam"].exists)
+        let apply = app.buttons["settings.apply.highBeam"]
+        XCTAssertTrue(apply.exists)
+        XCTAssertFalse(apply.isEnabled, "Unknown readback must not initialize a command draft")
+        highBeamDraft.tap()
+        app.buttons["On"].tap()
+        XCTAssertTrue(apply.isEnabled)
 
-        let headlight = app.switches["settings.control.headlight"]
-        XCTAssertTrue(headlight.exists)
-        XCTAssertTrue(headlight.isEnabled)
-
-        XCTAssertTrue(
-            app.descendants(matching: .any)["settings.control.aeroDynamicAssist"]
-                .waitForExistence(timeout: 5)
-        )
-
-        XCTAssertEqual(
-            app.descendants(matching: .any)["settings.capability.pedalMode"].label,
-            "Pedal mode, Needs validation"
-        )
-        XCTAssertEqual(
-            app.descendants(matching: .any)["settings.capability.accelerationAssist"].label,
-            "Acceleration assist, Not supported"
-        )
-        XCTAssertEqual(
-            app.descendants(matching: .any)["settings.capability.taillight"].label,
-            "Taillight, Not supported"
-        )
+        let pwmLabel = app.staticTexts["PWM duty tilt-back"]
+        for _ in 0..<5 where !pwmLabel.isHittable { screen.swipeUp() }
+        XCTAssertTrue(pwmLabel.exists)
+        XCTAssertFalse(app.buttons["settings.apply.pwmTiltback"].exists, "Ordinary Tune must not enable validation-only writes")
+        XCTAssertTrue(app.staticTexts["Writing this setting has not been verified."].firstMatch.exists)
     }
 
     private func assertRidePublishesDynamicTelemetryAfterRouteMounts(_ family: ConnectedDeviceFamily) throws {

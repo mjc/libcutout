@@ -24,5 +24,6 @@ public typealias DeviceActionSnapshot = CutoutMobileFFI.MobileDeviceActionSnapsh
 public typealias DeviceActionsSnapshot = CutoutMobileFFI.MobileDeviceActionsSnapshotDto
 public typealias DeviceActionProgress = CutoutMobileFFI.MobileDeviceActionProgressDto
 public typealias DeviceActionStatus = CutoutMobileFFI.MobileDeviceActionStatusDto
+public typealias DeviceActionNextStep = CutoutMobileFFI.MobileDeviceActionNextStepDto
 public typealias DeviceActionStep = CutoutMobileFFI.MobileDeviceActionStepDto
 public typealias DeviceActionSubmissionError = CutoutMobileFFI.MobileDeviceActionSubmissionError

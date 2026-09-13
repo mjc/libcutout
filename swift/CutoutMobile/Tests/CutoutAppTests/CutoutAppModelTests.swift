@@ -330,538 +330,40 @@ final class CutoutAppModelTests: XCTestCase {
     }
 
     @MainActor
-    func testHeadlightWriteRefusesWithoutVerifiedEucModel() {
-        let driver = SessionDriverSpy(rows: [])
-        driver.headlightWriteSucceeds = true
-        let model = CutoutAppModel(core: driver)
-
-        XCTAssertFalse(model.headlightControlAvailable)
-        XCTAssertEqual(
-            model.headlightStatusText,
-            "Headlight is unavailable until a supported wheel is connected."
-        )
-        XCTAssertEqual(model.setHeadlight(true), .failed)
-        XCTAssertEqual(model.headlightCommandStatus, .failed)
-        XCTAssertEqual(driver.headlightStates, [])
-    }
-
-    @MainActor
-    func testAeroHighBeamToggleReportsSentWithoutClaimingConfirmation() {
-        let driver = SessionDriverSpy(rows: [])
-        driver.electricUnicycleModel = .aero
-        driver.settingsCapabilitiesOverride = EucSettingsCapabilities(
-            pedalMode: .unsupported,
-            accelerationAssist: .unsupported,
-            headlight: .supported,
-            aeroHighBeam: .supported,
-            taillight: .unsupported
-        )
-        let model = CutoutAppModel(core: driver)
-
-        XCTAssertEqual(model.setHeadlight(true), .failed)
-        XCTAssertFalse(model.headlightOn)
-        XCTAssertEqual(model.headlightStatusText, "Headlight command failed.")
-        XCTAssertEqual(driver.headlightStates, [])
-
-        driver.headlightWriteSucceeds = true
-
-        XCTAssertEqual(model.setHeadlight(true), .accepted)
-        XCTAssertTrue(model.headlightOn)
-        XCTAssertEqual(model.headlightCommandStatus, .sentWithoutConfirmation)
-        XCTAssertEqual(model.headlightControlTitle, "High beam")
-        XCTAssertEqual(driver.aeroHighBeamStates, [.on])
-        XCTAssertEqual(
-            model.headlightStatusText,
-            "Command sent. This wheel does not report high-beam state."
-        )
-        XCTAssertEqual(driver.headlightStates, [.on])
-
-        driver.headlightWriteSucceeds = false
-        XCTAssertEqual(model.setHeadlight(false), .failed)
-        XCTAssertFalse(model.headlightOn)
-        XCTAssertEqual(model.headlightCommandStatus, .failed)
-    }
-
-    @MainActor
-    func testAeroManualHeadlightUsesTheIndependentLightCommand() {
-        let driver = SessionDriverSpy(rows: [])
-        driver.electricUnicycleModel = .aero
-        driver.headlightWriteSucceeds = true
-        let model = CutoutAppModel(core: driver)
-
-        XCTAssertTrue(model.manualHeadlightControlAvailable)
-        XCTAssertEqual(model.setManualHeadlight(true), .accepted)
-        XCTAssertEqual(driver.headlightStates, [.on])
-        XCTAssertEqual(driver.aeroHighBeamStates, [])
-    }
-
-    @MainActor
-    func testFalconHeadlightToggleIsAvailableThroughTheGuardedSession() {
-        let driver = SessionDriverSpy(rows: [])
-        driver.electricUnicycleModel = .falcon
-        driver.headlightWriteSucceeds = true
-        let model = CutoutAppModel(core: driver)
-
-        XCTAssertTrue(model.headlightControlAvailable)
-        XCTAssertEqual(model.setHeadlight(true), .accepted)
-        XCTAssertEqual(model.headlightCommandStatus, .waitingForConfirmation)
-        XCTAssertEqual(driver.headlightStates, [.on])
-    }
-
-    @MainActor
-    func testSettingsCapabilitiesExposeGuardedWriteSupportToTuneSurface() {
-        let driver = SessionDriverSpy(rows: [])
-        driver.electricUnicycleModel = .falcon
-        let model = CutoutAppModel(core: driver)
-
-        XCTAssertEqual(
-            model.settingsCapabilities,
-            EucSettingsCapabilities(
-                pedalMode: .supported,
-                rollAngle: .supported,
-                speedAlarmMode: .supported,
-                accelerationAssist: .unsupported,
-                headlight: .supported,
-                taillight: .unsupported,
-                begodeMaxSpeed: .supported,
-                begodeBeeperVolume: .supported,
-                begodeLedMode: .supported
-            )
-        )
-    }
-
-    @MainActor
-    func testPedalModeWriteUsesTheSupportedCapability() {
-        let driver = SessionDriverSpy(rows: [])
-        driver.electricUnicycleModel = .aero
-        driver.settingsCapabilitiesOverride = EucSettingsCapabilities(
-            pedalMode: .supported,
-            accelerationAssist: .unsupported,
-            headlight: .supported,
-            taillight: .unsupported
-        )
-        let model = CutoutAppModel(core: driver)
-
-        XCTAssertTrue(model.pedalModeControlAvailable)
-        XCTAssertEqual(model.setPedalMode(.soft), .accepted)
-        XCTAssertEqual(driver.pedalModes, [.soft])
-    }
-
-    @MainActor
-    func testRollAngleWriteUsesTheSupportedCapability() {
-        let driver = SessionDriverSpy(rows: [])
-        driver.electricUnicycleModel = .falcon
-        let model = CutoutAppModel(core: driver)
-
-        XCTAssertTrue(model.rollAngleControlAvailable)
-        XCTAssertEqual(model.setRollAngle(.high), .accepted)
-        XCTAssertEqual(driver.rollAngles, [.high])
-    }
-
-    @MainActor
-    func testSpeedAlarmModeWriteUsesTheSupportedCapability() {
-        let driver = SessionDriverSpy(rows: [])
-        driver.electricUnicycleModel = .falcon
-        let model = CutoutAppModel(core: driver)
-
-        XCTAssertTrue(model.speedAlarmModeControlAvailable)
-        XCTAssertEqual(model.setSpeedAlarmMode(.stageOneOnly), .accepted)
-        XCTAssertEqual(driver.speedAlarmModes, [.stageOneOnly])
-    }
-
-    @MainActor
-    func testAdditionalAeroControlsRequireValidationAndSubmitTypedValues() {
-        let driver = SessionDriverSpy(rows: [])
-        driver.electricUnicycleModel = .aero
-        let model = CutoutAppModel(core: driver)
-        let displayBacklight = AeroDisplayBacklight(percent: 75)!
-        let beeperVolume = AeroBeeperVolume(percent: 75)!
-        let dynamicAssist = AeroDynamicAssist(percent: 75)!
-        let pedalDipCompensation = AeroPedalDipCompensation(percent: 75)!
-        let lateralTiltLimit = AeroLateralTiltLimit(degrees: 55)!
-        let voltageCorrection = AeroVoltageCorrection(tenthsOfPercent: -5)!
-        let maxChargeVoltageRaw = AeroMaxChargeVoltageRaw(raw: 46)!
-        XCTAssertFalse(model.aeroDisplayBacklightControlAvailable)
-        XCTAssertEqual(model.setAeroDisplayBacklight(displayBacklight), .failed)
-        XCTAssertTrue(driver.aeroDisplayBacklightValues.isEmpty)
-        XCTAssertFalse(model.aeroBeeperVolumeControlAvailable)
-        XCTAssertEqual(model.setAeroBeeperVolume(beeperVolume), .failed)
-        XCTAssertTrue(driver.aeroBeeperVolumeValues.isEmpty)
-        XCTAssertFalse(model.aeroDynamicAssistControlAvailable)
-        XCTAssertEqual(model.setAeroDynamicAssist(dynamicAssist), .failed)
-        XCTAssertTrue(driver.aeroDynamicAssistValues.isEmpty)
-        XCTAssertFalse(model.aeroPedalDipCompensationControlAvailable)
-        XCTAssertEqual(model.setAeroPedalDipCompensation(pedalDipCompensation), .failed)
-        XCTAssertTrue(driver.aeroPedalDipCompensationValues.isEmpty)
-        XCTAssertFalse(model.aeroLateralTiltLimitControlAvailable)
-        XCTAssertEqual(model.setAeroLateralTiltLimit(lateralTiltLimit), .failed)
-        XCTAssertTrue(driver.aeroLateralTiltLimitValues.isEmpty)
-        XCTAssertFalse(model.aeroVoltageCorrectionControlAvailable)
-        XCTAssertEqual(model.setAeroVoltageCorrection(voltageCorrection), .failed)
-        XCTAssertTrue(driver.aeroVoltageCorrectionValues.isEmpty)
-        XCTAssertFalse(model.aeroMaxChargeVoltageRawControlAvailable)
-        XCTAssertEqual(model.setAeroMaxChargeVoltageRaw(maxChargeVoltageRaw), .failed)
-        XCTAssertTrue(driver.aeroMaxChargeVoltageRawValues.isEmpty)
-        XCTAssertFalse(model.aeroWheelUnitsControlAvailable)
-        XCTAssertEqual(model.setAeroWheelUnits(.imperial), .failed)
-        XCTAssertTrue(driver.aeroWheelUnitsValues.isEmpty)
-
-        driver.settingsCapabilitiesOverride = EucSettingsCapabilities(
-            validationMode: true,
-            pedalMode: .unverified,
-            accelerationAssist: .unsupported,
-            headlight: .supported,
-            taillight: .unsupported,
-            aeroDisplayBacklight: .unverified,
-            aeroWheelUnits: .unverified,
-            aeroBeeperVolume: .unverified,
-            aeroDynamicAssist: .unverified,
-            aeroPedalDipCompensation: .unverified,
-            aeroLateralTiltLimit: .unverified,
-            aeroVoltageCorrection: .unverified,
-            aeroMaxChargeVoltageRaw: .unverified
-        )
-        XCTAssertTrue(model.aeroDisplayBacklightControlAvailable)
-        XCTAssertEqual(model.setAeroDisplayBacklight(displayBacklight), .accepted)
-        XCTAssertEqual(driver.aeroDisplayBacklightValues, [displayBacklight])
-        XCTAssertTrue(model.aeroBeeperVolumeControlAvailable)
-        XCTAssertEqual(model.setAeroBeeperVolume(beeperVolume), .accepted)
-        XCTAssertEqual(driver.aeroBeeperVolumeValues, [beeperVolume])
-        XCTAssertTrue(model.aeroDynamicAssistControlAvailable)
-        XCTAssertEqual(model.setAeroDynamicAssist(dynamicAssist), .accepted)
-        XCTAssertEqual(driver.aeroDynamicAssistValues, [dynamicAssist])
-        XCTAssertTrue(model.aeroPedalDipCompensationControlAvailable)
-        XCTAssertEqual(model.setAeroPedalDipCompensation(pedalDipCompensation), .accepted)
-        XCTAssertEqual(driver.aeroPedalDipCompensationValues, [pedalDipCompensation])
-        XCTAssertTrue(model.aeroLateralTiltLimitControlAvailable)
-        XCTAssertEqual(model.setAeroLateralTiltLimit(lateralTiltLimit), .accepted)
-        XCTAssertEqual(driver.aeroLateralTiltLimitValues, [lateralTiltLimit])
-        XCTAssertTrue(model.aeroVoltageCorrectionControlAvailable)
-        XCTAssertEqual(model.setAeroVoltageCorrection(voltageCorrection), .accepted)
-        XCTAssertEqual(driver.aeroVoltageCorrectionValues, [voltageCorrection])
-        XCTAssertTrue(model.aeroMaxChargeVoltageRawControlAvailable)
-        XCTAssertEqual(model.setAeroMaxChargeVoltageRaw(maxChargeVoltageRaw), .accepted)
-        XCTAssertEqual(driver.aeroMaxChargeVoltageRawValues, [maxChargeVoltageRaw])
-        XCTAssertTrue(model.aeroWheelUnitsControlAvailable)
-        XCTAssertEqual(model.setAeroWheelUnits(.imperial), .accepted)
-        XCTAssertEqual(driver.aeroWheelUnitsValues, [.imperial])
-        XCTAssertEqual(model.settingsCapabilities?.aeroVoltageCorrection, .unverified)
-        XCTAssertEqual(model.settingsCapabilities?.aeroMaxChargeVoltageRaw, .unverified)
-    }
-
-
-    @MainActor
-    func testValidationModeAllowsAeroTestingWithoutClaimingVerifiedSupport() {
-        let driver = SessionDriverSpy(rows: [])
-        driver.electricUnicycleModel = .aero
-        driver.settingsCapabilitiesOverride = EucSettingsCapabilities(
-            validationMode: true,
-            resetTripMeter: .unverified,
-            pedalMode: .unverified,
-            accelerationAssist: .unsupported,
-            headlight: .supported,
-            aeroHighBeam: .supported,
-            taillight: .unsupported,
-            aeroTiltbackSpeed: .unverified,
-            aeroPwmPercent: .unverified,
-            aeroPedalHardness: .unverified,
-            aeroAlarmSpeed: .unverified,
-            aeroAngleAdjustment: .unverified
-        )
-        let model = CutoutAppModel(core: driver)
-
-        XCTAssertTrue(model.pedalModeControlAvailable)
-        XCTAssertTrue(model.resetTripMeterControlAvailable)
-        XCTAssertTrue(model.aeroTiltbackSpeedControlAvailable)
-        XCTAssertTrue(model.aeroPwmPercentControlAvailable)
-        XCTAssertTrue(model.aeroPedalHardnessControlAvailable)
-        XCTAssertTrue(model.aeroAlarmSpeedControlAvailable)
-        XCTAssertTrue(model.aeroAngleAdjustmentControlAvailable)
-        XCTAssertFalse(model.rollAngleControlAvailable)
-        XCTAssertEqual(model.settingsCapabilities?.aeroPwmPercent, .unverified)
-        XCTAssertEqual(model.setAeroPwmPercent(AeroPwmPercent(percent: 64)!), .accepted)
-        XCTAssertEqual(driver.aeroPwmPercents, [AeroPwmPercent(percent: 64)!])
-        XCTAssertEqual(model.setAeroPedalHardness(AeroPedalHardness(percent: 75)!), .accepted)
-        XCTAssertEqual(driver.aeroPedalHardnesses, [AeroPedalHardness(percent: 75)!])
-
-        driver.tripMeterResetCommandResult = .refused(.missingArm)
-        driver.tripMeterResetState = TripMeterResetState(kind: .refused, refusalReason: .missingArm)
-        XCTAssertEqual(model.resetTripMeter(), .refused(.missingArm))
-        XCTAssertEqual(driver.tripMeterResetCount, 1)
-        XCTAssertEqual(model.tripMeterResetState, driver.tripMeterResetState)
-        driver.tripMeterResetState = TripMeterResetState(kind: .timedOut)
-        XCTAssertEqual(model.tripMeterResetState?.kind, .timedOut)
-    }
-
-    @MainActor
-    func testBegodeWSettingWritesUseTheSupportedCapabilities() {
-        let driver = SessionDriverSpy(rows: [])
-        driver.electricUnicycleModel = .falcon
-        driver.settingsCapabilitiesOverride = EucSettingsCapabilities(
-            pedalMode: .unsupported,
-            accelerationAssist: .unsupported,
-            headlight: .unsupported,
-            taillight: .unsupported,
-            begodeMaxSpeed: .supported,
-            begodeBeeperVolume: .supported,
-            begodeLedMode: .supported
-        )
-        let model = CutoutAppModel(core: driver)
-
-        let speed = BegodeMaxSpeed(kilometresPerHour: 30)!
-        let volume = BegodeBeeperVolume(level: 7)!
-        let ledMode = BegodeLedMode(mode: 4)!
-
-        XCTAssertTrue(model.begodeMaxSpeedControlAvailable)
-        XCTAssertTrue(model.begodeBeeperVolumeControlAvailable)
-        XCTAssertTrue(model.begodeLedModeControlAvailable)
-        XCTAssertEqual(model.setBegodeMaxSpeed(speed), .accepted)
-        XCTAssertEqual(model.setBegodeBeeperVolume(volume), .accepted)
-        XCTAssertEqual(model.setBegodeLedMode(ledMode), .accepted)
-        XCTAssertEqual(driver.begodeMaxSpeeds, [speed])
-        XCTAssertEqual(driver.begodeBeeperVolumes, [volume])
-        XCTAssertEqual(driver.begodeLedModes, [ledMode])
-    }
-
-    @MainActor
-    func testPedalModeStateIsExposedThroughTheSettingsDriver() {
-        let driver = SessionDriverSpy(rows: [])
-        driver.pedalModeState = PedalModeSettingState(
-            kind: .current,
-            current: .hard,
-            source: .liveReadback
-        )
-        let model = CutoutAppModel(core: driver)
-
-        XCTAssertEqual(model.pedalModeState, driver.pedalModeState)
-    }
-
-    @MainActor
-    func testRemainingSettingStatesAreExposedThroughTheSettingsDriver() {
-        let driver = SessionDriverSpy(rows: [])
-        driver.accelerationAssistState = AccelerationAssistSettingState(
-            kind: .refused,
-            requested: .enabled,
-            refusalReason: .unsupportedCommand
-        )
-        driver.taillightState = LightSettingState(
-            kind: .refused,
-            requested: .on,
-            refusalReason: .unsupportedCommand
-        )
-        let model = CutoutAppModel(core: driver)
-
-        XCTAssertEqual(model.accelerationAssistState, driver.accelerationAssistState)
-        XCTAssertEqual(model.taillightState, driver.taillightState)
-    }
-
-    @MainActor
-    func testProductionEucUsesTheRustSettingsAggregateSnapshot() async {
+    func testProductionControlsUseTheGenericRustSnapshotAndRejectLatePublication() async throws {
         let fixture = CutoutUITestSessionFixture.euc
-        let core = CutoutSessionCore(testScript: fixture.testScript)
+        var frame = Data(repeating: 0, count: 42)
+        frame.replaceSubrange(0..<4, with: [0xdc, 0x5a, 0x5c, 38])
+        frame.replaceSubrange(28..<30, with: [0xa7, 0xf8])
+        let core = CutoutSessionCore(testScript: CutoutSessionTestScript(
+            candidate: fixture.candidate, telemetry: fixture.testScript.telemetry,
+            protocolNotifications: [frame], connectionDelayMilliseconds: 0
+        ))
         let model = CutoutAppModel(core: core)
-
         model.start()
         XCTAssertTrue(model.pair(platformIdentifier: fixture.candidate.platformIdentifier))
-        await Self.waitUntil("Rust settings aggregate snapshot", maxTurns: 100_000) {
-            model.phase == .live && model.settingsState != nil
+        await Self.waitUntil("generic controls publication", maxTurns: 100_000) {
+            model.phase == .live && model.deviceControlsSnapshot != nil
         }
-
-        XCTAssertEqual(model.settingsState, core.settingsState)
-        XCTAssertEqual(model.aeroDynamicAssistState, model.settingsState?.aeroDynamicAssist)
-    }
-
-    @MainActor
-    func testStaleSettingsSnapshotIsIgnoredAfterConnectionFailure() async throws {
-        let fixture = CutoutUITestSessionFixture.euc
-        let core = CutoutSessionCore(testScript: fixture.testScript)
-        let model = CutoutAppModel(core: core)
-
-        model.start()
-        XCTAssertTrue(model.pair(platformIdentifier: fixture.candidate.platformIdentifier))
-        await Self.waitUntil("Rust settings aggregate snapshot", maxTurns: 100_000) {
-            model.phase == .live && model.settingsState != nil
+        let snapshot = try XCTUnwrap(model.deviceControlsSnapshot)
+        let token = try XCTUnwrap(snapshot.connection.token)
+        XCTAssertEqual(snapshot.connection.readiness, .verified)
+        XCTAssertEqual(snapshot.settingDescriptors, core.deviceControlsSnapshot.settingDescriptors)
+        XCTAssertEqual(snapshot.settingDescriptors.first { $0.id == .pwmTiltback }?.access, .unverified)
+        XCTAssertThrowsError(try model.submitDeviceSetting(token: token, id: .pwmTiltback, value: .number(value: 80))) {
+            XCTAssertEqual($0 as? DeviceSettingSubmissionError, .Unverified)
         }
-        let state = try XCTUnwrap(model.settingsState)
-
+        try model.submitDeviceSetting(token: token, id: .highBeam, value: .boolean(value: true))
+        await Self.waitUntil("unconfirmed request publication") {
+            model.deviceControlsSnapshot?.settings.first { $0.id == .highBeam }?.requested == .boolean(value: true)
+        }
+        let highBeam = try XCTUnwrap(model.deviceControlsSnapshot?.settings.first { $0.id == .highBeam })
+        XCTAssertEqual(highBeam.status, .sentWithoutConfirmation)
+        XCTAssertNil(highBeam.current)
         core.onPhaseChange?(.failed(.sessionFailed("write channel unavailable")))
-        core.onSettingsStateChange?(state)
-
-        XCTAssertNil(model.settingsState)
-    }
-
-    @MainActor
-    func testTuneUsesRustOwnedConfirmedLightState() {
-        let driver = SessionDriverSpy(rows: [])
-        driver.electricUnicycleModel = .aero
-        driver.headlightState = LightSettingState(
-            kind: .confirmed,
-            current: .on,
-            source: .liveReadback,
-            confirmedAt: MonotonicMilliseconds(7)
-        )
-        driver.nowValue = 2_006
-        let model = CutoutAppModel(core: driver)
-
-        XCTAssertTrue(model.headlightOn)
-        XCTAssertEqual(model.headlightCommandStatus, .confirmed)
-        XCTAssertEqual(model.headlightStatusText, "Confirmed by wheel telemetry 1s ago.")
-    }
-
-    @MainActor
-    func testFalconHeadlightToggleWaitsForMatchingWheelTelemetry() {
-        let driver = SessionDriverSpy(rows: [])
-        driver.electricUnicycleModel = .falcon
-        driver.settingsCapabilitiesOverride = EucSettingsCapabilities(
-            pedalMode: .unsupported,
-            accelerationAssist: .unsupported,
-            headlight: .supported,
-            aeroHighBeam: .supported,
-            taillight: .unsupported
-        )
-        driver.headlightWriteSucceeds = true
-        let model = CutoutAppModel(core: driver)
-
-        XCTAssertEqual(model.setHeadlight(true), .accepted)
-        XCTAssertTrue(model.headlightOn)
-        XCTAssertEqual(model.headlightCommandStatus, .waitingForConfirmation)
-        XCTAssertEqual(model.headlightControlTitle, "Headlight")
-        XCTAssertEqual(model.headlightStatusText, "Waiting for wheel confirmation.")
-
-        driver.emitSettingsReadback(
-            SettingsReadback(
-                entries: [],
-                eucGarageSettings: EucGarageSettingsSnapshot(lightState: .off)
-            )
-        )
-        XCTAssertEqual(model.headlightCommandStatus, .waitingForConfirmation)
-
-        driver.emitSettingsReadback(
-            SettingsReadback(
-                entries: [],
-                eucGarageSettings: EucGarageSettingsSnapshot(lightState: .on)
-            )
-        )
-        XCTAssertEqual(model.headlightCommandStatus, .confirmed)
-        XCTAssertTrue(model.headlightOn)
-        XCTAssertEqual(model.headlightStatusText, "Confirmed by wheel telemetry 0s ago.")
-
-        XCTAssertEqual(model.setHeadlight(false), .accepted)
-        XCTAssertFalse(model.headlightOn)
-        XCTAssertEqual(model.headlightCommandStatus, .waitingForConfirmation)
-
-        driver.emitSettingsReadback(
-            SettingsReadback(
-                entries: [],
-                eucGarageSettings: EucGarageSettingsSnapshot(lightState: .off)
-            )
-        )
-        XCTAssertFalse(model.headlightOn)
-        XCTAssertEqual(model.headlightCommandStatus, .confirmed)
-    }
-
-    @MainActor
-    func testFalconHeadlightReadbackWithoutLightStateFailsPendingCommand() {
-        let driver = SessionDriverSpy(rows: [])
-        driver.electricUnicycleModel = .falcon
-        driver.settingsCapabilitiesOverride = EucSettingsCapabilities(
-            pedalMode: .unsupported,
-            accelerationAssist: .unsupported,
-            headlight: .supported,
-            aeroHighBeam: .supported,
-            taillight: .unsupported
-        )
-        driver.headlightWriteSucceeds = true
-        let model = CutoutAppModel(core: driver)
-
-        XCTAssertEqual(model.setHeadlight(true), .accepted)
-        XCTAssertEqual(model.headlightCommandStatus, .waitingForConfirmation)
-
-        driver.emitSettingsReadback(
-            SettingsReadback(entries: [], availability: .unsupported)
-        )
-
-        XCTAssertFalse(model.headlightOn)
-        XCTAssertEqual(model.headlightCommandStatus, .failed)
-        XCTAssertEqual(model.headlightStatusText, "Headlight command failed.")
-    }
-
-    @MainActor
-    func testFalconHeadlightConfirmationTimesOutWithoutReadback() {
-        let driver = SessionDriverSpy(rows: [])
-        driver.electricUnicycleModel = .falcon
-        driver.settingsCapabilitiesOverride = EucSettingsCapabilities(
-            pedalMode: .unsupported,
-            accelerationAssist: .unsupported,
-            headlight: .supported,
-            taillight: .unsupported
-        )
-        driver.headlightWriteSucceeds = true
-        let model = CutoutAppModel(core: driver)
-
-        XCTAssertEqual(model.setHeadlight(true), .accepted)
-        XCTAssertEqual(model.headlightCommandStatus, .waitingForConfirmation)
-
-        driver.nowValue = 2_000
-
-        XCTAssertEqual(model.headlightCommandStatus, .timedOut)
-        XCTAssertEqual(model.headlightStatusText, "Wheel did not confirm the headlight command.")
-        XCTAssertFalse(model.headlightOn)
-    }
-
-    @MainActor
-    func testHeadlightRefusalIsVisibleWithoutChangingState() {
-        let driver = SessionDriverSpy(rows: [])
-        driver.electricUnicycleModel = .falcon
-        driver.settingsCapabilitiesOverride = EucSettingsCapabilities(
-            pedalMode: .unsupported,
-            accelerationAssist: .unsupported,
-            headlight: .supported,
-            taillight: .unsupported
-        )
-        driver.headlightWriteSucceeds = true
-        driver.headlightCommandResult = .refused(.unsupportedCommand)
-        let model = CutoutAppModel(core: driver)
-
-        XCTAssertEqual(model.setHeadlight(true), .refused(.unsupportedCommand))
-        XCTAssertEqual(model.headlightCommandStatus, .refused)
-        XCTAssertEqual(model.headlightStatusText, "Wheel refused the headlight command.")
-        XCTAssertFalse(model.headlightOn)
-        XCTAssertEqual(driver.headlightStates, [])
-    }
-
-    @MainActor
-    func testHeadlightStateDoesNotSurviveDisconnectOrNewPairing() {
-        let row = DevicePickerRow(
-            id: "aero-1234",
-            title: "NF2557",
-            subtitle: "NOSFET Aero",
-            detail: "Device 1234",
-            state: DevicePickerRowState(action: .use),
-            symbolName: "scooter",
-            connectionRoute: .electricUnicycle,
-            electricUnicycleModel: .aero
-        )
-        let driver = SessionDriverSpy(rows: [row])
-        driver.electricUnicycleModel = .aero
-        driver.settingsCapabilitiesOverride = EucSettingsCapabilities(
-            pedalMode: .unsupported,
-            accelerationAssist: .unsupported,
-            headlight: .supported,
-            aeroHighBeam: .supported,
-            taillight: .unsupported
-        )
-        driver.headlightWriteSucceeds = true
-        let model = CutoutAppModel(core: driver)
-        model.start()
-
-        XCTAssertEqual(model.setHeadlight(true), .accepted)
-        model.disconnectTransport()
-        XCTAssertFalse(model.headlightOn)
-
-        XCTAssertEqual(model.setHeadlight(true), .accepted)
-        XCTAssertTrue(model.pair(platformIdentifier: row.id))
-        XCTAssertFalse(model.headlightOn)
+        core.onDeviceControlsChange?(snapshot)
+        XCTAssertNil(model.deviceControlsSnapshot)
+        core.disconnectAndScan()
     }
 
     @MainActor
@@ -3677,7 +3179,7 @@ private final class SessionDriverSpy: CutoutSessionDriving {
     var onReconnectScheduled: ((SessionConnectionRetry) -> Void)?
     var onCaptureEvent: ((CaptureEvent) -> Void)?
     var onScanStateChange: ((DevicePickerScanState) -> Void)?
-    var onSettingsStateChange: ((EucSettingsState) -> Void)?
+    var onDeviceControlsChange: ((DeviceControlsSnapshot) -> Void)?
     var onSettingsReadbackChange: ((SettingsReadback?) -> Void)?
     var onFaultHistoryReadbackChange: ((FaultHistoryReadback?) -> Void)?
     var onBmsSnapshotChange: ((BmsSnapshot?) -> Void)?
@@ -3691,66 +3193,8 @@ private final class SessionDriverSpy: CutoutSessionDriving {
     var protocolIdentityCandidate: DevicePickerDiscoveryCandidate?
     var isRecordOnlyConnection = false
     var electricUnicycleModel: ElectricUnicycleModel?
-    var headlightState: LightSettingState?
-    var headlightCommandStatus: LightCommandStatus? {
-        get {
-            if let headlightCommandStatusOverride { return headlightCommandStatusOverride }
-            guard let state = headlightState else { return nil }
-            switch state.kind {
-            case .pending:
-                guard electricUnicycleModel != .aero else { return .sentWithoutConfirmation }
-                guard let submittedAt = state.submittedAt else { return .waitingForConfirmation }
-                return now().elapsed(since: submittedAt).rawValue >= 2_000
-                    ? .timedOut
-                    : .waitingForConfirmation
-            case .unknown, .current: return .idle
-            case .confirmed: return .confirmed
-            case .refused: return .refused
-            case .timedOut: return .timedOut
-            case .failed: return .failed
-            }
-        }
-        set { headlightCommandStatusOverride = newValue }
-    }
-    private var headlightCommandStatusOverride: LightCommandStatus?
-    var tripMeterResetState: TripMeterResetState?
-    var tripMeterResetCommandResult: SettingCommandResult = .accepted
-    private(set) var tripMeterResetCount = 0
-    var aeroHighBeamState: LightSettingState?
-    var aeroTiltbackSpeedState: AeroSpeedSettingState?
-    private(set) var aeroTiltbackSpeeds = [AeroSpeedSetting]()
-    var aeroPwmPercentState: AeroPwmSettingState?
-    private(set) var aeroPwmPercents = [AeroPwmPercent]()
-    var aeroPedalHardnessState: AeroPedalHardnessSettingState?
-    var aeroDisplayBacklightState: AeroDisplayBacklightSettingState?
-    private(set) var aeroDisplayBacklightValues = [AeroDisplayBacklight]()
-    var aeroBeeperVolumeState: AeroBeeperVolumeSettingState?
-    private(set) var aeroBeeperVolumeValues = [AeroBeeperVolume]()
-    var aeroDynamicAssistState: AeroDynamicAssistSettingState?
-    private(set) var aeroDynamicAssistValues = [AeroDynamicAssist]()
-    var aeroPedalDipCompensationState: AeroPedalDipCompensationSettingState?
-    private(set) var aeroPedalDipCompensationValues = [AeroPedalDipCompensation]()
-    var aeroLateralTiltLimitState: AeroLateralTiltLimitSettingState?
-    private(set) var aeroLateralTiltLimitValues = [AeroLateralTiltLimit]()
-    var aeroVoltageCorrectionState: AeroVoltageCorrectionSettingState?
-    private(set) var aeroVoltageCorrectionValues = [AeroVoltageCorrection]()
-    var aeroMaxChargeVoltageRawState: AeroMaxChargeVoltageRawSettingState?
-    private(set) var aeroMaxChargeVoltageRawValues = [AeroMaxChargeVoltageRaw]()
-    var aeroWheelUnitsState: AeroWheelUnitsSettingState?
-    private(set) var aeroWheelUnitsValues = [AeroWheelUnits]()
-    private(set) var aeroPedalHardnesses = [AeroPedalHardness]()
-    var aeroAlarmSpeedState: AeroSpeedSettingState?
-    private(set) var aeroAlarmSpeeds = [AeroSpeedSetting]()
-    var aeroAngleAdjustmentState: AeroAngleAdjustmentSettingState?
-    private(set) var aeroAngleAdjustments = [AeroAngleAdjustment]()
-    var pedalModeState: PedalModeSettingState?
-    var rollAngleState: RollAngleSettingState?
-    var speedAlarmModeState: SpeedAlarmModeSettingState?
-    var accelerationAssistState: AccelerationAssistSettingState?
-    var taillightState: LightSettingState?
-    var settingsCapabilitiesOverride: EucSettingsCapabilities?
-    var settingsCapabilities: EucSettingsCapabilities? {
-        settingsCapabilitiesOverride ?? electricUnicycleModel?.settingsCapabilities
+    var deviceControlsSnapshot: DeviceControlsSnapshot {
+        rideSessionStateHandle.deviceControlsSnapshot(validationMode: false)
     }
     private let scanState: DevicePickerScanState
     private let pairingSucceeds: Bool
@@ -3765,19 +3209,6 @@ private final class SessionDriverSpy: CutoutSessionDriving {
     private(set) var flushCaptureCount = 0
     private(set) var disconnectCount = 0
     private(set) var resetRideMapLocationAdmissionCount = 0
-    private(set) var headlightStates = [LightState]()
-    private(set) var aeroHighBeamStates = [LightState]()
-    private(set) var pedalModes = [PedalMode.Kind]()
-    private(set) var rollAngles = [RollAngle.Kind]()
-    private(set) var speedAlarmModes = [SpeedAlarmMode.Kind]()
-    private(set) var begodeMaxSpeeds = [BegodeMaxSpeed]()
-    private(set) var begodeBeeperVolumes = [BegodeBeeperVolume]()
-    private(set) var begodeLedModes = [BegodeLedMode]()
-    var headlightWriteSucceeds = false
-    var headlightCommandResult: SettingCommandResult = .accepted
-    var aeroHighBeamWriteSucceeds = false
-    var aeroHighBeamCommandResult: SettingCommandResult = .accepted
-    var pedalModeCommandResult: SettingCommandResult = .accepted
     var nowValue: UInt64 = 0
 
     init(
@@ -3816,8 +3247,6 @@ private final class SessionDriverSpy: CutoutSessionDriving {
 
     func pair(platformIdentifier: String) -> Bool {
         pairedPlatformIdentifiers.append(platformIdentifier)
-        headlightState = nil
-        headlightCommandStatusOverride = nil
         return pairingSucceeds
     }
 
@@ -3847,181 +3276,19 @@ private final class SessionDriverSpy: CutoutSessionDriving {
 
     func disconnectAndScan() {
         disconnectCount += 1
-        headlightState = nil
-        headlightCommandStatusOverride = nil
     }
 
     func resetRideMapLocationAdmission() {
         resetRideMapLocationAdmissionCount += 1
     }
 
-    func setLights(_ state: LightState) -> SettingCommandResult {
-        guard headlightWriteSucceeds else {
-            headlightState = LightSettingState(kind: .failed, requested: state, source: .userRequest)
-            headlightCommandStatus = .failed
-            return .failed
-        }
-        guard headlightCommandResult == .accepted else {
-            if case .refused = headlightCommandResult {
-                headlightCommandStatus = .refused
-            } else {
-                headlightCommandStatus = .failed
-            }
-            return headlightCommandResult
-        }
-        guard headlightWriteSucceeds else {
-            headlightState = LightSettingState(kind: .failed, requested: state, source: .userRequest)
-            headlightCommandStatusOverride = .failed
-            return .failed
-        }
-        guard headlightCommandResult == .accepted else { return headlightCommandResult }
-        headlightStates.append(state)
-        headlightState = LightSettingState(
-            kind: .pending,
-            requested: state,
-            source: .userRequest,
-            submittedAt: now()
-        )
-        headlightCommandStatusOverride = nil
-        return .accepted
+    func submitDeviceSetting(token: ConnectionAttemptToken, id: DeviceSettingID, value: DeviceSettingValue) throws {
+        _ = try rideSessionStateHandle.submitSetting(token: token, id: id, value: value, validationMode: false, monotonicMs: nowValue)
+        onDeviceControlsChange?(deviceControlsSnapshot)
     }
-    func emitSettingsReadback(_ readback: SettingsReadback) {
-        if let reportedState = readback.eucGarageSettings.lightState {
-            if headlightState?.kind == .pending,
-               headlightState?.requested != reportedState
-            {
-                // Rust keeps a pending request until matching readback arrives.
-            } else {
-                headlightState = LightSettingState(
-                    kind: .confirmed,
-                    current: reportedState,
-                    source: .liveReadback,
-                    confirmedAt: now()
-                )
-                headlightCommandStatus = .confirmed
-            }
-        } else if headlightState?.kind == .pending {
-            headlightState = LightSettingState(kind: .failed)
-            headlightCommandStatus = .failed
-        }
-        onSettingsReadbackChange?(readback)
-    }
-    func setPedalMode(_ mode: PedalMode.Kind) -> SettingCommandResult {
-        guard pedalModeCommandResult == .accepted else { return pedalModeCommandResult }
-        pedalModes.append(mode)
-        return .accepted
-    }
-    func resetTripMeter() -> SettingCommandResult {
-        tripMeterResetCount += 1
-        return tripMeterResetCommandResult
-    }
-    func setAeroTiltbackSpeed(_ speed: AeroSpeedSetting) -> SettingCommandResult {
-        aeroTiltbackSpeeds.append(speed)
-        return .accepted
-    }
-
-    func setAeroPwmPercent(_ percent: AeroPwmPercent) -> SettingCommandResult {
-        aeroPwmPercents.append(percent)
-        return .accepted
-    }
-
-    func setAeroAlarmSpeed(_ speed: AeroSpeedSetting) -> SettingCommandResult {
-        aeroAlarmSpeeds.append(speed)
-        return .accepted
-    }
-
-    func setAeroAngleAdjustment(_ angle: AeroAngleAdjustment) -> SettingCommandResult {
-        aeroAngleAdjustments.append(angle)
-        return .accepted
-    }
-    func setAeroPedalHardness(_ hardness: AeroPedalHardness) -> SettingCommandResult {
-        aeroPedalHardnesses.append(hardness)
-        return .accepted
-    }
-
-    func setAeroDisplayBacklight(_ value: AeroDisplayBacklight) -> SettingCommandResult {
-        aeroDisplayBacklightValues.append(value)
-        return .accepted
-    }
-
-    func setAeroBeeperVolume(_ value: AeroBeeperVolume) -> SettingCommandResult {
-        aeroBeeperVolumeValues.append(value)
-        return .accepted
-    }
-
-    func setAeroDynamicAssist(_ value: AeroDynamicAssist) -> SettingCommandResult {
-        aeroDynamicAssistValues.append(value)
-        return .accepted
-    }
-
-    func setAeroPedalDipCompensation(_ value: AeroPedalDipCompensation) -> SettingCommandResult {
-        aeroPedalDipCompensationValues.append(value)
-        return .accepted
-    }
-
-    func setAeroLateralTiltLimit(_ value: AeroLateralTiltLimit) -> SettingCommandResult {
-        aeroLateralTiltLimitValues.append(value)
-        return .accepted
-    }
-
-    func setAeroVoltageCorrection(_ value: AeroVoltageCorrection) -> SettingCommandResult {
-        aeroVoltageCorrectionValues.append(value)
-        return .accepted
-    }
-
-    func setAeroMaxChargeVoltageRaw(_ value: AeroMaxChargeVoltageRaw) -> SettingCommandResult {
-        aeroMaxChargeVoltageRawValues.append(value)
-        return .accepted
-    }
-
-    func setAeroWheelUnits(_ value: AeroWheelUnits) -> SettingCommandResult {
-        aeroWheelUnitsValues.append(value)
-        return .accepted
-    }
-
-    func setRollAngle(_ angle: RollAngle.Kind) -> SettingCommandResult {
-        rollAngles.append(angle)
-        return .accepted
-    }
-    func setSpeedAlarmMode(_ mode: SpeedAlarmMode.Kind) -> SettingCommandResult {
-        speedAlarmModes.append(mode)
-        return .accepted
-    }
-    func setBegodeMaxSpeed(_ speed: BegodeMaxSpeed) -> SettingCommandResult {
-        begodeMaxSpeeds.append(speed)
-        return .accepted
-    }
-
-    func setBegodeBeeperVolume(_ volume: BegodeBeeperVolume) -> SettingCommandResult {
-        begodeBeeperVolumes.append(volume)
-        return .accepted
-    }
-
-    func setBegodeLedMode(_ mode: BegodeLedMode) -> SettingCommandResult {
-        begodeLedModes.append(mode)
-        return .accepted
-    }
-    func setAeroHighBeam(_ state: LightState) -> SettingCommandResult {
-        let succeeds = aeroHighBeamWriteSucceeds || headlightWriteSucceeds
-        guard succeeds else {
-            headlightState = LightSettingState(kind: .failed, requested: state, source: .userRequest)
-            headlightCommandStatusOverride = .failed
-            return .failed
-        }
-        let commandResult = aeroHighBeamWriteSucceeds
-            ? aeroHighBeamCommandResult
-            : headlightCommandResult
-        guard commandResult == .accepted else { return commandResult }
-        aeroHighBeamStates.append(state)
-        headlightStates.append(state)
-        headlightState = LightSettingState(
-            kind: .pending,
-            requested: state,
-            source: .userRequest,
-            submittedAt: now()
-        )
-        headlightCommandStatusOverride = .sentWithoutConfirmation
-        return .accepted
+    func submitDeviceAction(token: ConnectionAttemptToken, id: DeviceActionID) throws {
+        _ = try rideSessionStateHandle.submitAction(token: token, id: id, validationMode: false, monotonicMs: nowValue)
+        onDeviceControlsChange?(deviceControlsSnapshot)
     }
     func now() -> MonotonicMilliseconds {
         MonotonicMilliseconds(nowValue)
