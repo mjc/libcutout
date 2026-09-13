@@ -321,17 +321,9 @@ struct ContentView: View {
         #if os(iOS)
         switch Self.accentKind(selectedConnectionRoute: model.selectedConnectionRoute, route: route) {
         case .purple:
-            Color(uiColor: UIColor { traits in
-                traits.userInterfaceStyle == .dark
-                    ? .systemPurple
-                    : UIColor(red: 0.34, green: 0.08, blue: 0.52, alpha: 1)
-            })
+            Color(uiColor: TabAccentColors.purple)
         case .yellow:
-            Color(uiColor: UIColor { traits in
-                traits.userInterfaceStyle == .dark
-                    ? .systemYellow
-                    : UIColor(red: 0.45, green: 0.25, blue: 0.0, alpha: 1)
-            })
+            Color(uiColor: TabAccentColors.yellow)
         default:
             .primary
         }
