@@ -778,7 +778,7 @@ final class CutoutAppRouteTests: XCTestCase {
         )
     }
 
-    func testLiveActivityLifecycleErrorsHaveTypedAnnouncements() {
+    func testLiveActivityLifecycleErrorsHaveVisibleAndAccessiblePresentation() {
         XCTAssertEqual(
             LiveActivityRideLifecycleError.authorizationDenied.accessibilityAnnouncement,
             "Live Activity permission is unavailable."
@@ -790,6 +790,31 @@ final class CutoutAppRouteTests: XCTestCase {
         XCTAssertEqual(
             LiveActivityRideLifecycleError.activityUnavailable.accessibilityAnnouncement,
             "The Live Activity is unavailable."
+        )
+
+        XCTAssertEqual(
+            LiveActivityRideLifecycleError.authorizationDenied.failurePresentation,
+            LiveActivityFailurePresentation(
+                message: "Live Activity permission is unavailable.",
+                actionTitle: "Open Settings",
+                action: .openSettings
+            )
+        )
+        XCTAssertEqual(
+            LiveActivityRideLifecycleError.requestFailed.failurePresentation,
+            LiveActivityFailurePresentation(
+                message: "Couldn't start the Live Activity.",
+                actionTitle: "Try Again",
+                action: .retry
+            )
+        )
+        XCTAssertEqual(
+            LiveActivityRideLifecycleError.activityUnavailable.failurePresentation,
+            LiveActivityFailurePresentation(
+                message: "The Live Activity is unavailable.",
+                actionTitle: "Try Again",
+                action: .retry
+            )
         )
     }
 

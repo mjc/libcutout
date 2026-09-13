@@ -13,6 +13,7 @@ struct ContentView: View {
     @Binding private var navigationPath: [CutoutAppRoute]
     @AccessibilityFocusState private var focusedRoute: CutoutAppRoute?
     @State private var connectionAnnouncements = ConnectionAccessibilityAnnouncements()
+    @Environment(\.openURL) private var openURL
 
     init(
         model: CutoutAppModel,
@@ -48,6 +49,11 @@ struct ContentView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(PevColors.pageBackground.ignoresSafeArea())
+        .safeAreaInset(edge: .top) {
+            if let presentation = model.liveActivityError?.failurePresentation {
+                liveActivityFailureBanner(presentation)
+            }
+        }
         .onChange(of: route, initial: true) { _, route in
             focusedRoute = route
         }
@@ -92,6 +98,44 @@ struct ContentView: View {
             if let error {
                 AccessibilityNotification.Announcement(error.accessibilityAnnouncement).post()
             }
+        }
+    }
+
+    private func liveActivityFailureBanner(_ presentation: LiveActivityFailurePresentation) -> some View {
+        HStack(spacing: 12) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .foregroundStyle(PevColors.warningText)
+            Text(presentation.message)
+                .font(.subheadline)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            Button(presentation.actionTitle) {
+                performLiveActivityRecovery(presentation.action)
+            }
+            .buttonStyle(.bordered)
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 10)
+        .background(PevColors.warningFill)
+        .overlay(alignment: .bottom) {
+            Rectangle()
+                .fill(PevColors.warningStroke)
+                .frame(height: 1)
+        }
+        .accessibilityIdentifier("live-activity.failure")
+    }
+
+    private func performLiveActivityRecovery(_ action: LiveActivityFailureAction) {
+        switch action {
+        case .retry:
+            model.retryLiveActivity()
+        case .openSettings:
+#if os(iOS)
+            if let settingsURL = URL(string: UIApplication.openSettingsURLString) {
+                openURL(settingsURL)
+            }
+#else
+            model.retryLiveActivity()
+#endif
         }
     }
 

@@ -2760,6 +2760,14 @@ final class CutoutAppModel {
         lastLiveActivityUpdate = nil
     }
 
+    func retryLiveActivity() {
+        guard liveActivityError != nil else { return }
+        liveActivityError = nil
+        lastLiveActivitySnapshot = nil
+        lastLiveActivityUpdate = nil
+        syncLiveActivity()
+    }
+
     func applyProtocolIdentityCandidate(_ candidate: DevicePickerDiscoveryCandidate?) {
         guard isRecordOnlyCapture != true else {
             liveActivityIdentity = nil

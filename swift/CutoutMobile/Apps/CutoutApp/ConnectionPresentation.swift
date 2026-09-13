@@ -100,6 +100,33 @@ extension LiveActivityRideLifecycleError {
         case .activityUnavailable: localizedAppText("live_activity.error.unavailable")
         }
     }
+
+    var failurePresentation: LiveActivityFailurePresentation {
+        let action: LiveActivityFailureAction = switch self {
+        case .authorizationDenied: .openSettings
+        case .requestFailed, .activityUnavailable: .retry
+        }
+        return LiveActivityFailurePresentation(
+            message: accessibilityAnnouncement,
+            actionTitle: localizedAppText(
+                action == .openSettings
+                    ? "live_activity.action.open_settings"
+                    : "live_activity.action.try_again"
+            ),
+            action: action
+        )
+    }
+}
+
+enum LiveActivityFailureAction: Equatable {
+    case openSettings
+    case retry
+}
+
+struct LiveActivityFailurePresentation: Equatable {
+    let message: String
+    let actionTitle: String
+    let action: LiveActivityFailureAction
 }
 
 struct ConnectionAccessibilityAnnouncements {
