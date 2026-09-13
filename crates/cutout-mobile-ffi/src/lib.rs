@@ -3288,6 +3288,41 @@ impl MobileAccelerationAssistSettingStateDto {
     }
 }
 
+/// Complete Rust-owned settings projection for an EUC session.
+///
+/// Keeping the setting states together makes the FFI boundary a single
+/// snapshot instead of a collection of individually synchronized reads.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct MobileEucSettingsStateDto {
+    pub headlight: MobileLightSettingStateDto,
+    pub aero_high_beam: MobileLightSettingStateDto,
+    pub aero_tiltback_speed: MobileAeroSpeedSettingStateDto,
+    pub aero_pwm_percent: MobileAeroPwmSettingStateDto,
+    pub aero_gyro_calibration: MobileAeroGyroCalibrationSettingStateDto,
+    pub aero_riding_mode: MobileAeroRidingModeSettingStateDto,
+    pub aero_brake_overpressure_alarm: MobileAeroBrakeOverpressureAlarmStateDto,
+    pub aero_pedal_hardness: MobileAeroPedalHardnessStateDto,
+    pub aero_display_backlight: MobileAeroDisplayBacklightStateDto,
+    pub aero_beeper_volume: MobileAeroBeeperVolumeStateDto,
+    pub aero_dynamic_assist: MobileAeroDynamicAssistStateDto,
+    pub aero_pedal_dip_compensation: MobileAeroPedalDipCompensationStateDto,
+    pub aero_lateral_tilt_limit: MobileAeroLateralTiltLimitStateDto,
+    pub aero_voltage_correction: MobileAeroVoltageCorrectionStateDto,
+    pub aero_max_charge_voltage_raw: MobileAeroMaxChargeVoltageRawStateDto,
+    pub aero_wheel_units: MobileAeroWheelUnitsStateDto,
+    pub aero_high_speed_mode: MobileAeroHighSpeedModeStateDto,
+    pub aero_low_battery_mode: MobileAeroLowBatteryModeStateDto,
+    pub aero_transport_mode: MobileAeroTransportModeStateDto,
+    pub aero_alarm_speed: MobileAeroSpeedSettingStateDto,
+    pub aero_angle_adjustment: MobileAeroAngleAdjustmentStateDto,
+    pub pedal_mode: MobilePedalModeSettingStateDto,
+    pub roll_angle: MobileRollAngleSettingStateDto,
+    pub speed_alarm_mode: MobileSpeedAlarmModeSettingStateDto,
+    pub acceleration_assist: MobileAccelerationAssistSettingStateDto,
+    pub taillight: MobileLightSettingStateDto,
+    pub trip_meter_reset: MobileTripMeterResetStateDto,
+}
+
 impl From<MobileLightStateDto> for LightStateDto {
     fn from(state: MobileLightStateDto) -> Self {
         match state {
@@ -4529,6 +4564,38 @@ impl MobileEucSettingTrackers {
             CoreSettingState::Failed { .. } => MobileSettingStateKindDto::Failed,
         };
         snapshot
+    }
+
+    fn snapshot(&self) -> MobileEucSettingsStateDto {
+        MobileEucSettingsStateDto {
+            headlight: self.headlight(),
+            aero_high_beam: self.aero_high_beam(),
+            aero_tiltback_speed: self.aero_tiltback_speed(),
+            aero_pwm_percent: self.aero_pwm_percent(),
+            aero_gyro_calibration: self.aero_gyro_calibration(),
+            aero_riding_mode: self.aero_riding_mode(),
+            aero_brake_overpressure_alarm: self.aero_brake_overpressure_alarm(),
+            aero_pedal_hardness: self.aero_pedal_hardness(),
+            aero_display_backlight: self.aero_display_backlight(),
+            aero_beeper_volume: self.aero_beeper_volume(),
+            aero_dynamic_assist: self.aero_dynamic_assist(),
+            aero_pedal_dip_compensation: self.aero_pedal_dip_compensation(),
+            aero_lateral_tilt_limit: self.aero_lateral_tilt_limit(),
+            aero_voltage_correction: self.aero_voltage_correction(),
+            aero_max_charge_voltage_raw: self.aero_max_charge_voltage_raw(),
+            aero_wheel_units: self.aero_wheel_units(),
+            aero_high_speed_mode: self.aero_high_speed_mode(),
+            aero_low_battery_mode: self.aero_low_battery_mode(),
+            aero_transport_mode: self.aero_transport_mode(),
+            aero_alarm_speed: self.aero_alarm_speed(),
+            aero_angle_adjustment: self.aero_angle_adjustment(),
+            pedal_mode: self.pedal_mode(),
+            roll_angle: self.roll_angle(),
+            speed_alarm_mode: self.speed_alarm_mode(),
+            acceleration_assist: self.acceleration_assist(),
+            taillight: self.taillight(),
+            trip_meter_reset: self.trip_meter_reset(),
+        }
     }
 }
 
@@ -14142,6 +14209,11 @@ impl AeroBenignControlSession {
         }
     }
 
+    /// Returns one atomic snapshot of all Rust-owned setting lifecycles.
+    pub fn settings_state(&self) -> MobileEucSettingsStateDto {
+        self.lock_settings().snapshot()
+    }
+
     /// Arms settings writes only when the latest Rust-owned ride state is stationary.
     pub fn arm_settings_writes(
         &self,
@@ -15971,6 +16043,11 @@ impl FalconBenignControlSession {
     /// Returns the EUC setting write capabilities and their validation state.
     pub fn settings_capabilities(&self) -> MobileEucSettingsCapabilitiesDto {
         MobileEucSettingsCapabilitiesDto::falcon()
+    }
+
+    /// Returns one atomic snapshot of all Rust-owned setting lifecycles.
+    pub fn settings_state(&self) -> MobileEucSettingsStateDto {
+        self.lock_settings().snapshot()
     }
 
     /// Arms settings writes only when the latest Rust-owned ride state is stationary.
@@ -20394,6 +20471,88 @@ mod tests {
         assert_eq!(state.current, None);
         assert_eq!(state.requested, Some(MobileLightStateDto::On));
         assert_eq!(state.submitted_at_ms, Some(10));
+    }
+
+    #[test]
+    fn settings_state_returns_one_rust_owned_projection() {
+        let session = AeroBenignControlSession::new();
+        let snapshot = session.settings_state();
+
+        assert_eq!(snapshot.headlight, session.headlight_state());
+        assert_eq!(snapshot.aero_high_beam, session.aero_high_beam_state());
+        assert_eq!(
+            snapshot.aero_tiltback_speed,
+            session.aero_tiltback_speed_state()
+        );
+        assert_eq!(snapshot.aero_pwm_percent, session.aero_pwm_percent_state());
+        assert_eq!(
+            snapshot.aero_gyro_calibration,
+            session.aero_gyro_calibration_state()
+        );
+        assert_eq!(snapshot.aero_riding_mode, session.aero_riding_mode_state());
+        assert_eq!(
+            snapshot.aero_brake_overpressure_alarm,
+            session.aero_brake_overpressure_alarm_state()
+        );
+        assert_eq!(
+            snapshot.aero_pedal_hardness,
+            session.aero_pedal_hardness_state()
+        );
+        assert_eq!(
+            snapshot.aero_display_backlight,
+            session.aero_display_backlight_state()
+        );
+        assert_eq!(
+            snapshot.aero_beeper_volume,
+            session.aero_beeper_volume_state()
+        );
+        assert_eq!(
+            snapshot.aero_dynamic_assist,
+            session.aero_dynamic_assist_state()
+        );
+        assert_eq!(
+            snapshot.aero_pedal_dip_compensation,
+            session.aero_pedal_dip_compensation_state()
+        );
+        assert_eq!(
+            snapshot.aero_lateral_tilt_limit,
+            session.aero_lateral_tilt_limit_state()
+        );
+        assert_eq!(
+            snapshot.aero_voltage_correction,
+            session.aero_voltage_correction_state()
+        );
+        assert_eq!(
+            snapshot.aero_max_charge_voltage_raw,
+            session.aero_max_charge_voltage_raw_state()
+        );
+        assert_eq!(snapshot.aero_wheel_units, session.aero_wheel_units_state());
+        assert_eq!(
+            snapshot.aero_high_speed_mode,
+            session.aero_high_speed_mode_state()
+        );
+        assert_eq!(
+            snapshot.aero_low_battery_mode,
+            session.aero_low_battery_mode_state()
+        );
+        assert_eq!(
+            snapshot.aero_transport_mode,
+            session.aero_transport_mode_state()
+        );
+        assert_eq!(snapshot.aero_alarm_speed, session.aero_alarm_speed_state());
+        assert_eq!(
+            snapshot.aero_angle_adjustment,
+            session.aero_angle_adjustment_state()
+        );
+        assert_eq!(snapshot.pedal_mode, session.pedal_mode_state());
+        assert_eq!(snapshot.roll_angle, session.roll_angle_state());
+        assert_eq!(snapshot.speed_alarm_mode, session.speed_alarm_mode_state());
+        assert_eq!(
+            snapshot.acceleration_assist,
+            session.acceleration_assist_state()
+        );
+        assert_eq!(snapshot.taillight, session.taillight_state());
+        assert_eq!(snapshot.trip_meter_reset, session.trip_meter_reset_state());
     }
 
     #[test]

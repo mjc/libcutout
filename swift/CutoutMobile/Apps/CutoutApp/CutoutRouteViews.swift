@@ -402,59 +402,6 @@ struct EucTuneRouteView: View {
                     }
                 }
 
-                if let settings = model.settingsReadback?.eucGarageSettings {
-                    Section {
-                        EucSettingReadbackRow(
-                            id: "beepMargin",
-                            title: localizedAppText("settings.beep_margin.title"),
-                            value: EucSettingReadbackPresentation.speed(settings.beepMargin)
-                        )
-                        EucSettingReadbackRow(
-                            id: "tiltback",
-                            title: localizedAppText("settings.tiltback.title"),
-                            value: EucSettingReadbackPresentation.speed(settings.tiltback)
-                        )
-                        EucSettingReadbackRow(
-                            id: "pedalMode",
-                            title: localizedAppText("settings.pedal_mode.title"),
-                            value: EucSettingReadbackPresentation.pedalMode(
-                                model.pedalModeState,
-                                fallback: settings.pedalMode
-                            )
-                        )
-                        EucSettingReadbackRow(
-                            id: "rollAngle",
-                            title: localizedAppText("settings.roll_angle.title"),
-                            value: EucSettingReadbackPresentation.rollAngle(
-                                model.rollAngleState,
-                                fallback: settings.rollAngle
-                            )
-                        )
-                        EucSettingReadbackRow(
-                            id: "speedAlarmMode",
-                            title: localizedAppText("settings.speed_alarm_mode.title"),
-                            value: EucSettingReadbackPresentation.speedAlarmMode(
-                                model.speedAlarmModeState,
-                                fallback: settings.speedAlarmMode
-                            )
-                        )
-                        EucSettingReadbackRow(
-                            id: "autoShutdown",
-                            title: localizedAppText("settings.auto_shutdown.title"),
-                            value: EucSettingReadbackPresentation.seconds(settings.autoShutdownSeconds)
-                        )
-                        EucSettingReadbackRow(
-                            id: "chargeMode",
-                            title: localizedAppText("settings.charge_mode.title"),
-                            value: EucSettingReadbackPresentation.chargeMode(settings.chargeMode)
-                        )
-                    } header: {
-                        Text(localizedAppText("settings.readback.title"))
-                    } footer: {
-                        Text(localizedAppText("settings.readback.footer"))
-                    }
-                }
-
                 if let capabilities = model.settingsCapabilities {
                     Section {
                         if model.manualHeadlightControlVisible {
@@ -792,6 +739,7 @@ private struct EucAeroSettingsControls: View {
         } footer: {
             Text(localizedAppText("settings.aero.footer"))
         }
+        .buttonStyle(.borderless)
         .disabled(model.phase != .live)
         .onChange(of: model.aeroTiltbackSpeedState?.current, initial: true) { _, _ in
             seedFromDeviceIfNeeded()
@@ -941,7 +889,7 @@ private struct EucAeroAdditionalSettingsControls: View {
             }
             if model.aeroDynamicAssistControlAvailable {
                 EucAeroNumericSettingControl(
-                    title: localizedAppText("settings.aero.dynamic_assist.title"),
+                    title: localizedAppText("settings.acceleration_assist.title"),
                     id: "aeroDynamicAssist",
                     range: 0...100,
                     currentValue: model.aeroDynamicAssistState?.current.map { Int($0.percent) },
@@ -1062,6 +1010,7 @@ private struct EucAeroAdditionalSettingsControls: View {
         } footer: {
             Text(localizedAppText("settings.aero.footer"))
         }
+        .buttonStyle(.borderless)
         .disabled(model.phase != .live)
     }
 }

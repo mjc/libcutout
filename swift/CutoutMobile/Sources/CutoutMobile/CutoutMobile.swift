@@ -2410,6 +2410,71 @@ public struct EucSettingsCapabilities: Equatable, Hashable, Sendable {
     }
 }
 
+/// One coherent projection of every EUC setting lifecycle from Rust.
+///
+/// The mobile UI should read this snapshot rather than issuing a separate FFI
+/// call for each control. Rust owns lifecycle and validation policy; this type
+/// only adapts the generated DTOs to Swift value types.
+public struct EucSettingsState: Equatable, Hashable, Sendable {
+    public let headlight: LightSettingState
+    public let aeroHighBeam: LightSettingState
+    public let aeroTiltbackSpeed: AeroSpeedSettingState
+    public let aeroPwmPercent: AeroPwmSettingState
+    public let aeroGyroCalibration: AeroGyroCalibrationSettingState
+    public let aeroRidingMode: AeroRidingModeSettingState
+    public let aeroBrakeOverpressureAlarm: AeroBrakeOverpressureAlarmSettingState
+    public let aeroPedalHardness: AeroPedalHardnessSettingState
+    public let aeroDisplayBacklight: AeroDisplayBacklightSettingState
+    public let aeroBeeperVolume: AeroBeeperVolumeSettingState
+    public let aeroDynamicAssist: AeroDynamicAssistSettingState
+    public let aeroPedalDipCompensation: AeroPedalDipCompensationSettingState
+    public let aeroLateralTiltLimit: AeroLateralTiltLimitSettingState
+    public let aeroVoltageCorrection: AeroVoltageCorrectionSettingState
+    public let aeroMaxChargeVoltageRaw: AeroMaxChargeVoltageRawSettingState
+    public let aeroWheelUnits: AeroWheelUnitsSettingState
+    public let aeroHighSpeedMode: AeroToggleSettingState
+    public let aeroLowBatteryMode: AeroToggleSettingState
+    public let aeroTransportMode: AeroToggleSettingState
+    public let aeroAlarmSpeed: AeroSpeedSettingState
+    public let aeroAngleAdjustment: AeroAngleAdjustmentSettingState
+    public let pedalMode: PedalModeSettingState
+    public let rollAngle: RollAngleSettingState
+    public let speedAlarmMode: SpeedAlarmModeSettingState
+    public let accelerationAssist: AccelerationAssistSettingState
+    public let taillight: LightSettingState
+    public let tripMeterReset: TripMeterResetState
+
+    fileprivate init(_ dto: MobileEucSettingsStateDto) {
+        headlight = LightSettingState(dto.headlight)
+        aeroHighBeam = LightSettingState(dto.aeroHighBeam)
+        aeroTiltbackSpeed = AeroSpeedSettingState(dto.aeroTiltbackSpeed)
+        aeroPwmPercent = AeroPwmSettingState(dto.aeroPwmPercent)
+        aeroGyroCalibration = AeroGyroCalibrationSettingState(dto.aeroGyroCalibration)
+        aeroRidingMode = AeroRidingModeSettingState(dto.aeroRidingMode)
+        aeroBrakeOverpressureAlarm = AeroBrakeOverpressureAlarmSettingState(dto.aeroBrakeOverpressureAlarm)
+        aeroPedalHardness = AeroPedalHardnessSettingState(dto.aeroPedalHardness)
+        aeroDisplayBacklight = AeroDisplayBacklightSettingState(dto.aeroDisplayBacklight)
+        aeroBeeperVolume = AeroBeeperVolumeSettingState(dto.aeroBeeperVolume)
+        aeroDynamicAssist = AeroDynamicAssistSettingState(dto.aeroDynamicAssist)
+        aeroPedalDipCompensation = AeroPedalDipCompensationSettingState(dto.aeroPedalDipCompensation)
+        aeroLateralTiltLimit = AeroLateralTiltLimitSettingState(dto.aeroLateralTiltLimit)
+        aeroVoltageCorrection = AeroVoltageCorrectionSettingState(dto.aeroVoltageCorrection)
+        aeroMaxChargeVoltageRaw = AeroMaxChargeVoltageRawSettingState(dto.aeroMaxChargeVoltageRaw)
+        aeroWheelUnits = AeroWheelUnitsSettingState(dto.aeroWheelUnits)
+        aeroHighSpeedMode = AeroToggleSettingState(dto.aeroHighSpeedMode)
+        aeroLowBatteryMode = AeroToggleSettingState(dto.aeroLowBatteryMode)
+        aeroTransportMode = AeroToggleSettingState(dto.aeroTransportMode)
+        aeroAlarmSpeed = AeroSpeedSettingState(dto.aeroAlarmSpeed)
+        aeroAngleAdjustment = AeroAngleAdjustmentSettingState(dto.aeroAngleAdjustment)
+        pedalMode = PedalModeSettingState(dto.pedalMode)
+        rollAngle = RollAngleSettingState(dto.rollAngle)
+        speedAlarmMode = SpeedAlarmModeSettingState(dto.speedAlarmMode)
+        accelerationAssist = AccelerationAssistSettingState(dto.accelerationAssist)
+        taillight = LightSettingState(dto.taillight)
+        tripMeterReset = TripMeterResetState(dto.tripMeterReset)
+    }
+}
+
 /// Result of submitting a guarded setting command to the live session.
 public enum SettingCommandResult: Equatable, Hashable, Sendable {
     /// The command was accepted and scheduled for transport.
@@ -6311,6 +6376,16 @@ public final class ElectricUnicycleSession: @unchecked Sendable {
         }
     }
 
+    /// Reads all setting lifecycles through one Rust-owned snapshot.
+    public var settingsState: EucSettingsState {
+        switch inner {
+        case .aero(let session):
+            EucSettingsState(session.settingsState())
+        case .falcon(let session):
+            EucSettingsState(session.settingsState())
+        }
+    }
+
     public var tripMeterResetState: TripMeterResetState {
         switch inner {
         case .aero(let session):
@@ -7050,6 +7125,15 @@ public enum CoreBluetoothSession: Sendable {
         }
     }
 
+    public var settingsState: EucSettingsState? {
+        switch self {
+        case .electricUnicycle(let session):
+            session.settingsState
+        case .vescOnewheel:
+            nil
+        }
+    }
+
     public var tripMeterResetState: TripMeterResetState? {
         switch self {
         case .electricUnicycle(let session):
@@ -7463,6 +7547,10 @@ public final class CoreBluetoothSessionRunner: @unchecked Sendable {
         session.settingsCapabilities
     }
 
+    public var settingsState: EucSettingsState? {
+        session.settingsState
+    }
+
     public var tripMeterResetState: TripMeterResetState? {
         session.tripMeterResetState
     }
@@ -7740,6 +7828,7 @@ public final class CoreBluetoothLiveSessionOwner: @unchecked Sendable {
     private var receivedRealtimeTelemetrySinceLinkUp = false
     private var pendingOperationsAfterSubscription: [CoreBluetoothPlannedOperation] = []
     private var waitingForSubscriptionChannel: BluetoothUuid?
+    private var lastPublishedSettingsState: EucSettingsState?
 
     public convenience init(
         session: CoreBluetoothSession,
@@ -7811,6 +7900,13 @@ public final class CoreBluetoothLiveSessionOwner: @unchecked Sendable {
     public var settingsCapabilities: EucSettingsCapabilities? {
         runner.settingsCapabilities
     }
+
+    public var settingsState: EucSettingsState? {
+        runner.settingsState
+    }
+
+    /// Called on the session execution queue when Rust setting state changes.
+    public var onSettingsStateChange: ((EucSettingsState) -> Void)?
 
     public var tripMeterResetState: TripMeterResetState? {
         runner.tripMeterResetState
@@ -7946,6 +8042,7 @@ public final class CoreBluetoothLiveSessionOwner: @unchecked Sendable {
     public func handleLinkUp(at monotonicMilliseconds: MonotonicMilliseconds) throws -> CoreBluetoothSessionStep {
         cancelDeadlineTimer()
         cancelPendingRetry()
+        lastPublishedSettingsState = nil
         receivedRealtimeTelemetrySinceLinkUp = false
         retryAttempts = 0
         let step = try runner.handle(.linkUp(at: monotonicMilliseconds))
@@ -7962,6 +8059,7 @@ public final class CoreBluetoothLiveSessionOwner: @unchecked Sendable {
         executeAndRecord(subscriptions + writes)
         scheduleRetryIfNeeded()
         scheduleSettingTick()
+        publishSettingsState()
 
         return step
     }
@@ -7981,6 +8079,7 @@ public final class CoreBluetoothLiveSessionOwner: @unchecked Sendable {
         record(.command(command, at: monotonicMilliseconds))
         let step = try runner.handle(.command(command, at: monotonicMilliseconds))
         executeAndRecord(step.operations)
+        publishSettingsState()
         return step
     }
 
@@ -7989,6 +8088,7 @@ public final class CoreBluetoothLiveSessionOwner: @unchecked Sendable {
     public func handleTick(at monotonicMilliseconds: MonotonicMilliseconds) throws -> CoreBluetoothSessionStep {
         let step = try runner.handle(.tick(at: monotonicMilliseconds))
         executeAndRecord(step.operations)
+        publishSettingsState()
         return step
     }
 
@@ -8015,6 +8115,9 @@ public final class CoreBluetoothLiveSessionOwner: @unchecked Sendable {
             cancelPendingRetry()
         }
         executeAndRecord(step.operations)
+        if step.actions.contains(where: { $0.kind == .settingsReadback }) {
+            publishSettingsState()
+        }
         return step
     }
 
@@ -8022,6 +8125,7 @@ public final class CoreBluetoothLiveSessionOwner: @unchecked Sendable {
     public func handleLinkDown(at monotonicMilliseconds: MonotonicMilliseconds) throws -> CoreBluetoothSessionStep {
         cancelDeadlineTimer()
         cancelPendingRetry()
+        lastPublishedSettingsState = nil
         retainedSink.clearPendingWithoutResponseWrites()
         cancelSettingTick()
         pendingOperationsAfterSubscription.removeAll()
@@ -8066,8 +8170,7 @@ public final class CoreBluetoothLiveSessionOwner: @unchecked Sendable {
             guard let self, self.linkGeneration == generation else { return }
             guard self.retainedSink.canSubmitWithoutResponse() else { return }
             do {
-                let step = try self.runner.handle(.tick(at: self.monotonicClock.now()))
-                self.executeAndRecord(step.operations)
+                _ = try self.handleTick(at: self.monotonicClock.now())
             } catch {
                 self.cancelDeadlineTimer()
             }
@@ -8109,6 +8212,14 @@ public final class CoreBluetoothLiveSessionOwner: @unchecked Sendable {
                 deferAfterSubscription = true
             }
         }
+    }
+
+    private func publishSettingsState() {
+        guard let onSettingsStateChange, let settingsState,
+              settingsState != lastPublishedSettingsState
+        else { return }
+        lastPublishedSettingsState = settingsState
+        onSettingsStateChange(settingsState)
     }
 
     private func record(_ value: CoreBluetoothLiveRecord) {

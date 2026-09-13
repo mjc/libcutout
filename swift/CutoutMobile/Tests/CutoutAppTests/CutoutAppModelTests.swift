@@ -434,6 +434,12 @@ final class CutoutAppModelTests: XCTestCase {
     func testPedalModeWriteUsesTheSupportedCapability() {
         let driver = SessionDriverSpy(rows: [])
         driver.electricUnicycleModel = .aero
+        driver.settingsCapabilitiesOverride = EucSettingsCapabilities(
+            pedalMode: .supported,
+            accelerationAssist: .unsupported,
+            headlight: .supported,
+            taillight: .unsupported
+        )
         let model = CutoutAppModel(core: driver)
 
         XCTAssertTrue(model.pedalModeControlAvailable)
@@ -647,6 +653,41 @@ final class CutoutAppModelTests: XCTestCase {
 
         XCTAssertEqual(model.accelerationAssistState, driver.accelerationAssistState)
         XCTAssertEqual(model.taillightState, driver.taillightState)
+    }
+
+    @MainActor
+    func testProductionEucUsesTheRustSettingsAggregateSnapshot() async {
+        let fixture = CutoutUITestSessionFixture.euc
+        let core = CutoutSessionCore(testScript: fixture.testScript)
+        let model = CutoutAppModel(core: core)
+
+        model.start()
+        XCTAssertTrue(model.pair(platformIdentifier: fixture.candidate.platformIdentifier))
+        await Self.waitUntil("Rust settings aggregate snapshot", maxTurns: 100_000) {
+            model.phase == .live && model.settingsState != nil
+        }
+
+        XCTAssertEqual(model.settingsState, core.settingsState)
+        XCTAssertEqual(model.aeroDynamicAssistState, model.settingsState?.aeroDynamicAssist)
+    }
+
+    @MainActor
+    func testStaleSettingsSnapshotIsIgnoredAfterConnectionFailure() async throws {
+        let fixture = CutoutUITestSessionFixture.euc
+        let core = CutoutSessionCore(testScript: fixture.testScript)
+        let model = CutoutAppModel(core: core)
+
+        model.start()
+        XCTAssertTrue(model.pair(platformIdentifier: fixture.candidate.platformIdentifier))
+        await Self.waitUntil("Rust settings aggregate snapshot", maxTurns: 100_000) {
+            model.phase == .live && model.settingsState != nil
+        }
+        let state = try XCTUnwrap(model.settingsState)
+
+        core.onPhaseChange?(.failed(.sessionFailed("write channel unavailable")))
+        core.onSettingsStateChange?(state)
+
+        XCTAssertNil(model.settingsState)
     }
 
     @MainActor
@@ -3468,6 +3509,7 @@ private final class SessionDriverSpy: CutoutSessionDriving {
     var onReconnectScheduled: ((SessionConnectionRetry) -> Void)?
     var onCaptureEvent: ((CaptureEvent) -> Void)?
     var onScanStateChange: ((DevicePickerScanState) -> Void)?
+    var onSettingsStateChange: ((EucSettingsState) -> Void)?
     var onSettingsReadbackChange: ((SettingsReadback?) -> Void)?
     var onFaultHistoryReadbackChange: ((FaultHistoryReadback?) -> Void)?
     var onBmsSnapshotChange: ((BmsSnapshot?) -> Void)?
@@ -3504,9 +3546,12 @@ private final class SessionDriverSpy: CutoutSessionDriving {
     private var headlightCommandStatusOverride: LightCommandStatus?
     var tripMeterResetState: TripMeterResetState?
     var tripMeterResetCommandResult: SettingCommandResult = .accepted
+    private(set) var tripMeterResetCount = 0
     var aeroHighBeamState: LightSettingState?
     var aeroTiltbackSpeedState: AeroSpeedSettingState?
+    private(set) var aeroTiltbackSpeeds = [AeroSpeedSetting]()
     var aeroPwmPercentState: AeroPwmSettingState?
+    private(set) var aeroPwmPercents = [AeroPwmPercent]()
     var aeroPedalHardnessState: AeroPedalHardnessSettingState?
     var aeroDisplayBacklightState: AeroDisplayBacklightSettingState?
     private(set) var aeroDisplayBacklightValues = [AeroDisplayBacklight]()
@@ -3526,7 +3571,9 @@ private final class SessionDriverSpy: CutoutSessionDriving {
     private(set) var aeroWheelUnitsValues = [AeroWheelUnits]()
     private(set) var aeroPedalHardnesses = [AeroPedalHardness]()
     var aeroAlarmSpeedState: AeroSpeedSettingState?
+    private(set) var aeroAlarmSpeeds = [AeroSpeedSetting]()
     var aeroAngleAdjustmentState: AeroAngleAdjustmentSettingState?
+    private(set) var aeroAngleAdjustments = [AeroAngleAdjustment]()
     var pedalModeState: PedalModeSettingState?
     var rollAngleState: RollAngleSettingState?
     var speedAlarmModeState: SpeedAlarmModeSettingState?
@@ -3803,14 +3850,6 @@ private final class SessionDriverSpy: CutoutSessionDriving {
         headlightCommandStatusOverride = .sentWithoutConfirmation
         return .accepted
     }
-    func resetTripMeter() -> SettingCommandResult { .accepted }
-    func setAeroTiltbackSpeed(_ speed: AeroSpeedSetting) -> SettingCommandResult { .accepted }
-
-    func setAeroPwmPercent(_ percent: AeroPwmPercent) -> SettingCommandResult { .accepted }
-
-    func setAeroAlarmSpeed(_ speed: AeroSpeedSetting) -> SettingCommandResult { .accepted }
-
-    func setAeroAngleAdjustment(_ angle: AeroAngleAdjustment) -> SettingCommandResult { .accepted }
     func now() -> MonotonicMilliseconds {
         MonotonicMilliseconds(nowValue)
     }

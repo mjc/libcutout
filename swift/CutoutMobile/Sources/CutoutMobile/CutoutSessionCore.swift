@@ -293,6 +293,19 @@ public struct CutoutSessionTestScript {
         self.connectionDelayMilliseconds = connectionDelayMilliseconds
     }
 }
+
+/// Deterministic transport for exercising the Rust-backed settings path without BLE.
+private final class CutoutSessionTestOperationSink: CoreBluetoothOperationSink {
+    private(set) var writes: [(BluetoothUuid, Data)] = []
+
+    func subscribe(channel _: BluetoothUuid) {}
+
+    func writeWithoutResponse(channel: BluetoothUuid, bytes: Data) {
+        writes.append((channel, bytes))
+    }
+
+    func disconnect() {}
+}
 #endif
 
 struct BoundedDiagnosticLog {
@@ -351,6 +364,10 @@ public final class CutoutSessionCore: NSObject {
     }
     public var settingsCapabilities: EucSettingsCapabilities? {
         onBleQueue { liveOwner?.settingsCapabilities }
+    }
+    /// One queue-confined read of every Rust-owned setting lifecycle.
+    public var settingsState: EucSettingsState? {
+        onBleQueue { liveOwner?.settingsState }
     }
     public var tripMeterResetState: TripMeterResetState? {
         onBleQueue { liveOwner?.tripMeterResetState }
@@ -443,6 +460,7 @@ public final class CutoutSessionCore: NSObject {
     public var onRecord: ((String) -> Void)?
     public var onCaptureEvent: ((CaptureEvent) -> Void)?
     public var onScanStateChange: ((DevicePickerScanState) -> Void)?
+    public var onSettingsStateChange: ((EucSettingsState) -> Void)?
     public var onSettingsReadbackChange: ((SettingsReadback?) -> Void)?
     public var onFaultHistoryReadbackChange: ((FaultHistoryReadback?) -> Void)?
     public var onBmsSnapshotChange: ((BmsSnapshot?) -> Void)?
@@ -505,6 +523,7 @@ public final class CutoutSessionCore: NSObject {
     private var didResolveBluetoothRestoration = false
 #if DEBUG
     private let testScript: CutoutSessionTestScript?
+    private var testOperationSink: CutoutSessionTestOperationSink?
     private var testScriptWorkItem: DispatchWorkItem?
     private var testScriptUpdateWorkItem: DispatchWorkItem?
     private var testScriptDidReconnect = false
@@ -1020,6 +1039,8 @@ public final class CutoutSessionCore: NSObject {
             testScriptWorkItem?.cancel()
             testScriptUpdateWorkItem?.cancel()
             testScriptDidReconnect = false
+            testOperationSink = nil
+            liveOwner = nil
             displayState = RideDisplayState()
             publishDisplayState()
             switch testScript.initialBluetoothState {
@@ -1072,6 +1093,35 @@ public final class CutoutSessionCore: NSObject {
 
         self.selectedRoute = route
         self.selectedModel = selectedModel
+#if DEBUG
+        if route == .electricUnicycle, selectedModel == .aero {
+            do {
+                let sink = CutoutSessionTestOperationSink()
+                let advertisement = CoreBluetoothAdvertisement(
+                    peripheralIdentifier: CoreBluetoothPeripheralIdentifier(platformIdentifier),
+                    localName: testScript.candidate.displayName,
+                    advertisedServiceUuids: []
+                )
+                liveOwner = try CoreBluetoothLiveSessionOwner(
+                    session: .electricUnicycle(
+                        model: .aero,
+                        deviceIdentity: platformIdentifier,
+                        allowUnverifiedSettings: true
+                    ),
+                    advertisement: advertisement,
+                    writeLimit: TransportWriteLimitBytes(23),
+                    operationSink: sink,
+                    detectionSession: deviceDetectionSession,
+                    executionQueue: bleQueue
+                )
+                attachSettingsStateCallback()
+                testOperationSink = sink
+            } catch {
+                setPhase(.failed(.sessionFailed(error.sessionMessage)))
+                return false
+            }
+        }
+#endif
         testScriptWorkItem?.cancel()
         testScriptUpdateWorkItem?.cancel()
         setPhase(.discoveringServices)
@@ -1445,7 +1495,12 @@ public final class CutoutSessionCore: NSObject {
 
     private func setPhase(_ phase: SessionConnectionPhase) {
         self.phase = phase
+        // Publish the phase first so the app model can accept the dependent
+        // settings snapshot only after it has entered the live link.
         publishOnMain { self.onPhaseChange?(phase) }
+        if phase == .live, let state = liveOwner?.settingsState {
+            publishSettingsState(state)
+        }
     }
 
     private func connect(
@@ -1583,6 +1638,7 @@ public final class CutoutSessionCore: NSObject {
                 executionQueue: bleQueue,
                 monotonicClock: clock
             )
+            attachSettingsStateCallback()
             if let chargeEstimateProfile {
                 liveOwner?.configureChargeEstimate(profile: chargeEstimateProfile)
             }
@@ -1859,6 +1915,21 @@ public final class CutoutSessionCore: NSObject {
     private func publishSettingsReadback() {
         let value = settingsReadback
         publishOnMain { self.onSettingsReadbackChange?(value) }
+    }
+
+    private func publishSettingsState(_ value: EucSettingsState) {
+        publishOnMain { self.onSettingsStateChange?(value) }
+    }
+
+    private func attachSettingsStateCallback() {
+        guard let owner = liveOwner else { return }
+        owner.onSettingsStateChange = { [weak self, weak owner] state in
+            guard let self, let owner else { return }
+            self.onBleQueue {
+                guard self.phase == .live, self.liveOwner === owner else { return }
+                self.publishSettingsState(state)
+            }
+        }
     }
 
     private func publishFaultHistoryReadback() {
