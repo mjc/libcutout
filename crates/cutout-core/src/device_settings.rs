@@ -3,8 +3,9 @@
 use std::collections::BTreeMap;
 
 use crate::{
-    ControlRefusalReason, Duration, MonotonicTimestamp, SETTING_CONFIRMATION_TIMEOUT,
-    SettingCommandStatus, SettingState, SettingValue, SettingValueSource,
+    ControlRefusalReason, Duration, Measured, MonotonicTimestamp, SETTING_CONFIRMATION_TIMEOUT,
+    SettingCommandStatus, SettingState, SettingValue, SettingValueSource, ValueQuality,
+    ValueSource, VerificationStatus,
 };
 
 /// Stable semantic identity, independent of protocol fields or model names.
@@ -99,6 +100,8 @@ pub struct DeviceSettingSnapshot {
     pub id: SettingId,
     /// Most recent observed value with its original provenance.
     pub current: Option<SettingValue<DeviceSettingValue>>,
+    /// Original measurement evidence when the protocol supplied it.
+    pub measured: Option<Measured<DeviceSettingValue>>,
     /// Last request, kept separate from device readback.
     pub requested: Option<DeviceSettingValue>,
     /// Rust-owned confirmation state.
@@ -113,6 +116,7 @@ pub struct DeviceSettingSnapshot {
 struct SettingRecord {
     state: SettingState<DeviceSettingValue>,
     observed_at: Option<MonotonicTimestamp>,
+    evidence: Option<Measured<()>>,
     confirmation_supported: bool,
 }
 
@@ -121,6 +125,7 @@ impl Default for SettingRecord {
         Self {
             state: SettingState::unknown(),
             observed_at: None,
+            evidence: None,
             confirmation_supported: true,
         }
     }
@@ -145,6 +150,34 @@ impl DeviceSettingsState {
         source: SettingValueSource,
         observed_at: MonotonicTimestamp,
     ) {
+        self.observe_readback(id, SettingValue { value, source }, None, observed_at);
+    }
+
+    /// Retains decoded evidence without upgrading inferred values to confirmation.
+    pub fn observe_measured(
+        &mut self,
+        id: SettingId,
+        measured: Measured<DeviceSettingValue>,
+        observed_at: MonotonicTimestamp,
+    ) {
+        let source = if measured.source == ValueSource::Reported {
+            SettingValueSource::LiveReadback
+        } else {
+            SettingValueSource::Unknown
+        };
+        self.observe_readback(
+            id,
+            SettingValue {
+                value: measured.value,
+                source,
+            },
+            Some(measured.map_value(|_| ())),
+            observed_at,
+        );
+    }
+
+    /// Removes an explicitly unusable readback, preserving any outstanding request.
+    pub fn invalidate_readback(&mut self, id: SettingId, observed_at: MonotonicTimestamp) {
         let record = self.records.entry(id).or_default();
         if record
             .observed_at
@@ -153,14 +186,52 @@ impl DeviceSettingsState {
         {
             return;
         }
-        if !record.confirmation_supported
+        match &mut record.state {
+            SettingState::Pending { current, .. }
+            | SettingState::Refused { current, .. }
+            | SettingState::TimedOut { current, .. }
+            | SettingState::Failed { current, .. } => *current = None,
+            _ => record.state = SettingState::Unknown,
+        }
+        record.evidence = None;
+        record.observed_at = Some(observed_at);
+    }
+
+    fn observe_readback(
+        &mut self,
+        id: SettingId,
+        value: SettingValue<DeviceSettingValue>,
+        evidence: Option<Measured<()>>,
+        observed_at: MonotonicTimestamp,
+    ) {
+        let record = self.records.entry(id).or_default();
+        if record
+            .observed_at
+            .is_some_and(|latest| observed_at < latest)
+            || matches!(record.state, SettingState::Pending { submitted_at, .. } if observed_at < submitted_at)
+        {
+            return;
+        }
+        let usable_confirmation = value.source == SettingValueSource::LiveReadback
+            && evidence.is_none_or(|evidence| {
+                evidence.source == ValueSource::Reported
+                    && evidence.quality == ValueQuality::Known
+                    && matches!(
+                        evidence.verification,
+                        VerificationStatus::SourceVerified
+                            | VerificationStatus::HardwareVerified
+                            | VerificationStatus::SourceAndHardwareVerified
+                    )
+            });
+        if (!record.confirmation_supported || !usable_confirmation)
             && let SettingState::Pending { current, .. } = &mut record.state
         {
-            *current = Some(SettingValue { value, source });
+            *current = Some(value);
         } else {
-            record.state.observe(value, source, observed_at);
+            record.state.observe(value.value, value.source, observed_at);
         }
         record.observed_at = Some(observed_at);
+        record.evidence = evidence;
     }
 
     /// Records the outcome of this request, including failures before a write.
@@ -206,12 +277,18 @@ impl DeviceSettingsState {
             .map(|(&id, record)| DeviceSettingSnapshot {
                 id,
                 current: record.state.current_readback(),
+                measured: record
+                    .state
+                    .current_readback()
+                    .zip(record.evidence)
+                    .map(|(current, evidence)| evidence.map_value(|()| current.value)),
                 requested: record.state.requested_value(),
                 status: record
                     .state
                     .command_status(now, record.confirmation_supported),
                 age: record
                     .observed_at
+                    .filter(|_| record.state.current_readback().is_some())
                     .map(|observed| now.saturating_duration_since(observed)),
                 refusal: match record.state {
                     SettingState::Refused { reason, .. } => Some(reason),
@@ -231,6 +308,141 @@ mod tests {
 
     fn time(value: u64) -> MonotonicTimestamp {
         MonotonicTimestamp::new(value)
+    }
+
+    #[test]
+    fn measured_readback_retains_evidence_and_only_confirmable_evidence_acknowledges() {
+        use crate::{Measured, ValueQuality, ValueSource, VerificationStatus};
+
+        let id = SettingId::PwmTiltback;
+        let value = DeviceSettingValue::Number(80);
+        for source in [
+            ValueSource::Reported,
+            ValueSource::Calculated,
+            ValueSource::Estimated,
+        ] {
+            for quality in [ValueQuality::Known, ValueQuality::Inferred] {
+                for verification in [
+                    VerificationStatus::Unverified,
+                    VerificationStatus::Inferred,
+                    VerificationStatus::SourceVerified,
+                    VerificationStatus::HardwareVerified,
+                    VerificationStatus::SourceAndHardwareVerified,
+                ] {
+                    let mut settings = DeviceSettingsState::default();
+                    settings.submission(
+                        id,
+                        value,
+                        SettingSubmissionOutcome::Accepted,
+                        true,
+                        time(10),
+                    );
+                    let measured = Measured {
+                        value,
+                        source,
+                        quality,
+                        verification,
+                    };
+                    settings.observe_measured(id, measured, time(20));
+                    let snapshot = settings.snapshot(time(30));
+                    assert_eq!(snapshot[0].measured, Some(measured));
+                    assert_eq!(snapshot[0].age.unwrap().as_milliseconds(), 10);
+                    let confirms = source == ValueSource::Reported
+                        && quality == ValueQuality::Known
+                        && matches!(
+                            verification,
+                            VerificationStatus::SourceVerified
+                                | VerificationStatus::HardwareVerified
+                                | VerificationStatus::SourceAndHardwareVerified
+                        );
+                    assert_eq!(
+                        snapshot[0].status,
+                        if confirms {
+                            SettingCommandStatus::Confirmed
+                        } else {
+                            SettingCommandStatus::WaitingForConfirmation
+                        }
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn stale_readback_cannot_replace_newer_evidence() {
+        use crate::Measured;
+
+        let mut settings = DeviceSettingsState::default();
+        let id = SettingId::PwmTiltback;
+        let current = Measured::reported(DeviceSettingValue::Number(80));
+        settings.observe_measured(id, current, time(20));
+        settings.observe_measured(
+            id,
+            Measured::estimated(DeviceSettingValue::Number(60)),
+            time(19),
+        );
+        assert_eq!(settings.snapshot(time(30))[0].measured, Some(current));
+        assert_eq!(
+            settings.snapshot(time(30))[0]
+                .age
+                .unwrap()
+                .as_milliseconds(),
+            10
+        );
+        settings.disconnect();
+        assert!(settings.snapshot(time(30)).is_empty());
+    }
+
+    #[test]
+    fn explicit_unknown_invalidates_current_without_erasing_a_pending_request() {
+        let mut settings = DeviceSettingsState::default();
+        let id = SettingId::Headlight;
+        settings.observe_measured(
+            id,
+            Measured::reported(DeviceSettingValue::Boolean(false)),
+            time(10),
+        );
+        settings.submission(
+            id,
+            DeviceSettingValue::Boolean(true),
+            SettingSubmissionOutcome::Accepted,
+            true,
+            time(20),
+        );
+        settings.invalidate_readback(id, time(21));
+        let snapshot = settings.snapshot(time(22));
+        assert_eq!(snapshot[0].current, None);
+        assert_eq!(snapshot[0].measured, None);
+        assert_eq!(snapshot[0].age, None);
+        assert_eq!(
+            snapshot[0].requested,
+            Some(DeviceSettingValue::Boolean(true))
+        );
+        assert_eq!(
+            snapshot[0].status,
+            SettingCommandStatus::WaitingForConfirmation
+        );
+        settings.observe_measured(
+            id,
+            Measured::reported(DeviceSettingValue::Boolean(true)),
+            time(20),
+        );
+        assert_eq!(settings.snapshot(time(22))[0].current, None);
+        settings.observe_measured(
+            id,
+            Measured::reported(DeviceSettingValue::Boolean(true)),
+            time(23),
+        );
+        assert_eq!(
+            settings.snapshot(time(23))[0].status,
+            SettingCommandStatus::Confirmed
+        );
+        settings.invalidate_readback(id, time(24));
+        assert_eq!(settings.snapshot(time(24))[0].current, None);
+        assert_eq!(
+            settings.snapshot(time(24))[0].status,
+            SettingCommandStatus::Idle
+        );
     }
 
     #[test]

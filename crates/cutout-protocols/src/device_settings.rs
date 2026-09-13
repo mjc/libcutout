@@ -1,5 +1,8 @@
 //! Shared device settings definitions and semantic command validation.
 
+mod readback;
+pub use readback::SettingObservation;
+
 use cutout_core::{
     AccelerationAssistState, AeroAngleAdjustment, AeroBeeperVolume, AeroBrakeOverpressureAlarm,
     AeroDisplayBacklight, AeroDynamicAssist, AeroHighSpeedMode, AeroLateralTiltLimit,
@@ -498,6 +501,17 @@ fn number(minimum: i32, maximum: i32, precision: u8, unit: SettingUnit) -> Setti
     }
 }
 
+fn speed_control(minimum: i32, maximum: i32) -> SettingControl {
+    SettingControl::Number {
+        minimum: minimum * 10,
+        maximum: maximum * 10,
+        step: 10,
+        precision: 1,
+        unit: SettingUnit::KilometresPerHour,
+        can_disable: false,
+    }
+}
+
 fn choices(entries: &[(u16, &'static str, bool)]) -> SettingControl {
     SettingControl::Choices(
         entries
@@ -520,9 +534,7 @@ fn control(id: SettingId) -> SettingControl {
         | SettingId::TransportMode
         | SettingId::AccelerationAssist
         | SettingId::Taillight => SettingControl::Boolean,
-        SettingId::TiltbackSpeed | SettingId::SpeedAlarmThreshold => {
-            number(10, 200, 0, SettingUnit::KilometresPerHour)
-        }
+        SettingId::TiltbackSpeed | SettingId::SpeedAlarmThreshold => speed_control(10, 200),
         SettingId::PwmTiltback => number(30, 100, 0, SettingUnit::Percent),
         SettingId::PedalHardness
         | SettingId::DisplayBrightness
@@ -533,7 +545,7 @@ fn control(id: SettingId) -> SettingControl {
         SettingId::VoltageCorrection => number(-15, 15, 1, SettingUnit::Percent),
         SettingId::PedalAngle => number(-80, 80, 1, SettingUnit::Degrees),
         SettingId::BrakeOverpressureAlarm => number(90, 125, 0, SettingUnit::Percent),
-        SettingId::MaximumSpeed => number(0, 99, 0, SettingUnit::KilometresPerHour),
+        SettingId::MaximumSpeed => speed_control(0, 99),
         SettingId::BeeperVolumeLevel => number(1, 9, 0, SettingUnit::Level),
         SettingId::LightingPattern => choices(&[
             (0, "settings.choice.pattern_0", true),
@@ -614,6 +626,17 @@ fn boolean_command(id: SettingId, on: bool) -> Option<DeviceCommand> {
 }
 
 fn numeric_command(id: SettingId, value: i32) -> Option<DeviceCommand> {
+    let value = if matches!(
+        id,
+        SettingId::TiltbackSpeed | SettingId::SpeedAlarmThreshold | SettingId::MaximumSpeed
+    ) {
+        if value % 10 != 0 {
+            return None;
+        }
+        value / 10
+    } else {
+        value
+    };
     match id {
         SettingId::PwmTiltback => checked_number(value, AeroPwmPercent::from_duty_percent)
             .map(|pwm| DeviceCommand::SetAeroPwmPercent(pwm.into())),
