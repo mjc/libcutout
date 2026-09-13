@@ -339,3 +339,25 @@ fn live_speed_ignores_invalid_observations() {
         None
     );
 }
+
+#[test]
+fn explicit_disconnect_pauses_active_ride_only_for_the_current_command() {
+    let mut session = RideRecordingSession::new(None);
+    let active = session.start_gps_only(1_000, None).unwrap();
+
+    let paused = session
+        .prepare_disconnect(Some(active.command_token), 2_000)
+        .unwrap()
+        .unwrap();
+    assert_eq!(paused.state, ride_maps::RideLifecycleState::Paused);
+    assert_eq!(paused.ride_id, active.ride_id);
+    assert_eq!(
+        session.prepare_disconnect(Some(active.command_token), 3_000),
+        Err(RecordingError::StaleCommand)
+    );
+
+    let still_paused = session
+        .current_snapshot(3_000)
+        .expect("disconnect preparation retains the paused ride");
+    assert_eq!(still_paused.state, ride_maps::RideLifecycleState::Paused);
+}
