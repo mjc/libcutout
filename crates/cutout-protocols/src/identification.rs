@@ -6,8 +6,8 @@ pub use cutout_core::{
     AdvertisedName, ModelBanner, PendingProbe, ProtocolModelIdentity, ProtocolModelIdentityEvidence,
 };
 use cutout_core::{
-    CutoutSessionState, Duration, GattFingerprint, ModelRegistryEntry, MonotonicTimestamp,
-    ProtocolFamily,
+    BluetoothServiceUuid, CutoutSessionState, Duration, GattFingerprint, ModelRegistryEntry,
+    MonotonicTimestamp, ProtocolFamily,
 };
 
 use crate::{
@@ -18,6 +18,17 @@ use crate::{
 };
 
 const DETECTION_MAX_GATT_FINGERPRINTS: usize = 16;
+
+/// Protocol-owned result of requesting identification queries.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum IdentificationProbePlan {
+    /// Available transport evidence does not support these queries.
+    Unsupported,
+    /// A previous query is still awaiting its response.
+    AlreadyPending,
+    /// Ordered read-only writes selected by protocol policy.
+    Writes([crate::EncodedIdentificationProbe; 3]),
+}
 
 /// Confidence level for staged model identification.
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
@@ -333,6 +344,40 @@ struct NotificationDecision<'a> {
 }
 
 impl DeviceDetectionSession {
+    /// Selects and records the non-mutating query sequence from transport evidence.
+    pub fn begin_identification_probes(
+        &mut self,
+        state: &mut CutoutSessionState,
+        at: MonotonicTimestamp,
+    ) -> IdentificationProbePlan {
+        if let Some(selected) = state.discovery().selected_platform_identifier.as_deref() {
+            let supports_queries = state.discovery().observations.iter().any(|observation| {
+                observation.platform_identifier == selected
+                    && observation
+                        .advertised_service_uuids
+                        .contains(&BluetoothServiceUuid::EUC_SERIAL_FFE0)
+            }) || state
+                .identity()
+                .gatt
+                .iter()
+                .any(|gatt| gatt.service == crate::BEGODE_SERVICE_CHANNEL);
+            if !supports_queries {
+                return IdentificationProbePlan::Unsupported;
+            }
+        }
+        if self
+            .next_probe_expiry(state, Duration::from_milliseconds(0))
+            .is_some()
+        {
+            return IdentificationProbePlan::AlreadyPending;
+        }
+        let probes = crate::begode_identification_probes();
+        for probe in &probes {
+            let _ = self.observe_probe_write_at(state, probe.probe, at);
+        }
+        IdentificationProbePlan::Writes(probes)
+    }
+
     /// Creates an empty caller-owned detection session.
     #[must_use]
     pub fn new() -> Self {
