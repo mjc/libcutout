@@ -25,10 +25,22 @@ struct RideMapHistoryFilterBar: View {
     let setVehicleFilter: (String?) -> Void
 
     var body: some View {
-        RideMapHistoryFilterRow(
-            dateMenu: { dateMenu },
-            vehicleMenu: { vehicleMenu }
-        )
+        Group {
+            if #available(iOS 26, macOS 26, *) {
+                GlassEffectContainer(spacing: 8) {
+                    filterMenus
+                }
+            } else {
+                filterMenus
+            }
+        }
+    }
+
+    private var filterMenus: some View {
+        HStack(spacing: 8) {
+            dateMenu
+            vehicleMenu
+        }
     }
 
     private var dateMenu: some View {
@@ -282,30 +294,6 @@ private struct RideMapFilterSurface: ViewModifier {
             content
                 .background(PevColors.pageBackground.opacity(0.72), in: Capsule())
                 .overlay { Capsule().stroke(PevColors.cardStroke.opacity(0.45), lineWidth: 1) }
-        }
-    }
-}
-
-private struct RideMapHistoryFilterRow<DateMenu: View, VehicleMenu: View>: View {
-    @ViewBuilder let dateMenu: () -> DateMenu
-    @ViewBuilder let vehicleMenu: () -> VehicleMenu
-
-    var body: some View {
-        Group {
-            if #available(iOS 26, macOS 26, *) {
-                GlassEffectContainer(spacing: 8) {
-                    menus
-                }
-            } else {
-                menus
-            }
-        }
-    }
-
-    private var menus: some View {
-        HStack(spacing: 8) {
-            dateMenu()
-            vehicleMenu()
         }
     }
 }
