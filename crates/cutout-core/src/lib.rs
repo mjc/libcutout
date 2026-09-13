@@ -40,6 +40,8 @@ mod settings;
 pub use settings::*;
 mod device_settings;
 pub use device_settings::*;
+mod device_actions;
+pub use device_actions::*;
 
 #[cfg(test)]
 mod gatt_channel_tests;
