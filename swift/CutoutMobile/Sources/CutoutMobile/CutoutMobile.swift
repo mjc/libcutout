@@ -2291,7 +2291,8 @@ public struct AeroMaxChargeVoltageRawSettingState: Equatable, Hashable, Sendable
     }
 }
 
-/// NOSFET/Veteran PWT (PWM tilt-back alarm) percentage.
+/// NOSFET/Veteran PWT threshold as unused PWM percentage (headroom).
+/// For example, 20% headroom corresponds to 80% PWM usage.
 public struct AeroPwmPercent: Equatable, Hashable, Sendable {
     public let percent: UInt8
 

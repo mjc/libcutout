@@ -694,15 +694,18 @@ private struct EucAeroSettingsControls: View {
                 Stepper(value: $pwmPercent, in: 0...70) {
                     Text("\(localizedAppText("settings.aero.pwm.title")): \(pwmPercent)%")
                 }
+                Text(localizedAppText("settings.aero.pwm.description"))
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
                 Button(localizedAppText("settings.aero.send"), action: sendPwmPercent)
                 .accessibilityIdentifier("settings.control.aeroPwmPercent")
                 Button(localizedAppText("settings.aero.pwm.off"), action: disablePwm)
                     .accessibilityIdentifier("settings.control.aeroPwmOff")
                 EucSettingReadbackRow(
                     id: "aeroPwm",
-                    title: localizedAppText("settings.aero.current_value"),
+                    title: localizedAppText("settings.aero.pwm.current"),
                     value: model.aeroPwmPercentState?.currentIsOff == true
-                        ? localizedAppText("settings.aero.pwm.off")
+                        ? localizedAppText("settings.aero.pwm.disabled")
                         : model.aeroPwmPercentState?.current.map { "\($0.percent)%" }
                             ?? localizedAppText("settings.readback.unavailable")
                 )

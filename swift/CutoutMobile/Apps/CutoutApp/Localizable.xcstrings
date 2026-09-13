@@ -858,12 +858,23 @@
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Tilt-back" } } }
     },
     "settings.aero.pwm.title" : {
-      "comment" : "NOSFET Aero PWT (PWM tilt-back alarm) setting.",
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "PWT (PWM tilt-back)" } } }
+      "comment" : "NOSFET Aero PWT threshold expressed as remaining PWM margin, not used PWM.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Tilt-back headroom" } } }
+    },
+    "settings.aero.pwm.description" : {
+      "comment" : "Explains the percentage basis of the tilt-back headroom setting.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Remaining PWM margin: 20% headroom means tilt-back at 80% PWM. More headroom means earlier tilt-back." } } }
+    },
+    "settings.aero.pwm.current" : {
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Current tilt-back headroom" } } }
+    },
+    "settings.aero.pwm.disabled" : {
+      "comment" : "Readback showing PWM tilt-back is disabled; distinct from zero headroom.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Off" } } }
     },
     "settings.aero.pwm.off" : {
       "comment" : "Disables the NOSFET Aero PWT alarm.",
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Disable PWT" } } }
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Disable PWM tilt-back" } } }
     },
     "settings.aero.pedal_hardness.title" : {
       "comment" : "Numeric NOSFET Aero MD pedal hardness, separate from the hard/medium/soft presets.",
