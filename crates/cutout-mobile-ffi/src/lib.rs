@@ -9720,17 +9720,7 @@ impl MobileRideMapCore {
         at_ms: u64,
         last_connected_vehicle: Option<String>,
     ) -> Result<MobileRideMapCoreSnapshotDto, MobileRideMapCoreErrorDto> {
-        let expected = expected
-            .map(|token| {
-                Ok::<_, MobileRideMapCoreErrorDto>(persistence::RecordingToken {
-                    ride_id: parse_mobile_ride_id(&MobileRideIdDto {
-                        value: token.ride_id,
-                    })
-                    .map_err(map_core_error)?,
-                    generation: token.generation,
-                })
-            })
-            .transpose()?;
+        let expected = expected.map(TryInto::try_into).transpose()?;
         self.inner
             .lock()
             .unwrap_or_else(PoisonError::into_inner)

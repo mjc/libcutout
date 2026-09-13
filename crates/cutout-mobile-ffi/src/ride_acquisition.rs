@@ -1,9 +1,13 @@
 //! Thin platform location observation and acquisition projection bindings.
 
-use crate::{MobileRideMapCore, MobileRideMapCoreDecisionDto, MobileRideMapCoreErrorDto};
+use crate::{
+    MobileRideIdDto, MobileRideMapCore, MobileRideMapCoreDecisionDto, MobileRideMapCoreErrorDto,
+    MobileRideMapCoreSnapshotDto, MobileRideMapRecordingTokenDto, map_core_error,
+    parse_mobile_ride_id,
+};
 use libcutout_persistence::{
     LocationAcquisition, LocationAuthorization, LocationAvailability, LocationDemand,
-    LocationEnvironment,
+    LocationEnvironment, RecordingToken,
 };
 use std::sync::PoisonError;
 
@@ -131,6 +135,20 @@ impl From<LocationAcquisition> for MobileLocationAcquisitionDto {
     }
 }
 
+impl TryFrom<MobileRideMapRecordingTokenDto> for RecordingToken {
+    type Error = MobileRideMapCoreErrorDto;
+
+    fn try_from(token: MobileRideMapRecordingTokenDto) -> Result<Self, Self::Error> {
+        Ok(Self {
+            ride_id: parse_mobile_ride_id(&MobileRideIdDto {
+                value: token.ride_id,
+            })
+            .map_err(map_core_error)?,
+            generation: token.generation,
+        })
+    }
+}
+
 #[uniffi::export]
 impl MobileRideMapCore {
     /// Supplies platform observations and returns the resulting owner projection.
@@ -165,6 +183,23 @@ impl MobileRideMapCore {
             .unwrap_or_else(PoisonError::into_inner)
             .checkpoint()
             .map(|decisions| decisions.into_iter().map(Into::into).collect())
+            .map_err(Into::into)
+    }
+
+    /// Prepares the captured recording for explicit rider disconnect.
+    /// # Errors
+    /// Returns conversion, stale-target or durable transition errors from the owner.
+    pub fn prepare_disconnect(
+        &self,
+        expected: Option<MobileRideMapRecordingTokenDto>,
+        at_ms: u64,
+    ) -> Result<Option<MobileRideMapCoreSnapshotDto>, MobileRideMapCoreErrorDto> {
+        let expected = expected.map(TryInto::try_into).transpose()?;
+        self.inner
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .prepare_disconnect(expected, at_ms)
+            .map(|snapshot| snapshot.map(Into::into))
             .map_err(Into::into)
     }
 
