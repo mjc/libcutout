@@ -151,21 +151,21 @@ pub enum SettingsRequestError {
 pub struct SettingsProfile {
     available: Capabilities,
     verified: Capabilities,
-    unconfirmed: Capabilities,
+    confirmation: Capabilities,
 }
 
 impl SettingsProfile {
-    /// Selects available encoders, positively verified writes, and writes lacking readback.
+    /// Selects available encoders, verified writes, and writes with usable confirmation.
     #[must_use]
     pub const fn new(
         available: Capabilities,
         verified: Capabilities,
-        unconfirmed: Capabilities,
+        confirmation: Capabilities,
     ) -> Self {
         Self {
             available,
             verified,
-            unconfirmed,
+            confirmation,
         }
     }
 
@@ -203,7 +203,8 @@ impl SettingsProfile {
                     } else {
                         SettingAccess::Unverified
                     },
-                    confirmation_supported: !self.unconfirmed.supports_command_kind(kind),
+                    confirmation_supported: self.confirmation.supports_command_kind(kind)
+                        && id != SettingId::ChargeLimitDiagnostic,
                 })
             })
             .collect()
@@ -246,7 +247,23 @@ pub const fn aero_settings_profile() -> SettingsProfile {
             CommandKind::SetLights,
             CommandKind::SetAeroHighBeam,
         ]),
-        Capabilities::from_supported_commands([CommandKind::SetPedalMode]),
+        Capabilities::from_supported_commands([
+            CommandKind::SetAeroTiltbackSpeed,
+            CommandKind::SetAeroAlarmSpeed,
+            CommandKind::SetAeroPwmPercent,
+            CommandKind::SetAeroPedalHardness,
+            CommandKind::SetAeroDisplayBacklight,
+            CommandKind::SetAeroWheelUnits,
+            CommandKind::SetAeroBeeperVolume,
+            CommandKind::SetAeroDynamicAssist,
+            CommandKind::SetAeroPedalDipCompensation,
+            CommandKind::SetAeroLateralTiltLimit,
+            CommandKind::SetAeroVoltageCorrection,
+            CommandKind::SetAeroHighSpeedMode,
+            CommandKind::SetAeroLowBatteryMode,
+            CommandKind::SetAeroTransportMode,
+            CommandKind::SetAeroBrakeOverpressureAlarm,
+        ]),
     )
 }
 
@@ -259,10 +276,9 @@ pub const fn falcon_settings_profile() -> SettingsProfile {
         available,
         available,
         Capabilities::from_supported_commands([
-            CommandKind::SetLights,
-            CommandKind::SetBegodeMaxSpeed,
-            CommandKind::SetBegodeBeeperVolume,
-            CommandKind::SetBegodeLedMode,
+            CommandKind::SetPedalMode,
+            CommandKind::SetRollAngle,
+            CommandKind::SetSpeedAlarmMode,
         ]),
     )
 }
@@ -688,6 +704,37 @@ mod tests {
     use cutout_core::{
         AeroPwmSetting, Capabilities, CommandKind, DeviceCommand, DeviceSettingValue, SettingId,
     };
+
+    #[test]
+    fn confirmation_requires_a_positive_profile_capability() {
+        let available = Capabilities::from_supported_commands([CommandKind::SetLights]);
+        let unknown = SettingsProfile::new(available, available, Capabilities::default());
+        assert!(!unknown.descriptors(false)[0].confirmation_supported);
+        let aero = aero_settings_profile().descriptors(true);
+        for id in [
+            SettingId::Headlight,
+            SettingId::HighBeam,
+            SettingId::PedalAngle,
+            SettingId::RidingPreset,
+            SettingId::PedalMode,
+            SettingId::ChargeLimitDiagnostic,
+        ] {
+            assert!(
+                !aero
+                    .iter()
+                    .find(|entry| entry.id == id)
+                    .unwrap()
+                    .confirmation_supported,
+                "{id:?}"
+            );
+        }
+        assert!(
+            aero.iter()
+                .find(|entry| entry.id == SettingId::PwmTiltback)
+                .unwrap()
+                .confirmation_supported
+        );
+    }
 
     #[test]
     fn a_new_profile_uses_the_same_semantic_descriptors_and_submission() {
