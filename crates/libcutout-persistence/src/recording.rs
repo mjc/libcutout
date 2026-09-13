@@ -241,6 +241,8 @@ pub struct LocationAcquisition {
 pub struct RideRecordingSession {
     database: Option<RideDatabase>,
     location_environment: Option<LocationEnvironment>,
+    diagnostic_capture_generation: u64,
+    diagnostic_capture_location_active: bool,
     ride_id: Option<RideId>,
     revision: u64,
     generation: u64,
@@ -273,7 +275,21 @@ impl RideRecordingSession {
         }
     }
 
-    /// Projects acquisition demand; idle, paused and terminal rides do not request GPS.
+    /// Observes explicit diagnostic capture demand without creating or resuming a ride.
+    /// Generations are allocated after a capture writer opens; closed generations cannot restart.
+    pub fn observe_diagnostic_capture_location(&mut self, generation: u64, active: bool) {
+        if generation < self.diagnostic_capture_generation
+            || (generation == self.diagnostic_capture_generation
+                && (!self.diagnostic_capture_location_active || active))
+        {
+            return;
+        }
+        self.diagnostic_capture_generation = generation;
+        self.diagnostic_capture_location_active = active;
+        self.revision = self.revision.saturating_add(1);
+    }
+
+    /// Projects acquisition demand from active recording or explicit diagnostic capture.
     #[must_use]
     pub fn location_acquisition(&self) -> LocationAcquisition {
         let availability = if self.initialization_error.is_some() {
@@ -300,7 +316,9 @@ impl RideRecordingSession {
         } else {
             LocationAvailability::Checking
         };
-        let demand = if self.recorder.state() == Some(ride_maps::RideLifecycleState::Active) {
+        let demand = if self.recorder.state() == Some(ride_maps::RideLifecycleState::Active)
+            || self.diagnostic_capture_location_active
+        {
             match availability {
                 LocationAvailability::Ready | LocationAvailability::TemporarilyUnavailable => {
                     LocationDemand::Record
@@ -643,6 +661,8 @@ impl RideRecordingSession {
         let mut state = Self {
             database,
             location_environment: None,
+            diagnostic_capture_generation: 0,
+            diagnostic_capture_location_active: false,
             ride_id: None,
             revision: 0,
             generation: 0,

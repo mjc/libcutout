@@ -596,3 +596,46 @@ fn location_acquisition_distinguishes_permission_services_and_temporary_failure(
         );
     }
 }
+
+#[test]
+fn diagnostic_capture_location_demand_is_explicit_and_generation_scoped() {
+    let mut session = RideRecordingSession::new(None);
+    session.observe_location_environment(LocationEnvironment {
+        authorization: LocationAuthorization::Always,
+        services_enabled: true,
+        temporarily_unavailable: false,
+    });
+    // An ordinary telemetry capture has no independent acquisition input.
+    assert_eq!(session.location_acquisition().demand, LocationDemand::Idle);
+    session.observe_diagnostic_capture_location(1, true);
+    assert_eq!(
+        session.location_acquisition().demand,
+        LocationDemand::Record
+    );
+    assert!(session.current_snapshot(1_000).is_none());
+    session.observe_diagnostic_capture_location(2, true);
+    session.observe_diagnostic_capture_location(1, false);
+    assert_eq!(
+        session.location_acquisition().demand,
+        LocationDemand::Record
+    );
+    session.start_gps_only(1_000, None).unwrap();
+    session
+        .transition_at(ride_maps::RideEvent::Pause, 2_000)
+        .unwrap();
+    assert_eq!(
+        session.location_acquisition().demand,
+        LocationDemand::Record
+    );
+    session.observe_diagnostic_capture_location(2, false);
+    assert_eq!(session.location_acquisition().demand, LocationDemand::Idle);
+    let closed_revision = session.location_acquisition().revision;
+    session.observe_diagnostic_capture_location(2, true);
+    session.observe_diagnostic_capture_location(1, true);
+    assert_eq!(session.location_acquisition().revision, closed_revision);
+    assert_eq!(session.location_acquisition().demand, LocationDemand::Idle);
+    assert_eq!(
+        session.current_snapshot(2_000).unwrap().state,
+        ride_maps::RideLifecycleState::Paused
+    );
+}
