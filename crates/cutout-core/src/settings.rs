@@ -283,7 +283,7 @@ where
         }
     }
 
-    fn current_readback(self) -> Option<SettingValue<Value>> {
+    pub(crate) fn current_readback(self) -> Option<SettingValue<Value>> {
         match self {
             Self::Unknown => None,
             Self::Current(value) | Self::Confirmed { value, .. } => Some(value),

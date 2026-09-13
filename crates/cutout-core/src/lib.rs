@@ -36,6 +36,8 @@ mod turn_signals;
 pub use turn_signals::*;
 mod settings;
 pub use settings::*;
+mod device_settings;
+pub use device_settings::*;
 
 #[cfg(test)]
 mod gatt_channel_tests;
