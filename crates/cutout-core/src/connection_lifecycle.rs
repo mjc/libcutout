@@ -27,6 +27,18 @@ pub enum ConnectionReadiness {
     Failed,
 }
 
+/// Native link availability, independent of protocol admission.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum ConnectionTransportState {
+    /// No active native link can deliver data.
+    #[default]
+    Disconnected,
+    /// A native connection request is outstanding.
+    Connecting,
+    /// Native link established; subscriptions may still be pending or unavailable.
+    Connected,
+}
+
 /// Immutable connection state published to presentation and queued consumers.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct ConnectionAttemptSnapshot {
@@ -38,6 +50,8 @@ pub struct ConnectionAttemptSnapshot {
     pub token: Option<ConnectionAttemptToken>,
     /// Current admission state.
     pub readiness: ConnectionReadiness,
+    /// Native link availability; record-only never promises a working connection.
+    pub transport: ConnectionTransportState,
     /// Deadline covering connection, GATT discovery and identification together.
     pub deadline: Option<MonotonicTimestamp>,
 }
@@ -62,6 +76,7 @@ impl ConnectionAttemptLifecycle {
         };
         self.snapshot.token = Some(token.clone());
         self.snapshot.readiness = ConnectionReadiness::Pending;
+        self.snapshot.transport = ConnectionTransportState::Connecting;
         self.snapshot.deadline = Some(MonotonicTimestamp::new(at.get().saturating_add(15_000)));
         self.snapshot.revision = self.snapshot.revision.wrapping_add(1);
         token
@@ -76,12 +91,17 @@ impl ConnectionAttemptLifecycle {
     /// Atomically checks identity and permission to admit decoded ride telemetry.
     #[must_use]
     pub fn is_verified(&self, token: &ConnectionAttemptToken) -> bool {
-        self.is_current(token) && self.snapshot.readiness == ConnectionReadiness::Verified
+        self.is_current(token)
+            && self.snapshot.readiness == ConnectionReadiness::Verified
+            && self.snapshot.transport == ConnectionTransportState::Connected
     }
 
     /// Completes pending identification exactly once.
     pub fn finish_detection(&mut self, token: &ConnectionAttemptToken, verified: bool) -> bool {
         if !self.is_current(token) || self.snapshot.readiness != ConnectionReadiness::Pending {
+            return false;
+        }
+        if verified && self.snapshot.transport != ConnectionTransportState::Connected {
             return false;
         }
         self.snapshot.readiness = if verified {
@@ -109,6 +129,30 @@ impl ConnectionAttemptLifecycle {
         self.snapshot.token = None;
         self.snapshot.deadline = None;
         self.snapshot.readiness = ConnectionReadiness::Disconnected;
+        self.snapshot.transport = ConnectionTransportState::Disconnected;
+    }
+
+    /// Accepts native link establishment only for the outstanding active attempt.
+    pub fn connected(&mut self, token: &ConnectionAttemptToken) -> bool {
+        if !self.is_current(token)
+            || self.snapshot.transport != ConnectionTransportState::Connecting
+        {
+            return false;
+        }
+        self.snapshot.transport = ConnectionTransportState::Connected;
+        self.snapshot.revision = self.snapshot.revision.wrapping_add(1);
+        true
+    }
+
+    /// Records loss of native transport without claiming capture packets remain available.
+    pub fn link_down(&mut self, token: &ConnectionAttemptToken) -> bool {
+        if !self.is_current(token) {
+            return false;
+        }
+        self.snapshot.transport = ConnectionTransportState::Disconnected;
+        self.snapshot.revision = self.snapshot.revision.wrapping_add(1);
+        self.transport_failed(token);
+        true
     }
 
     /// Keeps failed detection recordable; failures after verification are terminal.
@@ -176,6 +220,7 @@ mod tests {
     fn verified_attempt_ignores_late_deadline_and_disconnect_retires_it() {
         let mut lifecycle = ConnectionAttemptLifecycle::default();
         let token = lifecycle.begin("A".into(), MonotonicTimestamp::new(100));
+        assert!(lifecycle.connected(&token));
         assert!(lifecycle.finish_detection(&token, true));
         assert!(lifecycle.is_verified(&token));
         assert!(!lifecycle.expire(&token, MonotonicTimestamp::new(99_000)));
@@ -212,9 +257,36 @@ mod tests {
         );
         assert!(lifecycle.is_current(&detecting));
         let live = lifecycle.begin("A".into(), MonotonicTimestamp::new(1));
+        assert!(lifecycle.connected(&live));
         assert!(lifecycle.finish_detection(&live, true));
         assert!(lifecycle.transport_failed(&live));
         assert_eq!(lifecycle.snapshot().readiness, ConnectionReadiness::Failed);
         assert!(!lifecycle.is_current(&live));
+    }
+
+    #[test]
+    fn record_only_distinguishes_discovery_error_from_missing_transport() {
+        let mut lifecycle = ConnectionAttemptLifecycle::default();
+        let token = lifecycle.begin("A".into(), MonotonicTimestamp::new(0));
+        assert!(lifecycle.connected(&token));
+        assert!(lifecycle.transport_failed(&token));
+        assert_eq!(
+            lifecycle.snapshot().readiness,
+            ConnectionReadiness::RecordOnly
+        );
+        assert_eq!(
+            lifecycle.snapshot().transport,
+            ConnectionTransportState::Connected
+        );
+        assert!(lifecycle.link_down(&token));
+        assert_eq!(
+            lifecycle.snapshot().readiness,
+            ConnectionReadiness::RecordOnly
+        );
+        assert_eq!(
+            lifecycle.snapshot().transport,
+            ConnectionTransportState::Disconnected
+        );
+        assert!(!lifecycle.connected(&token));
     }
 }

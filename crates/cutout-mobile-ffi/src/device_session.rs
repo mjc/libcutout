@@ -154,8 +154,9 @@ impl CutoutSessionStateHandle {
                 || identity.model.is_some()
                 || identity.protocol == ProtocolFamily::Vesc
             {
-                inner.state.connection.finish_detection(&token, true);
-                inner.device = Some(device);
+                if inner.state.connection.finish_detection(&token, true) {
+                    inner.device = Some(device);
+                }
             }
         } else if identification_complete {
             inner.state.connection.finish_detection(&token, false);
@@ -237,6 +238,7 @@ mod tests {
             .begin_connection_attempt("A".into(), 0)
             .token
             .unwrap();
+        handle.connection_link_established(old.clone());
         handle.observe_notification(VESC_REPLY.to_vec());
         let verified = handle.resolve_device_session(old.clone(), false, 0);
         assert_eq!(
