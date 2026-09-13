@@ -1,5 +1,8 @@
 //! Concrete `UniFFI` mobile binding surface for Cutout.
 
+mod ride_acquisition;
+pub use ride_acquisition::*;
+
 mod rgb;
 pub use rgb::*;
 mod connection_attempt;
@@ -6920,6 +6923,8 @@ pub struct MobileRideMapCoreSnapshotDto {
     pub command_token: MobileRideMapRecordingTokenDto,
     /// Retained listening policy for the selected recording.
     pub music_history_policy: MobileMusicHistoryPolicyDto,
+    /// Location readiness and native acquisition intent at this revision.
+    pub location_acquisition: MobileLocationAcquisitionDto,
     /// Correlation token for inputs acquired while this ride is recording.
     pub recording_token: Option<MobileRideMapRecordingTokenDto>,
     /// Current durable lifecycle state.
@@ -9531,6 +9536,7 @@ impl From<persistence::RecordingSnapshot> for MobileRideMapCoreSnapshotDto {
             ride_id: value.ride_id.uuid().to_string(),
             revision: value.revision,
             music_history_policy: value.music_history_policy.into(),
+            location_acquisition: value.location_acquisition.into(),
             command_token: MobileRideMapRecordingTokenDto {
                 ride_id: value.command_token.ride_id.uuid().to_string(),
                 generation: value.command_token.generation,
