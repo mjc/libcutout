@@ -858,15 +858,11 @@
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Tilt-back" } } }
     },
     "settings.aero.pwm.title" : {
-      "comment" : "NOSFET Aero PWT threshold expressed as remaining PWM margin, not used PWM.",
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Tilt-back headroom" } } }
-    },
-    "settings.aero.pwm.description" : {
-      "comment" : "Explains the percentage basis of the tilt-back headroom setting.",
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Remaining PWM margin: 20% headroom means tilt-back at 80% PWM. More headroom means earlier tilt-back." } } }
+      "comment" : "NOSFET Aero PWT threshold expressed as PWM utilization.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Tilt-back PWM" } } }
     },
     "settings.aero.pwm.current" : {
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Current tilt-back headroom" } } }
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Current tilt-back PWM" } } }
     },
     "settings.aero.pwm.disabled" : {
       "comment" : "Readback showing PWM tilt-back is disabled; distinct from zero headroom.",
