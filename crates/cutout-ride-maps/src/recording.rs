@@ -261,6 +261,8 @@ pub enum TelemetryObservation {
     AlreadyObserved,
     /// The ride has no confirmed vehicle association.
     NotAssociated,
+    /// The telemetry came from a different vehicle.
+    IdentityMismatch,
     /// The timestamp moved backwards.
     TimestampOutOfOrder,
     /// The ride is not open for telemetry.
@@ -1001,6 +1003,22 @@ impl RideMapRecorder {
         platform_identifier: &VehicleIdentity,
         at_milliseconds: MonotonicMilliseconds,
     ) -> VehicleAssociation {
+        let association = self.vehicle_association(platform_identifier, at_milliseconds);
+        if association == VehicleAssociation::Associated {
+            self.associated_vehicle = Some(platform_identifier.clone());
+            self.candidate_vehicle = None;
+            self.associated_at_milliseconds = Some(at_milliseconds);
+        }
+        association
+    }
+
+    /// Plans association without copying the live route or mutating its evidence.
+    #[must_use]
+    pub fn vehicle_association(
+        &self,
+        platform_identifier: &VehicleIdentity,
+        at_milliseconds: MonotonicMilliseconds,
+    ) -> VehicleAssociation {
         if !matches!(
             self.state,
             Some(RideLifecycleState::Active | RideLifecycleState::Paused)
@@ -1022,9 +1040,6 @@ impl RideMapRecorder {
         {
             return VehicleAssociation::IdentityMismatch;
         }
-        self.associated_vehicle = Some(platform_identifier.clone());
-        self.candidate_vehicle = None;
-        self.associated_at_milliseconds = Some(at_milliseconds);
         VehicleAssociation::Associated
     }
 
@@ -1032,6 +1047,21 @@ impl RideMapRecorder {
     #[must_use]
     pub fn observe_telemetry(
         &mut self,
+        platform_identifier: &VehicleIdentity,
+        at_milliseconds: MonotonicMilliseconds,
+    ) -> TelemetryObservation {
+        let observation = self.telemetry_observation(platform_identifier, at_milliseconds);
+        if observation == TelemetryObservation::Observed {
+            self.last_telemetry_at_milliseconds = Some(at_milliseconds);
+        }
+        observation
+    }
+
+    /// Plans telemetry admission without copying the live route or mutating evidence.
+    #[must_use]
+    pub fn telemetry_observation(
+        &self,
+        platform_identifier: &VehicleIdentity,
         at_milliseconds: MonotonicMilliseconds,
     ) -> TelemetryObservation {
         if !matches!(
@@ -1043,6 +1073,9 @@ impl RideMapRecorder {
         let Some(associated_at) = self.associated_at_milliseconds else {
             return TelemetryObservation::NotAssociated;
         };
+        if self.associated_vehicle.as_ref() != Some(platform_identifier) {
+            return TelemetryObservation::IdentityMismatch;
+        }
         if at_milliseconds < associated_at || at_milliseconds < self.created_at_milliseconds {
             return TelemetryObservation::TimestampOutOfOrder;
         }
@@ -1055,7 +1088,6 @@ impl RideMapRecorder {
         {
             return TelemetryObservation::TimestampOutOfOrder;
         }
-        self.last_telemetry_at_milliseconds = Some(at_milliseconds);
         TelemetryObservation::Observed
     }
 
@@ -1091,7 +1123,11 @@ impl RideMapRecorder {
     #[must_use]
     pub fn check_sample(&self, sample: &LocationSample) -> LocationAdmission {
         let previous = self.points.last().map(|point| point.sample());
-        route_admission(Some(self.created_at_milliseconds), previous.as_ref(), sample)
+        route_admission(
+            Some(self.created_at_milliseconds),
+            previous.as_ref(),
+            sample,
+        )
     }
 
     /// Admits a sample for recording after applying the complete route policy.

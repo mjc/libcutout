@@ -94,6 +94,7 @@ public enum MobileRideMapTelemetryObservation: Equatable, Hashable, Sendable {
     case observed
     case alreadyObserved
     case notAssociated
+    case identityMismatch
     case timestampOutOfOrder
     case rideNotOpen
     case unknown
@@ -799,8 +800,8 @@ public final class MobileRideMapState: @unchecked Sendable {
         }
     }
 
-    public func observeTelemetry(atMs: UInt64) throws -> MobileRideMapTelemetryObservation {
-        try withCore { map(try $0.observeTelemetry(atMs: atMs)) }
+    public func observeTelemetry(platformIdentifier: String, atMs: UInt64) throws -> MobileRideMapTelemetryObservation {
+        try withCore { map(try $0.observeTelemetry(platformIdentifier: platformIdentifier, atMs: atMs)) }
     }
 
     func recordBmsVoltageSamples(
@@ -1322,6 +1323,7 @@ public final class MobileRideMapState: @unchecked Sendable {
         case .observed: return .observed
         case .alreadyObserved: return .alreadyObserved
         case .notAssociated: return .notAssociated
+        case .identityMismatch: return .identityMismatch
         case .timestampOutOfOrder: return .timestampOutOfOrder
         case .rideNotOpen: return .rideNotOpen
         case .unknown: return .unknown

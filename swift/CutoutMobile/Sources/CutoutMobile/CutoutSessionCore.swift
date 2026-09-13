@@ -1841,7 +1841,7 @@ public final class CutoutSessionCore: NSObject {
                     )
                     self.associatedRideMapConnection = token
                 }
-                _ = try rideMapState.observeTelemetry(atMs: receivedAt.rawValue)
+                _ = try rideMapState.observeTelemetry(platformIdentifier: token.platformIdentifier, atMs: receivedAt.rawValue)
                 if let snapshot = rideMapState.currentSnapshot(atMs: receivedAt.rawValue) {
                     self.publishRideMapSnapshot(snapshot)
                 }
