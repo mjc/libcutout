@@ -1,6 +1,6 @@
 //! Thin platform location observation and acquisition projection bindings.
 
-use crate::MobileRideMapCore;
+use crate::{MobileRideMapCore, MobileRideMapCoreDecisionDto, MobileRideMapCoreErrorDto};
 use libcutout_persistence::{
     LocationAcquisition, LocationAuthorization, LocationAvailability, LocationDemand,
     LocationEnvironment,
@@ -141,6 +141,31 @@ impl MobileRideMapCore {
         let mut state = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
         state.observe_location_environment(environment.into());
         state.location_acquisition().into()
+    }
+
+    /// Forwards successful explicit diagnostic writer lifetime observations.
+    pub fn observe_diagnostic_capture_location(
+        &self,
+        generation: u64,
+        active: bool,
+    ) -> MobileLocationAcquisitionDto {
+        let mut state = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
+        state.observe_diagnostic_capture_location(generation, active);
+        state.location_acquisition().into()
+    }
+
+    /// Settles preceding recording writes through the existing persistence owner.
+    /// # Errors
+    /// Returns the owner's storage failure if the checkpoint cannot complete.
+    pub fn checkpoint(
+        &self,
+    ) -> Result<Vec<MobileRideMapCoreDecisionDto>, MobileRideMapCoreErrorDto> {
+        self.inner
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .checkpoint()
+            .map(|decisions| decisions.into_iter().map(Into::into).collect())
+            .map_err(Into::into)
     }
 
     /// Returns acquisition intent even when no ride exists yet.
