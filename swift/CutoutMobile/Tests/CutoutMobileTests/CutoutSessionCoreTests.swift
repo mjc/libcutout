@@ -135,9 +135,7 @@ final class CutoutSessionCoreTests: XCTestCase {
     }
 
     func testDatabaseBackedRideMapReportsPendingThenDurablyAccepted() async throws {
-        guard let database = RustPersistenceStore.shared else {
-            throw XCTSkip("Rust ride database is unavailable in this test environment")
-        }
+        let database = try XCTUnwrap(MobileRideMapState.debugDatabase)
 
         let state = MobileRideMapState(database: database)
         defer {

@@ -671,7 +671,7 @@ public final class MobileRideMapState: @unchecked Sendable {
     private let storageUnavailableError: MobileRideMapError?
 
 #if DEBUG
-    private static let debugDatabase: RideDatabaseHandle? = {
+    static let debugDatabase: RideDatabaseHandle? = {
         let path = FileManager.default.temporaryDirectory
             .appendingPathComponent("cutout-map-test-\(UUID().uuidString).sqlite")
             .path

@@ -189,9 +189,7 @@ final class RideMapStateTests: XCTestCase {
     }
 
     func testHistoricalVehicleDisplayNameAndFilterOptionsComeFromRustDeviceTable() throws {
-        guard let database = RustPersistenceStore.shared else {
-            throw XCTSkip("Rust ride database is unavailable in this test environment")
-        }
+        let database = try XCTUnwrap(MobileRideMapState.debugDatabase)
         let platformIdentifier = "corebluetooth-history-\(UUID().uuidString)"
 
         let rideID = try database.createRide(source: .live, createdAtMilliseconds: 1_000)
