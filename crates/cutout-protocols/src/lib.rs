@@ -79,9 +79,11 @@ pub use registry::{
     RegisteredModelDefinition, SESSION_REGISTRATIONS, SessionRegistration, VETERAN_PARSER_KEY,
     begode_falcon_session_with_voltage_profile, find_session_registration,
 };
+mod device_actions;
 mod device_settings;
 mod request_encoder;
 mod session;
+pub use device_actions::*;
 pub use device_settings::*;
 mod simulator;
 pub use simulator::{AeroSettingsReadback, AeroSettingsSimulator, AeroSimulatorWrite};

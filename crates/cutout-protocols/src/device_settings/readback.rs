@@ -5,7 +5,7 @@ use cutout_core::{
     SettingsReadback, SpeedAlarmMode,
 };
 
-use super::{SettingControl, SettingsProfile, command_kind, control};
+use super::{DeviceControlProfile, SettingControl, command_kind, control};
 use crate::{
     AERO_FIELD_BEEPER_VOLUME_PERCENT, AERO_FIELD_BRAKE_OVERPRESSURE_ALARM_PERCENT,
     AERO_FIELD_DISPLAY_BACKLIGHT_PERCENT, AERO_FIELD_DYNAMIC_ASSIST_PERCENT,
@@ -28,7 +28,7 @@ pub struct SettingObservation {
     pub value: Option<Measured<DeviceSettingValue>>,
 }
 
-impl SettingsProfile {
+impl DeviceControlProfile {
     /// Converts decoded protocol fields without granting writes or fabricating evidence.
     #[must_use]
     pub fn normalize_readback(self, readback: SettingsReadback) -> Vec<SettingObservation> {

@@ -149,15 +149,15 @@ pub enum SettingsRequestError {
     InvalidValue,
 }
 
-/// Capability selection over the shared semantic catalog, without client model switches.
+/// Capability selection over shared settings and actions, without client model switches.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub struct SettingsProfile {
-    available: Capabilities,
-    verified: Capabilities,
+pub struct DeviceControlProfile {
+    pub(crate) available: Capabilities,
+    pub(crate) verified: Capabilities,
     confirmation: Capabilities,
 }
 
-impl SettingsProfile {
+impl DeviceControlProfile {
     /// Selects available encoders, verified writes, and writes with usable confirmation.
     #[must_use]
     pub const fn new(
@@ -241,10 +241,10 @@ impl SettingsProfile {
     }
 }
 
-/// Aero candidates retain explicit per-command verification; charge raw stays diagnostic-only.
+/// Aero controls retain explicit per-command verification; charge raw stays diagnostic-only.
 #[must_use]
-pub const fn aero_settings_profile() -> SettingsProfile {
-    SettingsProfile::new(
+pub const fn aero_control_profile() -> DeviceControlProfile {
+    DeviceControlProfile::new(
         NosfetAeroModel::WRITE_CAPABILITIES.union(NosfetAeroModel::CONTROL_CAPABILITIES),
         Capabilities::from_supported_commands([
             CommandKind::SetLights,
@@ -272,10 +272,10 @@ pub const fn aero_settings_profile() -> SettingsProfile {
 
 /// Falcon writes with no readable acknowledgement remain explicitly unconfirmed.
 #[must_use]
-pub const fn falcon_settings_profile() -> SettingsProfile {
+pub const fn falcon_control_profile() -> DeviceControlProfile {
     let available =
         BegodeFalconModel::WRITE_CAPABILITIES.union(BegodeFalconModel::CONTROL_CAPABILITIES);
-    SettingsProfile::new(
+    DeviceControlProfile::new(
         available,
         available,
         Capabilities::from_supported_commands([
@@ -731,9 +731,9 @@ mod tests {
     #[test]
     fn confirmation_requires_a_positive_profile_capability() {
         let available = Capabilities::from_supported_commands([CommandKind::SetLights]);
-        let unknown = SettingsProfile::new(available, available, Capabilities::default());
+        let unknown = DeviceControlProfile::new(available, available, Capabilities::default());
         assert!(!unknown.descriptors(false)[0].confirmation_supported);
-        let aero = aero_settings_profile().descriptors(true);
+        let aero = aero_control_profile().descriptors(true);
         for id in [
             SettingId::Headlight,
             SettingId::HighBeam,
@@ -766,7 +766,8 @@ mod tests {
             CommandKind::SetAeroPwmPercent,
             CommandKind::SetAeroPwmOff,
         ]);
-        let profile = SettingsProfile::new(capabilities, capabilities, Capabilities::default());
+        let profile =
+            DeviceControlProfile::new(capabilities, capabilities, Capabilities::default());
         let descriptors = profile.descriptors(false);
         assert_eq!(descriptors.len(), 2);
         let pwm = descriptors
@@ -803,7 +804,7 @@ mod tests {
 
     #[test]
     fn readable_alarm_options_do_not_grant_unsupported_writes() {
-        let profile = falcon_settings_profile();
+        let profile = falcon_control_profile();
         let descriptors = profile.descriptors(false);
         let alarm = descriptors
             .iter()
@@ -826,7 +827,7 @@ mod tests {
 
     #[test]
     fn uncertain_charge_meaning_cannot_be_enabled_by_validation_mode() {
-        let profile = aero_settings_profile();
+        let profile = aero_control_profile();
         let descriptors = profile.descriptors(true);
         let charge = descriptors
             .iter()
@@ -859,7 +860,7 @@ mod tests {
 
     #[test]
     fn numeric_descriptors_and_checked_commands_agree_on_every_value() {
-        for profile in [aero_settings_profile(), falcon_settings_profile()] {
+        for profile in [aero_control_profile(), falcon_control_profile()] {
             for descriptor in profile.descriptors(true) {
                 let SettingControl::Number {
                     minimum,

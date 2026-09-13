@@ -5,11 +5,11 @@ use cutout_core::{
 use cutout_protocols::{
     AERO_FIELD_PWM_PERCENT, AERO_FIELD_VOLTAGE_CORRECTION_TENTHS_PERCENT,
     BEGODE_FIELD_LED_AND_LIGHT_MODE, BEGODE_FIELD_SETTINGS_BITS, BEGODE_FIELD_TILTBACK_SPEED_KMH,
-    SettingControl, SettingObservation, SettingsProfile, VETERAN_FIELD_SPEED_TILTBACK_DECI_KMH,
-    aero_settings_profile, falcon_settings_profile,
+    DeviceControlProfile, SettingControl, SettingObservation,
+    VETERAN_FIELD_SPEED_TILTBACK_DECI_KMH, aero_control_profile, falcon_control_profile,
 };
 
-fn read(profile: SettingsProfile, field: u16, raw: i64) -> Vec<SettingObservation> {
+fn read(profile: DeviceControlProfile, field: u16, raw: i64) -> Vec<SettingObservation> {
     profile.normalize_readback(SettingsReadback::available([Some(SettingsEntry {
         field: RawFieldValue {
             id: field,
@@ -32,7 +32,7 @@ fn value(observations: &[SettingObservation], id: SettingId) -> Option<DeviceSet
 
 #[test]
 fn pwm_readback_is_duty_and_readability_does_not_grant_a_write() {
-    let profile = aero_settings_profile();
+    let profile = aero_control_profile();
     for duty in 0..=100 {
         assert_eq!(
             value(
@@ -72,7 +72,7 @@ fn pwm_readback_is_duty_and_readability_does_not_grant_a_write() {
 
 #[test]
 fn fractional_speed_is_preserved_without_rounding_into_a_confirmable_request() {
-    let profile = aero_settings_profile();
+    let profile = aero_control_profile();
     let descriptor = profile
         .descriptors(true)
         .into_iter()
@@ -116,7 +116,7 @@ fn fractional_speed_is_preserved_without_rounding_into_a_confirmable_request() {
     assert_eq!(
         value(
             &read(
-                falcon_settings_profile(),
+                falcon_control_profile(),
                 BEGODE_FIELD_TILTBACK_SPEED_KMH,
                 48
             ),
@@ -128,7 +128,7 @@ fn fractional_speed_is_preserved_without_rounding_into_a_confirmable_request() {
         assert_eq!(
             value(
                 &read(
-                    falcon_settings_profile(),
+                    falcon_control_profile(),
                     BEGODE_FIELD_TILTBACK_SPEED_KMH,
                     raw,
                 ),
@@ -150,7 +150,7 @@ fn fractional_speed_is_preserved_without_rounding_into_a_confirmable_request() {
 
 #[test]
 fn packed_falcon_readback_keeps_semantic_choices_and_unknown_modes_distinct() {
-    let profile = falcon_settings_profile();
+    let profile = falcon_control_profile();
     for bits in 0_u16..=3 {
         let observations = read(
             profile,
@@ -195,7 +195,7 @@ fn packed_falcon_readback_keeps_semantic_choices_and_unknown_modes_distinct() {
 
 #[test]
 fn normalization_preserves_signed_fixed_point_and_original_evidence() {
-    let profile = aero_settings_profile();
+    let profile = aero_control_profile();
     for raw in -15..=15 {
         assert_eq!(
             value(
@@ -225,7 +225,7 @@ fn normalization_preserves_signed_fixed_point_and_original_evidence() {
 
 #[test]
 fn absent_and_unrelated_fields_do_not_manufacture_observations() {
-    let profile = aero_settings_profile();
+    let profile = aero_control_profile();
     assert!(
         profile
             .normalize_readback(SettingsReadback::unavailable())
@@ -237,6 +237,6 @@ fn absent_and_unrelated_fields_do_not_manufacture_observations() {
             .is_empty()
     );
     assert!(read(profile, u16::MAX, 80).is_empty());
-    assert!(read(falcon_settings_profile(), AERO_FIELD_PWM_PERCENT, 80).is_empty());
-    assert!(read(SettingsProfile::default(), AERO_FIELD_PWM_PERCENT, 80).is_empty());
+    assert!(read(falcon_control_profile(), AERO_FIELD_PWM_PERCENT, 80).is_empty());
+    assert!(read(DeviceControlProfile::default(), AERO_FIELD_PWM_PERCENT, 80).is_empty());
 }
