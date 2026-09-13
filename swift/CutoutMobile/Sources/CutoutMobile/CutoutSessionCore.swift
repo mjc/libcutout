@@ -507,6 +507,11 @@ public final class CutoutSessionCore: NSObject {
         return manager
     }()
 
+    /// Composes transport around a recording owner already restored off the main actor.
+    public convenience init(rideMapState: MobileRideMapState) {
+        self.init(clock: MonotonicClock(), rideMapState: rideMapState)
+    }
+
     public override convenience init() {
         let rideMapState = RustPersistenceStore.shared.map(MobileRideMapState.init(database:))
             ?? MobileRideMapState(storageUnavailable: "Rust ride database is unavailable")

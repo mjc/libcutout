@@ -324,6 +324,45 @@ final class CutoutAppModel {
         stopMusicMonitoring()
     }
 
+    private struct InitialPersistence: Sendable {
+        let selectedIdentifier: String?
+        let selectedName: String?
+        let musicHistory: MobileMusicHistoryDto?
+    }
+
+    /// Prepares durable state before constructing the main-actor presentation model.
+    static func open() async throws -> CutoutAppModel {
+        let database = try await RustPersistenceStore.open()
+        let (state, initial) = try await Task.detached(priority: .userInitiated) {
+            let state = MobileRideMapState(database: database)
+            if let error = state.initializationError { throw error }
+            let selection = DevicePickerSelectionStore()
+            let identifier = selection.platformIdentifier
+            let initial = InitialPersistence(
+                selectedIdentifier: identifier,
+                selectedName: identifier.flatMap { selection.displayName(for: $0) },
+                musicHistory: state.currentMusicHistory()
+            )
+            return (state, initial)
+        }.value
+        try Task.checkCancellation()
+        #if DEBUG
+        let permitsStoredDeviceAutoPairing = uiTestFixture == nil
+        #else
+        let permitsStoredDeviceAutoPairing = true
+        #endif
+        return CutoutAppModel(
+            core: makeSessionDriver(rideMapState: state),
+            permitsStoredDeviceAutoPairing: permitsStoredDeviceAutoPairing,
+            selectedDeviceStore: DevicePickerSelectionStore(),
+            rideSessionMarkerStore: RideSessionMarkerStore(),
+            liveActivityManager: LiveActivityRideActivityKitManager(),
+            musicHistoryPolicyStore: MusicHistoryPolicyStore(),
+            musicProviderSelectionStore: MusicProviderSelectionStore(),
+            musicMonitoringPreferenceStore: MusicMonitoringPreferenceStore(),
+            initialPersistence: initial
+        )
+    }
     convenience init() {
         #if DEBUG
         let permitsStoredDeviceAutoPairing = Self.uiTestFixture == nil
@@ -371,7 +410,8 @@ final class CutoutAppModel {
         liveActivityManager: any LiveActivityRideLifecycleManaging,
         musicHistoryPolicyStore: MusicHistoryPolicyStore,
         musicProviderSelectionStore: MusicProviderSelectionStore,
-        musicMonitoringPreferenceStore: MusicMonitoringPreferenceStore
+        musicMonitoringPreferenceStore: MusicMonitoringPreferenceStore,
+        initialPersistence: InitialPersistence? = nil
     ) {
         self.permitsStoredDeviceAutoPairing = permitsStoredDeviceAutoPairing
         self.core = core
@@ -392,14 +432,20 @@ final class CutoutAppModel {
         self.musicHistoryPolicyStore = musicHistoryPolicyStore
         self.musicHistoryPolicy = musicHistoryPolicyStore.policy
         self.musicCoordinator = MusicIntegrationCoordinator(rideMapState: core.rideMapStateHandle)
-        self.musicTimelineEvents = musicCoordinator.recordedEvents
-        hasSavedDevice = selectedDeviceStore.platformIdentifier != nil
-        if let identity = selectedDeviceStore.platformIdentifier,
-           let name = selectedDeviceStore.displayName(for: identity)
-        {
-            rideMapVehicleNameCache[identity] = name
+        self.musicTimelineEvents = []
+        if let initialPersistence {
+            hasSavedDevice = initialPersistence.selectedIdentifier != nil
+            if let identity = initialPersistence.selectedIdentifier, let name = initialPersistence.selectedName {
+                rideMapVehicleNameCache[identity] = name
+            }
+        } else {
+            hasSavedDevice = selectedDeviceStore.platformIdentifier != nil
+            if let identity = selectedDeviceStore.platformIdentifier,
+               let name = selectedDeviceStore.displayName(for: identity) {
+                rideMapVehicleNameCache[identity] = name
+            }
         }
-        restoreRideMapState()
+        restoreRideMapState(initialPersistence: initialPersistence)
         self.core.onDisplayStateChange = { [weak self] displayState in
             self?.displayState = displayState
             self?.syncLiveActivity()
@@ -919,19 +965,21 @@ final class CutoutAppModel {
 #endif
     }
 
-    private func restoreRideMapState() {
+    private func restoreRideMapState(initialPersistence: InitialPersistence? = nil) {
         guard let state = core.rideMapStateHandle else { return }
         rideMapSnapshot = state.currentSnapshot()
         if rideMapSnapshot != nil {
-            synchronizeMusicHistory(state.currentMusicHistory())
+            if let initialPersistence {
+                synchronizeMusicHistory(initialPersistence.musicHistory)
+            } else {
+                synchronizeMusicHistory(state.currentMusicHistory())
+            }
         } else {
             musicHistoryUnavailable = false
             musicCoordinator.restoreHistoryPolicy(musicHistoryPolicy)
             musicTimelineEvents = []
         }
-        rideMapLiveTelemetryState = rideMapSnapshot?.associatedVehicle == nil
-            ? .gpsOnly
-            : .associatedNoTelemetry
+        rideMapLiveTelemetryState = rideMapSnapshot?.telemetryState ?? .gpsOnly
         updateRideMapDurationTicker()
         guard rideMapSnapshot != nil else { return }
         rideMapRestoreTask?.cancel()
@@ -2507,13 +2555,13 @@ final class CutoutAppModel {
         }
     }
 
-    private static func makeSessionDriver() -> any CutoutSessionDriving {
+    private static func makeSessionDriver(rideMapState: MobileRideMapState? = nil) -> any CutoutSessionDriving {
         #if DEBUG
         if let fixture = uiTestFixture {
-            let rideMapState = RustPersistenceStore.shared.map(MobileRideMapState.init(database:))
             return CutoutSessionCore(testScript: fixture.testScript, rideMapState: rideMapState)
         }
         #endif
+        if let rideMapState { return CutoutSessionCore(rideMapState: rideMapState) }
         return CutoutSessionCore()
     }
 

@@ -1,12 +1,36 @@
 import CutoutMobileFFI
 import Foundation
 import OSLog
+import Synchronization
 
 /// The one Rust-owned SQLite service used by the mobile persistence adapters.
 public enum RustPersistenceStore {
     private static let logger = Logger(subsystem: "io.cutout.mobile", category: "persistence")
 
-    public static let shared: RideDatabaseHandle? = {
+    private static let cachedDatabase = Mutex<RideDatabaseHandle?>(nil)
+
+    /// Reads an already-open handle; accessing this property never opens storage.
+    public static var shared: RideDatabaseHandle? {
+        cachedDatabase.withLock { $0 }
+    }
+
+    /// Opens the process-owned database off the main actor. Failures remain retryable.
+    public static func open() async throws -> RideDatabaseHandle {
+        if let database = shared { return database }
+        let database = try await Task.detached(priority: .userInitiated) {
+            try openDefaultDatabase()
+        }.value
+        cachedDatabase.withLock { $0 = database }
+        return database
+    }
+
+    static func open(at databaseURL: URL) async throws -> RideDatabaseHandle {
+        try await Task.detached(priority: .userInitiated) {
+            try prepareDatabase(at: databaseURL)
+        }.value
+    }
+
+    private static func openDefaultDatabase() throws -> RideDatabaseHandle {
         let fileManager = FileManager.default
         guard
             let applicationSupport = fileManager.urls(
@@ -14,10 +38,16 @@ public enum RustPersistenceStore {
                 in: .userDomainMask
             ).first
         else {
-            return nil
+            throw CocoaError(.fileNoSuchFile)
         }
         let directory = applicationSupport.appendingPathComponent("Cutout", isDirectory: true)
-        var databaseURL = directory.appendingPathComponent("ride.sqlite")
+        return try prepareDatabase(at: directory.appendingPathComponent("ride.sqlite"))
+    }
+
+    private static func prepareDatabase(at url: URL) throws -> RideDatabaseHandle {
+        let fileManager = FileManager.default
+        let directory = url.deletingLastPathComponent()
+        var databaseURL = url
         do {
             try fileManager.createDirectory(
                 at: directory,
@@ -45,7 +75,7 @@ public enum RustPersistenceStore {
             return database
         } catch {
             logger.error("Could not open Rust ride database: \(error, privacy: .public)")
-            return nil
+            throw error
         }
-    }()
+    }
 }
