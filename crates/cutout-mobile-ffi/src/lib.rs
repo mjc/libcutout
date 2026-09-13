@@ -15157,20 +15157,16 @@ fn ride_operating_state(
     charge_mode: Option<ChargeModeReadingDto>,
     speed: Option<SpeedReadingDto>,
 ) -> RideOperatingState {
-    match operating_state {
-        Some(RideOperatingStateDto::Parked) => return RideOperatingState::Parked,
-        Some(RideOperatingStateDto::Standing) => return RideOperatingState::Standing,
-        Some(RideOperatingStateDto::Riding) => return RideOperatingState::Riding,
-        Some(RideOperatingStateDto::Charging) => return RideOperatingState::Charging,
-        Some(RideOperatingStateDto::Unknown) | None => {}
-    }
-    match charge_mode.map(|mode| mode.value) {
-        Some(ChargeModeDto::Charging) => RideOperatingState::Charging,
-        Some(ChargeModeDto::NotCharging) | None => match speed.map(|speed| speed.value.cmp(&0)) {
-            Some(std::cmp::Ordering::Equal) => RideOperatingState::Standing,
-            Some(_) => RideOperatingState::Riding,
-            None => RideOperatingState::Unknown,
-        },
+    match CoreRideOperatingState::resolve(
+        operating_state.map(Into::into),
+        charge_mode.map(|mode| mode.value.into()),
+        speed.map(|speed| cutout_core::Speed::from_millimetres_per_second(speed.value)),
+    ) {
+        CoreRideOperatingState::Unknown => RideOperatingState::Unknown,
+        CoreRideOperatingState::Parked => RideOperatingState::Parked,
+        CoreRideOperatingState::Standing => RideOperatingState::Standing,
+        CoreRideOperatingState::Riding => RideOperatingState::Riding,
+        CoreRideOperatingState::Charging => RideOperatingState::Charging,
     }
 }
 

@@ -1021,6 +1021,27 @@ impl From<RideOperatingState> for RideOperatingStateDto {
     }
 }
 
+impl From<RideOperatingStateDto> for RideOperatingState {
+    fn from(state: RideOperatingStateDto) -> Self {
+        match state {
+            RideOperatingStateDto::Unknown => Self::Unknown,
+            RideOperatingStateDto::Parked => Self::Parked,
+            RideOperatingStateDto::Standing => Self::Standing,
+            RideOperatingStateDto::Riding => Self::Riding,
+            RideOperatingStateDto::Charging => Self::Charging,
+        }
+    }
+}
+
+impl From<ChargeModeDto> for ChargeMode {
+    fn from(mode: ChargeModeDto) -> Self {
+        match mode {
+            ChargeModeDto::Charging => Self::Charging,
+            ChargeModeDto::NotCharging => Self::NotCharging,
+        }
+    }
+}
+
 /// UniFFI-ready controller operating mode.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum RideOperatingModeDto {
