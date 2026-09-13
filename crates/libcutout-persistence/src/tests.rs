@@ -20,9 +20,9 @@ use cutout_ride_maps::{RideLifecycleState, RideMapSegmentId, RideSegmentStartRea
 
 use super::{
     BmsVoltageSampleRecord, GeoBounds, HistoryContextBudget, PevcapImportOutcome,
-    PevcapImportPreview, PevcapImportWarning, QueryLimit, RideDatabase, RideHistoryQuery, RideId,
-    RideRecord, RideSource, RouteProjectionCancellation, StorageError, VoltageSagModelRecord,
-    normalize_device_display_name,
+    PevcapImportPreview, PevcapImportWarning, PhoneAlarmPreferencesRecord, QueryLimit,
+    RideDatabase, RideHistoryQuery, RideId, RideRecord, RideSource, RouteProjectionCancellation,
+    StorageError, VoltageSagModelRecord, normalize_device_display_name,
 };
 
 static TEST_LOCK: Mutex<()> = Mutex::new(());
@@ -88,6 +88,8 @@ fn music_v16_migration_preserves_events_without_fabricating_observation_times() 
             "ALTER TABLE ride_music_event DROP COLUMN observed_at_ms;
          ALTER TABLE ride_music_history DROP COLUMN last_observed_at_ms;
          ALTER TABLE ride_music_history DROP COLUMN deleted;
+         DROP TABLE bms_voltage_samples;
+         DROP TABLE phone_alarm_preferences;
          PRAGMA user_version = 16;",
         )
         .unwrap();
@@ -122,6 +124,8 @@ fn schema_v19_migration_adds_music_history_state() {
     connection
         .execute_batch(
             "ALTER TABLE ride_music_history DROP COLUMN state;
+             DROP TABLE bms_voltage_samples;
+             DROP TABLE phone_alarm_preferences;
              PRAGMA user_version = 19;",
         )
         .expect("legacy v19 shape creates");
@@ -147,6 +151,8 @@ fn pre_music_v16_migration_preserves_existing_capture_tables() {
         .execute_batch(
             "DROP TABLE ride_music_event;
              DROP TABLE ride_music_history;
+             DROP TABLE bms_voltage_samples;
+             DROP TABLE phone_alarm_preferences;
              PRAGMA user_version = 16;",
         )
         .unwrap();
@@ -300,6 +306,8 @@ fn music_v16_migration_rebuilds_utf8_text_bounds() {
             "DROP TABLE ride_music_event_current;
              ALTER TABLE ride_music_history DROP COLUMN last_observed_at_ms;
              ALTER TABLE ride_music_history DROP COLUMN deleted;
+             DROP TABLE bms_voltage_samples;
+             DROP TABLE phone_alarm_preferences;
              PRAGMA user_version = 16;",
         )
         .unwrap();
@@ -1670,6 +1678,75 @@ fn database_persists_migrated_mobile_state() {
 }
 
 #[test]
+fn database_persists_phone_alarm_preferences_per_device() {
+    let _guard = test_guard();
+    let path = std::env::temp_dir().join(format!(
+        "libcutout-persistence-phone-alarms-{}.sqlite",
+        uuid::Uuid::new_v4()
+    ));
+    let database = RideDatabase::open(&path).unwrap();
+
+    assert_eq!(database.phone_alarm_preferences("wheel-a").unwrap(), None);
+    database
+        .save_phone_alarm_preferences(
+            " wheel-a ",
+            PhoneAlarmPreferencesRecord::new(true, 80).unwrap(),
+        )
+        .unwrap();
+    database
+        .save_phone_alarm_preferences(
+            "wheel-b",
+            PhoneAlarmPreferencesRecord::new(false, 65).unwrap(),
+        )
+        .unwrap();
+    assert!(PhoneAlarmPreferencesRecord::new(true, 0).is_err());
+    assert!(PhoneAlarmPreferencesRecord::new(true, 101).is_err());
+    database.shutdown().unwrap();
+
+    let reopened = RideDatabase::open(&path).unwrap();
+    assert_eq!(
+        reopened.phone_alarm_preferences("wheel-a").unwrap(),
+        Some(PhoneAlarmPreferencesRecord::new(true, 80).unwrap())
+    );
+    assert_eq!(
+        reopened.phone_alarm_preferences("wheel-b").unwrap(),
+        Some(PhoneAlarmPreferencesRecord::new(false, 65).unwrap())
+    );
+    reopened.shutdown().unwrap();
+    let _ = std::fs::remove_file(path);
+}
+
+#[test]
+fn schema_v21_migration_adds_phone_alarm_preferences() {
+    let _guard = test_guard();
+    let path = std::env::temp_dir().join(format!(
+        "libcutout-persistence-phone-alarm-migration-{}.sqlite",
+        uuid::Uuid::new_v4()
+    ));
+    let connection = Connection::open(&path).unwrap();
+    crate::storage::create_current_schema(&connection).unwrap();
+    connection
+        .execute_batch(
+            "DROP TABLE phone_alarm_preferences;
+             PRAGMA user_version = 21;",
+        )
+        .unwrap();
+    drop(connection);
+
+    let database = RideDatabase::open(&path).unwrap();
+    assert_eq!(database.phone_alarm_preferences("wheel-a").unwrap(), None);
+    database.shutdown().unwrap();
+
+    let connection = Connection::open(&path).unwrap();
+    let version: i64 = connection
+        .pragma_query_value(None, "user_version", |row| row.get(0))
+        .unwrap();
+    assert_eq!(version, 22);
+    drop(connection);
+    let _ = std::fs::remove_file(path);
+}
+
+#[test]
 fn remember_selected_device_normalizes_identity_and_name_together() {
     let _guard = test_guard();
     let path = std::env::temp_dir().join(format!(
@@ -2275,6 +2352,8 @@ fn schema_fifteen_capture_backfill_preserves_receipts_and_rides() {
         connection
             .execute_batch(
                 "DROP TABLE pevcap_capture_chunks; DROP TABLE pevcap_captures;
+             DROP TABLE bms_voltage_samples;
+             DROP TABLE phone_alarm_preferences;
              PRAGMA user_version = 15;",
             )
             .unwrap();
@@ -3079,6 +3158,7 @@ fn version_20_database_adds_device_scoped_bms_history_without_resetting_existing
         .execute_batch(
             "DROP TABLE bms_voltage_samples;
              DROP TABLE last_connected_device;
+             DROP TABLE phone_alarm_preferences;
              PRAGMA application_id = 1129665615;
              PRAGMA user_version = 20;",
         )
@@ -3548,6 +3628,8 @@ fn schema_v13_spatial_rows_migrate_without_integer_domain_ids() {
              PRAGMA application_id = 1129665615;
              DROP TABLE pevcap_capture_chunks;
              DROP TABLE pevcap_captures;
+             DROP TABLE bms_voltage_samples;
+             DROP TABLE phone_alarm_preferences;
              PRAGMA user_version = 13;",
         )
         .unwrap();
@@ -3624,6 +3706,8 @@ fn schema_v12_singleton_rows_migrate_to_uuid_keys_without_data_loss() {
              PRAGMA application_id = 1129665615;
              DROP TABLE pevcap_capture_chunks;
              DROP TABLE pevcap_captures;
+             DROP TABLE bms_voltage_samples;
+             DROP TABLE phone_alarm_preferences;
              PRAGMA user_version = 12;",
         )
         .unwrap();
@@ -4165,6 +4249,8 @@ fn version_eight_migration_adds_monotonic_ride_start_column() {
             PRAGMA application_id = 1129665615;
             DROP TABLE pevcap_capture_chunks;
             DROP TABLE pevcap_captures;
+            DROP TABLE bms_voltage_samples;
+            DROP TABLE phone_alarm_preferences;
             PRAGMA user_version = 8;
             ",
         )

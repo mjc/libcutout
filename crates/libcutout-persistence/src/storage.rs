@@ -808,6 +808,45 @@ pub struct VoltageSagModelRecord {
     pub last_learned_wall_clock_milliseconds: u64,
 }
 
+/// Persisted phone-generated alarm preferences for one stable device identity.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct PhoneAlarmPreferencesRecord {
+    enabled: bool,
+    pwm_duty_percent: u8,
+}
+
+impl PhoneAlarmPreferencesRecord {
+    /// Creates validated preferences expressed as consumed PWM duty.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StorageError::InvalidStoredValue`] unless duty is in `1..=100`.
+    pub fn new(enabled: bool, pwm_duty_percent: u8) -> Result<Self, StorageError> {
+        if !(1..=100).contains(&pwm_duty_percent) {
+            return Err(StorageError::InvalidStoredValue {
+                field: "phone alarm PWM duty percent",
+                value: pwm_duty_percent.to_string(),
+            });
+        }
+        Ok(Self {
+            enabled,
+            pwm_duty_percent,
+        })
+    }
+
+    /// Returns whether the device may produce phone-generated alarms.
+    #[must_use]
+    pub const fn enabled(self) -> bool {
+        self.enabled
+    }
+
+    /// Returns the alarm threshold as consumed PWM duty percent.
+    #[must_use]
+    pub const fn pwm_duty_percent(self) -> u8 {
+        self.pwm_duty_percent
+    }
+}
+
 /// Durable PEVCAP import outcome.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum PevcapImportOutcome {
@@ -2260,6 +2299,41 @@ impl RideDatabase {
         self.request(|reply| Command::ClearLastConnectedDevice { reply })
     }
 
+    /// Stores phone-generated alarm preferences for one device.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StorageError`] when the identity or preferences are invalid, or the worker cannot
+    /// commit the update.
+    pub fn save_phone_alarm_preferences(
+        &self,
+        device_identity: &str,
+        preferences: PhoneAlarmPreferencesRecord,
+    ) -> Result<(), StorageError> {
+        let device_identity = normalize_stored_text(device_identity, "device identity")?;
+        self.request(move |reply| Command::SavePhoneAlarmPreferences {
+            device_identity,
+            preferences,
+            reply,
+        })
+    }
+
+    /// Loads phone-generated alarm preferences for one device.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StorageError`] when the identity is invalid or the worker cannot query it.
+    pub fn phone_alarm_preferences(
+        &self,
+        device_identity: &str,
+    ) -> Result<Option<PhoneAlarmPreferencesRecord>, StorageError> {
+        let device_identity = normalize_stored_text(device_identity, "device identity")?;
+        self.request(move |reply| Command::PhoneAlarmPreferences {
+            device_identity,
+            reply,
+        })
+    }
+
     /// Stores the opt-in music-history policy for one ride.
     ///
     /// Disabling history also removes any previously stored music events.
@@ -3552,6 +3626,15 @@ enum Command {
     },
     ClearLastConnectedDevice {
         reply: Reply<()>,
+    },
+    SavePhoneAlarmPreferences {
+        device_identity: String,
+        preferences: PhoneAlarmPreferencesRecord,
+        reply: Reply<()>,
+    },
+    PhoneAlarmPreferences {
+        device_identity: String,
+        reply: Reply<Option<PhoneAlarmPreferencesRecord>>,
     },
     RecordMusicEvent {
         ride_id: RideId,
@@ -5416,6 +5499,48 @@ fn clear_last_connected_device(connection: &Connection) -> Result<(), StorageErr
         [LastConnectedDeviceKey::VALUE.blob()],
     )?;
     Ok(())
+}
+
+fn save_phone_alarm_preferences(
+    connection: &Connection,
+    device_identity: &str,
+    preferences: PhoneAlarmPreferencesRecord,
+) -> Result<(), StorageError> {
+    connection.execute(
+        "INSERT INTO phone_alarm_preferences (device_identity, enabled, pwm_duty_percent)
+         VALUES (?1, ?2, ?3)
+         ON CONFLICT(device_identity) DO UPDATE SET enabled = excluded.enabled,
+             pwm_duty_percent = excluded.pwm_duty_percent",
+        params![
+            device_identity,
+            preferences.enabled(),
+            preferences.pwm_duty_percent()
+        ],
+    )?;
+    Ok(())
+}
+
+fn phone_alarm_preferences(
+    connection: &Connection,
+    device_identity: &str,
+) -> Result<Option<PhoneAlarmPreferencesRecord>, StorageError> {
+    connection
+        .query_row(
+            "SELECT enabled, pwm_duty_percent FROM phone_alarm_preferences
+             WHERE device_identity = ?1",
+            [device_identity],
+            |row| {
+                PhoneAlarmPreferencesRecord::new(row.get(0)?, row.get(1)?).map_err(|error| {
+                    rusqlite::Error::FromSqlConversionFailure(
+                        1,
+                        rusqlite::types::Type::Integer,
+                        Box::new(error),
+                    )
+                })
+            },
+        )
+        .optional()
+        .map_err(StorageError::from)
 }
 
 /// Durable music retention state, separate from whether any events exist.

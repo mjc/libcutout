@@ -14,6 +14,20 @@ use super::{
     save_music_history_policy, save_ride_session_marker, save_selected_device,
     save_voltage_sag_model, selected_device, settle_recovered_ride, sqlite_capabilities,
     trail_segments_in_bounds, transition_ride, update_ride_map_metadata, voltage_sag_model,
+    music_history_state, newest_recoverable_ride, pevcap_import_receipt, project_history_context,
+    project_route_points, rebuild_spatial_indexes, record_bms_voltage_samples, record_music_event,
+    remember_selected_device, remove_voltage_sag_model, ride_session_marker, route_points,
+    save_device_name, save_music_event, save_music_history_policy, save_ride_session_marker,
+    save_selected_device, save_voltage_sag_model, selected_device, sqlite_capabilities,
+    trail_segments_in_bounds, transition_ride, update_ride_map_metadata, voltage_sag_model,
+    music_history_state, newest_recoverable_ride, pevcap_import_receipt, phone_alarm_preferences,
+    project_history_context, project_route_points, rebuild_spatial_indexes,
+    record_bms_voltage_samples, record_music_event, remember_selected_device,
+    remove_voltage_sag_model, ride_session_marker, route_points, save_device_name,
+    save_music_event, save_music_history_policy, save_phone_alarm_preferences,
+    save_ride_session_marker, save_selected_device, save_voltage_sag_model, selected_device,
+    sqlite_capabilities, trail_segments_in_bounds, transition_ride, update_ride_map_metadata,
+    voltage_sag_model,
 };
 use rusqlite::Connection;
 use std::ops::ControlFlow;
@@ -262,6 +276,23 @@ impl DatabaseWorker<'_> {
             }
             Command::ClearLastConnectedDevice { reply } => {
                 let _ = reply.send(clear_last_connected_device(connection));
+            }
+            Command::SavePhoneAlarmPreferences {
+                device_identity,
+                preferences,
+                reply,
+            } => {
+                let _ = reply.send(save_phone_alarm_preferences(
+                    connection,
+                    &device_identity,
+                    preferences,
+                ));
+            }
+            Command::PhoneAlarmPreferences {
+                device_identity,
+                reply,
+            } => {
+                let _ = reply.send(phone_alarm_preferences(connection, &device_identity));
             }
             Command::RecordMusicEvent {
                 ride_id,

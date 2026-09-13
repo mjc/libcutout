@@ -226,6 +226,11 @@ pub(crate) fn create_current_schema(connection: &Connection) -> Result<(), Stora
             platform_identifier TEXT NOT NULL CHECK (length(platform_identifier) BETWEEN 1 AND 512),
             updated_at_ms INTEGER NOT NULL CHECK (updated_at_ms >= 0)
         );
+        CREATE TABLE phone_alarm_preferences (
+            device_identity TEXT PRIMARY KEY NOT NULL CHECK (length(device_identity) BETWEEN 1 AND 512),
+            enabled INTEGER NOT NULL CHECK (enabled IN (0, 1)),
+            pwm_duty_percent INTEGER NOT NULL CHECK (pwm_duty_percent BETWEEN 1 AND 100)
+        );
         CREATE TABLE voltage_sag_models (
             device_identity TEXT PRIMARY KEY NOT NULL CHECK (length(device_identity) BETWEEN 1 AND 512),
             schema_version INTEGER NOT NULL CHECK (schema_version = 1),
@@ -1137,6 +1142,13 @@ fn migrate_v22_to_current(connection: &mut Connection) -> Result<(), StorageErro
              updated_at_ms INTEGER NOT NULL CHECK (updated_at_ms >= 0)
          );",
     )?;
+    transaction.execute_batch(
+        "CREATE TABLE IF NOT EXISTS phone_alarm_preferences (
+             device_identity TEXT PRIMARY KEY NOT NULL CHECK (length(device_identity) BETWEEN 1 AND 512),
+             enabled INTEGER NOT NULL CHECK (enabled IN (0, 1)),
+             pwm_duty_percent INTEGER NOT NULL CHECK (pwm_duty_percent BETWEEN 1 AND 100)
+         );",
+    )?;
     transaction.execute_batch(&current_schema_pragmas())?;
     transaction.commit()?;
     Ok(())
@@ -1166,6 +1178,7 @@ pub(super) fn verify_current_schema(connection: &Connection) -> Result<(), Stora
         "ride_points",
         "ride_segments",
         "devices",
+        "phone_alarm_preferences",
         "selected_device",
         "voltage_sag_models",
         "ride_session_marker",
