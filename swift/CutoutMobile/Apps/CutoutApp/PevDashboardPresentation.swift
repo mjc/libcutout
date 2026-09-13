@@ -5,9 +5,6 @@ func liveSafetyBars(for state: EucRideScreenState) -> [PevSafetyBar] {
         PevSafetyBar(
             id: .pwmHeadroom, label: localizedAppText("ride.safety.pwm_headroom"),
             metricValue: state.pwmHeadroomMetricValue, progress: state.pwmHeadroomProgress, accent: .yellow),
-        PevSafetyBar(
-            id: .sagAdjustedEnergy, label: localizedAppText("ride.safety.sag_adjusted_energy"),
-            metricValue: .unavailable, progress: nil, accent: .cyan),
     ]
 }
 
