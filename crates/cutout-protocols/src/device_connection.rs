@@ -1,5 +1,8 @@
 //! Connection, detector and protocol-session ownership shared by native clients.
 
+mod settings;
+pub use settings::{DeviceSettingRequestError, DeviceSettingsSnapshot};
+
 use cutout_core::{
     ConnectionAttemptSnapshot, ConnectionAttemptToken, ConnectionReadiness, CutoutSessionState,
     DeviceEvent, DeviceSettingsState, MonotonicTimestamp, ParserDiagnosticsDto, ProtocolFamily,
@@ -109,7 +112,7 @@ mod tests {
         );
     }
 
-    fn connected_aero(owner: &mut DeviceConnectionSession) -> ConnectionAttemptToken {
+    pub(super) fn connected_aero(owner: &mut DeviceConnectionSession) -> ConnectionAttemptToken {
         let token = begin(owner, "A");
         let mut frame = vec![0_u8; 42];
         frame[..4].copy_from_slice(&[0xdc, 0x5a, 0x5c, 38]);
@@ -227,11 +230,13 @@ pub struct DeviceConnectionSession {
     pub detector: DeviceDetectionSession,
     /// Protocol-selected decoder, never selected by native model dispatch.
     pub device: Option<DeviceSession>,
+    last_input_at: MonotonicTimestamp,
 }
 
 impl DeviceConnectionSession {
     /// Replaces all device-scoped state before native work for the new attempt.
     pub fn begin_attempt(&mut self, platform_identifier: String, at: MonotonicTimestamp) {
+        self.last_input_at = at;
         self.state.reset_device_identity();
         self.state
             .select_discovered_platform(platform_identifier.clone());
@@ -329,9 +334,10 @@ impl DeviceConnectionSession {
         | SessionInputDto::CommandAt { monotonic_ms, .. }
         | SessionInputDto::LinkUp { monotonic_ms, .. } = input
         {
-            self.state
-                .settings
-                .tick(MonotonicTimestamp::new(monotonic_ms.milliseconds));
+            self.last_input_at = self
+                .last_input_at
+                .max(MonotonicTimestamp::new(monotonic_ms.milliseconds));
+            self.state.settings.tick(self.last_input_at);
         }
         let device = self.device.as_mut()?;
         let result = device.ingest_typed(input);

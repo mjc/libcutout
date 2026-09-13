@@ -7127,6 +7127,28 @@ pub enum RideOperatingState {
     Charging,
 }
 
+impl RideOperatingState {
+    /// Resolves explicit protocol state before charging and measured-speed fallbacks.
+    #[must_use]
+    pub fn resolve(
+        reported: Option<Self>,
+        charge_mode: Option<ChargeMode>,
+        speed: Option<Speed>,
+    ) -> Self {
+        if let Some(state) = reported.filter(|state| *state != Self::Unknown) {
+            return state;
+        }
+        if charge_mode == Some(ChargeMode::Charging) {
+            return Self::Charging;
+        }
+        match speed.map(Speed::as_millimetres_per_second) {
+            Some(0) => Self::Standing,
+            Some(_) => Self::Riding,
+            None => Self::Unknown,
+        }
+    }
+}
+
 /// Protocol-decoded controller operating mode.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum RideOperatingMode {
