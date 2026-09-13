@@ -1,6 +1,9 @@
 //! Immutable connection admission through the existing session-state mutex.
 
-use cutout_core::{ConnectionAttemptSnapshot, ConnectionAttemptToken, ConnectionReadiness};
+use cutout_core::{
+    ConnectionAttemptSnapshot, ConnectionAttemptToken, ConnectionReadiness,
+    ConnectionTransportState,
+};
 
 use crate::{CutoutSessionStateHandle, DeviceDetectionSession, MonotonicTimestamp};
 
@@ -28,6 +31,17 @@ pub enum MobileConnectionReadinessDto {
     Failed,
 }
 
+/// Native connection availability, separate from protocol admission.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Enum)]
+pub enum MobileConnectionTransportStateDto {
+    /// Native transport is unavailable; capture may contain only retained evidence.
+    Disconnected,
+    /// Native connection is outstanding.
+    Connecting,
+    /// Native connection exists, without promising any particular subscription.
+    Connected,
+}
+
 /// One atomic publication for UI and queued consumers.
 #[derive(Clone, Debug, Eq, PartialEq, uniffi::Record)]
 pub struct MobileConnectionAttemptSnapshotDto {
@@ -39,6 +53,8 @@ pub struct MobileConnectionAttemptSnapshotDto {
     pub token: Option<MobileConnectionAttemptTokenDto>,
     /// Current admission permission.
     pub readiness: MobileConnectionReadinessDto,
+    /// Whether native transport can currently deliver data.
+    pub transport: MobileConnectionTransportStateDto,
     /// Monotonic whole-attempt deadline in milliseconds.
     pub deadline_ms: Option<u64>,
 }
@@ -71,6 +87,15 @@ impl From<&ConnectionAttemptSnapshot> for MobileConnectionAttemptSnapshotDto {
                 ConnectionReadiness::RecordOnly => MobileConnectionReadinessDto::RecordOnly,
                 ConnectionReadiness::Failed => MobileConnectionReadinessDto::Failed,
             },
+            transport: match value.transport {
+                ConnectionTransportState::Disconnected => {
+                    MobileConnectionTransportStateDto::Disconnected
+                }
+                ConnectionTransportState::Connecting => {
+                    MobileConnectionTransportStateDto::Connecting
+                }
+                ConnectionTransportState::Connected => MobileConnectionTransportStateDto::Connected,
+            },
             deadline_ms: value.deadline.map(MonotonicTimestamp::get),
         }
     }
@@ -78,6 +103,30 @@ impl From<&ConnectionAttemptSnapshot> for MobileConnectionAttemptSnapshotDto {
 
 #[uniffi::export]
 impl CutoutSessionStateHandle {
+    /// Accepts a native link callback for its captured attempt.
+    pub fn connection_link_established(
+        &self,
+        token: MobileConnectionAttemptTokenDto,
+    ) -> MobileConnectionAttemptSnapshotDto {
+        let mut inner = self.lock_inner();
+        inner.state.connection.connected(&token.into());
+        inner.state.connection.snapshot().into()
+    }
+
+    /// Marks link loss before publishing capture availability or retrying.
+    pub fn connection_link_down(
+        &self,
+        token: MobileConnectionAttemptTokenDto,
+    ) -> MobileConnectionAttemptSnapshotDto {
+        let mut inner = self.lock_inner();
+        inner.state.connection.link_down(&token.into());
+        if inner.state.connection.snapshot().readiness == ConnectionReadiness::Failed {
+            inner.device = None;
+            inner.state.settings.disconnect();
+        }
+        inner.state.connection.snapshot().into()
+    }
+
     /// Replaces attempt and detector together, preserving discovery observations.
     pub fn begin_connection_attempt(
         &self,
@@ -176,6 +225,7 @@ mod tests {
         let handle = CutoutSessionStateHandle::new();
         let snapshot = handle.begin_connection_attempt("A".into(), 10);
         let token = snapshot.token.unwrap();
+        handle.connection_link_established(token.clone());
         assert!(!handle.verified_connection_attempt_is_current(token.clone()));
         {
             let mut inner = handle.lock_inner();
