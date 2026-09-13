@@ -99,6 +99,7 @@ struct RideMapHistoryDetailMap: View {
     let cameraRegion: MobileRideMapCameraRegion?
     let segments: [MobileRideMapSegmentDisplayMetadata]
     let state: RideMapHistoryRouteState
+    let cameraFitID: String?
     @Binding var mapPosition: MapCameraPosition
     @Binding var isApplyingCamera: Bool
     @State private var fittedRouteID: String?
@@ -118,6 +119,7 @@ struct RideMapHistoryDetailMap: View {
                 segments: segments,
                 contextRoutes: [],
                 fitsRouteOnChange: true,
+                cameraFitID: cameraFitID,
                 mapPosition: $mapPosition,
                 isApplyingCamera: $isApplyingCamera,
                 cameraDidChange: cameraDidChange
