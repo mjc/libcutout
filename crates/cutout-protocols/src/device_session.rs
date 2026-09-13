@@ -133,6 +133,24 @@ impl DeviceSession {
         self.identity
     }
 
+    /// Selects semantic settings only for an exactly identified supported model.
+    #[must_use]
+    pub fn settings_profile(&self) -> crate::SettingsProfile {
+        match (&self.engine, self.identity.model) {
+            (DeviceSessionEngine::Veteran(_), Some(model))
+                if model == &crate::NOSFET_AERO_REGISTRY_ENTRY =>
+            {
+                crate::aero_settings_profile()
+            }
+            (DeviceSessionEngine::Begode(_), Some(model))
+                if model == &crate::BEGODE_FALCON_REGISTRY_ENTRY =>
+            {
+                crate::falcon_settings_profile()
+            }
+            _ => crate::SettingsProfile::default(),
+        }
+    }
+
     /// Drives a typed input through the selected existing protocol implementation.
     #[must_use]
     pub fn ingest_checked(&mut self, input: &SessionInputDto) -> ConcreteSessionStepResultDto {
@@ -252,6 +270,7 @@ mod tests {
         assert_eq!(session.identity().protocol, ProtocolFamily::Vesc);
         assert_eq!(session.identity().vehicle_kind, VehicleKind::Unknown);
         assert_eq!(session.identity().model, None);
+        assert!(session.settings_profile().descriptors(true).is_empty());
     }
 
     #[test]
@@ -279,6 +298,7 @@ mod tests {
                 .all(|output| !matches!(output, SessionOutputDto::Transport(_)))
         );
         assert!(!session.arm_settings_writes(RideOperatingStateDto::Parked, Some(0), 1));
+        assert!(session.settings_profile().descriptors(true).is_empty());
     }
 
     #[test]
@@ -300,6 +320,13 @@ mod tests {
         assert_eq!(
             session.identity().vehicle_kind,
             VehicleKind::ElectricUnicycle
+        );
+        assert!(
+            session
+                .settings_profile()
+                .descriptors(false)
+                .iter()
+                .any(|descriptor| descriptor.id == cutout_core::SettingId::PwmTiltback)
         );
     }
 
