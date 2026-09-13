@@ -3,7 +3,7 @@ use super::{
     append_location_with_result, append_pevcap_location_batch, append_trail_segment, backup,
     begin_pevcap_import, clear_ride_session_marker, clear_selected_device, create_map_point,
     create_ride, create_started_live_ride, create_started_ride, create_trail, delete_music_history,
-    device_name, export_ride_json, find_ride, finish_pevcap_import,
+    device_name, export_ride_json, find_ride, finish_pevcap_import, integrity_check,
     list_ride_history_vehicle_options, list_rides, load_summary, load_summary_with_duration,
     map_points_in_bounds, migrate_device_name, music_events, music_history, music_history_policy,
     music_history_state, newest_recoverable_ride, pevcap_import_receipt, project_history_context,
@@ -98,6 +98,9 @@ impl DatabaseWorker<'_> {
             }
             Command::Capabilities { reply } => {
                 let _ = reply.send(sqlite_capabilities(connection));
+            }
+            Command::IntegrityCheck { reply } => {
+                let _ = reply.send(integrity_check(connection));
             }
             Command::CreateRide {
                 source,

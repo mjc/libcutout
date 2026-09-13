@@ -1911,6 +1911,19 @@ impl RideDatabase {
         self.request(|reply| Command::Capabilities { reply })
     }
 
+    /// Verifies the database integrity on the storage worker.
+    ///
+    /// This can scan the entire database, so callers should use it only for explicit
+    /// maintenance or diagnostics rather than normal startup.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StorageError::IntegrityCheckFailed`] when SQLite reports corruption, or another
+    /// [`StorageError`] when the worker cannot complete the check.
+    pub fn integrity_check(&self) -> Result<(), StorageError> {
+        self.request(|reply| Command::IntegrityCheck { reply })
+    }
+
     /// Creates a draft ride record.
     ///
     /// # Errors
@@ -3288,6 +3301,9 @@ enum Command {
     Capabilities {
         reply: Reply<SqliteCapabilities>,
     },
+    IntegrityCheck {
+        reply: Reply<()>,
+    },
     CreateRide {
         source: RideSource,
         created_at_ms: u64,
@@ -3628,11 +3644,6 @@ fn configure_connection(
     if foreign_keys != 1 {
         return Err(StorageError::Sqlite(rusqlite::Error::InvalidQuery));
     }
-    let quick_check: String =
-        connection.query_row("PRAGMA quick_check(1)", [], |row| row.get(0))?;
-    if quick_check != "ok" {
-        return Err(StorageError::IntegrityCheckFailed(quick_check));
-    }
     if !sqlite_capabilities(connection)?.has_rtree() {
         return Err(StorageError::SpatialCapabilityUnavailable);
     }
@@ -3644,6 +3655,15 @@ fn configure_connection(
     Ok(BootstrapSnapshot {
         recovered_rides: recovered_rides.into(),
     })
+}
+
+fn integrity_check(connection: &Connection) -> Result<(), StorageError> {
+    let quick_check: String =
+        connection.query_row("PRAGMA quick_check(1)", [], |row| row.get(0))?;
+    if quick_check != "ok" {
+        return Err(StorageError::IntegrityCheckFailed(quick_check));
+    }
+    Ok(())
 }
 
 /// Repairs rides created with a monotonic timestamp before the durable wall-clock boundary was

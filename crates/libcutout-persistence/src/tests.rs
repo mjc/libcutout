@@ -784,6 +784,21 @@ fn database_owns_one_service_and_reopens_persisted_rides() {
 }
 
 #[test]
+fn database_integrity_check_runs_on_demand() {
+    let _guard = test_guard();
+    let path = std::env::temp_dir().join(format!(
+        "libcutout-persistence-integrity-{}.sqlite",
+        uuid::Uuid::new_v4()
+    ));
+    let database = RideDatabase::open(&path).unwrap();
+
+    database.integrity_check().unwrap();
+
+    database.shutdown().unwrap();
+    let _ = std::fs::remove_file(path);
+}
+
+#[test]
 fn current_database_repairs_monotonic_ride_creation_times() {
     let _guard = test_guard();
     let mut connection = Connection::open_in_memory().unwrap();
