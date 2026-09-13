@@ -2546,8 +2546,19 @@ extension CutoutSessionCore: CBCentralManagerDelegate {
         } else {
             nil
         }
+        publishBluetoothRestoration(restoredPlatformIdentifier)
+    }
+
+    func publishBluetoothRestoration(_ restoredPlatformIdentifier: String?) {
+        // willRestoreState can publish progress before the app has accepted the selection.
+        // Replay that progress after selection restoration, including pending connections
+        // for which powered-on handling produces no subsequent phase callback.
+        let restoredPhase = phase
         publishOnMain {
             self.onBluetoothRestorationResolved?(restoredPlatformIdentifier)
+            if restoredPlatformIdentifier != nil {
+                self.onPhaseChange?(restoredPhase)
+            }
         }
     }
 

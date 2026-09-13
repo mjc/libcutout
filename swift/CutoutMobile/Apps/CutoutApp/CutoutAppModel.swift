@@ -2971,7 +2971,9 @@ final class CutoutAppModel {
             liveActivityError = error
             switch recoveryResult {
             case .adopted:
-                if error == nil {
+                if error == nil,
+                   core.rideSessionStateHandle.rideSessionSnapshot().phase == .active
+                {
                     lastLiveActivitySnapshot = snapshot
                     lastLiveActivityUpdate = snapshot == nil ? nil : core.now()
                 }

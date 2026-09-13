@@ -3772,6 +3772,10 @@ private final class SessionDriverSpy: CutoutSessionDriving {
         startCount += 1
         if notifyBluetoothRestorationOnStart {
             onBluetoothRestorationResolved?(restoredPlatformIdentifier)
+            if restoredPlatformIdentifier != nil {
+                // Match the core's selection-then-progress restoration publication.
+                onPhaseChange?(.discoveringServices)
+            }
         }
         onScanStateChange?(scanState)
     }

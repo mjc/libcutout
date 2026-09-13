@@ -54,6 +54,26 @@ final class CutoutSessionCoreTests: XCTestCase {
         XCTAssertEqual(log.droppedCount, 1)
     }
 
+    @MainActor
+    func testRestorationPublishesSelectionBeforeReplayingTheCurrentPhase() {
+        let core = CutoutSessionCore()
+        var events: [String] = []
+        core.onBluetoothRestorationResolved = { identifier in
+            events.append("restored=\(identifier ?? "none")")
+        }
+        core.onPhaseChange = { phase in
+            XCTAssertEqual(phase, core.phase)
+            events.append("phase")
+        }
+
+        core.publishBluetoothRestoration("wheel-a")
+        XCTAssertEqual(events, ["restored=wheel-a", "phase"])
+
+        events.removeAll()
+        core.publishBluetoothRestoration(nil)
+        XCTAssertEqual(events, ["restored=none"])
+    }
+
     func testMonotonicClockUsesItsInjectedUptimeSource() {
         var now = MonotonicMilliseconds(100)
         let clock = MonotonicClock(now: { now })
