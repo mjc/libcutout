@@ -986,6 +986,18 @@ impl CutoutSessionStateHandle {
         DiscoverySnapshot::from_state(&self.lock_inner().state)
     }
 
+    /// Projects retained unknown peripherals for an explicitly opened advanced capture list.
+    #[must_use]
+    pub fn advanced_capture_candidates(&self) -> Vec<DiscoveryCandidate> {
+        self.lock_inner()
+            .state
+            .discovery()
+            .advanced_capture_candidates()
+            .into_iter()
+            .map(Into::into)
+            .collect()
+    }
+
     /// Applies one typed Apple-platform event to the Rust-owned ride lifecycle.
     ///
     /// # Errors
