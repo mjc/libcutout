@@ -26,6 +26,8 @@ macro_rules! setting_enum {
     };
 }
 
+pub(super) use setting_enum;
+
 setting_enum!(
     MobileSettingIdDto,
     SettingId,
