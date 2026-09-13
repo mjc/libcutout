@@ -460,6 +460,7 @@ public final class CutoutSessionCore: NSObject {
     public var onRecord: ((String) -> Void)?
     public var onCaptureEvent: ((CaptureEvent) -> Void)?
     public var onScanStateChange: ((DevicePickerScanState) -> Void)?
+    public var onSettingsStateChange: ((EucSettingsState) -> Void)?
     public var onSettingsReadbackChange: ((SettingsReadback?) -> Void)?
     public var onFaultHistoryReadbackChange: ((FaultHistoryReadback?) -> Void)?
     public var onBmsSnapshotChange: ((BmsSnapshot?) -> Void)?
@@ -1113,6 +1114,7 @@ public final class CutoutSessionCore: NSObject {
                     detectionSession: deviceDetectionSession,
                     executionQueue: bleQueue
                 )
+                attachSettingsStateCallback()
                 testOperationSink = sink
             } catch {
                 setPhase(.failed(.sessionFailed(error.sessionMessage)))
@@ -1493,6 +1495,9 @@ public final class CutoutSessionCore: NSObject {
 
     private func setPhase(_ phase: SessionConnectionPhase) {
         self.phase = phase
+        if phase == .live, let state = liveOwner?.settingsState {
+            publishSettingsState(state)
+        }
         publishOnMain { self.onPhaseChange?(phase) }
     }
 
@@ -1631,6 +1636,7 @@ public final class CutoutSessionCore: NSObject {
                 executionQueue: bleQueue,
                 monotonicClock: clock
             )
+            attachSettingsStateCallback()
             if let chargeEstimateProfile {
                 liveOwner?.configureChargeEstimate(profile: chargeEstimateProfile)
             }
@@ -1907,6 +1913,16 @@ public final class CutoutSessionCore: NSObject {
     private func publishSettingsReadback() {
         let value = settingsReadback
         publishOnMain { self.onSettingsReadbackChange?(value) }
+    }
+
+    private func publishSettingsState(_ value: EucSettingsState) {
+        publishOnMain { self.onSettingsStateChange?(value) }
+    }
+
+    private func attachSettingsStateCallback() {
+        liveOwner?.onSettingsStateChange = { [weak self] state in
+            self?.publishSettingsState(state)
+        }
     }
 
     private func publishFaultHistoryReadback() {

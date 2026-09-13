@@ -11,6 +11,7 @@ protocol CutoutSessionDriving: AnyObject {
     var onReconnectScheduled: ((SessionConnectionRetry) -> Void)? { get set }
     var onCaptureEvent: ((CaptureEvent) -> Void)? { get set }
     var onScanStateChange: ((DevicePickerScanState) -> Void)? { get set }
+    var onSettingsStateChange: ((EucSettingsState) -> Void)? { get set }
     var onSettingsReadbackChange: ((SettingsReadback?) -> Void)? { get set }
     var onFaultHistoryReadbackChange: ((FaultHistoryReadback?) -> Void)? { get set }
     var onBmsSnapshotChange: ((BmsSnapshot?) -> Void)? { get set }

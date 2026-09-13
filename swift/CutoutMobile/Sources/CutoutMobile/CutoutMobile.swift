@@ -7904,6 +7904,9 @@ public final class CoreBluetoothLiveSessionOwner: @unchecked Sendable {
         runner.settingsState
     }
 
+    /// Called on the session execution queue when Rust setting state changes.
+    public var onSettingsStateChange: ((EucSettingsState) -> Void)?
+
     public var tripMeterResetState: TripMeterResetState? {
         runner.tripMeterResetState
     }
@@ -8054,6 +8057,7 @@ public final class CoreBluetoothLiveSessionOwner: @unchecked Sendable {
         executeAndRecord(subscriptions + writes)
         scheduleRetryIfNeeded()
         scheduleSettingTick()
+        publishSettingsState()
 
         return step
     }
@@ -8073,6 +8077,7 @@ public final class CoreBluetoothLiveSessionOwner: @unchecked Sendable {
         record(.command(command, at: monotonicMilliseconds))
         let step = try runner.handle(.command(command, at: monotonicMilliseconds))
         executeAndRecord(step.operations)
+        publishSettingsState()
         return step
     }
 
@@ -8081,6 +8086,7 @@ public final class CoreBluetoothLiveSessionOwner: @unchecked Sendable {
     public func handleTick(at monotonicMilliseconds: MonotonicMilliseconds) throws -> CoreBluetoothSessionStep {
         let step = try runner.handle(.tick(at: monotonicMilliseconds))
         executeAndRecord(step.operations)
+        publishSettingsState()
         return step
     }
 
@@ -8107,6 +8113,9 @@ public final class CoreBluetoothLiveSessionOwner: @unchecked Sendable {
             cancelPendingRetry()
         }
         executeAndRecord(step.operations)
+        if step.actions.contains(where: { $0.kind == .settingsReadback }) {
+            publishSettingsState()
+        }
         return step
     }
 
@@ -8158,8 +8167,7 @@ public final class CoreBluetoothLiveSessionOwner: @unchecked Sendable {
             guard let self, self.linkGeneration == generation else { return }
             guard self.retainedSink.canSubmitWithoutResponse() else { return }
             do {
-                let step = try self.runner.handle(.tick(at: self.monotonicClock.now()))
-                self.executeAndRecord(step.operations)
+                _ = try self.handleTick(at: self.monotonicClock.now())
             } catch {
                 self.cancelDeadlineTimer()
             }
@@ -8201,6 +8209,11 @@ public final class CoreBluetoothLiveSessionOwner: @unchecked Sendable {
                 deferAfterSubscription = true
             }
         }
+    }
+
+    private func publishSettingsState() {
+        guard let onSettingsStateChange, let settingsState else { return }
+        onSettingsStateChange(settingsState)
     }
 
     private func record(_ value: CoreBluetoothLiveRecord) {

@@ -413,6 +413,30 @@ final class CutoutSessionCoreTests: XCTestCase {
         XCTAssertEqual(core.setAeroAngleAdjustment(try XCTUnwrap(AeroAngleAdjustment(tenthsOfDegree: 5))), expectedRefusal)
         XCTAssertEqual(core.phase, .live)
     }
+
+    func testScriptedAeroSettingsStateCallbackReachesTheCoreBoundary() throws {
+        let snapshotPublished = expectation(description: "Rust settings snapshot published")
+        let live = expectation(description: "scripted Aero session reaches live")
+        let core = CutoutSessionCore(testScript: CutoutSessionTestScript(
+            candidate: scriptedAeroCandidate,
+            telemetry: TelemetrySnapshot(speed: speedValue(0)),
+            connectionDelayMilliseconds: 0
+        ))
+        core.onPhaseChange = { phase in
+            if phase == .live { live.fulfill() }
+        }
+        core.onSettingsStateChange = { state in
+            if state.headlight.kind == .pending {
+                snapshotPublished.fulfill()
+            }
+        }
+
+        core.start()
+        XCTAssertTrue(core.pair(platformIdentifier: scriptedAeroCandidate.platformIdentifier))
+        wait(for: [live], timeout: 1)
+        XCTAssertEqual(core.setLights(.on), .accepted)
+        wait(for: [snapshotPublished], timeout: 1)
+    }
     #endif
 
     func testScriptedBluetoothUnavailableSessionPublishesNoPickerRows() {
@@ -1452,6 +1476,28 @@ func testVescRideSnapshotProjectsBatteryLevelAndUpdateTime() throws {
         _ = try owner.handleTick(at: MonotonicMilliseconds(2_010))
 
         XCTAssertEqual(owner.headlightState?.kind, .timedOut)
+    }
+
+    func testLiveOwnerPublishesSettingStateAfterCommandAndTick() throws {
+        let sink = RecordingOperationSink()
+        let owner = CoreBluetoothLiveSessionOwner(
+            session: try .electricUnicycle(model: .falcon),
+            advertisement: CoreBluetoothAdvertisement(
+                peripheralIdentifier: CoreBluetoothPeripheralIdentifier("settings-state-test"),
+                localName: ElectricUnicycleModel.falcon.displayName,
+                advertisedServiceUuids: []
+            ),
+            writeLimit: TransportWriteLimitBytes(20),
+            operationSink: sink
+        )
+        var snapshots = [EucSettingsState]()
+        owner.onSettingsStateChange = { snapshots.append($0) }
+
+        _ = try owner.handleCommand(.setLights(.on), at: MonotonicMilliseconds(1))
+        XCTAssertEqual(snapshots.last?.headlight.kind, .pending)
+
+        _ = try owner.handleTick(at: MonotonicMilliseconds(2_010))
+        XCTAssertEqual(snapshots.last?.headlight.kind, .timedOut)
     }
 
     func testFalconHeadlightCommandReachesOperationSink() throws {

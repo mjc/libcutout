@@ -676,6 +676,9 @@ final class CutoutAppModel {
         self.core.onScanStateChange = { [weak self] scanState in
             self?.handleScanStateChange(scanState)
         }
+        self.core.onSettingsStateChange = { [weak self] state in
+            self?.settingsState = state
+        }
         self.core.onSettingsReadbackChange = { [weak self] settingsReadback in
             self?.handleSettingsReadback(settingsReadback)
         }

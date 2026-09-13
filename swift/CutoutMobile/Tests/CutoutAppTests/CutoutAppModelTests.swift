@@ -656,6 +656,22 @@ final class CutoutAppModelTests: XCTestCase {
     }
 
     @MainActor
+    func testProductionEucUsesTheRustSettingsAggregateSnapshot() async {
+        let fixture = CutoutUITestSessionFixture.euc
+        let core = CutoutSessionCore(testScript: fixture.testScript)
+        let model = CutoutAppModel(core: core)
+
+        model.start()
+        XCTAssertTrue(model.pair(platformIdentifier: fixture.candidate.platformIdentifier))
+        await Self.waitUntil("Rust settings aggregate snapshot", maxTurns: 100_000) {
+            model.phase == .live && model.settingsState != nil
+        }
+
+        XCTAssertEqual(model.settingsState, core.settingsState)
+        XCTAssertEqual(model.aeroDynamicAssistState, model.settingsState?.aeroDynamicAssist)
+    }
+
+    @MainActor
     func testTuneUsesRustOwnedConfirmedLightState() {
         let driver = SessionDriverSpy(rows: [])
         driver.electricUnicycleModel = .aero
@@ -3474,6 +3490,7 @@ private final class SessionDriverSpy: CutoutSessionDriving {
     var onReconnectScheduled: ((SessionConnectionRetry) -> Void)?
     var onCaptureEvent: ((CaptureEvent) -> Void)?
     var onScanStateChange: ((DevicePickerScanState) -> Void)?
+    var onSettingsStateChange: ((EucSettingsState) -> Void)?
     var onSettingsReadbackChange: ((SettingsReadback?) -> Void)?
     var onFaultHistoryReadbackChange: ((FaultHistoryReadback?) -> Void)?
     var onBmsSnapshotChange: ((BmsSnapshot?) -> Void)?
