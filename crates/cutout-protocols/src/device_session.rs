@@ -1,16 +1,55 @@
 //! Protocol-selected mobile session; clients never construct a model-specific reactor.
 
 use cutout_core::{
-    ControlRefusal, ControlRefusalReason, DeviceCommand, ModelRegistryEntry, ParserDiagnosticsDto,
-    ProtocolFamily, RideOperatingStateDto, SafetyClass, SessionEventDto, SessionInputDto,
-    SessionOutputDto, TelemetrySnapshotDto,
+    Capabilities, ControlRefusal, ControlRefusalReason, DeviceCommand, DeviceEvent, HostSession,
+    ModelRegistryEntry, ParserDiagnosticsDto, ProtocolFamily, ProtocolSession,
+    RideOperatingStateDto, SafetyClass, SessionInputDto, SessionOutput, TelemetrySnapshotDto,
 };
 
 use crate::{
-    ConcreteAeroBenignControlSession, ConcreteFalconBenignControlSession, ConcreteSessionErrorDto,
+    ConcreteAeroBenignControlSession, ConcreteFalconBenignControlSession,
     ConcreteSessionStepResultDto, DeviceDetectionResolution, IdentityConfidence,
     ProtocolFamilyState, VescReadOnlySession,
 };
+
+/// Original protocol outputs retained until shared state owners consume their evidence.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct DeviceSessionStep {
+    /// Ordered domain outputs, including measured settings readbacks.
+    pub outputs: Vec<SessionOutput>,
+    /// First refusal from the protocol or unsupported command capability.
+    pub error: Option<ControlRefusal>,
+}
+
+impl DeviceSessionStep {
+    pub(crate) fn drain<S: ProtocolSession>(
+        host: &mut HostSession<S>,
+        input: &SessionInputDto,
+        capabilities: Capabilities,
+    ) -> Self {
+        let outputs = host.drain_outputs();
+        let error = outputs
+            .iter()
+            .find_map(|output| match output {
+                SessionOutput::Event(DeviceEvent::ControlRefusal(refusal)) => Some(*refusal),
+                _ => None,
+            })
+            .or_else(|| {
+                let (SessionInputDto::Command(command)
+                | SessionInputDto::CommandAt { command, .. }) = input
+                else {
+                    return None;
+                };
+                let command = DeviceCommand::from(*command);
+                (!capabilities.supports_command_kind(command.kind())).then(|| ControlRefusal {
+                    command: command.kind(),
+                    safety_class: command.safety_class(),
+                    reason: ControlRefusalReason::UnsupportedCommand,
+                })
+            });
+        Self { outputs, error }
+    }
+}
 
 /// Native presentation category, independent of controller protocol or model.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -97,6 +136,12 @@ impl DeviceSession {
     /// Drives a typed input through the selected existing protocol implementation.
     #[must_use]
     pub fn ingest_checked(&mut self, input: &SessionInputDto) -> ConcreteSessionStepResultDto {
+        self.ingest_typed(input).into()
+    }
+
+    /// Preserves measured domain outputs for the shared device state owner.
+    #[must_use]
+    pub fn ingest_typed(&mut self, input: &SessionInputDto) -> DeviceSessionStep {
         if self.identity.model.is_none()
             && let SessionInputDto::Command(command) | SessionInputDto::CommandAt { command, .. } =
                 input
@@ -107,20 +152,17 @@ impl DeviceSession {
                     command: command.kind(),
                     safety_class: command.safety_class(),
                     reason: ControlRefusalReason::UnsupportedCommand,
-                }
-                .into();
-                return ConcreteSessionStepResultDto {
-                    outputs: vec![SessionOutputDto::Event(SessionEventDto::ControlRefusal(
-                        refusal,
-                    ))],
-                    error: Some(ConcreteSessionErrorDto::CommandRefused { refusal }),
+                };
+                return DeviceSessionStep {
+                    outputs: vec![SessionOutput::Event(DeviceEvent::ControlRefusal(refusal))],
+                    error: Some(refusal),
                 };
             }
         }
         match &mut self.engine {
-            DeviceSessionEngine::Veteran(session) => session.ingest_checked(input),
-            DeviceSessionEngine::Begode(session) => session.ingest_checked(input),
-            DeviceSessionEngine::Vesc(session) => session.ingest_checked(input),
+            DeviceSessionEngine::Veteran(session) => session.ingest_typed(input),
+            DeviceSessionEngine::Begode(session) => session.ingest_typed(input),
+            DeviceSessionEngine::Vesc(session) => session.ingest_typed(input),
         }
     }
 
@@ -168,7 +210,7 @@ impl DeviceSession {
 
 #[cfg(test)]
 mod tests {
-    use cutout_core::CutoutSessionState;
+    use cutout_core::{CutoutSessionState, SessionOutputDto};
 
     use crate::{DeviceDetectionEvent, DeviceDetectionSession};
 
@@ -258,6 +300,65 @@ mod tests {
         assert_eq!(
             session.identity().vehicle_kind,
             VehicleKind::ElectricUnicycle
+        );
+    }
+
+    #[test]
+    fn typed_session_retains_reported_settings_evidence_before_dto_conversion() {
+        let mut state = CutoutSessionState::default();
+        let mut detector = DeviceDetectionSession::default();
+        let mut frame = vec![0_u8; 42];
+        frame[..4].copy_from_slice(&[0xdc, 0x5a, 0x5c, 38]);
+        frame[28..30].copy_from_slice(&43_000_u16.to_be_bytes());
+        let resolution = detector.observe(
+            &mut state,
+            DeviceDetectionEvent::Notification { bytes: &frame },
+        );
+        let mut session = DeviceSession::from_detection(&resolution).unwrap();
+        let _ = session.ingest_typed(&SessionInputDto::LinkUp {
+            monotonic_ms: cutout_core::MonotonicMillisDto { milliseconds: 0 },
+            max_write_len: None,
+        });
+        let _ = session.ingest_typed(&SessionInputDto::Notification {
+            channel: crate::VETERAN_DATA_CHANNEL.as_bytes(),
+            bytes: frame,
+            monotonic_ms: cutout_core::MonotonicMillisDto { milliseconds: 1 },
+        });
+        let mut settings = vec![0x80; 58];
+        settings[..4].copy_from_slice(&[0xdc, 0x5a, 0x5c, 54]);
+        settings[28..30].copy_from_slice(&43_000_u16.to_be_bytes());
+        settings[46] = 8;
+        settings[53] = 20;
+        let checksum = crc32fast::hash(&settings[..54]);
+        settings[54..].copy_from_slice(&checksum.to_be_bytes());
+        let step = session.ingest_typed(&SessionInputDto::Notification {
+            channel: crate::VETERAN_DATA_CHANNEL.as_bytes(),
+            bytes: settings,
+            monotonic_ms: cutout_core::MonotonicMillisDto { milliseconds: 2 },
+        });
+        let entry = step
+            .outputs
+            .iter()
+            .find_map(|output| {
+                let SessionOutput::Event(DeviceEvent::ReadOnlyResponse(
+                    cutout_core::ReadOnlyResponse::Settings(readback),
+                )) = output
+                else {
+                    return None;
+                };
+                readback
+                    .entries()
+                    .into_iter()
+                    .flatten()
+                    .find(|entry| entry.field.id == crate::AERO_FIELD_PWM_PERCENT)
+            })
+            .expect("original measured PWM setting is retained");
+        assert_eq!(entry.field.value, 20);
+        assert_eq!(entry.source, cutout_core::ValueSource::Reported);
+        assert_eq!(entry.quality, cutout_core::ValueQuality::Known);
+        assert_eq!(
+            entry.verification,
+            cutout_core::VerificationStatus::SourceVerified
         );
     }
 }

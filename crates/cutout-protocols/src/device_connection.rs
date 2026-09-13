@@ -7,8 +7,8 @@ use cutout_core::{
 };
 
 use crate::{
-    ConcreteSessionStepResultDto, DeviceDetectionEvent, DeviceDetectionResolution,
-    DeviceDetectionSession, DeviceSession, DeviceSessionIdentity,
+    DeviceDetectionEvent, DeviceDetectionResolution, DeviceDetectionSession, DeviceSession,
+    DeviceSessionIdentity, DeviceSessionStep,
 };
 
 /// Connection admission and exact identity from one owner observation.
@@ -116,7 +116,7 @@ pub struct DeviceConnectionStep {
     /// Connection and identity that produced this result.
     pub session: DeviceConnectionSnapshot,
     /// Protocol outputs and typed error.
-    pub result: ConcreteSessionStepResultDto,
+    pub result: DeviceSessionStep,
     /// Latest normalized telemetry.
     pub telemetry: TelemetrySnapshotDto,
     /// Accumulated parser diagnostics.
@@ -230,7 +230,7 @@ impl DeviceConnectionSession {
             return None;
         }
         let device = self.device.as_mut()?;
-        let result = device.ingest_checked(input);
+        let result = device.ingest_typed(input);
         let telemetry = device.current_snapshot();
         let diagnostics = device.diagnostics();
         Some(DeviceConnectionStep {
