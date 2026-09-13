@@ -7,6 +7,8 @@ use crate::{ControlRefusalReason, Duration, Measured, MonotonicTimestamp};
 /// Stable action identity independent of protocol commands and model names.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub enum DeviceActionId {
+    /// Sound the wheel's horn once.
+    Horn,
     /// Clear the wheel's trip-distance counter.
     ResetTripMeter,
     /// Enter or exit the wheel's gyro-calibration procedure.
@@ -138,7 +140,7 @@ impl DeviceActionsState {
     ) -> Result<DeviceActionRequest, DeviceActionStateError> {
         let record = self.records.get(&id);
         let step = match id {
-            DeviceActionId::ResetTripMeter => DeviceActionStep::Invoke,
+            DeviceActionId::Horn | DeviceActionId::ResetTripMeter => DeviceActionStep::Invoke,
             DeviceActionId::GyroCalibration => match record {
                 Some(ActionRecord {
                     status: DeviceActionStatus::SentWithoutConfirmation,
@@ -382,6 +384,20 @@ mod tests {
         let request = actions
             .next_request(DeviceActionId::ResetTripMeter)
             .expect("reset is available");
+        assert_eq!(request.step, DeviceActionStep::Invoke);
+        actions.submission(request, DeviceActionSubmissionOutcome::Accepted, time(10));
+        assert_eq!(
+            actions.snapshot(time(u64::MAX))[0].status,
+            DeviceActionStatus::SentWithoutConfirmation
+        );
+    }
+
+    #[test]
+    fn horn_is_a_single_step_action_without_a_completion_claim() {
+        let mut actions = DeviceActionsState::default();
+        let request = actions
+            .next_request(DeviceActionId::Horn)
+            .expect("horn is available");
         assert_eq!(request.step, DeviceActionStep::Invoke);
         actions.submission(request, DeviceActionSubmissionOutcome::Accepted, time(10));
         assert_eq!(

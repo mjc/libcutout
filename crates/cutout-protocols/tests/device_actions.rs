@@ -24,7 +24,16 @@ fn gyro_readback(raw: i64) -> SettingsReadback {
 fn aero_actions_are_typed_and_remain_unverified_outside_validation_mode() {
     let profile = aero_control_profile();
     let actions = profile.action_descriptors(false);
-    assert_eq!(actions.len(), 2);
+    assert_eq!(actions.len(), 3);
+    let horn = actions
+        .iter()
+        .find(|action| action.id == DeviceActionId::Horn)
+        .unwrap();
+    assert_eq!(horn.label_key, "actions.horn.label");
+    assert_eq!(horn.help_key, "actions.horn.help");
+    assert_eq!(horn.role, ActionRole::Momentary);
+    assert_eq!(horn.confirmation, ActionConfirmation::None);
+    assert_eq!(horn.access, ActionAccess::Available);
     let reset = actions
         .iter()
         .find(|action| action.id == DeviceActionId::ResetTripMeter)
@@ -46,12 +55,17 @@ fn aero_actions_are_typed_and_remain_unverified_outside_validation_mode() {
     assert_eq!(gyro.access, ActionAccess::Unverified);
 
     let actions = DeviceActionsState::default();
+    let horn = actions.next_request(DeviceActionId::Horn).unwrap();
     let reset = actions
         .next_request(DeviceActionId::ResetTripMeter)
         .unwrap();
     let gyro = actions
         .next_request(DeviceActionId::GyroCalibration)
         .unwrap();
+    assert_eq!(
+        profile.action_command(horn, false),
+        Ok(DeviceCommand::SoundHorn)
+    );
     assert_eq!(
         profile.action_command(reset, false),
         Err(cutout_protocols::ActionRequestError::Unverified)
