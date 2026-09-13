@@ -221,7 +221,11 @@ impl RideWriteState {
             return Err(self.lifecycle);
         }
 
-        let admission = route_admission(previous.as_ref().map(|(_, sample)| sample), &sample);
+        let admission = route_admission(
+            self.monotonic_created_at_ms.map(MonotonicMilliseconds::new),
+            previous.as_ref().map(|(_, sample)| sample),
+            &sample,
+        );
         if admission != LocationAdmission::Accepted {
             return Ok(LocationWriteDecision::Rejected(admission));
         }

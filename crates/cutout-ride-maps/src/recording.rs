@@ -12,9 +12,13 @@ const MAX_IMPLIED_SPEED_MILLIMETRES_PER_SECOND: u64 = 100_000;
 /// Applies route admission policy to a candidate and its latest accepted predecessor.
 #[must_use]
 pub fn route_admission(
+    recording_started_at: Option<MonotonicMilliseconds>,
     previous: Option<&LocationSample>,
     sample: &LocationSample,
 ) -> LocationAdmission {
+    if recording_started_at.is_some_and(|started| sample.monotonic_milliseconds() < started) {
+        return LocationAdmission::OutOfOrder;
+    }
     if sample
         .horizontal_accuracy_millimetres()
         .is_some_and(|accuracy| accuracy > MAX_HORIZONTAL_ACCURACY_MILLIMETRES)
@@ -1087,7 +1091,7 @@ impl RideMapRecorder {
     #[must_use]
     pub fn check_sample(&self, sample: &LocationSample) -> LocationAdmission {
         let previous = self.points.last().map(|point| point.sample());
-        route_admission(previous.as_ref(), sample)
+        route_admission(Some(self.created_at_milliseconds), previous.as_ref(), sample)
     }
 
     /// Admits a sample for recording after applying the complete route policy.
@@ -1415,6 +1419,20 @@ mod tests {
     }
 
     #[test]
+    fn cached_location_before_recording_start_is_rejected() {
+        let mut recorder = RideMapRecorder::new();
+        recorder.start(monotonic(10_000), None).expect("starts");
+        assert_eq!(
+            recorder.check_sample(&sample(9_999, 40.0)),
+            LocationAdmission::OutOfOrder
+        );
+        assert_eq!(
+            recorder.check_sample(&sample(10_000, 40.0)),
+            LocationAdmission::Accepted
+        );
+    }
+
+    #[test]
     fn route_admission_applies_accuracy_and_speed_policy_without_recorder_state() {
         let previous = sample(1_000, 40.0);
         let low_accuracy = LocationSample::new(
@@ -1425,13 +1443,13 @@ mod tests {
             LocationSource::Live,
         );
         assert_eq!(
-            route_admission(Some(&previous), &low_accuracy),
+            route_admission(None, Some(&previous), &low_accuracy),
             LocationAdmission::AccuracyTooLow
         );
 
         let unrealistic_jump = sample(1_001, 40.001);
         assert_eq!(
-            route_admission(Some(&previous), &unrealistic_jump),
+            route_admission(None, Some(&previous), &unrealistic_jump),
             LocationAdmission::UnrealisticJump
         );
     }
