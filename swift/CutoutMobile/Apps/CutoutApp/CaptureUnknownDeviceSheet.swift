@@ -73,7 +73,7 @@ struct CaptureUnknownDeviceSheet: View {
                         .accessibilityIdentifier("device-picker.capture-kind")
                 }
 
-                captureSection(localizedAppText("picker.section.probe_first"), rows: sections.probeRecommended)
+                captureSection(localizedAppText("picker.section.detected_devices"), rows: sections.probeRecommended)
                 captureSection(localizedAppText("picker.section.record_only"), rows: sections.unsupported)
 
                 if let manualRow = sections.manual {

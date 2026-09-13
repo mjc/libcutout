@@ -116,10 +116,15 @@ struct RideMapLiveContentView: View {
     }
 
     private func recenterOnLatestPoint() {
-        guard let point = displayPoints.last, let cameraRegion else { return }
+        guard let point = displayPoints.last,
+              let cameraRegion,
+              let region = RideMapCanvasView.mapRegion(for: cameraRegion, centeredOn: point)
+        else {
+            return
+        }
         followsLatestPoint = true
         isApplyingCamera = true
-        mapPosition = .region(RideMapCanvasView.mapRegion(for: cameraRegion, centeredOn: point))
+        mapPosition = .region(region)
     }
 }
 

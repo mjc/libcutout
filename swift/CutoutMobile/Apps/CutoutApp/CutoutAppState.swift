@@ -109,6 +109,21 @@ enum ConnectionState: Equatable {
         }
     }
 
+    func replacingSelection(with selection: ConnectionSelection) -> Self {
+        switch self {
+        case .picker, .identified:
+            .identified(selection)
+        case let .connecting(_, phase):
+            .connecting(selection, phase: phase)
+        case let .retrying(_, retry):
+            .retrying(selection, retry: retry)
+        case .connected:
+            .connected(selection)
+        case let .failed(_, failure):
+            .failed(selection, failure)
+        }
+    }
+
     var statusText: String? {
         switch self {
         case .picker, .identified:

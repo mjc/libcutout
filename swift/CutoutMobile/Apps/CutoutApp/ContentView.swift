@@ -96,7 +96,7 @@ struct ContentView: View {
     }
 
     private func pair(_ row: DevicePickerRow) {
-        guard row.isSupported else { return }
+        guard row.isSupported || row.isProbeRecommended else { return }
 
         connectionAnnouncements.beginUserInitiatedAttempt()
         guard model.pair(platformIdentifier: row.id) else { return }

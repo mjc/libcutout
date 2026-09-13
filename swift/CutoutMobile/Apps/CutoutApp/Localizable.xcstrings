@@ -2144,6 +2144,10 @@
       "comment" : "Device picker heading for devices that need a protocol probe before connection.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Probe first" } } }
     },
+    "picker.section.detected_devices" : {
+      "comment" : "Section heading for devices whose protocol has been detected and can be used.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Detected devices" } } }
+    },
     "picker.section.record_only" : {
       "comment" : "Device picker heading for unsupported devices that can only be captured.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Record only" } } }

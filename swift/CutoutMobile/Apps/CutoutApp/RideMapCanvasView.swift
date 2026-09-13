@@ -167,18 +167,26 @@ struct RideMapCanvasView: View {
     static func mapRegion(
         for cameraRegion: MobileRideMapCameraRegion,
         centeredOn latest: MobileRideMapRouteDisplayPoint? = nil
-    ) -> MKCoordinateRegion {
+    ) -> MKCoordinateRegion? {
         let center = latest.map {
             CLLocationCoordinate2D(latitude: $0.latitudeDegrees, longitude: $0.longitudeDegrees)
         } ?? CLLocationCoordinate2D(
             latitude: cameraRegion.centerLatitudeDegrees,
             longitude: cameraRegion.centerLongitudeDegrees
         )
+        guard CLLocationCoordinate2DIsValid(center),
+              cameraRegion.latitudeSpanDegrees.isFinite,
+              cameraRegion.longitudeSpanDegrees.isFinite,
+              cameraRegion.latitudeSpanDegrees > 0,
+              cameraRegion.longitudeSpanDegrees > 0
+        else {
+            return nil
+        }
         return MKCoordinateRegion(
             center: center,
             span: MKCoordinateSpan(
-                latitudeDelta: cameraRegion.latitudeSpanDegrees,
-                longitudeDelta: cameraRegion.longitudeSpanDegrees
+                latitudeDelta: min(cameraRegion.latitudeSpanDegrees, 180),
+                longitudeDelta: min(cameraRegion.longitudeSpanDegrees, 360)
             )
         )
     }
@@ -497,9 +505,9 @@ struct RideMapCanvasView: View {
     }
 
     private func fitMap(to cameraRegion: MobileRideMapCameraRegion?) {
-        guard let cameraRegion else { return }
+        guard let cameraRegion, let region = Self.mapRegion(for: cameraRegion) else { return }
         isApplyingCamera = true
-        mapPosition = .region(Self.mapRegion(for: cameraRegion))
+        mapPosition = .region(region)
     }
 
 }

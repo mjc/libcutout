@@ -17,6 +17,8 @@ unset SDKROOT
 device_udid="${CUTOUT_IOS_DEVICE_UDID:-$(cutout_connected_ios_device_udid)}"
 product="${CUTOUT_IOS_DEVICE_PRODUCT:-$(CUTOUT_IOS_DEVICE_UDID="$device_udid" cutout_build_ios_device_app_bundle)}"
 bundle_id="${CUTOUT_IOS_APP_BUNDLE_ID:-$(cutout_ios_app_bundle_identifier "$product")}"
+spotify_client_id="$(cutout_require_spotify_client_id)"
+cutout_verify_embedded_spotify_client_id "$product" "$spotify_client_id"
 
 xcrun devicectl --quiet device install app --device "$device_udid" "$product"
 xcrun devicectl --quiet device process launch --device "$device_udid" --terminate-existing --activate "$bundle_id" "$@"

@@ -6,6 +6,12 @@ import XCTest
 
 @MainActor
 final class RideMapPresentationTests: XCTestCase {
+    func testInterruptedRideOffersResumeInsteadOfStartNew() {
+        XCTAssertEqual(RideMapControlsView.controlSet(for: .interrupted), .resumable)
+        XCTAssertEqual(RideMapControlsView.controlSet(for: .paused), .resumable)
+        XCTAssertEqual(RideMapControlsView.controlSet(for: .stopped), .terminal)
+    }
+
     func testHistoryMusicForgetUsesDestinationRideID() {
         var forgottenRideID: String?
         let music = RideMapHistoryMusicDetail(
@@ -187,17 +193,48 @@ final class RideMapPresentationTests: XCTestCase {
             longitudeSpanDegrees: 0.5
         )
 
-        let fitted = RideMapCanvasView.mapRegion(for: camera)
+        let fitted = try! XCTUnwrap(RideMapCanvasView.mapRegion(for: camera))
         XCTAssertEqual(fitted.center.latitude, 40)
         XCTAssertEqual(fitted.center.longitude, -105)
         XCTAssertEqual(fitted.span.latitudeDelta, 0.25)
         XCTAssertEqual(fitted.span.longitudeDelta, 0.5)
 
-        let recentered = RideMapCanvasView.mapRegion(for: camera, centeredOn: point(sequence: 9))
+        let recentered = try! XCTUnwrap(
+            RideMapCanvasView.mapRegion(for: camera, centeredOn: point(sequence: 9))
+        )
         XCTAssertEqual(recentered.center.latitude, 40)
         XCTAssertEqual(recentered.center.longitude, -105)
         XCTAssertEqual(recentered.span.latitudeDelta, fitted.span.latitudeDelta)
         XCTAssertEqual(recentered.span.longitudeDelta, fitted.span.longitudeDelta)
+    }
+
+    func testMapRejectsInvalidRecenterInputBeforeItReachesMapKit() {
+        let camera = MobileRideMapCameraRegion(
+            centerLatitudeDegrees: 40,
+            centerLongitudeDegrees: -105,
+            latitudeSpanDegrees: 0.25,
+            longitudeSpanDegrees: 0.5
+        )
+
+        XCTAssertNil(
+            RideMapCanvasView.mapRegion(
+                for: camera,
+                centeredOn: point(sequence: 9, latitude: .nan)
+            )
+        )
+    }
+
+    func testMapClampsCameraSpansToMapKitDomain() throws {
+        let camera = MobileRideMapCameraRegion(
+            centerLatitudeDegrees: 40,
+            centerLongitudeDegrees: -105,
+            latitudeSpanDegrees: 243,
+            longitudeSpanDegrees: 486
+        )
+
+        let region = try XCTUnwrap(RideMapCanvasView.mapRegion(for: camera))
+        XCTAssertEqual(region.span.latitudeDelta, 180)
+        XCTAssertEqual(region.span.longitudeDelta, 360)
     }
 
     func testMapGeoBoundsPreserveAntimeridianCrossing() {

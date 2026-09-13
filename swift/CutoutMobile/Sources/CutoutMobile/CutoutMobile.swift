@@ -66,6 +66,14 @@ public enum DeviceDetectionProtocolFamily: Equatable, Hashable, Sendable {
             .vesc
         }
     }
+
+    var electricUnicycleModel: ElectricUnicycleModel? {
+        switch self {
+        case .veteranLeaperkimNosfet: .aero
+        case .begodeGotway: .falcon
+        case .vesc: nil
+        }
+    }
 }
 
 public enum DeviceDetectionPendingProbe: Equatable, Hashable, Sendable {
@@ -107,7 +115,7 @@ public struct DeviceDetectionResolution: Equatable, Hashable, Sendable {
     public let missingProbeResponse: DeviceDetectionPendingProbe?
     public let malformedProbeResponse: DeviceDetectionPendingProbe?
 
-    fileprivate init(_ record: DeviceDetectionResolutionRecord) {
+    init(_ record: DeviceDetectionResolutionRecord) {
         self.protocolFamily = record.protocolFamily.map(DeviceDetectionProtocolFamily.init)
         self.protocolConflict = record.protocolConflict
         self.veteranProtocolModelID = record.veteranProtocolModelId
@@ -133,25 +141,74 @@ public enum IdentificationProbeResolutionDisposition: Equatable, Hashable, Senda
     case refuse(IdentificationProbeFailure)
 }
 
+public enum ProtocolDetectionResolutionDisposition: Equatable, Sendable {
+    case pending
+    case promote(route: DevicePickerConnectionRoute, model: ElectricUnicycleModel?)
+    case refuse(IdentificationProbeFailure)
+}
+
 public extension DeviceDetectionResolution {
-    func discoveryCandidate(
+    func connectionDisposition(
         platformIdentifier: String,
-        displayName: String
-    ) -> DiscoveryCandidate {
-        mobileDiscoveryCandidateFromDetectionResolution(
+        displayName: String,
+        allowClosestMatch: Bool = false
+    ) -> ProtocolDetectionResolutionDisposition {
+        if protocolConflict {
+            return .refuse(.conflictingEvidence)
+        }
+        guard protocolFamily != nil else {
+            if malformedProbeResponse != nil {
+                return .refuse(.malformedResponse)
+            }
+            if missingProbeResponse != nil {
+                return .refuse(.timedOut)
+            }
+            return .pending
+        }
+        let support = DevicePickerCandidateSupport(discoveryCandidate(
             platformIdentifier: platformIdentifier,
             displayName: displayName,
-            resolution: DeviceDetectionResolutionRecord(
-                protocolFamily: protocolFamily.map(\.dto),
-                protocolConflict: protocolConflict,
-                veteranProtocolModelId: veteranProtocolModelID,
-                advertisedName: advertisedName,
-                modelBanner: modelBanner,
-                firmwareBanner: firmwareBanner,
-                imuBanner: imuBanner,
-                missingProbeResponse: missingProbeResponse.map(\.dto),
-                malformedProbeResponse: malformedProbeResponse.map(\.dto)
+            allowClosestMatch: allowClosestMatch
+        ))
+        guard let route = support.connectionRoute else {
+            if malformedProbeResponse != nil {
+                return .refuse(.malformedResponse)
+            }
+            if missingProbeResponse != nil {
+                return .refuse(.timedOut)
+            }
+            return .pending
+        }
+        return .promote(route: route, model: support.electricUnicycleModel)
+    }
+
+    func discoveryCandidate(
+        platformIdentifier: String,
+        displayName: String,
+        allowClosestMatch: Bool = false
+    ) -> DiscoveryCandidate {
+        let resolution = DeviceDetectionResolutionRecord(
+            protocolFamily: protocolFamily.map(\.dto),
+            protocolConflict: protocolConflict,
+            veteranProtocolModelId: veteranProtocolModelID,
+            advertisedName: advertisedName,
+            modelBanner: modelBanner,
+            firmwareBanner: firmwareBanner,
+            imuBanner: imuBanner,
+            missingProbeResponse: missingProbeResponse.map(\.dto),
+            malformedProbeResponse: malformedProbeResponse.map(\.dto)
+        )
+        if allowClosestMatch {
+            return mobileDiscoveryCandidateFromClosestDetectionResolution(
+                platformIdentifier: platformIdentifier,
+                displayName: displayName,
+                resolution: resolution
             )
+        }
+        return mobileDiscoveryCandidateFromDetectionResolution(
+            platformIdentifier: platformIdentifier,
+            displayName: displayName,
+            resolution: resolution
         )
     }
 

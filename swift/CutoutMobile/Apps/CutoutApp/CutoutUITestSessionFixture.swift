@@ -189,6 +189,14 @@ enum CutoutUITestSessionFixture: Equatable {
         default: nil
         }
     }
+    var detectedSupport: DevicePickerCandidateSupport? {
+        switch self {
+        case .probeDevice, .probeTimeout, .probeMalformedResponse, .probeConflictingEvidence, .probeUnsupported:
+            .supported(connectionRoute: .electricUnicycle, electricUnicycleModel: .aero)
+        default:
+            nil
+        }
+    }
     var reconnectsAfterFirstLive: Bool { self == .reconnectingVesc || self == .reconnectingEuc }
     var emitsPendingTelemetry: Bool {
         self == .pendingVesc || self == .autoUnavailableVescLiveActivity
@@ -260,6 +268,7 @@ enum CutoutUITestSessionFixture: Equatable {
             initialBluetoothState: initialBluetoothState,
             failsConnection: failsConnection,
             identificationProbeFailure: identificationProbeFailure,
+            detectedSupport: detectedSupport,
             emitsLateLiveAfterFailure: failsConnection,
             reconnectsAfterFirstLive: reconnectsAfterFirstLive,
             reconnectAfterLiveMilliseconds: reconnectsAfterFirstLive ? 1_500 : 0,

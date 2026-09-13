@@ -117,7 +117,7 @@ final class CutoutAppRouteTests: XCTestCase {
         XCTAssertEqual(localizedAppText("picker.capture_kind.placeholder"), "Device model")
         XCTAssertEqual(localizedAppText("picker.capture_kind.hint"), "Enter the device family and model, for example EUC NOSFET Aeon")
         XCTAssertEqual(localizedAppText("picker.section.supported_now"), "Supported now")
-        XCTAssertEqual(localizedAppText("picker.section.probe_first"), "Probe first")
+        XCTAssertEqual(localizedAppText("picker.section.detected_devices"), "Detected devices")
         XCTAssertEqual(localizedAppText("picker.section.record_only"), "Record only")
         XCTAssertEqual(localizedAppText("picker.capture_kind_required_hint"), "Enter a device kind above to enable capture")
         XCTAssertEqual(localizedAppText("capture.stop"), "Finish capture")

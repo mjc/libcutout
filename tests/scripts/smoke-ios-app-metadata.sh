@@ -2,6 +2,7 @@
 set -euo pipefail
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+source "$root/scripts/swift-package-common.sh"
 tmp="$(mktemp -d "${TMPDIR:-/tmp}/cutout-ios-metadata.XXXXXX")"
 trap 'rm -rf "$tmp"' EXIT
 
@@ -37,6 +38,7 @@ with open(sys.argv[1], "wb") as fh:
         {
             "CFBundleDisplayName": "CutOut",
             "NSBluetoothAlwaysUsageDescription": "CutOut uses Bluetooth to read live vehicle telemetry.",
+            "SpotifyClientID": "configured-client-id",
             "UIDeviceFamily": [1],
             "UISupportedInterfaceOrientations": [
                 "UIInterfaceOrientationPortrait",
@@ -47,6 +49,15 @@ with open(sys.argv[1], "wb") as fh:
         fh,
     )
 PY
+
+cutout_verify_embedded_spotify_client_id "$product" "configured-client-id"
+if cutout_verify_embedded_spotify_client_id "$product" "different-client-id" \
+    >"$tmp/spotify-mismatch.log" 2>&1; then
+  echo "expected mismatched Spotify client ID to be rejected" >&2
+  exit 1
+fi
+grep -q -- "built app does not contain the configured Spotify client ID" \
+  "$tmp/spotify-mismatch.log"
 
 release_output="$(CUTOUT_IOS_METADATA_PRODUCT="$product" \
   "$root/scripts/smoke-ios-app-metadata.sh" --configuration Release)"

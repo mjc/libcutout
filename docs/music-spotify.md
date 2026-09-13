@@ -9,11 +9,14 @@ stay in the iOS adapter.
 
 ## Build and registration
 
-1. Register the CutOut bundle identifier and redirect URI
-   `cutout-spotify://spotify-login-callback` in the Spotify Developer
-   Dashboard. Enable the iOS SDK/App Remote product.
+1. In the Spotify Developer Dashboard, register bundle identifier
+   `io.cutout.cutoutapp`, redirect URI
+   `cutout-spotify://spotify-login-callback`, and the iOS SDK. These values must
+   match exactly.
 2. Install Spotify and sign in on the physical iPhone used for validation. A
-   Premium account is required for on-demand track playback.
+   Premium account is required for on-demand track playback. In development
+   mode, the app owner must have Premium; add any different validation account
+   under Users Management before authorizing it.
 3. Supply the client ID through `CUTOUT_SPOTIFY_CLIENT_ID`, `SPOTIFY_CLIENT_ID`,
    or `~/.config/libcutout/spotify-client-id`. The shared Xcode build helpers
    pass it as the `SPOTIFY_CLIENT_ID` build setting, which is substituted into

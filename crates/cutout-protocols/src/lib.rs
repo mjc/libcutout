@@ -56,7 +56,8 @@ pub use identification::{
     FirmwareBanner, IdentityBannerEvidence, IdentityConfidence, IdentityEvidence, ImuBanner,
     ModelBanner, ParsedModelBanner, PendingProbe, ProtocolFamilyState, ProtocolModelIdentity,
     ProtocolModelIdentityEvidence, StagedIdentityInput, StagedIdentityOutcome,
-    StagedIdentityResolution, identify_known_model, identify_model, parse_model_banner,
+    StagedIdentityResolution, closest_known_model, identify_known_model, identify_model,
+    parse_model_banner,
 };
 mod melk_lighting;
 pub use melk_lighting::{

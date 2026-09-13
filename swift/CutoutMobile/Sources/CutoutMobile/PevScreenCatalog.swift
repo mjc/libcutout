@@ -539,7 +539,7 @@ public extension DevicePickerRow {
     }
 
     var captureActionTitle: String {
-        pevLocalizedText(isProbeRecommended ? "picker.action.start_probe" : "picker.action.start_capture")
+        pevLocalizedText(isProbeRecommended ? "picker.row.action.use" : "picker.action.start_capture")
     }
 
     var useActionAccessibilityLabel: String {
@@ -562,7 +562,7 @@ public extension DevicePickerRowState {
         case .use:
             self = .supported(action: pevLocalizedText("picker.row.action.use"))
         case .probe:
-            self = .probeRecommended(action: pevLocalizedText("picker.row.action.probe"))
+            self = .probeRecommended(action: pevLocalizedText("picker.row.action.use"))
         case .record:
             self = .unsupported(action: pevLocalizedText("picker.row.action.record"))
         case .confirm:
@@ -632,7 +632,6 @@ public typealias PevPickerSections = DevicePickerSections
 
 public enum DevicePickerCandidateSupport: Equatable, Hashable, Sendable {
     case supported(connectionRoute: DevicePickerConnectionRoute?, electricUnicycleModel: ElectricUnicycleModel?)
-    case provisionalRoute(connectionRoute: DevicePickerConnectionRoute?, electricUnicycleModel: ElectricUnicycleModel?)
     case probeRecommended(disabledReason: String)
     case unknownRecordable(disabledReason: String)
     case knownUnsupported(disabledReason: String)
@@ -648,11 +647,6 @@ public extension DevicePickerCandidateSupport {
         switch dto.support {
         case .supported:
             self = .supported(
-                connectionRoute: dto.connectionRoute.map(DevicePickerConnectionRoute.init),
-                electricUnicycleModel: dto.electricUnicycleModel.map(ElectricUnicycleModel.init)
-            )
-        case .provisionalRoute:
-            self = .provisionalRoute(
                 connectionRoute: dto.connectionRoute.map(DevicePickerConnectionRoute.init),
                 electricUnicycleModel: dto.electricUnicycleModel.map(ElectricUnicycleModel.init)
             )
@@ -776,7 +770,7 @@ public struct DevicePickerDiscoveryCandidate: Equatable, Hashable, Sendable {
 public extension DevicePickerCandidateSupport {
     var isSupported: Bool {
         switch self {
-        case .supported, .provisionalRoute:
+        case .supported:
             true
         case .probeRecommended, .unknownRecordable, .knownUnsupported, .ambiguous, .conflicting, .rejectedNoise, .manualEntry, .unsupported:
             false
@@ -785,7 +779,7 @@ public extension DevicePickerCandidateSupport {
 
     var connectionRoute: DevicePickerConnectionRoute? {
         switch self {
-        case .supported(let connectionRoute, _), .provisionalRoute(let connectionRoute, _):
+        case .supported(let connectionRoute, _):
             connectionRoute
         case .probeRecommended, .unknownRecordable, .knownUnsupported, .ambiguous, .conflicting, .rejectedNoise, .manualEntry, .unsupported:
             nil
@@ -794,7 +788,7 @@ public extension DevicePickerCandidateSupport {
 
     var electricUnicycleModel: ElectricUnicycleModel? {
         switch self {
-        case .supported(_, let electricUnicycleModel), .provisionalRoute(_, let electricUnicycleModel):
+        case .supported(_, let electricUnicycleModel):
             electricUnicycleModel
         case .probeRecommended, .unknownRecordable, .knownUnsupported, .ambiguous, .conflicting, .rejectedNoise, .manualEntry, .unsupported:
             nil
@@ -803,7 +797,7 @@ public extension DevicePickerCandidateSupport {
 
     var pickerRowState: DevicePickerRowState {
         switch self {
-        case .supported, .provisionalRoute:
+        case .supported:
             DevicePickerRowState(action: .use)
         case .probeRecommended:
             DevicePickerRowState(action: .probe)
