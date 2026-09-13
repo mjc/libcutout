@@ -17,8 +17,6 @@ use crate::{
     VeteranTelemetry, classify_begode_ascii_banner,
 };
 
-const DETECTION_MAX_GATT_FINGERPRINTS: usize = 16;
-
 /// Protocol-owned result of requesting identification queries.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum IdentificationProbePlan {
@@ -403,10 +401,7 @@ impl DeviceDetectionSession {
             }
             DeviceDetectionEvent::Gatt { gatt } => {
                 state.identity_mut().gatt.clear();
-                state
-                    .identity_mut()
-                    .gatt
-                    .extend(gatt.iter().copied().take(DETECTION_MAX_GATT_FINGERPRINTS));
+                state.identity_mut().gatt.extend_from_slice(gatt);
                 self.refresh_resolution(state, None, None, current.protocol);
             }
             DeviceDetectionEvent::Notification { bytes } => {
@@ -1634,15 +1629,23 @@ mod tests {
     }
 
     #[test]
-    fn caller_owned_detection_session_caps_retained_gatt_fingerprints() {
+    fn caller_owned_detection_session_preserves_complete_gatt_inventory() {
         let mut session = DeviceDetectionSession::new();
-        let mut gatt = [UNKNOWN_GATT; super::DETECTION_MAX_GATT_FINGERPRINTS + 1];
-        gatt[super::DETECTION_MAX_GATT_FINGERPRINTS] = BEGODE_GATT[0];
+        let mut gatt = [UNKNOWN_GATT; 17];
+        gatt[16] = BEGODE_GATT[0];
 
         let update = session.observe(DeviceDetectionEvent::Gatt { gatt: &gatt });
 
-        assert_eq!(update.staged.confidence, IdentityConfidence::NoMatch);
+        assert_eq!(session.root.identity().gatt, gatt);
+        assert_eq!(update.protocol, ProtocolFamilyState::Unknown);
         assert_eq!(update.staged.model, None);
+        session.root.select_discovered_platform("selected".into());
+        assert!(matches!(
+            session
+                .detector
+                .begin_identification_probes(&mut session.root, MonotonicTimestamp::new(1)),
+            crate::IdentificationProbePlan::Writes(_)
+        ));
     }
 
     #[test]
