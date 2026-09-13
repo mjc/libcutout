@@ -7828,6 +7828,7 @@ public final class CoreBluetoothLiveSessionOwner: @unchecked Sendable {
     private var receivedRealtimeTelemetrySinceLinkUp = false
     private var pendingOperationsAfterSubscription: [CoreBluetoothPlannedOperation] = []
     private var waitingForSubscriptionChannel: BluetoothUuid?
+    private var lastPublishedSettingsState: EucSettingsState?
 
     public convenience init(
         session: CoreBluetoothSession,
@@ -8041,6 +8042,7 @@ public final class CoreBluetoothLiveSessionOwner: @unchecked Sendable {
     public func handleLinkUp(at monotonicMilliseconds: MonotonicMilliseconds) throws -> CoreBluetoothSessionStep {
         cancelDeadlineTimer()
         cancelPendingRetry()
+        lastPublishedSettingsState = nil
         receivedRealtimeTelemetrySinceLinkUp = false
         retryAttempts = 0
         let step = try runner.handle(.linkUp(at: monotonicMilliseconds))
@@ -8123,6 +8125,7 @@ public final class CoreBluetoothLiveSessionOwner: @unchecked Sendable {
     public func handleLinkDown(at monotonicMilliseconds: MonotonicMilliseconds) throws -> CoreBluetoothSessionStep {
         cancelDeadlineTimer()
         cancelPendingRetry()
+        lastPublishedSettingsState = nil
         retainedSink.clearPendingWithoutResponseWrites()
         cancelSettingTick()
         pendingOperationsAfterSubscription.removeAll()
@@ -8212,7 +8215,10 @@ public final class CoreBluetoothLiveSessionOwner: @unchecked Sendable {
     }
 
     private func publishSettingsState() {
-        guard let onSettingsStateChange, let settingsState else { return }
+        guard let onSettingsStateChange, let settingsState,
+              settingsState != lastPublishedSettingsState
+        else { return }
+        lastPublishedSettingsState = settingsState
         onSettingsStateChange(settingsState)
     }
 

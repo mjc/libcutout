@@ -1495,10 +1495,12 @@ public final class CutoutSessionCore: NSObject {
 
     private func setPhase(_ phase: SessionConnectionPhase) {
         self.phase = phase
+        // Publish the phase first so the app model can accept the dependent
+        // settings snapshot only after it has entered the live link.
+        publishOnMain { self.onPhaseChange?(phase) }
         if phase == .live, let state = liveOwner?.settingsState {
             publishSettingsState(state)
         }
-        publishOnMain { self.onPhaseChange?(phase) }
     }
 
     private func connect(
@@ -1920,8 +1922,13 @@ public final class CutoutSessionCore: NSObject {
     }
 
     private func attachSettingsStateCallback() {
-        liveOwner?.onSettingsStateChange = { [weak self] state in
-            self?.publishSettingsState(state)
+        guard let owner = liveOwner else { return }
+        owner.onSettingsStateChange = { [weak self, weak owner] state in
+            guard let self, let owner else { return }
+            self.onBleQueue {
+                guard self.phase == .live, self.liveOwner === owner else { return }
+                self.publishSettingsState(state)
+            }
         }
     }
 

@@ -20480,8 +20480,78 @@ mod tests {
 
         assert_eq!(snapshot.headlight, session.headlight_state());
         assert_eq!(snapshot.aero_high_beam, session.aero_high_beam_state());
+        assert_eq!(
+            snapshot.aero_tiltback_speed,
+            session.aero_tiltback_speed_state()
+        );
         assert_eq!(snapshot.aero_pwm_percent, session.aero_pwm_percent_state());
+        assert_eq!(
+            snapshot.aero_gyro_calibration,
+            session.aero_gyro_calibration_state()
+        );
+        assert_eq!(snapshot.aero_riding_mode, session.aero_riding_mode_state());
+        assert_eq!(
+            snapshot.aero_brake_overpressure_alarm,
+            session.aero_brake_overpressure_alarm_state()
+        );
+        assert_eq!(
+            snapshot.aero_pedal_hardness,
+            session.aero_pedal_hardness_state()
+        );
+        assert_eq!(
+            snapshot.aero_display_backlight,
+            session.aero_display_backlight_state()
+        );
+        assert_eq!(
+            snapshot.aero_beeper_volume,
+            session.aero_beeper_volume_state()
+        );
+        assert_eq!(
+            snapshot.aero_dynamic_assist,
+            session.aero_dynamic_assist_state()
+        );
+        assert_eq!(
+            snapshot.aero_pedal_dip_compensation,
+            session.aero_pedal_dip_compensation_state()
+        );
+        assert_eq!(
+            snapshot.aero_lateral_tilt_limit,
+            session.aero_lateral_tilt_limit_state()
+        );
+        assert_eq!(
+            snapshot.aero_voltage_correction,
+            session.aero_voltage_correction_state()
+        );
+        assert_eq!(
+            snapshot.aero_max_charge_voltage_raw,
+            session.aero_max_charge_voltage_raw_state()
+        );
+        assert_eq!(snapshot.aero_wheel_units, session.aero_wheel_units_state());
+        assert_eq!(
+            snapshot.aero_high_speed_mode,
+            session.aero_high_speed_mode_state()
+        );
+        assert_eq!(
+            snapshot.aero_low_battery_mode,
+            session.aero_low_battery_mode_state()
+        );
+        assert_eq!(
+            snapshot.aero_transport_mode,
+            session.aero_transport_mode_state()
+        );
+        assert_eq!(snapshot.aero_alarm_speed, session.aero_alarm_speed_state());
+        assert_eq!(
+            snapshot.aero_angle_adjustment,
+            session.aero_angle_adjustment_state()
+        );
         assert_eq!(snapshot.pedal_mode, session.pedal_mode_state());
+        assert_eq!(snapshot.roll_angle, session.roll_angle_state());
+        assert_eq!(snapshot.speed_alarm_mode, session.speed_alarm_mode_state());
+        assert_eq!(
+            snapshot.acceleration_assist,
+            session.acceleration_assist_state()
+        );
+        assert_eq!(snapshot.taillight, session.taillight_state());
         assert_eq!(snapshot.trip_meter_reset, session.trip_meter_reset_state());
     }
 

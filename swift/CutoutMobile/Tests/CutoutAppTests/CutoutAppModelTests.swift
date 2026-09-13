@@ -672,6 +672,25 @@ final class CutoutAppModelTests: XCTestCase {
     }
 
     @MainActor
+    func testStaleSettingsSnapshotIsIgnoredAfterConnectionFailure() async throws {
+        let fixture = CutoutUITestSessionFixture.euc
+        let core = CutoutSessionCore(testScript: fixture.testScript)
+        let model = CutoutAppModel(core: core)
+
+        model.start()
+        XCTAssertTrue(model.pair(platformIdentifier: fixture.candidate.platformIdentifier))
+        await Self.waitUntil("Rust settings aggregate snapshot", maxTurns: 100_000) {
+            model.phase == .live && model.settingsState != nil
+        }
+        let state = try XCTUnwrap(model.settingsState)
+
+        core.onPhaseChange?(.failed(.sessionFailed("write channel unavailable")))
+        core.onSettingsStateChange?(state)
+
+        XCTAssertNil(model.settingsState)
+    }
+
+    @MainActor
     func testTuneUsesRustOwnedConfirmedLightState() {
         let driver = SessionDriverSpy(rows: [])
         driver.electricUnicycleModel = .aero

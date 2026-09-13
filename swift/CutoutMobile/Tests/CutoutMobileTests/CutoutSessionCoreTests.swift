@@ -1498,6 +1498,9 @@ func testVescRideSnapshotProjectsBatteryLevelAndUpdateTime() throws {
 
         _ = try owner.handleTick(at: MonotonicMilliseconds(2_010))
         XCTAssertEqual(snapshots.last?.headlight.kind, .timedOut)
+
+        _ = try owner.handleTick(at: MonotonicMilliseconds(2_011))
+        XCTAssertEqual(snapshots.count, 2)
     }
 
     func testFalconHeadlightCommandReachesOperationSink() throws {

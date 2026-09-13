@@ -198,7 +198,7 @@ final class CutoutAppModel {
     }
 
     var tripMeterResetState: TripMeterResetState? {
-        core.tripMeterResetState
+        settingState(\.tripMeterReset, fallback: core.tripMeterResetState)
     }
 
     var aeroTiltbackSpeedState: AeroSpeedSettingState? {
@@ -677,7 +677,8 @@ final class CutoutAppModel {
             self?.handleScanStateChange(scanState)
         }
         self.core.onSettingsStateChange = { [weak self] state in
-            self?.settingsState = state
+            guard let self, self.phase == .live else { return }
+            self.settingsState = state
         }
         self.core.onSettingsReadbackChange = { [weak self] settingsReadback in
             self?.handleSettingsReadback(settingsReadback)
