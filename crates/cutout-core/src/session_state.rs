@@ -1,9 +1,9 @@
 //! Rust-owned session-state root and typed state slices.
 
 use crate::{
-    BatteryPageMetadata, BatteryPagePayload, BatteryReadback, DeviceEvent, FirmwareInfo,
-    GattFingerprint, MonotonicTimestamp, ParserDiagnostics, ProtocolFamily, RawTelemetryReadback,
-    ReadOnlyResponse, RideSessionLifecycle, SessionOutput, TelemetryDelta, TelemetrySnapshot,
+    BatteryPageMetadata, BatteryReadback, DeviceEvent, FirmwareInfo, GattFingerprint,
+    MonotonicTimestamp, ParserDiagnostics, ProtocolFamily, RawTelemetryReadback, ReadOnlyResponse,
+    RideSessionLifecycle, SessionOutput, TelemetryDelta, TelemetrySnapshot,
 };
 use arrayvec::ArrayVec;
 use bytes::Bytes;
@@ -654,24 +654,144 @@ pub struct BmsTelemetryState {
     /// Latest BMS or battery readback event.
     pub latest: BatteryReadback,
 
-    /// Latest page payload for each observed BMS page identity.
-    pub pages: Vec<BatteryPagePayload>,
+    /// Latest complete readback for each observed BMS page identity.
+    ///
+    /// Keeping the complete readback preserves decoder-assigned observation identity alongside
+    /// its page payload after later BMS packets replace `latest`.
+    pub pages: Vec<BatteryReadback>,
+
+    /// Bounded raw history for each decoder-assigned voltage observation.
+    observation_histories: Vec<BmsObservationHistory>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct BmsObservationHistory {
+    index: crate::BmsObservationIndex,
+    pack_index: Option<crate::BmsPackIndex>,
+    pack_observation_index: Option<crate::BmsCellIndex>,
+    samples: ArrayVec<crate::BmsVoltageSample, { crate::BMS_OBSERVATION_HISTORY_MAX }>,
+}
+
+impl BmsObservationHistory {
+    fn stabilized(&self) -> Option<crate::Voltage> {
+        let mut values: ArrayVec<crate::Voltage, { crate::BMS_OBSERVATION_HISTORY_MAX }> =
+            self.samples.iter().map(|sample| sample.voltage).collect();
+        let seed = values.first().copied()?;
+        while !values.is_full() {
+            values.push(seed);
+        }
+        values.sort_unstable_by_key(|value| value.as_millivolts());
+        values.get(values.len().saturating_sub(1) / 2).copied()
+    }
 }
 
 impl BmsTelemetryState {
-    fn observe_readback(&mut self, readback: &BatteryReadback) {
-        self.latest = readback.clone();
-        readback
-            .page()
-            .into_iter()
-            .for_each(|page| self.observe_page(page));
+    /// Summarizes retained observations, not a simultaneous scan or physical pack topology.
+    #[must_use]
+    pub fn observation_summary(&self) -> crate::BmsObservationSummary {
+        let mut observations: Vec<_> = self
+            .observation_histories
+            .iter()
+            .filter_map(|history| {
+                let voltage = history.stabilized()?;
+                Some(crate::BmsVoltageObservation {
+                    index: history.index,
+                    pack_index: history.pack_index,
+                    pack_observation_index: history.pack_observation_index,
+                    voltage,
+                    latest_voltage: history.samples.last()?.voltage,
+                    samples: history.samples.iter().copied().collect(),
+                })
+            })
+            .collect();
+        observations.sort_unstable_by_key(|observation| observation.index.get());
+        let lowest = observations.iter().min_by_key(|observation| {
+            (observation.voltage.as_millivolts(), observation.index.get())
+        });
+        let highest = observations.iter().min_by_key(|observation| {
+            (
+                std::cmp::Reverse(observation.voltage.as_millivolts()),
+                observation.index.get(),
+            )
+        });
+        crate::BmsObservationSummary {
+            observed_count: u32::try_from(observations.len()).unwrap_or(u32::MAX),
+            lowest_index: lowest.map(|observation| observation.index),
+            highest_index: highest.map(|observation| observation.index),
+            voltage_spread: lowest.zip(highest).map(|(low, high)| {
+                crate::VoltageDelta::from_millivolts(
+                    high.voltage
+                        .as_millivolts()
+                        .saturating_sub(low.voltage.as_millivolts()),
+                )
+            }),
+            observations,
+        }
     }
 
-    fn observe_page(&mut self, page: &BatteryPagePayload) {
+    fn observe_readback(&mut self, readback: &BatteryReadback) {
+        self.latest = readback.clone();
+        if readback.availability() != crate::BatteryReadbackAvailability::Available {
+            self.pages.clear();
+            self.observation_histories.clear();
+        }
+        self.observe_page(readback);
+    }
+
+    fn observe_page(&mut self, readback: &BatteryReadback) {
+        let Some(page) = readback.page() else {
+            return;
+        };
+        if let crate::BatteryPagePayload::CellVoltage(cell_page) = page {
+            let first = readback
+                .first_observation_index()
+                .map_or(0, |index| index.get());
+            for (slot, voltage) in cell_page.cell_voltages.iter().copied().enumerate() {
+                let Some(slot) = u16::try_from(slot).ok() else {
+                    continue;
+                };
+                let Some(index) = first.checked_add(slot).map(crate::BmsObservationIndex::new)
+                else {
+                    continue;
+                };
+                let pack_observation_index = readback
+                    .first_pack_observation_index()
+                    .and_then(|first| first.get().checked_add(slot))
+                    .map(crate::BmsCellIndex::new);
+                let history = self
+                    .observation_histories
+                    .iter_mut()
+                    .find(|history| history.index == index);
+                let sample = crate::BmsVoltageSample {
+                    voltage,
+                    observed_at: readback.observed_at(),
+                };
+                if let Some(history) = history {
+                    if history.samples.is_full() {
+                        history.samples.remove(0);
+                    }
+                    history.pack_index = readback.observation_pack_index();
+                    history.pack_observation_index = pack_observation_index;
+                    history.samples.push(sample);
+                } else {
+                    let mut samples = ArrayVec::new();
+                    samples.push(sample);
+                    self.observation_histories.push(BmsObservationHistory {
+                        index,
+                        pack_index: readback.observation_pack_index(),
+                        pack_observation_index,
+                        samples,
+                    });
+                }
+            }
+        }
         let identity = page.page();
-        self.pages
-            .retain(|existing| !same_bms_page(existing.page(), identity));
-        self.pages.push(page.clone());
+        self.pages.retain(|existing| {
+            existing
+                .page()
+                .is_none_or(|existing_page| !same_bms_page(existing_page.page(), identity))
+        });
+        self.pages.push(readback.clone());
     }
 }
 
@@ -746,6 +866,230 @@ mod tests {
             Some(ProtocolFamily::BegodeGotway)
         );
         assert_eq!(state.identity().model.as_deref(), Some("Begode Falcon"));
+    }
+
+    fn cell_readback(
+        selector: u8,
+        first_observation_index: u16,
+        millivolts: i32,
+    ) -> BatteryReadback {
+        BatteryReadback::available(crate::BatteryPagePayload::cell_voltage(
+            BatteryPageMetadata::cell_voltage(
+                crate::ProtocolSelector::new(selector),
+                crate::VerificationStatus::HardwareVerified,
+            ),
+            crate::BatteryInfo::default(),
+            (0..15)
+                .map(|_| crate::Voltage::from_millivolts(millivolts))
+                .collect(),
+        ))
+        .with_first_observation_index(crate::BmsObservationIndex::new(first_observation_index))
+    }
+
+    #[test]
+    fn bms_telemetry_retains_protocol_assigned_observation_indices() {
+        let mut state = CutoutSessionState::default();
+        for readback in [
+            cell_readback(5, 30, 3_850),
+            cell_readback(1, 0, 3_810),
+            cell_readback(6, 45, 3_860),
+            cell_readback(2, 15, 3_820),
+            cell_readback(2, 15, 3_825),
+            BatteryReadback::available(crate::BatteryPagePayload::temperature(
+                BatteryPageMetadata::temperature(
+                    crate::ProtocolSelector::new(3),
+                    crate::VerificationStatus::HardwareVerified,
+                ),
+                crate::BatteryInfo::default(),
+            )),
+        ] {
+            state.observe_read_only_response(&ReadOnlyResponse::Battery(readback));
+        }
+
+        let mut observed = std::collections::BTreeMap::new();
+        for page in state
+            .telemetry
+            .bms
+            .pages
+            .iter()
+            .filter_map(|readback| crate::BatteryReadbackDto::from(readback.clone()).page)
+        {
+            let Some(first_observation_index) = page.first_observation_index else {
+                continue;
+            };
+            observed.extend(page.cell_voltages.into_iter().enumerate().map(
+                |(local_index, voltage)| {
+                    (
+                        usize::from(first_observation_index) + local_index,
+                        voltage.value,
+                    )
+                },
+            ));
+        }
+
+        assert_eq!(observed.len(), 60);
+        for (indices, millivolts) in [
+            (0..15, 3_810),
+            (15..30, 3_825),
+            (30..45, 3_850),
+            (45..60, 3_860),
+        ] {
+            for index in indices {
+                assert_eq!(observed[&index], millivolts);
+            }
+        }
+        assert!(matches!(
+            state.telemetry.bms.latest.page(),
+            Some(crate::BatteryPagePayload::Temperature(_))
+        ));
+        let summary = state.telemetry.bms.observation_summary();
+        assert_eq!(summary.observed_count, 60);
+        assert_eq!(
+            summary.lowest_index,
+            Some(crate::BmsObservationIndex::new(0))
+        );
+        assert_eq!(
+            summary.highest_index,
+            Some(crate::BmsObservationIndex::new(45))
+        );
+        assert_eq!(
+            summary
+                .voltage_spread
+                .map(crate::VoltageDelta::as_millivolts),
+            Some(50)
+        );
+
+        for _ in 0..4 {
+            state.observe_read_only_response(&ReadOnlyResponse::Battery(cell_readback(
+                2, 15, 3_800,
+            )));
+        }
+        let summary = state.telemetry.bms.observation_summary();
+        assert_eq!(summary.observed_count, 60);
+        assert_eq!(
+            summary.lowest_index,
+            Some(crate::BmsObservationIndex::new(15))
+        );
+        assert_eq!(
+            summary
+                .voltage_spread
+                .map(crate::VoltageDelta::as_millivolts),
+            Some(60)
+        );
+
+        state
+            .observe_read_only_response(&ReadOnlyResponse::Battery(BatteryReadback::unavailable()));
+        assert!(state.telemetry.bms.pages.is_empty());
+        assert_eq!(
+            state.telemetry.bms.observation_summary(),
+            crate::BmsObservationSummary::default()
+        );
+    }
+
+    #[test]
+    fn bms_observation_summary_handles_empty_zero_ties_overflow_and_large_collections() {
+        fn page(first: u16, values: &[i32]) -> BatteryReadback {
+            BatteryReadback::available(crate::BatteryPagePayload::cell_voltage(
+                BatteryPageMetadata::cell_voltage(
+                    crate::ProtocolSelector::new(1),
+                    crate::VerificationStatus::Unverified,
+                ),
+                crate::BatteryInfo::default(),
+                values
+                    .iter()
+                    .copied()
+                    .map(crate::Voltage::from_millivolts)
+                    .collect(),
+            ))
+            .with_first_observation_index(BmsObservationIndex::new(first))
+        }
+        use crate::{BmsObservationIndex, BmsObservationSummary, VoltageDelta};
+        assert_eq!(
+            BmsObservationSummary::from_readbacks(&[page(0, &[]), BatteryReadback::unsupported()]),
+            BmsObservationSummary::default()
+        );
+        let summary =
+            BmsObservationSummary::from_readbacks(&[page(45, &[0, 4_200]), page(0, &[0, 4_200])]);
+        assert_eq!(summary.observed_count, 4);
+        assert_eq!(summary.lowest_index, Some(BmsObservationIndex::new(0)));
+        assert_eq!(summary.highest_index, Some(BmsObservationIndex::new(1)));
+        assert_eq!(
+            summary.voltage_spread,
+            Some(VoltageDelta::from_millivolts(4_200))
+        );
+        let summary = BmsObservationSummary::from_readbacks(&[page(0, &[i32::MIN, i32::MAX])]);
+        assert_eq!(
+            summary.voltage_spread,
+            Some(VoltageDelta::from_millivolts(i32::MAX))
+        );
+        let summary = BmsObservationSummary::from_readbacks(&[page(0, &[0]), page(0, &[4_000])]);
+        assert_eq!(summary.observed_count, 1);
+        assert_eq!(
+            summary.voltage_spread,
+            Some(VoltageDelta::from_millivolts(0))
+        );
+        for count in [224_u16, 252] {
+            let pages: Vec<_> = (0..count)
+                .rev()
+                .map(|index| page(index, &[4_000 + i32::from(index)]))
+                .collect();
+            let summary = BmsObservationSummary::from_readbacks(&pages);
+            assert_eq!(summary.observed_count, u32::from(count));
+            assert_eq!(summary.lowest_index, Some(BmsObservationIndex::new(0)));
+            assert_eq!(
+                summary.highest_index,
+                Some(BmsObservationIndex::new(count - 1))
+            );
+        }
+    }
+
+    #[test]
+    fn bms_summary_retains_raw_history_and_ignores_three_sample_voltage_pulses() {
+        let mut state = CutoutSessionState::default();
+        state.observe_read_only_response(&ReadOnlyResponse::Battery(
+            cell_readback(1, 0, 4_177)
+                .with_observation_pack(crate::BmsPackIndex::new(0), crate::BmsCellIndex::new(0)),
+        ));
+        state.observe_read_only_response(&ReadOnlyResponse::Battery(
+            cell_readback(2, 15, 4_193)
+                .with_observation_pack(crate::BmsPackIndex::new(0), crate::BmsCellIndex::new(15)),
+        ));
+        for voltage in [4_209, 4_209, 4_209] {
+            state.observe_read_only_response(&ReadOnlyResponse::Battery(
+                cell_readback(2, 15, voltage).with_observation_pack(
+                    crate::BmsPackIndex::new(0),
+                    crate::BmsCellIndex::new(15),
+                ),
+            ));
+        }
+
+        let summary = state.telemetry.bms.observation_summary();
+        assert_eq!(
+            summary.voltage_spread,
+            Some(crate::VoltageDelta::from_millivolts(16))
+        );
+        assert_eq!(summary.observations.len(), 30);
+        let pulsing = &summary.observations[15];
+        assert_eq!(pulsing.voltage, crate::Voltage::from_millivolts(4_193));
+        assert_eq!(
+            pulsing.latest_voltage,
+            crate::Voltage::from_millivolts(4_209)
+        );
+        assert_eq!(pulsing.samples.len(), 4);
+        assert_eq!(pulsing.pack_index, Some(crate::BmsPackIndex::new(0)));
+        assert_eq!(
+            pulsing.pack_observation_index,
+            Some(crate::BmsCellIndex::new(15))
+        );
+
+        state.observe_read_only_response(&ReadOnlyResponse::Battery(
+            cell_readback(2, 15, 4_209)
+                .with_observation_pack(crate::BmsPackIndex::new(0), crate::BmsCellIndex::new(15)),
+        ));
+        assert_eq!(
+            state.telemetry.bms.observation_summary().voltage_spread,
+            Some(crate::VoltageDelta::from_millivolts(32))
+        );
     }
 
     #[test]

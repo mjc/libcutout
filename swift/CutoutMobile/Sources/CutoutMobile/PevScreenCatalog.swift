@@ -386,7 +386,7 @@ private extension PevBmsScreenKind {
     func liveSubtitle(snapshot: BmsSnapshot, fallback: String) -> String {
         switch self {
         case .noData:
-            pevLocalizedText("bms.subtitle.controller_estimate", snapshot.topology.layoutLabel)
+            pevLocalizedText("bms.subtitle.controller_estimate", snapshot.topologyDisplayLabel)
         default:
             fallback
         }
@@ -404,7 +404,7 @@ private extension PevBmsScreenKind {
     func liveChips(snapshot: BmsSnapshot, selectedGroupIndex: Int?) -> [PevBmsChip] {
         switch self {
         case .overview:
-            var chips = [PevBmsChip(id: .topology, title: snapshot.topology.layoutLabel, accent: .yellow)]
+            var chips = [PevBmsChip(id: .topology, title: snapshot.topologyDisplayLabel, accent: .yellow)]
             if snapshot.topology.bmsCount > 0 {
                 chips.append(PevBmsChip(id: .bmsStatus, title: pevLocalizedText("bms.chip.bms_online", Int64(snapshot.topology.bmsCount)), accent: .green))
             }
@@ -412,7 +412,7 @@ private extension PevBmsScreenKind {
         case .cellMapInline, .cellMapScrollable:
             return [
                 PevBmsChip(id: .liveReadback, title: pevLocalizedText("bms.chip.live_readback"), accent: .cyan),
-                PevBmsChip(id: .topology, title: snapshot.topology.layoutLabel, accent: .yellow),
+                PevBmsChip(id: .topology, title: snapshot.topologyDisplayLabel, accent: .yellow),
             ]
         case .cellDetail:
             return [

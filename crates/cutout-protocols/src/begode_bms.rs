@@ -1,9 +1,9 @@
 use arrayvec::ArrayVec;
 use cutout_core::{
     BatteryCurrent, BatteryInfo, BatteryPageMetadata, BatteryPagePayload, BmsCellIndex,
-    BmsHalfIndex, BmsPackIndex, DutyCycle, Measured, MonotonicTimestamp, ProtocolSelector,
-    ProtocolTag, ReadOnlyResponse, TelemetryDelta, Temperature, ValueQuality, ValueSource,
-    VerificationStatus, Voltage,
+    BmsHalfIndex, BmsObservationIndex, BmsPackIndex, DutyCycle, Measured, MonotonicTimestamp,
+    ProtocolSelector, ProtocolTag, ReadOnlyResponse, TelemetryDelta, Temperature, ValueQuality,
+    ValueSource, VerificationStatus, Voltage,
 };
 use thiserror::Error;
 
@@ -16,6 +16,7 @@ use crate::{
 pub const BEGODE_BMS_CELL_VALUES_PER_PAGE: usize = 8;
 
 const BEGODE_BMS_CELL_VALUES_PER_PAGE_U16: u16 = 8;
+const BEGODE_BMS_OBSERVATIONS_PER_BANK: u16 = 32;
 
 /// Begode/Gotway BMS summary decoded from frame tag `0x01`.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -173,8 +174,8 @@ impl BegodeBmsCellPage {
     /// Converts the cell page into a generic battery page response.
     #[must_use]
     pub fn to_battery_response(&self) -> ReadOnlyResponse {
-        ReadOnlyResponse::Battery(cutout_core::BatteryReadback::available(
-            BatteryPagePayload::cell_voltage(
+        ReadOnlyResponse::Battery(
+            cutout_core::BatteryReadback::available(BatteryPagePayload::cell_voltage(
                 BatteryPageMetadata::cell_voltage(
                     self.page_index,
                     VerificationStatus::SourceVerified,
@@ -182,8 +183,13 @@ impl BegodeBmsCellPage {
                 .with_tag(self.tag),
                 BatteryInfo::default(),
                 self.cell_voltage.clone().into_iter().collect(),
-            ),
-        ))
+            ))
+            .with_first_observation_index(BmsObservationIndex::new(
+                u16::from(self.bms_index.get()) * BEGODE_BMS_OBSERVATIONS_PER_BANK
+                    + self.first_cell_index.get(),
+            ))
+            .with_observation_pack(self.bms_index, self.first_cell_index),
+        )
     }
 }
 
@@ -384,6 +390,10 @@ mod tests {
         assert_eq!(
             payload.page().verification,
             VerificationStatus::SourceVerified
+        );
+        assert_eq!(
+            readback.first_observation_index(),
+            Some(BmsObservationIndex::new(16))
         );
     }
 

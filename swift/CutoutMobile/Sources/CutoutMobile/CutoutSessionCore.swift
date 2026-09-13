@@ -1378,8 +1378,14 @@ public final class CutoutSessionCore: NSObject {
             return
         }
         cancelPendingReconnect()
+        let receivedBmsUpdate = step.actions.contains {
+            $0.kind == .bmsSnapshot && $0.bmsSnapshot != nil
+        }
         step.actions.forEach(applySessionAction)
         observeRideMapConnection(at: receivedAt)
+        if receivedBmsUpdate {
+            persistCurrentBmsSamples(receivedAt: receivedAt)
+        }
         let snapshot = step.snapshot
         displayState = displayState.reducing(snapshot: snapshot, receivedAt: receivedAt)
         hasObservedSpeedSnapshot = hasObservedSpeedSnapshot || snapshot?.speed?.value != nil
@@ -1429,7 +1435,9 @@ public final class CutoutSessionCore: NSObject {
         }
 
         bmsPages[pageKey] = update
-        return aggregateBmsSnapshot()
+        // Page ordering is for presentation, not summary recency. The arriving event carries
+        // core's summary of all retained observations, including updates to lower-numbered pages.
+        return aggregateBmsSnapshot()?.mergingBmsPage(update).withoutPageCursor()
     }
 
     private func aggregateBmsSnapshot() -> BmsSnapshot? {
@@ -1984,6 +1992,38 @@ public final class CutoutSessionCore: NSObject {
                 self.recordRideMapDiagnostic("ride_map_connection_error=\(error)")
             } catch {
                 self.recordRideMapDiagnostic("ride_map_connection_error=\(error)")
+            }
+        }
+    }
+
+    private func persistCurrentBmsSamples(receivedAt: MonotonicMilliseconds) {
+        guard let rideMapState,
+              rideMapState.initializationError == nil,
+              let deviceIdentity = protocolIdentityCandidate?.platformIdentifier
+                ?? peripheral?.identifier.uuidString,
+              let wallClockMilliseconds = unixMilliseconds(for: wallClock()),
+              let snapshot = bmsSnapshot
+        else {
+            return
+        }
+        let samples = bmsStorageSamples(
+            snapshot: snapshot,
+            receivedAt: receivedAt.rawValue,
+            wallClockMilliseconds: wallClockMilliseconds
+        )
+        guard !samples.isEmpty else { return }
+
+        let queue = rideMapQueue
+        let reference = WeakCutoutSessionCoreReference(self)
+        queue.async {
+            guard let self = reference.value else { return }
+            do {
+                try rideMapState.recordBmsVoltageSamples(
+                    deviceIdentity: deviceIdentity,
+                    samples: samples
+                )
+            } catch {
+                self.recordRideMapDiagnostic("bms_storage_error=\(error)")
             }
         }
     }
@@ -3327,6 +3367,29 @@ private func unixMilliseconds(for date: Date) -> UInt64? {
     let milliseconds = date.timeIntervalSince1970 * 1_000
     guard milliseconds.isFinite, milliseconds >= 0, milliseconds < Double(UInt64.max) else { return nil }
     return UInt64(milliseconds.rounded(.down))
+}
+
+func bmsStorageSamples(
+    snapshot: BmsSnapshot,
+    receivedAt: UInt64,
+    wallClockMilliseconds: UInt64
+) -> [MobileStoredBmsVoltageSampleDto] {
+    snapshot.groups.compactMap { group in
+        guard group.recentObservationMilliseconds.last == receivedAt,
+              let voltage = group.latestVoltage,
+              let observationIndex = UInt16(exactly: group.index - 1)
+        else {
+            return nil
+        }
+        return MobileStoredBmsVoltageSampleDto(
+            monotonicMilliseconds: receivedAt,
+            wallClockMilliseconds: wallClockMilliseconds,
+            observationIndex: observationIndex,
+            packIndex: group.packNumber.flatMap { UInt16(exactly: $0 - 1) },
+            packObservationIndex: group.packReadingIndex.flatMap { UInt16(exactly: $0 - 1) },
+            voltage: voltage
+        )
+    }
 }
 
 private extension CBCharacteristic {

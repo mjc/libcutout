@@ -496,7 +496,24 @@ fn drain_host_outputs<S>(host: &mut HostSession<S>) -> Vec<SessionOutputDto>
 where
     S: cutout_core::ProtocolSession,
 {
-    host.drain_outputs().into_iter().map(Into::into).collect()
+    let mut summary = None;
+    host.drain_outputs()
+        .into_iter()
+        .map(|output| {
+            let mut output = SessionOutputDto::from(output);
+            if let SessionOutputDto::ReadOnly(response) = &mut output
+                && let cutout_core::ReadOnlyOutputPayload::Battery(readback) = &mut response.payload
+                && let Some(page) = &mut readback.page
+            {
+                page.observation_summary = summary
+                    .get_or_insert_with(|| {
+                        host.session_state().telemetry().bms.observation_summary()
+                    })
+                    .clone();
+            }
+            output
+        })
+        .collect()
 }
 
 #[cfg(test)]
@@ -520,6 +537,69 @@ mod tests {
         MonotonicMillisDto {
             milliseconds: value,
         }
+    }
+
+    #[test]
+    fn drained_bms_pages_carry_the_retained_core_summary() {
+        struct Pages;
+        impl cutout_core::ProtocolSession for Pages {
+            fn handle(
+                &mut self,
+                input: cutout_core::SessionInput<'_>,
+                output: &mut Vec<cutout_core::SessionOutput>,
+            ) {
+                let cutout_core::SessionInput::Tick { monotonic_ms } = input else {
+                    return;
+                };
+                let (selector, voltage) = if monotonic_ms.get() == 1 {
+                    (6, 4_200)
+                } else {
+                    (2, 4_180)
+                };
+                let readback = crate::decode_veteran_bms_page(
+                    cutout_core::ProtocolSelector::new(selector),
+                    (0..15)
+                        .map(|_| cutout_core::Voltage::from_millivolts(voltage))
+                        .collect(),
+                    cutout_core::BatteryInfo::default(),
+                    cutout_core::VerificationStatus::Unverified,
+                )
+                .expect("typed cell page");
+                output.push(cutout_core::SessionOutput::Event(
+                    cutout_core::DeviceEvent::ReadOnlyResponse(
+                        cutout_core::ReadOnlyResponse::Battery(readback),
+                    ),
+                ));
+            }
+        }
+        let mut host = cutout_core::HostSession::new(Pages);
+        host.tick(MonotonicTimestamp::new(1));
+        let _ = super::drain_host_outputs(&mut host);
+        host.tick(MonotonicTimestamp::new(2));
+        let outputs = super::drain_host_outputs(&mut host);
+        let SessionOutputDto::ReadOnly(response) = &outputs[0] else {
+            panic!("battery output")
+        };
+        let cutout_core::ReadOnlyOutputPayload::Battery(readback) = &response.payload else {
+            panic!("battery readback")
+        };
+        let page = readback.page.as_ref().expect("page");
+        assert_eq!(page.cell_voltages.len(), 15);
+        assert_eq!(page.observation_summary.observed_count, 30);
+        assert_eq!(
+            page.observation_summary.lowest_index,
+            Some(cutout_core::BmsObservationIndex::new(15))
+        );
+        assert_eq!(
+            page.observation_summary.highest_index,
+            Some(cutout_core::BmsObservationIndex::new(45))
+        );
+        assert_eq!(
+            page.observation_summary
+                .voltage_spread
+                .map(cutout_core::VoltageDelta::as_millivolts),
+            Some(20)
+        );
     }
 
     const fn write_len(value: u16) -> TransportWriteLimit {

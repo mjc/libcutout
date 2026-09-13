@@ -2271,6 +2271,52 @@ func testVescRideSnapshotProjectsBatteryLevelAndUpdateTime() throws {
         XCTAssertEqual(observedSnapshots, [snapshot, nil])
     }
 
+    func testBmsStorageBatchContainsOnlyRawSamplesFromCurrentNotification() {
+        let snapshot = BmsSnapshot(
+            topology: BmsTopology(
+                layoutLabel: "unverified",
+                seriesGroupCount: nil,
+                parallelCount: nil,
+                packCount: 2,
+                bmsCount: 2,
+                confidence: .unverified
+            ),
+            groups: [
+                BmsGroupSnapshot(
+                    index: 46,
+                    packNumber: 2,
+                    packReadingIndex: 16,
+                    voltage: Voltage(value: 4_192),
+                    latestVoltage: Voltage(value: 4_209),
+                    recentVoltages: [Voltage(value: 4_192), Voltage(value: 4_209)],
+                    recentObservationMilliseconds: [900, 1_000]
+                ),
+                BmsGroupSnapshot(
+                    index: 1,
+                    packNumber: 1,
+                    packReadingIndex: 1,
+                    voltage: Voltage(value: 4_177),
+                    recentVoltages: [Voltage(value: 4_177)],
+                    recentObservationMilliseconds: [999]
+                ),
+            ]
+        )
+
+        let samples = bmsStorageSamples(
+            snapshot: snapshot,
+            receivedAt: 1_000,
+            wallClockMilliseconds: 2_000
+        )
+
+        XCTAssertEqual(samples.count, 1)
+        XCTAssertEqual(samples[0].monotonicMilliseconds, 1_000)
+        XCTAssertEqual(samples[0].wallClockMilliseconds, 2_000)
+        XCTAssertEqual(samples[0].observationIndex, 45)
+        XCTAssertEqual(samples[0].packIndex, 1)
+        XCTAssertEqual(samples[0].packObservationIndex, 15)
+        XCTAssertEqual(samples[0].voltage, Voltage(value: 4_209))
+    }
+
     func testBmsSnapshotAggregatesCollectedPagesForPackOverview() {
         let core = CutoutSessionCore()
         let metadataPage = BmsSnapshot(
@@ -2324,6 +2370,26 @@ func testVescRideSnapshotProjectsBatteryLevelAndUpdateTime() throws {
         XCTAssertEqual(core.bmsSnapshot?.current, BatteryCurrent(value: 0))
         XCTAssertEqual(core.bmsSnapshot?.cellDelta, VoltageDelta(value: 12))
         XCTAssertEqual(core.bmsSnapshot?.groups.count, 2)
+    }
+
+    func testBmsSnapshotUsesArrivingCoreSummaryRatherThanPageSortOrder() {
+        let core = CutoutSessionCore()
+        let topology = BmsTopology(layoutLabel: "unverified", seriesGroupCount: nil, parallelCount: nil, packCount: 1, bmsCount: 1, confidence: .unverified)
+        func receive(_ snapshot: BmsSnapshot, at: UInt64) {
+            core.applyNotificationStep(
+                CoreBluetoothSessionStep(operations: [], snapshot: nil, actions: [.withBmsSnapshot(snapshot)]),
+                receivedAt: MonotonicMilliseconds(at)
+            )
+        }
+        receive(BmsSnapshot(topology: topology, pageSelector: 6, cellDelta: VoltageDelta(value: 0), lowestGroupIndex: 46, observedGroupCount: 1, highestGroupIndex: 46, groups: [BmsGroupSnapshot(index: 46, voltage: Voltage(value: 4_200))]), at: 1)
+        receive(BmsSnapshot(topology: topology, pageSelector: 2, cellDelta: VoltageDelta(value: 20), lowestGroupIndex: 16, observedGroupCount: 2, highestGroupIndex: 46, groups: [BmsGroupSnapshot(index: 16, voltage: Voltage(value: 4_180))]), at: 2)
+        XCTAssertEqual(core.bmsSnapshot?.cellDelta, VoltageDelta(value: 20))
+        XCTAssertEqual(core.bmsSnapshot?.lowestGroupIndex, 16)
+        XCTAssertEqual(core.bmsSnapshot?.highestGroupIndex, 46)
+        XCTAssertEqual(core.bmsSnapshot?.observedGroupCount, 2)
+        receive(BmsSnapshot(topology: topology, pageSelector: 3, cellDelta: VoltageDelta(value: 20), lowestGroupIndex: 16, observedGroupCount: 2, highestGroupIndex: 46, highestTemperature: Temperature(value: 21_000)), at: 3)
+        XCTAssertEqual(core.bmsSnapshot?.cellDelta, VoltageDelta(value: 20))
+        XCTAssertEqual(core.bmsSnapshot?.groups.map(\.index), [16, 46])
     }
 
     func testBmsSnapshotCollectionDoesNotPublishCursorOnlyUpdates() {

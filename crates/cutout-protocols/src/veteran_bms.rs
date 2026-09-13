@@ -1,8 +1,9 @@
 use arrayvec::ArrayVec;
 use cutout_core::{
     BatteryCellVoltages, BatteryCurrent, BatteryInfo, BatteryPageKind, BatteryPageMetadata,
-    BatteryPagePayload, BmsPackCurrents, Information, ProtocolSelector, Quantity, Temperature,
-    Unit, VerificationStatus, Voltage,
+    BatteryPagePayload, BatteryReadback, BmsCellIndex, BmsObservationIndex, BmsPackCurrents,
+    BmsPackIndex, Information, ProtocolSelector, Quantity, Temperature, Unit, VerificationStatus,
+    Voltage,
 };
 use thiserror::Error;
 
@@ -13,6 +14,25 @@ use crate::{
 
 /// Cell-voltage count observed for typed Veteran/NOSFET BMS pages.
 pub const VETERAN_BMS_CELL_VALUES_PER_PAGE: u8 = 15;
+
+const fn veteran_observation_page_identity(
+    selector: ProtocolSelector,
+) -> Option<(BmsObservationIndex, BmsPackIndex, BmsCellIndex)> {
+    let (pack_index, pack_page_ordinal) = match selector.get() {
+        1 => (0_u8, 0_u16),
+        2 => (0, 1),
+        5 => (1, 0),
+        6 => (1, 1),
+        _ => return None,
+    };
+    let pack_first = pack_page_ordinal * VETERAN_BMS_CELL_VALUES_PER_PAGE as u16;
+    let first = pack_index as u16 * 2 * VETERAN_BMS_CELL_VALUES_PER_PAGE as u16 + pack_first;
+    Some((
+        BmsObservationIndex::new(first),
+        BmsPackIndex::new(pack_index),
+        BmsCellIndex::new(pack_first),
+    ))
+}
 
 /// Temperature sensor count documented for Veteran/NOSFET BMS temperature pages.
 pub const VETERAN_BMS_TEMPERATURE_VALUES_PER_PAGE: usize = 6;
@@ -319,7 +339,7 @@ pub enum VeteranBmsPageError {
     },
 }
 
-/// Decodes a pre-parsed Veteran/NOSFET BMS page into the generic battery payload shape.
+/// Decodes a pre-parsed Veteran/NOSFET BMS page into a generic battery readback.
 ///
 /// The caller supplies the already-parsed cell value count because byte-level
 /// Veteran frame decoding is a separate parser concern.
@@ -333,7 +353,7 @@ pub fn decode_veteran_bms_page(
     cell_voltages: BatteryCellVoltages,
     battery: BatteryInfo,
     verification: VerificationStatus,
-) -> Result<BatteryPagePayload, VeteranBmsPageError> {
+) -> Result<BatteryReadback, VeteranBmsPageError> {
     let kind = classify_veteran_bms_selector(selector);
     if matches!(kind, BatteryPageKind::CellVoltage) {
         let observed = u8::try_from(cell_voltages.len()).unwrap_or(u8::MAX);
@@ -344,17 +364,27 @@ pub fn decode_veteran_bms_page(
                 expected: VETERAN_BMS_CELL_VALUES_PER_PAGE,
             });
         }
-        return Ok(BatteryPagePayload::cell_voltage(
+        let Some((first_observation_index, pack_index, pack_first_index)) =
+            veteran_observation_page_identity(selector)
+        else {
+            return Ok(BatteryReadback::available(BatteryPagePayload::from_page(
+                BatteryPageMetadata::new(selector, kind, verification),
+                battery,
+            )));
+        };
+        return Ok(BatteryReadback::available(BatteryPagePayload::cell_voltage(
             BatteryPageMetadata::cell_voltage(selector, verification),
             battery,
             cell_voltages,
-        ));
+        ))
+        .with_first_observation_index(first_observation_index)
+        .with_observation_pack(pack_index, pack_first_index));
     }
 
-    Ok(BatteryPagePayload::from_page(
+    Ok(BatteryReadback::available(BatteryPagePayload::from_page(
         BatteryPageMetadata::new(selector, kind, verification),
         battery,
-    ))
+    )))
 }
 
 #[cfg(test)]
@@ -648,12 +678,74 @@ mod tests {
         )
         .expect("hardware-backed cell page count should decode");
 
-        assert!(matches!(decoded, BatteryPagePayload::CellVoltage(_)));
-        assert_eq!(decoded.page().selector, sel(1));
+        assert!(matches!(
+            decoded.page(),
+            Some(BatteryPagePayload::CellVoltage(_))
+        ));
         assert_eq!(
-            decoded.page().verification,
+            decoded.page().expect("available page").page().selector,
+            sel(1)
+        );
+        assert_eq!(
+            decoded.page().expect("available page").page().verification,
             VerificationStatus::HardwareVerified
         );
+    }
+
+    #[test]
+    fn cell_page_decoding_preserves_distinct_observation_ranges() {
+        let mut observed = std::collections::BTreeMap::new();
+        for (selector, first_observation_index, pack_index, pack_first_index, millivolts) in [
+            (5, 30, 1, 0, 3_850),
+            (1, 0, 0, 0, 3_810),
+            (6, 45, 1, 15, 3_860),
+            (2, 15, 0, 15, 3_820),
+            (2, 15, 0, 15, 3_825),
+        ] {
+            let decoded = decode_veteran_bms_page(
+                sel(selector),
+                (0..VETERAN_BMS_CELL_VALUES_PER_PAGE)
+                    .map(|_| Voltage::from_millivolts(millivolts))
+                    .collect(),
+                BatteryInfo::default(),
+                VerificationStatus::HardwareVerified,
+            )
+            .expect("documented Veteran cell page");
+            let BatteryPagePayload::CellVoltage(page) = decoded.page().expect("available page")
+            else {
+                panic!("documented Veteran cell page is typed");
+            };
+
+            assert_eq!(
+                decoded.first_observation_index(),
+                Some(BmsObservationIndex::new(first_observation_index))
+            );
+            assert_eq!(
+                decoded.observation_pack_index(),
+                Some(BmsPackIndex::new(pack_index))
+            );
+            assert_eq!(
+                decoded.first_pack_observation_index(),
+                Some(BmsCellIndex::new(pack_first_index))
+            );
+            observed.extend(page.cell_voltages.iter().copied().enumerate().map(
+                |(local_index, voltage)| {
+                    (usize::from(first_observation_index) + local_index, voltage)
+                },
+            ));
+        }
+
+        assert_eq!(observed.len(), 60);
+        for (indices, millivolts) in [
+            (0..15, 3_810),
+            (15..30, 3_825),
+            (30..45, 3_850),
+            (45..60, 3_860),
+        ] {
+            for index in indices {
+                assert_eq!(observed[&index], Voltage::from_millivolts(millivolts));
+            }
+        }
     }
 
     #[test]
@@ -697,12 +789,24 @@ mod tests {
         )
         .expect("temperature pages should preserve evidence without cell typing");
 
-        assert!(matches!(raw, BatteryPagePayload::Raw(_)));
-        assert!(matches!(metadata, BatteryPagePayload::Raw(_)));
-        assert!(matches!(temperature, BatteryPagePayload::Temperature(_)));
-        assert_eq!(raw.page().kind, BatteryPageKind::Raw);
-        assert_eq!(metadata.page().kind, BatteryPageKind::Metadata);
-        assert_eq!(temperature.page().kind, BatteryPageKind::Temperature);
+        assert!(matches!(raw.page(), Some(BatteryPagePayload::Raw(_))));
+        assert!(matches!(metadata.page(), Some(BatteryPagePayload::Raw(_))));
+        assert!(matches!(
+            temperature.page(),
+            Some(BatteryPagePayload::Temperature(_))
+        ));
+        assert_eq!(
+            raw.page().expect("available page").page().kind,
+            BatteryPageKind::Raw
+        );
+        assert_eq!(
+            metadata.page().expect("available page").page().kind,
+            BatteryPageKind::Metadata
+        );
+        assert_eq!(
+            temperature.page().expect("available page").page().kind,
+            BatteryPageKind::Temperature
+        );
     }
 
     proptest! {
@@ -719,8 +823,8 @@ mod tests {
             )
             .expect("unknown selectors should stay raw instead of failing typed invariants");
 
-            prop_assert_eq!(decoded.page().kind, BatteryPageKind::Raw);
-            prop_assert!(matches!(decoded, BatteryPagePayload::Raw(_)));
+            prop_assert_eq!(decoded.page().expect("available page").page().kind, BatteryPageKind::Raw);
+            prop_assert!(matches!(decoded.page(), Some(BatteryPagePayload::Raw(_))));
         }
 
         #[test]
@@ -735,8 +839,8 @@ mod tests {
 
             if count == VETERAN_BMS_CELL_VALUES_PER_PAGE {
                 let payload = decoded.expect("exact cell count should type the page");
-                prop_assert_eq!(payload.page().kind, BatteryPageKind::CellVoltage);
-                prop_assert!(matches!(payload, BatteryPagePayload::CellVoltage(_)));
+                prop_assert_eq!(payload.page().expect("available page").page().kind, BatteryPageKind::CellVoltage);
+                prop_assert!(matches!(payload.page(), Some(BatteryPagePayload::CellVoltage(_))));
             } else {
                 prop_assert_eq!(
                     decoded,
@@ -760,13 +864,13 @@ mod tests {
             )
             .expect("non-cell selectors should preserve evidence without cell-count invariants");
 
-            prop_assert_eq!(decoded.page().selector, selector);
-            prop_assert_eq!(decoded.page().kind, classify_veteran_bms_selector(selector));
-            prop_assert_eq!(decoded.page().verification, VerificationStatus::HardwareVerified);
+            prop_assert_eq!(decoded.page().expect("available page").page().selector, selector);
+            prop_assert_eq!(decoded.page().expect("available page").page().kind, classify_veteran_bms_selector(selector));
+            prop_assert_eq!(decoded.page().expect("available page").page().verification, VerificationStatus::HardwareVerified);
             if matches!(selector.get(), 3 | 7) {
-                prop_assert!(matches!(decoded, BatteryPagePayload::Temperature(_)));
+                prop_assert!(matches!(decoded.page(), Some(BatteryPagePayload::Temperature(_))));
             } else {
-                prop_assert!(matches!(decoded, BatteryPagePayload::Raw(_)));
+                prop_assert!(matches!(decoded.page(), Some(BatteryPagePayload::Raw(_))));
             }
         }
     }
