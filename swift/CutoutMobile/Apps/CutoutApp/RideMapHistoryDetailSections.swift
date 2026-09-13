@@ -101,6 +101,7 @@ struct RideMapHistoryDetailMap: View {
     let state: RideMapHistoryRouteState
     @Binding var mapPosition: MapCameraPosition
     @Binding var isApplyingCamera: Bool
+    @State private var fittedRouteID: String?
     let cameraDidChange: (MKCoordinateRegion) -> Void
 
     var body: some View {

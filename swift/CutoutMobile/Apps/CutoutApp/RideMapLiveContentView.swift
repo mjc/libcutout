@@ -50,7 +50,8 @@ struct RideMapLiveContentView: View {
                     cameraRegion: cameraRegion,
                     segments: segments,
                     contextRoutes: [],
-                    fitsRouteOnChange: false,
+                    fitsRouteOnChange: isTerminalRide,
+                    cameraFitID: cameraFitID,
                     mapPosition: $mapPosition,
                     isApplyingCamera: $isApplyingCamera,
                     cameraDidChange: { region in
@@ -128,6 +129,20 @@ struct RideMapLiveContentView: View {
 
     private var showsRecordedBounds: Bool {
         snapshot?.recordedBoundsAvailable == true
+    }
+
+    private var isTerminalRide: Bool {
+        guard let state = snapshot?.state else { return false }
+        switch state {
+        case .active, .paused:
+            return false
+        case .draft, .stopped, .interrupted, .discarded, .saved, .imported:
+            return true
+        }
+    }
+
+    private var cameraFitID: String {
+        isTerminalRide ? "\(routeID):terminal" : routeID
     }
 
     private func recenterOnLatestPoint() {

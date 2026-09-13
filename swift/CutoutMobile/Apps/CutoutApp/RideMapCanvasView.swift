@@ -353,8 +353,15 @@ struct RideMapCanvasView: View {
         }
         .task(id: pathKey) {
             let key = pathKey
+            let priorRouteID = renderedKey?.routeID
             updatePaths(for: key)
             rebuildContextPaths()
+            if priorRouteID != key.routeID, points.isEmpty {
+                // Do not leave an unrelated route's camera behind while an empty route is
+                // selected. Its first point will trigger the normal Rust-bounded fit below.
+                mapPosition = .automatic
+                isApplyingCamera = true
+            }
             let cameraFitID = key.cameraFitID ?? key.routeID
             if fitsRouteOnChange, fittedRouteID != cameraFitID, points.isEmpty == false,
                 fitMap(to: cameraRegion)
