@@ -1,9 +1,15 @@
+use std::collections::BTreeMap;
+
 use thiserror::Error;
 
 use crate::{Duration, DutyCycle, MonotonicTimestamp, RideStopReason, RideWarning};
 
 const PWM_REARM_HYSTERESIS_PERCENT: u8 = 5;
 const FAILED_DELIVERY_RETRY_AFTER: Duration = Duration::from_seconds(1);
+const PHONE_ALARM_REPEAT_AFTER: Duration = Duration::from_seconds(30);
+const DEFAULT_PWM_DUTY_PERCENT: u8 = 80;
+const MAX_PHONE_ALARM_DEVICES: usize = 256;
+const MAX_DEVICE_IDENTITY_BYTES: usize = 1_024;
 
 /// A phone-generated PWM alarm threshold expressed as consumed duty.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -14,9 +20,9 @@ impl PwmDutyAlarmThreshold {
     ///
     /// # Errors
     ///
-    /// Returns [`InvalidPwmDutyAlarmThreshold`] when `duty_percent` exceeds 100.
+    /// Returns [`InvalidPwmDutyAlarmThreshold`] unless `duty_percent` is 1 through 100.
     pub const fn new(duty_percent: u8) -> Result<Self, InvalidPwmDutyAlarmThreshold> {
-        if duty_percent <= 100 {
+        if duty_percent >= 1 && duty_percent <= 100 {
             Ok(Self(duty_percent))
         } else {
             Err(InvalidPwmDutyAlarmThreshold {
@@ -46,11 +52,90 @@ impl PwmDutyAlarmThreshold {
     }
 }
 
-/// A PWM duty threshold outside zero through one hundred percent.
+/// A PWM duty threshold outside one through one hundred percent.
 #[derive(Clone, Copy, Debug, Eq, Error, PartialEq)]
-#[error("PWM duty alarm threshold {value}% is outside 0% through 100%")]
+#[error("PWM duty alarm threshold {value}% is outside 1% through 100%")]
 pub struct InvalidPwmDutyAlarmThreshold {
     value: u8,
+}
+
+impl InvalidPwmDutyAlarmThreshold {
+    /// Returns the rejected duty percent.
+    #[must_use]
+    pub const fn value(self) -> u8 {
+        self.value
+    }
+}
+
+/// Persisted phone-generated alarm preferences for one device.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct PhoneAlarmPreferences {
+    enabled: bool,
+    pwm_duty_threshold: PwmDutyAlarmThreshold,
+}
+
+impl Default for PhoneAlarmPreferences {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            pwm_duty_threshold: PwmDutyAlarmThreshold(DEFAULT_PWM_DUTY_PERCENT),
+        }
+    }
+}
+
+impl PhoneAlarmPreferences {
+    /// Creates validated phone alarm preferences.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`InvalidPwmDutyAlarmThreshold`] unless duty is 1 through 100 percent.
+    pub fn new(enabled: bool, duty_percent: u8) -> Result<Self, InvalidPwmDutyAlarmThreshold> {
+        Ok(Self {
+            enabled,
+            pwm_duty_threshold: PwmDutyAlarmThreshold::new(duty_percent)?,
+        })
+    }
+
+    /// Returns whether this device may produce phone-generated alarms.
+    #[must_use]
+    pub const fn enabled(self) -> bool {
+        self.enabled
+    }
+
+    /// Returns the configured consumed PWM duty threshold.
+    #[must_use]
+    pub const fn duty_percent(self) -> u8 {
+        self.pwm_duty_threshold.duty_percent()
+    }
+
+    /// Returns the complementary unused PWM headroom threshold.
+    #[must_use]
+    pub const fn headroom_percent(self) -> u8 {
+        self.pwm_duty_threshold.headroom_percent()
+    }
+}
+
+/// Invalid manager input or persisted phone alarm preferences.
+#[derive(Clone, Copy, Debug, Eq, Error, PartialEq)]
+pub enum PhoneAlarmManagerError {
+    /// An active device is required before reading or changing its preferences.
+    #[error("no active device")]
+    NoActiveDevice,
+    /// Device identities must be non-empty and bounded.
+    #[error("invalid device identity")]
+    InvalidDeviceIdentity,
+    /// The PWM duty threshold was outside one through one hundred percent.
+    #[error(transparent)]
+    InvalidPwmDutyThreshold(#[from] InvalidPwmDutyAlarmThreshold),
+    /// The PWM headroom threshold was outside zero through ninety-nine percent.
+    #[error("PWM headroom alarm threshold {0}% is outside 0% through 99%")]
+    InvalidPwmHeadroomThreshold(u8),
+    /// The preference store exceeded its bounded device count.
+    #[error("too many phone alarm preference devices")]
+    TooManyDevices,
+    /// The expected device is no longer active.
+    #[error("active phone alarm device changed")]
+    DeviceIdentityChanged,
 }
 
 /// Freshness of the complete evidence set considered by phone alarms.
@@ -145,6 +230,41 @@ impl PhoneAlarmEvent {
 pub struct PhoneAlarmDeliveryRequest {
     id: u64,
     event: PhoneAlarmEvent,
+}
+
+/// Native effects from one Rust-owned alarm transition.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct PhoneAlarmActions {
+    scheduled: Vec<PhoneAlarmDeliveryRequest>,
+    cancelled_request_ids: Vec<u64>,
+}
+
+impl PhoneAlarmActions {
+    /// Returns alarm deliveries that native code should schedule.
+    #[must_use]
+    pub fn scheduled(&self) -> &[PhoneAlarmDeliveryRequest] {
+        &self.scheduled
+    }
+
+    /// Returns previously scheduled request identities that native code should cancel.
+    #[must_use]
+    pub fn cancelled_request_ids(&self) -> &[u64] {
+        &self.cancelled_request_ids
+    }
+
+    /// Consumes the actions into scheduled deliveries and cancellation identities.
+    #[must_use]
+    pub fn into_parts(self) -> (Vec<PhoneAlarmDeliveryRequest>, Vec<u64>) {
+        (self.scheduled, self.cancelled_request_ids)
+    }
+}
+
+impl std::ops::Deref for PhoneAlarmActions {
+    type Target = [PhoneAlarmDeliveryRequest];
+
+    fn deref(&self) -> &Self::Target {
+        &self.scheduled
+    }
 }
 
 impl PhoneAlarmDeliveryRequest {
@@ -244,13 +364,16 @@ impl PhoneAlarmEvaluator {
         policy: PhoneAlarmPolicy,
         evidence: PhoneAlarmEvidence,
         now: MonotonicTimestamp,
-    ) -> Vec<PhoneAlarmDeliveryRequest> {
+    ) -> PhoneAlarmActions {
         if !policy.enabled || evidence.freshness != PhoneAlarmEvidenceFreshness::Fresh {
-            self.clear();
-            return Vec::new();
+            return PhoneAlarmActions {
+                scheduled: Vec::new(),
+                cancelled_request_ids: self.clear(),
+            };
         }
 
         let mut requests = Vec::with_capacity(3);
+        let mut cancelled_request_ids = Vec::new();
         let pwm_event = evidence
             .pwm_duty
             .and_then(|duty| Self::pwm_event(policy.pwm_duty_threshold, duty));
@@ -259,6 +382,7 @@ impl PhoneAlarmEvaluator {
             policy.pwm_duty_threshold,
             evidence.pwm_duty,
             pwm_event,
+            &mut cancelled_request_ids,
         );
         Self::reserve_if_due(
             &mut self.pwm,
@@ -267,6 +391,7 @@ impl PhoneAlarmEvaluator {
             now,
             &mut self.next_request_id,
             &mut requests,
+            &mut cancelled_request_ids,
         );
 
         let warning_event = evidence
@@ -275,7 +400,7 @@ impl PhoneAlarmEvaluator {
                 RideWarning::None | RideWarning::Unknown => None,
                 warning => Some(PhoneAlarmEvent::ControllerWarning(warning)),
             });
-        Self::clear_if_absent(&mut self.warning, warning_event);
+        Self::clear_if_absent(&mut self.warning, warning_event, &mut cancelled_request_ids);
         Self::reserve_if_due(
             &mut self.warning,
             warning_event,
@@ -283,13 +408,14 @@ impl PhoneAlarmEvaluator {
             now,
             &mut self.next_request_id,
             &mut requests,
+            &mut cancelled_request_ids,
         );
 
         let stop_event = evidence.controller_stop.and_then(|reason| match reason {
             RideStopReason::None => None,
             reason => Some(PhoneAlarmEvent::ControllerStop(reason)),
         });
-        Self::clear_if_absent(&mut self.stop, stop_event);
+        Self::clear_if_absent(&mut self.stop, stop_event, &mut cancelled_request_ids);
         Self::reserve_if_due(
             &mut self.stop,
             stop_event,
@@ -297,8 +423,12 @@ impl PhoneAlarmEvaluator {
             now,
             &mut self.next_request_id,
             &mut requests,
+            &mut cancelled_request_ids,
         );
-        requests
+        PhoneAlarmActions {
+            scheduled: requests,
+            cancelled_request_ids,
+        }
     }
 
     /// Completes one reserved native delivery.
@@ -332,10 +462,14 @@ impl PhoneAlarmEvaluator {
         now: MonotonicTimestamp,
         next_request_id: &mut u64,
         requests: &mut Vec<PhoneAlarmDeliveryRequest>,
+        cancelled_request_ids: &mut Vec<u64>,
     ) {
         let Some(event) = event else { return };
         let condition = event.condition();
         if state.active != Some(condition) {
+            if let Some(id) = state.pending_request_id.take() {
+                cancelled_request_ids.push(id);
+            }
             state.active = Some(condition);
             state.delivered_at = None;
             state.failed_at = None;
@@ -376,11 +510,14 @@ impl PhoneAlarmEvaluator {
         threshold: PwmDutyAlarmThreshold,
         duty: Option<DutyCycle>,
         event: Option<PhoneAlarmEvent>,
+        cancelled_request_ids: &mut Vec<u64>,
     ) {
         if event.is_some() {
             return;
         }
-        state.pending_request_id = None;
+        if let Some(id) = state.pending_request_id.take() {
+            cancelled_request_ids.push(id);
+        }
         let should_clear =
             duty.is_none_or(|duty| duty.as_permille().unsigned_abs() <= threshold.rearm_permille());
         if should_clear {
@@ -388,16 +525,254 @@ impl PhoneAlarmEvaluator {
         }
     }
 
-    fn clear_if_absent(state: &mut PhoneAlarmChannelState, event: Option<PhoneAlarmEvent>) {
+    fn clear_if_absent(
+        state: &mut PhoneAlarmChannelState,
+        event: Option<PhoneAlarmEvent>,
+        cancelled_request_ids: &mut Vec<u64>,
+    ) {
         if event.is_none() {
+            if let Some(id) = state.pending_request_id {
+                cancelled_request_ids.push(id);
+            }
             state.clear();
         }
     }
 
-    fn clear(&mut self) {
+    fn clear(&mut self) -> Vec<u64> {
+        let cancelled_request_ids = [&self.pwm, &self.warning, &self.stop]
+            .into_iter()
+            .filter_map(|state| state.pending_request_id)
+            .collect();
         self.pwm.clear();
         self.warning.clear();
         self.stop.clear();
+        cancelled_request_ids
+    }
+}
+
+/// Rust-owned phone alarm preferences and delivery lifecycle for every device.
+#[derive(Debug, Default)]
+pub struct PhoneAlarmManager {
+    active_identity: Option<String>,
+    preferences: BTreeMap<String, PhoneAlarmPreferences>,
+    evaluator: PhoneAlarmEvaluator,
+    cancelled_request_ids: Vec<u64>,
+}
+
+impl PhoneAlarmManager {
+    /// Makes one platform-scoped device identity active and returns its preferences.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`PhoneAlarmManagerError::InvalidDeviceIdentity`] for an empty or oversized
+    /// identity, or [`PhoneAlarmManagerError::TooManyDevices`] when the bounded store is full.
+    pub fn activate_device(
+        &mut self,
+        identity: String,
+    ) -> Result<PhoneAlarmPreferences, PhoneAlarmManagerError> {
+        Self::validate_identity(&identity)?;
+        let identity_changed = self.active_identity.as_deref() != Some(identity.as_str());
+        if !self.preferences.contains_key(&identity)
+            && self.preferences.len() >= MAX_PHONE_ALARM_DEVICES
+        {
+            return Err(PhoneAlarmManagerError::TooManyDevices);
+        }
+        let preferences = *self.preferences.entry(identity.clone()).or_default();
+        self.active_identity = Some(identity);
+        if identity_changed {
+            self.invalidate();
+        }
+        Ok(preferences)
+    }
+
+    /// Clears the active session identity and invalidates every in-flight delivery.
+    pub fn clear_active_device(&mut self) {
+        self.active_identity = None;
+        self.invalidate();
+    }
+
+    /// Returns the active device's alarm preferences.
+    #[must_use]
+    pub fn active_preferences(&self) -> Option<PhoneAlarmPreferences> {
+        self.active_identity
+            .as_ref()
+            .and_then(|identity| self.preferences.get(identity))
+            .copied()
+    }
+
+    /// Returns the active platform-scoped device identity.
+    #[must_use]
+    pub fn active_identity(&self) -> Option<&str> {
+        self.active_identity.as_deref()
+    }
+
+    /// Returns preferences only when `identity` is still the active device.
+    ///
+    /// # Errors
+    ///
+    /// Returns a typed identity error for invalid input, no active device, or an identity switch.
+    pub fn active_preferences_for(
+        &self,
+        identity: &str,
+    ) -> Result<PhoneAlarmPreferences, PhoneAlarmManagerError> {
+        Self::validate_identity(identity)?;
+        let active_identity = self
+            .active_identity()
+            .ok_or(PhoneAlarmManagerError::NoActiveDevice)?;
+        if active_identity != identity {
+            return Err(PhoneAlarmManagerError::DeviceIdentityChanged);
+        }
+        self.active_preferences()
+            .ok_or(PhoneAlarmManagerError::NoActiveDevice)
+    }
+
+    /// Enables or disables phone alarms for the active device.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`PhoneAlarmManagerError::NoActiveDevice`] without an active identity.
+    pub fn set_enabled(&mut self, enabled: bool) -> Result<(), PhoneAlarmManagerError> {
+        self.update_active_preferences(|preferences| preferences.enabled = enabled)
+    }
+
+    /// Sets the active device's threshold as consumed PWM duty percent.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`PhoneAlarmManagerError::NoActiveDevice`] without an active identity, or
+    /// [`PhoneAlarmManagerError::InvalidPwmDutyThreshold`] outside 1 through 100 percent.
+    pub fn set_duty_percent(&mut self, duty_percent: u8) -> Result<(), PhoneAlarmManagerError> {
+        let threshold = PwmDutyAlarmThreshold::new(duty_percent)?;
+        self.update_active_preferences(|preferences| {
+            preferences.pwm_duty_threshold = threshold;
+        })
+    }
+
+    /// Sets the active device's threshold as unused PWM headroom percent.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`PhoneAlarmManagerError::NoActiveDevice`] without an active identity, or
+    /// [`PhoneAlarmManagerError::InvalidPwmHeadroomThreshold`] outside 0 through 99 percent.
+    pub fn set_headroom_percent(
+        &mut self,
+        headroom_percent: u8,
+    ) -> Result<(), PhoneAlarmManagerError> {
+        let Some(duty_percent) = 100_u8.checked_sub(headroom_percent) else {
+            return Err(PhoneAlarmManagerError::InvalidPwmHeadroomThreshold(
+                headroom_percent,
+            ));
+        };
+        self.set_duty_percent(duty_percent)
+    }
+
+    /// Reserves every independent delivery due for the active device.
+    pub fn evaluate(
+        &mut self,
+        evidence: PhoneAlarmEvidence,
+        now: MonotonicTimestamp,
+    ) -> PhoneAlarmActions {
+        let Some(preferences) = self.active_preferences() else {
+            self.invalidate();
+            return self.with_pending_cancellations(PhoneAlarmActions::default());
+        };
+        if !preferences.enabled || evidence.freshness != PhoneAlarmEvidenceFreshness::Fresh {
+            self.invalidate();
+            return self.with_pending_cancellations(PhoneAlarmActions::default());
+        }
+        let policy =
+            PhoneAlarmPolicy::enabled(preferences.pwm_duty_threshold, PHONE_ALARM_REPEAT_AFTER);
+        let actions = self.evaluator.evaluate(policy, evidence, now);
+        self.with_pending_cancellations(actions)
+    }
+
+    /// Completes one active device delivery reserved by [`Self::evaluate`].
+    pub fn complete_delivery(
+        &mut self,
+        request_id: u64,
+        delivered: bool,
+        now: MonotonicTimestamp,
+    ) -> bool {
+        self.active_identity.is_some()
+            && self.evaluator.complete_delivery(request_id, delivered, now)
+    }
+
+    /// Invalidates all in-flight deliveries while retaining preferences and request sequencing.
+    pub fn invalidate_deliveries(&mut self) -> Vec<u64> {
+        let mut cancelled = std::mem::take(&mut self.cancelled_request_ids);
+        cancelled.extend(self.evaluator.clear());
+        cancelled
+    }
+
+    /// Drains cancellation identities queued by identity or preference changes.
+    pub fn take_cancelled_request_ids(&mut self) -> Vec<u64> {
+        std::mem::take(&mut self.cancelled_request_ids)
+    }
+
+    /// Restores typed persisted preferences for a device without activating it.
+    ///
+    /// # Errors
+    ///
+    /// Returns a typed identity or bounded-store error.
+    pub fn restore_preferences(
+        &mut self,
+        identity: String,
+        preferences: PhoneAlarmPreferences,
+    ) -> Result<(), PhoneAlarmManagerError> {
+        Self::validate_identity(&identity)?;
+        if !self.preferences.contains_key(&identity)
+            && self.preferences.len() >= MAX_PHONE_ALARM_DEVICES
+        {
+            return Err(PhoneAlarmManagerError::TooManyDevices);
+        }
+        let active_changed = self.active_identity.as_deref() == Some(identity.as_str())
+            && self.preferences.get(&identity).copied() != Some(preferences);
+        self.preferences.insert(identity, preferences);
+        if active_changed {
+            self.invalidate();
+        }
+        Ok(())
+    }
+
+    fn update_active_preferences(
+        &mut self,
+        update: impl FnOnce(&mut PhoneAlarmPreferences),
+    ) -> Result<(), PhoneAlarmManagerError> {
+        let identity = self
+            .active_identity
+            .as_ref()
+            .ok_or(PhoneAlarmManagerError::NoActiveDevice)?;
+        let preferences = self
+            .preferences
+            .get_mut(identity)
+            .ok_or(PhoneAlarmManagerError::NoActiveDevice)?;
+        let previous = *preferences;
+        update(preferences);
+        if *preferences != previous {
+            self.invalidate();
+        }
+        Ok(())
+    }
+
+    fn validate_identity(identity: &str) -> Result<(), PhoneAlarmManagerError> {
+        if identity.trim().is_empty() || identity.len() > MAX_DEVICE_IDENTITY_BYTES {
+            Err(PhoneAlarmManagerError::InvalidDeviceIdentity)
+        } else {
+            Ok(())
+        }
+    }
+
+    fn invalidate(&mut self) {
+        self.cancelled_request_ids.extend(self.evaluator.clear());
+    }
+
+    fn with_pending_cancellations(&mut self, mut actions: PhoneAlarmActions) -> PhoneAlarmActions {
+        if !self.cancelled_request_ids.is_empty() {
+            self.cancelled_request_ids
+                .append(&mut actions.cancelled_request_ids);
+            actions.cancelled_request_ids = std::mem::take(&mut self.cancelled_request_ids);
+        }
+        actions
     }
 }
 
@@ -426,6 +801,15 @@ mod tests {
 
         assert_eq!(threshold.duty_percent(), 80);
         assert_eq!(threshold.headroom_percent(), 20);
+        assert!(PwmDutyAlarmThreshold::new(0).is_err());
+        assert_eq!(
+            PwmDutyAlarmThreshold::new(1).unwrap().headroom_percent(),
+            99
+        );
+        assert_eq!(
+            PwmDutyAlarmThreshold::new(100).unwrap().headroom_percent(),
+            0
+        );
         assert!(PwmDutyAlarmThreshold::new(101).is_err());
     }
 
@@ -541,5 +925,142 @@ mod tests {
                 .is_empty()
         );
         assert_eq!(evaluator.evaluate(policy(), evidence, at(12_200)).len(), 1);
+    }
+
+    #[test]
+    fn manager_owns_per_device_preferences_and_duty_headroom_semantics() {
+        let mut manager = PhoneAlarmManager::default();
+        manager.activate_device("wheel-a".to_owned()).unwrap();
+
+        assert_eq!(manager.active_preferences().unwrap().duty_percent(), 80);
+        assert_eq!(manager.active_preferences().unwrap().headroom_percent(), 20);
+        manager.set_enabled(true).unwrap();
+        manager.set_headroom_percent(15).unwrap();
+        assert_eq!(manager.active_preferences().unwrap().duty_percent(), 85);
+        assert_eq!(manager.active_preferences().unwrap().headroom_percent(), 15);
+
+        manager.activate_device("wheel-b".to_owned()).unwrap();
+        assert!(!manager.active_preferences().unwrap().enabled());
+        assert_eq!(manager.active_preferences().unwrap().duty_percent(), 80);
+        assert!(manager.set_duty_percent(0).is_err());
+        assert!(manager.set_duty_percent(101).is_err());
+        manager.set_headroom_percent(0).unwrap();
+        assert_eq!(manager.active_preferences().unwrap().duty_percent(), 100);
+        manager.set_headroom_percent(99).unwrap();
+        assert_eq!(manager.active_preferences().unwrap().duty_percent(), 1);
+        assert!(manager.set_headroom_percent(100).is_err());
+
+        manager.activate_device("wheel-a".to_owned()).unwrap();
+        assert!(manager.active_preferences().unwrap().enabled());
+        assert_eq!(manager.active_preferences().unwrap().duty_percent(), 85);
+    }
+
+    #[test]
+    fn manager_evaluates_active_device_with_fixed_repeat_policy() {
+        let mut manager = PhoneAlarmManager::default();
+        manager.activate_device("wheel-a".to_owned()).unwrap();
+        manager.set_enabled(true).unwrap();
+
+        let request = manager.evaluate(pwm_evidence(850), at(1_000)).scheduled()[0];
+        assert!(manager.complete_delivery(request.id(), true, at(1_100)));
+        assert!(
+            manager
+                .evaluate(pwm_evidence(850), at(30_999))
+                .scheduled()
+                .is_empty()
+        );
+        assert_eq!(
+            manager
+                .evaluate(pwm_evidence(850), at(31_100))
+                .scheduled()
+                .len(),
+            1
+        );
+    }
+
+    #[test]
+    fn manager_invalidates_in_flight_delivery_on_identity_settings_and_stale_state() {
+        let mut manager = PhoneAlarmManager::default();
+        manager.activate_device("wheel-a".to_owned()).unwrap();
+        manager.set_enabled(true).unwrap();
+        let identity_request = manager.evaluate(pwm_evidence(850), at(1)).scheduled()[0];
+
+        manager.activate_device("wheel-b".to_owned()).unwrap();
+        assert!(!manager.complete_delivery(identity_request.id(), true, at(2)));
+        manager.set_enabled(true).unwrap();
+        let identity_actions = manager.evaluate(pwm_evidence(850), at(3));
+        assert_eq!(
+            identity_actions.cancelled_request_ids(),
+            &[identity_request.id()]
+        );
+        let settings_request = identity_actions.scheduled()[0];
+        assert!(settings_request.id() > identity_request.id());
+        manager.set_duty_percent(90).unwrap();
+        assert!(!manager.complete_delivery(settings_request.id(), true, at(4)));
+
+        manager.set_duty_percent(80).unwrap();
+        let settings_actions = manager.evaluate(pwm_evidence(850), at(5));
+        assert_eq!(
+            settings_actions.cancelled_request_ids(),
+            &[settings_request.id()]
+        );
+        let stale_request = settings_actions.scheduled()[0];
+        let stale_actions = manager.evaluate(PhoneAlarmEvidence::stale(), at(6));
+        assert!(stale_actions.scheduled().is_empty());
+        assert_eq!(stale_actions.cancelled_request_ids(), &[stale_request.id()]);
+        assert!(!manager.complete_delivery(stale_request.id(), true, at(7)));
+    }
+
+    #[test]
+    fn manager_restores_typed_per_device_preferences() {
+        let mut manager = PhoneAlarmManager::default();
+        manager
+            .restore_preferences(
+                "wheel-a".to_owned(),
+                PhoneAlarmPreferences::new(true, 90).unwrap(),
+            )
+            .unwrap();
+
+        manager.activate_device("wheel-a".to_owned()).unwrap();
+        assert!(manager.active_preferences().unwrap().enabled());
+        assert_eq!(manager.active_preferences().unwrap().headroom_percent(), 10);
+    }
+
+    #[test]
+    fn manager_rejects_invalid_identity() {
+        let mut manager = PhoneAlarmManager::default();
+        assert!(manager.activate_device(String::new()).is_err());
+        assert!(manager.activate_device(" \t".to_owned()).is_err());
+        assert!(
+            manager
+                .restore_preferences(String::new(), PhoneAlarmPreferences::default())
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn manager_preserves_nonempty_opaque_identity_bytes() {
+        let mut manager = PhoneAlarmManager::default();
+        manager.activate_device(" wheel-a ".to_owned()).unwrap();
+        manager.set_enabled(true).unwrap();
+        manager.activate_device("wheel-a".to_owned()).unwrap();
+
+        assert!(!manager.active_preferences().unwrap().enabled());
+    }
+
+    #[test]
+    fn manager_rejects_settings_for_a_replaced_identity() {
+        let mut manager = PhoneAlarmManager::default();
+        manager.activate_device("wheel-a".to_owned()).unwrap();
+        assert_eq!(
+            manager.active_preferences_for("wheel-a").unwrap(),
+            PhoneAlarmPreferences::default()
+        );
+        manager.activate_device("wheel-b".to_owned()).unwrap();
+
+        assert_eq!(
+            manager.active_preferences_for("wheel-a"),
+            Err(PhoneAlarmManagerError::DeviceIdentityChanged)
+        );
     }
 }
