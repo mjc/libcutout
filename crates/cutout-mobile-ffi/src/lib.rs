@@ -9615,6 +9615,7 @@ impl MobileRideMapCoreInner {
             completed.push(match result {
                 Ok(result) if result.admission() == ride_maps::LocationAdmission::Accepted => {
                     self.recorder.record_sample(pending.sample);
+                    self.revision = self.revision.saturating_add(1);
                     let mut point = pending.point;
                     if let Some(sequence) = result.sequence() {
                         point.sequence = sequence;
@@ -9797,6 +9798,7 @@ impl MobileRideMapCoreInner {
         }
         self.admission_recorder.record_sample(sample);
         self.recorder = self.admission_recorder.clone();
+        self.revision = self.revision.saturating_add(1);
         Ok(MobileRideMapCoreDecisionDto::Accepted {
             point,
             segment_started,
@@ -10337,6 +10339,7 @@ impl MobileRideMapCore {
                     )
                     .map_err(map_core_error)?;
             }
+            state.revision = state.revision.saturating_add(1);
         }
         state.recorder = durable_staged;
         state.admission_recorder = staged;
@@ -10765,6 +10768,7 @@ impl MobileRideMapCore {
                     )
                     .map_err(map_core_error)?;
             }
+            state.revision = state.revision.saturating_add(1);
         }
         state.recorder = durable_staged;
         state.admission_recorder = staged;
@@ -10802,6 +10806,7 @@ impl MobileRideMapCore {
                     )
                     .map_err(map_core_error)?;
             }
+            state.revision = state.revision.saturating_add(1);
         }
         state.recorder = durable_staged;
         state.admission_recorder = staged;
@@ -22832,17 +22837,12 @@ mod tests {
                 .expect("location queues without waiting"),
             MobileRideMapCoreDecisionDto::Pending { .. }
         ));
-        state.stop(1_002).expect("recording stops");
-        state.save().expect("recording saves");
-
-        let settled = drain_location_writes(&state);
-        assert!(settled.iter().any(|decision| matches!(
-            decision,
-            MobileRideMapCoreDecisionDto::Accepted {
-                point: MobileRideMapCorePointDto { sequence: 0, .. },
-                ..
-            }
-        )));
+        let stopped = state.stop(1_002).expect("recording stops");
+        let saved = state.save().expect("recording saves");
+        assert_eq!(stopped.summary.point_count, 1);
+        assert_eq!(saved.summary.point_count, 1);
+        assert!(!state.has_pending_location_writes());
+        assert!(state.poll_location_writes().is_empty());
         let inner = state.inner.lock().unwrap_or_else(PoisonError::into_inner);
         assert_eq!(inner.recorder.summary().point_count().as_u64(), 1);
         drop(inner);
@@ -22946,6 +22946,7 @@ mod tests {
         assert_eq!(snapshot.associated_vehicle, Some("pev-1".to_owned()));
         assert_eq!(snapshot.summary.point_count, 0);
         state.stop(3_000).expect("the live map ride stops");
+        state.save().expect("the stopped ride saves");
         let restarted = state
             .ensure_recording_for_vehicle("pev-1".to_owned(), 2_000)
             .expect("a later connection starts a fresh live map ride");
@@ -22978,6 +22979,9 @@ mod tests {
             let database =
                 open_ride_database(path.to_string_lossy().into_owned()).expect("database reopens");
             let state = MobileRideMapCore::with_database(database.clone());
+            let recovered = state.current_snapshot(1_000).expect("recovered snapshot");
+            assert_eq!(recovered.allowed_actions, vec![MobileRideEventDto::Resume, MobileRideEventDto::Save, MobileRideEventDto::Discard]);
+            assert!(recovered.recording_token.is_none());
             let resumed = if use_resume_at {
                 state.resume_at(1_000)
             } else {
@@ -23405,7 +23409,7 @@ mod tests {
 
         state.stop(4_000).expect("map recording stops");
         state.save().expect("map recording saves");
-        assert!(state.current_snapshot(4_000).is_none());
+        assert_eq!(state.current_snapshot(4_000).unwrap().state, MobileRideLifecycleStateDto::Saved);
         let rides = database.list_rides(None, 1).expect("saved ride lists");
         assert!(rides.rides[0].created_at_milliseconds >= 100_000_000_000);
         database.shutdown().expect("map database shuts down");
