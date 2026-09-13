@@ -95,6 +95,131 @@ mod tests {
     }
 
     #[test]
+    fn saved_vesc_geometry_is_attempt_scoped_and_does_not_invent_vehicle_kind() {
+        let mut owner = DeviceConnectionSession::default();
+        let token = begin(&mut owner, "A");
+        let profile = crate::VescBoardProfile::new(
+            crate::MotorPolePairs::new(1),
+            crate::GearRatioDenominator::new(1),
+            cutout_core::Distance::from_millimetres(60),
+        );
+        assert!(owner.configure_vesc_board_profile(&token, profile));
+        let read = |owner: &mut DeviceConnectionSession, token: &ConnectionAttemptToken| {
+            let _ = owner.observe_for_attempt(
+                token,
+                DeviceDetectionEvent::Notification { bytes: VESC_REPLY },
+            );
+            owner.resolve(token, false, MonotonicTimestamp::new(1));
+            let _ = owner.ingest(
+                token,
+                &SessionInputDto::LinkUp {
+                    monotonic_ms: cutout_core::MonotonicMillisDto { milliseconds: 1 },
+                    max_write_len: None,
+                },
+            );
+            owner
+                .ingest(
+                    token,
+                    &SessionInputDto::Notification {
+                        channel: crate::VESC_NOTIFY_CHANNEL.as_bytes(),
+                        bytes: vec![
+                            2, 23, 50, 0, 2, 161, 138, 0, 0, 0, 0, 0, 4, 0, 0, 3, 221, 1, 119, 255,
+                            255, 170, 43, 0, 20, 45, 58, 3,
+                        ],
+                        monotonic_ms: cutout_core::MonotonicMillisDto { milliseconds: 2 },
+                    },
+                )
+                .unwrap()
+        };
+        let first = read(&mut owner, &token);
+        assert_eq!(first.telemetry.speed.unwrap().value, 989);
+        assert_eq!(
+            first.session.identity.unwrap().vehicle_kind,
+            crate::VehicleKind::Unknown
+        );
+        assert!(
+            !owner.configure_vesc_board_profile(&token, profile),
+            "live decoder configuration is immutable"
+        );
+        let replacement = begin(&mut owner, "B");
+        assert!(!owner.configure_vesc_board_profile(&token, profile));
+        assert!(read(&mut owner, &replacement).telemetry.speed.is_none());
+    }
+
+    #[test]
+    fn verified_vesc_starts_protocol_owned_polling_after_subscription() {
+        let mut owner = DeviceConnectionSession::default();
+        let token = begin(&mut owner, "VESC");
+        let _ = owner.observe_for_attempt(
+            &token,
+            DeviceDetectionEvent::Notification { bytes: VESC_REPLY },
+        );
+        owner.resolve(&token, false, MonotonicTimestamp::new(1));
+        let step = owner
+            .ingest(
+                &token,
+                &SessionInputDto::LinkUp {
+                    monotonic_ms: cutout_core::MonotonicMillisDto { milliseconds: 1 },
+                    max_write_len: None,
+                },
+            )
+            .unwrap();
+        let subscribe = step
+            .result
+            .outputs
+            .iter()
+            .position(|output| {
+                matches!(
+                    output,
+                    SessionOutput::Transport(cutout_core::TransportAction::Subscribe { .. })
+                )
+            })
+            .unwrap();
+        let write = step
+            .result
+            .outputs
+            .iter()
+            .position(|output| {
+                matches!(
+                    output,
+                    SessionOutput::Transport(cutout_core::TransportAction::Write { .. })
+                )
+            })
+            .expect("generic link-up starts the existing VESC polling owner");
+        assert!(
+            subscribe < write,
+            "native must enable notifications before initial requests"
+        );
+        let tick = owner
+            .ingest(
+                &token,
+                &SessionInputDto::Tick {
+                    monotonic_ms: cutout_core::MonotonicMillisDto {
+                        milliseconds: 2_001,
+                    },
+                },
+            )
+            .unwrap();
+        assert!(tick.result.outputs.iter().any(|output| matches!(
+            output,
+            SessionOutput::Transport(cutout_core::TransportAction::Write { .. })
+        )));
+        owner.link_down(&token);
+        assert!(
+            owner
+                .ingest(
+                    &token,
+                    &SessionInputDto::Tick {
+                        monotonic_ms: cutout_core::MonotonicMillisDto {
+                            milliseconds: 4_001
+                        },
+                    }
+                )
+                .is_none()
+        );
+    }
+
+    #[test]
     fn verified_link_loss_retires_decoder_before_queued_input() {
         let mut owner = DeviceConnectionSession::default();
         let token = begin(&mut owner, "A");
@@ -244,12 +369,14 @@ pub struct DeviceConnectionSession {
     /// Protocol-selected decoder, never selected by native model dispatch.
     pub device: Option<DeviceSession>,
     last_input_at: MonotonicTimestamp,
+    vesc_board_profile: Option<crate::VescBoardProfile>,
 }
 
 impl DeviceConnectionSession {
     /// Replaces all device-scoped state before native work for the new attempt.
     pub fn begin_attempt(&mut self, platform_identifier: String, at: MonotonicTimestamp) {
         self.last_input_at = at;
+        self.vesc_board_profile = None;
         self.state.reset_device_identity();
         self.state
             .select_discovered_platform(platform_identifier.clone());
@@ -258,6 +385,21 @@ impl DeviceConnectionSession {
         self.detector = DeviceDetectionSession::default();
         self.device = None;
         self.state.connection.begin(platform_identifier, at);
+    }
+
+    /// Supplies saved controller geometry for this pending attempt without asserting identity.
+    pub fn configure_vesc_board_profile(
+        &mut self,
+        token: &ConnectionAttemptToken,
+        profile: crate::VescBoardProfile,
+    ) -> bool {
+        if !self.state.connection.is_current(token)
+            || self.state.connection.snapshot().readiness != ConnectionReadiness::Pending
+        {
+            return false;
+        }
+        self.vesc_board_profile = Some(profile);
+        true
     }
 
     /// Ends the attempt before native cancellation or explicit selection replacement.
@@ -321,7 +463,9 @@ impl DeviceConnectionSession {
             return;
         }
         let resolution = self.detector.resolution(&self.state);
-        if let Some(device) = DeviceSession::from_detection(&resolution) {
+        if let Some(device) =
+            DeviceSession::from_detection_with_vesc_profile(&resolution, self.vesc_board_profile)
+        {
             let identity = device.identity();
             if (identification_complete
                 || identity.model.is_some()
