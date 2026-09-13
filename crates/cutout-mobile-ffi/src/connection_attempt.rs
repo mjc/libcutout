@@ -86,7 +86,9 @@ impl CutoutSessionStateHandle {
     ) -> MobileConnectionAttemptSnapshotDto {
         let mut inner = self.lock_inner();
         inner.state.reset_device_identity();
+        inner.state.settings = cutout_core::DeviceSettingsState::default();
         inner.detector = DeviceDetectionSession::default();
+        inner.device = None;
         inner
             .state
             .connection
@@ -136,6 +138,8 @@ impl CutoutSessionStateHandle {
     pub fn disconnect_connection_attempt(&self) -> MobileConnectionAttemptSnapshotDto {
         let mut inner = self.lock_inner();
         inner.state.connection.disconnect();
+        inner.state.settings.disconnect();
+        inner.device = None;
         inner.state.connection.snapshot().into()
     }
 
@@ -146,6 +150,19 @@ impl CutoutSessionStateHandle {
     ) -> MobileConnectionAttemptSnapshotDto {
         let mut inner = self.lock_inner();
         inner.state.connection.transport_failed(&token.into());
+        if inner.state.connection.snapshot().readiness == ConnectionReadiness::Failed {
+            inner.device = None;
+            inner.state.settings.disconnect();
+        }
+        inner.state.connection.snapshot().into()
+    }
+
+    /// Invalidates a capture that can no longer preserve incoming evidence.
+    pub fn fail_connection_capture(&self) -> MobileConnectionAttemptSnapshotDto {
+        let mut inner = self.lock_inner();
+        inner.state.connection.fail_capture();
+        inner.state.settings.disconnect();
+        inner.device = None;
         inner.state.connection.snapshot().into()
     }
 }
