@@ -1,8 +1,6 @@
 use cutout_core::{
-    Capabilities, ControlRefusal, ControlRefusalDto, ControlRefusalReason, DeviceCommand,
-    HostSession, MonotonicTimestamp, ParserDiagnosticsDto, RideOperatingState,
-    RideOperatingStateDto, SessionEventDto, SessionInput, SessionInputDto, SessionOutputDto,
-    TelemetrySnapshotDto,
+    ControlRefusalDto, HostSession, MonotonicTimestamp, ParserDiagnosticsDto, RideOperatingState,
+    RideOperatingStateDto, SessionInput, SessionInputDto, SessionOutputDto, TelemetrySnapshotDto,
 };
 
 use crate::{
@@ -15,10 +13,10 @@ type AeroBenignControlHost = HostSession<StationarySettingsWriteSession<NosfetAe
 type FalconBenignControlHost = HostSession<StationarySettingsWriteSession<BegodeFalconModel, true>>;
 type VescReadOnlyHost = HostSession<ReadOnlySession<VescGenericModel, true>>;
 
-fn output_is_telemetry(output: &SessionOutputDto) -> bool {
+fn output_is_telemetry(output: &cutout_core::SessionOutput) -> bool {
     matches!(
         output,
-        SessionOutputDto::Event(SessionEventDto::Telemetry(_))
+        cutout_core::SessionOutput::Event(cutout_core::DeviceEvent::Telemetry(_))
     )
 }
 
@@ -30,6 +28,19 @@ pub struct ConcreteSessionStepResultDto {
 
     /// Stable error value surfaced from outputs or construction checks.
     pub error: Option<ConcreteSessionErrorDto>,
+}
+
+impl From<crate::DeviceSessionStep> for ConcreteSessionStepResultDto {
+    fn from(value: crate::DeviceSessionStep) -> Self {
+        Self {
+            outputs: value.outputs.into_iter().map(Into::into).collect(),
+            error: value
+                .error
+                .map(|refusal| ConcreteSessionErrorDto::CommandRefused {
+                    refusal: refusal.into(),
+                }),
+        }
+    }
 }
 
 /// Stable concrete mobile-wrapper error DTO.
@@ -116,8 +127,13 @@ impl ConcreteAeroBenignControlSession {
     /// Drives one DTO input and returns owned outputs plus any stable error DTO.
     #[must_use]
     pub fn ingest_checked(&mut self, input: &SessionInputDto) -> ConcreteSessionStepResultDto {
+        self.ingest_typed(input).into()
+    }
+
+    /// Drains original domain outputs before conversion for shared state owners.
+    pub(crate) fn ingest_typed(&mut self, input: &SessionInputDto) -> crate::DeviceSessionStep {
         self.ingest(input);
-        let result = checked_drain_outputs(
+        let result = crate::DeviceSessionStep::drain(
             &mut self.host,
             input,
             StationarySettingsWriteSession::<NosfetAeroModel, false>::capabilities(),
@@ -234,8 +250,13 @@ impl ConcreteFalconBenignControlSession {
     /// Drives one DTO input and returns owned outputs plus any stable error DTO.
     #[must_use]
     pub fn ingest_checked(&mut self, input: &SessionInputDto) -> ConcreteSessionStepResultDto {
+        self.ingest_typed(input).into()
+    }
+
+    /// Drains original domain outputs before conversion for shared state owners.
+    pub(crate) fn ingest_typed(&mut self, input: &SessionInputDto) -> crate::DeviceSessionStep {
         self.ingest(input);
-        let result = checked_drain_outputs(
+        let result = crate::DeviceSessionStep::drain(
             &mut self.host,
             input,
             StationarySettingsWriteSession::<BegodeFalconModel, true>::capabilities(),
@@ -312,8 +333,13 @@ impl VescReadOnlySession {
     /// Drives one DTO input and returns owned outputs plus any stable error DTO.
     #[must_use]
     pub fn ingest_checked(&mut self, input: &SessionInputDto) -> ConcreteSessionStepResultDto {
+        self.ingest_typed(input).into()
+    }
+
+    /// Drains original domain outputs before conversion for shared state owners.
+    pub(crate) fn ingest_typed(&mut self, input: &SessionInputDto) -> crate::DeviceSessionStep {
         self.ingest(input);
-        checked_drain_outputs(
+        crate::DeviceSessionStep::drain(
             &mut self.host,
             input,
             ReadOnlySession::<VescGenericModel, true>::capabilities(),
@@ -421,63 +447,6 @@ pub fn try_new_begode_falcon_benign_control_session(
 #[must_use]
 pub fn new_vesc_read_only_session() -> VescReadOnlySession {
     VescReadOnlySession::new()
-}
-
-fn checked_drain_outputs<S>(
-    host: &mut HostSession<S>,
-    input: &SessionInputDto,
-    capabilities: Capabilities,
-) -> ConcreteSessionStepResultDto
-where
-    S: cutout_core::ProtocolSession,
-{
-    let outputs = drain_host_outputs(host);
-    ConcreteSessionStepResultDto {
-        error: first_error(input, capabilities, &outputs),
-        outputs,
-    }
-}
-
-fn first_error(
-    input: &SessionInputDto,
-    capabilities: Capabilities,
-    outputs: &[SessionOutputDto],
-) -> Option<ConcreteSessionErrorDto> {
-    outputs.iter().find_map(output_error).or_else(|| {
-        input_command_refusal(input, capabilities)
-            .map(|refusal| ConcreteSessionErrorDto::CommandRefused { refusal })
-    })
-}
-
-fn output_error(output: &SessionOutputDto) -> Option<ConcreteSessionErrorDto> {
-    match output {
-        SessionOutputDto::Event(SessionEventDto::ControlRefusal(refusal)) => {
-            Some(ConcreteSessionErrorDto::CommandRefused { refusal: *refusal })
-        }
-        SessionOutputDto::Transport(_)
-        | SessionOutputDto::ReadOnly(_)
-        | SessionOutputDto::Event(_)
-        | SessionOutputDto::NotificationIngest(_) => None,
-    }
-}
-
-fn input_command_refusal(
-    input: &SessionInputDto,
-    capabilities: Capabilities,
-) -> Option<ControlRefusalDto> {
-    let (SessionInputDto::Command(command) | SessionInputDto::CommandAt { command, .. }) = input
-    else {
-        return None;
-    };
-    let command = DeviceCommand::from(*command);
-    let kind = command.kind();
-    (!capabilities.supports_command_kind(kind)).then(|| {
-        ControlRefusalDto::from(ControlRefusal {
-            command: kind,
-            safety_class: command.safety_class(),
-            reason: ControlRefusalReason::UnsupportedCommand,
-        })
-    })
 }
 
 fn ingest_timestamped_command<S>(host: &mut HostSession<S>, input: &SessionInputDto)

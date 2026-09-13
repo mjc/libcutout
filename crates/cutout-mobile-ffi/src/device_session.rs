@@ -80,7 +80,7 @@ impl From<DeviceConnectionStep> for MobileDeviceSessionStepDto {
     fn from(value: DeviceConnectionStep) -> Self {
         Self {
             session: value.session.into(),
-            result: value.result.into(),
+            result: cutout_protocols::ConcreteSessionStepResultDto::from(value.result).into(),
             telemetry: value.telemetry.into(),
             diagnostics: value.diagnostics.into(),
         }
