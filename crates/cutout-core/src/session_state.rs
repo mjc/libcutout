@@ -426,6 +426,30 @@ impl DiscoveryState {
             .filter_map(DiscoveryCandidateSnapshot::from_observation)
             .collect()
     }
+
+    /// Returns retained unrecognized peripherals only for explicit advanced capture selection.
+    #[must_use]
+    pub fn advanced_capture_candidates(&self) -> Vec<DiscoveryCandidateSnapshot> {
+        self.observations
+            .iter()
+            .filter(|observation| {
+                DiscoveryCandidateSnapshot::from_observation(observation).is_none()
+            })
+            .map(|observation| DiscoveryCandidateSnapshot {
+                platform_identifier: observation.platform_identifier.clone(),
+                display_name: observation
+                    .advertised_name_text()
+                    .unwrap_or("Unknown Bluetooth device")
+                    .to_owned(),
+                product_category: "Unknown device".to_owned(),
+                evidence: "Retained Bluetooth advertisement".to_owned(),
+                detail: "Capture only; protocol unknown".to_owned(),
+                support: DiscoveryCandidateSupport::UnknownRecordable,
+                connection_route: None,
+                electric_unicycle_model: None,
+            })
+            .collect()
+    }
 }
 
 /// A normalized 128-bit Bluetooth service UUID.
@@ -800,6 +824,31 @@ mod tests {
                 .next_probe_expiry(crate::Duration::from_milliseconds(2_000)),
             None
         );
+    }
+
+    #[test]
+    fn advanced_capture_retains_unknowns_without_adding_default_picker_noise() {
+        let mut state = CutoutSessionState::default();
+        state.observe_discovery(discovery_observation("unknown", b"My PEV", vec![], -42));
+        state.observe_discovery(discovery_observation(
+            "known-uart",
+            b"UART",
+            vec![BluetoothServiceUuid::VESC_NORDIC_UART],
+            -40,
+        ));
+        let ordinary = state.discovery().picker_candidates();
+        assert_eq!(ordinary.len(), 1);
+        assert_eq!(ordinary[0].platform_identifier, "known-uart");
+        let advanced = state.discovery().advanced_capture_candidates();
+        assert_eq!(advanced.len(), 1);
+        assert_eq!(advanced[0].platform_identifier, "unknown");
+        assert_eq!(
+            advanced[0].support,
+            DiscoveryCandidateSupport::UnknownRecordable
+        );
+        assert!(advanced[0].connection_route.is_none());
+        assert!(advanced[0].electric_unicycle_model.is_none());
+        assert_eq!(state.discovery().observations.len(), 2);
     }
 
     #[test]
