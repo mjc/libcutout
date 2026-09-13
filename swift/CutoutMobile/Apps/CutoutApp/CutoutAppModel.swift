@@ -465,6 +465,14 @@ final class CutoutAppModel {
         captureStatus?.displayText
     }
 
+    var currentCameraCaptureFileName: () -> String? {
+        { [weak self] in self?.captureFileName }
+    }
+
+    var cameraSessionStateHandle: CutoutSessionStateHandle {
+        core.rideSessionStateHandle
+    }
+
     var connectionStatusText: String {
         connectionState.statusText ?? phase.displayText
     }
@@ -522,6 +530,20 @@ final class CutoutAppModel {
         if cameraMediaReferences.count > Self.maximumCameraMediaReferences {
             cameraMediaReferences.removeFirst()
         }
+    }
+
+    func recordCameraMediaReference(
+        source: CameraSourceKind,
+        media: CameraMediaEvidence,
+        localURL: URL
+    ) {
+        guard let captureFileName else { return }
+        recordCameraMediaReference(
+            captureFileName: captureFileName,
+            source: source,
+            media: media,
+            localURL: localURL
+        )
     }
 
     var headlightControlTitle: String {
@@ -2820,6 +2842,7 @@ final class CutoutAppModel {
 
     private func resetHeadlightState() {
         lastHeadlightSubmissionStatus = nil
+        fallbackHeadlightState = nil
     }
 
     func forgetSavedDevice() {
@@ -3244,6 +3267,7 @@ final class CutoutAppModel {
     func applyCaptureEvent(_ event: CaptureEvent) {
         switch event {
         case let .started(fileURL):
+            core.rideSessionStateHandle.clearCameraMediaProvenance()
             captureFileName = fileURL.lastPathComponent
             captureNotificationCount = 0
             captureStatus = captureFileName.map(CaptureStatus.recordingLocally)

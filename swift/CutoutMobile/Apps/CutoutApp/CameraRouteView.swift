@@ -1,5 +1,6 @@
 import CutoutMobile
 import CutoutMobileFFI
+import ImageIO
 import SwiftUI
 
 #if canImport(UIKit)
@@ -34,6 +35,13 @@ struct CameraRouteContainerView: View {
     @State private var stillRequestKey: String?
     @State private var isRequestingStill = false
     @State private var mediaDownloadGeneration: UInt64 = 0
+    @State private var readTask: Task<Void, Never>?
+    @State private var previewStartTask: Task<Void, Never>?
+    @State private var recordingTask: Task<Void, Never>?
+    @State private var stillTask: Task<Void, Never>?
+    @State private var readGeneration: UInt64 = 0
+    @State private var recordingGeneration: UInt64 = 0
+    @State private var stillGeneration: UInt64 = 0
     @Environment(\.scenePhase) private var scenePhase
 
     init(
@@ -93,10 +101,12 @@ struct CameraRouteContainerView: View {
                 adapter.setPreviewFrameHandler { frame in
                     do {
                         try await previewRenderer.enqueue(frame)
+                        return true
                     } catch CameraPreviewRendererError.missingParameterSets {
                         // The RTSP stream may begin with inter frames. Keep
                         // buffering until a random-access frame carries the
                         // codec configuration instead of killing the session.
+                        return false
                     }
                 }
                 adapter.start()
@@ -111,6 +121,8 @@ struct CameraRouteContainerView: View {
             .onChange(of: scenePhase) { _, phase in
                 if phase == .background {
                     stopCameraWork()
+                } else if phase == .active {
+                    adapter.start()
                 }
             }
     }
@@ -123,18 +135,32 @@ struct CameraRouteContainerView: View {
 
         isReading = true
         readErrorKey = nil
-        Task { @MainActor in
-            defer { isReading = false }
+        thumbnailGeneration &+= 1
+        thumbnailTask?.cancel()
+        thumbnailTask = nil
+        thumbnailPathInFlight = nil
+        thumbnailDataByPath.removeAll(keepingCapacity: true)
+        readTask?.cancel()
+        readGeneration &+= 1
+        let generation = readGeneration
+        readTask = Task { @MainActor in
+            defer {
+                if generation == readGeneration {
+                    isReading = false
+                    readTask = nil
+                }
+            }
             do {
                 let evidence = try await adapter.loadReadOnlyEvidence(address: address, port: portNumber)
+                guard generation == readGeneration, !Task.isCancelled else { return }
                 annotateCapture?("camera_profile", "novatek_r3_pro")
                 annotateCapture?("camera_firmware", evidence.firmwareVersion)
             } catch CameraReadOnlyRequestError.pathUnavailable {
-                readErrorKey = "camera.connection.detail.wifi_required"
+                if generation == readGeneration { readErrorKey = "camera.connection.detail.wifi_required" }
             } catch CameraReadOnlyRequestError.unsupportedProfile {
-                readErrorKey = "camera.error.unsupported_profile"
+                if generation == readGeneration { readErrorKey = "camera.error.unsupported_profile" }
             } catch {
-                readErrorKey = "camera.error.read_failed"
+                if generation == readGeneration, !Task.isCancelled { readErrorKey = "camera.error.read_failed" }
             }
         }
     }
@@ -143,7 +169,8 @@ struct CameraRouteContainerView: View {
         guard let uri = adapter.readOnlyEvidence?.movieRTSPURI else { return }
 
         previewRenderer.reset()
-        Task { @MainActor in
+        previewStartTask?.cancel()
+        previewStartTask = Task { @MainActor in
             do {
                 if let url {
                     try await adapter.startPreview(
@@ -157,7 +184,7 @@ struct CameraRouteContainerView: View {
             } catch CameraReadOnlyRequestError.originMismatch {
                 readErrorKey = "camera.error.origin_mismatch"
             } catch {
-                readErrorKey = "camera.error.read_failed"
+                if !Task.isCancelled { readErrorKey = "camera.error.read_failed" }
             }
         }
     }
@@ -273,14 +300,23 @@ struct CameraRouteContainerView: View {
 
         isRequestingRecording = true
         recordingRequestKey = nil
-        Task { @MainActor in
-            defer { isRequestingRecording = false }
+        recordingTask?.cancel()
+        recordingGeneration &+= 1
+        let generation = recordingGeneration
+        recordingTask = Task { @MainActor in
+            defer {
+                if generation == recordingGeneration {
+                    isRequestingRecording = false
+                    recordingTask = nil
+                }
+            }
             do {
                 let outcome = try await adapter.requestOnboardRecording(
                     address: address,
                     port: portNumber,
                     start: start
                 )
+                guard generation == recordingGeneration, !Task.isCancelled else { return }
                 recordingRequestKey = cameraCommandOutcomeKey(
                     outcome,
                     acknowledged: start
@@ -294,15 +330,15 @@ struct CameraRouteContainerView: View {
             } catch is CancellationError {
                 // Cancellation is an expected lifecycle event.
             } catch CameraCommandRequestError.pathUnavailable {
-                recordingRequestKey = "camera.connection.detail.wifi_required"
+                if generation == recordingGeneration { recordingRequestKey = "camera.connection.detail.wifi_required" }
             } catch CameraCommandRequestError.unsupported {
-                recordingRequestKey = "camera.recording.unavailable"
+                if generation == recordingGeneration { recordingRequestKey = "camera.recording.unavailable" }
             } catch CameraCommandRequestError.inFlight {
-                recordingRequestKey = "camera.command.busy"
+                if generation == recordingGeneration { recordingRequestKey = "camera.command.busy" }
             } catch CameraCommandRequestError.originMismatch {
-                recordingRequestKey = "camera.error.origin_mismatch"
+                if generation == recordingGeneration { recordingRequestKey = "camera.error.origin_mismatch" }
             } catch {
-                recordingRequestKey = "camera.error.recording_request_failed"
+                if generation == recordingGeneration, !Task.isCancelled { recordingRequestKey = "camera.error.recording_request_failed" }
             }
         }
     }
@@ -315,13 +351,22 @@ struct CameraRouteContainerView: View {
 
         isRequestingStill = true
         stillRequestKey = nil
-        Task { @MainActor in
-            defer { isRequestingStill = false }
+        stillTask?.cancel()
+        stillGeneration &+= 1
+        let generation = stillGeneration
+        stillTask = Task { @MainActor in
+            defer {
+                if generation == stillGeneration {
+                    isRequestingStill = false
+                    stillTask = nil
+                }
+            }
             do {
                 let outcome = try await adapter.requestStillCapture(
                     address: address,
                     port: portNumber
                 )
+                guard generation == stillGeneration, !Task.isCancelled else { return }
                 stillRequestKey = cameraCommandOutcomeKey(
                     outcome,
                     acknowledged: "camera.still.request_sent"
@@ -330,15 +375,15 @@ struct CameraRouteContainerView: View {
             } catch is CancellationError {
                 // Cancellation is an expected lifecycle event.
             } catch CameraCommandRequestError.pathUnavailable {
-                stillRequestKey = "camera.connection.detail.wifi_required"
+                if generation == stillGeneration { stillRequestKey = "camera.connection.detail.wifi_required" }
             } catch CameraCommandRequestError.unsupported {
-                stillRequestKey = "camera.still.unavailable"
+                if generation == stillGeneration { stillRequestKey = "camera.still.unavailable" }
             } catch CameraCommandRequestError.inFlight {
-                stillRequestKey = "camera.command.busy"
+                if generation == stillGeneration { stillRequestKey = "camera.command.busy" }
             } catch CameraCommandRequestError.originMismatch {
-                stillRequestKey = "camera.error.origin_mismatch"
+                if generation == stillGeneration { stillRequestKey = "camera.error.origin_mismatch" }
             } catch {
-                stillRequestKey = "camera.error.still_request_failed"
+                if generation == stillGeneration, !Task.isCancelled { stillRequestKey = "camera.error.still_request_failed" }
             }
         }
     }
@@ -360,6 +405,20 @@ struct CameraRouteContainerView: View {
     }
 
     private func stopCameraWork() {
+        readGeneration &+= 1
+        recordingGeneration &+= 1
+        stillGeneration &+= 1
+        readTask?.cancel()
+        previewStartTask?.cancel()
+        recordingTask?.cancel()
+        stillTask?.cancel()
+        readTask = nil
+        previewStartTask = nil
+        recordingTask = nil
+        stillTask = nil
+        isReading = false
+        isRequestingRecording = false
+        isRequestingStill = false
         mediaDownloadGeneration &+= 1
         thumbnailGeneration &+= 1
         mediaDownloadTask?.cancel()
@@ -369,8 +428,6 @@ struct CameraRouteContainerView: View {
         downloadingMediaPath = nil
         thumbnailPathInFlight = nil
         adapter.stop()
-        adapter.setPreviewConfigurationHandler(nil)
-        adapter.setPreviewFrameHandler(nil)
         previewRenderer.reset()
     }
 }
@@ -801,7 +858,7 @@ private struct CameraStatusCard: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(20)
         .cameraSurface(tint: PevColors.cyan)
-        .accessibilityElement(children: .combine)
+        .accessibilityElement(children: .contain)
         .accessibilityIdentifier("camera.setup.card")
     }
 
@@ -838,9 +895,8 @@ private struct CameraThumbnailView: View {
     let data: Data
 
     var body: some View {
-#if canImport(UIKit)
-        if let image = UIImage(data: data) {
-            Image(uiImage: image)
+        if let image = cameraThumbnailImage(data: data) {
+            Image(decorative: image, scale: 1, orientation: .up)
                 .resizable()
                 .scaledToFit()
                 .frame(maxWidth: 160, maxHeight: 100)
@@ -848,20 +904,17 @@ private struct CameraThumbnailView: View {
         } else {
             Image(systemName: "photo")
         }
-#elseif canImport(AppKit)
-        if let image = NSImage(data: data) {
-            Image(nsImage: image)
-                .resizable()
-                .scaledToFit()
-                .frame(maxWidth: 160, maxHeight: 100)
-                .clipShape(RoundedRectangle(cornerRadius: 8))
-        } else {
-            Image(systemName: "photo")
-        }
-#else
-        Image(systemName: "photo")
-#endif
     }
+}
+
+private func cameraThumbnailImage(data: Data) -> CGImage? {
+    guard let source = CGImageSourceCreateWithData(data as CFData, nil) else { return nil }
+    let options: [CFString: Any] = [
+        kCGImageSourceCreateThumbnailFromImageAlways: true,
+        kCGImageSourceCreateThumbnailWithTransform: true,
+        kCGImageSourceThumbnailMaxPixelSize: 320,
+    ]
+    return CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary)
 }
 
 private struct CameraTruthCard: View {

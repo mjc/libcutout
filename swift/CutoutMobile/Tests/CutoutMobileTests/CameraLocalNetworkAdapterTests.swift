@@ -957,7 +957,13 @@ private func cameraEvidence(
     ))
 }
 
-private let testCameraOrigin = try! mobileValidateNovatekHttpOrigin(address: "192.168.1.254", port: 80)
+private let testCameraOrigin: MobileNovatekHttpOriginDto = {
+    do {
+        return try mobileValidateNovatekHttpOrigin(address: "192.168.1.254", port: 80)
+    } catch {
+        preconditionFailure("valid camera test origin rejected: \(error)")
+    }
+}()
 
 private actor DownloadURLCapture {
     private var recordedURL: URL?
