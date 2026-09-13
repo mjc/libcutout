@@ -6,6 +6,8 @@ mod connection_attempt;
 pub use connection_attempt::*;
 mod device_session;
 pub use device_session::*;
+mod device_actions;
+pub use device_actions::*;
 mod device_settings;
 pub use device_settings::*;
 
