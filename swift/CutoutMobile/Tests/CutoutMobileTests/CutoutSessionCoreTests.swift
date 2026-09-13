@@ -397,67 +397,49 @@ final class CutoutSessionCoreTests: XCTestCase {
     }
 
     #if DEBUG
-    func testScriptedAeroSettingsSubmitThroughRustWithoutBluetooth() throws {
-        let live = expectation(description: "scripted Aero session reaches live")
+    func testScriptedControlsUseProtocolEvidenceAndFenceReplacementRequests() throws {
+        let live = expectation(description: "generic session reaches live twice")
+        live.expectedFulfillmentCount = 2
+        var frame = Data(repeating: 0, count: 42)
+        frame.replaceSubrange(0..<4, with: [0xdc, 0x5a, 0x5c, 38])
+        frame.replaceSubrange(28..<30, with: [0xa7, 0xf8])
         let core = CutoutSessionCore(testScript: CutoutSessionTestScript(
-            candidate: scriptedAeroCandidate,
-            telemetry: TelemetrySnapshot(speed: speedValue(0)),
-            connectionDelayMilliseconds: 0
+            candidate: scriptedAeroCandidate, telemetry: TelemetrySnapshot(speed: speedValue(0)),
+            protocolNotifications: [frame], connectionDelayMilliseconds: 0
         ))
+        var oldToken: ConnectionAttemptToken?
+        var newToken: ConnectionAttemptToken?
         core.onPhaseChange = { phase in
-            if phase == .live { live.fulfill() }
-        }
-
-        core.start()
-        XCTAssertTrue(core.pair(platformIdentifier: scriptedAeroCandidate.platformIdentifier))
-        wait(for: [live], timeout: 1)
-
-        let expectedRefusal: SettingCommandResult = .refused(.missingArm)
-        XCTAssertEqual(core.setAeroTiltbackSpeed(try XCTUnwrap(AeroSpeedSetting(kilometresPerHour: 80))), expectedRefusal)
-        XCTAssertEqual(core.setAeroPwmPercent(try XCTUnwrap(AeroPwmPercent(percent: 40))), expectedRefusal)
-        XCTAssertEqual(core.setAeroPwmOff(), expectedRefusal)
-        XCTAssertEqual(core.setAeroGyroCalibration(), expectedRefusal)
-        XCTAssertEqual(core.setAeroRidingMode(.medium), expectedRefusal)
-        XCTAssertEqual(core.setAeroBrakeOverpressureAlarm(try XCTUnwrap(AeroBrakeOverpressureAlarm(percent: 100))), expectedRefusal)
-        XCTAssertEqual(core.setAeroPedalHardness(try XCTUnwrap(AeroPedalHardness(percent: 50))), expectedRefusal)
-        XCTAssertEqual(core.setAeroDisplayBacklight(try XCTUnwrap(AeroDisplayBacklight(percent: 50))), expectedRefusal)
-        XCTAssertEqual(core.setAeroWheelUnits(.metric), expectedRefusal)
-        XCTAssertEqual(core.setAeroBeeperVolume(try XCTUnwrap(AeroBeeperVolume(percent: 50))), expectedRefusal)
-        XCTAssertEqual(core.setAeroDynamicAssist(try XCTUnwrap(AeroDynamicAssist(percent: 50))), expectedRefusal)
-        XCTAssertEqual(core.setAeroPedalDipCompensation(try XCTUnwrap(AeroPedalDipCompensation(percent: 50))), expectedRefusal)
-        XCTAssertEqual(core.setAeroLateralTiltLimit(try XCTUnwrap(AeroLateralTiltLimit(degrees: 55))), expectedRefusal)
-        XCTAssertEqual(core.setAeroVoltageCorrection(try XCTUnwrap(AeroVoltageCorrection(tenthsOfPercent: 0))), expectedRefusal)
-        XCTAssertEqual(core.setAeroMaxChargeVoltageRaw(try XCTUnwrap(AeroMaxChargeVoltageRaw(raw: 60))), expectedRefusal)
-        XCTAssertEqual(core.setAeroHighSpeedMode(AeroToggle(enabled: true)), expectedRefusal)
-        XCTAssertEqual(core.setAeroLowBatteryMode(AeroToggle(enabled: true)), expectedRefusal)
-        XCTAssertEqual(core.setAeroTransportMode(AeroToggle(enabled: false)), expectedRefusal)
-        XCTAssertEqual(core.setAeroAlarmSpeed(try XCTUnwrap(AeroSpeedSetting(kilometresPerHour: 30))), expectedRefusal)
-        XCTAssertEqual(core.setAeroAngleAdjustment(try XCTUnwrap(AeroAngleAdjustment(tenthsOfDegree: 5))), expectedRefusal)
-        XCTAssertEqual(core.phase, .live)
-    }
-
-    func testScriptedAeroSettingsStateCallbackReachesTheCoreBoundary() throws {
-        let snapshotPublished = expectation(description: "Rust settings snapshot published")
-        let live = expectation(description: "scripted Aero session reaches live")
-        let core = CutoutSessionCore(testScript: CutoutSessionTestScript(
-            candidate: scriptedAeroCandidate,
-            telemetry: TelemetrySnapshot(speed: speedValue(0)),
-            connectionDelayMilliseconds: 0
-        ))
-        core.onPhaseChange = { phase in
-            if phase == .live { live.fulfill() }
-        }
-        core.onSettingsStateChange = { state in
-            if state.headlight.kind == .pending {
-                snapshotPublished.fulfill()
+            guard phase == .live else { return }
+            if oldToken == nil {
+                oldToken = core.connectionSnapshot.token
+                core.disconnectAndScan()
+                XCTAssertTrue(core.pair(platformIdentifier: self.scriptedAeroCandidate.platformIdentifier))
+            } else {
+                newToken = core.connectionSnapshot.token
             }
+            live.fulfill()
         }
-
         core.start()
         XCTAssertTrue(core.pair(platformIdentifier: scriptedAeroCandidate.platformIdentifier))
-        wait(for: [live], timeout: 1)
-        XCTAssertEqual(core.setLights(.on), .accepted)
-        wait(for: [snapshotPublished], timeout: 1)
+        wait(for: [live], timeout: 2)
+        let first = try XCTUnwrap(oldToken)
+        let current = try XCTUnwrap(newToken)
+        XCTAssertNotEqual(first.generation, current.generation)
+        let before = core.deviceControlsSnapshot
+        XCTAssertThrowsError(try core.submitDeviceSetting(token: first, id: .highBeam, value: .boolean(value: true))) {
+            XCTAssertEqual($0 as? DeviceSettingSubmissionError, .ConnectionUnavailable)
+        }
+        XCTAssertEqual(core.deviceControlsSnapshot.settings, before.settings)
+        XCTAssertThrowsError(try core.submitDeviceSetting(token: current, id: .pwmTiltback, value: .number(value: 80))) {
+            XCTAssertEqual($0 as? DeviceSettingSubmissionError, .Unverified)
+        }
+        try core.submitDeviceSetting(token: current, id: .highBeam, value: .boolean(value: true))
+        let highBeam = try XCTUnwrap(core.deviceControlsSnapshot.settings.first { $0.id == .highBeam })
+        XCTAssertEqual(highBeam.requested, .boolean(value: true))
+        XCTAssertEqual(highBeam.status, .sentWithoutConfirmation)
+        XCTAssertNil(highBeam.current)
+        core.disconnectAndScan()
     }
     #endif
 
@@ -840,7 +822,10 @@ final class CutoutSessionCoreTests: XCTestCase {
 
         scheduler.runAll()
 
-        XCTAssertEqual(core.phase, .failed(.connectFailed("unknown error")))
+        XCTAssertEqual(core.phase, .live)
+        XCTAssertTrue(core.isRecordOnlyConnection)
+        XCTAssertEqual(core.connectionSnapshot.readiness, .recordOnly)
+        XCTAssertNil(core.rideSessionStateHandle.deviceSessionSnapshot().identity)
         XCTAssertEqual(core.scanState.rows, [scriptedVescCandidate.pickerRow])
         XCTAssertEqual(reconnectCount, 0)
     }
@@ -1595,7 +1580,8 @@ func testVescRideSnapshotProjectsBatteryLevelAndUpdateTime() throws {
 
         _ = try owner.handleCommand(.setLights(.on), at: MonotonicMilliseconds(1))
 
-        XCTAssertEqual(sink.writes, [Data("SetLightON".utf8)])
+        // Official binary default; ASCII requires complete matching telemetry evidence.
+        XCTAssertEqual(sink.writes, [Data([0x4c, 0x6b, 0x41, 0x70, 0x0d, 0x01, 0x80, 0x80, 0x01, 0x57, 0xed, 0x3b, 0xd5])])
     }
 
     func testFalconLiveOwnerTimesOutPendingHeadlightOnTick() throws {

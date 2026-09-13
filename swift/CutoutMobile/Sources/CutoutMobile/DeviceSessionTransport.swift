@@ -65,9 +65,6 @@ final class DeviceSessionTransport: @unchecked Sendable {
         }
     }
 
-    func configureVescChargeEstimate(profile: VescBoardProfile) {
-        chargeEstimator.configureVescBoardProfile(boardProfile: profile)
-    }
 
     func clearChargeEstimateProfile() {
         chargeEstimator.clearProfile()

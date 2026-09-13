@@ -399,21 +399,8 @@ public final class CutoutSessionCore: NSObject {
     public var electricUnicycleModel: ElectricUnicycleModel? {
         onBleQueue { selectedModel }
     }
-    public var settingsCapabilities: EucSettingsCapabilities? {
-        onBleQueue { liveOwner?.settingsCapabilities }
-    }
-    /// One queue-confined read of every Rust-owned setting lifecycle.
-    public var settingsState: EucSettingsState? {
-        onBleQueue { liveOwner?.settingsState }
-    }
-    public var tripMeterResetState: TripMeterResetState? {
-        onBleQueue { liveOwner?.tripMeterResetState }
-    }
-    public var headlightState: LightSettingState? {
-        onBleQueue { liveOwner?.headlightState }
-    }
-    public var headlightCommandStatus: LightCommandStatus? {
-        onBleQueue { liveOwner?.headlightCommandStatus(at: clock.now()) }
+    public var deviceControlsSnapshot: DeviceControlsSnapshot {
+        rustSessionState.deviceControlsSnapshot(validationMode: false)
     }
 
 #if DEBUG
@@ -421,75 +408,6 @@ public final class CutoutSessionCore: NSObject {
         onBleQueue { musicCaptureContext.current }
     }
 #endif
-    public var pedalModeState: PedalModeSettingState? {
-        onBleQueue { liveOwner?.pedalModeState }
-    }
-    public var rollAngleState: RollAngleSettingState? {
-        onBleQueue { liveOwner?.rollAngleState }
-    }
-    public var speedAlarmModeState: SpeedAlarmModeSettingState? {
-        onBleQueue { liveOwner?.speedAlarmModeState }
-    }
-    public var accelerationAssistState: AccelerationAssistSettingState? {
-        onBleQueue { liveOwner?.accelerationAssistState }
-    }
-    public var taillightState: LightSettingState? {
-        onBleQueue { liveOwner?.taillightState }
-    }
-    public var aeroHighBeamState: LightSettingState? {
-        onBleQueue { liveOwner?.aeroHighBeamState }
-    }
-    public var aeroTiltbackSpeedState: AeroSpeedSettingState? {
-        onBleQueue { liveOwner?.aeroTiltbackSpeedState }
-    }
-    public var aeroPwmPercentState: AeroPwmSettingState? {
-        onBleQueue { liveOwner?.aeroPwmPercentState }
-    }
-    public var aeroGyroCalibrationState: AeroGyroCalibrationSettingState? {
-        onBleQueue { liveOwner?.aeroGyroCalibrationState }
-    }
-    public var aeroPedalHardnessState: AeroPedalHardnessSettingState? {
-        onBleQueue { liveOwner?.aeroPedalHardnessState }
-    }
-    public var aeroDisplayBacklightState: AeroDisplayBacklightSettingState? {
-        onBleQueue { liveOwner?.aeroDisplayBacklightState }
-    }
-    public var aeroWheelUnitsState: AeroWheelUnitsSettingState? {
-        onBleQueue { liveOwner?.aeroWheelUnitsState }
-    }
-    public var aeroBeeperVolumeState: AeroBeeperVolumeSettingState? {
-        onBleQueue { liveOwner?.aeroBeeperVolumeState }
-    }
-    public var aeroDynamicAssistState: AeroDynamicAssistSettingState? {
-        onBleQueue { liveOwner?.aeroDynamicAssistState }
-    }
-    public var aeroPedalDipCompensationState: AeroPedalDipCompensationSettingState? {
-        onBleQueue { liveOwner?.aeroPedalDipCompensationState }
-    }
-    public var aeroLateralTiltLimitState: AeroLateralTiltLimitSettingState? {
-        onBleQueue { liveOwner?.aeroLateralTiltLimitState }
-    }
-    public var aeroVoltageCorrectionState: AeroVoltageCorrectionSettingState? {
-        onBleQueue { liveOwner?.aeroVoltageCorrectionState }
-    }
-    public var aeroMaxChargeVoltageRawState: AeroMaxChargeVoltageRawSettingState? {
-        onBleQueue { liveOwner?.aeroMaxChargeVoltageRawState }
-    }
-    public var aeroHighSpeedModeState: AeroToggleSettingState? {
-        onBleQueue { liveOwner?.aeroHighSpeedModeState }
-    }
-    public var aeroLowBatteryModeState: AeroToggleSettingState? {
-        onBleQueue { liveOwner?.aeroLowBatteryModeState }
-    }
-    public var aeroTransportModeState: AeroToggleSettingState? {
-        onBleQueue { liveOwner?.aeroTransportModeState }
-    }
-    public var aeroAlarmSpeedState: AeroSpeedSettingState? {
-        onBleQueue { liveOwner?.aeroAlarmSpeedState }
-    }
-    public var aeroAngleAdjustmentState: AeroAngleAdjustmentSettingState? {
-        onBleQueue { liveOwner?.aeroAngleAdjustmentState }
-    }
 
     public var onDisplayStateChange: ((RideDisplayState) -> Void)?
     public var onPhaseChange: ((SessionConnectionPhase) -> Void)?
@@ -498,7 +416,7 @@ public final class CutoutSessionCore: NSObject {
     public var onRecord: ((String) -> Void)?
     public var onCaptureEvent: ((CaptureEvent) -> Void)?
     public var onScanStateChange: ((DevicePickerScanState) -> Void)?
-    public var onSettingsStateChange: ((EucSettingsState) -> Void)?
+    public var onDeviceControlsChange: ((DeviceControlsSnapshot) -> Void)?
     public var onSettingsReadbackChange: ((SettingsReadback?) -> Void)?
     public var onFaultHistoryReadbackChange: ((FaultHistoryReadback?) -> Void)?
     public var onBmsSnapshotChange: ((BmsSnapshot?) -> Void)?
@@ -527,7 +445,7 @@ public final class CutoutSessionCore: NSObject {
     private var connectionDeadlineWorkItem: DispatchWorkItem?
     private var advertisement: CoreBluetoothAdvertisement?
     private var discoveredPeripherals: [CoreBluetoothPeripheralIdentifier: CBPeripheral] = [:]
-    private var liveOwner: CoreBluetoothLiveSessionOwner?
+    private var liveOwner: DeviceSessionTransport?
     private var selectedModel: ElectricUnicycleModel?
     private var selectedRoute: DevicePickerConnectionRoute?
     private var chargeEstimateProfile: ChargeEstimateProfile?
@@ -849,200 +767,26 @@ public final class CutoutSessionCore: NSObject {
         onBleQueue { disconnectAndScanOnBleQueue() }
     }
 
-    @discardableResult
-    public func setLights(_ state: LightState) -> SettingCommandResult {
-        onBleQueue {
-            guard phase == .live, let liveOwner else { return .failed }
-            do {
-                try liveOwner.handleCommand(.setLights(state), at: clock.now())
-                guard phase == .live else {
-                    liveOwner.failHeadlightCommand()
-                    return .failed
+    public func submitDeviceSetting(token: ConnectionAttemptToken, id: DeviceSettingID, value: DeviceSettingValue) throws {
+        try onBleQueue {
+            Result {
+                guard let owner = liveOwner, owner.token == token else {
+                    throw DeviceSettingSubmissionError.ConnectionUnavailable
                 }
-                return .accepted
-            } catch let error as CutoutSessionError {
-                record("set_lights_error=\(error)")
-                if case let .commandRefused(_, reason) = error {
-                    return .refused(reason)
-                }
-                return .failed
-            } catch {
-                record("set_lights_error=\(error)")
-                return .failed
+                _ = try owner.submitSetting(id, value: value, at: clock.now())
             }
-        }
+        }.get()
     }
 
-    @discardableResult
-    public func setAeroHighBeam(_ state: LightState) -> SettingCommandResult {
-        setStationarySetting("set_aero_high_beam", command: .setAeroHighBeam(state))
-    }
-
-    @discardableResult
-    public func setPedalMode(_ mode: PedalMode.Kind) -> SettingCommandResult {
-        setStationarySetting("set_pedal_mode", command: .setPedalMode(mode))
-    }
-
-    @discardableResult
-    public func setRollAngle(_ angle: RollAngle.Kind) -> SettingCommandResult {
-        setStationarySetting("set_roll_angle", command: .setRollAngle(angle))
-    }
-
-    @discardableResult
-    public func setSpeedAlarmMode(_ mode: SpeedAlarmMode.Kind) -> SettingCommandResult {
-        setStationarySetting("set_speed_alarm_mode", command: .setSpeedAlarmMode(mode))
-    }
-
-    @discardableResult
-    public func setBegodeMaxSpeed(_ speed: BegodeMaxSpeed) -> SettingCommandResult {
-        setStationarySetting("set_begode_max_speed", command: .setBegodeMaxSpeed(speed))
-    }
-
-    @discardableResult
-    public func setBegodeBeeperVolume(_ volume: BegodeBeeperVolume) -> SettingCommandResult {
-        setStationarySetting("set_begode_beeper_volume", command: .setBegodeBeeperVolume(volume))
-    }
-
-    @discardableResult
-    public func setBegodeLedMode(_ mode: BegodeLedMode) -> SettingCommandResult {
-        setStationarySetting("set_begode_led_mode", command: .setBegodeLedMode(mode))
-    }
-
-    @discardableResult
-    public func resetTripMeter() -> SettingCommandResult {
-        setStationarySetting("reset_trip_meter", command: .resetTripMeter)
-    }
-
-    @discardableResult
-    public func setAeroTiltbackSpeed(_ speed: AeroSpeedSetting) -> SettingCommandResult {
-        setStationarySetting("set_aero_tiltback_speed", command: .setAeroTiltbackSpeed(speed))
-    }
-
-    @discardableResult
-    public func setAeroPwmPercent(_ percent: AeroPwmPercent) -> SettingCommandResult {
-        setStationarySetting("set_aero_pwm_percent", command: .setAeroPwmPercent(percent))
-    }
-
-    @discardableResult
-    public func setAeroPwmOff() -> SettingCommandResult {
-        setStationarySetting("set_aero_pwm_off", command: .setAeroPwmOff)
-    }
-
-    @discardableResult
-    public func setAeroGyroCalibration() -> SettingCommandResult {
-        setStationarySetting("set_aero_gyro_calibration", command: .setAeroGyroCalibration)
-    }
-
-    @discardableResult
-    public func setAeroRidingMode(_ mode: AeroRidingMode) -> SettingCommandResult {
-        setStationarySetting("set_aero_riding_mode", command: .setAeroRidingMode(mode))
-    }
-
-    @discardableResult
-    public func setAeroBrakeOverpressureAlarm(
-        _ value: AeroBrakeOverpressureAlarm
-    ) -> SettingCommandResult {
-        setStationarySetting(
-            "set_aero_brake_overpressure_alarm",
-            command: .setAeroBrakeOverpressureAlarm(value)
-        )
-    }
-
-    @discardableResult
-    public func setAeroPedalHardness(_ hardness: AeroPedalHardness) -> SettingCommandResult {
-        setStationarySetting("set_aero_pedal_hardness", command: .setAeroPedalHardness(hardness))
-    }
-
-    @discardableResult
-    public func setAeroDisplayBacklight(_ value: AeroDisplayBacklight) -> SettingCommandResult {
-        setStationarySetting("set_aero_display_backlight", command: .setAeroDisplayBacklight(value))
-    }
-
-    @discardableResult
-    public func setAeroWheelUnits(_ value: AeroWheelUnits) -> SettingCommandResult {
-        setStationarySetting("set_aero_wheel_units", command: .setAeroWheelUnits(value))
-    }
-
-    @discardableResult
-    public func setAeroBeeperVolume(_ value: AeroBeeperVolume) -> SettingCommandResult {
-        setStationarySetting("set_aero_beeper_volume", command: .setAeroBeeperVolume(value))
-    }
-
-    @discardableResult
-    public func setAeroDynamicAssist(_ value: AeroDynamicAssist) -> SettingCommandResult {
-        setStationarySetting("set_aero_dynamic_assist", command: .setAeroDynamicAssist(value))
-    }
-
-    @discardableResult
-    public func setAeroPedalDipCompensation(_ value: AeroPedalDipCompensation) -> SettingCommandResult {
-        setStationarySetting("set_aero_pedal_dip_compensation", command: .setAeroPedalDipCompensation(value))
-    }
-
-    @discardableResult
-    public func setAeroLateralTiltLimit(_ value: AeroLateralTiltLimit) -> SettingCommandResult {
-        setStationarySetting("set_aero_lateral_tilt_limit", command: .setAeroLateralTiltLimit(value))
-    }
-
-    @discardableResult
-    public func setAeroVoltageCorrection(_ value: AeroVoltageCorrection) -> SettingCommandResult {
-        setStationarySetting("set_aero_voltage_correction", command: .setAeroVoltageCorrection(value))
-    }
-
-    @discardableResult
-    public func setAeroMaxChargeVoltageRaw(_ value: AeroMaxChargeVoltageRaw) -> SettingCommandResult {
-        setStationarySetting(
-            "set_aero_max_charge_voltage_raw",
-            command: .setAeroMaxChargeVoltageRaw(value)
-        )
-    }
-
-    @discardableResult
-    public func setAeroHighSpeedMode(_ value: AeroToggle) -> SettingCommandResult {
-        setStationarySetting("set_aero_high_speed_mode", command: .setAeroHighSpeedMode(value))
-    }
-
-    @discardableResult
-    public func setAeroLowBatteryMode(_ value: AeroToggle) -> SettingCommandResult {
-        setStationarySetting("set_aero_low_battery_mode", command: .setAeroLowBatteryMode(value))
-    }
-
-    @discardableResult
-    public func setAeroTransportMode(_ value: AeroToggle) -> SettingCommandResult {
-        setStationarySetting("set_aero_transport_mode", command: .setAeroTransportMode(value))
-    }
-
-    @discardableResult
-    public func setAeroAlarmSpeed(_ speed: AeroSpeedSetting) -> SettingCommandResult {
-        setStationarySetting("set_aero_alarm_speed", command: .setAeroAlarmSpeed(speed))
-    }
-
-    @discardableResult
-    public func setAeroAngleAdjustment(_ angle: AeroAngleAdjustment) -> SettingCommandResult {
-        setStationarySetting("set_aero_angle_adjustment", command: .setAeroAngleAdjustment(angle))
-    }
-
-    private func setStationarySetting(
-        _ name: String,
-        command: DeviceCommand
-    ) -> SettingCommandResult {
-        onBleQueue {
-            guard phase == .live, let liveOwner else { return .failed }
-            _ = liveOwner.armSettingsWrites(at: clock.now())
-            do {
-                try liveOwner.handleCommand(command, at: clock.now())
-                guard phase == .live else { return .failed }
-                return .accepted
-            } catch let error as CutoutSessionError {
-                record("\(name)_error=\(error)")
-                if case let .commandRefused(_, reason) = error {
-                    return .refused(reason)
+    public func submitDeviceAction(token: ConnectionAttemptToken, id: DeviceActionID) throws {
+        try onBleQueue {
+            Result {
+                guard let owner = liveOwner, owner.token == token else {
+                    throw DeviceActionSubmissionError.ConnectionUnavailable
                 }
-                return .failed
-            } catch {
-                record("\(name)_error=\(error)")
-                return .failed
+                _ = try owner.submitAction(id, at: clock.now())
             }
-        }
+        }.get()
     }
 
     /// Configures the Rust-owned charge estimate profile for the active or next connection.
@@ -1137,41 +881,16 @@ public final class CutoutSessionCore: NSObject {
 
         self.selectedRoute = route
         self.selectedModel = selectedModel
-#if DEBUG
-        if route == .electricUnicycle, selectedModel == .aero {
-            do {
-                let sink = CutoutSessionTestOperationSink()
-                let advertisement = CoreBluetoothAdvertisement(
-                    peripheralIdentifier: CoreBluetoothPeripheralIdentifier(platformIdentifier),
-                    localName: testScript.candidate.displayName,
-                    advertisedServiceUuids: []
-                )
-                beginBmsStorageSession()
-                liveOwner = try CoreBluetoothLiveSessionOwner(
-                    session: .electricUnicycle(
-                        model: .aero,
-                        deviceIdentity: platformIdentifier,
-                        allowUnverifiedSettings: true
-                    ),
-                    advertisement: advertisement,
-                    writeLimit: TransportWriteLimitBytes(23),
-                    operationSink: sink,
-                    detectionSession: deviceDetectionSession,
-                    executionQueue: bleQueue
-                )
-                attachSettingsStateCallback()
-                testOperationSink = sink
-            } catch {
-                setPhase(.failed(.sessionFailed(error.sessionMessage)))
-                return false
-            }
-        }
-#endif
         testScriptWorkItem?.cancel()
         testScriptUpdateWorkItem?.cancel()
+        liveOwner?.invalidate()
+        liveOwner = nil
         guard let token = rustSessionState.beginConnectionAttempt(
             platformIdentifier: platformIdentifier, nowMs: clock.now().rawValue
         ).token else { return false }
+        if let vescBoardProfile {
+            _ = rustSessionState.configureConnectionVescProfile(token: token, profile: vescBoardProfile)
+        }
         setPhase(.discoveringServices)
         setPhase(.subscribing)
         let work = DispatchWorkItem { [weak self] in
@@ -1216,6 +935,33 @@ public final class CutoutSessionCore: NSObject {
         _ = rustSessionState.resolveDeviceSession(
             token: token, identificationComplete: true, nowMs: clock.now().rawValue
         )
+        if rustSessionState.verifiedConnectionAttemptIsCurrent(token: token) {
+            let sink = CutoutSessionTestOperationSink()
+            testOperationSink = sink
+            let advertisement = CoreBluetoothAdvertisement(
+                peripheralIdentifier: CoreBluetoothPeripheralIdentifier(token.platformIdentifier),
+                localName: testScript.candidate.displayName, advertisedServiceUuids: []
+            )
+            let owner = makeDeviceTransport(token: token, advertisement: advertisement, sink: sink)
+            liveOwner = owner
+            attachDeviceControlsCallback()
+            do {
+                let step = try owner.handleLinkUp(at: clock.now())
+                let channels = step.operations.compactMap { operation -> BluetoothUuid? in
+                    guard case let .subscribe(channel) = operation else { return nil }
+                    owner.handleNotificationStateUpdate(channel: channel, isNotifying: true, error: nil)
+                    return channel
+                }
+                if let channel = channels.first {
+                    for bytes in testScript.protocolNotifications {
+                        _ = try owner.handleNotification(bytes: bytes, channel: channel, at: clock.now())
+                    }
+                }
+            } catch {
+                setPhase(.failed(.sessionFailed(error.sessionMessage)))
+                return
+            }
+        }
         emit(testScript: testScript, token: token)
     }
 
@@ -1330,6 +1076,7 @@ public final class CutoutSessionCore: NSObject {
 #endif
 
     private func disconnectAndScanOnBleQueue() {
+        liveOwner?.invalidate()
         _ = rustSessionState.disconnectConnectionAttempt()
         connectionDeadlineWorkItem?.cancel()
         connectionAttempt = nil
@@ -1579,6 +1326,7 @@ public final class CutoutSessionCore: NSObject {
 
     private func setPhase(_ phase: SessionConnectionPhase) {
         if case .failed = phase, let token = connectionSnapshot.token {
+            liveOwner?.invalidate()
             let wasPending = connectionSnapshot.readiness == .pending
             _ = rustSessionState.connectionTransportFailed(token: token)
             publishConnectionSnapshot()
@@ -1595,9 +1343,7 @@ public final class CutoutSessionCore: NSObject {
             guard self.connectionSnapshot.generation == generation else { return }
             self.onPhaseChange?(phase)
         }
-        if phase == .live, let state = liveOwner?.settingsState {
-            publishSettingsState(state)
-        }
+        publishDeviceControls(deviceControlsSnapshot)
     }
 
     func acceptsConnectionCallback(_ peripheral: CBPeripheral, token: ConnectionAttemptToken) -> Bool {
@@ -1619,11 +1365,16 @@ public final class CutoutSessionCore: NSObject {
     private func prepareConnectionAttempt(to peripheral: CBPeripheral) {
         assertOnBleQueue()
         let previous = self.peripheral
+        liveOwner?.invalidate()
+        liveOwner = nil
         let snapshot = rustSessionState.beginConnectionAttempt(
             platformIdentifier: peripheral.identifier.uuidString,
             nowMs: clock.now().rawValue
         )
         guard let token = snapshot.token else { return }
+        if let vescBoardProfile {
+            _ = rustSessionState.configureConnectionVescProfile(token: token, profile: vescBoardProfile)
+        }
         connectionDeadlineWorkItem?.cancel()
         clearProtocolDetectionExpiry()
         clearPendingBegodeProbeResponses()
@@ -1727,59 +1478,32 @@ public final class CutoutSessionCore: NSObject {
         startPreparedConnection()
     }
 
-    private func buildOwner(for peripheral: CBPeripheral) {
-        guard liveOwner == nil, let advertisement, let selectedRoute else {
-            return
-        }
-        do {
-            beginBmsStorageSession()
-            liveOwner = CoreBluetoothLiveSessionOwner(
-                session: try liveSession(for: selectedRoute),
-                advertisement: advertisement,
-                writeLimit: TransportWriteLimitBytes(23),
-                operationSink: self,
-                detectionSession: deviceDetectionSession,
-                retryCommandOnLinkUp: selectedRoute == .vescOnewheel ? .requestTelemetry : nil,
-                executionQueue: bleQueue,
-                monotonicClock: clock
-            )
-            attachSettingsStateCallback()
-            if let chargeEstimateProfile {
-                liveOwner?.configureChargeEstimate(profile: chargeEstimateProfile)
-            }
-            setPhase(.subscribing)
-            let inventory = CoreBluetoothGattInventory(services: peripheral.services ?? [])
-            liveOwner?.recordInventory(inventory)
-            let step = try liveOwner?.handleLinkUp(at: clock.now())
-            if let step {
-                applyLinkUpStep(step)
-            }
-        } catch {
-            setPhase(.failed(.sessionFailed(error.sessionMessage)))
-        }
+    private func makeDeviceTransport(
+        token: ConnectionAttemptToken,
+        advertisement: CoreBluetoothAdvertisement,
+        sink: CoreBluetoothOperationSink
+    ) -> DeviceSessionTransport {
+        let owner = DeviceSessionTransport(
+            state: rustSessionState, token: token, advertisement: advertisement,
+            writeLimit: TransportWriteLimitBytes(23), operationSink: sink,
+            queue: bleQueue, clock: clock
+        )
+        if let chargeEstimateProfile { owner.configureChargeEstimate(profile: chargeEstimateProfile) }
+        return owner
     }
 
-    private func liveSession(for route: DevicePickerConnectionRoute) throws -> CoreBluetoothSession {
-        switch route {
-        case .electricUnicycle:
-            guard let selectedModel else {
-                throw CutoutSessionError.unexpectedStepError("missing EUC model")
-            }
-            #if DEBUG
-            let allowUnverifiedSettings = true
-            #else
-            let allowUnverifiedSettings = false
-            #endif
-            return try .electricUnicycle(
-                model: selectedModel,
-                deviceIdentity: advertisement?.peripheralIdentifier.rawValue,
-                allowUnverifiedSettings: allowUnverifiedSettings
-            )
-        case .vescOnewheel:
-            if let vescBoardProfile {
-                return .vescOnewheel(boardProfile: vescBoardProfile)
-            }
-            return .vescOnewheel()
+    private func buildOwner(for peripheral: CBPeripheral) {
+        guard liveOwner == nil, let advertisement, let token = connectionSnapshot.token,
+              rustSessionState.verifiedConnectionAttemptIsCurrent(token: token) else { return }
+        do {
+            let owner = makeDeviceTransport(token: token, advertisement: advertisement, sink: self)
+            liveOwner = owner
+            attachDeviceControlsCallback()
+            setPhase(.subscribing)
+            owner.recordInventory(CoreBluetoothGattInventory(services: peripheral.services ?? []))
+            applyLinkUpStep(try owner.handleLinkUp(at: clock.now()))
+        } catch {
+            setPhase(.failed(.sessionFailed(error.sessionMessage)))
         }
     }
 
@@ -1803,6 +1527,7 @@ public final class CutoutSessionCore: NSObject {
             return
         }
         let wasDetecting = connectionSnapshot.readiness == .pending
+        liveOwner?.invalidate()
         _ = rustSessionState.connectionLinkDown(token: attempt.token)
         connectionDeadlineWorkItem?.cancel()
         publishConnectionSnapshot()
@@ -2033,18 +1758,18 @@ public final class CutoutSessionCore: NSObject {
         publishOnMain { self.onSettingsReadbackChange?(value) }
     }
 
-    private func publishSettingsState(_ value: EucSettingsState) {
-        publishOnMain { self.onSettingsStateChange?(value) }
+    private func publishDeviceControls(_ value: DeviceControlsSnapshot) {
+        publishOnMain { [weak self] in
+            guard let self, self.connectionSnapshot.revision == value.connection.revision else { return }
+            self.onDeviceControlsChange?(value)
+        }
     }
 
-    private func attachSettingsStateCallback() {
+    private func attachDeviceControlsCallback() {
         guard let owner = liveOwner else { return }
-        owner.onSettingsStateChange = { [weak self, weak owner] state in
-            guard let self, let owner else { return }
-            self.onBleQueue {
-                guard self.phase == .live, self.liveOwner === owner else { return }
-                self.publishSettingsState(state)
-            }
+        owner.onControlsChange = { [weak self, weak owner] state in
+            guard let self, let owner, self.liveOwner === owner else { return }
+            self.publishDeviceControls(state)
         }
     }
 
