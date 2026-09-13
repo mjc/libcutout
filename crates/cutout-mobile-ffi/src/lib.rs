@@ -2,6 +2,7 @@
 
 mod rgb;
 pub use rgb::*;
+<<<<<<< HEAD
 mod connection_attempt;
 pub use connection_attempt::*;
 mod device_session;
@@ -12,6 +13,8 @@ mod device_settings;
 pub use device_settings::*;
 mod raw_settings;
 pub use raw_settings::*;
+mod phone_alarm;
+pub use phone_alarm::*;
 
 use std::{
     collections::VecDeque,
