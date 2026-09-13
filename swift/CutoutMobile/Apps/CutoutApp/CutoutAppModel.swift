@@ -506,9 +506,27 @@ final class CutoutAppModel {
     }
 
     var manualHeadlightStatusText: String {
-        manualHeadlightControlAvailable
-            ? localizedAppText("settings.headlight.sent_unconfirmed")
-            : localizedAppText("settings.headlight.unavailable")
+        guard manualHeadlightControlAvailable else {
+            return localizedAppText("settings.headlight.unavailable")
+        }
+        switch manualHeadlightSubmissionFailure ?? manualHeadlightState?.kind ?? .unknown {
+        case .unknown:
+            return localizedAppText("settings.headlight.state_unknown")
+        case .current, .confirmed:
+            return localizedAppText("settings.headlight.confirmed")
+        case .pending:
+            switch manualHeadlightState?.requested {
+            case .on: return localizedAppText("settings.headlight.last_request_on")
+            case .off: return localizedAppText("settings.headlight.last_request_off")
+            default: return localizedAppText("settings.state.pending")
+            }
+        case .refused:
+            return localizedAppText("settings.headlight.refused")
+        case .timedOut:
+            return localizedAppText("settings.headlight.timed_out")
+        case .failed:
+            return localizedAppText("settings.headlight.failed")
+        }
     }
 
     private let core: any CutoutSessionDriving
@@ -533,6 +551,7 @@ final class CutoutAppModel {
     private var captureNotificationCount = 0
     private var captureLabel: String?
     private var lastHeadlightSubmissionStatus: LightCommandStatus?
+    private var manualHeadlightSubmissionFailure: SettingStateKind?
     private var fallbackHeadlightState: LightSettingState?
     private var hasStarted = false
     private var permitsStoredDeviceAutoPairing = true
@@ -2266,7 +2285,13 @@ final class CutoutAppModel {
     @discardableResult
     func setManualHeadlight(_ enabled: Bool) -> SettingCommandResult {
         guard manualHeadlightControlAvailable else { return .failed }
-        return submitSetting { core.setLights(enabled ? .on : .off) }
+        let result = submitSetting { core.setLights(enabled ? .on : .off) }
+        manualHeadlightSubmissionFailure = switch result {
+        case .accepted: nil
+        case .refused: .refused
+        case .failed: .failed
+        }
+        return result
     }
 
     @discardableResult
@@ -2741,6 +2766,7 @@ final class CutoutAppModel {
 
     private func resetHeadlightState() {
         lastHeadlightSubmissionStatus = nil
+        manualHeadlightSubmissionFailure = nil
     }
 
     func forgetSavedDevice() {

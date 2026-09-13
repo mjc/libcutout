@@ -396,6 +396,57 @@ final class CutoutAppModelTests: XCTestCase {
     }
 
     @MainActor
+    func testAeroManualHeadlightFeedbackTracksSubmissionsAndResets() {
+        let driver = SessionDriverSpy(rows: [])
+        driver.electricUnicycleModel = .aero
+        driver.headlightWriteSucceeds = true
+        let model = CutoutAppModel(core: driver)
+
+        XCTAssertEqual(model.manualHeadlightStatusText, "State unknown")
+        XCTAssertEqual(model.setManualHeadlight(true), .accepted)
+        XCTAssertEqual(model.manualHeadlightStatusText, "Last request: On (unconfirmed)")
+
+        driver.headlightCommandResult = .refused(.missingArm)
+        XCTAssertEqual(model.setManualHeadlight(false), .refused(.missingArm))
+        XCTAssertEqual(model.manualHeadlightStatusText, "Wheel refused the headlight command.")
+        XCTAssertEqual(driver.headlightStates, [.on])
+
+        driver.headlightWriteSucceeds = false
+        XCTAssertEqual(model.setManualHeadlight(false), .failed)
+        XCTAssertEqual(model.manualHeadlightStatusText, "Headlight command failed.")
+
+        driver.headlightWriteSucceeds = true
+        driver.headlightCommandResult = .accepted
+        XCTAssertEqual(model.setManualHeadlight(false), .accepted)
+        XCTAssertEqual(model.manualHeadlightStatusText, "Last request: Off (unconfirmed)")
+        driver.headlightWriteSucceeds = false
+        XCTAssertEqual(model.setManualHeadlight(true), .failed)
+        model.disconnectTransport()
+        XCTAssertEqual(model.manualHeadlightStatusText, "State unknown")
+    }
+
+    @MainActor
+    func testAeroManualHeadlightFeedbackUsesSubsequentSettingState() {
+        let driver = SessionDriverSpy(rows: [])
+        driver.electricUnicycleModel = .aero
+        driver.headlightWriteSucceeds = true
+        let model = CutoutAppModel(core: driver)
+        XCTAssertEqual(model.setManualHeadlight(true), .accepted)
+
+        for (kind, text): (SettingStateKind, String) in [
+            (.current, "Confirmed by wheel telemetry."),
+            (.confirmed, "Confirmed by wheel telemetry."),
+            (.timedOut, "Wheel did not confirm the headlight command."),
+            (.refused, "Wheel refused the headlight command."),
+            (.failed, "Headlight command failed."),
+            (.unknown, "State unknown"),
+        ] {
+            driver.headlightState = LightSettingState(kind: kind, current: .on, source: .liveReadback)
+            XCTAssertEqual(model.manualHeadlightStatusText, text)
+        }
+    }
+
+    @MainActor
     func testFalconHeadlightToggleIsAvailableThroughTheGuardedSession() {
         let driver = SessionDriverSpy(rows: [])
         driver.electricUnicycleModel = .falcon
