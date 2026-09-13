@@ -60,14 +60,17 @@ setting_enum!(
         BeeperVolumeLevel,
         LightingPattern,
         AccelerationAssist,
-        Taillight
+        Taillight,
+        AutoShutdownRemaining,
+        ChargeMode,
+        PowerOffDelay
     ]
 );
 setting_enum!(
     MobileSettingUnitDto,
     SettingUnit,
     "Physical unit and fixed-point interpretation.",
-    [Percent, KilometresPerHour, Degrees, Level]
+    [Percent, KilometresPerHour, Degrees, Level, Seconds, Minutes]
 );
 setting_enum!(
     MobileSettingGroupDto,
