@@ -89,7 +89,7 @@ impl DeviceConnectionSession {
             );
         }
         let step = self
-            .ingest(
+            .ingest_validated(
                 token,
                 &cutout_core::SessionInputDto::CommandAt {
                     command: command.into(),
@@ -117,6 +117,48 @@ mod tests {
     use cutout_core::{SessionOutput, SettingCommandStatus, TransportAction};
 
     use super::*;
+
+    #[test]
+    fn transport_ingress_cannot_bypass_semantic_write_validation() {
+        let mut owner = DeviceConnectionSession::default();
+        let token = super::super::tests::connected_aero(&mut owner);
+        let before = owner.settings_snapshot();
+        for command in [
+            cutout_core::DeviceCommand::SetLights(cutout_core::LightState::On),
+            cutout_core::DeviceCommand::ResetTripMeter,
+        ] {
+            assert!(
+                owner
+                    .ingest(
+                        &token,
+                        &cutout_core::SessionInputDto::Command(command.into())
+                    )
+                    .is_none()
+            );
+            assert!(
+                owner
+                    .ingest(
+                        &token,
+                        &cutout_core::SessionInputDto::CommandAt {
+                            command: command.into(),
+                            monotonic_ms: cutout_core::MonotonicMillisDto { milliseconds: 2 },
+                        }
+                    )
+                    .is_none()
+            );
+        }
+        assert_eq!(owner.settings_snapshot(), before);
+        assert!(
+            owner
+                .ingest(
+                    &token,
+                    &cutout_core::SessionInputDto::Command(
+                        cutout_core::DeviceCommand::RequestTelemetry.into()
+                    )
+                )
+                .is_some()
+        );
+    }
 
     #[test]
     fn semantic_submission_uses_live_session_and_records_unconfirmed_outcome() {

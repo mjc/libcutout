@@ -319,9 +319,25 @@ impl DeviceConnectionSession {
         }
     }
 
-    /// Decodes current verified input and pairs its identity before leaving this owner.
+    /// Decodes transport input and read-only commands for the current verified attempt.
+    /// Device writes enter through validated semantic settings or action submission.
     #[must_use]
     pub fn ingest(
+        &mut self,
+        token: &ConnectionAttemptToken,
+        input: &SessionInputDto,
+    ) -> Option<DeviceConnectionStep> {
+        if let SessionInputDto::Command(command) | SessionInputDto::CommandAt { command, .. } =
+            input
+            && cutout_core::DeviceCommand::from(*command).safety_class()
+                != cutout_core::SafetyClass::ReadOnly
+        {
+            return None;
+        }
+        self.ingest_validated(token, input)
+    }
+
+    fn ingest_validated(
         &mut self,
         token: &ConnectionAttemptToken,
         input: &SessionInputDto,
