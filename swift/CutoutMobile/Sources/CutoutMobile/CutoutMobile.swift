@@ -32,7 +32,7 @@ public struct MonotonicMilliseconds: Equatable, Hashable, Sendable {
         Self(rawValue >= start.rawValue ? rawValue - start.rawValue : 0)
     }
 
-    fileprivate var dto: MobileMonotonicMillisDto {
+    var dto: MobileMonotonicMillisDto {
         MobileMonotonicMillisDto(milliseconds: rawValue)
     }
 }
@@ -44,7 +44,7 @@ public struct TransportWriteLimitBytes: Equatable, Hashable, Sendable {
         self.rawValue = rawValue
     }
 
-    fileprivate var dto: MobileTransportWriteLimitDto {
+    var dto: MobileTransportWriteLimitDto {
         MobileTransportWriteLimitDto(bytes: rawValue)
     }
 }
@@ -530,7 +530,7 @@ public struct SessionAction: Equatable, Hashable, Sendable {
         )
     }
 
-    fileprivate init(_ dto: MobileSessionOutputDto) {
+    init(_ dto: MobileSessionOutputDto) {
         self.kind = SessionActionKind(dto.kind)
         self.channel = dto.channel
         self.bytes = dto.bytes
@@ -1009,7 +1009,7 @@ public struct ChargeEstimateState: Equatable, Hashable, Sendable {
         self.observedFor = ChargeEstimateDuration(dto.observedFor)
     }
 
-    fileprivate static var missingProfile: Self {
+    static var missingProfile: Self {
         Self(MobileChargeEstimateStateDto(
             kind: .unavailable,
             estimate: nil,
@@ -1095,7 +1095,7 @@ public struct ChargeEstimateProfile: Equatable, Hashable, Sendable {
         self.chargeFlowVerification = chargeFlowVerification
     }
 
-    fileprivate var dto: MobileChargeProfileDto {
+    var dto: MobileChargeProfileDto {
         MobileChargeProfileDto(
             sessionId: sessionID,
             profileId: profileID,
@@ -2678,7 +2678,7 @@ public enum DeviceCommand: Equatable, Hashable, Sendable {
         }
     }
 
-    fileprivate var dto: MobileCommandDto {
+    var dto: MobileCommandDto {
         switch self {
         case .requestIdentity:
             .requestIdentity
@@ -2907,7 +2907,7 @@ public struct TelemetrySnapshot: Equatable, Hashable, Sendable {
         self.init(dto, chargeEstimate: nil)
     }
 
-    fileprivate init(_ dto: MobileTelemetrySnapshotDto, chargeEstimate: ChargeEstimateState?) {
+    init(_ dto: MobileTelemetrySnapshotDto, chargeEstimate: ChargeEstimateState?) {
         self.init(
             at: dto.atMs.map { MonotonicMilliseconds($0.milliseconds) },
             speed: dto.speed?.value,
@@ -6304,7 +6304,7 @@ public enum CutoutSessionError: Error, Equatable, Sendable {
     case unsupportedFalconProfile
     case unexpectedStepError(String?)
 
-    fileprivate init(_ dto: MobileSessionStepErrorDto) {
+    init(_ dto: MobileSessionStepErrorDto) {
         switch dto.kind {
         case .commandRefused:
             self = .commandRefused(
@@ -7665,6 +7665,8 @@ public enum CoreBluetoothSessionEvent: Equatable, Hashable, Sendable {
 }
 
 public struct CoreBluetoothSessionStep: Equatable, Hashable, Sendable {
+    /// Exact Rust attempt that produced this decoded step, absent for legacy replay fixtures.
+    public let connectionAttempt: ConnectionAttemptToken?
     public let operations: [CoreBluetoothPlannedOperation]
     public let snapshot: TelemetrySnapshot?
     public let actions: [SessionAction]
@@ -7674,8 +7676,10 @@ public struct CoreBluetoothSessionStep: Equatable, Hashable, Sendable {
         operations: [CoreBluetoothPlannedOperation],
         snapshot: TelemetrySnapshot?,
         actions: [SessionAction] = [],
-        captureContext: CoreBluetoothCaptureContext? = nil
+        captureContext: CoreBluetoothCaptureContext? = nil,
+        connectionAttempt: ConnectionAttemptToken? = nil
     ) {
+        self.connectionAttempt = connectionAttempt
         self.operations = operations
         self.snapshot = snapshot
         self.actions = actions

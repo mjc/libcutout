@@ -317,6 +317,25 @@ impl From<DeviceSettingsSnapshot> for MobileDeviceSettingsSnapshotDto {
     }
 }
 
+/// Complete generic controls publication from one connection-owner observation.
+#[derive(Clone, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct MobileDeviceControlsSnapshotDto {
+    /// Attempt and readiness associated with every row.
+    pub connection: MobileConnectionAttemptSnapshotDto,
+    /// Owner timestamp used to calculate ages.
+    pub at_ms: u64,
+    /// Optional protocol-selected battery basis, preserving its original evidence.
+    pub default_charge_profile: Option<crate::MobileChargeProfileDto>,
+    /// Semantic controls available in this presentation mode.
+    pub setting_descriptors: Vec<MobileSettingDescriptorDto>,
+    /// Observed and requested setting state.
+    pub settings: Vec<MobileSettingSnapshotDto>,
+    /// Semantic actions available in this presentation mode.
+    pub action_descriptors: Vec<crate::MobileDeviceActionDescriptorDto>,
+    /// Procedure and momentary-action lifecycle state.
+    pub actions: Vec<crate::MobileDeviceActionSnapshotDto>,
+}
+
 /// Semantic submission refusal before protocol execution.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, thiserror::Error, uniffi::Error)]
 pub enum MobileDeviceSettingRequestError {
@@ -357,6 +376,46 @@ impl From<DeviceSettingRequestError> for MobileDeviceSettingRequestError {
 
 #[uniffi::export]
 impl CutoutSessionStateHandle {
+    /// Reads the complete Tune presentation under the existing session lock.
+    #[must_use]
+    pub fn device_controls_snapshot(
+        &self,
+        validation_mode: bool,
+    ) -> MobileDeviceControlsSnapshotDto {
+        let inner = self.lock_inner();
+        let settings: MobileDeviceSettingsSnapshotDto = inner.settings_snapshot().into();
+        let actions = inner.actions_snapshot();
+        let default_charge_profile = inner
+            .device
+            .as_ref()
+            .and_then(|device| device.control_profile().default_charge_profile())
+            .map(|profile| crate::MobileChargeProfileDto {
+                session_id: settings.connection.generation,
+                profile_id: profile.identity.get(),
+                capacity_milliamp_hours: profile.usable_capacity.as_milliamp_hours(),
+                capacity_source: profile.usable_capacity.source.into(),
+                verification: profile.usable_capacity.verification.into(),
+                charge_flow_verification: profile.charge_flow_verification.into(),
+            });
+        MobileDeviceControlsSnapshotDto {
+            connection: settings.connection,
+            default_charge_profile,
+            at_ms: settings.at_ms,
+            setting_descriptors: inner
+                .settings_descriptors(validation_mode)
+                .into_iter()
+                .map(Into::into)
+                .collect(),
+            settings: settings.settings,
+            action_descriptors: inner
+                .action_descriptors(validation_mode)
+                .into_iter()
+                .map(Into::into)
+                .collect(),
+            actions: actions.actions.into_iter().map(Into::into).collect(),
+        }
+    }
+
     /// Projects semantic controls and their producing connection under one lock.
     #[must_use]
     pub fn settings_descriptors(

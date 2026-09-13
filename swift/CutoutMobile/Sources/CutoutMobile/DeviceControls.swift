@@ -1,6 +1,7 @@
 import CutoutMobileFFI
 
 // Native views render the shared semantic catalog and immutable owner snapshots.
+public typealias DeviceControlsSnapshot = CutoutMobileFFI.MobileDeviceControlsSnapshotDto
 public typealias DeviceSettingID = CutoutMobileFFI.MobileSettingIdDto
 public typealias DeviceSettingValue = CutoutMobileFFI.MobileSettingValueDto
 public typealias DeviceSettingDescriptor = CutoutMobileFFI.MobileSettingDescriptorDto
