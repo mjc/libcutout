@@ -5,7 +5,7 @@ use cutout_core::{
     ConnectionTransportState,
 };
 
-use crate::{CutoutSessionStateHandle, DeviceDetectionSession, MonotonicTimestamp};
+use crate::{CutoutSessionStateHandle, MonotonicTimestamp};
 
 /// Identity captured with native callbacks and decoded telemetry.
 #[derive(Clone, Debug, Eq, PartialEq, uniffi::Record)]
@@ -119,11 +119,7 @@ impl CutoutSessionStateHandle {
         token: MobileConnectionAttemptTokenDto,
     ) -> MobileConnectionAttemptSnapshotDto {
         let mut inner = self.lock_inner();
-        inner.state.connection.link_down(&token.into());
-        if inner.state.connection.snapshot().readiness == ConnectionReadiness::Failed {
-            inner.device = None;
-            inner.state.settings.disconnect();
-        }
+        inner.link_down(&token.into());
         inner.state.connection.snapshot().into()
     }
 
@@ -134,14 +130,7 @@ impl CutoutSessionStateHandle {
         now_ms: u64,
     ) -> MobileConnectionAttemptSnapshotDto {
         let mut inner = self.lock_inner();
-        inner.state.reset_device_identity();
-        inner.state.settings = cutout_core::DeviceSettingsState::default();
-        inner.detector = DeviceDetectionSession::default();
-        inner.device = None;
-        inner
-            .state
-            .connection
-            .begin(platform_identifier, MonotonicTimestamp::new(now_ms));
+        inner.begin_attempt(platform_identifier, MonotonicTimestamp::new(now_ms));
         inner.state.connection.snapshot().into()
     }
 
@@ -186,9 +175,7 @@ impl CutoutSessionStateHandle {
     /// Invalidates before native cancellation so queued consumers reject old work.
     pub fn disconnect_connection_attempt(&self) -> MobileConnectionAttemptSnapshotDto {
         let mut inner = self.lock_inner();
-        inner.state.connection.disconnect();
-        inner.state.settings.disconnect();
-        inner.device = None;
+        inner.disconnect();
         inner.state.connection.snapshot().into()
     }
 
@@ -198,20 +185,14 @@ impl CutoutSessionStateHandle {
         token: MobileConnectionAttemptTokenDto,
     ) -> MobileConnectionAttemptSnapshotDto {
         let mut inner = self.lock_inner();
-        inner.state.connection.transport_failed(&token.into());
-        if inner.state.connection.snapshot().readiness == ConnectionReadiness::Failed {
-            inner.device = None;
-            inner.state.settings.disconnect();
-        }
+        inner.transport_failed(&token.into());
         inner.state.connection.snapshot().into()
     }
 
     /// Invalidates a capture that can no longer preserve incoming evidence.
     pub fn fail_connection_capture(&self) -> MobileConnectionAttemptSnapshotDto {
         let mut inner = self.lock_inner();
-        inner.state.connection.fail_capture();
-        inner.state.settings.disconnect();
-        inner.device = None;
+        inner.fail_capture();
         inner.state.connection.snapshot().into()
     }
 }
