@@ -106,6 +106,29 @@ pub struct MobileDeviceActionProgressReadingDto {
     pub verification: MobileVerificationStatusDto,
 }
 
+/// Next protocol-owned procedure step or its current unavailability reason.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Enum)]
+pub enum MobileDeviceActionNextStepDto {
+    /// The shared owner permits this next step.
+    Available { step: MobileDeviceActionStepDto },
+    /// Waiting for measured procedure progress.
+    Busy,
+    /// The previous procedure requires restarting the wheel.
+    RestartRequired,
+}
+
+impl From<Result<DeviceActionStep, cutout_core::DeviceActionStateError>>
+    for MobileDeviceActionNextStepDto
+{
+    fn from(value: Result<DeviceActionStep, cutout_core::DeviceActionStateError>) -> Self {
+        match value {
+            Ok(step) => Self::Available { step: step.into() },
+            Err(cutout_core::DeviceActionStateError::Busy) => Self::Busy,
+            Err(cutout_core::DeviceActionStateError::RestartRequired) => Self::RestartRequired,
+        }
+    }
+}
+
 /// Shared action state without invented completion.
 #[derive(Clone, Debug, Eq, PartialEq, uniffi::Record)]
 pub struct MobileDeviceActionSnapshotDto {
@@ -119,6 +142,8 @@ pub struct MobileDeviceActionSnapshotDto {
     pub age_ms: Option<u64>,
     /// Last requested procedure step.
     pub requested_step: Option<MobileDeviceActionStepDto>,
+    /// Next step selected by the shared action lifecycle.
+    pub next_step: MobileDeviceActionNextStepDto,
     /// Existing protocol guard refusal.
     pub refusal: Option<MobileControlRefusalReasonDto>,
 }
@@ -137,6 +162,7 @@ impl From<cutout_core::DeviceActionSnapshot> for MobileDeviceActionSnapshotDto {
             status: value.status.into(),
             age_ms: value.age.map(|age| age.as_milliseconds()),
             requested_step: value.requested_step.map(Into::into),
+            next_step: value.next_step.into(),
             refusal: value
                 .refusal
                 .map(|reason| cutout_core::ControlRefusalReasonDto::from(reason).into()),
@@ -295,6 +321,7 @@ mod tests {
             .find(|item| item.id == MobileDeviceActionIdDto::ResetTripMeter)
             .unwrap();
         assert_eq!(reset.confirmation, MobileDeviceActionConfirmationDto::None);
+        let before_refusal = handle.actions_snapshot();
         assert_eq!(
             handle
                 .submit_action(
@@ -306,7 +333,7 @@ mod tests {
                 .unwrap_err(),
             MobileDeviceActionSubmissionError::Unverified
         );
-        assert!(handle.actions_snapshot().actions.is_empty());
+        assert_eq!(handle.actions_snapshot(), before_refusal);
         handle
             .submit_action(
                 token.clone(),
@@ -316,7 +343,13 @@ mod tests {
             )
             .unwrap();
         assert_eq!(
-            handle.actions_snapshot().actions[0].status,
+            handle
+                .actions_snapshot()
+                .actions
+                .into_iter()
+                .find(|action| action.id == MobileDeviceActionIdDto::ResetTripMeter)
+                .unwrap()
+                .status,
             MobileDeviceActionStatusDto::SentWithoutConfirmation
         );
         let replacement = handle.begin_connection_attempt("B".into(), 4);
