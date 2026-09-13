@@ -3,6 +3,7 @@ use thiserror::Error;
 use crate::{Duration, DutyCycle, MonotonicTimestamp, RideStopReason, RideWarning};
 
 const PWM_REARM_HYSTERESIS_PERCENT: u8 = 5;
+const FAILED_DELIVERY_RETRY_AFTER: Duration = Duration::from_seconds(1);
 
 /// A phone-generated PWM alarm threshold expressed as consumed duty.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -52,21 +53,63 @@ pub struct InvalidPwmDutyAlarmThreshold {
     value: u8,
 }
 
-/// One fresh piece of ride evidence considered by the phone alarm policy.
+/// Freshness of the complete evidence set considered by phone alarms.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum PhoneAlarmObservation {
-    /// No alarm condition is active in the latest fresh ride state.
-    Nominal,
-    /// Fresh, signed controller duty; the policy evaluates its magnitude.
-    PwmDuty(DutyCycle),
-    /// Fresh controller warning decoded by the vehicle protocol.
-    ControllerWarning(RideWarning),
-    /// Fresh reason that the controller stopped balancing.
-    ControllerStop(RideStopReason),
-    /// Ride telemetry is too old to justify a phone alarm.
+pub enum PhoneAlarmEvidenceFreshness {
+    /// Every supplied value is current enough for an alarm decision.
+    Fresh,
+    /// The most recent ride evidence is too old for an alarm decision.
     Stale,
-    /// The connected protocol does not supply the required evidence.
+    /// The active session has no usable ride evidence.
     Unavailable,
+}
+
+/// One freshness-qualified ride state containing every independent alarm channel.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct PhoneAlarmEvidence {
+    freshness: PhoneAlarmEvidenceFreshness,
+    pwm_duty: Option<DutyCycle>,
+    controller_warning: Option<RideWarning>,
+    controller_stop: Option<RideStopReason>,
+}
+
+impl PhoneAlarmEvidence {
+    /// Creates a fresh evidence set. Independent simultaneous conditions remain present.
+    #[must_use]
+    pub const fn fresh(
+        pwm_duty: Option<DutyCycle>,
+        controller_warning: Option<RideWarning>,
+        controller_stop: Option<RideStopReason>,
+    ) -> Self {
+        Self {
+            freshness: PhoneAlarmEvidenceFreshness::Fresh,
+            pwm_duty,
+            controller_warning,
+            controller_stop,
+        }
+    }
+
+    /// Creates explicitly stale evidence with no alarm-eligible values.
+    #[must_use]
+    pub const fn stale() -> Self {
+        Self {
+            freshness: PhoneAlarmEvidenceFreshness::Stale,
+            pwm_duty: None,
+            controller_warning: None,
+            controller_stop: None,
+        }
+    }
+
+    /// Creates explicitly unavailable evidence with no alarm-eligible values.
+    #[must_use]
+    pub const fn unavailable() -> Self {
+        Self {
+            freshness: PhoneAlarmEvidenceFreshness::Unavailable,
+            pwm_duty: None,
+            controller_warning: None,
+            controller_stop: None,
+        }
+    }
 }
 
 /// A normalized phone alarm event ready for native delivery.
@@ -97,20 +140,25 @@ impl PhoneAlarmEvent {
     }
 }
 
+/// One reserved delivery whose success or failure must be acknowledged.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum ActivePhoneAlarmCondition {
-    PwmDuty,
-    ControllerWarning(RideWarning),
-    ControllerStop(RideStopReason),
+pub struct PhoneAlarmDeliveryRequest {
+    id: u64,
+    event: PhoneAlarmEvent,
 }
 
-/// Whether native code should deliver a phone-generated alarm now.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum PhoneAlarmDecision {
-    /// No delivery is due.
-    Silent,
-    /// Deliver the normalized event through the enabled native channels.
-    Deliver(PhoneAlarmEvent),
+impl PhoneAlarmDeliveryRequest {
+    /// Returns the evaluator-owned request identity.
+    #[must_use]
+    pub const fn id(self) -> u64 {
+        self.id
+    }
+
+    /// Returns the native alarm payload reserved by this request.
+    #[must_use]
+    pub const fn event(self) -> PhoneAlarmEvent {
+        self.event
+    }
 }
 
 /// User-selected phone alarm policy, independent of wheel firmware alarms.
@@ -146,107 +194,230 @@ impl PhoneAlarmPolicy {
     }
 }
 
-/// Stateful transition and repeat gate for phone-generated ride alarms.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ActivePhoneAlarmCondition {
+    PwmDuty,
+    ControllerWarning(RideWarning),
+    ControllerStop(RideStopReason),
+}
+
 #[derive(Debug, Default)]
-pub struct PhoneAlarmEvaluator {
+struct PhoneAlarmChannelState {
     active: Option<ActivePhoneAlarmCondition>,
     delivered_at: Option<MonotonicTimestamp>,
+    failed_at: Option<MonotonicTimestamp>,
+    pending_request_id: Option<u64>,
+}
+
+impl PhoneAlarmChannelState {
+    fn clear(&mut self) {
+        *self = Self::default();
+    }
+}
+
+/// Stateful transition, acknowledgement, and repeat gate for phone-generated alarms.
+#[derive(Debug)]
+pub struct PhoneAlarmEvaluator {
+    pwm: PhoneAlarmChannelState,
+    warning: PhoneAlarmChannelState,
+    stop: PhoneAlarmChannelState,
+    next_request_id: u64,
+}
+
+impl Default for PhoneAlarmEvaluator {
+    fn default() -> Self {
+        Self {
+            pwm: PhoneAlarmChannelState::default(),
+            warning: PhoneAlarmChannelState::default(),
+            stop: PhoneAlarmChannelState::default(),
+            next_request_id: 1,
+        }
+    }
 }
 
 impl PhoneAlarmEvaluator {
-    /// Evaluates one observation and returns a bounded native-delivery decision.
+    /// Reserves every independent alarm delivery due for one complete ride state.
+    ///
+    /// Each returned request remains in flight until [`Self::complete_delivery`] is called.
     pub fn evaluate(
         &mut self,
         policy: PhoneAlarmPolicy,
-        observation: PhoneAlarmObservation,
+        evidence: PhoneAlarmEvidence,
         now: MonotonicTimestamp,
-    ) -> PhoneAlarmDecision {
-        if !policy.enabled {
+    ) -> Vec<PhoneAlarmDeliveryRequest> {
+        if !policy.enabled || evidence.freshness != PhoneAlarmEvidenceFreshness::Fresh {
             self.clear();
-            return PhoneAlarmDecision::Silent;
+            return Vec::new();
         }
 
-        let next = Self::event(policy, observation);
-        let Some(event) = next else {
-            if self.should_rearm(policy, observation) {
-                self.clear();
-            }
-            return PhoneAlarmDecision::Silent;
-        };
+        let mut requests = Vec::with_capacity(3);
+        let pwm_event = evidence
+            .pwm_duty
+            .and_then(|duty| Self::pwm_event(policy.pwm_duty_threshold, duty));
+        Self::update_pwm_rearm(
+            &mut self.pwm,
+            policy.pwm_duty_threshold,
+            evidence.pwm_duty,
+            pwm_event,
+        );
+        Self::reserve_if_due(
+            &mut self.pwm,
+            pwm_event,
+            policy.repeat_after,
+            now,
+            &mut self.next_request_id,
+            &mut requests,
+        );
 
-        let condition = event.condition();
-        let is_transition = self.active != Some(condition);
-        let repeat_due = self.delivered_at.is_some_and(|delivered_at| {
-            now.saturating_duration_since(delivered_at) >= policy.repeat_after
+        let warning_event = evidence
+            .controller_warning
+            .and_then(|warning| match warning {
+                RideWarning::None | RideWarning::Unknown => None,
+                warning => Some(PhoneAlarmEvent::ControllerWarning(warning)),
+            });
+        Self::clear_if_absent(&mut self.warning, warning_event);
+        Self::reserve_if_due(
+            &mut self.warning,
+            warning_event,
+            policy.repeat_after,
+            now,
+            &mut self.next_request_id,
+            &mut requests,
+        );
+
+        let stop_event = evidence.controller_stop.and_then(|reason| match reason {
+            RideStopReason::None => None,
+            reason => Some(PhoneAlarmEvent::ControllerStop(reason)),
         });
-        if !is_transition && !repeat_due {
-            return PhoneAlarmDecision::Silent;
-        }
-
-        self.active = Some(condition);
-        self.delivered_at = Some(now);
-        PhoneAlarmDecision::Deliver(event)
+        Self::clear_if_absent(&mut self.stop, stop_event);
+        Self::reserve_if_due(
+            &mut self.stop,
+            stop_event,
+            policy.repeat_after,
+            now,
+            &mut self.next_request_id,
+            &mut requests,
+        );
+        requests
     }
 
-    fn event(
-        policy: PhoneAlarmPolicy,
-        observation: PhoneAlarmObservation,
-    ) -> Option<PhoneAlarmEvent> {
-        match observation {
-            PhoneAlarmObservation::PwmDuty(duty) => {
-                let duty_permille = duty.as_permille().unsigned_abs().min(1_000);
-                (duty_permille >= policy.pwm_duty_threshold.permille()).then(|| {
-                    let duty_percent = u8::try_from(duty_permille / 10).unwrap_or(100);
-                    PhoneAlarmEvent::PwmDuty {
-                        duty_percent,
-                        headroom_percent: 100 - duty_percent,
-                    }
-                })
+    /// Completes one reserved native delivery.
+    ///
+    /// Returns `false` when the request was invalidated by newer evidence or policy state.
+    pub fn complete_delivery(
+        &mut self,
+        request_id: u64,
+        delivered: bool,
+        now: MonotonicTimestamp,
+    ) -> bool {
+        for state in [&mut self.pwm, &mut self.warning, &mut self.stop] {
+            if state.pending_request_id == Some(request_id) {
+                state.pending_request_id = None;
+                if delivered {
+                    state.delivered_at = Some(now);
+                    state.failed_at = None;
+                } else {
+                    state.failed_at = Some(now);
+                }
+                return true;
             }
-            PhoneAlarmObservation::ControllerWarning(RideWarning::None | RideWarning::Unknown)
-            | PhoneAlarmObservation::ControllerStop(RideStopReason::None)
-            | PhoneAlarmObservation::Nominal
-            | PhoneAlarmObservation::Stale
-            | PhoneAlarmObservation::Unavailable => None,
-            PhoneAlarmObservation::ControllerWarning(warning) => {
-                Some(PhoneAlarmEvent::ControllerWarning(warning))
+        }
+        false
+    }
+
+    fn reserve_if_due(
+        state: &mut PhoneAlarmChannelState,
+        event: Option<PhoneAlarmEvent>,
+        repeat_after: Duration,
+        now: MonotonicTimestamp,
+        next_request_id: &mut u64,
+        requests: &mut Vec<PhoneAlarmDeliveryRequest>,
+    ) {
+        let Some(event) = event else { return };
+        let condition = event.condition();
+        if state.active != Some(condition) {
+            state.active = Some(condition);
+            state.delivered_at = None;
+            state.failed_at = None;
+            state.pending_request_id = None;
+        }
+        if state.pending_request_id.is_some() {
+            return;
+        }
+        let repeat_due = state
+            .delivered_at
+            .is_none_or(|delivered_at| now.saturating_duration_since(delivered_at) >= repeat_after);
+        let retry_due = state.failed_at.is_none_or(|failed_at| {
+            now.saturating_duration_since(failed_at) >= FAILED_DELIVERY_RETRY_AFTER
+        });
+        if !repeat_due || !retry_due {
+            return;
+        }
+
+        let id = *next_request_id;
+        *next_request_id = next_request_id.wrapping_add(1).max(1);
+        state.pending_request_id = Some(id);
+        requests.push(PhoneAlarmDeliveryRequest { id, event });
+    }
+
+    fn pwm_event(threshold: PwmDutyAlarmThreshold, duty: DutyCycle) -> Option<PhoneAlarmEvent> {
+        let duty_permille = duty.as_permille().unsigned_abs().min(1_000);
+        (duty_permille >= threshold.permille()).then(|| {
+            let duty_percent = u8::try_from(duty_permille / 10).unwrap_or(100);
+            PhoneAlarmEvent::PwmDuty {
+                duty_percent,
+                headroom_percent: 100 - duty_percent,
             }
-            PhoneAlarmObservation::ControllerStop(reason) => {
-                Some(PhoneAlarmEvent::ControllerStop(reason))
-            }
+        })
+    }
+
+    fn update_pwm_rearm(
+        state: &mut PhoneAlarmChannelState,
+        threshold: PwmDutyAlarmThreshold,
+        duty: Option<DutyCycle>,
+        event: Option<PhoneAlarmEvent>,
+    ) {
+        if event.is_some() {
+            return;
+        }
+        state.pending_request_id = None;
+        let should_clear =
+            duty.is_none_or(|duty| duty.as_permille().unsigned_abs() <= threshold.rearm_permille());
+        if should_clear {
+            state.clear();
         }
     }
 
-    fn should_rearm(&self, policy: PhoneAlarmPolicy, observation: PhoneAlarmObservation) -> bool {
-        match (self.active, observation) {
-            (Some(ActivePhoneAlarmCondition::PwmDuty), PhoneAlarmObservation::PwmDuty(duty)) => {
-                duty.as_permille().unsigned_abs() <= policy.pwm_duty_threshold.rearm_permille()
-            }
-            (
-                _,
-                PhoneAlarmObservation::Stale
-                | PhoneAlarmObservation::Unavailable
-                | PhoneAlarmObservation::Nominal
-                | PhoneAlarmObservation::ControllerWarning(RideWarning::None | RideWarning::Unknown)
-                | PhoneAlarmObservation::ControllerStop(RideStopReason::None),
-            ) => true,
-            _ => false,
+    fn clear_if_absent(state: &mut PhoneAlarmChannelState, event: Option<PhoneAlarmEvent>) {
+        if event.is_none() {
+            state.clear();
         }
     }
 
     fn clear(&mut self) {
-        self.active = None;
-        self.delivered_at = None;
+        self.pwm.clear();
+        self.warning.clear();
+        self.stop.clear();
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{Duration, DutyCycle, MonotonicTimestamp, RideWarning};
 
     fn at(milliseconds: u64) -> MonotonicTimestamp {
         MonotonicTimestamp::from_milliseconds(milliseconds)
+    }
+
+    fn policy() -> PhoneAlarmPolicy {
+        PhoneAlarmPolicy::enabled(
+            PwmDutyAlarmThreshold::new(80).unwrap(),
+            Duration::from_seconds(10),
+        )
+    }
+
+    fn pwm_evidence(permille: i16) -> PhoneAlarmEvidence {
+        PhoneAlarmEvidence::fresh(Some(DutyCycle::from_permille(permille)), None, None)
     }
 
     #[test]
@@ -259,110 +430,116 @@ mod tests {
     }
 
     #[test]
-    fn evaluator_delivers_fresh_transitions_and_bounded_repeats() {
-        let policy = PhoneAlarmPolicy::enabled(
-            PwmDutyAlarmThreshold::new(80).unwrap(),
-            Duration::from_seconds(10),
-        );
+    fn successful_delivery_starts_repeat_gate_without_pwm_chatter() {
         let mut evaluator = PhoneAlarmEvaluator::default();
-        let pwm = PhoneAlarmObservation::PwmDuty(DutyCycle::from_permille(850));
+        let first = evaluator.evaluate(policy(), pwm_evidence(850), at(1_000))[0];
+        assert!(evaluator.complete_delivery(first.id, true, at(1_100)));
 
-        assert_eq!(
-            evaluator.evaluate(policy, pwm, at(1_000)),
-            PhoneAlarmDecision::Deliver(PhoneAlarmEvent::PwmDuty {
-                duty_percent: 85,
-                headroom_percent: 15,
-            })
+        assert!(
+            evaluator
+                .evaluate(policy(), pwm_evidence(860), at(2_000))
+                .is_empty()
+        );
+        assert!(
+            evaluator
+                .evaluate(policy(), pwm_evidence(790), at(3_000))
+                .is_empty()
+        );
+        assert!(
+            evaluator
+                .evaluate(policy(), pwm_evidence(810), at(4_000))
+                .is_empty()
         );
         assert_eq!(
-            evaluator.evaluate(policy, pwm, at(5_000)),
-            PhoneAlarmDecision::Silent
-        );
-        assert_eq!(
-            evaluator.evaluate(
-                policy,
-                PhoneAlarmObservation::PwmDuty(DutyCycle::from_permille(860)),
-                at(6_000),
-            ),
-            PhoneAlarmDecision::Silent
-        );
-        assert_eq!(
-            evaluator.evaluate(policy, pwm, at(11_000)),
-            PhoneAlarmDecision::Deliver(PhoneAlarmEvent::PwmDuty {
-                duty_percent: 85,
-                headroom_percent: 15,
-            })
-        );
-
-        assert_eq!(
-            evaluator.evaluate(
-                policy,
-                PhoneAlarmObservation::ControllerWarning(RideWarning::LowVoltage),
-                at(11_001),
-            ),
-            PhoneAlarmDecision::Deliver(PhoneAlarmEvent::ControllerWarning(
-                RideWarning::LowVoltage
-            ))
+            evaluator
+                .evaluate(policy(), pwm_evidence(810), at(11_100))
+                .len(),
+            1
         );
     }
 
     #[test]
-    fn evaluator_suppresses_disabled_stale_unknown_and_pwm_chatter() {
-        let policy = PhoneAlarmPolicy::enabled(
-            PwmDutyAlarmThreshold::new(80).unwrap(),
-            Duration::from_seconds(10),
-        );
+    fn pwm_rearms_only_below_hysteresis() {
         let mut evaluator = PhoneAlarmEvaluator::default();
+        let first = evaluator.evaluate(policy(), pwm_evidence(810), at(1))[0];
+        assert!(evaluator.complete_delivery(first.id, true, at(2)));
+        assert!(
+            evaluator
+                .evaluate(policy(), pwm_evidence(740), at(3))
+                .is_empty()
+        );
+        assert_eq!(
+            evaluator.evaluate(policy(), pwm_evidence(810), at(4)).len(),
+            1
+        );
+    }
 
-        assert_eq!(
-            evaluator.evaluate(
-                PhoneAlarmPolicy::disabled(),
-                PhoneAlarmObservation::PwmDuty(DutyCycle::from_permille(900)),
-                at(1),
-            ),
-            PhoneAlarmDecision::Silent
+    #[test]
+    fn disabled_stale_and_unavailable_evidence_invalidate_requests() {
+        let mut evaluator = PhoneAlarmEvaluator::default();
+        let request = evaluator.evaluate(policy(), pwm_evidence(900), at(1))[0];
+
+        assert!(
+            evaluator
+                .evaluate(policy(), PhoneAlarmEvidence::stale(), at(2))
+                .is_empty()
         );
-        assert_eq!(
-            evaluator.evaluate(policy, PhoneAlarmObservation::Stale, at(2)),
-            PhoneAlarmDecision::Silent
+        assert!(!evaluator.complete_delivery(request.id, true, at(3)));
+        assert!(
+            evaluator
+                .evaluate(PhoneAlarmPolicy::disabled(), pwm_evidence(900), at(4))
+                .is_empty()
         );
-        assert_eq!(
-            evaluator.evaluate(
-                policy,
-                PhoneAlarmObservation::ControllerWarning(RideWarning::Unknown),
-                at(3),
-            ),
-            PhoneAlarmDecision::Silent
+        assert!(
+            evaluator
+                .evaluate(policy(), PhoneAlarmEvidence::unavailable(), at(5))
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn simultaneous_conditions_are_independent_delivery_requests() {
+        let mut evaluator = PhoneAlarmEvaluator::default();
+        let evidence = PhoneAlarmEvidence::fresh(
+            Some(DutyCycle::from_permille(850)),
+            Some(RideWarning::MotorTemperature),
+            Some(RideStopReason::Pitch),
         );
 
-        let high = PhoneAlarmObservation::PwmDuty(DutyCycle::from_permille(810));
-        assert!(matches!(
-            evaluator.evaluate(policy, high, at(4)),
-            PhoneAlarmDecision::Deliver(_)
-        ));
-        assert_eq!(
-            evaluator.evaluate(
-                policy,
-                PhoneAlarmObservation::PwmDuty(DutyCycle::from_permille(790)),
-                at(5),
-            ),
-            PhoneAlarmDecision::Silent
+        let requests = evaluator.evaluate(policy(), evidence, at(1_000));
+
+        assert_eq!(requests.len(), 3);
+        assert!(requests.iter().any(|request| matches!(
+            request.event,
+            PhoneAlarmEvent::PwmDuty {
+                duty_percent: 85,
+                headroom_percent: 15
+            }
+        )));
+        assert!(requests.iter().any(|request| {
+            request.event == PhoneAlarmEvent::ControllerWarning(RideWarning::MotorTemperature)
+        }));
+        assert!(requests.iter().any(|request| {
+            request.event == PhoneAlarmEvent::ControllerStop(RideStopReason::Pitch)
+        }));
+    }
+
+    #[test]
+    fn delivery_failure_retries_without_committing_repeat_gate() {
+        let evidence = pwm_evidence(850);
+        let mut evaluator = PhoneAlarmEvaluator::default();
+        let first = evaluator.evaluate(policy(), evidence, at(1_000))[0];
+
+        assert!(evaluator.complete_delivery(first.id, false, at(1_100)));
+        assert!(evaluator.evaluate(policy(), evidence, at(1_500)).is_empty());
+        let retry = evaluator.evaluate(policy(), evidence, at(2_100))[0];
+        assert_ne!(retry.id, first.id);
+        assert!(evaluator.complete_delivery(retry.id, true, at(2_200)));
+        assert!(
+            evaluator
+                .evaluate(policy(), evidence, at(11_000))
+                .is_empty()
         );
-        assert_eq!(
-            evaluator.evaluate(policy, high, at(6)),
-            PhoneAlarmDecision::Silent
-        );
-        assert_eq!(
-            evaluator.evaluate(
-                policy,
-                PhoneAlarmObservation::PwmDuty(DutyCycle::from_permille(740)),
-                at(7),
-            ),
-            PhoneAlarmDecision::Silent
-        );
-        assert!(matches!(
-            evaluator.evaluate(policy, high, at(8)),
-            PhoneAlarmDecision::Deliver(_)
-        ));
+        assert_eq!(evaluator.evaluate(policy(), evidence, at(12_200)).len(), 1);
     }
 }

@@ -1,9 +1,9 @@
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
 use cutout_core::{
-    Duration, DutyCycle, MonotonicTimestamp, PhoneAlarmDecision, PhoneAlarmEvaluator,
-    PhoneAlarmEvent, PhoneAlarmObservation, PhoneAlarmPolicy, PwmDutyAlarmThreshold,
-    RideStopReason, RideWarning,
+    Duration, DutyCycle, MonotonicTimestamp, PhoneAlarmDeliveryRequest, PhoneAlarmEvaluator,
+    PhoneAlarmEvent, PhoneAlarmEvidence, PhoneAlarmPolicy, PwmDutyAlarmThreshold, RideStopReason,
+    RideWarning,
 };
 
 use crate::{MobileVescRideStopReasonDto, MobileVescRideWarningDto};
@@ -19,30 +19,28 @@ pub struct MobilePhoneAlarmPolicyDto {
     pub repeat_after_milliseconds: u64,
 }
 
-/// Freshness-qualified ride evidence supplied to the Rust alarm owner.
+/// Freshness of the complete native ride evidence set.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Enum)]
-pub enum MobilePhoneAlarmObservationDto {
-    /// No alarm condition is active.
-    Nominal,
-    /// Signed controller duty in permille.
-    PwmDuty {
-        /// Signed duty magnitude and direction in permille.
-        duty_permille: i16,
-    },
-    /// Typed warning decoded from a VESC protocol.
-    ControllerWarning {
-        /// Current controller warning.
-        warning: MobileVescRideWarningDto,
-    },
-    /// Typed reason that a VESC controller stopped balancing.
-    ControllerStop {
-        /// Current stop reason.
-        reason: MobileVescRideStopReasonDto,
-    },
-    /// The latest ride evidence is stale.
+pub enum MobilePhoneAlarmEvidenceFreshnessDto {
+    /// Every supplied value is current enough for an alarm decision.
+    Fresh,
+    /// The most recent ride evidence is too old for an alarm decision.
     Stale,
-    /// The active protocol does not supply the required evidence.
+    /// The active session has no usable ride evidence.
     Unavailable,
+}
+
+/// Complete native ride evidence supplied to the Rust alarm owner.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct MobilePhoneAlarmEvidenceDto {
+    /// Freshness shared by every optional field.
+    pub freshness: MobilePhoneAlarmEvidenceFreshnessDto,
+    /// Signed controller duty in permille when supplied by the protocol.
+    pub pwm_duty_permille: Option<i16>,
+    /// Typed VESC warning when supplied by the protocol.
+    pub controller_warning: Option<MobileVescRideWarningDto>,
+    /// Typed VESC stop reason when supplied by the protocol.
+    pub controller_stop: Option<MobileVescRideStopReasonDto>,
 }
 
 /// Normalized alarm payload returned for native delivery.
@@ -67,15 +65,22 @@ pub enum MobilePhoneAlarmEventDto {
     },
 }
 
+/// One Rust-reserved native delivery request.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct MobilePhoneAlarmDeliveryRequestDto {
+    /// Evaluator-owned request identity used for completion.
+    pub id: u64,
+    /// Normalized event to deliver.
+    pub event: MobilePhoneAlarmEventDto,
+}
+
 /// Result of one Rust-owned phone alarm evaluation.
-#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Enum)]
+#[derive(Clone, Debug, Eq, PartialEq, uniffi::Enum)]
 pub enum MobilePhoneAlarmEvaluationDto {
-    /// No native delivery is due.
-    Silent,
-    /// Deliver one event through the enabled native channels.
-    Deliver {
-        /// Normalized event to deliver.
-        event: MobilePhoneAlarmEventDto,
+    /// Every independent delivery currently due.
+    Ready {
+        /// Zero to three reserved native deliveries.
+        requests: Vec<MobilePhoneAlarmDeliveryRequestDto>,
     },
     /// The supplied duty threshold exceeded one hundred percent.
     InvalidPwmDutyThreshold {
@@ -99,11 +104,11 @@ impl MobilePhoneAlarmEvaluator {
         Arc::new(Self::default())
     }
 
-    /// Evaluates one observation without owning native notification delivery.
+    /// Reserves every independent delivery due for the complete evidence set.
     pub fn evaluate(
         &self,
         policy: MobilePhoneAlarmPolicyDto,
-        observation: MobilePhoneAlarmObservationDto,
+        evidence: MobilePhoneAlarmEvidenceDto,
         monotonic_milliseconds: u64,
     ) -> MobilePhoneAlarmEvaluationDto {
         let Ok(threshold) = PwmDutyAlarmThreshold::new(policy.pwm_duty_percent) else {
@@ -119,13 +124,31 @@ impl MobilePhoneAlarmEvaluator {
         } else {
             PhoneAlarmPolicy::disabled()
         };
-        self.lock_inner()
+        let requests = self
+            .lock_inner()
             .evaluate(
                 policy,
-                observation.into(),
+                evidence.into(),
                 MonotonicTimestamp::from_milliseconds(monotonic_milliseconds),
             )
-            .into()
+            .into_iter()
+            .map(Into::into)
+            .collect();
+        MobilePhoneAlarmEvaluationDto::Ready { requests }
+    }
+
+    /// Records whether native scheduling succeeded for one reserved request.
+    pub fn complete_delivery(
+        &self,
+        request_id: u64,
+        delivered: bool,
+        monotonic_milliseconds: u64,
+    ) -> bool {
+        self.lock_inner().complete_delivery(
+            request_id,
+            delivered,
+            MonotonicTimestamp::from_milliseconds(monotonic_milliseconds),
+        )
     }
 }
 
@@ -135,32 +158,25 @@ impl MobilePhoneAlarmEvaluator {
     }
 }
 
-impl From<MobilePhoneAlarmObservationDto> for PhoneAlarmObservation {
-    fn from(observation: MobilePhoneAlarmObservationDto) -> Self {
-        match observation {
-            MobilePhoneAlarmObservationDto::Nominal => Self::Nominal,
-            MobilePhoneAlarmObservationDto::PwmDuty { duty_permille } => {
-                Self::PwmDuty(DutyCycle::from_permille(duty_permille))
-            }
-            MobilePhoneAlarmObservationDto::ControllerWarning { warning } => {
-                Self::ControllerWarning(warning.into())
-            }
-            MobilePhoneAlarmObservationDto::ControllerStop { reason } => {
-                Self::ControllerStop(reason.into())
-            }
-            MobilePhoneAlarmObservationDto::Stale => Self::Stale,
-            MobilePhoneAlarmObservationDto::Unavailable => Self::Unavailable,
+impl From<MobilePhoneAlarmEvidenceDto> for PhoneAlarmEvidence {
+    fn from(evidence: MobilePhoneAlarmEvidenceDto) -> Self {
+        match evidence.freshness {
+            MobilePhoneAlarmEvidenceFreshnessDto::Fresh => Self::fresh(
+                evidence.pwm_duty_permille.map(DutyCycle::from_permille),
+                evidence.controller_warning.map(Into::into),
+                evidence.controller_stop.map(Into::into),
+            ),
+            MobilePhoneAlarmEvidenceFreshnessDto::Stale => Self::stale(),
+            MobilePhoneAlarmEvidenceFreshnessDto::Unavailable => Self::unavailable(),
         }
     }
 }
 
-impl From<PhoneAlarmDecision> for MobilePhoneAlarmEvaluationDto {
-    fn from(decision: PhoneAlarmDecision) -> Self {
-        match decision {
-            PhoneAlarmDecision::Silent => Self::Silent,
-            PhoneAlarmDecision::Deliver(event) => Self::Deliver {
-                event: event.into(),
-            },
+impl From<PhoneAlarmDeliveryRequest> for MobilePhoneAlarmDeliveryRequestDto {
+    fn from(request: PhoneAlarmDeliveryRequest) -> Self {
+        Self {
+            id: request.id(),
+            event: request.event().into(),
         }
     }
 }
@@ -261,68 +277,83 @@ impl From<RideStopReason> for MobileVescRideStopReasonDto {
 mod tests {
     use super::*;
 
-    #[test]
-    fn thin_facade_preserves_pwm_duty_and_headroom() {
-        let evaluator = MobilePhoneAlarmEvaluator::new();
-        let policy = MobilePhoneAlarmPolicyDto {
+    fn policy() -> MobilePhoneAlarmPolicyDto {
+        MobilePhoneAlarmPolicyDto {
             enabled: true,
             pwm_duty_percent: 80,
             repeat_after_milliseconds: 10_000,
+        }
+    }
+
+    #[test]
+    fn facade_preserves_simultaneous_typed_events_and_completion() {
+        let evaluator = MobilePhoneAlarmEvaluator::new();
+        let evidence = MobilePhoneAlarmEvidenceDto {
+            freshness: MobilePhoneAlarmEvidenceFreshnessDto::Fresh,
+            pwm_duty_permille: Some(850),
+            controller_warning: Some(MobileVescRideWarningDto::MotorTemperature),
+            controller_stop: Some(MobileVescRideStopReasonDto::Pitch),
         };
 
-        assert_eq!(
-            evaluator.evaluate(
-                policy,
-                MobilePhoneAlarmObservationDto::PwmDuty { duty_permille: 850 },
-                1_000,
-            ),
-            MobilePhoneAlarmEvaluationDto::Deliver {
-                event: MobilePhoneAlarmEventDto::PwmDuty {
+        let MobilePhoneAlarmEvaluationDto::Ready { requests } =
+            evaluator.evaluate(policy(), evidence, 1_000)
+        else {
+            panic!("valid policy must return requests");
+        };
+        assert_eq!(requests.len(), 3);
+        assert!(requests.iter().any(|request| {
+            request.event
+                == MobilePhoneAlarmEventDto::PwmDuty {
                     duty_percent: 85,
                     headroom_percent: 15,
-                },
-            }
-        );
+                }
+        }));
+        for request in requests {
+            assert!(evaluator.complete_delivery(request.id, true, 1_100));
+        }
         assert_eq!(
-            evaluator.evaluate(
-                policy,
-                MobilePhoneAlarmObservationDto::PwmDuty { duty_permille: 860 },
-                2_000,
-            ),
-            MobilePhoneAlarmEvaluationDto::Silent
+            evaluator.evaluate(policy(), evidence, 2_000),
+            MobilePhoneAlarmEvaluationDto::Ready {
+                requests: Vec::new()
+            }
         );
     }
 
     #[test]
-    fn facade_rejects_invalid_thresholds_and_preserves_typed_warnings() {
+    fn facade_rejects_invalid_threshold_and_retries_failed_delivery() {
         let evaluator = MobilePhoneAlarmEvaluator::new();
         let invalid = MobilePhoneAlarmPolicyDto {
-            enabled: true,
             pwm_duty_percent: 101,
-            repeat_after_milliseconds: 10_000,
+            ..policy()
+        };
+        let evidence = MobilePhoneAlarmEvidenceDto {
+            freshness: MobilePhoneAlarmEvidenceFreshnessDto::Fresh,
+            pwm_duty_permille: Some(850),
+            controller_warning: None,
+            controller_stop: None,
         };
         assert_eq!(
-            evaluator.evaluate(invalid, MobilePhoneAlarmObservationDto::Nominal, 1),
+            evaluator.evaluate(invalid, evidence, 1),
             MobilePhoneAlarmEvaluationDto::InvalidPwmDutyThreshold { value: 101 }
         );
 
-        let policy = MobilePhoneAlarmPolicyDto {
-            pwm_duty_percent: 80,
-            ..invalid
+        let MobilePhoneAlarmEvaluationDto::Ready { requests } =
+            evaluator.evaluate(policy(), evidence, 1_000)
+        else {
+            panic!("valid policy must return requests");
         };
+        assert!(evaluator.complete_delivery(requests[0].id, false, 1_100));
         assert_eq!(
-            evaluator.evaluate(
-                policy,
-                MobilePhoneAlarmObservationDto::ControllerWarning {
-                    warning: MobileVescRideWarningDto::MotorTemperature,
-                },
-                2,
-            ),
-            MobilePhoneAlarmEvaluationDto::Deliver {
-                event: MobilePhoneAlarmEventDto::ControllerWarning {
-                    warning: MobileVescRideWarningDto::MotorTemperature,
-                },
+            evaluator.evaluate(policy(), evidence, 1_500),
+            MobilePhoneAlarmEvaluationDto::Ready {
+                requests: Vec::new()
             }
         );
+        let MobilePhoneAlarmEvaluationDto::Ready { requests } =
+            evaluator.evaluate(policy(), evidence, 2_100)
+        else {
+            panic!("valid policy must return requests");
+        };
+        assert_eq!(requests.len(), 1);
     }
 }
