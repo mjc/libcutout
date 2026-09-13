@@ -2,6 +2,8 @@
 
 mod rgb;
 pub use rgb::*;
+mod connection_attempt;
+pub use connection_attempt::*;
 
 use std::{
     collections::VecDeque,

@@ -11,8 +11,8 @@ use bytes::Bytes;
 /// Rust-owned durable state for one `CutOut` mobile/device session.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct CutoutSessionState {
-    /// Purpose of the selected device connection across transport attempts.
-    pub device_connection_intent: DeviceConnectionIntent,
+    /// Attempt identity, deadline and protocol admission state.
+    pub connection: crate::ConnectionAttemptLifecycle,
 
     /// Logical ride and Live Activity lifecycle state.
     pub ride_session: RideSessionLifecycle,
@@ -28,15 +28,6 @@ pub struct CutoutSessionState {
 }
 
 impl CutoutSessionState {
-    /// Whether unresolved identification should retry the selected connection.
-    #[must_use]
-    pub const fn should_retry_identification(&self) -> bool {
-        matches!(
-            self.device_connection_intent,
-            DeviceConnectionIntent::Reconnect
-        )
-    }
-
     /// Returns the current identity state without cloning the whole root.
     #[must_use]
     pub const fn identity(&self) -> &DeviceIdentityState {
@@ -192,13 +183,6 @@ pub struct DeviceIdentityState {
 }
 
 impl DeviceIdentityState {
-    /// Clears response bookkeeping from the previous physical link.
-    pub fn reset_link_probes(&mut self) {
-        self.pending_probe_started_at.fill(None);
-        self.missing_probe_response = None;
-        self.malformed_probe_response = None;
-    }
-
     /// Records an identity probe and the monotonic time at which it was written.
     pub fn observe_probe_write(&mut self, probe: PendingProbe, started_at: MonotonicTimestamp) {
         self.pending_probe_started_at[probe.index()].get_or_insert(started_at);
@@ -586,18 +570,6 @@ pub enum DiscoveryConnectionRoute {
 
     /// VESC/Onewheel read-only route.
     VescOnewheel,
-}
-
-/// Purpose of a selected device connection, independent of the current link.
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub enum DeviceConnectionIntent {
-    /// Identify a device selected for use.
-    #[default]
-    Use,
-    /// Recover a previously selected connection without falling back to capture-only.
-    Reconnect,
-    /// Capture an explicitly selected device without requiring a supported protocol.
-    RecordOnly,
 }
 
 /// Picker/discovery candidate derived from Rust-owned discovery evidence.
@@ -1249,42 +1221,6 @@ mod tests {
             identity.next_probe_expiry(crate::Duration::from_milliseconds(2_000)),
             Some(MonotonicTimestamp::new(3_001))
         );
-    }
-
-    #[test]
-    fn only_reconnect_intent_retries_identification() {
-        let mut state = CutoutSessionState::default();
-        assert!(!state.should_retry_identification());
-        state.device_connection_intent = DeviceConnectionIntent::Reconnect;
-        assert!(state.should_retry_identification());
-        state.device_connection_intent = DeviceConnectionIntent::RecordOnly;
-        assert!(!state.should_retry_identification());
-        state.device_connection_intent = DeviceConnectionIntent::Use;
-        assert!(!state.should_retry_identification());
-    }
-
-    #[test]
-    fn link_probe_reset_preserves_confirmed_identity_and_discovery() {
-        let mut state = CutoutSessionState::default();
-        state.observe_discovery(discovery_observation(
-            "peripheral-a",
-            b"NF2557",
-            vec![BluetoothServiceUuid::EUC_SERIAL_FFE0],
-            -42,
-        ));
-        state.select_discovered_platform("peripheral-a".to_owned());
-        state.identity.protocol_family = Some(ProtocolFamily::VeteranLeaperkimNosfet);
-        state.identity.model = Some("Aero".to_owned());
-        let expected_identity = state.identity.clone();
-        state
-            .identity
-            .observe_probe_write(PendingProbe::BegodeName, MonotonicTimestamp::new(42));
-        state.identity.missing_probe_response = Some(PendingProbe::BegodeFirmware);
-        state.identity.malformed_probe_response = Some(PendingProbe::BegodeImu);
-
-        state.identity.reset_link_probes();
-
-        assert_eq!(state.identity, expected_identity);
     }
 
     #[test]
