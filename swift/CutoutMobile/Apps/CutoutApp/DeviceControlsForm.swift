@@ -89,6 +89,7 @@ private struct DeviceSettingRow: View {
             }
         } header: {
             Text(localizedAppText(descriptor.labelKey))
+                .accessibilityIdentifier("settings.control.\(descriptor.id)")
         } footer: {
             VStack(alignment: .leading) {
                 if descriptor.access == .readOnly {
@@ -101,7 +102,6 @@ private struct DeviceSettingRow: View {
                 }
             }
         }
-        .accessibilityIdentifier("settings.control.\(descriptor.id)")
     }
 }
 
@@ -122,6 +122,7 @@ private struct DeviceActionRow: View {
                 }
             }
             .disabled(!DeviceControlPresentation.actionAvailable(descriptor: descriptor, state: state))
+            .accessibilityIdentifier("settings.action.\(descriptor.id)")
             if let submissionError {
                 Text(submissionError).foregroundStyle(.red)
             }
@@ -141,7 +142,6 @@ private struct DeviceActionRow: View {
         } message: {
             Text(localizedAppText(descriptor.helpKey))
         }
-        .accessibilityIdentifier("settings.action.\(descriptor.id)")
     }
 
     private func send() {
