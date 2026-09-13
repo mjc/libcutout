@@ -2,6 +2,8 @@
 
 mod rgb;
 pub use rgb::*;
+mod phone_alarm;
+pub use phone_alarm::*;
 
 use std::{
     collections::VecDeque,
