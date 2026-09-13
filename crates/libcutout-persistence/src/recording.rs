@@ -22,6 +22,9 @@ pub enum RecordingError {
     /// The requested lifecycle event is not valid for the current state.
     #[error("invalid ride transition")]
     InvalidTransition,
+    /// The recording changed after this command was requested.
+    #[error("ride changed before command could be applied")]
+    StaleCommand,
     /// The supplied location values are invalid.
     #[error("invalid location")]
     InvalidLocation,
@@ -137,6 +140,8 @@ pub struct RecordingSnapshot {
     pub ride_id: RideId,
     /// Monotonic revision across recording and lifecycle changes.
     pub revision: u64,
+    /// Correlation token for commands in every lifecycle state.
+    pub command_token: RecordingToken,
     /// Acquisition token present only while actively recording.
     pub recording_token: Option<RecordingToken>,
     /// Authoritative durable lifecycle.
@@ -655,6 +660,10 @@ impl RideRecordingSession {
         Some(RecordingSnapshot {
             ride_id,
             revision: self.revision,
+            command_token: RecordingToken {
+                ride_id,
+                generation: self.generation,
+            },
             recording_token: (state == ride_maps::RideLifecycleState::Active).then_some(
                 RecordingToken {
                     ride_id,
@@ -774,6 +783,36 @@ impl RideRecordingSession {
 }
 
 impl RideRecordingSession {
+    /// Applies a rider command only to the lifecycle that was displayed when requested.
+    ///
+    /// A missing token means the caller observed no recording. Telemetry and route updates
+    /// do not change this token; lifecycle transitions and replacement rides do.
+    ///
+    /// # Errors
+    /// Returns [`RecordingError::StaleCommand`] without mutation when the target changed,
+    /// or the underlying lifecycle/storage error when the requested command cannot complete.
+    pub fn apply_command(
+        &mut self,
+        expected: Option<RecordingToken>,
+        event: ride_maps::RideEvent,
+        at_ms: u64,
+        last_connected_vehicle: Option<String>,
+    ) -> Result<RecordingSnapshot, RecordingError> {
+        let current = self.ride_id.map(|ride_id| RecordingToken {
+            ride_id,
+            generation: self.generation,
+        });
+        if expected != current {
+            return Err(RecordingError::StaleCommand);
+        }
+        match event {
+            ride_maps::RideEvent::Start => self.start_gps_only(at_ms, last_connected_vehicle),
+            ride_maps::RideEvent::Save => self.save(),
+            ride_maps::RideEvent::Discard => self.discard(),
+            _ => self.transition_at(event, at_ms),
+        }
+    }
+
     fn logical_monotonic_milliseconds(&self, raw: u64) -> u64 {
         raw.saturating_add(self.monotonic_epoch_offset_milliseconds)
     }

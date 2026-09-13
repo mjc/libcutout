@@ -298,3 +298,82 @@ mod recovery_tests {
         );
     }
 }
+
+#[test]
+fn lifecycle_command_cannot_mutate_a_replacement_ride() {
+    let mut session = RideRecordingSession::new(None);
+    let first = session.start_gps_only(1_000, None).unwrap();
+    session
+        .transition_at(ride_maps::RideEvent::Stop, 2_000)
+        .unwrap();
+    session.save().unwrap();
+    let replacement = session.start_gps_only(3_000, None).unwrap();
+
+    assert_eq!(
+        session.apply_command(
+            Some(first.command_token),
+            ride_maps::RideEvent::Pause,
+            4_000,
+            None
+        ),
+        Err(RecordingError::StaleCommand)
+    );
+    assert_eq!(session.current_snapshot(3_000).unwrap(), replacement);
+}
+
+#[test]
+fn lifecycle_command_generation_changes_on_transitions_but_not_telemetry() {
+    let mut session = RideRecordingSession::new(None);
+    let attempt = ConnectionAttemptToken {
+        generation: 1,
+        platform_identifier: "pev-1".into(),
+    };
+    let active = session
+        .observe_connection_telemetry(&attempt, 1_000)
+        .unwrap();
+    let refreshed = session
+        .observe_connection_telemetry(&attempt, 1_100)
+        .unwrap();
+    assert_eq!(active.command_token, refreshed.command_token);
+    let paused = session
+        .apply_command(
+            Some(active.command_token),
+            ride_maps::RideEvent::Pause,
+            1_200,
+            None,
+        )
+        .unwrap();
+    assert_ne!(active.command_token, paused.command_token);
+    let resumed = session
+        .apply_command(
+            Some(paused.command_token),
+            ride_maps::RideEvent::Resume,
+            1_300,
+            None,
+        )
+        .unwrap();
+    assert_eq!(resumed.ride_id, active.ride_id);
+    assert_eq!(
+        session.apply_command(
+            Some(active.command_token),
+            ride_maps::RideEvent::Stop,
+            1_400,
+            None
+        ),
+        Err(RecordingError::StaleCommand)
+    );
+    assert_eq!(session.current_snapshot(1_300).unwrap(), resumed);
+}
+
+#[test]
+fn start_command_observing_no_ride_cannot_replace_a_new_automatic_ride() {
+    let mut session = RideRecordingSession::new(None);
+    let automatic = session
+        .ensure_recording_for_vehicle("pev-1", 1_000)
+        .unwrap();
+    assert_eq!(
+        session.apply_command(None, ride_maps::RideEvent::Start, 1_100, None),
+        Err(RecordingError::StaleCommand)
+    );
+    assert_eq!(session.current_snapshot(1_000).unwrap(), automatic);
+}

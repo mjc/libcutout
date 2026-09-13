@@ -6769,6 +6769,9 @@ pub enum MobileRideMapCoreErrorDto {
     /// The requested lifecycle event is not valid for the current state.
     #[error("invalid ride transition")]
     InvalidTransition,
+    /// The recording changed after the command was requested.
+    #[error("ride changed before command could be applied")]
+    StaleCommand,
     /// The supplied location values are invalid.
     #[error("invalid location")]
     InvalidLocation,
@@ -6913,6 +6916,8 @@ pub struct MobileRideMapCoreSnapshotDto {
     pub ride_id: String,
     /// Monotonic revision of the recording owner, including lifecycle changes.
     pub revision: u64,
+    /// Correlation token for commands in every lifecycle state.
+    pub command_token: MobileRideMapRecordingTokenDto,
     /// Correlation token for inputs acquired while this ride is recording.
     pub recording_token: Option<MobileRideMapRecordingTokenDto>,
     /// Current durable lifecycle state.
@@ -9489,6 +9494,7 @@ impl From<persistence::RecordingError> for MobileRideMapCoreErrorDto {
             persistence::RecordingError::AlreadyRecording => Self::AlreadyRecording,
             persistence::RecordingError::NoActiveRide => Self::NoActiveRide,
             persistence::RecordingError::InvalidTransition => Self::InvalidTransition,
+            persistence::RecordingError::StaleCommand => Self::StaleCommand,
             persistence::RecordingError::InvalidLocation => Self::InvalidLocation,
             persistence::RecordingError::InvalidRouteProjection => Self::InvalidRouteProjection,
             persistence::RecordingError::Cancelled => Self::Cancelled,
@@ -9522,6 +9528,10 @@ impl From<persistence::RecordingSnapshot> for MobileRideMapCoreSnapshotDto {
         Self {
             ride_id: value.ride_id.uuid().to_string(),
             revision: value.revision,
+            command_token: MobileRideMapRecordingTokenDto {
+                ride_id: value.command_token.ride_id.uuid().to_string(),
+                generation: value.command_token.generation,
+            },
             recording_token: value
                 .recording_token
                 .map(|token| MobileRideMapRecordingTokenDto {
@@ -9686,6 +9696,36 @@ impl MobileRideMapCore {
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
             .start_gps_only(at_ms, last_connected_vehicle)
+            .map(Into::into)
+            .map_err(Into::into)
+    }
+
+    /// Applies a lifecycle command to its captured ride and generation.
+    ///
+    /// # Errors
+    /// Returns a conversion error or the canonical recording command failure.
+    pub fn apply_command(
+        &self,
+        expected: Option<MobileRideMapRecordingTokenDto>,
+        event: MobileRideEventDto,
+        at_ms: u64,
+        last_connected_vehicle: Option<String>,
+    ) -> Result<MobileRideMapCoreSnapshotDto, MobileRideMapCoreErrorDto> {
+        let expected = expected
+            .map(|token| {
+                Ok::<_, MobileRideMapCoreErrorDto>(persistence::RecordingToken {
+                    ride_id: parse_mobile_ride_id(&MobileRideIdDto {
+                        value: token.ride_id,
+                    })
+                    .map_err(map_core_error)?,
+                    generation: token.generation,
+                })
+            })
+            .transpose()?;
+        self.inner
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .apply_command(expected, event.into(), at_ms, last_connected_vehicle)
             .map(Into::into)
             .map_err(Into::into)
     }
@@ -21824,6 +21864,33 @@ mod tests {
         let _ = fs::remove_dir(managed_path.parent().unwrap());
         let _ = fs::remove_file(database_path);
         let _ = fs::remove_file(artifact_path);
+    }
+
+    #[test]
+    fn mobile_recording_command_converts_target_and_stale_error() {
+        let core = MobileRideMapCore::new();
+        let active = core
+            .apply_command(None, MobileRideEventDto::Start, 1_000, None)
+            .unwrap();
+        let paused = core
+            .apply_command(
+                Some(active.command_token.clone()),
+                MobileRideEventDto::Pause,
+                2_000,
+                None,
+            )
+            .unwrap();
+        assert_eq!(paused.state, MobileRideLifecycleStateDto::Paused);
+        assert_ne!(paused.command_token, active.command_token);
+        assert_eq!(
+            core.apply_command(
+                Some(active.command_token),
+                MobileRideEventDto::Resume,
+                3_000,
+                None
+            ),
+            Err(MobileRideMapCoreErrorDto::StaleCommand)
+        );
     }
 
     #[test]
