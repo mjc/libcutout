@@ -2,6 +2,13 @@ import CutoutMobile
 import SwiftUI
 
 struct RideMapControlsView: View {
+    enum ControlSet: Equatable {
+        case recording
+        case resumable
+        case terminal
+        case start
+    }
+
     let state: MobileRideMapStateDto?
     @Binding var isDiscardConfirmationPresented: Bool
     let pause: () -> Void
@@ -10,9 +17,18 @@ struct RideMapControlsView: View {
     let stop: () -> Void
     let start: () -> Void
 
-    var body: some View {
+    static func controlSet(for state: MobileRideMapStateDto?) -> ControlSet {
         switch state {
-        case .active:
+        case .active: .recording
+        case .paused, .interrupted: .resumable
+        case .stopped: .terminal
+        case .draft, .saved, .discarded, .imported, nil: .start
+        }
+    }
+
+    var body: some View {
+        switch Self.controlSet(for: state) {
+        case .recording:
             RideMapAdaptiveControls {
                 Button(action: pause) {
                     Label(localizedAppText("ride_map.pause"), systemImage: "pause.fill")
@@ -23,7 +39,7 @@ struct RideMapControlsView: View {
                 .accessibilityIdentifier("ride-map.pause")
                 stopButton(prominent: true)
             }
-        case .paused:
+        case .resumable:
             RideMapAdaptiveControls {
                 Button(action: resume) {
                     Label(localizedAppText("ride_map.resume"), systemImage: "play.fill")
@@ -34,7 +50,7 @@ struct RideMapControlsView: View {
                 .accessibilityIdentifier("ride-map.resume")
                 stopButton(prominent: false)
             }
-        case .stopped:
+        case .terminal:
             RideMapAdaptiveControls {
                 Button(action: save) {
                     Label(localizedAppText("ride_map.save"), systemImage: "checkmark.circle.fill")
@@ -52,7 +68,7 @@ struct RideMapControlsView: View {
                 .buttonStyle(.bordered)
                 .accessibilityIdentifier("ride-map.discard")
             }
-        case .draft, .saved, .discarded, .interrupted, .imported, nil:
+        case .start:
             startButton
         }
     }

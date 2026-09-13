@@ -53,6 +53,21 @@ final class DeviceDetectionSessionTests: XCTestCase {
         )
     }
 
+    func testFragmentedVeteranStreamPromotesAeroThroughFFI() {
+        let session = DeviceDetectionSession()
+        let frame = syntheticVeteranFrameWithModelId43()
+
+        XCTAssertNil(session.observeNotification(bytes: frame.prefix(20)).protocolFamily)
+        XCTAssertNil(session.observeNotification(bytes: frame.dropFirst(20).prefix(20)).protocolFamily)
+        let resolution = session.observeNotification(bytes: frame.dropFirst(40))
+
+        XCTAssertEqual(resolution.protocolFamily, .veteranLeaperkimNosfet)
+        XCTAssertEqual(
+            resolution.probeDisposition(platformIdentifier: "wheel", displayName: "Unknown EUC"),
+            .promote(.aero)
+        )
+    }
+
     func testProbeDispositionRefusesMissingMalformedAndConflictingEvidence() {
         let missingSession = DeviceDetectionSession()
         _ = missingSession.observeBegodeNameProbe()
@@ -225,7 +240,7 @@ final class DeviceDetectionSessionTests: XCTestCase {
         XCTAssertEqual(candidate.pickerRow.connectionRoute, .electricUnicycle)
     }
 
-    func testVeteranFamilyOnlyDetectionResolutionProjectsRecordOnlyCandidate() {
+    func testVeteranFamilyOnlyDetectionResolutionRequiresProbe() {
         let candidate = DevicePickerDiscoveryCandidate(candidate: mobileDiscoveryCandidateFromDetectionResolution(
             platformIdentifier: "ios-local-veteran-family",
             displayName: "Veteran stream",
@@ -244,14 +259,72 @@ final class DeviceDetectionSessionTests: XCTestCase {
 
         XCTAssertEqual(
             candidate.support,
-            .unknownRecordable(disabledReason: "Veteran/NOSFET model not confirmed")
+            .probeRecommended(disabledReason: "Veteran/NOSFET model identity probe required")
         )
-        XCTAssertEqual(candidate.pickerRow.state, .unsupported(action: "Record"))
-        XCTAssertEqual(candidate.pickerRow.section, .recordOnly)
+        XCTAssertEqual(candidate.pickerRow.state, .probeRecommended(action: "Use"))
+        XCTAssertEqual(candidate.pickerRow.section, .probeFirst)
         XCTAssertNil(candidate.pickerRow.connectionRoute)
     }
 
-    func testVescFamilyOnlyDetectionResolutionProjectsProvisionalRouteCandidate() {
+    func testResolvedProtocolFamilyWinsOverUnrelatedProbeTimeout() {
+        let resolution = DeviceDetectionResolution(
+            DeviceDetectionResolutionRecord(
+                protocolFamily: .veteranLeaperkimNosfet,
+                protocolConflict: false,
+                veteranProtocolModelId: nil,
+                advertisedName: nil,
+                modelBanner: nil,
+                firmwareBanner: nil,
+                imuBanner: nil,
+                missingProbeResponse: .begodeName,
+                malformedProbeResponse: nil
+            )
+        )
+
+        XCTAssertEqual(
+            resolution.connectionDisposition(
+                platformIdentifier: "ios-local-aero",
+                displayName: "NF2557"
+            ),
+            .refuse(.timedOut)
+        )
+        XCTAssertEqual(
+            resolution.connectionDisposition(
+                platformIdentifier: "ios-local-aero",
+                displayName: "NF2557",
+                allowClosestMatch: true
+            ),
+            .promote(route: .electricUnicycle, model: .aero)
+        )
+    }
+
+    func testBegodeFamilyOnlyDetectionResolutionRequiresProbe() {
+        let candidate = DevicePickerDiscoveryCandidate(candidate: mobileDiscoveryCandidateFromDetectionResolution(
+            platformIdentifier: "ios-local-begode-family",
+            displayName: "Begode stream",
+            resolution: DeviceDetectionResolutionRecord(
+                protocolFamily: .begodeGotway,
+                protocolConflict: false,
+                veteranProtocolModelId: nil,
+                advertisedName: nil,
+                modelBanner: nil,
+                firmwareBanner: nil,
+                imuBanner: nil,
+                missingProbeResponse: nil,
+                malformedProbeResponse: nil
+            )
+        ))
+
+        XCTAssertEqual(
+            candidate.support,
+            .probeRecommended(disabledReason: "Begode/Gotway model identity probe required")
+        )
+        XCTAssertEqual(candidate.pickerRow.state, .probeRecommended(action: "Use"))
+        XCTAssertEqual(candidate.pickerRow.section, .probeFirst)
+        XCTAssertNil(candidate.pickerRow.connectionRoute)
+    }
+
+    func testVescFamilyOnlyDetectionResolutionProjectsSupportedCandidate() {
         let candidate = DevicePickerDiscoveryCandidate(candidate: mobileDiscoveryCandidateFromDetectionResolution(
             platformIdentifier: "ios-local-vesc-family",
             displayName: "VESC stream",
@@ -269,7 +342,7 @@ final class DeviceDetectionSessionTests: XCTestCase {
         ))
 
         XCTAssertEqual(candidate.productCategory, "VESC Onewheel")
-        XCTAssertEqual(candidate.support, .provisionalRoute(connectionRoute: .vescOnewheel, electricUnicycleModel: nil))
+        XCTAssertEqual(candidate.support, .supported(connectionRoute: .vescOnewheel, electricUnicycleModel: nil))
         XCTAssertEqual(candidate.pickerRow.state, .supported(action: "Use"))
         XCTAssertEqual(candidate.pickerRow.section, .supported)
         XCTAssertEqual(candidate.pickerRow.connectionRoute, .vescOnewheel)

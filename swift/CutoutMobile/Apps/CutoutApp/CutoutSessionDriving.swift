@@ -23,6 +23,7 @@ protocol CutoutSessionDriving: AnyObject {
     var onProtocolIdentityCandidateChange: ((DevicePickerDiscoveryCandidate?) -> Void)? { get set }
     var onBluetoothRestorationResolved: ((String?) -> Void)? { get set }
     var protocolIdentityCandidate: DevicePickerDiscoveryCandidate? { get }
+    var isRecordOnlyConnection: Bool { get }
     var electricUnicycleModel: ElectricUnicycleModel? { get }
     var settingsCapabilities: EucSettingsCapabilities? { get }
     var settingsState: EucSettingsState? { get }
@@ -110,6 +111,8 @@ extension CutoutSessionCore: CutoutSessionDriving {}
 
 extension CutoutSessionDriving {
     var settingsState: EucSettingsState? { nil }
+
+    var isRecordOnlyConnection: Bool { false }
 
     func setAeroPwmOff() -> SettingCommandResult { .failed }
     func setAeroGyroCalibration() -> SettingCommandResult { .failed }

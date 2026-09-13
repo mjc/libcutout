@@ -12,8 +12,9 @@ use cutout_core::{
 
 use crate::{
     BegodeBanner, BegodeBannerParse, BegodeFrame, BegodeFrameParseResult, BegodeFrameReassembler,
-    DeviceFamily, ProtocolFamilyClassification, VeteranFrame, VeteranTelemetry,
-    classify_begode_ascii_banner,
+    DeviceFamily, ProtocolFamilyClassification, VescReadOnlyStreamDecoder,
+    VescReadOnlyStreamResult, VeteranFrame, VeteranFrameParseResult, VeteranFrameReassembler,
+    VeteranTelemetry, classify_begode_ascii_banner,
 };
 
 const DETECTION_MAX_GATT_FINGERPRINTS: usize = 16;
@@ -169,6 +170,8 @@ pub struct StagedIdentityResolution {
 #[derive(Clone, Debug)]
 pub struct DeviceDetectionSession {
     begode_reassembler: BegodeFrameReassembler,
+    veteran_reassembler: VeteranFrameReassembler,
+    vesc_decoder: VescReadOnlyStreamDecoder,
 }
 
 /// Raw firmware-banner bytes retained as probe-response provenance.
@@ -249,6 +252,9 @@ pub enum ProtocolFamilyState {
 
     /// Begode / `GotWay` has been confirmed.
     BegodeGotway,
+
+    /// A validated VESC UART reply has been confirmed.
+    Vesc,
 
     /// Strong wire evidence reported incompatible protocol families.
     Conflict,
@@ -332,6 +338,8 @@ impl DeviceDetectionSession {
     pub fn new() -> Self {
         Self {
             begode_reassembler: BegodeFrameReassembler::default(),
+            veteran_reassembler: VeteranFrameReassembler::default(),
+            vesc_decoder: VescReadOnlyStreamDecoder::default(),
         }
     }
 
@@ -357,17 +365,63 @@ impl DeviceDetectionSession {
                 self.refresh_resolution(state, None, None, current.protocol);
             }
             DeviceDetectionEvent::Notification { bytes } => {
-                let begode_frame = bytes
-                    .iter()
-                    .filter_map(|byte| self.begode_reassembler.feed_byte_result(*byte).ok())
-                    .find_map(|result| match result {
-                        BegodeFrameParseResult::Complete(frame) => Some(*frame.as_slice()),
-                        BegodeFrameParseResult::Seeking | BegodeFrameParseResult::Buffered => None,
-                    });
-                let bytes = begode_frame
-                    .as_ref()
-                    .map_or(bytes, |frame| frame.as_slice());
-                let decision = NotificationDecision::from_bytes(current.protocol, bytes);
+                // Always consume the complete notification. CoreBluetooth may coalesce multiple
+                // protocol frames into one callback, and stopping at the first frame loses the
+                // prefix of every later frame from the reassembler.
+                let mut veteran_frame = None;
+                let mut begode_frame = None;
+                let mut veteran_protocol_model = ProtocolModelIdentityEvidence::Missing;
+                for byte in bytes {
+                    if let Ok(VeteranFrameParseResult::Complete(frame)) =
+                        self.veteran_reassembler.feed_byte_result(*byte)
+                    {
+                        let observed_model = VeteranTelemetry::decode(&frame)
+                            .map_or(ProtocolModelIdentityEvidence::Missing, |telemetry| {
+                                telemetry.firmware.protocol_model_identity()
+                            });
+                        veteran_protocol_model =
+                            merge_protocol_model_evidence(veteran_protocol_model, observed_model);
+                        veteran_frame = Some(frame);
+                    }
+                    if let Ok(BegodeFrameParseResult::Complete(frame)) =
+                        self.begode_reassembler.feed_byte_result(*byte)
+                    {
+                        begode_frame = Some(*frame.as_slice());
+                    }
+                }
+                let vesc_reply = matches!(
+                    self.vesc_decoder.feed_result(bytes),
+                    Ok(VescReadOnlyStreamResult::Replies(ref replies)) if !replies.is_empty()
+                );
+                let bytes = veteran_frame.as_ref().map_or_else(
+                    || {
+                        begode_frame
+                            .as_ref()
+                            .map_or(bytes, |frame| frame.as_slice())
+                    },
+                    VeteranFrame::as_slice,
+                );
+                let observed_protocol = [
+                    veteran_frame
+                        .as_ref()
+                        .map(|_| ProtocolFamilyState::VeteranLeaperkimNosfet),
+                    begode_frame
+                        .as_ref()
+                        .map(|_| ProtocolFamilyState::BegodeGotway),
+                    vesc_reply.then_some(ProtocolFamilyState::Vesc),
+                ]
+                .into_iter()
+                .flatten()
+                .fold(current.protocol, ProtocolFamilyState::merge_observed);
+                let mut decision =
+                    NotificationDecision::from_bytes(current.protocol, bytes, vesc_reply);
+                decision.protocol = observed_protocol;
+                if veteran_protocol_model != ProtocolModelIdentityEvidence::Missing {
+                    decision.protocol_model = veteran_protocol_model;
+                }
+                if observed_protocol == ProtocolFamilyState::Conflict {
+                    decision.protocol_model = ProtocolModelIdentityEvidence::Missing;
+                }
                 let malformed_model_banner = match (decision.banner_model, current.staged.model) {
                     (IdentityBannerEvidence::Malformed, None) => {
                         Some(ModelBanner::copy_from_slice(model_banner_bytes(bytes)))
@@ -536,6 +590,7 @@ impl DeviceDetectionSession {
                 Some(ProtocolFamily::VeteranLeaperkimNosfet)
             }
             ProtocolFamilyState::BegodeGotway => Some(ProtocolFamily::BegodeGotway),
+            ProtocolFamilyState::Vesc => Some(ProtocolFamily::Vesc),
             ProtocolFamilyState::Unknown | ProtocolFamilyState::Conflict => None,
         };
         let advertised_name = identity
@@ -584,7 +639,8 @@ fn protocol_state(
     match protocol_family {
         Some(ProtocolFamily::VeteranLeaperkimNosfet) => ProtocolFamilyState::VeteranLeaperkimNosfet,
         Some(ProtocolFamily::BegodeGotway) => ProtocolFamilyState::BegodeGotway,
-        Some(ProtocolFamily::Vesc) | None => ProtocolFamilyState::Unknown,
+        Some(ProtocolFamily::Vesc) => ProtocolFamilyState::Vesc,
+        None => ProtocolFamilyState::Unknown,
     }
 }
 
@@ -602,7 +658,8 @@ fn resolve_staged_identity(
         },
         ProtocolFamilyState::Unknown
         | ProtocolFamilyState::VeteranLeaperkimNosfet
-        | ProtocolFamilyState::BegodeGotway => identify_known_model(input),
+        | ProtocolFamilyState::BegodeGotway
+        | ProtocolFamilyState::Vesc => identify_known_model(input),
     }
 }
 
@@ -614,7 +671,11 @@ fn model_banner_bytes(bytes: &[u8]) -> &[u8] {
 }
 
 impl<'a> NotificationDecision<'a> {
-    fn from_bytes(current_protocol: ProtocolFamilyState, bytes: &[u8]) -> NotificationDecision<'_> {
+    fn from_bytes(
+        current_protocol: ProtocolFamilyState,
+        bytes: &[u8],
+        vesc_reply: bool,
+    ) -> NotificationDecision<'_> {
         let banner = classify_begode_ascii_banner(bytes);
         let banner_model = match banner {
             BegodeBannerParse::Banner(BegodeBanner::ModelName(_)) => parse_model_banner(bytes),
@@ -646,6 +707,10 @@ impl<'a> NotificationDecision<'a> {
                 ProtocolFamilyState::BegodeGotway,
                 ProtocolModelIdentityEvidence::Missing,
             ),
+            Err(_) if vesc_reply => (
+                ProtocolFamilyState::Vesc,
+                ProtocolModelIdentityEvidence::Missing,
+            ),
             Err(_) => (
                 ProtocolFamilyState::Unknown,
                 ProtocolModelIdentityEvidence::Missing,
@@ -656,7 +721,8 @@ impl<'a> NotificationDecision<'a> {
             ProtocolFamilyState::Conflict => ProtocolModelIdentityEvidence::Missing,
             ProtocolFamilyState::Unknown
             | ProtocolFamilyState::VeteranLeaperkimNosfet
-            | ProtocolFamilyState::BegodeGotway => protocol_model,
+            | ProtocolFamilyState::BegodeGotway
+            | ProtocolFamilyState::Vesc => protocol_model,
         };
 
         NotificationDecision {
@@ -693,8 +759,8 @@ impl ProtocolFamilyState {
             (Self::Unknown, observed) => observed,
             (current, observed) if current == observed => current,
             (
-                Self::VeteranLeaperkimNosfet | Self::BegodeGotway,
-                Self::VeteranLeaperkimNosfet | Self::BegodeGotway,
+                Self::VeteranLeaperkimNosfet | Self::BegodeGotway | Self::Vesc,
+                Self::VeteranLeaperkimNosfet | Self::BegodeGotway | Self::Vesc,
             ) => Self::Conflict,
         }
     }
@@ -706,8 +772,52 @@ impl ProtocolFamilyState {
                 ProtocolFamilyClassification::Known(DeviceFamily::NosfetAero)
             }
             Self::BegodeGotway => ProtocolFamilyClassification::Known(DeviceFamily::BegodeFalcon),
+            Self::Vesc => ProtocolFamilyClassification::Pending,
         }
     }
+}
+
+fn merge_protocol_model_evidence(
+    current: ProtocolModelIdentityEvidence,
+    observed: ProtocolModelIdentityEvidence,
+) -> ProtocolModelIdentityEvidence {
+    match (current, observed) {
+        (ProtocolModelIdentityEvidence::Missing, observed)
+        | (observed, ProtocolModelIdentityEvidence::Missing) => observed,
+        (ProtocolModelIdentityEvidence::Malformed, _)
+        | (_, ProtocolModelIdentityEvidence::Malformed) => ProtocolModelIdentityEvidence::Malformed,
+        (
+            ProtocolModelIdentityEvidence::ModelId(current),
+            ProtocolModelIdentityEvidence::ModelId(observed),
+        ) if current == observed => ProtocolModelIdentityEvidence::ModelId(current),
+        (
+            ProtocolModelIdentityEvidence::ModelId(current),
+            ProtocolModelIdentityEvidence::ModelId(observed),
+        ) => {
+            let current_known = veteran_model_id_is_known(current.model_id);
+            let observed_known = veteran_model_id_is_known(observed.model_id);
+            match (current_known, observed_known) {
+                (true, false) => ProtocolModelIdentityEvidence::ModelId(current),
+                (false, true) => ProtocolModelIdentityEvidence::ModelId(observed),
+                _ => ProtocolModelIdentityEvidence::Malformed,
+            }
+        }
+    }
+}
+
+fn veteran_model_id_is_known(model_id: u16) -> bool {
+    identify_known_model(&StagedIdentityInput {
+        advertised_name: None,
+        gatt: &[] as &[GattFingerprint],
+        stream_family: ProtocolFamilyClassification::Pending,
+        banner_model: IdentityBannerEvidence::Missing,
+        protocol_model: ProtocolModelIdentityEvidence::model_id(
+            ProtocolFamily::VeteranLeaperkimNosfet,
+            model_id,
+        ),
+    })
+    .model
+    .is_some()
 }
 
 /// Model evidence parsed from untrusted identity bytes.
@@ -782,6 +892,28 @@ pub fn identify_known_model(
     input: &StagedIdentityInput<'_, impl Clone + IntoIterator<Item: Borrow<GattFingerprint>>>,
 ) -> StagedIdentityResolution {
     identify_model(input, &crate::MODEL_REGISTRY)
+}
+
+/// Returns a unique supported model in the detected protocol family after probing is exhausted.
+#[must_use]
+pub fn closest_known_model(
+    input: &StagedIdentityInput<'_, impl Clone + IntoIterator<Item: Borrow<GattFingerprint>>>,
+) -> Option<&'static ModelRegistryEntry> {
+    if let Some(model) = identify_known_model(input).model {
+        return Some(model);
+    }
+    let family = match input.protocol_model {
+        ProtocolModelIdentityEvidence::ModelId(model) => Some(model.family),
+        ProtocolModelIdentityEvidence::Missing | ProtocolModelIdentityEvidence::Malformed => {
+            protocol_family_from_classification(input.stream_family)
+        }
+    }?;
+    let mut candidates = crate::MODEL_REGISTRY
+        .iter()
+        .copied()
+        .filter(|entry| entry.protocol_family == family);
+    let closest = candidates.next()?;
+    candidates.next().is_none().then_some(closest)
 }
 
 fn hints_only_resolution(
@@ -1063,9 +1195,9 @@ mod tests {
         DeviceDetectionEvent, DeviceDetectionResolution,
         DeviceDetectionSession as ProtocolDetectionSession, DeviceFamily, IdentityBannerEvidence,
         IdentityConfidence, IdentityEvidence, ModelBanner, NOSFET_AERO_REGISTRY_ENTRY,
-        PendingProbe, ProtocolFamilyClassification, ProtocolModelIdentityEvidence,
-        StagedIdentityInput, StagedIdentityOutcome, identify_known_model, identify_model,
-        parse_model_banner,
+        PendingProbe, ProtocolFamilyClassification, ProtocolFamilyState,
+        ProtocolModelIdentityEvidence, StagedIdentityInput, StagedIdentityOutcome,
+        closest_known_model, identify_known_model, identify_model, parse_model_banner,
     };
 
     const BEGODE_GATT: [GattFingerprint; 1] = [GattFingerprint {
@@ -1401,6 +1533,25 @@ mod tests {
     }
 
     #[test]
+    fn exhausted_unknown_model_id_selects_unique_supported_family_match() {
+        let input = StagedIdentityInput {
+            advertised_name: None,
+            gatt: NO_GATT,
+            stream_family: ProtocolFamilyClassification::Pending,
+            banner_model: IdentityBannerEvidence::Missing,
+            protocol_model: ProtocolModelIdentityEvidence::model_id(
+                ProtocolFamily::VeteranLeaperkimNosfet,
+                99,
+            ),
+        };
+
+        assert_eq!(
+            closest_known_model(&input),
+            Some(&NOSFET_AERO_REGISTRY_ENTRY)
+        );
+    }
+
+    #[test]
     fn caller_owned_detection_session_keeps_name_hint_unconfirmed() {
         let mut session = DeviceDetectionSession::new();
 
@@ -1603,6 +1754,84 @@ mod tests {
     }
 
     #[test]
+    fn caller_owned_detection_session_consumes_every_coalesced_veteran_frame() {
+        let mut session = DeviceDetectionSession::new();
+        let mut notification = Vec::from(synthetic_veteran_frame_with_model_id(60));
+        notification.extend_from_slice(&synthetic_veteran_frame_with_model_id(43));
+
+        let update = session.observe(DeviceDetectionEvent::Notification {
+            bytes: &notification,
+        });
+
+        assert_eq!(
+            update.protocol,
+            crate::ProtocolFamilyState::VeteranLeaperkimNosfet
+        );
+        assert_eq!(update.staged.model, Some(&NOSFET_AERO_REGISTRY_ENTRY));
+        assert_eq!(update.staged.outcome, StagedIdentityOutcome::Matched);
+    }
+
+    #[test]
+    fn caller_owned_detection_session_retains_known_model_from_earlier_coalesced_frame() {
+        let mut session = DeviceDetectionSession::new();
+        let mut notification = Vec::from(synthetic_veteran_frame_with_model_id(43));
+        notification.extend_from_slice(&synthetic_veteran_frame_with_model_id(60));
+
+        let update = session.observe(DeviceDetectionEvent::Notification {
+            bytes: &notification,
+        });
+
+        assert_eq!(
+            update.protocol,
+            crate::ProtocolFamilyState::VeteranLeaperkimNosfet
+        );
+        assert_eq!(update.staged.model, Some(&NOSFET_AERO_REGISTRY_ENTRY));
+        assert_eq!(update.staged.outcome, StagedIdentityOutcome::Matched);
+    }
+
+    #[test]
+    fn caller_owned_detection_session_rejects_coalesced_cross_family_frames() {
+        let mut session = DeviceDetectionSession::new();
+        let mut notification = Vec::from(synthetic_veteran_frame_with_model_id(43));
+        notification.extend_from_slice(&BEGODE_LIVE_A_FRAME);
+
+        let update = session.observe(DeviceDetectionEvent::Notification {
+            bytes: &notification,
+        });
+
+        assert_eq!(update.protocol, ProtocolFamilyState::Conflict);
+        assert_eq!(update.staged.outcome, StagedIdentityOutcome::Conflict);
+        assert_eq!(update.staged.model, None);
+    }
+
+    #[test]
+    fn caller_owned_detection_session_reassembles_fragmented_live_aero_frame() {
+        let mut session = DeviceDetectionSession::new();
+        let frame = hex_literal::hex!(
+            "dc5a5c5330f70000102d00029767001d00000dd0\
+             023f00000226021ca8f607801ac1000080c80000\
+             8080808080800500000000801e104c104f105010\
+             4f105010501051104f10511050104f104f105010\
+             50104e1eedece1"
+        );
+
+        for chunk in frame.chunks(20).take(4) {
+            let partial = session.observe(DeviceDetectionEvent::Notification { bytes: chunk });
+            assert_eq!(partial.protocol, crate::ProtocolFamilyState::Unknown);
+        }
+        let update = session.observe(DeviceDetectionEvent::Notification {
+            bytes: &frame[80..],
+        });
+
+        assert_eq!(
+            update.protocol,
+            crate::ProtocolFamilyState::VeteranLeaperkimNosfet
+        );
+        assert_eq!(update.staged.model, Some(&NOSFET_AERO_REGISTRY_ENTRY));
+        assert_eq!(update.staged.outcome, StagedIdentityOutcome::Matched);
+    }
+
+    #[test]
     fn caller_owned_detection_session_reports_conflict_when_protocol_family_changes() {
         let mut session = DeviceDetectionSession::new();
         let frame = synthetic_veteran_frame_with_model_id(43);
@@ -1679,6 +1908,21 @@ mod tests {
         assert_eq!(update.protocol, crate::ProtocolFamilyState::BegodeGotway);
         assert_eq!(update.staged.confidence, IdentityConfidence::FamilyOnly);
         assert_eq!(update.staged.model, None);
+    }
+
+    #[test]
+    fn caller_owned_detection_session_reassembles_fragmented_vesc_reply() {
+        let mut session = DeviceDetectionSession::new();
+        let frame = [
+            2, 20, 157, 7, 1, 2, 97, 98, 99, 49, 50, 51, 0, 117, 115, 101, 114, 104, 97, 115, 104,
+            0, 38, 208, 3,
+        ];
+
+        let first = session.observe(DeviceDetectionEvent::Notification { bytes: &frame[..9] });
+        let resolved = session.observe(DeviceDetectionEvent::Notification { bytes: &frame[9..] });
+
+        assert_eq!(first.protocol, ProtocolFamilyState::Unknown);
+        assert_eq!(resolved.protocol, ProtocolFamilyState::Vesc);
     }
 
     #[test]

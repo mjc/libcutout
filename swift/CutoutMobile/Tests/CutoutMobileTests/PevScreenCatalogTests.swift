@@ -190,9 +190,9 @@ final class PevScreenCatalogTests: XCTestCase {
             symbolName: "bolt"
         )
 
-        XCTAssertEqual(row.captureActionTitle, "Start probe")
+        XCTAssertEqual(row.captureActionTitle, "Use")
         XCTAssertEqual(row.useActionAccessibilityLabel, "Use VESC, device 1234")
-        XCTAssertEqual(row.captureActionAccessibilityLabel, "Start probe for VESC, device 1234")
+        XCTAssertEqual(row.captureActionAccessibilityLabel, "Use for VESC, device 1234")
         XCTAssertEqual(DevicePickerRowState(action: .confirm).actionTitle, "Confirm")
         XCTAssertEqual(DevicePickerRowState(action: .review).actionTitle, "Review")
         XCTAssertEqual(DevicePickerRowState(action: .later).actionTitle, "Later")

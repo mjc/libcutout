@@ -76,7 +76,8 @@ struct DevicePickerView: View {
                 VStack(alignment: .leading, spacing: 18) {
                     deviceSection(
                         title: localizedAppText("picker.section.supported_now"),
-                        rows: sections.supported
+                        rows: sections.supported + sections.probeRecommended,
+                        action: pair
                     )
 
                     Button("picker.advanced_capture") { isAdvancedCapturePresented = true }
@@ -104,14 +105,15 @@ struct DevicePickerView: View {
     @ViewBuilder
     private func deviceSection(
         title: String,
-        rows: [DevicePickerRow]
+        rows: [DevicePickerRow],
+        action: @escaping (DevicePickerRow) -> Void
     ) -> some View {
         if !rows.isEmpty {
             PevDashboardSectionLabel(title: title)
                 .padding(.top, 8)
             VStack(spacing: 12) {
                 ForEach(rows) { row in
-                    PickerDeviceRow(row: row, action: { pair(row) })
+                    PickerDeviceRow(row: row, action: { action(row) })
                 }
             }
         }

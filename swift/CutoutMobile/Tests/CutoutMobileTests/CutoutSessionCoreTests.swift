@@ -330,6 +330,10 @@ final class CutoutSessionCoreTests: XCTestCase {
             candidate: scriptedProbeCandidate,
             telemetry: nil,
             identificationProbeFailure: .timedOut,
+            detectedSupport: .supported(
+                connectionRoute: .electricUnicycle,
+                electricUnicycleModel: .aero
+            ),
             connectionDelayMilliseconds: 0
         ))
         core.onPhaseChange = { phase in
@@ -2765,18 +2769,15 @@ func testVescRideSnapshotProjectsBatteryLevelAndUpdateTime() throws {
         core.observeDetectionNotification(channel: channel, bytes: Data(Array(frame.dropFirst(20))))
 
         XCTAssertEqual(core.protocolIdentityCandidate?.displayName, "Mystery Wheel")
-        XCTAssertEqual(core.protocolIdentityCandidate?.detail, "Begode/GotWay identity probe collected; model not confirmed")
+        XCTAssertEqual(core.protocolIdentityCandidate?.detail, "Begode/Gotway protocol detected; model identity probe required")
         XCTAssertEqual(
             core.protocolIdentityCandidate?.support,
-            .unknownRecordable(disabledReason: "Begode model not confirmed")
+            .probeRecommended(disabledReason: "Begode/Gotway model identity probe required")
         )
-        XCTAssertEqual(
-            observedCandidates.compactMap { $0?.detail },
-            ["Begode/GotWay identity probe collected; model not confirmed"]
-        )
+        XCTAssertEqual(observedCandidates.compactMap { $0?.detail }, ["Begode/Gotway protocol detected; model identity probe required"])
         XCTAssertEqual(
             core.records.last,
-            "protocol_identity=Begode/GotWay identity probe collected; model not confirmed"
+            "protocol_identity=Begode/Gotway protocol detected; model identity probe required"
         )
     }
 

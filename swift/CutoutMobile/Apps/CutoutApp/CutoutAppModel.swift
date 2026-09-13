@@ -2513,12 +2513,12 @@ final class CutoutAppModel {
             )
             return false
         }
-        guard selectedRow.isSupported, let route = selectedRow.connectionRoute else { return false }
+        guard selectedRow.isSupported || selectedRow.isProbeRecommended else { return false }
 
         let selection = ConnectionSelection(
             platformIdentifier: selectedRow.id,
             title: selectedRow.title,
-            route: route
+            route: selectedRow.connectionRoute ?? .electricUnicycle
         )
         resetHeadlightState()
         liveActivityError = nil
@@ -2613,29 +2613,7 @@ final class CutoutAppModel {
     }
 
     func startProbe(platformIdentifier: String) -> Bool {
-        let rows = devicePickerScanState?.rows ?? []
-        guard let selectedRow = rows.first(where: { $0.id == platformIdentifier }),
-              selectedRow.isProbeRecommended
-        else {
-            return false
-        }
-        let selection = ConnectionSelection(
-            platformIdentifier: selectedRow.id,
-            title: selectedRow.title,
-            route: .electricUnicycle
-        )
-        connectionState = .connecting(selection, phase: .discoveringServices)
-        phase = .discoveringServices
-        let didStart = core.probe(platformIdentifier: platformIdentifier)
-        if !didStart {
-            connectionState = .picker
-            phase = .scanning
-            devicePickerScanState = .failed(
-                localizedAppText("picker.error.device_no_longer_available"),
-                rows: rows
-            )
-        }
-        return didStart
+        pair(platformIdentifier: platformIdentifier)
     }
 
     private func resetCaptureSession() {
@@ -2815,8 +2793,16 @@ final class CutoutAppModel {
             syncLiveActivity()
             return
         }
-        if connectionState.selection == nil {
-            connectionState = .identified(selection)
+        // Advertisement-derived routes only decide which device the user selected. The protocol
+        // detector owns the route once bytes have resolved it.
+        if connectionState.selection?.platformIdentifier == nil
+            || connectionState.selection?.platformIdentifier == selection.platformIdentifier {
+            let resolvedSelection = ConnectionSelection(
+                platformIdentifier: selection.platformIdentifier,
+                title: connectionState.selection?.title ?? selection.title,
+                route: selection.route
+            )
+            connectionState = connectionState.replacingSelection(with: resolvedSelection)
         }
         if selection.route == .vescOnewheel {
             liveActivityIdentity = vescRideIdentity(using: selection.title)
@@ -2838,7 +2824,8 @@ final class CutoutAppModel {
         }
         guard permitsStoredDeviceAutoPairing else { return }
         guard let platformIdentifier = selectedDeviceStore.platformIdentifier else { return }
-        guard scanState.storedSupportedRow(platformIdentifier: platformIdentifier) != nil else { return }
+        guard let row = scanState.rows.first(where: { $0.id == platformIdentifier }) else { return }
+        guard row.isSupported || row.isProbeRecommended else { return }
         _ = pair(platformIdentifier: platformIdentifier)
     }
 
@@ -2880,9 +2867,22 @@ final class CutoutAppModel {
                 connectionState = .connecting(selection, phase: phase)
             }
         case .live:
-            if let selection = connectionState.selection {
-                connectionState = .connected(selection)
-            } else if let selection = selection(from: core.protocolIdentityCandidate) {
+            if core.isRecordOnlyConnection {
+                recordOnlyDeviceKind = core.protocolIdentityCandidate?.productCategory
+                    ?? connectionState.selection?.title
+                connectionState = .picker
+                isRecordOnlyCapture = true
+                liveActivityIdentity = nil
+                syncLiveActivity()
+                break
+            }
+            if let selection = selection(from: core.protocolIdentityCandidate) {
+                connectionState = .connected(ConnectionSelection(
+                    platformIdentifier: selection.platformIdentifier,
+                    title: connectionState.selection?.title ?? selection.title,
+                    route: selection.route
+                ))
+            } else if let selection = connectionState.selection {
                 connectionState = .connected(selection)
             }
         case let .failed(failure):

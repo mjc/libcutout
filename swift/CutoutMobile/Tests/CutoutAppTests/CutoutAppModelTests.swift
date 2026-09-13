@@ -1665,7 +1665,39 @@ final class CutoutAppModelTests: XCTestCase {
     }
 
     @MainActor
-    func testRejectedPickerActionReturnsToThePickerWithAnError() {
+    func testStoredProbeEligibleDeviceAutoConnectsThroughProtocolDetection() {
+        let suiteName = "CutoutAppModelTests.autoProbe"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defaults.removePersistentDomain(forName: suiteName)
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        let platformIdentifier = "aero-1234"
+        let store = DevicePickerSelectionStore(defaults: defaults)
+        store.save(platformIdentifier: platformIdentifier, displayName: "NF2557")
+        let row = DevicePickerRow(
+            id: platformIdentifier,
+            title: "NF2557",
+            subtitle: "Electric unicycle",
+            detail: "Protocol detection required",
+            state: DevicePickerRowState(action: .probe),
+            symbolName: "circle.hexagongrid.circle"
+        )
+        let driver = SessionDriverSpy(rows: [row], notifyBluetoothRestorationOnStart: false)
+        let model = CutoutAppModel(
+            core: driver,
+            selectedDeviceStore: store,
+            rideSessionMarkerStore: RideSessionMarkerStore(defaults: defaults)
+        )
+
+        model.start()
+        driver.onBluetoothRestorationResolved?(nil)
+
+        XCTAssertEqual(driver.pairedPlatformIdentifiers, [platformIdentifier])
+        XCTAssertTrue(driver.probedPlatformIdentifiers.isEmpty)
+    }
+
+    @MainActor
+    func testProtocolDetectionPickerActionUsesTheUnifiedPairEntryPoint() {
         let suiteName = "CutoutAppModelTests.rejectedPickerAction"
         let defaults = UserDefaults(suiteName: suiteName)!
         defaults.removePersistentDomain(forName: suiteName)
@@ -1720,8 +1752,8 @@ final class CutoutAppModelTests: XCTestCase {
         let model = CutoutAppModel(core: driver)
         model.start()
 
-        XCTAssertFalse(model.pair(platformIdentifier: "probe-1234"))
-        XCTAssertTrue(driver.pairedPlatformIdentifiers.isEmpty)
+        XCTAssertTrue(model.pair(platformIdentifier: "probe-1234"))
+        XCTAssertEqual(driver.pairedPlatformIdentifiers, ["probe-1234"])
     }
 
     @MainActor
@@ -1739,7 +1771,8 @@ final class CutoutAppModelTests: XCTestCase {
         model.start()
 
         XCTAssertTrue(model.startProbe(platformIdentifier: row.id))
-        XCTAssertEqual(driver.probedPlatformIdentifiers, [row.id])
+        XCTAssertEqual(driver.pairedPlatformIdentifiers, [row.id])
+        XCTAssertTrue(driver.probedPlatformIdentifiers.isEmpty)
         XCTAssertTrue(driver.recordedPlatformIdentifiers.isEmpty)
     }
 
@@ -2132,6 +2165,31 @@ final class CutoutAppModelTests: XCTestCase {
     }
 
     @MainActor
+    func testUnresolvedProtocolConnectionEntersCaptureInsteadOfRide() {
+        let row = DevicePickerRow(
+            id: "unknown-1234",
+            title: "Unknown PEV",
+            subtitle: "Protocol detection required",
+            detail: "Device 1234",
+            state: DevicePickerRowState(action: .probe),
+            symbolName: "questionmark.circle"
+        )
+        let driver = SessionDriverSpy(rows: [row])
+        let model = CutoutAppModel(core: driver)
+        model.start()
+
+        XCTAssertTrue(model.pair(platformIdentifier: row.id))
+        driver.onPhaseChange?(.subscribing)
+        driver.isRecordOnlyConnection = true
+        driver.onPhaseChange?(.live)
+
+        XCTAssertTrue(model.isRecordOnlyCapture)
+        XCTAssertEqual(model.recordOnlyDeviceKind, row.title)
+        XCTAssertEqual(model.connectionState, .picker)
+        XCTAssertEqual(model.connectionState.navigationIntent(isRecordOnlyCapture: true), .stay)
+    }
+
+    @MainActor
     func testRecordOnlyLabelNeverSelectsAProtocolModel() {
         let driver = SessionDriverSpy(rows: [])
         let model = CutoutAppModel(core: driver)
@@ -2299,6 +2357,39 @@ final class CutoutAppModelTests: XCTestCase {
         XCTAssertEqual(model.phase, .scanning)
         XCTAssertNil(model.selectedRideTitle)
         XCTAssertNil(model.selectedConnectionRoute)
+    }
+
+    @MainActor
+    func testDetectedProtocolReplacesAdvertisementDerivedConnectionRoute() {
+        let row = DevicePickerRow(
+            id: "ambiguous-device",
+            title: "Previously connected",
+            subtitle: "Personal electric vehicle",
+            detail: "Protocol detection required",
+            state: DevicePickerRowState(action: .use),
+            symbolName: "circle.hexagongrid.circle",
+            connectionRoute: .electricUnicycle
+        )
+        let driver = SessionDriverSpy(rows: [row])
+        let model = CutoutAppModel(core: driver)
+        model.start()
+        XCTAssertTrue(model.pair(platformIdentifier: row.id))
+
+        let detected = DevicePickerDiscoveryCandidate(
+            platformIdentifier: row.id,
+            displayName: "Detected VESC",
+            productCategory: "VESC Onewheel",
+            evidence: "read-only protocol reply",
+            detail: "VESC protocol confirmed",
+            support: .supported(connectionRoute: .vescOnewheel, electricUnicycleModel: nil),
+            symbolName: row.symbolName
+        )
+        driver.protocolIdentityCandidate = detected
+        model.applyProtocolIdentityCandidate(detected)
+        driver.onPhaseChange?(.live)
+
+        XCTAssertEqual(model.selectedConnectionRoute, .vescOnewheel)
+        XCTAssertEqual(model.selectedRideTitle, "Previously connected")
     }
 
     func testCaptureStatusAnnouncesOnlyMeaningfulTransitions() {
@@ -3521,6 +3612,7 @@ private final class SessionDriverSpy: CutoutSessionDriving {
     var onProtocolIdentityCandidateChange: ((DevicePickerDiscoveryCandidate?) -> Void)?
     var onBluetoothRestorationResolved: ((String?) -> Void)?
     var protocolIdentityCandidate: DevicePickerDiscoveryCandidate?
+    var isRecordOnlyConnection = false
     var electricUnicycleModel: ElectricUnicycleModel?
     var headlightState: LightSettingState?
     var headlightCommandStatus: LightCommandStatus? {

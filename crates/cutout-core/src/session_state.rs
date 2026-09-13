@@ -516,9 +516,6 @@ pub enum DiscoveryCandidateSupport {
     /// Candidate can be paired through the current mobile route.
     Supported,
 
-    /// Candidate can use a read-only test route but is not confirmed identity.
-    ProvisionalRoute,
-
     /// Candidate should be identified with a read-only probe before routing.
     ProbeRecommended,
 
@@ -623,7 +620,7 @@ impl DiscoveryCandidateSnapshot {
                 product_category: "VESC Onewheel".to_owned(),
                 evidence: "FFF0 transport hint".to_owned(),
                 detail: "VESC protocol route".to_owned(),
-                support: DiscoveryCandidateSupport::ProvisionalRoute,
+                support: DiscoveryCandidateSupport::Supported,
                 connection_route: Some(DiscoveryConnectionRoute::VescOnewheel),
                 electric_unicycle_model: None,
             }),
@@ -903,7 +900,7 @@ mod tests {
         assert_eq!(picker_candidates[1].platform_identifier, "vesc-id");
         assert_eq!(
             picker_candidates[1].support,
-            DiscoveryCandidateSupport::ProvisionalRoute
+            DiscoveryCandidateSupport::Supported
         );
         assert_eq!(
             picker_candidates[1].connection_route,

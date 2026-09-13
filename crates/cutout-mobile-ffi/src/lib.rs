@@ -53,17 +53,18 @@ use cutout_core::{
     FaultHistoryAvailabilityDto, FaultHistoryEntry, FaultHistoryEntryDto, FaultHistoryReadback,
     FaultHistoryReadbackDto, FootpadContactStateDto, FootpadTelemetryDto, GattChannel,
     GattFingerprint, GattRoles, IgnoredNotificationEvidenceDto, IgnoredNotificationReasonDto,
-    LightState as CoreLightState, LightStateDto, Measured, MonotonicMillisDto, MonotonicTimestamp,
-    MusicProvider as CorePevcapMusicProvider, NotificationByteLenDto, NotificationEvidenceDto,
-    NotificationIngestOutcomeDto, ParserDiagnosticCountDto, ParserDiagnosticsDto,
-    ParserDroppedBytesDto, ParserErrorDto, ParserFrameLenDto, ParserGapEvidenceDto,
-    PayloadBodyLenDto, PedalMode as CorePedalMode, PevcapEncoding as CorePevcapEncoding,
-    PevcapHeader, PevcapLocationSample, PevcapMusicEvent, PevcapPhoneLocation, PevcapRecord,
-    PevcapResolvedIdentity, PhaseCurrentReadingDto, PowerReadingDto, ProtocolFamily,
-    ProtocolFamilyDto, ProtocolTag, RIDE_SESSION_STALE_AFTER, RawFieldValue, RawFieldValueDto,
-    RawTelemetryReadback, RawTelemetryReadbackDto, ReadOnlyOutputPayload,
-    ReservedPayloadEvidenceDto, RideOperatingModeDto, RideOperatingState as CoreRideOperatingState,
-    RideOperatingStateDto, RideSessionAppPresence as CoreRideSessionAppPresence,
+    LightState as CoreLightState, LightStateDto, Measured, ModelRegistryEntry, MonotonicMillisDto,
+    MonotonicTimestamp, MusicProvider as CorePevcapMusicProvider, NotificationByteLenDto,
+    NotificationEvidenceDto, NotificationIngestOutcomeDto, ParserDiagnosticCountDto,
+    ParserDiagnosticsDto, ParserDroppedBytesDto, ParserErrorDto, ParserFrameLenDto,
+    ParserGapEvidenceDto, PayloadBodyLenDto, PedalMode as CorePedalMode,
+    PevcapEncoding as CorePevcapEncoding, PevcapHeader, PevcapLocationSample, PevcapMusicEvent,
+    PevcapPhoneLocation, PevcapRecord, PevcapResolvedIdentity, PhaseCurrentReadingDto,
+    PowerReadingDto, ProtocolFamily, ProtocolFamilyDto, ProtocolTag, RIDE_SESSION_STALE_AFTER,
+    RawFieldValue, RawFieldValueDto, RawTelemetryReadback, RawTelemetryReadbackDto,
+    ReadOnlyOutputPayload, ReservedPayloadEvidenceDto, RideOperatingModeDto,
+    RideOperatingState as CoreRideOperatingState, RideOperatingStateDto,
+    RideSessionAppPresence as CoreRideSessionAppPresence,
     RideSessionDecision as CoreRideSessionDecision, RideSessionEffect as CoreRideSessionEffect,
     RideSessionEndReason as CoreRideSessionEndReason,
     RideSessionIdentity as CoreRideSessionIdentity, RideSessionInput as CoreRideSessionInput,
@@ -93,17 +94,18 @@ use cutout_music::{
 };
 use cutout_protocols::{
     AeroSettingsReadback, AeroSettingsSimulator as CoreAeroSettingsSimulator, BEGODE_DATA_CHANNEL,
-    BEGODE_FIELD_LED_AND_LIGHT_MODE, BEGODE_FIELD_SETTINGS_BITS, BEGODE_FIELD_TILTBACK_SPEED_KMH,
-    ConcreteAeroBenignControlSession, ConcreteFalconBenignControlSession, ConcreteFalconProfileDto,
-    ConcreteSessionErrorDto, ConcreteSessionStepResultDto, DeviceDetectionEvent,
-    DeviceDetectionResolution, DeviceDetectionSession, DeviceFamily, IdentityBannerEvidence,
+    BEGODE_FALCON_REGISTRY_ENTRY, BEGODE_FIELD_LED_AND_LIGHT_MODE, BEGODE_FIELD_SETTINGS_BITS,
+    BEGODE_FIELD_TILTBACK_SPEED_KMH, ConcreteAeroBenignControlSession,
+    ConcreteFalconBenignControlSession, ConcreteFalconProfileDto, ConcreteSessionErrorDto,
+    ConcreteSessionStepResultDto, DeviceDetectionEvent, DeviceDetectionResolution,
+    DeviceDetectionSession, DeviceFamily, IdentityBannerEvidence, NOSFET_AERO_REGISTRY_ENTRY,
     PendingProbe, ProtocolFamilyClassification, ProtocolFamilyState, ProtocolModelIdentityEvidence,
     StagedIdentityInput, StagedIdentityOutcome, VETERAN_FIELD_AUTO_SHUTDOWN_TIME_REMAINING_SECONDS,
     VETERAN_FIELD_CHARGE_MODE, VETERAN_FIELD_PEDALS_MODE, VETERAN_FIELD_SPEED_ALERT_DECI_KMH,
     VETERAN_FIELD_SPEED_TILTBACK_DECI_KMH, VescBatteryType as CoreVescBatteryType,
     VescBoardProfile as CoreVescBoardProfile, VescReadOnlySession as CoreVescReadOnlySession,
-    begode_identification_probes, identify_known_model, new_nosfet_aero_benign_control_session,
-    try_new_begode_falcon_benign_control_session,
+    begode_identification_probes, closest_known_model, identify_known_model,
+    new_nosfet_aero_benign_control_session, try_new_begode_falcon_benign_control_session,
 };
 use cutout_ride_maps as ride_maps;
 use libcutout_persistence as persistence;
@@ -125,9 +127,6 @@ pub use music_player_request::*;
 pub enum DiscoveryCandidateSupport {
     /// Candidate has a supported read-only route.
     Supported,
-
-    /// Candidate has a read-only test route from provisional evidence.
-    ProvisionalRoute,
 
     /// Candidate should be identified with a read-only probe before routing.
     ProbeRecommended,
@@ -195,7 +194,7 @@ pub enum DiscoveryCandidateSection {
 impl DiscoveryCandidateSupport {
     fn recommended_action(self) -> DiscoveryCandidateAction {
         match self {
-            Self::Supported | Self::ProvisionalRoute => DiscoveryCandidateAction::Use,
+            Self::Supported => DiscoveryCandidateAction::Use,
             Self::ProbeRecommended => DiscoveryCandidateAction::Probe,
             Self::UnknownRecordable
             | Self::KnownUnsupported
@@ -209,7 +208,7 @@ impl DiscoveryCandidateSupport {
 
     fn picker_section(self) -> DiscoveryCandidateSection {
         match self {
-            Self::Supported | Self::ProvisionalRoute => DiscoveryCandidateSection::Supported,
+            Self::Supported => DiscoveryCandidateSection::Supported,
             Self::ProbeRecommended => DiscoveryCandidateSection::ProbeFirst,
             Self::ManualPlaceholder => DiscoveryCandidateSection::Manual,
             Self::UnknownRecordable
@@ -884,8 +883,7 @@ impl From<DiscoveryCandidateSnapshot> for DiscoveryCandidate {
                 .map(DiscoveryConnectionRoute::from),
             electric_unicycle_model,
             disabled_reason: match candidate.support {
-                CoreDiscoveryCandidateSupport::Supported
-                | CoreDiscoveryCandidateSupport::ProvisionalRoute => None,
+                CoreDiscoveryCandidateSupport::Supported => None,
                 CoreDiscoveryCandidateSupport::ProbeRecommended
                 | CoreDiscoveryCandidateSupport::UnknownRecordable => {
                     Some(candidate.detail.clone())
@@ -931,7 +929,6 @@ impl From<CoreDiscoveryCandidateSupport> for DiscoveryCandidateSupport {
     fn from(support: CoreDiscoveryCandidateSupport) -> Self {
         match support {
             CoreDiscoveryCandidateSupport::Supported => Self::Supported,
-            CoreDiscoveryCandidateSupport::ProvisionalRoute => Self::ProvisionalRoute,
             CoreDiscoveryCandidateSupport::ProbeRecommended => Self::ProbeRecommended,
             CoreDiscoveryCandidateSupport::UnknownRecordable => Self::UnknownRecordable,
             CoreDiscoveryCandidateSupport::KnownUnsupported => Self::KnownUnsupported,
@@ -1185,21 +1182,15 @@ impl CutoutSessionStateHandle {
         });
         match selected_candidate {
             Some(candidate)
-                if candidate.electric_unicycle_model
-                    == Some(CoreDiscoveryElectricUnicycleModel::Aero) =>
-            {
-                return MobileIdentificationProbeOutcomeDto::NoProbeNeeded;
-            }
-            Some(candidate)
                 if candidate.connection_route
                     == Some(CoreDiscoveryConnectionRoute::VescOnewheel) =>
             {
                 return MobileIdentificationProbeOutcomeDto::Unsupported;
             }
             Some(candidate)
-                if candidate.support == CoreDiscoveryCandidateSupport::ProbeRecommended
-                    || candidate.electric_unicycle_model
-                        == Some(CoreDiscoveryElectricUnicycleModel::Falcon) => {}
+                if candidate.connection_route
+                    == Some(CoreDiscoveryConnectionRoute::ElectricUnicycle)
+                    || candidate.support == CoreDiscoveryCandidateSupport::ProbeRecommended => {}
             Some(_) => {
                 return MobileIdentificationProbeOutcomeDto::Unsupported;
             }
@@ -1437,9 +1428,9 @@ pub fn mobile_discovery_candidate_from_advertisement(
             evidence: "FFF0 transport hint".to_owned(),
             detail: "VESC protocol route".to_owned(),
             is_picker_candidate: true,
-            support: DiscoveryCandidateSupport::ProvisionalRoute,
-            recommended_action: DiscoveryCandidateSupport::ProvisionalRoute.recommended_action(),
-            section: DiscoveryCandidateSupport::ProvisionalRoute.picker_section(),
+            support: DiscoveryCandidateSupport::Supported,
+            recommended_action: DiscoveryCandidateSupport::Supported.recommended_action(),
+            section: DiscoveryCandidateSupport::Supported.picker_section(),
             connection_route: Some(DiscoveryConnectionRoute::VescOnewheel),
             electric_unicycle_model: None,
             disabled_reason: None,
@@ -1671,14 +1662,14 @@ pub fn mobile_discovery_candidate_from_detection_resolution(
             display_name,
             product_category: "Electric unicycle".to_owned(),
             evidence: "Veteran/NOSFET protocol family".to_owned(),
-            detail: "Veteran/NOSFET model not confirmed".to_owned(),
+            detail: "Veteran/NOSFET protocol detected; model identity probe required".to_owned(),
             is_picker_candidate: true,
-            support: DiscoveryCandidateSupport::UnknownRecordable,
-            recommended_action: DiscoveryCandidateSupport::UnknownRecordable.recommended_action(),
-            section: DiscoveryCandidateSupport::UnknownRecordable.picker_section(),
+            support: DiscoveryCandidateSupport::ProbeRecommended,
+            recommended_action: DiscoveryCandidateSupport::ProbeRecommended.recommended_action(),
+            section: DiscoveryCandidateSupport::ProbeRecommended.picker_section(),
             connection_route: None,
             electric_unicycle_model: None,
-            disabled_reason: Some("Veteran/NOSFET model not confirmed".to_owned()),
+            disabled_reason: Some("Veteran/NOSFET model identity probe required".to_owned()),
         };
     }
 
@@ -1693,12 +1684,34 @@ pub fn mobile_discovery_candidate_from_detection_resolution(
             evidence: "VESC protocol family".to_owned(),
             detail: "VESC read-only route".to_owned(),
             is_picker_candidate: true,
-            support: DiscoveryCandidateSupport::ProvisionalRoute,
-            recommended_action: DiscoveryCandidateSupport::ProvisionalRoute.recommended_action(),
-            section: DiscoveryCandidateSupport::ProvisionalRoute.picker_section(),
+            support: DiscoveryCandidateSupport::Supported,
+            recommended_action: DiscoveryCandidateSupport::Supported.recommended_action(),
+            section: DiscoveryCandidateSupport::Supported.picker_section(),
             connection_route: Some(DiscoveryConnectionRoute::VescOnewheel),
             electric_unicycle_model: None,
             disabled_reason: None,
+        };
+    }
+
+    if matches!(
+        resolution.protocol_family.as_ref(),
+        Some(MobileProtocolFamilyDto::BegodeGotway)
+    ) && resolution.missing_probe_response.is_none()
+        && resolution.malformed_probe_response.is_none()
+    {
+        return DiscoveryCandidate {
+            platform_identifier,
+            display_name,
+            product_category: "Electric unicycle".to_owned(),
+            evidence: "Begode/Gotway protocol family".to_owned(),
+            detail: "Begode/Gotway protocol detected; model identity probe required".to_owned(),
+            is_picker_candidate: true,
+            support: DiscoveryCandidateSupport::ProbeRecommended,
+            recommended_action: DiscoveryCandidateSupport::ProbeRecommended.recommended_action(),
+            section: DiscoveryCandidateSupport::ProbeRecommended.picker_section(),
+            connection_route: None,
+            electric_unicycle_model: None,
+            disabled_reason: Some("Begode/Gotway model identity probe required".to_owned()),
         };
     }
 
@@ -1751,6 +1764,104 @@ pub fn mobile_discovery_candidate_from_detection_resolution(
     )
 }
 
+/// Resolve the closest supported model after the normal detector has exhausted its probes.
+///
+/// A unique model in the detected protocol family is usable; a tied or unknown family remains
+/// unresolved so the caller can keep recording the connection.
+#[must_use]
+#[allow(
+    clippy::needless_pass_by_value,
+    reason = "UniFFI exports owned records"
+)]
+#[uniffi::export]
+pub fn mobile_discovery_candidate_from_closest_detection_resolution(
+    platform_identifier: String,
+    display_name: String,
+    resolution: DeviceDetectionResolutionRecord,
+) -> DiscoveryCandidate {
+    let detected = mobile_discovery_candidate_from_detection_resolution(
+        platform_identifier.clone(),
+        display_name.clone(),
+        resolution.clone(),
+    );
+    if detected.support == DiscoveryCandidateSupport::Supported || resolution.protocol_conflict {
+        return detected;
+    }
+
+    let Some(family) = resolution.protocol_family else {
+        return detected;
+    };
+    let stream_family = match family {
+        MobileProtocolFamilyDto::VeteranLeaperkimNosfet => {
+            ProtocolFamilyClassification::Known(DeviceFamily::NosfetAero)
+        }
+        MobileProtocolFamilyDto::BegodeGotway => {
+            ProtocolFamilyClassification::Known(DeviceFamily::BegodeFalcon)
+        }
+        MobileProtocolFamilyDto::Vesc => return detected,
+    };
+    let protocol_model = resolution
+        .veteran_protocol_model_id
+        .map_or(ProtocolModelIdentityEvidence::Missing, |model_id| {
+            ProtocolModelIdentityEvidence::model_id(ProtocolFamily::from(family), model_id)
+        });
+    let closest = closest_known_model(&StagedIdentityInput {
+        advertised_name: None,
+        gatt: &[] as &[GattFingerprint],
+        stream_family,
+        banner_model: IdentityBannerEvidence::Missing,
+        protocol_model,
+    });
+    let Some(registry_model) = closest else {
+        return detected;
+    };
+    let Some(model) = discovery_euc_model(registry_model) else {
+        return detected;
+    };
+
+    DiscoveryCandidate {
+        platform_identifier,
+        display_name,
+        product_category: "Electric unicycle".to_owned(),
+        evidence: format!("{} protocol family", family_label(family)),
+        detail: format!(
+            "{} selected as closest supported match after protocol detection",
+            registry_model.model
+        ),
+        is_picker_candidate: true,
+        support: DiscoveryCandidateSupport::Supported,
+        recommended_action: DiscoveryCandidateAction::Use,
+        section: DiscoveryCandidateSection::Supported,
+        connection_route: Some(DiscoveryConnectionRoute::ElectricUnicycle),
+        electric_unicycle_model: Some(model),
+        disabled_reason: None,
+    }
+}
+
+fn discovery_euc_model(
+    model: &'static ModelRegistryEntry,
+) -> Option<DiscoveryElectricUnicycleModel> {
+    if model.protocol_family == NOSFET_AERO_REGISTRY_ENTRY.protocol_family
+        && model.model == NOSFET_AERO_REGISTRY_ENTRY.model
+    {
+        Some(DiscoveryElectricUnicycleModel::Aero)
+    } else if model.protocol_family == BEGODE_FALCON_REGISTRY_ENTRY.protocol_family
+        && model.model == BEGODE_FALCON_REGISTRY_ENTRY.model
+    {
+        Some(DiscoveryElectricUnicycleModel::Falcon)
+    } else {
+        None
+    }
+}
+
+const fn family_label(family: MobileProtocolFamilyDto) -> &'static str {
+    match family {
+        MobileProtocolFamilyDto::VeteranLeaperkimNosfet => "Veteran/NOSFET",
+        MobileProtocolFamilyDto::BegodeGotway => "Begode/Gotway",
+        MobileProtocolFamilyDto::Vesc => "VESC",
+    }
+}
+
 /// Build a mobile discovery candidate from caller-owned Begode detection output.
 #[must_use]
 #[allow(
@@ -1795,26 +1906,18 @@ pub fn mobile_discovery_candidate_from_veteran_protocol_identity(
             display_name,
             product_category: "Electric unicycle".to_owned(),
             evidence: "Veteran protocol model id".to_owned(),
-            detail: format!("Unknown Veteran/NOSFET model id {model_id}"),
+            detail: format!("Veteran/NOSFET protocol detected; unknown model id {model_id}"),
             is_picker_candidate: true,
-            support: DiscoveryCandidateSupport::UnknownRecordable,
-            recommended_action: DiscoveryCandidateSupport::UnknownRecordable.recommended_action(),
-            section: DiscoveryCandidateSupport::UnknownRecordable.picker_section(),
+            support: DiscoveryCandidateSupport::ProbeRecommended,
+            recommended_action: DiscoveryCandidateSupport::ProbeRecommended.recommended_action(),
+            section: DiscoveryCandidateSupport::ProbeRecommended.picker_section(),
             connection_route: None,
             electric_unicycle_model: None,
-            disabled_reason: Some(format!("Unknown Veteran/NOSFET model id {model_id}")),
+            disabled_reason: Some("Veteran/NOSFET model identity probe required".to_owned()),
         };
     };
 
-    let electric_unicycle_model = match (
-        model.protocol_family,
-        model.wire_model_id.map(|wire_model_id| wire_model_id.value),
-    ) {
-        (ProtocolFamily::VeteranLeaperkimNosfet, Some(43)) => {
-            Some(DiscoveryElectricUnicycleModel::Aero)
-        }
-        _ => None,
-    };
+    let electric_unicycle_model = discovery_euc_model(model);
     let supported = electric_unicycle_model.is_some();
     let support = if supported {
         DiscoveryCandidateSupport::Supported
@@ -9389,6 +9492,7 @@ pub struct MobileRideMapCore {
 }
 
 const MAX_PENDING_LOCATION_WRITES: usize = 64;
+const AUTO_RESUME_RIDE_WINDOW_MILLISECONDS: u64 = 3 * 60 * 60 * 1_000;
 
 #[derive(Debug)]
 struct MobileRideMapCoreInner {
@@ -9400,6 +9504,8 @@ struct MobileRideMapCoreInner {
     music_history_policy: CoreMusicHistoryPolicy,
     music_restore_failed: bool,
     pending_location_writes: VecDeque<PendingMapLocationWrite>,
+    recoverable_updated_at_milliseconds: Option<u64>,
+    monotonic_epoch_offset_milliseconds: u64,
     initialization_error: Option<MobileRideMapCoreErrorDto>,
 }
 
@@ -9451,6 +9557,7 @@ impl MobileRideMapCoreInner {
         longitude_degrees: f64,
         horizontal_accuracy_meters: f64,
     ) -> Result<MobileRideMapCoreDecisionDto, MobileRideMapCoreErrorDto> {
+        let monotonic_ms = self.logical_monotonic_milliseconds(monotonic_ms);
         let Some(id) = self.active_ride_id.clone() else {
             return Err(MobileRideMapCoreErrorDto::NoActiveRide);
         };
@@ -9558,6 +9665,8 @@ impl MobileRideMapCoreInner {
             music_history_policy: CoreMusicHistoryPolicy::Disabled,
             music_restore_failed: false,
             pending_location_writes: VecDeque::new(),
+            recoverable_updated_at_milliseconds: None,
+            monotonic_epoch_offset_milliseconds: 0,
             initialization_error: None,
         };
         if let Err(error) = state.restore_active_ride() {
@@ -9679,6 +9788,7 @@ impl MobileRideMapCoreInner {
             timing,
         );
         self.active_ride_id = Some(ride.id);
+        self.recoverable_updated_at_milliseconds = Some(ride.updated_at_milliseconds);
         self.admission_recorder = self.recorder.clone();
         let Some(active_id) = self.active_ride_id.as_ref() else {
             return Err(MobileRideMapCoreErrorDto::NoActiveRide);
@@ -9776,6 +9886,15 @@ impl MobileRideMapCoreInner {
         state: MobileRideLifecycleStateDto,
         at_milliseconds: u64,
     ) -> MobileRideMapCoreSnapshotDto {
+        let at_milliseconds = self.logical_monotonic_milliseconds(at_milliseconds);
+        self.snapshot_at_logical(state, at_milliseconds)
+    }
+
+    fn snapshot_at_logical(
+        &self,
+        state: MobileRideLifecycleStateDto,
+        at_milliseconds: u64,
+    ) -> MobileRideMapCoreSnapshotDto {
         let mut snapshot = self.snapshot(state);
         snapshot.summary.duration_milliseconds = self
             .recorder
@@ -9804,6 +9923,7 @@ impl MobileRideMapCoreInner {
         }) {
             return Err(MobileRideMapCoreErrorDto::AlreadyRecording);
         }
+        self.monotonic_epoch_offset_milliseconds = 0;
         let mut staged_recorder = self.recorder.clone();
         staged_recorder
             .start(
@@ -9841,6 +9961,7 @@ impl MobileRideMapCoreInner {
         self.reset_music_history_policy();
         self.music_restore_failed = false;
         self.pending_location_writes.clear();
+        self.recoverable_updated_at_milliseconds = None;
         Ok(self.snapshot(MobileRideLifecycleStateDto::Active))
     }
 }
@@ -9995,6 +10116,38 @@ impl MobileRideMapCore {
         at_ms: u64,
     ) -> Result<MobileRideMapCoreSnapshotDto, MobileRideMapCoreErrorDto> {
         let mut state = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
+        if state.recorder.state() == Some(ride_maps::RideLifecycleState::Interrupted) {
+            let wall_clock_milliseconds: u64 = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .map_err(|error| MobileRideMapCoreErrorDto::Storage(error.to_string()))?
+                .as_millis()
+                .try_into()
+                .map_err(|error: std::num::TryFromIntError| {
+                    MobileRideMapCoreErrorDto::Storage(error.to_string())
+                })?;
+            let matches_vehicle = state.recorder.associated_vehicle()
+                == Some(platform_identifier.as_str())
+                || (state.recorder.associated_vehicle().is_none()
+                    && state.recorder.candidate_vehicle() == Some(platform_identifier.as_str()));
+            let within_resume_window =
+                state
+                    .recoverable_updated_at_milliseconds
+                    .is_some_and(|updated_at| {
+                        wall_clock_milliseconds
+                            .checked_sub(updated_at)
+                            .is_some_and(|age| age <= AUTO_RESUME_RIDE_WINDOW_MILLISECONDS)
+                    });
+            if matches_vehicle && within_resume_window {
+                let previous = state
+                    .recorder
+                    .recording_timing()
+                    .last_monotonic_milliseconds()
+                    .as_u64();
+                state.monotonic_epoch_offset_milliseconds = previous.saturating_sub(at_ms);
+                state.transition_inner_at(MobileRideEventDto::Resume, at_ms)?;
+                state.recoverable_updated_at_milliseconds = None;
+            }
+        }
         if state.recorder.state().is_none_or(|current| {
             matches!(
                 current,
@@ -10018,6 +10171,7 @@ impl MobileRideMapCore {
                     .into(),
             ));
         };
+        let at_ms = state.logical_monotonic_milliseconds(at_ms);
         let association =
             staged.observe_vehicle(&identity, ride_maps::MonotonicMilliseconds::new(at_ms));
         if association == ride_maps::VehicleAssociation::Associated {
@@ -10253,6 +10407,7 @@ impl MobileRideMapCore {
         let snapshot = CoreMusicSnapshot::try_from(snapshot)
             .map_err(MobileRideMapCoreErrorDto::InvalidMusicInput)?;
         let state = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
+        let monotonic_at_ms = state.logical_monotonic_milliseconds(monotonic_at_ms);
         let Some(ride_id) = state.active_ride_id.clone() else {
             return Err(MobileRideMapCoreErrorDto::NoActiveRide);
         };
@@ -10455,6 +10610,7 @@ impl MobileRideMapCore {
         let Some(identity) = ride_maps::VehicleIdentity::new(&platform_identifier) else {
             return Ok(ride_maps::VehicleAssociation::CandidateMissing.into());
         };
+        let at_ms = state.logical_monotonic_milliseconds(at_ms);
         let association =
             staged.observe_vehicle(&identity, ride_maps::MonotonicMilliseconds::new(at_ms));
         if association == ride_maps::VehicleAssociation::Associated {
@@ -10493,6 +10649,7 @@ impl MobileRideMapCore {
         at_ms: u64,
     ) -> Result<MobileRideMapTelemetryObservationDto, MobileRideMapCoreErrorDto> {
         let mut state = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
+        let at_ms = state.logical_monotonic_milliseconds(at_ms);
         let mut staged = state.admission_recorder.clone();
         let mut durable_staged = state.recorder.clone();
         let observation = staged.observe_telemetry(ride_maps::MonotonicMilliseconds::new(at_ms));
@@ -10674,7 +10831,7 @@ impl MobileRideMapCore {
             state.settled_ride_id = None;
         }
         // Rebuild the admission projection from the durable projection plus only writes that are
-        // still pending. This removes a provisional point after a durable rejection.
+        // still pending. This removes a pending point after a durable rejection.
         let mut rebuilt = state.recorder.clone();
         for pending in &state.pending_location_writes {
             rebuilt.record_sample(pending.sample);
@@ -10884,6 +11041,10 @@ fn project_live_route_points(
 }
 
 impl MobileRideMapCoreInner {
+    fn logical_monotonic_milliseconds(&self, raw: u64) -> u64 {
+        raw.saturating_add(self.monotonic_epoch_offset_milliseconds)
+    }
+
     fn transition_inner(
         &mut self,
         event: MobileRideEventDto,
@@ -10903,12 +11064,13 @@ impl MobileRideMapCoreInner {
         event: MobileRideEventDto,
         at_milliseconds: u64,
     ) -> Result<MobileRideMapCoreSnapshotDto, MobileRideMapCoreErrorDto> {
+        let at_milliseconds = self.logical_monotonic_milliseconds(at_milliseconds);
         let (_, next) = self.transition_state(event, at_milliseconds)?;
         self.recorder
             .apply_transition_at(next, ride_maps::MonotonicMilliseconds::new(at_milliseconds));
         self.admission_recorder
             .apply_transition_at(next, ride_maps::MonotonicMilliseconds::new(at_milliseconds));
-        Ok(self.snapshot_at(next.into(), at_milliseconds))
+        Ok(self.snapshot_at_logical(next.into(), at_milliseconds))
     }
 }
 
@@ -12204,6 +12366,7 @@ const fn mobile_protocol_family_from_detection(
             Some(MobileProtocolFamilyDto::VeteranLeaperkimNosfet)
         }
         ProtocolFamilyState::BegodeGotway => Some(MobileProtocolFamilyDto::BegodeGotway),
+        ProtocolFamilyState::Vesc => Some(MobileProtocolFamilyDto::Vesc),
     }
 }
 
@@ -17107,6 +17270,54 @@ mod tests {
     }
 
     #[test]
+    fn mobile_device_detection_session_exposes_fragmented_veteran_model() {
+        let session = CutoutSessionStateHandle::new();
+        let frame = synthetic_veteran_frame_with_model_id(43);
+
+        assert_eq!(
+            session
+                .observe_notification(frame[..20].to_vec())
+                .protocol_family,
+            None
+        );
+        assert_eq!(
+            session
+                .observe_notification(frame[20..40].to_vec())
+                .protocol_family,
+            None
+        );
+        let resolution = session.observe_notification(frame[40..].to_vec());
+
+        assert_eq!(
+            resolution.protocol_family,
+            Some(MobileProtocolFamilyDto::VeteranLeaperkimNosfet)
+        );
+        assert_eq!(resolution.veteran_protocol_model_id, Some(43));
+    }
+
+    #[test]
+    fn mobile_device_detection_session_exposes_fragmented_vesc_reply() {
+        let session = CutoutSessionStateHandle::new();
+        let frame = [
+            2, 20, 157, 7, 1, 2, 97, 98, 99, 49, 50, 51, 0, 117, 115, 101, 114, 104, 97, 115, 104,
+            0, 38, 208, 3,
+        ];
+
+        assert_eq!(
+            session
+                .observe_notification(frame[..9].to_vec())
+                .protocol_family,
+            None
+        );
+        assert_eq!(
+            session
+                .observe_notification(frame[9..].to_vec())
+                .protocol_family,
+            Some(MobileProtocolFamilyDto::Vesc)
+        );
+    }
+
+    #[test]
     fn mobile_device_detection_resolution_projects_veteran_model_id() {
         let session = CutoutSessionStateHandle::new();
         let veteran_frame = synthetic_veteran_frame_with_model_id(43);
@@ -17132,7 +17343,7 @@ mod tests {
     }
 
     #[test]
-    fn mobile_device_detection_resolution_keeps_veteran_family_only_recordable() {
+    fn mobile_device_detection_resolution_requires_veteran_model_probe() {
         let candidate = mobile_discovery_candidate_from_detection_resolution(
             "ios-local-veteran-family".to_owned(),
             "Veteran stream".to_owned(),
@@ -17151,21 +17362,94 @@ mod tests {
 
         assert_eq!(candidate.product_category, "Electric unicycle");
         assert_eq!(candidate.evidence, "Veteran/NOSFET protocol family");
-        assert_eq!(candidate.detail, "Veteran/NOSFET model not confirmed");
+        assert_eq!(
+            candidate.detail,
+            "Veteran/NOSFET protocol detected; model identity probe required"
+        );
         assert_eq!(
             candidate.support,
-            DiscoveryCandidateSupport::UnknownRecordable
+            DiscoveryCandidateSupport::ProbeRecommended
         );
         assert_eq!(candidate.connection_route, None);
         assert_eq!(candidate.electric_unicycle_model, None);
         assert_eq!(
             candidate.disabled_reason,
-            Some("Veteran/NOSFET model not confirmed".to_owned())
+            Some("Veteran/NOSFET model identity probe required".to_owned())
         );
     }
 
     #[test]
-    fn mobile_device_detection_resolution_routes_vesc_family_provisionally() {
+    fn mobile_device_detection_resolution_requires_begode_model_probe() {
+        let candidate = mobile_discovery_candidate_from_detection_resolution(
+            "ios-local-begode-family".to_owned(),
+            "Begode stream".to_owned(),
+            DeviceDetectionResolutionRecord {
+                protocol_family: Some(MobileProtocolFamilyDto::BegodeGotway),
+                protocol_conflict: false,
+                veteran_protocol_model_id: None,
+                advertised_name: None,
+                model_banner: None,
+                firmware_banner: None,
+                imu_banner: None,
+                missing_probe_response: None,
+                malformed_probe_response: None,
+            },
+        );
+
+        assert_eq!(
+            candidate.support,
+            DiscoveryCandidateSupport::ProbeRecommended
+        );
+        assert_eq!(candidate.connection_route, None);
+        assert_eq!(candidate.electric_unicycle_model, None);
+        assert_eq!(
+            candidate.disabled_reason,
+            Some("Begode/Gotway model identity probe required".to_owned())
+        );
+    }
+
+    #[test]
+    fn exhausted_family_detection_uses_unique_closest_supported_model() {
+        for (family, misleading_name, expected_model) in [
+            (
+                MobileProtocolFamilyDto::VeteranLeaperkimNosfet,
+                b"Begode Falcon".to_vec(),
+                DiscoveryElectricUnicycleModel::Aero,
+            ),
+            (
+                MobileProtocolFamilyDto::BegodeGotway,
+                b"NF2557".to_vec(),
+                DiscoveryElectricUnicycleModel::Falcon,
+            ),
+        ] {
+            let candidate = mobile_discovery_candidate_from_closest_detection_resolution(
+                "ios-local-device".to_owned(),
+                "Detected device".to_owned(),
+                DeviceDetectionResolutionRecord {
+                    protocol_family: Some(family),
+                    protocol_conflict: false,
+                    veteran_protocol_model_id: None,
+                    advertised_name: Some(misleading_name),
+                    model_banner: None,
+                    firmware_banner: None,
+                    imu_banner: None,
+                    missing_probe_response: None,
+                    malformed_probe_response: None,
+                },
+            );
+
+            assert_eq!(candidate.support, DiscoveryCandidateSupport::Supported);
+            assert_eq!(
+                candidate.connection_route,
+                Some(DiscoveryConnectionRoute::ElectricUnicycle)
+            );
+            assert_eq!(candidate.electric_unicycle_model, Some(expected_model));
+            assert!(candidate.detail.contains("closest supported match"));
+        }
+    }
+
+    #[test]
+    fn mobile_device_detection_resolution_routes_vesc_family() {
         let candidate = mobile_discovery_candidate_from_detection_resolution(
             "ios-local-vesc-family".to_owned(),
             "VESC stream".to_owned(),
@@ -17185,10 +17469,7 @@ mod tests {
         assert_eq!(candidate.product_category, "VESC Onewheel");
         assert_eq!(candidate.evidence, "VESC protocol family");
         assert_eq!(candidate.detail, "VESC read-only route");
-        assert_eq!(
-            candidate.support,
-            DiscoveryCandidateSupport::ProvisionalRoute
-        );
+        assert_eq!(candidate.support, DiscoveryCandidateSupport::Supported);
         assert_eq!(
             candidate.connection_route,
             Some(DiscoveryConnectionRoute::VescOnewheel)
@@ -17456,7 +17737,7 @@ mod tests {
     }
 
     #[test]
-    fn mobile_discovery_candidate_keeps_unknown_veteran_model_id_unrouteable() {
+    fn mobile_discovery_candidate_requires_unknown_veteran_model_probe() {
         let candidate = mobile_discovery_candidate_from_veteran_protocol_identity(
             "ios-local-veteran".to_owned(),
             "Veteran stream".to_owned(),
@@ -17465,17 +17746,20 @@ mod tests {
 
         assert_eq!(candidate.product_category, "Electric unicycle");
         assert_eq!(candidate.evidence, "Veteran protocol model id");
-        assert_eq!(candidate.detail, "Unknown Veteran/NOSFET model id 99");
+        assert_eq!(
+            candidate.detail,
+            "Veteran/NOSFET protocol detected; unknown model id 99"
+        );
         assert!(candidate.is_picker_candidate);
         assert_eq!(
             candidate.support,
-            DiscoveryCandidateSupport::UnknownRecordable
+            DiscoveryCandidateSupport::ProbeRecommended
         );
         assert_eq!(candidate.connection_route, None);
         assert_eq!(candidate.electric_unicycle_model, None);
         assert_eq!(
-            candidate.disabled_reason.as_deref(),
-            Some("Unknown Veteran/NOSFET model id 99")
+            candidate.disabled_reason,
+            Some("Veteran/NOSFET model identity probe required".to_owned())
         );
     }
 
@@ -18611,7 +18895,7 @@ mod tests {
     }
 
     #[test]
-    fn mobile_discovery_candidate_routes_vesc_advertisement_provisionally() {
+    fn mobile_discovery_candidate_routes_vesc_advertisement() {
         let candidate = mobile_discovery_candidate_from_advertisement(
             "ios-local-unknown".to_owned(),
             Some("Little FOCer".to_owned()),
@@ -18622,10 +18906,7 @@ mod tests {
 
         assert!(candidate.is_picker_candidate);
         assert_eq!(candidate.product_category, "VESC Onewheel");
-        assert_eq!(
-            candidate.support,
-            DiscoveryCandidateSupport::ProvisionalRoute
-        );
+        assert_eq!(candidate.support, DiscoveryCandidateSupport::Supported);
         assert_eq!(
             candidate.connection_route,
             Some(DiscoveryConnectionRoute::VescOnewheel)
@@ -22465,6 +22746,137 @@ mod tests {
             .expect("a later connection starts a fresh live map ride");
         assert_eq!(restarted.state, MobileRideLifecycleStateDto::Active);
         assert_ne!(restarted.ride_id, snapshot.ride_id);
+    }
+
+    #[test]
+    fn mobile_ride_map_core_auto_resumes_a_recent_interrupted_ride_for_the_same_vehicle() {
+        let _guard = RIDE_DATABASE_TEST_LOCK
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        let path = std::env::temp_dir().join(format!(
+            "cutout-mobile-map-auto-resume-{}-{}.sqlite3",
+            std::process::id(),
+            Uuid::new_v4()
+        ));
+        let original_ride_id = {
+            let database =
+                open_ride_database(path.to_string_lossy().into_owned()).expect("database opens");
+            let state = MobileRideMapCore::with_database(database.clone());
+            let snapshot = state
+                .ensure_recording_for_vehicle("pev-1".to_owned(), 1_000)
+                .expect("connection starts ride");
+            database.shutdown().expect("database shuts down");
+            snapshot.ride_id
+        };
+
+        let database =
+            open_ride_database(path.to_string_lossy().into_owned()).expect("database reopens");
+        let state = MobileRideMapCore::with_database(database.clone());
+        assert_eq!(
+            state.current_snapshot(2_000).map(|snapshot| snapshot.state),
+            Some(MobileRideLifecycleStateDto::Interrupted)
+        );
+        let resumed = state
+            .ensure_recording_for_vehicle("pev-1".to_owned(), 500)
+            .expect("recent matching ride resumes after a monotonic clock reset");
+        assert_eq!(resumed.state, MobileRideLifecycleStateDto::Active);
+        assert_eq!(resumed.ride_id, original_ride_id);
+        assert!(matches!(
+            state
+                .ingest_location(600, 1_700_000_000_600, 40.0, -105.0, 3.0)
+                .expect("new-epoch location is translated into the continued ride timeline"),
+            MobileRideMapCoreDecisionDto::Pending { .. }
+                | MobileRideMapCoreDecisionDto::Accepted { .. }
+        ));
+
+        database.shutdown().expect("reopened database shuts down");
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn mobile_ride_map_core_starts_new_when_the_interrupted_ride_is_for_another_vehicle() {
+        let _guard = RIDE_DATABASE_TEST_LOCK
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        let path = std::env::temp_dir().join(format!(
+            "cutout-mobile-map-auto-new-{}-{}.sqlite3",
+            std::process::id(),
+            Uuid::new_v4()
+        ));
+        let original_ride_id = {
+            let database =
+                open_ride_database(path.to_string_lossy().into_owned()).expect("database opens");
+            let state = MobileRideMapCore::with_database(database.clone());
+            let snapshot = state
+                .ensure_recording_for_vehicle("pev-1".to_owned(), 1_000)
+                .expect("connection starts ride");
+            database.shutdown().expect("database shuts down");
+            snapshot.ride_id
+        };
+
+        let database =
+            open_ride_database(path.to_string_lossy().into_owned()).expect("database reopens");
+        let state = MobileRideMapCore::with_database(database.clone());
+        let started = state
+            .ensure_recording_for_vehicle("pev-2".to_owned(), 2_000)
+            .expect("different vehicle starts a new ride");
+        assert_eq!(started.state, MobileRideLifecycleStateDto::Active);
+        assert_ne!(started.ride_id, original_ride_id);
+        assert_eq!(started.associated_vehicle.as_deref(), Some("pev-2"));
+
+        database.shutdown().expect("reopened database shuts down");
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn mobile_ride_map_core_starts_new_when_the_interrupted_ride_is_older_than_three_hours() {
+        let _guard = RIDE_DATABASE_TEST_LOCK
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        let path = std::env::temp_dir().join(format!(
+            "cutout-mobile-map-auto-new-old-{}-{}.sqlite3",
+            std::process::id(),
+            Uuid::new_v4()
+        ));
+        let original_ride_id = {
+            let database =
+                open_ride_database(path.to_string_lossy().into_owned()).expect("database opens");
+            let state = MobileRideMapCore::with_database(database.clone());
+            let snapshot = state
+                .ensure_recording_for_vehicle("pev-1".to_owned(), 1_000)
+                .expect("connection starts ride");
+            database.shutdown().expect("database shuts down");
+            snapshot.ride_id
+        };
+        let now_milliseconds = u64::try_from(
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("system clock follows epoch")
+                .as_millis(),
+        )
+        .expect("wall clock fits u64");
+        let stale_update = now_milliseconds
+            .saturating_sub(AUTO_RESUME_RIDE_WINDOW_MILLISECONDS)
+            .saturating_sub(1);
+        rusqlite::Connection::open(&path)
+            .expect("sqlite opens")
+            .execute(
+                "UPDATE rides SET created_at_ms = ?1, updated_at_ms = ?1",
+                [stale_update],
+            )
+            .expect("ride timestamp ages");
+
+        let database =
+            open_ride_database(path.to_string_lossy().into_owned()).expect("database reopens");
+        let state = MobileRideMapCore::with_database(database.clone());
+        let started = state
+            .ensure_recording_for_vehicle("pev-1".to_owned(), 2_000)
+            .expect("stale ride is replaced");
+        assert_eq!(started.state, MobileRideLifecycleStateDto::Active);
+        assert_ne!(started.ride_id, original_ride_id);
+
+        database.shutdown().expect("reopened database shuts down");
+        let _ = fs::remove_file(path);
     }
 
     #[test]

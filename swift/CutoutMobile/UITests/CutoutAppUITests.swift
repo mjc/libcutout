@@ -239,21 +239,16 @@ final class CutoutAppUITests: XCTestCase {
     }
 
     func testProbeActionDoesNotFallThroughToRecordOnly() {
-        let advancedCapture = openAdvancedCapture()
-        let captureKind = app.textFields["device-picker.capture-kind"]
-        let probeButton = app.buttons["device-picker.probe.ui-test-probe"]
+        disconnectIfConnected()
+        let useButton = app.buttons["device-picker.use.ui-test-probe"]
 
-        XCTAssertTrue(advancedCapture.exists)
-        XCTAssertTrue(captureKind.exists)
-        XCTAssertTrue(probeButton.waitForExistence(timeout: 5))
-        XCTAssertTrue(probeButton.isEnabled)
-        XCTAssertTrue(probeButton.isHittable)
-        XCTAssertTrue(probeButton.label.contains("Start probe"))
-        XCTAssertTrue(probeButton.label.contains("Unknown EUC"))
+        XCTAssertTrue(useButton.waitForExistence(timeout: 5), app.debugDescription)
+        XCTAssertTrue(useButton.isEnabled)
+        XCTAssertTrue(useButton.isHittable)
+        XCTAssertEqual(useButton.label, "Use Unknown EUC, device ROBE")
 
-        probeButton.tap()
+        useButton.tap()
 
-        XCTAssertFalse(advancedCapture.waitForExistence(timeout: 2))
         XCTAssertNotNil(connectedScreen(timeout: 20))
         disconnectIfConnected()
     }
@@ -381,7 +376,7 @@ final class CutoutAppUITests: XCTestCase {
         XCTAssertEqual(Fixture.testFixture(for: "testEUCReconnectKeepsRideRoute"), .eucReconnect)
     }
 
-    func testHomeMapRouteKeepsMapAndStartActionReachable() throws {
+    func testPickerSurfaceHomeMapRouteKeepsMapAndLifecycleActionsReachable() throws {
         let mapButton = app.buttons["device-picker.open-map"]
         XCTAssertTrue(mapButton.waitForExistence(timeout: 8), app.debugDescription)
         XCTAssertTrue(mapButton.isHittable)
@@ -390,15 +385,31 @@ final class CutoutAppUITests: XCTestCase {
         let mapScreen = app.descendants(matching: .any)["ride-map.screen"]
         XCTAssertTrue(mapScreen.waitForExistence(timeout: 8), app.debugDescription)
         XCTAssertTrue(app.descendants(matching: .any)["ride-map.map"].waitForExistence(timeout: 5))
-        let modePicker = mapScreen.descendants(matching: .any)["ride-map.mode-picker"]
+        let modePicker = mapScreen.segmentedControls.firstMatch
         XCTAssertTrue(modePicker.waitForExistence(timeout: 5), app.debugDescription)
-        let startButton = app.buttons["ride-map.start"]
-        XCTAssertTrue(startButton.waitForExistence(timeout: 5), app.debugDescription)
-        XCTAssertTrue(startButton.isEnabled)
-        XCTAssertTrue(startButton.isHittable)
-        XCTAssertGreaterThanOrEqual(startButton.frame.height, 44)
-        startButton.tap()
-        XCTAssertTrue(app.buttons["ride-map.pause"].waitForExistence(timeout: 5), app.debugDescription)
+        let pauseButton = app.buttons["ride-map.pause"]
+        let restoredResumeButton = app.buttons["ride-map.resume"]
+        if restoredResumeButton.waitForExistence(timeout: 2) {
+            restoredResumeButton.tap()
+        } else {
+            let startButton = app.buttons["ride-map.start"]
+            XCTAssertTrue(startButton.waitForExistence(timeout: 5), app.debugDescription)
+            XCTAssertTrue(startButton.isEnabled)
+            XCTAssertTrue(startButton.isHittable)
+            XCTAssertGreaterThanOrEqual(startButton.frame.height, 44)
+            startButton.tap()
+        }
+        XCTAssertTrue(pauseButton.waitForExistence(timeout: 5), app.debugDescription)
+        pauseButton.tap()
+        let resumeButton = app.buttons["ride-map.resume"]
+        XCTAssertTrue(resumeButton.waitForExistence(timeout: 5), app.debugDescription)
+        resumeButton.tap()
+        XCTAssertTrue(pauseButton.waitForExistence(timeout: 5), app.debugDescription)
+
+        let recenterButton = app.buttons["ride-map.recenter"]
+        XCTAssertTrue(recenterButton.waitForExistence(timeout: 5), app.debugDescription)
+        recenterButton.tap()
+        XCTAssertTrue(app.descendants(matching: .any)["ride-map.map"].exists)
     }
 
     func testCaptureAnnotationUsesOneStatefulAccessibleAction() {

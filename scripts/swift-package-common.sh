@@ -49,87 +49,61 @@ cutout_require_spotify_client_id() {
   printf '%s\n' "$client_id"
 }
 
+cutout_verify_embedded_spotify_client_id() {
+  local product expected actual
+  product="$1"
+  expected="$2"
+  actual="$(/usr/libexec/PlistBuddy -c 'Print :SpotifyClientID' "$product/Info.plist" 2>/dev/null || true)"
+  if [[ -z "$expected" || "$actual" != "$expected" ]]; then
+    echo "built app does not contain the configured Spotify client ID: $product" >&2
+    return 1
+  fi
+}
+
 cutout_swift_ffi_package_dir() {
   printf '%s\n' "$1/target/swift-ffi/CutoutMobileFFI"
 }
 
-cutout_swift_ffi_lock_path() {
-  printf '%s\n' "$(dirname "$(cutout_swift_ffi_package_dir "$1")")/.generation.lock"
-}
-
-cutout_acquire_swift_ffi_lock() {
-  local root lock owner current started timeout
+cutout_validate_swift_ffi_build_input() {
+  local root package
+  local -a required
   root="$1"
-  lock="$(cutout_swift_ffi_lock_path "$root")"
-  mkdir -p "$(dirname "$lock")"
-  timeout="${CUTOUT_SWIFT_FFI_LOCK_TIMEOUT_SECONDS:-120}"
-  if [[ ! "$timeout" =~ ^[1-9][0-9]*$ ]]; then
-    echo "CUTOUT_SWIFT_FFI_LOCK_TIMEOUT_SECONDS must be a positive integer" >&2
-    return 2
-  fi
-  started="$SECONDS"
-  while ! ln -s "$$" "$lock" 2>/dev/null; do
-    owner="$(readlink "$lock" 2>/dev/null || true)"
-    if [[ -z "$owner" || ! "$owner" =~ ^[0-9]+$ ]]; then
-      echo "refusing malformed Swift FFI generation lock: $lock" >&2
+  package="$(cutout_swift_ffi_package_dir "$root")"
+  required=(
+    "$package/Package.swift"
+    "$package/Sources/CutoutMobileFFI/cutout_mobile_ffi.swift"
+    "$package/cutout_mobile_ffiFFI.xcframework/Info.plist"
+    "$package/cutout_mobile_ffiFFI.xcframework/ios-arm64/libcutout_mobile_ffi.a"
+    "$package/cutout_mobile_ffiFFI.xcframework/ios-arm64/Headers/cutout_mobile_ffiFFI/cutout_mobile_ffiFFI.h"
+    "$package/cutout_mobile_ffiFFI.xcframework/ios-arm64/Headers/cutout_mobile_ffiFFI/module.modulemap"
+    "$package/cutout_mobile_ffiFFI.xcframework/ios-arm64-simulator/libcutout_mobile_ffi.a"
+    "$package/cutout_mobile_ffiFFI.xcframework/ios-arm64-simulator/Headers/cutout_mobile_ffiFFI/cutout_mobile_ffiFFI.h"
+    "$package/cutout_mobile_ffiFFI.xcframework/ios-arm64-simulator/Headers/cutout_mobile_ffiFFI/module.modulemap"
+    "$package/cutout_mobile_ffiFFI.xcframework/macos-arm64/libcutout_mobile_ffi.a"
+    "$package/cutout_mobile_ffiFFI.xcframework/macos-arm64/Headers/cutout_mobile_ffiFFI/cutout_mobile_ffiFFI.h"
+    "$package/cutout_mobile_ffiFFI.xcframework/macos-arm64/Headers/cutout_mobile_ffiFFI/module.modulemap"
+  )
+
+  for input in "${required[@]}"; do
+    if [[ ! -s "$input" ]]; then
+      echo "missing Swift FFI build input: $input" >&2
+      echo "Run: nix develop -c ./scripts/regenerate-swift-ffi.sh" >&2
       return 1
     fi
-    if ! kill -0 "$owner" 2>/dev/null; then
-      current="$(readlink "$lock" 2>/dev/null || true)"
-      [[ "$current" == "$owner" ]] && rm -f -- "$lock"
-      continue
-    fi
-    if (( SECONDS - started >= timeout )); then
-      echo "timed out waiting for Swift FFI generation lock: $lock (owner $owner)" >&2
-      return 1
-    fi
-    sleep 0.1
   done
-}
 
-cutout_release_swift_ffi_lock() {
-  local lock owner
-  lock="$(cutout_swift_ffi_lock_path "$1")"
-  owner="$(readlink "$lock" 2>/dev/null || true)"
-  [[ "$owner" == "$$" ]] && rm -f -- "$lock"
-}
-
-cutout_replace_generated_directory() {
-  local target parent name backup_root backup status
-  target="$1"
-  shift
-  parent="$(dirname "$target")"
-  name="$(basename "$target")"
-  if [[ "$target" != /* || "$target" == "/" || "$name" == "." || "$name" == ".." || ! -d "$parent" ]]; then
-    echo "refusing unsafe generated-directory target: $target" >&2
-    return 2
+  if ! grep -Eq 'Package[[:space:]]*\(' "$package/Package.swift"; then
+    echo "invalid Swift FFI Package.swift: $package/Package.swift" >&2
+    echo "Run: nix develop -c ./scripts/regenerate-swift-ffi.sh" >&2
+    return 1
   fi
-
-  backup_root="$(mktemp -d "$parent/.$name.backup.XXXXXX")"
-  backup="$backup_root/$name"
-  if [[ -e "$target" ]]; then
-    mv "$target" "$backup"
-  fi
-
-  if "$@"; then
-    rm -rf -- "$backup_root"
-    return 0
-  else
-    status=$?
-  fi
-
-  rm -rf -- "$target"
-  if [[ -e "$backup" ]]; then
-    mv "$backup" "$target"
-  fi
-  rmdir "$backup_root"
-  return "$status"
 }
 
 cutout_ensure_swift_ffi_build_input() {
   local root
   root="$1"
-  (cd "$root" && cargo run --quiet -p cutout-dev -- swift-ffi)
+  (cd "$root" && cargo run --quiet -p cutout-dev -- swift-ffi) || return
+  cutout_validate_swift_ffi_build_input "$root"
 }
 
 cutout_create_ios_ui_test_result_bundle() {
@@ -249,6 +223,9 @@ cutout_build_ios_app_bundle() {
     echo "expected installed product not found: $product" >&2
     return 1
   fi
+  if [[ -n "$spotify_client_id" ]]; then
+    cutout_verify_embedded_spotify_client_id "$product" "$spotify_client_id" || return
+  fi
 
   printf '%s\n' "$product"
 }
@@ -294,6 +271,7 @@ cutout_build_ios_device_app_bundle() {
     echo "expected installed product not found: $product" >&2
     return 1
   fi
+  cutout_verify_embedded_spotify_client_id "$product" "$spotify_client_id" || return
 
   printf '%s\n' "$product"
 }
@@ -354,6 +332,9 @@ cutout_archive_ios_release_testing_app() {
     echo "expected archive not found: $archive_path" >&2
     return 1
   fi
+  cutout_verify_embedded_spotify_client_id \
+    "$archive_path/Products/Applications/CutoutApp.app" \
+    "$spotify_client_id" || return
 
   printf '%s\n' "$archive_path"
 }

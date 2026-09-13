@@ -637,6 +637,10 @@
       "comment" : "Accessibility label for using a selected device. The placeholder is the device name.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Use %@" } } }
     },
+    "picker.section.detected_devices" : {
+      "comment" : "Section heading for devices whose protocol has been detected and can be used.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Detected devices" } } }
+    },
     "picker.device.with_identifier" : {
       "comment" : "Accessible device name with a short identifier. Placeholders are the device title and identifier suffix.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "%@, device %@" } } }

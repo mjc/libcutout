@@ -8,7 +8,7 @@ struct PickerDeviceRow: View {
     var action: (() -> Void)? = nil
 
     var body: some View {
-        if let action, row.state.isSupported {
+        if let action, row.state.isSupported || row.isProbeRecommended {
             Button(action: action) {
                 rowContent
             }
@@ -66,7 +66,11 @@ struct PickerDeviceRow: View {
     }
 
     private var statusPill: some View {
-        PevDashboardStatusPill(devicePickerState: row.state)
+        PevDashboardStatusPill(
+            devicePickerState: row.isProbeRecommended && action != nil
+                ? .supported(action: localizedAppText("picker.row.action.use"))
+                : row.state
+        )
     }
 }
 

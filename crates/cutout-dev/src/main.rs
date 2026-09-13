@@ -4,12 +4,14 @@ use std::{
     ffi::OsStr,
     fmt::Write,
     fs,
-    io::Write as _,
+    io::{ErrorKind, Write as _},
     path::{Path, PathBuf},
-    process::{Command, ExitStatus},
+    process::{Command, ExitStatus, Stdio},
+    thread,
+    time::{Duration, Instant},
 };
 
-use anyhow::{Context, Result, bail, ensure};
+use anyhow::{Context, Result, anyhow, bail, ensure};
 use cutout_core::{
     AeroAngleAdjustment, AeroBeeperVolume, AeroBrakeOverpressureAlarm, AeroDisplayBacklight,
     AeroDynamicAssist, AeroHighSpeedMode, AeroLateralTiltLimit, AeroLowBatteryMode,
@@ -35,24 +37,79 @@ impl SwiftFfiLock {
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent)?;
         }
-        let mut lock = fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&path)
-            .with_context(|| {
-                format!(
-                    "acquire Swift FFI generation lock {}; another generation may be running",
-                    path.display()
-                )
-            })?;
-        writeln!(lock, "{}", std::process::id())?;
-        Ok(Self { path })
+        let started = Instant::now();
+        loop {
+            match fs::create_dir(&path) {
+                Ok(()) => {
+                    let owner = path.join("owner");
+                    let mut lock = fs::File::create(&owner)?;
+                    writeln!(lock, "{}", std::process::id())?;
+                    return Ok(Self { path });
+                }
+                Err(error) if error.kind() == ErrorKind::AlreadyExists => {
+                    // The directory is the atomic ownership token. An owner file may be absent
+                    // briefly while the winner records its PID; never reclaim that state.
+                    if !path.is_dir() {
+                        let owner = fs::read_to_string(&path).unwrap_or_default();
+                        let owner_pid = owner.trim().parse::<u32>().ok();
+                        if let Some(pid) = owner_pid {
+                            if process_is_alive(pid) {
+                                ensure!(
+                                    started.elapsed() < Duration::from_secs(120),
+                                    "timed out waiting for Swift FFI generation lock {}",
+                                    path.display()
+                                );
+                                thread::sleep(Duration::from_millis(100));
+                                continue;
+                            }
+                            if fs::read_to_string(&path).unwrap_or_default() == owner {
+                                let _ = fs::remove_file(&path);
+                                continue;
+                            }
+                        }
+                        return Err(anyhow!(
+                            "malformed Swift FFI lock file exists at {}",
+                            path.display()
+                        ));
+                    }
+                    let owner_path = path.join("owner");
+                    let owner = fs::read_to_string(&owner_path).unwrap_or_default();
+                    let owner_pid = owner.trim().parse::<u32>().ok();
+                    if let Some(pid) = owner_pid {
+                        if !process_is_alive(pid)
+                            && fs::read_to_string(&owner_path).unwrap_or_default() == owner
+                        {
+                            let _ = fs::remove_file(&owner_path);
+                            let _ = fs::remove_dir(&path);
+                            continue;
+                        }
+                    }
+                    ensure!(
+                        started.elapsed() < Duration::from_secs(120),
+                        "timed out waiting for Swift FFI generation lock {}",
+                        path.display()
+                    );
+                    thread::sleep(Duration::from_millis(100));
+                }
+                Err(error) => return Err(error).context("acquire Swift FFI generation lock"),
+            }
+        }
     }
+}
+
+fn process_is_alive(pid: u32) -> bool {
+    Command::new("kill")
+        .args(["-0", &pid.to_string()])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .is_ok_and(|status| status.success())
 }
 
 impl Drop for SwiftFfiLock {
     fn drop(&mut self) {
-        let _ = fs::remove_file(&self.path);
+        let _ = fs::remove_file(self.path.join("owner"));
+        let _ = fs::remove_dir(&self.path);
     }
 }
 
@@ -270,6 +327,7 @@ fn regenerate_swift_ffi(root: &Path, package: &Path) -> Result<()> {
             ]),
         "generate Swift FFI package",
     )
+    .and_then(|()| normalize_xcframework_to_arm64(&cargo_package))
     .and_then(|()| sort_xcframework_plist(&cargo_package))
     .and_then(|()| trim_generated_sources(&cargo_package))
     .and_then(|()| {
@@ -311,6 +369,63 @@ fn regenerate_swift_ffi(root: &Path, package: &Path) -> Result<()> {
     }
 }
 
+/// Keep the generated package limited to architectures used by this project.
+/// cargo-swift emits universal Intel slices by default; no supported workflow
+/// here needs x86_64, and retaining those slices makes generation depend on
+/// an Intel macOS SDK being available.
+fn normalize_xcframework_to_arm64(package: &Path) -> Result<()> {
+    ensure!(
+        cfg!(target_os = "macos"),
+        "XCFramework normalization requires macOS"
+    );
+    let xcframework = package.join("cutout_mobile_ffiFFI.xcframework");
+    for (source_name, target_name) in [
+        ("ios-arm64_x86_64-simulator", "ios-arm64-simulator"),
+        ("macos-arm64_x86_64", "macos-arm64"),
+    ] {
+        let source = xcframework.join(source_name);
+        let target = xcframework.join(target_name);
+        if source.exists() {
+            fs::rename(&source, &target)
+                .with_context(|| format!("renaming {source_name} XCFramework slice"))?;
+        }
+        let library = target.join("libcutout_mobile_ffi.a");
+        let arm64 = target.join("libcutout_mobile_ffi.arm64.a");
+        run(
+            command("/usr/bin/lipo")
+                .args(["-thin", "arm64", "-output"])
+                .arg(&arm64)
+                .arg(&library),
+            "thin Swift FFI library to arm64",
+        )?;
+        fs::rename(arm64, library).context("install arm64 Swift FFI library")?;
+    }
+
+    const NORMALIZE_PLIST: &str = r#"
+import plistlib, sys
+path = sys.argv[1]
+with open(path, "rb") as source:
+    plist = plistlib.load(source)
+for library in plist["AvailableLibraries"]:
+    identifiers = {
+        "ios-arm64_x86_64-simulator": "ios-arm64-simulator",
+        "macos-arm64_x86_64": "macos-arm64",
+    }
+    library["LibraryIdentifier"] = identifiers.get(
+        library["LibraryIdentifier"], library["LibraryIdentifier"]
+    )
+    library["SupportedArchitectures"] = ["arm64"]
+with open(path, "wb") as destination:
+    plistlib.dump(plist, destination, sort_keys=False)
+"#;
+    run(
+        command("python3")
+            .args(["-c", NORMALIZE_PLIST])
+            .arg(xcframework.join("Info.plist")),
+        "normalize Swift FFI XCFramework metadata",
+    )
+}
+
 fn deploy_ios(root: &Path, launch_args: &[String]) -> Result<()> {
     ensure!(
         cfg!(target_os = "macos"),
@@ -330,6 +445,7 @@ fn deploy_ios(root: &Path, launch_args: &[String]) -> Result<()> {
 
     let team = env::var("CUTOUT_IOS_DEVELOPMENT_TEAM")
         .context("CUTOUT_IOS_DEVELOPMENT_TEAM is required for iPhone deployment")?;
+    let spotify_client_id = spotify_client_id()?;
     let bundle_id = env::var("CUTOUT_IOS_APP_BUNDLE_ID").ok();
     let destination = format!("platform=iOS,id={device}");
     let mut build = command("xcodebuild");
@@ -344,6 +460,7 @@ fn deploy_ios(root: &Path, launch_args: &[String]) -> Result<()> {
     ]);
     build.arg(&derived_data).arg("-allowProvisioningUpdates");
     build.args(ios_signing_arguments(Some(&team), bundle_id.as_deref())?);
+    build.arg(format!("SPOTIFY_CLIENT_ID={spotify_client_id}"));
     build.arg("build");
     run(&mut build, "build signed iPhone app")?;
     ensure!(
@@ -353,6 +470,11 @@ fn deploy_ios(root: &Path, launch_args: &[String]) -> Result<()> {
     );
 
     let bundle_id = plist_value(&product.join("Info.plist"), ":CFBundleIdentifier")?;
+    let embedded_spotify_client_id = plist_value(&product.join("Info.plist"), ":SpotifyClientID")?;
+    ensure!(
+        embedded_spotify_client_id == spotify_client_id,
+        "built app does not contain the configured Spotify client ID"
+    );
     run(
         command("xcrun").args([
             OsStr::new("devicectl"),
@@ -387,6 +509,34 @@ fn deploy_ios(root: &Path, launch_args: &[String]) -> Result<()> {
     println!("ios_app_bundle_id={bundle_id}");
     println!("ios_app_product={}", product.display());
     Ok(())
+}
+
+fn spotify_client_id() -> Result<String> {
+    for name in ["CUTOUT_SPOTIFY_CLIENT_ID", "SPOTIFY_CLIENT_ID"] {
+        if let Ok(value) = env::var(name)
+            && !value.trim().is_empty()
+        {
+            return Ok(value);
+        }
+    }
+    let path = env::var_os("CUTOUT_SPOTIFY_CLIENT_ID_FILE")
+        .map(PathBuf::from)
+        .or_else(|| {
+            env::var_os("XDG_CONFIG_HOME")
+                .map(PathBuf::from)
+                .map(|path| path.join("libcutout/spotify-client-id"))
+        })
+        .or_else(|| {
+            env::var_os("HOME")
+                .map(PathBuf::from)
+                .map(|path| path.join(".config/libcutout/spotify-client-id"))
+        })
+        .context("CUTOUT_SPOTIFY_CLIENT_ID is required for iPhone deployment")?;
+    let value = fs::read_to_string(&path)
+        .with_context(|| format!("read Spotify client ID from {}", path.display()))?;
+    let value = value.trim().to_owned();
+    ensure!(!value.is_empty(), "Spotify client ID must not be empty");
+    Ok(value)
 }
 
 fn discover_ios_device(root: &Path) -> Result<String> {
@@ -502,12 +652,12 @@ fn required_ffi_inputs(package: &Path) -> Vec<PathBuf> {
         package.join("cutout_mobile_ffiFFI.xcframework/ios-arm64/libcutout_mobile_ffi.a"),
         package.join("cutout_mobile_ffiFFI.xcframework/ios-arm64/Headers/cutout_mobile_ffiFFI/cutout_mobile_ffiFFI.h"),
         package.join("cutout_mobile_ffiFFI.xcframework/ios-arm64/Headers/cutout_mobile_ffiFFI/module.modulemap"),
-        package.join("cutout_mobile_ffiFFI.xcframework/ios-arm64_x86_64-simulator/libcutout_mobile_ffi.a"),
-        package.join("cutout_mobile_ffiFFI.xcframework/ios-arm64_x86_64-simulator/Headers/cutout_mobile_ffiFFI/cutout_mobile_ffiFFI.h"),
-        package.join("cutout_mobile_ffiFFI.xcframework/ios-arm64_x86_64-simulator/Headers/cutout_mobile_ffiFFI/module.modulemap"),
-        package.join("cutout_mobile_ffiFFI.xcframework/macos-arm64_x86_64/libcutout_mobile_ffi.a"),
-        package.join("cutout_mobile_ffiFFI.xcframework/macos-arm64_x86_64/Headers/cutout_mobile_ffiFFI/cutout_mobile_ffiFFI.h"),
-        package.join("cutout_mobile_ffiFFI.xcframework/macos-arm64_x86_64/Headers/cutout_mobile_ffiFFI/module.modulemap"),
+        package.join("cutout_mobile_ffiFFI.xcframework/ios-arm64-simulator/libcutout_mobile_ffi.a"),
+        package.join("cutout_mobile_ffiFFI.xcframework/ios-arm64-simulator/Headers/cutout_mobile_ffiFFI/cutout_mobile_ffiFFI.h"),
+        package.join("cutout_mobile_ffiFFI.xcframework/ios-arm64-simulator/Headers/cutout_mobile_ffiFFI/module.modulemap"),
+        package.join("cutout_mobile_ffiFFI.xcframework/macos-arm64/libcutout_mobile_ffi.a"),
+        package.join("cutout_mobile_ffiFFI.xcframework/macos-arm64/Headers/cutout_mobile_ffiFFI/cutout_mobile_ffiFFI.h"),
+        package.join("cutout_mobile_ffiFFI.xcframework/macos-arm64/Headers/cutout_mobile_ffiFFI/module.modulemap"),
     ]
     .into()
 }
@@ -523,8 +673,8 @@ fn verify_swift_ffi(package: &Path) -> Result<()> {
     if cfg!(target_os = "macos") {
         for (slice, architectures) in [
             ("ios-arm64", &["arm64"][..]),
-            ("ios-arm64_x86_64-simulator", &["arm64", "x86_64"][..]),
-            ("macos-arm64_x86_64", &["arm64", "x86_64"][..]),
+            ("ios-arm64-simulator", &["arm64"][..]),
+            ("macos-arm64", &["arm64"][..]),
         ] {
             let library = package.join(format!(
                 "cutout_mobile_ffiFFI.xcframework/{slice}/libcutout_mobile_ffi.a"
@@ -651,6 +801,15 @@ mod tests {
     }
 
     #[test]
+    fn swift_ffi_inputs_do_not_require_intel_slices() {
+        assert!(
+            required_ffi_inputs(Path::new(GENERATED_PACKAGE))
+                .iter()
+                .all(|path| !path.to_string_lossy().contains("x86_64"))
+        );
+    }
+
+    #[test]
     fn ios_deploy_accepts_launch_arguments_after_separator() {
         let args = ["ios", "deploy", "--", "--launch-smoke"].map(str::to_owned);
 
@@ -748,6 +907,28 @@ mod tests {
         fs::create_dir_all(&artifact).unwrap();
         fs::write(artifact.join("lib.a"), "generated").unwrap();
         assert_eq!(before, source_fingerprint(&root).unwrap());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn swift_ffi_lock_reclaims_a_dead_owner() {
+        let root =
+            env::temp_dir().join(format!("cutout-dev-stale-lock-test-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        let lock_path = root.join(SWIFT_FFI_LOCK);
+        fs::create_dir_all(lock_path.parent().unwrap()).unwrap();
+        // A PID outside the host's normal process range gives a deterministic dead owner.
+        let exited_pid = 2_147_483_647;
+        fs::create_dir(&lock_path).unwrap();
+        fs::write(lock_path.join("owner"), format!("{exited_pid}\n")).unwrap();
+
+        let lock = SwiftFfiLock::acquire(&root).expect("dead lock owner is reclaimed");
+        assert_eq!(
+            fs::read_to_string(lock_path.join("owner")).unwrap().trim(),
+            std::process::id().to_string()
+        );
+        drop(lock);
+        assert!(!lock_path.exists());
         fs::remove_dir_all(root).unwrap();
     }
 }
