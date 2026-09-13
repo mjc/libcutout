@@ -266,10 +266,14 @@ pub const fn aero_control_profile() -> DeviceControlProfile {
             CommandKind::SetAeroTransportMode,
             CommandKind::SetAeroAlarmSpeed,
             CommandKind::SetAeroAngleAdjustment,
+            CommandKind::SoundHorn,
             CommandKind::ResetTripMeter,
             CommandKind::SetAeroGyroCalibration,
         ]),
-        Capabilities::from_supported_commands([CommandKind::SetAeroHighBeam]),
+        Capabilities::from_supported_commands([
+            CommandKind::SetAeroHighBeam,
+            CommandKind::SoundHorn,
+        ]),
         Capabilities::from_supported_commands([
             CommandKind::SetAeroTiltbackSpeed,
             CommandKind::SetAeroAlarmSpeed,

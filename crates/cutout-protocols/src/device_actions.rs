@@ -11,6 +11,8 @@ use crate::{AERO_FIELD_GYRO_CALIBRATION_STATE, DeviceControlProfile};
 /// How a native client should present an action trigger.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ActionRole {
+    /// The action is an immediate momentary control.
+    Momentary,
     /// The action clears device data and requires confirmation.
     Destructive,
     /// The action starts or advances a physical procedure.
@@ -125,6 +127,7 @@ impl DeviceControlProfile {
             return Err(ActionRequestError::Unverified);
         }
         Ok(match request.id {
+            DeviceActionId::Horn => DeviceCommand::SoundHorn,
             DeviceActionId::ResetTripMeter => DeviceCommand::ResetTripMeter,
             DeviceActionId::GyroCalibration => DeviceCommand::SetAeroGyroCalibration,
         })
@@ -168,11 +171,13 @@ impl DeviceControlProfile {
 const fn valid_action_step(request: DeviceActionRequest) -> bool {
     matches!(
         (request.id, request.step),
-        (DeviceActionId::ResetTripMeter, DeviceActionStep::Invoke)
-            | (
-                DeviceActionId::GyroCalibration,
-                DeviceActionStep::PrepareGyroCalibration | DeviceActionStep::StartGyroCalibration
-            )
+        (
+            DeviceActionId::Horn | DeviceActionId::ResetTripMeter,
+            DeviceActionStep::Invoke
+        ) | (
+            DeviceActionId::GyroCalibration,
+            DeviceActionStep::PrepareGyroCalibration | DeviceActionStep::StartGyroCalibration
+        )
     )
 }
 
@@ -202,10 +207,18 @@ const ACTIONS: &[(
     ActionConfirmation,
 )] = &[
     (
+        DeviceActionId::Horn,
+        "actions.horn.label",
+        "actions.horn.help",
+        0,
+        ActionRole::Momentary,
+        ActionConfirmation::None,
+    ),
+    (
         DeviceActionId::ResetTripMeter,
         "actions.trip_meter_reset.label",
         "actions.trip_meter_reset.help",
-        0,
+        1,
         ActionRole::Destructive,
         ActionConfirmation::None,
     ),
@@ -213,7 +226,7 @@ const ACTIONS: &[(
         DeviceActionId::GyroCalibration,
         "actions.gyro_calibration.label",
         "actions.gyro_calibration.help",
-        1,
+        2,
         ActionRole::Procedure,
         ActionConfirmation::ProgressReadback,
     ),
@@ -221,6 +234,7 @@ const ACTIONS: &[(
 
 const fn action_kind(id: DeviceActionId) -> CommandKind {
     match id {
+        DeviceActionId::Horn => CommandKind::SoundHorn,
         DeviceActionId::ResetTripMeter => CommandKind::ResetTripMeter,
         DeviceActionId::GyroCalibration => CommandKind::SetAeroGyroCalibration,
     }
