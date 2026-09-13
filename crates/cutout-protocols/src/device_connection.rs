@@ -2,8 +2,8 @@
 
 use cutout_core::{
     ConnectionAttemptSnapshot, ConnectionAttemptToken, ConnectionReadiness, CutoutSessionState,
-    DeviceSettingsState, MonotonicTimestamp, ParserDiagnosticsDto, ProtocolFamily, SessionInputDto,
-    TelemetrySnapshotDto,
+    DeviceEvent, DeviceSettingsState, MonotonicTimestamp, ParserDiagnosticsDto, ProtocolFamily,
+    ReadOnlyResponse, SessionInputDto, SessionOutput, TelemetrySnapshotDto,
 };
 
 use crate::{
@@ -106,6 +106,101 @@ mod tests {
         assert_eq!(
             owner.snapshot().connection.readiness,
             ConnectionReadiness::Failed
+        );
+    }
+
+    fn connected_aero(owner: &mut DeviceConnectionSession) -> ConnectionAttemptToken {
+        let token = begin(owner, "A");
+        let mut frame = vec![0_u8; 42];
+        frame[..4].copy_from_slice(&[0xdc, 0x5a, 0x5c, 38]);
+        frame[28..30].copy_from_slice(&43_000_u16.to_be_bytes());
+        let _ =
+            owner.observe_for_attempt(&token, DeviceDetectionEvent::Notification { bytes: &frame });
+        owner.resolve(&token, false, MonotonicTimestamp::new(1));
+        let _ = owner.ingest(
+            &token,
+            &SessionInputDto::LinkUp {
+                monotonic_ms: cutout_core::MonotonicMillisDto { milliseconds: 1 },
+                max_write_len: None,
+            },
+        );
+        token
+    }
+
+    fn pwm_duty_readback(pwm: u8, at: u64) -> SessionInputDto {
+        let mut frame = vec![0x80; 58];
+        frame[..4].copy_from_slice(&[0xdc, 0x5a, 0x5c, 54]);
+        frame[28..30].copy_from_slice(&43_000_u16.to_be_bytes());
+        frame[46] = 8;
+        frame[53] = pwm;
+        let checksum = crc32fast::hash(&frame[..54]);
+        frame[54..].copy_from_slice(&checksum.to_be_bytes());
+        SessionInputDto::Notification {
+            channel: crate::VETERAN_DATA_CHANNEL.as_bytes(),
+            bytes: frame,
+            monotonic_ms: cutout_core::MonotonicMillisDto { milliseconds: at },
+        }
+    }
+
+    #[test]
+    fn decoded_settings_update_only_the_current_connections_semantic_owner() {
+        let mut owner = DeviceConnectionSession::default();
+        let token = connected_aero(&mut owner);
+        assert!(owner.ingest(&token, &pwm_duty_readback(80, 10)).is_some());
+        let snapshots = owner.state.settings.snapshot(MonotonicTimestamp::new(15));
+        let pwm = snapshots
+            .iter()
+            .find(|snapshot| snapshot.id == cutout_core::SettingId::PwmTiltback)
+            .expect("decoded PWM reaches shared settings owner");
+        assert_eq!(
+            pwm.current.unwrap().value,
+            cutout_core::DeviceSettingValue::Number(80)
+        );
+        assert_eq!(pwm.age, Some(cutout_core::Duration::from_milliseconds(5)));
+        let _ = begin(&mut owner, "B");
+        assert!(owner.ingest(&token, &pwm_duty_readback(30, 20)).is_none());
+        assert!(
+            owner
+                .state
+                .settings
+                .snapshot(MonotonicTimestamp::new(20))
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn explicit_unknown_settings_frame_clears_current_but_preserves_request() {
+        let mut owner = DeviceConnectionSession::default();
+        let token = connected_aero(&mut owner);
+        let _ = owner.ingest(&token, &pwm_duty_readback(80, 10));
+        assert!(
+            owner
+                .state
+                .settings
+                .snapshot(MonotonicTimestamp::new(10))
+                .iter()
+                .any(
+                    |snapshot| snapshot.id == cutout_core::SettingId::PwmTiltback
+                        && snapshot.current.is_some()
+                )
+        );
+        owner.state.settings.submission(
+            cutout_core::SettingId::PwmTiltback,
+            cutout_core::DeviceSettingValue::Number(85),
+            cutout_core::SettingSubmissionOutcome::Accepted,
+            true,
+            MonotonicTimestamp::new(11),
+        );
+        let _ = owner.ingest(&token, &pwm_duty_readback(128, 12));
+        let snapshots = owner.state.settings.snapshot(MonotonicTimestamp::new(12));
+        let pwm = snapshots
+            .iter()
+            .find(|snapshot| snapshot.id == cutout_core::SettingId::PwmTiltback)
+            .unwrap();
+        assert!(pwm.current.is_none());
+        assert_eq!(
+            pwm.requested,
+            Some(cutout_core::DeviceSettingValue::Number(85))
         );
     }
 }
@@ -229,10 +324,42 @@ impl DeviceConnectionSession {
         if !self.state.connection.is_verified(token) {
             return None;
         }
+        if let SessionInputDto::Notification { monotonic_ms, .. }
+        | SessionInputDto::Tick { monotonic_ms }
+        | SessionInputDto::CommandAt { monotonic_ms, .. }
+        | SessionInputDto::LinkUp { monotonic_ms, .. } = input
+        {
+            self.state
+                .settings
+                .tick(MonotonicTimestamp::new(monotonic_ms.milliseconds));
+        }
         let device = self.device.as_mut()?;
         let result = device.ingest_typed(input);
         let telemetry = device.current_snapshot();
         let diagnostics = device.diagnostics();
+        if let SessionInputDto::Notification { monotonic_ms, .. } = input {
+            let received_at = MonotonicTimestamp::new(monotonic_ms.milliseconds);
+            let profile = device.settings_profile();
+            for output in &result.outputs {
+                let SessionOutput::Event(DeviceEvent::ReadOnlyResponse(
+                    ReadOnlyResponse::Settings(readback),
+                )) = output
+                else {
+                    continue;
+                };
+                for observation in profile.normalize_readback(*readback) {
+                    if let Some(value) = observation.value {
+                        self.state
+                            .settings
+                            .observe_measured(observation.id, value, received_at);
+                    } else {
+                        self.state
+                            .settings
+                            .invalidate_readback(observation.id, received_at);
+                    }
+                }
+            }
+        }
         Some(DeviceConnectionStep {
             session: self.snapshot(),
             result,
