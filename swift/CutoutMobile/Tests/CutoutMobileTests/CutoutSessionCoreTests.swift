@@ -298,14 +298,14 @@ final class CutoutSessionCoreTests: XCTestCase {
 
         XCTAssertEqual(core.scanState.status, .scanning)
         XCTAssertEqual(core.scanState.rows.map(\.title), ["device-ffe0", "device-fff0"])
-        XCTAssertEqual(core.scanState.rows.map(\.connectionRoute), [nil, .vescOnewheel])
-        XCTAssertEqual(core.scanState.sections.supported.map(\.title), ["device-fff0"])
-        XCTAssertEqual(core.scanState.sections.probeRecommended.map(\.title), ["device-ffe0"])
+        XCTAssertEqual(core.scanState.rows.map(\.connectionRoute), [nil, nil])
+        XCTAssertTrue(core.scanState.sections.supported.isEmpty)
+        XCTAssertEqual(core.scanState.sections.probeRecommended.map(\.title), ["device-ffe0", "device-fff0"])
         XCTAssertTrue(core.scanState.sections.unsupported.isEmpty)
         XCTAssertEqual(observedStates.count, 2)
     }
 
-    func testUnnamedNordicUartAdvertisementRoutesAsVesc() {
+    func testUnnamedNordicUartAdvertisementRemainsProvisional() {
         let core = CutoutSessionCore()
 
         core.observeAdvertisement(
@@ -317,7 +317,7 @@ final class CutoutSessionCoreTests: XCTestCase {
         )
 
         XCTAssertEqual(core.scanState.rows.map(\.title), ["VESC device"])
-        XCTAssertEqual(core.scanState.rows.first?.connectionRoute, .vescOnewheel)
+        XCTAssertNil(core.scanState.rows.first?.connectionRoute)
     }
 
     func testObservedAdvertisementsHideNonPevRows() {
@@ -722,6 +722,42 @@ final class CutoutSessionCoreTests: XCTestCase {
 
         scheduler.runAll()
         XCTAssertEqual(reconnectCount, 1)
+    }
+
+    func testQueuedReconnectCannotReplaceNewAttemptEvenForSameDevice() {
+        for replacement in ["A", "B"] {
+            let scheduler = RecordingReconnectScheduler()
+            let core = CutoutSessionCore(
+                clock: MonotonicClock { MonotonicMilliseconds(1_000) },
+                testScript: CutoutSessionTestScript(candidate: scriptedVescCandidate, telemetry: nil, connectionDelayMilliseconds: 60_000),
+                reconnectScheduler: scheduler,
+                reconnectJitter: { 0 }
+            )
+            var reconnectCount = 0
+            _ = core.rideSessionStateHandle.beginConnectionAttempt(platformIdentifier: "A", nowMs: 0)
+            core.handleTransportTermination(platformIdentifier: "A", error: nil, reconnect: { reconnectCount += 1 })
+            _ = core.rideSessionStateHandle.beginConnectionAttempt(platformIdentifier: replacement, nowMs: 1)
+            scheduler.runAll()
+            XCTAssertEqual(reconnectCount, 0)
+            XCTAssertEqual(core.connectionSnapshot.token?.platformIdentifier, replacement)
+        }
+    }
+
+    func testExplicitDisconnectRejectsRetryEvenIfCancelledWorkIsDelivered() {
+        let scheduler = RecordingReconnectScheduler()
+        let core = CutoutSessionCore(
+            clock: MonotonicClock { MonotonicMilliseconds(1_000) },
+            testScript: CutoutSessionTestScript(candidate: scriptedVescCandidate, telemetry: nil, connectionDelayMilliseconds: 60_000),
+            reconnectScheduler: scheduler,
+            reconnectJitter: { 0 }
+        )
+        var reconnectCount = 0
+        _ = core.rideSessionStateHandle.beginConnectionAttempt(platformIdentifier: "A", nowMs: 0)
+        core.handleTransportTermination(platformIdentifier: "A", error: nil, reconnect: { reconnectCount += 1 })
+        core.disconnectAndScan()
+        scheduler.runAll(includingCancelled: true)
+        XCTAssertEqual(reconnectCount, 0)
+        XCTAssertEqual(core.connectionSnapshot.readiness, .disconnected)
     }
 
     func testBluetoothStateChangesClearPickerCancelReconnectAndRestoreScanning() {
@@ -3893,10 +3929,10 @@ private final class RecordingReconnectScheduler: ConnectionReconnectScheduling {
         return token
     }
 
-    func runAll() {
+    func runAll(includingCancelled: Bool = false) {
         let scheduled = scheduled
         self.scheduled.removeAll()
-        for entry in scheduled where !entry.token.isCancelled {
+        for entry in scheduled where includingCancelled || !entry.token.isCancelled {
             entry.operation()
         }
     }
