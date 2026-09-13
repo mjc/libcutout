@@ -21049,7 +21049,8 @@ mod tests {
             Some(MobileLightStateDto::On)
         );
         assert!(aero_result.outputs.iter().any(|output| {
-            output.kind == MobileSessionOutputKindDto::Write && output.bytes == b"SetLightON"
+            output.kind == MobileSessionOutputKindDto::Write
+                && output.bytes == hex_literal::hex!("4c6b41700d0180800157ed3bd5")
         }));
         assert_eq!(falcon_result.error, None);
         assert!(falcon_result.outputs.iter().any(|output| {
