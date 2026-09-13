@@ -9,6 +9,9 @@ final class CutoutAppRouteTests: XCTestCase {
         XCTAssertEqual(EucNumericSettingUnit.percent.text(75), "75%")
         XCTAssertEqual(EucNumericSettingUnit.degrees.text(55), "55°")
         XCTAssertEqual(EucNumericSettingUnit.tenthsOfPercent.text(-5), "-0.5%")
+        XCTAssertEqual(EucNumericSettingUnit.raw.text(0), "0")
+        XCTAssertEqual(EucNumericSettingUnit.raw.text(46), "46")
+        XCTAssertEqual(EucNumericSettingUnit.raw.text(70), "70")
     }
 
     func testAeroSettingsFormUsesCurrentValuesWhenAvailable() {

@@ -1146,7 +1146,7 @@ enum EucNumericSettingUnit {
         case .percent: "\(value)%"
         case .degrees: "\(value)°"
         case .tenthsOfPercent: String(format: "%.1f%%", Double(value) / 10)
-        case .raw: "(value)"
+        case .raw: String(value)
         }
     }
 }
