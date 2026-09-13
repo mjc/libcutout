@@ -153,7 +153,13 @@ impl DeviceSettingsState {
         {
             return;
         }
-        record.state.observe(value, source, observed_at);
+        if !record.confirmation_supported
+            && let SettingState::Pending { current, .. } = &mut record.state
+        {
+            *current = Some(SettingValue { value, source });
+        } else {
+            record.state.observe(value, source, observed_at);
+        }
         record.observed_at = Some(observed_at);
     }
 
@@ -308,6 +314,44 @@ mod tests {
         assert_eq!(
             settings.snapshot(time(32))[0].status,
             SettingCommandStatus::Confirmed
+        );
+    }
+
+    #[test]
+    fn readable_values_do_not_confirm_a_write_without_confirmation_support() {
+        let mut settings = DeviceSettingsState::default();
+        let id = SettingId::Headlight;
+        settings.submission(
+            id,
+            DeviceSettingValue::Boolean(true),
+            SettingSubmissionOutcome::Accepted,
+            false,
+            time(10),
+        );
+        settings.observe(
+            id,
+            DeviceSettingValue::Boolean(true),
+            SettingValueSource::LiveReadback,
+            time(20),
+        );
+        let snapshot = settings.snapshot(time(25));
+        assert_eq!(
+            snapshot[0].current.unwrap().value,
+            DeviceSettingValue::Boolean(true)
+        );
+        assert_eq!(snapshot[0].age, Some(Duration::from_milliseconds(5)));
+        assert_eq!(
+            snapshot[0].requested,
+            Some(DeviceSettingValue::Boolean(true))
+        );
+        assert_eq!(
+            snapshot[0].status,
+            SettingCommandStatus::SentWithoutConfirmation
+        );
+        settings.tick(time(10_000));
+        assert_eq!(
+            settings.snapshot(time(10_000))[0].status,
+            SettingCommandStatus::SentWithoutConfirmation
         );
     }
 
