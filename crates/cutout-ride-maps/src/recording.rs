@@ -432,6 +432,64 @@ impl RideRecordingTiming {
     pub const fn completed_duration_milliseconds(self) -> RideDurationMilliseconds {
         self.completed_duration
     }
+
+    /// Returns active recording duration, excluding pauses and interruptions.
+    #[must_use]
+    pub const fn duration_at(
+        self,
+        state: RideLifecycleState,
+        created_at: MonotonicMilliseconds,
+        at: MonotonicMilliseconds,
+    ) -> RideDurationMilliseconds {
+        let at = match state {
+            RideLifecycleState::Active => at,
+            RideLifecycleState::Paused => match self.paused_at {
+                Some(paused_at) => paused_at,
+                None => at,
+            },
+            _ => return self.completed_duration,
+        };
+        RideDurationMilliseconds::new(
+            at.saturating_sub(created_at)
+                .saturating_sub(self.paused_duration.as_u64()),
+        )
+    }
+
+    /// Calculates timing for a validated lifecycle transition.
+    #[must_use]
+    pub fn transitioned(
+        mut self,
+        previous: RideLifecycleState,
+        next: RideLifecycleState,
+        created_at: MonotonicMilliseconds,
+        at: MonotonicMilliseconds,
+    ) -> Self {
+        let at = clamped_transition_timestamp(created_at, Some(self.last_event), at);
+        match (previous, next) {
+            (RideLifecycleState::Active, RideLifecycleState::Paused) => self.paused_at = Some(at),
+            (
+                RideLifecycleState::Paused | RideLifecycleState::Interrupted,
+                RideLifecycleState::Active,
+            ) => {
+                let recorded = self.duration_at(previous, created_at, at);
+                self.paused_duration = RideDurationMilliseconds::new(
+                    at.saturating_sub(created_at)
+                        .saturating_sub(recorded.as_u64()),
+                );
+                self.paused_at = None;
+            }
+            (
+                RideLifecycleState::Active | RideLifecycleState::Paused,
+                RideLifecycleState::Stopped | RideLifecycleState::Interrupted,
+            ) => {
+                self.completed_duration = self.duration_at(previous, created_at, at);
+                self.paused_at = None;
+            }
+            _ => {}
+        }
+        self.last_event = at;
+        self
+    }
 }
 
 /// Clamps a lifecycle timestamp to the monotonic watermark already observed by a ride.
@@ -833,28 +891,12 @@ impl RideMapRecorder {
         &self,
         at_milliseconds: MonotonicMilliseconds,
     ) -> RideDurationMilliseconds {
-        match self.state {
-            Some(RideLifecycleState::Active) => self.active_duration_at(at_milliseconds),
-            Some(RideLifecycleState::Paused) => {
-                let paused_at = match self.paused_at_milliseconds {
-                    Some(value) => value,
-                    None => at_milliseconds,
-                };
-                self.active_duration_at(paused_at)
-            }
-            _ => self.completed_duration_milliseconds,
-        }
-    }
-
-    const fn active_duration_at(
-        &self,
-        at_milliseconds: MonotonicMilliseconds,
-    ) -> RideDurationMilliseconds {
-        RideDurationMilliseconds::new(
-            at_milliseconds
-                .saturating_sub(self.created_at_milliseconds)
-                .saturating_sub(self.paused_duration_milliseconds.as_u64()),
-        )
+        let state = match self.state {
+            Some(state) => state,
+            None => RideLifecycleState::Draft,
+        };
+        self.recording_timing()
+            .duration_at(state, self.created_at_milliseconds, at_milliseconds)
     }
 
     /// Starts a new recording projection.
@@ -925,31 +967,15 @@ impl RideMapRecorder {
             Some(self.last_monotonic_milliseconds),
             at_milliseconds,
         );
-        match (self.state, state) {
-            (Some(RideLifecycleState::Active), RideLifecycleState::Paused) => {
-                self.paused_at_milliseconds = Some(at_milliseconds);
-            }
-            (
-                Some(RideLifecycleState::Paused | RideLifecycleState::Interrupted),
-                RideLifecycleState::Active,
-            ) => {
-                let excluded_duration = self.paused_at_milliseconds.take().map_or_else(
-                    || at_milliseconds.saturating_sub(self.last_monotonic_milliseconds),
-                    |paused_at| at_milliseconds.saturating_sub(paused_at),
-                );
-                self.paused_duration_milliseconds = self
-                    .paused_duration_milliseconds
-                    .saturating_add(RideDurationMilliseconds::new(excluded_duration));
-            }
-            (
-                Some(RideLifecycleState::Active | RideLifecycleState::Paused),
-                RideLifecycleState::Stopped | RideLifecycleState::Interrupted,
-            ) => {
-                self.completed_duration_milliseconds =
-                    self.duration_milliseconds_at(at_milliseconds);
-            }
-            _ => {}
-        }
+        let timing = self.recording_timing().transitioned(
+            self.state.unwrap_or(RideLifecycleState::Draft),
+            state,
+            self.created_at_milliseconds,
+            at_milliseconds,
+        );
+        self.paused_at_milliseconds = timing.paused_at_milliseconds();
+        self.paused_duration_milliseconds = timing.paused_duration_milliseconds();
+        self.completed_duration_milliseconds = timing.completed_duration_milliseconds();
         if matches!(
             self.state,
             Some(RideLifecycleState::Paused | RideLifecycleState::Interrupted)
