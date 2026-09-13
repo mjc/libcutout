@@ -94,6 +94,8 @@ pub struct DeviceActionSnapshot {
     pub age: Option<Duration>,
     /// Last procedure step submitted, when one exists.
     pub requested_step: Option<DeviceActionStep>,
+    /// Next permitted step, or the Rust-owned reason another step is unavailable.
+    pub next_step: Result<DeviceActionStep, DeviceActionStateError>,
     /// Reason for the last refusal.
     pub refusal: Option<ControlRefusalReason>,
 }
@@ -268,19 +270,31 @@ impl DeviceActionsState {
     pub fn snapshot(&self, now: MonotonicTimestamp) -> Vec<DeviceActionSnapshot> {
         self.records
             .iter()
-            .map(|(&id, record)| DeviceActionSnapshot {
-                id,
-                progress: record.progress,
-                status: record.status,
-                age: record.progress.and_then(|_| {
-                    record
-                        .observed_at
-                        .map(|observed| now.saturating_duration_since(observed))
-                }),
-                requested_step: record.requested_step,
-                refusal: record.refusal,
-            })
+            .map(|(&id, _)| self.snapshot_for(id, now))
             .collect()
+    }
+
+    /// Projects one action, including its initial next step before any request exists.
+    #[must_use]
+    pub fn snapshot_for(
+        &self,
+        id: DeviceActionId,
+        now: MonotonicTimestamp,
+    ) -> DeviceActionSnapshot {
+        let record = self.records.get(&id).copied().unwrap_or_default();
+        DeviceActionSnapshot {
+            id,
+            progress: record.progress,
+            status: record.status,
+            age: record.progress.and_then(|_| {
+                record
+                    .observed_at
+                    .map(|observed| now.saturating_duration_since(observed))
+            }),
+            requested_step: record.requested_step,
+            next_step: self.next_request(id).map(|request| request.step),
+            refusal: record.refusal,
+        }
     }
 }
 
@@ -310,6 +324,12 @@ mod tests {
     #[test]
     fn gyro_procedure_advances_only_from_observed_progress() {
         let mut actions = DeviceActionsState::default();
+        let initial = actions.snapshot_for(DeviceActionId::GyroCalibration, time(0));
+        assert_eq!(initial.status, DeviceActionStatus::Idle);
+        assert_eq!(
+            initial.next_step,
+            Ok(DeviceActionStep::PrepareGyroCalibration)
+        );
         let prepare = actions
             .next_request(DeviceActionId::GyroCalibration)
             .expect("initial procedure step is available");
@@ -325,6 +345,10 @@ mod tests {
         assert_eq!(
             actions.snapshot(time(11))[0].status,
             DeviceActionStatus::WaitingForProgress
+        );
+        assert_eq!(
+            actions.snapshot(time(11))[0].next_step,
+            Err(DeviceActionStateError::Busy)
         );
 
         actions.observe_measured(
@@ -356,6 +380,10 @@ mod tests {
         let snapshot = actions.snapshot(time(14));
         assert_eq!(snapshot[0].status, DeviceActionStatus::ReadyForNextStep);
         assert_eq!(
+            snapshot[0].next_step,
+            Ok(DeviceActionStep::StartGyroCalibration)
+        );
+        assert_eq!(
             snapshot[0].progress.map(|entry| entry.value),
             Some(DeviceActionProgress::ReadyToCalibrate)
         );
@@ -369,6 +397,10 @@ mod tests {
         assert_eq!(
             actions.snapshot(time(17))[0].status,
             DeviceActionStatus::SentWithoutConfirmation
+        );
+        assert_eq!(
+            actions.snapshot(time(17))[0].next_step,
+            Err(DeviceActionStateError::RestartRequired)
         );
         assert_eq!(
             actions
@@ -453,6 +485,10 @@ mod tests {
         assert_eq!(
             actions.snapshot(time(11))[0].status,
             DeviceActionStatus::Idle
+        );
+        assert_eq!(
+            actions.snapshot(time(11))[0].next_step,
+            Ok(DeviceActionStep::PrepareGyroCalibration)
         );
     }
 
