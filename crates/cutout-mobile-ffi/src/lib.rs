@@ -6918,6 +6918,8 @@ pub struct MobileRideMapCoreSnapshotDto {
     pub revision: u64,
     /// Correlation token for commands in every lifecycle state.
     pub command_token: MobileRideMapRecordingTokenDto,
+    /// Retained listening policy for the selected recording.
+    pub music_history_policy: MobileMusicHistoryPolicyDto,
     /// Correlation token for inputs acquired while this ride is recording.
     pub recording_token: Option<MobileRideMapRecordingTokenDto>,
     /// Current durable lifecycle state.
@@ -9528,6 +9530,7 @@ impl From<persistence::RecordingSnapshot> for MobileRideMapCoreSnapshotDto {
         Self {
             ride_id: value.ride_id.uuid().to_string(),
             revision: value.revision,
+            music_history_policy: value.music_history_policy.into(),
             command_token: MobileRideMapRecordingTokenDto {
                 ride_id: value.command_token.ride_id.uuid().to_string(),
                 generation: value.command_token.generation,
@@ -9872,6 +9875,15 @@ impl MobileRideMapCore {
             .discard()
             .map(Into::into)
             .map_err(Into::into)
+    }
+
+    /// Selects retention for future rides without changing existing history.
+    #[allow(clippy::needless_pass_by_value)]
+    pub fn set_default_music_history_policy(&self, policy: MobileMusicHistoryPolicyDto) {
+        self.inner
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .set_default_music_history_policy(policy.into());
     }
 
     /// Returns the Rust-owned music-history policy for the active ride.

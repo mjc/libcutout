@@ -377,3 +377,125 @@ fn start_command_observing_no_ride_cannot_replace_a_new_automatic_ride() {
     );
     assert_eq!(session.current_snapshot(1_000).unwrap(), automatic);
 }
+
+#[test]
+fn saved_listening_default_is_committed_for_manual_and_automatic_new_rides() {
+    let _guard = crate::tests::test_guard();
+    let path = std::env::temp_dir().join(format!(
+        "cutout-ride-music-default-{}.sqlite3",
+        Uuid::new_v4()
+    ));
+    let database = RideDatabase::open(&path).unwrap();
+    let mut session = RideRecordingSession::new(Some(database.clone()));
+    session.set_default_music_history_policy(MusicHistoryPolicy::HumanReadable);
+
+    let automatic = session
+        .ensure_recording_for_vehicle("pev-1", 1_000)
+        .unwrap();
+    assert_eq!(
+        database.music_history_policy(automatic.ride_id).unwrap(),
+        MusicHistoryPolicy::HumanReadable
+    );
+    assert_eq!(
+        automatic.music_history_policy,
+        MusicHistoryPolicy::HumanReadable
+    );
+    session
+        .transition_at(ride_maps::RideEvent::Stop, 2_000)
+        .unwrap();
+    session.save().unwrap();
+    let manual = session.start_gps_only(3_000, None).unwrap();
+    assert_ne!(automatic.ride_id, manual.ride_id);
+    assert_eq!(
+        database.music_history_policy(manual.ride_id).unwrap(),
+        MusicHistoryPolicy::HumanReadable
+    );
+
+    database.shutdown().unwrap();
+    let _ = fs::remove_file(path);
+}
+
+#[test]
+fn saved_listening_default_does_not_restore_deleted_history_on_reconnect_or_recovery() {
+    let _guard = crate::tests::test_guard();
+    let path = std::env::temp_dir().join(format!(
+        "cutout-ride-music-deleted-{}.sqlite3",
+        Uuid::new_v4()
+    ));
+    let database = RideDatabase::open(&path).unwrap();
+    let mut session = RideRecordingSession::new(Some(database.clone()));
+    session.set_default_music_history_policy(MusicHistoryPolicy::HumanReadable);
+    let first = session
+        .ensure_recording_for_vehicle("pev-1", 1_000)
+        .unwrap();
+    session.delete_current_music_history().unwrap();
+    session
+        .transition_at(ride_maps::RideEvent::Pause, 2_000)
+        .unwrap();
+    session.set_default_music_history_policy(MusicHistoryPolicy::OpaqueItem);
+    let reconnected = session
+        .ensure_recording_for_vehicle("pev-1", 3_000)
+        .unwrap();
+    assert_eq!(reconnected.ride_id, first.ride_id);
+    assert_eq!(
+        session.current_music_history_policy(),
+        MusicHistoryPolicy::Disabled
+    );
+    assert_eq!(
+        database.music_history(first.ride_id).unwrap().status,
+        crate::MusicHistoryStatus::Deleted
+    );
+    drop(session);
+    database.shutdown().unwrap();
+    let database = RideDatabase::open(&path).unwrap();
+    let mut recovered = RideRecordingSession::new(Some(database.clone()));
+    recovered.set_default_music_history_policy(MusicHistoryPolicy::HumanReadable);
+    assert_eq!(
+        recovered.current_music_history_policy(),
+        MusicHistoryPolicy::Disabled
+    );
+    assert_eq!(
+        recovered.current_music_history().unwrap().unwrap().status,
+        crate::MusicHistoryStatus::Deleted
+    );
+    database.shutdown().unwrap();
+    let _ = fs::remove_file(path);
+}
+
+#[test]
+fn saved_listening_default_failure_rolls_back_new_ride_and_preserves_retry() {
+    let _guard = crate::tests::test_guard();
+    let path = std::env::temp_dir().join(format!(
+        "cutout-ride-music-atomic-{}.sqlite3",
+        Uuid::new_v4()
+    ));
+    let database = RideDatabase::open(&path).unwrap();
+    let connection = rusqlite::Connection::open(&path).unwrap();
+    connection.execute_batch("CREATE TRIGGER reject_music_policy BEFORE INSERT ON ride_music_history BEGIN SELECT RAISE(FAIL, 'injected retention failure'); END;").unwrap();
+    let mut session = RideRecordingSession::new(Some(database.clone()));
+    session.set_default_music_history_policy(MusicHistoryPolicy::HumanReadable);
+    assert!(
+        session
+            .ensure_recording_for_vehicle("pev-1", 1_000)
+            .is_err()
+    );
+    assert!(session.current_snapshot(1_000).is_none());
+    assert_eq!(
+        connection
+            .query_row("SELECT COUNT(*) FROM rides", [], |row| row.get::<_, i64>(0))
+            .unwrap(),
+        0
+    );
+    connection
+        .execute_batch("DROP TRIGGER reject_music_policy;")
+        .unwrap();
+    let retried = session
+        .ensure_recording_for_vehicle("pev-1", 2_000)
+        .unwrap();
+    assert_eq!(
+        database.music_history_policy(retried.ride_id).unwrap(),
+        MusicHistoryPolicy::HumanReadable
+    );
+    database.shutdown().unwrap();
+    let _ = fs::remove_file(path);
+}

@@ -2053,12 +2053,28 @@ impl RideDatabase {
         monotonic_created_at_ms: u64,
         candidate_vehicle: Option<&str>,
     ) -> Result<RideId, StorageError> {
+        self.create_started_live_ride_with_music_policy(
+            created_at_ms,
+            monotonic_created_at_ms,
+            candidate_vehicle,
+            None,
+        )
+    }
+
+    pub(crate) fn create_started_live_ride_with_music_policy(
+        &self,
+        created_at_ms: u64,
+        monotonic_created_at_ms: u64,
+        candidate_vehicle: Option<&str>,
+        music_history_policy: Option<MusicHistoryPolicy>,
+    ) -> Result<RideId, StorageError> {
         let candidate_vehicle =
             normalize_optional_stored_text(candidate_vehicle, "candidate vehicle")?;
         self.request(move |reply| Command::CreateStartedLiveRide {
             created_at_ms,
             monotonic_created_at_ms,
             candidate_vehicle,
+            music_history_policy,
             reply,
         })
     }
@@ -3389,6 +3405,7 @@ enum Command {
         created_at_ms: u64,
         monotonic_created_at_ms: u64,
         candidate_vehicle: Option<String>,
+        music_history_policy: Option<MusicHistoryPolicy>,
         reply: Reply<RideId>,
     },
     CreateStartedRide {
@@ -4024,6 +4041,7 @@ fn create_started_live_ride(
     created_at_ms: u64,
     monotonic_created_at_ms: u64,
     candidate_vehicle: Option<&str>,
+    music_history_policy: Option<MusicHistoryPolicy>,
 ) -> Result<RideId, StorageError> {
     let transaction = connection.transaction()?;
     let ride_id = RideId::new();
@@ -4039,6 +4057,9 @@ fn create_started_live_ride(
             candidate_vehicle,
         ],
     )?;
+    if let Some(policy) = music_history_policy {
+        apply_music_history_policy(&transaction, ride_id, policy)?;
+    }
     transaction.commit()?;
     Ok(ride_id)
 }

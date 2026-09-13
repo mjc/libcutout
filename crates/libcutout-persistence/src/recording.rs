@@ -144,6 +144,8 @@ pub struct RecordingSnapshot {
     pub command_token: RecordingToken,
     /// Acquisition token present only while actively recording.
     pub recording_token: Option<RecordingToken>,
+    /// Retained listening policy of this recording, independent of the future default.
+    pub music_history_policy: MusicHistoryPolicy,
     /// Authoritative durable lifecycle.
     pub state: ride_maps::RideLifecycleState,
     /// Valid actions offered to the rider.
@@ -173,6 +175,7 @@ pub struct RideRecordingSession {
     recorder: ride_maps::RideMapRecorder,
     admission_recorder: ride_maps::RideMapRecorder,
     music_history_policy: MusicHistoryPolicy,
+    default_music_history_policy: MusicHistoryPolicy,
     pending_location_writes: VecDeque<PendingMapLocationWrite>,
     recoverable_updated_at_milliseconds: Option<u64>,
     monotonic_epoch_offset_milliseconds: u64,
@@ -520,6 +523,7 @@ impl RideRecordingSession {
             recorder: ride_maps::RideMapRecorder::new(),
             admission_recorder: ride_maps::RideMapRecorder::new(),
             music_history_policy: MusicHistoryPolicy::Disabled,
+            default_music_history_policy: MusicHistoryPolicy::Disabled,
             pending_location_writes: VecDeque::new(),
             recoverable_updated_at_milliseconds: None,
             monotonic_epoch_offset_milliseconds: 0,
@@ -671,6 +675,7 @@ impl RideRecordingSession {
                 },
             ),
             state,
+            music_history_policy: self.music_history_policy,
             allowed_actions: state.recording_actions(),
             telemetry_state: self.recorder.telemetry_state_at(
                 self.recorder
@@ -760,10 +765,11 @@ impl RideRecordingSession {
                     RecordingError::Storage(error.to_string())
                 })?;
             database
-                .create_started_live_ride(
+                .create_started_live_ride_with_music_policy(
                     wall_clock_milliseconds,
                     at_ms,
                     last_connected_vehicle.as_deref(),
+                    Some(self.default_music_history_policy),
                 )
                 .map_err(RecordingError::from)?
         } else {
@@ -774,7 +780,7 @@ impl RideRecordingSession {
         self.ride_id = Some(id);
         self.revision = self.revision.saturating_add(1);
         self.generation = self.generation.saturating_add(1);
-        self.reset_music_history_policy();
+        self.apply_music_history_policy(self.default_music_history_policy);
         self.pending_location_writes.clear();
         self.recoverable_updated_at_milliseconds = None;
         self.snapshot(ride_maps::RideLifecycleState::Active)
@@ -1072,6 +1078,11 @@ impl RideRecordingSession {
 }
 
 impl RideRecordingSession {
+    /// Updates the native saved preference for future rides without changing current retention.
+    pub fn set_default_music_history_policy(&mut self, policy: MusicHistoryPolicy) {
+        self.default_music_history_policy = policy;
+    }
+
     /// Returns the selected recording's retained listening policy.
     pub fn current_music_history_policy(&mut self) -> MusicHistoryPolicy {
         let Some(id) = self.ride_id else {
@@ -1104,6 +1115,7 @@ impl RideRecordingSession {
             .ok_or_else(RecordingError::storage_unavailable)?
             .save_music_history_policy(id, policy)?;
         self.apply_music_history_policy(policy);
+        self.revision = self.revision.saturating_add(1);
         Ok(())
     }
     /// Returns selected history; discarded rides have no remaining history.
@@ -1133,6 +1145,7 @@ impl RideRecordingSession {
             .ok_or_else(RecordingError::storage_unavailable)?
             .delete_music_history(id)?;
         self.reset_music_history_policy();
+        self.revision = self.revision.saturating_add(1);
         Ok(())
     }
     /// Records a provider transition against the durable recording clock and retention policy.
