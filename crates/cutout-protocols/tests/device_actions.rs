@@ -1,6 +1,7 @@
 use cutout_core::{
-    DeviceActionId, DeviceActionProgress, DeviceCommand, RawFieldValue, SettingsEntry,
-    SettingsReadback, ValueQuality, ValueSource, VerificationStatus,
+    DeviceActionId, DeviceActionProgress, DeviceActionStatus, DeviceActionStep, DeviceActionsState,
+    DeviceCommand, MonotonicTimestamp, RawFieldValue, SettingsEntry, SettingsReadback,
+    ValueQuality, ValueSource, VerificationStatus,
 };
 use cutout_protocols::{
     AERO_FIELD_GYRO_CALIBRATION_STATE, ActionAccess, ActionConfirmation, ActionRole,
@@ -44,12 +45,19 @@ fn aero_actions_are_typed_and_remain_unverified_outside_validation_mode() {
     assert_eq!(gyro.confirmation, ActionConfirmation::ProgressReadback);
     assert_eq!(gyro.access, ActionAccess::Unverified);
 
+    let actions = DeviceActionsState::default();
+    let reset = actions
+        .next_request(DeviceActionId::ResetTripMeter)
+        .unwrap();
+    let gyro = actions
+        .next_request(DeviceActionId::GyroCalibration)
+        .unwrap();
     assert_eq!(
-        profile.action_command(DeviceActionId::ResetTripMeter, false),
+        profile.action_command(reset, false),
         Err(cutout_protocols::ActionRequestError::Unverified)
     );
     assert_eq!(
-        profile.action_command(DeviceActionId::GyroCalibration, true),
+        profile.action_command(gyro, true),
         Ok(DeviceCommand::SetAeroGyroCalibration)
     );
     assert!(falcon_control_profile().action_descriptors(true).is_empty());
@@ -57,6 +65,18 @@ fn aero_actions_are_typed_and_remain_unverified_outside_validation_mode() {
         DeviceControlProfile::default()
             .action_descriptors(true)
             .is_empty()
+    );
+}
+
+#[test]
+fn action_commands_reject_steps_that_do_not_belong_to_the_action() {
+    let invalid = cutout_core::DeviceActionRequest {
+        id: DeviceActionId::ResetTripMeter,
+        step: DeviceActionStep::StartGyroCalibration,
+    };
+    assert_eq!(
+        aero_control_profile().action_command(invalid, true),
+        Err(cutout_protocols::ActionRequestError::InvalidStep)
     );
 }
 
@@ -85,4 +105,24 @@ fn gyro_progress_preserves_evidence_and_explicit_unknown() {
             .normalize_action_readback(SettingsReadback::unavailable())
             .is_empty()
     );
+}
+
+#[test]
+fn normalized_progress_updates_the_shared_action_owner() {
+    let profile = aero_control_profile();
+    let mut actions = DeviceActionsState::default();
+    profile.apply_action_readback(&mut actions, gyro_readback(2), MonotonicTimestamp::new(10));
+    assert_eq!(
+        actions.snapshot(MonotonicTimestamp::new(11))[0].status,
+        DeviceActionStatus::ReadyForNextStep
+    );
+
+    profile.apply_action_readback(
+        &mut actions,
+        gyro_readback(128),
+        MonotonicTimestamp::new(12),
+    );
+    let snapshot = actions.snapshot(MonotonicTimestamp::new(13));
+    assert_eq!(snapshot[0].progress, None);
+    assert_eq!(snapshot[0].status, DeviceActionStatus::Idle);
 }
