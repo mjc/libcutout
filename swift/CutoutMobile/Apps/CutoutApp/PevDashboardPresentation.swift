@@ -4,26 +4,17 @@ func liveSafetyBars(for state: EucRideScreenState) -> [PevSafetyBar] {
     [
         PevSafetyBar(
             id: .pwmHeadroom, label: localizedAppText("ride.safety.pwm_headroom"),
-            metricValue: state.pwmHeadroomMetricValue, progress: state.pwmHeadroomProgress, accent: .yellow),
-        PevSafetyBar(
-            id: .sagAdjustedEnergy, label: localizedAppText("ride.safety.sag_adjusted_energy"),
-            metricValue: .unavailable, progress: nil, accent: .cyan),
+            metricValue: state.pwmHeadroomMetricValue, progress: state.pwmHeadroomProgress, accent: .yellow)
     ]
 }
 
 func liveDashboardTiles(from state: EucRideScreenState, telemetry: TelemetrySnapshot) -> [PevDashboardTile] {
-    let distanceUnit = RideUnits.distanceUnit(forSpeedUnit: state.speedUnit)
     let thermalMetricValue = telemetry.thermalMetricValue
-    let limpHomeRangeMetricValue = state.limpHomeRangeMetricValue
     let thermalDetail =
         if case .available = thermalMetricValue { liveThermalDetail(telemetry: telemetry) } else {
             localizedAppText("ride.value.unavailable")
         }
-    let limpHomeRangeDetail =
-        if case .available = limpHomeRangeMetricValue { localizedAppText("ride.detail.typed_range_estimate") } else {
-            localizedAppText("ride.value.unavailable")
-        }
-    return [
+    var tiles = [
         chargeEstimateTile(from: state),
         PevDashboardTile(
             kind: .packVoltage, label: localizedAppText("ride.metric.pack"),
@@ -33,10 +24,15 @@ func liveDashboardTiles(from state: EucRideScreenState, telemetry: TelemetrySnap
         PevDashboardTile(
             kind: .thermal, label: localizedAppText("ride.metric.thermal"), metricValue: thermalMetricValue,
             unit: RideUnits.temperatureUnit, detail: thermalDetail, accent: .green),
-        PevDashboardTile(
-            kind: .limpHomeRange, label: localizedAppText("ride.metric.limp_home"),
-            metricValue: limpHomeRangeMetricValue, unit: distanceUnit, detail: limpHomeRangeDetail, accent: .cyan),
     ]
+    if case .available = state.limpHomeRangeMetricValue {
+        tiles.append(PevDashboardTile(
+            kind: .limpHomeRange, label: localizedAppText("ride.metric.limp_home"),
+            metricValue: state.limpHomeRangeMetricValue,
+            unit: RideUnits.distanceUnit(forSpeedUnit: state.speedUnit),
+            detail: localizedAppText("ride.detail.typed_range_estimate"), accent: .cyan))
+    }
+    return tiles
 }
 
 func vescDebugTiles(_ snapshot: VescRideSnapshot) -> [PevDashboardTile] {

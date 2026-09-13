@@ -505,6 +505,10 @@ final class PevScreenThemeTests: XCTestCase {
             displayState: RideDisplayState()
         )
         XCTAssertEqual(unavailable.limpHomeRangeMetricValue, .unavailable)
+        XCTAssertNil(
+            liveDashboardTiles(from: unavailable, telemetry: TelemetrySnapshot())
+                .first { $0.kind == .limpHomeRange }
+        )
 
         let range = Distance(value: 22_852_500)
         let telemetry = TelemetrySnapshot(limpHomeRange: range)
@@ -533,10 +537,9 @@ final class PevScreenThemeTests: XCTestCase {
             displayState: RideDisplayState(telemetry: TelemetrySnapshot())
         )
         let unavailableBars = liveSafetyBars(for: unavailable)
+        XCTAssertEqual(unavailableBars.map(\.id), [.pwmHeadroom])
         XCTAssertEqual(unavailableBars.first?.metricValue, .unavailable)
         XCTAssertNil(unavailableBars.first?.progress)
-        XCTAssertEqual(unavailableBars.last?.metricValue, .unavailable)
-        XCTAssertNil(unavailableBars.last?.progress)
 
         let zeroHeadroom = EucRideScreenState(
             phase: .live,
