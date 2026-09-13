@@ -13,7 +13,7 @@ use cutout_core::{
     SpeedAlarmMode,
 };
 
-use crate::{BegodeFalconModel, NosfetAeroModel, SupportsBenignControls, SupportsSettingsWrites};
+use crate::{BegodeFalconModel, SupportsBenignControls, SupportsSettingsWrites};
 
 /// Meaning of a fixed-point numeric value before native display-unit conversion.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -245,11 +245,31 @@ impl DeviceControlProfile {
 #[must_use]
 pub const fn aero_control_profile() -> DeviceControlProfile {
     DeviceControlProfile::new(
-        NosfetAeroModel::WRITE_CAPABILITIES.union(NosfetAeroModel::CONTROL_CAPABILITIES),
         Capabilities::from_supported_commands([
-            CommandKind::SetLights,
             CommandKind::SetAeroHighBeam,
+            CommandKind::SetAeroTiltbackSpeed,
+            CommandKind::SetAeroPwmPercent,
+            CommandKind::SetAeroPwmOff,
+            CommandKind::SetAeroRidingMode,
+            CommandKind::SetAeroBrakeOverpressureAlarm,
+            CommandKind::SetAeroPedalHardness,
+            CommandKind::SetAeroDisplayBacklight,
+            CommandKind::SetAeroBeeperVolume,
+            CommandKind::SetAeroDynamicAssist,
+            CommandKind::SetAeroPedalDipCompensation,
+            CommandKind::SetAeroLateralTiltLimit,
+            CommandKind::SetAeroVoltageCorrection,
+            CommandKind::SetAeroMaxChargeVoltageRaw,
+            CommandKind::SetAeroWheelUnits,
+            CommandKind::SetAeroHighSpeedMode,
+            CommandKind::SetAeroLowBatteryMode,
+            CommandKind::SetAeroTransportMode,
+            CommandKind::SetAeroAlarmSpeed,
+            CommandKind::SetAeroAngleAdjustment,
+            CommandKind::ResetTripMeter,
+            CommandKind::SetAeroGyroCalibration,
         ]),
+        Capabilities::from_supported_commands([CommandKind::SetAeroHighBeam]),
         Capabilities::from_supported_commands([
             CommandKind::SetAeroTiltbackSpeed,
             CommandKind::SetAeroAlarmSpeed,
@@ -729,17 +749,40 @@ mod tests {
     };
 
     #[test]
+    fn aero_profile_exposes_one_descriptor_per_physical_control() {
+        let descriptors = aero_control_profile().descriptors(true);
+        assert!(
+            descriptors
+                .iter()
+                .any(|item| item.id == SettingId::HighBeam)
+        );
+        assert!(
+            descriptors
+                .iter()
+                .any(|item| item.id == SettingId::RidingPreset)
+        );
+        assert!(
+            !descriptors
+                .iter()
+                .any(|item| item.id == SettingId::Headlight)
+        );
+        assert!(
+            !descriptors
+                .iter()
+                .any(|item| item.id == SettingId::PedalMode)
+        );
+    }
+
+    #[test]
     fn confirmation_requires_a_positive_profile_capability() {
         let available = Capabilities::from_supported_commands([CommandKind::SetLights]);
         let unknown = DeviceControlProfile::new(available, available, Capabilities::default());
         assert!(!unknown.descriptors(false)[0].confirmation_supported);
         let aero = aero_control_profile().descriptors(true);
         for id in [
-            SettingId::Headlight,
             SettingId::HighBeam,
             SettingId::PedalAngle,
             SettingId::RidingPreset,
-            SettingId::PedalMode,
             SettingId::ChargeLimitDiagnostic,
         ] {
             assert!(

@@ -11,8 +11,8 @@ use cutout_core::{
 };
 
 use crate::{
-    AeroControlEncoder, NOSFET_AERO_REGISTRY_ENTRY, NosfetAeroModel, ProtocolModelSpec,
-    StationarySettingsWriteSession, SupportsSettingsWrites,
+    NOSFET_AERO_REGISTRY_ENTRY, NosfetAeroModel, ProtocolModelSpec, StationarySettingsWriteSession,
+    SupportsSettingsWrites,
 };
 
 /// Typed settings readback held by the simulated NOSFET Aero.
@@ -191,7 +191,6 @@ pub struct AeroSettingsSimulator {
     session: HostSession<StationarySettingsWriteSession<NosfetAeroModel, false>>,
     readback: AeroSettingsReadback,
     writes: Vec<AeroSimulatorWrite>,
-    pending_readback: Option<DeviceCommand>,
 }
 
 impl Default for AeroSettingsSimulator {
@@ -208,7 +207,6 @@ impl AeroSettingsSimulator {
             session: HostSession::new(StationarySettingsWriteSession::default()),
             readback,
             writes: Vec::new(),
-            pending_readback: None,
         };
         let _ = simulator.connect(MonotonicTimestamp::new(0));
         simulator
@@ -258,21 +256,15 @@ impl AeroSettingsSimulator {
             self.session.session_mut().arm(arm);
         } else {
             self.session.session_mut().clear_arm();
-            self.pending_readback = None;
         }
         self.session.tick(monotonic_ms);
         let mut outputs = self.drain_outputs();
-        self.complete_pending_readback(&mut outputs);
         self.session.issue_command(command);
         let command_outputs = self.drain_outputs();
         let command_wrote = command_outputs.iter().any(has_transport_write);
         outputs.extend(command_outputs);
         if command_wrote {
-            if Self::is_delayed_sequence(command) {
-                self.pending_readback = Some(command);
-            } else {
-                outputs.push(self.apply_readback(command));
-            }
+            outputs.push(self.apply_readback(command));
         }
         outputs
     }
@@ -281,17 +273,7 @@ impl AeroSettingsSimulator {
     #[must_use]
     pub fn tick(&mut self, monotonic_ms: MonotonicTimestamp) -> Vec<SessionOutput> {
         self.session.tick(monotonic_ms);
-        let mut outputs = self.drain_outputs();
-        self.complete_pending_readback(&mut outputs);
-        outputs
-    }
-
-    fn complete_pending_readback(&mut self, outputs: &mut Vec<SessionOutput>) {
-        if self.pending_readback.is_some() && outputs.iter().any(has_transport_write) {
-            if let Some(command) = self.pending_readback.take() {
-                outputs.push(self.apply_readback(command));
-            }
-        }
+        self.drain_outputs()
     }
 
     /// Returns the latest simulated typed settings readback.
@@ -403,11 +385,6 @@ impl AeroSettingsSimulator {
         SessionOutput::Event(DeviceEvent::ReadOnlyResponse(ReadOnlyResponse::Settings(
             self.settings_readback(),
         )))
-    }
-
-    fn is_delayed_sequence(command: DeviceCommand) -> bool {
-        AeroControlEncoder::encode_settings_sequence(command)
-            .is_some_and(|sequence| sequence.steps.len() > 1)
     }
 
     fn settings_readback(&self) -> SettingsReadback {
@@ -931,15 +908,11 @@ mod tests {
         let second_outputs = simulator.tick(now);
         assert!(!second_outputs.iter().any(is_settings_readback));
 
-        let expected = AeroControlEncoder::encode_settings_sequence(
-            DeviceCommand::SetAeroHighBeam(LightState::On),
-        )
-        .expect("high beam has a source-backed frame sequence");
-        assert_eq!(simulator.writes().len(), expected.steps.len());
-        for (write, step) in simulator.writes().iter().zip(expected.steps) {
-            assert_eq!(write.payload, step.payload);
-            assert_eq!(write.mode, step.mode);
-        }
+        let expected = AeroControlEncoder::encode(DeviceCommand::SetAeroHighBeam(LightState::On))
+            .expect("high beam has a source-backed frame");
+        assert_eq!(simulator.writes().len(), 1);
+        assert_eq!(simulator.writes()[0].payload, expected.payload);
+        assert_eq!(simulator.writes()[0].mode, expected.mode);
         assert_eq!(simulator.readback().high_beam, Some(LightState::On));
     }
 
@@ -984,6 +957,9 @@ mod tests {
         assert!(outputs.iter().any(has_transport_write));
         assert_eq!(simulator.readback().headlight, Some(LightState::On));
         assert_eq!(simulator.writes().len(), 1);
-        assert_eq!(simulator.writes()[0].payload.as_slice(), b"SetLightON");
+        assert_eq!(
+            simulator.writes()[0].payload.as_slice(),
+            &hex_literal::hex!("4c6b41700d0180800157ed3bd5")
+        );
     }
 }
