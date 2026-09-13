@@ -26,6 +26,9 @@ pub struct CutoutSessionState {
     /// Semantic setting observations and command lifecycle for this device.
     pub settings: crate::DeviceSettingsState,
 
+    /// Semantic device action lifecycle and measured procedure progress.
+    pub actions: crate::DeviceActionsState,
+
     /// Diagnostics accumulated from parser and protocol diagnostic events.
     pub diagnostics: SessionDiagnosticsState,
 }

@@ -1,5 +1,7 @@
 //! Connection, detector and protocol-session ownership shared by native clients.
 
+mod actions;
+pub use actions::{DeviceActionSubmissionError, DeviceActionsSnapshot};
 mod settings;
 pub use settings::{DeviceSettingRequestError, DeviceSettingsSnapshot};
 
@@ -241,6 +243,7 @@ impl DeviceConnectionSession {
         self.state
             .select_discovered_platform(platform_identifier.clone());
         self.state.settings = DeviceSettingsState::default();
+        self.state.actions.disconnect();
         self.detector = DeviceDetectionSession::default();
         self.device = None;
         self.state.connection.begin(platform_identifier, at);
@@ -250,6 +253,7 @@ impl DeviceConnectionSession {
     pub fn disconnect(&mut self) {
         self.state.connection.disconnect();
         self.state.settings.disconnect();
+        self.state.actions.disconnect();
         self.device = None;
     }
 
@@ -275,6 +279,7 @@ impl DeviceConnectionSession {
         if self.state.connection.snapshot().readiness == ConnectionReadiness::Failed {
             self.device = None;
             self.state.settings.disconnect();
+            self.state.actions.disconnect();
         }
     }
 
@@ -356,6 +361,29 @@ impl DeviceConnectionSession {
             self.state.settings.tick(self.last_input_at);
         }
         let device = self.device.as_mut()?;
+        if let SessionInputDto::CommandAt {
+            command,
+            monotonic_ms,
+        } = input
+        {
+            let command = cutout_core::DeviceCommand::from(*command);
+            let at = MonotonicTimestamp::new(monotonic_ms.milliseconds);
+            if command.safety_class() == cutout_core::SafetyClass::StationaryOnly {
+                let snapshot = device.current_snapshot();
+                let operating_state = cutout_core::RideOperatingState::resolve(
+                    snapshot.operating_state.map(Into::into),
+                    snapshot.charge_mode.map(|mode| mode.value.into()),
+                    snapshot
+                        .speed
+                        .map(|speed| cutout_core::Speed::from_millimetres_per_second(speed.value)),
+                );
+                let _ = device.arm_settings_writes(
+                    operating_state.into(),
+                    snapshot.speed.map(|speed| speed.value),
+                    at.get(),
+                );
+            }
+        }
         let result = device.ingest_typed(input);
         let telemetry = device.current_snapshot();
         let diagnostics = device.diagnostics();
@@ -369,6 +397,7 @@ impl DeviceConnectionSession {
                 else {
                     continue;
                 };
+                profile.apply_action_readback(&mut self.state.actions, *readback, received_at);
                 for observation in profile.normalize_readback(*readback) {
                     if let Some(value) = observation.value {
                         self.state
