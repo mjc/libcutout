@@ -2072,6 +2072,10 @@
       "comment" : "Top-level app navigation title for recording a capture.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Capture" } } }
     },
+    "navigation.section.camera" : {
+      "comment" : "Top-level app navigation title for the optional ride camera.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Camera" } } }
+    },
     "navigation.section.debug" : {
       "comment" : "Top-level app navigation title for diagnostics.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Debug" } } }
@@ -2087,6 +2091,334 @@
     "navigation.section.lighting" : {
       "comment" : "Top-level app navigation title for standalone RGB lighting control.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Lighting" } } }
+    },
+    "camera.action.open" : {
+      "comment" : "Button that opens the optional ride-camera surface from a connected ride shell.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Camera" } } }
+    },
+    "camera.action.back" : {
+      "comment" : "Button that returns from the optional ride-camera surface to the connected ride.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Back to ride" } } }
+    },
+    "camera.setup.title" : {
+      "comment" : "Camera setup card title for local-network camera connection.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Connect a ride camera" } } }
+    },
+    "camera.origin.address" : {
+      "comment" : "Label for the explicit local camera IPv4 address field.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Camera address" } } }
+    },
+    "camera.origin.port" : {
+      "comment" : "Label for the explicit local camera HTTP port field.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "HTTP port" } } }
+    },
+    "camera.origin.read" : {
+      "comment" : "Button that reads the selected camera's read-only evidence.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Read camera status" } } }
+    },
+    "camera.origin.reading" : {
+      "comment" : "Button label while camera read-only evidence is loading.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Reading camera status…" } } }
+    },
+    "camera.preview.start" : {
+      "comment" : "Button that starts the verified camera RTSP preview.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Start preview" } } }
+    },
+    "camera.preview.save" : {
+      "comment" : "Button that starts a verified camera preview and saves raw H.264 bytes.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Save preview" } } }
+    },
+    "camera.preview.stop" : {
+      "comment" : "Button that stops the foreground camera preview.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Stop preview" } } }
+    },
+    "camera.preview.source_ready" : {
+      "comment" : "Detail shown after read-only evidence includes a movie RTSP source.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Verified movie preview source available." } } }
+    },
+    "camera.preview.saved_detail" : {
+      "comment" : "Detail describing the raw H.264 file output format.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Saves a local Annex-B H.264 file; no cloud upload." } } }
+    },
+    "camera.preview.export" : {
+      "comment" : "Button that shares a saved local camera preview file.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Export preview" } } }
+    },
+    "camera.error.invalid_port" : {
+      "comment" : "Camera setup error when the explicit port is not a valid number.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Enter a valid HTTP port." } } }
+    },
+    "camera.error.read_failed" : {
+      "comment" : "Camera setup error when read-only evidence loading fails.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Camera status could not be read." } } }
+    },
+    "camera.error.unsupported_profile" : {
+      "comment" : "The camera responded, but its firmware is not the verified R3 Pro profile.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Camera firmware is not the verified R3 Pro profile." } } }
+    },
+    "camera.error.origin_mismatch" : {
+      "comment" : "Camera request rejected because the address no longer matches the origin used for read-only evidence.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Camera address changed; reload camera status before requesting media or control." } } }
+    },
+    "camera.profile.pending" : {
+      "comment" : "Profile identity shown before read-only camera evidence has arrived.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Profile identity pending" } } }
+    },
+    "camera.evidence.firmware" : {
+      "comment" : "Label for the firmware version returned by read-only camera evidence.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Firmware" } } }
+    },
+    "camera.evidence.media_count" : {
+      "comment" : "Label for the number of media records returned by the read-only camera listing.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Media records" } } }
+    },
+    "camera.evidence.media_title" : {
+      "comment" : "Heading for camera media entries returned by the read-only listing.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Camera files" } } }
+    },
+    "camera.evidence.media_load_more" : {
+      "comment" : "Button that loads the next bounded page of camera media entries.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Load more" } } }
+    },
+    "camera.evidence.media_download" : {
+      "comment" : "Button that downloads one camera media file to local storage.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Download" } } }
+    },
+    "camera.evidence.media_cancel" : {
+      "comment" : "Button that cancels a camera media file transfer in progress.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Cancel" } } }
+    },
+    "camera.evidence.media_saved" : {
+      "comment" : "Detail shown after a camera media file is saved locally.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Saved locally" } } }
+    },
+    "camera.evidence.media_export" : {
+      "comment" : "Button that explicitly exports a verified local camera media file.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Export" } } }
+    },
+    "camera.evidence.thumbnail_request" : {
+      "comment" : "Button that requests a camera-generated thumbnail for a media entry.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Thumbnail" } } }
+    },
+    "camera.evidence.thumbnail" : {
+      "comment" : "Accessibility label for a camera-generated media thumbnail.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Camera thumbnail" } } }
+    },
+    "camera.evidence.media_local_only" : {
+      "comment" : "Detail clarifying that camera media downloads stay on the device.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Downloads stay on-device; no cloud upload." } } }
+    },
+    "camera.evidence.metadata_only" : {
+      "comment" : "Detail clarifying that an empty camera media listing carries no file transfer evidence.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Read-only metadata; no media files were reported." } } }
+    },
+    "camera.error.media_download_failed" : {
+      "comment" : "Camera error shown when a local media download fails.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Camera file could not be saved locally." } } }
+    },
+    "camera.error.thumbnail_empty" : {
+      "comment" : "Camera error shown when a thumbnail response contains no image bytes.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Camera thumbnail was empty." } } }
+    },
+    "camera.error.thumbnail_failed" : {
+      "comment" : "Camera error shown when a thumbnail request fails.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Camera thumbnail could not be loaded." } } }
+    },
+    "camera.connection.not_configured" : {
+      "comment" : "Camera connection state before a validated local camera origin is loaded.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Camera not configured" } } }
+    },
+    "camera.connection.permission_required" : {
+      "comment" : "Camera connection state when Local Network permission is required.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Local Network permission required" } } }
+    },
+    "camera.connection.wifi_required" : {
+      "comment" : "Camera connection state when the camera Wi-Fi network is not joined.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Camera Wi-Fi required" } } }
+    },
+    "camera.connection.discovering" : {
+      "comment" : "Camera connection state while bounded local discovery is running.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Discovering camera" } } }
+    },
+    "camera.connection.connected" : {
+      "comment" : "Camera connection state after the selected local camera is connected.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Camera connected" } } }
+    },
+    "camera.connection.unsupported" : {
+      "comment" : "Camera connection state when the profile or firmware is unsupported.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Unsupported camera" } } }
+    },
+    "camera.connection.detail.not_configured" : {
+      "comment" : "Camera detail before a validated local camera origin is loaded.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Join the camera Wi-Fi network, then return to CutOut for read-only identification. Ride telemetry continues independently." } } }
+    },
+    "camera.connection.detail.permission_required" : {
+      "comment" : "Camera detail when Apple Local Network permission is missing.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Allow local camera access in Settings. No cloud relay is used." } } }
+    },
+    "camera.connection.detail.wifi_required" : {
+      "comment" : "Camera detail when camera Wi-Fi is not joined.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Connect to the camera access point before preview or media access." } } }
+    },
+    "camera.connection.detail.discovering" : {
+      "comment" : "Camera detail while bounded discovery is running.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Looking only for the selected local camera profile." } } }
+    },
+    "camera.connection.detail.connected" : {
+      "comment" : "Camera detail after the local camera is connected.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Read-only identity and capability evidence will gate controls." } } }
+    },
+    "camera.connection.detail.unsupported" : {
+      "comment" : "Camera detail when profile or firmware is unsupported.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Controls stay unavailable until this camera profile is independently verified." } } }
+    },
+    "camera.truth.title" : {
+      "comment" : "Heading for independent camera preview, recording, and storage truth.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Camera truth" } } }
+    },
+    "camera.truth.preview" : {
+      "comment" : "Camera truth row label for foreground preview state.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Foreground preview" } } }
+    },
+    "camera.truth.recording" : {
+      "comment" : "Camera truth row label for onboard recording state.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Onboard recording" } } }
+    },
+    "camera.truth.storage" : {
+      "comment" : "Camera truth row label for SD-card state.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Camera storage" } } }
+    },
+    "camera.privacy.local_only" : {
+      "comment" : "Privacy note for local-network camera access.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Local-only camera access. CutOut does not upload camera traffic." } } }
+    },
+    "camera.connection.bluetooth_warning" : {
+      "comment" : "Warning that camera Wi-Fi may interfere with FreedConn Bluetooth audio while ride telemetry continues independently.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Camera Wi-Fi may interfere with Bluetooth audio. Ride telemetry continues independently." } } }
+    },
+    "camera.preview.stopped" : {
+      "comment" : "Foreground preview has been stopped.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Stopped" } } }
+    },
+    "camera.preview.buffering" : {
+      "comment" : "Foreground preview is buffering.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Buffering" } } }
+    },
+    "camera.preview.live" : {
+      "comment" : "Foreground preview is receiving current media.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Live" } } }
+    },
+    "camera.preview.stale" : {
+      "comment" : "Foreground preview media is no longer current.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Stale" } } }
+    },
+    "camera.preview.interrupted" : {
+      "comment" : "Foreground preview was interrupted.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Interrupted" } } }
+    },
+    "camera.preview.unavailable" : {
+      "comment" : "Foreground preview is unavailable.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Unavailable" } } }
+    },
+    "camera.recording.unknown" : {
+      "comment" : "Onboard recording state has not been read back.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Unknown" } } }
+    },
+    "camera.recording.unavailable" : {
+      "comment" : "Recording controls are hidden because the camera has not advertised command 2001 support.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Recording controls unavailable until the camera advertises support." } } }
+    },
+    "camera.recording.request_start" : {
+      "comment" : "Button that requests the camera to start onboard recording.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Request start" } } }
+    },
+    "camera.recording.request_stop" : {
+      "comment" : "Button that requests the camera to stop onboard recording.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Request stop" } } }
+    },
+    "camera.recording.requesting" : {
+      "comment" : "Button label while an onboard-recording request is being sent.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Sending request…" } } }
+    },
+    "camera.recording.request_detail" : {
+      "comment" : "Detail clarifying that onboard-recording controls are requests, not readback.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Request sent locally; recording state still requires camera readback." } } }
+    },
+    "camera.recording.request_start_sent" : {
+      "comment" : "Status after an onboard-recording start request is accepted by the local transport.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Start request sent; state remains unconfirmed." } } }
+    },
+    "camera.recording.request_stop_sent" : {
+      "comment" : "Status after an onboard-recording stop request is accepted by the local transport.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Stop request sent; state remains unconfirmed." } } }
+    },
+    "camera.recording.stopped" : {
+      "comment" : "Onboard recording is confirmed stopped.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Stopped" } } }
+    },
+    "camera.recording.active" : {
+      "comment" : "Onboard recording is confirmed active.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Recording" } } }
+    },
+    "camera.error.recording_request_failed" : {
+      "comment" : "Camera error shown when an onboard-recording request fails.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Onboard recording request failed." } } }
+    },
+    "camera.command.refused" : {
+      "comment" : "Camera command response reported refusal.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Camera refused the request." } } }
+    },
+    "camera.command.timed_out" : {
+      "comment" : "Camera command transport timed out before a result was confirmed.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Camera request timed out; result is unknown." } } }
+    },
+    "camera.command.unknown" : {
+      "comment" : "Camera command response did not provide a usable status.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Camera response did not confirm the request." } } }
+    },
+    "camera.command.failed" : {
+      "comment" : "Camera command transport failed for a non-timeout reason.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Camera request failed before confirmation." } } }
+    },
+    "camera.command.busy" : {
+      "comment" : "A second camera command was rejected while another command is in flight.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Another camera request is still in progress." } } }
+    },
+    "camera.still.request" : {
+      "comment" : "Button that requests the camera to capture a still image.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Capture still" } } }
+    },
+    "camera.still.requesting" : {
+      "comment" : "Button label while a still-capture request is being sent.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Sending request…" } } }
+    },
+    "camera.still.request_sent" : {
+      "comment" : "Status after a still-capture request is accepted by the local transport.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Still-capture request sent; wait for media readback." } } }
+    },
+    "camera.still.unavailable" : {
+      "comment" : "Still capture is unavailable because the camera has not advertised command 1001 support.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Still capture unavailable until the camera advertises support." } } }
+    },
+    "camera.error.still_request_failed" : {
+      "comment" : "Camera error shown when a still-capture request fails.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Still-capture request failed." } } }
+    },
+    "camera.storage.unknown" : {
+      "comment" : "Camera storage state has not been read back.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Unknown" } } }
+    },
+    "camera.storage.present" : {
+      "comment" : "Camera reports storage present.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Present" } } }
+    },
+    "camera.storage.missing" : {
+      "comment" : "Camera reports storage missing.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Missing" } } }
+    },
+    "camera.storage.error" : {
+      "comment" : "Camera reports a storage error.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Error" } } }
     },
     "navigation.tab.cells" : {
       "comment" : "Compact navigation tab title for battery cells.",

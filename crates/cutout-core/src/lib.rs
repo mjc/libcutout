@@ -24,6 +24,8 @@ mod session_state;
 pub use session_state::*;
 mod ride_lifecycle;
 pub use ride_lifecycle::*;
+mod camera;
+pub use camera::*;
 mod energy_estimate;
 pub use energy_estimate::*;
 mod melk_controls;

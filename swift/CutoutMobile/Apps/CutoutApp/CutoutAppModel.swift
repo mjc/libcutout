@@ -162,6 +162,8 @@ final class CutoutAppModel {
     private(set) var activeCaptureLabels = Set<CaptureQuickLabel>()
     private(set) var recordOnlyDeviceKind: String?
     private(set) var hasSavedDevice = false
+    private(set) var cameraMediaReferences: [CameraMediaReference] = []
+    private static let maximumCameraMediaReferences = 64
     var headlightOn: Bool {
         guard let state = effectiveHeadlightState else { return false }
         return switch headlightCommandStatus {
@@ -463,8 +465,85 @@ final class CutoutAppModel {
         captureStatus?.displayText
     }
 
+    var currentCameraCaptureFileName: () -> String? {
+        { [weak self] in self?.captureFileName }
+    }
+
+    var cameraSessionStateHandle: CutoutSessionStateHandle {
+        core.rideSessionStateHandle
+    }
+
     var connectionStatusText: String {
         connectionState.statusText ?? phase.displayText
+    }
+
+    func annotateCapture(key: String, value: String) { core.annotateCapture(key: key, value: value) }
+
+    func recordCameraMediaReference(media: CameraMediaEvidence, localURL: URL) {
+        guard captureStatus?.isRecording == true, let captureFileName else { return }
+        guard !cameraMediaReferences.contains(where: { $0.rideCaptureFileName == captureFileName && $0.cameraPath == media.path }) else { return }
+        cameraMediaReferences.append(CameraMediaReference(cameraPath: media.path, localURL: localURL, sizeBytes: media.sizeBytes, cameraTimecode: media.timecode, cameraTime: media.time, rideCaptureFileName: captureFileName, clockUncertainty: .unknown))
+        if cameraMediaReferences.count > Self.maximumCameraMediaReferences { cameraMediaReferences.removeFirst() }
+    }
+
+    /// Records a completed camera download against the capture identity that
+    /// was captured when the operation started.
+    func recordCameraMediaReference(
+        captureFileName: String,
+        source: CameraSourceKind = .novatekR3Pro,
+        media: CameraMediaEvidence,
+        localURL: URL
+    ) {
+        guard !captureFileName.isEmpty else { return }
+        guard !cameraMediaReferences.contains(where: {
+            $0.source == source
+                && $0.rideCaptureFileName == captureFileName
+                && $0.cameraPath == media.path
+        }) else { return }
+
+        let input = MobileCameraMediaProvenanceInput(
+            source: source.mobileDto,
+            cameraPath: media.path,
+            sizeBytes: media.sizeBytes,
+            cameraTimecode: media.timecode,
+            cameraTime: media.time,
+            rideCaptureFileName: captureFileName,
+            capturedAtMonotonicMs: currentMonotonicTime.rawValue,
+            capturedAtWallClockMs: UInt64(max(0, Date().timeIntervalSince1970 * 1_000)),
+            clockUncertainty: .unknown
+        )
+        let sessionState = core.rideSessionStateHandle
+        guard (try? sessionState.recordCameraMediaProvenance(input: input)) != nil else {
+            return
+        }
+        guard let provenance = sessionState.cameraMediaProvenance().first(where: {
+            $0.source == source.mobileDto
+                && $0.cameraPath == media.path
+                && $0.rideCaptureFileName == captureFileName
+        }) else {
+            return
+        }
+
+        let reference = CameraMediaReference(provenance: provenance, localURL: localURL)
+        guard captureFileName == self.captureFileName else { return }
+        cameraMediaReferences.append(reference)
+        if cameraMediaReferences.count > Self.maximumCameraMediaReferences {
+            cameraMediaReferences.removeFirst()
+        }
+    }
+
+    func recordCameraMediaReference(
+        source: CameraSourceKind,
+        media: CameraMediaEvidence,
+        localURL: URL
+    ) {
+        guard let captureFileName else { return }
+        recordCameraMediaReference(
+            captureFileName: captureFileName,
+            source: source,
+            media: media,
+            localURL: localURL
+        )
     }
 
     var headlightControlTitle: String {
@@ -2763,6 +2842,7 @@ final class CutoutAppModel {
 
     private func resetHeadlightState() {
         lastHeadlightSubmissionStatus = nil
+        fallbackHeadlightState = nil
     }
 
     func forgetSavedDevice() {
@@ -3187,6 +3267,7 @@ final class CutoutAppModel {
     func applyCaptureEvent(_ event: CaptureEvent) {
         switch event {
         case let .started(fileURL):
+            core.rideSessionStateHandle.clearCameraMediaProvenance()
             captureFileName = fileURL.lastPathComponent
             captureNotificationCount = 0
             captureStatus = captureFileName.map(CaptureStatus.recordingLocally)

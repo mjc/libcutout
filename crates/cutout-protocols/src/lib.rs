@@ -63,6 +63,24 @@ pub use melk_lighting::{
     MELK_FRAME_LEN, MELK_NOTIFY_CHANNEL, MELK_SERVICE_CHANNEL, MELK_WRITE_CHANNEL,
     MelkGattEvidence, MelkLightingProfile, MelkPatternDescriptor, MelkWritePolicy,
 };
+mod novatek;
+pub use novatek::{
+    NOVATEK_MAX_MEDIA_RESPONSE_BYTES, NOVATEK_MAX_RESPONSE_BYTES,
+    NOVATEK_VERIFIED_R3_PRO_FIRMWARE_PREFIX, NovatekCommandOutcome, NovatekCommandStatus,
+    NovatekConfiguration, NovatekFirmwareVersion, NovatekHttpOrigin, NovatekLiveViewLinks,
+    NovatekMediaDownloadTarget, NovatekMediaEntry, NovatekMediaList, NovatekMediaPathError,
+    NovatekMediaThumbnailTarget, NovatekOriginError, NovatekReadCommand, NovatekReadOnlySnapshot,
+    NovatekRecordingCommand, NovatekResponseError, NovatekRtspUri, NovatekStillCaptureCommand,
+    NovatekStoragePresence, is_r3_pro_firmware, media_download_target, media_thumbnail_target,
+    parse_command_response, parse_configuration_response, parse_firmware_response,
+    parse_live_view_response, parse_media_list_response, parse_read_only_snapshot,
+    parse_storage_response,
+};
+mod rtsp;
+pub use rtsp::{
+    RetinaH264FileSink, RetinaRtspError, RetinaRtspPreviewSession, RetinaVideoConfiguration,
+    RetinaVideoFrame,
+};
 mod probe;
 pub use probe::{AeroProbe, FalconProbe, ProtocolProbe};
 mod parser;
