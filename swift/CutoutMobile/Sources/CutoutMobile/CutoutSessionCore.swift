@@ -1975,7 +1975,10 @@ public final class CutoutSessionCore: NSObject {
                     platformIdentifier: platformIdentifier,
                     atMs: receivedAt.rawValue
                 )
-                _ = try rideMapState.observeTelemetry(atMs: receivedAt.rawValue)
+                _ = try rideMapState.observeTelemetry(
+                    platformIdentifier: platformIdentifier,
+                    atMs: receivedAt.rawValue
+                )
                 if let snapshot = rideMapState.currentSnapshot(atMs: receivedAt.rawValue) {
                     self.publishRideMapSnapshot(snapshot)
                 }

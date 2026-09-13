@@ -257,6 +257,8 @@ pub enum TelemetryObservation {
     AlreadyObserved,
     /// The ride has no confirmed vehicle association.
     NotAssociated,
+    /// The telemetry came from a different vehicle.
+    IdentityMismatch,
     /// The timestamp moved backwards.
     TimestampOutOfOrder,
     /// The ride is not open for telemetry.
@@ -1002,6 +1004,7 @@ impl RideMapRecorder {
     #[must_use]
     pub fn observe_telemetry(
         &mut self,
+        platform_identifier: &VehicleIdentity,
         at_milliseconds: MonotonicMilliseconds,
     ) -> TelemetryObservation {
         if !matches!(
@@ -1013,6 +1016,9 @@ impl RideMapRecorder {
         let Some(associated_at) = self.associated_at_milliseconds else {
             return TelemetryObservation::NotAssociated;
         };
+        if self.associated_vehicle.as_ref() != Some(platform_identifier) {
+            return TelemetryObservation::IdentityMismatch;
+        }
         if at_milliseconds < associated_at || at_milliseconds < self.created_at_milliseconds {
             return TelemetryObservation::TimestampOutOfOrder;
         }

@@ -353,6 +353,26 @@ final class RideMapStateTests: XCTestCase {
         )
     }
 
+    func testMapStateSeparatesVehiclesAndRejectsTelemetryFromThePreviousVehicle() throws {
+        let state = MobileRideMapState()
+        let first = try state.ensureRecordingForVehicle(platformIdentifier: "pev-1", atMs: 100)
+        XCTAssertEqual(
+            try state.observeTelemetry(platformIdentifier: "pev-1", atMs: 200),
+            .observed
+        )
+        let second = try state.ensureRecordingForVehicle(platformIdentifier: "pev-2", atMs: 300)
+        XCTAssertNotEqual(first.rideID, second.rideID)
+        XCTAssertEqual(second.associatedVehicle, "pev-2")
+        XCTAssertEqual(
+            try state.observeTelemetry(platformIdentifier: "pev-1", atMs: 400),
+            .identityMismatch
+        )
+        XCTAssertEqual(
+            try state.observeTelemetry(platformIdentifier: "pev-2", atMs: 500),
+            .observed
+        )
+    }
+
     func testMapStateKeepsLifecycleAndRouteProjectionTyped() async throws {
         let state = MobileRideMapState()
 

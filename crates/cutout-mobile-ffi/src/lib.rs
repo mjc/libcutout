@@ -6802,6 +6802,8 @@ pub enum MobileRideMapTelemetryObservationDto {
     AlreadyObserved,
     /// The ride has no confirmed association.
     NotAssociated,
+    /// The telemetry came from a different vehicle.
+    IdentityMismatch,
     /// The timestamp moved backwards.
     TimestampOutOfOrder,
     /// The ride is not open for telemetry.
@@ -6816,6 +6818,7 @@ impl From<ride_maps::TelemetryObservation> for MobileRideMapTelemetryObservation
             ride_maps::TelemetryObservation::Observed => Self::Observed,
             ride_maps::TelemetryObservation::AlreadyObserved => Self::AlreadyObserved,
             ride_maps::TelemetryObservation::NotAssociated => Self::NotAssociated,
+            ride_maps::TelemetryObservation::IdentityMismatch => Self::IdentityMismatch,
             ride_maps::TelemetryObservation::TimestampOutOfOrder => Self::TimestampOutOfOrder,
             ride_maps::TelemetryObservation::RideNotOpen => Self::RideNotOpen,
             _ => Self::Unknown,
@@ -10104,7 +10107,8 @@ impl MobileRideMapCore {
     ///
     /// A fresh connection starts a new live ride when no open ride exists. An already-open
     /// GPS-only ride is associated with this vehicle, preserving the route recorded before the
-    /// Bluetooth connection was available.
+    /// Bluetooth connection was available. Connecting another confirmed vehicle saves the previous
+    /// vehicle's open ride before starting a separate recording.
     ///
     /// # Errors
     ///
@@ -10116,6 +10120,18 @@ impl MobileRideMapCore {
         at_ms: u64,
     ) -> Result<MobileRideMapCoreSnapshotDto, MobileRideMapCoreErrorDto> {
         let mut state = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
+        if matches!(
+            state.recorder.state(),
+            Some(ride_maps::RideLifecycleState::Active | ride_maps::RideLifecycleState::Paused)
+        ) && ride_maps::VehicleIdentity::new(&platform_identifier).is_some_and(|identity| {
+            state
+                .recorder
+                .associated_vehicle()
+                .is_some_and(|associated| associated != identity.as_str())
+        }) {
+            state.transition_inner_at(MobileRideEventDto::Stop, at_ms)?;
+            state.transition_inner_at(MobileRideEventDto::Save, at_ms)?;
+        }
         if state.recorder.state() == Some(ride_maps::RideLifecycleState::Interrupted) {
             let wall_clock_milliseconds: u64 = SystemTime::now()
                 .duration_since(UNIX_EPOCH)
@@ -10646,15 +10662,21 @@ impl MobileRideMapCore {
     /// Returns an error when durable telemetry metadata cannot be persisted.
     pub fn observe_telemetry(
         &self,
+        platform_identifier: String,
         at_ms: u64,
     ) -> Result<MobileRideMapTelemetryObservationDto, MobileRideMapCoreErrorDto> {
+        let Some(identity) = ride_maps::VehicleIdentity::new(&platform_identifier) else {
+            return Ok(MobileRideMapTelemetryObservationDto::IdentityMismatch);
+        };
         let mut state = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
         let at_ms = state.logical_monotonic_milliseconds(at_ms);
         let mut staged = state.admission_recorder.clone();
         let mut durable_staged = state.recorder.clone();
-        let observation = staged.observe_telemetry(ride_maps::MonotonicMilliseconds::new(at_ms));
+        let observation =
+            staged.observe_telemetry(&identity, ride_maps::MonotonicMilliseconds::new(at_ms));
         if observation == ride_maps::TelemetryObservation::Observed {
-            let _ = durable_staged.observe_telemetry(ride_maps::MonotonicMilliseconds::new(at_ms));
+            let _ = durable_staged
+                .observe_telemetry(&identity, ride_maps::MonotonicMilliseconds::new(at_ms));
             if let (Some(database), Some(id)) =
                 (state.database.as_ref(), state.active_ride_id.clone())
             {
@@ -22749,6 +22771,50 @@ mod tests {
     }
 
     #[test]
+    fn mobile_ride_map_core_saves_the_previous_vehicle_ride_before_switching() {
+        let _guard = RIDE_DATABASE_TEST_LOCK
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        let path = std::env::temp_dir().join(format!(
+            "cutout-mobile-map-switch-{}.sqlite3",
+            Uuid::new_v4()
+        ));
+        let database =
+            open_ride_database(path.to_string_lossy().into_owned()).expect("database opens");
+        let state = MobileRideMapCore::with_database(database.clone());
+        let first = state
+            .ensure_recording_for_vehicle("pev-1".to_owned(), 1_000)
+            .expect("first vehicle starts a ride");
+        state
+            .ingest_location(1_100, 1_700_000_001_100, 40.0, -105.0, 3.0)
+            .expect("first vehicle route point is admitted");
+        state.pause(1_200).expect("first ride pauses");
+        let reconnected = state
+            .ensure_recording_for_vehicle("pev-1".to_owned(), 1_300)
+            .expect("same vehicle reconnects");
+        assert_eq!(reconnected.ride_id, first.ride_id);
+        assert_eq!(reconnected.state, MobileRideLifecycleStateDto::Paused);
+
+        let second = state
+            .ensure_recording_for_vehicle("pev-2".to_owned(), 1_400)
+            .expect("different vehicle starts its own ride");
+        assert_ne!(second.ride_id, first.ride_id);
+        assert_eq!(second.associated_vehicle.as_deref(), Some("pev-2"));
+        assert_eq!(second.state, MobileRideLifecycleStateDto::Active);
+        let history = database.list_rides(None, 10).expect("history loads");
+        let saved = history
+            .rides
+            .iter()
+            .find(|ride| ride.id.value == first.ride_id)
+            .expect("first vehicle ride remains in history");
+        assert_eq!(saved.state, MobileRideLifecycleStateDto::Saved);
+        assert_eq!(saved.associated_vehicle.as_deref(), Some("pev-1"));
+        assert_eq!(saved.summary.point_count, 1);
+        database.shutdown().expect("database shuts down");
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
     fn mobile_ride_map_core_auto_resumes_a_recent_interrupted_ride_for_the_same_vehicle() {
         let _guard = RIDE_DATABASE_TEST_LOCK
             .lock()
@@ -23030,7 +23096,7 @@ mod tests {
             }
         ));
         state
-            .observe_telemetry(1_300)
+            .observe_telemetry("pev-1".to_owned(), 1_300)
             .expect("telemetry observation returns");
         let fresh = state
             .ingest_location(1_400, 1_700_000_001_400, 40.0, -105.0, 3.0)
@@ -23053,6 +23119,46 @@ mod tests {
         assert_eq!(
             points.points[1].telemetry_state,
             MobileRideMapCoreTelemetryStateDto::AssociatedNoTelemetry
+        );
+    }
+
+    #[test]
+    fn mobile_ride_map_core_rejects_telemetry_from_another_vehicle() {
+        let state = MobileRideMapCore::new();
+        state
+            .ensure_recording_for_vehicle("pev-1".to_owned(), 1_000)
+            .expect("first vehicle starts recording");
+        assert_eq!(
+            state.observe_telemetry("pev-1".to_owned(), 1_100).unwrap(),
+            MobileRideMapTelemetryObservationDto::Observed
+        );
+        assert_eq!(
+            state.observe_telemetry("pev-2".to_owned(), 20_000).unwrap(),
+            MobileRideMapTelemetryObservationDto::IdentityMismatch
+        );
+        let point = state
+            .ingest_location(20_001, 1_700_000_020_001, 40.0, -105.0, 3.0)
+            .expect("route point is accepted");
+        assert!(matches!(
+            point,
+            MobileRideMapCoreDecisionDto::Accepted {
+                point: MobileRideMapCorePointDto {
+                    telemetry_state: MobileRideMapCoreTelemetryStateDto::AssociatedStale,
+                    ..
+                },
+                ..
+            }
+        ));
+        state
+            .ensure_recording_for_vehicle("pev-2".to_owned(), 21_000)
+            .expect("second vehicle starts recording");
+        assert_eq!(
+            state.observe_telemetry("pev-1".to_owned(), 21_100).unwrap(),
+            MobileRideMapTelemetryObservationDto::IdentityMismatch
+        );
+        assert_eq!(
+            state.observe_telemetry("pev-2".to_owned(), 21_200).unwrap(),
+            MobileRideMapTelemetryObservationDto::Observed
         );
     }
 

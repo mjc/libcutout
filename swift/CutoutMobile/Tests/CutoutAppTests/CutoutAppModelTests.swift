@@ -3500,6 +3500,33 @@ final class CutoutAppModelTests: XCTestCase {
         }
     }
     @MainActor
+    func testVehicleChangeClearsThePreviousRideProjection() async throws {
+        let state = MobileRideMapState()
+        let core = CutoutSessionCore(clock: MonotonicClock(), rideMapState: state)
+        let model = CutoutAppModel(core: core)
+        let first = try state.ensureRecordingForVehicle(platformIdentifier: "pev-1", atMs: 100)
+        core.onRideMapSnapshotChange?(first)
+        let decision = await Self.settle(state, try state.ingestLocation(
+            monotonicMs: 200,
+            wallClockUnixMs: 1_700_000_000_200,
+            latitudeDegrees: 39.7392,
+            longitudeDegrees: -104.9903,
+            horizontalAccuracyMeters: 4
+        ))
+        core.onRideMapDecisionChange?(try XCTUnwrap(state.currentSnapshot(atMs: 200)), decision)
+        await Self.waitUntil("first vehicle route projection") {
+            !model.rideMapLiveDisplayPoints.isEmpty
+        }
+
+        let second = try state.ensureRecordingForVehicle(platformIdentifier: "pev-2", atMs: 300)
+        core.onRideMapSnapshotChange?(second)
+        XCTAssertEqual(model.rideMapSnapshot?.rideID, second.rideID)
+        XCTAssertTrue(model.rideMapLiveDisplayPoints.isEmpty)
+        XCTAssertNil(model.rideMapLiveCameraRegion)
+        XCTAssertNil(model.rideMapLastDecision)
+    }
+
+    @MainActor
     func testProductionRideMapDecisionReachesAppModelWithoutMapMounted() async throws {
         let fixture = CutoutUITestSessionFixture.autoVescLiveActivity
         let core = CutoutSessionCore(

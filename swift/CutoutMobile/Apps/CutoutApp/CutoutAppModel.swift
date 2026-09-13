@@ -697,6 +697,9 @@ final class CutoutAppModel {
         }
         self.core.onRideMapSnapshotChange = { [weak self] snapshot in
             guard let self else { return }
+            if self.rideMapSnapshot?.rideID != snapshot.rideID {
+                self.invalidateLiveProjection(clearPoints: true)
+            }
             self.rideMapSnapshot = snapshot
             self.rideMapLiveTelemetryState = snapshot.associatedVehicle == nil
                 ? .gpsOnly
