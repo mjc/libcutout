@@ -1,7 +1,8 @@
 //! Shared device-action descriptors, invocation, and progress normalization.
 
 use cutout_core::{
-    CommandKind, DeviceActionId, DeviceActionProgress, DeviceCommand, Measured, SettingsEntry,
+    CommandKind, DeviceActionId, DeviceActionProgress, DeviceActionRequest, DeviceActionStep,
+    DeviceActionsState, DeviceCommand, Measured, MonotonicTimestamp, SettingsEntry,
     SettingsReadback,
 };
 
@@ -62,6 +63,9 @@ pub enum ActionRequestError {
     /// The action requires explicit validation mode.
     #[error("action is unverified")]
     Unverified,
+    /// The procedure step does not belong to the requested action.
+    #[error("action procedure step is invalid")]
+    InvalidStep,
 }
 
 /// A present action-progress field with its original evidence.
@@ -106,18 +110,21 @@ impl DeviceControlProfile {
     /// Rejects actions unavailable to the profile or disallowed outside validation mode.
     pub fn action_command(
         self,
-        id: DeviceActionId,
+        request: DeviceActionRequest,
         validation_mode: bool,
     ) -> Result<DeviceCommand, ActionRequestError> {
+        if !valid_action_step(request) {
+            return Err(ActionRequestError::InvalidStep);
+        }
         let descriptor = self
             .action_descriptors(validation_mode)
             .into_iter()
-            .find(|descriptor| descriptor.id == id)
+            .find(|descriptor| descriptor.id == request.id)
             .ok_or(ActionRequestError::Unavailable)?;
         if descriptor.access == ActionAccess::Unverified {
             return Err(ActionRequestError::Unverified);
         }
-        Ok(match id {
+        Ok(match request.id {
             DeviceActionId::ResetTripMeter => DeviceCommand::ResetTripMeter,
             DeviceActionId::GyroCalibration => DeviceCommand::SetAeroGyroCalibration,
         })
@@ -140,6 +147,33 @@ impl DeviceControlProfile {
             .map(normalize_gyro_progress)
             .collect()
     }
+
+    /// Applies normalized action progress to the shared lifecycle owner.
+    pub fn apply_action_readback(
+        self,
+        state: &mut DeviceActionsState,
+        readback: SettingsReadback,
+        observed_at: MonotonicTimestamp,
+    ) {
+        for observation in self.normalize_action_readback(readback) {
+            if let Some(progress) = observation.progress {
+                state.observe_measured(observation.id, progress, observed_at);
+            } else {
+                state.invalidate_progress(observation.id, observed_at);
+            }
+        }
+    }
+}
+
+const fn valid_action_step(request: DeviceActionRequest) -> bool {
+    matches!(
+        (request.id, request.step),
+        (DeviceActionId::ResetTripMeter, DeviceActionStep::Invoke)
+            | (
+                DeviceActionId::GyroCalibration,
+                DeviceActionStep::PrepareGyroCalibration | DeviceActionStep::StartGyroCalibration
+            )
+    )
 }
 
 fn normalize_gyro_progress(entry: SettingsEntry) -> ActionObservation {
