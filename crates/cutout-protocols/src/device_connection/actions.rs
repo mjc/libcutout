@@ -47,7 +47,15 @@ impl DeviceConnectionSession {
         DeviceActionsSnapshot {
             connection: self.state.connection.snapshot().clone(),
             at: self.last_input_at,
-            actions: self.state.actions.snapshot(self.last_input_at),
+            actions: self
+                .action_descriptors(false)
+                .into_iter()
+                .map(|descriptor| {
+                    self.state
+                        .actions
+                        .snapshot_for(descriptor.id, self.last_input_at)
+                })
+                .collect(),
         }
     }
 
@@ -105,6 +113,25 @@ impl DeviceConnectionSession {
 mod tests {
     use super::*;
     use cutout_core::{DeviceActionStatus, SessionInputDto, SessionOutput, TransportAction};
+
+    #[test]
+    fn action_catalog_publishes_initial_next_step_without_a_request() {
+        let mut owner = DeviceConnectionSession::default();
+        let token = super::super::tests::connected_aero(&mut owner);
+        let snapshot = owner.actions_snapshot();
+        let gyro = snapshot
+            .actions
+            .iter()
+            .find(|action| action.id == DeviceActionId::GyroCalibration)
+            .expect("initial procedure state is visible before pressing a control");
+        assert_eq!(gyro.status, DeviceActionStatus::Idle);
+        assert_eq!(
+            gyro.next_step,
+            Ok(cutout_core::DeviceActionStep::PrepareGyroCalibration)
+        );
+        assert!(gyro.requested_step.is_none());
+        assert_eq!(snapshot.connection.token, Some(token));
+    }
 
     #[test]
     fn horn_is_available_without_a_speed_sample_or_stationary_arm() {
@@ -170,7 +197,13 @@ mod tests {
             .unwrap();
         assert_eq!(step.result.error, None);
         assert_eq!(
-            owner.actions_snapshot().actions[0].status,
+            owner
+                .actions_snapshot()
+                .actions
+                .into_iter()
+                .find(|action| action.id == DeviceActionId::GyroCalibration)
+                .unwrap()
+                .status,
             DeviceActionStatus::WaitingForProgress
         );
         assert_eq!(
@@ -184,7 +217,13 @@ mod tests {
         );
         let _ = owner.ingest(&token, &gyro_readback(2, 5));
         assert_eq!(
-            owner.actions_snapshot().actions[0].status,
+            owner
+                .actions_snapshot()
+                .actions
+                .into_iter()
+                .find(|action| action.id == DeviceActionId::GyroCalibration)
+                .unwrap()
+                .status,
             DeviceActionStatus::ReadyForNextStep
         );
         let step = owner
@@ -197,7 +236,13 @@ mod tests {
             .unwrap();
         assert_eq!(step.result.error, None);
         assert_eq!(
-            owner.actions_snapshot().actions[0].status,
+            owner
+                .actions_snapshot()
+                .actions
+                .into_iter()
+                .find(|action| action.id == DeviceActionId::GyroCalibration)
+                .unwrap()
+                .status,
             DeviceActionStatus::SentWithoutConfirmation
         );
         let _ = owner.ingest(&token, &gyro_readback(2, 7));
@@ -230,6 +275,7 @@ mod tests {
                 monotonic_ms: cutout_core::MonotonicMillisDto { milliseconds: 2 },
             },
         );
+        let before_refusal = owner.actions_snapshot();
         assert_eq!(
             owner.submit_action(
                 &token,
@@ -241,7 +287,7 @@ mod tests {
                 ActionRequestError::Unverified
             ))
         );
-        assert!(owner.actions_snapshot().actions.is_empty());
+        assert_eq!(owner.actions_snapshot(), before_refusal);
         let result = owner
             .submit_action(
                 &token,
@@ -258,7 +304,12 @@ mod tests {
         let snapshot = owner.actions_snapshot();
         assert_eq!(snapshot.connection.token, Some(token.clone()));
         assert_eq!(
-            snapshot.actions[0].status,
+            snapshot
+                .actions
+                .iter()
+                .find(|action| action.id == DeviceActionId::ResetTripMeter)
+                .unwrap()
+                .status,
             DeviceActionStatus::SentWithoutConfirmation
         );
         owner.begin_attempt("B".into(), MonotonicTimestamp::new(4));

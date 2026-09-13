@@ -70,7 +70,15 @@ setting_enum!(
     MobileSettingUnitDto,
     SettingUnit,
     "Physical unit and fixed-point interpretation.",
-    [Percent, KilometresPerHour, Degrees, Level, Seconds, Minutes]
+    [
+        Percent,
+        PwmDutyPercent,
+        KilometresPerHour,
+        Degrees,
+        Level,
+        Seconds,
+        Minutes
+    ]
 );
 setting_enum!(
     MobileSettingGroupDto,
