@@ -411,6 +411,7 @@ pub struct RideRecord {
     duration_ms: u64,
     summary: RideSummary,
     segment_count: u64,
+    background_gap_count: u64,
     candidate_vehicle: Option<String>,
     associated_vehicle: Option<String>,
     candidate_vehicle_name: Option<String>,
@@ -504,6 +505,12 @@ impl RideRecord {
     #[must_use]
     pub const fn segment_count(&self) -> u64 {
         self.segment_count
+    }
+
+    /// Returns the number of nonempty segments that begin after a background gap.
+    #[must_use]
+    pub const fn background_gap_count(&self) -> u64 {
+        self.background_gap_count
     }
 
     /// Returns the candidate vehicle identity snapshotted at ride start.
@@ -6588,7 +6595,9 @@ fn find_ride(connection: &Connection, ride_id: RideId) -> Result<Option<RideReco
                     (SELECT display_name FROM devices
                      WHERE platform_identifier = rides.candidate_vehicle),
                     (SELECT display_name FROM devices
-                     WHERE platform_identifier = rides.associated_vehicle)
+                     WHERE platform_identifier = rides.associated_vehicle),
+                    (SELECT COUNT(*) FROM ride_segments
+                     WHERE ride_id = rides.id AND point_count > 0 AND start_reason = 'background_gap')
              FROM rides
              WHERE state NOT IN ('draft', 'discarded') AND id = ?1",
             params![ride_id.uuid().to_string()],
@@ -6626,12 +6635,14 @@ fn newest_recoverable_ride(connection: &Connection) -> Result<Option<RideRecord>
                               FROM ride_points WHERE ride_id = rides.id)
                     END,
                     point_count, distance_mm,
-                    (SELECT COUNT(DISTINCT segment_id) FROM ride_points WHERE ride_id = rides.id),
+                    (SELECT COUNT(*) FROM ride_segments WHERE ride_id = rides.id AND point_count > 0),
                     candidate_vehicle, associated_vehicle, associated_at_ms, last_telemetry_at_ms,
                     (SELECT display_name FROM devices
                      WHERE platform_identifier = rides.candidate_vehicle),
                     (SELECT display_name FROM devices
-                     WHERE platform_identifier = rides.associated_vehicle)
+                     WHERE platform_identifier = rides.associated_vehicle),
+                    (SELECT COUNT(*) FROM ride_segments
+                     WHERE ride_id = rides.id AND point_count > 0 AND start_reason = 'background_gap')
              FROM rides
              WHERE state IN ('active', 'paused', 'stopped', 'interrupted')
              ORDER BY created_at_ms DESC, id DESC
@@ -6692,10 +6703,12 @@ fn list_rides(
                                      FROM ride_points WHERE ride_id = rides.id)
                            END,
                            rides.point_count, rides.distance_mm,
-                           (SELECT COUNT(DISTINCT segment_id) FROM ride_points WHERE ride_id = rides.id),
+                           (SELECT COUNT(*) FROM ride_segments WHERE ride_id = rides.id AND point_count > 0),
                            rides.candidate_vehicle, rides.associated_vehicle, rides.associated_at_ms,
                            rides.last_telemetry_at_ms,
-                           candidate_device.display_name, associated_device.display_name
+                           candidate_device.display_name, associated_device.display_name,
+                           (SELECT COUNT(*) FROM ride_segments
+                            WHERE ride_id = rides.id AND point_count > 0 AND start_reason = 'background_gap')
                     FROM rides
                     LEFT JOIN devices AS associated_device
                         ON associated_device.platform_identifier = rides.associated_vehicle
@@ -6833,6 +6846,7 @@ fn ride_record_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<RideRecord>
         duration_ms: row.get(10)?,
         summary: RideSummary::from_stored(row.get::<_, u64>(11)?.into(), row.get(12)?),
         segment_count: row.get(13)?,
+        background_gap_count: row.get(20)?,
         candidate_vehicle: row.get(14)?,
         associated_vehicle: row.get(15)?,
         associated_at_ms: row.get(16)?,

@@ -561,15 +561,7 @@ impl RideRecordingSession {
         else {
             return Ok(());
         };
-        let background_gap_count = database
-            .project_route_points(
-                ride.id(),
-                None,
-                ride_maps::RouteDisplayBudget::new(1)
-                    .ok_or(RecordingError::InvalidRouteProjection)?,
-                ride_maps::RoutePrivacyPolicy::Precise,
-            )?
-            .background_gap_count();
+        let background_gap_count = ride.background_gap_count();
         let samples = Self::restored_route_samples(
             database,
             ride.id(),

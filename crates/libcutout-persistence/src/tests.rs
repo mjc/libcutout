@@ -4830,3 +4830,48 @@ fn lowering_music_history_policy_redacts_existing_display_metadata() {
     assert_eq!(redacted[0].artist(), None);
     close_music_test_database(database, path);
 }
+
+#[test]
+fn recovery_metadata_preserves_background_gaps_without_route_projection() {
+    let _guard = test_guard();
+    let directory = tempfile::tempdir().expect("temporary database directory");
+    let database =
+        RideDatabase::open(&directory.path().join("rides.sqlite")).expect("database opens");
+    let mut recording = crate::RideRecordingSession::new(Some(database.clone()));
+    let started = recording.start_gps_only(1_000, None).expect("ride starts");
+    recording
+        .ingest_location(2_000, 1_700_000_002_000, 40.0, -105.0, 3.0)
+        .expect("first location queues");
+    recording
+        .ingest_location(
+            2_001 + MAX_GAP_MILLISECONDS,
+            1_700_000_002_001 + MAX_GAP_MILLISECONDS,
+            40.000_01,
+            -105.0,
+            3.0,
+        )
+        .expect("location after a gap queues");
+    recording
+        .transition_at(RideEvent::Stop, 3_000 + MAX_GAP_MILLISECONDS)
+        .expect("writes settle before stop");
+    let found = database
+        .find_ride(started.ride_id)
+        .expect("find succeeds")
+        .expect("ride exists");
+    let recovered = database
+        .newest_recoverable_ride()
+        .expect("recovery metadata loads")
+        .expect("stopped ride remains recoverable");
+    let page = database
+        .list_rides(None, QueryLimit::new(10).unwrap())
+        .expect("history loads");
+    assert_eq!(found.background_gap_count(), 1);
+    assert_eq!(recovered.background_gap_count(), 1);
+    assert_eq!(page.rides()[0].background_gap_count(), 1);
+    assert_eq!(recovered.segment_count(), 2);
+    drop(recording);
+    let restored = crate::RideRecordingSession::new(Some(database.clone()));
+    assert!(restored.initialization_error().is_none());
+    assert_eq!(restored.recorder().background_gap_count().as_u64(), 1);
+    database.shutdown().expect("database shuts down");
+}
