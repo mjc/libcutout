@@ -1,7 +1,7 @@
 use super::{MapPointId, SpatialRowId, StorageError};
 use rusqlite::{Connection, OptionalExtension, params};
 
-const CURRENT_SCHEMA_VERSION: i64 = 21;
+const CURRENT_SCHEMA_VERSION: i64 = 22;
 const APPLICATION_ID: i64 = 0x4355_544f;
 
 fn current_schema_pragmas() -> String {
@@ -42,6 +42,7 @@ pub(super) fn migrate(connection: &mut Connection) -> Result<(), StorageError> {
         18 => migrate_v18_to_current(connection)?,
         19 => migrate_v19_to_current(connection)?,
         20 => migrate_v20_to_current(connection)?,
+        21 => migrate_v21_to_current(connection)?,
         CURRENT_SCHEMA_VERSION => {
             if application_id != APPLICATION_ID {
                 return Err(StorageError::InvalidDatabaseIdentity);
@@ -216,6 +217,11 @@ pub(crate) fn create_current_schema(connection: &Connection) -> Result<(), Stora
             platform_identifier TEXT PRIMARY KEY NOT NULL CHECK (length(platform_identifier) BETWEEN 1 AND 512),
             display_name TEXT NOT NULL CHECK (length(display_name) BETWEEN 1 AND 512),
             updated_at_ms INTEGER NOT NULL CHECK (updated_at_ms >= 0)
+        );
+        CREATE TABLE phone_alarm_preferences (
+            device_identity TEXT PRIMARY KEY NOT NULL CHECK (length(device_identity) BETWEEN 1 AND 512),
+            enabled INTEGER NOT NULL CHECK (enabled IN (0, 1)),
+            pwm_duty_percent INTEGER NOT NULL CHECK (pwm_duty_percent BETWEEN 1 AND 100)
         );
         CREATE TABLE voltage_sag_models (
             device_identity TEXT PRIMARY KEY NOT NULL CHECK (length(device_identity) BETWEEN 1 AND 512),
@@ -1070,6 +1076,22 @@ fn migrate_v20_to_current(connection: &mut Connection) -> Result<(), StorageErro
          CREATE INDEX bms_voltage_samples_history
              ON bms_voltage_samples(device_identity, observation_index, wall_clock_ms DESC);",
     )?;
+    transaction.execute_batch(&format!(
+        "PRAGMA application_id = {APPLICATION_ID}; PRAGMA user_version = 21;"
+    ))?;
+    transaction.commit()?;
+    migrate_v21_to_current(connection)
+}
+
+fn migrate_v21_to_current(connection: &mut Connection) -> Result<(), StorageError> {
+    let transaction = connection.transaction()?;
+    transaction.execute_batch(
+        "CREATE TABLE phone_alarm_preferences (
+             device_identity TEXT PRIMARY KEY NOT NULL CHECK (length(device_identity) BETWEEN 1 AND 512),
+             enabled INTEGER NOT NULL CHECK (enabled IN (0, 1)),
+             pwm_duty_percent INTEGER NOT NULL CHECK (pwm_duty_percent BETWEEN 1 AND 100)
+         );",
+    )?;
     transaction.execute_batch(&current_schema_pragmas())?;
     transaction.commit()?;
     Ok(())
@@ -1099,6 +1121,7 @@ pub(super) fn verify_current_schema(connection: &Connection) -> Result<(), Stora
         "ride_points",
         "ride_segments",
         "devices",
+        "phone_alarm_preferences",
         "selected_device",
         "voltage_sag_models",
         "ride_session_marker",
