@@ -1,0 +1,300 @@
+use super::*;
+use std::{
+    fs,
+    time::{Duration, Instant},
+};
+use uuid::Uuid;
+#[test]
+fn connection_telemetry_preserves_saved_intent_and_rejects_old_attempts() {
+    let mut state = RideRecordingSession::new(None);
+    let first = ConnectionAttemptToken {
+        generation: 1,
+        platform_identifier: "pev-1".to_owned(),
+    };
+    let second = ConnectionAttemptToken {
+        generation: 2,
+        platform_identifier: "pev-2".to_owned(),
+    };
+    let active = state.observe_connection_telemetry(&first, 1_000).unwrap();
+    state
+        .transition_at(ride_maps::RideEvent::Stop, 2_000)
+        .unwrap();
+    state.save().unwrap();
+    let saved = state.observe_connection_telemetry(&first, 2_100).unwrap();
+    assert_eq!(saved.ride_id, active.ride_id);
+    assert_eq!(saved.state, ride_maps::RideLifecycleState::Saved);
+    let next = state.observe_connection_telemetry(&second, 3_000).unwrap();
+    assert_ne!(next.ride_id, saved.ride_id);
+    assert_eq!(next.associated_vehicle.as_deref(), Some("pev-2"));
+    let delayed = state.observe_connection_telemetry(&first, 4_000).unwrap();
+    assert_eq!(delayed.ride_id, next.ride_id);
+    assert_eq!(delayed.associated_vehicle, next.associated_vehicle);
+}
+#[test]
+fn connection_telemetry_retries_deferred_association_without_resuming_pause() {
+    let mut state = RideRecordingSession::new(None);
+    state.start_gps_only(1_000, None).unwrap();
+    state
+        .ingest_location(5_000, 1_700_000_005_000, 40.0, -105.0, 3.0)
+        .unwrap();
+    let token = ConnectionAttemptToken {
+        generation: 1,
+        platform_identifier: "pev-1".to_owned(),
+    };
+    let deferred = state.observe_connection_telemetry(&token, 4_000).unwrap();
+    assert!(deferred.associated_vehicle.is_none());
+    let associated = state.observe_connection_telemetry(&token, 6_000).unwrap();
+    assert_eq!(associated.associated_vehicle.as_deref(), Some("pev-1"));
+    assert_eq!(
+        associated.telemetry_state,
+        ride_maps::RouteTelemetryState::AssociatedFresh
+    );
+    state
+        .transition_at(ride_maps::RideEvent::Pause, 6_500)
+        .unwrap();
+    let paused = state.observe_connection_telemetry(&token, 6_600).unwrap();
+    assert_eq!(paused.state, ride_maps::RideLifecycleState::Paused);
+    assert_eq!(paused.ride_id, associated.ride_id);
+}
+#[test]
+fn discarded_ride_retains_lifecycle_without_retaining_music_context() {
+    let mut state = RideRecordingSession::new(None);
+    state.start_gps_only(1_000, None).unwrap();
+    state
+        .transition_at(ride_maps::RideEvent::Stop, 2_000)
+        .unwrap();
+    state.discard().unwrap();
+    assert!(state.current_music_history().is_none());
+    assert_eq!(
+        state.current_music_history_policy(),
+        MusicHistoryPolicy::Disabled
+    );
+    assert_eq!(
+        state.current_snapshot(2_000).unwrap().state,
+        ride_maps::RideLifecycleState::Discarded
+    );
+}
+#[test]
+fn mobile_ride_map_core_retains_terminal_snapshot_and_explicit_stop() {
+    let mut state = RideRecordingSession::new(None);
+    let started = state.ensure_recording_for_vehicle("pev-1", 1_000).unwrap();
+    state
+        .transition_at(ride_maps::RideEvent::Stop, 2_000)
+        .unwrap();
+    let reconnected = state.ensure_recording_for_vehicle("pev-1", 3_000).unwrap();
+    assert_eq!(reconnected.ride_id, started.ride_id);
+    assert_eq!(reconnected.state, ride_maps::RideLifecycleState::Stopped);
+    state.save().unwrap();
+    let saved = state
+        .current_snapshot(4_000)
+        .expect("saved state remains authoritative");
+    assert_eq!(saved.ride_id, started.ride_id);
+    assert_eq!(saved.state, ride_maps::RideLifecycleState::Saved);
+    let next = state.ensure_recording_for_vehicle("pev-1", 5_000).unwrap();
+    assert_ne!(next.ride_id, saved.ride_id);
+}
+#[test]
+fn mobile_ride_map_core_bounds_pending_location_backpressure() {
+    let _guard = crate::tests::test_guard();
+    let path = std::env::temp_dir().join(format!(
+        "cutout-mobile-map-backpressure-{}-{}.sqlite3",
+        std::process::id(),
+        Uuid::new_v4()
+    ));
+    let _ = fs::remove_file(&path);
+    let database = RideDatabase::open(&path).expect("database opens");
+    let mut state = RideRecordingSession::new(Some(database.clone()));
+    state.start_gps_only(1_000, None).expect("recording starts");
+
+    for index in 0..MAX_PENDING_LOCATION_WRITES {
+        let monotonic_ms = 1_001 + index as u64 * 1_000;
+        let decision = state
+            .ingest_location(
+                monotonic_ms,
+                1_700_000_000_000 + monotonic_ms,
+                40.0 + f64::from(u32::try_from(index).expect("bounded index")) * 0.00001,
+                -105.0,
+                3.0,
+            )
+            .expect("location remains nonblocking under queue load");
+        assert!(matches!(decision, RecordingDecision::Pending { .. }));
+    }
+    let started = Instant::now();
+    let decision = state
+        .ingest_location(
+            1_001 + MAX_PENDING_LOCATION_WRITES as u64 * 1_000,
+            1_700_000_000_000 + 1_001 + MAX_PENDING_LOCATION_WRITES as u64 * 1_000,
+            40.00065,
+            -105.0,
+            3.0,
+        )
+        .expect("queue saturation is reported as a decision");
+    assert!(started.elapsed() < Duration::from_millis(100));
+    assert!(matches!(decision, RecordingDecision::StorageError { .. }));
+
+    database.shutdown().expect("database shuts down");
+    let _ = fs::remove_file(path);
+}
+#[test]
+fn mobile_ride_map_core_starts_new_when_the_interrupted_ride_is_older_than_three_hours() {
+    let _guard = crate::tests::test_guard();
+    let path = std::env::temp_dir().join(format!(
+        "cutout-mobile-map-auto-new-old-{}-{}.sqlite3",
+        std::process::id(),
+        Uuid::new_v4()
+    ));
+    let original_ride_id = {
+        let database = RideDatabase::open(&path).expect("database opens");
+        let mut state = RideRecordingSession::new(Some(database.clone()));
+        let snapshot = state
+            .ensure_recording_for_vehicle("pev-1", 1_000)
+            .expect("connection starts ride");
+        database.shutdown().expect("database shuts down");
+        snapshot.ride_id
+    };
+    let now_milliseconds = u64::try_from(
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock follows epoch")
+            .as_millis(),
+    )
+    .expect("wall clock fits u64");
+    let stale_update = now_milliseconds
+        .saturating_sub(AUTO_RESUME_RIDE_WINDOW_MILLISECONDS)
+        .saturating_sub(1);
+    rusqlite::Connection::open(&path)
+        .expect("sqlite opens")
+        .execute(
+            "UPDATE rides SET created_at_ms = ?1, updated_at_ms = ?1",
+            [stale_update],
+        )
+        .expect("ride timestamp ages");
+
+    let database = RideDatabase::open(&path).expect("database reopens");
+    let mut state = RideRecordingSession::new(Some(database.clone()));
+    let started = state
+        .ensure_recording_for_vehicle("pev-1", 2_000)
+        .expect("stale ride is replaced");
+    assert_eq!(started.state, ride_maps::RideLifecycleState::Active);
+    assert_ne!(started.ride_id, original_ride_id);
+
+    database.shutdown().expect("reopened database shuts down");
+    let _ = fs::remove_file(path);
+}
+
+#[cfg(test)]
+mod recovery_tests {
+    use super::*;
+    use ride_maps::{RideEvent, RideLifecycleState, RideSegmentStartReason};
+
+    #[test]
+    fn durable_manual_resume_rebases_clock_and_keeps_route_and_pause_time() {
+        let _guard = crate::tests::test_guard();
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("rides.sqlite");
+        let database = RideDatabase::open(&path).unwrap();
+        let mut recording = RideRecordingSession::new(Some(database.clone()));
+        let original = recording.start_gps_only(999_000, None).unwrap();
+        recording
+            .ingest_location(1_000_000, 1_700_000_000_000, 40.0, -105.0, 3.0)
+            .unwrap();
+        database.summary(original.ride_id).unwrap();
+        recording.poll_location_writes();
+        database.shutdown().unwrap();
+        drop(recording);
+        let database = RideDatabase::open(&path).unwrap();
+        let mut recording = RideRecordingSession::new(Some(database.clone()));
+        let recovered = recording.current_snapshot(1_000).unwrap();
+        assert_eq!(
+            recovered.allowed_actions,
+            vec![RideEvent::Resume, RideEvent::Save, RideEvent::Discard]
+        );
+        assert_eq!(recovered.state, RideLifecycleState::Interrupted);
+        let resumed = recording.transition_at(RideEvent::Resume, 1_000).unwrap();
+        assert_eq!(resumed.ride_id, original.ride_id);
+        assert_eq!(resumed.summary.duration_milliseconds, 1_000);
+        recording
+            .ingest_location(1_500, 1_700_000_010_500, 40.000_01, -105.0, 3.0)
+            .unwrap();
+        database.summary(original.ride_id).unwrap();
+        recording.poll_location_writes();
+        let points = recording.points_after(None, 10).unwrap().points;
+        assert_eq!(points.len(), 2);
+        assert_eq!(
+            points[1].point.sample().monotonic_milliseconds().as_u64(),
+            1_000_500
+        );
+        assert_eq!(
+            points[1].point.segment_start_reason(),
+            RideSegmentStartReason::Resume
+        );
+        recording.transition_at(RideEvent::Pause, 1_600).unwrap();
+        recording.transition_at(RideEvent::Resume, 2_600).unwrap();
+        assert_eq!(
+            recording
+                .current_snapshot(2_700)
+                .unwrap()
+                .summary
+                .duration_milliseconds,
+            1_700
+        );
+        database.shutdown().unwrap();
+    }
+
+    #[test]
+    fn queued_location_identity_cannot_cross_pause_or_new_recording() {
+        let mut recording = RideRecordingSession::new(None);
+        let first = recording.start_gps_only(1_000, None).unwrap();
+        let input = PevcapPhoneLocation {
+            wall_clock_unix_ms: 1_700_000_002_000,
+            latitude_degrees: 40.0,
+            longitude_degrees: -105.0,
+            altitude_meters: 1_000.0,
+            horizontal_accuracy_meters: Some(3.0),
+            vertical_accuracy_meters: None,
+            speed_meters_per_second: None,
+            speed_accuracy_meters_per_second: None,
+            course_degrees: None,
+            course_accuracy_degrees: None,
+        };
+        recording.transition_at(RideEvent::Pause, 1_500).unwrap();
+        recording.transition_at(RideEvent::Resume, 1_600).unwrap();
+        assert!(
+            recording
+                .ingest_location_batch(
+                    first.recording_token,
+                    2_000,
+                    input.wall_clock_unix_ms,
+                    vec![input.clone()]
+                )
+                .unwrap()
+                .is_empty()
+        );
+        recording.transition_at(RideEvent::Stop, 2_100).unwrap();
+        recording.save().unwrap();
+        let next = recording.start_gps_only(2_200, None).unwrap();
+        assert!(
+            recording
+                .ingest_location_batch(
+                    first.recording_token,
+                    2_500,
+                    input.wall_clock_unix_ms,
+                    vec![input]
+                )
+                .unwrap()
+                .is_empty()
+        );
+        assert_eq!(
+            recording.current_snapshot(2_500).unwrap().ride_id,
+            next.ride_id
+        );
+        assert_eq!(
+            recording
+                .current_snapshot(2_500)
+                .unwrap()
+                .summary
+                .point_count,
+            0
+        );
+    }
+}

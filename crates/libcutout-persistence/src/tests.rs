@@ -59,7 +59,7 @@ fn close_music_test_database(database: RideDatabase, path: std::path::PathBuf) {
     let _ = std::fs::remove_file(path);
 }
 
-fn test_guard() -> std::sync::MutexGuard<'static, ()> {
+pub(crate) fn test_guard() -> std::sync::MutexGuard<'static, ()> {
     TEST_LOCK
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner)

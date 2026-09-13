@@ -8,6 +8,9 @@
 
 //! Rust-owned `SQLite` persistence for rides, maps, and mobile state.
 
+mod recording;
+pub use recording::*;
+
 mod storage;
 pub use storage::*;
 

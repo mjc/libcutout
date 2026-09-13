@@ -479,7 +479,6 @@ public final class CutoutSessionCore: NSObject {
     private let rideMapState: MobileRideMapState?
     private let phoneLocationState = MobilePhoneLocationState()
     private let publishedRideMapSnapshot = Mutex<MobileRideMapSnapshotDto?>(nil)
-    private var associatedRideMapConnection: ConnectionAttemptToken?
     private var rideMapWritePoller: DispatchSourceTimer?
     private var didRequestAlwaysLocationAuthorization = false
     private var didResolveBluetoothRestoration = false
@@ -1834,17 +1833,8 @@ public final class CutoutSessionCore: NSObject {
                   self.rideSessionStateHandle.verifiedConnectionAttemptIsCurrent(token: token)
             else { return }
             do {
-                if self.associatedRideMapConnection != token {
-                    _ = try rideMapState.ensureRecordingForVehicle(
-                        platformIdentifier: token.platformIdentifier,
-                        atMs: receivedAt.rawValue
-                    )
-                    self.associatedRideMapConnection = token
-                }
-                _ = try rideMapState.observeTelemetry(platformIdentifier: token.platformIdentifier, atMs: receivedAt.rawValue)
-                if let snapshot = rideMapState.currentSnapshot(atMs: receivedAt.rawValue) {
-                    self.publishRideMapSnapshot(snapshot)
-                }
+                let snapshot = try rideMapState.observeConnectionTelemetry(connection: token, atMs: receivedAt.rawValue)
+                self.publishRideMapSnapshot(snapshot)
             } catch let error as MobileRideMapError {
                 self.publishRideMapError(error)
                 self.recordRideMapDiagnostic("ride_map_connection_error=\(error)")
