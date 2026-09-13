@@ -29,6 +29,17 @@ pub enum IdentificationProbePlan {
     Writes([crate::EncodedIdentificationProbe; 1]),
 }
 
+/// Protocol-owned result of requesting identification queries.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum IdentificationProbePlan {
+    /// Available transport evidence does not support these queries.
+    Unsupported,
+    /// A previous query is still awaiting its response.
+    AlreadyPending,
+    /// Ordered read-only writes selected by protocol policy.
+    Writes([crate::EncodedIdentificationProbe; 3]),
+}
+
 /// Confidence level for staged model identification.
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub enum IdentityConfidence {
