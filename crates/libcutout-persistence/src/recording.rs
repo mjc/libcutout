@@ -146,6 +146,8 @@ pub struct RecordingSnapshot {
     pub recording_token: Option<RecordingToken>,
     /// Retained listening policy of this recording, independent of the future default.
     pub music_history_policy: MusicHistoryPolicy,
+    /// Native acquisition intent from the same owner revision.
+    pub location_acquisition: LocationAcquisition,
     /// Authoritative durable lifecycle.
     pub state: ride_maps::RideLifecycleState,
     /// Valid actions offered to the rider.
@@ -164,10 +166,81 @@ pub struct RecordingSnapshot {
 const MAX_PENDING_LOCATION_WRITES: usize = 64;
 const AUTO_RESUME_RIDE_WINDOW_MILLISECONDS: u64 = 3 * 60 * 60 * 1_000;
 
+/// Platform location authorization, independent of recording lifecycle.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum LocationAuthorization {
+    /// Authorization has not yet been observed or requested.
+    #[default]
+    NotDetermined,
+    /// The rider denied location access.
+    Denied,
+    /// Platform policy restricts location access.
+    Restricted,
+    /// Foreground location access is authorized.
+    WhenInUse,
+    /// Background location access is authorized.
+    Always,
+}
+
+/// Location observations supplied by the platform adapter.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct LocationEnvironment {
+    /// The latest platform permission result.
+    pub authorization: LocationAuthorization,
+    /// Whether system location services are enabled.
+    pub services_enabled: bool,
+    /// A recoverable acquisition error is currently reported.
+    pub temporarily_unavailable: bool,
+}
+
+/// Why a recording can or cannot currently receive location.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum LocationAvailability {
+    /// Platform state has not yet arrived.
+    Checking,
+    /// Location acquisition is permitted.
+    Ready,
+    /// A permission request is required.
+    PermissionRequired,
+    /// The rider denied access.
+    Denied,
+    /// Platform policy restricts access.
+    Restricted,
+    /// System location services are disabled.
+    ServicesDisabled,
+    /// Acquisition may recover while updates remain requested.
+    TemporarilyUnavailable,
+    /// The durable recording owner failed to initialize.
+    StorageUnavailable,
+}
+
+/// Platform acquisition work requested by the recording owner.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum LocationDemand {
+    /// No high-accuracy updates or permission prompt are needed.
+    Idle,
+    /// An active recording needs its initial location permission.
+    RequestPermission,
+    /// Keep high-accuracy updates active, including while the app is backgrounded.
+    Record,
+}
+
+/// Immutable acquisition intent derived from lifecycle and platform observations.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct LocationAcquisition {
+    /// Revision shared with the authoritative recording snapshot.
+    pub revision: u64,
+    /// The reason location is available or unavailable.
+    pub availability: LocationAvailability,
+    /// Required native acquisition work.
+    pub demand: LocationDemand,
+}
+
 /// Owns live recording policy and its durable database operations.
 #[derive(Debug)]
 pub struct RideRecordingSession {
     database: Option<RideDatabase>,
+    location_environment: Option<LocationEnvironment>,
     ride_id: Option<RideId>,
     revision: u64,
     generation: u64,
@@ -192,6 +265,59 @@ struct PendingMapLocationWrite {
 }
 
 impl RideRecordingSession {
+    /// Updates platform evidence without changing the recording lifecycle.
+    pub fn observe_location_environment(&mut self, environment: LocationEnvironment) {
+        if self.location_environment != Some(environment) {
+            self.location_environment = Some(environment);
+            self.revision = self.revision.saturating_add(1);
+        }
+    }
+
+    /// Projects acquisition demand; idle, paused and terminal rides do not request GPS.
+    #[must_use]
+    pub fn location_acquisition(&self) -> LocationAcquisition {
+        let availability = if self.initialization_error.is_some() {
+            LocationAvailability::StorageUnavailable
+        } else if let Some(environment) = self.location_environment {
+            if !environment.services_enabled {
+                LocationAvailability::ServicesDisabled
+            } else {
+                match environment.authorization {
+                    LocationAuthorization::NotDetermined => {
+                        LocationAvailability::PermissionRequired
+                    }
+                    LocationAuthorization::Denied => LocationAvailability::Denied,
+                    LocationAuthorization::Restricted => LocationAvailability::Restricted,
+                    LocationAuthorization::WhenInUse | LocationAuthorization::Always => {
+                        if environment.temporarily_unavailable {
+                            LocationAvailability::TemporarilyUnavailable
+                        } else {
+                            LocationAvailability::Ready
+                        }
+                    }
+                }
+            }
+        } else {
+            LocationAvailability::Checking
+        };
+        let demand = if self.recorder.state() == Some(ride_maps::RideLifecycleState::Active) {
+            match availability {
+                LocationAvailability::Ready | LocationAvailability::TemporarilyUnavailable => {
+                    LocationDemand::Record
+                }
+                LocationAvailability::PermissionRequired => LocationDemand::RequestPermission,
+                _ => LocationDemand::Idle,
+            }
+        } else {
+            LocationDemand::Idle
+        };
+        LocationAcquisition {
+            revision: self.revision,
+            availability,
+            demand,
+        }
+    }
+
     /// Associates confirmed vehicle evidence, preserving unfinished rider choices.
     ///
     /// # Errors
@@ -516,6 +642,7 @@ impl RideRecordingSession {
     pub fn new(database: Option<RideDatabase>) -> Self {
         let mut state = Self {
             database,
+            location_environment: None,
             ride_id: None,
             revision: 0,
             generation: 0,
@@ -675,6 +802,7 @@ impl RideRecordingSession {
                 },
             ),
             state,
+            location_acquisition: self.location_acquisition(),
             music_history_policy: self.music_history_policy,
             allowed_actions: state.recording_actions(),
             telemetry_state: self.recorder.telemetry_state_at(

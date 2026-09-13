@@ -499,3 +499,100 @@ fn saved_listening_default_failure_rolls_back_new_ride_and_preserves_retry() {
     database.shutdown().unwrap();
     let _ = fs::remove_file(path);
 }
+
+#[test]
+fn location_acquisition_is_owned_by_the_recording_lifecycle() {
+    let mut session = RideRecordingSession::new(None);
+    session.observe_location_environment(LocationEnvironment {
+        authorization: LocationAuthorization::Always,
+        services_enabled: true,
+        temporarily_unavailable: false,
+    });
+    assert_eq!(session.location_acquisition().demand, LocationDemand::Idle);
+    session.start_gps_only(1_000, None).unwrap();
+    assert_eq!(
+        session.location_acquisition().demand,
+        LocationDemand::Record
+    );
+    session
+        .transition_at(ride_maps::RideEvent::Pause, 2_000)
+        .unwrap();
+    assert_eq!(session.location_acquisition().demand, LocationDemand::Idle);
+    session
+        .transition_at(ride_maps::RideEvent::Resume, 3_000)
+        .unwrap();
+    assert_eq!(
+        session.location_acquisition().demand,
+        LocationDemand::Record
+    );
+    session
+        .transition_at(ride_maps::RideEvent::Stop, 4_000)
+        .unwrap();
+    assert_eq!(session.location_acquisition().demand, LocationDemand::Idle);
+    session.save().unwrap();
+    assert_eq!(session.location_acquisition().demand, LocationDemand::Idle);
+}
+
+#[test]
+fn location_acquisition_distinguishes_permission_services_and_temporary_failure() {
+    let mut session = RideRecordingSession::new(None);
+    let cases = [
+        (
+            LocationAuthorization::NotDetermined,
+            true,
+            false,
+            LocationAvailability::PermissionRequired,
+            LocationDemand::RequestPermission,
+        ),
+        (
+            LocationAuthorization::Denied,
+            true,
+            false,
+            LocationAvailability::Denied,
+            LocationDemand::Idle,
+        ),
+        (
+            LocationAuthorization::Restricted,
+            true,
+            false,
+            LocationAvailability::Restricted,
+            LocationDemand::Idle,
+        ),
+        (
+            LocationAuthorization::Always,
+            false,
+            false,
+            LocationAvailability::ServicesDisabled,
+            LocationDemand::Idle,
+        ),
+        (
+            LocationAuthorization::WhenInUse,
+            true,
+            false,
+            LocationAvailability::Ready,
+            LocationDemand::Record,
+        ),
+        (
+            LocationAuthorization::Always,
+            true,
+            true,
+            LocationAvailability::TemporarilyUnavailable,
+            LocationDemand::Record,
+        ),
+    ];
+    session.start_gps_only(1_000, None).unwrap();
+    for (authorization, services_enabled, temporarily_unavailable, availability, demand) in cases {
+        session.observe_location_environment(LocationEnvironment {
+            authorization,
+            services_enabled,
+            temporarily_unavailable,
+        });
+        let snapshot = session.location_acquisition();
+        assert_eq!(snapshot.availability, availability);
+        assert_eq!(snapshot.demand, demand);
+        assert_eq!(
+            session.current_snapshot(1_000).unwrap().state,
+            ride_maps::RideLifecycleState::Active
+        );
+    }
+}
