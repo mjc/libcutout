@@ -67,6 +67,12 @@ pub enum SettingId {
     AccelerationAssist,
     /// Independently controlled taillight.
     Taillight,
+    /// Time until automatic shutdown, reported in seconds.
+    AutoShutdownRemaining,
+    /// Configured idle delay before power-off, reported in minutes.
+    PowerOffDelay,
+    /// Whether the wheel reports that it is charging.
+    ChargeMode,
 }
 
 /// A descriptor's semantic value, never a raw field identifier.

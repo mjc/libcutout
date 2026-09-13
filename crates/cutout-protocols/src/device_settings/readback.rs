@@ -5,7 +5,7 @@ use cutout_core::{
     SettingsReadback, SpeedAlarmMode,
 };
 
-use super::{DeviceControlProfile, SettingControl, command_kind, control};
+use super::{DeviceControlProfile, SettingControl, control};
 use crate::{
     AERO_FIELD_BEEPER_VOLUME_PERCENT, AERO_FIELD_BRAKE_OVERPRESSURE_ALARM_PERCENT,
     AERO_FIELD_DISPLAY_BACKLIGHT_PERCENT, AERO_FIELD_DYNAMIC_ASSIST_PERCENT,
@@ -13,8 +13,10 @@ use crate::{
     AERO_FIELD_MAX_CHARGE_VOLTAGE_RAW, AERO_FIELD_PEDAL_DIP_COMPENSATION_PERCENT,
     AERO_FIELD_PEDAL_HARDNESS_PERCENT, AERO_FIELD_PWM_PERCENT, AERO_FIELD_TRANSPORT_MODE,
     AERO_FIELD_VOLTAGE_CORRECTION_TENTHS_PERCENT, AERO_FIELD_WHEEL_UNITS,
-    BEGODE_FIELD_LED_AND_LIGHT_MODE, BEGODE_FIELD_SETTINGS_BITS, BEGODE_FIELD_TILTBACK_SPEED_KMH,
-    BegodeLightMode, VETERAN_FIELD_PEDALS_MODE, VETERAN_FIELD_SPEED_ALERT_DECI_KMH,
+    BEGODE_FIELD_LED_AND_LIGHT_MODE, BEGODE_FIELD_POWER_OFF_TIMER_MINUTES,
+    BEGODE_FIELD_SETTINGS_BITS, BEGODE_FIELD_TILTBACK_SPEED_KMH, BegodeLightMode,
+    VETERAN_FIELD_AUTO_SHUTDOWN_TIME_REMAINING_SECONDS, VETERAN_FIELD_CHARGE_MODE,
+    VETERAN_FIELD_PEDALS_MODE, VETERAN_FIELD_SPEED_ALERT_DECI_KMH,
     VETERAN_FIELD_SPEED_TILTBACK_DECI_KMH,
 };
 
@@ -36,7 +38,8 @@ impl DeviceControlProfile {
         for entry in readback.entries().into_iter().flatten() {
             normalize_entry(entry, &mut observations);
         }
-        observations.retain(|entry| self.available.supports_command_kind(command_kind(entry.id)));
+        let descriptors = self.descriptors(false);
+        observations.retain(|entry| descriptors.iter().any(|item| item.id == entry.id));
         observations
     }
 }
@@ -77,6 +80,9 @@ fn normalize_entry(entry: SettingsEntry, observations: &mut Vec<SettingObservati
         AERO_FIELD_WHEEL_UNITS => SettingId::DisplayUnits,
         VETERAN_FIELD_SPEED_TILTBACK_DECI_KMH => SettingId::TiltbackSpeed,
         VETERAN_FIELD_SPEED_ALERT_DECI_KMH => SettingId::SpeedAlarmThreshold,
+        VETERAN_FIELD_AUTO_SHUTDOWN_TIME_REMAINING_SECONDS => SettingId::AutoShutdownRemaining,
+        VETERAN_FIELD_CHARGE_MODE => SettingId::ChargeMode,
+        BEGODE_FIELD_POWER_OFF_TIMER_MINUTES => SettingId::PowerOffDelay,
         VETERAN_FIELD_PEDALS_MODE => {
             let value = u16::try_from(raw)
                 .ok()

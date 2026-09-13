@@ -4,8 +4,10 @@ use cutout_core::{
 };
 use cutout_protocols::{
     AERO_FIELD_PWM_PERCENT, AERO_FIELD_VOLTAGE_CORRECTION_TENTHS_PERCENT,
-    BEGODE_FIELD_LED_AND_LIGHT_MODE, BEGODE_FIELD_SETTINGS_BITS, BEGODE_FIELD_TILTBACK_SPEED_KMH,
-    DeviceControlProfile, SettingControl, SettingObservation,
+    BEGODE_FIELD_LED_AND_LIGHT_MODE, BEGODE_FIELD_POWER_OFF_TIMER_MINUTES,
+    BEGODE_FIELD_SETTINGS_BITS, BEGODE_FIELD_TILTBACK_SPEED_KMH, DeviceControlProfile,
+    SettingAccess, SettingControl, SettingObservation, SettingUnit,
+    VETERAN_FIELD_AUTO_SHUTDOWN_TIME_REMAINING_SECONDS, VETERAN_FIELD_CHARGE_MODE,
     VETERAN_FIELD_SPEED_TILTBACK_DECI_KMH, aero_control_profile, falcon_control_profile,
 };
 
@@ -239,4 +241,76 @@ fn absent_and_unrelated_fields_do_not_manufacture_observations() {
     assert!(read(profile, u16::MAX, 80).is_empty());
     assert!(read(falcon_control_profile(), AERO_FIELD_PWM_PERCENT, 80).is_empty());
     assert!(read(DeviceControlProfile::default(), AERO_FIELD_PWM_PERCENT, 80).is_empty());
+}
+
+#[test]
+fn passive_garage_rows_keep_exact_meaning_and_cannot_be_submitted() {
+    let aero = aero_control_profile();
+    let descriptors = aero.descriptors(false);
+    let auto_shutdown = descriptors
+        .iter()
+        .find(|entry| entry.id == SettingId::AutoShutdownRemaining)
+        .unwrap();
+    assert_eq!(auto_shutdown.access, SettingAccess::ReadOnly);
+    assert!(matches!(
+        auto_shutdown.control,
+        SettingControl::Number {
+            unit: SettingUnit::Seconds,
+            ..
+        }
+    ));
+    let charge_mode = descriptors
+        .iter()
+        .find(|entry| entry.id == SettingId::ChargeMode)
+        .unwrap();
+    assert_eq!(charge_mode.access, SettingAccess::ReadOnly);
+    assert_eq!(
+        value(
+            &read(aero, VETERAN_FIELD_AUTO_SHUTDOWN_TIME_REMAINING_SECONDS, 90),
+            SettingId::AutoShutdownRemaining,
+        ),
+        Some(DeviceSettingValue::Number(90))
+    );
+    assert_eq!(
+        value(
+            &read(aero, VETERAN_FIELD_CHARGE_MODE, 1),
+            SettingId::ChargeMode,
+        ),
+        Some(DeviceSettingValue::Choice(1))
+    );
+    assert!(
+        aero.command(SettingId::ChargeMode, DeviceSettingValue::Choice(1), true,)
+            .is_err()
+    );
+
+    let falcon = falcon_control_profile();
+    let power_off = falcon
+        .descriptors(false)
+        .into_iter()
+        .find(|entry| entry.id == SettingId::PowerOffDelay)
+        .unwrap();
+    assert_eq!(power_off.access, SettingAccess::ReadOnly);
+    assert!(matches!(
+        power_off.control,
+        SettingControl::Number {
+            unit: SettingUnit::Minutes,
+            ..
+        }
+    ));
+    assert_eq!(
+        value(
+            &read(falcon, BEGODE_FIELD_POWER_OFF_TIMER_MINUTES, 15),
+            SettingId::PowerOffDelay,
+        ),
+        Some(DeviceSettingValue::Number(15))
+    );
+    assert!(read(aero, BEGODE_FIELD_POWER_OFF_TIMER_MINUTES, 15).is_empty());
+    assert!(
+        read(
+            falcon,
+            VETERAN_FIELD_AUTO_SHUTDOWN_TIME_REMAINING_SECONDS,
+            90,
+        )
+        .is_empty()
+    );
 }
