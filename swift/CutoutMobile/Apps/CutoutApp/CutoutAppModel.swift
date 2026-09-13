@@ -322,6 +322,20 @@ final class CutoutAppModel {
         }
     }
 
+    func recordCameraMediaReference(
+        source: CameraSourceKind,
+        media: CameraMediaEvidence,
+        localURL: URL
+    ) {
+        guard let captureFileName else { return }
+        recordCameraMediaReference(
+            captureFileName: captureFileName,
+            source: source,
+            media: media,
+            localURL: localURL
+        )
+    }
+
     private let core: any CutoutSessionDriving
     private let liveActivityCoordinator: LiveActivityRideLifecycleCoordinator
     private let selectedDeviceStore: DevicePickerSelectionStore
@@ -3114,6 +3128,7 @@ final class CutoutAppModel {
             guard latestCaptureGeneration.map({ generation >= $0 }) ?? true else { return }
             latestCaptureGeneration = generation
             activeCaptureGeneration = generation
+            core.rideSessionStateHandle.clearCameraMediaProvenance()
             captureFileName = fileURL.lastPathComponent
             captureNotificationCount = 0
             captureStatus = captureFileName.map(CaptureStatus.recordingLocally)
