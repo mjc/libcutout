@@ -12517,10 +12517,9 @@ impl CaptureWriter {
         metadata: &CaptureMetadata,
     ) -> Result<Self, String> {
         let header = capture_header(wall_clock_start_unix_ms, platform_id, write_limit, metadata)?;
-        OpenOptions::new()
-            .create(true)
+        let file = OpenOptions::new()
+            .create_new(true)
             .write(true)
-            .truncate(false)
             .open(&path)
             .map_err(|error| error.to_string())?;
         let (sender, receiver) = sync_channel(CAPTURE_WRITER_QUEUE_CAPACITY);
@@ -12531,7 +12530,14 @@ impl CaptureWriter {
         let join = thread::Builder::new()
             .name("cutout-pevcap-writer".into())
             .spawn(move || {
-                run_capture_writer(&path, header, &receiver, &thread_records, &thread_state);
+                run_capture_writer(
+                    &path,
+                    file,
+                    header,
+                    &receiver,
+                    &thread_records,
+                    &thread_state,
+                );
             })
             .map_err(|error| error.to_string())?;
         Ok(Self {
@@ -12668,12 +12674,13 @@ fn capture_header(
 
 fn run_capture_writer(
     path: &Path,
+    file: File,
     mut header: PevcapHeader,
     receiver: &Receiver<CaptureWriterMessage>,
     records: &CaptureRecordPool,
     state: &CaptureWriterState,
 ) {
-    let result = write_capture_stream(path, &mut header, receiver, records, state);
+    let result = write_capture_stream(path, file, &mut header, receiver, records, state);
     if let Err(error) = result {
         state.fail(error);
     }
@@ -12685,12 +12692,12 @@ fn run_capture_writer(
 )]
 fn write_capture_stream(
     path: &Path,
+    file: File,
     header: &mut PevcapHeader,
     receiver: &Receiver<CaptureWriterMessage>,
     records: &CaptureRecordPool,
     state: &CaptureWriterState,
 ) -> Result<(), String> {
-    let file = File::create(path).map_err(|error| error.to_string())?;
     let mut writer = BufWriter::new(file);
     let header_bytes = write_line(
         &mut writer,
@@ -13060,7 +13067,9 @@ impl MobilePevcapCaptureBuilder {
         self.send_metadata_update()
     }
 
-    /// Starts the Rust-owned streaming writer for a JSONL capture.
+    /// Starts the Rust-owned streaming writer for a new JSONL capture.
+    ///
+    /// Returns `false` if the path already exists, preserving the existing capture.
     pub fn start_writer(&self, path: String) -> bool {
         let metadata = self.metadata();
         let writer = match CaptureWriter::start(
@@ -21749,6 +21758,49 @@ mod tests {
             clock_uncertainty_ms: 75,
             ride_sequence: Some(2),
         })));
+    }
+
+    #[test]
+    fn mobile_capture_writer_preserves_existing_active_and_completed_captures() {
+        for finish_first in [false, true] {
+            let path = std::env::temp_dir().join(format!(
+                "cutout-mobile-writer-collision-{}.jsonl",
+                Uuid::new_v4()
+            ));
+            let first =
+                MobilePevcapCaptureBuilder::new(wc(1_700_000_000_000), "first-device".into(), None);
+            assert!(first.start_writer(path.to_string_lossy().into_owned()));
+            assert!(first.record_link_up(ms(1), None));
+            assert!(first.flush_writer());
+            if finish_first {
+                assert!(first.finish_writer());
+            }
+            let original = fs::read(&path).expect("first capture is readable");
+            let second = MobilePevcapCaptureBuilder::new(
+                wc(1_700_000_000_000),
+                "second-device".into(),
+                None,
+            );
+            let started = second.start_writer(path.to_string_lossy().into_owned());
+            assert!(second.finish_writer());
+
+            assert!(!started, "an existing capture must reject a second writer");
+            assert!(second.writer_status().failed);
+            assert_eq!(
+                fs::read(&path).expect("capture survives collision"),
+                original
+            );
+            if !finish_first {
+                assert!(first.record_link_down(ms(2)));
+                assert!(first.finish_writer());
+            }
+            let bytes = fs::read(&path).expect("original capture remains readable");
+            let capture = PevcapCapture::decode(&bytes, PevcapEncoding::Jsonl)
+                .expect("original capture remains valid");
+            assert_eq!(capture.header.platform_id.as_str(), "first-device");
+            assert_eq!(capture.records.len(), if finish_first { 1 } else { 2 });
+            fs::remove_file(path).expect("capture fixture is removable");
+        }
     }
 
     #[test]
