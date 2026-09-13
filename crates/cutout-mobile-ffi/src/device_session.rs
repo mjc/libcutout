@@ -1,7 +1,6 @@
 //! Generic device-session projection; protocol selection stays below the FFI boundary.
 
-use cutout_core::{ConnectionReadiness, ProtocolFamily, SessionInputDto};
-use cutout_protocols::{DeviceSession, VehicleKind};
+use cutout_protocols::{DeviceConnectionSnapshot, DeviceConnectionStep, VehicleKind};
 
 use crate::{
     CutoutSessionStateHandle, DeviceDetectionEvent, DeviceDetectionResolutionRecord,
@@ -58,24 +57,32 @@ pub struct MobileDeviceSessionStepDto {
     pub diagnostics: MobileParserDiagnosticsDto,
 }
 
-impl crate::MobileSessionState {
-    fn device_snapshot(&self) -> MobileDeviceSessionSnapshotDto {
+impl From<DeviceConnectionSnapshot> for MobileDeviceSessionSnapshotDto {
+    fn from(value: DeviceConnectionSnapshot) -> Self {
         MobileDeviceSessionSnapshotDto {
-            connection: self.state.connection.snapshot().into(),
-            identity: self.device.as_ref().map(|device| {
-                let identity = device.identity();
-                MobileDeviceIdentityDto {
-                    protocol: cutout_core::ProtocolFamilyDto::from(identity.protocol).into(),
-                    vehicle_kind: match identity.vehicle_kind {
-                        VehicleKind::Unknown => MobileVehicleKindDto::Unknown,
-                        VehicleKind::ElectricUnicycle => MobileVehicleKindDto::ElectricUnicycle,
-                        VehicleKind::Board => MobileVehicleKindDto::Board,
-                        VehicleKind::Scooter => MobileVehicleKindDto::Scooter,
-                        VehicleKind::Bike => MobileVehicleKindDto::Bike,
-                    },
-                    model: identity.model.map(|model| model.model.to_string()),
-                }
+            connection: (&value.connection).into(),
+            identity: value.identity.map(|identity| MobileDeviceIdentityDto {
+                protocol: cutout_core::ProtocolFamilyDto::from(identity.protocol).into(),
+                vehicle_kind: match identity.vehicle_kind {
+                    VehicleKind::Unknown => MobileVehicleKindDto::Unknown,
+                    VehicleKind::ElectricUnicycle => MobileVehicleKindDto::ElectricUnicycle,
+                    VehicleKind::Board => MobileVehicleKindDto::Board,
+                    VehicleKind::Scooter => MobileVehicleKindDto::Scooter,
+                    VehicleKind::Bike => MobileVehicleKindDto::Bike,
+                },
+                model: identity.model.map(|model| model.model.to_string()),
             }),
+        }
+    }
+}
+
+impl From<DeviceConnectionStep> for MobileDeviceSessionStepDto {
+    fn from(value: DeviceConnectionStep) -> Self {
+        Self {
+            session: value.session.into(),
+            result: value.result.into(),
+            telemetry: value.telemetry.into(),
+            diagnostics: value.diagnostics.into(),
         }
     }
 }
@@ -123,7 +130,7 @@ impl CutoutSessionStateHandle {
     /// Returns the protocol-selected session without exposing a model constructor.
     #[must_use]
     pub fn device_session_snapshot(&self) -> MobileDeviceSessionSnapshotDto {
-        self.lock_inner().device_snapshot()
+        self.lock_inner().snapshot().into()
     }
 
     /// Completes detection from retained Rust evidence; terminal attempts cannot promote.
@@ -134,34 +141,12 @@ impl CutoutSessionStateHandle {
         now_ms: u64,
     ) -> MobileDeviceSessionSnapshotDto {
         let mut inner = self.lock_inner();
-        let token = token.into();
-        if !inner.state.connection.is_current(&token)
-            || inner.state.connection.snapshot().readiness != ConnectionReadiness::Pending
-        {
-            return inner.device_snapshot();
-        }
-        if inner
-            .state
-            .connection
-            .expire(&token, crate::MonotonicTimestamp::new(now_ms))
-        {
-            return inner.device_snapshot();
-        }
-        let resolution = inner.detector.resolution(&inner.state);
-        if let Some(device) = DeviceSession::from_detection(&resolution) {
-            let identity = device.identity();
-            if identification_complete
-                || identity.model.is_some()
-                || identity.protocol == ProtocolFamily::Vesc
-            {
-                if inner.state.connection.finish_detection(&token, true) {
-                    inner.device = Some(device);
-                }
-            }
-        } else if identification_complete {
-            inner.state.connection.finish_detection(&token, false);
-        }
-        inner.device_snapshot()
+        inner.resolve(
+            &token.into(),
+            identification_complete,
+            crate::MonotonicTimestamp::new(now_ms),
+        );
+        inner.snapshot().into()
     }
 
     /// Decodes only for the currently verified attempt and pairs the resulting identity.
@@ -170,20 +155,9 @@ impl CutoutSessionStateHandle {
         token: MobileConnectionAttemptTokenDto,
         input: MobileSessionInputDto,
     ) -> Option<MobileDeviceSessionStepDto> {
-        let mut inner = self.lock_inner();
-        if !inner.state.connection.is_verified(&token.into()) {
-            return None;
-        }
-        let device = inner.device.as_mut()?;
-        let result = device.ingest_checked(&SessionInputDto::from(input)).into();
-        let telemetry = device.current_snapshot().into();
-        let diagnostics = device.diagnostics().into();
-        Some(MobileDeviceSessionStepDto {
-            session: inner.device_snapshot(),
-            result,
-            telemetry,
-            diagnostics,
-        })
+        self.lock_inner()
+            .ingest(&token.into(), &input.into())
+            .map(Into::into)
     }
 }
 
@@ -193,14 +167,9 @@ impl CutoutSessionStateHandle {
         token: MobileConnectionAttemptTokenDto,
         event: DeviceDetectionEvent<'_>,
     ) -> Option<DeviceDetectionResolutionRecord> {
-        let mut inner = self.lock_inner();
-        if !inner.state.connection.is_current(&token.into()) {
-            return None;
-        }
-        let crate::MobileSessionState {
-            state, detector, ..
-        } = &mut *inner;
-        Some(detector.observe(state, event).into())
+        self.lock_inner()
+            .observe_for_attempt(&token.into(), event)
+            .map(Into::into)
     }
 }
 

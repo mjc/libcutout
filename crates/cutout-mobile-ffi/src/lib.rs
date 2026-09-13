@@ -799,12 +799,7 @@ pub struct CutoutSessionStateHandle {
     inner: Mutex<MobileSessionState>,
 }
 
-#[derive(Debug, Default)]
-struct MobileSessionState {
-    state: CutoutSessionState,
-    detector: DeviceDetectionSession,
-    device: Option<cutout_protocols::DeviceSession>,
-}
+type MobileSessionState = cutout_protocols::DeviceConnectionSession;
 
 impl DiscoveryObservation {
     fn into_core(self) -> CoreDiscoveryObservation {
