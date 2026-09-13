@@ -606,6 +606,10 @@ impl DatabaseWorker<'_> {
                 let _ = reply.send(Ok(()));
                 return ControlFlow::Break(());
             }
+            Command::FlushPendingWrites { reply } => {
+                // Each preceding command completes its transaction before this FIFO barrier.
+                let _ = reply.send(Ok(()));
+            }
             Command::Shutdown { reply } => {
                 worker_alive.store(false, Ordering::Release);
                 let _ = reply.send(Ok(()));

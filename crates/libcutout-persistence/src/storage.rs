@@ -3198,6 +3198,15 @@ impl RideDatabase {
         service::begin_shutdown(self.service_id).map(|_| ())
     }
 
+    /// Waits until previously queued writes have completed their transactions.
+    ///
+    /// This keeps the shared database worker open. Call off the native main actor.
+    /// # Errors
+    /// Returns [`StorageError`] when the worker cannot acknowledge the barrier.
+    pub fn flush_pending_writes(&self) -> Result<(), StorageError> {
+        self.request_blocking(|reply| Command::FlushPendingWrites { reply })
+    }
+
     /// Stops the process-wide worker and releases its ownership slot.
     ///
     /// # Errors
@@ -3364,6 +3373,9 @@ struct ManagedArtifact {
 }
 
 enum Command {
+    FlushPendingWrites {
+        reply: Reply<()>,
+    },
     BeginCaptureData {
         digest: String,
         encoding: PevcapEncoding,

@@ -460,6 +460,17 @@ impl RideRecordingSession {
         Ok(observation)
     }
 
+    /// Settles queued location writes without ending or pausing the recording.
+    ///
+    /// # Errors
+    /// Returns [`RecordingError`] if the database cannot acknowledge preceding writes.
+    pub fn checkpoint(&mut self) -> Result<Vec<RecordingDecision>, RecordingError> {
+        if let Some(database) = &self.database {
+            database.flush_pending_writes()?;
+        }
+        Ok(self.poll_location_writes())
+    }
+
     /// Consumes completed writes and rebuilds speculative admission from durable state.
     pub fn poll_location_writes(&mut self) -> Vec<RecordingDecision> {
         let current_ride_id = self.ride_id;

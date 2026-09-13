@@ -639,3 +639,58 @@ fn diagnostic_capture_location_demand_is_explicit_and_generation_scoped() {
         ride_maps::RideLifecycleState::Paused
     );
 }
+
+#[test]
+fn recording_checkpoint_settles_pending_points_without_ending_the_active_ride() {
+    let _guard = crate::tests::test_guard();
+    let path =
+        std::env::temp_dir().join(format!("cutout-ride-checkpoint-{}.sqlite3", Uuid::new_v4()));
+    let database = RideDatabase::open(&path).unwrap();
+    let mut session = RideRecordingSession::new(Some(database.clone()));
+    let active = session.start_gps_only(1_000, None).unwrap();
+    assert!(matches!(
+        session
+            .ingest_location(2_000, 1_700_000_002_000, 40.0, -105.0, 3.0)
+            .unwrap(),
+        RecordingDecision::Pending { .. }
+    ));
+    let decisions = session.checkpoint().unwrap();
+    assert!(matches!(
+        decisions.as_slice(),
+        [RecordingDecision::Accepted { .. }]
+    ));
+    let checkpoint = session.current_snapshot(2_000).unwrap();
+    assert_eq!(checkpoint.ride_id, active.ride_id);
+    assert_eq!(checkpoint.state, ride_maps::RideLifecycleState::Active);
+    assert_eq!(checkpoint.summary.point_count, 1);
+    assert!(session.checkpoint().unwrap().is_empty());
+    drop(session);
+    database.shutdown().unwrap();
+    let database = RideDatabase::open(&path).unwrap();
+    let recovered = RideRecordingSession::new(Some(database.clone()))
+        .current_snapshot(2_000)
+        .unwrap();
+    assert_eq!(recovered.ride_id, active.ride_id);
+    assert_eq!(recovered.state, ride_maps::RideLifecycleState::Interrupted);
+    assert_eq!(recovered.summary.point_count, 1);
+    database.shutdown().unwrap();
+    let _ = fs::remove_file(path);
+}
+
+#[test]
+fn recording_checkpoint_reports_a_closed_worker_without_claiming_durability() {
+    let _guard = crate::tests::test_guard();
+    let path = std::env::temp_dir().join(format!(
+        "cutout-ride-checkpoint-closed-{}.sqlite3",
+        Uuid::new_v4()
+    ));
+    let database = RideDatabase::open(&path).unwrap();
+    let mut session = RideRecordingSession::new(Some(database.clone()));
+    let active = session.start_gps_only(1_000, None).unwrap();
+    database.shutdown().unwrap();
+    assert!(session.checkpoint().is_err());
+    let snapshot = session.current_snapshot(1_000).unwrap();
+    assert_eq!(snapshot.ride_id, active.ride_id);
+    assert_eq!(snapshot.state, ride_maps::RideLifecycleState::Active);
+    let _ = fs::remove_file(path);
+}
