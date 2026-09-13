@@ -10,6 +10,7 @@ struct RideMapLiveContentView: View {
     let cameraRegion: MobileRideMapCameraRegion?
     let segments: [MobileRideMapSegmentDisplayMetadata]
     let snapshot: MobileRideMapSnapshotDto?
+    var isCommandPending = false
     let availability: MobileRideMapAvailability
     let speed: SpeedReadout
     let vehicleName: String?
@@ -79,6 +80,7 @@ struct RideMapLiveContentView: View {
                         stop: stop,
                         start: start
                     )
+                    .disabled(isCommandPending)
                     RideMapCameraControlsView(
                         followsLatestPoint: $followsLatestPoint,
                         recenter: recenterOnLatestPoint
@@ -131,6 +133,7 @@ struct RideMapLiveContentView: View {
 private struct RideMapLiveStatusView: View {
     let displayPointCount: Int
     let snapshot: MobileRideMapSnapshotDto?
+    var isCommandPending = false
     let availability: MobileRideMapAvailability
     let vehicleName: String?
     let mapError: MobileRideMapError?

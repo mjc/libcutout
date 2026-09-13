@@ -505,6 +505,53 @@ final class CutoutAppModelTests: XCTestCase {
     }
 
     @MainActor
+    func testRecordingOwnerRejectsDuplicateCommandsAndLateCompletionAfterCancellation() async throws {
+        let driver = SessionDriverSpy(rows: [])
+        let active = try XCTUnwrap(driver.rideMapStateHandle).startGpsOnly(
+            atMs: 100, lastConnectedVehicle: nil
+        )
+        let recording = RideRecordingModel(core: driver)
+        var completion: CheckedContinuation<MobileRideMapSnapshotDto, Never>?
+        var submissions = 0
+        let first = Task {
+            await recording.performCommand {
+                submissions += 1
+                return await withCheckedContinuation { completion = $0 }
+            }
+        }
+        await Self.waitUntil("pending recording command") { completion != nil }
+        XCTAssertTrue(recording.isCommandPending)
+        let duplicate = await recording.performCommand {
+            submissions += 1
+            return active
+        }
+        XCTAssertFalse(duplicate)
+        XCTAssertEqual(submissions, 1)
+
+        recording.cancel()
+        completion?.resume(returning: active)
+        let applied = await first.value
+        XCTAssertFalse(applied)
+        XCTAssertFalse(recording.isCommandPending)
+        XCTAssertNil(recording.snapshot)
+        XCTAssertNil(recording.error)
+    }
+
+    @MainActor
+    func testRecordingOwnerDoesNotStayAliveThroughItsRefreshTask() async throws {
+        let driver = SessionDriverSpy(rows: [])
+        let active = try XCTUnwrap(driver.rideMapStateHandle).startGpsOnly(
+            atMs: 100, lastConnectedVehicle: nil
+        )
+        var recording: RideRecordingModel? = RideRecordingModel(core: driver)
+        weak var weakRecording = recording
+        recording?.applySnapshot(active)
+        await Task.yield()
+        recording = nil
+        await Self.waitUntil("recording owner teardown") { weakRecording == nil }
+    }
+
+    @MainActor
     func testLateRecordingSnapshotCannotReviveSavedRide() async throws {
         let driver = SessionDriverSpy(rows: [])
         let model = CutoutAppModel(core: driver)
@@ -756,56 +803,6 @@ final class CutoutAppModelTests: XCTestCase {
         XCTAssertNotNil(model.rideMapHistoryDetailRouteError)
         XCTAssertNil(model.rideMapHistoryRouteError)
         XCTAssertFalse(model.rideMapHistoryDetailRouteLoading)
-    }
-
-    @MainActor
-    func testLiveProjectionGenerationRejectsStaleOrDisabledResults() {
-        XCTAssertTrue(
-            CutoutAppModel.shouldApplyLiveProjection(
-                generation: 3,
-                currentGeneration: 3,
-                enabled: true
-            )
-        )
-        XCTAssertFalse(
-            CutoutAppModel.shouldApplyLiveProjection(
-                generation: 2,
-                currentGeneration: 3,
-                enabled: true
-            )
-        )
-        XCTAssertFalse(
-            CutoutAppModel.shouldApplyLiveProjection(
-                generation: 3,
-                currentGeneration: 3,
-                enabled: false
-            )
-        )
-    }
-
-    @MainActor
-    func testRestoredProjectionDoesNotReplaceNewerLiveState() {
-        XCTAssertTrue(
-            CutoutAppModel.shouldApplyRestoredLiveProjection(
-                restorationGeneration: 3,
-                currentGeneration: 3,
-                liveProjectionEnabled: false
-            )
-        )
-        XCTAssertFalse(
-            CutoutAppModel.shouldApplyRestoredLiveProjection(
-                restorationGeneration: 2,
-                currentGeneration: 3,
-                liveProjectionEnabled: false
-            )
-        )
-        XCTAssertFalse(
-            CutoutAppModel.shouldApplyRestoredLiveProjection(
-                restorationGeneration: 3,
-                currentGeneration: 3,
-                liveProjectionEnabled: true
-            )
-        )
     }
 
     func testRouteProjectionUsesRustBoundedProjection() async throws {
