@@ -1,4 +1,5 @@
 import CutoutMobile
+import Foundation
 import CutoutMobileFFI
 
 #if DEBUG
@@ -261,6 +262,11 @@ enum CutoutUITestSessionFixture: Equatable {
         return CutoutSessionTestScript(
             candidate: candidate,
             telemetry: emitsPendingTelemetry ? nil : telemetry,
+            // CRC-valid VESC identity reply, shared with the Rust device-session contract tests.
+            protocolNotifications: isEuc ? [] : [Data([
+                2, 20, 157, 7, 1, 2, 97, 98, 99, 49, 50, 51, 0, 117, 115, 101,
+                114, 104, 97, 115, 104, 0, 38, 208, 3,
+            ])],
             telemetryUpdate: telemetryUpdate,
             telemetryUpdateDelayMilliseconds: telemetryUpdateDelayMilliseconds,
             bmsSnapshot: testBmsSnapshot,

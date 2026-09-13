@@ -536,6 +536,10 @@ final class CutoutSessionCoreTests: XCTestCase {
             testScript: CutoutSessionTestScript(
                 candidate: scriptedVescCandidate,
                 telemetry: TelemetrySnapshot(speed: speedValue(8_000)),
+                protocolNotifications: [Data([
+                    2, 20, 157, 7, 1, 2, 97, 98, 99, 49, 50, 51, 0, 117, 115, 101,
+                    114, 104, 97, 115, 104, 0, 38, 208, 3,
+                ])],
                 startsLive: true,
                 connectionDelayMilliseconds: 0
             ),
@@ -556,11 +560,16 @@ final class CutoutSessionCoreTests: XCTestCase {
 
     func testProductionLocationPathPublishesAcceptedRideMapPoint() {
         let live = expectation(description: "scripted session reaches live")
+        let recording = expectation(description: "durable recording accepts locations")
         let pointAccepted = expectation(description: "ride-map point is accepted")
         let core = CutoutSessionCore(
             testScript: CutoutSessionTestScript(
                 candidate: scriptedVescCandidate,
                 telemetry: TelemetrySnapshot(speed: speedValue(8_000)),
+                protocolNotifications: [Data([
+                    2, 20, 157, 7, 1, 2, 97, 98, 99, 49, 50, 51, 0, 117, 115, 101,
+                    114, 104, 97, 115, 104, 0, 38, 208, 3,
+                ])],
                 startsLive: true,
                 connectionDelayMilliseconds: 0
             ),
@@ -569,13 +578,17 @@ final class CutoutSessionCoreTests: XCTestCase {
         core.onPhaseChange = { phase in
             if phase == .live { live.fulfill() }
         }
+        core.onRideMapSnapshotChange = { snapshot in
+            if snapshot.state == .active { recording.fulfill() }
+        }
         core.onRideMapDecisionChange = { _, decision in
             if case .accepted = decision { pointAccepted.fulfill() }
         }
 
         core.start()
         XCTAssertTrue(core.pair(platformIdentifier: scriptedVescCandidate.platformIdentifier))
-        wait(for: [live], timeout: 1)
+        wait(for: [live, recording], timeout: 1)
+        core.onRideMapSnapshotChange = nil
         let location = CLLocation(
             coordinate: CLLocationCoordinate2D(latitude: 39.7392, longitude: -104.9903),
             altitude: 1_600,
