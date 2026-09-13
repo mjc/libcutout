@@ -50,6 +50,8 @@ protocol CutoutSessionDriving: AnyObject {
     ) async throws -> MobileRideMapSnapshotDto
     func currentRideMapSnapshot(atMs: UInt64) async -> MobileRideMapSnapshotDto?
     func checkpointRideMap() async throws
+    func prepareRideMapForDisconnect(expected: MobileRideMapRecordingTokenDto?, connectionGeneration: UInt64, atMs: UInt64) async throws -> MobileRideMapSnapshotDto?
+    func disconnectAndScan(expectedGeneration: UInt64) -> Bool
 }
 
 extension CutoutSessionCore: CutoutSessionDriving {}
@@ -89,6 +91,17 @@ extension CutoutSessionDriving {
             expected: expected, event: event, atMs: atMs,
             lastConnectedVehicle: lastConnectedVehicle
         )
+    }
+
+    func prepareRideMapForDisconnect(expected: MobileRideMapRecordingTokenDto?, connectionGeneration: UInt64, atMs: UInt64) async throws -> MobileRideMapSnapshotDto? {
+        guard rideSessionStateHandle.connectionAttemptSnapshot().generation == connectionGeneration else { throw MobileRideMapError.staleCommand }
+        return try requireRideMapState().prepareDisconnect(expected: expected, atMs: atMs)
+    }
+
+    func disconnectAndScan(expectedGeneration: UInt64) -> Bool {
+        guard rideSessionStateHandle.connectionAttemptSnapshot().generation == expectedGeneration else { return false }
+        disconnectAndScan()
+        return true
     }
 
     func checkpointRideMap() async throws {

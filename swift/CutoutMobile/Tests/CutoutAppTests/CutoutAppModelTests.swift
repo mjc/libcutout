@@ -527,6 +527,79 @@ final class CutoutAppModelTests: XCTestCase {
     }
 
     @MainActor
+    func testExplicitDisconnectPausesRecordingBeforeNativeTeardown() async {
+        let driver = SessionDriverSpy(rows: [])
+        let model = CutoutAppModel(core: driver)
+        let started = await model.startGpsOnlyRide()
+        XCTAssertTrue(started)
+        let disconnected = await model.disconnectTransport()
+        XCTAssertTrue(disconnected)
+        XCTAssertEqual(driver.disconnectCount, 1)
+        XCTAssertEqual(model.rideMapSnapshot?.state, .paused)
+        XCTAssertEqual(driver.stateAtDisconnect, .paused)
+    }
+
+    @MainActor
+    func testExplicitDisconnectFailureRetainsTransportAndRecording() async {
+        let driver = SessionDriverSpy(rows: [])
+        let model = CutoutAppModel(core: driver)
+        _ = await model.startGpsOnlyRide()
+        driver.prepareDisconnectOperation = { throw MobileRideMapError.storageError("injected failure") }
+        let disconnected = await model.disconnectTransport()
+        XCTAssertFalse(disconnected)
+        XCTAssertEqual(driver.disconnectCount, 0)
+        XCTAssertEqual(model.rideMapSnapshot?.state, .active)
+        XCTAssertNotNil(model.rideMapLiveError)
+    }
+
+    @MainActor
+    func testLateDisconnectPreparationCannotDisconnectReplacementAttempt() async throws {
+        let driver = SessionDriverSpy(rows: [])
+        _ = driver.rideSessionStateHandle.beginConnectionAttempt(platformIdentifier: "first", nowMs: 0)
+        let model = CutoutAppModel(core: driver)
+        _ = await model.startGpsOnlyRide()
+        var completion: CheckedContinuation<MobileRideMapSnapshotDto?, Error>?
+        driver.prepareDisconnectOperation = {
+            try await withCheckedThrowingContinuation { completion = $0 }
+        }
+        let disconnect = Task { await model.disconnectTransport() }
+        await Self.waitUntil("disconnect preparation") { completion != nil }
+        _ = driver.rideSessionStateHandle.beginConnectionAttempt(platformIdentifier: "replacement", nowMs: 1)
+        completion?.resume(returning: try driver.rideMapState.pause(atMs: driver.now().rawValue))
+        let disconnected = await disconnect.value
+        XCTAssertFalse(disconnected)
+        XCTAssertEqual(driver.disconnectCount, 0)
+        XCTAssertEqual(driver.rideSessionStateHandle.connectionAttemptSnapshot().token?.platformIdentifier, "replacement")
+    }
+
+    @MainActor
+    func testFinishCaptureCannotDisconnectAReplacementDuringFlush() async {
+        let driver = SessionDriverSpy(rows: [])
+        _ = driver.rideSessionStateHandle.beginConnectionAttempt(platformIdentifier: "first", nowMs: 0)
+        let model = CutoutAppModel(core: driver)
+        var completion: CheckedContinuation<Bool, Never>?
+        driver.flushOperation = { await withCheckedContinuation { completion = $0 } }
+        let finish = Task { await model.finishCapture() }
+        await Self.waitUntil("capture flush") { completion != nil }
+        _ = driver.rideSessionStateHandle.beginConnectionAttempt(platformIdentifier: "replacement", nowMs: 1)
+        completion?.resume(returning: true)
+        let finished = await finish.value
+        XCTAssertFalse(finished)
+        XCTAssertEqual(driver.disconnectCount, 0)
+        XCTAssertFalse(model.isFinishingCapture)
+    }
+
+    @MainActor
+    func testTransientLinkLossKeepsIndependentGpsRecordingActive() async {
+        let driver = SessionDriverSpy(rows: [])
+        let model = CutoutAppModel(core: driver)
+        _ = await model.startGpsOnlyRide()
+        driver.onPhaseChange?(.failed(.connectFailed("temporary link loss")))
+        XCTAssertEqual(model.rideMapSnapshot?.state, .active)
+        XCTAssertEqual(driver.disconnectCount, 0)
+    }
+
+    @MainActor
     func testGpsOnlyBackgroundCheckpointsWithoutLiveActivity() async throws {
         let driver = SessionDriverSpy(rows: [])
         let model = CutoutAppModel(core: driver)
@@ -1374,17 +1447,17 @@ final class CutoutAppModelTests: XCTestCase {
     }
 
     @MainActor
-    func testDisconnectKeepsSavedDeviceUntilExplicitForget() {
+    func testDisconnectKeepsSavedDeviceUntilExplicitForget() async {
         let store = DevicePickerSelectionStore()
         store.save(platformIdentifier: "saved-device")
         defer { clear(store) }
         let model = CutoutAppModel()
 
-        model.disconnectTransport()
+        await model.disconnectTransport()
 
         XCTAssertEqual(store.platformIdentifier, "saved-device")
 
-        model.forgetSavedDevice()
+        await model.forgetSavedDevice()
 
         XCTAssertNil(store.platformIdentifier)
     }
@@ -1926,7 +1999,7 @@ final class CutoutAppModelTests: XCTestCase {
     }
 
     @MainActor
-    func testDisconnectIgnoresLateConnectionCallbacks() {
+    func testDisconnectIgnoresLateConnectionCallbacks() async {
         let row = DevicePickerRow(
             id: "vesc-1234",
             title: "VESC",
@@ -1950,7 +2023,7 @@ final class CutoutAppModelTests: XCTestCase {
         model.start()
         XCTAssertTrue(model.pair(platformIdentifier: row.id))
 
-        model.disconnectTransport()
+        await model.disconnectTransport()
         XCTAssertEqual(model.phase, .scanning)
         driver.onPhaseChange?(.scanning)
         driver.onPhaseChange?(.discoveringServices)
@@ -3313,6 +3386,7 @@ private final class SessionDriverSpy: CutoutSessionDriving {
     private(set) var recordedPlatformIdentifiers = [String]()
     private(set) var captureAnnotations = [String]()
     private(set) var flushCaptureCount = 0
+    var flushOperation: (() async -> Bool)?
     private(set) var checkpointCount = 0
     var checkpointOperation: (() async throws -> Void)?
     func checkpointRideMap() async throws {
@@ -3321,6 +3395,14 @@ private final class SessionDriverSpy: CutoutSessionDriving {
         else { _ = try rideMapState.checkpoint() }
     }
     private(set) var disconnectCount = 0
+    private(set) var stateAtDisconnect: MobileRideMapStateDto?
+    var prepareDisconnectOperation: (() async throws -> MobileRideMapSnapshotDto?)?
+    func prepareRideMapForDisconnect(expected: MobileRideMapRecordingTokenDto?, connectionGeneration: UInt64, atMs: UInt64) async throws -> MobileRideMapSnapshotDto? {
+        if let prepareDisconnectOperation { return try await prepareDisconnectOperation() }
+        guard rideSessionStateHandle.connectionAttemptSnapshot().generation == connectionGeneration else { throw MobileRideMapError.staleCommand }
+        return try rideMapState.prepareDisconnect(expected: expected, atMs: atMs)
+    }
+
     private(set) var resetRideMapLocationAdmissionCount = 0
     var nowValue: UInt64 = 0
 
@@ -3384,10 +3466,12 @@ private final class SessionDriverSpy: CutoutSessionDriving {
     func updateMusicCaptureObservation(_: MobilePevcapMusicEventDto?) {}
     func flushCapture() async -> Bool {
         flushCaptureCount += 1
+        if let flushOperation { return await flushOperation() }
         return flushSucceeds
     }
 
     func disconnectAndScan() {
+        stateAtDisconnect = rideMapState.currentSnapshot()?.state
         disconnectCount += 1
     }
 

@@ -767,6 +767,15 @@ public final class CutoutSessionCore: NSObject {
         }
     }
 
+    @discardableResult
+    public func disconnectAndScan(expectedGeneration: UInt64) -> Bool {
+        onBleQueue {
+            guard rustSessionState.connectionAttemptSnapshot().generation == expectedGeneration else { return false }
+            disconnectAndScan()
+            return true
+        }
+    }
+
     public func disconnectAndScan() {
         onBleQueue { disconnectAndScanOnBleQueue() }
     }
@@ -3215,6 +3224,28 @@ extension CutoutSessionCore {
                 self.recordRideMapDiagnostic("ride_map_ingest_error=\(error)")
             } catch {
                 self.recordRideMapDiagnostic("ride_map_ingest_error=\(error)")
+            }
+        }
+    }
+
+    public func prepareRideMapForDisconnect(
+        expected: MobileRideMapRecordingTokenDto?, connectionGeneration: UInt64, atMs: UInt64
+    ) async throws -> MobileRideMapSnapshotDto? {
+        guard let rideMapState else { return nil }
+        let reference = WeakCutoutSessionCoreReference(self)
+        let connectionOwner = rideSessionStateHandle
+        return try await withCheckedThrowingContinuation { continuation in
+            rideMapQueue.async {
+                do {
+                    guard connectionOwner.connectionAttemptSnapshot().generation == connectionGeneration else {
+                        throw MobileRideMapError.staleCommand
+                    }
+                    let snapshot = try rideMapState.prepareDisconnect(expected: expected, atMs: atMs)
+                    if let snapshot { reference.value?.publishRideMapSnapshot(snapshot) }
+                    continuation.resume(returning: snapshot)
+                } catch {
+                    continuation.resume(throwing: error)
+                }
             }
         }
     }

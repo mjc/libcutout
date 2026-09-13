@@ -2026,6 +2026,7 @@ final class CutoutAppModel {
     func finishCapture() async -> Bool {
         guard !isFinishingCapture else { return false }
         isFinishingCapture = true
+        let connectionGeneration = core.rideSessionStateHandle.connectionAttemptSnapshot().generation
 
         guard await flushCapture() else {
             captureStatus = .failed
@@ -2033,8 +2034,9 @@ final class CutoutAppModel {
             return false
         }
 
-        disconnectTransport()
-        return true
+        let disconnected = await disconnectTransport(expectedGeneration: connectionGeneration)
+        if !disconnected { isFinishingCapture = false }
+        return disconnected
     }
 
     func stopCaptureLabel(_ label: CaptureQuickLabel) {
@@ -2048,7 +2050,17 @@ final class CutoutAppModel {
         )
     }
 
-    func disconnectTransport() {
+    @discardableResult
+    func disconnectTransport() async -> Bool {
+        await disconnectTransport(expectedGeneration: core.rideSessionStateHandle.connectionAttemptSnapshot().generation)
+    }
+
+    private func disconnectTransport(expectedGeneration connectionGeneration: UInt64) async -> Bool {
+        guard await rideRecording.prepareDisconnect(connectionGeneration: connectionGeneration) else { return false }
+        guard core.disconnectAndScan(expectedGeneration: connectionGeneration) else {
+            rideRecording.error = .staleCommand
+            return false
+        }
         endLiveActivity(reason: .disconnected)
         isRecordOnlyCapture = false
         activeCaptureLabels.removeAll()
@@ -2060,17 +2072,19 @@ final class CutoutAppModel {
         liveActivityGlyph = .electricUnicycle
         permitsStoredDeviceAutoPairing = false
         clearDeviceControls()
-        core.disconnectAndScan()
+        return true
     }
 
     private func clearDeviceControls() {
         deviceControlsSnapshot = nil
     }
 
-    func forgetSavedDevice() {
-        disconnectTransport()
+    @discardableResult
+    func forgetSavedDevice() async -> Bool {
+        guard await disconnectTransport() else { return false }
         try? selectedDeviceStore.clear()
         hasSavedDevice = false
+        return true
     }
 
     func endLiveActivity(reason: LiveActivityRideLifecycleEndReason = .sessionEnded) {

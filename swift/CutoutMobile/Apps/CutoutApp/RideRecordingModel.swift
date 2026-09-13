@@ -27,7 +27,7 @@ final class RideRecordingModel {
     private var projectionGeneration: UInt64 = 0
     private var projectionEnabled = false
     private var durationTask: Task<Void, Never>?
-    private var commandTask: Task<MobileRideMapSnapshotDto, Error>?
+    private var commandTask: Task<MobileRideMapSnapshotDto?, Error>?
     private var commandGeneration: UInt64 = 0
     private var checkpointTask: Task<Void, Never>?
     private var checkpointGeneration: UInt64 = 0
@@ -231,6 +231,23 @@ final class RideRecordingModel {
     func performCommand(
         _ operation: @escaping @MainActor () async throws -> MobileRideMapSnapshotDto
     ) async -> Bool {
+        await performOperation { try await operation() }
+    }
+
+    func prepareDisconnect(connectionGeneration: UInt64) async -> Bool {
+        let expected = snapshot?.commandToken
+        let atMs = core.now().rawValue
+        let core = core
+        return await performOperation {
+            try await core.prepareRideMapForDisconnect(
+                expected: expected, connectionGeneration: connectionGeneration, atMs: atMs
+            )
+        }
+    }
+
+    private func performOperation(
+        _ operation: @escaping @MainActor () async throws -> MobileRideMapSnapshotDto?
+    ) async -> Bool {
         guard !isCommandPending else { return false }
         commandGeneration &+= 1
         let generation = commandGeneration
@@ -253,7 +270,7 @@ final class RideRecordingModel {
                 task.cancel()
             }
             guard !Task.isCancelled, !task.isCancelled, generation == commandGeneration else { return false }
-            guard applySnapshot(snapshot) else { return false }
+            if let snapshot, !applySnapshot(snapshot) { return false }
             error = nil
             return true
         } catch {

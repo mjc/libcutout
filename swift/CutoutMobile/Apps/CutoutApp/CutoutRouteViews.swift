@@ -85,7 +85,7 @@ struct DevicePickerRouteView: View {
             captureStatusText: model.captureStatusText,
             hasSavedDevice: model.hasSavedDevice,
             pair: pair,
-            forgetSavedDevice: model.forgetSavedDevice,
+            forgetSavedDevice: { Task { await model.forgetSavedDevice() } },
             probe: { row in model.startProbe(platformIdentifier: row.id) },
             recordOnly: { row, deviceKind in
                 guard model.recordOnly(platformIdentifier: row.id, deviceKind: deviceKind) else { return false }
@@ -109,8 +109,14 @@ struct DevicePickerRouteView: View {
                 Button {
                     navigate(.rideMap)
                 } label: {
-                    Label(localizedAppText("tab.map"), systemImage: "map")
-                        .frame(maxWidth: .infinity, minHeight: 44)
+                    VStack {
+                        Label(localizedAppText("tab.map"), systemImage: "map")
+                        if model.rideMapSnapshot?.state == .paused {
+                            Text(localizedAppText("ride_map.status.paused"))
+                                .font(.caption)
+                        }
+                    }
+                    .frame(maxWidth: .infinity, minHeight: 44)
                 }
                 .accessibilityIdentifier("device-picker.open-map")
             }

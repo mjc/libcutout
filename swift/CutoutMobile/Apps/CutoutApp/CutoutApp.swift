@@ -61,7 +61,7 @@ struct CutoutApp: App {
                     connectionRoute: model.selectedConnectionRoute,
                     navigationPath: $navigationPath,
                     canDisconnect: model.selectedConnectionRoute != nil,
-                    disconnect: model.disconnectTransport
+                    disconnect: { Task { await model.disconnectTransport() } }
                 )
             }
         }

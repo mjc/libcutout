@@ -1001,6 +1001,12 @@ public final class MobileRideMapState: @unchecked Sendable {
         }
     }
 
+    public func prepareDisconnect(expected: MobileRideMapRecordingTokenDto?, atMs: UInt64) throws -> MobileRideMapSnapshotDto? {
+        // Failed bootstrap has no recording owner or acquisition to pause.
+        guard core != nil else { return nil }
+        return try withCore { try $0.prepareDisconnect(expected: expected, atMs: atMs).map(mapSnapshot) }
+    }
+
     public func checkpoint() throws -> [MobileRideMapDecisionDto] {
         try withCore { try $0.checkpoint().map(map) }
     }
