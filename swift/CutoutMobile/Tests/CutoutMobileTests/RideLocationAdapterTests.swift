@@ -52,6 +52,24 @@ final class RideLocationAdapterTests: XCTestCase {
     }
 
     @MainActor
+    func testDiagnosticCaptureStartsLocationWithoutStartingARideAndRejectsOldIntent() throws {
+        let manager = LocationManagerSpy()
+        let adapter = RideLocationAdapter(manager: manager, onEnvironment: { _ in }, onLocations: { _ in })
+        let state = MobileRideMapState()
+        adapter.apply(state.observeLocationEnvironment(MobileLocationEnvironmentDto(
+            authorization: .always, servicesEnabled: true, temporarilyUnavailable: false
+        )))
+        let active = state.observeDiagnosticCaptureLocation(generation: 1, active: true)
+        adapter.apply(active)
+        XCTAssertEqual(manager.starts, 1)
+        XCTAssertNil(state.currentSnapshot())
+        adapter.apply(state.observeDiagnosticCaptureLocation(generation: 1, active: false))
+        XCTAssertEqual(manager.stops, 1)
+        XCTAssertFalse(adapter.apply(active))
+        XCTAssertEqual(manager.starts, 1)
+    }
+
+    @MainActor
     func testNativeLocationEnvironmentForwardsDeniedAndDisabledServices() async {
         let manager = LocationManagerSpy()
         manager.authorizationStatus = .denied

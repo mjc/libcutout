@@ -836,6 +836,33 @@ final class CutoutSessionCoreTests: XCTestCase {
         XCTAssertFalse(core.recordOnly(platformIdentifier: "ios-local-missing", note: "unknown wheel"))
     }
 
+    func testDiagnosticWriterLifetimeDrivesLocationDemandWithoutCreatingARide() async throws {
+        let state = MobileRideMapState()
+        _ = state.observeLocationEnvironment(MobileLocationEnvironmentDto(
+            authorization: .always, servicesEnabled: true, temporarilyUnavailable: false
+        ))
+        let core = CutoutSessionCore(testScript: CutoutSessionTestScript(
+            candidate: scriptedVescCandidate, telemetry: nil, connectionDelayMilliseconds: 0
+        ), rideMapState: state)
+        let started = expectation(description: "diagnostic writer starts")
+        var captureURL: URL?
+        core.onCaptureEvent = { event in
+            if case let .started(url) = event { captureURL = url; started.fulfill() }
+        }
+        XCTAssertEqual(state.locationAcquisition().demand, .idle)
+        XCTAssertTrue(core.recordOnly(platformIdentifier: scriptedVescCandidate.platformIdentifier))
+        await fulfillment(of: [started], timeout: 2)
+        // The snapshot read joins the same queue after the writer lifetime observation.
+        _ = await core.currentRideMapSnapshot(atMs: 0)
+        XCTAssertEqual(state.locationAcquisition().demand, .record)
+        XCTAssertNil(state.currentSnapshot())
+        core.disconnectAndScan()
+        _ = await core.currentRideMapSnapshot(atMs: 0)
+        XCTAssertEqual(state.locationAcquisition().demand, .idle)
+        XCTAssertNil(state.currentSnapshot())
+        if let captureURL { try? FileManager.default.removeItem(at: captureURL) }
+    }
+
     func testSuccessfulScriptedRecordOnlyFlushUsesTheRealWriter() async throws {
         let started = expectation(description: "real capture writer starts")
         var captureURL: URL?

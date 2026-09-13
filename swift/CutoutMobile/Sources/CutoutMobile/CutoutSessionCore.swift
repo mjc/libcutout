@@ -463,6 +463,8 @@ public final class CutoutSessionCore: NSObject {
     private var captureStartedAt: MonotonicMilliseconds?
     private var captureNotificationCount: UInt64 = 0
     private var captureBuilder: MobilePevcapCaptureBuilder?
+    private var nextCaptureGeneration: UInt64 = 0
+    private var diagnosticCaptureGeneration: UInt64?
     private var musicCaptureContext = CaptureMusicContext()
     private var captureMusicHistoryPolicy = MobileMusicHistoryPolicyDto.disabled
     private var captureFileURL: URL?
@@ -691,7 +693,8 @@ public final class CutoutSessionCore: NSObject {
                     startCapture(
                         reason: note ?? "record-only",
                         annotations: annotations,
-                        evidence: "simulator_fixture"
+                        evidence: "simulator_fixture",
+                        requestsDiagnosticLocation: true
                     )
                     guard captureBuilder != nil else {
                         isRecordOnly = false
@@ -1439,7 +1442,8 @@ public final class CutoutSessionCore: NSObject {
             reason: "record-only",
             annotations: ["route=record_only"] + annotations + (note.map {
                 [pevcapAnnotation(key: "user_note", value: $0)]
-            } ?? [])
+            } ?? []),
+            requestsDiagnosticLocation: true
         )
         clearSettingsReadback()
         clearFaultHistoryReadback()
@@ -1881,17 +1885,29 @@ public final class CutoutSessionCore: NSObject {
             publishOnMain { self.onRideMapAvailabilityChange?(.storageUnavailable) }
             return
         }
+        let reference = WeakCutoutSessionCoreReference(self)
         rideMapQueue.async {
             let intent = rideMapState.locationAcquisition()
-            self.publishLocationAcquisition(intent)
+            reference.value?.publishLocationAcquisition(intent)
         }
     }
 
     private func observeLocationEnvironment(_ environment: MobileLocationEnvironmentDto) {
         guard let rideMapState else { return }
+        let reference = WeakCutoutSessionCoreReference(self)
         rideMapQueue.async {
             let intent = rideMapState.observeLocationEnvironment(environment)
-            self.publishLocationAcquisition(intent)
+            reference.value?.publishLocationAcquisition(intent)
+        }
+    }
+
+    private func observeDiagnosticCaptureLocation(generation: UInt64, active: Bool) {
+        guard let rideMapState else { return }
+        let reference = WeakCutoutSessionCoreReference(self)
+        rideMapQueue.async {
+            reference.value?.publishLocationAcquisition(rideMapState.observeDiagnosticCaptureLocation(
+                generation: generation, active: active
+            ))
         }
     }
 
@@ -1980,8 +1996,10 @@ public final class CutoutSessionCore: NSObject {
     private func startCapture(
         reason: String,
         annotations extraAnnotations: [String] = [],
-        evidence: String = "hardware_tested"
+        evidence: String = "hardware_tested",
+        requestsDiagnosticLocation: Bool = false
     ) {
+        if captureBuilder != nil { finishCaptureWriter() }
         captureStartedAt = clock.now()
         captureNotificationCount = 0
 
@@ -2017,6 +2035,11 @@ public final class CutoutSessionCore: NSObject {
             setPhase(.failed(.sessionFailed("capture writer failed to start")))
             return
         }
+        nextCaptureGeneration &+= 1
+        if requestsDiagnosticLocation {
+            diagnosticCaptureGeneration = nextCaptureGeneration
+            observeDiagnosticCaptureLocation(generation: nextCaptureGeneration, active: true)
+        }
         musicCaptureContext.reset()
         captureFileURL = url
         record("capture_file=\(url.path)")
@@ -2051,10 +2074,15 @@ public final class CutoutSessionCore: NSObject {
         musicCaptureContext.reset()
         guard let builder = captureBuilder else { return }
         let completedCaptureURL = captureFileURL
+        let completedDiagnosticGeneration = diagnosticCaptureGeneration
+        diagnosticCaptureGeneration = nil
         captureBuilder = nil
         captureFileURL = nil
         captureStartedAt = nil
         musicCaptureContext.reset()
+        if let completedDiagnosticGeneration {
+            observeDiagnosticCaptureLocation(generation: completedDiagnosticGeneration, active: false)
+        }
         let finish = DispatchWorkItem { [weak self] in
             let writerSucceeded = builder.finishWriter()
             let succeeded = priorWriteSucceeded && writerSucceeded

@@ -831,6 +831,10 @@ public final class MobileRideMapState: @unchecked Sendable {
         core?.observeLocationEnvironment(environment: environment) ?? locationAcquisition()
     }
 
+    public func observeDiagnosticCaptureLocation(generation: UInt64, active: Bool) -> MobileLocationAcquisitionDto {
+        core?.observeDiagnosticCaptureLocation(generation: generation, active: active) ?? locationAcquisition()
+    }
+
     /// Supplies the saved preference for future ride creation.
     public func setDefaultMusicHistoryPolicy(_ policy: MobileMusicHistoryPolicyDto) {
         core?.setDefaultMusicHistoryPolicy(policy: policy)
