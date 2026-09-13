@@ -38,7 +38,6 @@ mod turn_signals;
 pub use turn_signals::*;
 mod settings;
 pub use settings::*;
-<<<<<<< HEAD
 mod device_settings;
 pub use device_settings::*;
 mod device_actions;
