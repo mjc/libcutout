@@ -26,6 +26,10 @@ pub enum SettingUnit {
     Degrees,
     /// Device-defined ordinal level, with no invented physical units.
     Level,
+    /// Duration in seconds.
+    Seconds,
+    /// Duration in minutes.
+    Minutes,
 }
 
 /// Semantic grouping and stable ordering independent of device names.
@@ -155,6 +159,7 @@ pub struct DeviceControlProfile {
     pub(crate) available: Capabilities,
     pub(crate) verified: Capabilities,
     confirmation: Capabilities,
+    readable: &'static [SettingId],
 }
 
 impl DeviceControlProfile {
@@ -169,7 +174,15 @@ impl DeviceControlProfile {
             available,
             verified,
             confirmation,
+            readable: &[],
         }
+    }
+
+    /// Adds protocol-specific passive observations that have no write command.
+    #[must_use]
+    pub const fn with_readable_settings(mut self, readable: &'static [SettingId]) -> Self {
+        self.readable = readable;
+        self
     }
 
     /// Returns supported controls, retaining diagnostic-only and unverified definitions.
@@ -179,7 +192,9 @@ impl DeviceControlProfile {
             .iter()
             .filter_map(|&(id, label_key, group, order)| {
                 let kind = command_kind(id);
-                if !self.available.supports_command_kind(kind) {
+                if !self.readable.contains(&id)
+                    && !kind.is_some_and(|kind| self.available.supports_command_kind(kind))
+                {
                     return None;
                 }
                 let mut control = control(id);
@@ -199,14 +214,17 @@ impl DeviceControlProfile {
                     group,
                     order,
                     control,
-                    access: if id == SettingId::ChargeLimitDiagnostic {
+                    access: if is_read_only(id) {
                         SettingAccess::ReadOnly
-                    } else if validation_mode || self.verified.supports_command_kind(kind) {
+                    } else if validation_mode
+                        || kind.is_some_and(|kind| self.verified.supports_command_kind(kind))
+                    {
                         SettingAccess::Writable
                     } else {
                         SettingAccess::Unverified
                     },
-                    confirmation_supported: self.confirmation.supports_command_kind(kind)
+                    confirmation_supported: kind
+                        .is_some_and(|kind| self.confirmation.supports_command_kind(kind))
                         && id != SettingId::ChargeLimitDiagnostic,
                 })
             })
@@ -292,6 +310,7 @@ pub const fn aero_control_profile() -> DeviceControlProfile {
             CommandKind::SetAeroBrakeOverpressureAlarm,
         ]),
     )
+    .with_readable_settings(&[SettingId::AutoShutdownRemaining, SettingId::ChargeMode])
 }
 
 /// Falcon writes with no readable acknowledgement remain explicitly unconfirmed.
@@ -308,6 +327,7 @@ pub const fn falcon_control_profile() -> DeviceControlProfile {
             CommandKind::SetSpeedAlarmMode,
         ]),
     )
+    .with_readable_settings(&[SettingId::PowerOffDelay])
 }
 
 const CATALOG: &[(SettingId, &str, SettingGroup, u16)] = &[
@@ -479,10 +499,28 @@ const CATALOG: &[(SettingId, &str, SettingGroup, u16)] = &[
         SettingGroup::Interface,
         27,
     ),
+    (
+        SettingId::AutoShutdownRemaining,
+        "settings.auto_shutdown_remaining.label",
+        SettingGroup::Diagnostics,
+        28,
+    ),
+    (
+        SettingId::PowerOffDelay,
+        "settings.power_off_delay.label",
+        SettingGroup::Modes,
+        29,
+    ),
+    (
+        SettingId::ChargeMode,
+        "settings.charge_mode.label",
+        SettingGroup::Diagnostics,
+        30,
+    ),
 ];
 
-const fn command_kind(id: SettingId) -> CommandKind {
-    match id {
+const fn command_kind(id: SettingId) -> Option<CommandKind> {
+    Some(match id {
         SettingId::Headlight => CommandKind::SetLights,
         SettingId::HighBeam => CommandKind::SetAeroHighBeam,
         SettingId::TiltbackSpeed => CommandKind::SetAeroTiltbackSpeed,
@@ -511,7 +549,20 @@ const fn command_kind(id: SettingId) -> CommandKind {
         SettingId::LightingPattern => CommandKind::SetBegodeLedMode,
         SettingId::AccelerationAssist => CommandKind::SetAccelerationAssist,
         SettingId::Taillight => CommandKind::SetTaillight,
-    }
+        SettingId::AutoShutdownRemaining | SettingId::PowerOffDelay | SettingId::ChargeMode => {
+            return None;
+        }
+    })
+}
+
+const fn is_read_only(id: SettingId) -> bool {
+    matches!(
+        id,
+        SettingId::ChargeLimitDiagnostic
+            | SettingId::AutoShutdownRemaining
+            | SettingId::PowerOffDelay
+            | SettingId::ChargeMode
+    )
 }
 
 fn number(minimum: i32, maximum: i32, precision: u8, unit: SettingUnit) -> SettingControl {
@@ -571,6 +622,12 @@ fn control(id: SettingId) -> SettingControl {
         SettingId::BrakeOverpressureAlarm => number(90, 125, 0, SettingUnit::Percent),
         SettingId::MaximumSpeed => speed_control(0, 99),
         SettingId::BeeperVolumeLevel => number(1, 9, 0, SettingUnit::Level),
+        SettingId::AutoShutdownRemaining => number(0, i32::MAX, 0, SettingUnit::Seconds),
+        SettingId::PowerOffDelay => number(0, 255, 0, SettingUnit::Minutes),
+        SettingId::ChargeMode => choices(&[
+            (0, "settings.choice.not_charging", false),
+            (1, "settings.choice.charging", false),
+        ]),
         SettingId::LightingPattern => choices(&[
             (0, "settings.choice.pattern_0", true),
             (1, "settings.choice.pattern_1", true),
@@ -919,8 +976,9 @@ mod tests {
                     continue;
                 };
                 for value in -256..=256 {
-                    let permitted =
-                        (minimum..=maximum).contains(&value) && (value - minimum) % step == 0;
+                    let permitted = descriptor.access == SettingAccess::Writable
+                        && (minimum..=maximum).contains(&value)
+                        && (value - minimum) % step == 0;
                     assert_eq!(
                         profile
                             .command(descriptor.id, DeviceSettingValue::Number(value), true)
