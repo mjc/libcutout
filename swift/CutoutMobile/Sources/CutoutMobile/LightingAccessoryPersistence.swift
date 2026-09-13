@@ -250,12 +250,6 @@ public final class LightingAccessoryPersistence {
         persist()
     }
 
-    /// Persists optional user-observed success without changing the requested lighting state.
-    public func markConfirmed() {
-        record?.setConfirmation(state: .confirmed)
-        persist()
-    }
-
     public func markScheduleConfirmed() {
         record?.setLastScheduleConfirmation(state: .confirmed)
         persist()
