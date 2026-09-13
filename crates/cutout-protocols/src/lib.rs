@@ -48,6 +48,8 @@ mod family;
 pub use family::*;
 mod ffi;
 pub use ffi::*;
+mod device_session;
+pub use device_session::*;
 mod fixture;
 pub use fixture::*;
 mod identification;
