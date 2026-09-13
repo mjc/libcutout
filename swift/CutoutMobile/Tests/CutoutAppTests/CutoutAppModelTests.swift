@@ -160,10 +160,11 @@ final class CutoutAppModelTests: XCTestCase {
     }
 
     @MainActor
-    func testForgetActiveMusicHistoryClearsLivePolicyAndTimeline() throws {
+    func testForgetActiveMusicHistoryClearsLivePolicyAndTimeline() async throws {
         let driver = SessionDriverSpy(rows: [])
         let model = CutoutAppModel(core: driver)
-        XCTAssertTrue(model.startGpsOnlyRide())
+        let started = await model.startGpsOnlyRide()
+        XCTAssertTrue(started)
         XCTAssertTrue(model.setMusicHistoryPolicy(.humanReadable))
 
         let snapshot = MobileMusicSnapshotDto(
@@ -201,7 +202,7 @@ final class CutoutAppModelTests: XCTestCase {
     }
 
     @MainActor
-    func testForgetActiveMusicHistoryDoesNotChangeFutureDefault() throws {
+    func testForgetActiveMusicHistoryDoesNotChangeFutureDefault() async throws {
         let suiteName = "CutoutAppMusicHistoryFutureDefault-\(UUID().uuidString)"
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
         defer { defaults.removePersistentDomain(forName: suiteName) }
@@ -210,23 +211,27 @@ final class CutoutAppModelTests: XCTestCase {
 
         let driver = SessionDriverSpy(rows: [])
         let model = CutoutAppModel(core: driver, musicHistoryPolicyStore: policyStore)
-        XCTAssertTrue(model.startGpsOnlyRide())
+        let started = await model.startGpsOnlyRide()
+        XCTAssertTrue(started)
         let rideID = try XCTUnwrap(model.rideMapSnapshot?.rideID)
 
         XCTAssertTrue(model.forgetMusicHistory(for: rideID))
         XCTAssertEqual(model.musicHistoryPolicy, .disabled)
         XCTAssertEqual(policyStore.policy, .humanReadable)
-        XCTAssertTrue(model.stopRideMap())
-        XCTAssertTrue(model.startGpsOnlyRide())
+        let stopped = await model.stopRideMap()
+        XCTAssertTrue(stopped)
+        let started2 = await model.startGpsOnlyRide()
+        XCTAssertTrue(started2)
         XCTAssertEqual(model.musicHistoryPolicy, .humanReadable)
         XCTAssertEqual(driver.rideMapState.currentMusicHistoryPolicy(), .humanReadable)
     }
 
     @MainActor
-    func testLoweringActiveMusicPolicyRedactsVisibleTimeline() {
+    func testLoweringActiveMusicPolicyRedactsVisibleTimeline() async {
         let driver = SessionDriverSpy(rows: [])
         let model = CutoutAppModel(core: driver)
-        XCTAssertTrue(model.startGpsOnlyRide())
+        let started = await model.startGpsOnlyRide()
+        XCTAssertTrue(started)
         XCTAssertTrue(model.setMusicHistoryPolicy(.humanReadable))
 
         let snapshot = MobileMusicSnapshotDto(
@@ -443,11 +448,12 @@ final class CutoutAppModelTests: XCTestCase {
     }
 
     @MainActor
-    func testRideMapCommandFailureRemainsVisibleAsTheTypedRustError() {
+    func testRideMapCommandFailureRemainsVisibleAsTheTypedRustError() async {
         let driver = SessionDriverSpy(rows: [])
         let model = CutoutAppModel(core: driver)
 
-        XCTAssertFalse(model.pauseRideMap())
+        let paused = await model.pauseRideMap()
+        XCTAssertFalse(paused)
         XCTAssertEqual(model.rideMapError, .noActiveRide)
         XCTAssertEqual(model.rideMapLiveError, .noActiveRide)
         XCTAssertNil(model.rideMapHistoryError)
@@ -499,18 +505,41 @@ final class CutoutAppModelTests: XCTestCase {
     }
 
     @MainActor
-    func testRideMapLifecycleControlsUpdateRecordingState() {
+    func testLateRecordingSnapshotCannotReviveSavedRide() async throws {
+        let driver = SessionDriverSpy(rows: [])
+        let model = CutoutAppModel(core: driver)
+        let started = await model.startGpsOnlyRide()
+        XCTAssertTrue(started)
+        let active = try XCTUnwrap(model.rideMapSnapshot)
+        let stopped = await model.stopRideMap()
+        XCTAssertTrue(stopped)
+        let saved = await model.saveRideMap()
+        XCTAssertTrue(saved)
+
+        driver.onRideMapSnapshotChange?(active)
+
+        XCTAssertEqual(model.rideMapSnapshot?.rideID, active.rideID)
+        XCTAssertEqual(model.rideMapSnapshot?.state, .saved)
+        XCTAssertFalse(model.isRideMapRecording)
+        XCTAssertNil(model.rideMapSnapshot?.recordingToken)
+    }
+
+    @MainActor
+    func testRideMapLifecycleControlsUpdateRecordingState() async {
         let driver = SessionDriverSpy(rows: [])
         let model = CutoutAppModel(core: driver)
 
         XCTAssertFalse(model.isRideMapRecording)
-        XCTAssertTrue(model.startGpsOnlyRide())
+        let started = await model.startGpsOnlyRide()
+        XCTAssertTrue(started)
         XCTAssertEqual(driver.resetRideMapLocationAdmissionCount, 1)
         XCTAssertTrue(model.isRideMapRecording)
-        XCTAssertTrue(model.pauseRideMap())
+        let paused = await model.pauseRideMap()
+        XCTAssertTrue(paused)
         XCTAssertFalse(model.isRideMapRecording)
         XCTAssertTrue(model.isRideMapPaused)
-        XCTAssertTrue(model.stopRideMap())
+        let stopped = await model.stopRideMap()
+        XCTAssertTrue(stopped)
         XCTAssertFalse(model.isRideMapRecording)
         XCTAssertFalse(model.isRideMapPaused)
     }

@@ -441,6 +441,10 @@ public struct MobileRideMapRouteEndpointMetadata: Equatable, Hashable, Sendable 
 
 public struct MobileRideMapSnapshotDto: Equatable, Hashable, Sendable {
     public let rideID: String
+    public let revision: UInt64
+    public let recordingToken: MobileRideMapRecordingTokenDto?
+    public let allowedActions: [MobileRideEventDto]
+    public let telemetryState: MobileRideMapTelemetryStateDto
     public let state: MobileRideMapStateDto
     public let summary: MobileRideMapSummaryDto
     public let segmentCount: UInt64
@@ -453,9 +457,17 @@ public struct MobileRideMapSnapshotDto: Equatable, Hashable, Sendable {
         summary: MobileRideMapSummaryDto,
         segmentCount: UInt64,
         associatedVehicle: String?,
-        recordedBoundsAvailable: Bool = false
+        recordedBoundsAvailable: Bool = false,
+        revision: UInt64 = 0,
+        recordingToken: MobileRideMapRecordingTokenDto? = nil,
+        allowedActions: [MobileRideEventDto] = [],
+        telemetryState: MobileRideMapTelemetryStateDto = .gpsOnly
     ) {
         self.rideID = rideID
+        self.revision = revision
+        self.recordingToken = recordingToken
+        self.allowedActions = allowedActions
+        self.telemetryState = telemetryState
         self.state = state
         self.summary = summary
         self.segmentCount = segmentCount
@@ -684,10 +696,11 @@ public final class MobileRideMapState: @unchecked Sendable {
             self.init(storageUnavailable: "Rust ride database is unavailable")
             return
         }
-        self.init(database: database)
-        if let core, core.currentSnapshot(atMs: Self.monotonicMillisecondsNow()) != nil {
-            _ = try? core.discard()
+        let prior = MobileRideMapCore.withDatabase(database: database)
+        if prior.currentSnapshot(atMs: Self.monotonicMillisecondsNow()) != nil {
+            _ = try? prior.discard()
         }
+        self.init(database: database)
     }
 #endif
 
@@ -947,12 +960,14 @@ public final class MobileRideMapState: @unchecked Sendable {
 
     /// Forwards one complete Core Location callback to Rust; Rust owns source-time admission.
     public func ingestLocationBatch(
+        recording: MobileRideMapRecordingTokenDto?,
         receiptMonotonicMs: UInt64,
         receiptWallClockUnixMs: UInt64,
         samples: [MobilePhoneLocationSampleDto]
     ) throws -> [MobileRideMapDecisionDto] {
         try withCore {
             try $0.ingestLocationBatch(
+                recording: recording,
                 receiptMonotonicMs: receiptMonotonicMs,
                 receiptWallClockUnixMs: receiptWallClockUnixMs,
                 samples: samples
@@ -1160,7 +1175,11 @@ public final class MobileRideMapState: @unchecked Sendable {
             ),
             segmentCount: snapshot.segmentCount,
             associatedVehicle: snapshot.associatedVehicle,
-            recordedBoundsAvailable: snapshot.recordedBoundsAvailable
+            recordedBoundsAvailable: snapshot.recordedBoundsAvailable,
+            revision: snapshot.revision,
+            recordingToken: snapshot.recordingToken,
+            allowedActions: snapshot.allowedActions,
+            telemetryState: map(snapshot.telemetryState)
         )
     }
 

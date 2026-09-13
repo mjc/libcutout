@@ -2,14 +2,7 @@ import CutoutMobile
 import SwiftUI
 
 struct RideMapControlsView: View {
-    enum ControlSet: Equatable {
-        case recording
-        case resumable
-        case terminal
-        case start
-    }
-
-    let state: MobileRideMapStateDto?
+    let snapshot: MobileRideMapSnapshotDto?
     @Binding var isDiscardConfirmationPresented: Bool
     let pause: () -> Void
     let resume: () -> Void
@@ -17,19 +10,9 @@ struct RideMapControlsView: View {
     let stop: () -> Void
     let start: () -> Void
 
-    static func controlSet(for state: MobileRideMapStateDto?) -> ControlSet {
-        switch state {
-        case .active: .recording
-        case .paused, .interrupted: .resumable
-        case .stopped: .terminal
-        case .draft, .saved, .discarded, .imported, nil: .start
-        }
-    }
-
     var body: some View {
-        switch Self.controlSet(for: state) {
-        case .recording:
-            RideMapAdaptiveControls {
+        RideMapAdaptiveControls {
+            if snapshot?.allowedActions.contains(.pause) == true {
                 Button(action: pause) {
                     Label(localizedAppText("ride_map.pause"), systemImage: "pause.fill")
                         .frame(maxWidth: .infinity, minHeight: 48)
@@ -37,10 +20,8 @@ struct RideMapControlsView: View {
                 .buttonStyle(.borderedProminent)
                 .tint(PevColors.yellow)
                 .accessibilityIdentifier("ride-map.pause")
-                stopButton(prominent: true)
             }
-        case .resumable:
-            RideMapAdaptiveControls {
+            if snapshot?.allowedActions.contains(.resume) == true {
                 Button(action: resume) {
                     Label(localizedAppText("ride_map.resume"), systemImage: "play.fill")
                         .frame(maxWidth: .infinity, minHeight: 48)
@@ -48,17 +29,19 @@ struct RideMapControlsView: View {
                 .buttonStyle(.borderedProminent)
                 .tint(PevColors.yellow)
                 .accessibilityIdentifier("ride-map.resume")
-                stopButton(prominent: false)
             }
-        case .terminal:
-            RideMapAdaptiveControls {
+            if snapshot?.allowedActions.contains(.stop) == true {
+                stopButton(prominent: snapshot?.state == .active)
+            }
+            if snapshot?.allowedActions.contains(.save) == true {
                 Button(action: save) {
                     Label(localizedAppText("ride_map.save"), systemImage: "checkmark.circle.fill")
                         .frame(maxWidth: .infinity, minHeight: 48)
                 }
                 .buttonStyle(.borderedProminent)
                 .accessibilityIdentifier("ride-map.save")
-
+            }
+            if snapshot?.allowedActions.contains(.discard) == true {
                 Button(role: .destructive) {
                     isDiscardConfirmationPresented = true
                 } label: {
@@ -68,8 +51,9 @@ struct RideMapControlsView: View {
                 .buttonStyle(.bordered)
                 .accessibilityIdentifier("ride-map.discard")
             }
-        case .start:
-            startButton
+            if snapshot == nil || snapshot?.allowedActions.contains(.start) == true {
+                startButton
+            }
         }
     }
 
@@ -100,7 +84,7 @@ struct RideMapControlsView: View {
     private var startButton: some View {
         Button(action: start) {
             Label(
-                localizedAppText(state == nil ? "ride_map.start" : "ride_map.start_new"),
+                localizedAppText(snapshot == nil ? "ride_map.start" : "ride_map.start_new"),
                 systemImage: "location.fill"
             )
             .frame(maxWidth: .infinity, minHeight: 48)

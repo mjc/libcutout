@@ -6,12 +6,6 @@ import XCTest
 
 @MainActor
 final class RideMapPresentationTests: XCTestCase {
-    func testInterruptedRideOffersResumeInsteadOfStartNew() {
-        XCTAssertEqual(RideMapControlsView.controlSet(for: .interrupted), .resumable)
-        XCTAssertEqual(RideMapControlsView.controlSet(for: .paused), .resumable)
-        XCTAssertEqual(RideMapControlsView.controlSet(for: .stopped), .terminal)
-    }
-
     func testHistoryMusicForgetUsesDestinationRideID() {
         var forgottenRideID: String?
         let music = RideMapHistoryMusicDetail(

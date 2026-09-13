@@ -43,12 +43,13 @@ protocol CutoutSessionDriving: AnyObject {
     func now() -> MonotonicMilliseconds
 
     func resetRideMapLocationAdmission()
-    func startRideMapGpsOnly(atMs: UInt64, lastConnectedVehicle: String?) throws -> MobileRideMapSnapshotDto
-    func pauseRideMap(atMs: UInt64) throws -> MobileRideMapSnapshotDto
-    func resumeRideMap(atMs: UInt64) throws -> MobileRideMapSnapshotDto
-    func stopRideMap(atMs: UInt64) throws -> MobileRideMapSnapshotDto
-    func saveRideMap() throws -> MobileRideMapSnapshotDto
-    func discardRideMap() throws -> MobileRideMapSnapshotDto
+    func startRideMapGpsOnly(atMs: UInt64, lastConnectedVehicle: String?) async throws -> MobileRideMapSnapshotDto
+    func pauseRideMap(atMs: UInt64) async throws -> MobileRideMapSnapshotDto
+    func resumeRideMap(atMs: UInt64) async throws -> MobileRideMapSnapshotDto
+    func stopRideMap(atMs: UInt64) async throws -> MobileRideMapSnapshotDto
+    func saveRideMap() async throws -> MobileRideMapSnapshotDto
+    func discardRideMap() async throws -> MobileRideMapSnapshotDto
+    func currentRideMapSnapshot(atMs: UInt64) async -> MobileRideMapSnapshotDto?
 }
 
 extension CutoutSessionCore: CutoutSessionDriving {}
@@ -76,27 +77,31 @@ extension CutoutSessionDriving {
 
     func resetRideMapLocationAdmission() {}
 
-    func startRideMapGpsOnly(atMs: UInt64, lastConnectedVehicle: String?) throws -> MobileRideMapSnapshotDto {
+    func startRideMapGpsOnly(atMs: UInt64, lastConnectedVehicle: String?) async throws -> MobileRideMapSnapshotDto {
         try requireRideMapState().startGpsOnly(atMs: atMs, lastConnectedVehicle: lastConnectedVehicle)
     }
 
-    func pauseRideMap(atMs: UInt64) throws -> MobileRideMapSnapshotDto {
+    func pauseRideMap(atMs: UInt64) async throws -> MobileRideMapSnapshotDto {
         try requireRideMapState().pause(atMs: atMs)
     }
 
-    func resumeRideMap(atMs: UInt64) throws -> MobileRideMapSnapshotDto {
+    func resumeRideMap(atMs: UInt64) async throws -> MobileRideMapSnapshotDto {
         try requireRideMapState().resume(atMs: atMs)
     }
 
-    func stopRideMap(atMs: UInt64) throws -> MobileRideMapSnapshotDto {
+    func stopRideMap(atMs: UInt64) async throws -> MobileRideMapSnapshotDto {
         try requireRideMapState().stop(atMs: atMs)
     }
 
-    func saveRideMap() throws -> MobileRideMapSnapshotDto {
+    func saveRideMap() async throws -> MobileRideMapSnapshotDto {
         try requireRideMapState().save()
     }
 
-    func discardRideMap() throws -> MobileRideMapSnapshotDto {
+    func discardRideMap() async throws -> MobileRideMapSnapshotDto {
         try requireRideMapState().discard()
+    }
+
+    func currentRideMapSnapshot(atMs: UInt64) async -> MobileRideMapSnapshotDto? {
+        rideMapStateHandle?.currentSnapshot(atMs: atMs)
     }
 }

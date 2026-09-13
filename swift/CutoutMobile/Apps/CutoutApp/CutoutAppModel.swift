@@ -437,12 +437,7 @@ final class CutoutAppModel {
             self?.applyRideMapDecision(snapshot: snapshot, decision: decision)
         }
         self.core.onRideMapSnapshotChange = { [weak self] snapshot in
-            guard let self else { return }
-            self.rideMapSnapshot = snapshot
-            self.rideMapLiveTelemetryState = snapshot.associatedVehicle == nil
-                ? .gpsOnly
-                : .associatedNoTelemetry
-            self.updateRideMapDurationTicker()
+            self?.applyRideMapSnapshot(snapshot)
         }
         self.core.onRideMapErrorChange = { [weak self] error in
             self?.rideMapLiveError = error
@@ -984,10 +979,10 @@ final class CutoutAppModel {
     }
 
     @discardableResult
-    func startGpsOnlyRide() -> Bool {
+    func startGpsOnlyRide() async -> Bool {
         core.resetRideMapLocationAdmission()
-        let started = applyRideMapCommand(resetPoints: true) {
-            try core.startRideMapGpsOnly(
+        let started = await applyRideMapCommand(resetPoints: true) {
+            try await core.startRideMapGpsOnly(
                 atMs: currentMonotonicTime.rawValue,
                 lastConnectedVehicle: selectedDeviceStore.platformIdentifier
             )
@@ -1059,23 +1054,23 @@ final class CutoutAppModel {
     }
 
     @discardableResult
-    func pauseRideMap() -> Bool {
-        applyRideMapCommand {
-            try core.pauseRideMap(atMs: currentMonotonicTime.rawValue)
+    func pauseRideMap() async -> Bool {
+        await applyRideMapCommand {
+            try await core.pauseRideMap(atMs: currentMonotonicTime.rawValue)
         }
     }
 
     @discardableResult
-    func resumeRideMap() -> Bool {
-        applyRideMapCommand {
-            try core.resumeRideMap(atMs: currentMonotonicTime.rawValue)
+    func resumeRideMap() async -> Bool {
+        await applyRideMapCommand {
+            try await core.resumeRideMap(atMs: currentMonotonicTime.rawValue)
         }
     }
 
     @discardableResult
-    func stopRideMap() -> Bool {
-        let stopped = applyRideMapCommand {
-            try core.stopRideMap(atMs: currentMonotonicTime.rawValue)
+    func stopRideMap() async -> Bool {
+        let stopped = await applyRideMapCommand {
+            try await core.stopRideMap(atMs: currentMonotonicTime.rawValue)
         }
         if stopped {
             invalidateLiveProjection(clearPoints: false)
@@ -1084,13 +1079,10 @@ final class CutoutAppModel {
         return stopped
     }
 
-    func refreshRideMapDuration() {
-        guard let snapshot = core.rideMapStateHandle?.currentSnapshot(atMs: currentMonotonicTime.rawValue),
-              snapshot.state == .active
-        else {
-            return
-        }
-        rideMapSnapshot = snapshot
+    func refreshRideMapDuration() async {
+        guard let snapshot = await core.currentRideMapSnapshot(atMs: currentMonotonicTime.rawValue)
+        else { return }
+        applyRideMapSnapshot(snapshot)
     }
 
     private func updateRideMapDurationTicker() {
@@ -1101,7 +1093,7 @@ final class CutoutAppModel {
         }
         rideMapDurationTask = Task { [weak self] in
             while Task.isCancelled == false {
-                self?.refreshRideMapDuration()
+                await self?.refreshRideMapDuration()
                 do {
                     try await Task.sleep(for: .seconds(1))
                 } catch {
@@ -1112,8 +1104,8 @@ final class CutoutAppModel {
     }
 
     @discardableResult
-    func saveRideMap() -> Bool {
-        guard applyRideMapCommand({ try core.saveRideMap() }) else {
+    func saveRideMap() async -> Bool {
+        guard await applyRideMapCommand({ try await core.saveRideMap() }) else {
             return false
         }
         invalidateLiveProjection(clearPoints: false)
@@ -1124,8 +1116,8 @@ final class CutoutAppModel {
     }
 
     @discardableResult
-    func discardRideMap() -> Bool {
-        guard applyRideMapCommand({ try core.discardRideMap() }) else {
+    func discardRideMap() async -> Bool {
+        guard await applyRideMapCommand({ try await core.discardRideMap() }) else {
             return false
         }
         invalidateLiveProjection(clearPoints: true)
@@ -1860,18 +1852,25 @@ final class CutoutAppModel {
         snapshot: MobileRideMapSnapshotDto,
         decision: MobileRideMapDecisionDto
     ) {
+        guard applyRideMapSnapshot(snapshot) else { return }
         rideMapLiveError = nil
-        rideMapSnapshot = snapshot
         rideMapLastDecision = decision
-        switch decision {
-        case let .pending(point, _):
-            rideMapLiveTelemetryState = point.telemetryState
-        case let .accepted(point, _):
-            rideMapLiveTelemetryState = point.telemetryState
-            requestLiveProjection()
-        case .rejected, .ignored, .storageError:
-            break
+    }
+
+    @discardableResult
+    private func applyRideMapSnapshot(_ snapshot: MobileRideMapSnapshotDto) -> Bool {
+        if let current = rideMapSnapshot, snapshot.revision < current.revision {
+            return false
         }
+        let prior = rideMapSnapshot
+        let changedRide = prior?.rideID != snapshot.rideID
+        let changedRoute = changedRide || prior?.summary.pointCount != snapshot.summary.pointCount
+        if changedRide { invalidateLiveProjection(clearPoints: true) }
+        rideMapSnapshot = snapshot
+        rideMapLiveTelemetryState = snapshot.telemetryState
+        if prior?.state != snapshot.state { updateRideMapDurationTicker() }
+        if changedRoute { requestLiveProjection() }
+        return true
     }
 
     /// Serializes live projections while allowing a burst of accepted points to coalesce.
@@ -1967,18 +1966,14 @@ final class CutoutAppModel {
 
     private func applyRideMapCommand(
         resetPoints: Bool = false,
-        _ command: () throws -> MobileRideMapSnapshotDto
-    ) -> Bool {
+        _ command: () async throws -> MobileRideMapSnapshotDto
+    ) async -> Bool {
         do {
-            rideMapSnapshot = try command()
+            applyRideMapSnapshot(try await command())
             rideMapLiveError = nil
-            updateRideMapDurationTicker()
             if resetPoints {
                 invalidateLiveProjection(clearPoints: true)
             }
-            rideMapLiveTelemetryState = rideMapSnapshot?.associatedVehicle == nil
-                ? .gpsOnly
-                : .associatedNoTelemetry
             return true
         } catch {
             rideMapLiveError = Self.mapRideMapError(error)

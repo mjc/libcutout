@@ -71,7 +71,7 @@ struct RideMapLiveContentView: View {
                     )
                     RideMapSummaryView(snapshot: snapshot, speed: speed, vehicleName: vehicleName)
                     RideMapControlsView(
-                        state: snapshot?.state,
+                        snapshot: snapshot,
                         isDiscardConfirmationPresented: $isDiscardConfirmationPresented,
                         pause: pause,
                         resume: resume,
