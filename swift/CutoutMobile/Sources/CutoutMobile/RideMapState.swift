@@ -1,16 +1,7 @@
 import CutoutMobileFFI
 import Foundation
 
-public enum MobileRideMapAvailability: Equatable, Hashable, Sendable {
-    case checking
-    case ready
-    case permissionRequired
-    case denied
-    case restricted
-    case servicesDisabled
-    case locationUnavailable
-    case storageUnavailable
-}
+public typealias MobileRideMapAvailability = MobileRideMapAvailabilityDto
 
 extension MobileMusicHistoryDto {
     public var historyState: MobileMusicHistoryStateDto? {
@@ -444,6 +435,7 @@ public struct MobileRideMapRouteEndpointMetadata: Equatable, Hashable, Sendable 
 public struct MobileRideMapSnapshotDto: Equatable, Hashable, Sendable {
     public let rideID: String
     public let revision: UInt64
+    public let locationAcquisition: MobileLocationAcquisitionDto?
     public let musicHistoryPolicy: MobileMusicHistoryPolicyDto
     public let commandToken: MobileRideMapRecordingTokenDto?
     public let recordingToken: MobileRideMapRecordingTokenDto?
@@ -467,13 +459,15 @@ public struct MobileRideMapSnapshotDto: Equatable, Hashable, Sendable {
         commandToken: MobileRideMapRecordingTokenDto? = nil,
         allowedActions: [MobileRideEventDto] = [],
         telemetryState: MobileRideMapTelemetryStateDto = .gpsOnly,
-        musicHistoryPolicy: MobileMusicHistoryPolicyDto = .disabled
+        musicHistoryPolicy: MobileMusicHistoryPolicyDto = .disabled,
+        locationAcquisition: MobileLocationAcquisitionDto? = nil
     ) {
         self.rideID = rideID
         self.revision = revision
         self.recordingToken = recordingToken
         self.commandToken = commandToken
         self.musicHistoryPolicy = musicHistoryPolicy
+        self.locationAcquisition = locationAcquisition
         self.allowedActions = allowedActions
         self.telemetryState = telemetryState
         self.state = state
@@ -825,6 +819,16 @@ public final class MobileRideMapState: @unchecked Sendable {
 
     public func observeConnectionTelemetry(connection: ConnectionAttemptToken, atMs: UInt64) throws -> MobileRideMapSnapshotDto {
         try withCore { mapSnapshot(try $0.observeConnectionTelemetry(connection: connection, atMs: atMs)) }
+    }
+
+    public func locationAcquisition() -> MobileLocationAcquisitionDto {
+        core?.locationAcquisition() ?? MobileLocationAcquisitionDto(
+            revision: 0, availability: .storageUnavailable, demand: .idle
+        )
+    }
+
+    public func observeLocationEnvironment(_ environment: MobileLocationEnvironmentDto) -> MobileLocationAcquisitionDto {
+        core?.observeLocationEnvironment(environment: environment) ?? locationAcquisition()
     }
 
     /// Supplies the saved preference for future ride creation.
@@ -1199,7 +1203,8 @@ public final class MobileRideMapState: @unchecked Sendable {
             commandToken: snapshot.commandToken,
             allowedActions: snapshot.allowedActions,
             telemetryState: map(snapshot.telemetryState),
-            musicHistoryPolicy: snapshot.musicHistoryPolicy
+            musicHistoryPolicy: snapshot.musicHistoryPolicy,
+            locationAcquisition: snapshot.locationAcquisition
         )
     }
 

@@ -480,7 +480,6 @@ public final class CutoutSessionCore: NSObject {
     private let phoneLocationState = MobilePhoneLocationState()
     private let publishedRideMapSnapshot = Mutex<MobileRideMapSnapshotDto?>(nil)
     private var rideMapWritePoller: DispatchSourceTimer?
-    private var didRequestAlwaysLocationAuthorization = false
     private var didResolveBluetoothRestoration = false
 #if DEBUG
     private let testScript: CutoutSessionTestScript?
@@ -496,16 +495,7 @@ public final class CutoutSessionCore: NSObject {
         rideMapWritePoller?.cancel()
     }
 
-    private lazy var locationManager: CLLocationManager = {
-        let manager = CLLocationManager()
-        manager.delegate = self
-        manager.desiredAccuracy = kCLLocationAccuracyBestForNavigation
-        manager.activityType = .fitness
-#if os(iOS)
-        manager.allowsBackgroundLocationUpdates = true
-#endif
-        return manager
-    }()
+    @MainActor private var rideLocationAdapter: RideLocationAdapter?
 
     /// Composes transport around a recording owner already restored off the main actor.
     public convenience init(rideMapState: MobileRideMapState) {
@@ -591,7 +581,17 @@ public final class CutoutSessionCore: NSObject {
             return
         }
 #endif
-        _ = locationManager
+        let locationReference = WeakCutoutSessionCoreReference(self)
+        DispatchQueue.main.async {
+            guard let self = locationReference.value else { return }
+            if self.rideLocationAdapter == nil {
+                self.rideLocationAdapter = RideLocationAdapter(
+                    onEnvironment: { [weak self] in self?.observeLocationEnvironment($0) },
+                    onLocations: { [weak self] in self?.receiveLocations($0) }
+                )
+            }
+            self.rideLocationAdapter?.refreshEnvironment()
+        }
         return onBleQueue {
             guard central == nil else {
                 return
@@ -1869,6 +1869,7 @@ public final class CutoutSessionCore: NSObject {
     private func publishRideMapSnapshot(_ snapshot: MobileRideMapSnapshotDto) {
         publishedRideMapSnapshot.withLock { $0 = snapshot }
         publishOnMain { self.onRideMapSnapshotChange?(snapshot) }
+        if let intent = snapshot.locationAcquisition { publishLocationAcquisition(intent) }
     }
 
     private func publishRideMapError(_ error: MobileRideMapError) {
@@ -1876,9 +1877,33 @@ public final class CutoutSessionCore: NSObject {
     }
 
     private func publishRideMapAvailability() {
-        let availability: MobileRideMapAvailability =
-            rideMapState?.initializationError == nil ? .ready : .storageUnavailable
-        publishOnMain { self.onRideMapAvailabilityChange?(availability) }
+        guard let rideMapState else {
+            publishOnMain { self.onRideMapAvailabilityChange?(.storageUnavailable) }
+            return
+        }
+        rideMapQueue.async {
+            let intent = rideMapState.locationAcquisition()
+            self.publishLocationAcquisition(intent)
+        }
+    }
+
+    private func observeLocationEnvironment(_ environment: MobileLocationEnvironmentDto) {
+        guard let rideMapState else { return }
+        rideMapQueue.async {
+            let intent = rideMapState.observeLocationEnvironment(environment)
+            self.publishLocationAcquisition(intent)
+        }
+    }
+
+    private func publishLocationAcquisition(_ intent: MobileLocationAcquisitionDto) {
+        let reference = WeakCutoutSessionCoreReference(self)
+        DispatchQueue.main.async { reference.value?.applyLocationAcquisition(intent) }
+    }
+
+    @MainActor
+    private func applyLocationAcquisition(_ intent: MobileLocationAcquisitionDto) {
+        guard rideLocationAdapter?.apply(intent) != false else { return }
+        onRideMapAvailabilityChange?(intent.availability)
     }
 
     /// Records one bounded music observation independently of BLE frame arrival.
@@ -3122,30 +3147,12 @@ extension CutoutSessionCore {
     }
 }
 
-extension CutoutSessionCore: CLLocationManagerDelegate {
-    private func requestAlwaysLocationAuthorizationIfNeeded() {
-        guard !didRequestAlwaysLocationAuthorization else { return }
-        didRequestAlwaysLocationAuthorization = true
-        locationManager.requestAlwaysAuthorization()
-    }
-
-    public func locationManagerDidChangeAuthorization(_ manager: CLLocationManager) {
-        switch manager.authorizationStatus {
-        case .notDetermined:
-            manager.requestWhenInUseAuthorization()
-        case .authorizedAlways:
-            manager.startUpdatingLocation()
-        case .authorizedWhenInUse:
-            requestAlwaysLocationAuthorizationIfNeeded()
-            manager.startUpdatingLocation()
-        case .denied, .restricted:
-            break
-        @unknown default:
-            break
-        }
-    }
-
+extension CutoutSessionCore {
     public func locationManager(_: CLLocationManager, didUpdateLocations locations: [CLLocation]) {
+        receiveLocations(locations)
+    }
+
+    private func receiveLocations(_ locations: [CLLocation]) {
         guard !locations.isEmpty else { return }
 
         let receiptMonotonicMs = clock.now().rawValue

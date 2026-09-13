@@ -64,7 +64,7 @@ extension CutoutSessionDriving {
     }
 
     var rideMapAvailability: MobileRideMapAvailability {
-        rideMapStorageError == nil ? .ready : .storageUnavailable
+        rideMapStorageError == nil ? .checking : .storageUnavailable
     }
 
     private func requireRideMapState() throws -> MobileRideMapState {
