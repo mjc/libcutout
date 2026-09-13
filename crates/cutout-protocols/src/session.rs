@@ -16,21 +16,22 @@ use cutout_core::{
 };
 
 use crate::{
-    AeroControlEncoder, AeroProbe, AeroRequestEncoder, BEGODE_DATA_CHANNEL, BEGODE_SERVICE_CHANNEL,
-    BegodeBmsCellPage, BegodeBmsPageError, BegodeBmsSummary, BegodeFrame, BegodeFrameError,
-    BegodeFrameParseResult, BegodeFrameReassembler, BegodeLiveATelemetry, BegodeLiveBTelemetry,
-    BegodePackVoltageProfile, BegodeTelemetryContext, BegodeTelemetryError, EncodedControl,
-    EncodedControlSequence, EncodedControlStep, EncodedRequest, FalconControlEncoder, FalconProbe,
-    FalconRequestEncoder, RefloatCodecError, RefloatReadOnlyRequest, RefloatReply,
-    RefloatStreamDecoder, RefloatStreamResult, RequestDisposition, VESC_COMM_CUSTOM_APP_DATA,
-    VESC_MAX_FRAME_LEN, VESC_NOTIFY_CHANNEL, VESC_WRITE_CHANNEL, VETERAN_DATA_CHANNEL,
-    VETERAN_SERVICE_CHANNEL, VescBoardProfile, VescCodecError, VescReadOnlyCodec,
-    VescReadOnlyReply, VescReadOnlyRequest, VescReadOnlyStreamDecoder, VescReadOnlyStreamResult,
-    VescRequestEncoder, VescStatsMask, VescStatsTelemetry, VescValuesMask, VescValuesTelemetry,
-    VeteranBmsCellPage, VeteranBmsMetadataPage, VeteranBmsPageEvidence, VeteranBmsTemperaturePage,
-    VeteranFrame, VeteranFrameParseResult, VeteranFrameReassembler, VeteranReassemblyError,
-    VeteranTelemetry, VeteranTelemetryError, begode_falcon_target_voltage_profile,
-    decode_veteran_bms_page, util::u64_to_i64_saturating,
+    AeroCommandMode, AeroCommandModeDetector, AeroControlEncoder, AeroProbe, AeroRequestEncoder,
+    BEGODE_DATA_CHANNEL, BEGODE_SERVICE_CHANNEL, BegodeBmsCellPage, BegodeBmsPageError,
+    BegodeBmsSummary, BegodeFrame, BegodeFrameError, BegodeFrameParseResult,
+    BegodeFrameReassembler, BegodeLiveATelemetry, BegodeLiveBTelemetry, BegodePackVoltageProfile,
+    BegodeTelemetryContext, BegodeTelemetryError, EncodedControl, EncodedControlSequence,
+    EncodedControlStep, EncodedRequest, FalconControlEncoder, FalconProbe, FalconRequestEncoder,
+    RefloatCodecError, RefloatReadOnlyRequest, RefloatReply, RefloatStreamDecoder,
+    RefloatStreamResult, RequestDisposition, VESC_COMM_CUSTOM_APP_DATA, VESC_MAX_FRAME_LEN,
+    VESC_NOTIFY_CHANNEL, VESC_WRITE_CHANNEL, VETERAN_DATA_CHANNEL, VETERAN_SERVICE_CHANNEL,
+    VescBoardProfile, VescCodecError, VescReadOnlyCodec, VescReadOnlyReply, VescReadOnlyRequest,
+    VescReadOnlyStreamDecoder, VescReadOnlyStreamResult, VescRequestEncoder, VescStatsMask,
+    VescStatsTelemetry, VescValuesMask, VescValuesTelemetry, VeteranBmsCellPage,
+    VeteranBmsMetadataPage, VeteranBmsPageEvidence, VeteranBmsTemperaturePage, VeteranFrame,
+    VeteranFrameParseResult, VeteranFrameReassembler, VeteranReassemblyError, VeteranTelemetry,
+    VeteranTelemetryError, begode_falcon_target_voltage_profile, decode_veteran_bms_page,
+    util::u64_to_i64_saturating,
 };
 
 /// Raw VESC electrical RPM telemetry field id.
@@ -175,6 +176,11 @@ pub trait ReadOnlyNotificationDecoder {
         false
     }
 
+    /// Returns connection-scoped evidence needed to encode controls.
+    fn control_encoding_context(&self) -> ControlEncodingContext {
+        ControlEncodingContext::default()
+    }
+
     /// Handles an accepted notification payload.
     fn handle_notification(
         &mut self,
@@ -184,6 +190,16 @@ pub trait ReadOnlyNotificationDecoder {
         monotonic_ms: MonotonicTimestamp,
         output: &mut Vec<SessionOutput>,
     );
+}
+
+/// Protocol-specific wire representation selected from connection evidence.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum ControlEncodingContext {
+    /// No protocol-specific representation is required.
+    #[default]
+    Default,
+    /// NOSFET command representation selected from complete telemetry packets.
+    Aero(AeroCommandMode),
 }
 
 /// No-op notification decoder for models without typed notification decoding yet.
@@ -216,6 +232,7 @@ impl ReadOnlyNotificationDecoder for NoopNotificationDecoder {
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct VeteranNotificationDecoder {
     reassembler: VeteranFrameReassembler,
+    command_mode: AeroCommandModeDetector,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -230,6 +247,11 @@ type CompletedFrames = Quantity<Count, CompletedFrame, usize>;
 impl ReadOnlyNotificationDecoder for VeteranNotificationDecoder {
     fn reset(&mut self) {
         self.reassembler.reset();
+        self.command_mode.reset();
+    }
+
+    fn control_encoding_context(&self) -> ControlEncodingContext {
+        ControlEncodingContext::Aero(self.command_mode.mode())
     }
 
     fn handle_notification(
@@ -247,6 +269,8 @@ impl ReadOnlyNotificationDecoder for VeteranNotificationDecoder {
                 Ok(VeteranFrameParseResult::Complete(frame)) => {
                     completed_frames = completed_frames.next();
                     buffered = false;
+                    self.command_mode
+                        .observe_complete_packet_len(frame.as_slice().len());
                     let event_count = push_veteran_frame(&frame, monotonic_ms, output);
                     push_veteran_ingest_outcome_for_frame(
                         &frame,
@@ -1513,12 +1537,18 @@ pub trait SupportsSettingsWrites: ProtocolModelSpec {
     const MAX_SETTINGS_SPEED: Option<cutout_core::Speed> = None;
 
     /// Encodes a supported settings write.
-    fn encode_settings_write(command: DeviceCommand) -> Option<EncodedControl>;
+    fn encode_settings_write(
+        command: DeviceCommand,
+        context: ControlEncodingContext,
+    ) -> Option<EncodedControl>;
 
     /// Encodes a supported multi-step settings write, when the protocol requires timing.
     #[must_use]
-    fn encode_settings_sequence(command: DeviceCommand) -> Option<EncodedControlSequence> {
-        let _ = command;
+    fn encode_settings_sequence(
+        command: DeviceCommand,
+        context: ControlEncodingContext,
+    ) -> Option<EncodedControlSequence> {
+        let _ = (command, context);
         None
     }
 
@@ -1543,7 +1573,10 @@ pub trait SupportsBenignControls: ProtocolModelSpec {
     const CONTROL_CAPABILITIES: Capabilities;
 
     /// Encodes a supported benign control.
-    fn encode_benign_control(command: DeviceCommand) -> Option<EncodedControl>;
+    fn encode_benign_control(
+        command: DeviceCommand,
+        context: ControlEncodingContext,
+    ) -> Option<EncodedControl>;
 }
 
 /// Type-level dangerous-actuation capability.
@@ -1643,10 +1676,17 @@ impl SupportsReadRequests for NosfetAeroModel {
 
 impl SupportsBenignControls for NosfetAeroModel {
     const CONTROL_CAPABILITIES: Capabilities =
-        Capabilities::from_supported_commands([CommandKind::SetLights]);
+        Capabilities::from_supported_commands([CommandKind::SetLights, CommandKind::SoundHorn]);
 
-    fn encode_benign_control(command: DeviceCommand) -> Option<EncodedControl> {
-        AeroControlEncoder::encode(command)
+    fn encode_benign_control(
+        command: DeviceCommand,
+        context: ControlEncodingContext,
+    ) -> Option<EncodedControl> {
+        let mode = match context {
+            ControlEncodingContext::Aero(mode) => mode,
+            ControlEncodingContext::Default => AeroCommandMode::Binary,
+        };
+        AeroControlEncoder::encode_in_mode(command, mode)
     }
 }
 
@@ -1679,12 +1719,15 @@ impl SupportsSettingsWrites for NosfetAeroModel {
     const MAX_SETTINGS_SPEED: Option<cutout_core::Speed> =
         Some(cutout_core::Speed::from_millimetres_per_second(500));
 
-    fn encode_settings_write(command: DeviceCommand) -> Option<EncodedControl> {
-        AeroControlEncoder::encode(command)
-    }
-
-    fn encode_settings_sequence(command: DeviceCommand) -> Option<EncodedControlSequence> {
-        AeroControlEncoder::encode_settings_sequence(command)
+    fn encode_settings_write(
+        command: DeviceCommand,
+        context: ControlEncodingContext,
+    ) -> Option<EncodedControl> {
+        let mode = match context {
+            ControlEncodingContext::Aero(mode) => mode,
+            ControlEncodingContext::Default => AeroCommandMode::Binary,
+        };
+        AeroControlEncoder::encode_in_mode(command, mode)
     }
 }
 
@@ -1745,7 +1788,10 @@ impl SupportsBenignControls for BegodeFalconModel {
     const CONTROL_CAPABILITIES: Capabilities =
         Capabilities::from_supported_commands([CommandKind::SetLights]);
 
-    fn encode_benign_control(command: DeviceCommand) -> Option<EncodedControl> {
+    fn encode_benign_control(
+        command: DeviceCommand,
+        _context: ControlEncodingContext,
+    ) -> Option<EncodedControl> {
         FalconControlEncoder::encode(command)
     }
 }
@@ -1760,11 +1806,17 @@ impl SupportsSettingsWrites for BegodeFalconModel {
         CommandKind::SetBegodeLedMode,
     ]);
 
-    fn encode_settings_write(command: DeviceCommand) -> Option<EncodedControl> {
+    fn encode_settings_write(
+        command: DeviceCommand,
+        _context: ControlEncodingContext,
+    ) -> Option<EncodedControl> {
         FalconControlEncoder::encode(command)
     }
 
-    fn encode_settings_sequence(command: DeviceCommand) -> Option<EncodedControlSequence> {
+    fn encode_settings_sequence(
+        command: DeviceCommand,
+        _context: ControlEncodingContext,
+    ) -> Option<EncodedControlSequence> {
         FalconControlEncoder::encode_settings_sequence(command)
     }
 }
@@ -2038,11 +2090,12 @@ pub struct BenignControlSession<
 
 fn handle_benign_control<M: ReadOnlyModelSpec + SupportsBenignControls>(
     command: DeviceCommand,
+    context: ControlEncodingContext,
     output: &mut Vec<SessionOutput>,
 ) {
     let kind = command.kind();
     if M::CONTROL_CAPABILITIES.supports_command_kind(kind) {
-        if let Some(encoded) = M::encode_benign_control(command) {
+        if let Some(encoded) = M::encode_benign_control(command, context) {
             output.push(SessionOutput::Transport(TransportAction::Write {
                 channel: M::WRITE_CHANNEL,
                 bytes: encoded.payload,
@@ -2146,7 +2199,8 @@ impl<M: ReadOnlyModelSpec + SupportsBenignControls, const ACCEPT_ANY_NOTIFICATIO
         if command.safety_class() == SafetyClass::BenignControl
             && M::CONTROL_CAPABILITIES.supports_command_kind(kind)
         {
-            if let Some(encoded) = M::encode_benign_control(command) {
+            let context = self.read_only.decoder.control_encoding_context();
+            if let Some(encoded) = M::encode_benign_control(command, context) {
                 if let DeviceCommand::SetLights(state) = command {
                     self.light_command_state =
                         LightCommandState::Requested(RequestedLightState::new(state));
@@ -2405,7 +2459,8 @@ impl<
             return;
         }
 
-        if let Some(sequence) = M::encode_settings_sequence(command) {
+        let context = self.read_only.decoder.control_encoding_context();
+        if let Some(sequence) = M::encode_settings_sequence(command, context) {
             let mut steps = sequence.steps.into_iter();
             let Some(first) = steps.next() else {
                 output.push(SessionOutput::Event(DeviceEvent::ControlRefusal(
@@ -2438,7 +2493,7 @@ impl<
             return;
         }
 
-        if let Some(encoded) = M::encode_settings_write(command) {
+        if let Some(encoded) = M::encode_settings_write(command, context) {
             output.push(SessionOutput::Transport(TransportAction::Write {
                 channel: M::WRITE_CHANNEL,
                 bytes: encoded.payload,
@@ -2480,7 +2535,8 @@ impl<
             SessionInput::Command(command)
                 if command.safety_class() == SafetyClass::BenignControl =>
             {
-                handle_benign_control::<M>(command, output);
+                let context = self.read_only.decoder.control_encoding_context();
+                handle_benign_control::<M>(command, context, output);
             }
             input => {
                 let start = output.len();
@@ -2630,7 +2686,10 @@ mod tests {
         const WRITE_CAPABILITIES: Capabilities =
             Capabilities::from_supported_commands([CommandKind::SetPedalMode]);
 
-        fn encode_settings_write(command: DeviceCommand) -> Option<EncodedControl> {
+        fn encode_settings_write(
+            command: DeviceCommand,
+            _context: ControlEncodingContext,
+        ) -> Option<EncodedControl> {
             AeroControlEncoder::encode(command)
         }
     }
@@ -2638,7 +2697,10 @@ mod tests {
     impl SupportsBenignControls for TestModel {
         const CONTROL_CAPABILITIES: Capabilities = Capabilities::from_supported_commands([]);
 
-        fn encode_benign_control(_command: DeviceCommand) -> Option<EncodedControl> {
+        fn encode_benign_control(
+            _command: DeviceCommand,
+            _context: ControlEncodingContext,
+        ) -> Option<EncodedControl> {
             None
         }
     }
@@ -2682,6 +2744,12 @@ mod tests {
              2f0e300e2a0e320e2e0e300e310e300e2d0e2f0e\
              310e2e9e05e3ad"
         )
+    }
+
+    fn short_aero_frame() -> [u8; 36] {
+        let mut frame = [0_u8; 36];
+        frame[..4].copy_from_slice(&[0xdc, 0x5a, 0x5c, 0x20]);
+        frame
     }
 
     fn live_aero_selector_3_frame() -> [u8; 99] {
@@ -3268,7 +3336,7 @@ mod tests {
     #[test]
     fn read_only_session_shells_remain_small() {
         assert!(size_of::<ReadOnlySession<BegodeFalconModel, true>>() <= 64);
-        assert!(size_of::<ReadOnlySession<NosfetAeroModel, false>>() <= 272);
+        assert!(size_of::<ReadOnlySession<NosfetAeroModel, false>>() <= 280);
     }
 
     #[test]
@@ -4844,6 +4912,7 @@ mod tests {
     fn nosfet_aero_decoder_reports_oversized_frame_as_parser_diagnostic_ingest() {
         let mut decoder = VeteranNotificationDecoder {
             reassembler: VeteranFrameReassembler::saturated_candidate_for_test(),
+            command_mode: AeroCommandModeDetector::default(),
         };
         let mut output = Vec::new();
 
@@ -5195,10 +5264,98 @@ mod tests {
             output,
             vec![SessionOutput::Transport(TransportAction::Write {
                 channel: VETERAN_DATA_CHANNEL,
-                bytes: WritePayload::try_from_slice(b"SetLightON").expect("fixture payload fits"),
+                bytes: WritePayload::try_from_slice(&hex_literal::hex!(
+                    "4c6b41700d0180800157ed3bd5"
+                ))
+                .expect("fixture payload fits"),
                 mode: WriteMode::WithoutResponse,
             })]
         );
+    }
+
+    #[test]
+    fn aero_session_latches_ascii_from_complete_packets_and_resets_on_reconnect() {
+        let mut session = BenignControlSession::<NosfetAeroModel, false>::default();
+        let mut output = Vec::new();
+        session.handle(
+            SessionInput::LinkUp(LinkInfo {
+                monotonic_ms: ms(1),
+                max_write_len: None,
+            }),
+            &mut output,
+        );
+        for at in [2, 3] {
+            session.handle(
+                SessionInput::Notification {
+                    channel: VETERAN_DATA_CHANNEL,
+                    bytes: &short_aero_frame(),
+                    monotonic_ms: ms(at),
+                },
+                &mut output,
+            );
+        }
+        output.clear();
+        session.handle(
+            SessionInput::Command(DeviceCommand::SetLights(cutout_core::LightState::On)),
+            &mut output,
+        );
+        assert!(output.iter().any(|item| matches!(
+            item,
+            SessionOutput::Transport(TransportAction::Write { bytes, .. })
+                if bytes.as_slice() == b"SetLightON"
+        )));
+
+        session.handle(SessionInput::LinkDown, &mut output);
+        session.handle(
+            SessionInput::LinkUp(LinkInfo {
+                monotonic_ms: ms(4),
+                max_write_len: None,
+            }),
+            &mut output,
+        );
+        output.clear();
+        session.handle(
+            SessionInput::Command(DeviceCommand::SetLights(cutout_core::LightState::On)),
+            &mut output,
+        );
+        assert!(output.iter().any(|item| matches!(
+            item,
+            SessionOutput::Transport(TransportAction::Write { bytes, .. })
+                if bytes.as_slice() == hex_literal::hex!("4c6b41700d0180800157ed3bd5")
+        )));
+    }
+
+    #[test]
+    fn aero_session_ignores_tiny_complete_frames_when_selecting_command_mode() {
+        let mut session = BenignControlSession::<NosfetAeroModel, false>::default();
+        let mut output = Vec::new();
+        session.handle(
+            SessionInput::LinkUp(LinkInfo {
+                monotonic_ms: ms(1),
+                max_write_len: None,
+            }),
+            &mut output,
+        );
+        for at in [2, 3] {
+            session.handle(
+                SessionInput::Notification {
+                    channel: VETERAN_DATA_CHANNEL,
+                    bytes: b"\xdc\x5a\x5c\x01\xaa",
+                    monotonic_ms: ms(at),
+                },
+                &mut output,
+            );
+        }
+        output.clear();
+        session.handle(
+            SessionInput::Command(DeviceCommand::SetLights(cutout_core::LightState::On)),
+            &mut output,
+        );
+        assert!(output.iter().any(|item| matches!(
+            item,
+            SessionOutput::Transport(TransportAction::Write { bytes, .. })
+                if bytes.as_slice() == hex_literal::hex!("4c6b41700d0180800157ed3bd5")
+        )));
     }
 
     #[test]
@@ -5249,7 +5406,7 @@ mod tests {
         assert!(output.iter().any(|item| matches!(
             item,
             SessionOutput::Transport(TransportAction::Write { bytes, .. })
-                if bytes.as_slice() == b"SETh"
+                if bytes.as_slice() == hex_literal::hex!("4c6b41700c01800346e935ac")
         )));
     }
 
@@ -5279,7 +5436,7 @@ mod tests {
         assert!(output.iter().any(|item| matches!(
             item,
             SessionOutput::Transport(TransportAction::Write { bytes, .. })
-                if bytes.as_slice() == b"CLEARMETER"
+                if bytes.as_slice() == hex_literal::hex!("4c6b41700b0001090a31f8")
         )));
     }
 
@@ -5749,7 +5906,7 @@ mod tests {
         assert!(output.iter().any(|item| matches!(
             item,
             SessionOutput::Transport(TransportAction::Write { bytes, .. })
-                if bytes.as_slice() == b"SETh"
+                if bytes.as_slice() == hex_literal::hex!("4c6b41700c01800346e935ac")
         )));
 
         session.handle(

@@ -726,7 +726,7 @@ mod tests {
             output,
             SessionOutputDto::Transport(TransportActionDto::Write { channel, bytes, .. })
                 if *channel == VETERAN_DATA_CHANNEL.as_bytes()
-                    && bytes == b"SetLightON"
+                    && bytes == &hex_literal::hex!("4c6b41700d0180800157ed3bd5")
         )));
     }
 

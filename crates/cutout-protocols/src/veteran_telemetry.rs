@@ -776,7 +776,7 @@ pub const AERO_FIELD_DISPLAY_BACKLIGHT_PERCENT: u16 = 0x0837;
 /// Aero page-8 transportation-mode toggle.
 pub const AERO_FIELD_TRANSPORT_MODE: u16 = 0x0839;
 
-/// Aero page-8 gyro calibration state: zero idle, one waiting, two complete.
+/// Aero page-8 gyro procedure byte: one is adjusting attitude; two is ready to calibrate.
 pub const AERO_FIELD_GYRO_CALIBRATION_STATE: u16 = 0x0838;
 
 /// Aero page-8 signed voltage correction, in tenths of a percent.

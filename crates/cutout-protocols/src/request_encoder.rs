@@ -79,17 +79,76 @@ pub struct EncodedControlSequence {
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct AeroControlEncoder;
 
+/// NOSFET command representation selected from complete telemetry packets.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum AeroCommandMode {
+    /// Legacy string commands without a checksum.
+    Ascii,
+    /// Modern binary commands with a trailing CRC32.
+    Binary,
+}
+
+/// Connection-scoped detector matching the official two-packet command-mode selection.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct AeroCommandModeDetector {
+    previous: Option<AeroCommandMode>,
+    latched: Option<AeroCommandMode>,
+}
+
+impl AeroCommandModeDetector {
+    /// Returns the selected mode. The official client starts in binary mode before detection.
+    #[must_use]
+    pub fn mode(self) -> AeroCommandMode {
+        self.latched.unwrap_or(AeroCommandMode::Binary)
+    }
+
+    /// Returns whether two consecutive complete packets selected a mode.
+    #[must_use]
+    pub const fn is_latched(self) -> bool {
+        self.latched.is_some()
+    }
+
+    /// Observes one complete assembled packet length and latches two matching classifications.
+    pub fn observe_complete_packet_len(&mut self, packet_len: usize) {
+        if packet_len < 36 || self.latched.is_some() {
+            return;
+        }
+        let observed = if packet_len < 47 {
+            AeroCommandMode::Ascii
+        } else {
+            AeroCommandMode::Binary
+        };
+        if self.previous == Some(observed) {
+            self.latched = Some(observed);
+        } else {
+            self.previous = Some(observed);
+        }
+    }
+
+    /// Clears all connection-scoped evidence.
+    pub fn reset(&mut self) {
+        *self = Self::default();
+    }
+}
+
 impl AeroControlEncoder {
     /// Encodes a supported NOSFET Aero benign control.
     #[must_use]
     pub fn encode(command: DeviceCommand) -> Option<EncodedControl> {
-        let payload = match command {
-            DeviceCommand::SetLights(LightState::On) => b"SetLightON".as_slice(),
-            DeviceCommand::SetLights(LightState::Off) => b"SetLightOFF".as_slice(),
-            DeviceCommand::SetPedalMode(PedalMode::Hard) => b"SETh".as_slice(),
-            DeviceCommand::SetPedalMode(PedalMode::Medium) => b"SETm".as_slice(),
-            DeviceCommand::SetPedalMode(PedalMode::Soft) => b"SETs".as_slice(),
-            DeviceCommand::ResetTripMeter => b"CLEARMETER".as_slice(),
+        Self::encode_in_mode(command, AeroCommandMode::Binary)
+    }
+
+    /// Encodes a control through the connection-selected command representation.
+    #[must_use]
+    pub fn encode_in_mode(command: DeviceCommand, mode: AeroCommandMode) -> Option<EncodedControl> {
+        if let Some(payload) = aero_mode_control_payload(command, mode) {
+            return Some(EncodedControl {
+                command: command.kind(),
+                payload,
+                mode: WriteMode::WithoutResponse,
+            });
+        }
+        match command {
             DeviceCommand::SetAeroDisplayBacklight(value) => {
                 return Some(EncodedControl {
                     command: command.kind(),
@@ -248,13 +307,6 @@ impl AeroControlEncoder {
                     mode: WriteMode::WithoutResponse,
                 });
             }
-            DeviceCommand::SetAeroRidingMode(mode) => {
-                return Some(EncodedControl {
-                    command: command.kind(),
-                    payload: aero_binary_frame(*b"LkAp", &[0x01, 0x80], mode.wire_value())?,
-                    mode: WriteMode::WithoutResponse,
-                });
-            }
             DeviceCommand::SetAeroPedalHardness(percent) => {
                 return Some(EncodedControl {
                     command: command.kind(),
@@ -343,39 +395,63 @@ impl AeroControlEncoder {
                     mode: WriteMode::WithoutResponse,
                 });
             }
+            DeviceCommand::SetLights(_)
+            | DeviceCommand::SetPedalMode(_)
+            | DeviceCommand::ResetTripMeter
+            | DeviceCommand::SoundHorn
+            | DeviceCommand::SetAeroRidingMode(_)
+            | DeviceCommand::SetAeroHighBeam(_) => return None,
             _ => return None,
-        };
-        Some(EncodedControl {
-            command: command.kind(),
-            payload: request_payload(payload),
-            mode: WriteMode::WithoutResponse,
-        })
+        }
     }
+}
 
-    /// Encodes the official NOSFET high-beam frame.
-    ///
-    /// The official Android app writes only the `LkAp` frame here. The
-    /// `LdAp` frame used by older reverse-engineered captures is not a
-    /// companion for Aero's light command; sending it makes the wheel emit
-    /// an extra acknowledgement beep.
-    #[must_use]
-    pub fn encode_settings_sequence(command: DeviceCommand) -> Option<EncodedControlSequence> {
-        let state = match command {
-            DeviceCommand::SetAeroHighBeam(LightState::On) => 1,
-            DeviceCommand::SetAeroHighBeam(LightState::Off) => 0,
-            _ => return None,
-        };
-        let mut steps = ArrayVec::new();
-        steps.push(EncodedControlStep {
-            delay_ms: 0,
-            payload: aero_binary_frame(*b"LkAp", &[0x01, 0x80, 0x80], state)?,
-            mode: WriteMode::WithoutResponse,
-        });
-        Some(EncodedControlSequence {
-            command: command.kind(),
-            steps,
-        })
-    }
+fn aero_mode_control_payload(
+    command: DeviceCommand,
+    mode: AeroCommandMode,
+) -> Option<WritePayload> {
+    let (ascii, binary) = match command {
+        DeviceCommand::SoundHorn => (
+            b"OLDCMDb".as_slice(),
+            aero_binary_frame(*b"LkAp", &[0x00, 0x80, 0x80, 0x80], 1)?,
+        ),
+        DeviceCommand::ResetTripMeter => (
+            b"CLEARMETER".as_slice(),
+            aero_binary_frame(*b"LkAp", &[0x00], 1)?,
+        ),
+        DeviceCommand::SetLights(state) | DeviceCommand::SetAeroHighBeam(state) => match state {
+            LightState::On => (
+                b"SetLightON".as_slice(),
+                aero_binary_frame(*b"LkAp", &[0x01, 0x80, 0x80], 1)?,
+            ),
+            LightState::Off => (
+                b"SetLightOFF".as_slice(),
+                aero_binary_frame(*b"LkAp", &[0x01, 0x80, 0x80], 0)?,
+            ),
+            LightState::Strobe => return None,
+        },
+        DeviceCommand::SetPedalMode(mode) => aero_riding_mode_payload(match mode {
+            PedalMode::Soft => 1,
+            PedalMode::Medium => 2,
+            PedalMode::Hard => 3,
+        })?,
+        DeviceCommand::SetAeroRidingMode(mode) => aero_riding_mode_payload(mode.wire_value())?,
+        _ => return None,
+    };
+    Some(match mode {
+        AeroCommandMode::Ascii => request_payload(ascii),
+        AeroCommandMode::Binary => binary,
+    })
+}
+
+fn aero_riding_mode_payload(value: u8) -> Option<(&'static [u8], WritePayload)> {
+    let ascii = match value {
+        1 => b"SETs".as_slice(),
+        2 => b"SETm".as_slice(),
+        3 => b"SETh".as_slice(),
+        _ => return None,
+    };
+    Some((ascii, aero_binary_frame(*b"LkAp", &[0x01, 0x80], value)?))
 }
 
 fn aero_binary_frame(magic: [u8; 4], payload_head: &[u8], value: u8) -> Option<WritePayload> {
@@ -749,23 +825,35 @@ mod tests {
     use cutout_core::{BegodeBeeperVolume, BegodeLedModeSetting, BegodeMaxSpeed};
 
     #[test]
-    fn aero_control_encoder_uses_silent_ascii_light_commands() {
+    fn aero_control_encoder_defaults_to_the_official_binary_mode() {
         let on = AeroControlEncoder::encode(DeviceCommand::SetLights(LightState::On))
             .expect("NOSFET lights-on command encodes");
         let off = AeroControlEncoder::encode(DeviceCommand::SetLights(LightState::Off))
             .expect("NOSFET lights-off command encodes");
 
         assert_eq!(on.command, CommandKind::SetLights);
-        assert_eq!(on.payload.as_slice(), b"SetLightON");
+        assert_eq!(
+            on.payload.as_slice(),
+            &hex_literal::hex!("4c6b41700d0180800157ed3bd5")
+        );
         assert_eq!(on.mode, WriteMode::WithoutResponse);
         assert_eq!(off.command, CommandKind::SetLights);
-        assert_eq!(off.payload.as_slice(), b"SetLightOFF");
+        assert_eq!(
+            off.payload.as_slice(),
+            &hex_literal::hex!("4c6b41700d0180800020ea0b43")
+        );
         assert_eq!(off.mode, WriteMode::WithoutResponse);
         assert_eq!(
             AeroControlEncoder::encode(DeviceCommand::SetLights(LightState::Strobe)),
             None
         );
-        assert_eq!(AeroControlEncoder::encode(DeviceCommand::SoundHorn), None);
+        assert_eq!(
+            AeroControlEncoder::encode(DeviceCommand::SoundHorn)
+                .unwrap()
+                .payload
+                .as_slice(),
+            &hex_literal::hex!("4c6b41700e0080808001ca87e66f")
+        );
     }
 
     #[test]
@@ -774,8 +862,111 @@ mod tests {
             .expect("trip reset is a supported Aero settings write");
 
         assert_eq!(reset.command, CommandKind::ResetTripMeter);
-        assert_eq!(reset.payload.as_slice(), b"CLEARMETER");
+        assert_eq!(
+            reset.payload.as_slice(),
+            &hex_literal::hex!("4c6b41700b0001090a31f8")
+        );
         assert_eq!(reset.mode, WriteMode::WithoutResponse);
+    }
+
+    #[test]
+    fn aero_command_mode_latches_only_after_two_matching_complete_packets() {
+        let mut mode = AeroCommandModeDetector::default();
+        assert_eq!(mode.mode(), AeroCommandMode::Binary);
+        assert!(!mode.is_latched());
+
+        mode.observe_complete_packet_len(5);
+        mode.observe_complete_packet_len(5);
+        assert_eq!(mode.mode(), AeroCommandMode::Binary);
+        assert!(!mode.is_latched());
+
+        mode.observe_complete_packet_len(46);
+        mode.observe_complete_packet_len(47);
+        assert_eq!(mode.mode(), AeroCommandMode::Binary);
+        assert!(!mode.is_latched());
+
+        mode.observe_complete_packet_len(46);
+        mode.observe_complete_packet_len(46);
+        assert_eq!(mode.mode(), AeroCommandMode::Ascii);
+        assert!(mode.is_latched());
+
+        mode.observe_complete_packet_len(47);
+        assert_eq!(mode.mode(), AeroCommandMode::Ascii);
+        mode.reset();
+        assert_eq!(mode, AeroCommandModeDetector::default());
+    }
+
+    #[test]
+    fn aero_mode_aware_controls_match_official_ascii_and_binary_fixtures() {
+        for (command, ascii, binary) in [
+            (
+                DeviceCommand::SoundHorn,
+                b"OLDCMDb".as_slice(),
+                hex_literal::hex!("4c6b41700e0080808001ca87e66f").as_slice(),
+            ),
+            (
+                DeviceCommand::ResetTripMeter,
+                b"CLEARMETER".as_slice(),
+                hex_literal::hex!("4c6b41700b0001090a31f8").as_slice(),
+            ),
+            (
+                DeviceCommand::SetLights(LightState::On),
+                b"SetLightON".as_slice(),
+                hex_literal::hex!("4c6b41700d0180800157ed3bd5").as_slice(),
+            ),
+            (
+                DeviceCommand::SetLights(LightState::Off),
+                b"SetLightOFF".as_slice(),
+                hex_literal::hex!("4c6b41700d0180800020ea0b43").as_slice(),
+            ),
+            (
+                DeviceCommand::SetPedalMode(PedalMode::Soft),
+                b"SETs".as_slice(),
+                hex_literal::hex!("4c6b41700c018001a8e75480").as_slice(),
+            ),
+            (
+                DeviceCommand::SetPedalMode(PedalMode::Medium),
+                b"SETm".as_slice(),
+                hex_literal::hex!("4c6b41700c01800231ee053a").as_slice(),
+            ),
+            (
+                DeviceCommand::SetPedalMode(PedalMode::Hard),
+                b"SETh".as_slice(),
+                hex_literal::hex!("4c6b41700c01800346e935ac").as_slice(),
+            ),
+        ] {
+            assert_eq!(
+                AeroControlEncoder::encode_in_mode(command, AeroCommandMode::Ascii)
+                    .unwrap()
+                    .payload
+                    .as_slice(),
+                ascii
+            );
+            assert_eq!(
+                AeroControlEncoder::encode_in_mode(command, AeroCommandMode::Binary)
+                    .unwrap()
+                    .payload
+                    .as_slice(),
+                binary
+            );
+        }
+    }
+
+    #[test]
+    fn model_specific_aero_aliases_share_the_mode_aware_encoder() {
+        let high_beam = AeroControlEncoder::encode_in_mode(
+            DeviceCommand::SetAeroHighBeam(LightState::On),
+            AeroCommandMode::Ascii,
+        )
+        .unwrap();
+        assert_eq!(high_beam.payload.as_slice(), b"SetLightON");
+
+        let riding = AeroControlEncoder::encode_in_mode(
+            DeviceCommand::SetAeroRidingMode(cutout_core::AeroRidingMode::Medium),
+            AeroCommandMode::Ascii,
+        )
+        .unwrap();
+        assert_eq!(riding.payload.as_slice(), b"SETm");
     }
 
     #[test]
@@ -1050,25 +1241,20 @@ mod tests {
 
     #[test]
     fn aero_high_beam_encodes_the_official_single_lkap_frame() {
-        let sequence = AeroControlEncoder::encode_settings_sequence(
+        let encoded = AeroControlEncoder::encode_in_mode(
             DeviceCommand::SetAeroHighBeam(LightState::On),
+            AeroCommandMode::Binary,
         )
-        .expect("Aero high beam sequence encodes");
+        .expect("Aero high beam encodes");
 
-        assert_eq!(sequence.command, CommandKind::SetAeroHighBeam);
-        assert_eq!(sequence.steps.len(), 1);
-        assert_eq!(sequence.steps[0].delay_ms, 0);
-        assert_eq!(&sequence.steps[0].payload.as_slice()[..5], b"LkAp\r");
-        assert_eq!(
-            &sequence.steps[0].payload.as_slice()[5..9],
-            &[1, 0x80, 0x80, 1]
-        );
-        let step = &sequence.steps[0];
-        let frame_len = usize::from(step.payload.as_slice()[4]);
+        assert_eq!(encoded.command, CommandKind::SetAeroHighBeam);
+        assert_eq!(&encoded.payload.as_slice()[..5], b"LkAp\r");
+        assert_eq!(&encoded.payload.as_slice()[5..9], &[1, 0x80, 0x80, 1]);
+        let frame_len = usize::from(encoded.payload.as_slice()[4]);
         let crc_offset = frame_len - 4;
-        let expected_crc = crc32(&step.payload.as_slice()[..crc_offset]).to_be_bytes();
-        assert_eq!(&step.payload.as_slice()[crc_offset..], &expected_crc);
-        assert_eq!(step.mode, WriteMode::WithoutResponse);
+        let expected_crc = crc32(&encoded.payload.as_slice()[..crc_offset]).to_be_bytes();
+        assert_eq!(&encoded.payload.as_slice()[crc_offset..], &expected_crc);
+        assert_eq!(encoded.mode, WriteMode::WithoutResponse);
     }
 
     #[test]
@@ -1097,7 +1283,10 @@ mod tests {
         let aero = AeroControlEncoder::encode(DeviceCommand::SetPedalMode(PedalMode::Hard))
             .expect("documented Veteran pedal mode encoder");
         assert_eq!(aero.command, CommandKind::SetPedalMode);
-        assert_eq!(aero.payload.as_slice(), b"SETh");
+        assert_eq!(
+            aero.payload.as_slice(),
+            &hex_literal::hex!("4c6b41700c01800346e935ac")
+        );
 
         let falcon = FalconControlEncoder::encode(DeviceCommand::SetPedalMode(PedalMode::Soft))
             .expect("documented Begode pedal mode encoder");
