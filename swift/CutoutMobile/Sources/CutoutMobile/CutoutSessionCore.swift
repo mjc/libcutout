@@ -374,6 +374,7 @@ private final class WeakCutoutSessionCoreReference: @unchecked Sendable {
 
 public final class CutoutSessionCore: NSObject {
     public var rideSessionStateHandle: CutoutSessionStateHandle { rustSessionState }
+    public var connectionSnapshot: ConnectionSnapshot { rustSessionState.connectionAttemptSnapshot() }
     public var rideMapStateHandle: MobileRideMapState? { rideMapState }
     public private(set) var displayState = RideDisplayState()
     public private(set) var phase = SessionConnectionPhase.starting
@@ -385,7 +386,10 @@ public final class CutoutSessionCore: NSObject {
     public private(set) var faultHistoryReadback: FaultHistoryReadback?
     public private(set) var bmsSnapshot: BmsSnapshot?
     public private(set) var phoneLocationSnapshot = MobilePhoneLocationSnapshotDto(latestSample: nil, gpsSpeed: nil)
-    public private(set) var protocolIdentityCandidate: DevicePickerDiscoveryCandidate?
+    private var storedProtocolIdentityCandidate: DevicePickerDiscoveryCandidate?
+    public var protocolIdentityCandidate: DevicePickerDiscoveryCandidate? {
+        onBleQueue { storedProtocolIdentityCandidate }
+    }
     public var isRecordOnlyConnection: Bool {
         onBleQueue { isRecordOnly }
     }
@@ -486,6 +490,7 @@ public final class CutoutSessionCore: NSObject {
 
     public var onDisplayStateChange: ((RideDisplayState) -> Void)?
     public var onPhaseChange: ((SessionConnectionPhase) -> Void)?
+    public var onConnectionSnapshotChange: ((ConnectionSnapshot) -> Void)?
     public var onReconnectScheduled: ((SessionConnectionRetry) -> Void)?
     public var onRecord: ((String) -> Void)?
     public var onCaptureEvent: ((CaptureEvent) -> Void)?
@@ -514,6 +519,9 @@ public final class CutoutSessionCore: NSObject {
     private let selectedDeviceStore: DevicePickerSelectionStore
     private var central: CBCentralManager?
     private var peripheral: CBPeripheral?
+    private var connectionAttempt: CoreBluetoothConnectionAttempt?
+    private var retiringPeripheralIdentifiers: Set<UUID> = []
+    private var connectionDeadlineWorkItem: DispatchWorkItem?
     private var advertisement: CoreBluetoothAdvertisement?
     private var discoveredPeripherals: [CoreBluetoothPeripheralIdentifier: CBPeripheral] = [:]
     private var liveOwner: CoreBluetoothLiveSessionOwner?
@@ -527,6 +535,7 @@ public final class CutoutSessionCore: NSObject {
     private var pendingWithoutResponseWrites: [(CBCharacteristic, Data)] = []
     private static let maximumPendingWithoutResponseWrites = 64
     private var pendingServiceDiscoveries = Set<CBUUID>()
+    private var connectionGattInventory: [MobileGattFingerprintDto] = []
     private var suppressReconnect = false
     private let reconnectController: ConnectionReconnectController
     private let reconnectJitter: () -> Double
@@ -563,6 +572,7 @@ public final class CutoutSessionCore: NSObject {
 #endif
 
     deinit {
+        connectionDeadlineWorkItem?.cancel()
         protocolDetectionExpiryWorkItem?.cancel()
         rideMapWritePoller?.cancel()
     }
@@ -1193,7 +1203,7 @@ public final class CutoutSessionCore: NSObject {
 
     private func emit(testScript: CutoutSessionTestScript) {
         if testScript.startsLive {
-            protocolIdentityCandidate = testScript.candidate
+            storedProtocolIdentityCandidate = testScript.candidate
             publishProtocolIdentityCandidate()
         }
         guard let telemetry = testScript.telemetry else {
@@ -1294,6 +1304,10 @@ public final class CutoutSessionCore: NSObject {
 #endif
 
     private func disconnectAndScanOnBleQueue() {
+        _ = rustSessionState.disconnectConnectionAttempt()
+        connectionDeadlineWorkItem?.cancel()
+        connectionAttempt = nil
+        publishConnectionSnapshot()
 #if DEBUG
         testScriptWorkItem?.cancel()
         testScriptWorkItem = nil
@@ -1302,7 +1316,6 @@ public final class CutoutSessionCore: NSObject {
 #endif
         suppressReconnect = true
         cancelPendingReconnect()
-        rustSessionState.setDeviceConnectionIntent(intent: .use)
         musicCaptureContext.reset()
 #if DEBUG
         if testScript != nil, isRecordOnly, captureBuilder != nil {
@@ -1330,6 +1343,7 @@ public final class CutoutSessionCore: NSObject {
         clearProtocolDetectionExpiry()
         subscribedCharacteristics.removeAll()
         pendingServiceDiscoveries.removeAll()
+        connectionGattInventory.removeAll()
         displayState = RideDisplayState()
         hasObservedSpeedSnapshot = false
         clearSettingsReadback()
@@ -1339,6 +1353,10 @@ public final class CutoutSessionCore: NSObject {
         publishDisplayState()
 
         if let peripheral {
+            if peripheral.state != .disconnected {
+                retiringPeripheralIdentifiers.insert(peripheral.identifier)
+            }
+            peripheral.delegate = nil
             central?.cancelPeripheralConnection(peripheral)
         }
         peripheral = nil
@@ -1436,9 +1454,7 @@ public final class CutoutSessionCore: NSObject {
         }
 
         bmsPages[pageKey] = update
-        // Page ordering is for presentation, not summary recency. The arriving event carries
-        // core's summary of all retained observations, including updates to lower-numbered pages.
-        return aggregateBmsSnapshot()?.mergingBmsPage(update).withoutPageCursor()
+        return aggregateBmsSnapshot()
     }
 
     private func aggregateBmsSnapshot() -> BmsSnapshot? {
@@ -1459,7 +1475,7 @@ public final class CutoutSessionCore: NSObject {
                     ?? protocolIdentityFallbackDisplayName(protocolFamily: .veteranLeaperkimNosfet),
                 modelId: modelId
             )
-            protocolIdentityCandidate = DevicePickerDiscoveryCandidate(candidate: candidate)
+            storedProtocolIdentityCandidate = DevicePickerDiscoveryCandidate(candidate: candidate)
             publishProtocolIdentityCandidate()
             record("protocol_identity=\(candidate.detail)")
             updateCaptureIdentity()
@@ -1497,7 +1513,7 @@ public final class CutoutSessionCore: NSObject {
         guard protocolIdentityCandidate != nil else {
             return
         }
-        protocolIdentityCandidate = nil
+        storedProtocolIdentityCandidate = nil
         publishProtocolIdentityCandidate()
     }
 
@@ -1528,25 +1544,111 @@ public final class CutoutSessionCore: NSObject {
         guard pickerCandidate != protocolIdentityCandidate else {
             return
         }
-        protocolIdentityCandidate = pickerCandidate
+        storedProtocolIdentityCandidate = pickerCandidate
         publishProtocolIdentityCandidate()
         record("protocol_identity=\(candidate.detail)")
         updateCaptureIdentity()
     }
 
     private func setPhase(_ phase: SessionConnectionPhase) {
+        if case .failed = phase, let token = connectionSnapshot.token {
+            let wasPending = connectionSnapshot.readiness == .pending
+            _ = rustSessionState.connectionTransportFailed(token: token)
+            publishConnectionSnapshot()
+            if wasPending {
+                recordUnresolvedProtocolDetection(.unsupported, on: peripheral?.state == .connected ? peripheral : nil)
+                return
+            }
+        }
         self.phase = phase
         // Publish the phase first so the app model can accept the dependent
         // settings snapshot only after it has entered the live link.
-        publishOnMain { self.onPhaseChange?(phase) }
+        let generation = connectionSnapshot.generation
+        publishOnMain {
+            guard self.connectionSnapshot.generation == generation else { return }
+            self.onPhaseChange?(phase)
+        }
         if phase == .live, let state = liveOwner?.settingsState {
             publishSettingsState(state)
         }
     }
 
+    func acceptsConnectionCallback(_ peripheral: CBPeripheral, token: ConnectionAttemptToken) -> Bool {
+        assertOnBleQueue()
+        return self.peripheral === peripheral
+            && connectionAttempt?.token == token
+            && !retiringPeripheralIdentifiers.contains(peripheral.identifier)
+            && rustSessionState.connectionAttemptIsCurrent(token: token)
+    }
+
+    private func publishConnectionSnapshot() {
+        let snapshot = connectionSnapshot
+        publishOnMain { [weak self] in
+            guard let self, self.connectionSnapshot.revision == snapshot.revision else { return }
+            self.onConnectionSnapshotChange?(snapshot)
+        }
+    }
+
+    private func prepareConnectionAttempt(to peripheral: CBPeripheral) {
+        assertOnBleQueue()
+        let previous = self.peripheral
+        let snapshot = rustSessionState.beginConnectionAttempt(
+            platformIdentifier: peripheral.identifier.uuidString,
+            nowMs: clock.now().rawValue
+        )
+        guard let token = snapshot.token else { return }
+        connectionDeadlineWorkItem?.cancel()
+        clearProtocolDetectionExpiry()
+        clearPendingBegodeProbeResponses()
+        connectionGattInventory.removeAll()
+        subscribedCharacteristics.removeAll()
+        pendingServiceDiscoveries.removeAll()
+        pendingWithoutResponseWrites.removeAll()
+        connectionAttempt = CoreBluetoothConnectionAttempt(token: token, peripheral: peripheral, owner: self)
+        if let previous, previous.state == .connected || previous.state == .connecting || previous.state == .disconnecting {
+            retiringPeripheralIdentifiers.insert(previous.identifier)
+            previous.delegate = nil
+            central?.cancelPeripheralConnection(previous)
+        }
+        let work = DispatchWorkItem { [weak self] in
+            guard let self, self.rustSessionState.connectionAttemptIsCurrent(token: token),
+                  self.connectionSnapshot.readiness == .pending else { return }
+            let expired = self.rustSessionState.expireConnectionAttempt(token: token, nowMs: self.clock.now().rawValue)
+            guard expired.readiness == .recordOnly else { return }
+            self.recordUnresolvedProtocolDetection(.timedOut, on: self.peripheral)
+            self.publishConnectionSnapshot()
+        }
+        connectionDeadlineWorkItem = work
+        let now = clock.now().rawValue
+        let deadline = snapshot.deadlineMs ?? now
+        let delay = deadline > now ? deadline - now : 0
+        bleQueue.asyncAfter(deadline: .now() + .milliseconds(Int(clamping: delay)), execute: work)
+        publishConnectionSnapshot()
+    }
+
+    private func startPreparedConnection() {
+        guard let attempt = connectionAttempt,
+              rustSessionState.connectionAttemptIsCurrent(token: attempt.token),
+              !retiringPeripheralIdentifiers.contains(attempt.peripheral.identifier)
+        else { return }
+        attempt.peripheral.delegate = attempt
+        central?.connect(attempt.peripheral)
+    }
+
+    private func drainRetiredConnection(_ peripheral: CBPeripheral) -> Bool {
+        guard retiringPeripheralIdentifiers.remove(peripheral.identifier) != nil else { return false }
+        // Start after the terminal callback's queue turn, so a same-device retry cannot
+        // receive the previous attempt's queued native completion as its own.
+        if connectionAttempt?.peripheral.identifier == peripheral.identifier {
+            let reference = WeakCutoutSessionCoreReference(self)
+            bleQueue.async { reference.value?.startPreparedConnection() }
+        }
+        return true
+    }
+
     private func connectRecordOnly(to peripheral: CBPeripheral, using advertisement: CoreBluetoothAdvertisement, note: String?, annotations: [String]) {
         cancelPendingReconnect()
-        rustSessionState.setDeviceConnectionIntent(intent: .recordOnly)
+        prepareConnectionAttempt(to: peripheral)
         suppressReconnect = false
         isRecordOnly = true
         isDetectingProtocol = false
@@ -1568,15 +1670,14 @@ public final class CutoutSessionCore: NSObject {
         clearFaultHistoryReadback()
         clearBmsSnapshot()
         clearProtocolIdentityCandidate()
-        peripheral.delegate = self
         setPhase(.discoveringServices)
         central?.stopScan()
-        central?.connect(peripheral)
+        startPreparedConnection()
     }
 
     private func connectForProtocolDetection(to peripheral: CBPeripheral, using advertisement: CoreBluetoothAdvertisement) {
         cancelPendingReconnect()
-        rustSessionState.setDeviceConnectionIntent(intent: .use)
+        prepareConnectionAttempt(to: peripheral)
         suppressReconnect = false
         isRecordOnly = false
         isDetectingProtocol = true
@@ -1594,10 +1695,9 @@ public final class CutoutSessionCore: NSObject {
         clearFaultHistoryReadback()
         clearBmsSnapshot()
         clearProtocolIdentityCandidate()
-        peripheral.delegate = self
         setPhase(.discoveringServices)
         central?.stopScan()
-        central?.connect(peripheral)
+        startPreparedConnection()
     }
 
     private func buildOwner(for peripheral: CBPeripheral) {
@@ -1671,7 +1771,17 @@ public final class CutoutSessionCore: NSObject {
     }
 
     private func handleDisconnect(from peripheral: CBPeripheral, error: Error?) {
-        guard self.peripheral === peripheral else {
+        guard let attempt = connectionAttempt,
+              acceptsConnectionCallback(peripheral, token: attempt.token) else {
+            return
+        }
+        let wasDetecting = connectionSnapshot.readiness == .pending
+        _ = rustSessionState.connectionLinkDown(token: attempt.token)
+        connectionDeadlineWorkItem?.cancel()
+        publishConnectionSnapshot()
+        if wasDetecting {
+            recordUnresolvedProtocolDetection(.unsupported, on: nil)
+            finishCaptureAfterLinkDown()
             return
         }
         handleTransportTermination(
@@ -1679,7 +1789,9 @@ public final class CutoutSessionCore: NSObject {
             error: error,
             reconnect: { [weak self, weak peripheral] in
                 guard let self, let peripheral else { return }
-                self.central?.connect(peripheral)
+                self.prepareConnectionAttempt(to: peripheral)
+                _ = self.deviceDetectionSession.observeAdvertisement(name: self.advertisement?.localName.map { Data($0.utf8) })
+                self.startPreparedConnection()
             }
         )
     }
@@ -1698,20 +1810,6 @@ public final class CutoutSessionCore: NSObject {
         }
     }
 
-    func recoverConnection(after failure: SessionConnectionFailure, disconnect: () -> Void) {
-        onBleQueue {
-            record("connection_attempt_failed=\(failure)")
-            clearProtocolDetectionExpiry()
-            clearPendingBegodeProbeResponses()
-            pendingWithoutResponseWrites.removeAll()
-            liveOwner = nil
-            // Only retry exhaustion is terminal. CoreBluetooth's disconnect
-            // callback retires this attempt and schedules its replacement.
-            setPhase(.discoveringServices)
-            disconnect()
-        }
-    }
-
     private func handleTransportTerminationOnBleQueue(
         platformIdentifier: String,
         error: Error?,
@@ -1724,17 +1822,17 @@ public final class CutoutSessionCore: NSObject {
         testScriptUpdateWorkItem?.cancel()
         testScriptUpdateWorkItem = nil
 #endif
-        clearProtocolDetectionExpiry()
         markOutstandingBegodeProbeResponsesMissing()
         finishCaptureAfterLinkDown()
         let wasRecordOnlyConnection = isRecordOnly
         isRecordOnly = false
-        // The target is unchanged. Keep its verified route/model, but never carry
-        // packet fragments, GATT bindings or pending probes into another link.
-        isDetectingProtocol = selectedRoute == nil
+        isDetectingProtocol = true
+        selectedModel = nil
+        selectedRoute = nil
         rideMapConnectionObserved = false
         liveOwner = nil
-        rustSessionState.resetDeviceDetectionLink()
+        deviceDetectionSession.reset()
+        _ = deviceDetectionSession.observeAdvertisement(name: advertisement?.localName.map { Data($0.utf8) })
         subscribedCharacteristics.removeAll()
         pendingWithoutResponseWrites.removeAll()
         pendingServiceDiscoveries.removeAll()
@@ -1762,13 +1860,14 @@ public final class CutoutSessionCore: NSObject {
         error: Error?,
         reconnect: @escaping () -> Void
     ) {
-        rustSessionState.setDeviceConnectionIntent(intent: .reconnect)
+        let connectionGeneration = connectionSnapshot.generation
         guard let schedule = reconnectController.schedule(
             jitter: reconnectJitter(),
             operation: { [weak self] in
                 guard let self else { return }
                 self.onBleQueue {
-                    guard !self.suppressReconnect else { return }
+                    guard !self.suppressReconnect,
+                          self.connectionSnapshot.generation == connectionGeneration else { return }
                     self.startCapture(
                         reason: "protocol-detection",
                         annotations: ["intent=previously_connected"]
@@ -1782,7 +1881,9 @@ public final class CutoutSessionCore: NSObject {
             return
         }
 
-        isDetectingProtocol = selectedRoute == nil
+        isDetectingProtocol = true
+        selectedRoute = nil
+        selectedModel = nil
         rideMapConnectionObserved = false
         setPhase(.discoveringServices)
 
@@ -1795,7 +1896,10 @@ public final class CutoutSessionCore: NSObject {
             deadline: deadline,
             failure: .connectFailed(error.sessionMessage)
         )
-        publishOnMain { self.onReconnectScheduled?(retry) }
+        publishOnMain {
+            guard self.connectionSnapshot.generation == connectionGeneration else { return }
+            self.onReconnectScheduled?(retry)
+        }
 
         record("reconnect_attempt=\(schedule.attempt) delay_ms=\(schedule.delayMilliseconds)")
     }
@@ -1935,7 +2039,11 @@ public final class CutoutSessionCore: NSObject {
 
     private func publishProtocolIdentityCandidate() {
         let value = protocolIdentityCandidate
-        publishOnMain { self.onProtocolIdentityCandidateChange?(value) }
+        let generation = connectionSnapshot.generation
+        publishOnMain {
+            guard self.connectionSnapshot.generation == generation else { return }
+            self.onProtocolIdentityCandidateChange?(value)
+        }
     }
 
     private func publishCaptureEvent(_ event: CaptureEvent) {
@@ -2047,7 +2155,6 @@ public final class CutoutSessionCore: NSObject {
     private func beginBmsStorageSession() {
         bmsStorageSessionIdentifier = UUID().uuidString
     }
-
     private func publishRideMapDecisions(_ decisions: [MobileRideMapDecisionDto]) {
         guard let rideMapState else { return }
         let snapshot = rideMapState.currentSnapshot(atMs: clock.now().rawValue)
@@ -2181,6 +2288,8 @@ public final class CutoutSessionCore: NSObject {
         captureBuilder = builder
         _ = builder.setMusicContext(music: musicCaptureContext.current)
         guard builder.startWriter(path: url.path) else {
+            _ = rustSessionState.failConnectionCapture()
+            publishConnectionSnapshot()
             record("capture_error=writer_start_failed")
             captureBuilder = nil
             captureFileURL = nil
@@ -2198,6 +2307,8 @@ public final class CutoutSessionCore: NSObject {
 
     private func acceptCaptureWrite(_ accepted: Bool) -> Bool {
         guard !accepted else { return true }
+        _ = rustSessionState.failConnectionCapture()
+        publishConnectionSnapshot()
         let status = captureBuilder?.writerStatus()
         record("capture_error=writer_failed \(status?.lastError ?? "unknown")")
         publishCaptureEvent(.failed)
@@ -2457,6 +2568,7 @@ private extension CutoutSessionCore {
         )
 
         discoveredPeripherals[restoredAdvertisement.peripheralIdentifier] = restoredPeripheral
+        prepareConnectionAttempt(to: restoredPeripheral)
         advertisement = restoredAdvertisement
         peripheral = restoredPeripheral
         selectedRoute = nil
@@ -2465,7 +2577,7 @@ private extension CutoutSessionCore {
         isRecordOnly = false
         isDetectingProtocol = true
         suppressReconnect = false
-        restoredPeripheral.delegate = self
+        restoredPeripheral.delegate = connectionAttempt
         deviceDetectionSession.reset()
         _ = deviceDetectionSession.observeAdvertisement(
             name: restoredAdvertisement.localName.map { Data($0.utf8) }
@@ -2474,6 +2586,10 @@ private extension CutoutSessionCore {
 
         switch restoredPeripheral.state {
         case .connected:
+            if let token = connectionAttempt?.token {
+                _ = rustSessionState.connectionLinkEstablished(token: token)
+                publishConnectionSnapshot()
+            }
             prepareRestoredRide()
             if central?.state == .poweredOn {
                 resumeConnectedPeripheral(restoredPeripheral)
@@ -2496,7 +2612,6 @@ private extension CutoutSessionCore {
     }
 
     func prepareRestoredRide() {
-        rustSessionState.setDeviceConnectionIntent(intent: .reconnect)
         startCapture(reason: "protocol-detection", annotations: ["intent=previously_connected"])
         clearSettingsReadback()
         clearFaultHistoryReadback()
@@ -2525,9 +2640,13 @@ private extension CutoutSessionCore {
                     bindDiscoveredCharacteristic(channel, characteristic)
                 }
             }
+            recordGattFingerprints(service: service)
             pendingServiceDiscoveries.remove(service.uuid)
         }
         guard pendingServiceDiscoveries.isEmpty else { return }
+        if let token = connectionAttempt?.token {
+            _ = rustSessionState.observeConnectionGatt(token: token, fingerprints: connectionGattInventory)
+        }
         if isDetectingProtocol {
             beginProtocolDetection(on: peripheral)
         } else {
@@ -2567,19 +2686,8 @@ extension CutoutSessionCore: CBCentralManagerDelegate {
         } else {
             nil
         }
-        publishBluetoothRestoration(restoredPlatformIdentifier)
-    }
-
-    func publishBluetoothRestoration(_ restoredPlatformIdentifier: String?) {
-        // willRestoreState can publish progress before the app has accepted the selection.
-        // Replay that progress after selection restoration, including pending connections
-        // for which powered-on handling produces no subsequent phase callback.
-        let restoredPhase = phase
         publishOnMain {
             self.onBluetoothRestorationResolved?(restoredPlatformIdentifier)
-            if restoredPlatformIdentifier != nil {
-                self.onPhaseChange?(restoredPhase)
-            }
         }
     }
 
@@ -2594,6 +2702,11 @@ extension CutoutSessionCore: CBCentralManagerDelegate {
         record("central_state=\(state.rawValue)")
         guard state == .poweredOn else {
             cancelPendingReconnect()
+            if let token = connectionSnapshot.token {
+                _ = rustSessionState.connectionLinkDown(token: token)
+                connectionDeadlineWorkItem?.cancel()
+                publishConnectionSnapshot()
+            }
             scanState = state == .unauthorized
                 ? .permissionDenied
                 : DevicePickerScanState(status: .bluetoothUnavailable, rows: [])
@@ -2608,6 +2721,10 @@ extension CutoutSessionCore: CBCentralManagerDelegate {
         if let peripheral, selectedRoute != nil || isDetectingProtocol {
             switch peripheral.state {
             case .connected:
+                if connectionSnapshot.transport != .connected, let advertisement {
+                    connectForProtocolDetection(to: peripheral, using: advertisement)
+                    return
+                }
                 resumeConnectedPeripheral(peripheral)
                 record("central_state=restored_session")
                 return
@@ -2615,7 +2732,10 @@ extension CutoutSessionCore: CBCentralManagerDelegate {
                 record("central_state=restored_session")
                 return
             case .disconnected, .disconnecting:
-                break
+                if let advertisement {
+                    connectForProtocolDetection(to: peripheral, using: advertisement)
+                    return
+                }
             @unknown default:
                 break
             }
@@ -2657,9 +2777,12 @@ extension CutoutSessionCore: CBCentralManagerDelegate {
 
     public func centralManager(_ central: CBCentralManager, didConnect peripheral: CBPeripheral) {
         assertOnBleQueue()
-        guard self.peripheral === peripheral else { return }
+        guard central === self.central, let attempt = connectionAttempt,
+              acceptsConnectionCallback(peripheral, token: attempt.token) else { return }
+        _ = rustSessionState.connectionLinkEstablished(token: attempt.token)
+        publishConnectionSnapshot()
         setPhase(.discoveringServices)
-        peripheral.delegate = self
+        peripheral.delegate = attempt
         if isRecordOnly || isDetectingProtocol {
             _ = captureBuilder?.recordLinkUp(
                 monotonicMs: MobileMonotonicMillisDto(milliseconds: captureElapsedMilliseconds()),
@@ -2669,18 +2792,22 @@ extension CutoutSessionCore: CBCentralManagerDelegate {
         peripheral.discoverServices(discoveryServiceUuidsForSelectedRoute)
     }
 
-    public func centralManager(_: CBCentralManager, didFailToConnect peripheral: CBPeripheral, error: Error?) {
+    public func centralManager(_ central: CBCentralManager, didFailToConnect peripheral: CBPeripheral, error: Error?) {
         assertOnBleQueue()
+        guard central === self.central else { return }
+        if drainRetiredConnection(peripheral) { return }
         record("connect_failed=\(peripheral.identifier.uuidString) error=\(String(describing: error))")
         handleDisconnect(from: peripheral, error: error)
     }
 
     public func centralManager(
-        _: CBCentralManager,
+        _ central: CBCentralManager,
         didDisconnectPeripheral peripheral: CBPeripheral,
         error: Error?
     ) {
         assertOnBleQueue()
+        guard central === self.central else { return }
+        if drainRetiredConnection(peripheral) { return }
         handleDisconnect(from: peripheral, error: error)
     }
 }
@@ -2694,15 +2821,18 @@ extension CutoutSessionCore: CBPeripheralDelegate {
 
     public func peripheral(_ peripheral: CBPeripheral, didDiscoverServices error: Error?) {
         assertOnBleQueue()
-        guard self.peripheral === peripheral else { return }
         if let error {
-            recoverConnection(after: .serviceDiscoveryFailed(error.sessionMessage)) {
-                self.central?.cancelPeripheralConnection(peripheral)
-            }
+            setPhase(.failed(.serviceDiscoveryFailed(error.sessionMessage)))
             return
         }
-        guard peripheral.state == .connected else { return }
         let services = peripheral.services ?? []
+        if services.isEmpty {
+            if let token = connectionAttempt?.token {
+                _ = rustSessionState.observeConnectionGatt(token: token, fingerprints: [])
+            }
+            recordUnresolvedProtocolDetection(.unsupported, on: peripheral)
+            return
+        }
         record("services=\(services.map { $0.uuid.uuidString }.joined(separator: ","))")
         pendingServiceDiscoveries = Set(services.map(\.uuid))
         services.forEach {
@@ -2716,14 +2846,10 @@ extension CutoutSessionCore: CBPeripheralDelegate {
         error: Error?
     ) {
         assertOnBleQueue()
-        guard self.peripheral === peripheral else { return }
         if let error {
-            recoverConnection(after: .characteristicDiscoveryFailed(error.sessionMessage)) {
-                self.central?.cancelPeripheralConnection(peripheral)
-            }
+            setPhase(.failed(.characteristicDiscoveryFailed(error.sessionMessage)))
             return
         }
-        guard peripheral.state == .connected else { return }
         service.characteristics?.forEach { characteristic in
             if let channel = BluetoothUuid(coreBluetoothUuid: characteristic.uuid) {
                 bindDiscoveredCharacteristic(channel, characteristic)
@@ -2731,9 +2857,16 @@ extension CutoutSessionCore: CBPeripheralDelegate {
         }
         recordGattFingerprints(service: service)
         pendingServiceDiscoveries.remove(service.uuid)
+        if pendingServiceDiscoveries.isEmpty, let token = connectionAttempt?.token {
+            _ = rustSessionState.observeConnectionGatt(token: token, fingerprints: connectionGattInventory)
+        }
         if isRecordOnly {
             subscribeRecordOnlyCharacteristics(service.characteristics ?? [], on: peripheral)
             if pendingServiceDiscoveries.isEmpty {
+                if let token = connectionAttempt?.token {
+                    _ = rustSessionState.connectionTransportFailed(token: token)
+                    publishConnectionSnapshot()
+                }
                 setPhase(.live)
             }
             return
@@ -2750,19 +2883,15 @@ extension CutoutSessionCore: CBPeripheralDelegate {
     }
 
     public func peripheral(
-        _ peripheral: CBPeripheral,
+        _: CBPeripheral,
         didUpdateValueFor characteristic: CBCharacteristic,
         error: Error?
     ) {
         assertOnBleQueue()
-        guard self.peripheral === peripheral else { return }
         if let error {
-            recoverConnection(after: .notificationFailed(error.sessionMessage)) {
-                self.central?.cancelPeripheralConnection(peripheral)
-            }
+            setPhase(.failed(.notificationFailed(error.sessionMessage)))
             return
         }
-        guard peripheral.state == .connected else { return }
         guard
             let value = characteristic.value,
             let channel = BluetoothUuid(coreBluetoothUuid: characteristic.uuid)
@@ -2784,6 +2913,16 @@ extension CutoutSessionCore: CBPeripheralDelegate {
                 ) else { return }
                 captureNotificationCount += 1
                 publishCaptureEvent(.progress(captureProgress()))
+                if isDetectingProtocol, channel.bluetooth16Value == 0xffe1,
+                   deviceDetectionSession.nextBegodeProbeExpiry(
+                       timeout: BegodeProbeResponsePolicy.timeoutAfter
+                   ) == nil
+                {
+                    finishProtocolDetectionOrRecord(
+                        detectionResolution,
+                        on: characteristic.service?.peripheral
+                    )
+                }
                 return
             }
         }
@@ -2838,12 +2977,11 @@ extension CutoutSessionCore: CBPeripheralDelegate {
     }
 
     public func peripheral(
-        _ peripheral: CBPeripheral,
+        _: CBPeripheral,
         didUpdateNotificationStateFor characteristic: CBCharacteristic,
         error: Error?
     ) {
         assertOnBleQueue()
-        guard self.peripheral === peripheral else { return }
         guard let channel = BluetoothUuid(coreBluetoothUuid: characteristic.uuid) else {
             return
         }
@@ -2852,12 +2990,9 @@ extension CutoutSessionCore: CBPeripheralDelegate {
             return
         }
         if let error {
-            recoverConnection(after: .notificationFailed(error.sessionMessage)) {
-                self.central?.cancelPeripheralConnection(peripheral)
-            }
+            setPhase(.failed(.notificationFailed(error.sessionMessage)))
             return
         }
-        guard peripheral.state == .connected else { return }
         if isDetectingProtocol, channel.bluetooth16Value == 0xffe1, characteristic.isNotifying {
             startEucProtocolDetection(on: characteristic.service?.peripheral)
             return
@@ -2976,20 +3111,20 @@ extension CutoutSessionCore {
         guard let serviceUuid = BluetoothUuid(coreBluetoothUuid: service.uuid) else {
             return
         }
-        guard let builder = captureBuilder else {
-            return
-        }
+        connectionGattInventory.removeAll { $0.service == serviceUuid.bytes }
         for characteristic in service.characteristics ?? [] {
             guard let characteristicUuid = BluetoothUuid(coreBluetoothUuid: characteristic.uuid) else {
                 continue
             }
-            guard acceptCaptureWrite(builder.addGattFingerprint(fingerprint: MobileGattFingerprintDto(
+            let fingerprint = MobileGattFingerprintDto(
                 service: serviceUuid.bytes,
                 characteristic: characteristicUuid.bytes,
                 roles: characteristic.mobileGattRoles,
                 verification: .hardwareVerified
-            ))) else {
-                return
+            )
+            connectionGattInventory.append(fingerprint)
+            if let builder = captureBuilder {
+                guard acceptCaptureWrite(builder.addGattFingerprint(fingerprint: fingerprint)) else { return }
             }
         }
     }
@@ -3037,7 +3172,16 @@ extension CutoutSessionCore {
     @discardableResult
     func observeDetectionNotification(channel: BluetoothUuid, bytes: Data) -> DeviceDetectionResolution {
         let previous = deviceDetectionSession.resolution
-        let current = identificationProbeTransport.observeNotification(channel: channel, bytes: bytes)
+        let current: DeviceDetectionResolution
+        if let token = connectionAttempt?.token,
+           let resolution = rustSessionState.observeConnectionNotification(token: token, bytes: bytes) {
+            current = DeviceDetectionResolution(resolution)
+        } else if connectionAttempt == nil {
+            // Standalone decoder fixtures have no platform connection attempt.
+            current = identificationProbeTransport.observeNotification(channel: channel, bytes: bytes)
+        } else {
+            return previous
+        }
         guard channel.bluetooth16Value == 0xffe1 else {
             return current
         }
@@ -3116,6 +3260,22 @@ extension CutoutSessionCore {
         guard isDetectingProtocol, let peripheral, let advertisement else {
             return false
         }
+        guard let token = connectionAttempt?.token else { return false }
+        let resolved = rustSessionState.resolveDeviceSession(
+            token: token,
+            identificationComplete: allowClosestMatch,
+            nowMs: clock.now().rawValue
+        )
+        switch resolved.connection.readiness {
+        case .recordOnly:
+            recordUnresolvedProtocolDetection(.unsupported, on: peripheral)
+            return false
+        case .verified:
+            connectionDeadlineWorkItem?.cancel()
+            publishConnectionSnapshot()
+        case .pending, .disconnected, .failed:
+            return false
+        }
         switch resolution.connectionDisposition(
             platformIdentifier: advertisement.peripheralIdentifier.rawValue,
             displayName: advertisement.localName
@@ -3128,7 +3288,7 @@ extension CutoutSessionCore {
             isDetectingProtocol = false
             clearProtocolDetectionExpiry()
             selectedRoute = route
-            selectedModel = model ?? resolution.protocolFamily?.electricUnicycleModel
+            selectedModel = model
             annotateDetection("protocol_detection_resolved=\(route.rawValue)")
             buildOwner(for: peripheral)
             return liveOwner != nil
@@ -3179,7 +3339,6 @@ extension CutoutSessionCore {
     }
 
     private func startEucProtocolDetection(on peripheral: CBPeripheral?) {
-        if let peripheral { scheduleProtocolDetectionExpiry(on: peripheral) }
         switch identificationProbeTransport.notificationsEnabled(at: clock.now(), using: self) {
         case .noProbeNeeded:
             if !promoteProtocolDetectionIfResolved(deviceDetectionSession.resolution, on: peripheral) {
@@ -3192,26 +3351,15 @@ extension CutoutSessionCore {
         }
     }
 
-    func recordUnresolvedProtocolDetection(
+    private func recordUnresolvedProtocolDetection(
         _ failure: IdentificationProbeFailure,
         on peripheral: CBPeripheral?
     ) {
-        onBleQueue {
-            if rustSessionState.shouldRetryIdentification() {
-                annotateDetection("protocol_detection_retry=\(failure)")
-                recoverConnection(after: .identificationFailed(failure)) {
-                    if let peripheral { self.central?.cancelPeripheralConnection(peripheral) }
-                }
-                return
-            }
-            enterUnresolvedCapture(failure, on: peripheral)
+        if let token = connectionSnapshot.token, connectionSnapshot.readiness == .pending {
+            _ = rustSessionState.connectionTransportFailed(token: token)
         }
-    }
-
-    private func enterUnresolvedCapture(
-        _ failure: IdentificationProbeFailure,
-        on peripheral: CBPeripheral?
-    ) {
+        connectionDeadlineWorkItem?.cancel()
+        publishConnectionSnapshot()
         isDetectingProtocol = false
         isRecordOnly = true
         clearProtocolDetectionExpiry()
@@ -3239,8 +3387,10 @@ extension CutoutSessionCore {
 
         let now = clock.now().rawValue
         let delay = deadline.rawValue > now ? deadline.rawValue - now : 0
+        let generation = connectionSnapshot.generation
         let work = DispatchWorkItem { [weak self] in
-            self?.expireOutstandingBegodeProbeResponses()
+            guard let self, self.connectionSnapshot.generation == generation else { return }
+            self.expireOutstandingBegodeProbeResponses()
         }
         begodeProbeExpiryWorkItem = work
         bleQueue.asyncAfter(
@@ -3252,9 +3402,10 @@ extension CutoutSessionCore {
     private func scheduleProtocolDetectionExpiry(on peripheral: CBPeripheral) {
         protocolDetectionExpiryWorkItem?.cancel()
         let delay = ProtocolDetectionResponsePolicy.timeoutAfter.rawValue
+        let generation = connectionSnapshot.generation
         let work = DispatchWorkItem { [weak self, weak peripheral] in
-            guard let self, let peripheral,
-                  self.peripheral === peripheral, self.isDetectingProtocol else { return }
+            guard let self, self.connectionSnapshot.generation == generation,
+                  self.isDetectingProtocol else { return }
             self.finishProtocolDetectionOrRecord(self.deviceDetectionSession.resolution, on: peripheral)
         }
         protocolDetectionExpiryWorkItem = work
@@ -3444,7 +3595,6 @@ func bmsStorageSamples(
         )
     }
 }
-
 private extension CBCharacteristic {
     var mobileGattRoles: [MobileGattRoleDto] {
         var roles: [MobileGattRoleDto] = []
