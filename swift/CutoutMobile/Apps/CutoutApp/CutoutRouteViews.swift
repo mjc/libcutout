@@ -220,10 +220,10 @@ struct EucTuneRouteView: View {
                 }
                 Section {
                     HStack {
-                        Button(localizedAppText("settings.headlight.turn_on")) {
+                        Button(localizedAppText("settings.headlight.turn_on", model.headlightControlTitle)) {
                             _ = model.setHeadlight(true)
                         }
-                        Button(localizedAppText("settings.headlight.turn_off")) {
+                        Button(localizedAppText("settings.headlight.turn_off", model.headlightControlTitle)) {
                             _ = model.setHeadlight(false)
                         }
                     }

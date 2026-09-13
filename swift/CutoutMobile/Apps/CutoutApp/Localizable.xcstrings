@@ -594,12 +594,12 @@
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Requests are submitted immediately to the connected wheel." } } }
     },
     "settings.headlight.turn_on" : {
-      "comment" : "Action button that requests the headlight to turn on.",
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Turn On" } } }
+      "comment" : "Turns on the named lighting function: High beam on Aero, Headlight on other wheels.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "%@ on" } } }
     },
     "settings.headlight.turn_off" : {
-      "comment" : "Action button that requests the headlight to turn off.",
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Turn Off" } } }
+      "comment" : "Turns off the named lighting function: High beam off on Aero, Headlight off on other wheels.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "%@ off" } } }
     },
     "settings.headlight.state_unknown" : {
       "comment" : "Headlight status when the app has no device readback.",
