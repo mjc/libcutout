@@ -16405,6 +16405,17 @@ impl From<VescBoardProfile> for CoreVescBoardProfile {
         if profile.reports_battery_current {
             core_profile = core_profile.with_reported_battery_current();
         }
+        core_profile.charge_profile = profile.charge_profile.map(|charge| {
+            cutout_core::ChargeProfile::new(
+                ChargeProfileIdentity::new(charge.profile_id),
+                UsablePackCapacity::new(
+                    Capacity::from_milliamp_hours(charge.capacity_milliamp_hours),
+                    charge.capacity_source.into(),
+                    charge.verification.into(),
+                ),
+                charge.charge_flow_verification.into(),
+            )
+        });
         core_profile
     }
 }

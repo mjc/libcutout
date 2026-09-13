@@ -402,6 +402,18 @@ impl DeviceConnectionSession {
         true
     }
 
+    /// Selects usable capacity only for the protocol established in this attempt.
+    #[must_use]
+    pub fn default_charge_profile(&self) -> Option<cutout_core::ChargeProfile> {
+        let device = self.device.as_ref()?;
+        match device.identity().protocol {
+            ProtocolFamily::Vesc => self
+                .vesc_board_profile
+                .and_then(|profile| profile.charge_profile),
+            _ => device.control_profile().default_charge_profile(),
+        }
+    }
+
     /// Ends the attempt before native cancellation or explicit selection replacement.
     pub fn disconnect(&mut self) {
         self.state.connection.disconnect();

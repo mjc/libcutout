@@ -393,18 +393,17 @@ impl CutoutSessionStateHandle {
         let inner = self.lock_inner();
         let settings: MobileDeviceSettingsSnapshotDto = inner.settings_snapshot().into();
         let actions = inner.actions_snapshot();
-        let default_charge_profile = inner
-            .device
-            .as_ref()
-            .and_then(|device| device.control_profile().default_charge_profile())
-            .map(|profile| crate::MobileChargeProfileDto {
-                session_id: settings.connection.generation,
-                profile_id: profile.identity.get(),
-                capacity_milliamp_hours: profile.usable_capacity.as_milliamp_hours(),
-                capacity_source: profile.usable_capacity.source.into(),
-                verification: profile.usable_capacity.verification.into(),
-                charge_flow_verification: profile.charge_flow_verification.into(),
-            });
+        let default_charge_profile =
+            inner
+                .default_charge_profile()
+                .map(|profile| crate::MobileChargeProfileDto {
+                    session_id: settings.connection.generation,
+                    profile_id: profile.identity.get(),
+                    capacity_milliamp_hours: profile.usable_capacity.as_milliamp_hours(),
+                    capacity_source: profile.usable_capacity.source.into(),
+                    verification: profile.usable_capacity.verification.into(),
+                    charge_flow_verification: profile.charge_flow_verification.into(),
+                });
         MobileDeviceControlsSnapshotDto {
             connection: settings.connection,
             default_charge_profile,
@@ -472,6 +471,98 @@ impl CutoutSessionStateHandle {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn generic_charge_profile_follows_verified_protocol_and_attempt() {
+        use crate::{
+            Distance, MobileChargeCapacitySourceDto, MobileChargeProfileDto,
+            MobileVerificationStatusDto, VescBatteryCellModel, VescBatteryType, VescBoardProfile,
+        };
+        let handle = CutoutSessionStateHandle::new();
+        let charge = MobileChargeProfileDto {
+            session_id: 999,
+            profile_id: 15_002,
+            capacity_milliamp_hours: 6_000,
+            capacity_source: MobileChargeCapacitySourceDto::ProtocolProfile,
+            verification: MobileVerificationStatusDto::SourceVerified,
+            charge_flow_verification: MobileVerificationStatusDto::HardwareVerified,
+        };
+        let profile = VescBoardProfile {
+            motor_pole_pairs: 15,
+            gear_ratio_denominator: 1,
+            wheel_circumference: Distance { value: 2_100 },
+            battery_type: VescBatteryType::LiIon,
+            battery_cells: 15,
+            battery_parallel_cells: 2,
+            battery_cell_model: VescBatteryCellModel::SonyVtc6,
+            charge_profile: Some(charge),
+            reports_battery_current: true,
+        };
+        let vesc_reply = vec![
+            2, 20, 157, 7, 1, 2, 97, 98, 99, 49, 50, 51, 0, 117, 115, 101, 114, 104, 97, 115, 104,
+            0, 38, 208, 3,
+        ];
+        let first = handle
+            .begin_connection_attempt("A".into(), 0)
+            .token
+            .unwrap();
+        assert!(handle.configure_connection_vesc_profile(first.clone(), profile));
+        assert!(
+            handle
+                .device_controls_snapshot(false)
+                .default_charge_profile
+                .is_none()
+        );
+        handle.connection_link_established(first.clone());
+        handle.observe_connection_notification(first.clone(), vesc_reply.clone());
+        handle.resolve_device_session(first.clone(), false, 1);
+        let selected = handle
+            .device_controls_snapshot(false)
+            .default_charge_profile
+            .unwrap();
+        assert_eq!(
+            selected,
+            MobileChargeProfileDto {
+                session_id: first.generation,
+                ..charge
+            }
+        );
+
+        let second = handle
+            .begin_connection_attempt("B".into(), 2)
+            .token
+            .unwrap();
+        assert!(handle.configure_connection_vesc_profile(second.clone(), profile));
+        handle.connection_link_established(second.clone());
+        let mut aero_frame = vec![0_u8; 42];
+        aero_frame[..4].copy_from_slice(&[0xdc, 0x5a, 0x5c, 38]);
+        aero_frame[28..30].copy_from_slice(&43_000_u16.to_be_bytes());
+        handle.observe_connection_notification(second.clone(), aero_frame);
+        handle.resolve_device_session(second.clone(), false, 3);
+        let selected = handle
+            .device_controls_snapshot(false)
+            .default_charge_profile
+            .unwrap();
+        assert_eq!(
+            selected.profile_id, 43,
+            "saved VESC capacity must not overwrite an EUC profile"
+        );
+        assert_eq!(selected.session_id, second.generation);
+
+        let third = handle
+            .begin_connection_attempt("C".into(), 4)
+            .token
+            .unwrap();
+        handle.connection_link_established(third.clone());
+        handle.observe_connection_notification(third.clone(), vesc_reply);
+        handle.resolve_device_session(third, false, 5);
+        assert!(
+            handle
+                .device_controls_snapshot(false)
+                .default_charge_profile
+                .is_none()
+        );
+    }
 
     #[test]
     fn generic_settings_boundary_keeps_identity_refusals_and_requests_distinct() {

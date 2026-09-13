@@ -624,6 +624,9 @@ pub struct VescBoardProfile {
     /// Optional voltage curve used to estimate battery level.
     pub battery_profile: Option<VescBatteryProfile>,
 
+    /// Optional usable pack capacity, including its original evidence.
+    pub charge_profile: Option<cutout_core::ChargeProfile>,
+
     /// True when this profile should calculate speed from eRPM.
     pub calculates_speed: bool,
 
@@ -673,6 +676,7 @@ impl VescBoardProfile {
             gear_ratio_denominator,
             wheel_circumference,
             battery_profile: None,
+            charge_profile: None,
             calculates_speed: true,
             reports_battery_current: false,
         }
