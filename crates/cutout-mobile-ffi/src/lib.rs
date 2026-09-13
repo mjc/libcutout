@@ -4,6 +4,8 @@ mod rgb;
 pub use rgb::*;
 mod connection_attempt;
 pub use connection_attempt::*;
+mod device_session;
+pub use device_session::*;
 
 use std::{
     collections::VecDeque,
@@ -795,6 +797,7 @@ pub struct CutoutSessionStateHandle {
 struct MobileSessionState {
     state: CutoutSessionState,
     detector: DeviceDetectionSession,
+    device: Option<cutout_protocols::DeviceSession>,
 }
 
 impl DiscoveryObservation {
@@ -1182,7 +1185,9 @@ impl CutoutSessionStateHandle {
         started_at_ms: u64,
     ) -> MobileIdentificationProbeOutcomeDto {
         let mut inner = self.lock_inner();
-        let MobileSessionState { state, detector } = &mut *inner;
+        let MobileSessionState {
+            state, detector, ..
+        } = &mut *inner;
         match detector.begin_identification_probes(state, MonotonicTimestamp::new(started_at_ms)) {
             cutout_protocols::IdentificationProbePlan::Unsupported => {
                 MobileIdentificationProbeOutcomeDto::Unsupported
@@ -1296,7 +1301,9 @@ impl CutoutSessionStateHandle {
         timeout_ms: u64,
     ) -> Vec<MobilePendingProbeDto> {
         let mut state = self.lock_inner();
-        let MobileSessionState { state, detector } = &mut *state;
+        let MobileSessionState {
+            state, detector, ..
+        } = &mut *state;
         detector
             .expire_pending_probes(
                 state,
@@ -1311,7 +1318,9 @@ impl CutoutSessionStateHandle {
     /// Marks every pending Begode probe as missing.
     pub fn mark_begode_probe_responses_missing(&self) -> Vec<MobilePendingProbeDto> {
         let mut state = self.lock_inner();
-        let MobileSessionState { state, detector } = &mut *state;
+        let MobileSessionState {
+            state, detector, ..
+        } = &mut *state;
         detector
             .mark_pending_probes_missing(state)
             .into_iter()
@@ -1362,7 +1371,9 @@ impl CutoutSessionStateHandle {
 impl CutoutSessionStateHandle {
     fn observe(&self, event: DeviceDetectionEvent<'_>) -> DeviceDetectionResolutionRecord {
         let mut state = self.lock_inner();
-        let MobileSessionState { state, detector } = &mut *state;
+        let MobileSessionState {
+            state, detector, ..
+        } = &mut *state;
         detector.observe(state, event).into()
     }
 
@@ -1372,7 +1383,9 @@ impl CutoutSessionStateHandle {
         started_at_ms: u64,
     ) -> DeviceDetectionResolutionRecord {
         let mut state = self.lock_inner();
-        let MobileSessionState { state, detector } = &mut *state;
+        let MobileSessionState {
+            state, detector, ..
+        } = &mut *state;
         detector
             .observe_probe_write_at(state, probe, MonotonicTimestamp::new(started_at_ms))
             .into()
