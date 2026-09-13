@@ -2100,7 +2100,7 @@ public final class CutoutSessionCore: NSObject {
         captureNotificationCount = 0
 
         let directory = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
-        let url = directory.appendingPathComponent("cutout-btle-capture-\(Int(Date().timeIntervalSince1970)).jsonl")
+        let url = directory.appendingPathComponent("cutout-btle-capture-\(Int(Date().timeIntervalSince1970))-\(UUID().uuidString).jsonl")
         let builder = MobilePevcapCaptureBuilder(
             wallClockStartUnixMs: MobileWallClockUnixMillisDto(milliseconds: UInt64(Date().timeIntervalSince1970 * 1_000)),
             platformId: advertisement?.peripheralIdentifier.rawValue ?? "ios",
