@@ -694,3 +694,89 @@ fn recording_checkpoint_reports_a_closed_worker_without_claiming_durability() {
     assert_eq!(snapshot.state, ride_maps::RideLifecycleState::Active);
     let _ = fs::remove_file(path);
 }
+
+#[test]
+fn explicit_disconnect_pauses_durably_and_does_not_resume_on_reconnect() {
+    let _guard = crate::tests::test_guard();
+    let path =
+        std::env::temp_dir().join(format!("cutout-ride-disconnect-{}.sqlite3", Uuid::new_v4()));
+    let database = RideDatabase::open(&path).unwrap();
+    let mut session = RideRecordingSession::new(Some(database.clone()));
+    let active = session
+        .ensure_recording_for_vehicle("pev-1", 1_000)
+        .unwrap();
+    let paused = session
+        .prepare_disconnect(Some(active.command_token), 2_000)
+        .unwrap()
+        .unwrap();
+    assert_eq!(paused.state, ride_maps::RideLifecycleState::Paused);
+    assert_eq!(paused.ride_id, active.ride_id);
+    assert_eq!(session.location_acquisition().demand, LocationDemand::Idle);
+    let reconnected = session
+        .ensure_recording_for_vehicle("pev-1", 3_000)
+        .unwrap();
+    assert_eq!(reconnected.state, ride_maps::RideLifecycleState::Paused);
+    database.shutdown().unwrap();
+    let database = RideDatabase::open(&path).unwrap();
+    let recovered = RideRecordingSession::new(Some(database.clone()))
+        .current_snapshot(3_000)
+        .unwrap();
+    assert_eq!(recovered.state, ride_maps::RideLifecycleState::Interrupted);
+    assert_eq!(recovered.summary.duration_milliseconds, 1_000);
+    database.shutdown().unwrap();
+    let _ = fs::remove_file(path);
+}
+
+#[test]
+fn explicit_disconnect_preserves_absent_terminal_and_replacement_recordings() {
+    let mut session = RideRecordingSession::new(None);
+    assert!(session.prepare_disconnect(None, 0).unwrap().is_none());
+    let first = session.start_gps_only(1_000, None).unwrap();
+    session
+        .transition_at(ride_maps::RideEvent::Stop, 2_000)
+        .unwrap();
+    let saved = session.save().unwrap();
+    assert_eq!(
+        session
+            .prepare_disconnect(Some(saved.command_token), 3_000)
+            .unwrap()
+            .unwrap()
+            .state,
+        ride_maps::RideLifecycleState::Saved
+    );
+    let replacement = session.start_gps_only(4_000, None).unwrap();
+    assert!(matches!(
+        session.prepare_disconnect(Some(first.command_token), 5_000),
+        Err(RecordingError::StaleCommand)
+    ));
+    assert_eq!(
+        session.current_snapshot(5_000).unwrap().recording_token,
+        replacement.recording_token
+    );
+    assert_eq!(
+        session.current_snapshot(5_000).unwrap().state,
+        ride_maps::RideLifecycleState::Active
+    );
+}
+
+#[test]
+fn explicit_disconnect_failure_preserves_active_recording_for_retry() {
+    let _guard = crate::tests::test_guard();
+    let path = std::env::temp_dir().join(format!(
+        "cutout-ride-disconnect-failure-{}.sqlite3",
+        Uuid::new_v4()
+    ));
+    let database = RideDatabase::open(&path).unwrap();
+    let mut session = RideRecordingSession::new(Some(database.clone()));
+    let active = session.start_gps_only(1_000, None).unwrap();
+    database.shutdown().unwrap();
+    assert!(
+        session
+            .prepare_disconnect(Some(active.command_token), 2_000)
+            .is_err()
+    );
+    let current = session.current_snapshot(2_000).unwrap();
+    assert_eq!(current.state, ride_maps::RideLifecycleState::Active);
+    assert_eq!(current.command_token, active.command_token);
+    let _ = fs::remove_file(path);
+}

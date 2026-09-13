@@ -963,18 +963,45 @@ impl RideRecordingSession {
         at_ms: u64,
         last_connected_vehicle: Option<String>,
     ) -> Result<RecordingSnapshot, RecordingError> {
-        let current = self.ride_id.map(|ride_id| RecordingToken {
-            ride_id,
-            generation: self.generation,
-        });
-        if expected != current {
-            return Err(RecordingError::StaleCommand);
-        }
+        self.validate_command_target(expected)?;
         match event {
             ride_maps::RideEvent::Start => self.start_gps_only(at_ms, last_connected_vehicle),
             ride_maps::RideEvent::Save => self.save(),
             ride_maps::RideEvent::Discard => self.discard(),
             _ => self.transition_at(event, at_ms),
+        }
+    }
+
+    /// Durably pauses active recording before an explicit rider-requested disconnect.
+    /// Automatic link loss does not call this operation. Other rider choices are preserved.
+    /// # Errors
+    /// Returns a stale-command or persistence failure before native teardown may proceed.
+    pub fn prepare_disconnect(
+        &mut self,
+        expected: Option<RecordingToken>,
+        at_ms: u64,
+    ) -> Result<Option<RecordingSnapshot>, RecordingError> {
+        self.validate_command_target(expected)?;
+        if self.recorder.state() == Some(ride_maps::RideLifecycleState::Active) {
+            return self
+                .transition_at(ride_maps::RideEvent::Pause, at_ms)
+                .map(Some);
+        }
+        Ok(self.current_snapshot(at_ms))
+    }
+
+    fn validate_command_target(
+        &self,
+        expected: Option<RecordingToken>,
+    ) -> Result<(), RecordingError> {
+        let current = self.ride_id.map(|ride_id| RecordingToken {
+            ride_id,
+            generation: self.generation,
+        });
+        if expected == current {
+            Ok(())
+        } else {
+            Err(RecordingError::StaleCommand)
         }
     }
 
