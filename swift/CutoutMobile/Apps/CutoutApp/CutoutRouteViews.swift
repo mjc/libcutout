@@ -691,7 +691,7 @@ private struct EucAeroSettingsControls: View {
                 .accessibilityIdentifier("settings.control.aeroTiltbackSpeed")
             }
             if model.aeroPwmPercentControlAvailable {
-                Stepper(value: $pwmPercent, in: 0...70) {
+                Stepper(value: $pwmPercent, in: 30...100) {
                     Text("\(localizedAppText("settings.aero.pwm.title")): \(pwmPercent)%")
                 }
                 Button(localizedAppText("settings.aero.send"), action: sendPwmPercent)
@@ -700,10 +700,10 @@ private struct EucAeroSettingsControls: View {
                     .accessibilityIdentifier("settings.control.aeroPwmOff")
                 EucSettingReadbackRow(
                     id: "aeroPwm",
-                    title: localizedAppText("settings.aero.current_value"),
+                    title: localizedAppText("settings.aero.pwm.current"),
                     value: model.aeroPwmPercentState?.currentIsOff == true
-                        ? localizedAppText("settings.aero.pwm.off")
-                        : model.aeroPwmPercentState?.current.map { "\($0.percent)%" }
+                        ? localizedAppText("settings.aero.pwm.disabled")
+                        : model.aeroPwmPercentState?.current.map { "\($0.dutyPercent)%" }
                             ?? localizedAppText("settings.readback.unavailable")
                 )
             }
@@ -764,7 +764,7 @@ private struct EucAeroSettingsControls: View {
             seededTiltback = true
         }
         if !seededPwm, let current = model.aeroPwmPercentState?.current {
-            pwmPercent = Int(current.percent)
+            pwmPercent = current.dutyPercent
             seededPwm = true
         }
         if !seededPedalHardness, let current = model.aeroPedalHardnessState?.current {
@@ -787,7 +787,7 @@ private struct EucAeroSettingsControls: View {
     }
 
     private func sendPwmPercent() {
-        guard let setting = AeroPwmPercent(percent: UInt8(pwmPercent)) else { return }
+        guard let setting = AeroPwmPercent(dutyPercent: pwmPercent) else { return }
         _ = model.setAeroPwmPercent(setting)
     }
 
@@ -810,6 +810,15 @@ private struct EucAeroSettingsControls: View {
         _ = model.setAeroAngleAdjustment(setting)
     }
 
+}
+
+extension AeroPwmPercent {
+    var dutyPercent: Int { 100 - Int(percent) }
+
+    init?(dutyPercent: Int) {
+        guard (30...100).contains(dutyPercent) else { return nil }
+        self.init(percent: UInt8(100 - dutyPercent))
+    }
 }
 
 struct AeroSettingsFormValues: Equatable {
@@ -837,7 +846,7 @@ struct AeroSettingsFormValues: Equatable {
         self.alarm = alarm
         self.angle = angle
         tiltbackSpeed = Int(tiltback?.kilometresPerHour ?? 20)
-        pwmPercent = Int(pwm?.percent ?? 60)
+        pwmPercent = pwm?.dutyPercent ?? 40
         pedalHardnessPercent = Int(pedalHardness?.percent ?? 60)
         alarmSpeed = Int(alarm?.kilometresPerHour ?? 20)
         angleTenths = Int(angle?.tenthsOfDegree ?? 0)

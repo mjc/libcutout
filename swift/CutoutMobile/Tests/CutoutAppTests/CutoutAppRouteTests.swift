@@ -5,6 +5,29 @@ import XCTest
 import CutoutMobileFFI
 
 final class CutoutAppRouteTests: XCTestCase {
+    func testTiltbackPwmMatchesWireDutyAndReadback() throws {
+        for duty in [30, 80, 100] {
+            let setting = try XCTUnwrap(AeroPwmPercent(dutyPercent: duty))
+            XCTAssertEqual(setting.percent, UInt8(100 - duty))
+            XCTAssertEqual(setting.dutyPercent, duty)
+
+            let simulator = AeroSettingsSimulator()
+            let outputs = simulator.issue(
+                command: .setAeroPwmPercent(MobileAeroPwmPercentDto(percent: setting.percent)),
+                operatingState: .parked,
+                speed: nil,
+                monotonicMs: MobileMonotonicMillisDto(milliseconds: 10)
+            )
+            let write = try XCTUnwrap(outputs.first { $0.kind == .write })
+            XCTAssertEqual(write.bytes[13], UInt8(duty))
+            let readback = try XCTUnwrap(simulator.readback().pwmPercent)
+            XCTAssertEqual(AeroPwmPercent(percent: readback.percent)?.dutyPercent, duty)
+        }
+        for invalid in [-1, 0, 29, 101, 256] {
+            XCTAssertNil(AeroPwmPercent(dutyPercent: invalid))
+        }
+    }
+
     func testAeroNumericControlsShowProtocolUnits() {
         XCTAssertEqual(EucNumericSettingUnit.percent.text(75), "75%")
         XCTAssertEqual(EucNumericSettingUnit.degrees.text(55), "55°")
@@ -14,14 +37,14 @@ final class CutoutAppRouteTests: XCTestCase {
     func testAeroSettingsFormUsesCurrentValuesWhenAvailable() {
         let values = AeroSettingsFormValues(
             tiltback: AeroSpeedSetting(kilometresPerHour: 31),
-            pwm: AeroPwmPercent(percent: 74),
+            pwm: AeroPwmPercent(percent: 20),
             pedalHardness: AeroPedalHardness(percent: 75),
             alarm: AeroSpeedSetting(kilometresPerHour: 42),
             angle: AeroAngleAdjustment(tenthsOfDegree: -12)
         )
 
         XCTAssertEqual(values.tiltbackSpeed, 31)
-        XCTAssertEqual(values.pwmPercent, 74)
+        XCTAssertEqual(values.pwmPercent, 80)
         XCTAssertEqual(values.pedalHardnessPercent, 75)
         XCTAssertEqual(values.alarmSpeed, 42)
         XCTAssertEqual(values.angleTenths, -12)
@@ -36,7 +59,7 @@ final class CutoutAppRouteTests: XCTestCase {
         )
 
         XCTAssertEqual(values.tiltbackSpeed, 20)
-        XCTAssertEqual(values.pwmPercent, 60)
+        XCTAssertEqual(values.pwmPercent, 40)
         XCTAssertEqual(values.alarmSpeed, 20)
         XCTAssertEqual(values.angleTenths, 0)
     }
