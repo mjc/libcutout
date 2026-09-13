@@ -336,6 +336,10 @@ final class CutoutAppModel {
         )
     }
 
+    func recordCameraMediaReference(media: CameraMediaEvidence, localURL: URL) {
+        recordCameraMediaReference(source: .novatekR3Pro, media: media, localURL: localURL)
+    }
+
     private let core: any CutoutSessionDriving
     private let liveActivityCoordinator: LiveActivityRideLifecycleCoordinator
     private let selectedDeviceStore: DevicePickerSelectionStore
@@ -3129,6 +3133,7 @@ final class CutoutAppModel {
             latestCaptureGeneration = generation
             activeCaptureGeneration = generation
             core.rideSessionStateHandle.clearCameraMediaProvenance()
+            cameraMediaReferences.removeAll(keepingCapacity: true)
             captureFileName = fileURL.lastPathComponent
             captureNotificationCount = 0
             captureStatus = captureFileName.map(CaptureStatus.recordingLocally)

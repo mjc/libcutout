@@ -5,6 +5,7 @@ use std::{
     io::{self, BufWriter, Write},
     net::Ipv4Addr,
     path::Path,
+    time::Duration,
 };
 
 use crate::NovatekHttpOrigin;
@@ -19,6 +20,8 @@ use url::Url;
 /// Maximum encoded H.264 access-unit size accepted from an RTSP camera.
 const RETINA_MAX_VIDEO_FRAME_BYTES: usize = 8 * 1024 * 1024;
 const RETINA_MAX_VIDEO_CONFIGURATION_BYTES: usize = 64 * 1024;
+const RETINA_RTSP_HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
+const RETINA_RTSP_IDLE_TIMEOUT: Duration = Duration::from_secs(15);
 
 /// Failure while creating or consuming a Retina RTSP preview session.
 #[derive(Debug, Error)]
@@ -263,6 +266,18 @@ impl RetinaRtspPreviewSession {
         uri: &str,
         expected_address: Option<Ipv4Addr>,
     ) -> Result<Self, RetinaRtspError> {
+        tokio::time::timeout(
+            RETINA_RTSP_HANDSHAKE_TIMEOUT,
+            Self::connect_inner_unbounded(uri, expected_address),
+        )
+        .await
+        .map_err(|_| RetinaRtspError::Session("RTSP handshake timed out".to_owned()))?
+    }
+
+    async fn connect_inner_unbounded(
+        uri: &str,
+        expected_address: Option<Ipv4Addr>,
+    ) -> Result<Self, RetinaRtspError> {
         let url = Url::parse(uri).map_err(|_| RetinaRtspError::InvalidUri)?;
         if url.scheme() != "rtsp" || url.host_str().is_none() {
             return Err(RetinaRtspError::InvalidUri);
@@ -323,7 +338,10 @@ impl RetinaRtspPreviewSession {
     ///
     /// Returns a Retina error when the transport or depacketizer fails.
     pub async fn next_video_frame(&mut self) -> Result<Option<RetinaVideoFrame>, RetinaRtspError> {
-        while let Some(item) = self.demuxed.next().await {
+        while let Some(item) = tokio::time::timeout(RETINA_RTSP_IDLE_TIMEOUT, self.demuxed.next())
+            .await
+            .map_err(|_| RetinaRtspError::Session("RTSP stream idle timeout".to_owned()))?
+        {
             match item.map_err(|error| RetinaRtspError::Session(error.to_string()))? {
                 CodecItem::VideoFrame(frame) if frame.stream_id() == self.video_stream_id => {
                     if frame.has_new_parameters() {

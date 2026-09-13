@@ -28,6 +28,7 @@ struct CameraRouteContainerView: View {
     @State private var thumbnailTask: Task<Void, Never>?
     @State private var thumbnailGeneration: UInt64 = 0
     @State private var thumbnailDataByPath: [String: Data] = [:]
+    private static let maximumThumbnailEntries = 32
     @State private var thumbnailPathInFlight: String?
     @State private var thumbnailErrorKey: String?
     @State private var recordingRequestKey: String?
@@ -159,6 +160,11 @@ struct CameraRouteContainerView: View {
                 if generation == readGeneration { readErrorKey = "camera.connection.detail.wifi_required" }
             } catch CameraReadOnlyRequestError.unsupportedProfile {
                 if generation == readGeneration { readErrorKey = "camera.error.unsupported_profile" }
+            } catch let error as URLError where error.code == .notConnectedToInternet {
+                if generation == readGeneration {
+                    adapter.observePermissionRequired()
+                    readErrorKey = "camera.error.read_failed"
+                }
             } catch {
                 if generation == readGeneration, !Task.isCancelled { readErrorKey = "camera.error.read_failed" }
             }
@@ -276,6 +282,11 @@ struct CameraRouteContainerView: View {
                 guard !data.isEmpty else {
                     thumbnailErrorKey = "camera.error.thumbnail_empty"
                     return
+                }
+                if thumbnailDataByPath.count >= Self.maximumThumbnailEntries,
+                   thumbnailDataByPath[media.path] == nil,
+                   let oldestPath = thumbnailDataByPath.keys.first {
+                    thumbnailDataByPath.removeValue(forKey: oldestPath)
                 }
                 thumbnailDataByPath[media.path] = data
             } catch is CancellationError {
@@ -710,9 +721,9 @@ private struct CameraStatusCard: View {
                         .font(.subheadline.weight(.semibold))
                     LazyVStack(alignment: .leading, spacing: 12) {
                         ForEach(
-                            readOnlyEvidence.media.prefix(mediaPage * Self.mediaPageSize),
-                            id: \.path
-                        ) { media in
+                            Array(readOnlyEvidence.media.prefix(mediaPage * Self.mediaPageSize).enumerated()),
+                            id: \.offset
+                        ) { _, media in
                         HStack(alignment: .top, spacing: 10) {
                             VStack(alignment: .leading, spacing: 3) {
                                 Text(media.name)

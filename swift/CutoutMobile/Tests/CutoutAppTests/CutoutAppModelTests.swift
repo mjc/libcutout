@@ -2408,6 +2408,16 @@ final class CutoutAppModelTests: XCTestCase {
 
         model.applyCaptureEvent(.started(fileURL: URL(fileURLWithPath: "/tmp/next-ride.jsonl")))
         XCTAssertTrue(model.cameraSessionStateHandle.cameraMediaProvenance().isEmpty)
+        XCTAssertTrue(model.cameraMediaReferences.isEmpty)
+
+        model.recordCameraMediaReference(
+            captureFileName: "ride.jsonl",
+            source: .rtsp,
+            media: media,
+            localURL: localURL
+        )
+        XCTAssertTrue(model.cameraSessionStateHandle.cameraMediaProvenance().isEmpty)
+        XCTAssertTrue(model.cameraMediaReferences.isEmpty)
     }
 
     @MainActor
