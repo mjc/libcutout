@@ -1,17 +1,20 @@
 import CutoutMobileFFI
+import CoreGraphics
 import Foundation
 import SwiftUI
 
-/// Presentation-only artwork retained in Swift and bounded before decoding.
+/// Presentation-only artwork retained in Swift at the provider-requested size.
 /// Artwork never enters the Rust ride or UniFFI contracts.
 public struct MusicArtwork: Equatable, Sendable {
-    public static let maxBytes = 512 * 1024
+    public static let maxPixelDimension = 1_024
 
-    public let data: Data
+    public let image: CGImage
 
-    public init?(data: Data) {
-        guard data.isEmpty == false, data.count <= Self.maxBytes else { return nil }
-        self.data = data
+    public init?(image: CGImage) {
+        guard image.width <= Self.maxPixelDimension,
+              image.height <= Self.maxPixelDimension
+        else { return nil }
+        self.image = image
     }
 }
 
@@ -1150,15 +1153,14 @@ public extension MobileMusicRideEventDto {
 
 /// One provider observation entering the shared music pipeline.
 ///
-/// Providers may attach bounded metadata, but never an audio buffer or artwork
-/// payload.
+/// Providers may attach bounded presentation artwork, but never an audio buffer.
 public struct MusicProviderObservation: Equatable, Sendable {
     public let snapshot: MobileMusicSnapshotDto
     public let artwork: MusicArtwork?
 
-    public init(snapshot: MobileMusicSnapshotDto, artworkData: Data? = nil) {
+    public init(snapshot: MobileMusicSnapshotDto, artwork: MusicArtwork? = nil) {
         self.snapshot = snapshot
-        artwork = artworkData.flatMap(MusicArtwork.init(data:))
+        self.artwork = artwork
     }
 
     var staleProjection: Self {
@@ -1187,7 +1189,7 @@ public struct MusicProviderObservation: Equatable, Sendable {
                     openProvider: snapshot.capabilities.openProvider
                 )
             ),
-            artworkData: artwork?.data
+            artwork: artwork
         )
     }
 
@@ -1203,7 +1205,7 @@ public struct MusicProviderObservation: Equatable, Sendable {
                 observedAtMs: max(observedAtMs, snapshot.observedAtMs),
                 capabilities: snapshot.capabilities
             ),
-            artworkData: artwork?.data
+            artwork: artwork
         )
     }
 

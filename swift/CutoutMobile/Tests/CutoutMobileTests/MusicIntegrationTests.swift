@@ -1,4 +1,5 @@
 import XCTest
+import CoreGraphics
 import CutoutMobileFFI
 @testable import CutoutMobile
 
@@ -524,7 +525,7 @@ final class MusicIntegrationTests: XCTestCase {
     func testArtworkCacheReusesOnlyBoundedArtworkForTheSameItem() {
         var cache = MusicArtworkCache()
         var loadCount = 0
-        let artwork = MusicArtwork(data: Data([1, 2, 3]))
+        let artwork = testArtwork(gray: 0.25)
 
         let first = cache.artwork(for: "track-1") {
             loadCount += 1
@@ -550,8 +551,8 @@ final class MusicIntegrationTests: XCTestCase {
 
     func testArtworkCacheRejectsOldTrackAfterIdentityChanges() {
         var cache = MusicArtworkCache()
-        let first = MusicArtwork(data: Data([1, 2, 3]))!
-        let second = MusicArtwork(data: Data([4, 5, 6]))!
+        let first = testArtwork(gray: 0.25)
+        let second = testArtwork(gray: 0.75)
 
         cache.insert(first, for: "spotify:track:first")
         XCTAssertEqual(cache.cachedArtwork(for: "spotify:track:first"), first)
@@ -578,17 +579,17 @@ final class MusicIntegrationTests: XCTestCase {
             observedAtMs: 1_100,
             capabilities: .init(previous: true, play: false, pause: true, next: true, openProvider: true)
         )
-        let artwork = Data([1, 2, 3])
+        let artwork = testArtwork(gray: 0.25)
 
         let firstOutcome = try coordinator.ingest(
-            observation: MusicProviderObservation(snapshot: snapshot, artworkData: artwork),
+            observation: MusicProviderObservation(snapshot: snapshot, artwork: artwork),
             wallClockAtMs: 1_700_000_000_000,
             clockUncertaintyMs: 1
         )
 
         XCTAssertEqual(firstOutcome, .recorded)
         XCTAssertEqual(coordinator.recordedEvents.count, 1)
-        XCTAssertEqual(coordinator.nowPlaying?.artwork?.data, artwork)
+        XCTAssertEqual(coordinator.nowPlaying?.artwork, artwork)
         let recordedEvents = coordinator.recordedEvents
 
         let updatedSnapshot = MobileMusicSnapshotDto(
@@ -601,17 +602,25 @@ final class MusicIntegrationTests: XCTestCase {
             observedAtMs: 1_200,
             capabilities: snapshot.capabilities
         )
-        let updatedArtwork = Data([4, 5, 6])
+        let updatedArtwork = testArtwork(gray: 0.75)
         let secondOutcome = try coordinator.ingest(
-            observation: MusicProviderObservation(snapshot: updatedSnapshot, artworkData: updatedArtwork),
+            observation: MusicProviderObservation(snapshot: updatedSnapshot, artwork: updatedArtwork),
             wallClockAtMs: 1_700_000_000_100,
             clockUncertaintyMs: 1
         )
 
         XCTAssertNil(secondOutcome)
-        XCTAssertEqual(coordinator.nowPlaying?.artwork?.data, updatedArtwork)
+        XCTAssertEqual(coordinator.nowPlaying?.artwork, updatedArtwork)
         XCTAssertEqual(coordinator.recordedEvents, recordedEvents)
         XCTAssertEqual(coordinator.recordedEvents.count, 1)
+    }
+
+    func testArtworkRejectsImagesLargerThanThePresentationBound() {
+        XCTAssertNil(
+            MusicArtwork(
+                image: testImage(width: MusicArtwork.maxPixelDimension + 1, gray: 0.5)
+            )
+        )
     }
 
     private func nowPlaying(trackID: String) -> MusicNowPlaying {
@@ -985,4 +994,23 @@ final class MusicIntegrationTests: XCTestCase {
         )
         XCTAssertEqual(coordinator.recordedEvents.map(\.kind), [.itemChanged, .skip])
     }
+}
+
+private func testArtwork(gray: CGFloat) -> MusicArtwork {
+    MusicArtwork(image: testImage(gray: gray))!
+}
+
+private func testImage(width: Int = 1, gray: CGFloat) -> CGImage {
+    let context = CGContext(
+        data: nil,
+        width: width,
+        height: 1,
+        bitsPerComponent: 8,
+        bytesPerRow: width * 4,
+        space: CGColorSpaceCreateDeviceRGB(),
+        bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+    )!
+    context.setFillColor(red: gray, green: gray, blue: gray, alpha: 1)
+    context.fill(CGRect(x: 0, y: 0, width: width, height: 1))
+    return context.makeImage()!
 }

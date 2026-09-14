@@ -1,10 +1,9 @@
 import CutoutMobileFFI
 import Foundation
-import ImageIO
 import SwiftUI
 
 /// A small, reusable control surface for Ride and Map. It renders metadata only;
-/// neither artwork bytes nor an audio stream cross the app boundary.
+/// neither artwork nor an audio stream crosses the Rust ride boundary.
 public struct MusicCompactPlayer: View {
     public let nowPlaying: MusicNowPlaying
     public let timeline: [MobileMusicRideEventDto]
@@ -397,11 +396,9 @@ private struct MusicArtworkView: View {
     let cornerRadius: CGFloat
     let accessibilityLabel: String
 
-    @State private var image: CGImage?
-
     var body: some View {
         Group {
-            if let image {
+            if let image = artwork?.image {
                 Image(decorative: image, scale: 1, orientation: .up)
                     .resizable()
                     .scaledToFill()
@@ -412,29 +409,6 @@ private struct MusicArtworkView: View {
                 MusicArtworkPlaceholder(size: size)
             }
         }
-        .task(id: artwork?.data) {
-            let data = artwork?.data
-            let maxPixelSize = max(1, Int(size * 3))
-            let decoded: CGImage? = await Task.detached(priority: .userInitiated) {
-                guard let data else { return nil }
-                return Self.decode(data: data, maxPixelSize: maxPixelSize)
-            }.value
-            guard !Task.isCancelled else { return }
-            image = decoded
-        }
-    }
-
-    nonisolated private static func decode(data: Data, maxPixelSize: Int) -> CGImage? {
-        guard let source = CGImageSourceCreateWithData(data as CFData, nil) else { return nil }
-        return CGImageSourceCreateThumbnailAtIndex(
-            source,
-            0,
-            [
-                kCGImageSourceCreateThumbnailFromImageAlways: true,
-                kCGImageSourceCreateThumbnailWithTransform: true,
-                kCGImageSourceThumbnailMaxPixelSize: maxPixelSize,
-            ] as CFDictionary
-        )
     }
 }
 

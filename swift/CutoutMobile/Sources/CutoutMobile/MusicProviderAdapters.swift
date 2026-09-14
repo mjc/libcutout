@@ -754,7 +754,7 @@ public final class SpotifyProviderAdapter: NSObject {
                 openProvider: true
             )
         )
-        return MusicProviderObservation(snapshot: snapshot, artworkData: artwork?.data)
+        return MusicProviderObservation(snapshot: snapshot, artwork: artwork)
     }
 
     public func unavailableSnapshot(observedAtMs: UInt64) -> MobileMusicSnapshotDto {
@@ -932,9 +932,9 @@ public final class SpotifyProviderAdapter: NSObject {
         artworkRequest = (effect.id, trackURI, generation)
         beginArtworkDeadline(effect: effect, track: track, generation: generation)
         imageAPI.fetchImage(forItem: track, with: Self.artworkSize) { [weak self] image, error in
-            let data = (image as? UIImage)?.jpegData(compressionQuality: 0.8)
             let failed = error != nil
-            Task { @MainActor [weak self, data, failed] in
+            Task { @MainActor [weak self, image, failed] in
+                let artwork = (image as? UIImage)?.cgImage.flatMap(MusicArtwork.init(image:))
                 guard let self,
                       let request = self.artworkRequest,
                       request.id == effect.id,
@@ -948,7 +948,7 @@ public final class SpotifyProviderAdapter: NSObject {
                 ) == .accepted else { return }
                 self.artworkRequest = nil
                 self.effects.cancel(.artwork(effect.id))
-                if !failed, let data, let artwork = MusicArtwork(data: data) {
+                if !failed, let artwork {
                     self.artworkCache.insert(artwork, for: trackURI)
                     self.artwork = artwork
                     self.emitChange()

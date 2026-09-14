@@ -104,7 +104,7 @@ private final class SystemAppleMusicObservationService: AppleMusicObservationSer
                     openProvider: true
                 )
             ),
-            artworkData: artwork?.data
+            artwork: artwork
         )
     }
 
@@ -124,10 +124,9 @@ private final class SystemAppleMusicObservationService: AppleMusicObservationSer
     private func loadArtwork(from item: MPMediaItem?) -> MusicArtwork? {
 #if canImport(UIKit) && os(iOS)
         guard let artwork = item?.artwork,
-              let image = artwork.image(at: Self.artworkSize),
-              let data = image.jpegData(compressionQuality: 0.8)
+              let image = artwork.image(at: Self.artworkSize)?.cgImage
         else { return nil }
-        return MusicArtwork(data: data)
+        return MusicArtwork(image: image)
 #else
         nil
 #endif
@@ -350,7 +349,7 @@ public final class AppleMusicProviderAdapter {
     }
 
     /// Returns the most recently completed cached provider observation with a
-    /// current timestamp. The artwork bytes never enter the Rust ride contract.
+    /// current timestamp. The artwork never enters the Rust ride contract.
     public func observation(observedAtMs: UInt64) -> MusicProviderObservation {
         observationBridge.cachedObservation?.observedAt(observedAtMs)
             ?? .unavailable(
