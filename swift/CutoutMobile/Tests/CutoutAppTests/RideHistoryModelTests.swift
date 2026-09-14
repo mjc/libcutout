@@ -188,6 +188,8 @@ final class RideHistoryModelTests: XCTestCase {
                 currentProjectionRideID: "ride-a",
                 loadGeneration: 3,
                 currentGeneration: 3,
+                viewportLoadGeneration: 7,
+                currentViewportLoadGeneration: 7,
                 isCancelled: false
             ))
         XCTAssertFalse(
@@ -198,6 +200,8 @@ final class RideHistoryModelTests: XCTestCase {
                 currentProjectionRideID: nil,
                 loadGeneration: 3,
                 currentGeneration: 4,
+                viewportLoadGeneration: 7,
+                currentViewportLoadGeneration: 7,
                 isCancelled: false
             ))
         XCTAssertFalse(
@@ -208,6 +212,20 @@ final class RideHistoryModelTests: XCTestCase {
                 currentProjectionRideID: "ride-b",
                 loadGeneration: 3,
                 currentGeneration: 3,
+                viewportLoadGeneration: 7,
+                currentViewportLoadGeneration: 7,
+                isCancelled: false
+            ))
+        XCTAssertFalse(
+            RideHistoryModel.shouldApplyHistoryDetailViewport(
+                rideID: "ride-a",
+                selectedRideID: "ride-a",
+                expectedProjectionRideID: "ride-a",
+                currentProjectionRideID: "ride-a",
+                loadGeneration: 3,
+                currentGeneration: 3,
+                viewportLoadGeneration: 7,
+                currentViewportLoadGeneration: 8,
                 isCancelled: false
             ))
     }

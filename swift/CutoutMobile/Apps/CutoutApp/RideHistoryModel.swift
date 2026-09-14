@@ -12,6 +12,7 @@ private struct RideHistoryDetailViewportRequest: Sendable {
     let rideID: String
     let projectionRideID: String
     let generation: UInt64
+    let viewportGeneration: UInt64
 }
 
 protocol RideHistoryQuerying: Sendable {
@@ -61,6 +62,7 @@ final class RideHistoryModel {
     private var queryGeneration: UInt64 = 0
     private var selectionTask: Task<Void, Never>?
     private var detailLoadGeneration: UInt64 = 0
+    private var viewportLoadGeneration: UInt64 = 0
     private var selectionCancellation: MobileRideMapProjectionCancellation?
     private var viewportTask: Task<Void, Never>?
     private var viewportCancellation: MobileRideMapProjectionCancellation?
@@ -206,10 +208,12 @@ final class RideHistoryModel {
         else {
             return
         }
+        viewportLoadGeneration &+= 1
         let request = RideHistoryDetailViewportRequest(
             rideID: selectedRideID,
             projectionRideID: projectionRideID,
-            generation: detailLoadGeneration
+            generation: detailLoadGeneration,
+            viewportGeneration: viewportLoadGeneration
         )
         viewportCancellation?.cancel()
         viewportTask?.cancel()
@@ -450,6 +454,8 @@ final class RideHistoryModel {
             currentProjectionRideID: detailProjectionRideID,
             loadGeneration: request.generation,
             currentGeneration: detailLoadGeneration,
+            viewportLoadGeneration: request.viewportGeneration,
+            currentViewportLoadGeneration: viewportLoadGeneration,
             isCancelled: isCancelled
         )
     }
@@ -512,6 +518,7 @@ final class RideHistoryModel {
         viewportCancellation?.cancel()
         viewportTask?.cancel()
         detailLoadGeneration &+= 1
+        viewportLoadGeneration &+= 1
     }
 
     func clearMusicMetadata() {
@@ -842,6 +849,8 @@ final class RideHistoryModel {
         selectedRideID: String?,
         loadGeneration: UInt64,
         currentGeneration: UInt64,
+        viewportLoadGeneration: UInt64,
+        currentViewportLoadGeneration: UInt64,
         isCancelled: Bool
     ) -> Bool {
         !isCancelled && loadGeneration == currentGeneration && selectedRideID == rideID
@@ -861,6 +870,7 @@ final class RideHistoryModel {
             && selectedRideID == rideID
             && expectedProjectionRideID == rideID
             && currentProjectionRideID == expectedProjectionRideID
+            && viewportLoadGeneration == currentViewportLoadGeneration
     }
 
     static func shouldApplyHistoryQuery(
