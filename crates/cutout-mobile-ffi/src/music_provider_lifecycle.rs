@@ -781,39 +781,19 @@ impl MobileMusicProviderLifecycle {
             .into()
     }
 
-    /// Begins one transport request.
+    /// Begins one transport request, optionally owned by a connection attempt.
     #[must_use]
     pub fn begin_transport_effect(
         &self,
         provider_generation: MobileMusicProviderSessionId,
+        connection_attempt_id: Option<MobileMusicConnectionAttemptId>,
         command: MobileMusicCommandDto,
         now_ms: u64,
     ) -> Option<MobileMusicTransportEffect> {
         self.lock_inner()
             .begin_transport_effect(
                 ProviderSessionId::from_raw(provider_generation.value),
-                command.into(),
-                now_ms,
-            )
-            .map(|effect| MobileMusicTransportEffect {
-                id: effect.id.into(),
-                deadline_ms: effect.deadline.as_milliseconds(),
-            })
-    }
-
-    /// Begins a transport command owned by one connection attempt.
-    #[must_use]
-    pub fn begin_transport_effect_for_connection(
-        &self,
-        provider_generation: MobileMusicProviderSessionId,
-        connection_attempt_id: MobileMusicConnectionAttemptId,
-        command: MobileMusicCommandDto,
-        now_ms: u64,
-    ) -> Option<MobileMusicTransportEffect> {
-        self.lock_inner()
-            .begin_transport_effect_for_connection(
-                ProviderSessionId::from_raw(provider_generation.value),
-                Some(ConnectionAttemptId::from_raw(connection_attempt_id.value)),
+                connection_attempt_id.map(|id| ConnectionAttemptId::from_raw(id.value)),
                 command.into(),
                 now_ms,
             )
@@ -1084,7 +1064,7 @@ mod tests {
             .begin_provider_session()
             .expect("provider session");
         let transport = lifecycle
-            .begin_transport_effect(provider, MobileMusicCommandDto::Play, 100)
+            .begin_transport_effect(provider, None, MobileMusicCommandDto::Play, 100)
             .expect("transport");
 
         let suspension = lifecycle.suspend();
@@ -1137,12 +1117,7 @@ mod tests {
             MobileMusicProviderConnectionCallback::Accepted
         );
         let transport = lifecycle
-            .begin_transport_effect_for_connection(
-                provider,
-                attempt,
-                MobileMusicCommandDto::Play,
-                0,
-            )
+            .begin_transport_effect(provider, Some(attempt), MobileMusicCommandDto::Play, 0)
             .expect("transport");
 
         let ended = lifecycle.connection_failed_effect(attempt, 100);

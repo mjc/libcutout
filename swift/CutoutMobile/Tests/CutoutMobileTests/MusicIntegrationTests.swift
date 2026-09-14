@@ -4,6 +4,16 @@ import CutoutMobileFFI
 @testable import CutoutMobile
 
 final class MusicIntegrationTests: XCTestCase {
+    @MainActor
+    private func makeCoordinator(
+        rideMapState: MobileRideMapState?
+    ) -> MusicIntegrationCoordinator {
+        MusicIntegrationCoordinator(
+            rideMapState: rideMapState,
+            lifecycle: MobileMusicProviderLifecycle()
+        )
+    }
+
     func testMusicCommandFeedbackPresentsEveryNonAcceptedOutcome() {
         XCTAssertNil(MusicCommandFeedback(requestID: .init(value: 1), outcome: .accepted).messageKey)
         XCTAssertEqual(
@@ -47,6 +57,7 @@ final class MusicIntegrationTests: XCTestCase {
 
         let first = try XCTUnwrap(lifecycle.beginTransportEffect(
             providerGeneration: provider,
+            connectionAttemptId: nil,
             command: .play,
             nowMs: 1_000
         ))
@@ -57,6 +68,7 @@ final class MusicIntegrationTests: XCTestCase {
         ))
         XCTAssertNil(lifecycle.beginTransportEffect(
             providerGeneration: provider,
+            connectionAttemptId: nil,
             command: .play,
             nowMs: 1_001
         ))
@@ -69,6 +81,7 @@ final class MusicIntegrationTests: XCTestCase {
 
         let second = try XCTUnwrap(lifecycle.beginTransportEffect(
             providerGeneration: provider,
+            connectionAttemptId: nil,
             command: .play,
             nowMs: 11_001
         ))
@@ -90,6 +103,7 @@ final class MusicIntegrationTests: XCTestCase {
         var callbacks = [(MobileMusicTransportRequestId, MusicCommandOutcome)]()
         let request = try XCTUnwrap(lifecycle.beginTransportEffect(
             providerGeneration: provider,
+            connectionAttemptId: nil,
             command: .play,
             nowMs: 100
         ))
@@ -119,7 +133,7 @@ final class MusicIntegrationTests: XCTestCase {
 
     @MainActor
     func testSpotifyEpisodeWithoutArtistStillUpdatesPlayingTitle() throws {
-        let coordinator = MusicIntegrationCoordinator(rideMapState: nil)
+        let coordinator = makeCoordinator(rideMapState: nil)
         let snapshot = MobileMusicSnapshotDto(
             provider: .spotify,
             sessionId: "spotify-app-remote",
@@ -321,7 +335,7 @@ final class MusicIntegrationTests: XCTestCase {
     func testEnablingHistorySeedsTheCurrentTrackAfterDisabledObservation() throws {
         let state = MobileRideMapState()
         _ = try state.startGpsOnly(atMs: 1_000, lastConnectedVehicle: nil)
-        let coordinator = MusicIntegrationCoordinator(rideMapState: state)
+        let coordinator = makeCoordinator(rideMapState: state)
         let playing = MobileMusicSnapshotDto(
             provider: .appleMusic,
             sessionId: "apple",
@@ -456,7 +470,7 @@ final class MusicIntegrationTests: XCTestCase {
     func testProviderArtworkReachesPresentationOnlyNowPlaying() throws {
         let rideMapState = MobileRideMapState()
         _ = try rideMapState.startGpsOnly(atMs: 1_000, lastConnectedVehicle: nil)
-        let coordinator = MusicIntegrationCoordinator(rideMapState: rideMapState)
+        let coordinator = makeCoordinator(rideMapState: rideMapState)
         try coordinator.setHistoryPolicy(.humanReadable)
         let snapshot = MobileMusicSnapshotDto(
             provider: .spotify,
@@ -652,7 +666,7 @@ final class MusicIntegrationTests: XCTestCase {
         let state = MobileRideMapState()
         _ = try state.startGpsOnly(atMs: 1_000, lastConnectedVehicle: nil)
         try state.setMusicHistoryPolicy(.humanReadable)
-        let coordinator = MusicIntegrationCoordinator(rideMapState: state)
+        let coordinator = makeCoordinator(rideMapState: state)
         let invalid = MobileMusicSnapshotDto(
             provider: .appleMusic,
             sessionId: "session",
@@ -679,7 +693,7 @@ final class MusicIntegrationTests: XCTestCase {
         let state = MobileRideMapState()
         _ = try state.startGpsOnly(atMs: 1_000, lastConnectedVehicle: nil)
         try state.setMusicHistoryPolicy(.humanReadable)
-        let coordinator = MusicIntegrationCoordinator(rideMapState: state)
+        let coordinator = makeCoordinator(rideMapState: state)
 
         let valid = MobileMusicSnapshotDto(
             provider: .appleMusic,
@@ -731,7 +745,7 @@ final class MusicIntegrationTests: XCTestCase {
         let state = MobileRideMapState()
         _ = try state.startGpsOnly(atMs: 1_000, lastConnectedVehicle: nil)
         try state.setMusicHistoryPolicy(.humanReadable)
-        let coordinator = MusicIntegrationCoordinator(rideMapState: state)
+        let coordinator = makeCoordinator(rideMapState: state)
         let snapshot = MobileMusicSnapshotDto(
             provider: .appleMusic,
             sessionId: "session",
@@ -877,6 +891,7 @@ final class MusicIntegrationTests: XCTestCase {
         )
         let transport = try XCTUnwrap(lifecycle.beginTransportEffect(
             providerGeneration: provider,
+            connectionAttemptId: nil,
             command: .next,
             nowMs: 1_150
         ))

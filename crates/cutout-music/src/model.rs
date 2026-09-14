@@ -4,9 +4,9 @@ use cutout_core::MonotonicTimestamp;
 use thiserror::Error;
 
 /// Maximum provider/session identifier bytes accepted at the platform boundary.
-pub const MAX_MUSIC_IDENTIFIER_BYTES: usize = 256;
+pub(crate) const MAX_MUSIC_IDENTIFIER_BYTES: usize = 256;
 /// Maximum title or artist bytes retained in human-readable ride history.
-pub const MAX_MUSIC_DISPLAY_TEXT_BYTES: usize = 512;
+pub(crate) const MAX_MUSIC_DISPLAY_TEXT_BYTES: usize = 512;
 
 /// A provider with a supported transport-control adapter.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]

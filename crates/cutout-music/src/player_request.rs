@@ -56,30 +56,79 @@ impl PlayerStateRequestState {
     }
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ObservationRevisionState {
+    Current(ObservationRevision),
+    Exhausted,
+}
+
+impl Default for ObservationRevisionState {
+    fn default() -> Self {
+        Self::Current(ObservationRevision::default())
+    }
+}
+
+impl ObservationRevisionState {
+    const fn revision(self) -> ObservationRevision {
+        match self {
+            Self::Current(revision) => revision,
+            Self::Exhausted => ObservationRevision::from_raw(u64::MAX),
+        }
+    }
+
+    fn advance(&mut self) {
+        let Self::Current(current) = *self else {
+            return;
+        };
+        *self = match current.next() {
+            Some(next) => Self::Current(next),
+            None => Self::Exhausted,
+        };
+    }
+}
+
 /// One outstanding player-state request, replaceable if its callback is lost.
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct MusicPlayerRequest {
-    last_id: u64,
+    last_id: PlayerStateRequestId,
     state: PlayerStateRequestState,
     last_observed_at: Option<MonotonicTimestamp>,
-    observation_revision: ObservationRevision,
-    observation_revision_exhausted: bool,
+    observation_revision: ObservationRevisionState,
+}
+
+/// Bounded identity and retry admission for provider artwork callbacks.
+#[derive(Debug, Default)]
+enum ArtworkRequestState {
+    #[default]
+    Available,
+    Pending(ArtworkRequestId),
 }
 
 /// Bounded identity and retry admission for provider artwork callbacks.
 #[derive(Debug)]
 pub struct MusicArtworkRequest {
-    last_id: Option<u64>,
+    last_id: ArtworkRequestId,
     attempts: u8,
-    pending: Option<ArtworkRequestId>,
+    state: ArtworkRequestState,
+}
+
+impl Default for MusicPlayerRequest {
+    fn default() -> Self {
+        Self {
+            last_id: PlayerStateRequestId::from_raw(0),
+            state: PlayerStateRequestState::Available,
+            last_observed_at: None,
+            observation_revision: ObservationRevisionState::default(),
+        }
+    }
 }
 
 impl Default for MusicArtworkRequest {
     fn default() -> Self {
         Self {
-            last_id: Some(0),
+            last_id: ArtworkRequestId::from_raw(0),
             attempts: 0,
-            pending: None,
+            state: ArtworkRequestState::Available,
         }
     }
 }
@@ -88,38 +137,42 @@ impl MusicArtworkRequest {
     /// Admits at most three requests until the track or connection is reset.
     #[must_use]
     pub fn begin(&mut self) -> Option<ArtworkRequestId> {
-        if self.pending.is_some() || self.attempts >= MAX_ARTWORK_ATTEMPTS {
+        if matches!(self.state, ArtworkRequestState::Pending(_))
+            || self.attempts >= MAX_ARTWORK_ATTEMPTS
+        {
             return None;
         }
-        let next_id = self.last_id.and_then(|last_id| last_id.checked_add(1))?;
-        self.last_id = Some(next_id);
+        let id = self.last_id.next()?;
+        self.last_id = id;
         self.attempts += 1;
-        let id = ArtworkRequestId::from_raw(next_id);
-        self.pending = Some(id);
+        self.state = ArtworkRequestState::Pending(id);
         Some(id)
     }
 
     /// Accepts only the current image callback or deadline.
     #[must_use]
     pub fn complete(&mut self, request_id: ArtworkRequestId) -> MusicPlayerRequestCompletion {
-        if self.pending == Some(request_id) {
-            self.pending = None;
-            MusicPlayerRequestCompletion::Accepted
-        } else {
-            MusicPlayerRequestCompletion::Stale
+        match self.state {
+            ArtworkRequestState::Pending(id) if id == request_id => {
+                self.state = ArtworkRequestState::Available;
+                MusicPlayerRequestCompletion::Accepted
+            }
+            ArtworkRequestState::Available | ArtworkRequestState::Pending(_) => {
+                MusicPlayerRequestCompletion::Stale
+            }
         }
     }
 
     /// Whether another attempt remains after a failure or deadline.
     #[must_use]
     pub fn can_retry(&self) -> bool {
-        self.pending.is_none() && self.attempts < MAX_ARTWORK_ATTEMPTS
+        matches!(self.state, ArtworkRequestState::Available) && self.attempts < MAX_ARTWORK_ATTEMPTS
     }
 
     /// Starts a new track or connection budget without reusing callback IDs.
     pub fn reset(&mut self) {
         self.attempts = 0;
-        self.pending = None;
+        self.state = ArtworkRequestState::Available;
     }
 }
 
@@ -134,8 +187,8 @@ impl MusicPlayerRequest {
         {
             return None;
         }
-        self.last_id = self.last_id.checked_add(1)?;
-        let id = PlayerStateRequestId::from_raw(self.last_id);
+        let id = self.last_id.next()?;
+        self.last_id = id;
         self.state = PlayerStateRequestState::Pending(PendingPlayerStateRequest {
             id,
             started_at: now,
@@ -193,8 +246,7 @@ impl MusicPlayerRequest {
         observation_revision: ObservationRevision,
         now_ms: u64,
     ) -> MusicPlayerRequestCompletion {
-        if self.observation_revision_exhausted || observation_revision != self.observation_revision
-        {
+        if self.observation_revision != ObservationRevisionState::Current(observation_revision) {
             let _ = self.state.retire(request_id);
             return MusicPlayerRequestCompletion::Stale;
         }
@@ -205,18 +257,14 @@ impl MusicPlayerRequest {
     /// Connected sessions seed it before the first player-state response;
     /// verified updates then refresh it as they arrive.
     pub fn mark_observed(&mut self, now_ms: u64) {
-        if let Some(next) = self.observation_revision.next() {
-            self.observation_revision = next;
-        } else {
-            self.observation_revision_exhausted = true;
-        }
+        self.observation_revision.advance();
         self.last_observed_at = Some(MonotonicTimestamp::new(now_ms));
     }
 
     /// Revision of the latest authoritative observation.
     #[must_use]
     pub const fn observation_revision(&self) -> ObservationRevision {
-        self.observation_revision
+        self.observation_revision.revision()
     }
 
     /// Whether the most recently verified player state is too old to present

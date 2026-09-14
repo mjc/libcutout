@@ -54,6 +54,15 @@ impl<K> LifecycleId<K> {
     pub const fn raw(self) -> u64 {
         self.value
     }
+
+    /// Advances this identity without allowing arithmetic overflow to reuse a value.
+    #[must_use]
+    pub const fn next(self) -> Option<Self> {
+        match self.value.checked_add(1) {
+            Some(value) => Some(Self::from_raw(value)),
+            None => None,
+        }
+    }
 }
 
 impl<K> From<u64> for LifecycleId<K> {

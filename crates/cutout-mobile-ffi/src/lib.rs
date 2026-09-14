@@ -7215,15 +7215,6 @@ pub struct MobileRideMapLimitsDto {
     pub history_recent_window_milliseconds: u64,
 }
 
-/// Rust-owned byte bounds for provider music metadata.
-#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Record)]
-pub struct MobileMusicLimitsDto {
-    /// Maximum provider/session/item identifier bytes.
-    pub identifier_max_bytes: u32,
-    /// Maximum title or artist bytes.
-    pub display_text_max_bytes: u32,
-}
-
 /// Inputs for a bounded history overview context projection.
 #[derive(Clone, Debug, PartialEq, uniffi::Record)]
 pub struct MobileRideHistoryContextOptionsDto {
@@ -8306,35 +8297,6 @@ pub fn mobile_ride_map_limits() -> MobileRideMapLimitsDto {
         history_context_total_point_budget: persistence::DEFAULT_HISTORY_CONTEXT_TOTAL_POINTS,
         history_recent_window_milliseconds: persistence::DEFAULT_HISTORY_RECENT_WINDOW_MILLISECONDS,
     }
-}
-
-/// Returns the Rust-owned byte bounds used by mobile music validation.
-#[uniffi::export]
-#[must_use]
-pub fn mobile_music_limits() -> MobileMusicLimitsDto {
-    MobileMusicLimitsDto {
-        identifier_max_bytes: u32::try_from(cutout_music::MAX_MUSIC_IDENTIFIER_BYTES)
-            .unwrap_or(u32::MAX),
-        display_text_max_bytes: u32::try_from(cutout_music::MAX_MUSIC_DISPLAY_TEXT_BYTES)
-            .unwrap_or(u32::MAX),
-    }
-}
-
-/// Validates one provider observation using the portable Rust music contract.
-///
-/// Platform adapters may use this before updating presentation state so malformed
-/// metadata never enters the UI or capture path.
-#[uniffi::export]
-///
-/// # Errors
-///
-/// Returns [`MobileRideMapCoreErrorDto::InvalidMusicInput`] when the observation is malformed.
-pub fn validate_music_snapshot(
-    snapshot: MobileMusicSnapshotDto,
-) -> Result<(), MobileRideMapCoreErrorDto> {
-    CoreMusicSnapshot::try_from(snapshot)
-        .map(|_| ())
-        .map_err(MobileRideMapCoreErrorDto::InvalidMusicInput)
 }
 
 /// Applies the Rust-owned PEVCAP music retention filter to one provider item.

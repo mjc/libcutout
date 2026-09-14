@@ -1,8 +1,6 @@
 //! Identity for asynchronous provider callback lifecycles.
 
-use std::marker::PhantomData;
-
-use crate::ids::{AuthorizationGeneration, AuthorizationId, LifecycleId};
+use crate::ids::{AuthorizationId, LifecycleId};
 
 /// Whether a callback belongs to the active provider object.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -13,20 +11,26 @@ pub enum CallbackEpochMatch {
     Stale,
 }
 
+/// Whether a replaceable callback source currently owns an identity.
+#[derive(Debug, Default)]
+enum CallbackEpochState<K> {
+    #[default]
+    Idle,
+    Active(LifecycleId<K>),
+}
+
 /// Monotonic identity for one replaceable provider callback source.
 #[derive(Debug)]
 pub struct CallbackEpoch<K = ()> {
-    last_id: Option<u64>,
-    active: Option<LifecycleId<K>>,
-    marker: PhantomData<fn() -> K>,
+    last_id: LifecycleId<K>,
+    state: CallbackEpochState<K>,
 }
 
 impl<K> Default for CallbackEpoch<K> {
     fn default() -> Self {
         Self {
-            last_id: Some(0),
-            active: None,
-            marker: PhantomData,
+            last_id: LifecycleId::from_raw(0),
+            state: CallbackEpochState::Idle,
         }
     }
 }
@@ -51,37 +55,46 @@ pub enum AuthorizationTransactionMatch {
     Stale,
 }
 
-/// Owns the identity and kind of the one active authorization operation.
 #[derive(Debug, Default)]
+enum AuthorizationTransactionState {
+    #[default]
+    Idle,
+    Authorizing(AuthorizationId),
+    Renewing(AuthorizationId),
+}
+
+/// Owns the identity and kind of the one active authorization operation.
+#[derive(Debug)]
 pub struct AuthorizationTransaction {
-    epoch: CallbackEpoch<AuthorizationGeneration>,
-    kind: Option<AuthorizationTransactionKind>,
+    last_id: AuthorizationId,
+    state: AuthorizationTransactionState,
+}
+
+impl Default for AuthorizationTransaction {
+    fn default() -> Self {
+        Self {
+            last_id: AuthorizationId::from_raw(0),
+            state: AuthorizationTransactionState::Idle,
+        }
+    }
 }
 
 impl<K> CallbackEpoch<K> {
-    /// Whether another distinct identity can be issued.
-    #[must_use]
-    pub fn can_begin(&self) -> bool {
-        self.last_id.is_some_and(|last_id| last_id < u64::MAX)
-    }
-
     /// Begins a new epoch and retires any predecessor.
     #[must_use]
     pub fn begin(&mut self) -> Option<LifecycleId<K>> {
-        let next_id = self.last_id?.checked_add(1)?;
-        self.last_id = Some(next_id);
-        let id = LifecycleId::from_raw(next_id);
-        self.active = Some(id);
+        let id = self.last_id.next()?;
+        self.last_id = id;
+        self.state = CallbackEpochState::Active(id);
         Some(id)
     }
 
     /// Classifies a callback without ending the epoch.
     #[must_use]
     pub fn classify(&self, id: LifecycleId<K>) -> CallbackEpochMatch {
-        if self.active == Some(id) {
-            CallbackEpochMatch::Current
-        } else {
-            CallbackEpochMatch::Stale
+        match self.state {
+            CallbackEpochState::Active(active) if active == id => CallbackEpochMatch::Current,
+            CallbackEpochState::Idle | CallbackEpochState::Active(_) => CallbackEpochMatch::Stale,
         }
     }
 
@@ -90,14 +103,14 @@ impl<K> CallbackEpoch<K> {
     pub fn finish(&mut self, id: LifecycleId<K>) -> CallbackEpochMatch {
         let outcome = self.classify(id);
         if outcome == CallbackEpochMatch::Current {
-            self.active = None;
+            self.state = CallbackEpochState::Idle;
         }
         outcome
     }
 
     /// Retires the active callback source synchronously.
     pub fn invalidate(&mut self) {
-        self.active = None;
+        self.state = CallbackEpochState::Idle;
     }
 }
 
@@ -105,23 +118,30 @@ impl AuthorizationTransaction {
     /// Begins an authorization operation and retires any predecessor.
     #[must_use]
     pub fn begin(&mut self, kind: AuthorizationTransactionKind) -> Option<AuthorizationId> {
-        let id = self.epoch.begin()?;
-        self.kind = Some(kind);
+        let id = self.last_id.next()?;
+        self.last_id = id;
+        self.state = match kind {
+            AuthorizationTransactionKind::Authorizing => {
+                AuthorizationTransactionState::Authorizing(id)
+            }
+            AuthorizationTransactionKind::Renewing => AuthorizationTransactionState::Renewing(id),
+        };
         Some(id)
     }
 
     /// Classifies a callback without terminating the operation.
     #[must_use]
     pub fn classify(&self, id: AuthorizationId) -> AuthorizationTransactionMatch {
-        if self.epoch.classify(id) == CallbackEpochMatch::Stale {
-            return AuthorizationTransactionMatch::Stale;
-        }
-        match self.kind {
-            Some(AuthorizationTransactionKind::Authorizing) => {
+        match self.state {
+            AuthorizationTransactionState::Authorizing(active) if active == id => {
                 AuthorizationTransactionMatch::Authorizing
             }
-            Some(AuthorizationTransactionKind::Renewing) => AuthorizationTransactionMatch::Renewing,
-            None => AuthorizationTransactionMatch::Stale,
+            AuthorizationTransactionState::Renewing(active) if active == id => {
+                AuthorizationTransactionMatch::Renewing
+            }
+            AuthorizationTransactionState::Idle
+            | AuthorizationTransactionState::Authorizing(_)
+            | AuthorizationTransactionState::Renewing(_) => AuthorizationTransactionMatch::Stale,
         }
     }
 
@@ -130,16 +150,14 @@ impl AuthorizationTransaction {
     pub fn finish(&mut self, id: AuthorizationId) -> AuthorizationTransactionMatch {
         let outcome = self.classify(id);
         if outcome != AuthorizationTransactionMatch::Stale {
-            let _ = self.epoch.finish(id);
-            self.kind = None;
+            self.state = AuthorizationTransactionState::Idle;
         }
         outcome
     }
 
     /// Retires the active operation synchronously.
     pub fn invalidate(&mut self) {
-        self.epoch.invalidate();
-        self.kind = None;
+        self.state = AuthorizationTransactionState::Idle;
     }
 }
 
@@ -147,8 +165,9 @@ impl AuthorizationTransaction {
 mod tests {
     use super::{
         AuthorizationTransaction, AuthorizationTransactionKind, AuthorizationTransactionMatch,
-        CallbackEpoch, CallbackEpochMatch,
+        CallbackEpoch, CallbackEpochMatch, CallbackEpochState,
     };
+    use crate::ids::LifecycleId;
 
     #[test]
     fn invalidation_and_terminal_callbacks_cannot_reopen_an_epoch() {
@@ -207,13 +226,11 @@ mod tests {
     #[test]
     fn identity_exhaustion_does_not_reuse_the_last_epoch() {
         let mut epoch: CallbackEpoch<()> = CallbackEpoch {
-            last_id: Some(u64::MAX),
-            active: None,
-            marker: std::marker::PhantomData,
+            last_id: LifecycleId::from_raw(u64::MAX),
+            state: CallbackEpochState::Idle,
         };
 
-        assert!(!epoch.can_begin());
         assert_eq!(epoch.begin(), None);
-        assert_eq!(epoch.last_id, Some(u64::MAX));
+        assert_eq!(epoch.last_id.raw(), u64::MAX);
     }
 }

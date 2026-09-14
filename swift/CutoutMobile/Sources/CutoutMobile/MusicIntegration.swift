@@ -201,21 +201,12 @@ final class MusicProviderTransportExecutor {
         ) -> Void
     ) async -> MusicCommandOutcome {
         guard !Task.isCancelled else { return .unavailable }
-        let effect: MobileMusicTransportEffect?
-        if let connectionAttemptID {
-            effect = lifecycle.beginTransportEffectForConnection(
-                providerGeneration: providerGeneration,
-                connectionAttemptId: connectionAttemptID,
-                command: command,
-                nowMs: nowMs()
-            )
-        } else {
-            effect = lifecycle.beginTransportEffect(
-                providerGeneration: providerGeneration,
-                command: command,
-                nowMs: nowMs()
-            )
-        }
+        let effect = lifecycle.beginTransportEffect(
+            providerGeneration: providerGeneration,
+            connectionAttemptId: connectionAttemptID,
+            command: command,
+            nowMs: nowMs()
+        )
         guard let effect else { return .refused }
 
         return await withTaskCancellationHandler {
@@ -634,12 +625,7 @@ final class AppleMusicObservationBridge {
                   self.readInFlight == requestID
             else { return }
             self.readInFlight = nil
-            self.cachedObservation = self.cachedObservation?.staleProjection(
-                observedAtMs: self.observedAtMs?() ?? observedAtMs
-            )
-            if let cachedObservation = self.cachedObservation {
-                self.onObservation?(cachedObservation)
-            }
+            self.publishStaleCachedObservation(fallbackObservedAtMs: observedAtMs)
             self.effects.cancel(.playerState(requestID))
         }
         effects.run(.playerState(requestID)) { [weak self, service] in
@@ -661,17 +647,21 @@ final class AppleMusicObservationBridge {
             self.readInFlight = nil
             self.effects.cancel(.playerStateTimeout(requestID))
             guard completion == .accepted else {
-                self.cachedObservation = self.cachedObservation?.staleProjection(
-                    observedAtMs: self.observedAtMs?() ?? observedAtMs
-                )
-                if let cachedObservation = self.cachedObservation {
-                    self.onObservation?(cachedObservation)
-                }
+                self.publishStaleCachedObservation(fallbackObservedAtMs: observedAtMs)
                 return
             }
             guard let observation else { return }
             self.cachedObservation = observation
             self.onObservation?(observation)
+        }
+    }
+
+    private func publishStaleCachedObservation(fallbackObservedAtMs: UInt64) {
+        cachedObservation = cachedObservation?.staleProjection(
+            observedAtMs: observedAtMs?() ?? fallbackObservedAtMs
+        )
+        if let cachedObservation {
+            onObservation?(cachedObservation)
         }
     }
 
@@ -1148,7 +1138,7 @@ public final class MusicIntegrationCoordinator {
     public private(set) var lastRecordedSequence: UInt64?
     public init(
         rideMapState: MobileRideMapState?,
-        lifecycle: MobileMusicProviderLifecycle = MobileMusicProviderLifecycle()
+        lifecycle: MobileMusicProviderLifecycle
     ) {
         self.rideMapState = rideMapState
         self.lifecycle = lifecycle
