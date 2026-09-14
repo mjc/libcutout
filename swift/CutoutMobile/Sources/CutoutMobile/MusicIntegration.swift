@@ -726,7 +726,9 @@ final class AppleMusicObservationBridge {
                   self.lifecycle.completePlayerStateRequest(id: requestID) == .accepted
             else { return }
             self.readInFlight = false
-            self.cachedObservation = self.cachedObservation?.staleProjection
+            self.cachedObservation = self.cachedObservation?.staleProjection(
+                observedAtMs: self.observedAtMs?() ?? observedAtMs
+            )
             if let cachedObservation = self.cachedObservation {
                 self.onObservation?(cachedObservation)
             }
@@ -1131,7 +1133,15 @@ public struct MusicProviderObservation: Equatable, Sendable {
     }
 
     var staleProjection: Self {
-        Self(
+        staleProjection(observedAtMs: snapshot.observedAtMs)
+    }
+
+    func staleProjection(observedAtMs: UInt64) -> Self {
+        let nextObservedAtMs = max(
+            observedAtMs,
+            snapshot.observedAtMs == .max ? .max : snapshot.observedAtMs + 1
+        )
+        return Self(
             snapshot: MobileMusicSnapshotDto(
                 provider: snapshot.provider,
                 sessionId: snapshot.sessionId,
@@ -1139,7 +1149,7 @@ public struct MusicProviderObservation: Equatable, Sendable {
                 item: snapshot.item,
                 positionMilliseconds: snapshot.positionMilliseconds,
                 durationMilliseconds: snapshot.durationMilliseconds,
-                observedAtMs: snapshot.observedAtMs,
+                observedAtMs: nextObservedAtMs,
                 capabilities: .init(
                     previous: false,
                     play: false,

@@ -117,6 +117,7 @@ public final class SpotifyProviderAdapter: NSObject {
     private var artworkCache = MusicArtworkCache()
     private var artworkRequest: (id: UInt64, trackURI: String, generation: UInt64)?
     private var artworkRetryID: UInt64?
+    private var playerStateRequestID: UInt64?
     private var onChange: (@MainActor () -> Void)?
     private var lifecycleState: MobileMusicPlaybackStateDto = .disconnected
     private var appRemoteGeneration: UInt64?
@@ -377,6 +378,7 @@ public final class SpotifyProviderAdapter: NSObject {
             transport.apply(lifecycle.retireProviderSession(id: appRemoteGeneration))
         }
         appRemoteGeneration = nil
+        playerStateRequestID = nil
         playerState = nil
         artwork = nil
         invalidateArtworkRequest()
@@ -469,9 +471,10 @@ public final class SpotifyProviderAdapter: NSObject {
             emitChange()
         }
         guard let playerAPI = appRemote?.playerAPI,
+              let bridge = appRemoteBridge,
               let requestID = lifecycle.beginPlayerStateRequest(nowMs: nowMs) else { return }
         let observationRevision = lifecycle.playerStateObservationRevision()
-        guard let bridge = appRemoteBridge else { return }
+        playerStateRequestID = requestID
         let providerGeneration = bridge.providerGeneration
         let attemptID = bridge.attemptID
         playerAPI.getPlayerState { [weak self] result, error in
@@ -481,10 +484,19 @@ public final class SpotifyProviderAdapter: NSObject {
                 guard let self,
                       self.lifecycle.classifyProviderSession(id: providerGeneration) == .current,
                       self.lifecycle.classifyConnection(id: attemptID) == .accepted else { return }
-                guard self.lifecycle.completePlayerStateRequestIfCurrent(
+                let completion = self.lifecycle.completePlayerStateRequestIfCurrent(
                     id: requestID,
                     observationRevision: observationRevision
-                ) == .accepted else { return }
+                )
+                guard completion == .accepted else {
+                    if self.playerStateRequestID == requestID {
+                        self.playerStateRequestID = nil
+                    }
+                    return
+                }
+                if self.playerStateRequestID == requestID {
+                    self.playerStateRequestID = nil
+                }
                 if let playerState, errorInfo == nil {
                     self.handlePlayerStateDidChange(
                         playerState,
@@ -817,12 +829,6 @@ public final class SpotifyProviderAdapter: NSObject {
         guard lifecycle.classifyProviderSession(id: providerGeneration) == .current,
               lifecycle.connectionDisconnected(id: attemptID, nowMs: connectionNowMs) == .accepted
         else { return }
-        transport.apply(
-            lifecycle.cancelTransportForConnection(
-                providerGeneration: providerGeneration,
-                connectionAttemptId: attemptID
-            )
-        )
         detachAppRemote(providerGeneration: providerGeneration, attemptID: attemptID)
         lifecycleState = .disconnected
 #if DEBUG
@@ -839,6 +845,16 @@ public final class SpotifyProviderAdapter: NSObject {
         guard let bridge = appRemoteBridge,
               bridge.providerGeneration == providerGeneration,
               bridge.attemptID == attemptID else { return }
+        transport.apply(
+            lifecycle.cancelTransportForConnection(
+                providerGeneration: providerGeneration,
+                connectionAttemptId: attemptID
+            )
+        )
+        if let requestID = playerStateRequestID {
+            _ = lifecycle.completePlayerStateRequest(id: requestID)
+            playerStateRequestID = nil
+        }
         appRemote?.playerAPI?.delegate = nil
         appRemote?.delegate = nil
         appRemoteBridge?.owner = nil

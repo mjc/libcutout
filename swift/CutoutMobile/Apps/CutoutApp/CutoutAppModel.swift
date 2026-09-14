@@ -1237,6 +1237,7 @@ final class CutoutAppModel {
         }
 #else
         _ = ingestMusicObservation(unavailableMusicObservation(observedAtMs: core.now().rawValue))
+        _ = musicProviderLifecycle.finishMonitor(generation: effect.generation)
 #endif
     }
 

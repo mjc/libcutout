@@ -119,6 +119,41 @@ final class AppleMusicObservationBridgeTests: XCTestCase {
         effects.cancelAll()
     }
 
+    func testTimedOutReadPublishesAStaleObservationWithNewerTimestamp() async {
+        let service = AppleMusicObservationServiceSpy()
+        let rustLifecycle = MobileMusicProviderLifecycle()
+        let effects = MusicProviderEffectExecutor()
+        let lifecycle = AppleMusicObservationBridge(
+            service: service,
+            lifecycle: rustLifecycle,
+            effects: effects,
+            playerStateTimeout: .milliseconds(20)
+        )
+        var received = [MusicProviderObservation]()
+
+        await lifecycle.startMonitoring(observedAtMs: { 20 }) { received.append($0) }
+        lifecycle.refresh(observedAtMs: 10)
+        await service.waitForRefresh(generation: 1)
+        await service.completeRefresh(
+            generation: 1,
+            with: observation(track: "old", observedAtMs: 10)
+        )
+        await waitUntil { received.count == 1 }
+
+        lifecycle.refresh(observedAtMs: 20)
+        await waitUntil { received.last?.snapshot.state == .stale }
+
+        XCTAssertEqual(received.count, 2)
+        XCTAssertEqual(received[1].snapshot.item?.identifier, "old")
+        XCTAssertGreaterThan(
+            received[1].snapshot.observedAtMs,
+            received[0].snapshot.observedAtMs
+        )
+
+        lifecycle.stopMonitoring()
+        effects.cancelAll()
+    }
+
     @MainActor
     func testPlaybackNotificationGenerationBalancesBeginAndEnd() {
         var generation = AppleMusicNotificationGeneration()
