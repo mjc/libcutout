@@ -48,7 +48,10 @@ struct CutoutApp: App {
                     pevLocalizedText("music.command.title"),
                     isPresented: Binding(
                         get: { model.musicCommandStatusText != nil },
-                        set: { _ in }
+                        set: { isPresented in
+                            guard !isPresented else { return }
+                            model.dismissMusicCommandFeedback()
+                        }
                     ),
                     presenting: model.musicCommandFeedback
                 ) { feedback in

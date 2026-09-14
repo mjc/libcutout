@@ -131,6 +131,29 @@ final class CutoutAppModelTests: XCTestCase {
     }
 
     @MainActor
+    func testSystemAlertDismissalClearsCurrentMusicCommandFeedback() {
+        let model = CutoutAppModel(core: SessionDriverSpy(rows: []))
+        let requestID = model.beginMusicCommandFeedback()
+        _ = model.finishMusicCommand(.failed, provider: .appleMusic, requestID: requestID)
+
+        model.dismissMusicCommandFeedback()
+
+        XCTAssertNil(model.musicCommandFeedback)
+    }
+
+    @MainActor
+    func testProviderSwitchClearsMusicCommandFeedbackProjection() {
+        let model = CutoutAppModel(core: SessionDriverSpy(rows: []))
+        let requestID = model.beginMusicCommandFeedback()
+        _ = model.finishMusicCommand(.failed, provider: .appleMusic, requestID: requestID)
+        XCTAssertNotNil(model.musicCommandFeedback)
+
+        model.selectMusicProvider(.spotify)
+
+        XCTAssertNil(model.musicCommandFeedback)
+    }
+
+    @MainActor
     func testMusicSetupShowsUnavailableOnUnsupportedPlatform() {
         let model = CutoutAppModel(core: SessionDriverSpy(rows: []))
 

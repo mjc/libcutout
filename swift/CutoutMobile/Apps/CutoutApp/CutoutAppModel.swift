@@ -799,6 +799,11 @@ final class CutoutAppModel {
         musicCommandFeedback = nil
     }
 
+    func dismissMusicCommandFeedback() {
+        guard let requestID = musicCommandFeedback?.requestID else { return }
+        dismissMusicCommandFeedback(requestID: requestID)
+    }
+
     func finishMusicCommand(
         _ outcome: MusicCommandOutcome,
         provider: MobileMusicProviderDto,
@@ -830,6 +835,7 @@ final class CutoutAppModel {
         let previousProvider = selectedMusicProvider
         musicCoordinator.resetProviderCorrelation()
         musicProviderLifecycle.invalidateCommandFeedback()
+        musicCommandFeedback = nil
         selectedMusicProvider = provider
         musicSettingsNowPlaying = projectedMusicNowPlaying()
         musicProviderSelectionStore.set(provider)
@@ -1202,6 +1208,7 @@ final class CutoutAppModel {
 #endif
             return
         }
+        musicCommandFeedback = nil
 #if os(iOS) && canImport(MediaPlayer)
         stopMusicMonitoring()
         let generation = effect.generation
