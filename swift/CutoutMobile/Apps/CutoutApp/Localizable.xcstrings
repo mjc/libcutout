@@ -2661,6 +2661,18 @@
         "en" : { "stringUnit" : { "state" : "translated", "value" : "Connection lost. Retrying connection." } }
       }
     },
+    "live_activity.action.open_settings" : {
+      "comment" : "Action that opens system settings after Live Activity authorization is denied.",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Open Settings" } }
+      }
+    },
+    "live_activity.action.try_again" : {
+      "comment" : "Action that retries a failed Live Activity request.",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Try Again" } }
+      }
+    },
     "live_activity.error.authorization_denied" : {
       "comment" : "VoiceOver announcement when the system denies Live Activity authorization.",
       "localizations" : {

@@ -448,6 +448,48 @@ final class PevScreenThemeTests: XCTestCase {
         XCTAssertEqual(rows.suffix(4).map(\.accessibilityValueText), Array(repeating: "unavailable", count: 4))
     }
 
+    func testLiveDashboardRendersRustSelectedMetricsInDescriptorOrder() {
+        let telemetry = TelemetrySnapshot()
+        let state = EucRideScreenState(
+            phase: .live,
+            displayState: RideDisplayState(telemetry: telemetry)
+        )
+
+        XCTAssertEqual(
+            liveDashboardTiles(from: state, telemetry: telemetry).map(\.kind),
+            [.chargeEstimate, .packVoltage, .power, .thermal]
+        )
+        XCTAssertEqual(liveSafetyBars(for: state).map(\.id), [.pwmHeadroom])
+    }
+
+    func testLiveDashboardPreservesZeroAndIncludesOnlyProducedOptionalMetrics() {
+        let telemetry = TelemetrySnapshot(
+            operatingState: .riding,
+            voltage: Voltage(value: 60_000),
+            batteryCurrent: BatteryCurrent(value: 0),
+            power: Power(value: 0),
+            pwm: DutyCycle(permille: 1_000),
+            limpHomeRange: Distance(value: 22_852_500)
+        )
+        let state = EucRideScreenState(
+            phase: .live,
+            displayState: RideDisplayState(telemetry: telemetry)
+        )
+        let tiles = liveDashboardTiles(from: state, telemetry: telemetry)
+
+        XCTAssertEqual(tiles.map(\.kind), [
+            .chargeEstimate, .packVoltage, .power, .thermal, .limpHomeRange,
+        ])
+        XCTAssertEqual(
+            tiles.first { $0.kind == .power }?.metricValue,
+            .available(display: "0.00", accessibility: "0.00")
+        )
+        XCTAssertEqual(
+            liveSafetyBars(for: state).first?.metricValue,
+            .available(display: "0%", accessibility: "0%")
+        )
+    }
+
     func testTelemetrySnapshotUsesTypedLiveVoltageAndThermalMetrics() {
         let unavailable = TelemetrySnapshot()
         XCTAssertEqual(unavailable.packVoltageMetricValue, .unavailable)
@@ -505,6 +547,10 @@ final class PevScreenThemeTests: XCTestCase {
             displayState: RideDisplayState()
         )
         XCTAssertEqual(unavailable.limpHomeRangeMetricValue, .unavailable)
+        XCTAssertNil(
+            liveDashboardTiles(from: unavailable, telemetry: TelemetrySnapshot())
+                .first { $0.kind == .limpHomeRange }
+        )
 
         let range = Distance(value: 22_852_500)
         let telemetry = TelemetrySnapshot(limpHomeRange: range)
@@ -533,10 +579,9 @@ final class PevScreenThemeTests: XCTestCase {
             displayState: RideDisplayState(telemetry: TelemetrySnapshot())
         )
         let unavailableBars = liveSafetyBars(for: unavailable)
+        XCTAssertEqual(unavailableBars.map(\.id), [.pwmHeadroom])
         XCTAssertEqual(unavailableBars.first?.metricValue, .unavailable)
         XCTAssertNil(unavailableBars.first?.progress)
-        XCTAssertEqual(unavailableBars.last?.metricValue, .unavailable)
-        XCTAssertNil(unavailableBars.last?.progress)
 
         let zeroHeadroom = EucRideScreenState(
             phase: .live,
@@ -732,7 +777,7 @@ final class PevScreenThemeTests: XCTestCase {
         XCTAssertEqual(localizedAppText("telemetry.power_flow.negative_unknown"), "regen/discharge unverified")
     }
 
-    func testSharedRideTilePresentationUsesTheAppCatalog() {
+    func testSharedRideTilePresentationUsesTheAppCatalog() throws {
         let telemetry = TelemetrySnapshot(
             voltage: Voltage(value: 54_300),
             batteryCurrent: BatteryCurrent(value: 12_400),
@@ -742,15 +787,20 @@ final class PevScreenThemeTests: XCTestCase {
         )
 
         let expectedPower = RideUnits.powerText(milliwatts: 673_320, fractionDigits: 2)
-        let powerTile = livePowerTile(from: telemetry)
+        let state = EucRideScreenState(
+            phase: .live,
+            displayState: RideDisplayState(telemetry: telemetry)
+        )
+        let tiles = liveDashboardTiles(from: state, telemetry: telemetry)
+        let powerTile = try XCTUnwrap(tiles.first { $0.kind == .power })
+        let thermalTile = try XCTUnwrap(tiles.first { $0.kind == .thermal })
         XCTAssertEqual(powerTile.label, "power")
         XCTAssertEqual(
             powerTile.metricValue,
             .available(display: expectedPower, accessibility: expectedPower)
         )
-        XCTAssertEqual(powerTile.metricValue, telemetry.powerPresentation.metricValue)
         XCTAssertEqual(powerTile.detail, "discharging")
-        XCTAssertEqual(liveThermalDetail(telemetry: telemetry), "ESC 54 °C · motor 49 °C")
+        XCTAssertEqual(thermalTile.detail, "ESC 54 °C · motor 49 °C")
         XCTAssertEqual(localizedAppText("ride.metric.power"), "power")
         XCTAssertEqual(
             localizedAppText("ride.thermal.controller_motor", "54", "°C", "49", "°C"),

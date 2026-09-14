@@ -1,0 +1,354 @@
+//! Rust-owned projection of live rider metrics for mobile dashboards.
+
+use crate::{
+    BatteryCurrent, Distance, DutyCycle, Measured, Power, RideOperatingState, Temperature, Voltage,
+};
+
+const PWM_IDLE_DEADBAND_PERMILLE: u16 = 20;
+
+/// Availability of one projected rider metric.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum RiderMetricValue<T> {
+    /// The metric has a usable typed value.
+    Available(T),
+    /// The metric is supported but does not apply in the current operating state.
+    NotApplicable,
+    /// The metric is supported but no current value is available.
+    Unavailable,
+}
+
+/// Origin and value of the projected electrical power metric.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum RiderPowerValue {
+    /// Power calculated from pack voltage and non-zero battery current.
+    CalculatedPackCurrent(Power),
+    /// Power reported directly by the active protocol.
+    Reported(Power),
+    /// No usable power value is available.
+    Unavailable,
+}
+
+/// Typed temperatures retained for the thermal dashboard metric.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct RiderThermalReadback {
+    /// Hottest available temperature.
+    pub maximum: Temperature,
+    /// Controller temperature, when available.
+    pub controller: Option<Temperature>,
+    /// Motor temperature, when available.
+    pub motor: Option<Temperature>,
+    /// Battery temperature, when available.
+    pub battery: Option<Temperature>,
+}
+
+/// One metric included in the main live rider dashboard.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum RiderDashboardMetricDescriptor {
+    /// Rust-owned charge estimator presentation.
+    ChargeEstimate,
+    /// Pack voltage, including explicit current unavailability.
+    PackVoltage {
+        /// Current pack voltage value.
+        value: RiderMetricValue<Voltage>,
+    },
+    /// Electrical power with its selection semantics resolved.
+    Power {
+        /// Current power value and origin.
+        value: RiderPowerValue,
+    },
+    /// Hottest temperature and component readback.
+    Thermal {
+        /// Current thermal value.
+        value: RiderMetricValue<RiderThermalReadback>,
+    },
+    /// Remaining limp-home distance. This descriptor exists only with a producer value.
+    LimpHomeRange {
+        /// Produced remaining distance.
+        value: Distance,
+    },
+}
+
+/// One metric included in the live rider safety section.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum RiderSafetyMetricDescriptor {
+    /// Remaining PWM duty headroom in permille.
+    PwmHeadroom {
+        /// Current headroom availability and value.
+        value: RiderMetricValue<u16>,
+    },
+}
+
+/// Typed inputs needed to project the live rider dashboard.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct RiderDashboardInput {
+    /// Current operating state.
+    pub operating_state: RideOperatingState,
+    /// Latest pack voltage.
+    pub voltage: Option<Measured<Voltage>>,
+    /// Latest battery current.
+    pub battery_current: Option<Measured<BatteryCurrent>>,
+    /// Latest protocol-reported power.
+    pub reported_power: Option<Measured<Power>>,
+    /// Latest controller temperature.
+    pub controller_temperature: Option<Measured<Temperature>>,
+    /// Latest motor temperature.
+    pub motor_temperature: Option<Measured<Temperature>>,
+    /// Latest battery temperature.
+    pub battery_temperature: Option<Measured<Temperature>>,
+    /// Latest PWM duty.
+    pub pwm: Option<Measured<DutyCycle>>,
+    /// Produced limp-home distance, when a defined producer exists.
+    pub limp_home_range: Option<Measured<Distance>>,
+}
+
+/// Ordered live rider metrics ready for a platform adapter to render.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RiderDashboardProjection {
+    /// Main dashboard metrics in display order.
+    pub dashboard_metrics: Vec<RiderDashboardMetricDescriptor>,
+    /// Safety metrics in display order.
+    pub safety_metrics: Vec<RiderSafetyMetricDescriptor>,
+}
+
+impl RiderDashboardProjection {
+    /// Projects supported live rider metrics and omits metrics without a producer.
+    #[must_use]
+    pub fn from_input(input: RiderDashboardInput) -> Self {
+        let mut dashboard_metrics = vec![
+            RiderDashboardMetricDescriptor::ChargeEstimate,
+            RiderDashboardMetricDescriptor::PackVoltage {
+                value: input
+                    .voltage
+                    .map_or(RiderMetricValue::Unavailable, |reading| {
+                        RiderMetricValue::Available(reading.value)
+                    }),
+            },
+            RiderDashboardMetricDescriptor::Power {
+                value: power_value(input.voltage, input.battery_current, input.reported_power),
+            },
+            RiderDashboardMetricDescriptor::Thermal {
+                value: thermal_value(
+                    input.controller_temperature,
+                    input.motor_temperature,
+                    input.battery_temperature,
+                ),
+            },
+        ];
+        if let Some(range) = input.limp_home_range {
+            dashboard_metrics
+                .push(RiderDashboardMetricDescriptor::LimpHomeRange { value: range.value });
+        }
+
+        Self {
+            dashboard_metrics,
+            safety_metrics: vec![RiderSafetyMetricDescriptor::PwmHeadroom {
+                value: pwm_headroom(input.operating_state, input.pwm),
+            }],
+        }
+    }
+}
+
+fn power_value(
+    voltage: Option<Measured<Voltage>>,
+    battery_current: Option<Measured<BatteryCurrent>>,
+    reported_power: Option<Measured<Power>>,
+) -> RiderPowerValue {
+    if let (Some(voltage), Some(current)) = (voltage, battery_current)
+        && current.value.as_milliamps() != 0
+    {
+        return RiderPowerValue::CalculatedPackCurrent(Power::from_voltage_current(
+            voltage.value,
+            current.value,
+        ));
+    }
+    reported_power.map_or(RiderPowerValue::Unavailable, |reading| {
+        RiderPowerValue::Reported(reading.value)
+    })
+}
+
+fn thermal_value(
+    controller: Option<Measured<Temperature>>,
+    motor: Option<Measured<Temperature>>,
+    battery: Option<Measured<Temperature>>,
+) -> RiderMetricValue<RiderThermalReadback> {
+    let maximum = [controller, motor, battery]
+        .into_iter()
+        .flatten()
+        .map(|reading| reading.value)
+        .max_by_key(|temperature| temperature.as_millicelsius());
+    maximum.map_or(RiderMetricValue::Unavailable, |maximum| {
+        RiderMetricValue::Available(RiderThermalReadback {
+            maximum,
+            controller: controller.map(|reading| reading.value),
+            motor: motor.map(|reading| reading.value),
+            battery: battery.map(|reading| reading.value),
+        })
+    })
+}
+
+fn pwm_headroom(
+    operating_state: RideOperatingState,
+    pwm: Option<Measured<DutyCycle>>,
+) -> RiderMetricValue<u16> {
+    let Some(pwm) = pwm else {
+        return RiderMetricValue::Unavailable;
+    };
+    if !matches!(
+        operating_state,
+        RideOperatingState::Riding | RideOperatingState::Standing
+    ) {
+        return RiderMetricValue::NotApplicable;
+    }
+
+    let raw_used = pwm.value.as_permille().unsigned_abs().min(1_000);
+    let used = if raw_used <= PWM_IDLE_DEADBAND_PERMILLE {
+        0
+    } else {
+        raw_used
+    };
+    RiderMetricValue::Available(1_000 - used)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{
+        BatteryCurrent, Distance, DutyCycle, Measured, Power, RideOperatingState, Temperature,
+        Voltage,
+    };
+
+    fn empty_input() -> RiderDashboardInput {
+        RiderDashboardInput {
+            operating_state: RideOperatingState::Unknown,
+            voltage: None,
+            battery_current: None,
+            reported_power: None,
+            controller_temperature: None,
+            motor_temperature: None,
+            battery_temperature: None,
+            pwm: None,
+            limp_home_range: None,
+        }
+    }
+
+    #[test]
+    fn projection_omits_metrics_without_a_producer() {
+        let projection = RiderDashboardProjection::from_input(empty_input());
+
+        assert_eq!(
+            projection.dashboard_metrics,
+            vec![
+                RiderDashboardMetricDescriptor::ChargeEstimate,
+                RiderDashboardMetricDescriptor::PackVoltage {
+                    value: RiderMetricValue::Unavailable,
+                },
+                RiderDashboardMetricDescriptor::Power {
+                    value: RiderPowerValue::Unavailable,
+                },
+                RiderDashboardMetricDescriptor::Thermal {
+                    value: RiderMetricValue::Unavailable,
+                },
+            ]
+        );
+        assert_eq!(
+            projection.safety_metrics,
+            vec![RiderSafetyMetricDescriptor::PwmHeadroom {
+                value: RiderMetricValue::Unavailable,
+            }]
+        );
+    }
+
+    #[test]
+    fn projection_preserves_available_values_and_zero() {
+        let projection = RiderDashboardProjection::from_input(RiderDashboardInput {
+            operating_state: RideOperatingState::Riding,
+            voltage: Some(Measured::reported(Voltage::from_millivolts(60_000))),
+            battery_current: Some(Measured::reported(BatteryCurrent::from_milliamps(0))),
+            reported_power: Some(Measured::reported(Power::from_milliwatts(0))),
+            controller_temperature: Some(Measured::reported(Temperature::from_millicelsius(
+                42_000,
+            ))),
+            motor_temperature: Some(Measured::reported(Temperature::from_millicelsius(54_000))),
+            battery_temperature: None,
+            pwm: Some(Measured::reported(DutyCycle::from_permille(1_000))),
+            limp_home_range: Some(Measured::estimated(Distance::from_millimetres(22_852_500))),
+        });
+
+        assert_eq!(
+            projection.dashboard_metrics,
+            vec![
+                RiderDashboardMetricDescriptor::ChargeEstimate,
+                RiderDashboardMetricDescriptor::PackVoltage {
+                    value: RiderMetricValue::Available(Voltage::from_millivolts(60_000)),
+                },
+                RiderDashboardMetricDescriptor::Power {
+                    value: RiderPowerValue::Reported(Power::from_milliwatts(0)),
+                },
+                RiderDashboardMetricDescriptor::Thermal {
+                    value: RiderMetricValue::Available(RiderThermalReadback {
+                        maximum: Temperature::from_millicelsius(54_000),
+                        controller: Some(Temperature::from_millicelsius(42_000)),
+                        motor: Some(Temperature::from_millicelsius(54_000)),
+                        battery: None,
+                    }),
+                },
+                RiderDashboardMetricDescriptor::LimpHomeRange {
+                    value: Distance::from_millimetres(22_852_500),
+                },
+            ]
+        );
+        assert_eq!(
+            projection.safety_metrics,
+            vec![RiderSafetyMetricDescriptor::PwmHeadroom {
+                value: RiderMetricValue::Available(0),
+            }]
+        );
+    }
+
+    #[test]
+    fn projection_calculates_pack_power_and_pwm_headroom() {
+        let projection = RiderDashboardProjection::from_input(RiderDashboardInput {
+            operating_state: RideOperatingState::Standing,
+            voltage: Some(Measured::reported(Voltage::from_millivolts(60_000))),
+            battery_current: Some(Measured::reported(BatteryCurrent::from_milliamps(10_000))),
+            reported_power: Some(Measured::reported(Power::from_milliwatts(900_000))),
+            pwm: Some(Measured::reported(DutyCycle::from_permille(-450))),
+            ..empty_input()
+        });
+
+        assert_eq!(
+            projection.dashboard_metrics[2],
+            RiderDashboardMetricDescriptor::Power {
+                value: RiderPowerValue::CalculatedPackCurrent(Power::from_milliwatts(600_000)),
+            }
+        );
+        assert_eq!(
+            projection.safety_metrics,
+            vec![RiderSafetyMetricDescriptor::PwmHeadroom {
+                value: RiderMetricValue::Available(550),
+            }]
+        );
+    }
+
+    #[test]
+    fn pwm_headroom_is_not_applicable_outside_balancing_states() {
+        for operating_state in [
+            RideOperatingState::Unknown,
+            RideOperatingState::Parked,
+            RideOperatingState::Charging,
+        ] {
+            let projection = RiderDashboardProjection::from_input(RiderDashboardInput {
+                operating_state,
+                pwm: Some(Measured::reported(DutyCycle::from_permille(500))),
+                ..empty_input()
+            });
+
+            assert_eq!(
+                projection.safety_metrics,
+                vec![RiderSafetyMetricDescriptor::PwmHeadroom {
+                    value: RiderMetricValue::NotApplicable,
+                }]
+            );
+        }
+    }
+}

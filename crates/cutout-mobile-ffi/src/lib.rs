@@ -6058,6 +6058,98 @@ pub struct MobileTelemetrySnapshotDto {
     pub battery_level_estimated: Option<BatteryLevelReading>,
 }
 
+/// Source of a projected live rider power value.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Enum)]
+pub enum MobileRiderPowerSourceDto {
+    /// Calculated from pack voltage and non-zero battery current.
+    CalculatedPackCurrent,
+    /// Reported directly by the active protocol.
+    Reported,
+}
+
+/// Typed temperature values for the projected thermal metric.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct MobileRiderThermalReadbackDto {
+    /// Hottest available temperature.
+    pub maximum: Temperature,
+    /// Controller temperature, when available.
+    pub controller: Option<Temperature>,
+    /// Motor temperature, when available.
+    pub motor: Option<Temperature>,
+    /// Battery temperature, when available.
+    pub battery: Option<Temperature>,
+}
+
+/// One Rust-selected metric in the main live rider dashboard.
+#[derive(Clone, Debug, Eq, PartialEq, uniffi::Enum)]
+pub enum MobileRiderDashboardMetricDescriptorDto {
+    /// Render the Rust-owned charge estimate state.
+    ChargeEstimate,
+    /// Pack voltage; `None` is explicit current unavailability.
+    PackVoltage { voltage: Option<Voltage> },
+    /// Electrical power with its selected source; both fields are absent together.
+    Power {
+        power: Option<Power>,
+        source: Option<MobileRiderPowerSourceDto>,
+    },
+    /// Thermal readback; `None` is explicit current unavailability.
+    Thermal {
+        readback: Option<MobileRiderThermalReadbackDto>,
+    },
+    /// Produced limp-home distance. This variant is omitted without a producer value.
+    LimpHomeRange { distance: Distance },
+}
+
+/// Availability and value of projected PWM headroom.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Enum)]
+pub enum MobileRiderHeadroomValueDto {
+    /// Current headroom in permille.
+    Available { permille: u16 },
+    /// PWM exists but does not apply in the current operating state.
+    NotApplicable,
+    /// No current PWM value is available.
+    Unavailable,
+}
+
+/// One Rust-selected metric in the live rider safety section.
+#[derive(Clone, Debug, Eq, PartialEq, uniffi::Enum)]
+pub enum MobileRiderSafetyMetricDescriptorDto {
+    /// Remaining PWM duty headroom.
+    PwmHeadroom { value: MobileRiderHeadroomValueDto },
+}
+
+/// Ordered Rust-owned live rider dashboard projection.
+#[derive(Clone, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct MobileRiderDashboardProjectionDto {
+    /// Main dashboard metrics in display order.
+    pub dashboard_metrics: Vec<MobileRiderDashboardMetricDescriptorDto>,
+    /// Safety metrics in display order.
+    pub safety_metrics: Vec<MobileRiderSafetyMetricDescriptorDto>,
+}
+
+/// Compact values used by Swift fixtures to exercise the Rust-owned projection.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct MobileRiderDashboardValuesDto {
+    /// Current operating state.
+    pub operating_state: RideOperatingState,
+    /// Current pack voltage.
+    pub voltage: Option<Voltage>,
+    /// Current battery current.
+    pub battery_current: Option<BatteryCurrent>,
+    /// Protocol-reported power.
+    pub reported_power: Option<Power>,
+    /// Current controller temperature.
+    pub controller_temperature: Option<Temperature>,
+    /// Current motor temperature.
+    pub motor_temperature: Option<Temperature>,
+    /// Current battery temperature.
+    pub battery_temperature: Option<Temperature>,
+    /// Current PWM duty.
+    pub pwm: Option<DutyCycle>,
+    /// Produced limp-home range.
+    pub limp_home_range: Option<Distance>,
+}
+
 /// Mobile footpad telemetry DTO.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Enum)]
 pub enum MobileFootpadContactState {
@@ -15439,6 +15531,200 @@ impl From<ControlRefusalReasonDto> for MobileControlRefusalReasonDto {
     }
 }
 
+/// Projects the live rider dashboard from a typed production telemetry snapshot.
+#[uniffi::export]
+#[must_use]
+#[allow(
+    clippy::needless_pass_by_value,
+    reason = "UniFFI record arguments cross this boundary by value"
+)]
+pub fn mobile_rider_dashboard_projection(
+    snapshot: MobileTelemetrySnapshotDto,
+) -> MobileRiderDashboardProjectionDto {
+    cutout_core::RiderDashboardProjection::from_input(core_rider_dashboard_input(&snapshot)).into()
+}
+
+/// Projects the live rider dashboard from compact typed values used by Swift fixtures.
+#[uniffi::export]
+#[must_use]
+pub fn mobile_rider_dashboard_projection_for_values(
+    values: MobileRiderDashboardValuesDto,
+) -> MobileRiderDashboardProjectionDto {
+    cutout_core::RiderDashboardProjection::from_input(cutout_core::RiderDashboardInput {
+        operating_state: core_ride_operating_state(values.operating_state),
+        voltage: values
+            .voltage
+            .map(|value| Measured::reported(cutout_core::Voltage::from_millivolts(value.value))),
+        battery_current: values.battery_current.map(|value| {
+            Measured::reported(cutout_core::BatteryCurrent::from_milliamps(value.value))
+        }),
+        reported_power: values
+            .reported_power
+            .map(|value| Measured::reported(cutout_core::Power::from_milliwatts(value.value))),
+        controller_temperature: values.controller_temperature.map(|value| {
+            Measured::reported(cutout_core::Temperature::from_millicelsius(value.value))
+        }),
+        motor_temperature: values.motor_temperature.map(|value| {
+            Measured::reported(cutout_core::Temperature::from_millicelsius(value.value))
+        }),
+        battery_temperature: values.battery_temperature.map(|value| {
+            Measured::reported(cutout_core::Temperature::from_millicelsius(value.value))
+        }),
+        pwm: values
+            .pwm
+            .map(|value| Measured::reported(cutout_core::DutyCycle::from_permille(value.permille))),
+        limp_home_range: values
+            .limp_home_range
+            .map(|value| Measured::estimated(cutout_core::Distance::from_millimetres(value.value))),
+    })
+    .into()
+}
+
+fn core_rider_dashboard_input(
+    snapshot: &MobileTelemetrySnapshotDto,
+) -> cutout_core::RiderDashboardInput {
+    cutout_core::RiderDashboardInput {
+        operating_state: core_ride_operating_state(snapshot.operating_state),
+        voltage: snapshot.voltage.map(core_measured_voltage),
+        battery_current: snapshot.battery_current.map(core_measured_battery_current),
+        reported_power: snapshot.power.map(|reading| {
+            core_measured(
+                cutout_core::Power::from_milliwatts(reading.value.value),
+                reading.source,
+                reading.quality,
+                reading.verification,
+            )
+        }),
+        controller_temperature: snapshot.controller_temperature.map(core_temperature),
+        motor_temperature: snapshot.motor_temperature.map(core_temperature),
+        battery_temperature: snapshot.battery_temperature.map(core_temperature),
+        pwm: snapshot
+            .pwm
+            .map(|value| Measured::reported(cutout_core::DutyCycle::from_permille(value.permille))),
+        limp_home_range: snapshot.limp_home_range.map(|reading| {
+            core_measured(
+                cutout_core::Distance::from_millimetres(reading.value.value),
+                reading.source,
+                reading.quality,
+                reading.verification,
+            )
+        }),
+    }
+}
+
+fn core_ride_operating_state(state: RideOperatingState) -> CoreRideOperatingState {
+    match state {
+        RideOperatingState::Unknown => CoreRideOperatingState::Unknown,
+        RideOperatingState::Parked => CoreRideOperatingState::Parked,
+        RideOperatingState::Standing => CoreRideOperatingState::Standing,
+        RideOperatingState::Riding => CoreRideOperatingState::Riding,
+        RideOperatingState::Charging => CoreRideOperatingState::Charging,
+    }
+}
+
+impl From<cutout_core::RiderDashboardProjection> for MobileRiderDashboardProjectionDto {
+    fn from(projection: cutout_core::RiderDashboardProjection) -> Self {
+        Self {
+            dashboard_metrics: projection
+                .dashboard_metrics
+                .into_iter()
+                .map(Into::into)
+                .collect(),
+            safety_metrics: projection
+                .safety_metrics
+                .into_iter()
+                .map(Into::into)
+                .collect(),
+        }
+    }
+}
+
+impl From<cutout_core::RiderDashboardMetricDescriptor> for MobileRiderDashboardMetricDescriptorDto {
+    fn from(descriptor: cutout_core::RiderDashboardMetricDescriptor) -> Self {
+        match descriptor {
+            cutout_core::RiderDashboardMetricDescriptor::ChargeEstimate => Self::ChargeEstimate,
+            cutout_core::RiderDashboardMetricDescriptor::PackVoltage { value } => {
+                Self::PackVoltage {
+                    voltage: match value {
+                        cutout_core::RiderMetricValue::Available(value) => Some(Voltage {
+                            value: value.as_millivolts(),
+                        }),
+                        cutout_core::RiderMetricValue::NotApplicable
+                        | cutout_core::RiderMetricValue::Unavailable => None,
+                    },
+                }
+            }
+            cutout_core::RiderDashboardMetricDescriptor::Power { value } => match value {
+                cutout_core::RiderPowerValue::CalculatedPackCurrent(value) => Self::Power {
+                    power: Some(Power {
+                        value: value.as_milliwatts(),
+                    }),
+                    source: Some(MobileRiderPowerSourceDto::CalculatedPackCurrent),
+                },
+                cutout_core::RiderPowerValue::Reported(value) => Self::Power {
+                    power: Some(Power {
+                        value: value.as_milliwatts(),
+                    }),
+                    source: Some(MobileRiderPowerSourceDto::Reported),
+                },
+                cutout_core::RiderPowerValue::Unavailable => Self::Power {
+                    power: None,
+                    source: None,
+                },
+            },
+            cutout_core::RiderDashboardMetricDescriptor::Thermal { value } => Self::Thermal {
+                readback: match value {
+                    cutout_core::RiderMetricValue::Available(value) => {
+                        Some(MobileRiderThermalReadbackDto {
+                            maximum: Temperature {
+                                value: value.maximum.as_millicelsius(),
+                            },
+                            controller: value.controller.map(|value| Temperature {
+                                value: value.as_millicelsius(),
+                            }),
+                            motor: value.motor.map(|value| Temperature {
+                                value: value.as_millicelsius(),
+                            }),
+                            battery: value.battery.map(|value| Temperature {
+                                value: value.as_millicelsius(),
+                            }),
+                        })
+                    }
+                    cutout_core::RiderMetricValue::NotApplicable
+                    | cutout_core::RiderMetricValue::Unavailable => None,
+                },
+            },
+            cutout_core::RiderDashboardMetricDescriptor::LimpHomeRange { value } => {
+                Self::LimpHomeRange {
+                    distance: Distance {
+                        value: value.as_millimetres(),
+                    },
+                }
+            }
+        }
+    }
+}
+
+impl From<cutout_core::RiderSafetyMetricDescriptor> for MobileRiderSafetyMetricDescriptorDto {
+    fn from(descriptor: cutout_core::RiderSafetyMetricDescriptor) -> Self {
+        match descriptor {
+            cutout_core::RiderSafetyMetricDescriptor::PwmHeadroom { value } => Self::PwmHeadroom {
+                value: match value {
+                    cutout_core::RiderMetricValue::Available(permille) => {
+                        MobileRiderHeadroomValueDto::Available { permille }
+                    }
+                    cutout_core::RiderMetricValue::NotApplicable => {
+                        MobileRiderHeadroomValueDto::NotApplicable
+                    }
+                    cutout_core::RiderMetricValue::Unavailable => {
+                        MobileRiderHeadroomValueDto::Unavailable
+                    }
+                },
+            },
+        }
+    }
+}
+
 impl From<TelemetrySnapshotDto> for MobileTelemetrySnapshotDto {
     fn from(snapshot: TelemetrySnapshotDto) -> Self {
         let operating_state = ride_operating_state(
@@ -16604,6 +16890,58 @@ mod tests {
     use cutout_protocols::{
         BEGODE_DATA_CHANNEL, BEGODE_SERVICE_CHANNEL, VESC_COMM_CUSTOM_APP_DATA, VESC_NOTIFY_CHANNEL,
     };
+
+    #[test]
+    fn production_snapshot_projects_supported_rider_metrics_through_mobile_ffi() {
+        let core_snapshot = cutout_core::TelemetrySnapshot {
+            voltage: Some(Measured::reported(CoreVoltage::from_millivolts(62_800))),
+            battery_current: Some(Measured::reported(CoreBatteryCurrent::from_milliamps(0))),
+            power: Some(Measured::reported(cutout_core::Power::from_milliwatts(0))),
+            controller_temperature: Some(Measured::reported(
+                cutout_core::Temperature::from_millicelsius(42_000),
+            )),
+            motor_temperature: Some(Measured::reported(
+                cutout_core::Temperature::from_millicelsius(54_000),
+            )),
+            pwm: Some(Measured::reported(cutout_core::DutyCycle::from_permille(
+                1_000,
+            ))),
+            operating_state: Some(CoreRideOperatingState::Riding),
+            ..cutout_core::TelemetrySnapshot::default()
+        };
+        let mobile_snapshot =
+            MobileTelemetrySnapshotDto::from(TelemetrySnapshotDto::from(core_snapshot));
+
+        let projection = mobile_rider_dashboard_projection(mobile_snapshot);
+
+        assert_eq!(
+            projection.dashboard_metrics,
+            vec![
+                MobileRiderDashboardMetricDescriptorDto::ChargeEstimate,
+                MobileRiderDashboardMetricDescriptorDto::PackVoltage {
+                    voltage: Some(Voltage { value: 62_800 }),
+                },
+                MobileRiderDashboardMetricDescriptorDto::Power {
+                    power: Some(Power { value: 0 }),
+                    source: Some(MobileRiderPowerSourceDto::Reported),
+                },
+                MobileRiderDashboardMetricDescriptorDto::Thermal {
+                    readback: Some(MobileRiderThermalReadbackDto {
+                        maximum: Temperature { value: 54_000 },
+                        controller: Some(Temperature { value: 42_000 }),
+                        motor: Some(Temperature { value: 54_000 }),
+                        battery: None,
+                    }),
+                },
+            ]
+        );
+        assert_eq!(
+            projection.safety_metrics,
+            vec![MobileRiderSafetyMetricDescriptorDto::PwmHeadroom {
+                value: MobileRiderHeadroomValueDto::Available { permille: 0 },
+            }]
+        );
+    }
 
     #[test]
     fn mobile_ride_map_limits_match_rust_bounds() {

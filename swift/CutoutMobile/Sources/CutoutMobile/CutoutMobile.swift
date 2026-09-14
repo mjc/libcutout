@@ -3,9 +3,18 @@ import CutoutMobileFFI
 public typealias Angle = CutoutMobileFFI.Angle
 public typealias BatteryCurrent = CutoutMobileFFI.BatteryCurrent
 public typealias BatteryLevel = CutoutMobileFFI.BatteryLevel
+public typealias Distance = CutoutMobileFFI.Distance
+public typealias DutyCycle = CutoutMobileFFI.DutyCycle
 public typealias MobilePhoneLocationSnapshotDto = CutoutMobileFFI.MobilePhoneLocationSnapshotDto
 public typealias PhaseCurrent = CutoutMobileFFI.PhaseCurrent
+public typealias Power = CutoutMobileFFI.Power
 public typealias PowerFlowDirection = CutoutMobileFFI.PowerFlowDirection
+public typealias RiderDashboardMetricDescriptor = CutoutMobileFFI.MobileRiderDashboardMetricDescriptorDto
+public typealias RiderDashboardProjection = CutoutMobileFFI.MobileRiderDashboardProjectionDto
+public typealias RiderHeadroomValue = CutoutMobileFFI.MobileRiderHeadroomValueDto
+public typealias RiderPowerSource = CutoutMobileFFI.MobileRiderPowerSourceDto
+public typealias RiderSafetyMetricDescriptor = CutoutMobileFFI.MobileRiderSafetyMetricDescriptorDto
+public typealias RiderThermalReadback = CutoutMobileFFI.MobileRiderThermalReadbackDto
 public typealias Speed = CutoutMobileFFI.Speed
 public typealias Temperature = CutoutMobileFFI.Temperature
 public typealias Voltage = CutoutMobileFFI.Voltage
@@ -2817,6 +2826,7 @@ public struct TelemetrySnapshot: Equatable, Hashable, Sendable {
     public let batteryLevelEstimated: BatteryLevel?
     public let chargeMode: ChargeMode?
     public let chargeEstimate: ChargeEstimateState?
+    public let riderDashboardProjection: RiderDashboardProjection
 
     public init(
         at: MonotonicMilliseconds? = nil,
@@ -2847,7 +2857,8 @@ public struct TelemetrySnapshot: Equatable, Hashable, Sendable {
         batteryLevelReported: BatteryLevel? = nil,
         batteryLevelEstimated: BatteryLevel? = nil,
         chargeMode: ChargeMode? = nil,
-        chargeEstimate: ChargeEstimateState? = nil
+        chargeEstimate: ChargeEstimateState? = nil,
+        riderDashboardProjection: RiderDashboardProjection? = nil
     ) {
         self.at = at
         self.speed = speed
@@ -2878,6 +2889,18 @@ public struct TelemetrySnapshot: Equatable, Hashable, Sendable {
         self.batteryLevelEstimated = batteryLevelEstimated
         self.chargeMode = chargeMode
         self.chargeEstimate = chargeEstimate
+        self.riderDashboardProjection = riderDashboardProjection
+            ?? mobileRiderDashboardProjectionForValues(values: MobileRiderDashboardValuesDto(
+                operatingState: operatingState,
+                voltage: voltage,
+                batteryCurrent: batteryCurrent,
+                reportedPower: power,
+                controllerTemperature: controllerTemperature,
+                motorTemperature: motorTemperature,
+                batteryTemperature: batteryTemperature,
+                pwm: pwm,
+                limpHomeRange: limpHomeRange
+            ))
     }
 
     fileprivate init(_ dto: MobileTelemetrySnapshotDto) {
@@ -2916,14 +2939,18 @@ public struct TelemetrySnapshot: Equatable, Hashable, Sendable {
             batteryLevelReported: dto.batteryLevelReported?.value,
             batteryLevelEstimated: dto.batteryLevelEstimated?.value,
             chargeMode: dto.chargeMode.map { ChargeMode($0.value) },
-            chargeEstimate: chargeEstimate
+            chargeEstimate: chargeEstimate,
+            riderDashboardProjection: mobileRiderDashboardProjection(snapshot: dto)
         )
     }
 
     public var packVoltageMetricValue: PevDashboardMetricValue {
-        guard let voltage else { return .unavailable }
-        let text = RideUnits.voltageText(millivolts: voltage.value, fractionDigits: 1)
-        return .available(display: text, accessibility: text)
+        for case let .packVoltage(voltage) in riderDashboardProjection.dashboardMetrics {
+            guard let voltage else { return .unavailable }
+            let text = RideUnits.voltageText(millivolts: voltage.value, fractionDigits: 1)
+            return .available(display: text, accessibility: text)
+        }
+        return .unavailable
     }
 
     public var packVoltageDetail: TelemetryPackVoltageDetail {
@@ -2933,29 +2960,33 @@ public struct TelemetrySnapshot: Equatable, Hashable, Sendable {
     }
 
     public var thermalMetricValue: PevDashboardMetricValue {
-        let temperatures = [controllerTemperature, motorTemperature, batteryTemperature]
-            .compactMap { $0?.value }
-        guard let maximum = temperatures.max() else { return .unavailable }
-        let text = RideUnits.temperatureText(millicelsius: maximum, fractionDigits: 0)
-        return .available(display: text, accessibility: text)
+        for case let .thermal(readback) in riderDashboardProjection.dashboardMetrics {
+            guard let readback else { return .unavailable }
+            let text = RideUnits.temperatureText(millicelsius: readback.maximum.value, fractionDigits: 0)
+            return .available(display: text, accessibility: text)
+        }
+        return .unavailable
     }
 
     public var thermalReadback: TelemetryThermalReadback {
-        TelemetryThermalReadback(
-            controller: controllerTemperature,
-            motor: motorTemperature,
-            battery: batteryTemperature
-        )
+        for case let .thermal(readback) in riderDashboardProjection.dashboardMetrics {
+            guard let readback else { return .unavailable }
+            return TelemetryThermalReadback(
+                controller: readback.controller,
+                motor: readback.motor,
+                battery: readback.battery
+            )
+        }
+        return .unavailable
     }
 
     public var powerPresentation: TelemetryPowerPresentation {
-        if let voltage, let batteryCurrent, batteryCurrent.value != 0 {
-            return .calculatedPackCurrent(
-                Power(value: Int64(voltage.value) * Int64(batteryCurrent.value) / 1_000)
-            )
-        }
-        if let power {
-            return .reported(power)
+        for case let .power(power, source) in riderDashboardProjection.dashboardMetrics {
+            guard let power, let source else { return .unavailable }
+            return switch source {
+            case .calculatedPackCurrent: .calculatedPackCurrent(power)
+            case .reported: .reported(power)
+            }
         }
         return .unavailable
     }
@@ -3737,46 +3768,25 @@ private func rideHeroSeverity(_ warning: VescRideWarning) -> RideHeroSeverity {
     }
 }
 
-private let dutyHeadroomIdleDeadbandPermille = 20
-
-private func dutyHeadroomPermille(from dutyCycle: DutyCycle) -> Int {
-    let rawUsedPermille = min(1_000, abs(Int(dutyCycle.permille)))
-    let usedPermille = rawUsedPermille <= dutyHeadroomIdleDeadbandPermille ? 0 : rawUsedPermille
-    return max(0, 1_000 - usedPermille)
-}
-
-private func dutyHeadroomBatteryLevel(from dutyCycle: DutyCycle) -> BatteryLevel {
-    BatteryLevel(value: UInt8(dutyHeadroomPermille(from: dutyCycle) / 10))
-}
-
 private extension TelemetrySnapshot {
-    var pwmHeadroomApplicability: EucRideMetricApplicability {
-        guard pwm != nil else {
-            return .unavailable
+    var pwmHeadroomValue: RiderHeadroomValue {
+        for case let .pwmHeadroom(value) in riderDashboardProjection.safetyMetrics {
+            return value
         }
+        return .unavailable
+    }
 
-        return switch operatingState {
-        case .riding, .standing:
-            .available
-        case .parked, .charging, .unknown:
-            .notApplicable
+    var pwmHeadroomApplicability: EucRideMetricApplicability {
+        switch pwmHeadroomValue {
+        case .available: .available
+        case .notApplicable: .notApplicable
+        case .unavailable: .unavailable
         }
     }
 
     var dutyHeadroom: BatteryLevel? {
-        guard pwmHeadroomApplicability == .available, let pwm else {
-            return nil
-        }
-
-        return dutyHeadroomBatteryLevel(from: pwm)
-    }
-
-    var pwmHeadroomPermille: Int? {
-        guard pwmHeadroomApplicability == .available, let pwm else {
-            return nil
-        }
-
-        return dutyHeadroomPermille(from: pwm)
+        guard case .available(let permille) = pwmHeadroomValue else { return nil }
+        return BatteryLevel(value: UInt8(permille / 10))
     }
 }
 
@@ -5787,11 +5797,16 @@ public struct EucRideScreenState: Equatable, Hashable, Sendable {
     }
 
     public var pwmHeadroomApplicability: EucRideMetricApplicability {
-        telemetry?.pwmHeadroomApplicability ?? .unavailable
+        switch telemetry?.pwmHeadroomValue {
+        case .available: .available
+        case .notApplicable: .notApplicable
+        case .unavailable, nil: .unavailable
+        }
     }
 
     public var pwmHeadroomPermille: Int? {
-        telemetry?.pwmHeadroomPermille
+        guard case .available(let permille) = telemetry?.pwmHeadroomValue else { return nil }
+        return Int(permille)
     }
 
     public var pwmHeadroomMetricValue: PevDashboardMetricValue {

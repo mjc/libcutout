@@ -2873,8 +2873,7 @@ final class CutoutAppModelTests: XCTestCase {
         XCTAssertEqual(model.liveActivityError, .authorizationDenied)
 
         await manager.setError(nil)
-        XCTAssertTrue(model.pair(platformIdentifier: row.id))
-        XCTAssertFalse(model.pair(platformIdentifier: row.id))
+        model.retryLiveActivity()
 
         await Self.waitUntil("live activity retry") {
             await manager.startCount == 2
