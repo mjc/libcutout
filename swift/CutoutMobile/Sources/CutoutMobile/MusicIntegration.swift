@@ -103,35 +103,48 @@ final class MusicTransportCoordinator {
     typealias Completion = @MainActor (UInt64, MusicCommandOutcome) -> Void
 
     private let lifecycle: MobileMusicProviderLifecycle
-    private var pending: (requestID: UInt64, completion: Completion)?
+    private var pending: (providerGeneration: UInt64, requestID: UInt64, completion: Completion)?
 
     init(lifecycle: MobileMusicProviderLifecycle) {
         self.lifecycle = lifecycle
     }
 
-    func begin(nowMs: UInt64, completion: @escaping Completion) -> UInt64? {
-        guard pending == nil, let requestID = lifecycle.beginTransport(nowMs: nowMs) else {
-            return nil
-        }
-        pending = (requestID, completion)
-        return requestID
+    func register(
+        providerGeneration: UInt64,
+        effect: MobileMusicProviderTimedEffect,
+        completion: @escaping Completion
+    ) -> Bool {
+        guard pending == nil else { return false }
+        pending = (providerGeneration, effect.id, completion)
+        return true
     }
 
-    func finish(requestID: UInt64, accepted: Bool) {
+    func finish(providerGeneration: UInt64, requestID: UInt64, accepted: Bool) {
         apply(
             lifecycle.finishTransport(
+                providerGeneration: providerGeneration,
                 requestId: requestID,
                 outcome: accepted ? .accepted : .failed
-            )
+            ),
+            requestID: requestID
         )
     }
 
-    func expire(nowMs: UInt64) {
-        apply(lifecycle.expireTransport(nowMs: nowMs))
+    func expire(providerGeneration: UInt64, requestID: UInt64, nowMs: UInt64) {
+        apply(
+            lifecycle.expireTransport(providerGeneration: providerGeneration, nowMs: nowMs),
+            requestID: requestID
+        )
     }
 
-    func cancel() {
-        apply(lifecycle.cancelTransport())
+    func cancel(providerGeneration: UInt64, requestID: UInt64) {
+        apply(
+            lifecycle.cancelTransport(
+                providerGeneration: providerGeneration,
+                requestId: requestID
+            ),
+            requestID: requestID
+        )
     }
 
     func resolveCancelled(requestID: UInt64?) {
@@ -143,15 +156,108 @@ final class MusicTransportCoordinator {
         completion(requestID, .unavailable)
     }
 
-    func apply(_ result: MobileMusicTransportCompletion) {
-        guard result.state == .finished,
-              let requestID = result.requestId,
-              let outcome = result.outcome,
-              pending?.requestID == requestID,
-              let completion = pending?.completion
-        else { return }
+    func apply(_ result: MobileMusicTransportCompletion, requestID fallbackRequestID: UInt64? = nil) {
+        let requestID = result.requestId ?? fallbackRequestID
+        guard let requestID, pending?.requestID == requestID, let completion = pending?.completion else { return }
+        if result.state == .stale {
+            pending = nil
+            completion(requestID, .unavailable)
+            return
+        }
+        guard result.state == .finished, let outcome = result.outcome else { return }
         pending = nil
         completion(requestID, outcome.commandOutcome)
+    }
+}
+
+/// Executes one provider command under Rust admission, identity, and deadline policy.
+@MainActor
+final class MusicProviderTransportExecutor {
+    private let lifecycle: MobileMusicProviderLifecycle
+    private let effects: MusicProviderEffectExecutor
+    private let nowMs: @MainActor () -> UInt64
+    private lazy var coordinator = MusicTransportCoordinator(lifecycle: lifecycle)
+
+    init(
+        lifecycle: MobileMusicProviderLifecycle,
+        effects: MusicProviderEffectExecutor,
+        nowMs: @escaping @MainActor () -> UInt64
+    ) {
+        self.lifecycle = lifecycle
+        self.effects = effects
+        self.nowMs = nowMs
+    }
+
+    func perform(
+        providerGeneration: UInt64,
+        dispatch: @escaping @MainActor @Sendable (
+            @escaping @MainActor @Sendable (Bool) -> Void
+        ) -> Void
+    ) async -> MusicCommandOutcome {
+        guard let effect = lifecycle.beginTransportEffect(
+            providerGeneration: providerGeneration,
+            nowMs: nowMs()
+        ) else { return .refused }
+
+        return await withTaskCancellationHandler {
+            await withCheckedContinuation { continuation in
+                guard coordinator.register(
+                    providerGeneration: providerGeneration,
+                    effect: effect,
+                    completion: { [effects] requestID, outcome in
+                        effects.cancel(.transport(requestID))
+                        continuation.resume(returning: outcome)
+                    }
+                ) else {
+                    coordinator.cancel(
+                        providerGeneration: providerGeneration,
+                        requestID: effect.id
+                    )
+                    continuation.resume(returning: .refused)
+                    return
+                }
+                effects.run(
+                    .transport(effect.id),
+                    until: effect,
+                    nowMs: nowMs
+                ) { [weak self] in
+                    self?.coordinator.expire(
+                        providerGeneration: providerGeneration,
+                        requestID: effect.id,
+                        nowMs: effect.deadlineMs
+                    )
+                }
+                dispatch { [weak self] accepted in
+                    self?.coordinator.finish(
+                        providerGeneration: providerGeneration,
+                        requestID: effect.id,
+                        accepted: accepted
+                    )
+                }
+            }
+        } onCancel: {
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                self.effects.cancel(.transport(effect.id))
+                self.coordinator.cancel(
+                    providerGeneration: providerGeneration,
+                    requestID: effect.id
+                )
+            }
+        }
+    }
+
+    func apply(_ completion: MobileMusicTransportCompletion) {
+        if let requestID = completion.requestId {
+            effects.cancel(.transport(requestID))
+        }
+        coordinator.apply(completion)
+    }
+
+    func apply(_ suspension: MobileMusicProviderSuspension) {
+        guard let requestID = suspension.cancelledTransportRequestId else { return }
+        effects.cancel(.transport(requestID))
+        coordinator.resolveCancelled(requestID: requestID)
     }
 }
 
@@ -428,6 +534,19 @@ public final class MusicProviderEffectExecutor {
         }
     }
 
+    func run(
+        _ key: Key,
+        until effect: MobileMusicProviderTimedEffect,
+        nowMs: @escaping @MainActor @Sendable () -> UInt64,
+        operation: @escaping @MainActor @Sendable () async -> Void
+    ) {
+        precondition(key.id == effect.id)
+        run(key) {
+            guard await Self.wait(until: effect.deadlineMs, nowMs: nowMs) else { return }
+            await operation()
+        }
+    }
+
     public func cancel(_ key: Key) {
         tasks.removeValue(forKey: key)?.cancel()
     }
@@ -448,6 +567,31 @@ public final class MusicProviderEffectExecutor {
 
     public func isRunning(_ key: Key) -> Bool {
         tasks[key].map { !$0.isCancelled } ?? false
+    }
+
+    public static func wait(
+        until deadlineMs: UInt64,
+        nowMs: @escaping @MainActor @Sendable () -> UInt64
+    ) async -> Bool {
+        let now = nowMs()
+        let remaining = deadlineMs > now ? deadlineMs - now : 0
+        do {
+            try await Task.sleep(for: .milliseconds(remaining))
+            return true
+        } catch {
+            return false
+        }
+    }
+}
+
+private extension MusicProviderEffectExecutor.Key {
+    var id: UInt64 {
+        switch self {
+        case let .monitor(id), let .authorization(id), let .provider(id),
+             let .playerState(id), let .transport(id), let .artwork(id),
+             let .artworkRetry(id):
+            id
+        }
     }
 }
 
@@ -474,6 +618,7 @@ final class AppleMusicObservationBridge {
     private var onObservation: (@MainActor (MusicProviderObservation) -> Void)?
 
     private(set) var cachedObservation: MusicProviderObservation?
+    var providerGeneration: UInt64? { activeGeneration }
 
     init(
         service: any AppleMusicObservationService,
@@ -489,7 +634,7 @@ final class AppleMusicObservationBridge {
         observedAtMs: @escaping @MainActor () -> UInt64,
         onObservation: @escaping @MainActor (MusicProviderObservation) -> Void
     ) async {
-        stopMonitoring()
+        _ = stopMonitoring()
         let generation = lifecycle.beginProviderSession()
         activeGeneration = generation
         cachedObservation = nil
@@ -530,15 +675,16 @@ final class AppleMusicObservationBridge {
         }
     }
 
-    func stopMonitoring() {
-        guard let generation = activeGeneration else { return }
+    func stopMonitoring() -> MobileMusicTransportCompletion? {
+        guard let generation = activeGeneration else { return nil }
         activeGeneration = nil
         effects.cancelAll(in: .playerState)
-        _ = lifecycle.retireProviderSession(id: generation)
+        let completion = lifecycle.retireProviderSession(id: generation)
         cachedObservation = nil
         observedAtMs = nil
         onObservation = nil
         unsubscribe(generation: generation)
+        return completion
     }
 
     private func unsubscribe(generation: UInt64) {
@@ -1828,6 +1974,7 @@ private actor SystemAppleMusicObservationService: AppleMusicObservationService {
 public final class AppleMusicProviderAdapter {
     public static let providerURL = URL(string: "https://music.apple.com/")!
     private let observationBridge: AppleMusicObservationBridge
+    private let transport: MusicProviderTransportExecutor
 #if canImport(MusicKit) && os(iOS)
     private let makeSystemPlayer: () -> SystemMusicPlayer
     private lazy var systemPlayer = makeSystemPlayer()
@@ -1865,6 +2012,11 @@ public final class AppleMusicProviderAdapter {
             lifecycle: lifecycle,
             effects: effects
         )
+        transport = MusicProviderTransportExecutor(
+            lifecycle: lifecycle,
+            effects: effects,
+            nowMs: { UInt64(ProcessInfo.processInfo.systemUptime * 1_000) }
+        )
 #if canImport(MusicKit) && os(iOS)
         makeSystemPlayer = { SystemMusicPlayer.shared }
 #endif
@@ -1876,6 +2028,7 @@ public final class AppleMusicProviderAdapter {
         observedAtMs: @escaping @MainActor () -> UInt64,
         onObservation: @escaping @MainActor (MusicProviderObservation) -> Void
     ) async {
+        stopMonitoring()
         await observationBridge.startMonitoring(
             observedAtMs: observedAtMs,
             onObservation: onObservation
@@ -1883,7 +2036,9 @@ public final class AppleMusicProviderAdapter {
     }
 
     public func stopMonitoring() {
-        observationBridge.stopMonitoring()
+        if let completion = observationBridge.stopMonitoring() {
+            transport.apply(completion)
+        }
     }
 
     public func refreshObservation(observedAtMs: UInt64) {
@@ -1925,52 +2080,77 @@ public final class AppleMusicProviderAdapter {
 
     @MainActor
     public func perform(_ command: MobileMusicCommandDto) async -> MusicCommandOutcome {
-        switch command {
-        case .previous:
-#if canImport(MusicKit) && os(iOS)
-            do {
-                try await systemPlayer.skipToPreviousEntry()
-            } catch {
-                return .failed
-            }
-#else
-            legacyTransportPlayer.skipToPreviousItem()
-#endif
-        case .play:
-#if canImport(MusicKit) && os(iOS)
-            do {
-                try await systemPlayer.play()
-            } catch {
-                return .failed
-            }
-#else
-            legacyTransportPlayer.play()
-#endif
-        case .pause:
-#if canImport(MusicKit) && os(iOS)
-            systemPlayer.pause()
-#else
-            legacyTransportPlayer.pause()
-#endif
-        case .next:
-#if canImport(MusicKit) && os(iOS)
-            do {
-                try await systemPlayer.skipToNextEntry()
-            } catch {
-                return .failed
-            }
-#else
-            legacyTransportPlayer.skipToNextItem()
-#endif
-        case .openProvider:
+        if command == .openProvider {
 #if canImport(UIKit) && os(iOS)
             guard UIApplication.shared.canOpenURL(Self.providerURL) else { return .unavailable }
             guard await UIApplication.shared.open(Self.providerURL) else { return .failed }
+            return .accepted
 #else
             return .unavailable
 #endif
         }
-        return .accepted
+        guard let providerGeneration = observationBridge.providerGeneration else {
+            return .unavailable
+        }
+        return await transport.perform(providerGeneration: providerGeneration) { [weak self] completion in
+            Task { @MainActor in
+                guard let self else {
+                    completion(false)
+                    return
+                }
+                completion(await self.execute(command))
+            }
+        }
+    }
+
+    private func execute(_ command: MobileMusicCommandDto) async -> Bool {
+        switch command {
+            case .previous:
+#if canImport(MusicKit) && os(iOS)
+                do {
+                    try await systemPlayer.skipToPreviousEntry()
+                    return true
+                } catch {
+                    return false
+                }
+#else
+                legacyTransportPlayer.skipToPreviousItem()
+                return true
+#endif
+            case .play:
+#if canImport(MusicKit) && os(iOS)
+                do {
+                    try await systemPlayer.play()
+                    return true
+                } catch {
+                    return false
+                }
+#else
+                legacyTransportPlayer.play()
+                return true
+#endif
+            case .pause:
+#if canImport(MusicKit) && os(iOS)
+                systemPlayer.pause()
+#else
+                legacyTransportPlayer.pause()
+#endif
+                return true
+            case .next:
+#if canImport(MusicKit) && os(iOS)
+                do {
+                    try await systemPlayer.skipToNextEntry()
+                    return true
+                } catch {
+                    return false
+                }
+#else
+                legacyTransportPlayer.skipToNextItem()
+                return true
+#endif
+            case .openProvider:
+                return false
+        }
     }
 
     public func snapshot(observedAtMs: UInt64) -> MobileMusicSnapshotDto {

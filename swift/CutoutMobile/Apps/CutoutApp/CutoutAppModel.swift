@@ -717,19 +717,30 @@ final class CutoutAppModel {
 
     @discardableResult
     func handleMusicCommand(_ command: MobileMusicCommandDto) async -> MusicCommandOutcome {
+        let commandProvider = selectedMusicProvider
         musicCommandFeedback = MusicCommandFeedback(outcome: .accepted)
 #if canImport(MediaPlayer) && os(iOS)
         // Opening the selected provider is a settings action, not a transport
         // capability. It must work before any playback snapshot has arrived.
         if command == .openProvider {
             if selectedMusicProvider == .spotify {
-                return finishMusicCommand(await spotifyMusicProvider.perform(.openProvider))
+                return finishMusicCommand(
+                    await spotifyMusicProvider.perform(.openProvider),
+                    provider: commandProvider
+                )
             }
-            return finishMusicCommand(await appleMusicProvider.perform(.openProvider))
+            return finishMusicCommand(
+                await appleMusicProvider.perform(.openProvider),
+                provider: commandProvider
+            )
         }
 #endif
-        guard let nowPlaying = musicNowPlaying else { return finishMusicCommand(.unavailable) }
-        guard nowPlaying.isCommandAvailable(command) else { return finishMusicCommand(.refused) }
+        guard let nowPlaying = musicNowPlaying else {
+            return finishMusicCommand(.unavailable, provider: commandProvider)
+        }
+        guard nowPlaying.isCommandAvailable(command) else {
+            return finishMusicCommand(.refused, provider: commandProvider)
+        }
 #if canImport(MediaPlayer) && os(iOS)
         let skipHintID: UInt64?
         switch command {
@@ -750,9 +761,9 @@ final class CutoutAppModel {
         } else if let skipHintID {
             musicTransitionHintTracker.clear(id: skipHintID)
         }
-        return finishMusicCommand(outcome)
+        return finishMusicCommand(outcome, provider: commandProvider)
 #else
-        return finishMusicCommand(.unavailable)
+        return finishMusicCommand(.unavailable, provider: commandProvider)
 #endif
     }
 
@@ -760,8 +771,13 @@ final class CutoutAppModel {
         musicCommandFeedback = MusicCommandFeedback(outcome: .accepted)
     }
 
-    private func finishMusicCommand(_ outcome: MusicCommandOutcome) -> MusicCommandOutcome {
-        musicCommandFeedback = MusicCommandFeedback(outcome: outcome)
+    private func finishMusicCommand(
+        _ outcome: MusicCommandOutcome,
+        provider: MobileMusicProviderDto
+    ) -> MusicCommandOutcome {
+        if selectedMusicProvider == provider {
+            musicCommandFeedback = MusicCommandFeedback(outcome: outcome)
+        }
         return outcome
     }
 
@@ -1011,6 +1027,7 @@ final class CutoutAppModel {
         provider: MobileMusicProviderDto,
         generation: UInt64,
         allowAuthorization: Bool,
+        lifecycle: MobileMusicProviderLifecycle,
         appleMusicProvider: AppleMusicProviderAdapter,
         spotifyMusicProvider: SpotifyProviderAdapter,
         isCurrent: @escaping @MainActor () -> Bool,
@@ -1032,14 +1049,19 @@ final class CutoutAppModel {
                     spotifyMusicProvider.stopMonitoring()
                 }
             }
-            while !Task.isCancelled && isCurrent() && spotifyMusicProvider.shouldContinueMonitoring {
+            while !Task.isCancelled && isCurrent() {
+                guard let nowMs = observedAtMs(),
+                      let poll = lifecycle.nextMonitorPoll(
+                          generation: generation,
+                          workState: spotifyMusicProvider.monitoringWorkState,
+                          nowMs: nowMs
+                      ) else { return }
                 spotifyMusicProvider.ensureConnection()
                 spotifyMusicProvider.refreshPlayerState()
-                do {
-                    try await Task.sleep(for: .seconds(1))
-                } catch {
-                    return
-                }
+                guard await MusicProviderEffectExecutor.wait(
+                    until: poll.deadlineMs,
+                    nowMs: { observedAtMs() ?? poll.deadlineMs }
+                ) else { return }
             }
             return
         }
@@ -1079,13 +1101,17 @@ final class CutoutAppModel {
             }
         }
         while !Task.isCancelled {
-            guard isCurrent(), let observedAtMs = observedAtMs() else { return }
-            appleMusicProvider.refreshObservation(observedAtMs: observedAtMs)
-            do {
-                try await Task.sleep(for: .seconds(1))
-            } catch {
-                return
-            }
+            guard isCurrent(), let currentObservedAtMs = observedAtMs() else { return }
+            guard let poll = lifecycle.nextMonitorPoll(
+                generation: generation,
+                workState: .active,
+                nowMs: currentObservedAtMs
+            ) else { return }
+            appleMusicProvider.refreshObservation(observedAtMs: currentObservedAtMs)
+            guard await MusicProviderEffectExecutor.wait(
+                until: poll.deadlineMs,
+                nowMs: { observedAtMs() ?? poll.deadlineMs }
+            ) else { return }
         }
     }
 #endif
@@ -1153,6 +1179,7 @@ final class CutoutAppModel {
                 provider: provider,
                 generation: generation,
                 allowAuthorization: effect.start == .authorize,
+                lifecycle: self.musicProviderLifecycle,
                 appleMusicProvider: appleMusicProvider,
                 spotifyMusicProvider: spotifyMusicProvider,
                 isCurrent: { [weak self] in

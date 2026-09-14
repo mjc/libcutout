@@ -28,6 +28,16 @@ pub struct MusicConnection {
 }
 
 impl MusicConnection {
+    /// Classifies a callback without changing attempt or connection state.
+    #[must_use]
+    pub fn classify(&self, attempt_id: u64) -> MusicConnectionCallback {
+        if self.active_attempt_id == Some(attempt_id) || self.connected_id == Some(attempt_id) {
+            MusicConnectionCallback::Accepted
+        } else {
+            MusicConnectionCallback::Stale
+        }
+    }
+
     /// Invalidates the active attempt/session without reusing callback identities.
     pub fn reset(&mut self) {
         *self = Self {
@@ -82,7 +92,7 @@ impl MusicConnection {
     /// Accepts a failure only from the current attempt or connected session.
     #[must_use]
     pub fn failed_for(&mut self, attempt_id: u64, now_ms: u64) -> MusicConnectionCallback {
-        if self.active_attempt_id != Some(attempt_id) && self.connected_id != Some(attempt_id) {
+        if self.classify(attempt_id) == MusicConnectionCallback::Stale {
             return MusicConnectionCallback::Stale;
         }
         self.in_flight_since = None;

@@ -61,19 +61,6 @@ struct AppSetupView: View {
             }
         }
         .tint(PevDashboardColors.yellow)
-        .alert(
-            pevLocalizedText("music.command.title"),
-            isPresented: Binding(
-                get: { model.musicCommandStatusText != nil },
-                set: { if !$0 { model.dismissMusicCommandFeedback() } }
-            )
-        ) {
-            Button(pevLocalizedText("music.command.dismiss")) {
-                model.dismissMusicCommandFeedback()
-            }
-        } message: {
-            Text(model.musicCommandStatusText ?? "")
-        }
     }
 
     @ToolbarContentBuilder

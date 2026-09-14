@@ -1,6 +1,6 @@
 use cutout_mobile_ffi::{
-    MobileMusicMonitor, MobileMusicMonitorRequest, MobileMusicMonitorResume,
-    MobileMusicMonitorStart, MobileMusicPlaybackStateDto, music_callback_path_matches,
+    MobileMusicPlaybackStateDto, MobileMusicProviderLifecycle, MobileMusicProviderMonitorRequest,
+    MobileMusicProviderMonitorResume, MobileMusicProviderMonitorStart, music_callback_path_matches,
     music_playback_title_key,
 };
 
@@ -28,20 +28,26 @@ fn missing_title_binding_preserves_playing_and_unknown_status() {
 
 #[test]
 fn music_monitor_binding_resumes_passively_without_ride_state() {
-    let monitor = MobileMusicMonitor::new();
+    let monitor = MobileMusicProviderLifecycle::new();
     assert!(monitor.is_scene_active());
-    assert_eq!(monitor.take_start(), None);
-    monitor.request(MobileMusicMonitorRequest::Authorize);
+    assert_eq!(monitor.begin_monitor(), None);
+    monitor.request_monitor(MobileMusicProviderMonitorRequest::Authorize);
     assert_eq!(
-        monitor.take_start(),
-        Some(MobileMusicMonitorStart::Authorize)
+        monitor.begin_monitor().map(|effect| effect.start),
+        Some(MobileMusicProviderMonitorStart::Authorize)
     );
-    monitor.suspend();
+    _ = monitor.suspend();
     assert!(!monitor.is_scene_active());
-    assert_eq!(monitor.take_start(), None);
-    assert_eq!(monitor.resume(), MobileMusicMonitorResume::Restored);
-    assert_eq!(monitor.take_start(), Some(MobileMusicMonitorStart::Observe));
-    assert_eq!(monitor.resume(), MobileMusicMonitorResume::AlreadyActive);
-    monitor.cancel();
-    assert_eq!(monitor.take_start(), None);
+    assert_eq!(monitor.begin_monitor(), None);
+    assert_eq!(monitor.resume(), MobileMusicProviderMonitorResume::Restored);
+    assert_eq!(
+        monitor.begin_monitor().map(|effect| effect.start),
+        Some(MobileMusicProviderMonitorStart::Observe)
+    );
+    assert_eq!(
+        monitor.resume(),
+        MobileMusicProviderMonitorResume::AlreadyActive
+    );
+    _ = monitor.cancel_monitor();
+    assert_eq!(monitor.begin_monitor(), None);
 }

@@ -14,20 +14,31 @@ final class MusicIntegrationTests: XCTestCase {
     func testProviderTransportCompletesMissingDelayedAndDuplicateCallbacksOnce() async throws {
         let lifecycle = MobileMusicProviderLifecycle()
         let coordinator = MusicTransportCoordinator(lifecycle: lifecycle)
+        let provider = lifecycle.beginProviderSession()
         var callbacks = [(UInt64, MusicCommandOutcome)]()
 
-        let first = try XCTUnwrap(coordinator.begin(nowMs: 1_000) { callbacks.append(($0, $1)) })
-        XCTAssertNil(coordinator.begin(nowMs: 1_001) { _, _ in XCTFail("busy command admitted") })
-        coordinator.expire(nowMs: 10_999)
+        let first = try XCTUnwrap(lifecycle.beginTransportEffect(providerGeneration: provider, nowMs: 1_000))
+        XCTAssertTrue(coordinator.register(
+            providerGeneration: provider,
+            effect: first,
+            completion: { callbacks.append(($0, $1)) }
+        ))
+        XCTAssertNil(lifecycle.beginTransportEffect(providerGeneration: provider, nowMs: 1_001))
+        coordinator.expire(providerGeneration: provider, requestID: first.id, nowMs: 10_999)
         XCTAssertTrue(callbacks.isEmpty)
-        coordinator.expire(nowMs: 11_000)
-        coordinator.finish(requestID: first, accepted: true)
-        coordinator.finish(requestID: first, accepted: false)
+        coordinator.expire(providerGeneration: provider, requestID: first.id, nowMs: 11_000)
+        coordinator.finish(providerGeneration: provider, requestID: first.id, accepted: true)
+        coordinator.finish(providerGeneration: provider, requestID: first.id, accepted: false)
         XCTAssertEqual(callbacks.map(\.1), [.failed])
 
-        let second = try XCTUnwrap(coordinator.begin(nowMs: 11_001) { callbacks.append(($0, $1)) })
-        coordinator.finish(requestID: second, accepted: true)
-        coordinator.finish(requestID: second, accepted: false)
+        let second = try XCTUnwrap(lifecycle.beginTransportEffect(providerGeneration: provider, nowMs: 11_001))
+        XCTAssertTrue(coordinator.register(
+            providerGeneration: provider,
+            effect: second,
+            completion: { callbacks.append(($0, $1)) }
+        ))
+        coordinator.finish(providerGeneration: provider, requestID: second.id, accepted: true)
+        coordinator.finish(providerGeneration: provider, requestID: second.id, accepted: false)
         XCTAssertEqual(callbacks.map(\.1), [.failed, .accepted])
     }
 
@@ -37,12 +48,17 @@ final class MusicIntegrationTests: XCTestCase {
         let coordinator = MusicTransportCoordinator(lifecycle: lifecycle)
         let provider = lifecycle.beginProviderSession()
         var callbacks = [(UInt64, MusicCommandOutcome)]()
-        let request = try XCTUnwrap(coordinator.begin(nowMs: 100) { callbacks.append(($0, $1)) })
+        let request = try XCTUnwrap(lifecycle.beginTransportEffect(providerGeneration: provider, nowMs: 100))
+        XCTAssertTrue(coordinator.register(
+            providerGeneration: provider,
+            effect: request,
+            completion: { callbacks.append(($0, $1)) }
+        ))
 
         coordinator.apply(lifecycle.retireProviderSession(id: provider))
-        coordinator.finish(requestID: request, accepted: true)
+        coordinator.finish(providerGeneration: provider, requestID: request.id, accepted: true)
 
-        XCTAssertEqual(callbacks.map(\.0), [request])
+        XCTAssertEqual(callbacks.map(\.0), [request.id])
         XCTAssertEqual(callbacks.map(\.1), [.unavailable])
     }
 

@@ -8,9 +8,29 @@ use cutout_music::callback_epoch::{
 use cutout_music::connection::MusicConnectionCallback;
 use cutout_music::player_request::MusicPlayerRequestCompletion;
 use cutout_music::provider_lifecycle::{
-    MusicProviderLifecycle, MusicTransportCompletion, MusicTransportOutcome,
+    MusicDeadlineEffect, MusicProviderLifecycle, MusicProviderWorkState, MusicTransportCompletion,
+    MusicTransportOutcome,
 };
 use cutout_music::{MusicMonitorRequest, MusicMonitorResume, MusicMonitorStart};
+
+use crate::{CoreMusicPlaybackState, MobileMusicPlaybackStateDto};
+
+/// Matches callback paths with only empty/slash root equivalence.
+#[uniffi::export]
+#[must_use]
+#[allow(clippy::needless_pass_by_value)] // UniFFI owns strings at this boundary.
+pub fn music_callback_path_matches(expected: String, actual: String) -> bool {
+    cutout_music::music_callback_path_matches(&expected, &actual)
+}
+
+/// Localized title key preserving playback state when track metadata is absent.
+#[uniffi::export]
+#[must_use]
+pub fn music_playback_title_key(state: MobileMusicPlaybackStateDto) -> String {
+    CoreMusicPlaybackState::from(state)
+        .fallback_title_key()
+        .to_owned()
+}
 
 /// User intent for the next foreground provider start.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Enum)]
@@ -37,6 +57,25 @@ pub struct MobileMusicProviderMonitorEffect {
     pub generation: u64,
     /// Provider start mode.
     pub start: MobileMusicProviderMonitorStart,
+}
+
+/// One Rust-issued platform effect and its absolute monotonic deadline.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct MobileMusicProviderTimedEffect {
+    /// Rust-owned effect identity.
+    pub id: u64,
+    /// Absolute monotonic deadline in milliseconds.
+    pub deadline_ms: u64,
+}
+
+/// Provider facts considered by Rust when scheduling another monitor poll.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Enum)]
+pub enum MobileMusicProviderWorkState {
+    Active,
+    AuthorizationPending,
+    CredentialsAvailable,
+    RequiresUserAction,
+    Unavailable,
 }
 
 /// Result of restoring the provider lifecycle to the foreground.
@@ -190,6 +229,19 @@ impl MobileMusicProviderLifecycle {
         self.lock_inner().finish_monitor(generation).into()
     }
 
+    /// Schedules another poll only while Rust considers the monitor useful.
+    #[must_use]
+    pub fn next_monitor_poll(
+        &self,
+        generation: u64,
+        work_state: MobileMusicProviderWorkState,
+        now_ms: u64,
+    ) -> Option<MobileMusicProviderTimedEffect> {
+        self.lock_inner()
+            .next_monitor_poll(generation, work_state.into(), now_ms)
+            .map(Into::into)
+    }
+
     /// Whether provider work is allowed in the current scene.
     #[must_use]
     pub fn is_scene_active(&self) -> bool {
@@ -232,8 +284,14 @@ impl MobileMusicProviderLifecycle {
 
     /// Begins one authorization transaction.
     #[must_use]
-    pub fn begin_authorization(&self, kind: MobileMusicProviderAuthorizationKind) -> u64 {
-        self.lock_inner().begin_authorization(kind.into())
+    pub fn begin_authorization_effect(
+        &self,
+        kind: MobileMusicProviderAuthorizationKind,
+        now_ms: u64,
+    ) -> MobileMusicProviderTimedEffect {
+        self.lock_inner()
+            .begin_authorization_effect(kind.into(), now_ms)
+            .into()
     }
 
     /// Classifies a provider authorization callback.
@@ -257,6 +315,12 @@ impl MobileMusicProviderLifecycle {
     #[must_use]
     pub fn begin_connection_attempt(&self, now_ms: u64) -> Option<u64> {
         self.lock_inner().begin_connection_attempt(now_ms)
+    }
+
+    /// Classifies a connection or player callback without changing retry state.
+    #[must_use]
+    pub fn classify_connection(&self, id: u64) -> MobileMusicProviderConnectionCallback {
+        self.lock_inner().classify_connection(id).into()
     }
 
     /// Accepts success only for the current connection attempt.
@@ -306,20 +370,26 @@ impl MobileMusicProviderLifecycle {
 
     /// Begins one bounded artwork request.
     #[must_use]
-    pub fn begin_artwork_request(&self) -> Option<u64> {
-        self.lock_inner().begin_artwork_request()
+    pub fn begin_artwork_effect(
+        &self,
+        provider_generation: u64,
+        now_ms: u64,
+    ) -> Option<MobileMusicProviderTimedEffect> {
+        self.lock_inner()
+            .begin_artwork_effect(provider_generation, now_ms)
+            .map(Into::into)
     }
 
     /// Completes only the matching artwork request.
     #[must_use]
-    pub fn complete_artwork_request(&self, id: u64) -> MobileMusicRequestCompletion {
-        self.lock_inner().complete_artwork_request(id).into()
-    }
-
-    /// Whether another artwork attempt remains for the current item.
-    #[must_use]
-    pub fn can_retry_artwork(&self) -> bool {
-        self.lock_inner().can_retry_artwork()
+    pub fn complete_artwork_request(
+        &self,
+        provider_generation: u64,
+        id: u64,
+    ) -> MobileMusicRequestCompletion {
+        self.lock_inner()
+            .complete_artwork_request(provider_generation, id)
+            .into()
     }
 
     /// Starts a fresh artwork budget for a new item.
@@ -327,34 +397,77 @@ impl MobileMusicProviderLifecycle {
         self.lock_inner().reset_artwork();
     }
 
+    /// Schedules another artwork attempt using a distinct Rust identity.
+    #[must_use]
+    pub fn begin_artwork_retry_effect(
+        &self,
+        provider_generation: u64,
+        now_ms: u64,
+    ) -> Option<MobileMusicProviderTimedEffect> {
+        self.lock_inner()
+            .begin_artwork_retry_effect(provider_generation, now_ms)
+            .map(Into::into)
+    }
+
+    /// Completes only the matching provider's current artwork retry delay.
+    #[must_use]
+    pub fn complete_artwork_retry(
+        &self,
+        provider_generation: u64,
+        id: u64,
+    ) -> MobileMusicProviderCallbackMatch {
+        self.lock_inner()
+            .complete_artwork_retry(provider_generation, id)
+            .into()
+    }
+
     /// Begins one transport request.
     #[must_use]
-    pub fn begin_transport(&self, now_ms: u64) -> Option<u64> {
-        self.lock_inner().begin_transport(now_ms)
+    pub fn begin_transport_effect(
+        &self,
+        provider_generation: u64,
+        now_ms: u64,
+    ) -> Option<MobileMusicProviderTimedEffect> {
+        self.lock_inner()
+            .begin_transport_effect(provider_generation, now_ms)
+            .map(Into::into)
     }
 
     /// Finishes the matching transport request exactly once.
     #[must_use]
     pub fn finish_transport(
         &self,
+        provider_generation: u64,
         request_id: u64,
         outcome: MobileMusicTransportOutcome,
     ) -> MobileMusicTransportCompletion {
         self.lock_inner()
-            .finish_transport(request_id, outcome.into())
+            .finish_transport(provider_generation, request_id, outcome.into())
             .into()
     }
 
     /// Applies the portable transport timeout deadline.
     #[must_use]
-    pub fn expire_transport(&self, now_ms: u64) -> MobileMusicTransportCompletion {
-        self.lock_inner().expire_transport(now_ms).into()
+    pub fn expire_transport(
+        &self,
+        provider_generation: u64,
+        now_ms: u64,
+    ) -> MobileMusicTransportCompletion {
+        self.lock_inner()
+            .expire_transport(provider_generation, now_ms)
+            .into()
     }
 
     /// Cancels the pending transport request, if any.
     #[must_use]
-    pub fn cancel_transport(&self) -> MobileMusicTransportCompletion {
-        self.lock_inner().cancel_transport().into()
+    pub fn cancel_transport(
+        &self,
+        provider_generation: u64,
+        request_id: u64,
+    ) -> MobileMusicTransportCompletion {
+        self.lock_inner()
+            .cancel_transport(provider_generation, request_id)
+            .into()
     }
 }
 
@@ -378,6 +491,27 @@ impl From<MusicMonitorStart> for MobileMusicProviderMonitorStart {
         match value {
             MusicMonitorStart::Observe => Self::Observe,
             MusicMonitorStart::Authorize => Self::Authorize,
+        }
+    }
+}
+
+impl From<MusicDeadlineEffect> for MobileMusicProviderTimedEffect {
+    fn from(value: MusicDeadlineEffect) -> Self {
+        Self {
+            id: value.id,
+            deadline_ms: value.deadline_ms,
+        }
+    }
+}
+
+impl From<MobileMusicProviderWorkState> for MusicProviderWorkState {
+    fn from(value: MobileMusicProviderWorkState) -> Self {
+        match value {
+            MobileMusicProviderWorkState::Active => Self::Active,
+            MobileMusicProviderWorkState::AuthorizationPending => Self::AuthorizationPending,
+            MobileMusicProviderWorkState::CredentialsAvailable => Self::CredentialsAvailable,
+            MobileMusicProviderWorkState::RequiresUserAction => Self::RequiresUserAction,
+            MobileMusicProviderWorkState::Unavailable => Self::Unavailable,
         }
     }
 }
@@ -505,20 +639,25 @@ mod tests {
             lifecycle.classify_monitor(monitor.generation),
             MobileMusicProviderCallbackMatch::Current
         );
-        let authorization =
-            lifecycle.begin_authorization(MobileMusicProviderAuthorizationKind::Authorizing);
+        let authorization = lifecycle
+            .begin_authorization_effect(MobileMusicProviderAuthorizationKind::Authorizing, 0);
         let provider = lifecycle.begin_provider_session();
-        let transport = lifecycle.begin_transport(100).expect("transport");
+        let transport = lifecycle
+            .begin_transport_effect(provider, 100)
+            .expect("transport");
 
         let suspension = lifecycle.suspend();
         assert!(suspension.observation_gap);
-        assert_eq!(suspension.cancelled_transport_request_id, Some(transport));
+        assert_eq!(
+            suspension.cancelled_transport_request_id,
+            Some(transport.id)
+        );
         assert_eq!(
             lifecycle.classify_provider_session(provider),
             MobileMusicProviderCallbackMatch::Stale
         );
         assert_eq!(
-            lifecycle.finish_authorization(authorization),
+            lifecycle.finish_authorization(authorization.id),
             MobileMusicProviderAuthorizationMatch::Authorizing
         );
         assert_eq!(
@@ -531,7 +670,11 @@ mod tests {
         );
         assert_eq!(
             lifecycle
-                .finish_transport(transport, MobileMusicTransportOutcome::Accepted)
+                .finish_transport(
+                    provider,
+                    transport.id,
+                    MobileMusicTransportOutcome::Accepted
+                )
                 .state,
             MobileMusicTransportCompletionState::Stale
         );
