@@ -1426,6 +1426,7 @@ public final class CutoutSessionCore: NSObject {
 
     private func connectRecordOnly(to peripheral: CBPeripheral, using advertisement: CoreBluetoothAdvertisement, note: String?, annotations: [String]) {
         cancelPendingReconnect()
+        rustSessionState.setDeviceConnectionIntent(intent: .recordOnly)
         prepareConnectionAttempt(to: peripheral)
         suppressReconnect = false
         isRecordOnly = true
@@ -1453,8 +1454,13 @@ public final class CutoutSessionCore: NSObject {
         startPreparedConnection()
     }
 
-    private func connectForProtocolDetection(to peripheral: CBPeripheral, using advertisement: CoreBluetoothAdvertisement) {
+    private func connectForProtocolDetection(
+        to peripheral: CBPeripheral,
+        using advertisement: CoreBluetoothAdvertisement,
+        intent: DeviceConnectionIntentDto = .use
+    ) {
         cancelPendingReconnect()
+        rustSessionState.setDeviceConnectionIntent(intent: intent)
         prepareConnectionAttempt(to: peripheral)
         suppressReconnect = false
         isRecordOnly = false
@@ -1531,7 +1537,7 @@ public final class CutoutSessionCore: NSObject {
         _ = rustSessionState.connectionLinkDown(token: attempt.token)
         connectionDeadlineWorkItem?.cancel()
         publishConnectionSnapshot()
-        if wasDetecting {
+        if wasDetecting, !rustSessionState.shouldRetryIdentification() {
             recordUnresolvedProtocolDetection(.unsupported, on: nil)
             finishCaptureAfterLinkDown()
             return
@@ -1562,6 +1568,18 @@ public final class CutoutSessionCore: NSObject {
         }
     }
 
+    func recoverConnection(after failure: SessionConnectionFailure, disconnect: () -> Void) {
+        onBleQueue {
+            record("connection_attempt_failed=\(failure)")
+            clearProtocolDetectionExpiry()
+            clearPendingBegodeProbeResponses()
+            pendingWithoutResponseWrites.removeAll()
+            liveOwner = nil
+            setPhase(.discoveringServices)
+            disconnect()
+        }
+    }
+
     private func handleTransportTerminationOnBleQueue(
         platformIdentifier: String,
         error: Error?,
@@ -1574,17 +1592,15 @@ public final class CutoutSessionCore: NSObject {
         testScriptUpdateWorkItem?.cancel()
         testScriptUpdateWorkItem = nil
 #endif
+        clearProtocolDetectionExpiry()
         markOutstandingBegodeProbeResponsesMissing()
         finishCaptureAfterLinkDown()
         let wasRecordOnlyConnection = isRecordOnly
         isRecordOnly = false
-        isDetectingProtocol = true
-        selectedModel = nil
-        selectedRoute = nil
+        isDetectingProtocol = selectedRoute == nil
         rideMapConnectionObserved = false
         liveOwner = nil
-        deviceDetectionSession.reset()
-        _ = deviceDetectionSession.observeAdvertisement(name: advertisement?.localName.map { Data($0.utf8) })
+        rustSessionState.resetDeviceDetectionLink()
         subscribedCharacteristics.removeAll()
         pendingWithoutResponseWrites.removeAll()
         pendingServiceDiscoveries.removeAll()
@@ -1612,6 +1628,7 @@ public final class CutoutSessionCore: NSObject {
         error: Error?,
         reconnect: @escaping () -> Void
     ) {
+        rustSessionState.setDeviceConnectionIntent(intent: .reconnect)
         let connectionGeneration = connectionSnapshot.generation
         guard let schedule = reconnectController.schedule(
             jitter: reconnectJitter(),
@@ -1628,14 +1645,13 @@ public final class CutoutSessionCore: NSObject {
                 }
             }
         ) else {
+            rustSessionState.setDeviceConnectionIntent(intent: .recordOnly)
             setPhase(.failed(.connectFailed(error.sessionMessage)))
             central?.scanForPeripherals(withServices: nil)
             return
         }
 
-        isDetectingProtocol = true
-        selectedRoute = nil
-        selectedModel = nil
+        isDetectingProtocol = selectedRoute == nil
         rideMapConnectionObserved = false
         setPhase(.discoveringServices)
 
@@ -2438,8 +2454,16 @@ extension CutoutSessionCore: CBCentralManagerDelegate {
         } else {
             nil
         }
+        publishBluetoothRestoration(restoredPlatformIdentifier)
+    }
+
+    func publishBluetoothRestoration(_ restoredPlatformIdentifier: String?) {
+        let restoredPhase = phase
         publishOnMain {
             self.onBluetoothRestorationResolved?(restoredPlatformIdentifier)
+            if restoredPlatformIdentifier != nil {
+                self.onPhaseChange?(restoredPhase)
+            }
         }
     }
 
@@ -2474,7 +2498,11 @@ extension CutoutSessionCore: CBCentralManagerDelegate {
             switch peripheral.state {
             case .connected:
                 if connectionSnapshot.transport != .connected, let advertisement {
-                    connectForProtocolDetection(to: peripheral, using: advertisement)
+                    connectForProtocolDetection(
+                        to: peripheral,
+                        using: advertisement,
+                        intent: .reconnect
+                    )
                     return
                 }
                 resumeConnectedPeripheral(peripheral)
@@ -2485,7 +2513,11 @@ extension CutoutSessionCore: CBCentralManagerDelegate {
                 return
             case .disconnected, .disconnecting:
                 if let advertisement {
-                    connectForProtocolDetection(to: peripheral, using: advertisement)
+                    connectForProtocolDetection(
+                        to: peripheral,
+                        using: advertisement,
+                        intent: .reconnect
+                    )
                     return
                 }
             @unknown default:
@@ -3103,7 +3135,23 @@ extension CutoutSessionCore {
         }
     }
 
-    private func recordUnresolvedProtocolDetection(
+    func recordUnresolvedProtocolDetection(
+        _ failure: IdentificationProbeFailure,
+        on peripheral: CBPeripheral?
+    ) {
+        onBleQueue {
+            if rustSessionState.shouldRetryIdentification() {
+                annotateDetection("protocol_detection_retry=\(failure)")
+                recoverConnection(after: .identificationFailed(failure)) {
+                    if let peripheral { self.central?.cancelPeripheralConnection(peripheral) }
+                }
+                return
+            }
+            enterUnresolvedCapture(failure, on: peripheral)
+        }
+    }
+
+    private func enterUnresolvedCapture(
         _ failure: IdentificationProbeFailure,
         on peripheral: CBPeripheral?
     ) {
