@@ -35,9 +35,11 @@ pub struct DeviceActionsSnapshot {
 impl DeviceConnectionSession {
     /// Returns the current device's semantic action catalog.
     #[must_use]
-    pub fn action_descriptors(&self, validation_mode: bool) -> Vec<ActionDescriptor> {
+    pub fn action_descriptors(&self) -> Vec<ActionDescriptor> {
         self.device.as_ref().map_or_else(Vec::new, |device| {
-            device.control_profile().action_descriptors(validation_mode)
+            device
+                .control_profile()
+                .action_descriptors(self.validation_authorized())
         })
     }
 
@@ -48,7 +50,7 @@ impl DeviceConnectionSession {
             connection: self.state.connection.snapshot().clone(),
             at: self.last_input_at,
             actions: self
-                .action_descriptors(false)
+                .action_descriptors()
                 .into_iter()
                 .map(|descriptor| {
                     self.state
@@ -67,7 +69,6 @@ impl DeviceConnectionSession {
         &mut self,
         token: &ConnectionAttemptToken,
         id: DeviceActionId,
-        validation_mode: bool,
         at: MonotonicTimestamp,
     ) -> Result<DeviceConnectionStep, DeviceActionSubmissionError> {
         if !self.state.connection.is_verified(token) {
@@ -88,7 +89,7 @@ impl DeviceConnectionSession {
                     DeviceActionSubmissionError::RestartRequired
                 }
             })?;
-        let command = profile.action_command(request, validation_mode)?;
+        let command = profile.action_command(request, self.validation_authorized())?;
         let step = self
             .ingest_validated(
                 token,
@@ -147,12 +148,7 @@ mod tests {
                 .is_none()
         );
         let result = owner
-            .submit_action(
-                &token,
-                DeviceActionId::Horn,
-                false,
-                MonotonicTimestamp::new(2),
-            )
+            .submit_action(&token, DeviceActionId::Horn, MonotonicTimestamp::new(2))
             .unwrap();
         assert_eq!(result.result.error, None);
         assert!(result.result.outputs.iter().any(|output| matches!(
@@ -187,11 +183,11 @@ mod tests {
         let mut owner = DeviceConnectionSession::default();
         let token = super::super::tests::connected_aero(&mut owner);
         let _ = owner.ingest(&token, &gyro_readback(128, 2));
+        assert!(owner.set_validation_authorization(&token, true));
         let step = owner
             .submit_action(
                 &token,
                 DeviceActionId::GyroCalibration,
-                true,
                 MonotonicTimestamp::new(3),
             )
             .unwrap();
@@ -210,7 +206,6 @@ mod tests {
             owner.submit_action(
                 &token,
                 DeviceActionId::GyroCalibration,
-                true,
                 MonotonicTimestamp::new(4)
             ),
             Err(DeviceActionSubmissionError::Busy)
@@ -230,7 +225,6 @@ mod tests {
             .submit_action(
                 &token,
                 DeviceActionId::GyroCalibration,
-                true,
                 MonotonicTimestamp::new(6),
             )
             .unwrap();
@@ -250,7 +244,6 @@ mod tests {
             owner.submit_action(
                 &token,
                 DeviceActionId::GyroCalibration,
-                true,
                 MonotonicTimestamp::new(8)
             ),
             Err(DeviceActionSubmissionError::RestartRequired)
@@ -280,7 +273,6 @@ mod tests {
             owner.submit_action(
                 &token,
                 DeviceActionId::ResetTripMeter,
-                false,
                 MonotonicTimestamp::new(3)
             ),
             Err(DeviceActionSubmissionError::Profile(
@@ -288,11 +280,11 @@ mod tests {
             ))
         );
         assert_eq!(owner.actions_snapshot(), before_refusal);
+        assert!(owner.set_validation_authorization(&token, true));
         let result = owner
             .submit_action(
                 &token,
                 DeviceActionId::ResetTripMeter,
-                true,
                 MonotonicTimestamp::new(3),
             )
             .unwrap();
@@ -318,7 +310,6 @@ mod tests {
             owner.submit_action(
                 &token,
                 DeviceActionId::ResetTripMeter,
-                false,
                 MonotonicTimestamp::new(5)
             ),
             Err(DeviceActionSubmissionError::ConnectionUnavailable)

@@ -175,6 +175,8 @@ impl From<cutout_core::DeviceActionSnapshot> for MobileDeviceActionSnapshotDto {
 pub struct MobileDeviceActionDescriptorsDto {
     /// Current connection token and readiness.
     pub connection: MobileConnectionAttemptSnapshotDto,
+    /// Whether this attempt authorizes source-backed validation writes.
+    pub validation_authorized: bool,
     /// Semantic action catalog.
     pub descriptors: Vec<MobileDeviceActionDescriptorDto>,
 }
@@ -235,12 +237,13 @@ impl From<DeviceActionSubmissionError> for MobileDeviceActionSubmissionError {
 impl CutoutSessionStateHandle {
     /// Projects protocol-owned action definitions and connection identity atomically.
     #[must_use]
-    pub fn action_descriptors(&self, validation_mode: bool) -> MobileDeviceActionDescriptorsDto {
+    pub fn action_descriptors(&self) -> MobileDeviceActionDescriptorsDto {
         let inner = self.lock_inner();
         MobileDeviceActionDescriptorsDto {
             connection: inner.state.connection.snapshot().into(),
+            validation_authorized: inner.validation_authorized(),
             descriptors: inner
-                .action_descriptors(validation_mode)
+                .action_descriptors()
                 .into_iter()
                 .map(Into::into)
                 .collect(),
@@ -264,14 +267,12 @@ impl CutoutSessionStateHandle {
         &self,
         token: MobileConnectionAttemptTokenDto,
         id: MobileDeviceActionIdDto,
-        validation_mode: bool,
         monotonic_ms: u64,
     ) -> Result<MobileDeviceSessionStepDto, MobileDeviceActionSubmissionError> {
         self.lock_inner()
             .submit_action(
                 &token.into(),
                 id.into(),
-                validation_mode,
                 cutout_core::MonotonicTimestamp::new(monotonic_ms),
             )
             .map(Into::into)
@@ -313,7 +314,7 @@ mod tests {
             },
         );
         drop(inner);
-        let catalog = handle.action_descriptors(false);
+        let catalog = handle.action_descriptors();
         assert_eq!(catalog.connection.token, Some(token.clone()));
         let reset = catalog
             .descriptors
@@ -324,23 +325,14 @@ mod tests {
         let before_refusal = handle.actions_snapshot();
         assert_eq!(
             handle
-                .submit_action(
-                    token.clone(),
-                    MobileDeviceActionIdDto::ResetTripMeter,
-                    false,
-                    3
-                )
+                .submit_action(token.clone(), MobileDeviceActionIdDto::ResetTripMeter, 3)
                 .unwrap_err(),
             MobileDeviceActionSubmissionError::Unverified
         );
         assert_eq!(handle.actions_snapshot(), before_refusal);
+        assert!(handle.set_device_controls_validation(token.clone(), true));
         handle
-            .submit_action(
-                token.clone(),
-                MobileDeviceActionIdDto::ResetTripMeter,
-                true,
-                3,
-            )
+            .submit_action(token.clone(), MobileDeviceActionIdDto::ResetTripMeter, 3)
             .unwrap();
         assert_eq!(
             handle
@@ -355,7 +347,7 @@ mod tests {
         let replacement = handle.begin_connection_attempt("B".into(), 4);
         assert_eq!(
             handle
-                .submit_action(token, MobileDeviceActionIdDto::ResetTripMeter, true, 5)
+                .submit_action(token, MobileDeviceActionIdDto::ResetTripMeter, 5)
                 .unwrap_err(),
             MobileDeviceActionSubmissionError::ConnectionUnavailable
         );

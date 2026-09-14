@@ -300,6 +300,8 @@ impl From<DeviceSettingSnapshot> for MobileSettingSnapshotDto {
 pub struct MobileSettingsDescriptorSnapshotDto {
     /// Immutable admission and identity token.
     pub connection: MobileConnectionAttemptSnapshotDto,
+    /// Whether this attempt authorizes source-backed validation writes.
+    pub validation_authorized: bool,
     /// Protocol-selected controls.
     pub descriptors: Vec<MobileSettingDescriptorDto>,
 }
@@ -330,6 +332,8 @@ impl From<DeviceSettingsSnapshot> for MobileDeviceSettingsSnapshotDto {
 pub struct MobileDeviceControlsSnapshotDto {
     /// Attempt and readiness associated with every row.
     pub connection: MobileConnectionAttemptSnapshotDto,
+    /// Whether this attempt authorizes source-backed validation writes.
+    pub validation_authorized: bool,
     /// Owner timestamp used to calculate ages.
     pub at_ms: u64,
     /// Optional protocol-selected battery basis, preserving its original evidence.
@@ -386,10 +390,7 @@ impl From<DeviceSettingRequestError> for MobileDeviceSettingRequestError {
 impl CutoutSessionStateHandle {
     /// Reads the complete Tune presentation under the existing session lock.
     #[must_use]
-    pub fn device_controls_snapshot(
-        &self,
-        validation_mode: bool,
-    ) -> MobileDeviceControlsSnapshotDto {
+    pub fn device_controls_snapshot(&self) -> MobileDeviceControlsSnapshotDto {
         let inner = self.lock_inner();
         let settings: MobileDeviceSettingsSnapshotDto = inner.settings_snapshot().into();
         let actions = inner.actions_snapshot();
@@ -406,16 +407,17 @@ impl CutoutSessionStateHandle {
                 });
         MobileDeviceControlsSnapshotDto {
             connection: settings.connection,
+            validation_authorized: inner.validation_authorized(),
             default_charge_profile,
             at_ms: settings.at_ms,
             setting_descriptors: inner
-                .settings_descriptors(validation_mode)
+                .settings_descriptors()
                 .into_iter()
                 .map(Into::into)
                 .collect(),
             settings: settings.settings,
             action_descriptors: inner
-                .action_descriptors(validation_mode)
+                .action_descriptors()
                 .into_iter()
                 .map(Into::into)
                 .collect(),
@@ -425,15 +427,13 @@ impl CutoutSessionStateHandle {
 
     /// Projects semantic controls and their producing connection under one lock.
     #[must_use]
-    pub fn settings_descriptors(
-        &self,
-        validation_mode: bool,
-    ) -> MobileSettingsDescriptorSnapshotDto {
+    pub fn settings_descriptors(&self) -> MobileSettingsDescriptorSnapshotDto {
         let inner = self.lock_inner();
         MobileSettingsDescriptorSnapshotDto {
             connection: inner.state.connection.snapshot().into(),
+            validation_authorized: inner.validation_authorized(),
             descriptors: inner
-                .settings_descriptors(validation_mode)
+                .settings_descriptors()
                 .into_iter()
                 .map(Into::into)
                 .collect(),
@@ -446,13 +446,22 @@ impl CutoutSessionStateHandle {
         self.lock_inner().settings_snapshot().into()
     }
 
+    /// Changes validation authorization for exactly one current connection attempt.
+    pub fn set_device_controls_validation(
+        &self,
+        token: MobileConnectionAttemptTokenDto,
+        authorized: bool,
+    ) -> bool {
+        self.lock_inner()
+            .set_validation_authorization(&token.into(), authorized)
+    }
+
     /// Submits one semantic value through the protocol owner.
     pub fn submit_setting(
         &self,
         token: MobileConnectionAttemptTokenDto,
         id: MobileSettingIdDto,
         value: MobileSettingValueDto,
-        validation_mode: bool,
         monotonic_ms: u64,
     ) -> Result<MobileDeviceSessionStepDto, MobileDeviceSettingRequestError> {
         self.lock_inner()
@@ -460,7 +469,6 @@ impl CutoutSessionStateHandle {
                 &token.into(),
                 id.into(),
                 value.into(),
-                validation_mode,
                 cutout_core::MonotonicTimestamp::new(monotonic_ms),
             )
             .map(Into::into)
@@ -509,7 +517,7 @@ mod tests {
         assert!(handle.configure_connection_vesc_profile(first.clone(), profile));
         assert!(
             handle
-                .device_controls_snapshot(false)
+                .device_controls_snapshot()
                 .default_charge_profile
                 .is_none()
         );
@@ -517,7 +525,7 @@ mod tests {
         handle.observe_connection_notification(first.clone(), vesc_reply.clone());
         handle.resolve_device_session(first.clone(), false, 1);
         let selected = handle
-            .device_controls_snapshot(false)
+            .device_controls_snapshot()
             .default_charge_profile
             .unwrap();
         assert_eq!(
@@ -540,7 +548,7 @@ mod tests {
         handle.observe_connection_notification(second.clone(), aero_frame);
         handle.resolve_device_session(second.clone(), false, 3);
         let selected = handle
-            .device_controls_snapshot(false)
+            .device_controls_snapshot()
             .default_charge_profile
             .unwrap();
         assert_eq!(
@@ -558,7 +566,7 @@ mod tests {
         handle.resolve_device_session(third, false, 5);
         assert!(
             handle
-                .device_controls_snapshot(false)
+                .device_controls_snapshot()
                 .default_charge_profile
                 .is_none()
         );
@@ -592,8 +600,9 @@ mod tests {
                 monotonic_ms: cutout_core::MonotonicMillisDto { milliseconds: 1 },
             },
         );
-        let descriptors = handle.settings_descriptors(false);
+        let descriptors = handle.settings_descriptors();
         assert_eq!(descriptors.connection.token, Some(token.clone()));
+        assert!(!descriptors.validation_authorized);
         assert!(
             descriptors
                 .descriptors
@@ -605,7 +614,6 @@ mod tests {
                 token.clone(),
                 MobileSettingIdDto::HighBeam,
                 MobileSettingValueDto::Boolean { value: true },
-                false,
                 2,
             )
             .unwrap();
@@ -630,13 +638,14 @@ mod tests {
                     token.clone(),
                     MobileSettingIdDto::HighBeam,
                     MobileSettingValueDto::Number { value: 80 },
-                    false,
                     3
                 )
                 .unwrap_err(),
             MobileDeviceSettingRequestError::InvalidValue
         );
         assert_eq!(handle.settings_snapshot(), before);
+        assert!(handle.set_device_controls_validation(token.clone(), true));
+        assert!(handle.settings_descriptors().validation_authorized);
         let next = handle.begin_connection_attempt("B".into(), 4);
         assert_eq!(
             handle
@@ -644,14 +653,14 @@ mod tests {
                     token,
                     MobileSettingIdDto::HighBeam,
                     MobileSettingValueDto::Boolean { value: false },
-                    false,
                     5
                 )
                 .unwrap_err(),
             MobileDeviceSettingRequestError::ConnectionUnavailable
         );
-        assert_eq!(handle.settings_descriptors(true).connection, next);
-        assert!(handle.settings_descriptors(true).descriptors.is_empty());
+        assert_eq!(handle.settings_descriptors().connection, next);
+        assert!(!handle.settings_descriptors().validation_authorized);
+        assert!(handle.settings_descriptors().descriptors.is_empty());
         assert!(handle.settings_snapshot().settings.is_empty());
     }
 

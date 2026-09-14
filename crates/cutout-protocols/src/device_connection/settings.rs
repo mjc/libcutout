@@ -32,10 +32,31 @@ pub struct DeviceSettingsSnapshot {
 impl DeviceConnectionSession {
     /// Returns semantic controls available on the selected exact protocol model.
     #[must_use]
-    pub fn settings_descriptors(&self, validation_mode: bool) -> Vec<SettingDescriptor> {
+    pub fn settings_descriptors(&self) -> Vec<SettingDescriptor> {
         self.device.as_ref().map_or_else(Vec::new, |device| {
-            device.control_profile().descriptors(validation_mode)
+            device
+                .control_profile()
+                .descriptors(self.validation_authorized)
         })
+    }
+
+    /// Changes validation authorization only for the current connection attempt.
+    pub fn set_validation_authorization(
+        &mut self,
+        token: &ConnectionAttemptToken,
+        authorized: bool,
+    ) -> bool {
+        if !self.state.connection.is_current(token) {
+            return false;
+        }
+        self.validation_authorized = authorized;
+        true
+    }
+
+    /// Returns the current attempt's validation authorization.
+    #[must_use]
+    pub const fn validation_authorized(&self) -> bool {
+        self.validation_authorized
     }
 
     /// Returns immutable observed/requested state for the current connection.
@@ -57,20 +78,20 @@ impl DeviceConnectionSession {
         token: &ConnectionAttemptToken,
         id: SettingId,
         value: DeviceSettingValue,
-        validation_mode: bool,
         at: MonotonicTimestamp,
     ) -> Result<DeviceConnectionStep, DeviceSettingRequestError> {
         if !self.state.connection.is_verified(token) {
             return Err(DeviceSettingRequestError::ConnectionUnavailable);
         }
+        let validation_authorized = self.validation_authorized;
         let device = self
             .device
             .as_mut()
             .ok_or(DeviceSettingRequestError::ConnectionUnavailable)?;
         let profile = device.control_profile();
-        let command = profile.command(id, value, validation_mode)?;
+        let command = profile.command(id, value, validation_authorized)?;
         let confirmation_supported = profile
-            .descriptors(validation_mode)
+            .descriptors(validation_authorized)
             .iter()
             .any(|descriptor| descriptor.id == id && descriptor.confirmation_supported);
         let step = self
@@ -155,7 +176,6 @@ mod tests {
                 &token,
                 SettingId::HighBeam,
                 DeviceSettingValue::Boolean(true),
-                false,
                 MonotonicTimestamp::new(2),
             )
             .unwrap();
@@ -187,7 +207,6 @@ mod tests {
                 &token,
                 SettingId::HighBeam,
                 DeviceSettingValue::Boolean(true),
-                false,
                 MonotonicTimestamp::new(2),
             )
             .unwrap();
@@ -197,7 +216,6 @@ mod tests {
                 &token,
                 SettingId::HighBeam,
                 DeviceSettingValue::Number(7),
-                false,
                 MonotonicTimestamp::new(3)
             ),
             Err(DeviceSettingRequestError::Profile(
@@ -211,7 +229,6 @@ mod tests {
                 &token,
                 SettingId::HighBeam,
                 DeviceSettingValue::Boolean(false),
-                false,
                 MonotonicTimestamp::new(5)
             ),
             Err(DeviceSettingRequestError::ConnectionUnavailable)
@@ -228,19 +245,18 @@ mod tests {
                 &token,
                 SettingId::PwmTiltback,
                 DeviceSettingValue::Number(80),
-                false,
                 MonotonicTimestamp::new(2)
             ),
             Err(DeviceSettingRequestError::Profile(
                 SettingsRequestError::Unverified
             ))
         );
+        assert!(owner.set_validation_authorization(&token, true));
         let refused = owner
             .submit_setting(
                 &token,
                 SettingId::PwmTiltback,
                 DeviceSettingValue::Number(80),
-                true,
                 MonotonicTimestamp::new(2),
             )
             .unwrap();
@@ -268,7 +284,6 @@ mod tests {
                 &token,
                 SettingId::PwmTiltback,
                 DeviceSettingValue::Number(80),
-                true,
                 MonotonicTimestamp::new(11),
             )
             .unwrap();
@@ -282,7 +297,6 @@ mod tests {
                 &token,
                 SettingId::PwmTiltback,
                 DeviceSettingValue::Number(85),
-                true,
                 MonotonicTimestamp::new(10_000),
             )
             .unwrap();
@@ -291,5 +305,36 @@ mod tests {
             output,
             SessionOutput::Transport(TransportAction::Write { .. })
         )));
+    }
+    #[test]
+    fn validation_authorization_is_owned_by_one_connection_attempt() {
+        let mut owner = DeviceConnectionSession::default();
+        let first = super::super::tests::connected_aero(&mut owner);
+        assert_eq!(
+            owner
+                .settings_descriptors()
+                .into_iter()
+                .find(|item| item.id == SettingId::PwmTiltback)
+                .unwrap()
+                .access,
+            crate::SettingAccess::Unverified
+        );
+        assert!(owner.set_validation_authorization(&first, true));
+        assert!(owner.validation_authorized());
+        assert_eq!(
+            owner
+                .settings_descriptors()
+                .into_iter()
+                .find(|item| item.id == SettingId::PwmTiltback)
+                .unwrap()
+                .access,
+            crate::SettingAccess::Writable
+        );
+
+        owner.begin_attempt("B".into(), MonotonicTimestamp::new(3));
+        let replacement = owner.state.connection.snapshot().token.clone().unwrap();
+        assert!(!owner.validation_authorized());
+        assert!(!owner.set_validation_authorization(&first, true));
+        assert!(owner.set_validation_authorization(&replacement, true));
     }
 }

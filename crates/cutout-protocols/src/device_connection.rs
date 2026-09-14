@@ -370,6 +370,7 @@ pub struct DeviceConnectionSession {
     pub device: Option<DeviceSession>,
     last_input_at: MonotonicTimestamp,
     vesc_board_profile: Option<crate::VescBoardProfile>,
+    validation_authorized: bool,
 }
 
 impl DeviceConnectionSession {
@@ -377,6 +378,7 @@ impl DeviceConnectionSession {
     pub fn begin_attempt(&mut self, platform_identifier: String, at: MonotonicTimestamp) {
         self.last_input_at = at;
         self.vesc_board_profile = None;
+        self.validation_authorized = false;
         self.state.reset_device_identity();
         self.state
             .select_discovered_platform(platform_identifier.clone());
