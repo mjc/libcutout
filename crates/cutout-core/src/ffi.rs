@@ -5,20 +5,21 @@ use crate::{
     AeroPwmSetting, AeroRidingMode, AeroSpeedSetting, AeroTransportMode, AeroVoltageCorrection,
     Angle, BatteryCurrent, BatteryInfo, BatteryLevel, BatteryPageKind, BatteryPageMetadata,
     BatteryPagePayload, BatteryReadback, BatteryReadbackAvailability, BegodeBeeperVolume,
-    BegodeLedModeSetting, BegodeMaxSpeed, BmsPackCurrents, ChargeMode, CommandKind, ControlRefusal,
-    ControlRefusalReason, DeviceCommand, DeviceEvent, DiagnosticDetail, DiagnosticError,
-    DiagnosticErrorKind, DiagnosticReadback, DiagnosticSeverity, Distance, DutyCycle, FaultCode,
-    FaultHistoryAvailability, FaultHistoryEntry, FaultHistoryReadback, FirmwareInfo,
-    FootpadContactState, FootpadTelemetry, IgnoredNotificationEvidence, IgnoredNotificationReason,
-    LightState, Measured, MonotonicTimestamp, NotificationByteLen, NotificationEvidence,
-    NotificationIngestOutcome, ParserDiagnosticCount, ParserDiagnostics, ParserDroppedBytes,
-    ParserError, ParserFrameLen, ParserGapEvidence, PayloadBodyLen, PedalMode, PhaseCurrent, Power,
-    ProtocolFamily, ProtocolTag, RawFieldValue, RawTelemetryReadback, ReadOnlyResponse,
-    ReservedPayloadEvidence, RideOperatingMode, RideOperatingState, RideStopReason, RideWarning,
-    RollAngle, SafetyClass, SemanticEventCount, SessionInput, SessionOutput, SettingsEntry,
-    SettingsReadback, SettingsReadbackAvailability, Speed, SpeedAlarmMode, TelemetryDelta,
-    TelemetrySnapshot, Temperature, TransportAction, TransportWriteLimit, ValueQuality,
-    ValueSource, VerificationStatus, Voltage, WriteMode,
+    BegodeLedModeSetting, BegodeMaxSpeed, BmsObservationIndex, BmsPackCurrents, ChargeMode,
+    CommandKind, ControlRefusal, ControlRefusalReason, DeviceCommand, DeviceEvent,
+    DiagnosticDetail, DiagnosticError, DiagnosticErrorKind, DiagnosticReadback, DiagnosticSeverity,
+    Distance, DutyCycle, FaultCode, FaultHistoryAvailability, FaultHistoryEntry,
+    FaultHistoryReadback, FirmwareInfo, FootpadContactState, FootpadTelemetry,
+    IgnoredNotificationEvidence, IgnoredNotificationReason, LightState, Measured,
+    MonotonicTimestamp, NotificationByteLen, NotificationEvidence, NotificationIngestOutcome,
+    ParserDiagnosticCount, ParserDiagnostics, ParserDroppedBytes, ParserError, ParserFrameLen,
+    ParserGapEvidence, PayloadBodyLen, PedalMode, PhaseCurrent, Power, ProtocolFamily, ProtocolTag,
+    RawFieldValue, RawTelemetryReadback, ReadOnlyResponse, ReservedPayloadEvidence,
+    RideOperatingMode, RideOperatingState, RideStopReason, RideWarning, RollAngle, SafetyClass,
+    SemanticEventCount, SessionInput, SessionOutput, SettingsEntry, SettingsReadback,
+    SettingsReadbackAvailability, Speed, SpeedAlarmMode, TelemetryDelta, TelemetrySnapshot,
+    Temperature, TransportAction, TransportWriteLimit, ValueQuality, ValueSource,
+    VerificationStatus, Voltage, WriteMode,
 };
 
 /// UniFFI-ready owned read-only output.
@@ -1455,9 +1456,21 @@ pub struct BatteryReadbackDto {
 
 impl From<BatteryReadback> for BatteryReadbackDto {
     fn from(readback: BatteryReadback) -> Self {
+        let observation_summary =
+            crate::BmsObservationSummary::from_readbacks(std::slice::from_ref(&readback));
+        let first_observation_index = readback
+            .first_observation_index()
+            .map(BmsObservationIndex::get);
+        let mut page = readback
+            .page()
+            .cloned()
+            .map(|page| BatteryInfoDto::from_payload(page, first_observation_index));
+        if let Some(page) = &mut page {
+            page.observation_summary = observation_summary;
+        }
         Self {
             availability: readback.availability().into(),
-            page: readback.page().cloned().map(Into::into),
+            page,
         }
     }
 }
@@ -1465,6 +1478,9 @@ impl From<BatteryReadback> for BatteryReadbackDto {
 /// UniFFI-ready battery or BMS response.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct BatteryInfoDto {
+    /// Core-owned voltage summary; session projections supply the retained cross-page summary.
+    pub observation_summary: crate::BmsObservationSummary,
+
     /// Page metadata for this battery response.
     pub page: BmsStatusPage,
 
@@ -1495,12 +1511,21 @@ pub struct BatteryInfoDto {
     /// Page-specific cell or cell-group voltage values in millivolts.
     pub cell_voltages: Vec<VoltageReadingDto>,
 
+    /// First stable observation index assigned by the protocol decoder, when known.
+    pub first_observation_index: Option<u16>,
+
     /// Raw battery or BMS state field.
     pub raw_state: Option<RawFieldValueDto>,
 }
 
 impl From<BatteryPagePayload> for BatteryInfoDto {
     fn from(payload: BatteryPagePayload) -> Self {
+        Self::from_payload(payload, None)
+    }
+}
+
+impl BatteryInfoDto {
+    fn from_payload(payload: BatteryPagePayload, first_observation_index: Option<u16>) -> Self {
         let battery = payload.battery();
         let temperatures = payload
             .temperatures()
@@ -1517,26 +1542,33 @@ impl From<BatteryPagePayload> for BatteryInfoDto {
                 .collect(),
             BatteryPagePayload::Temperature(_) | BatteryPagePayload::Raw(_) => Vec::new(),
         };
-        Self::from_payload_parts(
+        let mut result = Self::from_payload_parts(
             payload.page(),
             battery,
             payload.bms_pack_currents(),
             temperatures,
             cell_voltages,
-        )
+            first_observation_index,
+        );
+        let mut readback = BatteryReadback::available(payload);
+        if let Some(index) = first_observation_index {
+            readback = readback.with_first_observation_index(BmsObservationIndex::new(index));
+        }
+        result.observation_summary = crate::BmsObservationSummary::from_readbacks(&[readback]);
+        result
     }
-}
 
-impl BatteryInfoDto {
     fn from_payload_parts(
         page: BatteryPageMetadata,
         battery: BatteryInfo,
         bms_pack_currents: Option<BmsPackCurrents>,
         temperatures: Vec<Option<TemperatureReadingDto>>,
         cell_voltages: Vec<VoltageReadingDto>,
+        first_observation_index: Option<u16>,
     ) -> Self {
         Self {
             page: page.into(),
+            observation_summary: crate::BmsObservationSummary::default(),
             voltage: battery.voltage.map(Into::into),
             current: battery.current.map(Into::into),
             bms_pack_current_0: bms_pack_currents.map(|currents| {
@@ -1550,6 +1582,7 @@ impl BatteryInfoDto {
             temperature: battery.temperature.map(Into::into),
             temperatures,
             cell_voltages,
+            first_observation_index,
             raw_state: battery.raw_state.map(Into::into),
         }
     }

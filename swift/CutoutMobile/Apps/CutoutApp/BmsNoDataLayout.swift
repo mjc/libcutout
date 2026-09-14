@@ -63,9 +63,6 @@ struct BmsNoDataLayout: View {
 
                     BmsNoDataUnknownsCard(rows: snapshot.noDataUnknownRows)
 
-                    if let liveSnapshot, liveSnapshot.shouldRenderReadback {
-                        BmsDiagnosticsSection(snapshot: liveSnapshot)
-                    }
                 }
                 .padding(.horizontal, 24)
                 .padding(.top, 44)

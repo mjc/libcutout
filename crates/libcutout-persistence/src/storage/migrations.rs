@@ -1,7 +1,7 @@
 use super::{MapPointId, SpatialRowId, StorageError};
 use rusqlite::{Connection, OptionalExtension, params};
 
-const CURRENT_SCHEMA_VERSION: i64 = 20;
+const CURRENT_SCHEMA_VERSION: i64 = 21;
 const APPLICATION_ID: i64 = 0x4355_544f;
 
 fn current_schema_pragmas() -> String {
@@ -41,6 +41,7 @@ pub(super) fn migrate(connection: &mut Connection) -> Result<(), StorageError> {
         17 => migrate_v17_to_current(connection)?,
         18 => migrate_v18_to_current(connection)?,
         19 => migrate_v19_to_current(connection)?,
+        20 => migrate_v20_to_current(connection)?,
         CURRENT_SCHEMA_VERSION => {
             if application_id != APPLICATION_ID {
                 return Err(StorageError::InvalidDatabaseIdentity);
@@ -193,6 +194,19 @@ pub(crate) fn create_current_schema(connection: &Connection) -> Result<(), Stora
             observed_at_ms INTEGER CHECK (observed_at_ms IS NULL OR observed_at_ms BETWEEN 0 AND monotonic_at_ms),
             PRIMARY KEY (ride_id, sequence)
         );
+        CREATE TABLE bms_voltage_samples (
+            device_identity TEXT NOT NULL CHECK (length(device_identity) BETWEEN 1 AND 512),
+            monotonic_ms INTEGER NOT NULL CHECK (monotonic_ms >= 0),
+            wall_clock_ms INTEGER NOT NULL CHECK (wall_clock_ms >= 0),
+            observation_index INTEGER NOT NULL CHECK (observation_index BETWEEN 0 AND 65535),
+            pack_index INTEGER CHECK (pack_index IS NULL OR pack_index BETWEEN 0 AND 65535),
+            pack_observation_index INTEGER
+                CHECK (pack_observation_index IS NULL OR pack_observation_index BETWEEN 0 AND 65535),
+            millivolts INTEGER NOT NULL,
+            PRIMARY KEY (device_identity, monotonic_ms, wall_clock_ms, observation_index)
+        );
+        CREATE INDEX bms_voltage_samples_history
+            ON bms_voltage_samples(device_identity, observation_index, wall_clock_ms DESC);
         CREATE TABLE selected_device (
             singleton_key BLOB PRIMARY KEY NOT NULL CHECK (length(singleton_key) = 16),
             platform_identifier TEXT NOT NULL CHECK (length(platform_identifier) BETWEEN 1 AND 512),
@@ -1028,13 +1042,37 @@ fn migrate_v18_to_current(connection: &mut Connection) -> Result<(), StorageErro
              END;",
         )?;
     }
-    transaction.execute_batch(&current_schema_pragmas())?;
+    transaction.execute_batch(&format!(
+        "PRAGMA application_id = {APPLICATION_ID}; PRAGMA user_version = 20;"
+    ))?;
     transaction.commit()?;
-    Ok(())
+    migrate_v20_to_current(connection)
 }
 
 fn migrate_v19_to_current(connection: &mut Connection) -> Result<(), StorageError> {
     migrate_v18_to_current(connection)
+}
+
+fn migrate_v20_to_current(connection: &mut Connection) -> Result<(), StorageError> {
+    let transaction = connection.transaction()?;
+    transaction.execute_batch(
+        "CREATE TABLE bms_voltage_samples (
+             device_identity TEXT NOT NULL CHECK (length(device_identity) BETWEEN 1 AND 512),
+             monotonic_ms INTEGER NOT NULL CHECK (monotonic_ms >= 0),
+             wall_clock_ms INTEGER NOT NULL CHECK (wall_clock_ms >= 0),
+             observation_index INTEGER NOT NULL CHECK (observation_index BETWEEN 0 AND 65535),
+             pack_index INTEGER CHECK (pack_index IS NULL OR pack_index BETWEEN 0 AND 65535),
+             pack_observation_index INTEGER
+                 CHECK (pack_observation_index IS NULL OR pack_observation_index BETWEEN 0 AND 65535),
+             millivolts INTEGER NOT NULL,
+             PRIMARY KEY (device_identity, monotonic_ms, wall_clock_ms, observation_index)
+         );
+         CREATE INDEX bms_voltage_samples_history
+             ON bms_voltage_samples(device_identity, observation_index, wall_clock_ms DESC);",
+    )?;
+    transaction.execute_batch(&current_schema_pragmas())?;
+    transaction.commit()?;
+    Ok(())
 }
 
 fn table_has_column(
@@ -1077,6 +1115,7 @@ pub(super) fn verify_current_schema(connection: &Connection) -> Result<(), Stora
         "map_points_rtree",
         "ride_music_history",
         "ride_music_event",
+        "bms_voltage_samples",
     ] {
         let exists: bool = connection.query_row(
             "SELECT EXISTS(SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = ?1)",

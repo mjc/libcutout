@@ -2,16 +2,17 @@ use arrayvec::ArrayVec;
 use core::{fmt, marker::PhantomData};
 use cutout_core::{
     BATTERY_TEMPERATURE_VALUES_PER_PAGE, BatteryCurrent, BatteryInfo, BatteryPageKind,
-    BatteryPageMetadata, BatteryPagePayload, BatterySpec, Capabilities, CommandKind,
-    ControlRefusal, ControlRefusalReason, Count, DeviceCommand, DeviceEvent, DiagnosticDetail,
-    DiagnosticReadback, DiagnosticSeverity, FirmwareInfo, GattChannel, GattFingerprint, GattRoles,
-    LightCommandState, Measured, ModelRegistryEntry, MonotonicTimestamp, NotificationByteLen,
-    NotificationIngestOutcome, ParserDiagnostics, ParserError, ParserGapEvidence, PayloadBodyLen,
-    PayloadClassifier, ProtocolFamily, ProtocolSelector, ProtocolSession, Quantity, RawFieldValue,
-    RawTelemetryReadback, ReadOnlyResponse, RequestedLightState, ReservedPayloadEvidence,
-    RetainedNotificationPayload, SafetyClass, SemanticEventCount, SeriesCount, SessionInput,
-    SessionOutput, Temperature, TransportAction, Unit, ValueQuality, VerificationStatus,
-    VerifiedValue, Voltage, WriteMode, WritePayload,
+    BatteryPageMetadata, BatteryPagePayload, BatteryReadback, BatterySpec, Capabilities,
+    CommandKind, ControlRefusal, ControlRefusalReason, Count, DeviceCommand, DeviceEvent,
+    DiagnosticDetail, DiagnosticReadback, DiagnosticSeverity, FirmwareInfo, GattChannel,
+    GattFingerprint, GattRoles, LightCommandState, Measured, ModelRegistryEntry,
+    MonotonicTimestamp, NotificationByteLen, NotificationIngestOutcome, ParserDiagnostics,
+    ParserError, ParserGapEvidence, PayloadBodyLen, PayloadClassifier, ProtocolFamily,
+    ProtocolSelector, ProtocolSession, Quantity, RawFieldValue, RawTelemetryReadback,
+    ReadOnlyResponse, RequestedLightState, ReservedPayloadEvidence, RetainedNotificationPayload,
+    SafetyClass, SemanticEventCount, SeriesCount, SessionInput, SessionOutput, Temperature,
+    TransportAction, Unit, ValueQuality, VerificationStatus, VerifiedValue, Voltage, WriteMode,
+    WritePayload,
 };
 
 use crate::{
@@ -1406,11 +1407,9 @@ fn push_veteran_frame(
             }
             if let Some(evidence) = VeteranBmsPageEvidence::from_frame(frame) {
                 if evidence.kind != BatteryPageKind::Raw {
-                    if let Some(payload) = veteran_bms_payload(evidence) {
+                    if let Some(readback) = veteran_bms_readback(evidence) {
                         output.push(SessionOutput::Event(DeviceEvent::ReadOnlyResponse(
-                            ReadOnlyResponse::Battery(cutout_core::BatteryReadback::available(
-                                payload,
-                            )),
+                            ReadOnlyResponse::Battery(readback),
                         )));
                         return SemanticEventCount::from_events(3).saturating_add(settings_count);
                     }
@@ -1425,16 +1424,18 @@ fn push_veteran_frame(
     }
 }
 
-fn veteran_bms_payload(evidence: VeteranBmsPageEvidence<'_>) -> Option<BatteryPagePayload> {
+fn veteran_bms_readback(evidence: VeteranBmsPageEvidence<'_>) -> Option<BatteryReadback> {
     if evidence.kind == BatteryPageKind::Temperature {
         return VeteranBmsTemperaturePage::from_body(evidence.selector, evidence.body)
             .ok()
-            .map(veteran_bms_temperature_payload);
+            .map(veteran_bms_temperature_payload)
+            .map(BatteryReadback::available);
     }
     if evidence.kind == BatteryPageKind::Metadata {
         return VeteranBmsMetadataPage::from_body(evidence.selector, evidence.body)
             .ok()
-            .map(veteran_bms_metadata_payload);
+            .map(veteran_bms_metadata_payload)
+            .map(BatteryReadback::available);
     }
 
     VeteranBmsCellPage::from_body(evidence.selector, evidence.body)
@@ -1442,7 +1443,7 @@ fn veteran_bms_payload(evidence: VeteranBmsPageEvidence<'_>) -> Option<BatteryPa
         .and_then(veteran_bms_cell_payload)
 }
 
-fn veteran_bms_cell_payload(page: VeteranBmsCellPage) -> Option<BatteryPagePayload> {
+fn veteran_bms_cell_payload(page: VeteranBmsCellPage) -> Option<BatteryReadback> {
     let cell_voltages = page.cell_voltage.into_iter().collect();
     decode_veteran_bms_page(
         page.selector,

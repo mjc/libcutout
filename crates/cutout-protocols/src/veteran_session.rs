@@ -1,6 +1,7 @@
 use cutout_core::{
     BATTERY_TEMPERATURE_VALUES_PER_PAGE, BatteryCurrent, BatteryInfo, BatteryPageKind,
-    BatteryPageMetadata, BatteryPagePayload, BatterySpec, Capabilities, CommandKind, Count,
+    BatteryPageMetadata, BatteryPagePayload, BatteryReadback, BatterySpec, Capabilities,
+    CommandKind, Count,
     DeviceEvent, GattChannel, GattFingerprint, GattRoles, Measured, ModelRegistryEntry,
     MonotonicTimestamp, NotificationByteLen, NotificationIngestOutcome, ParserError,
     ParserGapEvidence, PayloadBodyLen, PayloadClassifier, ProtocolFamily, ProtocolSelector,
@@ -212,10 +213,10 @@ fn push_veteran_frame(
             }
             if let Some(evidence) = VeteranBmsPageEvidence::from_frame(frame) {
                 if evidence.kind != BatteryPageKind::Raw
-                    && let Some(payload) = veteran_bms_payload(evidence)
+                    && let Some(readback) = veteran_bms_readback(evidence)
                 {
                     output.push(SessionOutput::Event(DeviceEvent::ReadOnlyResponse(
-                        ReadOnlyResponse::Battery(payload),
+                        ReadOnlyResponse::Battery(readback),
                     )))?;
                     return Ok(SemanticEventCount::from_events(3).saturating_add(settings_count));
                 }
@@ -229,16 +230,18 @@ fn push_veteran_frame(
     }
 }
 
-fn veteran_bms_payload(evidence: VeteranBmsPageEvidence<'_>) -> Option<BatteryPagePayload> {
+fn veteran_bms_readback(evidence: VeteranBmsPageEvidence<'_>) -> Option<BatteryReadback> {
     if evidence.kind == BatteryPageKind::Temperature {
         return VeteranBmsTemperaturePage::from_body(evidence.selector, evidence.body)
             .ok()
-            .map(veteran_bms_temperature_payload);
+            .map(veteran_bms_temperature_payload)
+            .map(BatteryReadback::available);
     }
     if evidence.kind == BatteryPageKind::Metadata {
         return VeteranBmsMetadataPage::from_body(evidence.selector, evidence.body)
             .ok()
-            .map(veteran_bms_metadata_payload);
+            .map(veteran_bms_metadata_payload)
+            .map(BatteryReadback::available);
     }
 
     let observed_cell_values = VeteranBmsCellPage::from_body(evidence.selector, evidence.body)

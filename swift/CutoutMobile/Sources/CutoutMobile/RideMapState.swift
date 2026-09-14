@@ -671,7 +671,7 @@ public final class MobileRideMapState: @unchecked Sendable {
     private let storageUnavailableError: MobileRideMapError?
 
 #if DEBUG
-    private static let debugDatabase: RideDatabaseHandle? = {
+    static let debugDatabase: RideDatabaseHandle? = {
         let path = FileManager.default.temporaryDirectory
             .appendingPathComponent("cutout-map-test-\(UUID().uuidString).sqlite")
             .path
@@ -788,6 +788,16 @@ public final class MobileRideMapState: @unchecked Sendable {
 
     public func observeTelemetry(atMs: UInt64) throws -> MobileRideMapTelemetryObservation {
         try withCore { map(try $0.observeTelemetry(atMs: atMs)) }
+    }
+
+    func recordBmsVoltageSamples(
+        deviceIdentity: String,
+        samples: [MobileStoredBmsVoltageSampleDto]
+    ) throws {
+        guard !samples.isEmpty else { return }
+        try withDatabase {
+            try $0.recordBmsVoltageSamples(deviceIdentity: deviceIdentity, samples: samples)
+        }
     }
 
     /// Sets the active ride's bounded music-history retention policy.

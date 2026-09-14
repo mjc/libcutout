@@ -134,6 +134,55 @@ impl Default for RideId {
     }
 }
 
+/// One raw BMS voltage observation stored independently of ride recording.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct BmsVoltageSampleRecord {
+    device_identity: String,
+    monotonic_milliseconds: u64,
+    wall_clock_milliseconds: u64,
+    observation_index: u16,
+    pack_index: Option<u16>,
+    pack_observation_index: Option<u16>,
+    millivolts: i32,
+}
+
+impl BmsVoltageSampleRecord {
+    /// Creates a validated raw BMS voltage sample.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the device identity is empty or exceeds the storage bound.
+    pub fn new(
+        device_identity: &str,
+        monotonic_milliseconds: u64,
+        wall_clock_milliseconds: u64,
+        observation_index: u16,
+        millivolts: i32,
+    ) -> Result<Self, StorageError> {
+        Ok(Self {
+            device_identity: normalize_stored_text(device_identity, "BMS device identity")?,
+            monotonic_milliseconds,
+            wall_clock_milliseconds,
+            observation_index,
+            pack_index: None,
+            pack_observation_index: None,
+            millivolts,
+        })
+    }
+
+    /// Attaches the protocol-assigned pack identity when it is known.
+    #[must_use]
+    pub const fn with_pack_identity(
+        mut self,
+        pack_index: Option<u16>,
+        pack_observation_index: Option<u16>,
+    ) -> Self {
+        self.pack_index = pack_index;
+        self.pack_observation_index = pack_observation_index;
+        self
+    }
+}
+
 /// Mandatory upper bound for a growing database query.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct QueryLimit(u32);
@@ -2038,6 +2087,25 @@ impl RideDatabase {
         })
     }
 
+    /// Stores a batch of raw BMS voltage samples independently of ride lifecycle.
+    ///
+    /// Replaying a previously submitted batch is idempotent. Samples are separated by device,
+    /// dual-clock timestamp, and protocol-assigned observation identity.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StorageError`] when a timestamp cannot be represented by SQLite or the worker
+    /// cannot commit the batch.
+    pub fn record_bms_voltage_samples(
+        &self,
+        samples: &[BmsVoltageSampleRecord],
+    ) -> Result<(), StorageError> {
+        self.request(move |reply| Command::RecordBmsVoltageSamples {
+            samples: samples.to_vec(),
+            reply,
+        })
+    }
+
     /// Stores the selected platform-local device identifier.
     ///
     /// # Errors
@@ -3332,6 +3400,10 @@ enum Command {
         last_telemetry_at_ms: Option<u64>,
         reply: Reply<()>,
     },
+    RecordBmsVoltageSamples {
+        samples: Vec<BmsVoltageSampleRecord>,
+        reply: Reply<()>,
+    },
     SaveDeviceName {
         platform_identifier: String,
         display_name: String,
@@ -4013,6 +4085,44 @@ fn update_ride_map_metadata(
         return Err(StorageError::NotFound);
     }
     Ok(())
+}
+
+fn record_bms_voltage_samples(
+    connection: &mut Connection,
+    samples: &[BmsVoltageSampleRecord],
+) -> Result<(), StorageError> {
+    if samples.is_empty() {
+        return Ok(());
+    }
+    let transaction = connection.transaction()?;
+    {
+        let mut insert = transaction.prepare_cached(
+            "INSERT OR IGNORE INTO bms_voltage_samples
+                (device_identity, monotonic_ms, wall_clock_ms, observation_index,
+                 pack_index, pack_observation_index, millivolts)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+        )?;
+        for sample in samples {
+            insert.execute(params![
+                sample.device_identity,
+                bms_sqlite_integer(sample.monotonic_milliseconds, "BMS monotonic timestamp")?,
+                bms_sqlite_integer(sample.wall_clock_milliseconds, "BMS wall clock timestamp")?,
+                sample.observation_index,
+                sample.pack_index,
+                sample.pack_observation_index,
+                sample.millivolts,
+            ])?;
+        }
+    }
+    transaction.commit()?;
+    Ok(())
+}
+
+fn bms_sqlite_integer(value: u64, field: &'static str) -> Result<i64, StorageError> {
+    i64::try_from(value).map_err(|_| StorageError::InvalidStoredValue {
+        field,
+        value: value.to_string(),
+    })
 }
 
 fn ensure_spatial_schema(

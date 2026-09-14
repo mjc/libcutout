@@ -19,9 +19,9 @@ use rusqlite::Connection;
 use cutout_ride_maps::{RideLifecycleState, RideMapSegmentId, RideSegmentStartReason};
 
 use super::{
-    GeoBounds, HistoryContextBudget, PevcapImportOutcome, PevcapImportPreview, PevcapImportWarning,
-    QueryLimit, RideDatabase, RideHistoryQuery, RideId, RideRecord, RideSource,
-    RouteProjectionCancellation, StorageError, VoltageSagModelRecord,
+    BmsVoltageSampleRecord, GeoBounds, HistoryContextBudget, PevcapImportOutcome,
+    PevcapImportPreview, PevcapImportWarning, QueryLimit, RideDatabase, RideHistoryQuery, RideId,
+    RideRecord, RideSource, RouteProjectionCancellation, StorageError, VoltageSagModelRecord,
     normalize_device_display_name,
 };
 
@@ -2871,7 +2871,7 @@ fn legacy_schema_versions_migrate_to_the_current_schema() {
         let current_version: i64 = connection
             .pragma_query_value(None, "user_version", |row| row.get(0))
             .unwrap();
-        assert_eq!(current_version, 20);
+        assert_eq!(current_version, 21);
         let music_tables: i64 = connection
             .query_row(
                 "SELECT COUNT(*) FROM sqlite_schema
@@ -2947,6 +2947,115 @@ fn newer_schema_is_rejected_without_resetting_the_database() {
         .pragma_query_value(None, "user_version", |row| row.get(0))
         .unwrap();
     assert_eq!(version, 99);
+    let _ = std::fs::remove_file(path);
+}
+
+#[test]
+fn bms_voltage_samples_are_durable_without_a_ride_and_duplicate_batches_are_idempotent() {
+    let _guard = test_guard();
+    let path = std::env::temp_dir().join(format!(
+        "libcutout-persistence-bms-{}.sqlite",
+        uuid::Uuid::new_v4()
+    ));
+    let database = RideDatabase::open(&path).unwrap();
+    let samples = [
+        BmsVoltageSampleRecord::new("wheel-a", 1_000, 2_000, 45, 4_193)
+            .unwrap()
+            .with_pack_identity(Some(1), Some(15)),
+        BmsVoltageSampleRecord::new("wheel-a", 1_000, 2_000, 46, 4_192)
+            .unwrap()
+            .with_pack_identity(Some(1), Some(16)),
+    ];
+
+    database.record_bms_voltage_samples(&samples).unwrap();
+    database.record_bms_voltage_samples(&samples).unwrap();
+    database.shutdown().unwrap();
+
+    let connection = Connection::open(&path).unwrap();
+    let rows: Vec<(String, u64, u64, u16, Option<u16>, Option<u16>, i32)> = connection
+        .prepare(
+            "SELECT device_identity, monotonic_ms, wall_clock_ms, observation_index,
+                    pack_index, pack_observation_index, millivolts
+             FROM bms_voltage_samples
+             ORDER BY observation_index",
+        )
+        .unwrap()
+        .query_map([], |row| {
+            Ok((
+                row.get(0)?,
+                row.get(1)?,
+                row.get(2)?,
+                row.get(3)?,
+                row.get(4)?,
+                row.get(5)?,
+                row.get(6)?,
+            ))
+        })
+        .unwrap()
+        .collect::<Result<_, _>>()
+        .unwrap();
+    assert_eq!(
+        rows,
+        vec![
+            (
+                "wheel-a".to_owned(),
+                1_000,
+                2_000,
+                45,
+                Some(1),
+                Some(15),
+                4_193
+            ),
+            (
+                "wheel-a".to_owned(),
+                1_000,
+                2_000,
+                46,
+                Some(1),
+                Some(16),
+                4_192
+            ),
+        ]
+    );
+    drop(connection);
+    let _ = std::fs::remove_file(path);
+}
+
+#[test]
+fn version_20_database_adds_device_scoped_bms_history_without_resetting_existing_data() {
+    let _guard = test_guard();
+    let path = std::env::temp_dir().join(format!(
+        "libcutout-persistence-bms-migration-{}.sqlite",
+        uuid::Uuid::new_v4()
+    ));
+    let connection = Connection::open(&path).unwrap();
+    crate::storage::create_current_schema(&connection).unwrap();
+    connection
+        .execute_batch(
+            "DROP TABLE bms_voltage_samples;
+             PRAGMA application_id = 1129665615;
+             PRAGMA user_version = 20;",
+        )
+        .unwrap();
+    drop(connection);
+
+    let database = RideDatabase::open(&path).unwrap();
+    database.shutdown().unwrap();
+
+    let connection = Connection::open(&path).unwrap();
+    let version: i64 = connection
+        .pragma_query_value(None, "user_version", |row| row.get(0))
+        .unwrap();
+    assert_eq!(version, 21);
+    let table: String = connection
+        .query_row(
+            "SELECT name FROM sqlite_schema WHERE type = 'table' AND name = 'bms_voltage_samples'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(table, "bms_voltage_samples");
+    drop(connection);
     let _ = std::fs::remove_file(path);
 }
 

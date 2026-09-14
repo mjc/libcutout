@@ -54,6 +54,26 @@ final class CutoutSessionCoreTests: XCTestCase {
         XCTAssertEqual(log.droppedCount, 1)
     }
 
+    @MainActor
+    func testRestorationPublishesSelectionBeforeReplayingTheCurrentPhase() {
+        let core = CutoutSessionCore()
+        var events: [String] = []
+        core.onBluetoothRestorationResolved = { identifier in
+            events.append("restored=\(identifier ?? "none")")
+        }
+        core.onPhaseChange = { phase in
+            XCTAssertEqual(phase, core.phase)
+            events.append("phase")
+        }
+
+        core.publishBluetoothRestoration("wheel-a")
+        XCTAssertEqual(events, ["restored=wheel-a", "phase"])
+
+        events.removeAll()
+        core.publishBluetoothRestoration(nil)
+        XCTAssertEqual(events, ["restored=none"])
+    }
+
     func testMonotonicClockUsesItsInjectedUptimeSource() {
         var now = MonotonicMilliseconds(100)
         let clock = MonotonicClock(now: { now })
@@ -135,9 +155,7 @@ final class CutoutSessionCoreTests: XCTestCase {
     }
 
     func testDatabaseBackedRideMapReportsPendingThenDurablyAccepted() async throws {
-        guard let database = RustPersistenceStore.shared else {
-            throw XCTSkip("Rust ride database is unavailable in this test environment")
-        }
+        let database = try XCTUnwrap(MobileRideMapState.debugDatabase)
 
         let state = MobileRideMapState(database: database)
         defer {
@@ -596,6 +614,76 @@ final class CutoutSessionCoreTests: XCTestCase {
 
         wait(for: [retry, live], timeout: 3)
         XCTAssertEqual(core.phase, .live)
+    }
+
+    func testRecoverableGattFailureDoesNotPublishTerminalRideFailure() {
+        let core = CutoutSessionCore()
+        core.applyNotificationStep(
+            CoreBluetoothSessionStep(operations: [], snapshot: nil),
+            receivedAt: MonotonicMilliseconds(100)
+        )
+        XCTAssertEqual(core.phase, .live)
+        var disconnects = 0
+
+        core.recoverConnection(after: .serviceDiscoveryFailed("link lost")) {
+            disconnects += 1
+        }
+
+        XCTAssertEqual(disconnects, 1)
+        XCTAssertEqual(core.phase, .discoveringServices)
+        XCTAssertFalse(core.isRecordOnlyConnection)
+    }
+
+    func testUnresolvedRestoredConnectionRetriesInsteadOfEnteringCaptureOnly() {
+        let core = CutoutSessionCore()
+        core.rideSessionStateHandle.setDeviceConnectionIntent(intent: .reconnect)
+
+        core.recordUnresolvedProtocolDetection(.timedOut, on: nil)
+
+        XCTAssertEqual(core.phase, .discoveringServices)
+        XCTAssertFalse(core.isRecordOnlyConnection)
+        XCTAssertTrue(core.rideSessionStateHandle.shouldRetryIdentification())
+    }
+
+    func testUnresolvedFirstUseCanStillEnterCaptureOnly() {
+        let core = CutoutSessionCore()
+        core.rideSessionStateHandle.setDeviceConnectionIntent(intent: .use)
+
+        core.recordUnresolvedProtocolDetection(.unsupported, on: nil)
+
+        XCTAssertEqual(core.phase, .live)
+        XCTAssertTrue(core.isRecordOnlyConnection)
+    }
+
+    func testTransportTerminationPreservesVerifiedWheelIdentityAcrossRetries() {
+        let scheduler = RecordingReconnectScheduler()
+        let core = CutoutSessionCore(
+            clock: MonotonicClock { MonotonicMilliseconds(1_000) },
+            testScript: CutoutSessionTestScript(
+                candidate: scriptedAeroCandidate,
+                telemetry: nil,
+                connectionDelayMilliseconds: 60_000
+            ),
+            reconnectScheduler: scheduler,
+            reconnectJitter: { 0 }
+        )
+        core.start()
+        XCTAssertTrue(core.pair(platformIdentifier: scriptedAeroCandidate.platformIdentifier))
+        XCTAssertEqual(core.electricUnicycleModel, .aero)
+
+        for _ in 0..<2 {
+            core.handleTransportTermination(
+                platformIdentifier: scriptedAeroCandidate.platformIdentifier,
+                error: nil,
+                reconnect: {}
+            )
+            scheduler.runAll()
+            XCTAssertEqual(core.electricUnicycleModel, .aero)
+            XCTAssertFalse(core.isRecordOnlyConnection)
+        }
+
+        core.disconnectAndScan()
+        XCTAssertNil(core.electricUnicycleModel)
     }
 
     func testTransportTerminationUsesTheSharedReconnectTransition() {
@@ -2271,6 +2359,52 @@ func testVescRideSnapshotProjectsBatteryLevelAndUpdateTime() throws {
         XCTAssertEqual(observedSnapshots, [snapshot, nil])
     }
 
+    func testBmsStorageBatchContainsOnlyRawSamplesFromCurrentNotification() {
+        let snapshot = BmsSnapshot(
+            topology: BmsTopology(
+                layoutLabel: "unverified",
+                seriesGroupCount: nil,
+                parallelCount: nil,
+                packCount: 2,
+                bmsCount: 2,
+                confidence: .unverified
+            ),
+            groups: [
+                BmsGroupSnapshot(
+                    index: 46,
+                    packNumber: 2,
+                    packReadingIndex: 16,
+                    voltage: Voltage(value: 4_192),
+                    latestVoltage: Voltage(value: 4_209),
+                    recentVoltages: [Voltage(value: 4_192), Voltage(value: 4_209)],
+                    recentObservationMilliseconds: [900, 1_000]
+                ),
+                BmsGroupSnapshot(
+                    index: 1,
+                    packNumber: 1,
+                    packReadingIndex: 1,
+                    voltage: Voltage(value: 4_177),
+                    recentVoltages: [Voltage(value: 4_177)],
+                    recentObservationMilliseconds: [999]
+                ),
+            ]
+        )
+
+        let samples = bmsStorageSamples(
+            snapshot: snapshot,
+            receivedAt: 1_000,
+            wallClockMilliseconds: 2_000
+        )
+
+        XCTAssertEqual(samples.count, 1)
+        XCTAssertEqual(samples[0].monotonicMilliseconds, 1_000)
+        XCTAssertEqual(samples[0].wallClockMilliseconds, 2_000)
+        XCTAssertEqual(samples[0].observationIndex, 45)
+        XCTAssertEqual(samples[0].packIndex, 1)
+        XCTAssertEqual(samples[0].packObservationIndex, 15)
+        XCTAssertEqual(samples[0].voltage, Voltage(value: 4_209))
+    }
+
     func testBmsSnapshotAggregatesCollectedPagesForPackOverview() {
         let core = CutoutSessionCore()
         let metadataPage = BmsSnapshot(
@@ -2324,6 +2458,26 @@ func testVescRideSnapshotProjectsBatteryLevelAndUpdateTime() throws {
         XCTAssertEqual(core.bmsSnapshot?.current, BatteryCurrent(value: 0))
         XCTAssertEqual(core.bmsSnapshot?.cellDelta, VoltageDelta(value: 12))
         XCTAssertEqual(core.bmsSnapshot?.groups.count, 2)
+    }
+
+    func testBmsSnapshotUsesArrivingCoreSummaryRatherThanPageSortOrder() {
+        let core = CutoutSessionCore()
+        let topology = BmsTopology(layoutLabel: "unverified", seriesGroupCount: nil, parallelCount: nil, packCount: 1, bmsCount: 1, confidence: .unverified)
+        func receive(_ snapshot: BmsSnapshot, at: UInt64) {
+            core.applyNotificationStep(
+                CoreBluetoothSessionStep(operations: [], snapshot: nil, actions: [.withBmsSnapshot(snapshot)]),
+                receivedAt: MonotonicMilliseconds(at)
+            )
+        }
+        receive(BmsSnapshot(topology: topology, pageSelector: 6, cellDelta: VoltageDelta(value: 0), lowestGroupIndex: 46, observedGroupCount: 1, highestGroupIndex: 46, groups: [BmsGroupSnapshot(index: 46, voltage: Voltage(value: 4_200))]), at: 1)
+        receive(BmsSnapshot(topology: topology, pageSelector: 2, cellDelta: VoltageDelta(value: 20), lowestGroupIndex: 16, observedGroupCount: 2, highestGroupIndex: 46, groups: [BmsGroupSnapshot(index: 16, voltage: Voltage(value: 4_180))]), at: 2)
+        XCTAssertEqual(core.bmsSnapshot?.cellDelta, VoltageDelta(value: 20))
+        XCTAssertEqual(core.bmsSnapshot?.lowestGroupIndex, 16)
+        XCTAssertEqual(core.bmsSnapshot?.highestGroupIndex, 46)
+        XCTAssertEqual(core.bmsSnapshot?.observedGroupCount, 2)
+        receive(BmsSnapshot(topology: topology, pageSelector: 3, cellDelta: VoltageDelta(value: 20), lowestGroupIndex: 16, observedGroupCount: 2, highestGroupIndex: 46, highestTemperature: Temperature(value: 21_000)), at: 3)
+        XCTAssertEqual(core.bmsSnapshot?.cellDelta, VoltageDelta(value: 20))
+        XCTAssertEqual(core.bmsSnapshot?.groups.map(\.index), [16, 46])
     }
 
     func testBmsSnapshotCollectionDoesNotPublishCursorOnlyUpdates() {

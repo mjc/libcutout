@@ -3169,6 +3169,7 @@ enum BmsTemperatureValuesPerPageUnit {}
 enum BmsPackIndexUnit {}
 enum BmsHalfIndexUnit {}
 enum BmsCellIndexUnit {}
+enum BmsObservationIndexUnit {}
 
 macro_rules! typed_protocol_value {
     ($name:ident, $unit:ident, $inner:ty, $doc:literal) => {
@@ -3612,6 +3613,13 @@ typed_protocol_value!(
     BmsCellIndexUnit,
     u16,
     "Zero-based BMS cell index represented by a decoded cell page."
+);
+
+typed_protocol_value!(
+    BmsObservationIndex,
+    BmsObservationIndexUnit,
+    u16,
+    "Zero-based stable BMS observation index assigned by a protocol decoder without asserting pack topology."
 );
 
 /// Bounded notification evidence shared by protocol ingest outcomes.
@@ -7228,6 +7236,20 @@ pub struct BatteryReadback {
 
     /// Battery/BMS page payload, when available.
     page: Option<BatteryPagePayload>,
+
+    /// First stable observation index assigned by the protocol decoder, when known.
+    ///
+    /// This identifies cell readings across pages without asserting physical pack topology.
+    first_observation_index: Option<BmsObservationIndex>,
+
+    /// Protocol-assigned pack/BMS identity for this page, when known.
+    observation_pack_index: Option<BmsPackIndex>,
+
+    /// First zero-based observation position within the protocol-assigned pack.
+    first_pack_observation_index: Option<BmsCellIndex>,
+
+    /// Host monotonic receipt time attached by the session facade.
+    observed_at: Option<MonotonicTimestamp>,
 }
 
 impl BatteryReadback {
@@ -7237,6 +7259,10 @@ impl BatteryReadback {
         Self {
             availability: BatteryReadbackAvailability::Available,
             page: Some(page),
+            first_observation_index: None,
+            observation_pack_index: None,
+            first_pack_observation_index: None,
+            observed_at: None,
         }
     }
 
@@ -7246,6 +7272,10 @@ impl BatteryReadback {
         Self {
             availability: BatteryReadbackAvailability::Unavailable,
             page: None,
+            first_observation_index: None,
+            observation_pack_index: None,
+            first_pack_observation_index: None,
+            observed_at: None,
         }
     }
 
@@ -7255,6 +7285,10 @@ impl BatteryReadback {
         Self {
             availability: BatteryReadbackAvailability::Unsupported,
             page: None,
+            first_observation_index: None,
+            observation_pack_index: None,
+            first_pack_observation_index: None,
+            observed_at: None,
         }
     }
 
@@ -7262,6 +7296,56 @@ impl BatteryReadback {
     #[must_use]
     pub const fn availability(&self) -> BatteryReadbackAvailability {
         self.availability
+    }
+
+    /// Attaches a protocol-derived identity to an available typed cell page.
+    #[must_use]
+    pub const fn with_first_observation_index(mut self, index: BmsObservationIndex) -> Self {
+        self.first_observation_index = Some(index);
+        self
+    }
+
+    /// Returns the first stable observation index for this readback, when known.
+    #[must_use]
+    pub const fn first_observation_index(&self) -> Option<BmsObservationIndex> {
+        self.first_observation_index
+    }
+
+    /// Attaches the pack/BMS and pack-local position assigned by the protocol decoder.
+    #[must_use]
+    pub const fn with_observation_pack(
+        mut self,
+        pack_index: BmsPackIndex,
+        first_pack_observation_index: BmsCellIndex,
+    ) -> Self {
+        self.observation_pack_index = Some(pack_index);
+        self.first_pack_observation_index = Some(first_pack_observation_index);
+        self
+    }
+
+    /// Returns the protocol-assigned pack/BMS identity, when known.
+    #[must_use]
+    pub const fn observation_pack_index(&self) -> Option<BmsPackIndex> {
+        self.observation_pack_index
+    }
+
+    /// Returns the first pack-local observation position, when known.
+    #[must_use]
+    pub const fn first_pack_observation_index(&self) -> Option<BmsCellIndex> {
+        self.first_pack_observation_index
+    }
+
+    /// Attaches the host monotonic receipt time.
+    #[must_use]
+    pub const fn with_observed_at(mut self, observed_at: MonotonicTimestamp) -> Self {
+        self.observed_at = Some(observed_at);
+        self
+    }
+
+    /// Returns the host monotonic receipt time, when available.
+    #[must_use]
+    pub const fn observed_at(&self) -> Option<MonotonicTimestamp> {
+        self.observed_at
     }
 
     /// Returns the battery/BMS page payload, when available.
@@ -8233,7 +8317,22 @@ where
 
     fn handle(&mut self, input: SessionInput<'_>) {
         let start = self.output.len();
+        let observed_at = match input {
+            SessionInput::Notification { monotonic_ms, .. }
+            | SessionInput::Tick { monotonic_ms } => Some(monotonic_ms),
+            SessionInput::LinkUp(_) | SessionInput::LinkDown | SessionInput::Command(_) => None,
+        };
         self.session.handle(input, &mut self.output);
+        if let Some(observed_at) = observed_at {
+            for output in &mut self.output[start..] {
+                if let SessionOutput::Event(DeviceEvent::ReadOnlyResponse(
+                    ReadOnlyResponse::Battery(readback),
+                )) = output
+                {
+                    *readback = readback.clone().with_observed_at(observed_at);
+                }
+            }
+        }
         self.state.observe_outputs(&self.output[start..]);
     }
 }
@@ -12851,6 +12950,7 @@ mod tests {
                 .bms
                 .pages
                 .iter()
+                .filter_map(crate::BatteryReadback::page)
                 .map(crate::BatteryPagePayload::page)
                 .map(|page| page.selector.get())
                 .collect::<Vec<_>>(),

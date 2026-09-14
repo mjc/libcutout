@@ -2901,8 +2901,11 @@ final class CutoutAppModel {
         guard let selection = connectionState.selection,
               selection.platformIdentifier == retry.platformIdentifier
         else { return }
-        if case .failed = connectionState { return }
+        if case .failed = phase {
+            phase = .discoveringServices
+        }
         connectionState = .retrying(selection, retry: retry)
+        syncLiveActivity()
     }
 
     private func handleBluetoothRestorationResolved(_ platformIdentifier: String?) {
@@ -2916,6 +2919,14 @@ final class CutoutAppModel {
             }
             return
         }
+        if let platformIdentifier {
+            connectionState = .identified(ConnectionSelection(
+                platformIdentifier: platformIdentifier,
+                title: selectedDeviceStore.displayName(for: platformIdentifier)
+                    ?? localizedAppText("setup.device"),
+                route: .electricUnicycle
+            ))
+        }
         if platformIdentifier != nil, marker == nil {
             permitsStoredDeviceAutoPairing = false
             rideSessionRestorationState = .complete
@@ -2927,7 +2938,7 @@ final class CutoutAppModel {
                     marker: marker,
                     platformIdentifier: platformIdentifier
                 )) == true
-            permitsStoredDeviceAutoPairing = markerMatches
+            permitsStoredDeviceAutoPairing = false
             if !markerMatches {
                 beginRideSessionRecovery(
                     restoredPlatformIdentifier: platformIdentifier,

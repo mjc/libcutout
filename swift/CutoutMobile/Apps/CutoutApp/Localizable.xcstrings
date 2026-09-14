@@ -1,6 +1,96 @@
 {
   "sourceLanguage" : "en",
   "strings" : {
+    "bms.pack.find_reading" : {
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Find reading number" } } }
+    },
+    "bms.pack.reading_warning" : {
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Reading %d · Battery warning" } } }
+    },
+    "bms.pack.title" : {
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Battery" } } }
+    },
+    "bms.pack.difference" : {
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Voltage difference" } } }
+    },
+    "bms.pack.all_cells" : {
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "All cell voltages" } } }
+    },
+    "bms.pack.temperatures" : {
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Temperatures" } } }
+    },
+    "bms.pack.temperature" : {
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Temperature" } } }
+    },
+    "bms.pack.sensor" : {
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Sensor %d" } } }
+    },
+    "bms.pack.reading_axis" : {
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Reading" } } }
+    },
+    "bms.pack.chart" : {
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Cell voltages in volts" } } }
+    },
+    "bms.pack.lowest" : {
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Lowest" } } }
+    },
+    "bms.pack.highest" : {
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Highest" } } }
+    },
+    "bms.pack.readings" : {
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "%d voltage readings" } } }
+    },
+    "bms.pack.open_reading" : {
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "View reading %d" } } }
+    },
+    "bms.pack.reading" : {
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Reading %d" } } }
+    },
+    "bms.pack.charge" : {
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Charge" } } }
+    },
+    "bms.pack.voltage" : {
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Pack voltage" } } }
+    },
+    "bms.pack.current" : {
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Current" } } }
+    },
+    "bms.pack.back" : {
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Battery overview" } } }
+    },
+    "bms.pack.cell_warning" : {
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Battery warning" } } }
+    },
+    "bms.pack.balancing" : {
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Balancing" } } }
+    },
+    "bms.pack.previous" : {
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Previous" } } }
+    },
+    "bms.pack.next" : {
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Next" } } }
+    },
+    "bms.pack.recent_history" : {
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Recent readings" } } }
+    },
+    "bms.pack.sample" : {
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Sample" } } }
+    },
+    "bms.pack.recent_history_accessibility" : {
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "%d recent voltage readings" } } }
+    },
+    "bms.pack.recent_range" : {
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Recent range" } } }
+    },
+    "bms.pack.latest_raw" : {
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Latest reading" } } }
+    },
+    "bms.pack.stabilized_explanation" : {
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "The headline value uses the recent median so brief voltage pulses do not make the pack summary jump." } } }
+    },
+    "bms.pack.pack_number" : {
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Pack %d" } } }
+    },
     "lighting.state.idle" : {
       "comment" : "Lighting connection state.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Idle" } } }

@@ -5,6 +5,144 @@ use crate::{
     ProtocolTag, Temperature, VerificationStatus, Voltage,
 };
 
+/// Complete BMS page cycles retained for stabilizing cell-voltage observations.
+pub(crate) const BMS_OBSERVATION_HISTORY_CYCLES: usize = 7;
+
+/// One raw sample retained behind a stabilized BMS voltage observation.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct BmsVoltageSample {
+    /// Raw voltage reported by the BMS.
+    pub voltage: Voltage,
+    /// Host monotonic receipt time attached before the readback entered retained state.
+    pub observed_at: crate::MonotonicTimestamp,
+}
+
+/// Current stabilized value and recent raw history for one protocol-assigned observation.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct BmsVoltageObservation {
+    /// Stable zero-based identity across every reported pack.
+    pub index: crate::BmsObservationIndex,
+    /// Protocol-assigned zero-based pack/BMS identity, when known.
+    pub pack_index: Option<crate::BmsPackIndex>,
+    /// Zero-based position within that pack, when known.
+    pub pack_observation_index: Option<crate::BmsCellIndex>,
+    /// Lower median of the retained raw samples, used for live summaries.
+    pub voltage: Voltage,
+    /// Most recent raw sample.
+    pub latest_voltage: Voltage,
+    /// Oldest-to-newest bounded raw history.
+    pub samples: Vec<BmsVoltageSample>,
+}
+
+/// Numerical summary of identified voltage observations, independent of physical topology.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct BmsObservationSummary {
+    /// Number of distinct voltage observations (including reported zero values).
+    pub observed_count: u32,
+    /// Zero-based identity of the lowest voltage; ties choose the smallest identity.
+    pub lowest_index: Option<crate::BmsObservationIndex>,
+    /// Zero-based identity of the highest voltage; ties choose the smallest identity.
+    pub highest_index: Option<crate::BmsObservationIndex>,
+    /// Highest minus lowest voltage, saturated to the voltage-delta representation.
+    pub voltage_spread: Option<crate::VoltageDelta>,
+    /// Stabilized readings and bounded raw history used to produce the summary.
+    pub observations: Vec<BmsVoltageObservation>,
+}
+
+impl BmsObservationSummary {
+    /// Summarizes retained readbacks in oldest-to-newest replacement order.
+    ///
+    /// Untimestamped decoder-local and non-cell pages have no retained voltage observations.
+    /// Later timestamped values extend the raw history for the same identity. An unassigned page
+    /// uses page-local indices, as in its DTO. This does not imply the readings were measured
+    /// simultaneously or cover a full pack.
+    #[must_use]
+    pub fn from_readbacks(readbacks: &[crate::BatteryReadback]) -> Self {
+        let mut observations = std::collections::BTreeMap::new();
+        for readback in readbacks {
+            let Some(observed_at) = readback.observed_at() else {
+                continue;
+            };
+            let Some(BatteryPagePayload::CellVoltage(page)) = readback.page() else {
+                continue;
+            };
+            let first = readback
+                .first_observation_index()
+                .map_or(0, crate::BmsObservationIndex::get);
+            for (slot, voltage) in page.cell_voltages.iter().enumerate() {
+                if let Some(index) = u16::try_from(slot)
+                    .ok()
+                    .and_then(|slot| first.checked_add(slot))
+                {
+                    let pack_observation_index = u16::try_from(slot).ok().and_then(|slot| {
+                        readback
+                            .first_pack_observation_index()
+                            .and_then(|first| first.get().checked_add(slot))
+                            .map(crate::BmsCellIndex::new)
+                    });
+                    let sample = BmsVoltageSample {
+                        voltage: *voltage,
+                        observed_at,
+                    };
+                    observations
+                        .entry(index)
+                        .and_modify(|observation: &mut BmsVoltageObservation| {
+                            observation.pack_index = readback.observation_pack_index();
+                            observation.pack_observation_index = pack_observation_index;
+                            observation.latest_voltage = *voltage;
+                            observation.samples.push(sample);
+                        })
+                        .or_insert_with(|| BmsVoltageObservation {
+                            index: crate::BmsObservationIndex::new(index),
+                            pack_index: readback.observation_pack_index(),
+                            pack_observation_index,
+                            voltage: *voltage,
+                            latest_voltage: *voltage,
+                            samples: vec![sample],
+                        });
+                }
+            }
+        }
+        for observation in observations.values_mut() {
+            observation.voltage = stabilized_voltage(&observation.samples);
+        }
+        let lowest = observations
+            .iter()
+            .min_by_key(|(index, observation)| (observation.voltage.as_millivolts(), **index));
+        let highest = observations.iter().min_by_key(|(index, observation)| {
+            (
+                std::cmp::Reverse(observation.voltage.as_millivolts()),
+                **index,
+            )
+        });
+        Self {
+            // At most 65,536 distinct u16 observation identities can participate.
+            observed_count: u32::try_from(observations.len()).unwrap_or(u32::MAX),
+            lowest_index: lowest.map(|(index, _)| crate::BmsObservationIndex::new(*index)),
+            highest_index: highest.map(|(index, _)| crate::BmsObservationIndex::new(*index)),
+            voltage_spread: lowest.zip(highest).map(|((_, low), (_, high))| {
+                crate::VoltageDelta::from_millivolts(
+                    high.voltage
+                        .as_millivolts()
+                        .saturating_sub(low.voltage.as_millivolts()),
+                )
+            }),
+            observations: observations.into_values().collect(),
+        }
+    }
+}
+
+fn stabilized_voltage(samples: &[BmsVoltageSample]) -> Voltage {
+    let seed = samples
+        .first()
+        .expect("an observation is created with one sample")
+        .voltage;
+    let mut values: Vec<_> = samples.iter().map(|sample| sample.voltage).collect();
+    values.resize(BMS_OBSERVATION_HISTORY_CYCLES, seed);
+    values.sort_unstable_by_key(|value| value.as_millivolts());
+    values[values.len().saturating_sub(1) / 2]
+}
+
 /// Maximum number of cell or cell-group voltage values carried by one typed BMS page.
 pub const BATTERY_CELL_VOLTAGE_VALUES_MAX: usize = 15;
 

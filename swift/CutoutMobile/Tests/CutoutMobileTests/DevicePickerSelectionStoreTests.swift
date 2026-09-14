@@ -46,9 +46,7 @@ final class DevicePickerSelectionStoreTests: XCTestCase {
 
         let platformIdentifier = "ios-local-aero-\(UUID().uuidString)"
         let key = "io.cutout.devicePicker.deviceName.\(platformIdentifier)"
-        guard let database = RustPersistenceStore.shared else {
-            throw XCTSkip("Rust ride database is unavailable in this test environment")
-        }
+        let database = try XCTUnwrap(MobileRideMapState.debugDatabase)
         defaults.set("NF2557", forKey: key)
         let store = DevicePickerSelectionStore(database: database, defaults: defaults)
 

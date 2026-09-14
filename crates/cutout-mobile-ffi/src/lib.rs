@@ -6,7 +6,6 @@ pub use rgb::*;
 use std::{
     collections::VecDeque,
     convert::TryFrom,
-    fmt,
     fs::{self, File, OpenOptions},
     io::{BufRead, BufReader, BufWriter, Write},
     path::{Path, PathBuf},
@@ -43,8 +42,9 @@ use cutout_core::{
     ChargeEstimateState, ChargeEstimateUnavailableReason, ChargeFlow, ChargeMode, ChargeModeDto,
     ChargeModeReadingDto, ChargeProfileIdentity, ChargeSessionIdentity, ChargeTimeEstimate,
     CommandKindDto, ControlRefusalReason as CoreControlRefusalReason, ControlRefusalReasonDto,
-    CutoutSessionState, DeviceCommand as CoreDeviceCommand, DeviceCommandDto, DeviceEvent,
-    DiscoveryCandidateSnapshot, DiscoveryCandidateSupport as CoreDiscoveryCandidateSupport,
+    CutoutSessionState, DeviceCommand as CoreDeviceCommand, DeviceCommandDto,
+    DeviceConnectionIntent as CoreDeviceConnectionIntent, DeviceEvent, DiscoveryCandidateSnapshot,
+    DiscoveryCandidateSupport as CoreDiscoveryCandidateSupport,
     DiscoveryConnectionRoute as CoreDiscoveryConnectionRoute,
     DiscoveryElectricUnicycleModel as CoreDiscoveryElectricUnicycleModel,
     DiscoveryManufacturerDataSummary as CoreDiscoveryManufacturerDataSummary,
@@ -60,11 +60,10 @@ use cutout_core::{
     ParserGapEvidenceDto, PayloadBodyLenDto, PedalMode as CorePedalMode,
     PevcapEncoding as CorePevcapEncoding, PevcapHeader, PevcapLocationSample, PevcapMusicEvent,
     PevcapPhoneLocation, PevcapRecord, PevcapResolvedIdentity, PhaseCurrentReadingDto,
-    PowerReadingDto, ProtocolFamily, ProtocolFamilyDto, ProtocolTag, RIDE_SESSION_STALE_AFTER,
-    RawFieldValue, RawFieldValueDto, RawTelemetryReadback, RawTelemetryReadbackDto,
-    ReadOnlyOutputPayload, ReservedPayloadEvidenceDto, RideOperatingModeDto,
-    RideOperatingState as CoreRideOperatingState, RideOperatingStateDto,
-    RideSessionAppPresence as CoreRideSessionAppPresence,
+    PowerReadingDto, ProtocolFamily, ProtocolFamilyDto, RIDE_SESSION_STALE_AFTER, RawFieldValue,
+    RawFieldValueDto, RawTelemetryReadback, RawTelemetryReadbackDto, ReadOnlyOutputPayload,
+    ReservedPayloadEvidenceDto, RideOperatingModeDto, RideOperatingState as CoreRideOperatingState,
+    RideOperatingStateDto, RideSessionAppPresence as CoreRideSessionAppPresence,
     RideSessionDecision as CoreRideSessionDecision, RideSessionEffect as CoreRideSessionEffect,
     RideSessionEndReason as CoreRideSessionEndReason,
     RideSessionIdentity as CoreRideSessionIdentity, RideSessionInput as CoreRideSessionInput,
@@ -769,6 +768,27 @@ impl MobileRideSessionDecisionDto {
     }
 }
 
+/// Purpose of a selected device connection across transport attempts.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Enum)]
+pub enum DeviceConnectionIntentDto {
+    /// Identify a device selected for use.
+    Use,
+    /// Recover the selected connection without falling back to capture-only.
+    Reconnect,
+    /// Capture a device without requiring a supported protocol.
+    RecordOnly,
+}
+
+impl From<DeviceConnectionIntentDto> for CoreDeviceConnectionIntent {
+    fn from(intent: DeviceConnectionIntentDto) -> Self {
+        match intent {
+            DeviceConnectionIntentDto::Use => Self::Use,
+            DeviceConnectionIntentDto::Reconnect => Self::Reconnect,
+            DeviceConnectionIntentDto::RecordOnly => Self::RecordOnly,
+        }
+    }
+}
+
 /// Mobile-facing Rust-owned `CutOut` session state handle.
 #[derive(Debug, uniffi::Object)]
 pub struct CutoutSessionStateHandle {
@@ -1359,6 +1379,23 @@ impl CutoutSessionStateHandle {
     pub fn reset_device_detection(&self) {
         let mut state = self.lock_inner();
         state.state.reset_device_identity();
+        state.detector = DeviceDetectionSession::default();
+    }
+
+    /// Sets the purpose of the selected connection across transport attempts.
+    pub fn set_device_connection_intent(&self, intent: DeviceConnectionIntentDto) {
+        self.lock_inner().state.device_connection_intent = intent.into();
+    }
+
+    /// Whether unresolved identification should retry rather than capture-only.
+    pub fn should_retry_identification(&self) -> bool {
+        self.lock_inner().state.should_retry_identification()
+    }
+
+    /// Clears link-local stream buffers and probes while retaining confirmed identity.
+    pub fn reset_device_detection_link(&self) {
+        let mut state = self.lock_inner();
+        state.state.identity_mut().reset_link_probes();
         state.detector = DeviceDetectionSession::default();
     }
 }
@@ -8307,6 +8344,23 @@ pub fn open_ride_database(
         .map_err(map_ride_database_error)
 }
 
+/// One device-scoped raw BMS sample submitted to durable storage.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct MobileStoredBmsVoltageSampleDto {
+    /// Host monotonic receipt time.
+    pub monotonic_milliseconds: u64,
+    /// Wall-clock receipt time.
+    pub wall_clock_milliseconds: u64,
+    /// Zero-based observation identity assigned by the protocol decoder.
+    pub observation_index: u16,
+    /// Zero-based pack/BMS identity, when known.
+    pub pack_index: Option<u16>,
+    /// Zero-based observation position within the pack, when known.
+    pub pack_observation_index: Option<u16>,
+    /// Raw reported voltage.
+    pub voltage: Voltage,
+}
+
 #[uniffi::export]
 impl RideDatabaseHandle {
     /// Returns the stable identity of the process-wide database service.
@@ -8329,6 +8383,38 @@ impl RideDatabaseHandle {
                 })
                 .collect(),
         }
+    }
+
+    /// Stores raw BMS voltage samples independently of ride lifecycle.
+    ///
+    /// # Errors
+    ///
+    /// Returns a typed database error when the device identity, timestamp, queue, or storage
+    /// transaction is invalid.
+    pub fn record_bms_voltage_samples(
+        &self,
+        device_identity: String,
+        samples: Vec<MobileStoredBmsVoltageSampleDto>,
+    ) -> Result<(), MobileRideDatabaseError> {
+        let samples = samples
+            .into_iter()
+            .map(|sample| {
+                persistence::BmsVoltageSampleRecord::new(
+                    &device_identity,
+                    sample.monotonic_milliseconds,
+                    sample.wall_clock_milliseconds,
+                    sample.observation_index,
+                    sample.voltage.value,
+                )
+                .map(|record| {
+                    record.with_pack_identity(sample.pack_index, sample.pack_observation_index)
+                })
+            })
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(map_ride_database_error)?;
+        self.inner
+            .record_bms_voltage_samples(&samples)
+            .map_err(map_ride_database_error)
     }
 
     /// Lists one bounded page of ride history in stable newest-first order.
@@ -11418,11 +11504,26 @@ pub struct MobileBmsGroupSnapshotDto {
     /// One-based group index used in the UI.
     pub index: u16,
 
+    /// One-based pack/BMS number assigned by the protocol decoder, when known.
+    pub pack_number: Option<u8>,
+
+    /// One-based observation position within that pack, when known.
+    pub pack_reading_index: Option<u16>,
+
     /// Optional explicit label such as `left pack`.
     pub label: Option<String>,
 
     /// Group voltage.
     pub voltage: Option<VoltageReading>,
+
+    /// Most recent raw voltage before stabilization.
+    pub latest_voltage: Option<Voltage>,
+
+    /// Oldest-to-newest bounded raw voltage history.
+    pub recent_voltages: Vec<Voltage>,
+
+    /// Host monotonic receipt times parallel to `recent_voltages`.
+    pub recent_observation_milliseconds: Vec<u64>,
 
     /// Group temperature.
     pub temperature: Option<TemperatureReading>,
@@ -11456,6 +11557,12 @@ pub struct MobileBmsFaultDto {
 /// Typed BMS snapshot for mobile pack and cells screens.
 #[derive(Clone, Debug, Eq, PartialEq, uniffi::Record)]
 pub struct MobileBmsSnapshotDto {
+    /// Distinct voltage observations counted by core; not a physical cell count.
+    pub observed_group_count: u32,
+
+    /// One-based highest observation identity selected by core.
+    pub highest_group_index: Option<u16>,
+
     /// Whether BMS or pack-health data is available for display.
     pub availability: MobileReadbackAvailabilityDto,
 
@@ -11549,12 +11656,20 @@ impl From<BatteryReadbackDto> for MobileBmsSnapshotDto {
 
 impl MobileBmsSnapshotDto {
     fn from_page(availability: MobileReadbackAvailabilityDto, battery: BatteryInfoDto) -> Self {
-        let page_identity = BmsPageIdentity::from_page(battery.page);
-        let groups = bms_groups_from_cell_voltages(&battery.cell_voltages, page_identity);
+        let groups = if battery.observation_summary.observations.is_empty() {
+            bms_groups_from_cell_voltages(&battery.cell_voltages, battery.first_observation_index)
+        } else {
+            bms_groups_from_observations(&battery.observation_summary.observations)
+        };
         let temperatures = bms_temperatures(&battery.temperatures);
         Self {
             availability,
-            topology: MobileBmsTopologyDto::from_observed_groups(groups.len()),
+            topology: MobileBmsTopologyDto::from_observed_groups(&groups),
+            observed_group_count: battery.observation_summary.observed_count,
+            highest_group_index: battery
+                .observation_summary
+                .highest_index
+                .and_then(|index| index.get().checked_add(1)),
             page_selector: Some(battery.page.id.selector),
             page_tag: battery.page.id.namespace.map(|namespace| namespace.value),
             page_kind: Some(bms_page_kind_label(battery.page.kind).to_owned()),
@@ -11567,11 +11682,20 @@ impl MobileBmsSnapshotDto {
             current: battery.current.map(Into::into),
             bms_pack_current_0: battery.bms_pack_current_0.map(Into::into),
             bms_pack_current_1: battery.bms_pack_current_1.map(Into::into),
-            cell_delta: cell_voltage_delta(&battery.cell_voltages),
-            lowest_group_index: lowest_cell_voltage_group_index(
-                &battery.cell_voltages,
-                page_identity,
-            ),
+            cell_delta: battery.observation_summary.voltage_spread.map(|spread| {
+                VoltageDeltaReading {
+                    value: VoltageDelta {
+                        value: spread.as_millivolts(),
+                    },
+                    source: MobileValueSourceDto::Calculated,
+                    quality: MobileValueQualityDto::Known,
+                    verification: MobileVerificationStatusDto::Unverified,
+                }
+            }),
+            lowest_group_index: battery
+                .observation_summary
+                .lowest_index
+                .and_then(|index| index.get().checked_add(1)),
             highest_temperature: highest_battery_temperature(
                 battery.temperature,
                 battery.temperatures,
@@ -11593,6 +11717,8 @@ impl MobileBmsSnapshotDto {
         Self {
             availability,
             topology: MobileBmsTopologyDto::unknown_readback(),
+            observed_group_count: 0,
+            highest_group_index: None,
             page_selector: None,
             page_tag: None,
             page_kind: None,
@@ -11630,17 +11756,81 @@ fn bms_page_kind_label(kind: BatteryPageKindDto) -> &'static str {
 
 fn bms_groups_from_cell_voltages(
     cell_voltages: &[VoltageReadingDto],
-    page_identity: BmsPageIdentity,
+    first_observation_index: Option<u16>,
 ) -> Vec<MobileBmsGroupSnapshotDto> {
     cell_voltages
         .iter()
         .enumerate()
         .filter_map(|(index, voltage)| {
-            let group_index = page_identity.group_index(index)?;
+            let group_index = bms_group_index(first_observation_index, index)?;
             Some(MobileBmsGroupSnapshotDto {
-                index: group_index.as_mobile_dto(),
+                index: group_index,
+                pack_number: None,
+                pack_reading_index: None,
                 label: Some(format!("group {group_index}")),
                 voltage: Some((*voltage).into()),
+                latest_voltage: Some(Voltage {
+                    value: voltage.value,
+                }),
+                recent_voltages: vec![Voltage {
+                    value: voltage.value,
+                }],
+                recent_observation_milliseconds: Vec::new(),
+                temperature: None,
+                resistance: None,
+                is_balancing: None,
+                alert_level: MobileBmsAlertLevelDto::Nominal,
+                detail: None,
+            })
+        })
+        .collect()
+}
+
+fn bms_groups_from_observations(
+    observations: &[cutout_core::BmsVoltageObservation],
+) -> Vec<MobileBmsGroupSnapshotDto> {
+    observations
+        .iter()
+        .filter_map(|observation| {
+            let index = observation.index.get().checked_add(1)?;
+            let pack_number = observation
+                .pack_index
+                .and_then(|pack| pack.get().checked_add(1));
+            let pack_reading_index = observation
+                .pack_observation_index
+                .and_then(|reading| reading.get().checked_add(1));
+            let label = match (pack_number, pack_reading_index) {
+                (Some(pack), Some(reading)) => Some(format!("Pack {pack} · cell {reading}")),
+                _ => Some(format!("Reading {index}")),
+            };
+            Some(MobileBmsGroupSnapshotDto {
+                index,
+                pack_number,
+                pack_reading_index,
+                label,
+                voltage: Some(VoltageReading {
+                    value: Voltage {
+                        value: observation.voltage.as_millivolts(),
+                    },
+                    source: MobileValueSourceDto::Calculated,
+                    quality: MobileValueQualityDto::Known,
+                    verification: MobileVerificationStatusDto::SourceVerified,
+                }),
+                latest_voltage: Some(Voltage {
+                    value: observation.latest_voltage.as_millivolts(),
+                }),
+                recent_voltages: observation
+                    .samples
+                    .iter()
+                    .map(|sample| Voltage {
+                        value: sample.voltage.as_millivolts(),
+                    })
+                    .collect(),
+                recent_observation_milliseconds: observation
+                    .samples
+                    .iter()
+                    .map(|sample| sample.observed_at.as_milliseconds())
+                    .collect(),
                 temperature: None,
                 resistance: None,
                 is_balancing: None,
@@ -11660,203 +11850,30 @@ fn bms_temperatures(temperatures: &[Option<TemperatureReadingDto>]) -> Vec<Tempe
         .collect()
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-struct BmsPageIdentity {
-    page_selector: BmsPageSelector,
-    cell_bank: Option<BegodeCellPageBank>,
-}
-
-impl BmsPageIdentity {
-    fn from_page(page: cutout_core::BmsStatusPage) -> Self {
-        Self::from_tag_and_selector(
-            page.id
-                .namespace
-                .map(cutout_core::BmsStatusPageNamespace::into_core),
-            page.id.selector,
-        )
-    }
-
-    fn from_tag_and_selector(page_tag: Option<ProtocolTag>, page_selector: u8) -> Self {
-        Self {
-            page_selector: BmsPageSelector::from_mobile_dto(page_selector),
-            cell_bank: BegodeCellPageBank::from_protocol_tag(page_tag),
-        }
-    }
-
-    fn first_group_index(self) -> BmsGroupIndex {
-        match self.cell_bank {
-            Some(bank) => bank.first_group_index_for_page(self.page_selector),
-            None => BmsGroupIndex::FIRST,
-        }
-    }
-
-    fn group_index(self, page_offset: usize) -> Option<BmsGroupIndex> {
-        self.first_group_index().offset(page_offset)
-    }
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-struct BmsPageSelector(u8);
-
-impl BmsPageSelector {
-    fn from_mobile_dto(selector: u8) -> Self {
-        Self(selector)
-    }
-
-    fn cell_page_offset(self, values_per_page: BmsPageGroupCount) -> Option<BmsGroupOffset> {
-        self.0
-            .checked_mul(values_per_page.get())
-            .map(BmsGroupOffset::new)
-    }
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum BegodeCellPageBank {
-    First,
-    Second,
-}
-
-impl BegodeCellPageBank {
-    const VALUES_PER_PAGE: BmsPageGroupCount = BmsPageGroupCount::new(8);
-    const VALUES_PER_BANK: BmsGroupOffset = BmsGroupOffset::new(32);
-
-    fn from_protocol_tag(tag: Option<ProtocolTag>) -> Option<Self> {
-        match tag.map(BegodeBmsPageTag::from_protocol_tag) {
-            Some(BegodeBmsPageTag::FirstCellBank) => Some(Self::First),
-            Some(BegodeBmsPageTag::SecondCellBank) => Some(Self::Second),
-            Some(BegodeBmsPageTag::Summary | BegodeBmsPageTag::Unknown) | None => None,
-        }
-    }
-
-    fn first_group_index_for_page(self, page_selector: BmsPageSelector) -> BmsGroupIndex {
-        let bank_offset = match self {
-            Self::First => BmsGroupOffset::ZERO,
-            Self::Second => Self::VALUES_PER_BANK,
-        };
-        let bank_base = BmsGroupIndex::FIRST
-            .offset_by(bank_offset)
-            .unwrap_or(BmsGroupIndex::FIRST);
-        page_selector
-            .cell_page_offset(Self::VALUES_PER_PAGE)
-            .and_then(|offset| bank_base.offset_by(offset))
-            .unwrap_or(bank_base)
-    }
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum BegodeBmsPageTag {
-    Summary,
-    FirstCellBank,
-    SecondCellBank,
-    Unknown,
-}
-
-impl BegodeBmsPageTag {
-    fn from_protocol_tag(tag: ProtocolTag) -> Self {
-        match tag.get() {
-            0x01 => Self::Summary,
-            0x02 => Self::FirstCellBank,
-            0x03 => Self::SecondCellBank,
-            _ => Self::Unknown,
-        }
-    }
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-struct BmsPageGroupCount(u8);
-
-impl BmsPageGroupCount {
-    const fn new(count: u8) -> Self {
-        Self(count)
-    }
-
-    const fn get(self) -> u8 {
-        self.0
-    }
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-struct BmsGroupOffset(u8);
-
-impl BmsGroupOffset {
-    const ZERO: Self = Self(0);
-
-    const fn new(offset: u8) -> Self {
-        Self(offset)
-    }
-
-    const fn get(self) -> u8 {
-        self.0
-    }
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-struct BmsGroupIndex(u8);
-
-impl BmsGroupIndex {
-    const FIRST: Self = Self(1);
-    #[cfg(test)]
-    const MAX: Self = Self(u8::MAX);
-
-    fn as_mobile_dto(self) -> u16 {
-        self.0.into()
-    }
-
-    fn offset(self, page_offset: usize) -> Option<Self> {
-        u8::try_from(page_offset)
-            .ok()
-            .and_then(|offset| self.0.checked_add(offset))
-            .map(Self)
-    }
-
-    fn offset_by(self, offset: BmsGroupOffset) -> Option<Self> {
-        self.0.checked_add(offset.get()).map(Self)
-    }
-}
-
-impl fmt::Display for BmsGroupIndex {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        self.0.fmt(f)
-    }
-}
-
-fn cell_voltage_delta(cell_voltages: &[VoltageReadingDto]) -> Option<VoltageDeltaReading> {
-    let min = cell_voltages.iter().map(|voltage| voltage.value).min()?;
-    let max = cell_voltages.iter().map(|voltage| voltage.value).max()?;
-    let first = cell_voltages.first()?;
-    Some(VoltageDeltaReading {
-        value: VoltageDelta {
-            value: max.saturating_sub(min),
-        },
-        source: MobileValueSourceDto::Calculated,
-        quality: MobileValueQualityDto::Known,
-        verification: first.verification.into(),
-    })
-}
-
-fn lowest_cell_voltage_group_index(
-    cell_voltages: &[VoltageReadingDto],
-    page_identity: BmsPageIdentity,
-) -> Option<u16> {
-    cell_voltages
-        .iter()
-        .enumerate()
-        .min_by_key(|(_, voltage)| voltage.value)
-        .and_then(|(index, _)| page_identity.group_index(index))
-        .map(BmsGroupIndex::as_mobile_dto)
+fn bms_group_index(first_observation_index: Option<u16>, local_index: usize) -> Option<u16> {
+    first_observation_index
+        .unwrap_or_default()
+        .checked_add(u16::try_from(local_index).ok()?)
+        .and_then(|index| index.checked_add(1))
 }
 
 impl MobileBmsTopologyDto {
-    fn from_observed_groups(group_count: usize) -> Self {
+    fn from_observed_groups(groups: &[MobileBmsGroupSnapshotDto]) -> Self {
+        let group_count = groups.len();
         if group_count == 0 {
             return Self::unknown_readback();
         }
+        let pack_count = groups
+            .iter()
+            .filter_map(|group| group.pack_number)
+            .collect::<std::collections::BTreeSet<_>>()
+            .len();
         Self {
             layout_label: format!("{group_count} observed BMS groups"),
             series_group_count: None,
             parallel_count: None,
-            pack_count: 1,
-            bms_count: 1,
+            pack_count: u8::try_from(pack_count.max(1)).unwrap_or(u8::MAX),
+            bms_count: u8::try_from(pack_count.max(1)).unwrap_or(u8::MAX),
             confidence: MobileBmsTopologyConfidenceDto::Unverified,
         }
     }
@@ -17305,6 +17322,50 @@ mod tests {
     }
 
     #[test]
+    fn mobile_detection_link_reset_isolates_partial_frames() {
+        let session = CutoutSessionStateHandle::new();
+        let frame = synthetic_veteran_frame_with_model_id(43);
+        let _ = session.observe_notification(frame[..20].to_vec());
+
+        session.reset_device_detection_link();
+
+        assert_eq!(
+            session
+                .observe_notification(frame[20..].to_vec())
+                .protocol_family,
+            None
+        );
+        assert_eq!(
+            session
+                .observe_notification(frame.to_vec())
+                .veteran_protocol_model_id,
+            Some(43)
+        );
+    }
+
+    #[test]
+    fn mobile_detection_link_reset_preserves_identity_and_connection_intent() {
+        let session = CutoutSessionStateHandle::new();
+        assert!(!session.should_retry_identification());
+        session.set_device_connection_intent(DeviceConnectionIntentDto::Reconnect);
+        let frame = synthetic_veteran_frame_with_model_id(43);
+        let expected = session.observe_notification(frame.to_vec());
+        let _ = session.begin_identification_probe_at(1_000);
+        let _ = session.mark_begode_probe_responses_missing();
+        let _ = session.begin_identification_probe_at(2_000);
+
+        session.reset_device_detection_link();
+
+        assert!(session.should_retry_identification());
+        assert_eq!(session.resolution(), expected);
+        assert_eq!(session.next_begode_probe_expiry(2_000), None);
+        session.set_device_connection_intent(DeviceConnectionIntentDto::RecordOnly);
+        assert!(!session.should_retry_identification());
+        session.set_device_connection_intent(DeviceConnectionIntentDto::Use);
+        assert!(!session.should_retry_identification());
+    }
+
+    #[test]
     fn mobile_device_detection_session_exposes_fragmented_vesc_reply() {
         let session = CutoutSessionStateHandle::new();
         let frame = [
@@ -17774,6 +17835,8 @@ mod tests {
 
     fn bms_snapshot_fixture() -> MobileBmsSnapshotDto {
         MobileBmsSnapshotDto {
+            observed_group_count: 1,
+            highest_group_index: Some(17),
             availability: MobileReadbackAvailabilityDto::Available,
             topology: MobileBmsTopologyDto {
                 layout_label: "20S4P split pack".to_owned(),
@@ -17824,12 +17887,17 @@ mod tests {
             groups: vec![MobileBmsGroupSnapshotDto {
                 index: 17,
                 label: Some("group 17".to_owned()),
+                pack_number: None,
+                pack_reading_index: None,
                 voltage: Some(VoltageReading {
                     value: Voltage { value: 4_071 },
                     source: MobileValueSourceDto::Reported,
                     quality: MobileValueQualityDto::Known,
                     verification: MobileVerificationStatusDto::HardwareVerified,
                 }),
+                latest_voltage: None,
+                recent_voltages: Vec::new(),
+                recent_observation_milliseconds: Vec::new(),
                 temperature: Some(TemperatureReading {
                     value: Temperature { value: 34_900 },
                     source: MobileValueSourceDto::Reported,
@@ -18645,6 +18713,13 @@ mod tests {
             payload: ReadOnlyOutputPayload::Battery(BatteryReadbackDto {
                 availability: BatteryReadbackAvailabilityDto::Available,
                 page: Some(BatteryInfoDto {
+                    observation_summary: cutout_core::BmsObservationSummary {
+                        observed_count: 3,
+                        lowest_index: Some(cutout_core::BmsObservationIndex::new(1)),
+                        highest_index: Some(cutout_core::BmsObservationIndex::new(2)),
+                        voltage_spread: Some(cutout_core::VoltageDelta::from_millivolts(8)),
+                        observations: Vec::new(),
+                    },
                     page: cutout_core::BmsStatusPage {
                         id: cutout_core::BmsStatusPageId {
                             namespace: None,
@@ -18662,10 +18737,38 @@ mod tests {
                     temperature: Some(temperature(31_000)),
                     temperatures: vec![None, Some(temperature(37_800)), Some(temperature(35_200))],
                     cell_voltages: vec![voltage(3_633), voltage(3_626), voltage(3_634)],
+                    first_observation_index: None,
                     raw_state: None,
                 }),
             }),
         })
+    }
+
+    #[test]
+    fn mobile_bms_projection_preserves_cross_page_summary_without_recomputing() {
+        let mut output = battery_readback_output_fixture();
+        let SessionOutputDto::ReadOnly(response) = &mut output else {
+            panic!("readback")
+        };
+        let ReadOnlyOutputPayload::Battery(readback) = &mut response.payload else {
+            panic!("battery")
+        };
+        let page = readback.page.as_mut().expect("page");
+        page.observation_summary = cutout_core::BmsObservationSummary {
+            observed_count: 60,
+            lowest_index: Some(cutout_core::BmsObservationIndex::new(59)),
+            highest_index: Some(cutout_core::BmsObservationIndex::new(15)),
+            voltage_spread: Some(cutout_core::VoltageDelta::from_millivolts(36)),
+            observations: Vec::new(),
+        };
+        let snapshot = MobileSessionOutputDto::from(output)
+            .bms_snapshot
+            .expect("snapshot");
+        assert_eq!(snapshot.groups.len(), 3);
+        assert_eq!(snapshot.observed_group_count, 60);
+        assert_eq!(snapshot.lowest_group_index, Some(60));
+        assert_eq!(snapshot.highest_group_index, Some(16));
+        assert_eq!(snapshot.cell_delta.expect("spread").value.value, 36);
     }
 
     #[test]
@@ -18787,6 +18890,7 @@ mod tests {
             payload: ReadOnlyOutputPayload::Battery(BatteryReadbackDto {
                 availability: BatteryReadbackAvailabilityDto::Unsupported,
                 page: Some(BatteryInfoDto {
+                    observation_summary: cutout_core::BmsObservationSummary::default(),
                     page: cutout_core::BmsStatusPage {
                         id: cutout_core::BmsStatusPageId {
                             namespace: None,
@@ -18809,6 +18913,7 @@ mod tests {
                     temperature: Some(temperature_reading(31_000)),
                     temperatures: vec![Some(temperature_reading(37_800))],
                     cell_voltages: vec![voltage_reading(3_633)],
+                    first_observation_index: None,
                     raw_state: None,
                 }),
             }),
@@ -18832,46 +18937,57 @@ mod tests {
 
     #[test]
     fn bms_group_projection_skips_unrepresentable_group_indices() {
-        let mut cell_voltages = vec![voltage_reading(3_600); usize::from(u8::MAX) + 1];
-        cell_voltages[usize::from(u8::MAX)] = voltage_reading(3_500);
-        let page_identity = BmsPageIdentity::from_tag_and_selector(None, 0);
+        let cell_voltages = vec![voltage_reading(3_600), voltage_reading(3_500)];
 
-        let groups = bms_groups_from_cell_voltages(&cell_voltages, page_identity);
+        let groups = bms_groups_from_cell_voltages(&cell_voltages, Some(u16::MAX - 1));
 
-        assert_eq!(groups.len(), usize::from(u8::MAX));
-        assert_eq!(
-            groups.last().map(|group| group.index),
-            Some(BmsGroupIndex::MAX.as_mobile_dto())
-        );
-        assert_eq!(
-            lowest_cell_voltage_group_index(&cell_voltages, page_identity),
-            None
-        );
+        assert_eq!(groups.len(), 1);
+        assert_eq!(groups.last().map(|group| group.index), Some(u16::MAX));
+        assert_eq!(bms_group_index(Some(u16::MAX - 1), 1), None);
     }
 
     #[test]
-    fn begode_cell_pages_project_to_global_group_indices() {
-        let cell_voltages = vec![voltage_reading(3_600), voltage_reading(3_590)];
-        let page_identity = BmsPageIdentity::from_tag_and_selector(Some(ProtocolTag::new(0x03)), 2);
-        let groups = bms_groups_from_cell_voltages(&cell_voltages, page_identity);
+    fn mobile_bms_projection_preserves_decoder_assigned_observation_indices() {
+        let readback = cutout_protocols::decode_veteran_bms_page(
+            cutout_core::ProtocolSelector::new(6),
+            (0..cutout_protocols::VETERAN_BMS_CELL_VALUES_PER_PAGE)
+                .map(|local_index| {
+                    cutout_core::Voltage::from_millivolts(if local_index == 14 {
+                        3_700
+                    } else {
+                        3_810 + i32::from(local_index)
+                    })
+                })
+                .collect(),
+            cutout_core::BatteryInfo::default(),
+            VerificationStatus::HardwareVerified,
+        )
+        .expect("documented Veteran cell page")
+        .with_observed_at(cutout_core::MonotonicTimestamp::new(42));
 
-        assert_eq!(page_identity.first_group_index().as_mobile_dto(), 49);
+        let snapshot = MobileBmsSnapshotDto::from(BatteryReadbackDto::from(readback));
+
+        assert_eq!(snapshot.groups.first().map(|group| group.index), Some(46));
+        assert_eq!(snapshot.groups.last().map(|group| group.index), Some(60));
         assert_eq!(
-            groups.iter().map(|group| group.index).collect::<Vec<_>>(),
-            vec![49, 50]
+            snapshot
+                .groups
+                .last()
+                .and_then(|group| group.label.as_deref()),
+            Some("Pack 2 · cell 30")
         );
         assert_eq!(
-            lowest_cell_voltage_group_index(&cell_voltages, page_identity),
-            Some(50)
+            snapshot.groups.last().and_then(|group| group.pack_number),
+            Some(2)
         );
-    }
-
-    #[test]
-    fn begode_second_bank_overflow_falls_back_to_bank_base() {
-        let page_identity =
-            BmsPageIdentity::from_tag_and_selector(Some(ProtocolTag::new(0x03)), u8::MAX);
-
-        assert_eq!(page_identity.first_group_index().as_mobile_dto(), 33);
+        assert_eq!(
+            snapshot
+                .groups
+                .last()
+                .and_then(|group| group.pack_reading_index),
+            Some(30)
+        );
+        assert_eq!(snapshot.lowest_group_index, Some(60));
     }
 
     #[test]

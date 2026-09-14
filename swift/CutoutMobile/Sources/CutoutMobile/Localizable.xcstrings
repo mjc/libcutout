@@ -176,6 +176,7 @@
     "bms.topology.layout_verified" : { "comment" : "BMS topology confidence.", "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "layout verified" } } } },
     "bms.topology.layout_inferred" : { "comment" : "BMS topology confidence.", "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "layout inferred" } } } },
     "bms.topology.layout_unverified" : { "comment" : "BMS topology confidence.", "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "layout unverified" } } } },
+    "bms.topology.reported_groups_unverified" : { "comment" : "Unverified cell-map summary. Argument: number of reported cell groups; this is not a physical pack topology claim.", "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "%lld reported cell groups · layout unverified" } } } },
     "bms.topology.sensor_names_unavailable" : { "comment" : "BMS topology detail when temperature sensor names are unavailable.", "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "sensor names unavailable" } } } },
     "charge.estimate.confidence.high" : {
       "comment" : "Charge estimate confidence level.",
