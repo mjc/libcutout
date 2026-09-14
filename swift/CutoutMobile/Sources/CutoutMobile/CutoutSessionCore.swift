@@ -485,6 +485,7 @@ public final class CutoutSessionCore: NSObject {
     }
 
     public var onDisplayStateChange: ((RideDisplayState) -> Void)?
+    public var onPhoneAlarmActionsAvailable: ((MobilePhoneAlarmActionsDto) -> Void)?
     public var onPhaseChange: ((SessionConnectionPhase) -> Void)?
     public var onReconnectScheduled: ((SessionConnectionRetry) -> Void)?
     public var onRecord: ((String) -> Void)?
@@ -578,9 +579,18 @@ public final class CutoutSessionCore: NSObject {
     }()
 
     public override convenience init() {
-        let rideMapState = RustPersistenceStore.shared.map(MobileRideMapState.init(database:))
+        let database = RustPersistenceStore.shared
+        let rideMapState = database.map(MobileRideMapState.init(database:))
             ?? MobileRideMapState(storageUnavailable: "Rust ride database is unavailable")
-        self.init(clock: MonotonicClock(), rideMapState: rideMapState)
+        let sessionState = database.map {
+            CutoutSessionStateHandle.withDatabase(database: $0)
+        }
+            ?? CutoutSessionStateHandle()
+        self.init(
+            clock: MonotonicClock(),
+            rideMapState: rideMapState,
+            rustSessionState: sessionState
+        )
     }
 
 #if DEBUG
@@ -602,9 +612,9 @@ public final class CutoutSessionCore: NSObject {
         reconnectJitter: @escaping () -> Double = { Double.random(in: 0...1) },
         selectedDeviceStore: DevicePickerSelectionStore = DevicePickerSelectionStore(),
         wallClock: @escaping () -> Date = { Date() },
-        rideMapState: MobileRideMapState? = nil
+        rideMapState: MobileRideMapState? = nil,
+        rustSessionState: CutoutSessionStateHandle = CutoutSessionStateHandle()
     ) {
-        let rustSessionState = CutoutSessionStateHandle()
         self.rustSessionState = rustSessionState
         let deviceDetectionSession = DeviceDetectionSession(sessionState: rustSessionState)
         self.deviceDetectionSession = deviceDetectionSession
@@ -618,6 +628,9 @@ public final class CutoutSessionCore: NSObject {
         self.reconnectController = ConnectionReconnectController(scheduler: reconnectScheduler)
         self.reconnectJitter = reconnectJitter
         self.selectedDeviceStore = selectedDeviceStore
+        if let deviceIdentity = selectedDeviceStore.platformIdentifier {
+            _ = try? rustSessionState.activatePhoneAlarmDevice(deviceIdentity: deviceIdentity)
+        }
         super.init()
         bleQueue.setSpecific(key: bleQueueKey, value: ())
         rideMapQueue.setSpecific(key: rideMapQueueKey, value: ())
@@ -627,9 +640,9 @@ public final class CutoutSessionCore: NSObject {
         clock: MonotonicClock,
         selectedDeviceStore: DevicePickerSelectionStore = DevicePickerSelectionStore(),
         wallClock: @escaping () -> Date = { Date() },
-        rideMapState: MobileRideMapState? = nil
+        rideMapState: MobileRideMapState? = nil,
+        rustSessionState: CutoutSessionStateHandle = CutoutSessionStateHandle()
     ) {
-        let rustSessionState = CutoutSessionStateHandle()
         self.rustSessionState = rustSessionState
         let deviceDetectionSession = DeviceDetectionSession(sessionState: rustSessionState)
         self.deviceDetectionSession = deviceDetectionSession
@@ -642,6 +655,9 @@ public final class CutoutSessionCore: NSObject {
         self.reconnectController = ConnectionReconnectController(scheduler: MainQueueReconnectScheduler())
         self.reconnectJitter = { Double.random(in: 0...1) }
         self.selectedDeviceStore = selectedDeviceStore
+        if let deviceIdentity = selectedDeviceStore.platformIdentifier {
+            _ = try? rustSessionState.activatePhoneAlarmDevice(deviceIdentity: deviceIdentity)
+        }
         super.init()
         bleQueue.setSpecific(key: bleQueueKey, value: ())
         rideMapQueue.setSpecific(key: rideMapQueueKey, value: ())
@@ -694,7 +710,7 @@ public final class CutoutSessionCore: NSObject {
 #endif
         return onBleQueue {
             let identifier = CoreBluetoothPeripheralIdentifier(platformIdentifier)
-            let snapshot = rustSessionState.selectDiscoveredPlatform(platformIdentifier: platformIdentifier)
+            let snapshot = rustSessionState.discoverySnapshot()
             let advertisement = snapshot.advertisement(platformIdentifier: platformIdentifier)
             guard let peripheral = discoveredPeripherals[identifier], let advertisement else {
                 return false
@@ -715,7 +731,7 @@ public final class CutoutSessionCore: NSObject {
 #endif
         return onBleQueue {
             let identifier = CoreBluetoothPeripheralIdentifier(platformIdentifier)
-            let snapshot = rustSessionState.selectDiscoveredPlatform(platformIdentifier: platformIdentifier)
+            let snapshot = rustSessionState.discoverySnapshot()
             guard let peripheral = discoveredPeripherals[identifier],
                   let advertisement = snapshot.advertisement(platformIdentifier: platformIdentifier)
             else { return false }
@@ -735,7 +751,7 @@ public final class CutoutSessionCore: NSObject {
 #endif
         return onBleQueue {
             let identifier = CoreBluetoothPeripheralIdentifier(platformIdentifier)
-            let snapshot = rustSessionState.selectDiscoveredPlatform(platformIdentifier: platformIdentifier)
+            let snapshot = rustSessionState.discoverySnapshot()
             guard
                 let peripheral = discoveredPeripherals[identifier],
                 let advertisement = snapshot.advertisement(platformIdentifier: platformIdentifier)
@@ -764,6 +780,7 @@ public final class CutoutSessionCore: NSObject {
                         isRecordOnly = false
                         return false
                     }
+                    deviceDetectionSession.reset()
                     publishCaptureEvent(.progress(captureProgress()))
                     return true
                 }
@@ -771,6 +788,7 @@ public final class CutoutSessionCore: NSObject {
             let fileURL = URL(fileURLWithPath: "/tmp/ui-test.capture")
             captureFileURL = fileURL
             isRecordOnly = true
+            deviceDetectionSession.reset()
             publishCaptureEvent(.started(fileURL: fileURL))
             publishCaptureEvent(.progress(CaptureProgress(
                 elapsedMilliseconds: 63_000,
@@ -784,7 +802,7 @@ public final class CutoutSessionCore: NSObject {
 #endif
         return onBleQueue {
             let identifier = CoreBluetoothPeripheralIdentifier(platformIdentifier)
-            let snapshot = rustSessionState.selectDiscoveredPlatform(platformIdentifier: platformIdentifier)
+            let snapshot = rustSessionState.discoverySnapshot()
             guard
                 let peripheral = discoveredPeripherals[identifier],
                 let advertisement = snapshot.advertisement(platformIdentifier: platformIdentifier)
@@ -1123,6 +1141,9 @@ public final class CutoutSessionCore: NSObject {
 
         self.selectedRoute = route
         self.selectedModel = selectedModel
+        _ = rustSessionState.selectDiscoveredPlatform(
+            platformIdentifier: platformIdentifier
+        )
 #if DEBUG
         if route == .electricUnicycle, selectedModel == .aero {
             do {
@@ -1136,13 +1157,15 @@ public final class CutoutSessionCore: NSObject {
                     session: .electricUnicycle(
                         model: .aero,
                         deviceIdentity: platformIdentifier,
-                        allowUnverifiedSettings: true
+                        allowUnverifiedSettings: true,
+                        sessionState: rustSessionState
                     ),
                     advertisement: advertisement,
                     writeLimit: TransportWriteLimitBytes(23),
                     operationSink: sink,
                     detectionSession: deviceDetectionSession,
-                    executionQueue: bleQueue
+                    executionQueue: bleQueue,
+                    onStep: { [weak self] in self?.publishPhoneAlarmActionsAvailable() }
                 )
                 attachSettingsStateCallback()
                 testOperationSink = sink
@@ -1589,6 +1612,9 @@ public final class CutoutSessionCore: NSObject {
         liveOwner = nil
         deviceDetectionSession.reset()
         _ = deviceDetectionSession.observeAdvertisement(name: advertisement.localName.map { Data($0.utf8) })
+        _ = rustSessionState.selectDiscoveredPlatform(
+            platformIdentifier: advertisement.peripheralIdentifier.rawValue
+        )
         startCapture(reason: "protocol-detection", annotations: ["intent=manual_use"])
         clearSettingsReadback()
         clearFaultHistoryReadback()
@@ -1613,7 +1639,8 @@ public final class CutoutSessionCore: NSObject {
                 detectionSession: deviceDetectionSession,
                 retryCommandOnLinkUp: selectedRoute == .vescOnewheel ? .requestTelemetry : nil,
                 executionQueue: bleQueue,
-                monotonicClock: clock
+                monotonicClock: clock,
+                onStep: { [weak self] in self?.publishPhoneAlarmActionsAvailable() }
             )
             attachSettingsStateCallback()
             if let chargeEstimateProfile {
@@ -1645,13 +1672,17 @@ public final class CutoutSessionCore: NSObject {
             return try .electricUnicycle(
                 model: selectedModel,
                 deviceIdentity: advertisement?.peripheralIdentifier.rawValue,
-                allowUnverifiedSettings: allowUnverifiedSettings
+                allowUnverifiedSettings: allowUnverifiedSettings,
+                sessionState: rustSessionState
             )
         case .vescOnewheel:
             if let vescBoardProfile {
-                return .vescOnewheel(boardProfile: vescBoardProfile)
+                return .vescOnewheel(
+                    boardProfile: vescBoardProfile,
+                    sessionState: rustSessionState
+                )
             }
-            return .vescOnewheel()
+            return .vescOnewheel(sessionState: rustSessionState)
         }
     }
 
@@ -1748,6 +1779,10 @@ public final class CutoutSessionCore: NSObject {
             central?.scanForPeripherals(withServices: nil)
             return
         }
+
+        _ = rustSessionState.selectDiscoveredPlatform(
+            platformIdentifier: platformIdentifier
+        )
 
         scheduleReconnect(
             platformIdentifier: platformIdentifier,
@@ -1894,6 +1929,12 @@ public final class CutoutSessionCore: NSObject {
     private func publishScanState() {
         let value = scanState
         publishOnMain { self.onScanStateChange?(value) }
+    }
+
+    private func publishPhoneAlarmActionsAvailable() {
+        let actions = rustSessionState.drainPhoneAlarmActions()
+        guard !actions.schedule.isEmpty || !actions.cancelRequestIds.isEmpty else { return }
+        publishOnMain { self.onPhoneAlarmActionsAvailable?(actions) }
     }
 
     private func publishSettingsReadback() {
@@ -2448,10 +2489,6 @@ private extension CutoutSessionCore {
         let discovery = rustSessionState.observeDiscovery(
             observation: DiscoveryObservation(restoredAdvertisement)
         )
-        _ = rustSessionState.selectDiscoveredPlatform(
-            platformIdentifier: selectedIdentifier
-        )
-
         discoveredPeripherals[restoredAdvertisement.peripheralIdentifier] = restoredPeripheral
         advertisement = restoredAdvertisement
         peripheral = restoredPeripheral
@@ -2465,6 +2502,9 @@ private extension CutoutSessionCore {
         deviceDetectionSession.reset()
         _ = deviceDetectionSession.observeAdvertisement(
             name: restoredAdvertisement.localName.map { Data($0.utf8) }
+        )
+        _ = rustSessionState.selectDiscoveredPlatform(
+            platformIdentifier: selectedIdentifier
         )
         record("central_restore=selected state=\(restoredPeripheral.state.rawValue) observations=\(discovery.observations.count)")
 

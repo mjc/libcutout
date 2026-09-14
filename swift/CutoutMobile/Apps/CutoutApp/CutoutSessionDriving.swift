@@ -7,6 +7,7 @@ protocol CutoutSessionDriving: AnyObject {
     /// The Rust-backed map adapter is optional while persistence is unavailable.
     var rideMapStateHandle: MobileRideMapState? { get }
     var onDisplayStateChange: ((RideDisplayState) -> Void)? { get set }
+    var onPhoneAlarmActionsAvailable: ((MobilePhoneAlarmActionsDto) -> Void)? { get set }
     var onPhaseChange: ((SessionConnectionPhase) -> Void)? { get set }
     var onReconnectScheduled: ((SessionConnectionRetry) -> Void)? { get set }
     var onCaptureEvent: ((CaptureEvent) -> Void)? { get set }
@@ -110,6 +111,11 @@ protocol CutoutSessionDriving: AnyObject {
 extension CutoutSessionCore: CutoutSessionDriving {}
 
 extension CutoutSessionDriving {
+    var onPhoneAlarmActionsAvailable: ((MobilePhoneAlarmActionsDto) -> Void)? {
+        get { nil }
+        set {}
+    }
+
     var settingsState: EucSettingsState? { nil }
 
     var isRecordOnlyConnection: Bool { false }

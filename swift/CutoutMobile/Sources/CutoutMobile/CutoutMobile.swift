@@ -3166,7 +3166,7 @@ public enum VescRideWarning: Equatable, Hashable, Sendable {
     case bmsConnection
     case unknown
 
-    fileprivate init(_ dto: MobileVescRideWarningDto) {
+    public init(_ dto: MobileVescRideWarningDto) {
         switch dto {
         case .none:
             self = .none
@@ -3211,7 +3211,7 @@ public enum VescRideStopReason: Equatable, Hashable, Sendable {
     case reverse
     case quickStop
 
-    fileprivate init(_ dto: MobileVescRideStopReasonDto) {
+    public init(_ dto: MobileVescRideStopReasonDto) {
         switch dto {
         case .none: self = .none
         case .pitch: self = .pitch
@@ -6439,15 +6439,21 @@ public final class ElectricUnicycleSession: @unchecked Sendable {
     public init(
         model: ElectricUnicycleModel,
         deviceIdentity: String? = nil,
-        allowUnverifiedSettings: Bool = false
+        allowUnverifiedSettings: Bool = false,
+        sessionState: CutoutSessionStateHandle? = nil
     ) throws {
         self.model = model
         self.voltageSagIdentity = deviceIdentity
         self.inner = switch model {
         case .aero:
-            .aero(Self.makeAeroSession(allowUnverifiedSettings: allowUnverifiedSettings))
+            .aero(Self.makeAeroSession(
+                allowUnverifiedSettings: allowUnverifiedSettings,
+                sessionState: sessionState
+            ))
         case .falcon:
-            .falcon(try FalconBenignControlSession())
+            .falcon(try sessionState.map {
+                try FalconBenignControlSession.withSessionState(sessionState: $0)
+            } ?? FalconBenignControlSession())
         }
         chargeEstimator.configureElectricUnicycleProfile(model: model.dto)
         if
@@ -6459,8 +6465,14 @@ public final class ElectricUnicycleSession: @unchecked Sendable {
         }
     }
 
-    private static func makeAeroSession(allowUnverifiedSettings: Bool) -> AeroBenignControlSession {
-        let session = AeroBenignControlSession()
+    private static func makeAeroSession(
+        allowUnverifiedSettings: Bool,
+        sessionState: CutoutSessionStateHandle?
+    ) -> AeroBenignControlSession {
+        let session = sessionState.map {
+            AeroBenignControlSession.withSessionState(sessionState: $0)
+        }
+            ?? AeroBenignControlSession()
         if allowUnverifiedSettings {
             session.enableSettingsValidation()
         }
@@ -6901,12 +6913,23 @@ public final class VescOnewheelSession: @unchecked Sendable {
     private let chargeEstimator = MobileChargeEstimator()
     private var chargeEstimateState = ChargeEstimateState.missingProfile
 
-    public init() {
-        self.inner = VescReadOnlySession()
+    public init(sessionState: CutoutSessionStateHandle? = nil) {
+        self.inner = sessionState.map {
+            VescReadOnlySession.withSessionState(sessionState: $0)
+        }
+            ?? VescReadOnlySession()
     }
 
-    public init(boardProfile: VescBoardProfile) {
-        self.inner = VescReadOnlySession.withBoardProfile(boardProfile: boardProfile)
+    public init(
+        boardProfile: VescBoardProfile,
+        sessionState: CutoutSessionStateHandle? = nil
+    ) {
+        self.inner = sessionState.map {
+            VescReadOnlySession.withBoardProfileAndSessionState(
+                boardProfile: boardProfile,
+                sessionState: $0
+            )
+        } ?? VescReadOnlySession.withBoardProfile(boardProfile: boardProfile)
         chargeEstimator.configureVescBoardProfile(boardProfile: boardProfile)
     }
 
@@ -7188,21 +7211,31 @@ public enum CoreBluetoothSession: Sendable {
     public static func electricUnicycle(
         model: ElectricUnicycleModel,
         deviceIdentity: String? = nil,
-        allowUnverifiedSettings: Bool = false
+        allowUnverifiedSettings: Bool = false,
+        sessionState: CutoutSessionStateHandle? = nil
     ) throws -> CoreBluetoothSession {
         try .electricUnicycle(ElectricUnicycleSession(
             model: model,
             deviceIdentity: deviceIdentity,
-            allowUnverifiedSettings: allowUnverifiedSettings
+            allowUnverifiedSettings: allowUnverifiedSettings,
+            sessionState: sessionState
         ))
     }
 
-    public static func vescOnewheel() -> CoreBluetoothSession {
-        .vescOnewheel(VescOnewheelSession())
+    public static func vescOnewheel(
+        sessionState: CutoutSessionStateHandle? = nil
+    ) -> CoreBluetoothSession {
+        .vescOnewheel(VescOnewheelSession(sessionState: sessionState))
     }
 
-    public static func vescOnewheel(boardProfile: VescBoardProfile) -> CoreBluetoothSession {
-        .vescOnewheel(VescOnewheelSession(boardProfile: boardProfile))
+    public static func vescOnewheel(
+        boardProfile: VescBoardProfile,
+        sessionState: CutoutSessionStateHandle? = nil
+    ) -> CoreBluetoothSession {
+        .vescOnewheel(VescOnewheelSession(
+            boardProfile: boardProfile,
+            sessionState: sessionState
+        ))
     }
 
     /// Configures the Rust-owned charge estimate profile for this live session.
@@ -7926,6 +7959,7 @@ public final class CoreBluetoothLiveSessionOwner: @unchecked Sendable {
     private let maximumRetryAttempts: Int
     private let retryDelay: DispatchTimeInterval
     private let monotonicClock: MonotonicClock
+    private let onStep: () -> Void
     private let pollsVesc: Bool
     private var recorded: [CoreBluetoothLiveRecord] = []
     private var pendingRetry: DispatchWorkItem?
@@ -7948,7 +7982,8 @@ public final class CoreBluetoothLiveSessionOwner: @unchecked Sendable {
         retryCommandOnLinkUp: DeviceCommand? = nil,
         maximumRetryAttempts: Int = 3,
         retryDelay: DispatchTimeInterval = .seconds(1),
-        executionQueue: DispatchQueue? = nil
+        executionQueue: DispatchQueue? = nil,
+        onStep: @escaping () -> Void = {}
     ) {
         self.init(
             session: session,
@@ -7960,7 +7995,8 @@ public final class CoreBluetoothLiveSessionOwner: @unchecked Sendable {
             maximumRetryAttempts: maximumRetryAttempts,
             retryDelay: retryDelay,
             executionQueue: executionQueue,
-            monotonicClock: MonotonicClock()
+            monotonicClock: MonotonicClock(),
+            onStep: onStep
         )
     }
 
@@ -7974,7 +8010,8 @@ public final class CoreBluetoothLiveSessionOwner: @unchecked Sendable {
         maximumRetryAttempts: Int = 3,
         retryDelay: DispatchTimeInterval = .seconds(1),
         executionQueue: DispatchQueue? = nil,
-        monotonicClock: MonotonicClock
+        monotonicClock: MonotonicClock,
+        onStep: @escaping () -> Void = {}
     ) {
         self.platformIdentifier = advertisement.peripheralIdentifier
         self.runner = CoreBluetoothSessionRunner(
@@ -7994,6 +8031,7 @@ public final class CoreBluetoothLiveSessionOwner: @unchecked Sendable {
         self.maximumRetryAttempts = max(0, maximumRetryAttempts)
         self.retryDelay = retryDelay
         self.monotonicClock = monotonicClock
+        self.onStep = onStep
         self.pollsVesc = if case .vescOnewheel = session { true } else { false }
     }
 
@@ -8155,6 +8193,7 @@ public final class CoreBluetoothLiveSessionOwner: @unchecked Sendable {
         receivedRealtimeTelemetrySinceLinkUp = false
         retryAttempts = 0
         let step = try runner.handle(.linkUp(at: monotonicMilliseconds))
+        onStep()
         record(.linkUp(
             platformIdentifier: platformIdentifier,
             writeLimit: step.captureContext?.writeLimit ?? TransportWriteLimitBytes(0)
@@ -8187,6 +8226,7 @@ public final class CoreBluetoothLiveSessionOwner: @unchecked Sendable {
     ) throws -> CoreBluetoothSessionStep {
         record(.command(command, at: monotonicMilliseconds))
         let step = try runner.handle(.command(command, at: monotonicMilliseconds))
+        onStep()
         executeAndRecord(step.operations)
         publishSettingsState()
         return step
@@ -8196,6 +8236,7 @@ public final class CoreBluetoothLiveSessionOwner: @unchecked Sendable {
     @discardableResult
     public func handleTick(at monotonicMilliseconds: MonotonicMilliseconds) throws -> CoreBluetoothSessionStep {
         let step = try runner.handle(.tick(at: monotonicMilliseconds))
+        onStep()
         executeAndRecord(step.operations)
         publishSettingsState()
         return step
@@ -8217,6 +8258,7 @@ public final class CoreBluetoothLiveSessionOwner: @unchecked Sendable {
             channel: channel,
             at: monotonicMilliseconds
         ))
+        onStep()
         receivedRealtimeTelemetrySinceLinkUp =
             receivedRealtimeTelemetrySinceLinkUp
             || step.actions.contains { $0.vescRealtimeTelemetry }
@@ -8240,6 +8282,7 @@ public final class CoreBluetoothLiveSessionOwner: @unchecked Sendable {
         pendingOperationsAfterSubscription.removeAll()
         waitingForSubscriptionChannel = nil
         let step = try runner.handle(.linkDown(at: monotonicMilliseconds))
+        onStep()
         record(.linkDown(
             platformIdentifier: platformIdentifier,
             at: monotonicMilliseconds
