@@ -277,7 +277,7 @@ fn connection_end_releases_player_poll_and_owned_transport_for_reconnect() {
         }
     );
     assert_eq!(
-        lifecycle.complete_player_state_request(poll),
+        lifecycle.complete_player_state_request(poll, 1_000),
         cutout_music::player_request::MusicPlayerRequestCompletion::Stale
     );
     assert!(lifecycle.begin_player_state_request(101).is_some());
@@ -382,7 +382,7 @@ fn newer_push_revision_rejects_an_older_player_poll() {
     let revision = lifecycle.player_state_observation_revision();
     lifecycle.mark_player_state_observed(1);
     assert_eq!(
-        lifecycle.complete_player_state_request_if_current(request, revision),
+        lifecycle.complete_player_state_request_if_current(request, revision, 1_000),
         cutout_music::player_request::MusicPlayerRequestCompletion::Stale
     );
 }

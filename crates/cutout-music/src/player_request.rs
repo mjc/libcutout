@@ -100,11 +100,20 @@ impl MusicPlayerRequest {
 
     /// Accepts only the outstanding callback; late callbacks cannot clear a retry.
     #[must_use]
-    pub fn complete(&mut self, request_id: PlayerStateRequestId) -> MusicPlayerRequestCompletion {
-        if self.pending.is_some_and(|(id, _)| id == request_id) {
+    pub fn complete(
+        &mut self,
+        request_id: PlayerStateRequestId,
+        now_ms: u64,
+    ) -> MusicPlayerRequestCompletion {
+        if self.pending.is_some_and(|(id, started_at)| {
+            id == request_id && now_ms.saturating_sub(started_at) < REQUEST_TIMEOUT_MS
+        }) {
             self.pending = None;
             MusicPlayerRequestCompletion::Accepted
         } else {
+            if self.pending.is_some_and(|(id, _)| id == request_id) {
+                self.pending = None;
+            }
             MusicPlayerRequestCompletion::Stale
         }
     }
@@ -115,6 +124,7 @@ impl MusicPlayerRequest {
         &mut self,
         request_id: PlayerStateRequestId,
         observation_revision: ObservationRevision,
+        now_ms: u64,
     ) -> MusicPlayerRequestCompletion {
         if self.observation_revision_exhausted || observation_revision != self.observation_revision
         {
@@ -123,7 +133,7 @@ impl MusicPlayerRequest {
             }
             return MusicPlayerRequestCompletion::Stale;
         }
-        self.complete(request_id)
+        self.complete(request_id, now_ms)
     }
 
     /// Starts or refreshes the monotonic freshness window for this session.

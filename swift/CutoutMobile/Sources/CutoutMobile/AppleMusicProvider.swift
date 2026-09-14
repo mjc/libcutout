@@ -150,6 +150,7 @@ public final class AppleMusicProviderAdapter {
     private let observationBridge: AppleMusicObservationBridge
     private let transport: MusicProviderTransportExecutor
     private let pendingCommandTask = MusicCommandTaskSlot()
+    private var commandTaskIDs = [MobileMusicTransportRequestId: MusicCommandTaskID]()
 #if canImport(MusicKit) && os(iOS)
     private let makeSystemPlayer: () -> SystemMusicPlayer
     private lazy var systemPlayer = makeSystemPlayer()
@@ -212,6 +213,7 @@ public final class AppleMusicProviderAdapter {
 
     public func stopMonitoring() {
         pendingCommandTask.cancel()
+        commandTaskIDs.removeAll()
         if let completion = observationBridge.stopMonitoring() {
             transport.apply(completion)
         }
@@ -272,14 +274,24 @@ public final class AppleMusicProviderAdapter {
         guard let providerGeneration = observationBridge.providerGeneration else {
             return .unavailable
         }
-        return await transport.perform(providerGeneration: providerGeneration) { [weak self] completion in
+        return await transport.perform(
+            providerGeneration: providerGeneration,
+            onTerminal: { [weak self] requestID in
+                guard let self, let taskID = self.commandTaskIDs.removeValue(forKey: requestID) else { return }
+                self.pendingCommandTask.cancel(taskID)
+            }
+        ) { [weak self] requestID, completion in
             guard let self else {
                 completion(false)
                 return
             }
             let taskID = self.pendingCommandTask.reserve()
+            self.commandTaskIDs[requestID] = taskID
             let task = Task { @MainActor [weak self] in
-                defer { self?.pendingCommandTask.finish(taskID) }
+                defer {
+                    self?.pendingCommandTask.finish(taskID)
+                    self?.commandTaskIDs.removeValue(forKey: requestID)
+                }
                 guard let self,
                       self.observationBridge.providerGeneration == providerGeneration,
                       !Task.isCancelled else {

@@ -15,14 +15,14 @@ final class MusicProviderTransportExecutorTests: XCTestCase {
         )
 
         let first = Task { @MainActor in
-            await transport.perform(providerGeneration: provider) { completion in
+            await transport.perform(providerGeneration: provider) { _, completion in
                 Task { @MainActor in completion(await gate.wait()) }
             }
         }
         let started = await gate.waitUntilOperationStarted()
         XCTAssertTrue(started)
 
-        let overlapping = await transport.perform(providerGeneration: provider) { $0(true) }
+        let overlapping = await transport.perform(providerGeneration: provider) { _, completion in completion(true) }
         XCTAssertEqual(overlapping, .refused)
 
         await gate.resume(returning: true)
@@ -40,7 +40,7 @@ final class MusicProviderTransportExecutorTests: XCTestCase {
             nowMs: { 0 }
         )
         let command = Task { @MainActor in
-            await transport.perform(providerGeneration: apple) { completion in
+            await transport.perform(providerGeneration: apple) { _, completion in
                 Task { @MainActor in completion(await gate.wait()) }
             }
         }
@@ -65,7 +65,7 @@ final class MusicProviderTransportExecutorTests: XCTestCase {
             nowMs: { 0 }
         )
         let command = Task { @MainActor in
-            await transport.perform(providerGeneration: provider) { completion in
+            await transport.perform(providerGeneration: provider) { _, completion in
                 Task { @MainActor in completion(await gate.wait()) }
             }
         }
@@ -89,7 +89,7 @@ final class MusicProviderTransportExecutorTests: XCTestCase {
         )
         var dispatched = false
         let command = Task { @MainActor in
-            await transport.perform(providerGeneration: provider) { completion in
+            await transport.perform(providerGeneration: provider) { _, completion in
                 dispatched = true
                 completion(true)
             }

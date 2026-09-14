@@ -291,6 +291,7 @@ impl MusicProviderLifecycle {
             return MusicTransportCompletion::Stale;
         }
         self.observing = false;
+        self.command_feedback.invalidate();
         self.connection.reset();
         self.player_state.reset();
         self.artwork.reset();
@@ -391,6 +392,27 @@ impl MusicProviderLifecycle {
         self.end_connection(id, now_ms)
     }
 
+    /// Retires a timed-out attempt when its SDK reports success too late.
+    #[must_use]
+    pub fn connection_expired_effect(
+        &mut self,
+        id: ConnectionAttemptId,
+        now_ms: u64,
+    ) -> MusicConnectionEffect {
+        let callback = self.connection.expired_for(id, now_ms);
+        if callback == MusicConnectionCallback::Stale {
+            return MusicConnectionEffect {
+                callback,
+                transport: MusicTransportCompletion::Stale,
+            };
+        }
+        self.player_state.reset();
+        MusicConnectionEffect {
+            callback,
+            transport: self.cancel_transport_for_connection_current(id),
+        }
+    }
+
     /// Accepts disconnection and retires all work owned by the connection.
     #[must_use]
     pub fn connection_disconnected_effect(
@@ -412,8 +434,9 @@ impl MusicProviderLifecycle {
     pub fn complete_player_state_request(
         &mut self,
         id: PlayerStateRequestId,
+        now_ms: u64,
     ) -> MusicPlayerRequestCompletion {
-        self.player_state.complete(id)
+        self.player_state.complete(id, now_ms)
     }
 
     /// Completes a poll only when no newer authoritative observation arrived.
@@ -422,9 +445,10 @@ impl MusicProviderLifecycle {
         &mut self,
         id: PlayerStateRequestId,
         observation_revision: ObservationRevision,
+        now_ms: u64,
     ) -> MusicPlayerRequestCompletion {
         self.player_state
-            .complete_if_current(id, observation_revision)
+            .complete_if_current(id, observation_revision, now_ms)
     }
 
     /// Revision of the latest authoritative player observation.

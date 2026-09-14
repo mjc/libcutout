@@ -193,7 +193,9 @@ final class MusicProviderTransportExecutor {
     func perform(
         providerGeneration: MobileMusicProviderSessionId,
         connectionAttemptID: MobileMusicConnectionAttemptId? = nil,
+        onTerminal: @escaping @MainActor (MobileMusicTransportRequestId) -> Void = { _ in },
         dispatch: @escaping @MainActor @Sendable (
+            MobileMusicTransportRequestId,
             @escaping @MainActor @Sendable (Bool) -> Void
         ) -> Void
     ) async -> MusicCommandOutcome {
@@ -220,6 +222,7 @@ final class MusicProviderTransportExecutor {
                     effect: effect,
                     completion: { [effects] requestID, outcome in
                         effects.cancel(.transport(requestID))
+                        onTerminal(requestID)
                         continuation.resume(returning: outcome)
                     }
                 ) else {
@@ -227,6 +230,7 @@ final class MusicProviderTransportExecutor {
                         providerGeneration: providerGeneration,
                         requestID: effect.id
                     )
+                    onTerminal(effect.id)
                     continuation.resume(returning: .refused)
                     return
                 }
@@ -235,6 +239,7 @@ final class MusicProviderTransportExecutor {
                         providerGeneration: providerGeneration,
                         requestID: effect.id
                     )
+                    onTerminal(effect.id)
                     return
                 }
                 effects.run(
@@ -248,7 +253,7 @@ final class MusicProviderTransportExecutor {
                         nowMs: effect.deadlineMs
                     )
                 }
-                dispatch { [weak self] accepted in
+                dispatch(effect.id) { [weak self] accepted in
                     guard let self else { return }
                     self.coordinator.finish(
                         providerGeneration: providerGeneration,
@@ -266,6 +271,7 @@ final class MusicProviderTransportExecutor {
                     providerGeneration: providerGeneration,
                     requestID: effect.id
                 )
+                onTerminal(effect.id)
             }
         }
     }
@@ -319,6 +325,13 @@ final class MusicCommandTaskSlot {
     }
 
     func cancel() {
+        task?.cancel()
+        task = nil
+        currentID = nil
+    }
+
+    func cancel(_ id: MusicCommandTaskID) {
+        guard currentID == id else { return }
         task?.cancel()
         task = nil
         currentID = nil
@@ -398,7 +411,12 @@ public struct MusicTransitionHintTracker: Sendable {
         if pendingHints.isEmpty {
             remainingUnchangedObservations = nil
         }
-        return pendingHints.first?.hint
+        guard let first = pendingHints.first else { return nil }
+        // A delayed observation must not consume a command issued later.
+        if let issuedAtMs = first.issuedAtMs, monotonicMs < issuedAtMs {
+            return nil
+        }
+        return first.hint
     }
 
     public mutating func clear() {
@@ -754,7 +772,7 @@ final class AppleMusicObservationBridge {
             guard let self,
                   self.activeGeneration == generation,
                   self.lifecycle.classifyProviderSession(id: generation) == .current,
-                  self.lifecycle.completePlayerStateRequest(id: requestID) == .accepted
+                  self.lifecycle.completePlayerStateRequest(id: requestID, nowMs: self.observedAtMs?() ?? observedAtMs) == .accepted
             else { return }
             self.readInFlight = false
             self.cachedObservation = self.cachedObservation?.staleProjection(
@@ -774,7 +792,7 @@ final class AppleMusicObservationBridge {
             guard self.activeGeneration == generation,
                   self.lifecycle.classifyProviderSession(id: generation) == .current
             else { return }
-            guard self.lifecycle.completePlayerStateRequest(id: requestID) == .accepted else {
+            guard self.lifecycle.completePlayerStateRequest(id: requestID, nowMs: self.observedAtMs?() ?? observedAtMs) == .accepted else {
                 return
             }
             self.readInFlight = false
@@ -1254,6 +1272,9 @@ public final class MusicIntegrationCoordinator {
 
     private var lastObservedAtByProvider = [MobileMusicProviderDto: UInt64]()
     private var lastCorrelationRideID: String?
+    /// Latest accepted observation, including position-only updates. This is
+    /// the baseline for occurrence/rewind detection.
+    private var lastAcceptedSnapshotByProvider = [MobileMusicProviderDto: MobileMusicSnapshotDto]()
     private var lastPersistedSnapshotByProvider = [MobileMusicProviderDto: MobileMusicSnapshotDto]()
     private var historyPolicy = MobileMusicHistoryPolicyDto.disabled
     public private(set) var lastRecordedSequence: UInt64?
@@ -1301,8 +1322,8 @@ public final class MusicIntegrationCoordinator {
             }
             throw error
         }
+        let previous = lastAcceptedSnapshotByProvider[normalizedSnapshot.provider]
         guard accept(normalizedSnapshot) else { return nil }
-        let previous = lastPersistedSnapshotByProvider[normalizedSnapshot.provider]
         update(snapshot: normalizedSnapshot, artwork: artwork)
         guard let kind = try musicTransitionKind(
             previous: previous,
@@ -1369,6 +1390,7 @@ public final class MusicIntegrationCoordinator {
     /// Selection itself must not synthesize a stop, disconnect, or item change.
     public func resetProviderCorrelation() {
         lastObservedAtByProvider.removeAll(keepingCapacity: true)
+        lastAcceptedSnapshotByProvider.removeAll(keepingCapacity: true)
         lastPersistedSnapshotByProvider.removeAll(keepingCapacity: true)
         lastCorrelationRideID = rideMapState?.currentSnapshot()?.rideID
         nowPlaying = nil
@@ -1420,6 +1442,7 @@ public final class MusicIntegrationCoordinator {
         guard rideID != lastCorrelationRideID else { return }
         lastCorrelationRideID = rideID
         lastObservedAtByProvider.removeAll()
+        lastAcceptedSnapshotByProvider.removeAll()
         lastPersistedSnapshotByProvider.removeAll()
         lastRecordedSequence = nil
     }
@@ -1445,10 +1468,12 @@ public final class MusicIntegrationCoordinator {
             // Enabling history should capture the current item on the next
             // accepted observation, even if it was already playing.
             lastPersistedSnapshotByProvider.removeAll(keepingCapacity: true)
+            lastAcceptedSnapshotByProvider.removeAll(keepingCapacity: true)
         case (_, .disabled):
             // Keep the current player as the baseline while history is off so
             // a later re-enable can deliberately start a new association.
             lastPersistedSnapshotByProvider.removeAll(keepingCapacity: true)
+            lastAcceptedSnapshotByProvider.removeAll(keepingCapacity: true)
         default:
             // Redaction and display-policy changes are not music transitions.
             // Preserve the baseline so the next poll cannot duplicate one.
@@ -1463,6 +1488,7 @@ public final class MusicIntegrationCoordinator {
             currentObservedAtMs: snapshot.observedAtMs
         ) else { return false }
         lastObservedAtByProvider[snapshot.provider] = snapshot.observedAtMs
+        lastAcceptedSnapshotByProvider[snapshot.provider] = snapshot
         return true
     }
 

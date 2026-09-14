@@ -8361,6 +8361,9 @@ pub fn music_transition_kind(
     skip_hint: bool,
 ) -> Result<Option<MobileMusicRideEventKindDto>, MobileRideMapCoreErrorDto> {
     validate_music_snapshot(current.clone())?;
+    if current.state == MobileMusicPlaybackStateDto::Disconnected {
+        return Ok(Some(MobileMusicRideEventKindDto::ProviderDisconnected));
+    }
     let Some(previous) = previous else {
         return Ok(current
             .item
@@ -24382,6 +24385,26 @@ mod tests {
         assert_eq!(
             music_transition_kind(Some(previous), current, true).expect("valid snapshots"),
             Some(MobileMusicRideEventKindDto::Skip)
+        );
+    }
+
+    #[test]
+    fn initial_disconnected_observation_preserves_the_disconnect_boundary() {
+        let mut with_item = test_music_snapshot();
+        with_item.state = MobileMusicPlaybackStateDto::Disconnected;
+        assert_eq!(
+            music_transition_kind(None, with_item, false).expect("valid snapshot"),
+            Some(MobileMusicRideEventKindDto::ProviderDisconnected)
+        );
+
+        let mut without_item = test_music_snapshot();
+        without_item.state = MobileMusicPlaybackStateDto::Disconnected;
+        without_item.item = None;
+        without_item.position_milliseconds = None;
+        without_item.duration_milliseconds = None;
+        assert_eq!(
+            music_transition_kind(None, without_item, false).expect("valid snapshot"),
+            Some(MobileMusicRideEventKindDto::ProviderDisconnected)
         );
     }
 

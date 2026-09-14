@@ -184,6 +184,26 @@ impl MusicConnection {
         self.connected_id = Some(attempt_id);
         MusicConnectionCallback::Accepted
     }
+
+    /// Retires an attempt whose deadline elapsed before a late success callback.
+    #[must_use]
+    pub fn expired_for(
+        &mut self,
+        attempt_id: ConnectionAttemptId,
+        now_ms: u64,
+    ) -> MusicConnectionCallback {
+        if self.active_attempt_id != Some(attempt_id)
+            || !self
+                .in_flight_since
+                .is_some_and(|started_at| now_ms.saturating_sub(started_at) >= ATTEMPT_TIMEOUT_MS)
+        {
+            return MusicConnectionCallback::Stale;
+        }
+        self.in_flight_since = None;
+        self.active_attempt_id = None;
+        self.schedule_retry(now_ms);
+        MusicConnectionCallback::Accepted
+    }
 }
 
 #[cfg(test)]
@@ -282,6 +302,19 @@ mod tests {
             MusicConnectionCallback::Accepted
         );
         assert!(connection.begin_attempt_id(2_200).is_some());
+    }
+
+    #[test]
+    fn late_success_expires_current_attempt_and_schedules_recovery() {
+        let mut connection = MusicConnection::default();
+        let attempt = connection.begin_attempt_id(0).expect("attempt");
+        assert_eq!(
+            connection.expired_for(attempt, 10_000),
+            MusicConnectionCallback::Accepted
+        );
+        assert_eq!(connection.classify(attempt), MusicConnectionCallback::Stale);
+        assert!(connection.begin_attempt_id(11_999).is_none());
+        assert!(connection.begin_attempt_id(12_000).is_some());
     }
 
     #[test]

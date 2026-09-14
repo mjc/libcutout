@@ -503,7 +503,8 @@ public final class SpotifyProviderAdapter: NSObject {
                       self.lifecycle.classifyConnection(id: attemptID, nowMs: self.connectionNowMs) == .accepted else { return }
                 let completion = self.lifecycle.completePlayerStateRequestIfCurrent(
                     id: requestID,
-                    observationRevision: observationRevision
+                    observationRevision: observationRevision,
+                    nowMs: self.connectionNowMs
                 )
                 guard completion == .accepted else {
                     if self.playerStateRequestID == requestID {
@@ -716,7 +717,7 @@ public final class SpotifyProviderAdapter: NSObject {
         return await transport.perform(
             providerGeneration: bridge.providerGeneration,
             connectionAttemptID: bridge.attemptID
-        ) { completion in
+        ) { _, completion in
             let callback: SPTAppRemoteCallback = { _, error in
                 Task { @MainActor in completion(error == nil) }
             }
@@ -783,8 +784,20 @@ public final class SpotifyProviderAdapter: NSObject {
               bridge.providerGeneration == providerGeneration,
               bridge.attemptID == attemptID,
               lifecycle.classifyProviderSession(id: providerGeneration) == .current,
-              onChange != nil,
-              lifecycle.connectionEstablished(id: attemptID, nowMs: connectionNowMs) == .accepted else { return }
+              onChange != nil else { return }
+        guard lifecycle.connectionEstablished(id: attemptID, nowMs: connectionNowMs) == .accepted else {
+            // This callback belongs to the still-installed SDK object, but
+            // Rust has already expired its attempt. Disconnect that object so
+            // `isConnected` cannot permanently block the next retry.
+            appRemote.disconnect()
+            let expired = lifecycle.connectionExpiredEffect(id: attemptID, nowMs: connectionNowMs)
+            guard expired.callback == .accepted else { return }
+            transport.apply(expired.transport)
+            detachAppRemote(providerGeneration: providerGeneration, attemptID: attemptID)
+            lifecycleState = .disconnected
+            emitChange()
+            return
+        }
 #if DEBUG
         print("spotify_connection_established")
 #endif

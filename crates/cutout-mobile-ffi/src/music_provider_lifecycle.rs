@@ -556,6 +556,18 @@ impl MobileMusicProviderLifecycle {
             .into()
     }
 
+    /// Retires a connection attempt that reported success after its deadline.
+    #[must_use]
+    pub fn connection_expired_effect(
+        &self,
+        id: MobileMusicConnectionAttemptId,
+        now_ms: u64,
+    ) -> MobileMusicProviderConnectionEffect {
+        self.lock_inner()
+            .connection_expired_effect(ConnectionAttemptId::from_raw(id.value), now_ms)
+            .into()
+    }
+
     /// Accepts disconnection and returns the transport work retired with it.
     #[must_use]
     pub fn connection_disconnected_effect(
@@ -584,9 +596,10 @@ impl MobileMusicProviderLifecycle {
     pub fn complete_player_state_request(
         &self,
         id: MobileMusicPlayerStateRequestId,
+        now_ms: u64,
     ) -> MobileMusicRequestCompletion {
         self.lock_inner()
-            .complete_player_state_request(PlayerStateRequestId::from_raw(id.value))
+            .complete_player_state_request(PlayerStateRequestId::from_raw(id.value), now_ms)
             .into()
     }
 
@@ -596,11 +609,13 @@ impl MobileMusicProviderLifecycle {
         &self,
         id: MobileMusicPlayerStateRequestId,
         observation_revision: MobileMusicObservationRevision,
+        now_ms: u64,
     ) -> MobileMusicRequestCompletion {
         self.lock_inner()
             .complete_player_state_request_if_current(
                 PlayerStateRequestId::from_raw(id.value),
                 ObservationRevision::from_raw(observation_revision.value),
+                now_ms,
             )
             .into()
     }

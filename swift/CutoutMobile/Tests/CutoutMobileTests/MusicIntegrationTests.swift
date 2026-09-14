@@ -414,6 +414,14 @@ final class MusicIntegrationTests: XCTestCase {
         XCTAssertNil(tracker.pendingHint)
     }
 
+    func testTransitionHintDoesNotApplyToAnObservationFromBeforeIssue() {
+        var tracker = MusicTransitionHintTracker()
+        tracker.issue(.skip, issuedAtMs: 200)
+
+        XCTAssertNil(tracker.hint(atMonotonicMs: 100))
+        XCTAssertEqual(tracker.hint(atMonotonicMs: 300), .skip)
+    }
+
     func testTransitionHintClearsWhenProviderLosesItsCurrentItem() {
         var tracker = MusicTransitionHintTracker()
         tracker.issue(.skip)

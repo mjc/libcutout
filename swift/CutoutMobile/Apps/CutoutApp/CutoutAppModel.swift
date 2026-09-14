@@ -793,9 +793,8 @@ final class CutoutAppModel {
     }
 
     func dismissMusicCommandFeedback(requestID: MobileMusicCommandFeedbackId) {
-        guard musicCommandFeedback?.requestID == requestID,
-              musicProviderLifecycle.dismissCommandFeedback(id: requestID) == .current
-        else { return }
+        guard musicCommandFeedback?.requestID == requestID else { return }
+        _ = musicProviderLifecycle.dismissCommandFeedback(id: requestID)
         musicCommandFeedback = nil
     }
 
@@ -928,13 +927,17 @@ final class CutoutAppModel {
                 )
             } else if outcome == .disabled {
                 clearMusicCaptureContext()
+                musicHistorySaveError = nil
+            } else if outcome == .full {
+                clearMusicCaptureContext()
+                musicHistorySaveError = .storageError("ride music timeline is full")
             }
             finishMusicObservation(
                 previousNowPlaying: previousNowPlaying,
                 appliedHint: appliedHint,
                 currentObservedAtMs: observation.snapshot.observedAtMs
             )
-            return true
+            return outcome != .full
         } catch MobileRideMapError.noActiveRide {
             finishMusicObservation(
                 previousNowPlaying: previousNowPlaying,
@@ -943,7 +946,7 @@ final class CutoutAppModel {
             )
             return false
         } catch {
-            rideMapLiveError = Self.mapRideMapError(error)
+            musicHistorySaveError = Self.mapRideMapError(error)
             finishMusicObservation(
                 previousNowPlaying: previousNowPlaying,
                 appliedHint: appliedHint,
@@ -1203,13 +1206,16 @@ final class CutoutAppModel {
     }
 
     private func beginMusicMonitoring() {
+        // Invalidate before stopping the old provider; stopping can resume a
+        // cancelled command continuation synchronously.
+        musicProviderLifecycle.invalidateCommandFeedback()
+        musicCommandFeedback = nil
         guard let effect = musicProviderLifecycle.beginMonitor() else {
 #if DEBUG
             print("music_monitor_skipped inactive_or_not_requested")
 #endif
             return
         }
-        musicCommandFeedback = nil
 #if os(iOS) && canImport(MediaPlayer)
         stopMusicMonitoring()
         let generation = effect.generation
