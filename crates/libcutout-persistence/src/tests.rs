@@ -3098,6 +3098,69 @@ fn version_20_database_adds_device_scoped_bms_history_without_resetting_existing
 }
 
 #[test]
+fn version_21_bms_history_preserves_existing_samples_with_legacy_event_identities() {
+    let _guard = test_guard();
+    let path = std::env::temp_dir().join(format!(
+        "libcutout-persistence-bms-v21-migration-{}.sqlite",
+        uuid::Uuid::new_v4()
+    ));
+    let connection = Connection::open(&path).unwrap();
+    crate::storage::create_current_schema(&connection).unwrap();
+    connection
+        .execute_batch(
+            "DROP TABLE bms_voltage_samples;
+             CREATE TABLE bms_voltage_samples (
+                 device_identity TEXT NOT NULL,
+                 monotonic_ms INTEGER NOT NULL,
+                 wall_clock_ms INTEGER NOT NULL,
+                 observation_index INTEGER NOT NULL,
+                 pack_index INTEGER,
+                 pack_observation_index INTEGER,
+                 millivolts INTEGER NOT NULL,
+                 PRIMARY KEY (device_identity, monotonic_ms, wall_clock_ms, observation_index)
+             );
+             INSERT INTO bms_voltage_samples
+                 (device_identity, monotonic_ms, wall_clock_ms, observation_index,
+                  pack_index, pack_observation_index, millivolts)
+             VALUES ('wheel-a', 1000, 2000, 45, 1, 15, 4193);
+             PRAGMA application_id = 1129665615;
+             PRAGMA user_version = 21;",
+        )
+        .unwrap();
+    drop(connection);
+
+    let database = RideDatabase::open(&path).unwrap();
+    database.shutdown().unwrap();
+
+    let connection = Connection::open(&path).unwrap();
+    let sample: (String, u64, u64, u16, Option<u16>, Option<u16>, i32) = connection
+        .query_row(
+            "SELECT session_identifier, event_sequence, monotonic_ms, observation_index,
+                    pack_index, pack_observation_index, millivolts
+             FROM bms_voltage_samples",
+            [],
+            |row| {
+                Ok((
+                    row.get(0)?,
+                    row.get(1)?,
+                    row.get(2)?,
+                    row.get(3)?,
+                    row.get(4)?,
+                    row.get(5)?,
+                    row.get(6)?,
+                ))
+            },
+        )
+        .unwrap();
+    assert_eq!(
+        sample,
+        ("legacy".to_owned(), 1, 1_000, 45, Some(1), Some(15), 4_193)
+    );
+    drop(connection);
+    let _ = std::fs::remove_file(path);
+}
+
+#[test]
 fn database_indexes_trails_and_map_points_with_rtree() {
     let _guard = test_guard();
     let path = std::env::temp_dir().join(format!(
