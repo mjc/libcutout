@@ -34,6 +34,8 @@ mod turn_signals;
 pub use turn_signals::*;
 mod settings;
 pub use settings::*;
+mod phone_alarm;
+pub use phone_alarm::*;
 
 #[cfg(test)]
 mod gatt_channel_tests;
