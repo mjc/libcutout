@@ -739,14 +739,14 @@ final class AppleMusicObservationBridge {
             )
             guard let self else { return }
             guard self.activeGeneration == generation,
-                  self.lifecycle.classifyProviderSession(id: generation) == .current,
-                  self.lifecycle.completePlayerStateRequest(id: requestID) == .accepted,
-                  let observation else {
-                self.readInFlight = false
+                  self.lifecycle.classifyProviderSession(id: generation) == .current
+            else { return }
+            guard self.lifecycle.completePlayerStateRequest(id: requestID) == .accepted else {
                 return
             }
             self.readInFlight = false
             self.effects.cancel(.playerStateTimeout(requestID))
+            guard let observation else { return }
             self.cachedObservation = observation
             self.onObservation?(observation)
         }
