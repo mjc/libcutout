@@ -116,10 +116,12 @@ mod music_callback_epoch;
 mod music_connection;
 mod music_monitor;
 mod music_player_request;
+mod music_provider_lifecycle;
 pub use music_callback_epoch::*;
 pub use music_connection::*;
 pub use music_monitor::*;
 pub use music_player_request::*;
+pub use music_provider_lifecycle::*;
 
 /// Mobile discovery candidate support state.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Enum)]

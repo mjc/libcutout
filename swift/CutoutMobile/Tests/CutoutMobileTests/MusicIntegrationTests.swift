@@ -3,6 +3,49 @@ import CutoutMobileFFI
 @testable import CutoutMobile
 
 final class MusicIntegrationTests: XCTestCase {
+    func testMusicCommandFeedbackPresentsEveryNonAcceptedOutcome() {
+        XCTAssertNil(MusicCommandFeedback(outcome: .accepted).messageKey)
+        XCTAssertEqual(MusicCommandFeedback(outcome: .refused).messageKey, "music.command.refused")
+        XCTAssertEqual(MusicCommandFeedback(outcome: .failed).messageKey, "music.command.failed")
+        XCTAssertEqual(MusicCommandFeedback(outcome: .unavailable).messageKey, "music.command.unavailable")
+    }
+
+    @MainActor
+    func testProviderTransportCompletesMissingDelayedAndDuplicateCallbacksOnce() async throws {
+        let lifecycle = MobileMusicProviderLifecycle()
+        let coordinator = MusicTransportCoordinator(lifecycle: lifecycle)
+        var callbacks = [(UInt64, MusicCommandOutcome)]()
+
+        let first = try XCTUnwrap(coordinator.begin(nowMs: 1_000) { callbacks.append(($0, $1)) })
+        XCTAssertNil(coordinator.begin(nowMs: 1_001) { _, _ in XCTFail("busy command admitted") })
+        coordinator.expire(nowMs: 10_999)
+        XCTAssertTrue(callbacks.isEmpty)
+        coordinator.expire(nowMs: 11_000)
+        coordinator.finish(requestID: first, accepted: true)
+        coordinator.finish(requestID: first, accepted: false)
+        XCTAssertEqual(callbacks.map(\.1), [.failed])
+
+        let second = try XCTUnwrap(coordinator.begin(nowMs: 11_001) { callbacks.append(($0, $1)) })
+        coordinator.finish(requestID: second, accepted: true)
+        coordinator.finish(requestID: second, accepted: false)
+        XCTAssertEqual(callbacks.map(\.1), [.failed, .accepted])
+    }
+
+    @MainActor
+    func testProviderTransportDisconnectResumesPendingCommandAndRejectsLateCallback() throws {
+        let lifecycle = MobileMusicProviderLifecycle()
+        let coordinator = MusicTransportCoordinator(lifecycle: lifecycle)
+        let provider = lifecycle.beginProviderSession()
+        var callbacks = [(UInt64, MusicCommandOutcome)]()
+        let request = try XCTUnwrap(coordinator.begin(nowMs: 100) { callbacks.append(($0, $1)) })
+
+        coordinator.apply(lifecycle.retireProviderSession(id: provider))
+        coordinator.finish(requestID: request, accepted: true)
+
+        XCTAssertEqual(callbacks.map(\.0), [request])
+        XCTAssertEqual(callbacks.map(\.1), [.unavailable])
+    }
+
     func testSpotifyCallbackAcceptsObservedRootSlashWithoutAcceptingAnotherPath() throws {
         let configured = try XCTUnwrap(URL(string: "cutout-spotify://spotify-login-callback"))
         let returned = try XCTUnwrap(URL(string: "cutout-spotify://spotify-login-callback/#access_token=test"))
@@ -97,17 +140,18 @@ final class MusicIntegrationTests: XCTestCase {
     }
 
     func testPlayerStateFreshnessExpiresOnlyAfterRustObservationDeadline() {
-        let request = MobileMusicPlayerRequest()
+        let lifecycle = MobileMusicProviderLifecycle()
 
-        XCTAssertFalse(request.isStale(nowMs: 30_000))
-        request.markObserved(nowMs: 1_000)
-        XCTAssertFalse(request.isStale(nowMs: 31_000))
-        XCTAssertTrue(request.isStale(nowMs: 31_001))
+        XCTAssertFalse(lifecycle.isPlayerStateStale(nowMs: 30_000))
+        lifecycle.markPlayerStateObserved(nowMs: 1_000)
+        XCTAssertFalse(lifecycle.isPlayerStateStale(nowMs: 31_000))
+        XCTAssertTrue(lifecycle.isPlayerStateStale(nowMs: 31_001))
 
-        request.markObserved(nowMs: 31_001)
-        XCTAssertFalse(request.isStale(nowMs: 61_001))
-        request.reset()
-        XCTAssertFalse(request.isStale(nowMs: UInt64.max))
+        lifecycle.markPlayerStateObserved(nowMs: 31_001)
+        XCTAssertFalse(lifecycle.isPlayerStateStale(nowMs: 61_001))
+        _ = lifecycle.beginProviderSession()
+        _ = lifecycle.suspend()
+        XCTAssertFalse(lifecycle.isPlayerStateStale(nowMs: UInt64.max))
     }
 
     @MainActor
@@ -381,18 +425,20 @@ final class MusicIntegrationTests: XCTestCase {
         XCTAssertNil(tracker.pendingHint)
     }
 
-    func testMusicMonitorGenerationInvalidatesOlderTasks() {
-        var generation = MusicMonitorGeneration()
-        let first = generation.begin()
+    func testRustMusicMonitorLifecycleInvalidatesOlderEffects() throws {
+        let lifecycle = MobileMusicProviderLifecycle()
+        lifecycle.requestMonitor(request: .observe)
+        let first = try XCTUnwrap(lifecycle.beginMonitor())
 
-        XCTAssertTrue(generation.owns(first))
+        XCTAssertEqual(lifecycle.classifyMonitor(generation: first.generation), .current)
 
-        generation.invalidate()
+        _ = lifecycle.suspend()
 
-        XCTAssertFalse(generation.owns(first))
-        let second = generation.begin()
-        XCTAssertTrue(generation.owns(second))
-        XCTAssertFalse(generation.owns(first))
+        XCTAssertEqual(lifecycle.classifyMonitor(generation: first.generation), .stale)
+        _ = lifecycle.resume()
+        let second = try XCTUnwrap(lifecycle.beginMonitor())
+        XCTAssertEqual(lifecycle.classifyMonitor(generation: second.generation), .current)
+        XCTAssertEqual(lifecycle.classifyMonitor(generation: first.generation), .stale)
     }
 
     func testMusicAccessibilityAnnouncementsDeduplicateProjectedState() {

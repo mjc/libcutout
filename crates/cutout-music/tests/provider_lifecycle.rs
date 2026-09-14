@@ -18,7 +18,7 @@ fn apple_music_and_spotify_share_monitoring_and_observation_gap_policy() {
     for (provider, lifecycle) in &mut providers {
         lifecycle.request_monitor(MusicMonitorRequest::Authorize);
         assert_eq!(
-            lifecycle.take_monitor_start(),
+            lifecycle.begin_monitor().map(|effect| effect.start),
             Some(MusicMonitorStart::Authorize),
             "{provider:?}",
         );
@@ -50,7 +50,7 @@ fn apple_music_and_spotify_share_monitoring_and_observation_gap_policy() {
             "{provider:?}",
         );
         assert_eq!(
-            lifecycle.take_monitor_start(),
+            lifecycle.begin_monitor().map(|effect| effect.start),
             Some(MusicMonitorStart::Observe),
             "{provider:?}",
         );
@@ -122,5 +122,33 @@ fn transport_has_one_terminal_outcome_across_deadline_and_late_callback() {
     assert_eq!(
         lifecycle.finish_transport(replacement, MusicTransportOutcome::Failed),
         MusicTransportCompletion::Stale,
+    );
+}
+#[test]
+fn monitor_effect_ids_are_rust_owned_and_invalidated_by_scene_changes() {
+    let mut lifecycle = MusicProviderLifecycle::default();
+    lifecycle.request_monitor(MusicMonitorRequest::Observe);
+    let first = lifecycle.begin_monitor().expect("first monitor");
+    assert_eq!(first.start, MusicMonitorStart::Observe);
+    assert_eq!(
+        lifecycle.classify_monitor(first.generation),
+        CallbackEpochMatch::Current,
+    );
+
+    let replacement = lifecycle.begin_monitor().expect("replacement monitor");
+    assert_ne!(first.generation, replacement.generation);
+    assert_eq!(
+        lifecycle.classify_monitor(first.generation),
+        CallbackEpochMatch::Stale,
+    );
+    assert_eq!(
+        lifecycle.classify_monitor(replacement.generation),
+        CallbackEpochMatch::Current,
+    );
+
+    lifecycle.suspend();
+    assert_eq!(
+        lifecycle.classify_monitor(replacement.generation),
+        CallbackEpochMatch::Stale,
     );
 }

@@ -104,6 +104,15 @@ final class CutoutAppModelTests: XCTestCase {
 
 #if !os(iOS)
     @MainActor
+    func testUnavailableMusicCommandPublishesVisibleFeedback() async {
+        let model = CutoutAppModel(core: SessionDriverSpy(rows: []))
+
+        let outcome = await model.handleMusicCommand(.play)
+        XCTAssertEqual(outcome, .unavailable)
+        XCTAssertEqual(model.musicCommandStatusText, pevLocalizedText("music.command.unavailable"))
+    }
+
+    @MainActor
     func testMusicSetupShowsUnavailableOnUnsupportedPlatform() {
         let model = CutoutAppModel(core: SessionDriverSpy(rows: []))
 
@@ -124,24 +133,6 @@ final class CutoutAppModelTests: XCTestCase {
         XCTAssertEqual(model.musicNowPlaying?.state, .unavailable)
     }
 #endif
-
-    func testMusicMonitorSceneStateResumesOnlyRequestedMonitor() {
-        var state = MusicMonitorSceneState()
-
-        XCTAssertFalse(state.resumeIfNeeded())
-
-        state.suspend()
-        XCTAssertFalse(state.resumeIfNeeded())
-
-        state.request()
-        state.suspend()
-        XCTAssertTrue(state.resumeIfNeeded())
-        XCTAssertFalse(state.resumeIfNeeded())
-
-        state.cancel()
-        state.suspend()
-        XCTAssertFalse(state.resumeIfNeeded())
-    }
 
     @MainActor
     func testMusicHistoryDefaultIsLoadedForFutureRides() throws {

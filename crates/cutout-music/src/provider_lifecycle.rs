@@ -50,6 +50,15 @@ pub struct MusicProviderSuspension {
     pub cancelled_transport_request_id: Option<u64>,
 }
 
+/// One foreground monitor effect admitted by Rust-owned intent.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct MusicMonitorEffect {
+    /// Correlation identity for the platform task.
+    pub generation: u64,
+    /// Whether this start may launch authorization UI.
+    pub start: MusicMonitorStart,
+}
+
 #[derive(Clone, Copy, Debug)]
 struct PendingTransport {
     request_id: u64,
@@ -63,6 +72,7 @@ struct PendingTransport {
 #[derive(Debug, Default)]
 pub struct MusicProviderLifecycle {
     monitor: MusicMonitor,
+    monitor_generation: CallbackEpoch,
     provider_session: CallbackEpoch,
     authorization: AuthorizationTransaction,
     connection: MusicConnection,
@@ -82,14 +92,30 @@ impl MusicProviderLifecycle {
     /// Cancels all monitor and provider work, including authorization.
     pub fn cancel_monitor(&mut self) -> MusicTransportCompletion {
         self.monitor.cancel();
+        self.monitor_generation.invalidate();
         self.authorization.invalidate();
         self.retire_all_provider_work()
     }
 
-    /// Admits the next foreground start.
+    /// Admits one foreground effect with a Rust-owned correlation identity.
     #[must_use]
-    pub fn take_monitor_start(&mut self) -> Option<MusicMonitorStart> {
-        self.monitor.take_start()
+    pub fn begin_monitor(&mut self) -> Option<MusicMonitorEffect> {
+        self.monitor.take_start().map(|start| MusicMonitorEffect {
+            generation: self.monitor_generation.begin(),
+            start,
+        })
+    }
+
+    /// Classifies a foreground monitor task without ending it.
+    #[must_use]
+    pub fn classify_monitor(&self, generation: u64) -> CallbackEpochMatch {
+        self.monitor_generation.classify(generation)
+    }
+
+    /// Ends only the matching foreground monitor task.
+    #[must_use]
+    pub fn finish_monitor(&mut self, generation: u64) -> CallbackEpochMatch {
+        self.monitor_generation.finish(generation)
     }
 
     /// Whether the foreground scene currently permits provider work.
@@ -102,6 +128,7 @@ impl MusicProviderLifecycle {
     /// authorization callback already handed to the provider application.
     pub fn suspend(&mut self) -> MusicProviderSuspension {
         self.monitor.suspend();
+        self.monitor_generation.invalidate();
         let observation_gap = self.observing;
         let cancelled_transport_request_id = self.cancel_transport().finished_request_id();
         self.invalidate_provider_work();

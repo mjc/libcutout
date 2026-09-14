@@ -1014,6 +1014,26 @@
       "comment" : "Restores the hidden compact music player.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Show music player" } } }
     },
+    "music.command.dismiss" : {
+      "comment" : "Dismisses music command feedback.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "OK" } } }
+    },
+    "music.command.failed" : {
+      "comment" : "Music provider rejected or failed a transport command.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "The music command failed." } } }
+    },
+    "music.command.refused" : {
+      "comment" : "The current playback state does not permit a music command.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "That control is unavailable for the current track." } } }
+    },
+    "music.command.title" : {
+      "comment" : "Title for music command feedback.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Music control" } } }
+    },
+    "music.command.unavailable" : {
+      "comment" : "No connected provider can receive a music command.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Connect the music provider and try again." } } }
+    },
     "music.state.authorization_required" : {
       "comment" : "Music provider requires authorization.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Authorization required" } } }
