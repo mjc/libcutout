@@ -1,5 +1,9 @@
 //! Identity for asynchronous provider callback lifecycles.
 
+use std::marker::PhantomData;
+
+use crate::ids::{AuthorizationGeneration, AuthorizationId, LifecycleId};
+
 /// Whether a callback belongs to the active provider object.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum CallbackEpochMatch {
@@ -10,10 +14,21 @@ pub enum CallbackEpochMatch {
 }
 
 /// Monotonic identity for one replaceable provider callback source.
-#[derive(Debug, Default)]
-pub struct CallbackEpoch {
+#[derive(Debug)]
+pub struct CallbackEpoch<K = ()> {
     last_id: u64,
-    active: Option<u64>,
+    active: Option<LifecycleId<K>>,
+    marker: PhantomData<fn() -> K>,
+}
+
+impl<K> Default for CallbackEpoch<K> {
+    fn default() -> Self {
+        Self {
+            last_id: 0,
+            active: None,
+            marker: PhantomData,
+        }
+    }
 }
 
 /// Authorization operation associated with the current callback epoch.
@@ -39,22 +54,23 @@ pub enum AuthorizationTransactionMatch {
 /// Owns the identity and kind of the one active authorization operation.
 #[derive(Debug, Default)]
 pub struct AuthorizationTransaction {
-    epoch: CallbackEpoch,
+    epoch: CallbackEpoch<AuthorizationGeneration>,
     kind: Option<AuthorizationTransactionKind>,
 }
 
-impl CallbackEpoch {
+impl<K> CallbackEpoch<K> {
     /// Begins a new epoch and retires any predecessor.
     #[must_use]
-    pub fn begin(&mut self) -> u64 {
+    pub fn begin(&mut self) -> LifecycleId<K> {
         self.last_id = self.last_id.wrapping_add(1);
-        self.active = Some(self.last_id);
-        self.last_id
+        let id = LifecycleId::from_raw(self.last_id);
+        self.active = Some(id);
+        id
     }
 
     /// Classifies a callback without ending the epoch.
     #[must_use]
-    pub fn classify(&self, id: u64) -> CallbackEpochMatch {
+    pub fn classify(&self, id: LifecycleId<K>) -> CallbackEpochMatch {
         if self.active == Some(id) {
             CallbackEpochMatch::Current
         } else {
@@ -64,7 +80,7 @@ impl CallbackEpoch {
 
     /// Ends the epoch only when the terminal callback is current.
     #[must_use]
-    pub fn finish(&mut self, id: u64) -> CallbackEpochMatch {
+    pub fn finish(&mut self, id: LifecycleId<K>) -> CallbackEpochMatch {
         let outcome = self.classify(id);
         if outcome == CallbackEpochMatch::Current {
             self.active = None;
@@ -81,14 +97,14 @@ impl CallbackEpoch {
 impl AuthorizationTransaction {
     /// Begins an authorization operation and retires any predecessor.
     #[must_use]
-    pub fn begin(&mut self, kind: AuthorizationTransactionKind) -> u64 {
+    pub fn begin(&mut self, kind: AuthorizationTransactionKind) -> AuthorizationId {
         self.kind = Some(kind);
         self.epoch.begin()
     }
 
     /// Classifies a callback without terminating the operation.
     #[must_use]
-    pub fn classify(&self, id: u64) -> AuthorizationTransactionMatch {
+    pub fn classify(&self, id: AuthorizationId) -> AuthorizationTransactionMatch {
         if self.epoch.classify(id) == CallbackEpochMatch::Stale {
             return AuthorizationTransactionMatch::Stale;
         }
@@ -103,7 +119,7 @@ impl AuthorizationTransaction {
 
     /// Terminates the operation only when the callback identity is current.
     #[must_use]
-    pub fn finish(&mut self, id: u64) -> AuthorizationTransactionMatch {
+    pub fn finish(&mut self, id: AuthorizationId) -> AuthorizationTransactionMatch {
         let outcome = self.classify(id);
         if outcome != AuthorizationTransactionMatch::Stale {
             let _ = self.epoch.finish(id);
@@ -128,7 +144,7 @@ mod tests {
 
     #[test]
     fn invalidation_and_terminal_callbacks_cannot_reopen_an_epoch() {
-        let mut epoch = CallbackEpoch::default();
+        let mut epoch: CallbackEpoch<()> = CallbackEpoch::default();
         let first = epoch.begin();
         epoch.invalidate();
         assert_eq!(epoch.classify(first), CallbackEpochMatch::Stale);

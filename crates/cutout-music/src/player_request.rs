@@ -1,5 +1,7 @@
 //! Correlation and timeout admission for provider player-state callbacks.
 
+use crate::ids::{ArtworkRequestId, ObservationRevision, PlayerStateRequestId};
+
 const REQUEST_TIMEOUT_MS: u64 = 10_000;
 const OBSERVATION_TIMEOUT_MS: u64 = 30_000;
 const MAX_ARTWORK_ATTEMPTS: u8 = 3;
@@ -17,9 +19,9 @@ pub enum MusicPlayerRequestCompletion {
 #[derive(Debug, Default)]
 pub struct MusicPlayerRequest {
     last_id: u64,
-    pending: Option<(u64, u64)>,
+    pending: Option<(PlayerStateRequestId, u64)>,
     last_observed_at: Option<u64>,
-    observation_revision: u64,
+    observation_revision: ObservationRevision,
 }
 
 /// Bounded identity and retry admission for provider artwork callbacks.
@@ -27,25 +29,26 @@ pub struct MusicPlayerRequest {
 pub struct MusicArtworkRequest {
     last_id: u64,
     attempts: u8,
-    pending: Option<u64>,
+    pending: Option<ArtworkRequestId>,
 }
 
 impl MusicArtworkRequest {
     /// Admits at most three requests until the track or connection is reset.
     #[must_use]
-    pub fn begin(&mut self) -> Option<u64> {
+    pub fn begin(&mut self) -> Option<ArtworkRequestId> {
         if self.pending.is_some() || self.attempts >= MAX_ARTWORK_ATTEMPTS {
             return None;
         }
         self.last_id = self.last_id.wrapping_add(1);
         self.attempts += 1;
-        self.pending = Some(self.last_id);
-        Some(self.last_id)
+        let id = ArtworkRequestId::from_raw(self.last_id);
+        self.pending = Some(id);
+        Some(id)
     }
 
     /// Accepts only the current image callback or deadline.
     #[must_use]
-    pub fn complete(&mut self, request_id: u64) -> MusicPlayerRequestCompletion {
+    pub fn complete(&mut self, request_id: ArtworkRequestId) -> MusicPlayerRequestCompletion {
         if self.pending == Some(request_id) {
             self.pending = None;
             MusicPlayerRequestCompletion::Accepted
@@ -71,20 +74,21 @@ impl MusicPlayerRequest {
     /// Admits a request when none is pending or the previous request timed out.
     /// The platform supplies a monotonic timestamp and captures the returned ID.
     #[must_use]
-    pub fn begin(&mut self, now_ms: u64) -> Option<u64> {
+    pub fn begin(&mut self, now_ms: u64) -> Option<PlayerStateRequestId> {
         if let Some((_, started_at)) = self.pending
             && now_ms.saturating_sub(started_at) < REQUEST_TIMEOUT_MS
         {
             return None;
         }
         self.last_id = self.last_id.checked_add(1)?;
-        self.pending = Some((self.last_id, now_ms));
-        Some(self.last_id)
+        let id = PlayerStateRequestId::from_raw(self.last_id);
+        self.pending = Some((id, now_ms));
+        Some(id)
     }
 
     /// Accepts only the outstanding callback; late callbacks cannot clear a retry.
     #[must_use]
-    pub fn complete(&mut self, request_id: u64) -> MusicPlayerRequestCompletion {
+    pub fn complete(&mut self, request_id: PlayerStateRequestId) -> MusicPlayerRequestCompletion {
         if self.pending.is_some_and(|(id, _)| id == request_id) {
             self.pending = None;
             MusicPlayerRequestCompletion::Accepted
@@ -97,8 +101,8 @@ impl MusicPlayerRequest {
     #[must_use]
     pub fn complete_if_current(
         &mut self,
-        request_id: u64,
-        observation_revision: u64,
+        request_id: PlayerStateRequestId,
+        observation_revision: ObservationRevision,
     ) -> MusicPlayerRequestCompletion {
         if observation_revision != self.observation_revision {
             if self.pending.is_some_and(|(id, _)| id == request_id) {
@@ -113,13 +117,13 @@ impl MusicPlayerRequest {
     /// Connected sessions seed it before the first player-state response;
     /// verified updates then refresh it as they arrive.
     pub fn mark_observed(&mut self, now_ms: u64) {
-        self.observation_revision = self.observation_revision.wrapping_add(1);
+        self.observation_revision = self.observation_revision.next();
         self.last_observed_at = Some(now_ms);
     }
 
     /// Revision of the latest authoritative observation.
     #[must_use]
-    pub const fn observation_revision(&self) -> u64 {
+    pub const fn observation_revision(&self) -> ObservationRevision {
         self.observation_revision
     }
 

@@ -5,6 +5,11 @@ use crate::callback_epoch::{
     CallbackEpoch, CallbackEpochMatch,
 };
 use crate::connection::{MusicConnection, MusicConnectionCallback};
+use crate::ids::{
+    ArtworkRequestId, ArtworkRetry, ArtworkRetryId, AuthorizationId, CommandFeedback,
+    CommandFeedbackId, ConnectionAttemptId, MonitorGeneration, MonitorId, ObservationRevision,
+    PlayerStateRequestId, ProviderSessionGeneration, ProviderSessionId, TransportRequestId,
+};
 use crate::player_request::{
     MusicArtworkRequest, MusicPlayerRequest, MusicPlayerRequestCompletion,
 };
@@ -18,9 +23,9 @@ const ARTWORK_RETRY_DELAY_MS: u64 = 1_000;
 
 /// One Rust-issued effect identity and its monotonic deadline.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct MusicDeadlineEffect {
+pub struct MusicDeadlineEffect<I> {
     /// Identity used to reject replacement callbacks.
-    pub id: u64,
+    pub id: I,
     /// Absolute monotonic deadline for the platform executor.
     pub deadline_ms: u64,
 }
@@ -61,12 +66,21 @@ pub enum MusicTransportCompletion {
     /// This transition ended the current request exactly once.
     Finished {
         /// Correlation identity of the completed request.
-        request_id: u64,
+        request_id: TransportRequestId,
         /// Terminal request outcome.
         outcome: MusicTransportOutcome,
     },
     /// The callback belonged to a completed or replaced request.
     Stale,
+}
+
+/// Result of ending a provider connection attempt or session.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct MusicConnectionEffect {
+    /// Whether the callback belonged to the current connection.
+    pub callback: MusicConnectionCallback,
+    /// Transport work owned by that connection, if any.
+    pub transport: MusicTransportCompletion,
 }
 
 /// Provider work cancelled by a scene suspension.
@@ -75,23 +89,23 @@ pub struct MusicProviderSuspension {
     /// Whether active observation stopped and the ride timeline has an unknown interval.
     pub observation_gap: bool,
     /// Transport request that the platform must resume as cancelled, when present.
-    pub cancelled_transport_request_id: Option<u64>,
+    pub cancelled_transport_request_id: Option<TransportRequestId>,
 }
 
 /// One foreground monitor effect admitted by Rust-owned intent.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct MusicMonitorEffect {
     /// Correlation identity for the platform task.
-    pub generation: u64,
+    pub generation: MonitorId,
     /// Whether this start may launch authorization UI.
     pub start: MusicMonitorStart,
 }
 
 #[derive(Clone, Copy, Debug)]
 struct PendingTransport {
-    provider_generation: u64,
-    connection_attempt_id: Option<u64>,
-    request_id: u64,
+    provider_generation: ProviderSessionId,
+    connection_attempt_id: Option<ConnectionAttemptId>,
+    request_id: TransportRequestId,
     started_at_ms: u64,
 }
 
@@ -102,14 +116,14 @@ struct PendingTransport {
 #[derive(Debug, Default)]
 pub struct MusicProviderLifecycle {
     monitor: MusicMonitor,
-    monitor_generation: CallbackEpoch,
-    provider_session: CallbackEpoch,
+    monitor_generation: CallbackEpoch<MonitorGeneration>,
+    provider_session: CallbackEpoch<ProviderSessionGeneration>,
     authorization: AuthorizationTransaction,
     connection: MusicConnection,
     player_state: MusicPlayerRequest,
     artwork: MusicArtworkRequest,
-    artwork_retry: CallbackEpoch,
-    command_feedback: CallbackEpoch,
+    artwork_retry: CallbackEpoch<ArtworkRetry>,
+    command_feedback: CallbackEpoch<CommandFeedback>,
     last_transport_id: u64,
     pending_transport: Option<PendingTransport>,
     observing: bool,
@@ -118,13 +132,13 @@ pub struct MusicProviderLifecycle {
 impl MusicProviderLifecycle {
     /// Begins one replaceable command-feedback presentation.
     #[must_use]
-    pub fn begin_command_feedback(&mut self) -> u64 {
+    pub fn begin_command_feedback(&mut self) -> CommandFeedbackId {
         self.command_feedback.begin()
     }
 
     /// Classifies a command completion without changing the visible request.
     #[must_use]
-    pub fn classify_command_feedback(&self, id: u64) -> CallbackEpochMatch {
+    pub fn classify_command_feedback(&self, id: CommandFeedbackId) -> CallbackEpochMatch {
         self.command_feedback.classify(id)
     }
 
@@ -135,7 +149,7 @@ impl MusicProviderLifecycle {
 
     /// Dismisses only the matching visible command feedback.
     #[must_use]
-    pub fn dismiss_command_feedback(&mut self, id: u64) -> CallbackEpochMatch {
+    pub fn dismiss_command_feedback(&mut self, id: CommandFeedbackId) -> CallbackEpochMatch {
         self.command_feedback.finish(id)
     }
 
@@ -163,13 +177,13 @@ impl MusicProviderLifecycle {
 
     /// Classifies a foreground monitor task without ending it.
     #[must_use]
-    pub fn classify_monitor(&self, generation: u64) -> CallbackEpochMatch {
+    pub fn classify_monitor(&self, generation: MonitorId) -> CallbackEpochMatch {
         self.monitor_generation.classify(generation)
     }
 
     /// Ends only the matching foreground monitor task.
     #[must_use]
-    pub fn finish_monitor(&mut self, generation: u64) -> CallbackEpochMatch {
+    pub fn finish_monitor(&mut self, generation: MonitorId) -> CallbackEpochMatch {
         self.monitor_generation.finish(generation)
     }
 
@@ -177,10 +191,10 @@ impl MusicProviderLifecycle {
     #[must_use]
     pub fn next_monitor_poll(
         &self,
-        generation: u64,
+        generation: MonitorId,
         work_state: MusicProviderWorkState,
         now_ms: u64,
-    ) -> Option<MusicDeadlineEffect> {
+    ) -> Option<MusicDeadlineEffect<MonitorId>> {
         if self.monitor_generation.classify(generation) == CallbackEpochMatch::Stale
             || matches!(
                 work_state,
@@ -223,7 +237,7 @@ impl MusicProviderLifecycle {
 
     /// Begins one replaceable provider SDK object generation.
     #[must_use]
-    pub fn begin_provider_session(&mut self) -> u64 {
+    pub fn begin_provider_session(&mut self) -> ProviderSessionId {
         let _ = self.retire_all_provider_work();
         self.command_feedback.invalidate();
         self.observing = true;
@@ -232,13 +246,13 @@ impl MusicProviderLifecycle {
 
     /// Classifies a provider callback without ending the generation.
     #[must_use]
-    pub fn classify_provider_session(&self, id: u64) -> CallbackEpochMatch {
+    pub fn classify_provider_session(&self, id: ProviderSessionId) -> CallbackEpochMatch {
         self.provider_session.classify(id)
     }
 
     /// Ends only the matching provider generation and cancels its transport.
     #[must_use]
-    pub fn retire_provider_session(&mut self, id: u64) -> MusicTransportCompletion {
+    pub fn retire_provider_session(&mut self, id: ProviderSessionId) -> MusicTransportCompletion {
         if self.provider_session.finish(id) == CallbackEpochMatch::Stale {
             return MusicTransportCompletion::Stale;
         }
@@ -251,7 +265,7 @@ impl MusicProviderLifecycle {
 
     /// Begins a user authorization or silent renewal transaction.
     #[must_use]
-    pub fn begin_authorization(&mut self, kind: AuthorizationTransactionKind) -> u64 {
+    pub fn begin_authorization(&mut self, kind: AuthorizationTransactionKind) -> AuthorizationId {
         self.authorization.begin(kind)
     }
 
@@ -261,7 +275,7 @@ impl MusicProviderLifecycle {
         &mut self,
         kind: AuthorizationTransactionKind,
         now_ms: u64,
-    ) -> MusicDeadlineEffect {
+    ) -> MusicDeadlineEffect<AuthorizationId> {
         let deadline_ms = match kind {
             // Interactive login is completed by the provider handoff. It must
             // not expire while a human is in the provider app.
@@ -278,13 +292,13 @@ impl MusicProviderLifecycle {
 
     /// Classifies an authorization callback without finishing it.
     #[must_use]
-    pub fn classify_authorization(&self, id: u64) -> AuthorizationTransactionMatch {
+    pub fn classify_authorization(&self, id: AuthorizationId) -> AuthorizationTransactionMatch {
         self.authorization.classify(id)
     }
 
     /// Finishes the matching authorization transaction exactly once.
     #[must_use]
-    pub fn finish_authorization(&mut self, id: u64) -> AuthorizationTransactionMatch {
+    pub fn finish_authorization(&mut self, id: AuthorizationId) -> AuthorizationTransactionMatch {
         self.authorization.finish(id)
     }
 
@@ -295,43 +309,74 @@ impl MusicProviderLifecycle {
 
     /// Begins a bounded provider connection attempt.
     #[must_use]
-    pub fn begin_connection_attempt(&mut self, now_ms: u64) -> Option<u64> {
+    pub fn begin_connection_attempt(&mut self, now_ms: u64) -> Option<ConnectionAttemptId> {
         self.connection.begin_attempt_id(now_ms)
     }
 
     /// Classifies a connection or player callback without changing retry state.
     #[must_use]
-    pub fn classify_connection(&self, id: u64) -> MusicConnectionCallback {
+    pub fn classify_connection(&self, id: ConnectionAttemptId) -> MusicConnectionCallback {
         self.connection.classify(id)
     }
 
     /// Accepts success only for the current connection attempt.
     #[must_use]
-    pub fn connection_established(&mut self, id: u64) -> MusicConnectionCallback {
+    pub fn connection_established(&mut self, id: ConnectionAttemptId) -> MusicConnectionCallback {
         self.connection.established_for(id)
     }
 
     /// Accepts failure only for the current connection attempt or session.
     #[must_use]
-    pub fn connection_failed(&mut self, id: u64, now_ms: u64) -> MusicConnectionCallback {
-        self.connection.failed_for(id, now_ms)
+    pub fn connection_failed(
+        &mut self,
+        id: ConnectionAttemptId,
+        now_ms: u64,
+    ) -> MusicConnectionCallback {
+        self.connection_failed_effect(id, now_ms).callback
+    }
+
+    /// Accepts failure and retires all work owned by the connection.
+    #[must_use]
+    pub fn connection_failed_effect(
+        &mut self,
+        id: ConnectionAttemptId,
+        now_ms: u64,
+    ) -> MusicConnectionEffect {
+        self.end_connection(id, now_ms)
     }
 
     /// Accepts disconnection only for the current connection attempt or session.
     #[must_use]
-    pub fn connection_disconnected(&mut self, id: u64, now_ms: u64) -> MusicConnectionCallback {
-        self.connection.disconnected_for(id, now_ms)
+    pub fn connection_disconnected(
+        &mut self,
+        id: ConnectionAttemptId,
+        now_ms: u64,
+    ) -> MusicConnectionCallback {
+        self.connection_disconnected_effect(id, now_ms).callback
+    }
+
+    /// Accepts disconnection and retires all work owned by the connection.
+    #[must_use]
+    pub fn connection_disconnected_effect(
+        &mut self,
+        id: ConnectionAttemptId,
+        now_ms: u64,
+    ) -> MusicConnectionEffect {
+        self.end_connection(id, now_ms)
     }
 
     /// Begins or replaces an expired player-state request.
     #[must_use]
-    pub fn begin_player_state_request(&mut self, now_ms: u64) -> Option<u64> {
+    pub fn begin_player_state_request(&mut self, now_ms: u64) -> Option<PlayerStateRequestId> {
         self.player_state.begin(now_ms)
     }
 
     /// Completes only the matching player-state request.
     #[must_use]
-    pub fn complete_player_state_request(&mut self, id: u64) -> MusicPlayerRequestCompletion {
+    pub fn complete_player_state_request(
+        &mut self,
+        id: PlayerStateRequestId,
+    ) -> MusicPlayerRequestCompletion {
         self.player_state.complete(id)
     }
 
@@ -339,8 +384,8 @@ impl MusicProviderLifecycle {
     #[must_use]
     pub fn complete_player_state_request_if_current(
         &mut self,
-        id: u64,
-        observation_revision: u64,
+        id: PlayerStateRequestId,
+        observation_revision: ObservationRevision,
     ) -> MusicPlayerRequestCompletion {
         self.player_state
             .complete_if_current(id, observation_revision)
@@ -348,7 +393,7 @@ impl MusicProviderLifecycle {
 
     /// Revision of the latest authoritative player observation.
     #[must_use]
-    pub fn player_state_observation_revision(&self) -> u64 {
+    pub fn player_state_observation_revision(&self) -> ObservationRevision {
         self.player_state.observation_revision()
     }
 
@@ -367,9 +412,9 @@ impl MusicProviderLifecycle {
     #[must_use]
     pub fn begin_artwork_effect(
         &mut self,
-        provider_generation: u64,
+        provider_generation: ProviderSessionId,
         now_ms: u64,
-    ) -> Option<MusicDeadlineEffect> {
+    ) -> Option<MusicDeadlineEffect<ArtworkRequestId>> {
         if self.provider_session.classify(provider_generation) == CallbackEpochMatch::Stale {
             return None;
         }
@@ -383,8 +428,8 @@ impl MusicProviderLifecycle {
     #[must_use]
     pub fn complete_artwork_request(
         &mut self,
-        provider_generation: u64,
-        id: u64,
+        provider_generation: ProviderSessionId,
+        id: ArtworkRequestId,
     ) -> MusicPlayerRequestCompletion {
         if self.provider_session.classify(provider_generation) == CallbackEpochMatch::Stale {
             return MusicPlayerRequestCompletion::Stale;
@@ -402,9 +447,9 @@ impl MusicProviderLifecycle {
     #[must_use]
     pub fn begin_artwork_retry_effect(
         &mut self,
-        provider_generation: u64,
+        provider_generation: ProviderSessionId,
         now_ms: u64,
-    ) -> Option<MusicDeadlineEffect> {
+    ) -> Option<MusicDeadlineEffect<ArtworkRetryId>> {
         if self.provider_session.classify(provider_generation) == CallbackEpochMatch::Stale
             || !self.artwork.can_retry()
         {
@@ -420,8 +465,8 @@ impl MusicProviderLifecycle {
     #[must_use]
     pub fn complete_artwork_retry(
         &mut self,
-        provider_generation: u64,
-        id: u64,
+        provider_generation: ProviderSessionId,
+        id: ArtworkRetryId,
     ) -> CallbackEpochMatch {
         if self.provider_session.classify(provider_generation) == CallbackEpochMatch::Stale {
             return CallbackEpochMatch::Stale;
@@ -433,9 +478,9 @@ impl MusicProviderLifecycle {
     #[must_use]
     pub fn begin_transport_effect(
         &mut self,
-        provider_generation: u64,
+        provider_generation: ProviderSessionId,
         now_ms: u64,
-    ) -> Option<MusicDeadlineEffect> {
+    ) -> Option<MusicDeadlineEffect<TransportRequestId>> {
         self.begin_transport_effect_for_connection(provider_generation, None, now_ms)
     }
 
@@ -443,10 +488,10 @@ impl MusicProviderLifecycle {
     #[must_use]
     pub fn begin_transport_effect_for_connection(
         &mut self,
-        provider_generation: u64,
-        connection_attempt_id: Option<u64>,
+        provider_generation: ProviderSessionId,
+        connection_attempt_id: Option<ConnectionAttemptId>,
         now_ms: u64,
-    ) -> Option<MusicDeadlineEffect> {
+    ) -> Option<MusicDeadlineEffect<TransportRequestId>> {
         if self.provider_session.classify(provider_generation) == CallbackEpochMatch::Stale
             || self.pending_transport.is_some()
         {
@@ -456,11 +501,11 @@ impl MusicProviderLifecycle {
         self.pending_transport = Some(PendingTransport {
             provider_generation,
             connection_attempt_id,
-            request_id: self.last_transport_id,
+            request_id: TransportRequestId::from_raw(self.last_transport_id),
             started_at_ms: now_ms,
         });
         Some(MusicDeadlineEffect {
-            id: self.last_transport_id,
+            id: TransportRequestId::from_raw(self.last_transport_id),
             deadline_ms: now_ms.saturating_add(TRANSPORT_TIMEOUT_MS),
         })
     }
@@ -469,8 +514,8 @@ impl MusicProviderLifecycle {
     #[must_use]
     pub fn finish_transport(
         &mut self,
-        provider_generation: u64,
-        request_id: u64,
+        provider_generation: ProviderSessionId,
+        request_id: TransportRequestId,
         outcome: MusicTransportOutcome,
     ) -> MusicTransportCompletion {
         if self.pending_transport.is_none_or(|pending| {
@@ -489,7 +534,7 @@ impl MusicProviderLifecycle {
     #[must_use]
     pub fn expire_transport(
         &mut self,
-        provider_generation: u64,
+        provider_generation: ProviderSessionId,
         now_ms: u64,
     ) -> MusicTransportCompletion {
         let Some(pending) = self.pending_transport else {
@@ -512,8 +557,8 @@ impl MusicProviderLifecycle {
     #[must_use]
     pub fn cancel_transport(
         &mut self,
-        provider_generation: u64,
-        request_id: u64,
+        provider_generation: ProviderSessionId,
+        request_id: TransportRequestId,
     ) -> MusicTransportCompletion {
         self.finish_transport(
             provider_generation,
@@ -526,8 +571,8 @@ impl MusicProviderLifecycle {
     #[must_use]
     pub fn cancel_transport_for_connection(
         &mut self,
-        provider_generation: u64,
-        connection_attempt_id: u64,
+        provider_generation: ProviderSessionId,
+        connection_attempt_id: ConnectionAttemptId,
     ) -> MusicTransportCompletion {
         let Some(pending) = self.pending_transport else {
             return MusicTransportCompletion::Stale;
@@ -555,6 +600,38 @@ impl MusicProviderLifecycle {
         )
     }
 
+    fn end_connection(&mut self, id: ConnectionAttemptId, now_ms: u64) -> MusicConnectionEffect {
+        let callback = self.connection.failed_for(id, now_ms);
+        if callback == MusicConnectionCallback::Stale {
+            return MusicConnectionEffect {
+                callback,
+                transport: MusicTransportCompletion::Stale,
+            };
+        }
+        self.player_state.reset();
+        MusicConnectionEffect {
+            callback,
+            transport: self.cancel_transport_for_connection_current(id),
+        }
+    }
+
+    fn cancel_transport_for_connection_current(
+        &mut self,
+        connection_attempt_id: ConnectionAttemptId,
+    ) -> MusicTransportCompletion {
+        let Some(pending) = self.pending_transport else {
+            return MusicTransportCompletion::Stale;
+        };
+        if pending.connection_attempt_id != Some(connection_attempt_id) {
+            return MusicTransportCompletion::Stale;
+        }
+        self.finish_transport(
+            pending.provider_generation,
+            pending.request_id,
+            MusicTransportOutcome::Cancelled,
+        )
+    }
+
     fn retire_all_provider_work(&mut self) -> MusicTransportCompletion {
         let completion = self.cancel_current_transport();
         self.invalidate_provider_work();
@@ -572,7 +649,7 @@ impl MusicProviderLifecycle {
 }
 
 impl MusicTransportCompletion {
-    fn finished_request_id(self) -> Option<u64> {
+    fn finished_request_id(self) -> Option<TransportRequestId> {
         match self {
             Self::Finished { request_id, .. } => Some(request_id),
             Self::Pending | Self::Stale => None,

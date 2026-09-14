@@ -1,5 +1,7 @@
 //! Bounded connection attempts for a foreground music provider session.
 
+use crate::ids::ConnectionAttemptId;
+
 const MAXIMUM_ATTEMPTS: u8 = 3;
 const RETRY_DELAY_MS: u64 = 2_000;
 const ATTEMPT_TIMEOUT_MS: u64 = 10_000;
@@ -23,14 +25,14 @@ pub struct MusicConnection {
     in_flight_since: Option<u64>,
     retry_at: u64,
     next_attempt_id: u64,
-    active_attempt_id: Option<u64>,
-    connected_id: Option<u64>,
+    active_attempt_id: Option<ConnectionAttemptId>,
+    connected_id: Option<ConnectionAttemptId>,
 }
 
 impl MusicConnection {
     /// Classifies a callback without changing attempt or connection state.
     #[must_use]
-    pub fn classify(&self, attempt_id: u64) -> MusicConnectionCallback {
+    pub fn classify(&self, attempt_id: ConnectionAttemptId) -> MusicConnectionCallback {
         if self.active_attempt_id == Some(attempt_id) || self.connected_id == Some(attempt_id) {
             MusicConnectionCallback::Accepted
         } else {
@@ -48,7 +50,7 @@ impl MusicConnection {
 
     /// Starts an attempt and returns its identity for callback validation.
     #[must_use]
-    pub fn begin_attempt_id(&mut self, now_ms: u64) -> Option<u64> {
+    pub fn begin_attempt_id(&mut self, now_ms: u64) -> Option<ConnectionAttemptId> {
         if self.attempts >= MAXIMUM_ATTEMPTS || now_ms < self.retry_at {
             return None;
         }
@@ -59,8 +61,8 @@ impl MusicConnection {
         }
         self.attempts += 1;
         self.in_flight_since = Some(now_ms);
-        let attempt_id = self.next_attempt_id.max(1);
-        self.next_attempt_id = attempt_id.wrapping_add(1).max(1);
+        let attempt_id = ConnectionAttemptId::from_raw(self.next_attempt_id.max(1));
+        self.next_attempt_id = attempt_id.raw().wrapping_add(1).max(1);
         self.active_attempt_id = Some(attempt_id);
         self.connected_id = None;
         Some(attempt_id)
@@ -91,7 +93,11 @@ impl MusicConnection {
 
     /// Accepts a failure only from the current attempt or connected session.
     #[must_use]
-    pub fn failed_for(&mut self, attempt_id: u64, now_ms: u64) -> MusicConnectionCallback {
+    pub fn failed_for(
+        &mut self,
+        attempt_id: ConnectionAttemptId,
+        now_ms: u64,
+    ) -> MusicConnectionCallback {
         if self.classify(attempt_id) == MusicConnectionCallback::Stale {
             return MusicConnectionCallback::Stale;
         }
@@ -108,13 +114,17 @@ impl MusicConnection {
 
     /// Accepts a disconnect only from the current attempt or connected session.
     #[must_use]
-    pub fn disconnected_for(&mut self, attempt_id: u64, now_ms: u64) -> MusicConnectionCallback {
+    pub fn disconnected_for(
+        &mut self,
+        attempt_id: ConnectionAttemptId,
+        now_ms: u64,
+    ) -> MusicConnectionCallback {
         self.failed_for(attempt_id, now_ms)
     }
 
     /// Accepts success only from the currently active attempt.
     #[must_use]
-    pub fn established_for(&mut self, attempt_id: u64) -> MusicConnectionCallback {
+    pub fn established_for(&mut self, attempt_id: ConnectionAttemptId) -> MusicConnectionCallback {
         if self.active_attempt_id != Some(attempt_id) {
             return MusicConnectionCallback::Stale;
         }

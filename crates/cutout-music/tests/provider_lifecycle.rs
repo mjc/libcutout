@@ -209,6 +209,39 @@ fn connection_disconnect_cancels_only_connection_owned_transport() {
 }
 
 #[test]
+fn connection_end_releases_player_poll_and_owned_transport_for_reconnect() {
+    let mut lifecycle = MusicProviderLifecycle::default();
+    let provider = lifecycle.begin_provider_session();
+    let attempt = lifecycle.begin_connection_attempt(0).expect("attempt");
+    let poll = lifecycle
+        .begin_player_state_request(0)
+        .expect("player poll");
+    let command = lifecycle
+        .begin_transport_effect_for_connection(provider, Some(attempt), 0)
+        .expect("transport");
+
+    let failure = lifecycle.connection_failed_effect(attempt, 100);
+    assert_eq!(failure.callback, MusicConnectionCallback::Accepted);
+    assert_eq!(
+        failure.transport,
+        MusicTransportCompletion::Finished {
+            request_id: command.id,
+            outcome: MusicTransportOutcome::Cancelled,
+        }
+    );
+    assert_eq!(
+        lifecycle.complete_player_state_request(poll),
+        cutout_music::player_request::MusicPlayerRequestCompletion::Stale
+    );
+    assert!(lifecycle.begin_player_state_request(101).is_some());
+    assert!(
+        lifecycle
+            .begin_transport_effect_for_connection(provider, None, 101)
+            .is_some()
+    );
+}
+
+#[test]
 fn newer_push_revision_rejects_an_older_player_poll() {
     let mut lifecycle = MusicProviderLifecycle::default();
     let request = lifecycle.begin_player_state_request(0).expect("poll");
