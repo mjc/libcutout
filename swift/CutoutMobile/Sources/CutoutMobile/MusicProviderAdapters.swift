@@ -805,9 +805,10 @@ public final class SpotifyProviderAdapter: NSObject {
         errorDomain: String?,
         errorCode: Int?
     ) {
-        guard lifecycle.classifyProviderSession(id: providerGeneration) == .current,
-              lifecycle.connectionFailed(id: attemptID, nowMs: connectionNowMs) == .accepted
-        else { return }
+        guard lifecycle.classifyProviderSession(id: providerGeneration) == .current else { return }
+        let connection = lifecycle.connectionFailedEffect(id: attemptID, nowMs: connectionNowMs)
+        guard connection.callback == .accepted else { return }
+        transport.apply(connection.transport)
         detachAppRemote(providerGeneration: providerGeneration, attemptID: attemptID)
         // App Remote reports transport and wakeup failures here too. A generic
         // connection failure is not evidence that the credential was rejected.
@@ -826,9 +827,10 @@ public final class SpotifyProviderAdapter: NSObject {
         errorDomain: String?,
         errorCode: Int?
     ) {
-        guard lifecycle.classifyProviderSession(id: providerGeneration) == .current,
-              lifecycle.connectionDisconnected(id: attemptID, nowMs: connectionNowMs) == .accepted
-        else { return }
+        guard lifecycle.classifyProviderSession(id: providerGeneration) == .current else { return }
+        let connection = lifecycle.connectionDisconnectedEffect(id: attemptID, nowMs: connectionNowMs)
+        guard connection.callback == .accepted else { return }
+        transport.apply(connection.transport)
         detachAppRemote(providerGeneration: providerGeneration, attemptID: attemptID)
         lifecycleState = .disconnected
 #if DEBUG
@@ -845,16 +847,7 @@ public final class SpotifyProviderAdapter: NSObject {
         guard let bridge = appRemoteBridge,
               bridge.providerGeneration == providerGeneration,
               bridge.attemptID == attemptID else { return }
-        transport.apply(
-            lifecycle.cancelTransportForConnection(
-                providerGeneration: providerGeneration,
-                connectionAttemptId: attemptID
-            )
-        )
-        if let requestID = playerStateRequestID {
-            _ = lifecycle.completePlayerStateRequest(id: requestID)
-            playerStateRequestID = nil
-        }
+        playerStateRequestID = nil
         appRemote?.playerAPI?.delegate = nil
         appRemote?.delegate = nil
         appRemoteBridge?.owner = nil
