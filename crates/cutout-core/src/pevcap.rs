@@ -1469,8 +1469,8 @@ impl PevcapHeader {
     ///
     /// # Errors
     ///
-    /// Returns [`PevcapHeaderError::TooManyItems`] when a bounded header list
-    /// exceeds the format limit.
+    /// Returns [`PevcapHeaderError::TooManyItems`] when any bounded header
+    /// list exceeds the format bound.
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         wall_clock_start_unix_ms: WallClockUnixTimestamp,

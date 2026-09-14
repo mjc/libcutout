@@ -51,6 +51,7 @@ enum CutoutAppRoute: Hashable {
     case vescRide
     case vescDebug
     case capture
+    case camera
     case rideMap
     case rideMapDetail(rideID: String)
 
@@ -117,6 +118,11 @@ enum CutoutAppRoute: Hashable {
         }
     }
 
+    static func navigationPath(openingCameraFrom route: CutoutAppRoute) -> [CutoutAppRoute] {
+        guard route != .camera else { return [.camera] }
+        return navigationPath(for: route) + [.camera]
+    }
+
     var preservesNavigationOnConnectionLoss: Bool {
         switch self {
         case .rideMap, .rideMapDetail, .lighting:
@@ -128,7 +134,7 @@ enum CutoutAppRoute: Hashable {
 
     private var routeTabs: [PevScreenTab] {
         switch self {
-        case .devicePicker, .capture, .rideMap, .rideMapDetail:
+        case .devicePicker, .capture, .camera, .rideMap, .rideMapDetail:
             []
         case .eucRide:
             PevRideTabs.eucRideTabs(selected: .eucRide)

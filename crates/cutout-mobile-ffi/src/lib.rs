@@ -6,8 +6,10 @@ pub use rgb::*;
 use std::{
     collections::VecDeque,
     convert::TryFrom,
+    fmt,
     fs::{self, File, OpenOptions},
     io::{BufRead, BufReader, BufWriter, Write},
+    net::Ipv4Addr,
     path::{Path, PathBuf},
     sync::{
         Arc, Mutex, MutexGuard, PoisonError,
@@ -38,13 +40,18 @@ use cutout_core::{
     BatteryPageKindDto, BatteryReadbackAvailabilityDto, BatteryReadbackDto,
     BegodeBeeperVolume as CoreBegodeBeeperVolume, BegodeLedModeSetting as CoreBegodeLedModeSetting,
     BegodeMaxSpeed as CoreBegodeMaxSpeed, BluetoothServiceUuid as CoreBluetoothServiceUuid,
+    CameraClockUncertainty as CoreCameraClockUncertainty,
+    CameraMediaCaptureTiming as CoreCameraMediaCaptureTiming,
+    CameraMediaProvenance as CoreCameraMediaProvenance,
+    CameraMediaProvenanceError as CoreCameraMediaProvenanceError,
+    CameraOnboardRecordingState as CoreCameraOnboardRecordingState,
+    CameraPreviewState as CoreCameraPreviewState, CameraSourceKind as CoreCameraSourceKind,
     Capacity, ChargeEstimateError, ChargeEstimateInput, ChargeEstimateResetReason,
     ChargeEstimateState, ChargeEstimateUnavailableReason, ChargeFlow, ChargeMode, ChargeModeDto,
     ChargeModeReadingDto, ChargeProfileIdentity, ChargeSessionIdentity, ChargeTimeEstimate,
     CommandKindDto, ControlRefusalReason as CoreControlRefusalReason, ControlRefusalReasonDto,
-    CutoutSessionState, DeviceCommand as CoreDeviceCommand, DeviceCommandDto,
-    DeviceConnectionIntent as CoreDeviceConnectionIntent, DeviceEvent, DiscoveryCandidateSnapshot,
-    DiscoveryCandidateSupport as CoreDiscoveryCandidateSupport,
+    CutoutSessionState, DeviceCommand as CoreDeviceCommand, DeviceCommandDto, DeviceEvent,
+    DiscoveryCandidateSnapshot, DiscoveryCandidateSupport as CoreDiscoveryCandidateSupport,
     DiscoveryConnectionRoute as CoreDiscoveryConnectionRoute,
     DiscoveryElectricUnicycleModel as CoreDiscoveryElectricUnicycleModel,
     DiscoveryManufacturerDataSummary as CoreDiscoveryManufacturerDataSummary,
@@ -53,15 +60,15 @@ use cutout_core::{
     FaultHistoryAvailabilityDto, FaultHistoryEntry, FaultHistoryEntryDto, FaultHistoryReadback,
     FaultHistoryReadbackDto, FootpadContactStateDto, FootpadTelemetryDto, GattChannel,
     GattFingerprint, GattRoles, IgnoredNotificationEvidenceDto, IgnoredNotificationReasonDto,
-    LightState as CoreLightState, LightStateDto, Measured, ModelRegistryEntry, MonotonicMillisDto,
-    MonotonicTimestamp, MusicProvider as CorePevcapMusicProvider, NotificationByteLenDto,
-    NotificationEvidenceDto, NotificationIngestOutcomeDto, ParserDiagnosticCountDto,
-    ParserDiagnosticsDto, ParserDroppedBytesDto, ParserErrorDto, ParserFrameLenDto,
-    ParserGapEvidenceDto, PayloadBodyLenDto, PedalMode as CorePedalMode,
-    PevcapEncoding as CorePevcapEncoding, PevcapHeader, PevcapLocationSample, PevcapMusicEvent,
-    PevcapPhoneLocation, PevcapRecord, PevcapResolvedIdentity, PhaseCurrentReadingDto,
-    PowerReadingDto, ProtocolFamily, ProtocolFamilyDto, RIDE_SESSION_STALE_AFTER, RawFieldValue,
-    RawFieldValueDto, RawTelemetryReadback, RawTelemetryReadbackDto, ReadOnlyOutputPayload,
+    LightState as CoreLightState, LightStateDto, Measured, MonotonicMillisDto, MonotonicTimestamp,
+    MusicProvider as CorePevcapMusicProvider, NotificationByteLenDto, NotificationEvidenceDto,
+    NotificationIngestOutcomeDto, ParserDiagnosticCountDto, ParserDiagnosticsDto,
+    ParserDroppedBytesDto, ParserErrorDto, ParserFrameLenDto, ParserGapEvidenceDto,
+    PayloadBodyLenDto, PedalMode as CorePedalMode, PevcapEncoding as CorePevcapEncoding,
+    PevcapHeader, PevcapLocationSample, PevcapMusicEvent, PevcapPhoneLocation, PevcapRecord,
+    PevcapResolvedIdentity, PhaseCurrentReadingDto, PowerReadingDto, ProtocolFamily,
+    ProtocolFamilyDto, ProtocolTag, RIDE_SESSION_STALE_AFTER, RawFieldValue, RawFieldValueDto,
+    RawTelemetryReadback, RawTelemetryReadbackDto, ReadOnlyOutputPayload,
     ReservedPayloadEvidenceDto, RideOperatingModeDto, RideOperatingState as CoreRideOperatingState,
     RideOperatingStateDto, RideSessionAppPresence as CoreRideSessionAppPresence,
     RideSessionDecision as CoreRideSessionDecision, RideSessionEffect as CoreRideSessionEffect,
@@ -93,21 +100,26 @@ use cutout_music::{
 };
 use cutout_protocols::{
     AeroSettingsReadback, AeroSettingsSimulator as CoreAeroSettingsSimulator, BEGODE_DATA_CHANNEL,
-    BEGODE_FALCON_REGISTRY_ENTRY, BEGODE_FIELD_LED_AND_LIGHT_MODE, BEGODE_FIELD_SETTINGS_BITS,
-    BEGODE_FIELD_TILTBACK_SPEED_KMH, ConcreteAeroBenignControlSession,
-    ConcreteFalconBenignControlSession, ConcreteFalconProfileDto, ConcreteSessionErrorDto,
-    ConcreteSessionStepResultDto, DeviceDetectionEvent, DeviceDetectionResolution,
-    DeviceDetectionSession, DeviceFamily, IdentityBannerEvidence, NOSFET_AERO_REGISTRY_ENTRY,
-    PendingProbe, ProtocolFamilyClassification, ProtocolFamilyState, ProtocolModelIdentityEvidence,
-    StagedIdentityInput, StagedIdentityOutcome, VETERAN_FIELD_AUTO_SHUTDOWN_TIME_REMAINING_SECONDS,
-    VETERAN_FIELD_CHARGE_MODE, VETERAN_FIELD_PEDALS_MODE, VETERAN_FIELD_SPEED_ALERT_DECI_KMH,
+    BEGODE_FIELD_LED_AND_LIGHT_MODE, BEGODE_FIELD_SETTINGS_BITS, BEGODE_FIELD_TILTBACK_SPEED_KMH,
+    ConcreteAeroBenignControlSession, ConcreteFalconBenignControlSession, ConcreteFalconProfileDto,
+    ConcreteSessionErrorDto, ConcreteSessionStepResultDto, DeviceDetectionEvent,
+    DeviceDetectionResolution, DeviceDetectionSession, DeviceFamily, IdentityBannerEvidence,
+    NovatekCommandOutcome, NovatekHttpOrigin, NovatekMediaPathError, NovatekOriginError,
+    NovatekReadCommand, NovatekRecordingCommand, NovatekStillCaptureCommand,
+    NovatekStoragePresence, PendingProbe, ProtocolFamilyClassification, ProtocolFamilyState,
+    ProtocolModelIdentityEvidence, RetinaH264FileSink, RetinaRtspError, RetinaRtspPreviewSession,
+    RetinaVideoConfiguration, RetinaVideoFrame, StagedIdentityInput, StagedIdentityOutcome,
+    VETERAN_FIELD_AUTO_SHUTDOWN_TIME_REMAINING_SECONDS, VETERAN_FIELD_CHARGE_MODE,
+    VETERAN_FIELD_PEDALS_MODE, VETERAN_FIELD_SPEED_ALERT_DECI_KMH,
     VETERAN_FIELD_SPEED_TILTBACK_DECI_KMH, VescBatteryType as CoreVescBatteryType,
     VescBoardProfile as CoreVescBoardProfile, VescReadOnlySession as CoreVescReadOnlySession,
-    begode_identification_probes, closest_known_model, identify_known_model,
-    new_nosfet_aero_benign_control_session, try_new_begode_falcon_benign_control_session,
+    begode_identification_probes, identify_known_model, is_r3_pro_firmware,
+    new_nosfet_aero_benign_control_session, parse_read_only_snapshot,
+    try_new_begode_falcon_benign_control_session,
 };
 use cutout_ride_maps as ride_maps;
 use libcutout_persistence as persistence;
+use tokio::sync::Notify;
 use uuid::Uuid;
 
 uniffi::setup_scaffolding!();
@@ -121,11 +133,964 @@ pub use music_connection::*;
 pub use music_monitor::*;
 pub use music_player_request::*;
 
+/// Foreground preview state owned by the Rust camera session.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Enum)]
+pub enum MobileCameraPreviewStateDto {
+    /// No preview is active.
+    Stopped,
+    /// Preview is waiting for usable media.
+    Buffering,
+    /// Preview is receiving current media.
+    Live,
+    /// The most recent preview media is no longer current.
+    Stale,
+    /// An active preview was interrupted.
+    Interrupted,
+    /// The selected camera cannot provide a preview.
+    Unavailable,
+}
+
+/// Authoritative onboard recording state owned by the Rust camera session.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Enum)]
+pub enum MobileCameraOnboardRecordingStateDto {
+    /// Recording readback has not arrived.
+    Unknown,
+    /// Camera confirmed that onboard recording is stopped.
+    Stopped,
+    /// Camera confirmed that onboard recording is active.
+    Recording,
+}
+
+/// Current camera state returned by the Rust session handle.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct MobileCameraSnapshotDto {
+    /// Foreground RTSP preview state.
+    pub preview: MobileCameraPreviewStateDto,
+    /// Camera-reported onboard recording state.
+    pub onboard_recording: MobileCameraOnboardRecordingStateDto,
+}
+
+/// Camera source identity attached to media provenance.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Enum)]
+pub enum MobileCameraSourceKindDto {
+    /// Verified `FreedConn` R3 Pro Novatek profile.
+    NovatekR3Pro,
+    /// Standard RTSP camera source.
+    Rtsp,
+    /// Deterministic fixture source used by tests and replay.
+    Fixture,
+}
+
+/// Confidence available for camera/phone clock alignment.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Enum)]
+pub enum MobileCameraClockUncertaintyDto {
+    /// No clock relationship was established.
+    Unknown,
+    /// Clocks may differ by at most this many milliseconds.
+    Milliseconds { value: u64 },
+}
+
+/// Camera-media provenance submitted by a mobile adapter after a bounded download.
+#[derive(Clone, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct MobileCameraMediaProvenanceInput {
+    /// Camera source identity.
+    pub source: MobileCameraSourceKindDto,
+    /// Camera-reported media path.
+    pub camera_path: String,
+    /// Camera-reported media size in bytes.
+    pub size_bytes: u64,
+    /// Camera-reported media timecode.
+    pub camera_timecode: u64,
+    /// Camera-reported display time, when available.
+    pub camera_time: String,
+    /// Associated ride capture file name.
+    pub ride_capture_file_name: String,
+    /// Host monotonic time when the association was captured.
+    pub captured_at_monotonic_ms: u64,
+    /// Host wall-clock time when the association was captured.
+    pub captured_at_wall_clock_ms: u64,
+    /// Explicit camera/phone clock uncertainty.
+    pub clock_uncertainty: MobileCameraClockUncertaintyDto,
+}
+
+/// Camera-media provenance returned from the Rust session state.
+#[derive(Clone, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct MobileCameraMediaProvenanceDto {
+    /// Camera source identity.
+    pub source: MobileCameraSourceKindDto,
+    /// Camera-reported media path.
+    pub camera_path: String,
+    /// Camera-reported media size in bytes.
+    pub size_bytes: u64,
+    /// Camera-reported media timecode.
+    pub camera_timecode: u64,
+    /// Camera-reported display time, when available.
+    pub camera_time: String,
+    /// Associated ride capture file name.
+    pub ride_capture_file_name: String,
+    /// Host monotonic time when the association was captured.
+    pub captured_at_monotonic_ms: u64,
+    /// Host wall-clock time when the association was captured.
+    pub captured_at_wall_clock_ms: u64,
+    /// Explicit camera/phone clock uncertainty.
+    pub clock_uncertainty: MobileCameraClockUncertaintyDto,
+}
+
+/// Failure returned when a mobile adapter submits unbounded camera provenance.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, thiserror::Error, uniffi::Error)]
+pub enum MobileCameraMediaProvenanceError {
+    /// The camera path is empty.
+    #[error("camera media path is empty")]
+    EmptyCameraPath,
+    /// The camera path exceeds Rust's bound.
+    #[error("camera media path is too long")]
+    CameraPathTooLong,
+    /// The camera display time exceeds Rust's bound.
+    #[error("camera media time is too long")]
+    CameraTimeTooLong,
+    /// The ride capture name is empty.
+    #[error("ride capture file name is empty")]
+    EmptyRideCaptureFileName,
+    /// The ride capture name exceeds Rust's bound.
+    #[error("ride capture file name is too long")]
+    RideCaptureFileNameTooLong,
+}
+
+/// Lifecycle observation emitted by a platform RTSP transport.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Enum)]
+pub enum MobileCameraPreviewEventDto {
+    /// A preview transport has started and is waiting for its first frame.
+    Started,
+    /// An encoded preview frame was received.
+    FrameReceived,
+    /// An active preview transport was interrupted.
+    Interrupted,
+    /// The preview transport was deliberately stopped.
+    Stopped,
+    /// The selected source cannot provide a preview.
+    Unavailable,
+}
+
+/// One encoded video access unit returned by the Retina preview session.
+#[derive(Clone, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct MobileCameraVideoFrameDto {
+    /// Encoded frame bytes in the source codec format.
+    pub data: Vec<u8>,
+    /// Number of lost RTP packets before this frame.
+    pub loss: u16,
+    /// Whether this frame is a random-access point.
+    pub is_random_access_point: bool,
+    /// Presentation timestamp in the stream's clock units.
+    pub timestamp: i64,
+    /// Clock rate associated with `timestamp`, in Hz.
+    pub clock_rate_hz: u32,
+}
+
+/// Codec configuration advertised by the camera's RTSP SDP.
+#[derive(Clone, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct MobileCameraVideoConfigurationDto {
+    /// RFC 6381 codec identifier, for example `avc1.4D401E`.
+    pub codec: String,
+    /// Coded width in pixels.
+    pub width: u32,
+    /// Coded height in pixels.
+    pub height: u32,
+    /// Codec-specific decoder configuration, such as H.264 `avcC` bytes.
+    pub extra_data: Vec<u8>,
+}
+
+/// Failure returned by the mobile RTSP preview object.
+#[derive(Clone, Debug, Eq, PartialEq, thiserror::Error, uniffi::Error)]
+pub enum MobileCameraPreviewError {
+    /// The supplied URI was not an RTSP URI.
+    #[error("invalid RTSP URI")]
+    InvalidUri,
+    /// The URI did not identify a validated local IPv4 camera origin.
+    #[error("RTSP endpoint is not local")]
+    NonLocalUri,
+    /// The URI differs from the explicitly selected camera origin.
+    #[error("RTSP endpoint does not match the camera origin")]
+    OriginMismatch,
+    /// The RTSP server advertised no H.264 video stream.
+    #[error("RTSP session has no H.264 video stream")]
+    UnsupportedVideoCodec,
+    /// An encoded access unit exceeded the fixed mobile memory budget.
+    #[error("RTSP video frame is too large")]
+    VideoFrameTooLarge,
+    /// The preview object has already been stopped or ended.
+    #[error("RTSP preview is not running")]
+    NotRunning,
+    /// Retina failed while negotiating or consuming the session.
+    #[error("RTSP session failed")]
+    Session,
+}
+
+impl From<RetinaRtspError> for MobileCameraPreviewError {
+    fn from(error: RetinaRtspError) -> Self {
+        match error {
+            RetinaRtspError::InvalidUri => Self::InvalidUri,
+            RetinaRtspError::NonLocalUri => Self::NonLocalUri,
+            RetinaRtspError::OriginMismatch => Self::OriginMismatch,
+            RetinaRtspError::UnsupportedVideoCodec => Self::UnsupportedVideoCodec,
+            RetinaRtspError::VideoFrameTooLarge { .. } => Self::VideoFrameTooLarge,
+            RetinaRtspError::Session(_) => Self::Session,
+        }
+    }
+}
+
+/// Async mobile RTSP preview session backed by the Rust Retina transport.
+#[derive(Debug, uniffi::Object)]
+pub struct MobileCameraPreviewSession {
+    inner: Mutex<Option<RetinaRtspPreviewSession>>,
+    video_configuration: Mutex<Option<RetinaVideoConfiguration>>,
+    stop: Arc<Notify>,
+    stopped: AtomicBool,
+    generation: AtomicU64,
+}
+
+impl From<CoreCameraPreviewState> for MobileCameraPreviewStateDto {
+    fn from(state: CoreCameraPreviewState) -> Self {
+        match state {
+            CoreCameraPreviewState::Stopped => Self::Stopped,
+            CoreCameraPreviewState::Buffering => Self::Buffering,
+            CoreCameraPreviewState::Live => Self::Live,
+            CoreCameraPreviewState::Stale => Self::Stale,
+            CoreCameraPreviewState::Interrupted => Self::Interrupted,
+            _ => Self::Unavailable,
+        }
+    }
+}
+
+impl From<MobileCameraPreviewStateDto> for CoreCameraPreviewState {
+    fn from(state: MobileCameraPreviewStateDto) -> Self {
+        match state {
+            MobileCameraPreviewStateDto::Stopped => Self::Stopped,
+            MobileCameraPreviewStateDto::Buffering => Self::Buffering,
+            MobileCameraPreviewStateDto::Live => Self::Live,
+            MobileCameraPreviewStateDto::Stale => Self::Stale,
+            MobileCameraPreviewStateDto::Interrupted => Self::Interrupted,
+            MobileCameraPreviewStateDto::Unavailable => Self::Unavailable,
+        }
+    }
+}
+
+impl From<CoreCameraOnboardRecordingState> for MobileCameraOnboardRecordingStateDto {
+    fn from(state: CoreCameraOnboardRecordingState) -> Self {
+        match state {
+            CoreCameraOnboardRecordingState::Stopped => Self::Stopped,
+            CoreCameraOnboardRecordingState::Recording => Self::Recording,
+            _ => Self::Unknown,
+        }
+    }
+}
+
+impl From<MobileCameraOnboardRecordingStateDto> for CoreCameraOnboardRecordingState {
+    fn from(state: MobileCameraOnboardRecordingStateDto) -> Self {
+        match state {
+            MobileCameraOnboardRecordingStateDto::Unknown => Self::Unknown,
+            MobileCameraOnboardRecordingStateDto::Stopped => Self::Stopped,
+            MobileCameraOnboardRecordingStateDto::Recording => Self::Recording,
+        }
+    }
+}
+
+impl From<cutout_core::CameraSessionState> for MobileCameraSnapshotDto {
+    fn from(state: cutout_core::CameraSessionState) -> Self {
+        Self {
+            preview: state.preview().into(),
+            onboard_recording: state.onboard_recording().into(),
+        }
+    }
+}
+
+impl From<MobileCameraSourceKindDto> for CoreCameraSourceKind {
+    fn from(source: MobileCameraSourceKindDto) -> Self {
+        match source {
+            MobileCameraSourceKindDto::NovatekR3Pro => Self::NovatekR3Pro,
+            MobileCameraSourceKindDto::Rtsp => Self::Rtsp,
+            MobileCameraSourceKindDto::Fixture => Self::Fixture,
+        }
+    }
+}
+
+impl From<CoreCameraSourceKind> for MobileCameraSourceKindDto {
+    fn from(source: CoreCameraSourceKind) -> Self {
+        match source {
+            CoreCameraSourceKind::NovatekR3Pro => Self::NovatekR3Pro,
+            CoreCameraSourceKind::Rtsp => Self::Rtsp,
+            CoreCameraSourceKind::Fixture => Self::Fixture,
+        }
+    }
+}
+
+impl From<MobileCameraClockUncertaintyDto> for CoreCameraClockUncertainty {
+    fn from(uncertainty: MobileCameraClockUncertaintyDto) -> Self {
+        match uncertainty {
+            MobileCameraClockUncertaintyDto::Unknown => Self::Unknown,
+            MobileCameraClockUncertaintyDto::Milliseconds { value } => Self::Milliseconds(value),
+        }
+    }
+}
+
+impl From<CoreCameraClockUncertainty> for MobileCameraClockUncertaintyDto {
+    fn from(uncertainty: CoreCameraClockUncertainty) -> Self {
+        match uncertainty {
+            CoreCameraClockUncertainty::Unknown => Self::Unknown,
+            CoreCameraClockUncertainty::Milliseconds(value) => Self::Milliseconds { value },
+        }
+    }
+}
+
+impl From<&CoreCameraMediaProvenance> for MobileCameraMediaProvenanceDto {
+    fn from(record: &CoreCameraMediaProvenance) -> Self {
+        Self {
+            source: record.source().into(),
+            camera_path: record.camera_path().to_owned(),
+            size_bytes: record.size_bytes(),
+            camera_timecode: record.camera_timecode(),
+            camera_time: record.camera_time().to_owned(),
+            ride_capture_file_name: record.ride_capture_file_name().to_owned(),
+            captured_at_monotonic_ms: record.captured_at_monotonic().as_milliseconds(),
+            captured_at_wall_clock_ms: record.captured_at_wall_clock().as_milliseconds(),
+            clock_uncertainty: record.clock_uncertainty().into(),
+        }
+    }
+}
+
+impl From<CoreCameraMediaProvenanceError> for MobileCameraMediaProvenanceError {
+    fn from(error: CoreCameraMediaProvenanceError) -> Self {
+        match error {
+            CoreCameraMediaProvenanceError::EmptyCameraPath => Self::EmptyCameraPath,
+            CoreCameraMediaProvenanceError::CameraPathTooLong => Self::CameraPathTooLong,
+            CoreCameraMediaProvenanceError::CameraTimeTooLong => Self::CameraTimeTooLong,
+            CoreCameraMediaProvenanceError::EmptyRideCaptureFileName => {
+                Self::EmptyRideCaptureFileName
+            }
+            CoreCameraMediaProvenanceError::RideCaptureFileNameTooLong => {
+                Self::RideCaptureFileNameTooLong
+            }
+        }
+    }
+}
+
+impl MobileCameraMediaProvenanceInput {
+    fn into_core(self) -> Result<CoreCameraMediaProvenance, MobileCameraMediaProvenanceError> {
+        CoreCameraMediaProvenance::new(
+            self.source.into(),
+            &self.camera_path,
+            self.size_bytes,
+            self.camera_timecode,
+            &self.camera_time,
+            &self.ride_capture_file_name,
+            CoreCameraMediaCaptureTiming {
+                captured_at_monotonic: MonotonicTimestamp::new(self.captured_at_monotonic_ms),
+                captured_at_wall_clock: WallClockUnixTimestamp::new(self.captured_at_wall_clock_ms),
+                clock_uncertainty: self.clock_uncertainty.into(),
+            },
+        )
+        .map_err(Into::into)
+    }
+}
+
+impl From<RetinaVideoFrame> for MobileCameraVideoFrameDto {
+    fn from(frame: RetinaVideoFrame) -> Self {
+        Self {
+            data: frame.data,
+            loss: frame.loss,
+            is_random_access_point: frame.is_random_access_point,
+            timestamp: frame.timestamp,
+            clock_rate_hz: frame.clock_rate_hz,
+        }
+    }
+}
+
+impl From<&RetinaVideoConfiguration> for MobileCameraVideoConfigurationDto {
+    fn from(configuration: &RetinaVideoConfiguration) -> Self {
+        Self {
+            codec: configuration.codec.clone(),
+            width: configuration.width,
+            height: configuration.height,
+            extra_data: configuration.extra_data.clone(),
+        }
+    }
+}
+
+impl From<MobileCameraVideoFrameDto> for RetinaVideoFrame {
+    fn from(frame: MobileCameraVideoFrameDto) -> Self {
+        Self::new(
+            frame.data,
+            frame.loss,
+            frame.is_random_access_point,
+            frame.timestamp,
+            frame.clock_rate_hz,
+        )
+    }
+}
+
+#[uniffi::export(async_runtime = "tokio")]
+impl MobileCameraPreviewSession {
+    /// Waits for the next encoded video frame from the running session.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`MobileCameraPreviewError::NotRunning`] after [`Self::stop`]
+    /// or a transport/depacketization failure from Retina.
+    pub async fn next_video_frame(
+        &self,
+    ) -> Result<Option<MobileCameraVideoFrameDto>, MobileCameraPreviewError> {
+        // Create the notification future before checking state so a stop that
+        // races this call cannot be missed between the check and the select.
+        let stop = Arc::clone(&self.stop);
+        let notified = stop.notified();
+        tokio::pin!(notified);
+        if self.stopped.load(Ordering::Acquire) {
+            return Err(MobileCameraPreviewError::NotRunning);
+        }
+        let generation = self.generation.load(Ordering::Acquire);
+        let mut session = {
+            let mut inner = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
+            inner.take().ok_or(MobileCameraPreviewError::NotRunning)?
+        };
+        let result = tokio::select! {
+            result = session.next_video_frame() => result,
+            () = &mut notified => return Ok(None),
+        };
+        match result {
+            Ok(Some(frame)) => {
+                // A completed read belongs to the generation that started it.
+                // Do not resurrect a session after stop (or a future restart).
+                let configuration = session.video_configuration().cloned();
+                let mut inner = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
+                if !self.stopped.load(Ordering::Acquire)
+                    && self.generation.load(Ordering::Acquire) == generation
+                {
+                    *inner = Some(session);
+                } else {
+                    // A stop raced the read. Do not leak the completed frame
+                    // into a newer consumer or retain the detached session.
+                    drop(inner);
+                    return Ok(None);
+                }
+                if let Some(configuration) = configuration {
+                    *self
+                        .video_configuration
+                        .lock()
+                        .unwrap_or_else(PoisonError::into_inner) = Some(configuration);
+                }
+                Ok(Some(frame.into()))
+            }
+            Ok(None) => Ok(None),
+            Err(error) => Err(error.into()),
+        }
+    }
+
+    /// Returns codec configuration advertised during RTSP negotiation.
+    #[must_use]
+    pub fn video_configuration(&self) -> Option<MobileCameraVideoConfigurationDto> {
+        self.video_configuration
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .as_ref()
+            .map(Into::into)
+    }
+
+    /// Stops the preview and releases the underlying RTSP session.
+    pub fn stop(&self) {
+        self.stopped.store(true, Ordering::Release);
+        self.generation.fetch_add(1, Ordering::AcqRel);
+        self.stop.notify_waiters();
+        let mut inner = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
+        inner.take();
+    }
+}
+
+fn mobile_camera_preview_from_session(
+    session: RetinaRtspPreviewSession,
+) -> Arc<MobileCameraPreviewSession> {
+    let video_configuration = session.video_configuration().cloned();
+    Arc::new(MobileCameraPreviewSession {
+        inner: Mutex::new(Some(session)),
+        video_configuration: Mutex::new(video_configuration),
+        stop: Arc::new(Notify::new()),
+        stopped: AtomicBool::new(false),
+        generation: AtomicU64::new(0),
+    })
+}
+
+/// Connects a mobile RTSP preview only when its host matches the selected
+/// camera origin.
+///
+/// The URI comes from camera-reported metadata, so the mobile caller supplies
+/// the origin it explicitly selected during HTTP discovery.
+///
+/// # Errors
+///
+/// Returns an error when `expected_address` is not an IPv4 address, the URI is
+/// malformed or non-local, it names a different address, or the RTSP handshake
+/// fails.
+#[uniffi::export(async_runtime = "tokio")]
+pub async fn mobile_camera_preview_connect_for_origin(
+    uri: String,
+    expected_address: String,
+) -> Result<Arc<MobileCameraPreviewSession>, MobileCameraPreviewError> {
+    let expected_address = expected_address
+        .parse::<Ipv4Addr>()
+        .map_err(|_| MobileCameraPreviewError::NonLocalUri)?;
+    let session = RetinaRtspPreviewSession::connect_for_origin(&uri, expected_address).await?;
+    Ok(mobile_camera_preview_from_session(session))
+}
+
+/// Mobile-facing Annex-B H.264 file sink for encoded preview frames.
+#[derive(Debug, uniffi::Object)]
+pub struct MobileCameraPreviewFileSink {
+    inner: Mutex<Option<RetinaH264FileSink>>,
+}
+
+/// Failure while creating or writing an encoded preview file.
+#[derive(Clone, Debug, Eq, PartialEq, thiserror::Error, uniffi::Error)]
+pub enum MobileCameraPreviewFileError {
+    /// The destination could not be created.
+    #[error("could not create preview file")]
+    Create,
+    /// A frame could not be written or was not valid Retina H.264 data.
+    #[error("could not write preview frame")]
+    Write,
+    /// The sink has already been finished.
+    #[error("preview file sink is finished")]
+    Finished,
+}
+
+#[uniffi::export]
+impl MobileCameraPreviewFileSink {
+    /// Creates or truncates an Annex-B H.264 elementary-stream file.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`MobileCameraPreviewFileError::Create`] when the destination
+    /// cannot be opened.
+    #[uniffi::constructor]
+    pub fn create(path: String) -> Result<Arc<Self>, MobileCameraPreviewFileError> {
+        let sink =
+            RetinaH264FileSink::create(path).map_err(|_| MobileCameraPreviewFileError::Create)?;
+        Ok(Arc::new(Self {
+            inner: Mutex::new(Some(sink)),
+        }))
+    }
+
+    /// Writes one encoded preview frame to the file.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`MobileCameraPreviewFileError::Finished`] after finishing, or
+    /// [`MobileCameraPreviewFileError::Write`] for malformed data or an I/O
+    /// failure.
+    pub fn write_frame(
+        &self,
+        frame: MobileCameraVideoFrameDto,
+    ) -> Result<(), MobileCameraPreviewFileError> {
+        let mut inner = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
+        let sink = inner
+            .as_mut()
+            .ok_or(MobileCameraPreviewFileError::Finished)?;
+        sink.write_frame(&frame.into())
+            .map_err(|_| MobileCameraPreviewFileError::Write)
+    }
+
+    /// Flushes buffered bytes and closes the file.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`MobileCameraPreviewFileError::Finished`] if this sink was
+    /// already finished, or [`MobileCameraPreviewFileError::Write`] if the
+    /// final flush fails.
+    pub fn finish(&self) -> Result<(), MobileCameraPreviewFileError> {
+        let sink = self
+            .inner
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .take()
+            .ok_or(MobileCameraPreviewFileError::Finished)?;
+        sink.finish()
+            .map_err(|_| MobileCameraPreviewFileError::Write)
+    }
+}
+
+/// Read-only command supported by the Novatek R3 Pro adapter.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Enum)]
+pub enum MobileNovatekReadCommandDto {
+    /// Source-backed command `2016` with semantics retained as opaque status.
+    Command2016,
+    /// Source-backed live-view format and RTSP-link command `2019`.
+    LiveViewFormat,
+    /// Source-backed firmware-version command `3012`.
+    FirmwareVersion,
+    /// Source-backed configuration/status command `3014`.
+    Configuration,
+    /// Source-backed media-list command `3015`.
+    MediaList,
+    /// Source-backed storage-presence command `3024`.
+    StoragePresent,
+}
+
+impl From<MobileNovatekReadCommandDto> for NovatekReadCommand {
+    fn from(command: MobileNovatekReadCommandDto) -> Self {
+        match command {
+            MobileNovatekReadCommandDto::Command2016 => Self::Command2016,
+            MobileNovatekReadCommandDto::LiveViewFormat => Self::LiveViewFormat,
+            MobileNovatekReadCommandDto::FirmwareVersion => Self::FirmwareVersion,
+            MobileNovatekReadCommandDto::Configuration => Self::Configuration,
+            MobileNovatekReadCommandDto::MediaList => Self::MediaList,
+            MobileNovatekReadCommandDto::StoragePresent => Self::StoragePresent,
+        }
+    }
+}
+
+/// Explicit onboard-recording request exposed to a mobile client.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Enum)]
+pub enum MobileNovatekRecordingCommandDto {
+    /// Request that the camera start recording.
+    Start,
+    /// Request that the camera stop recording.
+    Stop,
+}
+
+/// Explicit still-capture request exposed to a mobile client.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Enum)]
+pub enum MobileNovatekStillCaptureCommandDto {
+    /// Request that the camera capture a still image.
+    Capture,
+}
+
+/// Outcome reported by a bounded Novatek command response.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Enum)]
+pub enum MobileNovatekCommandOutcomeDto {
+    /// The camera response reported status zero.
+    Acknowledged,
+    /// The camera response reported a nonzero status.
+    Refused,
+    /// The response did not provide a usable status.
+    Unknown,
+}
+
+impl From<MobileNovatekStillCaptureCommandDto> for NovatekStillCaptureCommand {
+    fn from(_: MobileNovatekStillCaptureCommandDto) -> Self {
+        Self
+    }
+}
+
+impl From<MobileNovatekRecordingCommandDto> for NovatekRecordingCommand {
+    fn from(command: MobileNovatekRecordingCommandDto) -> Self {
+        match command {
+            MobileNovatekRecordingCommandDto::Start => Self::Start,
+            MobileNovatekRecordingCommandDto::Stop => Self::Stop,
+        }
+    }
+}
+
+/// One Novatek command/status pair returned to a mobile client.
+#[derive(Clone, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct MobileNovatekCommandStatusDto {
+    /// Numeric command identifier reported by the camera.
+    pub command_id: u16,
+    /// Camera-reported status value.
+    pub status: u16,
+}
+
+/// One bounded Novatek media record returned to a mobile client.
+#[derive(Clone, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct MobileNovatekMediaEntryDto {
+    /// Camera-reported file name.
+    pub name: String,
+    /// Camera-reported path.
+    pub path: String,
+    /// File size in bytes.
+    pub size_bytes: u64,
+    /// Camera-reported timestamp code.
+    pub timecode: u64,
+    /// Camera-reported display time.
+    pub time: String,
+    /// Camera-reported attribute bits.
+    pub attributes: u32,
+}
+
+/// Bounded, read-only Novatek evidence collected for the R3 Pro profile.
+#[derive(Clone, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct MobileNovatekReadOnlySnapshotDto {
+    /// Firmware version reported by command `3012`.
+    pub firmware_version: String,
+    /// Movie-preview RTSP URI reported by command `2019`.
+    pub movie_rtsp_uri: String,
+    /// Photo-preview RTSP URI reported by command `2019`.
+    pub photo_rtsp_uri: String,
+    /// Configuration/status pairs reported by command `3014`.
+    pub configuration: Vec<MobileNovatekCommandStatusDto>,
+    /// Whether command `3024` reports an inserted storage card.
+    pub storage_present: bool,
+    /// Bounded media records reported by command `3015`.
+    pub media: Vec<MobileNovatekMediaEntryDto>,
+}
+
+/// Failure returned when a captured Novatek response cannot be parsed.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, thiserror::Error, uniffi::Error)]
+pub enum MobileNovatekParseError {
+    /// One or more responses were malformed or exceeded parser bounds.
+    #[error("invalid Novatek read-only response")]
+    InvalidResponse,
+}
+
+/// Failure returned when validating a mobile-supplied Novatek origin.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, thiserror::Error, uniffi::Error)]
+pub enum MobileNovatekOriginError {
+    /// The address was not valid IPv4 text.
+    #[error("invalid IPv4 address")]
+    InvalidAddress,
+    /// The address was not private, link-local, or loopback.
+    #[error("origin is not local")]
+    NonLocalAddress,
+    /// Port zero cannot identify a camera HTTP service.
+    #[error("origin has an invalid TCP port")]
+    InvalidPort,
+}
+
+/// Failure returned when a camera-reported media path is not safe to download.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, thiserror::Error, uniffi::Error)]
+pub enum MobileNovatekMediaPathError {
+    /// The path is not rooted at the camera's validated Novatek volume.
+    #[error("invalid Novatek media path")]
+    InvalidPath,
+}
+
+/// Validated local Novatek HTTP origin returned to a mobile client.
+#[derive(Clone, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct MobileNovatekHttpOriginDto {
+    /// Validated IPv4 address text.
+    pub address: String,
+    /// Validated TCP port.
+    pub port: u16,
+}
+
+/// Returns the fixed relative target for a read-only Novatek command.
+#[uniffi::export]
+#[must_use]
+pub fn mobile_novatek_read_command_target(command: MobileNovatekReadCommandDto) -> String {
+    NovatekReadCommand::from(command)
+        .request_target()
+        .to_owned()
+}
+
+/// Maps a validated camera media path to an origin-relative HTTP target.
+///
+/// The returned target is safe to append to a caller-validated local origin.
+/// No network request is made by this helper.
+///
+/// # Errors
+///
+/// Returns [`MobileNovatekMediaPathError::InvalidPath`] when the supplied
+/// path is not a bounded Novatek media path.
+#[uniffi::export]
+#[allow(
+    clippy::needless_pass_by_value,
+    reason = "UniFFI exports owned strings"
+)]
+pub fn mobile_novatek_media_download_target(
+    path: String,
+) -> Result<String, MobileNovatekMediaPathError> {
+    cutout_protocols::media_download_target(&path)
+        .map(|target| target.as_str().to_owned())
+        .map_err(|error| match error {
+            NovatekMediaPathError::InvalidRoot
+            | NovatekMediaPathError::UnsafeComponent
+            | NovatekMediaPathError::ValueTooLong { .. } => {
+                MobileNovatekMediaPathError::InvalidPath
+            }
+        })
+}
+
+/// Maps a validated camera media path to its source-backed thumbnail target.
+///
+/// No network request is made by this helper. The caller must gate the
+/// command on read-only configuration evidence before fetching it.
+///
+/// # Errors
+///
+/// Returns [`MobileNovatekMediaPathError::InvalidPath`] when the path is not a
+/// bounded, camera-rooted Novatek path.
+#[uniffi::export]
+#[allow(
+    clippy::needless_pass_by_value,
+    reason = "UniFFI exports owned strings"
+)]
+pub fn mobile_novatek_media_thumbnail_target(
+    path: String,
+) -> Result<String, MobileNovatekMediaPathError> {
+    cutout_protocols::media_thumbnail_target(&path)
+        .map(|target| target.as_str().to_owned())
+        .map_err(|error| match error {
+            NovatekMediaPathError::InvalidRoot
+            | NovatekMediaPathError::UnsafeComponent
+            | NovatekMediaPathError::ValueTooLong { .. } => {
+                MobileNovatekMediaPathError::InvalidPath
+            }
+        })
+}
+
+/// Returns the fixed target for an explicit onboard-recording request.
+///
+/// A successful HTTP request is not recording readback; callers must keep
+/// camera recording state unconfirmed until a camera status response arrives.
+#[uniffi::export]
+#[must_use]
+pub fn mobile_novatek_recording_command_target(
+    command: MobileNovatekRecordingCommandDto,
+) -> String {
+    NovatekRecordingCommand::from(command)
+        .request_target()
+        .to_owned()
+}
+
+/// Returns the fixed target for an explicit still-capture request.
+///
+/// A successful HTTP request is not camera acknowledgement or media readback;
+/// callers must wait for a later media-list response before presenting a file.
+#[uniffi::export]
+#[must_use]
+pub fn mobile_novatek_still_capture_command_target(
+    command: MobileNovatekStillCaptureCommandDto,
+) -> String {
+    NovatekStillCaptureCommand::from(command)
+        .request_target()
+        .to_owned()
+}
+
+/// Returns whether a firmware string is in the verified R3V1 R3 Pro family.
+#[uniffi::export]
+#[must_use]
+#[allow(
+    clippy::needless_pass_by_value,
+    reason = "UniFFI exports owned strings"
+)]
+pub fn mobile_novatek_firmware_is_r3_pro(firmware_version: String) -> bool {
+    is_r3_pro_firmware(&firmware_version)
+}
+
+/// Validates a local IPv4 origin before the platform network adapter connects.
+///
+/// # Errors
+///
+/// Returns an error when `address` is not IPv4 text, is not a local address,
+/// or `port` is zero.
+#[uniffi::export]
+#[allow(
+    clippy::needless_pass_by_value,
+    reason = "UniFFI exports owned strings"
+)]
+pub fn mobile_validate_novatek_http_origin(
+    address: String,
+    port: u16,
+) -> Result<MobileNovatekHttpOriginDto, MobileNovatekOriginError> {
+    let address = address
+        .parse::<Ipv4Addr>()
+        .map_err(|_| MobileNovatekOriginError::InvalidAddress)?;
+    let origin = NovatekHttpOrigin::new(address, port).map_err(|error| match error {
+        NovatekOriginError::NonLocalAddress => MobileNovatekOriginError::NonLocalAddress,
+        NovatekOriginError::InvalidPort => MobileNovatekOriginError::InvalidPort,
+    })?;
+    Ok(MobileNovatekHttpOriginDto {
+        address: origin.address().to_string(),
+        port: origin.port(),
+    })
+}
+
+/// Parses captured Novatek responses into bounded mobile-owned evidence.
+///
+/// # Errors
+///
+/// Returns [`MobileNovatekParseError::InvalidResponse`] when any captured
+/// response is malformed or exceeds the Rust parser's fixed bounds.
+#[uniffi::export]
+#[allow(
+    clippy::needless_pass_by_value,
+    reason = "UniFFI exports owned byte buffers"
+)]
+pub fn mobile_parse_novatek_read_only_snapshot(
+    firmware_response: Vec<u8>,
+    live_view_response: Vec<u8>,
+    configuration_response: Vec<u8>,
+    storage_response: Vec<u8>,
+    media_response: Vec<u8>,
+) -> Result<MobileNovatekReadOnlySnapshotDto, MobileNovatekParseError> {
+    let snapshot = parse_read_only_snapshot(
+        &firmware_response,
+        &live_view_response,
+        &configuration_response,
+        &storage_response,
+        &media_response,
+    )
+    .map_err(|_| MobileNovatekParseError::InvalidResponse)?;
+    Ok(MobileNovatekReadOnlySnapshotDto {
+        firmware_version: snapshot.firmware().as_str().to_owned(),
+        movie_rtsp_uri: snapshot.live_view().movie().as_str().to_owned(),
+        photo_rtsp_uri: snapshot.live_view().photo().as_str().to_owned(),
+        configuration: snapshot
+            .configuration()
+            .statuses()
+            .iter()
+            .map(|status| MobileNovatekCommandStatusDto {
+                command_id: status.command_id(),
+                status: status.status(),
+            })
+            .collect(),
+        storage_present: snapshot.storage() == NovatekStoragePresence::Present,
+        media: snapshot
+            .media()
+            .entries()
+            .iter()
+            .map(|entry| MobileNovatekMediaEntryDto {
+                name: entry.name().to_owned(),
+                path: entry.path().to_owned(),
+                size_bytes: entry.size_bytes(),
+                timecode: entry.timecode(),
+                time: entry.time().to_owned(),
+                attributes: entry.attributes(),
+            })
+            .collect(),
+    })
+}
+
+/// Parses a bounded Novatek command response without inferring state change.
+/// The reported command must match `expected_command_id`; a status from a
+/// different command is never treated as an acknowledgement.
+///
+/// # Errors
+///
+/// Returns [`MobileNovatekParseError::InvalidResponse`] when the response is
+/// not valid bounded UTF-8 or contains a malformed status value.
+#[uniffi::export]
+#[allow(
+    clippy::needless_pass_by_value,
+    reason = "UniFFI exports owned byte buffers"
+)]
+pub fn mobile_parse_novatek_command_outcome(
+    response: Vec<u8>,
+    expected_command_id: u16,
+) -> Result<MobileNovatekCommandOutcomeDto, MobileNovatekParseError> {
+    let outcome = cutout_protocols::parse_command_response(&response, expected_command_id)
+        .map_err(|_| MobileNovatekParseError::InvalidResponse)?;
+    Ok(match outcome {
+        NovatekCommandOutcome::Acknowledged => MobileNovatekCommandOutcomeDto::Acknowledged,
+        NovatekCommandOutcome::Refused { .. } => MobileNovatekCommandOutcomeDto::Refused,
+        NovatekCommandOutcome::Unknown => MobileNovatekCommandOutcomeDto::Unknown,
+    })
+}
+
 /// Mobile discovery candidate support state.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Enum)]
 pub enum DiscoveryCandidateSupport {
     /// Candidate has a supported read-only route.
     Supported,
+
+    /// Candidate has a read-only test route from provisional evidence.
+    ProvisionalRoute,
 
     /// Candidate should be identified with a read-only probe before routing.
     ProbeRecommended,
@@ -193,7 +1158,7 @@ pub enum DiscoveryCandidateSection {
 impl DiscoveryCandidateSupport {
     fn recommended_action(self) -> DiscoveryCandidateAction {
         match self {
-            Self::Supported => DiscoveryCandidateAction::Use,
+            Self::Supported | Self::ProvisionalRoute => DiscoveryCandidateAction::Use,
             Self::ProbeRecommended => DiscoveryCandidateAction::Probe,
             Self::UnknownRecordable
             | Self::KnownUnsupported
@@ -207,7 +1172,7 @@ impl DiscoveryCandidateSupport {
 
     fn picker_section(self) -> DiscoveryCandidateSection {
         match self {
-            Self::Supported => DiscoveryCandidateSection::Supported,
+            Self::Supported | Self::ProvisionalRoute => DiscoveryCandidateSection::Supported,
             Self::ProbeRecommended => DiscoveryCandidateSection::ProbeFirst,
             Self::ManualPlaceholder => DiscoveryCandidateSection::Manual,
             Self::UnknownRecordable
@@ -768,27 +1733,6 @@ impl MobileRideSessionDecisionDto {
     }
 }
 
-/// Purpose of a selected device connection across transport attempts.
-#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Enum)]
-pub enum DeviceConnectionIntentDto {
-    /// Identify a device selected for use.
-    Use,
-    /// Recover the selected connection without falling back to capture-only.
-    Reconnect,
-    /// Capture a device without requiring a supported protocol.
-    RecordOnly,
-}
-
-impl From<DeviceConnectionIntentDto> for CoreDeviceConnectionIntent {
-    fn from(intent: DeviceConnectionIntentDto) -> Self {
-        match intent {
-            DeviceConnectionIntentDto::Use => Self::Use,
-            DeviceConnectionIntentDto::Reconnect => Self::Reconnect,
-            DeviceConnectionIntentDto::RecordOnly => Self::RecordOnly,
-        }
-    }
-}
-
 /// Mobile-facing Rust-owned `CutOut` session state handle.
 #[derive(Debug, uniffi::Object)]
 pub struct CutoutSessionStateHandle {
@@ -903,7 +1847,8 @@ impl From<DiscoveryCandidateSnapshot> for DiscoveryCandidate {
                 .map(DiscoveryConnectionRoute::from),
             electric_unicycle_model,
             disabled_reason: match candidate.support {
-                CoreDiscoveryCandidateSupport::Supported => None,
+                CoreDiscoveryCandidateSupport::Supported
+                | CoreDiscoveryCandidateSupport::ProvisionalRoute => None,
                 CoreDiscoveryCandidateSupport::ProbeRecommended
                 | CoreDiscoveryCandidateSupport::UnknownRecordable => {
                     Some(candidate.detail.clone())
@@ -949,6 +1894,7 @@ impl From<CoreDiscoveryCandidateSupport> for DiscoveryCandidateSupport {
     fn from(support: CoreDiscoveryCandidateSupport) -> Self {
         match support {
             CoreDiscoveryCandidateSupport::Supported => Self::Supported,
+            CoreDiscoveryCandidateSupport::ProvisionalRoute => Self::ProvisionalRoute,
             CoreDiscoveryCandidateSupport::ProbeRecommended => Self::ProbeRecommended,
             CoreDiscoveryCandidateSupport::UnknownRecordable => Self::UnknownRecordable,
             CoreDiscoveryCandidateSupport::KnownUnsupported => Self::KnownUnsupported,
@@ -990,6 +1936,81 @@ impl CutoutSessionStateHandle {
     #[must_use]
     pub fn discovery_snapshot(&self) -> DiscoverySnapshot {
         DiscoverySnapshot::from_state(&self.lock_inner().state)
+    }
+
+    /// Returns the current Rust-owned camera preview and recording state.
+    #[must_use]
+    pub fn camera_snapshot(&self) -> MobileCameraSnapshotDto {
+        self.lock_inner().state.camera().to_owned().into()
+    }
+
+    /// Records a foreground preview observation without changing recording truth.
+    pub fn observe_camera_preview(&self, preview: MobileCameraPreviewStateDto) {
+        self.lock_inner()
+            .state
+            .camera_mut()
+            .observe_preview(preview.into());
+    }
+
+    /// Reduces one platform preview lifecycle event into Rust-owned state.
+    pub fn reduce_camera_preview(&self, event: MobileCameraPreviewEventDto) {
+        let preview = match event {
+            MobileCameraPreviewEventDto::Started => CoreCameraPreviewState::Buffering,
+            MobileCameraPreviewEventDto::FrameReceived => CoreCameraPreviewState::Live,
+            MobileCameraPreviewEventDto::Interrupted => CoreCameraPreviewState::Interrupted,
+            MobileCameraPreviewEventDto::Stopped => CoreCameraPreviewState::Stopped,
+            MobileCameraPreviewEventDto::Unavailable => CoreCameraPreviewState::Unavailable,
+        };
+        self.lock_inner()
+            .state
+            .camera_mut()
+            .observe_preview(preview);
+    }
+
+    /// Records authoritative onboard recording truth without changing preview state.
+    pub fn observe_camera_onboard_recording(
+        &self,
+        onboard_recording: MobileCameraOnboardRecordingStateDto,
+    ) {
+        self.lock_inner()
+            .state
+            .camera_mut()
+            .observe_onboard_recording(onboard_recording.into());
+    }
+
+    /// Records bounded camera-media provenance without copying video bytes into
+    /// the Rust session state.
+    ///
+    /// # Errors
+    ///
+    /// Returns a typed error when camera metadata exceeds the Rust-owned bounds
+    /// or contains an empty required identifier.
+    pub fn record_camera_media_provenance(
+        &self,
+        input: MobileCameraMediaProvenanceInput,
+    ) -> Result<(), MobileCameraMediaProvenanceError> {
+        let record = input.into_core()?;
+        self.lock_inner()
+            .state
+            .record_camera_media_provenance(record);
+        Ok(())
+    }
+
+    /// Returns bounded camera-media provenance retained by the Rust session.
+    #[must_use]
+    pub fn camera_media_provenance(&self) -> Vec<MobileCameraMediaProvenanceDto> {
+        self.lock_inner()
+            .state
+            .camera_provenance()
+            .media()
+            .iter()
+            .map(MobileCameraMediaProvenanceDto::from)
+            .collect()
+    }
+
+    /// Clears camera-media provenance for the next ride capture.
+    pub fn clear_camera_media_provenance(&self) {
+        self.lock_inner().state.camera_provenance.clear();
     }
 
     /// Applies one typed Apple-platform event to the Rust-owned ride lifecycle.
@@ -1202,15 +2223,21 @@ impl CutoutSessionStateHandle {
         });
         match selected_candidate {
             Some(candidate)
+                if candidate.electric_unicycle_model
+                    == Some(CoreDiscoveryElectricUnicycleModel::Aero) =>
+            {
+                return MobileIdentificationProbeOutcomeDto::NoProbeNeeded;
+            }
+            Some(candidate)
                 if candidate.connection_route
                     == Some(CoreDiscoveryConnectionRoute::VescOnewheel) =>
             {
                 return MobileIdentificationProbeOutcomeDto::Unsupported;
             }
             Some(candidate)
-                if candidate.connection_route
-                    == Some(CoreDiscoveryConnectionRoute::ElectricUnicycle)
-                    || candidate.support == CoreDiscoveryCandidateSupport::ProbeRecommended => {}
+                if candidate.support == CoreDiscoveryCandidateSupport::ProbeRecommended
+                    || candidate.electric_unicycle_model
+                        == Some(CoreDiscoveryElectricUnicycleModel::Falcon) => {}
             Some(_) => {
                 return MobileIdentificationProbeOutcomeDto::Unsupported;
             }
@@ -1381,23 +2408,6 @@ impl CutoutSessionStateHandle {
         state.state.reset_device_identity();
         state.detector = DeviceDetectionSession::default();
     }
-
-    /// Sets the purpose of the selected connection across transport attempts.
-    pub fn set_device_connection_intent(&self, intent: DeviceConnectionIntentDto) {
-        self.lock_inner().state.device_connection_intent = intent.into();
-    }
-
-    /// Whether unresolved identification should retry rather than capture-only.
-    pub fn should_retry_identification(&self) -> bool {
-        self.lock_inner().state.should_retry_identification()
-    }
-
-    /// Clears link-local stream buffers and probes while retaining confirmed identity.
-    pub fn reset_device_detection_link(&self) {
-        let mut state = self.lock_inner();
-        state.state.identity_mut().reset_link_probes();
-        state.detector = DeviceDetectionSession::default();
-    }
 }
 
 impl CutoutSessionStateHandle {
@@ -1465,9 +2475,9 @@ pub fn mobile_discovery_candidate_from_advertisement(
             evidence: "FFF0 transport hint".to_owned(),
             detail: "VESC protocol route".to_owned(),
             is_picker_candidate: true,
-            support: DiscoveryCandidateSupport::Supported,
-            recommended_action: DiscoveryCandidateSupport::Supported.recommended_action(),
-            section: DiscoveryCandidateSupport::Supported.picker_section(),
+            support: DiscoveryCandidateSupport::ProvisionalRoute,
+            recommended_action: DiscoveryCandidateSupport::ProvisionalRoute.recommended_action(),
+            section: DiscoveryCandidateSupport::ProvisionalRoute.picker_section(),
             connection_route: Some(DiscoveryConnectionRoute::VescOnewheel),
             electric_unicycle_model: None,
             disabled_reason: None,
@@ -1699,14 +2709,14 @@ pub fn mobile_discovery_candidate_from_detection_resolution(
             display_name,
             product_category: "Electric unicycle".to_owned(),
             evidence: "Veteran/NOSFET protocol family".to_owned(),
-            detail: "Veteran/NOSFET protocol detected; model identity probe required".to_owned(),
+            detail: "Veteran/NOSFET model not confirmed".to_owned(),
             is_picker_candidate: true,
-            support: DiscoveryCandidateSupport::ProbeRecommended,
-            recommended_action: DiscoveryCandidateSupport::ProbeRecommended.recommended_action(),
-            section: DiscoveryCandidateSupport::ProbeRecommended.picker_section(),
+            support: DiscoveryCandidateSupport::UnknownRecordable,
+            recommended_action: DiscoveryCandidateSupport::UnknownRecordable.recommended_action(),
+            section: DiscoveryCandidateSupport::UnknownRecordable.picker_section(),
             connection_route: None,
             electric_unicycle_model: None,
-            disabled_reason: Some("Veteran/NOSFET model identity probe required".to_owned()),
+            disabled_reason: Some("Veteran/NOSFET model not confirmed".to_owned()),
         };
     }
 
@@ -1721,34 +2731,12 @@ pub fn mobile_discovery_candidate_from_detection_resolution(
             evidence: "VESC protocol family".to_owned(),
             detail: "VESC read-only route".to_owned(),
             is_picker_candidate: true,
-            support: DiscoveryCandidateSupport::Supported,
-            recommended_action: DiscoveryCandidateSupport::Supported.recommended_action(),
-            section: DiscoveryCandidateSupport::Supported.picker_section(),
+            support: DiscoveryCandidateSupport::ProvisionalRoute,
+            recommended_action: DiscoveryCandidateSupport::ProvisionalRoute.recommended_action(),
+            section: DiscoveryCandidateSupport::ProvisionalRoute.picker_section(),
             connection_route: Some(DiscoveryConnectionRoute::VescOnewheel),
             electric_unicycle_model: None,
             disabled_reason: None,
-        };
-    }
-
-    if matches!(
-        resolution.protocol_family.as_ref(),
-        Some(MobileProtocolFamilyDto::BegodeGotway)
-    ) && resolution.missing_probe_response.is_none()
-        && resolution.malformed_probe_response.is_none()
-    {
-        return DiscoveryCandidate {
-            platform_identifier,
-            display_name,
-            product_category: "Electric unicycle".to_owned(),
-            evidence: "Begode/Gotway protocol family".to_owned(),
-            detail: "Begode/Gotway protocol detected; model identity probe required".to_owned(),
-            is_picker_candidate: true,
-            support: DiscoveryCandidateSupport::ProbeRecommended,
-            recommended_action: DiscoveryCandidateSupport::ProbeRecommended.recommended_action(),
-            section: DiscoveryCandidateSupport::ProbeRecommended.picker_section(),
-            connection_route: None,
-            electric_unicycle_model: None,
-            disabled_reason: Some("Begode/Gotway model identity probe required".to_owned()),
         };
     }
 
@@ -1801,104 +2789,6 @@ pub fn mobile_discovery_candidate_from_detection_resolution(
     )
 }
 
-/// Resolve the closest supported model after the normal detector has exhausted its probes.
-///
-/// A unique model in the detected protocol family is usable; a tied or unknown family remains
-/// unresolved so the caller can keep recording the connection.
-#[must_use]
-#[allow(
-    clippy::needless_pass_by_value,
-    reason = "UniFFI exports owned records"
-)]
-#[uniffi::export]
-pub fn mobile_discovery_candidate_from_closest_detection_resolution(
-    platform_identifier: String,
-    display_name: String,
-    resolution: DeviceDetectionResolutionRecord,
-) -> DiscoveryCandidate {
-    let detected = mobile_discovery_candidate_from_detection_resolution(
-        platform_identifier.clone(),
-        display_name.clone(),
-        resolution.clone(),
-    );
-    if detected.support == DiscoveryCandidateSupport::Supported || resolution.protocol_conflict {
-        return detected;
-    }
-
-    let Some(family) = resolution.protocol_family else {
-        return detected;
-    };
-    let stream_family = match family {
-        MobileProtocolFamilyDto::VeteranLeaperkimNosfet => {
-            ProtocolFamilyClassification::Known(DeviceFamily::NosfetAero)
-        }
-        MobileProtocolFamilyDto::BegodeGotway => {
-            ProtocolFamilyClassification::Known(DeviceFamily::BegodeFalcon)
-        }
-        MobileProtocolFamilyDto::Vesc => return detected,
-    };
-    let protocol_model = resolution
-        .veteran_protocol_model_id
-        .map_or(ProtocolModelIdentityEvidence::Missing, |model_id| {
-            ProtocolModelIdentityEvidence::model_id(ProtocolFamily::from(family), model_id)
-        });
-    let closest = closest_known_model(&StagedIdentityInput {
-        advertised_name: None,
-        gatt: &[] as &[GattFingerprint],
-        stream_family,
-        banner_model: IdentityBannerEvidence::Missing,
-        protocol_model,
-    });
-    let Some(registry_model) = closest else {
-        return detected;
-    };
-    let Some(model) = discovery_euc_model(registry_model) else {
-        return detected;
-    };
-
-    DiscoveryCandidate {
-        platform_identifier,
-        display_name,
-        product_category: "Electric unicycle".to_owned(),
-        evidence: format!("{} protocol family", family_label(family)),
-        detail: format!(
-            "{} selected as closest supported match after protocol detection",
-            registry_model.model
-        ),
-        is_picker_candidate: true,
-        support: DiscoveryCandidateSupport::Supported,
-        recommended_action: DiscoveryCandidateAction::Use,
-        section: DiscoveryCandidateSection::Supported,
-        connection_route: Some(DiscoveryConnectionRoute::ElectricUnicycle),
-        electric_unicycle_model: Some(model),
-        disabled_reason: None,
-    }
-}
-
-fn discovery_euc_model(
-    model: &'static ModelRegistryEntry,
-) -> Option<DiscoveryElectricUnicycleModel> {
-    if model.protocol_family == NOSFET_AERO_REGISTRY_ENTRY.protocol_family
-        && model.model == NOSFET_AERO_REGISTRY_ENTRY.model
-    {
-        Some(DiscoveryElectricUnicycleModel::Aero)
-    } else if model.protocol_family == BEGODE_FALCON_REGISTRY_ENTRY.protocol_family
-        && model.model == BEGODE_FALCON_REGISTRY_ENTRY.model
-    {
-        Some(DiscoveryElectricUnicycleModel::Falcon)
-    } else {
-        None
-    }
-}
-
-const fn family_label(family: MobileProtocolFamilyDto) -> &'static str {
-    match family {
-        MobileProtocolFamilyDto::VeteranLeaperkimNosfet => "Veteran/NOSFET",
-        MobileProtocolFamilyDto::BegodeGotway => "Begode/Gotway",
-        MobileProtocolFamilyDto::Vesc => "VESC",
-    }
-}
-
 /// Build a mobile discovery candidate from caller-owned Begode detection output.
 #[must_use]
 #[allow(
@@ -1943,18 +2833,26 @@ pub fn mobile_discovery_candidate_from_veteran_protocol_identity(
             display_name,
             product_category: "Electric unicycle".to_owned(),
             evidence: "Veteran protocol model id".to_owned(),
-            detail: format!("Veteran/NOSFET protocol detected; unknown model id {model_id}"),
+            detail: format!("Unknown Veteran/NOSFET model id {model_id}"),
             is_picker_candidate: true,
-            support: DiscoveryCandidateSupport::ProbeRecommended,
-            recommended_action: DiscoveryCandidateSupport::ProbeRecommended.recommended_action(),
-            section: DiscoveryCandidateSupport::ProbeRecommended.picker_section(),
+            support: DiscoveryCandidateSupport::UnknownRecordable,
+            recommended_action: DiscoveryCandidateSupport::UnknownRecordable.recommended_action(),
+            section: DiscoveryCandidateSupport::UnknownRecordable.picker_section(),
             connection_route: None,
             electric_unicycle_model: None,
-            disabled_reason: Some("Veteran/NOSFET model identity probe required".to_owned()),
+            disabled_reason: Some(format!("Unknown Veteran/NOSFET model id {model_id}")),
         };
     };
 
-    let electric_unicycle_model = discovery_euc_model(model);
+    let electric_unicycle_model = match (
+        model.protocol_family,
+        model.wire_model_id.map(|wire_model_id| wire_model_id.value),
+    ) {
+        (ProtocolFamily::VeteranLeaperkimNosfet, Some(43)) => {
+            Some(DiscoveryElectricUnicycleModel::Aero)
+        }
+        _ => None,
+    };
     let supported = electric_unicycle_model.is_some();
     let support = if supported {
         DiscoveryCandidateSupport::Supported
@@ -3428,10 +4326,17 @@ impl MobileAccelerationAssistSettingStateDto {
     }
 }
 
+impl From<MobileLightStateDto> for LightStateDto {
+    fn from(state: MobileLightStateDto) -> Self {
+        match state {
+            MobileLightStateDto::Off => Self::Off,
+            MobileLightStateDto::On => Self::On,
+            MobileLightStateDto::Strobe => Self::Strobe,
+        }
+    }
+}
+
 /// Complete Rust-owned settings projection for an EUC session.
-///
-/// Keeping the setting states together makes the FFI boundary a single
-/// snapshot instead of a collection of individually synchronized reads.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Record)]
 pub struct MobileEucSettingsStateDto {
     pub headlight: MobileLightSettingStateDto,
@@ -3461,16 +4366,6 @@ pub struct MobileEucSettingsStateDto {
     pub acceleration_assist: MobileAccelerationAssistSettingStateDto,
     pub taillight: MobileLightSettingStateDto,
     pub trip_meter_reset: MobileTripMeterResetStateDto,
-}
-
-impl From<MobileLightStateDto> for LightStateDto {
-    fn from(state: MobileLightStateDto) -> Self {
-        match state {
-            MobileLightStateDto::Off => Self::Off,
-            MobileLightStateDto::On => Self::On,
-            MobileLightStateDto::Strobe => Self::Strobe,
-        }
-    }
 }
 
 /// Mobile DTO input kind.
@@ -8344,23 +9239,6 @@ pub fn open_ride_database(
         .map_err(map_ride_database_error)
 }
 
-/// One device-scoped raw BMS sample submitted to durable storage.
-#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Record)]
-pub struct MobileStoredBmsVoltageSampleDto {
-    /// Host monotonic receipt time.
-    pub monotonic_milliseconds: u64,
-    /// Wall-clock receipt time.
-    pub wall_clock_milliseconds: u64,
-    /// Zero-based observation identity assigned by the protocol decoder.
-    pub observation_index: u16,
-    /// Zero-based pack/BMS identity, when known.
-    pub pack_index: Option<u16>,
-    /// Zero-based observation position within the pack, when known.
-    pub pack_observation_index: Option<u16>,
-    /// Raw reported voltage.
-    pub voltage: Voltage,
-}
-
 #[uniffi::export]
 impl RideDatabaseHandle {
     /// Returns the stable identity of the process-wide database service.
@@ -8383,38 +9261,6 @@ impl RideDatabaseHandle {
                 })
                 .collect(),
         }
-    }
-
-    /// Stores raw BMS voltage samples independently of ride lifecycle.
-    ///
-    /// # Errors
-    ///
-    /// Returns a typed database error when the device identity, timestamp, queue, or storage
-    /// transaction is invalid.
-    pub fn record_bms_voltage_samples(
-        &self,
-        device_identity: String,
-        samples: Vec<MobileStoredBmsVoltageSampleDto>,
-    ) -> Result<(), MobileRideDatabaseError> {
-        let samples = samples
-            .into_iter()
-            .map(|sample| {
-                persistence::BmsVoltageSampleRecord::new(
-                    &device_identity,
-                    sample.monotonic_milliseconds,
-                    sample.wall_clock_milliseconds,
-                    sample.observation_index,
-                    sample.voltage.value,
-                )
-                .map(|record| {
-                    record.with_pack_identity(sample.pack_index, sample.pack_observation_index)
-                })
-            })
-            .collect::<Result<Vec<_>, _>>()
-            .map_err(map_ride_database_error)?;
-        self.inner
-            .record_bms_voltage_samples(&samples)
-            .map_err(map_ride_database_error)
     }
 
     /// Lists one bounded page of ride history in stable newest-first order.
@@ -9578,7 +10424,6 @@ pub struct MobileRideMapCore {
 }
 
 const MAX_PENDING_LOCATION_WRITES: usize = 64;
-const AUTO_RESUME_RIDE_WINDOW_MILLISECONDS: u64 = 3 * 60 * 60 * 1_000;
 
 #[derive(Debug)]
 struct MobileRideMapCoreInner {
@@ -9590,8 +10435,6 @@ struct MobileRideMapCoreInner {
     music_history_policy: CoreMusicHistoryPolicy,
     music_restore_failed: bool,
     pending_location_writes: VecDeque<PendingMapLocationWrite>,
-    recoverable_updated_at_milliseconds: Option<u64>,
-    monotonic_epoch_offset_milliseconds: u64,
     initialization_error: Option<MobileRideMapCoreErrorDto>,
 }
 
@@ -9643,7 +10486,6 @@ impl MobileRideMapCoreInner {
         longitude_degrees: f64,
         horizontal_accuracy_meters: f64,
     ) -> Result<MobileRideMapCoreDecisionDto, MobileRideMapCoreErrorDto> {
-        let monotonic_ms = self.logical_monotonic_milliseconds(monotonic_ms);
         let Some(id) = self.active_ride_id.clone() else {
             return Err(MobileRideMapCoreErrorDto::NoActiveRide);
         };
@@ -9751,8 +10593,6 @@ impl MobileRideMapCoreInner {
             music_history_policy: CoreMusicHistoryPolicy::Disabled,
             music_restore_failed: false,
             pending_location_writes: VecDeque::new(),
-            recoverable_updated_at_milliseconds: None,
-            monotonic_epoch_offset_milliseconds: 0,
             initialization_error: None,
         };
         if let Err(error) = state.restore_active_ride() {
@@ -9874,7 +10714,6 @@ impl MobileRideMapCoreInner {
             timing,
         );
         self.active_ride_id = Some(ride.id);
-        self.recoverable_updated_at_milliseconds = Some(ride.updated_at_milliseconds);
         self.admission_recorder = self.recorder.clone();
         let Some(active_id) = self.active_ride_id.as_ref() else {
             return Err(MobileRideMapCoreErrorDto::NoActiveRide);
@@ -9972,15 +10811,6 @@ impl MobileRideMapCoreInner {
         state: MobileRideLifecycleStateDto,
         at_milliseconds: u64,
     ) -> MobileRideMapCoreSnapshotDto {
-        let at_milliseconds = self.logical_monotonic_milliseconds(at_milliseconds);
-        self.snapshot_at_logical(state, at_milliseconds)
-    }
-
-    fn snapshot_at_logical(
-        &self,
-        state: MobileRideLifecycleStateDto,
-        at_milliseconds: u64,
-    ) -> MobileRideMapCoreSnapshotDto {
         let mut snapshot = self.snapshot(state);
         snapshot.summary.duration_milliseconds = self
             .recorder
@@ -10009,7 +10839,6 @@ impl MobileRideMapCoreInner {
         }) {
             return Err(MobileRideMapCoreErrorDto::AlreadyRecording);
         }
-        self.monotonic_epoch_offset_milliseconds = 0;
         let mut staged_recorder = self.recorder.clone();
         staged_recorder
             .start(
@@ -10047,7 +10876,6 @@ impl MobileRideMapCoreInner {
         self.reset_music_history_policy();
         self.music_restore_failed = false;
         self.pending_location_writes.clear();
-        self.recoverable_updated_at_milliseconds = None;
         Ok(self.snapshot(MobileRideLifecycleStateDto::Active))
     }
 }
@@ -10202,38 +11030,6 @@ impl MobileRideMapCore {
         at_ms: u64,
     ) -> Result<MobileRideMapCoreSnapshotDto, MobileRideMapCoreErrorDto> {
         let mut state = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
-        if state.recorder.state() == Some(ride_maps::RideLifecycleState::Interrupted) {
-            let wall_clock_milliseconds: u64 = SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .map_err(|error| MobileRideMapCoreErrorDto::Storage(error.to_string()))?
-                .as_millis()
-                .try_into()
-                .map_err(|error: std::num::TryFromIntError| {
-                    MobileRideMapCoreErrorDto::Storage(error.to_string())
-                })?;
-            let matches_vehicle = state.recorder.associated_vehicle()
-                == Some(platform_identifier.as_str())
-                || (state.recorder.associated_vehicle().is_none()
-                    && state.recorder.candidate_vehicle() == Some(platform_identifier.as_str()));
-            let within_resume_window =
-                state
-                    .recoverable_updated_at_milliseconds
-                    .is_some_and(|updated_at| {
-                        wall_clock_milliseconds
-                            .checked_sub(updated_at)
-                            .is_some_and(|age| age <= AUTO_RESUME_RIDE_WINDOW_MILLISECONDS)
-                    });
-            if matches_vehicle && within_resume_window {
-                let previous = state
-                    .recorder
-                    .recording_timing()
-                    .last_monotonic_milliseconds()
-                    .as_u64();
-                state.monotonic_epoch_offset_milliseconds = previous.saturating_sub(at_ms);
-                state.transition_inner_at(MobileRideEventDto::Resume, at_ms)?;
-                state.recoverable_updated_at_milliseconds = None;
-            }
-        }
         if state.recorder.state().is_none_or(|current| {
             matches!(
                 current,
@@ -10257,7 +11053,6 @@ impl MobileRideMapCore {
                     .into(),
             ));
         };
-        let at_ms = state.logical_monotonic_milliseconds(at_ms);
         let association =
             staged.observe_vehicle(&identity, ride_maps::MonotonicMilliseconds::new(at_ms));
         if association == ride_maps::VehicleAssociation::Associated {
@@ -10493,7 +11288,6 @@ impl MobileRideMapCore {
         let snapshot = CoreMusicSnapshot::try_from(snapshot)
             .map_err(MobileRideMapCoreErrorDto::InvalidMusicInput)?;
         let state = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
-        let monotonic_at_ms = state.logical_monotonic_milliseconds(monotonic_at_ms);
         let Some(ride_id) = state.active_ride_id.clone() else {
             return Err(MobileRideMapCoreErrorDto::NoActiveRide);
         };
@@ -10696,7 +11490,6 @@ impl MobileRideMapCore {
         let Some(identity) = ride_maps::VehicleIdentity::new(&platform_identifier) else {
             return Ok(ride_maps::VehicleAssociation::CandidateMissing.into());
         };
-        let at_ms = state.logical_monotonic_milliseconds(at_ms);
         let association =
             staged.observe_vehicle(&identity, ride_maps::MonotonicMilliseconds::new(at_ms));
         if association == ride_maps::VehicleAssociation::Associated {
@@ -10735,7 +11528,6 @@ impl MobileRideMapCore {
         at_ms: u64,
     ) -> Result<MobileRideMapTelemetryObservationDto, MobileRideMapCoreErrorDto> {
         let mut state = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
-        let at_ms = state.logical_monotonic_milliseconds(at_ms);
         let mut staged = state.admission_recorder.clone();
         let mut durable_staged = state.recorder.clone();
         let observation = staged.observe_telemetry(ride_maps::MonotonicMilliseconds::new(at_ms));
@@ -10917,7 +11709,7 @@ impl MobileRideMapCore {
             state.settled_ride_id = None;
         }
         // Rebuild the admission projection from the durable projection plus only writes that are
-        // still pending. This removes a pending point after a durable rejection.
+        // still pending. This removes a provisional point after a durable rejection.
         let mut rebuilt = state.recorder.clone();
         for pending in &state.pending_location_writes {
             rebuilt.record_sample(pending.sample);
@@ -11127,10 +11919,6 @@ fn project_live_route_points(
 }
 
 impl MobileRideMapCoreInner {
-    fn logical_monotonic_milliseconds(&self, raw: u64) -> u64 {
-        raw.saturating_add(self.monotonic_epoch_offset_milliseconds)
-    }
-
     fn transition_inner(
         &mut self,
         event: MobileRideEventDto,
@@ -11150,13 +11938,12 @@ impl MobileRideMapCoreInner {
         event: MobileRideEventDto,
         at_milliseconds: u64,
     ) -> Result<MobileRideMapCoreSnapshotDto, MobileRideMapCoreErrorDto> {
-        let at_milliseconds = self.logical_monotonic_milliseconds(at_milliseconds);
         let (_, next) = self.transition_state(event, at_milliseconds)?;
         self.recorder
             .apply_transition_at(next, ride_maps::MonotonicMilliseconds::new(at_milliseconds));
         self.admission_recorder
             .apply_transition_at(next, ride_maps::MonotonicMilliseconds::new(at_milliseconds));
-        Ok(self.snapshot_at_logical(next.into(), at_milliseconds))
+        Ok(self.snapshot_at(next.into(), at_milliseconds))
     }
 }
 
@@ -11504,26 +12291,11 @@ pub struct MobileBmsGroupSnapshotDto {
     /// One-based group index used in the UI.
     pub index: u16,
 
-    /// One-based pack/BMS number assigned by the protocol decoder, when known.
-    pub pack_number: Option<u8>,
-
-    /// One-based observation position within that pack, when known.
-    pub pack_reading_index: Option<u16>,
-
     /// Optional explicit label such as `left pack`.
     pub label: Option<String>,
 
     /// Group voltage.
     pub voltage: Option<VoltageReading>,
-
-    /// Most recent raw voltage before stabilization.
-    pub latest_voltage: Option<Voltage>,
-
-    /// Oldest-to-newest bounded raw voltage history.
-    pub recent_voltages: Vec<Voltage>,
-
-    /// Host monotonic receipt times parallel to `recent_voltages`.
-    pub recent_observation_milliseconds: Vec<u64>,
 
     /// Group temperature.
     pub temperature: Option<TemperatureReading>,
@@ -11557,12 +12329,6 @@ pub struct MobileBmsFaultDto {
 /// Typed BMS snapshot for mobile pack and cells screens.
 #[derive(Clone, Debug, Eq, PartialEq, uniffi::Record)]
 pub struct MobileBmsSnapshotDto {
-    /// Distinct voltage observations counted by core; not a physical cell count.
-    pub observed_group_count: u32,
-
-    /// One-based highest observation identity selected by core.
-    pub highest_group_index: Option<u16>,
-
     /// Whether BMS or pack-health data is available for display.
     pub availability: MobileReadbackAvailabilityDto,
 
@@ -11656,20 +12422,12 @@ impl From<BatteryReadbackDto> for MobileBmsSnapshotDto {
 
 impl MobileBmsSnapshotDto {
     fn from_page(availability: MobileReadbackAvailabilityDto, battery: BatteryInfoDto) -> Self {
-        let groups = if battery.observation_summary.observations.is_empty() {
-            bms_groups_from_cell_voltages(&battery.cell_voltages, battery.first_observation_index)
-        } else {
-            bms_groups_from_observations(&battery.observation_summary.observations)
-        };
+        let page_identity = BmsPageIdentity::from_page(battery.page);
+        let groups = bms_groups_from_cell_voltages(&battery.cell_voltages, page_identity);
         let temperatures = bms_temperatures(&battery.temperatures);
         Self {
             availability,
-            topology: MobileBmsTopologyDto::from_observed_groups(&groups),
-            observed_group_count: battery.observation_summary.observed_count,
-            highest_group_index: battery
-                .observation_summary
-                .highest_index
-                .and_then(|index| index.get().checked_add(1)),
+            topology: MobileBmsTopologyDto::from_observed_groups(groups.len()),
             page_selector: Some(battery.page.id.selector),
             page_tag: battery.page.id.namespace.map(|namespace| namespace.value),
             page_kind: Some(bms_page_kind_label(battery.page.kind).to_owned()),
@@ -11682,20 +12440,11 @@ impl MobileBmsSnapshotDto {
             current: battery.current.map(Into::into),
             bms_pack_current_0: battery.bms_pack_current_0.map(Into::into),
             bms_pack_current_1: battery.bms_pack_current_1.map(Into::into),
-            cell_delta: battery.observation_summary.voltage_spread.map(|spread| {
-                VoltageDeltaReading {
-                    value: VoltageDelta {
-                        value: spread.as_millivolts(),
-                    },
-                    source: MobileValueSourceDto::Calculated,
-                    quality: MobileValueQualityDto::Known,
-                    verification: MobileVerificationStatusDto::Unverified,
-                }
-            }),
-            lowest_group_index: battery
-                .observation_summary
-                .lowest_index
-                .and_then(|index| index.get().checked_add(1)),
+            cell_delta: cell_voltage_delta(&battery.cell_voltages),
+            lowest_group_index: lowest_cell_voltage_group_index(
+                &battery.cell_voltages,
+                page_identity,
+            ),
             highest_temperature: highest_battery_temperature(
                 battery.temperature,
                 battery.temperatures,
@@ -11717,8 +12466,6 @@ impl MobileBmsSnapshotDto {
         Self {
             availability,
             topology: MobileBmsTopologyDto::unknown_readback(),
-            observed_group_count: 0,
-            highest_group_index: None,
             page_selector: None,
             page_tag: None,
             page_kind: None,
@@ -11756,81 +12503,17 @@ fn bms_page_kind_label(kind: BatteryPageKindDto) -> &'static str {
 
 fn bms_groups_from_cell_voltages(
     cell_voltages: &[VoltageReadingDto],
-    first_observation_index: Option<u16>,
+    page_identity: BmsPageIdentity,
 ) -> Vec<MobileBmsGroupSnapshotDto> {
     cell_voltages
         .iter()
         .enumerate()
         .filter_map(|(index, voltage)| {
-            let group_index = bms_group_index(first_observation_index, index)?;
+            let group_index = page_identity.group_index(index)?;
             Some(MobileBmsGroupSnapshotDto {
-                index: group_index,
-                pack_number: None,
-                pack_reading_index: None,
+                index: group_index.as_mobile_dto(),
                 label: Some(format!("group {group_index}")),
                 voltage: Some((*voltage).into()),
-                latest_voltage: Some(Voltage {
-                    value: voltage.value,
-                }),
-                recent_voltages: vec![Voltage {
-                    value: voltage.value,
-                }],
-                recent_observation_milliseconds: Vec::new(),
-                temperature: None,
-                resistance: None,
-                is_balancing: None,
-                alert_level: MobileBmsAlertLevelDto::Nominal,
-                detail: None,
-            })
-        })
-        .collect()
-}
-
-fn bms_groups_from_observations(
-    observations: &[cutout_core::BmsVoltageObservation],
-) -> Vec<MobileBmsGroupSnapshotDto> {
-    observations
-        .iter()
-        .filter_map(|observation| {
-            let index = observation.index.get().checked_add(1)?;
-            let pack_number = observation
-                .pack_index
-                .and_then(|pack| pack.get().checked_add(1));
-            let pack_reading_index = observation
-                .pack_observation_index
-                .and_then(|reading| reading.get().checked_add(1));
-            let label = match (pack_number, pack_reading_index) {
-                (Some(pack), Some(reading)) => Some(format!("Pack {pack} · cell {reading}")),
-                _ => Some(format!("Reading {index}")),
-            };
-            Some(MobileBmsGroupSnapshotDto {
-                index,
-                pack_number,
-                pack_reading_index,
-                label,
-                voltage: Some(VoltageReading {
-                    value: Voltage {
-                        value: observation.voltage.as_millivolts(),
-                    },
-                    source: MobileValueSourceDto::Calculated,
-                    quality: MobileValueQualityDto::Known,
-                    verification: MobileVerificationStatusDto::SourceVerified,
-                }),
-                latest_voltage: Some(Voltage {
-                    value: observation.latest_voltage.as_millivolts(),
-                }),
-                recent_voltages: observation
-                    .samples
-                    .iter()
-                    .map(|sample| Voltage {
-                        value: sample.voltage.as_millivolts(),
-                    })
-                    .collect(),
-                recent_observation_milliseconds: observation
-                    .samples
-                    .iter()
-                    .map(|sample| sample.observed_at.as_milliseconds())
-                    .collect(),
                 temperature: None,
                 resistance: None,
                 is_balancing: None,
@@ -11850,30 +12533,203 @@ fn bms_temperatures(temperatures: &[Option<TemperatureReadingDto>]) -> Vec<Tempe
         .collect()
 }
 
-fn bms_group_index(first_observation_index: Option<u16>, local_index: usize) -> Option<u16> {
-    first_observation_index
-        .unwrap_or_default()
-        .checked_add(u16::try_from(local_index).ok()?)
-        .and_then(|index| index.checked_add(1))
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct BmsPageIdentity {
+    page_selector: BmsPageSelector,
+    cell_bank: Option<BegodeCellPageBank>,
+}
+
+impl BmsPageIdentity {
+    fn from_page(page: cutout_core::BmsStatusPage) -> Self {
+        Self::from_tag_and_selector(
+            page.id
+                .namespace
+                .map(cutout_core::BmsStatusPageNamespace::into_core),
+            page.id.selector,
+        )
+    }
+
+    fn from_tag_and_selector(page_tag: Option<ProtocolTag>, page_selector: u8) -> Self {
+        Self {
+            page_selector: BmsPageSelector::from_mobile_dto(page_selector),
+            cell_bank: BegodeCellPageBank::from_protocol_tag(page_tag),
+        }
+    }
+
+    fn first_group_index(self) -> BmsGroupIndex {
+        match self.cell_bank {
+            Some(bank) => bank.first_group_index_for_page(self.page_selector),
+            None => BmsGroupIndex::FIRST,
+        }
+    }
+
+    fn group_index(self, page_offset: usize) -> Option<BmsGroupIndex> {
+        self.first_group_index().offset(page_offset)
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct BmsPageSelector(u8);
+
+impl BmsPageSelector {
+    fn from_mobile_dto(selector: u8) -> Self {
+        Self(selector)
+    }
+
+    fn cell_page_offset(self, values_per_page: BmsPageGroupCount) -> Option<BmsGroupOffset> {
+        self.0
+            .checked_mul(values_per_page.get())
+            .map(BmsGroupOffset::new)
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum BegodeCellPageBank {
+    First,
+    Second,
+}
+
+impl BegodeCellPageBank {
+    const VALUES_PER_PAGE: BmsPageGroupCount = BmsPageGroupCount::new(8);
+    const VALUES_PER_BANK: BmsGroupOffset = BmsGroupOffset::new(32);
+
+    fn from_protocol_tag(tag: Option<ProtocolTag>) -> Option<Self> {
+        match tag.map(BegodeBmsPageTag::from_protocol_tag) {
+            Some(BegodeBmsPageTag::FirstCellBank) => Some(Self::First),
+            Some(BegodeBmsPageTag::SecondCellBank) => Some(Self::Second),
+            Some(BegodeBmsPageTag::Summary | BegodeBmsPageTag::Unknown) | None => None,
+        }
+    }
+
+    fn first_group_index_for_page(self, page_selector: BmsPageSelector) -> BmsGroupIndex {
+        let bank_offset = match self {
+            Self::First => BmsGroupOffset::ZERO,
+            Self::Second => Self::VALUES_PER_BANK,
+        };
+        let bank_base = BmsGroupIndex::FIRST
+            .offset_by(bank_offset)
+            .unwrap_or(BmsGroupIndex::FIRST);
+        page_selector
+            .cell_page_offset(Self::VALUES_PER_PAGE)
+            .and_then(|offset| bank_base.offset_by(offset))
+            .unwrap_or(bank_base)
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum BegodeBmsPageTag {
+    Summary,
+    FirstCellBank,
+    SecondCellBank,
+    Unknown,
+}
+
+impl BegodeBmsPageTag {
+    fn from_protocol_tag(tag: ProtocolTag) -> Self {
+        match tag.get() {
+            0x01 => Self::Summary,
+            0x02 => Self::FirstCellBank,
+            0x03 => Self::SecondCellBank,
+            _ => Self::Unknown,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct BmsPageGroupCount(u8);
+
+impl BmsPageGroupCount {
+    const fn new(count: u8) -> Self {
+        Self(count)
+    }
+
+    const fn get(self) -> u8 {
+        self.0
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct BmsGroupOffset(u8);
+
+impl BmsGroupOffset {
+    const ZERO: Self = Self(0);
+
+    const fn new(offset: u8) -> Self {
+        Self(offset)
+    }
+
+    const fn get(self) -> u8 {
+        self.0
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct BmsGroupIndex(u8);
+
+impl BmsGroupIndex {
+    const FIRST: Self = Self(1);
+    #[cfg(test)]
+    const MAX: Self = Self(u8::MAX);
+
+    fn as_mobile_dto(self) -> u16 {
+        self.0.into()
+    }
+
+    fn offset(self, page_offset: usize) -> Option<Self> {
+        u8::try_from(page_offset)
+            .ok()
+            .and_then(|offset| self.0.checked_add(offset))
+            .map(Self)
+    }
+
+    fn offset_by(self, offset: BmsGroupOffset) -> Option<Self> {
+        self.0.checked_add(offset.get()).map(Self)
+    }
+}
+
+impl fmt::Display for BmsGroupIndex {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.0.fmt(f)
+    }
+}
+
+fn cell_voltage_delta(cell_voltages: &[VoltageReadingDto]) -> Option<VoltageDeltaReading> {
+    let min = cell_voltages.iter().map(|voltage| voltage.value).min()?;
+    let max = cell_voltages.iter().map(|voltage| voltage.value).max()?;
+    let first = cell_voltages.first()?;
+    Some(VoltageDeltaReading {
+        value: VoltageDelta {
+            value: max.saturating_sub(min),
+        },
+        source: MobileValueSourceDto::Calculated,
+        quality: MobileValueQualityDto::Known,
+        verification: first.verification.into(),
+    })
+}
+
+fn lowest_cell_voltage_group_index(
+    cell_voltages: &[VoltageReadingDto],
+    page_identity: BmsPageIdentity,
+) -> Option<u16> {
+    cell_voltages
+        .iter()
+        .enumerate()
+        .min_by_key(|(_, voltage)| voltage.value)
+        .and_then(|(index, _)| page_identity.group_index(index))
+        .map(BmsGroupIndex::as_mobile_dto)
 }
 
 impl MobileBmsTopologyDto {
-    fn from_observed_groups(groups: &[MobileBmsGroupSnapshotDto]) -> Self {
-        let group_count = groups.len();
+    fn from_observed_groups(group_count: usize) -> Self {
         if group_count == 0 {
             return Self::unknown_readback();
         }
-        let pack_count = groups
-            .iter()
-            .filter_map(|group| group.pack_number)
-            .collect::<std::collections::BTreeSet<_>>()
-            .len();
         Self {
             layout_label: format!("{group_count} observed BMS groups"),
             series_group_count: None,
             parallel_count: None,
-            pack_count: u8::try_from(pack_count.max(1)).unwrap_or(u8::MAX),
-            bms_count: u8::try_from(pack_count.max(1)).unwrap_or(u8::MAX),
+            pack_count: 1,
+            bms_count: 1,
             confidence: MobileBmsTopologyConfidenceDto::Unverified,
         }
     }
@@ -12383,7 +13239,6 @@ const fn mobile_protocol_family_from_detection(
             Some(MobileProtocolFamilyDto::VeteranLeaperkimNosfet)
         }
         ProtocolFamilyState::BegodeGotway => Some(MobileProtocolFamilyDto::BegodeGotway),
-        ProtocolFamilyState::Vesc => Some(MobileProtocolFamilyDto::Vesc),
     }
 }
 
@@ -12534,9 +13389,10 @@ impl CaptureWriter {
         metadata: &CaptureMetadata,
     ) -> Result<Self, String> {
         let header = capture_header(wall_clock_start_unix_ms, platform_id, write_limit, metadata)?;
-        let file = OpenOptions::new()
-            .create_new(true)
+        OpenOptions::new()
+            .create(true)
             .write(true)
+            .truncate(false)
             .open(&path)
             .map_err(|error| error.to_string())?;
         let (sender, receiver) = sync_channel(CAPTURE_WRITER_QUEUE_CAPACITY);
@@ -12547,14 +13403,7 @@ impl CaptureWriter {
         let join = thread::Builder::new()
             .name("cutout-pevcap-writer".into())
             .spawn(move || {
-                run_capture_writer(
-                    &path,
-                    file,
-                    header,
-                    &receiver,
-                    &thread_records,
-                    &thread_state,
-                );
+                run_capture_writer(&path, header, &receiver, &thread_records, &thread_state);
             })
             .map_err(|error| error.to_string())?;
         Ok(Self {
@@ -12691,13 +13540,12 @@ fn capture_header(
 
 fn run_capture_writer(
     path: &Path,
-    file: File,
     mut header: PevcapHeader,
     receiver: &Receiver<CaptureWriterMessage>,
     records: &CaptureRecordPool,
     state: &CaptureWriterState,
 ) {
-    let result = write_capture_stream(path, file, &mut header, receiver, records, state);
+    let result = write_capture_stream(path, &mut header, receiver, records, state);
     if let Err(error) = result {
         state.fail(error);
     }
@@ -12709,12 +13557,12 @@ fn run_capture_writer(
 )]
 fn write_capture_stream(
     path: &Path,
-    file: File,
     header: &mut PevcapHeader,
     receiver: &Receiver<CaptureWriterMessage>,
     records: &CaptureRecordPool,
     state: &CaptureWriterState,
 ) -> Result<(), String> {
+    let file = File::create(path).map_err(|error| error.to_string())?;
     let mut writer = BufWriter::new(file);
     let header_bytes = write_line(
         &mut writer,
@@ -13084,9 +13932,7 @@ impl MobilePevcapCaptureBuilder {
         self.send_metadata_update()
     }
 
-    /// Starts the Rust-owned streaming writer for a new JSONL capture.
-    ///
-    /// Returns `false` if the path already exists, preserving the existing capture.
+    /// Starts the Rust-owned streaming writer for a JSONL capture.
     pub fn start_writer(&self, path: String) -> bool {
         let metadata = self.metadata();
         let writer = match CaptureWriter::start(
@@ -16540,6 +17386,260 @@ impl VescReadOnlySession {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn mobile_camera_state_bridge_keeps_preview_and_recording_independent() {
+        let handle = CutoutSessionStateHandle::new();
+
+        assert_eq!(
+            handle.camera_snapshot(),
+            MobileCameraSnapshotDto {
+                preview: MobileCameraPreviewStateDto::Stopped,
+                onboard_recording: MobileCameraOnboardRecordingStateDto::Unknown,
+            }
+        );
+
+        handle.observe_camera_onboard_recording(MobileCameraOnboardRecordingStateDto::Recording);
+        handle.observe_camera_preview(MobileCameraPreviewStateDto::Live);
+        handle.observe_camera_preview(MobileCameraPreviewStateDto::Stopped);
+
+        assert_eq!(
+            handle.camera_snapshot(),
+            MobileCameraSnapshotDto {
+                preview: MobileCameraPreviewStateDto::Stopped,
+                onboard_recording: MobileCameraOnboardRecordingStateDto::Recording,
+            }
+        );
+    }
+
+    #[test]
+    fn mobile_camera_media_provenance_is_rust_owned_and_bounded() {
+        let handle = CutoutSessionStateHandle::new();
+
+        handle
+            .record_camera_media_provenance(MobileCameraMediaProvenanceInput {
+                source: MobileCameraSourceKindDto::NovatekR3Pro,
+                camera_path: "/DCIM/MOV001.TS".to_owned(),
+                size_bytes: 42,
+                camera_timecode: 7,
+                camera_time: "2026-09-07 12:00:00".to_owned(),
+                ride_capture_file_name: "ride.pevcap".to_owned(),
+                captured_at_monotonic_ms: 100,
+                captured_at_wall_clock_ms: 200,
+                clock_uncertainty: MobileCameraClockUncertaintyDto::Milliseconds { value: 500 },
+            })
+            .expect("bounded provenance");
+
+        assert_eq!(
+            handle.camera_media_provenance(),
+            vec![MobileCameraMediaProvenanceDto {
+                source: MobileCameraSourceKindDto::NovatekR3Pro,
+                camera_path: "/DCIM/MOV001.TS".to_owned(),
+                size_bytes: 42,
+                camera_timecode: 7,
+                camera_time: "2026-09-07 12:00:00".to_owned(),
+                ride_capture_file_name: "ride.pevcap".to_owned(),
+                captured_at_monotonic_ms: 100,
+                captured_at_wall_clock_ms: 200,
+                clock_uncertainty: MobileCameraClockUncertaintyDto::Milliseconds { value: 500 },
+            }]
+        );
+    }
+
+    #[test]
+    fn mobile_camera_preview_events_have_explicit_lifecycle_states() {
+        let handle = CutoutSessionStateHandle::new();
+
+        handle.reduce_camera_preview(MobileCameraPreviewEventDto::Started);
+        assert_eq!(
+            handle.camera_snapshot().preview,
+            MobileCameraPreviewStateDto::Buffering
+        );
+        handle.reduce_camera_preview(MobileCameraPreviewEventDto::FrameReceived);
+        assert_eq!(
+            handle.camera_snapshot().preview,
+            MobileCameraPreviewStateDto::Live
+        );
+        handle.reduce_camera_preview(MobileCameraPreviewEventDto::Interrupted);
+        assert_eq!(
+            handle.camera_snapshot().preview,
+            MobileCameraPreviewStateDto::Interrupted
+        );
+        handle.reduce_camera_preview(MobileCameraPreviewEventDto::Stopped);
+        assert_eq!(
+            handle.camera_snapshot().preview,
+            MobileCameraPreviewStateDto::Stopped
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn mobile_camera_preview_binds_rtsp_to_the_selected_origin() {
+        let error = mobile_camera_preview_connect_for_origin(
+            "rtsp://192.168.1.253/xxx.mov".to_owned(),
+            "192.168.1.254".to_owned(),
+        )
+        .await
+        .expect_err("a mismatched local RTSP host must fail before network I/O");
+
+        assert_eq!(error, MobileCameraPreviewError::OriginMismatch);
+    }
+
+    #[test]
+    fn mobile_camera_preview_file_sink_writes_and_finishes_once() {
+        let path =
+            std::env::temp_dir().join(format!("cutout-mobile-retina-{}.h264", std::process::id()));
+        let sink = MobileCameraPreviewFileSink::create(path.to_string_lossy().into_owned())
+            .expect("temporary preview file can be created");
+        sink.write_frame(MobileCameraVideoFrameDto {
+            data: vec![0, 0, 0, 1, 0x65],
+            loss: 0,
+            is_random_access_point: true,
+            timestamp: 0,
+            clock_rate_hz: 90_000,
+        })
+        .expect("valid frame can be written");
+        sink.finish().expect("preview file can be finished");
+        assert_eq!(
+            fs::read(&path).expect("finished preview file exists"),
+            vec![0, 0, 0, 1, 0x65]
+        );
+        assert_eq!(sink.finish(), Err(MobileCameraPreviewFileError::Finished));
+        fs::remove_file(path).expect("temporary preview file can be removed");
+    }
+
+    #[test]
+    fn mobile_camera_preview_frame_preserves_timing_metadata() {
+        let frame = MobileCameraVideoFrameDto {
+            data: vec![0, 0, 0, 1, 0x65],
+            loss: 2,
+            is_random_access_point: true,
+            timestamp: 180_000,
+            clock_rate_hz: 90_000,
+        };
+
+        let round_trip: MobileCameraVideoFrameDto = RetinaVideoFrame::from(frame.clone()).into();
+
+        assert_eq!(round_trip, frame);
+    }
+
+    #[test]
+    fn mobile_novatek_snapshot_uses_rust_parsers_for_read_only_evidence() {
+        let firmware = br"<Function><Cmd>3012</Cmd><Status>0</Status><String>R3V1.1_20240411</String></Function>".to_vec();
+        let live_view = br"<LIST><MovieLiveViewLink>rtsp://192.168.1.254/xxx.mov</MovieLiveViewLink><PhotoLiveViewLink>rtsp://192.168.1.254/xxx.mov</PhotoLiveViewLink></LIST>".to_vec();
+        let configuration = br"<Function><Cmd>2016</Cmd><Status>0</Status></Function>".to_vec();
+        let storage =
+            br"<Function><Cmd>3024</Cmd><Status>0</Status><Value>1</Value></Function>".to_vec();
+        let media = br"<LIST><File><NAME>clip.TS</NAME><FPATH>A:\Novatek\Movie\clip.TS</FPATH><SIZE>42</SIZE><TIMECODE>7</TIMECODE><TIME>2025/01/01 00:00:00</TIME><ATTR>32</ATTR></File></LIST>".to_vec();
+
+        let snapshot = mobile_parse_novatek_read_only_snapshot(
+            firmware,
+            live_view,
+            configuration,
+            storage,
+            media,
+        )
+        .expect("captured R3 read-only responses are valid");
+
+        assert_eq!(snapshot.firmware_version, "R3V1.1_20240411");
+        assert_eq!(snapshot.movie_rtsp_uri, "rtsp://192.168.1.254/xxx.mov");
+        assert!(snapshot.storage_present);
+        assert_eq!(snapshot.configuration[0].command_id, 2016);
+        assert_eq!(snapshot.media[0].name, "clip.TS");
+    }
+
+    #[test]
+    fn mobile_novatek_profile_check_is_owned_by_the_protocol_boundary() {
+        assert!(mobile_novatek_firmware_is_r3_pro(
+            "R3V1.1_20240411".to_owned()
+        ));
+        assert!(!mobile_novatek_firmware_is_r3_pro(
+            "R4V2.0_20250101".to_owned()
+        ));
+    }
+
+    #[test]
+    fn mobile_novatek_boundary_exposes_only_local_origins_and_fixed_targets() {
+        let origin = mobile_validate_novatek_http_origin("192.168.1.254".to_owned(), 80)
+            .expect("captured origin is local");
+
+        assert_eq!(origin.address, "192.168.1.254");
+        assert_eq!(origin.port, 80);
+        assert_eq!(
+            mobile_novatek_read_command_target(MobileNovatekReadCommandDto::MediaList),
+            "/?custom=1&cmd=3015"
+        );
+        assert_eq!(
+            mobile_validate_novatek_http_origin("8.8.8.8".to_owned(), 80),
+            Err(MobileNovatekOriginError::NonLocalAddress)
+        );
+    }
+
+    #[test]
+    fn mobile_novatek_media_target_maps_and_rejects_paths() {
+        assert_eq!(
+            mobile_novatek_media_download_target(r"A:\Novatek\Movie\clip.TS".to_owned()),
+            Ok("/Novatek/Movie/clip.TS".to_owned())
+        );
+        assert_eq!(
+            mobile_novatek_media_download_target(r"A:\Novatek\Movie\..\clip.TS".to_owned()),
+            Err(MobileNovatekMediaPathError::InvalidPath)
+        );
+    }
+
+    #[test]
+    fn mobile_novatek_thumbnail_target_maps_validated_media_path() {
+        assert_eq!(
+            mobile_novatek_media_thumbnail_target(r"A:\Novatek\Movie\clip.TS".to_owned()),
+            Ok("/Novatek/Movie/clip.TS?custom=1&cmd=4001".to_owned())
+        );
+    }
+
+    #[test]
+    fn mobile_novatek_recording_targets_are_explicit_requests() {
+        assert_eq!(
+            mobile_novatek_recording_command_target(MobileNovatekRecordingCommandDto::Start),
+            "/?custom=1&cmd=2001&str=1"
+        );
+        assert_eq!(
+            mobile_novatek_recording_command_target(MobileNovatekRecordingCommandDto::Stop),
+            "/?custom=1&cmd=2001&str=0"
+        );
+    }
+
+    #[test]
+    fn mobile_novatek_still_capture_target_is_explicit_request() {
+        assert_eq!(
+            mobile_novatek_still_capture_command_target(
+                MobileNovatekStillCaptureCommandDto::Capture
+            ),
+            "/?custom=1&cmd=1001"
+        );
+    }
+
+    #[test]
+    fn mobile_novatek_command_outcomes_bridge_rust_parser() {
+        assert_eq!(
+            mobile_parse_novatek_command_outcome(
+                br"<Function><Cmd>2001</Cmd><Status>0</Status></Function>".to_vec(),
+                2001,
+            ),
+            Ok(MobileNovatekCommandOutcomeDto::Acknowledged)
+        );
+        assert_eq!(
+            mobile_parse_novatek_command_outcome(
+                br"<Function><Cmd>2001</Cmd><Status>7</Status></Function>".to_vec(),
+                2001,
+            ),
+            Ok(MobileNovatekCommandOutcomeDto::Refused)
+        );
+        assert_eq!(
+            mobile_parse_novatek_command_outcome(
+                br"<Function><Cmd>2001</Cmd></Function>".to_vec(),
+                2001,
+            ),
+            Ok(MobileNovatekCommandOutcomeDto::Unknown)
+        );
+    }
     use cutout_core::{PevcapCapture, PevcapEncoding};
     use cutout_protocols::{
         BEGODE_DATA_CHANNEL, BEGODE_SERVICE_CHANNEL, VESC_COMM_CUSTOM_APP_DATA, VESC_NOTIFY_CHANNEL,
@@ -17296,98 +18396,6 @@ mod tests {
     }
 
     #[test]
-    fn mobile_device_detection_session_exposes_fragmented_veteran_model() {
-        let session = CutoutSessionStateHandle::new();
-        let frame = synthetic_veteran_frame_with_model_id(43);
-
-        assert_eq!(
-            session
-                .observe_notification(frame[..20].to_vec())
-                .protocol_family,
-            None
-        );
-        assert_eq!(
-            session
-                .observe_notification(frame[20..40].to_vec())
-                .protocol_family,
-            None
-        );
-        let resolution = session.observe_notification(frame[40..].to_vec());
-
-        assert_eq!(
-            resolution.protocol_family,
-            Some(MobileProtocolFamilyDto::VeteranLeaperkimNosfet)
-        );
-        assert_eq!(resolution.veteran_protocol_model_id, Some(43));
-    }
-
-    #[test]
-    fn mobile_detection_link_reset_isolates_partial_frames() {
-        let session = CutoutSessionStateHandle::new();
-        let frame = synthetic_veteran_frame_with_model_id(43);
-        let _ = session.observe_notification(frame[..20].to_vec());
-
-        session.reset_device_detection_link();
-
-        assert_eq!(
-            session
-                .observe_notification(frame[20..].to_vec())
-                .protocol_family,
-            None
-        );
-        assert_eq!(
-            session
-                .observe_notification(frame.to_vec())
-                .veteran_protocol_model_id,
-            Some(43)
-        );
-    }
-
-    #[test]
-    fn mobile_detection_link_reset_preserves_identity_and_connection_intent() {
-        let session = CutoutSessionStateHandle::new();
-        assert!(!session.should_retry_identification());
-        session.set_device_connection_intent(DeviceConnectionIntentDto::Reconnect);
-        let frame = synthetic_veteran_frame_with_model_id(43);
-        let expected = session.observe_notification(frame.to_vec());
-        let _ = session.begin_identification_probe_at(1_000);
-        let _ = session.mark_begode_probe_responses_missing();
-        let _ = session.begin_identification_probe_at(2_000);
-
-        session.reset_device_detection_link();
-
-        assert!(session.should_retry_identification());
-        assert_eq!(session.resolution(), expected);
-        assert_eq!(session.next_begode_probe_expiry(2_000), None);
-        session.set_device_connection_intent(DeviceConnectionIntentDto::RecordOnly);
-        assert!(!session.should_retry_identification());
-        session.set_device_connection_intent(DeviceConnectionIntentDto::Use);
-        assert!(!session.should_retry_identification());
-    }
-
-    #[test]
-    fn mobile_device_detection_session_exposes_fragmented_vesc_reply() {
-        let session = CutoutSessionStateHandle::new();
-        let frame = [
-            2, 20, 157, 7, 1, 2, 97, 98, 99, 49, 50, 51, 0, 117, 115, 101, 114, 104, 97, 115, 104,
-            0, 38, 208, 3,
-        ];
-
-        assert_eq!(
-            session
-                .observe_notification(frame[..9].to_vec())
-                .protocol_family,
-            None
-        );
-        assert_eq!(
-            session
-                .observe_notification(frame[9..].to_vec())
-                .protocol_family,
-            Some(MobileProtocolFamilyDto::Vesc)
-        );
-    }
-
-    #[test]
     fn mobile_device_detection_resolution_projects_veteran_model_id() {
         let session = CutoutSessionStateHandle::new();
         let veteran_frame = synthetic_veteran_frame_with_model_id(43);
@@ -17413,7 +18421,7 @@ mod tests {
     }
 
     #[test]
-    fn mobile_device_detection_resolution_requires_veteran_model_probe() {
+    fn mobile_device_detection_resolution_keeps_veteran_family_only_recordable() {
         let candidate = mobile_discovery_candidate_from_detection_resolution(
             "ios-local-veteran-family".to_owned(),
             "Veteran stream".to_owned(),
@@ -17432,94 +18440,21 @@ mod tests {
 
         assert_eq!(candidate.product_category, "Electric unicycle");
         assert_eq!(candidate.evidence, "Veteran/NOSFET protocol family");
-        assert_eq!(
-            candidate.detail,
-            "Veteran/NOSFET protocol detected; model identity probe required"
-        );
+        assert_eq!(candidate.detail, "Veteran/NOSFET model not confirmed");
         assert_eq!(
             candidate.support,
-            DiscoveryCandidateSupport::ProbeRecommended
+            DiscoveryCandidateSupport::UnknownRecordable
         );
         assert_eq!(candidate.connection_route, None);
         assert_eq!(candidate.electric_unicycle_model, None);
         assert_eq!(
             candidate.disabled_reason,
-            Some("Veteran/NOSFET model identity probe required".to_owned())
+            Some("Veteran/NOSFET model not confirmed".to_owned())
         );
     }
 
     #[test]
-    fn mobile_device_detection_resolution_requires_begode_model_probe() {
-        let candidate = mobile_discovery_candidate_from_detection_resolution(
-            "ios-local-begode-family".to_owned(),
-            "Begode stream".to_owned(),
-            DeviceDetectionResolutionRecord {
-                protocol_family: Some(MobileProtocolFamilyDto::BegodeGotway),
-                protocol_conflict: false,
-                veteran_protocol_model_id: None,
-                advertised_name: None,
-                model_banner: None,
-                firmware_banner: None,
-                imu_banner: None,
-                missing_probe_response: None,
-                malformed_probe_response: None,
-            },
-        );
-
-        assert_eq!(
-            candidate.support,
-            DiscoveryCandidateSupport::ProbeRecommended
-        );
-        assert_eq!(candidate.connection_route, None);
-        assert_eq!(candidate.electric_unicycle_model, None);
-        assert_eq!(
-            candidate.disabled_reason,
-            Some("Begode/Gotway model identity probe required".to_owned())
-        );
-    }
-
-    #[test]
-    fn exhausted_family_detection_uses_unique_closest_supported_model() {
-        for (family, misleading_name, expected_model) in [
-            (
-                MobileProtocolFamilyDto::VeteranLeaperkimNosfet,
-                b"Begode Falcon".to_vec(),
-                DiscoveryElectricUnicycleModel::Aero,
-            ),
-            (
-                MobileProtocolFamilyDto::BegodeGotway,
-                b"NF2557".to_vec(),
-                DiscoveryElectricUnicycleModel::Falcon,
-            ),
-        ] {
-            let candidate = mobile_discovery_candidate_from_closest_detection_resolution(
-                "ios-local-device".to_owned(),
-                "Detected device".to_owned(),
-                DeviceDetectionResolutionRecord {
-                    protocol_family: Some(family),
-                    protocol_conflict: false,
-                    veteran_protocol_model_id: None,
-                    advertised_name: Some(misleading_name),
-                    model_banner: None,
-                    firmware_banner: None,
-                    imu_banner: None,
-                    missing_probe_response: None,
-                    malformed_probe_response: None,
-                },
-            );
-
-            assert_eq!(candidate.support, DiscoveryCandidateSupport::Supported);
-            assert_eq!(
-                candidate.connection_route,
-                Some(DiscoveryConnectionRoute::ElectricUnicycle)
-            );
-            assert_eq!(candidate.electric_unicycle_model, Some(expected_model));
-            assert!(candidate.detail.contains("closest supported match"));
-        }
-    }
-
-    #[test]
-    fn mobile_device_detection_resolution_routes_vesc_family() {
+    fn mobile_device_detection_resolution_routes_vesc_family_provisionally() {
         let candidate = mobile_discovery_candidate_from_detection_resolution(
             "ios-local-vesc-family".to_owned(),
             "VESC stream".to_owned(),
@@ -17539,7 +18474,10 @@ mod tests {
         assert_eq!(candidate.product_category, "VESC Onewheel");
         assert_eq!(candidate.evidence, "VESC protocol family");
         assert_eq!(candidate.detail, "VESC read-only route");
-        assert_eq!(candidate.support, DiscoveryCandidateSupport::Supported);
+        assert_eq!(
+            candidate.support,
+            DiscoveryCandidateSupport::ProvisionalRoute
+        );
         assert_eq!(
             candidate.connection_route,
             Some(DiscoveryConnectionRoute::VescOnewheel)
@@ -17807,7 +18745,7 @@ mod tests {
     }
 
     #[test]
-    fn mobile_discovery_candidate_requires_unknown_veteran_model_probe() {
+    fn mobile_discovery_candidate_keeps_unknown_veteran_model_id_unrouteable() {
         let candidate = mobile_discovery_candidate_from_veteran_protocol_identity(
             "ios-local-veteran".to_owned(),
             "Veteran stream".to_owned(),
@@ -17816,27 +18754,22 @@ mod tests {
 
         assert_eq!(candidate.product_category, "Electric unicycle");
         assert_eq!(candidate.evidence, "Veteran protocol model id");
-        assert_eq!(
-            candidate.detail,
-            "Veteran/NOSFET protocol detected; unknown model id 99"
-        );
+        assert_eq!(candidate.detail, "Unknown Veteran/NOSFET model id 99");
         assert!(candidate.is_picker_candidate);
         assert_eq!(
             candidate.support,
-            DiscoveryCandidateSupport::ProbeRecommended
+            DiscoveryCandidateSupport::UnknownRecordable
         );
         assert_eq!(candidate.connection_route, None);
         assert_eq!(candidate.electric_unicycle_model, None);
         assert_eq!(
-            candidate.disabled_reason,
-            Some("Veteran/NOSFET model identity probe required".to_owned())
+            candidate.disabled_reason.as_deref(),
+            Some("Unknown Veteran/NOSFET model id 99")
         );
     }
 
     fn bms_snapshot_fixture() -> MobileBmsSnapshotDto {
         MobileBmsSnapshotDto {
-            observed_group_count: 1,
-            highest_group_index: Some(17),
             availability: MobileReadbackAvailabilityDto::Available,
             topology: MobileBmsTopologyDto {
                 layout_label: "20S4P split pack".to_owned(),
@@ -17887,17 +18820,12 @@ mod tests {
             groups: vec![MobileBmsGroupSnapshotDto {
                 index: 17,
                 label: Some("group 17".to_owned()),
-                pack_number: None,
-                pack_reading_index: None,
                 voltage: Some(VoltageReading {
                     value: Voltage { value: 4_071 },
                     source: MobileValueSourceDto::Reported,
                     quality: MobileValueQualityDto::Known,
                     verification: MobileVerificationStatusDto::HardwareVerified,
                 }),
-                latest_voltage: None,
-                recent_voltages: Vec::new(),
-                recent_observation_milliseconds: Vec::new(),
                 temperature: Some(TemperatureReading {
                     value: Temperature { value: 34_900 },
                     source: MobileValueSourceDto::Reported,
@@ -18713,13 +19641,6 @@ mod tests {
             payload: ReadOnlyOutputPayload::Battery(BatteryReadbackDto {
                 availability: BatteryReadbackAvailabilityDto::Available,
                 page: Some(BatteryInfoDto {
-                    observation_summary: cutout_core::BmsObservationSummary {
-                        observed_count: 3,
-                        lowest_index: Some(cutout_core::BmsObservationIndex::new(1)),
-                        highest_index: Some(cutout_core::BmsObservationIndex::new(2)),
-                        voltage_spread: Some(cutout_core::VoltageDelta::from_millivolts(8)),
-                        observations: Vec::new(),
-                    },
                     page: cutout_core::BmsStatusPage {
                         id: cutout_core::BmsStatusPageId {
                             namespace: None,
@@ -18737,38 +19658,10 @@ mod tests {
                     temperature: Some(temperature(31_000)),
                     temperatures: vec![None, Some(temperature(37_800)), Some(temperature(35_200))],
                     cell_voltages: vec![voltage(3_633), voltage(3_626), voltage(3_634)],
-                    first_observation_index: None,
                     raw_state: None,
                 }),
             }),
         })
-    }
-
-    #[test]
-    fn mobile_bms_projection_preserves_cross_page_summary_without_recomputing() {
-        let mut output = battery_readback_output_fixture();
-        let SessionOutputDto::ReadOnly(response) = &mut output else {
-            panic!("readback")
-        };
-        let ReadOnlyOutputPayload::Battery(readback) = &mut response.payload else {
-            panic!("battery")
-        };
-        let page = readback.page.as_mut().expect("page");
-        page.observation_summary = cutout_core::BmsObservationSummary {
-            observed_count: 60,
-            lowest_index: Some(cutout_core::BmsObservationIndex::new(59)),
-            highest_index: Some(cutout_core::BmsObservationIndex::new(15)),
-            voltage_spread: Some(cutout_core::VoltageDelta::from_millivolts(36)),
-            observations: Vec::new(),
-        };
-        let snapshot = MobileSessionOutputDto::from(output)
-            .bms_snapshot
-            .expect("snapshot");
-        assert_eq!(snapshot.groups.len(), 3);
-        assert_eq!(snapshot.observed_group_count, 60);
-        assert_eq!(snapshot.lowest_group_index, Some(60));
-        assert_eq!(snapshot.highest_group_index, Some(16));
-        assert_eq!(snapshot.cell_delta.expect("spread").value.value, 36);
     }
 
     #[test]
@@ -18890,7 +19783,6 @@ mod tests {
             payload: ReadOnlyOutputPayload::Battery(BatteryReadbackDto {
                 availability: BatteryReadbackAvailabilityDto::Unsupported,
                 page: Some(BatteryInfoDto {
-                    observation_summary: cutout_core::BmsObservationSummary::default(),
                     page: cutout_core::BmsStatusPage {
                         id: cutout_core::BmsStatusPageId {
                             namespace: None,
@@ -18913,7 +19805,6 @@ mod tests {
                     temperature: Some(temperature_reading(31_000)),
                     temperatures: vec![Some(temperature_reading(37_800))],
                     cell_voltages: vec![voltage_reading(3_633)],
-                    first_observation_index: None,
                     raw_state: None,
                 }),
             }),
@@ -18937,57 +19828,46 @@ mod tests {
 
     #[test]
     fn bms_group_projection_skips_unrepresentable_group_indices() {
-        let cell_voltages = vec![voltage_reading(3_600), voltage_reading(3_500)];
+        let mut cell_voltages = vec![voltage_reading(3_600); usize::from(u8::MAX) + 1];
+        cell_voltages[usize::from(u8::MAX)] = voltage_reading(3_500);
+        let page_identity = BmsPageIdentity::from_tag_and_selector(None, 0);
 
-        let groups = bms_groups_from_cell_voltages(&cell_voltages, Some(u16::MAX - 1));
+        let groups = bms_groups_from_cell_voltages(&cell_voltages, page_identity);
 
-        assert_eq!(groups.len(), 1);
-        assert_eq!(groups.last().map(|group| group.index), Some(u16::MAX));
-        assert_eq!(bms_group_index(Some(u16::MAX - 1), 1), None);
+        assert_eq!(groups.len(), usize::from(u8::MAX));
+        assert_eq!(
+            groups.last().map(|group| group.index),
+            Some(BmsGroupIndex::MAX.as_mobile_dto())
+        );
+        assert_eq!(
+            lowest_cell_voltage_group_index(&cell_voltages, page_identity),
+            None
+        );
     }
 
     #[test]
-    fn mobile_bms_projection_preserves_decoder_assigned_observation_indices() {
-        let readback = cutout_protocols::decode_veteran_bms_page(
-            cutout_core::ProtocolSelector::new(6),
-            (0..cutout_protocols::VETERAN_BMS_CELL_VALUES_PER_PAGE)
-                .map(|local_index| {
-                    cutout_core::Voltage::from_millivolts(if local_index == 14 {
-                        3_700
-                    } else {
-                        3_810 + i32::from(local_index)
-                    })
-                })
-                .collect(),
-            cutout_core::BatteryInfo::default(),
-            VerificationStatus::HardwareVerified,
-        )
-        .expect("documented Veteran cell page")
-        .with_observed_at(cutout_core::MonotonicTimestamp::new(42));
+    fn begode_cell_pages_project_to_global_group_indices() {
+        let cell_voltages = vec![voltage_reading(3_600), voltage_reading(3_590)];
+        let page_identity = BmsPageIdentity::from_tag_and_selector(Some(ProtocolTag::new(0x03)), 2);
+        let groups = bms_groups_from_cell_voltages(&cell_voltages, page_identity);
 
-        let snapshot = MobileBmsSnapshotDto::from(BatteryReadbackDto::from(readback));
+        assert_eq!(page_identity.first_group_index().as_mobile_dto(), 49);
+        assert_eq!(
+            groups.iter().map(|group| group.index).collect::<Vec<_>>(),
+            vec![49, 50]
+        );
+        assert_eq!(
+            lowest_cell_voltage_group_index(&cell_voltages, page_identity),
+            Some(50)
+        );
+    }
 
-        assert_eq!(snapshot.groups.first().map(|group| group.index), Some(46));
-        assert_eq!(snapshot.groups.last().map(|group| group.index), Some(60));
-        assert_eq!(
-            snapshot
-                .groups
-                .last()
-                .and_then(|group| group.label.as_deref()),
-            Some("Pack 2 · cell 30")
-        );
-        assert_eq!(
-            snapshot.groups.last().and_then(|group| group.pack_number),
-            Some(2)
-        );
-        assert_eq!(
-            snapshot
-                .groups
-                .last()
-                .and_then(|group| group.pack_reading_index),
-            Some(30)
-        );
-        assert_eq!(snapshot.lowest_group_index, Some(60));
+    #[test]
+    fn begode_second_bank_overflow_falls_back_to_bank_base() {
+        let page_identity =
+            BmsPageIdentity::from_tag_and_selector(Some(ProtocolTag::new(0x03)), u8::MAX);
+
+        assert_eq!(page_identity.first_group_index().as_mobile_dto(), 33);
     }
 
     #[test]
@@ -19020,7 +19900,7 @@ mod tests {
     }
 
     #[test]
-    fn mobile_discovery_candidate_routes_vesc_advertisement() {
+    fn mobile_discovery_candidate_routes_vesc_advertisement_provisionally() {
         let candidate = mobile_discovery_candidate_from_advertisement(
             "ios-local-unknown".to_owned(),
             Some("Little FOCer".to_owned()),
@@ -19031,7 +19911,10 @@ mod tests {
 
         assert!(candidate.is_picker_candidate);
         assert_eq!(candidate.product_category, "VESC Onewheel");
-        assert_eq!(candidate.support, DiscoveryCandidateSupport::Supported);
+        assert_eq!(
+            candidate.support,
+            DiscoveryCandidateSupport::ProvisionalRoute
+        );
         assert_eq!(
             candidate.connection_route,
             Some(DiscoveryConnectionRoute::VescOnewheel)
@@ -20880,88 +21763,6 @@ mod tests {
     }
 
     #[test]
-    fn settings_state_returns_one_rust_owned_projection() {
-        let session = AeroBenignControlSession::new();
-        let snapshot = session.settings_state();
-
-        assert_eq!(snapshot.headlight, session.headlight_state());
-        assert_eq!(snapshot.aero_high_beam, session.aero_high_beam_state());
-        assert_eq!(
-            snapshot.aero_tiltback_speed,
-            session.aero_tiltback_speed_state()
-        );
-        assert_eq!(snapshot.aero_pwm_percent, session.aero_pwm_percent_state());
-        assert_eq!(
-            snapshot.aero_gyro_calibration,
-            session.aero_gyro_calibration_state()
-        );
-        assert_eq!(snapshot.aero_riding_mode, session.aero_riding_mode_state());
-        assert_eq!(
-            snapshot.aero_brake_overpressure_alarm,
-            session.aero_brake_overpressure_alarm_state()
-        );
-        assert_eq!(
-            snapshot.aero_pedal_hardness,
-            session.aero_pedal_hardness_state()
-        );
-        assert_eq!(
-            snapshot.aero_display_backlight,
-            session.aero_display_backlight_state()
-        );
-        assert_eq!(
-            snapshot.aero_beeper_volume,
-            session.aero_beeper_volume_state()
-        );
-        assert_eq!(
-            snapshot.aero_dynamic_assist,
-            session.aero_dynamic_assist_state()
-        );
-        assert_eq!(
-            snapshot.aero_pedal_dip_compensation,
-            session.aero_pedal_dip_compensation_state()
-        );
-        assert_eq!(
-            snapshot.aero_lateral_tilt_limit,
-            session.aero_lateral_tilt_limit_state()
-        );
-        assert_eq!(
-            snapshot.aero_voltage_correction,
-            session.aero_voltage_correction_state()
-        );
-        assert_eq!(
-            snapshot.aero_max_charge_voltage_raw,
-            session.aero_max_charge_voltage_raw_state()
-        );
-        assert_eq!(snapshot.aero_wheel_units, session.aero_wheel_units_state());
-        assert_eq!(
-            snapshot.aero_high_speed_mode,
-            session.aero_high_speed_mode_state()
-        );
-        assert_eq!(
-            snapshot.aero_low_battery_mode,
-            session.aero_low_battery_mode_state()
-        );
-        assert_eq!(
-            snapshot.aero_transport_mode,
-            session.aero_transport_mode_state()
-        );
-        assert_eq!(snapshot.aero_alarm_speed, session.aero_alarm_speed_state());
-        assert_eq!(
-            snapshot.aero_angle_adjustment,
-            session.aero_angle_adjustment_state()
-        );
-        assert_eq!(snapshot.pedal_mode, session.pedal_mode_state());
-        assert_eq!(snapshot.roll_angle, session.roll_angle_state());
-        assert_eq!(snapshot.speed_alarm_mode, session.speed_alarm_mode_state());
-        assert_eq!(
-            snapshot.acceleration_assist,
-            session.acceleration_assist_state()
-        );
-        assert_eq!(snapshot.taillight, session.taillight_state());
-        assert_eq!(snapshot.trip_meter_reset, session.trip_meter_reset_state());
-    }
-
-    #[test]
     fn aero_light_state_remains_unconfirmed_without_readback() {
         let session = AeroBenignControlSession::new();
 
@@ -21874,49 +22675,6 @@ mod tests {
             clock_uncertainty_ms: 75,
             ride_sequence: Some(2),
         })));
-    }
-
-    #[test]
-    fn mobile_capture_writer_preserves_existing_active_and_completed_captures() {
-        for finish_first in [false, true] {
-            let path = std::env::temp_dir().join(format!(
-                "cutout-mobile-writer-collision-{}.jsonl",
-                Uuid::new_v4()
-            ));
-            let first =
-                MobilePevcapCaptureBuilder::new(wc(1_700_000_000_000), "first-device".into(), None);
-            assert!(first.start_writer(path.to_string_lossy().into_owned()));
-            assert!(first.record_link_up(ms(1), None));
-            assert!(first.flush_writer());
-            if finish_first {
-                assert!(first.finish_writer());
-            }
-            let original = fs::read(&path).expect("first capture is readable");
-            let second = MobilePevcapCaptureBuilder::new(
-                wc(1_700_000_000_000),
-                "second-device".into(),
-                None,
-            );
-            let started = second.start_writer(path.to_string_lossy().into_owned());
-            assert!(second.finish_writer());
-
-            assert!(!started, "an existing capture must reject a second writer");
-            assert!(second.writer_status().failed);
-            assert_eq!(
-                fs::read(&path).expect("capture survives collision"),
-                original
-            );
-            if !finish_first {
-                assert!(first.record_link_down(ms(2)));
-                assert!(first.finish_writer());
-            }
-            let bytes = fs::read(&path).expect("original capture remains readable");
-            let capture = PevcapCapture::decode(&bytes, PevcapEncoding::Jsonl)
-                .expect("original capture remains valid");
-            assert_eq!(capture.header.platform_id.as_str(), "first-device");
-            assert_eq!(capture.records.len(), if finish_first { 1 } else { 2 });
-            fs::remove_file(path).expect("capture fixture is removable");
-        }
     }
 
     #[test]
@@ -22914,137 +23672,6 @@ mod tests {
             .expect("a later connection starts a fresh live map ride");
         assert_eq!(restarted.state, MobileRideLifecycleStateDto::Active);
         assert_ne!(restarted.ride_id, snapshot.ride_id);
-    }
-
-    #[test]
-    fn mobile_ride_map_core_auto_resumes_a_recent_interrupted_ride_for_the_same_vehicle() {
-        let _guard = RIDE_DATABASE_TEST_LOCK
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner);
-        let path = std::env::temp_dir().join(format!(
-            "cutout-mobile-map-auto-resume-{}-{}.sqlite3",
-            std::process::id(),
-            Uuid::new_v4()
-        ));
-        let original_ride_id = {
-            let database =
-                open_ride_database(path.to_string_lossy().into_owned()).expect("database opens");
-            let state = MobileRideMapCore::with_database(database.clone());
-            let snapshot = state
-                .ensure_recording_for_vehicle("pev-1".to_owned(), 1_000)
-                .expect("connection starts ride");
-            database.shutdown().expect("database shuts down");
-            snapshot.ride_id
-        };
-
-        let database =
-            open_ride_database(path.to_string_lossy().into_owned()).expect("database reopens");
-        let state = MobileRideMapCore::with_database(database.clone());
-        assert_eq!(
-            state.current_snapshot(2_000).map(|snapshot| snapshot.state),
-            Some(MobileRideLifecycleStateDto::Interrupted)
-        );
-        let resumed = state
-            .ensure_recording_for_vehicle("pev-1".to_owned(), 500)
-            .expect("recent matching ride resumes after a monotonic clock reset");
-        assert_eq!(resumed.state, MobileRideLifecycleStateDto::Active);
-        assert_eq!(resumed.ride_id, original_ride_id);
-        assert!(matches!(
-            state
-                .ingest_location(600, 1_700_000_000_600, 40.0, -105.0, 3.0)
-                .expect("new-epoch location is translated into the continued ride timeline"),
-            MobileRideMapCoreDecisionDto::Pending { .. }
-                | MobileRideMapCoreDecisionDto::Accepted { .. }
-        ));
-
-        database.shutdown().expect("reopened database shuts down");
-        let _ = fs::remove_file(path);
-    }
-
-    #[test]
-    fn mobile_ride_map_core_starts_new_when_the_interrupted_ride_is_for_another_vehicle() {
-        let _guard = RIDE_DATABASE_TEST_LOCK
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner);
-        let path = std::env::temp_dir().join(format!(
-            "cutout-mobile-map-auto-new-{}-{}.sqlite3",
-            std::process::id(),
-            Uuid::new_v4()
-        ));
-        let original_ride_id = {
-            let database =
-                open_ride_database(path.to_string_lossy().into_owned()).expect("database opens");
-            let state = MobileRideMapCore::with_database(database.clone());
-            let snapshot = state
-                .ensure_recording_for_vehicle("pev-1".to_owned(), 1_000)
-                .expect("connection starts ride");
-            database.shutdown().expect("database shuts down");
-            snapshot.ride_id
-        };
-
-        let database =
-            open_ride_database(path.to_string_lossy().into_owned()).expect("database reopens");
-        let state = MobileRideMapCore::with_database(database.clone());
-        let started = state
-            .ensure_recording_for_vehicle("pev-2".to_owned(), 2_000)
-            .expect("different vehicle starts a new ride");
-        assert_eq!(started.state, MobileRideLifecycleStateDto::Active);
-        assert_ne!(started.ride_id, original_ride_id);
-        assert_eq!(started.associated_vehicle.as_deref(), Some("pev-2"));
-
-        database.shutdown().expect("reopened database shuts down");
-        let _ = fs::remove_file(path);
-    }
-
-    #[test]
-    fn mobile_ride_map_core_starts_new_when_the_interrupted_ride_is_older_than_three_hours() {
-        let _guard = RIDE_DATABASE_TEST_LOCK
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner);
-        let path = std::env::temp_dir().join(format!(
-            "cutout-mobile-map-auto-new-old-{}-{}.sqlite3",
-            std::process::id(),
-            Uuid::new_v4()
-        ));
-        let original_ride_id = {
-            let database =
-                open_ride_database(path.to_string_lossy().into_owned()).expect("database opens");
-            let state = MobileRideMapCore::with_database(database.clone());
-            let snapshot = state
-                .ensure_recording_for_vehicle("pev-1".to_owned(), 1_000)
-                .expect("connection starts ride");
-            database.shutdown().expect("database shuts down");
-            snapshot.ride_id
-        };
-        let now_milliseconds = u64::try_from(
-            SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .expect("system clock follows epoch")
-                .as_millis(),
-        )
-        .expect("wall clock fits u64");
-        let stale_update = now_milliseconds
-            .saturating_sub(AUTO_RESUME_RIDE_WINDOW_MILLISECONDS)
-            .saturating_sub(1);
-        rusqlite::Connection::open(&path)
-            .expect("sqlite opens")
-            .execute(
-                "UPDATE rides SET created_at_ms = ?1, updated_at_ms = ?1",
-                [stale_update],
-            )
-            .expect("ride timestamp ages");
-
-        let database =
-            open_ride_database(path.to_string_lossy().into_owned()).expect("database reopens");
-        let state = MobileRideMapCore::with_database(database.clone());
-        let started = state
-            .ensure_recording_for_vehicle("pev-1".to_owned(), 2_000)
-            .expect("stale ride is replaced");
-        assert_eq!(started.state, MobileRideLifecycleStateDto::Active);
-        assert_ne!(started.ride_id, original_ride_id);
-
-        database.shutdown().expect("reopened database shuts down");
-        let _ = fs::remove_file(path);
     }
 
     #[test]

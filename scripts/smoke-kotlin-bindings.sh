@@ -39,13 +39,26 @@ if [[ -z "$jna_jar" ]]; then
   exit 1
 fi
 
+coroutines_jar="${KOTLINX_COROUTINES_JAR:-}"
+if [[ -z "$coroutines_jar" && -f /usr/share/java/kotlinx-coroutines-core-jvm.jar ]]; then
+  coroutines_jar=/usr/share/java/kotlinx-coroutines-core-jvm.jar
+fi
+if [[ -z "$coroutines_jar" ]]; then
+  echo "kotlinx-coroutines-core-jvm.jar not found; enter the Nix dev shell" >&2
+  exit 1
+fi
+
+kotlin_classpath="$jna_jar:$coroutines_jar"
+library_override="$root/$lib_path"
+
 kotlinc \
   target/uniffi-smoke/kotlin/uniffi/cutout_mobile_ffi/cutout_mobile_ffi.kt \
   tests/mobile-ffi/kotlin-smoke.kt \
-  -cp "$jna_jar" \
+  -cp "$kotlin_classpath" \
   -include-runtime \
   -d target/uniffi-smoke/kotlin-smoke.jar
 java \
   -Djava.library.path="$root/target/debug" \
-  -cp "target/uniffi-smoke/kotlin-smoke.jar:$jna_jar" \
+  -Duniffi.component.cutout_mobile_ffi.libraryOverride="$library_override" \
+  -cp "target/uniffi-smoke/kotlin-smoke.jar:$kotlin_classpath" \
   Kotlin_smokeKt
