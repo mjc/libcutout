@@ -66,6 +66,9 @@
 		444444444444444444444401 /* UITests/CutoutAppUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 444444444444444444444411 /* UITests/CutoutAppUITests.swift */; };
 		500000000000000000000101 /* Apps/Localizable.xcstrings in Resources */ = {isa = PBXBuildFile; fileRef = 500000000000000000000201 /* Apps/Localizable.xcstrings */; };
 		500000000000000000000102 /* Apps/Localizable.xcstrings in Resources */ = {isa = PBXBuildFile; fileRef = 500000000000000000000201 /* Apps/Localizable.xcstrings */; };
+		C00100000000000000000001 /* TabAccentColors.swift in Sources */ = {isa = PBXBuildFile; fileRef = C00100000000000000000011 /* TabAccentColors.swift */; };
+		C00100000000000000000002 /* TabAccentColors.swift in Sources */ = {isa = PBXBuildFile; fileRef = C00100000000000000000011 /* TabAccentColors.swift */; };
+		C00100000000000000000003 /* TabAccentColorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C00100000000000000000012 /* TabAccentColorTests.swift */; };
 		A6FD381C839A4BD98A66DDD6 /* Apps/CutoutApp/DeviceControlsForm.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5EC7F605A4BE4DD590E4C995 /* Apps/CutoutApp/DeviceControlsForm.swift */; };
 /* End PBXBuildFile section */
 
@@ -154,6 +157,8 @@
 		444444444444444444444411 /* UITests/CutoutAppUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UITests/CutoutAppUITests.swift; sourceTree = SOURCE_ROOT; };
 		444444444444444444444412 /* CutoutAppUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = CutoutAppUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		500000000000000000000201 /* Apps/CutoutApp/Localizable.xcstrings */ = {isa = PBXFileReference; lastKnownFileType = text.json.xcstrings; path = Apps/CutoutApp/Localizable.xcstrings; sourceTree = SOURCE_ROOT; };
+		C00100000000000000000011 /* TabAccentColors.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Apps/CutoutApp/TabAccentColors.swift; sourceTree = SOURCE_ROOT; };
+		C00100000000000000000012 /* TabAccentColorTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UITests/TabAccentColorTests.swift; sourceTree = SOURCE_ROOT; };
 		5EC7F605A4BE4DD590E4C995 /* Apps/CutoutApp/DeviceControlsForm.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Apps/CutoutApp/DeviceControlsForm.swift; sourceTree = SOURCE_ROOT; };
 /* End PBXFileReference section */
 
@@ -201,6 +206,7 @@
 			children = (
 				111111111111111111111121 /* Apps/CutoutApp/CutoutApp.swift */,
 				111111111111111111111122 /* Apps/CutoutApp/ContentView.swift */,
+				C00100000000000000000011 /* TabAccentColors.swift */,
 				111111111111111111111123 /* Apps/CutoutApp/CutoutAppModel.swift */,
 				40000000000000000000001B /* Apps/CutoutApp/CutoutAppState.swift */,
 				40000000000000000000001C /* Apps/CutoutApp/CutoutRouteViews.swift */,
@@ -294,6 +300,7 @@
 			isa = PBXGroup;
 			children = (
 				444444444444444444444411 /* UITests/CutoutAppUITests.swift */,
+				C00100000000000000000012 /* TabAccentColorTests.swift */,
 			);
 			path = UITests;
 			sourceTree = "<group>";
@@ -439,6 +446,7 @@
 			files = (
 				111111111111111111111111 /* Apps/CutoutApp/CutoutApp.swift in Sources */,
 				111111111111111111111112 /* Apps/CutoutApp/ContentView.swift in Sources */,
+				C00100000000000000000001 /* TabAccentColors.swift in Sources */,
 				111111111111111111111113 /* Apps/CutoutApp/CutoutAppModel.swift in Sources */,
 				30000000000000000000001B /* Apps/CutoutApp/CutoutAppState.swift in Sources */,
 				30000000000000000000001C /* Apps/CutoutApp/CutoutRouteViews.swift in Sources */,
@@ -504,6 +512,8 @@
 			buildActionMask = 2147483647;
 			files = (
 				444444444444444444444401 /* UITests/CutoutAppUITests.swift in Sources */,
+				C00100000000000000000002 /* TabAccentColors.swift in Sources */,
+				C00100000000000000000003 /* TabAccentColorTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
