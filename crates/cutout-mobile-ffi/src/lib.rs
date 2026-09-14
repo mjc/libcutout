@@ -1371,6 +1371,16 @@ impl CutoutSessionStateHandle {
         }
     }
 
+    /// Clears the active phone-alarm device and cancels its native deliveries.
+    pub fn deactivate_phone_alarm_device(&self) -> MobilePhoneAlarmActionsDto {
+        let mut state = self.lock_phone_alarm();
+        state.alarms.clear_active_device();
+        state.activation_error = None;
+        let cancel_request_ids = state.alarms.take_cancelled_request_ids();
+        state.discard_queued_schedules(&cancel_request_ids);
+        MobilePhoneAlarmActionsDto::cancellations(cancel_request_ids)
+    }
+
     /// Updates the selected device's phone alarm opt-in and persists it through Rust.
     #[allow(clippy::needless_pass_by_value, reason = "UniFFI exports own strings.")]
     pub fn set_phone_alarm_enabled(
