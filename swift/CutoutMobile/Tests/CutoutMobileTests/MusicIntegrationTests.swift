@@ -20,6 +20,24 @@ final class MusicIntegrationTests: XCTestCase {
     }
 
     @MainActor
+    func testOlderMusicCommandTaskCannotClearNewerTask() {
+        let slot = MusicCommandTaskSlot()
+        let firstID = slot.reserve()
+        let firstTask = Task {}
+        slot.install(firstTask, for: firstID)
+
+        let secondID = slot.reserve()
+        let secondTask = Task {}
+        slot.install(secondTask, for: secondID)
+
+        slot.finish(firstID)
+        XCTAssertEqual(slot.currentID, secondID)
+
+        slot.finish(secondID)
+        XCTAssertNil(slot.currentID)
+    }
+
+    @MainActor
     func testProviderTransportCompletesMissingDelayedAndDuplicateCallbacksOnce() async throws {
         let lifecycle = MobileMusicProviderLifecycle()
         let coordinator = MusicTransportCoordinator(lifecycle: lifecycle)

@@ -282,6 +282,47 @@ final class MusicProviderTransportExecutor {
     }
 }
 
+struct MusicCommandTaskID: Equatable, Sendable {
+    fileprivate let rawValue: UInt64
+}
+
+@MainActor
+final class MusicCommandTaskSlot {
+    private var nextID: UInt64 = 0
+    private var task: Task<Void, Never>?
+    private(set) var currentID: MusicCommandTaskID?
+
+    @discardableResult
+    func reserve() -> MusicCommandTaskID {
+        task?.cancel()
+        task = nil
+        nextID &+= 1
+        let id = MusicCommandTaskID(rawValue: nextID)
+        currentID = id
+        return id
+    }
+
+    func install(_ task: Task<Void, Never>, for id: MusicCommandTaskID) {
+        guard currentID == id else {
+            task.cancel()
+            return
+        }
+        self.task = task
+    }
+
+    func finish(_ id: MusicCommandTaskID) {
+        guard currentID == id else { return }
+        task = nil
+        currentID = nil
+    }
+
+    func cancel() {
+        task?.cancel()
+        task = nil
+        currentID = nil
+    }
+}
+
 private extension MobileMusicTransportOutcome {
     var commandOutcome: MusicCommandOutcome {
         switch self {
@@ -2102,7 +2143,7 @@ public final class AppleMusicProviderAdapter {
     public static let providerURL = URL(string: "https://music.apple.com/")!
     private let observationBridge: AppleMusicObservationBridge
     private let transport: MusicProviderTransportExecutor
-    private var pendingCommandTask: Task<Void, Never>?
+    private let pendingCommandTask = MusicCommandTaskSlot()
 #if canImport(MusicKit) && os(iOS)
     private let makeSystemPlayer: () -> SystemMusicPlayer
     private lazy var systemPlayer = makeSystemPlayer()
@@ -2164,8 +2205,7 @@ public final class AppleMusicProviderAdapter {
     }
 
     public func stopMonitoring() {
-        pendingCommandTask?.cancel()
-        pendingCommandTask = nil
+        pendingCommandTask.cancel()
         if let completion = observationBridge.stopMonitoring() {
             transport.apply(completion)
         }
@@ -2231,8 +2271,9 @@ public final class AppleMusicProviderAdapter {
                 completion(false)
                 return
             }
-            self.pendingCommandTask?.cancel()
-            self.pendingCommandTask = Task { @MainActor [weak self] in
+            let taskID = self.pendingCommandTask.reserve()
+            let task = Task { @MainActor [weak self] in
+                defer { self?.pendingCommandTask.finish(taskID) }
                 guard let self,
                       self.observationBridge.providerGeneration == providerGeneration,
                       !Task.isCancelled else {
@@ -2240,8 +2281,8 @@ public final class AppleMusicProviderAdapter {
                     return
                 }
                 completion(await self.execute(command))
-                self.pendingCommandTask = nil
             }
+            self.pendingCommandTask.install(task, for: taskID)
         }
     }
 
