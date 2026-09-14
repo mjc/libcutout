@@ -158,7 +158,7 @@ fn pre_music_v16_migration_preserves_existing_capture_tables() {
         connection
             .query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0))
             .unwrap(),
-        20
+        22
     );
     for table in ["pevcap_captures", "pevcap_capture_chunks"] {
         assert!(
@@ -2871,7 +2871,7 @@ fn legacy_schema_versions_migrate_to_the_current_schema() {
         let current_version: i64 = connection
             .pragma_query_value(None, "user_version", |row| row.get(0))
             .unwrap();
-        assert_eq!(current_version, 21);
+        assert_eq!(current_version, 22);
         let music_tables: i64 = connection
             .query_row(
                 "SELECT COUNT(*) FROM sqlite_schema
@@ -3022,6 +3022,44 @@ fn bms_voltage_samples_are_durable_without_a_ride_and_duplicate_batches_are_idem
 }
 
 #[test]
+fn bms_voltage_event_identity_retains_equal_samples_and_retries_idempotently() {
+    let _guard = test_guard();
+    let path = std::env::temp_dir().join(format!(
+        "libcutout-persistence-bms-events-{}.sqlite",
+        uuid::Uuid::new_v4()
+    ));
+    let database = RideDatabase::open(&path).unwrap();
+    let samples = [
+        BmsVoltageSampleRecord::new("wheel-a", 1_000, 2_000, 45, 4_193)
+            .unwrap()
+            .with_event_identity("session-a", 1)
+            .unwrap(),
+        BmsVoltageSampleRecord::new("wheel-a", 1_000, 2_000, 45, 4_193)
+            .unwrap()
+            .with_event_identity("session-a", 2)
+            .unwrap(),
+    ];
+    database.record_bms_voltage_samples(&samples).unwrap();
+    database.record_bms_voltage_samples(&samples).unwrap();
+    database.shutdown().unwrap();
+
+    let connection = Connection::open(&path).unwrap();
+    let event_sequences: Vec<u64> = connection
+        .prepare(
+            "SELECT event_sequence FROM bms_voltage_samples
+             ORDER BY event_sequence",
+        )
+        .unwrap()
+        .query_map([], |row| row.get(0))
+        .unwrap()
+        .collect::<Result<_, _>>()
+        .unwrap();
+    assert_eq!(event_sequences, vec![1, 2]);
+    drop(connection);
+    let _ = std::fs::remove_file(path);
+}
+
+#[test]
 fn version_20_database_adds_device_scoped_bms_history_without_resetting_existing_data() {
     let _guard = test_guard();
     let path = std::env::temp_dir().join(format!(
@@ -3046,7 +3084,7 @@ fn version_20_database_adds_device_scoped_bms_history_without_resetting_existing
     let version: i64 = connection
         .pragma_query_value(None, "user_version", |row| row.get(0))
         .unwrap();
-    assert_eq!(version, 21);
+    assert_eq!(version, 22);
     let table: String = connection
         .query_row(
             "SELECT name FROM sqlite_schema WHERE type = 'table' AND name = 'bms_voltage_samples'",
@@ -3395,7 +3433,7 @@ fn schema_v13_spatial_rows_migrate_without_integer_domain_ids() {
     let version: i64 = connection
         .pragma_query_value(None, "user_version", |row| row.get(0))
         .unwrap();
-    assert_eq!(version, 20);
+    assert_eq!(version, 22);
     let rtree_id: i64 = connection
         .query_row(
             "SELECT rtree_id FROM trail_segment_spatial_keys",
@@ -3461,7 +3499,7 @@ fn schema_v12_singleton_rows_migrate_to_uuid_keys_without_data_loss() {
     let version: i64 = connection
         .pragma_query_value(None, "user_version", |row| row.get(0))
         .unwrap();
-    assert_eq!(version, 20);
+    assert_eq!(version, 22);
     let selected_key_length: u64 = connection
         .query_row(
             "SELECT length(singleton_key) FROM selected_device",
@@ -3979,7 +4017,7 @@ fn version_eight_migration_adds_monotonic_ride_start_column() {
             |row| row.get(0),
         )
         .unwrap();
-    assert_eq!(version, 20);
+    assert_eq!(version, 22);
     assert!(has_monotonic_start);
 
     let _ = std::fs::remove_file(path);

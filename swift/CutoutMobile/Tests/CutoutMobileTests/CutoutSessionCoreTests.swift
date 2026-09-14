@@ -2393,16 +2393,53 @@ func testVescRideSnapshotProjectsBatteryLevelAndUpdateTime() throws {
         let samples = bmsStorageSamples(
             snapshot: snapshot,
             receivedAt: 1_000,
-            wallClockMilliseconds: 2_000
+            wallClockMilliseconds: 2_000,
+            sessionIdentifier: "test-session",
+            eventSequence: 7
         )
 
         XCTAssertEqual(samples.count, 1)
+        XCTAssertEqual(samples[0].sessionIdentifier, "test-session")
+        XCTAssertEqual(samples[0].eventSequence, 7)
         XCTAssertEqual(samples[0].monotonicMilliseconds, 1_000)
         XCTAssertEqual(samples[0].wallClockMilliseconds, 2_000)
         XCTAssertEqual(samples[0].observationIndex, 45)
         XCTAssertEqual(samples[0].packIndex, 1)
         XCTAssertEqual(samples[0].packObservationIndex, 15)
         XCTAssertEqual(samples[0].voltage, Voltage(value: 4_209))
+    }
+
+    func testBmsStorageSamplesKeepEveryReadingFromDistinctEvents() {
+        let snapshot = BmsSnapshot(
+            topology: BmsTopology(
+                layoutLabel: "test",
+                seriesGroupCount: nil,
+                parallelCount: nil,
+                packCount: 1,
+                bmsCount: 1,
+                confidence: .unverified
+            ),
+            groups: [
+                BmsGroupSnapshot(
+                    index: 1,
+                    voltage: Voltage(value: 4_209),
+                    latestVoltage: Voltage(value: 4_193),
+                    recentVoltages: [Voltage(value: 4_177), Voltage(value: 4_209)],
+                    recentObservationMilliseconds: [1_000, 1_000]
+                )
+            ]
+        )
+
+        let samples = bmsStorageSamples(
+            snapshot: snapshot,
+            receivedAt: 1_000,
+            wallClockMilliseconds: 2_000,
+            sessionIdentifier: "test-session",
+            eventSequence: 1
+        )
+
+        XCTAssertEqual(samples.map(\.eventSequence), [1, 2])
+        XCTAssertEqual(samples.map(\.voltage), [Voltage(value: 4_177), Voltage(value: 4_209)])
     }
 
     func testBmsSnapshotAggregatesCollectedPagesForPackOverview() {

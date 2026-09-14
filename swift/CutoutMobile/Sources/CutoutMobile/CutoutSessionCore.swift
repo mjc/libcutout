@@ -537,6 +537,8 @@ public final class CutoutSessionCore: NSObject {
     private var captureMusicHistoryPolicy = MobileMusicHistoryPolicyDto.disabled
     private var captureFileURL: URL?
     private var bmsPages: [BmsPageKey: BmsSnapshot] = [:]
+    private let bmsStorageSessionIdentifier = UUID().uuidString
+    private var bmsStorageEventSequence: UInt64 = 0
     private let deviceDetectionSession: DeviceDetectionSession
     private let identificationProbeTransport: IdentificationProbeTransportCoordinator
     private var begodeProbeExpiryWorkItem: DispatchWorkItem?
@@ -1379,14 +1381,12 @@ public final class CutoutSessionCore: NSObject {
             return
         }
         cancelPendingReconnect()
-        let receivedBmsUpdate = step.actions.contains {
-            $0.kind == .bmsSnapshot && $0.bmsSnapshot != nil
+        let bmsUpdates = step.actions.compactMap { action in
+            action.kind == .bmsSnapshot ? action.bmsSnapshot : nil
         }
         step.actions.forEach(applySessionAction)
         observeRideMapConnection(at: receivedAt)
-        if receivedBmsUpdate {
-            persistCurrentBmsSamples(receivedAt: receivedAt)
-        }
+        bmsUpdates.forEach { persistBmsSamples($0, receivedAt: receivedAt) }
         let snapshot = step.snapshot
         displayState = displayState.reducing(snapshot: snapshot, receivedAt: receivedAt)
         hasObservedSpeedSnapshot = hasObservedSpeedSnapshot || snapshot?.speed?.value != nil
@@ -2012,22 +2012,24 @@ public final class CutoutSessionCore: NSObject {
         }
     }
 
-    private func persistCurrentBmsSamples(receivedAt: MonotonicMilliseconds) {
+    private func persistBmsSamples(_ snapshot: BmsSnapshot, receivedAt: MonotonicMilliseconds) {
         guard let rideMapState,
               rideMapState.initializationError == nil,
               let deviceIdentity = protocolIdentityCandidate?.platformIdentifier
                 ?? peripheral?.identifier.uuidString,
-              let wallClockMilliseconds = unixMilliseconds(for: wallClock()),
-              let snapshot = bmsSnapshot
+              let wallClockMilliseconds = unixMilliseconds(for: wallClock())
         else {
             return
         }
         let samples = bmsStorageSamples(
             snapshot: snapshot,
             receivedAt: receivedAt.rawValue,
-            wallClockMilliseconds: wallClockMilliseconds
+            wallClockMilliseconds: wallClockMilliseconds,
+            sessionIdentifier: bmsStorageSessionIdentifier,
+            eventSequence: bmsStorageEventSequence
         )
         guard !samples.isEmpty else { return }
+        bmsStorageEventSequence &+= UInt64(samples.count)
 
         let queue = rideMapQueue
         let reference = WeakCutoutSessionCoreReference(self)
@@ -3425,23 +3427,27 @@ private func unixMilliseconds(for date: Date) -> UInt64? {
 func bmsStorageSamples(
     snapshot: BmsSnapshot,
     receivedAt: UInt64,
-    wallClockMilliseconds: UInt64
+    wallClockMilliseconds: UInt64,
+    sessionIdentifier: String,
+    eventSequence: UInt64
 ) -> [MobileStoredBmsVoltageSampleDto] {
-    snapshot.groups.compactMap { group in
-        guard group.recentObservationMilliseconds.last == receivedAt,
-              let voltage = group.latestVoltage,
-              let observationIndex = UInt16(exactly: group.index - 1)
-        else {
-            return nil
+    var nextEventSequence = eventSequence
+    return snapshot.groups.flatMap { group -> [MobileStoredBmsVoltageSampleDto] in
+        guard let observationIndex = UInt16(exactly: group.index - 1) else { return [] }
+        return zip(group.recentVoltages, group.recentObservationMilliseconds).compactMap { voltage, observedAt in
+            guard observedAt == receivedAt else { return nil }
+            defer { nextEventSequence &+= 1 }
+            return MobileStoredBmsVoltageSampleDto(
+                sessionIdentifier: sessionIdentifier,
+                eventSequence: nextEventSequence,
+                monotonicMilliseconds: receivedAt,
+                wallClockMilliseconds: wallClockMilliseconds,
+                observationIndex: observationIndex,
+                packIndex: group.packNumber.flatMap { UInt16(exactly: $0 - 1) },
+                packObservationIndex: group.packReadingIndex.flatMap { UInt16(exactly: $0 - 1) },
+                voltage: voltage
+            )
         }
-        return MobileStoredBmsVoltageSampleDto(
-            monotonicMilliseconds: receivedAt,
-            wallClockMilliseconds: wallClockMilliseconds,
-            observationIndex: observationIndex,
-            packIndex: group.packNumber.flatMap { UInt16(exactly: $0 - 1) },
-            packObservationIndex: group.packReadingIndex.flatMap { UInt16(exactly: $0 - 1) },
-            voltage: voltage
-        )
     }
 }
 

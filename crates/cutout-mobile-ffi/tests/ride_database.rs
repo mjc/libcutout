@@ -42,6 +42,8 @@ fn mobile_clients_store_device_scoped_bms_samples_without_a_ride() {
         .record_bms_voltage_samples(
             "wheel-a".to_owned(),
             vec![MobileStoredBmsVoltageSampleDto {
+                session_identifier: "test-session".to_owned(),
+                event_sequence: 1,
                 monotonic_milliseconds: 1_000,
                 wall_clock_milliseconds: 2_000,
                 observation_index: 45,

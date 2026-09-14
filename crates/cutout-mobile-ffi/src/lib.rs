@@ -8345,8 +8345,12 @@ pub fn open_ride_database(
 }
 
 /// One device-scoped raw BMS sample submitted to durable storage.
-#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Record)]
+#[derive(Clone, Debug, Eq, PartialEq, uniffi::Record)]
 pub struct MobileStoredBmsVoltageSampleDto {
+    /// Retry-stable session identity for this stream of observation events.
+    pub session_identifier: String,
+    /// Monotonically increasing identity of the source observation event.
+    pub event_sequence: u64,
     /// Host monotonic receipt time.
     pub monotonic_milliseconds: u64,
     /// Wall-clock receipt time.
@@ -8408,6 +8412,9 @@ impl RideDatabaseHandle {
                 )
                 .map(|record| {
                     record.with_pack_identity(sample.pack_index, sample.pack_observation_index)
+                })
+                .and_then(|record| {
+                    record.with_event_identity(&sample.session_identifier, sample.event_sequence)
                 })
             })
             .collect::<Result<Vec<_>, _>>()
