@@ -1414,6 +1414,17 @@ public final class CutoutSessionCore: NSObject {
         publishConnectionSnapshot()
     }
 
+    func prepareRestoredConnection(from restoredPlatformIdentifiers: [String]) -> String? {
+        guard let selectedIdentifier = CoreBluetoothRestorationPolicy.selectedPlatformIdentifier(
+            savedPlatformIdentifier: selectedDeviceStore.platformIdentifier,
+            restoredPlatformIdentifiers: restoredPlatformIdentifiers
+        ) else {
+            return nil
+        }
+        rustSessionState.setDeviceConnectionIntent(intent: .reconnect)
+        return selectedIdentifier
+    }
+
     private func startPreparedConnection() {
         guard let attempt = connectionAttempt,
               rustSessionState.connectionAttemptIsCurrent(token: attempt.token),
@@ -2320,10 +2331,7 @@ private extension CutoutSessionCore {
         assertOnBleQueue()
         let restoredIdentifiers = restoredPeripherals.map(\.identifier.uuidString)
         guard
-            let selectedIdentifier = CoreBluetoothRestorationPolicy.selectedPlatformIdentifier(
-                savedPlatformIdentifier: selectedDeviceStore.platformIdentifier,
-                restoredPlatformIdentifiers: restoredIdentifiers
-            ),
+            let selectedIdentifier = prepareRestoredConnection(from: restoredIdentifiers),
             let restoredPeripheral = restoredPeripherals.first(where: {
                 $0.identifier.uuidString == selectedIdentifier
             })

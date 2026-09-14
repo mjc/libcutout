@@ -630,8 +630,19 @@ final class CutoutSessionCoreTests: XCTestCase {
     }
 
     func testUnresolvedRestoredConnectionRetriesInsteadOfEnteringCaptureOnly() {
-        let core = CutoutSessionCore()
-        core.rideSessionStateHandle.setDeviceConnectionIntent(intent: .reconnect)
+        let defaults = UserDefaults(suiteName: #function)!
+        defer { defaults.removePersistentDomain(forName: #function) }
+        let selectionStore = DevicePickerSelectionStore(defaults: defaults)
+        selectionStore.save(platformIdentifier: "wheel-a")
+        let core = CutoutSessionCore(
+            clock: MonotonicClock { MonotonicMilliseconds(1_000) },
+            selectedDeviceStore: selectionStore
+        )
+
+        XCTAssertEqual(
+            core.prepareRestoredConnection(from: ["wheel-a", "wheel-b"]),
+            "wheel-a"
+        )
 
         core.recordUnresolvedProtocolDetection(.timedOut, on: nil)
 
