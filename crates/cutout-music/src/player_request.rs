@@ -101,6 +101,9 @@ impl MusicPlayerRequest {
         observation_revision: u64,
     ) -> MusicPlayerRequestCompletion {
         if observation_revision != self.observation_revision {
+            if self.pending.is_some_and(|(id, _)| id == request_id) {
+                self.pending = None;
+            }
             return MusicPlayerRequestCompletion::Stale;
         }
         self.complete(request_id)

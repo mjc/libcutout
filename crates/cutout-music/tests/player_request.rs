@@ -40,6 +40,20 @@ fn normal_completion_allows_next_poll_and_reset_invalidates_old_callback() {
 }
 
 #[test]
+fn superseded_poll_releases_pending_slot_for_immediate_repoll() {
+    let mut request = MusicPlayerRequest::default();
+    let poll = request.begin(100).expect("initial poll");
+    let poll_revision = request.observation_revision();
+    request.mark_observed(101);
+
+    assert_eq!(
+        request.complete_if_current(poll, poll_revision),
+        MusicPlayerRequestCompletion::Stale
+    );
+    assert!(request.begin(102).is_some());
+}
+
+#[test]
 fn backwards_clock_does_not_expire_an_outstanding_request() {
     let mut request = MusicPlayerRequest::default();
     assert!(request.begin(100).is_some());
