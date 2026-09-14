@@ -1132,7 +1132,7 @@ fn migrate_v20_to_current(connection: &mut Connection) -> Result<(), StorageErro
     }
     let transaction = connection.transaction()?;
     transaction.execute_batch(
-        "CREATE TABLE bms_voltage_samples (
+        "CREATE TABLE IF NOT EXISTS bms_voltage_samples (
              device_identity TEXT NOT NULL CHECK (length(device_identity) BETWEEN 1 AND 512),
              monotonic_ms INTEGER NOT NULL CHECK (monotonic_ms >= 0),
              wall_clock_ms INTEGER NOT NULL CHECK (wall_clock_ms >= 0),
@@ -1143,7 +1143,7 @@ fn migrate_v20_to_current(connection: &mut Connection) -> Result<(), StorageErro
              millivolts INTEGER NOT NULL,
              PRIMARY KEY (device_identity, monotonic_ms, wall_clock_ms, observation_index)
          );
-         CREATE INDEX bms_voltage_samples_history
+         CREATE INDEX IF NOT EXISTS bms_voltage_samples_history
              ON bms_voltage_samples(device_identity, observation_index, wall_clock_ms DESC);",
     )?;
     transaction.execute_batch(&format!(
