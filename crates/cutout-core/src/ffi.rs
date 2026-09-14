@@ -5,11 +5,11 @@ use crate::{
     AeroPwmSetting, AeroRidingMode, AeroSpeedSetting, AeroTransportMode, AeroVoltageCorrection,
     Angle, BatteryCurrent, BatteryInfo, BatteryLevel, BatteryPageKind, BatteryPageMetadata,
     BatteryPagePayload, BatteryReadback, BatteryReadbackAvailability, BegodeBeeperVolume,
-    BegodeLedModeSetting, BegodeMaxSpeed, BmsObservationIndex, BmsPackCurrents, ChargeMode,
-    CommandKind, ControlRefusal, ControlRefusalReason, DeviceCommand, DeviceEvent,
-    DiagnosticDetail, DiagnosticError, DiagnosticErrorKind, DiagnosticReadback, DiagnosticSeverity,
-    Distance, DutyCycle, FaultCode, FaultHistoryAvailability, FaultHistoryEntry,
-    FaultHistoryReadback, FirmwareInfo, FootpadContactState, FootpadTelemetry,
+    BegodeLedModeSetting, BegodeMaxSpeed, BmsCellIndex, BmsObservationIndex, BmsPackCurrents,
+    BmsPackIndex, ChargeMode, CommandKind, ControlRefusal, ControlRefusalReason, DeviceCommand,
+    DeviceEvent, DiagnosticDetail, DiagnosticError, DiagnosticErrorKind, DiagnosticReadback,
+    DiagnosticSeverity, Distance, DutyCycle, FaultCode, FaultHistoryAvailability,
+    FaultHistoryEntry, FaultHistoryReadback, FirmwareInfo, FootpadContactState, FootpadTelemetry,
     IgnoredNotificationEvidence, IgnoredNotificationReason, LightState, Measured,
     MonotonicTimestamp, NotificationByteLen, NotificationEvidence, NotificationIngestOutcome,
     ParserDiagnosticCount, ParserDiagnostics, ParserDroppedBytes, ParserError, ParserFrameLen,
@@ -1461,12 +1461,23 @@ impl From<BatteryReadback> for BatteryReadbackDto {
         let first_observation_index = readback
             .first_observation_index()
             .map(BmsObservationIndex::get);
+        let observation_pack_index = readback
+            .observation_pack_index()
+            .map(BmsPackIndex::get)
+            .map(u16::from);
+        let first_pack_observation_index = readback
+            .first_pack_observation_index()
+            .map(BmsCellIndex::get);
         let mut page = readback
             .page()
             .cloned()
             .map(|page| BatteryInfoDto::from_payload(page, first_observation_index));
         if let Some(page) = &mut page {
             page.observation_summary = observation_summary;
+            page.observed_at_milliseconds = readback.observed_at().map(MonotonicTimestamp::get);
+            page.observation_event_sequence = readback.observation_event_sequence();
+            page.observation_pack_index = observation_pack_index;
+            page.first_pack_observation_index = first_pack_observation_index;
         }
         Self {
             availability: readback.availability().into(),
@@ -1513,6 +1524,18 @@ pub struct BatteryInfoDto {
 
     /// First stable observation index assigned by the protocol decoder, when known.
     pub first_observation_index: Option<u16>,
+
+    /// Host monotonic receipt time for this decoded page, when available.
+    pub observed_at_milliseconds: Option<u64>,
+
+    /// Retry-stable sequence assigned to this decoded cell-page event.
+    pub observation_event_sequence: Option<u64>,
+
+    /// Protocol-assigned zero-based pack identity, when known.
+    pub observation_pack_index: Option<u16>,
+
+    /// First zero-based observation position within that pack, when known.
+    pub first_pack_observation_index: Option<u16>,
 
     /// Raw battery or BMS state field.
     pub raw_state: Option<RawFieldValueDto>,
@@ -1583,6 +1606,10 @@ impl BatteryInfoDto {
             temperatures,
             cell_voltages,
             first_observation_index,
+            observed_at_milliseconds: None,
+            observation_event_sequence: None,
+            observation_pack_index: None,
+            first_pack_observation_index: None,
             raw_state: battery.raw_state.map(Into::into),
         }
     }

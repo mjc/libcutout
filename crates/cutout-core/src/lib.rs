@@ -7250,6 +7250,9 @@ pub struct BatteryReadback {
 
     /// Host monotonic receipt time attached by the session facade.
     observed_at: Option<MonotonicTimestamp>,
+
+    /// Monotonic identity assigned to a decoded cell-voltage page before presentation aggregation.
+    observation_event_sequence: Option<u64>,
 }
 
 impl BatteryReadback {
@@ -7263,6 +7266,7 @@ impl BatteryReadback {
             observation_pack_index: None,
             first_pack_observation_index: None,
             observed_at: None,
+            observation_event_sequence: None,
         }
     }
 
@@ -7276,6 +7280,7 @@ impl BatteryReadback {
             observation_pack_index: None,
             first_pack_observation_index: None,
             observed_at: None,
+            observation_event_sequence: None,
         }
     }
 
@@ -7289,6 +7294,7 @@ impl BatteryReadback {
             observation_pack_index: None,
             first_pack_observation_index: None,
             observed_at: None,
+            observation_event_sequence: None,
         }
     }
 
@@ -7346,6 +7352,19 @@ impl BatteryReadback {
     #[must_use]
     pub const fn observed_at(&self) -> Option<MonotonicTimestamp> {
         self.observed_at
+    }
+
+    /// Attaches the sequence assigned to this decoded cell-voltage event.
+    #[must_use]
+    pub const fn with_observation_event_sequence(mut self, sequence: u64) -> Self {
+        self.observation_event_sequence = Some(sequence);
+        self
+    }
+
+    /// Returns the decoded cell-voltage event sequence, when this readback has one.
+    #[must_use]
+    pub const fn observation_event_sequence(&self) -> Option<u64> {
+        self.observation_event_sequence
     }
 
     /// Returns the battery/BMS page payload, when available.
@@ -8330,6 +8349,7 @@ where
                 )) = output
                 {
                     *readback = readback.clone().with_observed_at(observed_at);
+                    self.state.assign_bms_observation_event_sequence(readback);
                 }
             }
         }

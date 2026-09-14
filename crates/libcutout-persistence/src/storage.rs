@@ -138,6 +138,8 @@ impl Default for RideId {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct BmsVoltageSampleRecord {
     device_identity: String,
+    session_identifier: String,
+    event_sequence: u64,
     monotonic_milliseconds: u64,
     wall_clock_milliseconds: u64,
     observation_index: u16,
@@ -151,9 +153,11 @@ impl BmsVoltageSampleRecord {
     ///
     /// # Errors
     ///
-    /// Returns an error when the device identity is empty or exceeds the storage bound.
+    /// Returns an error when either identity is empty or exceeds the storage bound.
     pub fn new(
         device_identity: &str,
+        session_identifier: &str,
+        event_sequence: u64,
         monotonic_milliseconds: u64,
         wall_clock_milliseconds: u64,
         observation_index: u16,
@@ -161,6 +165,8 @@ impl BmsVoltageSampleRecord {
     ) -> Result<Self, StorageError> {
         Ok(Self {
             device_identity: normalize_stored_text(device_identity, "BMS device identity")?,
+            session_identifier: normalize_stored_text(session_identifier, "BMS session identity")?,
+            event_sequence,
             monotonic_milliseconds,
             wall_clock_milliseconds,
             observation_index,
@@ -2089,8 +2095,7 @@ impl RideDatabase {
 
     /// Stores a batch of raw BMS voltage samples independently of ride lifecycle.
     ///
-    /// Replaying a previously submitted batch is idempotent. Samples are separated by device,
-    /// dual-clock timestamp, and protocol-assigned observation identity.
+    /// Replaying a previously submitted batch is idempotent by observation-event identity.
     ///
     /// # Errors
     ///
@@ -4098,13 +4103,15 @@ fn record_bms_voltage_samples(
     {
         let mut insert = transaction.prepare_cached(
             "INSERT OR IGNORE INTO bms_voltage_samples
-                (device_identity, monotonic_ms, wall_clock_ms, observation_index,
+                (device_identity, session_identifier, event_sequence, monotonic_ms, wall_clock_ms, observation_index,
                  pack_index, pack_observation_index, millivolts)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
         )?;
         for sample in samples {
             insert.execute(params![
                 sample.device_identity,
+                sample.session_identifier,
+                bms_sqlite_integer(sample.event_sequence, "BMS event sequence")?,
                 bms_sqlite_integer(sample.monotonic_milliseconds, "BMS monotonic timestamp")?,
                 bms_sqlite_integer(sample.wall_clock_milliseconds, "BMS wall clock timestamp")?,
                 sample.observation_index,

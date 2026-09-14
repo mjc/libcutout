@@ -4667,6 +4667,8 @@ public struct BmsSnapshot: Equatable, Hashable, Sendable {
     public let faultSummary: String?
     public let faultDetail: String?
     public let groups: [BmsGroupSnapshot]
+    /// Newly decoded raw readings kept separate from the displayed cross-page summary.
+    public let rawObservations: [BmsRawVoltageObservation]
     public let faults: [BmsFault]
     public let captureActionTitle: String?
     public let captureActionState: String?
@@ -4696,6 +4698,7 @@ public struct BmsSnapshot: Equatable, Hashable, Sendable {
         faultSummary: String? = nil,
         faultDetail: String? = nil,
         groups: [BmsGroupSnapshot] = [],
+        rawObservations: [BmsRawVoltageObservation] = [],
         faults: [BmsFault] = [],
         captureActionTitle: String? = nil,
         captureActionState: String? = nil
@@ -4725,6 +4728,7 @@ public struct BmsSnapshot: Equatable, Hashable, Sendable {
         self.faultSummary = hasReadbackData ? faultSummary : nil
         self.faultDetail = hasReadbackData ? faultDetail : nil
         self.groups = hasReadbackData ? groups : []
+        self.rawObservations = hasReadbackData ? rawObservations : []
         self.faults = hasReadbackData ? faults : []
         self.captureActionTitle = hasReadbackData ? captureActionTitle : nil
         self.captureActionState = hasReadbackData ? captureActionState : nil
@@ -4756,6 +4760,7 @@ public struct BmsSnapshot: Equatable, Hashable, Sendable {
             faultSummary: dto.faultSummary,
             faultDetail: dto.faultDetail,
             groups: dto.groups.map(BmsGroupSnapshot.init),
+            rawObservations: dto.rawObservations.map(BmsRawVoltageObservation.init),
             faults: dto.faults.map(BmsFault.init),
             captureActionTitle: dto.captureActionTitle,
             captureActionState: dto.captureActionState
@@ -4963,6 +4968,7 @@ public struct BmsSnapshot: Equatable, Hashable, Sendable {
             faultSummary: update.faultSummary ?? faultSummary,
             faultDetail: update.faultDetail ?? faultDetail,
             groups: mergedGroups,
+            rawObservations: update.rawObservations,
             faults: update.faults.isEmpty ? faults : update.faults,
             captureActionTitle: update.captureActionTitle ?? captureActionTitle,
             captureActionState: update.captureActionState ?? captureActionState
@@ -5290,6 +5296,43 @@ public struct BmsSnapshot: Equatable, Hashable, Sendable {
     }
 }
 
+/// A raw BMS reading with the source event identity used for durable storage.
+public struct BmsRawVoltageObservation: Equatable, Hashable, Sendable {
+    public let eventSequence: UInt64
+    public let observedAtMilliseconds: UInt64
+    public let observationIndex: UInt16
+    public let packIndex: UInt16?
+    public let packObservationIndex: UInt16?
+    public let voltage: Voltage
+
+    init(
+        eventSequence: UInt64,
+        observedAtMilliseconds: UInt64,
+        observationIndex: UInt16,
+        packIndex: UInt16?,
+        packObservationIndex: UInt16?,
+        voltage: Voltage
+    ) {
+        self.eventSequence = eventSequence
+        self.observedAtMilliseconds = observedAtMilliseconds
+        self.observationIndex = observationIndex
+        self.packIndex = packIndex
+        self.packObservationIndex = packObservationIndex
+        self.voltage = voltage
+    }
+
+    fileprivate init(_ dto: MobileBmsRawVoltageObservationDto) {
+        self.init(
+            eventSequence: dto.eventSequence,
+            observedAtMilliseconds: dto.observedAtMilliseconds,
+            observationIndex: dto.observationIndex,
+            packIndex: dto.packIndex,
+            packObservationIndex: dto.packObservationIndex,
+            voltage: dto.voltage
+        )
+    }
+}
+
 public extension BmsSnapshot {
     func withoutPageCursor() -> BmsSnapshot {
         return BmsSnapshot(
@@ -5317,6 +5360,7 @@ public extension BmsSnapshot {
             faultSummary: faultSummary,
             faultDetail: faultDetail,
             groups: groups,
+            rawObservations: rawObservations,
             faults: faults,
             captureActionTitle: captureActionTitle,
             captureActionState: captureActionState

@@ -537,6 +537,7 @@ public final class CutoutSessionCore: NSObject {
     private var captureMusicHistoryPolicy = MobileMusicHistoryPolicyDto.disabled
     private var captureFileURL: URL?
     private var bmsPages: [BmsPageKey: BmsSnapshot] = [:]
+    private var bmsStorageSessionIdentifier = UUID().uuidString
     private let deviceDetectionSession: DeviceDetectionSession
     private let identificationProbeTransport: IdentificationProbeTransportCoordinator
     private var begodeProbeExpiryWorkItem: DispatchWorkItem?
@@ -1132,6 +1133,7 @@ public final class CutoutSessionCore: NSObject {
                     localName: testScript.candidate.displayName,
                     advertisedServiceUuids: []
                 )
+                beginBmsStorageSession()
                 liveOwner = try CoreBluetoothLiveSessionOwner(
                     session: .electricUnicycle(
                         model: .aero,
@@ -1379,14 +1381,12 @@ public final class CutoutSessionCore: NSObject {
             return
         }
         cancelPendingReconnect()
-        let receivedBmsUpdate = step.actions.contains {
-            $0.kind == .bmsSnapshot && $0.bmsSnapshot != nil
-        }
+        let bmsObservations = step.actions.compactMap { action in
+            action.kind == .bmsSnapshot ? action.bmsSnapshot : nil
+        }.flatMap(\.rawObservations)
         step.actions.forEach(applySessionAction)
         observeRideMapConnection(at: receivedAt)
-        if receivedBmsUpdate {
-            persistCurrentBmsSamples(receivedAt: receivedAt)
-        }
+        persistBmsSamples(bmsObservations)
         let snapshot = step.snapshot
         displayState = displayState.reducing(snapshot: snapshot, receivedAt: receivedAt)
         hasObservedSpeedSnapshot = hasObservedSpeedSnapshot || snapshot?.speed?.value != nil
@@ -1605,6 +1605,7 @@ public final class CutoutSessionCore: NSObject {
             return
         }
         do {
+            beginBmsStorageSession()
             liveOwner = CoreBluetoothLiveSessionOwner(
                 session: try liveSession(for: selectedRoute),
                 advertisement: advertisement,
@@ -2012,20 +2013,19 @@ public final class CutoutSessionCore: NSObject {
         }
     }
 
-    private func persistCurrentBmsSamples(receivedAt: MonotonicMilliseconds) {
+    private func persistBmsSamples(_ observations: [BmsRawVoltageObservation]) {
         guard let rideMapState,
               rideMapState.initializationError == nil,
               let deviceIdentity = protocolIdentityCandidate?.platformIdentifier
                 ?? peripheral?.identifier.uuidString,
-              let wallClockMilliseconds = unixMilliseconds(for: wallClock()),
-              let snapshot = bmsSnapshot
+              let wallClockMilliseconds = unixMilliseconds(for: wallClock())
         else {
             return
         }
         let samples = bmsStorageSamples(
-            snapshot: snapshot,
-            receivedAt: receivedAt.rawValue,
-            wallClockMilliseconds: wallClockMilliseconds
+            observations: observations,
+            wallClockMilliseconds: wallClockMilliseconds,
+            sessionIdentifier: bmsStorageSessionIdentifier
         )
         guard !samples.isEmpty else { return }
 
@@ -2042,6 +2042,10 @@ public final class CutoutSessionCore: NSObject {
                 self.recordRideMapDiagnostic("bms_storage_error=\(error)")
             }
         }
+    }
+
+    private func beginBmsStorageSession() {
+        bmsStorageSessionIdentifier = UUID().uuidString
     }
 
     private func publishRideMapDecisions(_ decisions: [MobileRideMapDecisionDto]) {
@@ -3423,24 +3427,20 @@ private func unixMilliseconds(for date: Date) -> UInt64? {
 }
 
 func bmsStorageSamples(
-    snapshot: BmsSnapshot,
-    receivedAt: UInt64,
-    wallClockMilliseconds: UInt64
+    observations: [BmsRawVoltageObservation],
+    wallClockMilliseconds: UInt64,
+    sessionIdentifier: String
 ) -> [MobileStoredBmsVoltageSampleDto] {
-    snapshot.groups.compactMap { group in
-        guard group.recentObservationMilliseconds.last == receivedAt,
-              let voltage = group.latestVoltage,
-              let observationIndex = UInt16(exactly: group.index - 1)
-        else {
-            return nil
-        }
-        return MobileStoredBmsVoltageSampleDto(
-            monotonicMilliseconds: receivedAt,
+    observations.map { observation in
+        MobileStoredBmsVoltageSampleDto(
+            sessionIdentifier: sessionIdentifier,
+            eventSequence: observation.eventSequence,
+            monotonicMilliseconds: observation.observedAtMilliseconds,
             wallClockMilliseconds: wallClockMilliseconds,
-            observationIndex: observationIndex,
-            packIndex: group.packNumber.flatMap { UInt16(exactly: $0 - 1) },
-            packObservationIndex: group.packReadingIndex.flatMap { UInt16(exactly: $0 - 1) },
-            voltage: voltage
+            observationIndex: observation.observationIndex,
+            packIndex: observation.packIndex,
+            packObservationIndex: observation.packObservationIndex,
+            voltage: observation.voltage
         )
     }
 }

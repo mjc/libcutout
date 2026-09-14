@@ -497,6 +497,7 @@ where
     S: cutout_core::ProtocolSession,
 {
     let mut summary = None;
+    let mut temperature_summary = None;
     host.drain_outputs()
         .into_iter()
         .map(|output| {
@@ -510,6 +511,23 @@ where
                         host.session_state().telemetry().bms.observation_summary()
                     })
                     .clone();
+                let temperatures = temperature_summary.get_or_insert_with(|| {
+                    host.session_state().telemetry().bms.temperature_summary()
+                });
+                if !temperatures.readings.is_empty() {
+                    page.temperature = temperatures
+                        .highest_temperature
+                        .map(cutout_core::Measured::reported)
+                        .map(Into::into);
+                    page.temperatures = temperatures
+                        .readings
+                        .iter()
+                        .copied()
+                        .map(cutout_core::Measured::reported)
+                        .map(Into::into)
+                        .map(Some)
+                        .collect();
+                }
             }
             output
         })
@@ -574,9 +592,23 @@ mod tests {
         }
         let mut host = cutout_core::HostSession::new(Pages);
         host.tick(MonotonicTimestamp::new(1));
-        let _ = super::drain_host_outputs(&mut host);
+        let first_outputs = super::drain_host_outputs(&mut host);
         host.tick(MonotonicTimestamp::new(2));
         let outputs = super::drain_host_outputs(&mut host);
+        let SessionOutputDto::ReadOnly(first_response) = &first_outputs[0] else {
+            panic!("first battery output")
+        };
+        let cutout_core::ReadOnlyOutputPayload::Battery(first_readback) = &first_response.payload
+        else {
+            panic!("first battery readback")
+        };
+        assert_eq!(
+            first_readback
+                .page
+                .as_ref()
+                .and_then(|page| page.observation_event_sequence),
+            Some(0)
+        );
         let SessionOutputDto::ReadOnly(response) = &outputs[0] else {
             panic!("battery output")
         };
@@ -584,6 +616,8 @@ mod tests {
             panic!("battery readback")
         };
         let page = readback.page.as_ref().expect("page");
+        assert_eq!(page.observation_event_sequence, Some(1));
+        assert_eq!(page.observed_at_milliseconds, Some(2));
         assert_eq!(page.cell_voltages.len(), 15);
         assert_eq!(page.observation_summary.observed_count, 30);
         assert_eq!(
@@ -599,6 +633,72 @@ mod tests {
                 .voltage_spread
                 .map(cutout_core::VoltageDelta::as_millivolts),
             Some(20)
+        );
+    }
+
+    #[test]
+    fn drained_bms_pages_keep_same_timestamp_events_distinct_from_their_shared_summary() {
+        struct TwoPages;
+        impl cutout_core::ProtocolSession for TwoPages {
+            fn handle(
+                &mut self,
+                input: cutout_core::SessionInput<'_>,
+                output: &mut Vec<cutout_core::SessionOutput>,
+            ) {
+                let cutout_core::SessionInput::Tick { .. } = input else {
+                    return;
+                };
+                for selector in [1, 2] {
+                    let readback = crate::decode_veteran_bms_page(
+                        cutout_core::ProtocolSelector::new(selector),
+                        (0..15)
+                            .map(|_| cutout_core::Voltage::from_millivolts(4_209))
+                            .collect(),
+                        cutout_core::BatteryInfo::default(),
+                        cutout_core::VerificationStatus::Unverified,
+                    )
+                    .expect("typed cell page");
+                    output.push(cutout_core::SessionOutput::Event(
+                        cutout_core::DeviceEvent::ReadOnlyResponse(
+                            cutout_core::ReadOnlyResponse::Battery(readback),
+                        ),
+                    ));
+                }
+            }
+        }
+
+        let mut host = cutout_core::HostSession::new(TwoPages);
+        host.tick(MonotonicTimestamp::new(1_000));
+        let events: Vec<_> = super::drain_host_outputs(&mut host)
+            .into_iter()
+            .filter_map(|output| match output {
+                SessionOutputDto::ReadOnly(response) => match response.payload {
+                    cutout_core::ReadOnlyOutputPayload::Battery(readback) => readback.page,
+                    _ => None,
+                },
+                _ => None,
+            })
+            .collect();
+
+        assert_eq!(events.len(), 2);
+        assert_eq!(
+            events
+                .iter()
+                .map(|page| page.observation_event_sequence)
+                .collect::<Vec<_>>(),
+            vec![Some(0), Some(1)]
+        );
+        assert_eq!(
+            events
+                .iter()
+                .map(|page| page.observed_at_milliseconds)
+                .collect::<Vec<_>>(),
+            vec![Some(1_000), Some(1_000)]
+        );
+        assert!(
+            events
+                .iter()
+                .all(|page| page.observation_summary.observed_count == 30)
         );
     }
 
@@ -870,6 +970,38 @@ mod tests {
                 SessionOutputDto::Event(SessionEventDto::DiagnosticError(_))
             )
         }));
+    }
+
+    #[test]
+    fn concrete_falcon_bms_summary_preserves_metadata_temperature_in_mobile_projection() {
+        let mut session = new_begode_falcon_benign_control_session();
+        session.ingest(&SessionInputDto::LinkUp {
+            monotonic_ms: ms(1),
+            max_write_len: Some(write_len_dto(185)),
+        });
+        let _ = session.drain_outputs();
+
+        session.ingest(&SessionInputDto::Notification {
+            channel: BEGODE_DATA_CHANNEL.as_bytes(),
+            bytes: hex_literal::hex!("55aa271000000320ff9c0019001a0190000001035a5a5a5a").to_vec(),
+            monotonic_ms: ms(42),
+        });
+
+        let temperature = session
+            .drain_outputs()
+            .into_iter()
+            .find_map(|output| match output {
+                SessionOutputDto::ReadOnly(response) => match response.payload {
+                    cutout_core::ReadOnlyOutputPayload::Battery(readback) => readback
+                        .page
+                        .and_then(|page| page.temperature)
+                        .map(|temperature| temperature.value),
+                    _ => None,
+                },
+                _ => None,
+            });
+
+        assert_eq!(temperature, Some(25_000));
     }
 
     #[test]

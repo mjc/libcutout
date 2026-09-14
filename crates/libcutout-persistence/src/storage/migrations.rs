@@ -1,7 +1,7 @@
 use super::{MapPointId, SpatialRowId, StorageError};
 use rusqlite::{Connection, OptionalExtension, params};
 
-const CURRENT_SCHEMA_VERSION: i64 = 21;
+const CURRENT_SCHEMA_VERSION: i64 = 22;
 const APPLICATION_ID: i64 = 0x4355_544f;
 
 fn current_schema_pragmas() -> String {
@@ -42,6 +42,7 @@ pub(super) fn migrate(connection: &mut Connection) -> Result<(), StorageError> {
         18 => migrate_v18_to_current(connection)?,
         19 => migrate_v19_to_current(connection)?,
         20 => migrate_v20_to_current(connection)?,
+        21 => migrate_v21_to_current(connection)?,
         CURRENT_SCHEMA_VERSION => {
             if application_id != APPLICATION_ID {
                 return Err(StorageError::InvalidDatabaseIdentity);
@@ -196,6 +197,8 @@ pub(crate) fn create_current_schema(connection: &Connection) -> Result<(), Stora
         );
         CREATE TABLE bms_voltage_samples (
             device_identity TEXT NOT NULL CHECK (length(device_identity) BETWEEN 1 AND 512),
+            session_identifier TEXT NOT NULL CHECK (length(session_identifier) BETWEEN 1 AND 512),
+            event_sequence INTEGER NOT NULL CHECK (event_sequence >= 0),
             monotonic_ms INTEGER NOT NULL CHECK (monotonic_ms >= 0),
             wall_clock_ms INTEGER NOT NULL CHECK (wall_clock_ms >= 0),
             observation_index INTEGER NOT NULL CHECK (observation_index BETWEEN 0 AND 65535),
@@ -203,7 +206,7 @@ pub(crate) fn create_current_schema(connection: &Connection) -> Result<(), Stora
             pack_observation_index INTEGER
                 CHECK (pack_observation_index IS NULL OR pack_observation_index BETWEEN 0 AND 65535),
             millivolts INTEGER NOT NULL,
-            PRIMARY KEY (device_identity, monotonic_ms, wall_clock_ms, observation_index)
+            PRIMARY KEY (device_identity, session_identifier, event_sequence, observation_index)
         );
         CREATE INDEX bms_voltage_samples_history
             ON bms_voltage_samples(device_identity, observation_index, wall_clock_ms DESC);
@@ -1054,6 +1057,13 @@ fn migrate_v19_to_current(connection: &mut Connection) -> Result<(), StorageErro
 }
 
 fn migrate_v20_to_current(connection: &mut Connection) -> Result<(), StorageError> {
+    if table_exists(connection, "bms_voltage_samples")? {
+        if table_has_column(connection, "bms_voltage_samples", "session_identifier")? {
+            connection.execute_batch(&current_schema_pragmas())?;
+            return Ok(());
+        }
+        return migrate_v21_to_current(connection);
+    }
     let transaction = connection.transaction()?;
     transaction.execute_batch(
         "CREATE TABLE bms_voltage_samples (
@@ -1067,6 +1077,39 @@ fn migrate_v20_to_current(connection: &mut Connection) -> Result<(), StorageErro
              millivolts INTEGER NOT NULL,
              PRIMARY KEY (device_identity, monotonic_ms, wall_clock_ms, observation_index)
          );
+         CREATE INDEX bms_voltage_samples_history
+             ON bms_voltage_samples(device_identity, observation_index, wall_clock_ms DESC);",
+    )?;
+    transaction.execute_batch(&format!(
+        "PRAGMA application_id = {APPLICATION_ID}; PRAGMA user_version = 21;"
+    ))?;
+    transaction.commit()?;
+    migrate_v21_to_current(connection)
+}
+
+fn migrate_v21_to_current(connection: &mut Connection) -> Result<(), StorageError> {
+    let transaction = connection.transaction()?;
+    transaction.execute_batch(
+        "ALTER TABLE bms_voltage_samples RENAME TO bms_voltage_samples_legacy;
+         CREATE TABLE bms_voltage_samples (
+             device_identity TEXT NOT NULL CHECK (length(device_identity) BETWEEN 1 AND 512),
+             session_identifier TEXT NOT NULL CHECK (length(session_identifier) BETWEEN 1 AND 512),
+             event_sequence INTEGER NOT NULL CHECK (event_sequence >= 0),
+             monotonic_ms INTEGER NOT NULL CHECK (monotonic_ms >= 0),
+             wall_clock_ms INTEGER NOT NULL CHECK (wall_clock_ms >= 0),
+             observation_index INTEGER NOT NULL CHECK (observation_index BETWEEN 0 AND 65535),
+             pack_index INTEGER CHECK (pack_index IS NULL OR pack_index BETWEEN 0 AND 65535),
+             pack_observation_index INTEGER CHECK (pack_observation_index IS NULL OR pack_observation_index BETWEEN 0 AND 65535),
+             millivolts INTEGER NOT NULL,
+             PRIMARY KEY (device_identity, session_identifier, event_sequence, observation_index)
+         );
+         INSERT INTO bms_voltage_samples
+             (device_identity, session_identifier, event_sequence, monotonic_ms, wall_clock_ms,
+              observation_index, pack_index, pack_observation_index, millivolts)
+         SELECT device_identity, 'legacy', rowid, monotonic_ms, wall_clock_ms,
+                observation_index, pack_index, pack_observation_index, millivolts
+         FROM bms_voltage_samples_legacy;
+         DROP TABLE bms_voltage_samples_legacy;
          CREATE INDEX bms_voltage_samples_history
              ON bms_voltage_samples(device_identity, observation_index, wall_clock_ms DESC);",
     )?;

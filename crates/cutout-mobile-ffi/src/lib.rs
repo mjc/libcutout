@@ -8345,8 +8345,12 @@ pub fn open_ride_database(
 }
 
 /// One device-scoped raw BMS sample submitted to durable storage.
-#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Record)]
+#[derive(Clone, Debug, Eq, PartialEq, uniffi::Record)]
 pub struct MobileStoredBmsVoltageSampleDto {
+    /// Retry-stable session identity for this stream of observation events.
+    pub session_identifier: String,
+    /// Monotonically increasing identity of the source observation event.
+    pub event_sequence: u64,
     /// Host monotonic receipt time.
     pub monotonic_milliseconds: u64,
     /// Wall-clock receipt time.
@@ -8401,6 +8405,8 @@ impl RideDatabaseHandle {
             .map(|sample| {
                 persistence::BmsVoltageSampleRecord::new(
                     &device_identity,
+                    &sample.session_identifier,
+                    sample.event_sequence,
                     sample.monotonic_milliseconds,
                     sample.wall_clock_milliseconds,
                     sample.observation_index,
@@ -11626,6 +11632,9 @@ pub struct MobileBmsSnapshotDto {
     /// Per-group readings.
     pub groups: Vec<MobileBmsGroupSnapshotDto>,
 
+    /// Newly decoded raw cell-voltage events carried separately from the display summary.
+    pub raw_observations: Vec<MobileBmsRawVoltageObservationDto>,
+
     /// Decoded faults or advisories.
     pub faults: Vec<MobileBmsFaultDto>,
 
@@ -11634,6 +11643,23 @@ pub struct MobileBmsSnapshotDto {
 
     /// Optional state label for the capture action.
     pub capture_action_state: Option<String>,
+}
+
+/// One raw cell-voltage event whose identity remains stable across display aggregation and retries.
+#[derive(Clone, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct MobileBmsRawVoltageObservationDto {
+    /// Sequence assigned by core to this decoded cell-voltage page.
+    pub event_sequence: u64,
+    /// Host monotonic receipt time of the source page.
+    pub observed_at_milliseconds: u64,
+    /// Zero-based identity assigned by the protocol decoder.
+    pub observation_index: u16,
+    /// Zero-based pack/BMS identity, when known.
+    pub pack_index: Option<u16>,
+    /// Zero-based observation position within the pack, when known.
+    pub pack_observation_index: Option<u16>,
+    /// Raw reported voltage.
+    pub voltage: Voltage,
 }
 
 impl From<BatteryInfoDto> for MobileBmsSnapshotDto {
@@ -11656,6 +11682,7 @@ impl From<BatteryReadbackDto> for MobileBmsSnapshotDto {
 
 impl MobileBmsSnapshotDto {
     fn from_page(availability: MobileReadbackAvailabilityDto, battery: BatteryInfoDto) -> Self {
+        let raw_observations = bms_raw_observations(&battery);
         let groups = if battery.observation_summary.observations.is_empty() {
             bms_groups_from_cell_voltages(&battery.cell_voltages, battery.first_observation_index)
         } else {
@@ -11707,6 +11734,7 @@ impl MobileBmsSnapshotDto {
             fault_summary: None,
             fault_detail: None,
             groups,
+            raw_observations,
             faults: Vec::new(),
             capture_action_title: None,
             capture_action_state: None,
@@ -11738,11 +11766,43 @@ impl MobileBmsSnapshotDto {
             fault_summary: None,
             fault_detail: None,
             groups: Vec::new(),
+            raw_observations: Vec::new(),
             faults: Vec::new(),
             capture_action_title: None,
             capture_action_state: None,
         }
     }
+}
+
+fn bms_raw_observations(battery: &BatteryInfoDto) -> Vec<MobileBmsRawVoltageObservationDto> {
+    let (Some(event_sequence), Some(observed_at_milliseconds), Some(first_observation_index)) = (
+        battery.observation_event_sequence,
+        battery.observed_at_milliseconds,
+        battery.first_observation_index,
+    ) else {
+        return Vec::new();
+    };
+
+    battery
+        .cell_voltages
+        .iter()
+        .enumerate()
+        .filter_map(|(offset, voltage)| {
+            let offset = u16::try_from(offset).ok()?;
+            Some(MobileBmsRawVoltageObservationDto {
+                event_sequence,
+                observed_at_milliseconds,
+                observation_index: first_observation_index.checked_add(offset)?,
+                pack_index: battery.observation_pack_index,
+                pack_observation_index: battery
+                    .first_pack_observation_index
+                    .and_then(|index| index.checked_add(offset)),
+                voltage: Voltage {
+                    value: voltage.value,
+                },
+            })
+        })
+        .collect()
 }
 
 fn bms_page_kind_label(kind: BatteryPageKindDto) -> &'static str {
@@ -17909,6 +17969,7 @@ mod tests {
                 alert_level: MobileBmsAlertLevelDto::Warning,
                 detail: Some("drops first during acceleration".to_owned()),
             }],
+            raw_observations: Vec::new(),
             faults: vec![MobileBmsFaultDto {
                 code: "0x0040".to_owned(),
                 label: "needs decoder".to_owned(),
@@ -18738,6 +18799,10 @@ mod tests {
                     temperatures: vec![None, Some(temperature(37_800)), Some(temperature(35_200))],
                     cell_voltages: vec![voltage(3_633), voltage(3_626), voltage(3_634)],
                     first_observation_index: None,
+                    observed_at_milliseconds: None,
+                    observation_event_sequence: None,
+                    observation_pack_index: None,
+                    first_pack_observation_index: None,
                     raw_state: None,
                 }),
             }),
@@ -18769,6 +18834,38 @@ mod tests {
         assert_eq!(snapshot.lowest_group_index, Some(60));
         assert_eq!(snapshot.highest_group_index, Some(16));
         assert_eq!(snapshot.cell_delta.expect("spread").value.value, 36);
+    }
+
+    #[test]
+    fn mobile_bms_projection_keeps_raw_events_outside_the_display_summary() {
+        let mut output = battery_readback_output_fixture();
+        let SessionOutputDto::ReadOnly(response) = &mut output else {
+            panic!("readback")
+        };
+        let ReadOnlyOutputPayload::Battery(readback) = &mut response.payload else {
+            panic!("battery")
+        };
+        let page = readback.page.as_mut().expect("page");
+        page.first_observation_index = Some(45);
+        page.observed_at_milliseconds = Some(1_000);
+        page.observation_event_sequence = Some(7);
+        page.observation_pack_index = Some(1);
+        page.first_pack_observation_index = Some(15);
+
+        let snapshot = MobileSessionOutputDto::from(output)
+            .bms_snapshot
+            .expect("snapshot");
+
+        assert_eq!(snapshot.raw_observations.len(), 3);
+        assert_eq!(snapshot.raw_observations[0].event_sequence, 7);
+        assert_eq!(snapshot.raw_observations[0].observed_at_milliseconds, 1_000);
+        assert_eq!(snapshot.raw_observations[0].observation_index, 45);
+        assert_eq!(snapshot.raw_observations[2].observation_index, 47);
+        assert_eq!(snapshot.raw_observations[0].pack_index, Some(1));
+        assert_eq!(
+            snapshot.raw_observations[2].pack_observation_index,
+            Some(17)
+        );
     }
 
     #[test]
@@ -18914,6 +19011,10 @@ mod tests {
                     temperatures: vec![Some(temperature_reading(37_800))],
                     cell_voltages: vec![voltage_reading(3_633)],
                     first_observation_index: None,
+                    observed_at_milliseconds: None,
+                    observation_event_sequence: None,
+                    observation_pack_index: None,
+                    first_pack_observation_index: None,
                     raw_state: None,
                 }),
             }),
