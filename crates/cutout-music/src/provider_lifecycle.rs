@@ -475,7 +475,7 @@ impl MusicProviderLifecycle {
         if self.provider_session.classify(provider_generation) == CallbackEpochMatch::Stale
             || self.pending_transport.is_some()
             || connection_attempt_id
-                .is_some_and(|id| self.connection.classify(id) == MusicConnectionCallback::Stale)
+                .is_some_and(|id| self.connection.classify(id) != MusicConnectionCallback::Accepted)
         {
             return None;
         }
