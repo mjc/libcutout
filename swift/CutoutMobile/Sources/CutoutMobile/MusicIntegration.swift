@@ -1,26 +1,20 @@
 import CutoutMobileFFI
+import CoreGraphics
 import Foundation
 import SwiftUI
-#if canImport(UIKit) && os(iOS)
-import UIKit
-#endif
-#if canImport(AppKit)
-import AppKit
-#endif
-#if canImport(MusicKit) && os(iOS)
-@preconcurrency import MusicKit
-#endif
 
-/// Presentation-only artwork retained in Swift and bounded before decoding.
+/// Presentation-only artwork retained in Swift at the provider-requested size.
 /// Artwork never enters the Rust ride or UniFFI contracts.
 public struct MusicArtwork: Equatable, Sendable {
-    public static let maxBytes = 512 * 1024
+    public static let maxPixelDimension = 1_024
 
-    public let data: Data
+    public let image: CGImage
 
-    public init?(data: Data) {
-        guard data.isEmpty == false, data.count <= Self.maxBytes else { return nil }
-        self.data = data
+    public init?(image: CGImage) {
+        guard image.width <= Self.maxPixelDimension,
+              image.height <= Self.maxPixelDimension
+        else { return nil }
+        self.image = image
     }
 }
 
@@ -79,11 +73,272 @@ public enum MusicCommandOutcome: Equatable, Sendable {
     case unavailable
 }
 
-/// A provider command can explain a subsequent item change without replacing
-/// the Rust-owned event kind contract.
-public enum MusicTransitionHint: Equatable, Sendable {
-    /// The provider accepted a previous/next transport command.
-    case skip
+/// Visible command feedback derived from the terminal provider outcome.
+public struct MusicCommandFeedback: Equatable, Sendable {
+    public let requestID: MobileMusicCommandFeedbackId
+    public let outcome: MusicCommandOutcome
+
+    public init(requestID: MobileMusicCommandFeedbackId, outcome: MusicCommandOutcome) {
+        self.requestID = requestID
+        self.outcome = outcome
+    }
+
+    public var messageKey: String? {
+        switch outcome {
+        case .accepted: nil
+        case .refused: "music.command.refused"
+        case .failed: "music.command.failed"
+        case .unavailable: "music.command.unavailable"
+        }
+    }
+}
+
+/// Resolves one provider transport callback exactly once under the Rust-owned lifecycle.
+@MainActor
+final class MusicTransportCoordinator {
+    typealias Completion = @MainActor (MobileMusicTransportRequestId, MusicCommandOutcome) -> Void
+
+    private let lifecycle: MobileMusicProviderLifecycle
+    private var pending: (providerGeneration: MobileMusicProviderSessionId, requestID: MobileMusicTransportRequestId, completion: Completion)?
+
+    init(lifecycle: MobileMusicProviderLifecycle) {
+        self.lifecycle = lifecycle
+    }
+
+    func register(
+        providerGeneration: MobileMusicProviderSessionId,
+        effect: MobileMusicTransportEffect,
+        completion: @escaping Completion
+    ) -> Bool {
+        guard pending == nil else { return false }
+        pending = (providerGeneration, effect.id, completion)
+        return true
+    }
+
+    func finish(
+        providerGeneration: MobileMusicProviderSessionId,
+        requestID: MobileMusicTransportRequestId,
+        accepted: Bool
+    ) {
+        apply(
+            lifecycle.finishTransport(
+                providerGeneration: providerGeneration,
+                requestId: requestID,
+                outcome: accepted ? .accepted : .failed
+            ),
+            requestID: requestID
+        )
+    }
+
+    func expire(providerGeneration: MobileMusicProviderSessionId, requestID: MobileMusicTransportRequestId, nowMs: UInt64) {
+        apply(
+            lifecycle.expireTransport(providerGeneration: providerGeneration, nowMs: nowMs),
+            requestID: requestID
+        )
+    }
+
+    func cancel(providerGeneration: MobileMusicProviderSessionId, requestID: MobileMusicTransportRequestId) {
+        apply(
+            lifecycle.cancelTransport(
+                providerGeneration: providerGeneration,
+                requestId: requestID
+            ),
+            requestID: requestID
+        )
+    }
+
+    func resolveCancelled(requestID: MobileMusicTransportRequestId?) {
+        guard let requestID,
+              pending?.requestID == requestID,
+              let completion = pending?.completion
+        else { return }
+        pending = nil
+        completion(requestID, .unavailable)
+    }
+
+    func apply(_ result: MobileMusicTransportCompletion, requestID fallbackRequestID: MobileMusicTransportRequestId? = nil) {
+        let requestID = result.requestId ?? fallbackRequestID
+        guard let requestID, pending?.requestID == requestID, let completion = pending?.completion else { return }
+        if result.state == .stale {
+            pending = nil
+            completion(requestID, .unavailable)
+            return
+        }
+        guard result.state == .finished, let outcome = result.outcome else { return }
+        pending = nil
+        completion(requestID, outcome.commandOutcome)
+    }
+}
+
+/// Executes one provider command under Rust admission, identity, and deadline policy.
+@MainActor
+final class MusicProviderTransportExecutor {
+    private let lifecycle: MobileMusicProviderLifecycle
+    private let effects: MusicProviderEffectExecutor
+    private let nowMs: @MainActor () -> UInt64
+    private lazy var coordinator = MusicTransportCoordinator(lifecycle: lifecycle)
+
+    init(
+        lifecycle: MobileMusicProviderLifecycle,
+        effects: MusicProviderEffectExecutor,
+        nowMs: @escaping @MainActor () -> UInt64
+    ) {
+        self.lifecycle = lifecycle
+        self.effects = effects
+        self.nowMs = nowMs
+    }
+
+    func perform(
+        owner: MobileMusicTransportOwner,
+        command: MobileMusicCommandDto,
+        onTerminal: @escaping @MainActor (MobileMusicTransportRequestId) -> Void = { _ in },
+        dispatch: @escaping @MainActor @Sendable (
+            MobileMusicTransportRequestId,
+            @escaping @MainActor @Sendable (Bool) -> Void
+        ) -> Void
+    ) async -> MusicCommandOutcome {
+        guard !Task.isCancelled else { return .unavailable }
+        let providerGeneration = switch owner {
+        case let .provider(providerGeneration): providerGeneration
+        case let .connection(providerGeneration, _): providerGeneration
+        }
+        let effect = lifecycle.beginTransportEffect(
+            owner: owner,
+            command: command,
+            nowMs: nowMs()
+        )
+        guard let effect else { return .refused }
+
+        return await withTaskCancellationHandler {
+            await withCheckedContinuation { continuation in
+                guard coordinator.register(
+                    providerGeneration: providerGeneration,
+                    effect: effect,
+                    completion: { [effects] requestID, outcome in
+                        effects.cancel(.transport(requestID))
+                        onTerminal(requestID)
+                        continuation.resume(returning: outcome)
+                    }
+                ) else {
+                    coordinator.cancel(
+                        providerGeneration: providerGeneration,
+                        requestID: effect.id
+                    )
+                    onTerminal(effect.id)
+                    continuation.resume(returning: .refused)
+                    return
+                }
+                guard !Task.isCancelled else {
+                    coordinator.cancel(
+                        providerGeneration: providerGeneration,
+                        requestID: effect.id
+                    )
+                    onTerminal(effect.id)
+                    return
+                }
+                effects.run(
+                    .transport(effect.id),
+                    until: effect.deadlineMs,
+                    nowMs: nowMs
+                ) { [weak self] in
+                    self?.coordinator.expire(
+                        providerGeneration: providerGeneration,
+                        requestID: effect.id,
+                        nowMs: effect.deadlineMs
+                    )
+                }
+                dispatch(effect.id) { [weak self] accepted in
+                    guard let self else { return }
+                    self.coordinator.finish(
+                        providerGeneration: providerGeneration,
+                        requestID: effect.id,
+                        accepted: accepted
+                    )
+                }
+            }
+        } onCancel: {
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                self.effects.cancel(.transport(effect.id))
+                self.coordinator.cancel(
+                    providerGeneration: providerGeneration,
+                    requestID: effect.id
+                )
+                onTerminal(effect.id)
+            }
+        }
+    }
+
+    func apply(_ completion: MobileMusicTransportCompletion) {
+        if let requestID = completion.requestId {
+            effects.cancel(.transport(requestID))
+        }
+        coordinator.apply(completion)
+    }
+
+    func apply(_ suspension: MobileMusicProviderSuspension) {
+        guard let requestID = suspension.cancelledTransportRequestId else { return }
+        effects.cancel(.transport(requestID))
+        coordinator.resolveCancelled(requestID: requestID)
+    }
+}
+
+struct MusicCommandTaskID: Equatable, Sendable {
+    fileprivate let rawValue: UInt64
+}
+
+@MainActor
+final class MusicCommandTaskSlot {
+    private var nextID: UInt64 = 0
+    private var task: Task<Void, Never>?
+    private(set) var currentID: MusicCommandTaskID?
+
+    @discardableResult
+    func reserve() -> MusicCommandTaskID {
+        task?.cancel()
+        task = nil
+        nextID &+= 1
+        let id = MusicCommandTaskID(rawValue: nextID)
+        currentID = id
+        return id
+    }
+
+    func install(_ task: Task<Void, Never>, for id: MusicCommandTaskID) {
+        guard currentID == id else {
+            task.cancel()
+            return
+        }
+        self.task = task
+    }
+
+    func finish(_ id: MusicCommandTaskID) {
+        guard currentID == id else { return }
+        task = nil
+        currentID = nil
+    }
+
+    func cancel() {
+        task?.cancel()
+        task = nil
+        currentID = nil
+    }
+
+    func cancel(_ id: MusicCommandTaskID) {
+        guard currentID == id else { return }
+        task?.cancel()
+        task = nil
+        currentID = nil
+    }
+}
+
+private extension MobileMusicTransportOutcome {
+    var commandOutcome: MusicCommandOutcome {
+        switch self {
+        case .accepted: .accepted
+        case .failed, .timedOut: .failed
+        case .cancelled: .unavailable
+        }
+    }
 }
 
 /// Describes the provider lifecycle that the app can currently monitor.
@@ -96,130 +351,6 @@ public enum MusicProviderMonitoringMode: Equatable, Sendable {
     case spotifyAppRemote
     case unavailable
 }
-
-/// Holds a transport hint until the provider reports the resulting state.
-///
-/// System-player notifications can arrive after the immediate post-command
-/// poll, so the hint survives several unchanged snapshots but expires when the
-/// provider never reports a resulting item change.
-public struct MusicTransitionHintTracker: Sendable {
-    private static let maxAgeMilliseconds: UInt64 = 5_000
-    private static let maximumUnchangedObservations = 5
-    private struct PendingHint: Sendable {
-        let id: UInt64
-        let hint: MusicTransitionHint
-        let issuedAtMs: UInt64?
-    }
-
-    private var pendingHints = [PendingHint]()
-    private var nextID: UInt64 = 0
-    private var remainingUnchangedObservations: Int?
-
-    public var pendingHint: MusicTransitionHint? { pendingHints.first?.hint }
-
-    public init() {
-        pendingHints = []
-    }
-
-    public var hint: MusicTransitionHint? { pendingHint }
-
-    @discardableResult
-    public mutating func issue(_ hint: MusicTransitionHint, issuedAtMs: UInt64? = nil) -> UInt64 {
-        let id = nextID
-        nextID &+= 1
-        pendingHints.append(PendingHint(id: id, hint: hint, issuedAtMs: issuedAtMs))
-        remainingUnchangedObservations = Self.maximumUnchangedObservations
-        return id
-    }
-
-    public mutating func hint(atMonotonicMs monotonicMs: UInt64) -> MusicTransitionHint? {
-        pendingHints.removeAll { hint in
-            guard let issuedAtMs = hint.issuedAtMs,
-                  monotonicMs >= issuedAtMs
-            else { return false }
-            return monotonicMs - issuedAtMs > Self.maxAgeMilliseconds
-        }
-        if pendingHints.isEmpty {
-            remainingUnchangedObservations = nil
-        }
-        return pendingHints.first?.hint
-    }
-
-    public mutating func clear() {
-        pendingHints.removeAll(keepingCapacity: true)
-        remainingUnchangedObservations = nil
-    }
-
-    public mutating func clear(id: UInt64) {
-        let clearsFront = pendingHints.first?.id == id
-        pendingHints.removeAll { $0.id == id }
-        guard clearsFront else { return }
-        remainingUnchangedObservations = pendingHints.isEmpty ? nil : Self.maximumUnchangedObservations
-    }
-
-    public mutating func resolve(
-        previous: MusicNowPlaying?,
-        current: MusicNowPlaying?,
-        appliedHint: MusicTransitionHint?,
-        currentObservedAtMs: UInt64? = nil
-    ) {
-        guard pendingHint == .skip, appliedHint == .skip,
-              let pending = pendingHints.first
-        else { return }
-        if let issuedAtMs = pending.issuedAtMs,
-           let currentObservedAtMs,
-           currentObservedAtMs >= issuedAtMs,
-           currentObservedAtMs - issuedAtMs > Self.maxAgeMilliseconds {
-            removeFirstPending()
-            return
-        }
-        guard let current else {
-            removeFirstPending()
-            return
-        }
-        if MusicTransitionHintTracker.isTerminalState(current.state) {
-            removeFirstPending()
-            return
-        }
-        guard let previous, current.item != nil else {
-            consumeUnchangedObservation()
-            return
-        }
-        if previous.provider != current.provider
-            || previous.item?.identifier != current.item?.identifier
-        {
-            removeFirstPending()
-        } else {
-            consumeUnchangedObservation()
-        }
-    }
-
-    private mutating func removeFirstPending() {
-        pendingHints.removeFirst()
-        remainingUnchangedObservations = pendingHints.isEmpty
-            ? nil
-            : Self.maximumUnchangedObservations
-    }
-
-    private mutating func consumeUnchangedObservation() {
-        let remaining = remainingUnchangedObservations ?? Self.maximumUnchangedObservations
-        guard remaining > 1 else {
-            removeFirstPending()
-            return
-        }
-        remainingUnchangedObservations = remaining - 1
-    }
-
-    private static func isTerminalState(_ state: MobileMusicPlaybackStateDto) -> Bool {
-        switch state {
-        case .stopped, .unauthorized, .unavailable, .disconnected, .stale:
-            true
-        default:
-            false
-        }
-    }
-}
-
 
 public extension MobileMusicProviderDto {
     static var allCases: [Self] { [.appleMusic, .spotify] }
@@ -291,26 +422,307 @@ public struct MusicMonitoringPreferenceStore {
     }
 }
 
-/// Identifies the currently owning music-monitor task.
-///
-/// A cancelled task may finish after a replacement task starts. The generation
-/// keeps that stale task from tearing down the replacement provider observer.
-public struct MusicMonitorGeneration: Sendable, Equatable {
-    public private(set) var current: UInt64 = 0
+/// Executes platform effects without inventing lifecycle identities in Swift.
+@MainActor
+public final class MusicProviderEffectExecutor {
+    public enum Namespace: Equatable, Sendable {
+        case monitor
+        case authorization
+        case provider
+        case playerState
+        case playerStateTimeout
+        case transport
+        case artwork
+        case artworkRetry
+    }
+
+    public enum Key: Hashable, Sendable {
+        case monitor(MobileMusicMonitorId)
+        case authorization(MobileMusicAuthorizationId)
+        case provider(MobileMusicProviderSessionId)
+        case playerState(MobileMusicPlayerStateRequestId)
+        case playerStateTimeout(MobileMusicPlayerStateRequestId)
+        case transport(MobileMusicTransportRequestId)
+        case artwork(MobileMusicArtworkRequestId)
+        case artworkRetry(MobileMusicArtworkRetryId)
+
+        var namespace: Namespace {
+            switch self {
+            case .monitor: .monitor
+            case .authorization: .authorization
+            case .provider: .provider
+            case .playerState: .playerState
+            case .playerStateTimeout: .playerStateTimeout
+            case .transport: .transport
+            case .artwork: .artwork
+            case .artworkRetry: .artworkRetry
+            }
+        }
+    }
+
+    private var tasks = [Key: Task<Void, Never>]()
 
     public init() {}
 
-    public mutating func begin() -> UInt64 {
-        current &+= 1
-        return current
+    public func run(
+        _ key: Key,
+        operation: @escaping @MainActor @Sendable () async -> Void
+    ) {
+        tasks.removeValue(forKey: key)?.cancel()
+        tasks[key] = Task { [weak self] in
+            await operation()
+            guard !Task.isCancelled else { return }
+            self?.tasks[key] = nil
+        }
     }
 
-    public mutating func invalidate() {
-        current &+= 1
+    func run(
+        _ key: Key,
+        until deadlineMs: UInt64,
+        nowMs: @escaping @MainActor @Sendable () -> UInt64,
+        operation: @escaping @MainActor @Sendable () async -> Void
+    ) {
+        run(key) {
+            guard await Self.wait(until: deadlineMs, nowMs: nowMs) else { return }
+            await operation()
+        }
     }
 
-    public func owns(_ generation: UInt64) -> Bool {
-        generation == current
+    public func cancel(_ key: Key) {
+        tasks.removeValue(forKey: key)?.cancel()
+    }
+
+    public func cancelAll(in namespace: Namespace) {
+        let keys = tasks.keys.filter { $0.namespace == namespace }
+        for key in keys {
+            cancel(key)
+        }
+    }
+
+    public func cancelAll() {
+        for task in tasks.values {
+            task.cancel()
+        }
+        tasks.removeAll()
+    }
+
+    public func isRunning(_ key: Key) -> Bool {
+        tasks[key].map { !$0.isCancelled } ?? false
+    }
+
+    public static func wait(
+        until deadlineMs: UInt64,
+        nowMs: @escaping @MainActor @Sendable () -> UInt64
+    ) async -> Bool {
+        let now = nowMs()
+        let remaining = deadlineMs > now ? deadlineMs - now : 0
+        do {
+            try await Task.sleep(for: .milliseconds(remaining))
+            return true
+        } catch {
+            return false
+        }
+    }
+}
+
+@MainActor
+struct AppleMusicNotificationGeneration {
+    private(set) var isActive = false
+
+    mutating func begin(_ operation: () -> Void) {
+        guard !isActive else { return }
+        operation()
+        isActive = true
+    }
+
+    mutating func end(_ operation: () -> Void) {
+        guard isActive else { return }
+        operation()
+        isActive = false
+    }
+}
+
+protocol AppleMusicObservationService: Sendable {
+    func subscribe(
+        generation: UInt64,
+        onChange: @escaping @Sendable (UInt64) -> Void
+    ) async
+    func unsubscribe(generation: UInt64) async
+    func observation(
+        generation: UInt64,
+        observedAtMs: UInt64
+    ) async -> MusicProviderObservation?
+}
+
+/// Bridges Apple Music SDK effects to Rust-owned lifecycle identities.
+@MainActor
+final class AppleMusicObservationBridge {
+    private let service: any AppleMusicObservationService
+    private let lifecycle: MobileMusicProviderLifecycle
+    private let effects: MusicProviderEffectExecutor
+    private let playerStateTimeout: Duration
+    private var activeGeneration: MobileMusicProviderSessionId?
+    private var observedAtMs: (@MainActor () -> UInt64)?
+    private var onObservation: (@MainActor (MusicProviderObservation) -> Void)?
+    private var readInFlight: MobileMusicPlayerStateRequestId?
+    private var pendingRefreshObservedAtMs: UInt64?
+
+    private(set) var cachedObservation: MusicProviderObservation?
+    var providerGeneration: MobileMusicProviderSessionId? { activeGeneration }
+
+    init(
+        service: any AppleMusicObservationService,
+        lifecycle: MobileMusicProviderLifecycle,
+        effects: MusicProviderEffectExecutor,
+        playerStateTimeout: Duration = .seconds(10)
+    ) {
+        self.service = service
+        self.lifecycle = lifecycle
+        self.effects = effects
+        self.playerStateTimeout = playerStateTimeout
+    }
+
+    @discardableResult
+    func startMonitoring(
+        observedAtMs: @escaping @MainActor () -> UInt64,
+        onObservation: @escaping @MainActor (MusicProviderObservation) -> Void
+    ) async -> MobileMusicTransportCompletion? {
+        let previousObservation = cachedObservation
+        let retiredTransport = stopMonitoring()
+        guard let generation = lifecycle.beginProviderSession() else { return retiredTransport }
+        activeGeneration = generation
+        self.observedAtMs = observedAtMs
+        self.onObservation = onObservation
+        let replacementObservedAtMs = observedAtMs()
+        cachedObservation = previousObservation?.staleProjection(
+            observedAtMs: replacementObservedAtMs
+        ) ?? MusicProviderObservation.unavailable(
+            provider: .appleMusic,
+            sessionId: "system-music-player",
+            observedAtMs: replacementObservedAtMs,
+            openProvider: true
+        )
+        if let cachedObservation {
+            onObservation(cachedObservation)
+        }
+
+        await service.subscribe(generation: generation.value) { [weak self] reportedGeneration in
+            Task { @MainActor [weak self] in
+                self?.providerDidChange(generation: reportedGeneration)
+            }
+        }
+        guard activeGeneration == generation,
+              lifecycle.classifyProviderSession(id: generation) == .current
+        else {
+            unsubscribe(generation: generation)
+            return retiredTransport
+        }
+        return retiredTransport
+    }
+
+    func refresh(observedAtMs: UInt64) {
+        guard let generation = activeGeneration,
+              lifecycle.classifyProviderSession(id: generation) == .current
+        else { return }
+        guard readInFlight == nil else {
+            pendingRefreshObservedAtMs = max(pendingRefreshObservedAtMs ?? 0, observedAtMs)
+            return
+        }
+        guard let requestID = lifecycle.beginPlayerStateRequest(nowMs: observedAtMs) else { return }
+        readInFlight = requestID
+        effects.run(.playerStateTimeout(requestID)) { [weak self] in
+            do { try await Task.sleep(for: self?.playerStateTimeout ?? .seconds(10)) } catch { return }
+            guard let self,
+                  self.activeGeneration == generation,
+                  self.lifecycle.classifyProviderSession(id: generation) == .current,
+                  self.lifecycle.expirePlayerStateRequest(
+                      id: requestID,
+                      nowMs: self.observedAtMs?() ?? observedAtMs
+                  ) == .expired,
+                  self.readInFlight == requestID
+            else { return }
+            self.readInFlight = nil
+            self.publishStaleCachedObservation(fallbackObservedAtMs: observedAtMs)
+            self.effects.cancel(.playerState(requestID))
+            self.runPendingRefresh(generation: generation)
+        }
+        effects.run(.playerState(requestID)) { [weak self, service] in
+            let observation = await service.observation(
+                generation: generation.value,
+                observedAtMs: observedAtMs
+            )
+            guard let self else { return }
+            guard self.activeGeneration == generation,
+                  self.lifecycle.classifyProviderSession(id: generation) == .current
+            else { return }
+            let completion = self.lifecycle.completePlayerStateRequest(
+                id: requestID,
+                nowMs: self.observedAtMs?() ?? observedAtMs
+            )
+            guard self.readInFlight == requestID else {
+                return
+            }
+            self.readInFlight = nil
+            self.effects.cancel(.playerStateTimeout(requestID))
+            guard completion == .accepted else {
+                self.publishStaleCachedObservation(fallbackObservedAtMs: observedAtMs)
+                self.runPendingRefresh(generation: generation)
+                return
+            }
+            if let observation {
+                self.cachedObservation = observation
+                self.onObservation?(observation)
+            }
+            self.runPendingRefresh(generation: generation)
+        }
+    }
+
+    private func publishStaleCachedObservation(fallbackObservedAtMs: UInt64) {
+        cachedObservation = cachedObservation?.staleProjection(
+            observedAtMs: observedAtMs?() ?? fallbackObservedAtMs
+        )
+        if let cachedObservation {
+            onObservation?(cachedObservation)
+        }
+    }
+
+    private func runPendingRefresh(generation: MobileMusicProviderSessionId) {
+        guard activeGeneration == generation,
+              lifecycle.classifyProviderSession(id: generation) == .current,
+              let pendingRefreshObservedAtMs
+        else { return }
+        self.pendingRefreshObservedAtMs = nil
+        refresh(observedAtMs: pendingRefreshObservedAtMs)
+    }
+
+    func stopMonitoring() -> MobileMusicTransportCompletion? {
+        guard let generation = activeGeneration else { return nil }
+        activeGeneration = nil
+        effects.cancelAll(in: .playerState)
+        effects.cancelAll(in: .playerStateTimeout)
+        readInFlight = nil
+        pendingRefreshObservedAtMs = nil
+        let completion = lifecycle.retireProviderSession(id: generation)
+        cachedObservation = nil
+        observedAtMs = nil
+        onObservation = nil
+        unsubscribe(generation: generation)
+        return completion
+    }
+
+    private func unsubscribe(generation: MobileMusicProviderSessionId) {
+        effects.run(.provider(generation)) { [service] in
+            await service.unsubscribe(generation: generation.value)
+        }
+    }
+
+    private func providerDidChange(generation: UInt64) {
+        guard activeGeneration?.value == generation,
+              let activeGeneration,
+              lifecycle.classifyProviderSession(id: activeGeneration) == .current,
+              let observedAtMs
+        else { return }
+        refresh(observedAtMs: observedAtMs())
     }
 }
 
@@ -389,6 +801,7 @@ public struct MusicNowPlaying: Equatable, Sendable {
     public let provider: MobileMusicProviderDto
     public let state: MobileMusicPlaybackStateDto
     public let item: MobileMusicItemDto?
+    public let positionMilliseconds: UInt64?
     public let capabilities: MobileMusicCapabilitiesDto
     public let artwork: MusicArtwork?
 
@@ -396,6 +809,7 @@ public struct MusicNowPlaying: Equatable, Sendable {
         provider: MobileMusicProviderDto,
         state: MobileMusicPlaybackStateDto,
         item: MobileMusicItemDto? = nil,
+        positionMilliseconds: UInt64? = nil,
         artwork: MusicArtwork? = nil,
         capabilities: MobileMusicCapabilitiesDto = .init(
             previous: false,
@@ -408,6 +822,7 @@ public struct MusicNowPlaying: Equatable, Sendable {
         self.provider = provider
         self.state = state
         self.item = item
+        self.positionMilliseconds = positionMilliseconds
         self.artwork = artwork
         self.capabilities = capabilities
     }
@@ -417,6 +832,7 @@ public struct MusicNowPlaying: Equatable, Sendable {
             provider: snapshot.provider,
             state: snapshot.state,
             item: snapshot.item,
+            positionMilliseconds: snapshot.positionMilliseconds,
             artwork: artwork,
             capabilities: snapshot.capabilities
         )
@@ -492,6 +908,7 @@ public struct MusicNowPlaying: Equatable, Sendable {
             provider: provider,
             state: .stale,
             item: item,
+            positionMilliseconds: positionMilliseconds,
             artwork: artwork,
             capabilities: .init(
                 previous: false,
@@ -647,15 +1064,60 @@ public extension MobileMusicRideEventDto {
 
 /// One provider observation entering the shared music pipeline.
 ///
-/// Providers may attach bounded metadata, but never an audio buffer or artwork
-/// payload.
+/// Providers may attach bounded presentation artwork, but never an audio buffer.
 public struct MusicProviderObservation: Equatable, Sendable {
     public let snapshot: MobileMusicSnapshotDto
     public let artwork: MusicArtwork?
 
-    public init(snapshot: MobileMusicSnapshotDto, artworkData: Data? = nil) {
+    public init(snapshot: MobileMusicSnapshotDto, artwork: MusicArtwork? = nil) {
         self.snapshot = snapshot
-        artwork = artworkData.flatMap(MusicArtwork.init(data:))
+        self.artwork = artwork
+    }
+
+    var staleProjection: Self {
+        staleProjection(observedAtMs: snapshot.observedAtMs)
+    }
+
+    func staleProjection(observedAtMs: UInt64) -> Self {
+        let nextObservedAtMs = max(
+            observedAtMs,
+            snapshot.observedAtMs == .max ? .max : snapshot.observedAtMs + 1
+        )
+        return Self(
+            snapshot: MobileMusicSnapshotDto(
+                provider: snapshot.provider,
+                sessionId: snapshot.sessionId,
+                state: .stale,
+                item: snapshot.item,
+                positionMilliseconds: snapshot.positionMilliseconds,
+                durationMilliseconds: snapshot.durationMilliseconds,
+                observedAtMs: nextObservedAtMs,
+                capabilities: .init(
+                    previous: false,
+                    play: false,
+                    pause: false,
+                    next: false,
+                    openProvider: snapshot.capabilities.openProvider
+                )
+            ),
+            artwork: artwork
+        )
+    }
+
+    func observedAt(_ observedAtMs: UInt64) -> Self {
+        Self(
+            snapshot: MobileMusicSnapshotDto(
+                provider: snapshot.provider,
+                sessionId: snapshot.sessionId,
+                state: snapshot.state,
+                item: snapshot.item,
+                positionMilliseconds: snapshot.positionMilliseconds,
+                durationMilliseconds: snapshot.durationMilliseconds,
+                observedAtMs: max(observedAtMs, snapshot.observedAtMs),
+                capabilities: snapshot.capabilities
+            ),
+            artwork: artwork
+        )
     }
 
     public static func unavailable(
@@ -696,18 +1158,26 @@ enum MusicTimeConversion {
 }
 
 /// The Rust-owned ride association is the only path for music metadata to enter a ride.
+public enum MusicIntegrationIngestError: Error {
+    case observation(Error)
+    case history(Error)
+}
+
 @MainActor
 public final class MusicIntegrationCoordinator {
     public private(set) var nowPlaying: MusicNowPlaying?
     private let rideMapState: MobileRideMapState?
+    private let lifecycle: MobileMusicProviderLifecycle
 
-    private var lastObservedAtByProvider = [MobileMusicProviderDto: UInt64]()
     private var lastCorrelationRideID: String?
-    private var lastPersistedSnapshotByProvider = [MobileMusicProviderDto: MobileMusicSnapshotDto]()
     private var historyPolicy = MobileMusicHistoryPolicyDto.disabled
     public private(set) var lastRecordedSequence: UInt64?
-    public init(rideMapState: MobileRideMapState?) {
+    public init(
+        rideMapState: MobileRideMapState?,
+        lifecycle: MobileMusicProviderLifecycle
+    ) {
         self.rideMapState = rideMapState
+        self.lifecycle = lifecycle
     }
 
     public func update(snapshot: MobileMusicSnapshotDto, artwork: MusicArtwork? = nil) {
@@ -721,15 +1191,13 @@ public final class MusicIntegrationCoordinator {
     public func ingest(
         snapshot: MobileMusicSnapshotDto,
         wallClockAtMs: UInt64,
-        clockUncertaintyMs: UInt64,
-        transitionHint: MusicTransitionHint? = nil
+        clockUncertaintyMs: UInt64
     ) throws -> MobileMusicTimelineOutcomeDto? {
         try ingest(
             snapshot: snapshot,
             artwork: nil,
             wallClockAtMs: wallClockAtMs,
-            clockUncertaintyMs: clockUncertaintyMs,
-            transitionHint: transitionHint
+            clockUncertaintyMs: clockUncertaintyMs
         )
     }
 
@@ -737,44 +1205,54 @@ public final class MusicIntegrationCoordinator {
         snapshot: MobileMusicSnapshotDto,
         artwork: MusicArtwork?,
         wallClockAtMs: UInt64,
-        clockUncertaintyMs: UInt64,
-        transitionHint: MusicTransitionHint?
+        clockUncertaintyMs: UInt64
     ) throws -> MobileMusicTimelineOutcomeDto? {
         resetCorrelationIfRideChanged()
-        guard let snapshot = try? normalizeMusicSnapshot(snapshot: snapshot) else { return nil }
-        guard accept(snapshot) else { return nil }
-        let previous = lastPersistedSnapshotByProvider[snapshot.provider]
-        update(snapshot: snapshot, artwork: artwork)
-        guard let kind = try musicTransitionKind(
-            previous: previous,
-            current: snapshot,
-            skipHint: transitionHint == .skip
-        ) else {
+        let decision: MobileMusicObservationDecision
+        do {
+            guard let accepted = try lifecycle.observeMusic(
+                snapshot: snapshot,
+                wallClockAtMs: wallClockAtMs,
+                clockUncertaintyMs: clockUncertaintyMs
+            ) else {
+                return nil
+            }
+            decision = accepted
+        } catch {
+            if let nowPlaying {
+                self.nowPlaying = nowPlaying.staleProjection
+            }
+            throw MusicIntegrationIngestError.observation(error)
+        }
+        let normalizedSnapshot = decision.snapshot
+        update(snapshot: normalizedSnapshot, artwork: artwork)
+        guard let transition = decision.historyTransition else {
             return nil
         }
         do {
             guard let rideMapState else {
-                rememberPersistedState(.disabled, snapshot: snapshot)
+                _ = lifecycle.acknowledgeHistoryTransition(id: transition.id)
                 return .disabled
             }
             let result = try rideMapState.recordMusicEventWithSequence(
-                snapshot: snapshot,
-                kind: kind,
-                monotonicAtMs: snapshot.observedAtMs,
-                wallClockAtMs: wallClockAtMs,
-                clockUncertaintyMs: clockUncertaintyMs
+                snapshot: transition.snapshot,
+                kind: transition.kind,
+                monotonicAtMs: transition.snapshot.observedAtMs,
+                wallClockAtMs: transition.wallClockAtMs,
+                clockUncertaintyMs: transition.clockUncertaintyMs
             )
             lastRecordedSequence = result.sequence
+            _ = lifecycle.acknowledgeHistoryTransition(id: transition.id)
             let outcome = result.outcome
-            rememberPersistedState(outcome, snapshot: snapshot)
             return outcome
         } catch MobileRideMapError.noActiveRide {
             if historyPolicy == .disabled {
-                rememberPersistedState(.disabled, snapshot: snapshot)
+                _ = lifecycle.acknowledgeHistoryTransition(id: transition.id)
                 return .disabled
             }
-            lastPersistedSnapshotByProvider[snapshot.provider] = snapshot
-            throw MobileRideMapError.noActiveRide
+            throw MusicIntegrationIngestError.history(MobileRideMapError.noActiveRide)
+        } catch {
+            throw MusicIntegrationIngestError.history(error)
         }
     }
 
@@ -784,15 +1262,13 @@ public final class MusicIntegrationCoordinator {
     public func ingest(
         observation: MusicProviderObservation,
         wallClockAtMs: UInt64,
-        clockUncertaintyMs: UInt64,
-        transitionHint: MusicTransitionHint? = nil
+        clockUncertaintyMs: UInt64
     ) throws -> MobileMusicTimelineOutcomeDto? {
         try ingest(
             snapshot: observation.snapshot,
             artwork: observation.artwork,
             wallClockAtMs: wallClockAtMs,
-            clockUncertaintyMs: clockUncertaintyMs,
-            transitionHint: transitionHint
+            clockUncertaintyMs: clockUncertaintyMs
         )
     }
 
@@ -809,7 +1285,7 @@ public final class MusicIntegrationCoordinator {
     /// Drops provider-local observations before a deliberate provider switch.
     /// Selection itself must not synthesize a stop, disconnect, or item change.
     public func resetProviderCorrelation() {
-        lastObservedAtByProvider.removeAll(keepingCapacity: true)
+        lifecycle.resetObservationCorrelation()
         lastCorrelationRideID = rideMapState?.currentSnapshot()?.rideID
         nowPlaying = nil
         lastRecordedSequence = nil
@@ -834,8 +1310,14 @@ public final class MusicIntegrationCoordinator {
         clockUncertaintyMs: UInt64
     ) throws -> MobileMusicTimelineOutcomeDto {
         resetCorrelationIfRideChanged()
-        let snapshot = try validatedMusicSnapshot(snapshot)
-        guard accept(snapshot) else { return .outOfOrder }
+        guard let decision = try lifecycle.observeMusic(
+            snapshot: snapshot,
+            wallClockAtMs: wallClockAtMs,
+            clockUncertaintyMs: clockUncertaintyMs
+        ) else {
+            return .outOfOrder
+        }
+        let snapshot = decision.snapshot
         update(snapshot: snapshot)
         guard let rideMapState else {
             return .rideNotOpen
@@ -847,7 +1329,9 @@ public final class MusicIntegrationCoordinator {
             wallClockAtMs: wallClockAtMs,
             clockUncertaintyMs: clockUncertaintyMs
         )
-        rememberPersistedState(outcome, snapshot: snapshot)
+        if let transition = decision.historyTransition {
+            _ = lifecycle.acknowledgeHistoryTransition(id: transition.id)
+        }
         return outcome
     }
 
@@ -859,21 +1343,8 @@ public final class MusicIntegrationCoordinator {
         let rideID = rideMapState?.currentSnapshot()?.rideID
         guard rideID != lastCorrelationRideID else { return }
         lastCorrelationRideID = rideID
-        lastObservedAtByProvider.removeAll()
-        lastPersistedSnapshotByProvider.removeAll()
+        lifecycle.resetObservationCorrelation()
         lastRecordedSequence = nil
-    }
-
-    private func rememberPersistedState(
-        _ outcome: MobileMusicTimelineOutcomeDto,
-        snapshot: MobileMusicSnapshotDto
-    ) {
-        switch outcome {
-        case .recorded, .duplicate, .disabled:
-            lastPersistedSnapshotByProvider[snapshot.provider] = snapshot
-        case .outOfOrder, .rideNotOpen, .full:
-            break
-        }
     }
 
     private func rebasePersistedState(
@@ -884,11 +1355,11 @@ public final class MusicIntegrationCoordinator {
         case (.disabled, .opaqueItem), (.disabled, .humanReadable):
             // Enabling history should capture the current item on the next
             // accepted observation, even if it was already playing.
-            lastPersistedSnapshotByProvider.removeAll(keepingCapacity: true)
+            lifecycle.resetObservationBaselines()
         case (_, .disabled):
             // Keep the current player as the baseline while history is off so
             // a later re-enable can deliberately start a new association.
-            lastPersistedSnapshotByProvider.removeAll(keepingCapacity: true)
+            lifecycle.resetObservationBaselines()
         default:
             // Redaction and display-policy changes are not music transitions.
             // Preserve the baseline so the next poll cannot duplicate one.
@@ -896,759 +1367,4 @@ public final class MusicIntegrationCoordinator {
         }
     }
 
-    private func accept(_ snapshot: MobileMusicSnapshotDto) -> Bool {
-        let lastObservedAtMs = lastObservedAtByProvider[snapshot.provider]
-        guard acceptMusicSnapshot(
-            previousObservedAtMs: lastObservedAtMs,
-            currentObservedAtMs: snapshot.observedAtMs
-        ) else { return false }
-        lastObservedAtByProvider[snapshot.provider] = snapshot.observedAtMs
-        return true
-    }
-
-    private func validatedMusicSnapshot(
-        _ snapshot: MobileMusicSnapshotDto
-    ) throws -> MobileMusicSnapshotDto {
-        do {
-            return try normalizeMusicSnapshot(snapshot: snapshot)
-        } catch let error as MobileRideMapCoreErrorDto {
-            switch error {
-            case let .InvalidMusicInput(message):
-                throw MobileRideMapError.invalidMusicInput(message)
-            default:
-                throw MobileRideMapError.storageError(String(describing: error))
-            }
-        }
-    }
-
 }
-
-/// A small, reusable control surface for Ride and Map. It renders metadata only;
-/// neither artwork bytes nor an audio stream cross the app boundary.
-public struct MusicCompactPlayer: View {
-    public let nowPlaying: MusicNowPlaying
-    public let timeline: [MobileMusicRideEventDto]
-    public let onCommand: (MobileMusicCommandDto) -> Void
-    public let onOpenSettings: () -> Void
-    public let onDismiss: () -> Void
-    @State private var isExpanded = false
-    @State private var accessibilityAnnouncementTracker = MusicAccessibilityAnnouncementTracker()
-
-    public init(
-        nowPlaying: MusicNowPlaying,
-        timeline: [MobileMusicRideEventDto] = [],
-        onCommand: @escaping (MobileMusicCommandDto) -> Void,
-        onOpenSettings: @escaping () -> Void,
-        onDismiss: @escaping () -> Void = {}
-    ) {
-        self.nowPlaying = nowPlaying
-        self.timeline = timeline
-        self.onCommand = onCommand
-        self.onOpenSettings = onOpenSettings
-        self.onDismiss = onDismiss
-    }
-
-    public var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(spacing: 12) {
-                artworkView
-                VStack(alignment: .leading, spacing: 3) {
-                    Text(nowPlaying.title)
-                        .lineLimit(1)
-                        .font(.subheadline.weight(.bold))
-                        .accessibilityIdentifier("music.now-playing-title")
-                        .accessibilityValue(String(describing: nowPlaying.state))
-                    Text(nowPlaying.statusText ?? nowPlaying.artist)
-                        .lineLimit(1)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-                .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
-            }
-            HStack(spacing: 8) {
-                if nowPlaying.requiresSetup {
-                    Button(action: onOpenSettings) {
-                        Label(pevLocalizedText("music.settings.open"), systemImage: "gearshape")
-                    }
-                    .buttonStyle(.bordered)
-                    .controlSize(.small)
-                    .tint(PevDashboardColors.yellow)
-                    .accessibilityIdentifier("music.open-settings")
-                }
-                Spacer(minLength: 0)
-                MusicTransportControls(nowPlaying: nowPlaying, onCommand: onCommand)
-                MusicPlayerIconButton(
-                    systemImage: "ellipsis",
-                    label: pevLocalizedText("music.expand"),
-                    action: { isExpanded = true },
-                    accessibilityIdentifier: "music.expand"
-                )
-                MusicPlayerIconButton(
-                    systemImage: "xmark",
-                    label: pevLocalizedText("music.hide"),
-                    action: onDismiss
-                )
-            }
-        }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 12)
-        .tint(PevDashboardColors.yellow)
-        .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 20))
-        .accessibilityElement(children: .contain)
-        .accessibilityLabel(nowPlaying.accessibilitySummary)
-        .onChange(of: nowPlaying) { _, nowPlaying in
-            guard let announcement = accessibilityAnnouncementTracker.next(for: nowPlaying) else {
-                return
-            }
-            AccessibilityNotification.Announcement(announcement).post()
-        }
-        .sheet(isPresented: $isExpanded) {
-            MusicExpandedPlayer(
-                nowPlaying: nowPlaying,
-                timeline: timeline,
-                onCommand: onCommand
-            )
-        }
-    }
-
-    @ViewBuilder
-    private var artworkView: some View {
-#if canImport(UIKit) && os(iOS)
-        if let data = nowPlaying.artwork?.data, let image = UIImage(data: data) {
-            Image(uiImage: image)
-                .resizable()
-                .scaledToFill()
-                .frame(width: 44, height: 44)
-                .clipShape(RoundedRectangle(cornerRadius: 6))
-                .accessibilityLabel(nowPlaying.artworkAccessibilityLabel)
-        } else {
-            Image(systemName: "music.note")
-                .font(.title3)
-                .frame(width: 44, height: 44)
-                .background(PevDashboardColors.yellow.opacity(0.16), in: RoundedRectangle(cornerRadius: 12))
-                .foregroundStyle(PevDashboardColors.yellow)
-                .accessibilityHidden(true)
-        }
-#elseif canImport(AppKit)
-        if let data = nowPlaying.artwork?.data, let image = NSImage(data: data) {
-            Image(nsImage: image)
-                .resizable()
-                .scaledToFill()
-                .frame(width: 44, height: 44)
-                .clipShape(RoundedRectangle(cornerRadius: 6))
-                .accessibilityLabel(nowPlaying.artworkAccessibilityLabel)
-        } else {
-            Image(systemName: "music.note")
-                .font(.title3)
-                .frame(width: 44, height: 44)
-                .background(PevDashboardColors.yellow.opacity(0.16), in: RoundedRectangle(cornerRadius: 12))
-                .foregroundStyle(PevDashboardColors.yellow)
-                .accessibilityHidden(true)
-        }
-#else
-        Image(systemName: "music.note")
-            .accessibilityHidden(true)
-#endif
-    }
-}
-
-private struct MusicTransportControls: View {
-    let nowPlaying: MusicNowPlaying
-    let onCommand: (MobileMusicCommandDto) -> Void
-
-    var body: some View {
-        HStack(spacing: 4) {
-            if nowPlaying.isCommandAvailable(.previous) {
-                MusicPlayerIconButton(
-                    systemImage: "backward.fill",
-                    label: pevLocalizedText("music.previous"),
-                    action: { onCommand(.previous) }
-                )
-            }
-            if let command = nowPlaying.playPauseCommand {
-                MusicPlayerIconButton(
-                    systemImage: command == .pause ? "pause.fill" : "play.fill",
-                    label: pevLocalizedText(command == .pause ? "music.pause" : "music.play"),
-                    action: { onCommand(command) },
-                    isProminent: true
-                )
-            }
-            if nowPlaying.isCommandAvailable(.next) {
-                MusicPlayerIconButton(
-                    systemImage: "forward.fill",
-                    label: pevLocalizedText("music.next"),
-                    action: { onCommand(.next) }
-                )
-            }
-            if nowPlaying.isCommandAvailable(.openProvider) {
-                MusicPlayerIconButton(
-                    systemImage: "arrow.up.forward.app",
-                    label: pevLocalizedText("music.open_provider"),
-                    action: { onCommand(.openProvider) }
-                )
-            }
-        }
-    }
-}
-
-private struct MusicPlayerIconButton: View {
-    let systemImage: String
-    let label: String
-    let action: () -> Void
-    var accessibilityIdentifier: String?
-    var isProminent = false
-
-    init(
-        systemImage: String,
-        label: String,
-        action: @escaping () -> Void,
-        accessibilityIdentifier: String? = nil,
-        isProminent: Bool = false
-    ) {
-        self.systemImage = systemImage
-        self.label = label
-        self.action = action
-        self.accessibilityIdentifier = accessibilityIdentifier
-        self.isProminent = isProminent
-    }
-
-    var body: some View {
-        if let accessibilityIdentifier, !accessibilityIdentifier.isEmpty {
-            button.accessibilityIdentifier(accessibilityIdentifier)
-        } else {
-            button
-        }
-    }
-
-    private var button: some View {
-        Button(action: action) {
-            Image(systemName: systemImage)
-                .frame(minWidth: isProminent ? 36 : 30, minHeight: 36)
-                .background(
-                    isProminent ? PevDashboardColors.yellow.opacity(0.18) : .clear,
-                    in: Circle()
-                )
-        }
-        .buttonStyle(.plain)
-        .accessibilityLabel(label)
-    }
-}
-
-private struct MusicTimelineRow: View {
-    let event: MobileMusicRideEventDto
-
-    var body: some View {
-        HStack(spacing: 12) {
-            VStack(alignment: .leading, spacing: 2) {
-                Text(event.timelineItemTitle)
-                    .lineLimit(1)
-                Text("\(event.provider.title) · \(event.kind.timelineTitle)")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-            Spacer(minLength: 8)
-            Text(
-                Date(timeIntervalSince1970: Double(event.wallClockAtMs) / 1_000),
-                style: .time
-            )
-            .font(.caption2.monospacedDigit())
-            .foregroundStyle(.secondary)
-        }
-        .accessibilityElement(children: .combine)
-    }
-}
-
-public struct MusicTimelineRows: View {
-    public let events: [MobileMusicRideEventDto]
-
-    public init(events: [MobileMusicRideEventDto]) {
-        self.events = events
-    }
-
-    public var body: some View {
-        ForEach(events, id: \.timelineID) { event in
-            MusicTimelineRow(event: event)
-        }
-    }
-}
-
-public struct MusicExpandedPlayer: View {
-    public let nowPlaying: MusicNowPlaying
-    public let timeline: [MobileMusicRideEventDto]
-    public let onCommand: (MobileMusicCommandDto) -> Void
-    @Environment(\.dismiss) private var dismiss
-
-    public init(
-        nowPlaying: MusicNowPlaying,
-        timeline: [MobileMusicRideEventDto] = [],
-        onCommand: @escaping (MobileMusicCommandDto) -> Void
-    ) {
-        self.nowPlaying = nowPlaying
-        self.timeline = timeline
-        self.onCommand = onCommand
-    }
-
-    public var body: some View {
-        NavigationStack {
-            Form {
-                Section {
-                    MusicExpandedHero(nowPlaying: nowPlaying)
-                    MusicTransportControls(nowPlaying: nowPlaying, onCommand: onCommand)
-                }
-                if !timeline.isEmpty {
-                    Section(pevLocalizedText("music.timeline.title")) {
-                        MusicTimelineRows(events: timeline)
-                    }
-                }
-            }
-            .formStyle(.grouped)
-            .navigationTitle(pevLocalizedText("music.expand"))
-            .toolbar {
-                ToolbarItem(placement: .confirmationAction) {
-                    Button(pevLocalizedText("music.done")) { dismiss() }
-                        .accessibilityIdentifier("music.done")
-                }
-            }
-        }
-        .tint(PevDashboardColors.yellow)
-    }
-}
-
-/// Configuration is separate from live playback. Bindings publish changes
-/// directly to the app's persisted, Rust-owned settings instead of shadow state.
-public struct MusicSettingsView: View {
-    let nowPlaying: MusicNowPlaying?
-    @Binding var selectedProvider: MobileMusicProviderDto
-    @Binding var historyPolicy: MobileMusicHistoryPolicyDto
-    let historyUnavailable: Bool
-    let historySaveError: MobileRideMapError?
-    let onConnect: () -> Void
-    let onAuthorizeSpotify: () -> Void
-    let onOpenProvider: () -> Void
-
-    public init(
-        nowPlaying: MusicNowPlaying?,
-        selectedProvider: Binding<MobileMusicProviderDto>,
-        historyPolicy: Binding<MobileMusicHistoryPolicyDto>,
-        historyUnavailable: Bool,
-        historySaveError: MobileRideMapError?,
-        onConnect: @escaping () -> Void,
-        onAuthorizeSpotify: @escaping () -> Void,
-        onOpenProvider: @escaping () -> Void
-    ) {
-        self.nowPlaying = nowPlaying
-        _selectedProvider = selectedProvider
-        _historyPolicy = historyPolicy
-        self.historyUnavailable = historyUnavailable
-        self.historySaveError = historySaveError
-        self.onConnect = onConnect
-        self.onAuthorizeSpotify = onAuthorizeSpotify
-        self.onOpenProvider = onOpenProvider
-    }
-
-    public var body: some View {
-        Form {
-            Section(pevLocalizedText("music.provider.select")) {
-                Picker(pevLocalizedText("music.provider.select"), selection: $selectedProvider) {
-                    ForEach(MobileMusicProviderDto.allCases, id: \.self) { provider in
-                        Text(provider.title).tag(provider)
-                    }
-                }
-                .accessibilityIdentifier("music.provider-picker")
-                if let nowPlaying {
-                    Text(nowPlaying.statusText ?? nowPlaying.title)
-                        .foregroundStyle(.secondary)
-                        .accessibilityIdentifier("music.connection-status")
-                } else {
-                    Text(pevLocalizedText("music.state.not_connected"))
-                        .foregroundStyle(.secondary)
-                        .accessibilityIdentifier("music.connection-status")
-                }
-                Button(pevLocalizedText("music.connect_provider", selectedProvider.title), action: onConnect)
-                    .accessibilityIdentifier("music.connect-provider")
-                if selectedProvider == .spotify {
-                    Button(pevLocalizedText("music.authorize_spotify"), action: onAuthorizeSpotify)
-                        .accessibilityIdentifier("music.authorize-spotify")
-                }
-                Button(pevLocalizedText("music.open_named_provider", selectedProvider.title), action: onOpenProvider)
-                    .accessibilityIdentifier("music.open-provider")
-            }
-            Section {
-                Picker(pevLocalizedText("music.history.title"), selection: $historyPolicy) {
-                    ForEach(MobileMusicHistoryPolicyDto.allCases, id: \.self) { policy in
-                        MusicHistoryPolicyLabel(policy: policy).tag(policy)
-                    }
-                }
-                .accessibilityIdentifier("music.history-picker")
-                .accessibilityValue(historyPolicy.musicAccessibilityIdentifier)
-                if historyUnavailable {
-                    Label(pevLocalizedText("music.state.unavailable"), systemImage: "exclamationmark.triangle")
-                        .accessibilityIdentifier("music.history-unavailable")
-                }
-                if historySaveError != nil {
-                    Label(pevLocalizedText("music.history.save_error"), systemImage: "exclamationmark.triangle")
-                        .accessibilityIdentifier("music.history-error")
-                }
-            } header: {
-                Text(pevLocalizedText("music.history.title"))
-            } footer: {
-                Text(historyPolicy.explanation + " " + pevLocalizedText("music.history.privacy"))
-            }
-        }
-        .formStyle(.grouped)
-        .navigationTitle(pevLocalizedText("music.settings.title"))
-        .accessibilityIdentifier("music.settings.screen")
-    }
-}
-
-private struct MusicExpandedHero: View {
-    let nowPlaying: MusicNowPlaying
-
-    var body: some View {
-        HStack(spacing: 16) {
-            artworkView
-            VStack(alignment: .leading, spacing: 5) {
-                Text(nowPlaying.providerName.uppercased())
-                    .font(.caption.weight(.bold))
-                    .foregroundStyle(PevDashboardColors.yellow)
-                    .tracking(0.8)
-                Text(nowPlaying.title)
-                    .font(.title3.weight(.bold))
-                    .lineLimit(2)
-                Text(nowPlaying.artist)
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-                if let status = nowPlaying.statusText {
-                    Text(status)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-            }
-            Spacer(minLength: 0)
-        }
-        .padding(16)
-        .background(PevDashboardColors.yellow.opacity(0.10), in: RoundedRectangle(cornerRadius: 20))
-    }
-
-    @ViewBuilder
-    private var artworkView: some View {
-#if canImport(UIKit) && os(iOS)
-        if let data = nowPlaying.artwork?.data, let image = UIImage(data: data) {
-            Image(uiImage: image)
-                .resizable()
-                .scaledToFill()
-                .frame(width: 84, height: 84)
-                .clipShape(RoundedRectangle(cornerRadius: 16))
-                .accessibilityLabel(nowPlaying.artworkAccessibilityLabel)
-        } else {
-            MusicArtworkPlaceholder()
-        }
-#elseif canImport(AppKit)
-        if let data = nowPlaying.artwork?.data, let image = NSImage(data: data) {
-            Image(nsImage: image)
-                .resizable()
-                .scaledToFill()
-                .frame(width: 84, height: 84)
-                .clipShape(RoundedRectangle(cornerRadius: 16))
-                .accessibilityLabel(nowPlaying.artworkAccessibilityLabel)
-        } else {
-            MusicArtworkPlaceholder()
-        }
-#else
-        MusicArtworkPlaceholder()
-#endif
-    }
-}
-
-private struct MusicArtworkPlaceholder: View {
-    var body: some View {
-        Image(systemName: "music.note")
-            .font(.largeTitle)
-            .foregroundStyle(PevDashboardColors.yellow)
-            .frame(width: 84, height: 84)
-            .background(PevDashboardColors.yellow.opacity(0.16), in: RoundedRectangle(cornerRadius: 16))
-            .accessibilityHidden(true)
-    }
-}
-
-private struct MusicHistoryPolicyLabel: View {
-    let policy: MobileMusicHistoryPolicyDto
-
-    var body: some View {
-        Text(policy.title)
-            .accessibilityIdentifier("music.history-policy.\(policy.musicAccessibilityIdentifier)")
-    }
-}
-
-/// Shared Ride/Map composition for the compact player.
-public struct MusicCompactPlayerInset: ViewModifier {
-    public let nowPlaying: MusicNowPlaying?
-    public let timeline: [MobileMusicRideEventDto]
-    public let isHidden: Bool
-    public let onCommand: (MobileMusicCommandDto) -> Void
-    public let onOpenSettings: () -> Void
-    public let onDismiss: () -> Void
-    public let onRestore: () -> Void
-
-    public func body(content: Content) -> some View {
-        content.safeAreaInset(edge: .bottom, spacing: 8) {
-            if let nowPlaying {
-                MusicCompactPlayer(
-                    nowPlaying: nowPlaying,
-                    timeline: timeline,
-                    onCommand: onCommand,
-                    onOpenSettings: onOpenSettings,
-                    onDismiss: onDismiss
-                )
-                .padding(.horizontal, 12)
-            } else if isHidden {
-                Button(action: onRestore) {
-                    Label(
-                        pevLocalizedText("music.restore"),
-                        systemImage: "music.note"
-                    )
-                }
-                .buttonStyle(.bordered)
-                .accessibilityIdentifier("music.restore")
-            } else {
-                Button(action: onOpenSettings) {
-                    Label(pevLocalizedText("music.settings.open"), systemImage: "gearshape")
-                }
-                .buttonStyle(.bordered)
-                .tint(PevDashboardColors.yellow)
-                .accessibilityIdentifier("music.open-settings")
-            }
-        }
-    }
-}
-
-public extension View {
-    func musicCompactPlayer(
-        nowPlaying: MusicNowPlaying?,
-        timeline: [MobileMusicRideEventDto] = [],
-        isHidden: Bool,
-        onCommand: @escaping (MobileMusicCommandDto) -> Void,
-        onOpenSettings: @escaping () -> Void,
-        onDismiss: @escaping () -> Void,
-        onRestore: @escaping () -> Void
-    ) -> some View {
-        modifier(MusicCompactPlayerInset(
-            nowPlaying: nowPlaying,
-            timeline: timeline,
-            isHidden: isHidden,
-            onCommand: onCommand,
-            onOpenSettings: onOpenSettings,
-            onDismiss: onDismiss,
-            onRestore: onRestore
-        ))
-    }
-}
-
-#if canImport(MediaPlayer) && os(iOS)
-import MediaPlayer
-
-/// Apple Music's system-player bridge. MusicKit owns transport; MediaPlayer is
-/// retained only for the system now-playing metadata/artwork surface. iOS does
-/// not provide a system PCM tap for another app's playback.
-@MainActor
-public final class AppleMusicProviderAdapter {
-    public static let providerURL = URL(string: "https://music.apple.com/")!
-    private static let artworkSize = CGSize(width: 256, height: 256)
-    private let player = MPMusicPlayerController.systemMusicPlayer
-#if canImport(MusicKit) && os(iOS)
-    private let systemPlayer = SystemMusicPlayer.shared
-#endif
-    private var notificationTokens = [NSObjectProtocol]()
-    private var artworkCache = MusicArtworkCache()
-
-    public init() {}
-
-    isolated deinit {
-        let center = NotificationCenter.default
-        notificationTokens.forEach(center.removeObserver)
-        player.endGeneratingPlaybackNotifications()
-    }
-
-    /// Starts the system-player callbacks used to refresh bounded metadata.
-    /// Polling remains the fallback for position and lifecycle reconciliation.
-    public func startMonitoring(onChange: @escaping @MainActor () -> Void) {
-        stopMonitoring()
-        player.beginGeneratingPlaybackNotifications()
-        let center = NotificationCenter.default
-        let names: [Notification.Name] = [
-            .MPMusicPlayerControllerPlaybackStateDidChange,
-            .MPMusicPlayerControllerNowPlayingItemDidChange,
-        ]
-        notificationTokens = names.map { name in
-            center.addObserver(forName: name, object: player, queue: .main) { _ in
-                Task { @MainActor in onChange() }
-            }
-        }
-    }
-
-    public func stopMonitoring() {
-        let center = NotificationCenter.default
-        notificationTokens.forEach(center.removeObserver)
-        notificationTokens.removeAll(keepingCapacity: true)
-        player.endGeneratingPlaybackNotifications()
-    }
-
-    public func requestAuthorization(allowPrompt: Bool = true) async -> Bool {
-#if canImport(MusicKit) && os(iOS)
-        guard allowPrompt else { return MusicAuthorization.currentStatus == .authorized }
-        return await MusicAuthorization.request() == .authorized
-#else
-        guard allowPrompt else { return MPMediaLibrary.authorizationStatus() == .authorized }
-        return await withCheckedContinuation { continuation in
-            MPMediaLibrary.requestAuthorization { status in
-                continuation.resume(returning: status == .authorized)
-            }
-        }
-#endif
-    }
-
-    public func unauthorizedSnapshot(observedAtMs: UInt64) -> MobileMusicSnapshotDto {
-        MobileMusicSnapshotDto(
-            provider: .appleMusic,
-            sessionId: "system-music-player",
-            state: .unauthorized,
-            item: nil,
-            positionMilliseconds: nil,
-            durationMilliseconds: nil,
-            observedAtMs: observedAtMs,
-            capabilities: MobileMusicCapabilitiesDto(
-                previous: false,
-                play: false,
-                pause: false,
-                next: false,
-                openProvider: true
-            )
-        )
-    }
-
-    @MainActor
-    public func perform(_ command: MobileMusicCommandDto) async -> MusicCommandOutcome {
-        switch command {
-        case .previous:
-#if canImport(MusicKit) && os(iOS)
-            do {
-                try await systemPlayer.skipToPreviousEntry()
-            } catch {
-                return .failed
-            }
-#else
-            player.skipToPreviousItem()
-#endif
-        case .play:
-#if canImport(MusicKit) && os(iOS)
-            do {
-                try await systemPlayer.play()
-            } catch {
-                return .failed
-            }
-#else
-            player.play()
-#endif
-        case .pause:
-#if canImport(MusicKit) && os(iOS)
-            systemPlayer.pause()
-#else
-            player.pause()
-#endif
-        case .next:
-#if canImport(MusicKit) && os(iOS)
-            do {
-                try await systemPlayer.skipToNextEntry()
-            } catch {
-                return .failed
-            }
-#else
-            player.skipToNextItem()
-#endif
-        case .openProvider:
-#if canImport(UIKit) && os(iOS)
-            guard UIApplication.shared.canOpenURL(Self.providerURL) else { return .unavailable }
-            guard await UIApplication.shared.open(Self.providerURL) else { return .failed }
-#else
-            return .unavailable
-#endif
-        }
-        return .accepted
-    }
-
-    public func snapshot(observedAtMs: UInt64) -> MobileMusicSnapshotDto {
-        let item = player.nowPlayingItem.map {
-            MobileMusicItemDto(
-                identifier: appleMusicIdentifier(for: $0),
-                title: $0.title,
-                artist: $0.artist
-            )
-        }
-        let state: MobileMusicPlaybackStateDto = switch player.playbackState {
-        case .playing: .playing
-        case .paused: .paused
-        case .interrupted: .interrupted
-        case .stopped: .stopped
-        default: .unavailable
-        }
-        let position = MusicTimeConversion.milliseconds(player.currentPlaybackTime)
-        let duration = player.nowPlayingItem.flatMap {
-            MusicTimeConversion.milliseconds($0.playbackDuration)
-        }
-        return MobileMusicSnapshotDto(
-            provider: .appleMusic,
-            sessionId: "system-music-player",
-            state: state,
-            item: item,
-            positionMilliseconds: position,
-            durationMilliseconds: duration,
-            observedAtMs: observedAtMs,
-            capabilities: MobileMusicCapabilitiesDto(
-                previous: item != nil,
-                play: state == .paused || state == .stopped,
-                pause: state == .playing,
-                next: item != nil,
-                openProvider: true
-            )
-        )
-    }
-
-    /// Returns the same bounded provider snapshot plus permitted artwork for
-    /// SwiftUI. The artwork bytes never enter the Rust ride contract.
-    public func observation(observedAtMs: UInt64) -> MusicProviderObservation {
-        MusicProviderObservation(
-            snapshot: snapshot(observedAtMs: observedAtMs),
-            artworkData: artworkData()
-        )
-    }
-
-    private func artworkData() -> Data? {
-        artworkCache.artwork(for: player.nowPlayingItem.map(appleMusicIdentifier)) {
-            loadArtwork()
-        }?.data
-    }
-
-    private func loadArtwork() -> MusicArtwork? {
-#if canImport(UIKit) && os(iOS)
-        guard let artwork = player.nowPlayingItem?.artwork,
-              let image = artwork.image(at: Self.artworkSize),
-              let data = image.jpegData(compressionQuality: 0.8)
-        else {
-            return nil
-        }
-        return MusicArtwork(data: data)
-#else
-        nil
-#endif
-    }
-
-    private func appleMusicIdentifier(for item: MPMediaItem) -> String {
-        let storeID = item.playbackStoreID
-        if !storeID.isEmpty, storeID != "0" {
-            return "apple:catalog:\(storeID)"
-        }
-        return "apple:local:\(item.persistentID)"
-    }
-}
-#endif

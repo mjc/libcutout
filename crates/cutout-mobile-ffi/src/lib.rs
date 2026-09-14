@@ -112,14 +112,8 @@ use uuid::Uuid;
 
 uniffi::setup_scaffolding!();
 
-mod music_callback_epoch;
-mod music_connection;
-mod music_monitor;
-mod music_player_request;
-pub use music_callback_epoch::*;
-pub use music_connection::*;
-pub use music_monitor::*;
-pub use music_player_request::*;
+mod music_provider_lifecycle;
+pub use music_provider_lifecycle::*;
 
 /// Mobile discovery candidate support state.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Enum)]
@@ -6570,6 +6564,22 @@ impl From<MobileMusicPlaybackStateDto> for CoreMusicPlaybackState {
     }
 }
 
+impl From<CoreMusicPlaybackState> for MobileMusicPlaybackStateDto {
+    fn from(state: CoreMusicPlaybackState) -> Self {
+        match state {
+            CoreMusicPlaybackState::Playing => Self::Playing,
+            CoreMusicPlaybackState::Paused => Self::Paused,
+            CoreMusicPlaybackState::Stopped => Self::Stopped,
+            CoreMusicPlaybackState::Buffering => Self::Buffering,
+            CoreMusicPlaybackState::Interrupted => Self::Interrupted,
+            CoreMusicPlaybackState::Unauthorized => Self::Unauthorized,
+            CoreMusicPlaybackState::Unavailable => Self::Unavailable,
+            CoreMusicPlaybackState::Disconnected => Self::Disconnected,
+            CoreMusicPlaybackState::Stale => Self::Stale,
+        }
+    }
+}
+
 impl From<MobileMusicCommandDto> for CoreMusicCommand {
     fn from(command: MobileMusicCommandDto) -> Self {
         match command {
@@ -6636,6 +6646,19 @@ impl From<MobileMusicRideEventKindDto> for CoreMusicRideEventKind {
     }
 }
 
+impl From<CoreMusicRideEventKind> for MobileMusicRideEventKindDto {
+    fn from(kind: CoreMusicRideEventKind) -> Self {
+        match kind {
+            CoreMusicRideEventKind::Play => Self::Play,
+            CoreMusicRideEventKind::Pause => Self::Pause,
+            CoreMusicRideEventKind::Skip => Self::Skip,
+            CoreMusicRideEventKind::ItemChanged => Self::ItemChanged,
+            CoreMusicRideEventKind::Stopped => Self::Stopped,
+            CoreMusicRideEventKind::ProviderDisconnected => Self::ProviderDisconnected,
+        }
+    }
+}
+
 impl From<CoreMusicTimelineOutcome> for MobileMusicTimelineOutcomeDto {
     fn from(outcome: CoreMusicTimelineOutcome) -> Self {
         match outcome {
@@ -6672,6 +6695,32 @@ impl TryFrom<MobileMusicSnapshotDto> for CoreMusicSnapshot {
             snapshot.capabilities.into(),
         )
         .map_err(|error| error.to_string())
+    }
+}
+
+impl From<&CoreMusicSnapshot> for MobileMusicSnapshotDto {
+    fn from(snapshot: &CoreMusicSnapshot) -> Self {
+        let capabilities = snapshot.capabilities();
+        Self {
+            provider: snapshot.provider().into(),
+            session_id: snapshot.session_id().as_str().to_owned(),
+            state: snapshot.state().into(),
+            item: snapshot.item().map(|item| MobileMusicItemDto {
+                identifier: item.identifier().as_str().to_owned(),
+                title: item.title().map(str::to_owned),
+                artist: item.artist().map(str::to_owned),
+            }),
+            position_milliseconds: snapshot.position_milliseconds(),
+            duration_milliseconds: snapshot.duration_milliseconds(),
+            observed_at_ms: snapshot.observed_at().as_milliseconds(),
+            capabilities: MobileMusicCapabilitiesDto {
+                previous: capabilities.supports(CoreMusicCommand::Previous),
+                play: capabilities.supports(CoreMusicCommand::Play),
+                pause: capabilities.supports(CoreMusicCommand::Pause),
+                next: capabilities.supports(CoreMusicCommand::Next),
+                open_provider: capabilities.supports(CoreMusicCommand::OpenProvider),
+            },
+        }
     }
 }
 
@@ -7164,15 +7213,6 @@ pub struct MobileRideMapLimitsDto {
     pub history_context_total_point_budget: u32,
     /// Duration covered by the recent-history filter.
     pub history_recent_window_milliseconds: u64,
-}
-
-/// Rust-owned byte bounds for provider music metadata.
-#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Record)]
-pub struct MobileMusicLimitsDto {
-    /// Maximum provider/session/item identifier bytes.
-    pub identifier_max_bytes: u32,
-    /// Maximum title or artist bytes.
-    pub display_text_max_bytes: u32,
 }
 
 /// Inputs for a bounded history overview context projection.
@@ -8259,75 +8299,6 @@ pub fn mobile_ride_map_limits() -> MobileRideMapLimitsDto {
     }
 }
 
-/// Returns the Rust-owned byte bounds used by mobile music validation.
-#[uniffi::export]
-#[must_use]
-pub fn mobile_music_limits() -> MobileMusicLimitsDto {
-    MobileMusicLimitsDto {
-        identifier_max_bytes: u32::try_from(cutout_music::MAX_MUSIC_IDENTIFIER_BYTES)
-            .unwrap_or(u32::MAX),
-        display_text_max_bytes: u32::try_from(cutout_music::MAX_MUSIC_DISPLAY_TEXT_BYTES)
-            .unwrap_or(u32::MAX),
-    }
-}
-
-/// Validates one provider observation using the portable Rust music contract.
-///
-/// Platform adapters may use this before updating presentation state so malformed
-/// metadata never enters the UI or capture path.
-#[uniffi::export]
-///
-/// # Errors
-///
-/// Returns [`MobileRideMapCoreErrorDto::InvalidMusicInput`] when the observation is malformed.
-pub fn validate_music_snapshot(
-    snapshot: MobileMusicSnapshotDto,
-) -> Result<(), MobileRideMapCoreErrorDto> {
-    CoreMusicSnapshot::try_from(snapshot)
-        .map(|_| ())
-        .map_err(MobileRideMapCoreErrorDto::InvalidMusicInput)
-}
-
-/// Normalizes optional display fields and validates one provider observation.
-#[uniffi::export]
-///
-/// # Errors
-///
-/// Returns [`MobileRideMapCoreErrorDto::InvalidMusicInput`] when the observation is malformed.
-pub fn normalize_music_snapshot(
-    mut snapshot: MobileMusicSnapshotDto,
-) -> Result<MobileMusicSnapshotDto, MobileRideMapCoreErrorDto> {
-    if let Some(item) = snapshot.item.as_mut() {
-        if item
-            .title
-            .as_deref()
-            .is_some_and(|value| value.trim().is_empty())
-        {
-            item.title = None;
-        }
-        if item
-            .artist
-            .as_deref()
-            .is_some_and(|value| value.trim().is_empty())
-        {
-            item.artist = None;
-        }
-    }
-    validate_music_snapshot(snapshot.clone())?;
-    Ok(snapshot)
-}
-
-/// Applies the Rust-owned monotonic observation watermark used by provider
-/// adapters before they update presentation or submit a ride transition.
-#[uniffi::export]
-#[must_use]
-pub fn accept_music_snapshot(
-    previous_observed_at_ms: Option<u64>,
-    current_observed_at_ms: u64,
-) -> bool {
-    previous_observed_at_ms.is_none_or(|previous| current_observed_at_ms > previous)
-}
-
 /// Applies the Rust-owned PEVCAP music retention filter to one provider item.
 #[uniffi::export]
 #[must_use]
@@ -8344,81 +8315,6 @@ pub fn pevcap_music_track_identifier(
     } else {
         Some(identifier)
     }
-}
-
-/// Classifies a validated provider observation against the last committed one.
-///
-/// The decision is portable domain logic; Swift only supplies observations and
-/// the fact that a skip command is awaiting provider confirmation.
-#[uniffi::export]
-#[allow(
-    clippy::needless_pass_by_value,
-    reason = "UniFFI exports own snapshot values at the FFI boundary."
-)]
-///
-/// # Errors
-///
-/// Returns [`MobileRideMapCoreErrorDto::InvalidMusicInput`] when either snapshot is malformed.
-pub fn music_transition_kind(
-    previous: Option<MobileMusicSnapshotDto>,
-    current: MobileMusicSnapshotDto,
-    skip_hint: bool,
-) -> Result<Option<MobileMusicRideEventKindDto>, MobileRideMapCoreErrorDto> {
-    validate_music_snapshot(current.clone())?;
-    let Some(previous) = previous else {
-        return Ok(current
-            .item
-            .as_ref()
-            .map(|_| MobileMusicRideEventKindDto::ItemChanged));
-    };
-    validate_music_snapshot(previous.clone())?;
-    if current.state == MobileMusicPlaybackStateDto::Disconnected {
-        return Ok(
-            (previous.state != MobileMusicPlaybackStateDto::Disconnected)
-                .then_some(MobileMusicRideEventKindDto::ProviderDisconnected),
-        );
-    }
-    if matches!(
-        current.state,
-        MobileMusicPlaybackStateDto::Unauthorized
-            | MobileMusicPlaybackStateDto::Unavailable
-            | MobileMusicPlaybackStateDto::Disconnected
-            | MobileMusicPlaybackStateDto::Stale
-    ) {
-        return Ok(None);
-    }
-    if previous.provider != current.provider {
-        return Ok(Some(MobileMusicRideEventKindDto::ItemChanged));
-    }
-    if current.state == MobileMusicPlaybackStateDto::Stopped
-        && previous.state != MobileMusicPlaybackStateDto::Stopped
-    {
-        return Ok(Some(MobileMusicRideEventKindDto::Stopped));
-    }
-    if previous.item.as_ref().map(|item| &item.identifier)
-        != current.item.as_ref().map(|item| &item.identifier)
-    {
-        return Ok(Some(
-            if skip_hint && previous.item.is_some() && current.item.is_some() {
-                MobileMusicRideEventKindDto::Skip
-            } else {
-                MobileMusicRideEventKindDto::ItemChanged
-            },
-        ));
-    }
-    Ok(match (previous.state, current.state) {
-        (_, MobileMusicPlaybackStateDto::Playing)
-            if previous.state != MobileMusicPlaybackStateDto::Playing =>
-        {
-            Some(MobileMusicRideEventKindDto::Play)
-        }
-        (_, MobileMusicPlaybackStateDto::Paused)
-            if previous.state != MobileMusicPlaybackStateDto::Paused =>
-        {
-            Some(MobileMusicRideEventKindDto::Pause)
-        }
-        _ => None,
-    })
 }
 
 /// Acquires the process-wide Rust-owned ride database service for `path`.
@@ -24357,14 +24253,6 @@ mod tests {
                 open_provider: true,
             },
         }
-    }
-
-    #[test]
-    fn music_observation_watermark_accepts_only_newer_samples() {
-        assert!(accept_music_snapshot(None, 1));
-        assert!(accept_music_snapshot(Some(1), 2));
-        assert!(!accept_music_snapshot(Some(2), 2));
-        assert!(!accept_music_snapshot(Some(2), 1));
     }
 
     #[test]

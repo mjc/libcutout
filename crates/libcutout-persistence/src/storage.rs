@@ -5958,13 +5958,7 @@ fn decode_music_event(row: &rusqlite::Row<'_>) -> Result<MusicRideEvent, rusqlit
     )
     .map_err(|error| {
         let column = match error {
-            MusicValidationError::Blank(field) | MusicValidationError::TooLong(field) => {
-                match field {
-                    "title" => 2,
-                    "artist" => 3,
-                    _ => 1,
-                }
-            }
+            MusicValidationError::BlankIdentifier | MusicValidationError::IdentifierTooLong => 1,
             MusicValidationError::PositionAfterDuration => 5,
             MusicValidationError::ObservationAfterEvent => 8,
             MusicValidationError::EventKindStateMismatch => 4,

@@ -1,8 +1,121 @@
 import XCTest
+import CoreGraphics
 import CutoutMobileFFI
 @testable import CutoutMobile
 
 final class MusicIntegrationTests: XCTestCase {
+    @MainActor
+    private func makeCoordinator(
+        rideMapState: MobileRideMapState?
+    ) -> MusicIntegrationCoordinator {
+        MusicIntegrationCoordinator(
+            rideMapState: rideMapState,
+            lifecycle: MobileMusicProviderLifecycle()
+        )
+    }
+
+    func testMusicCommandFeedbackPresentsEveryNonAcceptedOutcome() {
+        XCTAssertNil(MusicCommandFeedback(requestID: .init(value: 1), outcome: .accepted).messageKey)
+        XCTAssertEqual(
+            MusicCommandFeedback(requestID: .init(value: 2), outcome: .refused).messageKey,
+            "music.command.refused"
+        )
+        XCTAssertEqual(
+            MusicCommandFeedback(requestID: .init(value: 3), outcome: .failed).messageKey,
+            "music.command.failed"
+        )
+        XCTAssertEqual(
+            MusicCommandFeedback(requestID: .init(value: 4), outcome: .unavailable).messageKey,
+            "music.command.unavailable"
+        )
+    }
+
+    @MainActor
+    func testOlderMusicCommandTaskCannotClearNewerTask() {
+        let slot = MusicCommandTaskSlot()
+        let firstID = slot.reserve()
+        let firstTask = Task {}
+        slot.install(firstTask, for: firstID)
+
+        let secondID = slot.reserve()
+        let secondTask = Task {}
+        slot.install(secondTask, for: secondID)
+
+        slot.finish(firstID)
+        XCTAssertEqual(slot.currentID, secondID)
+
+        slot.finish(secondID)
+        XCTAssertNil(slot.currentID)
+    }
+
+    @MainActor
+    func testProviderTransportCompletesMissingDelayedAndDuplicateCallbacksOnce() async throws {
+        let lifecycle = MobileMusicProviderLifecycle()
+        let coordinator = MusicTransportCoordinator(lifecycle: lifecycle)
+        let provider = try! XCTUnwrap(lifecycle.beginProviderSession())
+        var callbacks = [(MobileMusicTransportRequestId, MusicCommandOutcome)]()
+
+        let first = try XCTUnwrap(lifecycle.beginTransportEffect(
+            owner: .provider(providerGeneration: provider),
+            command: .play,
+            nowMs: 1_000
+        ))
+        XCTAssertTrue(coordinator.register(
+            providerGeneration: provider,
+            effect: first,
+            completion: { callbacks.append(($0, $1)) }
+        ))
+        XCTAssertNil(lifecycle.beginTransportEffect(
+            owner: .provider(providerGeneration: provider),
+            command: .play,
+            nowMs: 1_001
+        ))
+        coordinator.expire(providerGeneration: provider, requestID: first.id, nowMs: 10_999)
+        XCTAssertTrue(callbacks.isEmpty)
+        coordinator.expire(providerGeneration: provider, requestID: first.id, nowMs: 11_000)
+        coordinator.finish(providerGeneration: provider, requestID: first.id, accepted: true)
+        coordinator.finish(providerGeneration: provider, requestID: first.id, accepted: false)
+        XCTAssertEqual(callbacks.map(\.1), [.failed])
+
+        let second = try XCTUnwrap(lifecycle.beginTransportEffect(
+            owner: .provider(providerGeneration: provider),
+            command: .play,
+            nowMs: 11_001
+        ))
+        XCTAssertTrue(coordinator.register(
+            providerGeneration: provider,
+            effect: second,
+            completion: { callbacks.append(($0, $1)) }
+        ))
+        coordinator.finish(providerGeneration: provider, requestID: second.id, accepted: true)
+        coordinator.finish(providerGeneration: provider, requestID: second.id, accepted: false)
+        XCTAssertEqual(callbacks.map(\.1), [.failed, .accepted])
+    }
+
+    @MainActor
+    func testProviderTransportDisconnectResumesPendingCommandAndRejectsLateCallback() throws {
+        let lifecycle = MobileMusicProviderLifecycle()
+        let coordinator = MusicTransportCoordinator(lifecycle: lifecycle)
+        let provider = try! XCTUnwrap(lifecycle.beginProviderSession())
+        var callbacks = [(MobileMusicTransportRequestId, MusicCommandOutcome)]()
+        let request = try XCTUnwrap(lifecycle.beginTransportEffect(
+            owner: .provider(providerGeneration: provider),
+            command: .play,
+            nowMs: 100
+        ))
+        XCTAssertTrue(coordinator.register(
+            providerGeneration: provider,
+            effect: request,
+            completion: { callbacks.append(($0, $1)) }
+        ))
+
+        coordinator.apply(lifecycle.retireProviderSession(id: provider))
+        coordinator.finish(providerGeneration: provider, requestID: request.id, accepted: true)
+
+        XCTAssertEqual(callbacks.map(\.0), [request.id])
+        XCTAssertEqual(callbacks.map(\.1), [.unavailable])
+    }
+
     func testSpotifyCallbackAcceptsObservedRootSlashWithoutAcceptingAnotherPath() throws {
         let configured = try XCTUnwrap(URL(string: "cutout-spotify://spotify-login-callback"))
         let returned = try XCTUnwrap(URL(string: "cutout-spotify://spotify-login-callback/#access_token=test"))
@@ -16,7 +129,7 @@ final class MusicIntegrationTests: XCTestCase {
 
     @MainActor
     func testSpotifyEpisodeWithoutArtistStillUpdatesPlayingTitle() throws {
-        let coordinator = MusicIntegrationCoordinator(rideMapState: nil)
+        let coordinator = makeCoordinator(rideMapState: nil)
         let snapshot = MobileMusicSnapshotDto(
             provider: .spotify,
             sessionId: "spotify-app-remote",
@@ -97,17 +210,18 @@ final class MusicIntegrationTests: XCTestCase {
     }
 
     func testPlayerStateFreshnessExpiresOnlyAfterRustObservationDeadline() {
-        let request = MobileMusicPlayerRequest()
+        let lifecycle = MobileMusicProviderLifecycle()
 
-        XCTAssertFalse(request.isStale(nowMs: 30_000))
-        request.markObserved(nowMs: 1_000)
-        XCTAssertFalse(request.isStale(nowMs: 31_000))
-        XCTAssertTrue(request.isStale(nowMs: 31_001))
+        XCTAssertFalse(lifecycle.isPlayerStateStale(nowMs: 30_000))
+        lifecycle.markPlayerStateObserved(nowMs: 1_000)
+        XCTAssertFalse(lifecycle.isPlayerStateStale(nowMs: 31_000))
+        XCTAssertTrue(lifecycle.isPlayerStateStale(nowMs: 31_001))
 
-        request.markObserved(nowMs: 31_001)
-        XCTAssertFalse(request.isStale(nowMs: 61_001))
-        request.reset()
-        XCTAssertFalse(request.isStale(nowMs: UInt64.max))
+        lifecycle.markPlayerStateObserved(nowMs: 31_001)
+        XCTAssertFalse(lifecycle.isPlayerStateStale(nowMs: 61_001))
+        _ = lifecycle.beginProviderSession()
+        _ = lifecycle.suspend()
+        XCTAssertFalse(lifecycle.isPlayerStateStale(nowMs: UInt64.max))
     }
 
     @MainActor
@@ -166,76 +280,13 @@ final class MusicIntegrationTests: XCTestCase {
         XCTAssertFalse(store.isEnabled)
     }
 
-    func testTransitionHintRemainsPendingUntilTheItemChanges() {
-        var tracker = MusicTransitionHintTracker()
-        tracker.issue(.skip)
-
-        let unchanged = nowPlaying(trackID: "track-1")
-        XCTAssertEqual(tracker.pendingHint, .skip)
-        XCTAssertEqual(tracker.hint, .skip)
-        tracker.resolve(previous: unchanged, current: unchanged, appliedHint: .skip)
-        XCTAssertEqual(tracker.pendingHint, .skip)
-
-        let changed = nowPlaying(trackID: "track-2")
-        tracker.resolve(previous: unchanged, current: changed, appliedHint: .skip)
-        XCTAssertNil(tracker.pendingHint)
-    }
-
-    func testTransitionHintsQueueAndFailedCommandClearsOnlyItsOwnToken() {
-        var tracker = MusicTransitionHintTracker()
-        let first = tracker.issue(.skip)
-        _ = tracker.issue(.skip)
-
-        tracker.clear(id: first)
-        XCTAssertEqual(tracker.pendingHint, .skip)
-
-        let previous = nowPlaying(trackID: "track-1")
-        tracker.resolve(previous: previous, current: nowPlaying(trackID: "track-2"), appliedHint: .skip)
-        XCTAssertNil(tracker.pendingHint)
-    }
-
-    func testClearingNonFrontHintDoesNotRefreshFrontHintAge() {
-        var tracker = MusicTransitionHintTracker()
-        _ = tracker.issue(.skip)
-        let second = tracker.issue(.skip)
-        let unchanged = nowPlaying(trackID: "track-1")
-
-        for _ in 0..<4 {
-            tracker.resolve(previous: unchanged, current: unchanged, appliedHint: .skip)
-        }
-        tracker.clear(id: second)
-        tracker.resolve(previous: unchanged, current: unchanged, appliedHint: .skip)
-
-        XCTAssertNil(tracker.pendingHint)
-    }
-
-    func testTransitionHintExpiresWhenProviderNeverChangesTheItem() {
-        var tracker = MusicTransitionHintTracker()
-        tracker.issue(.skip, issuedAtMs: 1_000)
-
-        XCTAssertEqual(tracker.hint(atMonotonicMs: 6_000), .skip)
-        XCTAssertNil(tracker.hint(atMonotonicMs: 6_001))
-        XCTAssertNil(tracker.pendingHint)
-    }
-
-    func testTransitionHintExpiresAfterBoundedUnchangedObservations() {
-        var tracker = MusicTransitionHintTracker()
-        tracker.issue(.skip)
-
-        let unchanged = nowPlaying(trackID: "track-1")
-        for _ in 0..<5 {
-            tracker.resolve(previous: unchanged, current: unchanged, appliedHint: .skip)
-        }
-
-        XCTAssertNil(tracker.pendingHint)
-    }
-
     @MainActor
     func testProviderResetDropsCorrelationWithoutWritingAnEvent() throws {
         let state = MobileRideMapState()
         _ = try state.startGpsOnly(atMs: 1_000, lastConnectedVehicle: nil)
         try state.setMusicHistoryPolicy(.humanReadable)
-        let coordinator = MusicIntegrationCoordinator(rideMapState: state)
+        let lifecycle = MobileMusicProviderLifecycle()
+        let coordinator = MusicIntegrationCoordinator(rideMapState: state, lifecycle: lifecycle)
 
         let playing = MobileMusicSnapshotDto(
             provider: .appleMusic,
@@ -280,7 +331,7 @@ final class MusicIntegrationTests: XCTestCase {
     func testEnablingHistorySeedsTheCurrentTrackAfterDisabledObservation() throws {
         let state = MobileRideMapState()
         _ = try state.startGpsOnly(atMs: 1_000, lastConnectedVehicle: nil)
-        let coordinator = MusicIntegrationCoordinator(rideMapState: state)
+        let coordinator = makeCoordinator(rideMapState: state)
         let playing = MobileMusicSnapshotDto(
             provider: .appleMusic,
             sessionId: "apple",
@@ -317,82 +368,20 @@ final class MusicIntegrationTests: XCTestCase {
         XCTAssertEqual(coordinator.recordedEvents.count, 1)
     }
 
-    func testTransitionHintCanBeClearedWithoutIssuingAnEmptyCommand() {
-        var tracker = MusicTransitionHintTracker()
-        tracker.issue(.skip)
+    func testRustMusicMonitorLifecycleInvalidatesOlderEffects() throws {
+        let lifecycle = MobileMusicProviderLifecycle()
+        lifecycle.requestMonitor(request: .observe)
+        let first = try XCTUnwrap(lifecycle.beginMonitor())
 
-        tracker.clear()
+        XCTAssertEqual(lifecycle.classifyMonitor(generation: first.generation), .current)
 
-        XCTAssertNil(tracker.pendingHint)
-    }
+        _ = lifecycle.suspend()
 
-    func testTransitionHintClearsWhenProviderLosesItsCurrentItem() {
-        var tracker = MusicTransitionHintTracker()
-        tracker.issue(.skip)
-
-        tracker.resolve(
-            previous: nowPlaying(trackID: "track-1"),
-            current: MusicNowPlaying(
-                provider: .appleMusic,
-                state: .stopped,
-                item: nil,
-                capabilities: .init(
-                    previous: false,
-                    play: true,
-                    pause: false,
-                    next: false,
-                    openProvider: true
-                )
-            ),
-            appliedHint: .skip
-        )
-
-        XCTAssertNil(tracker.pendingHint)
-    }
-
-    func testTransitionHintClearsOnTerminalStateBeforeLaterItemChange() {
-        var tracker = MusicTransitionHintTracker()
-        tracker.issue(.skip)
-
-        let previous = nowPlaying(trackID: "track-1")
-        tracker.resolve(
-            previous: previous,
-            current: MusicNowPlaying(
-                provider: .appleMusic,
-                state: .stopped,
-                item: previous.item,
-                capabilities: .init(
-                    previous: false,
-                    play: true,
-                    pause: false,
-                    next: false,
-                    openProvider: true
-                )
-            ),
-            appliedHint: .skip
-        )
-        XCTAssertNil(tracker.pendingHint)
-
-        tracker.resolve(
-            previous: previous,
-            current: nowPlaying(trackID: "track-2"),
-            appliedHint: .skip
-        )
-        XCTAssertNil(tracker.pendingHint)
-    }
-
-    func testMusicMonitorGenerationInvalidatesOlderTasks() {
-        var generation = MusicMonitorGeneration()
-        let first = generation.begin()
-
-        XCTAssertTrue(generation.owns(first))
-
-        generation.invalidate()
-
-        XCTAssertFalse(generation.owns(first))
-        let second = generation.begin()
-        XCTAssertTrue(generation.owns(second))
-        XCTAssertFalse(generation.owns(first))
+        XCTAssertEqual(lifecycle.classifyMonitor(generation: first.generation), .stale)
+        _ = lifecycle.resume()
+        let second = try XCTUnwrap(lifecycle.beginMonitor())
+        XCTAssertEqual(lifecycle.classifyMonitor(generation: second.generation), .current)
+        XCTAssertEqual(lifecycle.classifyMonitor(generation: first.generation), .stale)
     }
 
     func testMusicAccessibilityAnnouncementsDeduplicateProjectedState() {
@@ -435,7 +424,7 @@ final class MusicIntegrationTests: XCTestCase {
     func testArtworkCacheReusesOnlyBoundedArtworkForTheSameItem() {
         var cache = MusicArtworkCache()
         var loadCount = 0
-        let artwork = MusicArtwork(data: Data([1, 2, 3]))
+        let artwork = testArtwork(gray: 0.25)
 
         let first = cache.artwork(for: "track-1") {
             loadCount += 1
@@ -461,8 +450,8 @@ final class MusicIntegrationTests: XCTestCase {
 
     func testArtworkCacheRejectsOldTrackAfterIdentityChanges() {
         var cache = MusicArtworkCache()
-        let first = MusicArtwork(data: Data([1, 2, 3]))!
-        let second = MusicArtwork(data: Data([4, 5, 6]))!
+        let first = testArtwork(gray: 0.25)
+        let second = testArtwork(gray: 0.75)
 
         cache.insert(first, for: "spotify:track:first")
         XCTAssertEqual(cache.cachedArtwork(for: "spotify:track:first"), first)
@@ -477,7 +466,7 @@ final class MusicIntegrationTests: XCTestCase {
     func testProviderArtworkReachesPresentationOnlyNowPlaying() throws {
         let rideMapState = MobileRideMapState()
         _ = try rideMapState.startGpsOnly(atMs: 1_000, lastConnectedVehicle: nil)
-        let coordinator = MusicIntegrationCoordinator(rideMapState: rideMapState)
+        let coordinator = makeCoordinator(rideMapState: rideMapState)
         try coordinator.setHistoryPolicy(.humanReadable)
         let snapshot = MobileMusicSnapshotDto(
             provider: .spotify,
@@ -489,17 +478,17 @@ final class MusicIntegrationTests: XCTestCase {
             observedAtMs: 1_100,
             capabilities: .init(previous: true, play: false, pause: true, next: true, openProvider: true)
         )
-        let artwork = Data([1, 2, 3])
+        let artwork = testArtwork(gray: 0.25)
 
         let firstOutcome = try coordinator.ingest(
-            observation: MusicProviderObservation(snapshot: snapshot, artworkData: artwork),
+            observation: MusicProviderObservation(snapshot: snapshot, artwork: artwork),
             wallClockAtMs: 1_700_000_000_000,
             clockUncertaintyMs: 1
         )
 
         XCTAssertEqual(firstOutcome, .recorded)
         XCTAssertEqual(coordinator.recordedEvents.count, 1)
-        XCTAssertEqual(coordinator.nowPlaying?.artwork?.data, artwork)
+        XCTAssertEqual(coordinator.nowPlaying?.artwork, artwork)
         let recordedEvents = coordinator.recordedEvents
 
         let updatedSnapshot = MobileMusicSnapshotDto(
@@ -512,17 +501,25 @@ final class MusicIntegrationTests: XCTestCase {
             observedAtMs: 1_200,
             capabilities: snapshot.capabilities
         )
-        let updatedArtwork = Data([4, 5, 6])
+        let updatedArtwork = testArtwork(gray: 0.75)
         let secondOutcome = try coordinator.ingest(
-            observation: MusicProviderObservation(snapshot: updatedSnapshot, artworkData: updatedArtwork),
+            observation: MusicProviderObservation(snapshot: updatedSnapshot, artwork: updatedArtwork),
             wallClockAtMs: 1_700_000_000_100,
             clockUncertaintyMs: 1
         )
 
         XCTAssertNil(secondOutcome)
-        XCTAssertEqual(coordinator.nowPlaying?.artwork?.data, updatedArtwork)
+        XCTAssertEqual(coordinator.nowPlaying?.artwork, updatedArtwork)
         XCTAssertEqual(coordinator.recordedEvents, recordedEvents)
         XCTAssertEqual(coordinator.recordedEvents.count, 1)
+    }
+
+    func testArtworkRejectsImagesLargerThanThePresentationBound() {
+        XCTAssertNil(
+            MusicArtwork(
+                image: testImage(width: MusicArtwork.maxPixelDimension + 1, gray: 0.5)
+            )
+        )
     }
 
     private func nowPlaying(trackID: String) -> MusicNowPlaying {
@@ -579,6 +576,33 @@ final class MusicIntegrationTests: XCTestCase {
         XCTAssertTrue(stale.availableTransportCommands.isEmpty)
     }
 
+    func testCachedObservationProjectsRequestedTimestampWithoutChangingState() {
+        let observation = MusicProviderObservation(
+            snapshot: .init(
+                provider: .appleMusic,
+                sessionId: "system-music-player",
+                state: .playing,
+                item: .init(identifier: "track-1", title: "Song", artist: "Artist"),
+                positionMilliseconds: nil,
+                durationMilliseconds: nil,
+                observedAtMs: 1_000,
+                capabilities: .init(
+                    previous: true,
+                    play: false,
+                    pause: true,
+                    next: true,
+                    openProvider: true
+                )
+            )
+        )
+
+        let projected = observation.observedAt(2_000)
+
+        XCTAssertEqual(projected.snapshot.observedAtMs, 2_000)
+        XCTAssertEqual(projected.snapshot.state, MobileMusicPlaybackStateDto.playing)
+        XCTAssertEqual(projected.snapshot.capabilities, observation.snapshot.capabilities)
+    }
+
     func testStaleStateRejectsRetainedSkipCapabilities() {
         let stale = MusicNowPlaying(
             provider: .spotify,
@@ -599,11 +623,12 @@ final class MusicIntegrationTests: XCTestCase {
     }
 
     @MainActor
-    func testCoordinatorRejectsMalformedExplicitRecordBeforeProjectingIt() throws {
+    func testCoordinatorTruncatesOversizedExplicitRecordBeforeProjectingIt() throws {
         let state = MobileRideMapState()
         _ = try state.startGpsOnly(atMs: 1_000, lastConnectedVehicle: nil)
         try state.setMusicHistoryPolicy(.humanReadable)
-        let coordinator = MusicIntegrationCoordinator(rideMapState: state)
+        let lifecycle = MobileMusicProviderLifecycle()
+        let coordinator = MusicIntegrationCoordinator(rideMapState: state, lifecycle: lifecycle)
         let malformed = MobileMusicSnapshotDto(
             provider: .appleMusic,
             sessionId: "session",
@@ -619,7 +644,7 @@ final class MusicIntegrationTests: XCTestCase {
             capabilities: .init(previous: true, play: false, pause: true, next: true, openProvider: true)
         )
 
-        XCTAssertThrowsError(
+        XCTAssertNoThrow(
             try coordinator.record(
                 snapshot: malformed,
                 kind: .itemChanged,
@@ -628,7 +653,8 @@ final class MusicIntegrationTests: XCTestCase {
                 clockUncertaintyMs: 5
             )
         )
-        XCTAssertNil(coordinator.nowPlaying)
+        XCTAssertEqual(coordinator.nowPlaying?.item?.identifier, "track-1")
+        XCTAssertEqual(coordinator.nowPlaying?.item?.title?.utf8.count, 512)
     }
 
     @MainActor
@@ -636,7 +662,7 @@ final class MusicIntegrationTests: XCTestCase {
         let state = MobileRideMapState()
         _ = try state.startGpsOnly(atMs: 1_000, lastConnectedVehicle: nil)
         try state.setMusicHistoryPolicy(.humanReadable)
-        let coordinator = MusicIntegrationCoordinator(rideMapState: state)
+        let coordinator = makeCoordinator(rideMapState: state)
         let invalid = MobileMusicSnapshotDto(
             provider: .appleMusic,
             sessionId: "session",
@@ -648,7 +674,7 @@ final class MusicIntegrationTests: XCTestCase {
             capabilities: .init(previous: true, play: false, pause: true, next: true, openProvider: true)
         )
 
-        XCTAssertNil(
+        XCTAssertThrowsError(
             try coordinator.ingest(
                 snapshot: invalid,
                 wallClockAtMs: 1_700_000_000_100,
@@ -659,11 +685,11 @@ final class MusicIntegrationTests: XCTestCase {
     }
 
     @MainActor
-    func testCoordinatorRejectsOversizedProviderMetadataBeforeProjectingIt() throws {
+    func testCoordinatorBoundsOversizedProviderMetadataBeforeProjectingIt() throws {
         let state = MobileRideMapState()
         _ = try state.startGpsOnly(atMs: 1_000, lastConnectedVehicle: nil)
         try state.setMusicHistoryPolicy(.humanReadable)
-        let coordinator = MusicIntegrationCoordinator(rideMapState: state)
+        let coordinator = makeCoordinator(rideMapState: state)
 
         let valid = MobileMusicSnapshotDto(
             provider: .appleMusic,
@@ -698,15 +724,16 @@ final class MusicIntegrationTests: XCTestCase {
             observedAtMs: 1_200,
             capabilities: valid.capabilities
         )
-        XCTAssertNil(
+        XCTAssertEqual(
             try coordinator.ingest(
                 snapshot: invalid,
                 wallClockAtMs: 1_700_000_000_200,
                 clockUncertaintyMs: 5
-            )
+            ),
+            .recorded
         )
-        XCTAssertEqual(coordinator.nowPlaying?.item?.identifier, "track-1")
-        XCTAssertEqual(coordinator.nowPlaying?.item?.title, "Song")
+        XCTAssertEqual(coordinator.nowPlaying?.item?.identifier, "track-2")
+        XCTAssertEqual(coordinator.nowPlaying?.item?.title?.utf8.count, 512)
     }
 
     @MainActor
@@ -714,7 +741,7 @@ final class MusicIntegrationTests: XCTestCase {
         let state = MobileRideMapState()
         _ = try state.startGpsOnly(atMs: 1_000, lastConnectedVehicle: nil)
         try state.setMusicHistoryPolicy(.humanReadable)
-        let coordinator = MusicIntegrationCoordinator(rideMapState: state)
+        let coordinator = makeCoordinator(rideMapState: state)
         let snapshot = MobileMusicSnapshotDto(
             provider: .appleMusic,
             sessionId: "session",
@@ -821,7 +848,9 @@ final class MusicIntegrationTests: XCTestCase {
         let state = MobileRideMapState()
         _ = try state.startGpsOnly(atMs: 1_000, lastConnectedVehicle: nil)
         try state.setMusicHistoryPolicy(.humanReadable)
-        let coordinator = MusicIntegrationCoordinator(rideMapState: state)
+        let lifecycle = MobileMusicProviderLifecycle()
+        let provider = try XCTUnwrap(lifecycle.beginProviderSession())
+        let coordinator = MusicIntegrationCoordinator(rideMapState: state, lifecycle: lifecycle)
 
         func observation(trackID: String, observedAtMs: UInt64) -> MusicProviderObservation {
             MusicProviderObservation(
@@ -856,15 +885,97 @@ final class MusicIntegrationTests: XCTestCase {
             ),
             .recorded
         )
+        let transport = try XCTUnwrap(lifecycle.beginTransportEffect(
+            owner: .provider(providerGeneration: provider),
+            command: .next,
+            nowMs: 1_150
+        ))
+        XCTAssertEqual(
+            lifecycle.finishTransport(
+                providerGeneration: provider,
+                requestId: transport.id,
+                outcome: .accepted
+            ).state,
+            .finished
+        )
         XCTAssertEqual(
             try coordinator.ingest(
                 observation: observation(trackID: "track-2", observedAtMs: 1_200),
                 wallClockAtMs: 1_700_000_000_200,
-                clockUncertaintyMs: 5,
-                transitionHint: .skip
+                clockUncertaintyMs: 5
             ),
             .recorded
         )
         XCTAssertEqual(coordinator.recordedEvents.map(\.kind), [.itemChanged, .skip])
     }
+
+    func testRustHistoryTransitionRemainsPendingUntilSwiftAcknowledgesIt() throws {
+        let lifecycle = MobileMusicProviderLifecycle()
+
+        func snapshot(trackID: String, observedAtMs: UInt64) -> MobileMusicSnapshotDto {
+            MobileMusicSnapshotDto(
+                provider: .appleMusic,
+                sessionId: "session",
+                state: .playing,
+                item: .init(identifier: trackID, title: trackID, artist: nil),
+                positionMilliseconds: nil,
+                durationMilliseconds: nil,
+                observedAtMs: observedAtMs,
+                capabilities: .init(
+                    previous: true,
+                    play: false,
+                    pause: true,
+                    next: true,
+                    openProvider: true
+                )
+            )
+        }
+
+        let first = try XCTUnwrap(lifecycle.observeMusic(
+            snapshot: snapshot(trackID: "first", observedAtMs: 100),
+            wallClockAtMs: 1_000,
+            clockUncertaintyMs: 5
+        )?.historyTransition)
+        XCTAssertEqual(lifecycle.acknowledgeHistoryTransition(id: first.id), .acknowledged)
+
+        let pending = try XCTUnwrap(lifecycle.observeMusic(
+            snapshot: snapshot(trackID: "second", observedAtMs: 200),
+            wallClockAtMs: 2_000,
+            clockUncertaintyMs: 5
+        )?.historyTransition)
+        let retry = try XCTUnwrap(lifecycle.observeMusic(
+            snapshot: snapshot(trackID: "second", observedAtMs: 300),
+            wallClockAtMs: 3_000,
+            clockUncertaintyMs: 5
+        )?.historyTransition)
+
+        XCTAssertEqual(retry.id, pending.id)
+        XCTAssertEqual(retry.snapshot.observedAtMs, 200)
+        XCTAssertEqual(retry.wallClockAtMs, 2_000)
+        XCTAssertEqual(lifecycle.acknowledgeHistoryTransition(id: retry.id), .acknowledged)
+        XCTAssertNil(try lifecycle.observeMusic(
+            snapshot: snapshot(trackID: "second", observedAtMs: 400),
+            wallClockAtMs: 4_000,
+            clockUncertaintyMs: 5
+        )?.historyTransition)
+    }
+}
+
+private func testArtwork(gray: CGFloat) -> MusicArtwork {
+    MusicArtwork(image: testImage(gray: gray))!
+}
+
+private func testImage(width: Int = 1, gray: CGFloat) -> CGImage {
+    let context = CGContext(
+        data: nil,
+        width: width,
+        height: 1,
+        bitsPerComponent: 8,
+        bytesPerRow: width * 4,
+        space: CGColorSpaceCreateDeviceRGB(),
+        bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+    )!
+    context.setFillColor(red: gray, green: gray, blue: gray, alpha: 1)
+    context.fill(CGRect(x: 0, y: 0, width: width, height: 1))
+    return context.makeImage()!
 }

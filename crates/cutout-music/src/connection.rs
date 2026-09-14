@@ -1,8 +1,12 @@
 //! Bounded connection attempts for a foreground music provider session.
 
+use cutout_core::{Duration, MonotonicTimestamp};
+
+use crate::ids::{ConnectionAttemptId, EstablishedConnectionId};
+
 const MAXIMUM_ATTEMPTS: u8 = 3;
-const RETRY_DELAY_MS: u64 = 2_000;
-const ATTEMPT_TIMEOUT_MS: u64 = 10_000;
+const RETRY_DELAY: Duration = Duration::from_milliseconds(2_000);
+const ATTEMPT_TIMEOUT: Duration = Duration::from_milliseconds(10_000);
 
 /// Result of applying a provider connection callback.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -13,156 +17,361 @@ pub enum MusicConnectionCallback {
     Stale,
 }
 
+/// Result of asking the bounded connection state to start recovery work.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ConnectionAttemptAdmission {
+    /// A new attempt was admitted with a fresh callback identity.
+    Started(ConnectionAttemptId),
+    /// An admitted attempt is still inside its callback deadline.
+    Pending,
+    /// A failed or disconnected attempt is still inside its retry delay.
+    WaitingToRetry,
+    /// The provider session consumed its bounded recovery budget.
+    Exhausted,
+}
+
 /// Retry admission, without credential ownership or platform SDK side effects.
 ///
 /// A new explicit monitoring session creates a fresh policy. Failures and
 /// disconnects retain the attempt budget; only a successful connection resets it.
 #[derive(Debug, Default)]
+enum MusicConnectionState {
+    #[default]
+    Idle,
+    Connecting {
+        attempt_id: ConnectionAttemptId,
+        started_at: MonotonicTimestamp,
+    },
+    Connected {
+        connection_id: EstablishedConnectionId,
+    },
+    WaitingToRetry {
+        not_before: MonotonicTimestamp,
+    },
+}
+
+/// Bounded portable connection state for one provider session.
+#[derive(Debug)]
 pub struct MusicConnection {
     attempts: u8,
-    in_flight_since: Option<u64>,
-    retry_at: u64,
-    next_attempt_id: u64,
-    active_attempt_id: Option<u64>,
-    connected_id: Option<u64>,
+    last_attempt_id: ConnectionAttemptId,
+    state: MusicConnectionState,
+}
+
+impl Default for MusicConnection {
+    fn default() -> Self {
+        Self {
+            attempts: 0,
+            last_attempt_id: ConnectionAttemptId::from_raw(0),
+            state: MusicConnectionState::Idle,
+        }
+    }
 }
 
 impl MusicConnection {
+    /// Returns the active attempt or connected session, when one exists.
+    #[must_use]
+    pub fn callback_id(&self) -> Option<ConnectionAttemptId> {
+        match self.state {
+            MusicConnectionState::Connecting { attempt_id, .. } => Some(attempt_id),
+            MusicConnectionState::Connected { connection_id } => {
+                Some(ConnectionAttemptId::from_raw(connection_id.raw()))
+            }
+            MusicConnectionState::Idle | MusicConnectionState::WaitingToRetry { .. } => None,
+        }
+    }
+
+    /// Whether this identity owns an established provider connection.
+    #[must_use]
+    pub fn is_established(&self, connection_id: EstablishedConnectionId) -> bool {
+        matches!(
+            self.state,
+            MusicConnectionState::Connected {
+                connection_id: current
+            } if current == connection_id
+        )
+    }
+
+    /// Classifies a callback without changing attempt or connection state.
+    #[must_use]
+    pub fn classify(&self, attempt_id: ConnectionAttemptId) -> MusicConnectionCallback {
+        if self.callback_id() == Some(attempt_id) {
+            MusicConnectionCallback::Accepted
+        } else {
+            MusicConnectionCallback::Stale
+        }
+    }
+
+    /// Classifies a callback while enforcing the active attempt deadline.
+    #[must_use]
+    pub fn classify_at(
+        &self,
+        attempt_id: ConnectionAttemptId,
+        now_ms: u64,
+    ) -> MusicConnectionCallback {
+        match self.state {
+            MusicConnectionState::Connected {
+                connection_id: current,
+            } if current.raw() == attempt_id.raw() => MusicConnectionCallback::Accepted,
+            MusicConnectionState::Connecting {
+                attempt_id: current,
+                started_at,
+            } if current == attempt_id
+                && MonotonicTimestamp::new(now_ms).saturating_duration_since(started_at)
+                    < ATTEMPT_TIMEOUT =>
+            {
+                MusicConnectionCallback::Accepted
+            }
+            MusicConnectionState::Idle
+            | MusicConnectionState::Connecting { .. }
+            | MusicConnectionState::Connected { .. }
+            | MusicConnectionState::WaitingToRetry { .. } => MusicConnectionCallback::Stale,
+        }
+    }
+
+    /// Invalidates the active attempt/session without reusing callback identities.
+    pub fn reset(&mut self) {
+        self.attempts = 0;
+        self.state = MusicConnectionState::Idle;
+    }
+
     /// Starts an attempt and returns its identity for callback validation.
     #[must_use]
-    pub fn begin_attempt_id(&mut self, now_ms: u64) -> Option<u64> {
-        if self.attempts >= MAXIMUM_ATTEMPTS || now_ms < self.retry_at {
-            return None;
+    pub fn begin_attempt(&mut self, now_ms: u64) -> ConnectionAttemptAdmission {
+        if self.attempts >= MAXIMUM_ATTEMPTS {
+            return ConnectionAttemptAdmission::Exhausted;
         }
-        if let Some(started_at) = self.in_flight_since
-            && now_ms.saturating_sub(started_at) < ATTEMPT_TIMEOUT_MS
-        {
-            return None;
+        let now = MonotonicTimestamp::new(now_ms);
+        match self.state {
+            MusicConnectionState::Connecting { started_at, .. }
+                if now.saturating_duration_since(started_at) < ATTEMPT_TIMEOUT =>
+            {
+                return ConnectionAttemptAdmission::Pending;
+            }
+            MusicConnectionState::WaitingToRetry { not_before } if now < not_before => {
+                return ConnectionAttemptAdmission::WaitingToRetry;
+            }
+            MusicConnectionState::Idle
+            | MusicConnectionState::Connecting { .. }
+            | MusicConnectionState::Connected { .. }
+            | MusicConnectionState::WaitingToRetry { .. } => {}
         }
-        self.attempts += 1;
-        self.in_flight_since = Some(now_ms);
-        let attempt_id = self.next_attempt_id.max(1);
-        self.next_attempt_id = attempt_id.wrapping_add(1).max(1);
-        self.active_attempt_id = Some(attempt_id);
-        self.connected_id = None;
-        Some(attempt_id)
-    }
-
-    /// Resets retry/session state after success without reusing callback identities.
-    pub fn established(&mut self) {
-        *self = Self {
-            next_attempt_id: self.next_attempt_id,
-            ..Self::default()
+        let Some(attempt_id) = self.last_attempt_id.next() else {
+            return ConnectionAttemptAdmission::Exhausted;
         };
+        self.attempts += 1;
+        self.last_attempt_id = attempt_id;
+        self.state = MusicConnectionState::Connecting {
+            attempt_id,
+            started_at: now,
+        };
+        ConnectionAttemptAdmission::Started(attempt_id)
     }
 
-    /// Schedules recovery after a disconnect without granting additional attempts.
-    pub fn disconnected(&mut self, now_ms: u64) {
-        if let Some(attempt_id) = self.active_attempt_id.or(self.connected_id) {
-            let _ = self.disconnected_for(attempt_id, now_ms);
-        } else {
-            self.schedule_retry(now_ms);
+    /// Whether the current provider session has no remaining recovery attempt.
+    #[must_use]
+    pub fn recovery_exhausted_at(&self, now_ms: u64) -> bool {
+        if self.attempts < MAXIMUM_ATTEMPTS {
+            return false;
         }
-    }
-
-    /// Schedules a retry; a connection error does not imply rejected credentials.
-    pub fn failed(&mut self, now_ms: u64) {
-        if let Some(attempt_id) = self.active_attempt_id.or(self.connected_id) {
-            let _ = self.failed_for(attempt_id, now_ms);
-        } else {
-            self.schedule_retry(now_ms);
+        match self.state {
+            MusicConnectionState::Connecting { started_at, .. } => {
+                MonotonicTimestamp::new(now_ms).saturating_duration_since(started_at)
+                    >= ATTEMPT_TIMEOUT
+            }
+            MusicConnectionState::WaitingToRetry { .. } | MusicConnectionState::Idle => true,
+            MusicConnectionState::Connected { .. } => false,
         }
     }
 
     /// Accepts a failure only from the current attempt or connected session.
     #[must_use]
-    pub fn failed_for(&mut self, attempt_id: u64, now_ms: u64) -> MusicConnectionCallback {
-        if self.active_attempt_id != Some(attempt_id) && self.connected_id != Some(attempt_id) {
+    pub fn failed_for(
+        &mut self,
+        attempt_id: ConnectionAttemptId,
+        now_ms: u64,
+    ) -> MusicConnectionCallback {
+        if self.classify_at(attempt_id, now_ms) == MusicConnectionCallback::Stale {
             return MusicConnectionCallback::Stale;
         }
-        self.in_flight_since = None;
-        self.active_attempt_id = None;
-        self.connected_id = None;
         self.schedule_retry(now_ms);
         MusicConnectionCallback::Accepted
     }
 
     fn schedule_retry(&mut self, now_ms: u64) {
-        self.retry_at = self.retry_at.max(now_ms.saturating_add(RETRY_DELAY_MS));
+        let requested = MonotonicTimestamp::new(now_ms).saturating_add_duration(RETRY_DELAY);
+        let not_before = match self.state {
+            MusicConnectionState::WaitingToRetry { not_before } => not_before.max(requested),
+            MusicConnectionState::Idle
+            | MusicConnectionState::Connecting { .. }
+            | MusicConnectionState::Connected { .. } => requested,
+        };
+        self.state = MusicConnectionState::WaitingToRetry { not_before };
     }
 
     /// Accepts a disconnect only from the current attempt or connected session.
     #[must_use]
-    pub fn disconnected_for(&mut self, attempt_id: u64, now_ms: u64) -> MusicConnectionCallback {
+    pub fn disconnected_for(
+        &mut self,
+        attempt_id: ConnectionAttemptId,
+        now_ms: u64,
+    ) -> MusicConnectionCallback {
         self.failed_for(attempt_id, now_ms)
     }
 
-    /// Accepts success only from the currently active attempt.
+    /// Accepts success only before the active attempt's deadline.
     #[must_use]
-    pub fn established_for(&mut self, attempt_id: u64) -> MusicConnectionCallback {
-        if self.active_attempt_id != Some(attempt_id) {
+    pub fn established_for_at(
+        &mut self,
+        attempt_id: ConnectionAttemptId,
+        now_ms: u64,
+    ) -> Option<EstablishedConnectionId> {
+        if !matches!(
+            self.state,
+            MusicConnectionState::Connecting {
+                attempt_id: current,
+                ..
+            } if current == attempt_id
+        ) || self.classify_at(attempt_id, now_ms) == MusicConnectionCallback::Stale
+        {
+            return None;
+        }
+        let connection_id = EstablishedConnectionId::from_raw(attempt_id.raw());
+        self.attempts = 0;
+        self.state = MusicConnectionState::Connected { connection_id };
+        Some(connection_id)
+    }
+
+    /// Retires an attempt whose deadline elapsed before a late success callback.
+    #[must_use]
+    pub fn expired_for(
+        &mut self,
+        attempt_id: ConnectionAttemptId,
+        now_ms: u64,
+    ) -> MusicConnectionCallback {
+        let MusicConnectionState::Connecting {
+            attempt_id: current,
+            started_at,
+        } = self.state
+        else {
+            return MusicConnectionCallback::Stale;
+        };
+        if current != attempt_id
+            || MonotonicTimestamp::new(now_ms).saturating_duration_since(started_at)
+                < ATTEMPT_TIMEOUT
+        {
             return MusicConnectionCallback::Stale;
         }
-        self.established();
-        self.connected_id = Some(attempt_id);
+        self.schedule_retry(now_ms);
         MusicConnectionCallback::Accepted
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{MusicConnection, MusicConnectionCallback};
+    use super::{ConnectionAttemptAdmission, MusicConnection, MusicConnectionCallback};
+    use crate::ids::ConnectionAttemptId;
+
+    fn started(connection: &mut MusicConnection, now_ms: u64) -> ConnectionAttemptId {
+        let ConnectionAttemptAdmission::Started(id) = connection.begin_attempt(now_ms) else {
+            panic!("expected a new connection attempt");
+        };
+        id
+    }
 
     #[test]
     fn a_failed_attempt_retries_after_delay_without_resetting_budget() {
         let mut connection = MusicConnection::default();
-        assert!(connection.begin_attempt_id(0).is_some());
-        connection.failed(100);
-        assert!(connection.begin_attempt_id(2_099).is_none());
-        assert!(connection.begin_attempt_id(2_100).is_some());
-        connection.failed(2_200);
-        assert!(connection.begin_attempt_id(4_200).is_some());
-        connection.failed(4_300);
-        assert!(connection.begin_attempt_id(100_000).is_none());
+        let first = started(&mut connection, 0);
+        assert_eq!(
+            connection.failed_for(first, 100),
+            MusicConnectionCallback::Accepted
+        );
+        assert_eq!(
+            connection.begin_attempt(2_099),
+            ConnectionAttemptAdmission::WaitingToRetry
+        );
+        let second = started(&mut connection, 2_100);
+        assert_eq!(
+            connection.failed_for(second, 2_200),
+            MusicConnectionCallback::Accepted
+        );
+        let third = started(&mut connection, 4_200);
+        assert_eq!(
+            connection.failed_for(third, 4_300),
+            MusicConnectionCallback::Accepted
+        );
+        assert_eq!(
+            connection.begin_attempt(100_000),
+            ConnectionAttemptAdmission::Exhausted
+        );
     }
 
     #[test]
     fn a_lost_callback_times_out_but_attempts_remain_bounded() {
         let mut connection = MusicConnection::default();
-        assert!(connection.begin_attempt_id(0).is_some());
-        assert!(connection.begin_attempt_id(9_999).is_none());
-        assert!(connection.begin_attempt_id(10_000).is_some());
-        assert!(connection.begin_attempt_id(19_999).is_none());
-        assert!(connection.begin_attempt_id(20_000).is_some());
-        assert!(connection.begin_attempt_id(30_000).is_none());
+        let _ = started(&mut connection, 0);
+        assert_eq!(
+            connection.begin_attempt(9_999),
+            ConnectionAttemptAdmission::Pending
+        );
+        let _ = started(&mut connection, 10_000);
+        assert_eq!(
+            connection.begin_attempt(19_999),
+            ConnectionAttemptAdmission::Pending
+        );
+        let _ = started(&mut connection, 20_000);
+        assert_eq!(
+            connection.begin_attempt(30_000),
+            ConnectionAttemptAdmission::Exhausted
+        );
+        assert!(connection.recovery_exhausted_at(30_000));
     }
 
     #[test]
-    fn disconnect_preserves_budget_and_established_resets_it() {
+    fn disconnect_preserves_budget_and_success_resets_it() {
         let mut connection = MusicConnection::default();
-        for now_ms in [0, 2_000, 4_000] {
-            assert!(connection.begin_attempt_id(now_ms).is_some());
-            connection.disconnected(now_ms);
+        for now_ms in [0, 2_000] {
+            let attempt = started(&mut connection, now_ms);
+            assert_eq!(
+                connection.disconnected_for(attempt, now_ms),
+                MusicConnectionCallback::Accepted
+            );
         }
-        assert!(connection.begin_attempt_id(6_000).is_none());
-        connection.established();
-        connection.disconnected(6_000);
-        assert!(connection.begin_attempt_id(7_999).is_none());
-        assert!(connection.begin_attempt_id(8_000).is_some());
+        let third = started(&mut connection, 4_000);
+        let established = connection
+            .established_for_at(third, 4_000)
+            .expect("established connection");
+        assert!(connection.is_established(established));
+        assert_eq!(
+            connection.disconnected_for(third, 6_000),
+            MusicConnectionCallback::Accepted
+        );
+        assert_eq!(
+            connection.begin_attempt(7_999),
+            ConnectionAttemptAdmission::WaitingToRetry
+        );
+        let _ = started(&mut connection, 8_000);
     }
 
     #[test]
     fn backwards_or_overflowing_clock_cannot_shorten_an_in_flight_attempt() {
         let mut connection = MusicConnection::default();
-        assert!(connection.begin_attempt_id(u64::MAX - 1).is_some());
-        assert!(connection.begin_attempt_id(0).is_none());
-        assert!(connection.begin_attempt_id(u64::MAX).is_none());
+        let _ = started(&mut connection, u64::MAX - 1);
+        assert_eq!(
+            connection.begin_attempt(0),
+            ConnectionAttemptAdmission::Pending
+        );
+        assert_eq!(
+            connection.begin_attempt(u64::MAX),
+            ConnectionAttemptAdmission::Pending
+        );
     }
 
     #[test]
     fn stale_callbacks_do_not_extend_a_pending_retry_or_clear_a_new_attempt() {
         let mut connection = MusicConnection::default();
-        let first = connection.begin_attempt_id(0).expect("first attempt");
+        let first = started(&mut connection, 0);
         assert_eq!(
             connection.failed_for(first, 100),
             MusicConnectionCallback::Accepted
@@ -172,49 +381,72 @@ mod tests {
             MusicConnectionCallback::Stale
         );
 
-        let second = connection.begin_attempt_id(2_100).expect("second attempt");
+        let second = started(&mut connection, 2_100);
         assert_eq!(
             connection.failed_for(first, 2_200),
             MusicConnectionCallback::Stale
         );
-        assert!(connection.begin_attempt_id(2_200).is_none());
+        assert_eq!(
+            connection.begin_attempt(2_200),
+            ConnectionAttemptAdmission::Pending
+        );
         assert_eq!(
             connection.failed_for(second, 2_200),
             MusicConnectionCallback::Accepted
         );
-        assert!(connection.begin_attempt_id(4_199).is_none());
-        assert!(connection.begin_attempt_id(4_200).is_some());
+        assert_eq!(
+            connection.begin_attempt(4_199),
+            ConnectionAttemptAdmission::WaitingToRetry
+        );
+        let _ = started(&mut connection, 4_200);
     }
 
     #[test]
     fn stale_success_cannot_reset_a_new_attempt() {
         let mut connection = MusicConnection::default();
-        let first = connection.begin_attempt_id(0).expect("first attempt");
+        let first = started(&mut connection, 0);
         assert_eq!(
             connection.failed_for(first, 100),
             MusicConnectionCallback::Accepted
         );
-        let second = connection.begin_attempt_id(2_100).expect("second attempt");
+        let second = started(&mut connection, 2_100);
+        assert_eq!(connection.established_for_at(first, 2_100), None);
         assert_eq!(
-            connection.established_for(first),
-            MusicConnectionCallback::Stale
+            connection.begin_attempt(2_200),
+            ConnectionAttemptAdmission::Pending
         );
-        assert!(connection.begin_attempt_id(2_200).is_none());
+        assert!(connection.established_for_at(second, 2_100).is_some());
+        let _ = started(&mut connection, 2_200);
+    }
+
+    #[test]
+    fn late_success_expires_current_attempt_and_schedules_recovery() {
+        let mut connection = MusicConnection::default();
+        let attempt = started(&mut connection, 0);
         assert_eq!(
-            connection.established_for(second),
+            connection.expired_for(attempt, 10_000),
             MusicConnectionCallback::Accepted
         );
-        assert!(connection.begin_attempt_id(2_200).is_some());
+        assert_eq!(connection.classify(attempt), MusicConnectionCallback::Stale);
+        assert_eq!(
+            connection.begin_attempt(11_999),
+            ConnectionAttemptAdmission::WaitingToRetry
+        );
+        let _ = started(&mut connection, 12_000);
+    }
+
+    #[test]
+    fn an_attempt_expires_before_a_late_success_callback() {
+        let mut connection = MusicConnection::default();
+        let attempt = started(&mut connection, 0);
+        assert_eq!(connection.established_for_at(attempt, 10_000), None);
     }
 
     #[test]
     fn disconnect_after_success_schedules_recovery_without_accepting_stale_events() {
         let mut connection = MusicConnection::default();
-        let attempt = connection.begin_attempt_id(0).expect("attempt");
-        assert_eq!(
-            connection.established_for(attempt),
-            MusicConnectionCallback::Accepted
-        );
+        let attempt = started(&mut connection, 0);
+        assert!(connection.established_for_at(attempt, 0).is_some());
         assert_eq!(
             connection.disconnected_for(attempt, 100),
             MusicConnectionCallback::Accepted
@@ -223,41 +455,49 @@ mod tests {
             connection.disconnected_for(attempt, 200),
             MusicConnectionCallback::Stale
         );
-        assert!(connection.begin_attempt_id(2_099).is_none());
-        assert!(connection.begin_attempt_id(2_100).is_some());
+        assert_eq!(
+            connection.begin_attempt(2_099),
+            ConnectionAttemptAdmission::WaitingToRetry
+        );
+        let _ = started(&mut connection, 2_100);
     }
 
     #[test]
     fn successful_connection_does_not_reuse_attempt_identity_on_recovery() {
         let mut connection = MusicConnection::default();
-        let first = connection.begin_attempt_id(0).expect("first attempt");
-        assert_eq!(
-            connection.established_for(first),
-            MusicConnectionCallback::Accepted
-        );
+        let first = started(&mut connection, 0);
+        assert!(connection.established_for_at(first, 0).is_some());
         assert_eq!(
             connection.disconnected_for(first, 100),
             MusicConnectionCallback::Accepted
         );
-        let second = connection
-            .begin_attempt_id(2_100)
-            .expect("recovery attempt");
+        let second = started(&mut connection, 2_100);
         assert_ne!(first, second);
         assert_eq!(
             connection.failed_for(first, 2_200),
             MusicConnectionCallback::Stale
         );
-        assert_eq!(
-            connection.established_for(first),
-            MusicConnectionCallback::Stale
-        );
+        assert_eq!(connection.established_for_at(first, 2_200), None);
         assert_eq!(
             connection.disconnected_for(first, 2_300),
             MusicConnectionCallback::Stale
         );
+        assert!(connection.established_for_at(second, 2_200).is_some());
+    }
+
+    #[test]
+    fn attempt_identity_exhaustion_leaves_connection_state_unchanged() {
+        let mut connection = MusicConnection {
+            last_attempt_id: ConnectionAttemptId::from_raw(u64::MAX),
+            ..MusicConnection::default()
+        };
+        let before = connection.attempts;
+
         assert_eq!(
-            connection.established_for(second),
-            MusicConnectionCallback::Accepted
+            connection.begin_attempt(0),
+            ConnectionAttemptAdmission::Exhausted
         );
+        assert_eq!(connection.attempts, before);
+        assert_eq!(connection.callback_id(), None);
     }
 }

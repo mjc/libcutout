@@ -44,6 +44,23 @@ struct CutoutApp: App {
                         break
                     }
                 }
+                .alert(
+                    pevLocalizedText("music.command.title"),
+                    isPresented: Binding(
+                        get: { model.musicCommandStatusText != nil },
+                        set: { isPresented in
+                            guard !isPresented else { return }
+                            model.dismissMusicCommandFeedback()
+                        }
+                    ),
+                    presenting: model.musicCommandFeedback
+                ) { feedback in
+                    Button(pevLocalizedText("music.command.dismiss")) {
+                        model.dismissMusicCommandFeedback(requestID: feedback.requestID)
+                    }
+                } message: { feedback in
+                    Text(feedback.messageKey.map { pevLocalizedText($0) } ?? "")
+                }
         }
         .commands {
             CutoutNavigationCommands(

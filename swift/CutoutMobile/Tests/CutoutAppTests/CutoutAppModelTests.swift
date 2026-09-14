@@ -104,6 +104,56 @@ final class CutoutAppModelTests: XCTestCase {
 
 #if !os(iOS)
     @MainActor
+    func testUnavailableMusicCommandPublishesVisibleFeedback() async {
+        let model = CutoutAppModel(core: SessionDriverSpy(rows: []))
+
+        let outcome = await model.handleMusicCommand(.play)
+        XCTAssertEqual(outcome, .unavailable)
+        XCTAssertEqual(model.musicCommandStatusText, pevLocalizedText("music.command.unavailable"))
+    }
+
+    @MainActor
+    func testOlderSameProviderCompletionAndDismissalCannotReplaceNewerFeedback() {
+        let model = CutoutAppModel(core: SessionDriverSpy(rows: []))
+        let first = try! XCTUnwrap(model.beginMusicCommandFeedback())
+        let second = try! XCTUnwrap(model.beginMusicCommandFeedback())
+
+        _ = model.finishMusicCommand(.failed, provider: .appleMusic, requestID: first)
+        XCTAssertNil(model.musicCommandStatusText)
+
+        _ = model.finishMusicCommand(.refused, provider: .appleMusic, requestID: second)
+        XCTAssertEqual(model.musicCommandStatusText, pevLocalizedText("music.command.refused"))
+
+        model.dismissMusicCommandFeedback(requestID: first)
+        XCTAssertEqual(model.musicCommandStatusText, pevLocalizedText("music.command.refused"))
+        model.dismissMusicCommandFeedback(requestID: second)
+        XCTAssertNil(model.musicCommandStatusText)
+    }
+
+    @MainActor
+    func testSystemAlertDismissalClearsCurrentMusicCommandFeedback() {
+        let model = CutoutAppModel(core: SessionDriverSpy(rows: []))
+        let requestID = try! XCTUnwrap(model.beginMusicCommandFeedback())
+        _ = model.finishMusicCommand(.failed, provider: .appleMusic, requestID: requestID)
+
+        model.dismissMusicCommandFeedback()
+
+        XCTAssertNil(model.musicCommandFeedback)
+    }
+
+    @MainActor
+    func testProviderSwitchClearsMusicCommandFeedbackProjection() {
+        let model = CutoutAppModel(core: SessionDriverSpy(rows: []))
+        let requestID = try! XCTUnwrap(model.beginMusicCommandFeedback())
+        _ = model.finishMusicCommand(.failed, provider: .appleMusic, requestID: requestID)
+        XCTAssertNotNil(model.musicCommandFeedback)
+
+        model.selectMusicProvider(.spotify)
+
+        XCTAssertNil(model.musicCommandFeedback)
+    }
+
+    @MainActor
     func testMusicSetupShowsUnavailableOnUnsupportedPlatform() {
         let model = CutoutAppModel(core: SessionDriverSpy(rows: []))
 
@@ -123,25 +173,68 @@ final class CutoutAppModelTests: XCTestCase {
         XCTAssertEqual(model.musicNowPlaying?.provider, .appleMusic)
         XCTAssertEqual(model.musicNowPlaying?.state, .unavailable)
     }
-#endif
 
-    func testMusicMonitorSceneStateResumesOnlyRequestedMonitor() {
-        var state = MusicMonitorSceneState()
+    @MainActor
+    func testValidObservationClearsRecoveredValidationErrorWithoutATransition() {
+        let model = CutoutAppModel(core: SessionDriverSpy(rows: []))
+        let capabilities = MobileMusicCapabilitiesDto(
+            previous: true,
+            play: false,
+            pause: true,
+            next: true,
+            openProvider: true
+        )
+        func snapshot(
+            observedAtMs: UInt64,
+            positionMilliseconds: UInt64?,
+            durationMilliseconds: UInt64?
+        ) -> MobileMusicSnapshotDto {
+            MobileMusicSnapshotDto(
+                provider: .appleMusic,
+                sessionId: "session",
+                state: .playing,
+                item: MobileMusicItemDto(
+                    identifier: "track-1",
+                    title: "Song",
+                    artist: "Artist"
+                ),
+                positionMilliseconds: positionMilliseconds,
+                durationMilliseconds: durationMilliseconds,
+                observedAtMs: observedAtMs,
+                capabilities: capabilities
+            )
+        }
 
-        XCTAssertFalse(state.resumeIfNeeded())
+        XCTAssertTrue(model.ingestMusicObservation(MusicProviderObservation(
+            snapshot: snapshot(
+                observedAtMs: 1,
+                positionMilliseconds: 10,
+                durationMilliseconds: 100
+            )
+        )))
+        XCTAssertFalse(model.ingestMusicObservation(MusicProviderObservation(
+            snapshot: snapshot(
+                observedAtMs: 2,
+                positionMilliseconds: 101,
+                durationMilliseconds: 100
+            )
+        )))
+        XCTAssertNotNil(model.musicHistorySaveError)
+        XCTAssertEqual(model.musicSettingsNowPlaying?.state, .stale)
+        XCTAssertFalse(model.musicSettingsNowPlaying?.capabilities.pause ?? true)
 
-        state.suspend()
-        XCTAssertFalse(state.resumeIfNeeded())
-
-        state.request()
-        state.suspend()
-        XCTAssertTrue(state.resumeIfNeeded())
-        XCTAssertFalse(state.resumeIfNeeded())
-
-        state.cancel()
-        state.suspend()
-        XCTAssertFalse(state.resumeIfNeeded())
+        XCTAssertTrue(model.ingestMusicObservation(MusicProviderObservation(
+            snapshot: snapshot(
+                observedAtMs: 3,
+                positionMilliseconds: 10,
+                durationMilliseconds: 100
+            )
+        )))
+        XCTAssertNil(model.musicHistorySaveError)
+        XCTAssertEqual(model.musicSettingsNowPlaying?.state, .playing)
+        XCTAssertTrue(model.musicSettingsNowPlaying?.capabilities.pause ?? false)
     }
+#endif
 
     @MainActor
     func testMusicHistoryDefaultIsLoadedForFutureRides() throws {
