@@ -389,14 +389,6 @@ impl MobileMusicProviderLifecycle {
             .into()
     }
 
-    /// Accepts failure only for the current connection attempt or session.
-    #[must_use]
-    pub fn connection_failed(&self, id: u64, now_ms: u64) -> MobileMusicProviderConnectionCallback {
-        self.lock_inner()
-            .connection_failed(ConnectionAttemptId::from_raw(id), now_ms)
-            .into()
-    }
-
     /// Accepts failure and returns the transport work retired with it.
     #[must_use]
     pub fn connection_failed_effect(
@@ -406,18 +398,6 @@ impl MobileMusicProviderLifecycle {
     ) -> MobileMusicProviderConnectionEffect {
         self.lock_inner()
             .connection_failed_effect(ConnectionAttemptId::from_raw(id), now_ms)
-            .into()
-    }
-
-    /// Accepts disconnection only for the current connection attempt or session.
-    #[must_use]
-    pub fn connection_disconnected(
-        &self,
-        id: u64,
-        now_ms: u64,
-    ) -> MobileMusicProviderConnectionCallback {
-        self.lock_inner()
-            .connection_disconnected(ConnectionAttemptId::from_raw(id), now_ms)
             .into()
     }
 

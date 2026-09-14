@@ -325,16 +325,6 @@ impl MusicProviderLifecycle {
         self.connection.established_for(id)
     }
 
-    /// Accepts failure only for the current connection attempt or session.
-    #[must_use]
-    pub fn connection_failed(
-        &mut self,
-        id: ConnectionAttemptId,
-        now_ms: u64,
-    ) -> MusicConnectionCallback {
-        self.connection_failed_effect(id, now_ms).callback
-    }
-
     /// Accepts failure and retires all work owned by the connection.
     #[must_use]
     pub fn connection_failed_effect(
@@ -343,16 +333,6 @@ impl MusicProviderLifecycle {
         now_ms: u64,
     ) -> MusicConnectionEffect {
         self.end_connection(id, now_ms)
-    }
-
-    /// Accepts disconnection only for the current connection attempt or session.
-    #[must_use]
-    pub fn connection_disconnected(
-        &mut self,
-        id: ConnectionAttemptId,
-        now_ms: u64,
-    ) -> MusicConnectionCallback {
-        self.connection_disconnected_effect(id, now_ms).callback
     }
 
     /// Accepts disconnection and retires all work owned by the connection.
@@ -494,6 +474,8 @@ impl MusicProviderLifecycle {
     ) -> Option<MusicDeadlineEffect<TransportRequestId>> {
         if self.provider_session.classify(provider_generation) == CallbackEpochMatch::Stale
             || self.pending_transport.is_some()
+            || connection_attempt_id
+                .is_some_and(|id| self.connection.classify(id) == MusicConnectionCallback::Stale)
         {
             return None;
         }

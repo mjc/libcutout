@@ -242,6 +242,22 @@ fn connection_end_releases_player_poll_and_owned_transport_for_reconnect() {
 }
 
 #[test]
+fn stale_connection_cannot_start_owned_transport() {
+    let mut lifecycle = MusicProviderLifecycle::default();
+    let provider = lifecycle.begin_provider_session();
+    let attempt = lifecycle.begin_connection_attempt(0).expect("attempt");
+    assert_eq!(
+        lifecycle.connection_failed_effect(attempt, 100).callback,
+        MusicConnectionCallback::Accepted
+    );
+
+    assert_eq!(
+        lifecycle.begin_transport_effect_for_connection(provider, Some(attempt), 101),
+        None
+    );
+}
+
+#[test]
 fn newer_push_revision_rejects_an_older_player_poll() {
     let mut lifecycle = MusicProviderLifecycle::default();
     let request = lifecycle.begin_player_state_request(0).expect("poll");
@@ -283,7 +299,9 @@ fn spotify_connection_retries_do_not_reset_when_the_sdk_object_is_recreated() {
             .begin_connection_attempt(now_ms)
             .expect("bounded attempt");
         assert_eq!(
-            lifecycle.connection_failed(attempt, now_ms + 100),
+            lifecycle
+                .connection_failed_effect(attempt, now_ms + 100)
+                .callback,
             MusicConnectionCallback::Accepted,
         );
     }
