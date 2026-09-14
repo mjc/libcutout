@@ -8763,7 +8763,9 @@ fn route_projection_counts(
     let Some((source_revision, source_point_count)) = projection_sqlite(
         connection
             .query_row(
-                "SELECT updated_at_ms, point_count FROM rides WHERE id = ?1",
+                // Canonical route points are append-only, so point_count is a monotonic route
+                // revision. updated_at_ms is wall-clock metadata and may repeat.
+                "SELECT point_count, point_count FROM rides WHERE id = ?1",
                 [ride_id],
                 |row| Ok((row.get::<_, u64>(0)?, row.get::<_, u64>(1)?)),
             )

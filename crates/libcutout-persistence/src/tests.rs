@@ -6476,6 +6476,46 @@ fn route_projection_is_bounded_viewport_aware_and_cancellable() {
 }
 
 #[test]
+fn route_projection_revision_changes_when_points_share_a_wall_clock_timestamp() {
+    let _guard = test_guard();
+    let path = std::env::temp_dir().join(format!(
+        "libcutout-persistence-route-projection-revision-{}.sqlite",
+        uuid::Uuid::new_v4()
+    ));
+    let database = RideDatabase::open(&path).unwrap();
+    let ride = database.create_ride(RideSource::Live, 10).unwrap();
+    database.transition(ride, RideEvent::Start).unwrap();
+
+    for (monotonic_ms, latitude) in [(1_000, 40.0), (2_000, 40.00001)] {
+        let sample = LocationSample::new(
+            Coordinate::from_degrees(latitude, -105.0).unwrap(),
+            monotonic_ms,
+            1_700_000_000_000,
+            None,
+            LocationSource::Live,
+        );
+        assert_eq!(
+            database.append_location(ride, sample).unwrap(),
+            LocationAdmission::Accepted
+        );
+    }
+
+    let projection = database
+        .project_route_points(
+            ride,
+            None,
+            RouteDisplayBudget::new(8).unwrap(),
+            RoutePrivacyPolicy::Precise,
+        )
+        .unwrap();
+    assert_eq!(projection.source_revision(), 2);
+    assert_eq!(projection.source_point_count(), 2);
+
+    database.shutdown().unwrap();
+    let _ = std::fs::remove_file(path);
+}
+
+#[test]
 fn route_projection_camera_bounds_include_points_omitted_by_display_lod() {
     let _guard = test_guard();
     let path = std::env::temp_dir().join(format!(
