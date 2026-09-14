@@ -2959,10 +2959,10 @@ fn bms_voltage_samples_are_durable_without_a_ride_and_duplicate_batches_are_idem
     ));
     let database = RideDatabase::open(&path).unwrap();
     let samples = [
-        BmsVoltageSampleRecord::new("wheel-a", 1_000, 2_000, 45, 4_193)
+        BmsVoltageSampleRecord::new("wheel-a", "session-a", 1, 1_000, 2_000, 45, 4_193)
             .unwrap()
             .with_pack_identity(Some(1), Some(15)),
-        BmsVoltageSampleRecord::new("wheel-a", 1_000, 2_000, 46, 4_192)
+        BmsVoltageSampleRecord::new("wheel-a", "session-a", 2, 1_000, 2_000, 46, 4_192)
             .unwrap()
             .with_pack_identity(Some(1), Some(16)),
     ];
@@ -3022,7 +3022,7 @@ fn bms_voltage_samples_are_durable_without_a_ride_and_duplicate_batches_are_idem
 }
 
 #[test]
-fn bms_voltage_event_identity_retains_equal_samples_and_retries_idempotently() {
+fn bms_voltage_constructor_requires_distinct_event_identities_for_successive_samples() {
     let _guard = test_guard();
     let path = std::env::temp_dir().join(format!(
         "libcutout-persistence-bms-events-{}.sqlite",
@@ -3030,31 +3030,29 @@ fn bms_voltage_event_identity_retains_equal_samples_and_retries_idempotently() {
     ));
     let database = RideDatabase::open(&path).unwrap();
     let samples = [
-        BmsVoltageSampleRecord::new("wheel-a", 1_000, 2_000, 45, 4_193)
-            .unwrap()
-            .with_event_identity("session-a", 1)
-            .unwrap(),
-        BmsVoltageSampleRecord::new("wheel-a", 1_000, 2_000, 45, 4_193)
-            .unwrap()
-            .with_event_identity("session-a", 2)
-            .unwrap(),
+        BmsVoltageSampleRecord::new("wheel-a", "session-a", 1, 1_000, 2_000, 45, 4_177).unwrap(),
+        BmsVoltageSampleRecord::new("wheel-a", "session-a", 2, 1_000, 2_000, 45, 4_209).unwrap(),
+        BmsVoltageSampleRecord::new("wheel-a", "session-a", 3, 1_001, 2_001, 45, 4_209).unwrap(),
     ];
     database.record_bms_voltage_samples(&samples).unwrap();
     database.record_bms_voltage_samples(&samples).unwrap();
     database.shutdown().unwrap();
 
     let connection = Connection::open(&path).unwrap();
-    let event_sequences: Vec<u64> = connection
+    let events: Vec<(u64, u64, i32)> = connection
         .prepare(
-            "SELECT event_sequence FROM bms_voltage_samples
+            "SELECT event_sequence, monotonic_ms, millivolts FROM bms_voltage_samples
              ORDER BY event_sequence",
         )
         .unwrap()
-        .query_map([], |row| row.get(0))
+        .query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))
         .unwrap()
         .collect::<Result<_, _>>()
         .unwrap();
-    assert_eq!(event_sequences, vec![1, 2]);
+    assert_eq!(
+        events,
+        vec![(1, 1_000, 4_177), (2, 1_000, 4_209), (3, 1_001, 4_209)]
+    );
     drop(connection);
     let _ = std::fs::remove_file(path);
 }

@@ -49,7 +49,7 @@ pub struct BmsObservationSummary {
     pub observations: Vec<BmsVoltageObservation>,
 }
 
-/// Temperature readings retained from the latest report for every BMS temperature page.
+/// Temperature readings retained from the latest report for every BMS temperature source.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct BmsTemperatureSummary {
     /// Flattened readings in stable source-page and sensor order.
@@ -59,31 +59,32 @@ pub struct BmsTemperatureSummary {
 }
 
 impl BmsTemperatureSummary {
-    /// Summarizes the latest retained temperature page for each source identity.
+    /// Summarizes the latest retained temperature source for each page identity.
     #[must_use]
     pub fn from_readbacks(readbacks: &[crate::BatteryReadback]) -> Self {
         let mut pages: Vec<_> = readbacks
             .iter()
             .filter_map(|readback| match readback.page() {
-                Some(BatteryPagePayload::Temperature(page)) => Some(page),
-                Some(BatteryPagePayload::CellVoltage(_) | BatteryPagePayload::Raw(_)) | None => {
-                    None
-                }
+                Some(BatteryPagePayload::Temperature(page)) => Some((
+                    page.page,
+                    page.temperatures[..usize::from(page.temperature_count.get())].to_vec(),
+                )),
+                // Some protocols report their sole BMS temperature in a metadata page rather
+                // than a typed temperature page. Retain that scalar instead of letting an empty
+                // page summary erase it at the shared projection boundary.
+                Some(BatteryPagePayload::Raw(page)) => page
+                    .battery
+                    .temperature
+                    .map(|temperature| (page.page, vec![temperature.value])),
+                Some(BatteryPagePayload::CellVoltage(_)) | None => None,
             })
             .collect();
-        pages.sort_unstable_by_key(|page| {
-            (
-                page.page.tag.map(ProtocolTag::get),
-                page.page.selector.get(),
-            )
+        pages.sort_unstable_by_key(|(page, _)| {
+            (page.tag.map(ProtocolTag::get), page.selector.get())
         });
         let readings: Vec<_> = pages
             .into_iter()
-            .flat_map(|page| {
-                page.temperatures[..usize::from(page.temperature_count.get())]
-                    .iter()
-                    .copied()
-            })
+            .flat_map(|(_, readings)| readings)
             .collect();
         Self {
             highest_temperature: readings

@@ -2359,43 +2359,20 @@ func testVescRideSnapshotProjectsBatteryLevelAndUpdateTime() throws {
         XCTAssertEqual(observedSnapshots, [snapshot, nil])
     }
 
-    func testBmsStorageBatchContainsOnlyRawSamplesFromCurrentNotification() {
-        let snapshot = BmsSnapshot(
-            topology: BmsTopology(
-                layoutLabel: "unverified",
-                seriesGroupCount: nil,
-                parallelCount: nil,
-                packCount: 2,
-                bmsCount: 2,
-                confidence: .unverified
-            ),
-            groups: [
-                BmsGroupSnapshot(
-                    index: 46,
-                    packNumber: 2,
-                    packReadingIndex: 16,
-                    voltage: Voltage(value: 4_192),
-                    latestVoltage: Voltage(value: 4_209),
-                    recentVoltages: [Voltage(value: 4_192), Voltage(value: 4_209)],
-                    recentObservationMilliseconds: [900, 1_000]
-                ),
-                BmsGroupSnapshot(
-                    index: 1,
-                    packNumber: 1,
-                    packReadingIndex: 1,
-                    voltage: Voltage(value: 4_177),
-                    recentVoltages: [Voltage(value: 4_177)],
-                    recentObservationMilliseconds: [999]
-                ),
-            ]
-        )
-
+    func testBmsStorageBatchUsesOnlyDecodedRawEvents() {
         let samples = bmsStorageSamples(
-            snapshot: snapshot,
-            receivedAt: 1_000,
+            observations: [
+                BmsRawVoltageObservation(
+                    eventSequence: 7,
+                    observedAtMilliseconds: 1_000,
+                    observationIndex: 45,
+                    packIndex: 1,
+                    packObservationIndex: 15,
+                    voltage: Voltage(value: 4_209)
+                )
+            ],
             wallClockMilliseconds: 2_000,
-            sessionIdentifier: "test-session",
-            eventSequence: 7
+            sessionIdentifier: "test-session"
         )
 
         XCTAssertEqual(samples.count, 1)
@@ -2409,37 +2386,32 @@ func testVescRideSnapshotProjectsBatteryLevelAndUpdateTime() throws {
         XCTAssertEqual(samples[0].voltage, Voltage(value: 4_209))
     }
 
-    func testBmsStorageSamplesKeepEveryReadingFromDistinctEvents() {
-        let snapshot = BmsSnapshot(
-            topology: BmsTopology(
-                layoutLabel: "test",
-                seriesGroupCount: nil,
-                parallelCount: nil,
-                packCount: 1,
-                bmsCount: 1,
-                confidence: .unverified
-            ),
-            groups: [
-                BmsGroupSnapshot(
-                    index: 1,
-                    voltage: Voltage(value: 4_209),
-                    latestVoltage: Voltage(value: 4_193),
-                    recentVoltages: [Voltage(value: 4_177), Voltage(value: 4_209)],
-                    recentObservationMilliseconds: [1_000, 1_000]
-                )
-            ]
-        )
-
+    func testBmsStorageSamplesKeepEqualReadingsFromDistinctDecodedEvents() {
         let samples = bmsStorageSamples(
-            snapshot: snapshot,
-            receivedAt: 1_000,
+            observations: [
+                BmsRawVoltageObservation(
+                    eventSequence: 1,
+                    observedAtMilliseconds: 1_000,
+                    observationIndex: 0,
+                    packIndex: nil,
+                    packObservationIndex: nil,
+                    voltage: Voltage(value: 4_209)
+                ),
+                BmsRawVoltageObservation(
+                    eventSequence: 2,
+                    observedAtMilliseconds: 1_000,
+                    observationIndex: 0,
+                    packIndex: nil,
+                    packObservationIndex: nil,
+                    voltage: Voltage(value: 4_209)
+                )
+            ],
             wallClockMilliseconds: 2_000,
-            sessionIdentifier: "test-session",
-            eventSequence: 1
+            sessionIdentifier: "test-session"
         )
 
         XCTAssertEqual(samples.map(\.eventSequence), [1, 2])
-        XCTAssertEqual(samples.map(\.voltage), [Voltage(value: 4_177), Voltage(value: 4_209)])
+        XCTAssertEqual(samples.map(\.voltage), [Voltage(value: 4_209), Voltage(value: 4_209)])
     }
 
     func testBmsSnapshotAggregatesCollectedPagesForPackOverview() {

@@ -104,6 +104,14 @@ impl CutoutSessionState {
         }
     }
 
+    /// Assigns an identity to a newly decoded cell-voltage page before any presentation
+    /// aggregation can combine it with other pages.
+    pub(crate) fn assign_bms_observation_event_sequence(&mut self, readback: &mut BatteryReadback) {
+        self.telemetry
+            .bms
+            .assign_observation_event_sequence(readback);
+    }
+
     fn observe_output(&mut self, output: &SessionOutput) {
         match output {
             SessionOutput::Event(event) => self.observe_event(event),
@@ -693,9 +701,30 @@ pub struct BmsTelemetryState {
 
     /// Timestamped cell-page readbacks retained across complete page cycles.
     observation_history: Vec<BatteryReadback>,
+
+    /// Sequence for raw cell-page events in this host session.
+    next_observation_event_sequence: u64,
 }
 
 impl BmsTelemetryState {
+    fn assign_observation_event_sequence(&mut self, readback: &mut BatteryReadback) {
+        if readback.observed_at().is_none()
+            || !matches!(
+                readback.page(),
+                Some(crate::BatteryPagePayload::CellVoltage(_))
+            )
+            || readback.observation_event_sequence().is_some()
+        {
+            return;
+        }
+        let sequence = self.next_observation_event_sequence;
+        self.next_observation_event_sequence = self
+            .next_observation_event_sequence
+            .checked_add(1)
+            .expect("BMS observation event sequence exhausted");
+        *readback = readback.clone().with_observation_event_sequence(sequence);
+    }
+
     /// Summarizes retained observations, not a simultaneous scan or physical pack topology.
     #[must_use]
     pub fn observation_summary(&self) -> crate::BmsObservationSummary {
@@ -879,6 +908,21 @@ mod tests {
         ))
     }
 
+    fn metadata_temperature_readback(selector: u8, value: i32) -> BatteryReadback {
+        BatteryReadback::available(crate::BatteryPagePayload::raw(
+            BatteryPageMetadata::metadata(
+                crate::ProtocolSelector::new(selector),
+                crate::VerificationStatus::HardwareVerified,
+            ),
+            crate::BatteryInfo {
+                temperature: Some(crate::Measured::reported(
+                    crate::Temperature::from_millicelsius(value),
+                )),
+                ..crate::BatteryInfo::default()
+            },
+        ))
+    }
+
     #[test]
     fn bms_telemetry_retains_latest_temperatures_from_every_source_page() {
         let mut state = CutoutSessionState::default();
@@ -902,6 +946,24 @@ mod tests {
         assert_eq!(
             summary.highest_temperature,
             Some(crate::Temperature::from_millicelsius(61_000))
+        );
+    }
+
+    #[test]
+    fn bms_telemetry_retains_metadata_temperature_sources() {
+        let mut state = CutoutSessionState::default();
+        state.observe_read_only_response(&ReadOnlyResponse::Battery(
+            metadata_temperature_readback(1, 32_000),
+        ));
+
+        let summary = state.telemetry.bms.temperature_summary();
+        assert_eq!(
+            summary.readings,
+            vec![crate::Temperature::from_millicelsius(32_000)]
+        );
+        assert_eq!(
+            summary.highest_temperature,
+            Some(crate::Temperature::from_millicelsius(32_000))
         );
     }
 

@@ -153,9 +153,11 @@ impl BmsVoltageSampleRecord {
     ///
     /// # Errors
     ///
-    /// Returns an error when the device identity is empty or exceeds the storage bound.
+    /// Returns an error when either identity is empty or exceeds the storage bound.
     pub fn new(
         device_identity: &str,
+        session_identifier: &str,
+        event_sequence: u64,
         monotonic_milliseconds: u64,
         wall_clock_milliseconds: u64,
         observation_index: u16,
@@ -163,8 +165,8 @@ impl BmsVoltageSampleRecord {
     ) -> Result<Self, StorageError> {
         Ok(Self {
             device_identity: normalize_stored_text(device_identity, "BMS device identity")?,
-            session_identifier: "legacy".to_owned(),
-            event_sequence: 0,
+            session_identifier: normalize_stored_text(session_identifier, "BMS session identity")?,
+            event_sequence,
             monotonic_milliseconds,
             wall_clock_milliseconds,
             observation_index,
@@ -184,19 +186,6 @@ impl BmsVoltageSampleRecord {
         self.pack_index = pack_index;
         self.pack_observation_index = pack_observation_index;
         self
-    }
-
-    /// Attaches the retry-stable identity of the source observation event.
-    #[must_use]
-    pub fn with_event_identity(
-        mut self,
-        session_identifier: &str,
-        event_sequence: u64,
-    ) -> Result<Self, StorageError> {
-        self.session_identifier =
-            normalize_stored_text(session_identifier, "BMS session identity")?;
-        self.event_sequence = event_sequence;
-        Ok(self)
     }
 }
 
