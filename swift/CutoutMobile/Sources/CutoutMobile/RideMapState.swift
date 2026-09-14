@@ -404,6 +404,7 @@ public struct MobileRideMapCameraRegion: Equatable, Hashable, Sendable {
 public struct MobileRideMapRouteProjection: Equatable, Hashable, Sendable {
     public let points: [MobileRideMapRouteDisplayPoint]
     public let segments: [MobileRideMapSegmentDisplayMetadata]
+    public let sourceRevision: UInt64
     public let sourcePointCount: UInt64
     public let sourceSegmentCount: UInt64
     public let candidatePointCount: UInt64
@@ -423,6 +424,7 @@ public struct MobileRideMapRouteProjection: Equatable, Hashable, Sendable {
     public init(
         points: [MobileRideMapRouteDisplayPoint],
         segments: [MobileRideMapSegmentDisplayMetadata],
+        sourceRevision: UInt64 = 0,
         sourcePointCount: UInt64,
         sourceSegmentCount: UInt64,
         candidatePointCount: UInt64,
@@ -439,6 +441,7 @@ public struct MobileRideMapRouteProjection: Equatable, Hashable, Sendable {
     ) {
         self.points = points
         self.segments = segments
+        self.sourceRevision = sourceRevision
         self.sourcePointCount = sourcePointCount
         self.sourceSegmentCount = sourceSegmentCount
         self.candidatePointCount = candidatePointCount
@@ -1697,6 +1700,7 @@ public final class MobileRideMapState: @unchecked Sendable {
                     lastVisibleSequence: segment.lastVisibleSequence
                 )
             },
+            sourceRevision: projection.sourceRevision,
             sourcePointCount: projection.sourcePointCount,
             sourceSegmentCount: projection.sourceSegmentCount,
             candidatePointCount: projection.candidatePointCount,

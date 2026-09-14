@@ -1757,6 +1757,7 @@ pub struct RoutePointProjection {
     points: Vec<RouteDisplayPoint>,
     camera_region: Option<RouteCameraRegion>,
     canonical_camera_region: Option<RouteCameraRegion>,
+    source_revision: u64,
     source_point_count: u64,
     source_segment_count: u64,
     candidate_point_count: u64,
@@ -1799,6 +1800,11 @@ impl RoutePointProjection {
         self.canonical_camera_region
     }
 
+    /// Returns the Rust-owned source revision used to produce this projection.
+    #[must_use]
+    pub const fn source_revision(&self) -> u64 {
+        self.source_revision
+    }
     /// Returns the complete durable point count before LOD or viewport filtering.
     #[must_use]
     pub const fn source_point_count(&self) -> u64 {
@@ -8513,6 +8519,7 @@ fn project_route_points(
                 privacy,
                 cancellation,
             )?,
+            source_revision: counts.source_revision,
             source_point_count: counts.source_point_count,
             source_segment_count: counts.source_segment_count,
             candidate_point_count: counts.candidate_point_count,
@@ -8542,6 +8549,7 @@ fn project_route_points(
             privacy,
             cancellation,
         )?,
+        source_revision: counts.source_revision,
         source_point_count: counts.source_point_count,
         source_segment_count: counts.source_segment_count,
         candidate_point_count: counts.candidate_point_count,
@@ -8735,6 +8743,7 @@ fn route_endpoint_metadata_from_storage(
 }
 
 struct RouteProjectionCounts {
+    source_revision: u64,
     source_point_count: u64,
     source_segment_count: u64,
     background_gap_count: u64,
@@ -8751,12 +8760,12 @@ fn route_projection_counts(
     viewport: Option<RouteViewport>,
     cancellation: Option<&RouteProjectionCancellation>,
 ) -> Result<Option<RouteProjectionCounts>, StorageError> {
-    let Some(source_point_count) = projection_sqlite(
+    let Some((source_revision, source_point_count)) = projection_sqlite(
         connection
             .query_row(
-                "SELECT point_count FROM rides WHERE id = ?1",
+                "SELECT updated_at_ms, point_count FROM rides WHERE id = ?1",
                 [ride_id],
-                |row| row.get::<_, u64>(0),
+                |row| Ok((row.get::<_, u64>(0)?, row.get::<_, u64>(1)?)),
             )
             .optional(),
         cancellation,
@@ -8826,6 +8835,7 @@ fn route_projection_counts(
         (source_point_count, source_segment_count)
     };
     Ok(Some(RouteProjectionCounts {
+        source_revision,
         source_point_count,
         source_segment_count,
         background_gap_count,

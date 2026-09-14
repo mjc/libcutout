@@ -6974,6 +6974,8 @@ pub struct MobileRideMapRouteProjectionDto {
     pub points: Vec<MobileRideMapRouteDisplayPointDto>,
     /// Bounded metadata for the visible projected segment runs.
     pub segments: Vec<MobileRideMapSegmentDisplayMetadataDto>,
+    /// Rust-owned source revision used to produce this projection.
+    pub source_revision: u64,
     /// Total canonical point count before viewport filtering or display LOD.
     pub source_point_count: u64,
     /// Total canonical segment count before viewport filtering or display LOD.
@@ -7631,6 +7633,7 @@ fn mobile_route_projection_dto(
             .copied()
             .map(mobile_segment_display_metadata_dto)
             .collect(),
+        source_revision: projection.source_revision(),
         source_point_count: projection.source_point_count(),
         source_segment_count: projection.source_segment_count(),
         candidate_point_count: projection.candidate_point_count(),
@@ -13128,15 +13131,27 @@ fn project_live_route_points(
         return Err(MobileRideMapCoreErrorDto::Cancelled);
     }
     let (viewport, budget, privacy) = mobile_route_projection_options(options)?;
-    let (points, first_sequence, source_point_count, source_segment_count, background_gap_count) = {
+    let (
+        points,
+        first_sequence,
+        source_revision,
+        source_point_count,
+        source_segment_count,
+        background_gap_count,
+        camera_region,
+    ) = {
         let state = core.inner.lock().unwrap_or_else(PoisonError::into_inner);
         state.require_ready()?;
         (
             state.recorder.points().to_vec(),
             state.recorder.first_point_sequence(),
+            state
+                .current_snapshot(0)
+                .map_or(0, |snapshot| snapshot.revision),
             state.recorder.point_count(),
             state.recorder.segment_count().as_u64(),
             state.recorder.background_gap_count().as_u64(),
+            state.current_camera_region(privacy),
         )
     };
     if is_cancelled() {
@@ -13180,6 +13195,7 @@ fn project_live_route_points(
     Ok(MobileRideMapRouteProjectionDto {
         points,
         segments,
+        source_revision,
         source_point_count,
         source_segment_count,
         candidate_point_count,

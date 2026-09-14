@@ -6416,6 +6416,7 @@ fn route_projection_is_bounded_viewport_aware_and_cancellable() {
         )
         .unwrap();
     assert_eq!(projection.source_point_count(), 100);
+    assert!(projection.source_revision() > 0);
     assert_eq!(projection.points().len(), 8);
 
     let viewport = RouteViewport::new(
