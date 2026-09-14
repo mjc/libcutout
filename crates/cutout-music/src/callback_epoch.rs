@@ -16,7 +16,7 @@ pub enum CallbackEpochMatch {
 /// Monotonic identity for one replaceable provider callback source.
 #[derive(Debug)]
 pub struct CallbackEpoch<K = ()> {
-    last_id: u64,
+    last_id: Option<u64>,
     active: Option<LifecycleId<K>>,
     marker: PhantomData<fn() -> K>,
 }
@@ -24,7 +24,7 @@ pub struct CallbackEpoch<K = ()> {
 impl<K> Default for CallbackEpoch<K> {
     fn default() -> Self {
         Self {
-            last_id: 0,
+            last_id: Some(0),
             active: None,
             marker: PhantomData,
         }
@@ -59,13 +59,20 @@ pub struct AuthorizationTransaction {
 }
 
 impl<K> CallbackEpoch<K> {
+    /// Whether another distinct identity can be issued.
+    #[must_use]
+    pub fn can_begin(&self) -> bool {
+        self.last_id.is_some_and(|last_id| last_id < u64::MAX)
+    }
+
     /// Begins a new epoch and retires any predecessor.
     #[must_use]
-    pub fn begin(&mut self) -> LifecycleId<K> {
-        self.last_id = self.last_id.wrapping_add(1);
-        let id = LifecycleId::from_raw(self.last_id);
+    pub fn begin(&mut self) -> Option<LifecycleId<K>> {
+        let next_id = self.last_id?.checked_add(1)?;
+        self.last_id = Some(next_id);
+        let id = LifecycleId::from_raw(next_id);
         self.active = Some(id);
-        id
+        Some(id)
     }
 
     /// Classifies a callback without ending the epoch.
@@ -97,9 +104,10 @@ impl<K> CallbackEpoch<K> {
 impl AuthorizationTransaction {
     /// Begins an authorization operation and retires any predecessor.
     #[must_use]
-    pub fn begin(&mut self, kind: AuthorizationTransactionKind) -> AuthorizationId {
+    pub fn begin(&mut self, kind: AuthorizationTransactionKind) -> Option<AuthorizationId> {
+        let id = self.epoch.begin()?;
         self.kind = Some(kind);
-        self.epoch.begin()
+        Some(id)
     }
 
     /// Classifies a callback without terminating the operation.
@@ -145,11 +153,11 @@ mod tests {
     #[test]
     fn invalidation_and_terminal_callbacks_cannot_reopen_an_epoch() {
         let mut epoch: CallbackEpoch<()> = CallbackEpoch::default();
-        let first = epoch.begin();
+        let first = epoch.begin().expect("first epoch");
         epoch.invalidate();
         assert_eq!(epoch.classify(first), CallbackEpochMatch::Stale);
 
-        let replacement = epoch.begin();
+        let replacement = epoch.begin().expect("replacement epoch");
         assert_eq!(epoch.classify(first), CallbackEpochMatch::Stale);
         assert_eq!(epoch.finish(replacement), CallbackEpochMatch::Current);
         assert_eq!(epoch.classify(replacement), CallbackEpochMatch::Stale);
@@ -158,13 +166,17 @@ mod tests {
     #[test]
     fn authorization_identity_preserves_the_operation_kind_until_termination() {
         let mut transaction = AuthorizationTransaction::default();
-        let authorization = transaction.begin(AuthorizationTransactionKind::Authorizing);
+        let authorization = transaction
+            .begin(AuthorizationTransactionKind::Authorizing)
+            .expect("authorization");
         assert_eq!(
             transaction.classify(authorization),
             AuthorizationTransactionMatch::Authorizing
         );
 
-        let renewal = transaction.begin(AuthorizationTransactionKind::Renewing);
+        let renewal = transaction
+            .begin(AuthorizationTransactionKind::Renewing)
+            .expect("renewal");
         assert_eq!(
             transaction.finish(authorization),
             AuthorizationTransactionMatch::Stale
@@ -182,11 +194,26 @@ mod tests {
     #[test]
     fn invalidation_rejects_a_queued_authorization_callback() {
         let mut transaction = AuthorizationTransaction::default();
-        let generation = transaction.begin(AuthorizationTransactionKind::Renewing);
+        let generation = transaction
+            .begin(AuthorizationTransactionKind::Renewing)
+            .expect("renewal");
         transaction.invalidate();
         assert_eq!(
             transaction.finish(generation),
             AuthorizationTransactionMatch::Stale
         );
+    }
+
+    #[test]
+    fn identity_exhaustion_does_not_reuse_the_last_epoch() {
+        let mut epoch: CallbackEpoch<()> = CallbackEpoch {
+            last_id: Some(u64::MAX),
+            active: None,
+            marker: std::marker::PhantomData,
+        };
+
+        assert!(!epoch.can_begin());
+        assert_eq!(epoch.begin(), None);
+        assert_eq!(epoch.last_id, Some(u64::MAX));
     }
 }

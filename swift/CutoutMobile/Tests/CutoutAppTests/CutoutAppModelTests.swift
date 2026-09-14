@@ -115,8 +115,8 @@ final class CutoutAppModelTests: XCTestCase {
     @MainActor
     func testOlderSameProviderCompletionAndDismissalCannotReplaceNewerFeedback() {
         let model = CutoutAppModel(core: SessionDriverSpy(rows: []))
-        let first = model.beginMusicCommandFeedback()
-        let second = model.beginMusicCommandFeedback()
+        let first = try! XCTUnwrap(model.beginMusicCommandFeedback())
+        let second = try! XCTUnwrap(model.beginMusicCommandFeedback())
 
         _ = model.finishMusicCommand(.failed, provider: .appleMusic, requestID: first)
         XCTAssertNil(model.musicCommandStatusText)
@@ -133,7 +133,7 @@ final class CutoutAppModelTests: XCTestCase {
     @MainActor
     func testSystemAlertDismissalClearsCurrentMusicCommandFeedback() {
         let model = CutoutAppModel(core: SessionDriverSpy(rows: []))
-        let requestID = model.beginMusicCommandFeedback()
+        let requestID = try! XCTUnwrap(model.beginMusicCommandFeedback())
         _ = model.finishMusicCommand(.failed, provider: .appleMusic, requestID: requestID)
 
         model.dismissMusicCommandFeedback()
@@ -144,7 +144,7 @@ final class CutoutAppModelTests: XCTestCase {
     @MainActor
     func testProviderSwitchClearsMusicCommandFeedbackProjection() {
         let model = CutoutAppModel(core: SessionDriverSpy(rows: []))
-        let requestID = model.beginMusicCommandFeedback()
+        let requestID = try! XCTUnwrap(model.beginMusicCommandFeedback())
         _ = model.finishMusicCommand(.failed, provider: .appleMusic, requestID: requestID)
         XCTAssertNotNil(model.musicCommandFeedback)
 

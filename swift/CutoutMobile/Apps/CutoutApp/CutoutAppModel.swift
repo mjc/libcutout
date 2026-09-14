@@ -718,7 +718,7 @@ final class CutoutAppModel {
     @discardableResult
     func handleMusicCommand(_ command: MobileMusicCommandDto) async -> MusicCommandOutcome {
         let commandProvider = selectedMusicProvider
-        let feedbackRequestID = beginMusicCommandFeedback()
+        guard let feedbackRequestID = beginMusicCommandFeedback() else { return .unavailable }
 #if canImport(MediaPlayer) && os(iOS)
         // Opening the selected provider is a settings action, not a transport
         // capability. It must work before any playback snapshot has arrived.
@@ -786,8 +786,8 @@ final class CutoutAppModel {
     }
 
     @discardableResult
-    func beginMusicCommandFeedback() -> MobileMusicCommandFeedbackId {
-        let requestID = musicProviderLifecycle.beginCommandFeedback()
+    func beginMusicCommandFeedback() -> MobileMusicCommandFeedbackId? {
+        guard let requestID = musicProviderLifecycle.beginCommandFeedback() else { return nil }
         musicCommandFeedback = MusicCommandFeedback(requestID: requestID, outcome: .accepted)
         return requestID
     }

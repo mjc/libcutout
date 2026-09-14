@@ -277,7 +277,12 @@ public final class SpotifyProviderAdapter: NSObject {
         // A scene transition can stop and restart observation while the SDK's
         // authorization callback is still in flight. Keep that transaction
         // alive and let the single monitor loop observe its completion.
-        appRemoteGeneration = lifecycle.beginProviderSession()
+        guard let providerGeneration = lifecycle.beginProviderSession() else {
+            lifecycleState = .unavailable
+            emitChange()
+            return false
+        }
+        appRemoteGeneration = providerGeneration
         if authorizationGeneration != nil, sessionManager != nil {
             lifecycleState = .buffering
             emitChange()
@@ -303,10 +308,14 @@ public final class SpotifyProviderAdapter: NSObject {
             }
             lifecycleState = .buffering
             emitChange()
-            let (sessionManager, effect) = makeSessionManager(
+            guard let (sessionManager, effect) = makeSessionManager(
                 configuration: configuration,
                 kind: .authorizing
-            )
+            ) else {
+                lifecycleState = .unavailable
+                emitChange()
+                return false
+            }
             authorizationGeneration = effect.id
             sessionManager.initiateSession(with: .appRemoteControl, options: .default, campaign: nil)
             beginAuthorizationTimeout(effect, kind: .authorizing)
@@ -315,10 +324,14 @@ public final class SpotifyProviderAdapter: NSObject {
     }
 
     private func beginRenewal(configuration: SPTConfiguration, session: SPTSession) {
-        let (sessionManager, effect) = makeSessionManager(
+        guard let (sessionManager, effect) = makeSessionManager(
             configuration: configuration,
             kind: .renewing
-        )
+        ) else {
+            lifecycleState = .unavailable
+            emitChange()
+            return
+        }
         sessionManager.session = session
         accessToken = nil
         authorizationGeneration = effect.id
@@ -331,8 +344,10 @@ public final class SpotifyProviderAdapter: NSObject {
     private func makeSessionManager(
         configuration: SPTConfiguration,
         kind: MobileMusicProviderAuthorizationKind
-    ) -> (SPTSessionManager, MobileMusicAuthorizationEffect) {
-        let effect = lifecycle.beginAuthorizationEffect(kind: kind, nowMs: connectionNowMs)
+    ) -> (SPTSessionManager, MobileMusicAuthorizationEffect)? {
+        guard let effect = lifecycle.beginAuthorizationEffect(kind: kind, nowMs: connectionNowMs) else {
+            return nil
+        }
         let bridge = SessionManagerBridge(owner: self, generation: effect.id)
         let manager = SPTSessionManager(configuration: configuration, delegate: bridge)
         sessionManagerBridge = bridge
@@ -449,8 +464,10 @@ public final class SpotifyProviderAdapter: NSObject {
         guard let configuration,
               let providerGeneration = appRemoteGeneration,
               lifecycle.classifyProviderSession(id: providerGeneration) == .current,
-              let attemptID = lifecycle.beginConnectionAttempt(nowMs: connectionNowMs)
+              let attemptEffect = lifecycle.beginConnectionAttempt(nowMs: connectionNowMs)
         else { return }
+        let attemptID = attemptEffect.attemptId
+        transport.apply(attemptEffect.transport)
         let appRemote = makeAppRemote(
             configuration,
             providerGeneration: providerGeneration,
@@ -483,7 +500,7 @@ public final class SpotifyProviderAdapter: NSObject {
             Task { @MainActor [weak self] in
                 guard let self,
                       self.lifecycle.classifyProviderSession(id: providerGeneration) == .current,
-                      self.lifecycle.classifyConnection(id: attemptID) == .accepted else { return }
+                      self.lifecycle.classifyConnection(id: attemptID, nowMs: self.connectionNowMs) == .accepted else { return }
                 let completion = self.lifecycle.completePlayerStateRequestIfCurrent(
                     id: requestID,
                     observationRevision: observationRevision
@@ -694,7 +711,7 @@ public final class SpotifyProviderAdapter: NSObject {
               let playerAPI = appRemote?.playerAPI,
               let bridge = appRemoteBridge,
               lifecycle.classifyProviderSession(id: bridge.providerGeneration) == .current,
-              lifecycle.classifyConnection(id: bridge.attemptID) == .accepted
+              lifecycle.classifyConnection(id: bridge.attemptID, nowMs: connectionNowMs) == .accepted
         else { return .unavailable }
         return await transport.perform(
             providerGeneration: bridge.providerGeneration,
@@ -767,7 +784,7 @@ public final class SpotifyProviderAdapter: NSObject {
               bridge.attemptID == attemptID,
               lifecycle.classifyProviderSession(id: providerGeneration) == .current,
               onChange != nil,
-              lifecycle.connectionEstablished(id: attemptID) == .accepted else { return }
+              lifecycle.connectionEstablished(id: attemptID, nowMs: connectionNowMs) == .accepted else { return }
 #if DEBUG
         print("spotify_connection_established")
 #endif
@@ -782,7 +799,7 @@ public final class SpotifyProviderAdapter: NSObject {
             Task { @MainActor [weak self] in
                 guard let self,
                       self.lifecycle.classifyProviderSession(id: providerGeneration) == .current,
-                      self.lifecycle.classifyConnection(id: attemptID) == .accepted else { return }
+                      self.lifecycle.classifyConnection(id: attemptID, nowMs: self.connectionNowMs) == .accepted else { return }
                 if hasError {
                     self.lifecycleState = .stale
                     self.emitChange()
@@ -866,7 +883,7 @@ public final class SpotifyProviderAdapter: NSObject {
         guard onChange != nil,
               appRemote != nil,
               lifecycle.classifyProviderSession(id: providerGeneration) == .current,
-              lifecycle.classifyConnection(id: attemptID) == .accepted else { return }
+              lifecycle.classifyConnection(id: attemptID, nowMs: connectionNowMs) == .accepted else { return }
         let trackChanged = self.playerState?.track.uri != playerState.track.uri
 #if DEBUG
         if trackChanged {

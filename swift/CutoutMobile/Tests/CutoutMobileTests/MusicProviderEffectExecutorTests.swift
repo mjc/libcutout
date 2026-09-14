@@ -35,7 +35,7 @@ final class MusicProviderEffectExecutorTests: XCTestCase {
     func testNamespaceCancellationStopsOnlyMatchingRustIssuedEffects() async {
         let lifecycle = MobileMusicProviderLifecycle()
         let effects = MusicProviderEffectExecutor()
-        let provider = lifecycle.beginProviderSession()
+        let provider = try! XCTUnwrap(lifecycle.beginProviderSession())
         let playerState = try! XCTUnwrap(lifecycle.beginPlayerStateRequest(nowMs: 0))
         effects.run(.provider(provider)) { try? await Task.sleep(for: .seconds(30)) }
         effects.run(.playerState(playerState)) { try? await Task.sleep(for: .seconds(30)) }

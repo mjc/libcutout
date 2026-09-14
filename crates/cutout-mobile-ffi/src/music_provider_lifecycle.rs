@@ -12,8 +12,8 @@ use cutout_music::ids::{
 };
 use cutout_music::player_request::MusicPlayerRequestCompletion;
 use cutout_music::provider_lifecycle::{
-    MusicConnectionEffect, MusicProviderLifecycle, MusicProviderWorkState,
-    MusicTransportCompletion, MusicTransportOutcome,
+    MusicConnectionAttemptEffect, MusicConnectionEffect, MusicProviderLifecycle,
+    MusicProviderWorkState, MusicTransportCompletion, MusicTransportOutcome,
 };
 use cutout_music::{MusicMonitorRequest, MusicMonitorResume, MusicMonitorStart};
 
@@ -240,6 +240,15 @@ pub struct MobileMusicProviderConnectionEffect {
     pub transport: MobileMusicTransportCompletion,
 }
 
+/// One connection attempt and transport retired when it replaced an owner.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct MobileMusicProviderConnectionAttemptEffect {
+    /// Identity for callbacks from this attempt.
+    pub attempt_id: MobileMusicConnectionAttemptId,
+    /// Transport request retired with the replaced attempt, when present.
+    pub transport: MobileMusicTransportCompletion,
+}
+
 /// Classification of a player-state or artwork callback.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Enum)]
 pub enum MobileMusicRequestCompletion {
@@ -310,8 +319,8 @@ impl MobileMusicProviderLifecycle {
 
     /// Begins one replaceable command-feedback presentation.
     #[must_use]
-    pub fn begin_command_feedback(&self) -> MobileMusicCommandFeedbackId {
-        self.lock_inner().begin_command_feedback().into()
+    pub fn begin_command_feedback(&self) -> Option<MobileMusicCommandFeedbackId> {
+        self.lock_inner().begin_command_feedback().map(Into::into)
     }
 
     /// Classifies a command completion without changing the visible request.
@@ -426,8 +435,8 @@ impl MobileMusicProviderLifecycle {
 
     /// Begins a replaceable provider SDK object generation.
     #[must_use]
-    pub fn begin_provider_session(&self) -> MobileMusicProviderSessionId {
-        self.lock_inner().begin_provider_session().into()
+    pub fn begin_provider_session(&self) -> Option<MobileMusicProviderSessionId> {
+        self.lock_inner().begin_provider_session().map(Into::into)
     }
 
     /// Invalidates command feedback when the provider session changes.
@@ -463,14 +472,14 @@ impl MobileMusicProviderLifecycle {
         &self,
         kind: MobileMusicProviderAuthorizationKind,
         now_ms: u64,
-    ) -> MobileMusicAuthorizationEffect {
+    ) -> Option<MobileMusicAuthorizationEffect> {
         let effect = self
             .lock_inner()
-            .begin_authorization_effect(kind.into(), now_ms);
-        MobileMusicAuthorizationEffect {
+            .begin_authorization_effect(kind.into(), now_ms)?;
+        Some(MobileMusicAuthorizationEffect {
             id: effect.id.into(),
             deadline_ms: effect.deadline_ms,
-        }
+        })
     }
 
     /// Classifies a provider authorization callback.
@@ -502,7 +511,10 @@ impl MobileMusicProviderLifecycle {
 
     /// Begins one bounded provider connection attempt.
     #[must_use]
-    pub fn begin_connection_attempt(&self, now_ms: u64) -> Option<MobileMusicConnectionAttemptId> {
+    pub fn begin_connection_attempt(
+        &self,
+        now_ms: u64,
+    ) -> Option<MobileMusicProviderConnectionAttemptEffect> {
         self.lock_inner()
             .begin_connection_attempt(now_ms)
             .map(Into::into)
@@ -513,9 +525,10 @@ impl MobileMusicProviderLifecycle {
     pub fn classify_connection(
         &self,
         id: MobileMusicConnectionAttemptId,
+        now_ms: u64,
     ) -> MobileMusicProviderConnectionCallback {
         self.lock_inner()
-            .classify_connection(ConnectionAttemptId::from_raw(id.value))
+            .classify_connection(ConnectionAttemptId::from_raw(id.value), now_ms)
             .into()
     }
 
@@ -524,9 +537,10 @@ impl MobileMusicProviderLifecycle {
     pub fn connection_established(
         &self,
         id: MobileMusicConnectionAttemptId,
+        now_ms: u64,
     ) -> MobileMusicProviderConnectionCallback {
         self.lock_inner()
-            .connection_established(ConnectionAttemptId::from_raw(id.value))
+            .connection_established(ConnectionAttemptId::from_raw(id.value), now_ms)
             .into()
     }
 
@@ -724,12 +738,14 @@ impl MobileMusicProviderLifecycle {
         provider_generation: MobileMusicProviderSessionId,
         request_id: MobileMusicTransportRequestId,
         outcome: MobileMusicTransportOutcome,
+        now_ms: u64,
     ) -> MobileMusicTransportCompletion {
         self.lock_inner()
             .finish_transport(
                 ProviderSessionId::from_raw(provider_generation.value),
                 TransportRequestId::from_raw(request_id.value),
                 outcome.into(),
+                now_ms,
             )
             .into()
     }
@@ -872,6 +888,15 @@ impl From<MusicConnectionEffect> for MobileMusicProviderConnectionEffect {
     }
 }
 
+impl From<MusicConnectionAttemptEffect> for MobileMusicProviderConnectionAttemptEffect {
+    fn from(value: MusicConnectionAttemptEffect) -> Self {
+        Self {
+            attempt_id: value.attempt_id.into(),
+            transport: value.transport.into(),
+        }
+    }
+}
+
 impl From<MusicPlayerRequestCompletion> for MobileMusicRequestCompletion {
     fn from(value: MusicPlayerRequestCompletion) -> Self {
         match value {
@@ -949,8 +974,11 @@ mod tests {
             MobileMusicProviderCallbackMatch::Current
         );
         let authorization = lifecycle
-            .begin_authorization_effect(MobileMusicProviderAuthorizationKind::Authorizing, 0);
-        let provider = lifecycle.begin_provider_session();
+            .begin_authorization_effect(MobileMusicProviderAuthorizationKind::Authorizing, 0)
+            .expect("authorization effect");
+        let provider = lifecycle
+            .begin_provider_session()
+            .expect("provider session");
         let transport = lifecycle
             .begin_transport_effect(provider, 100)
             .expect("transport");
@@ -982,7 +1010,8 @@ mod tests {
                 .finish_transport(
                     provider,
                     transport.id,
-                    MobileMusicTransportOutcome::Accepted
+                    MobileMusicTransportOutcome::Accepted,
+                    100,
                 )
                 .state,
             MobileMusicTransportCompletionState::Stale
@@ -992,8 +1021,17 @@ mod tests {
     #[test]
     fn binding_projects_connection_end_with_owned_transport_cancellation() {
         let lifecycle = MobileMusicProviderLifecycle::new();
-        let provider = lifecycle.begin_provider_session();
-        let attempt = lifecycle.begin_connection_attempt(0).expect("attempt");
+        let provider = lifecycle
+            .begin_provider_session()
+            .expect("provider session");
+        let attempt = lifecycle
+            .begin_connection_attempt(0)
+            .expect("attempt")
+            .attempt_id;
+        assert_eq!(
+            lifecycle.connection_established(attempt, 0),
+            MobileMusicProviderConnectionCallback::Accepted
+        );
         let transport = lifecycle
             .begin_transport_effect_for_connection(provider, attempt, 0)
             .expect("transport");

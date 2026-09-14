@@ -6,7 +6,7 @@ import XCTest
 final class MusicProviderTransportExecutorTests: XCTestCase {
     func testOverlappingAppleCommandsAdmitOnlyOneRustTransport() async {
         let lifecycle = MobileMusicProviderLifecycle()
-        let provider = lifecycle.beginProviderSession()
+        let provider = try! XCTUnwrap(lifecycle.beginProviderSession())
         let gate = TransportOperationGate()
         let transport = MusicProviderTransportExecutor(
             lifecycle: lifecycle,
@@ -32,7 +32,7 @@ final class MusicProviderTransportExecutorTests: XCTestCase {
 
     func testProviderChangeRejectsLateAppleCommandCompletion() async {
         let lifecycle = MobileMusicProviderLifecycle()
-        let apple = lifecycle.beginProviderSession()
+        let apple = try! XCTUnwrap(lifecycle.beginProviderSession())
         let gate = TransportOperationGate()
         let transport = MusicProviderTransportExecutor(
             lifecycle: lifecycle,
@@ -57,7 +57,7 @@ final class MusicProviderTransportExecutorTests: XCTestCase {
 
     func testAppleBackgroundSuspensionCompletesPendingCommand() async {
         let lifecycle = MobileMusicProviderLifecycle()
-        let provider = lifecycle.beginProviderSession()
+        let provider = try! XCTUnwrap(lifecycle.beginProviderSession())
         let gate = TransportOperationGate()
         let transport = MusicProviderTransportExecutor(
             lifecycle: lifecycle,
@@ -81,7 +81,7 @@ final class MusicProviderTransportExecutorTests: XCTestCase {
 
     func testAlreadyCancelledCommandDoesNotDispatchProviderEffect() async {
         let lifecycle = MobileMusicProviderLifecycle()
-        let provider = lifecycle.beginProviderSession()
+        let provider = try! XCTUnwrap(lifecycle.beginProviderSession())
         let transport = MusicProviderTransportExecutor(
             lifecycle: lifecycle,
             effects: MusicProviderEffectExecutor(),

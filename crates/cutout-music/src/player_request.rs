@@ -22,14 +22,25 @@ pub struct MusicPlayerRequest {
     pending: Option<(PlayerStateRequestId, u64)>,
     last_observed_at: Option<u64>,
     observation_revision: ObservationRevision,
+    observation_revision_exhausted: bool,
 }
 
 /// Bounded identity and retry admission for provider artwork callbacks.
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct MusicArtworkRequest {
-    last_id: u64,
+    last_id: Option<u64>,
     attempts: u8,
     pending: Option<ArtworkRequestId>,
+}
+
+impl Default for MusicArtworkRequest {
+    fn default() -> Self {
+        Self {
+            last_id: Some(0),
+            attempts: 0,
+            pending: None,
+        }
+    }
 }
 
 impl MusicArtworkRequest {
@@ -39,9 +50,10 @@ impl MusicArtworkRequest {
         if self.pending.is_some() || self.attempts >= MAX_ARTWORK_ATTEMPTS {
             return None;
         }
-        self.last_id = self.last_id.wrapping_add(1);
+        let next_id = self.last_id.and_then(|last_id| last_id.checked_add(1))?;
+        self.last_id = Some(next_id);
         self.attempts += 1;
-        let id = ArtworkRequestId::from_raw(self.last_id);
+        let id = ArtworkRequestId::from_raw(next_id);
         self.pending = Some(id);
         Some(id)
     }
@@ -104,7 +116,8 @@ impl MusicPlayerRequest {
         request_id: PlayerStateRequestId,
         observation_revision: ObservationRevision,
     ) -> MusicPlayerRequestCompletion {
-        if observation_revision != self.observation_revision {
+        if self.observation_revision_exhausted || observation_revision != self.observation_revision
+        {
             if self.pending.is_some_and(|(id, _)| id == request_id) {
                 self.pending = None;
             }
@@ -117,7 +130,11 @@ impl MusicPlayerRequest {
     /// Connected sessions seed it before the first player-state response;
     /// verified updates then refresh it as they arrive.
     pub fn mark_observed(&mut self, now_ms: u64) {
-        self.observation_revision = self.observation_revision.next();
+        if let Some(next) = self.observation_revision.next() {
+            self.observation_revision = next;
+        } else {
+            self.observation_revision_exhausted = true;
+        }
         self.last_observed_at = Some(now_ms);
     }
 

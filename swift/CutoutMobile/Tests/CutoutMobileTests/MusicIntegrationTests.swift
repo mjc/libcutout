@@ -41,7 +41,7 @@ final class MusicIntegrationTests: XCTestCase {
     func testProviderTransportCompletesMissingDelayedAndDuplicateCallbacksOnce() async throws {
         let lifecycle = MobileMusicProviderLifecycle()
         let coordinator = MusicTransportCoordinator(lifecycle: lifecycle)
-        let provider = lifecycle.beginProviderSession()
+        let provider = try! XCTUnwrap(lifecycle.beginProviderSession())
         var callbacks = [(MobileMusicTransportRequestId, MusicCommandOutcome)]()
 
         let first = try XCTUnwrap(lifecycle.beginTransportEffect(providerGeneration: provider, nowMs: 1_000))
@@ -54,8 +54,8 @@ final class MusicIntegrationTests: XCTestCase {
         coordinator.expire(providerGeneration: provider, requestID: first.id, nowMs: 10_999)
         XCTAssertTrue(callbacks.isEmpty)
         coordinator.expire(providerGeneration: provider, requestID: first.id, nowMs: 11_000)
-        coordinator.finish(providerGeneration: provider, requestID: first.id, accepted: true)
-        coordinator.finish(providerGeneration: provider, requestID: first.id, accepted: false)
+        coordinator.finish(providerGeneration: provider, requestID: first.id, accepted: true, nowMs: 11_000)
+        coordinator.finish(providerGeneration: provider, requestID: first.id, accepted: false, nowMs: 11_000)
         XCTAssertEqual(callbacks.map(\.1), [.failed])
 
         let second = try XCTUnwrap(lifecycle.beginTransportEffect(providerGeneration: provider, nowMs: 11_001))
@@ -64,8 +64,8 @@ final class MusicIntegrationTests: XCTestCase {
             effect: second,
             completion: { callbacks.append(($0, $1)) }
         ))
-        coordinator.finish(providerGeneration: provider, requestID: second.id, accepted: true)
-        coordinator.finish(providerGeneration: provider, requestID: second.id, accepted: false)
+        coordinator.finish(providerGeneration: provider, requestID: second.id, accepted: true, nowMs: 11_001)
+        coordinator.finish(providerGeneration: provider, requestID: second.id, accepted: false, nowMs: 11_001)
         XCTAssertEqual(callbacks.map(\.1), [.failed, .accepted])
     }
 
@@ -73,7 +73,7 @@ final class MusicIntegrationTests: XCTestCase {
     func testProviderTransportDisconnectResumesPendingCommandAndRejectsLateCallback() throws {
         let lifecycle = MobileMusicProviderLifecycle()
         let coordinator = MusicTransportCoordinator(lifecycle: lifecycle)
-        let provider = lifecycle.beginProviderSession()
+        let provider = try! XCTUnwrap(lifecycle.beginProviderSession())
         var callbacks = [(MobileMusicTransportRequestId, MusicCommandOutcome)]()
         let request = try XCTUnwrap(lifecycle.beginTransportEffect(providerGeneration: provider, nowMs: 100))
         XCTAssertTrue(coordinator.register(
@@ -83,7 +83,7 @@ final class MusicIntegrationTests: XCTestCase {
         ))
 
         coordinator.apply(lifecycle.retireProviderSession(id: provider))
-        coordinator.finish(providerGeneration: provider, requestID: request.id, accepted: true)
+        coordinator.finish(providerGeneration: provider, requestID: request.id, accepted: true, nowMs: 101)
 
         XCTAssertEqual(callbacks.map(\.0), [request.id])
         XCTAssertEqual(callbacks.map(\.1), [.unavailable])
@@ -666,6 +666,33 @@ final class MusicIntegrationTests: XCTestCase {
         XCTAssertFalse(stale.isCommandAvailable(.pause))
         XCTAssertFalse(stale.isCommandAvailable(.next))
         XCTAssertTrue(stale.availableTransportCommands.isEmpty)
+    }
+
+    func testCachedObservationProjectsRequestedTimestampWithoutChangingState() {
+        let observation = MusicProviderObservation(
+            snapshot: .init(
+                provider: .appleMusic,
+                sessionId: "system-music-player",
+                state: .playing,
+                item: .init(identifier: "track-1", title: "Song", artist: "Artist"),
+                positionMilliseconds: nil,
+                durationMilliseconds: nil,
+                observedAtMs: 1_000,
+                capabilities: .init(
+                    previous: true,
+                    play: false,
+                    pause: true,
+                    next: true,
+                    openProvider: true
+                )
+            )
+        )
+
+        let projected = observation.observedAt(2_000)
+
+        XCTAssertEqual(projected.snapshot.observedAtMs, 2_000)
+        XCTAssertEqual(projected.snapshot.state, MobileMusicPlaybackStateDto.playing)
+        XCTAssertEqual(projected.snapshot.capabilities, observation.snapshot.capabilities)
     }
 
     func testStaleStateRejectsRetainedSkipCapabilities() {

@@ -107,8 +107,11 @@ impl ObservationRevision {
 
     /// Advances the revision without allowing arithmetic overflow to reuse a value.
     #[must_use]
-    pub const fn next(self) -> Self {
-        Self(self.0.wrapping_add(1))
+    pub const fn next(self) -> Option<Self> {
+        match self.0.checked_add(1) {
+            Some(value) => Some(Self(value)),
+            None => None,
+        }
     }
 }
 

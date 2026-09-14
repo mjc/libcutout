@@ -141,19 +141,25 @@ impl MusicMonitor {
         matches!(self.scene, MonitorScene::Active)
     }
 
+    /// Returns the start that would be admitted without consuming the intent.
+    #[must_use]
+    pub fn pending_start(&self) -> Option<MusicMonitorStart> {
+        if self.scene != MonitorScene::Active || self.intent == MonitorIntent::Idle {
+            return None;
+        }
+        Some(match self.intent {
+            MonitorIntent::Idle | MonitorIntent::Observe => MusicMonitorStart::Observe,
+            MonitorIntent::Authorize => MusicMonitorStart::Authorize,
+        })
+    }
+
     /// Admits a foreground start and consumes any one-shot authorization grant.
     ///
     /// Further starts remain passive until another explicit request. The platform
     /// must cancel or replace its existing SDK task before starting another one.
     #[must_use]
     pub fn take_start(&mut self) -> Option<MusicMonitorStart> {
-        if self.scene != MonitorScene::Active || self.intent == MonitorIntent::Idle {
-            return None;
-        }
-        let start = match self.intent {
-            MonitorIntent::Idle | MonitorIntent::Observe => MusicMonitorStart::Observe,
-            MonitorIntent::Authorize => MusicMonitorStart::Authorize,
-        };
+        let start = self.pending_start()?;
         self.intent = MonitorIntent::Observe;
         Some(start)
     }
