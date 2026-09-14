@@ -3122,10 +3122,11 @@ final class CutoutAppModel {
                 endReason: endReason
             )
             let error = await liveActivityCoordinator.lastError
-            self?.liveActivityError = error
+            guard let self, self.liveActivityRequestID == requestID else { return }
+            self.liveActivityError = error
             if error != nil {
-                self?.lastLiveActivitySnapshot = nil
-                self?.lastLiveActivityUpdate = nil
+                self.lastLiveActivitySnapshot = nil
+                self.lastLiveActivityUpdate = nil
             }
         }
     }
