@@ -2772,7 +2772,6 @@
     "settings.aero.riding_mode.hard" : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Hard" } } } },
     "settings.aero.riding_mode.medium" : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Medium" } } } },
     "settings.aero.riding_mode.soft" : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Soft" } } } },
-    "settings.aero.brake_overpressure.title" : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Brake alarm" } } } },
     "actions.gyro_calibration.help" : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Keep the wheel upright and still. Prepare calibration, then start when the wheel reports ready." } } } },
     "actions.gyro_calibration.label" : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Calibrate gyro" } } } },
     "actions.horn.help" : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Sounds the wheel horn." } } } },

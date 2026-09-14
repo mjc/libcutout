@@ -2394,6 +2394,11 @@ private extension CutoutSessionCore {
             setPhase(.discoveringServices)
         case .disconnected, .disconnecting:
             record("central_restore=selected_not_connected")
+            connectionDeadlineWorkItem?.cancel()
+            connectionDeadlineWorkItem = nil
+            _ = rustSessionState.disconnectConnectionAttempt()
+            connectionAttempt = nil
+            publishConnectionSnapshot()
             peripheral = nil
             advertisement = nil
             selectedRoute = nil

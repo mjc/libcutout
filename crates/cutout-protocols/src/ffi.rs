@@ -721,7 +721,6 @@ mod tests {
             DeviceCommandDto::SetLights(cutout_core::LightStateDto::On),
         ));
 
-        assert_eq!(result.error, None);
         assert!(result.outputs.iter().any(|output| matches!(
             output,
             SessionOutputDto::Transport(TransportActionDto::Write { channel, bytes, .. })

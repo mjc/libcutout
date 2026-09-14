@@ -250,8 +250,7 @@ mod tests {
         assert!(aero_output.iter().any(|item| matches!(
             item,
             SessionOutput::Transport(TransportAction::Write { bytes, .. })
-                    if bytes.as_slice()
-                        == hex_literal::hex!("4c6b41700d0180800157ed3bd5")
+                if bytes.as_slice() == hex_literal::hex!("4c6b41700d0180800157ed3bd5")
         )));
 
         let mut falcon = find_session_registration(BEGODE_FALCON_SESSION_KEY)

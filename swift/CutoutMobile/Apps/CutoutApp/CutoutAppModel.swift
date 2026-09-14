@@ -405,7 +405,6 @@ final class CutoutAppModel {
         }
         self.core.onPhaseChange = { [weak self] phase in
             guard let self else { return }
-            if phase != .live { deviceControlsSnapshot = nil }
             self.handlePhaseChange(phase)
             self.syncLiveActivity()
         }
