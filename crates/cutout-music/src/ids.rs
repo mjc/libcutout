@@ -91,6 +91,7 @@ lifecycle_id!(MonitorGeneration, MonitorId);
 lifecycle_id!(ProviderSessionGeneration, ProviderSessionId);
 lifecycle_id!(AuthorizationGeneration, AuthorizationId);
 lifecycle_id!(ConnectionAttempt, ConnectionAttemptId);
+lifecycle_id!(EstablishedConnection, EstablishedConnectionId);
 lifecycle_id!(PlayerStateRequest, PlayerStateRequestId);
 lifecycle_id!(ArtworkRequest, ArtworkRequestId);
 lifecycle_id!(ArtworkRetry, ArtworkRetryId);

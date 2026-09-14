@@ -110,6 +110,7 @@ public final class SpotifyProviderAdapter: NSObject {
     private var authorizationGeneration: MobileMusicAuthorizationId?
     private var appRemote: SPTAppRemote?
     private var appRemoteBridge: AppRemoteBridge?
+    private var establishedConnectionID: MobileMusicEstablishedConnectionId?
     private var accessToken: String?
     private var session: SPTSession?
     private var playerState: SPTAppRemotePlayerState?
@@ -442,6 +443,7 @@ public final class SpotifyProviderAdapter: NSObject {
         attemptID: MobileMusicConnectionAttemptId
     ) -> SPTAppRemote {
         invalidateArtworkRequest()
+        establishedConnectionID = nil
         if let previous = appRemote {
             appRemote = nil
             previous.playerAPI?.delegate = nil
@@ -711,12 +713,15 @@ public final class SpotifyProviderAdapter: NSObject {
         guard lifecycleState == .playing || lifecycleState == .paused,
               let playerAPI = appRemote?.playerAPI,
               let bridge = appRemoteBridge,
+              let connectionID = establishedConnectionID,
               lifecycle.classifyProviderSession(id: bridge.providerGeneration) == .current,
               lifecycle.classifyConnection(id: bridge.attemptID, nowMs: connectionNowMs) == .accepted
         else { return .unavailable }
         return await transport.perform(
-            providerGeneration: bridge.providerGeneration,
-            connectionAttemptID: bridge.attemptID,
+            owner: .connection(
+                providerGeneration: bridge.providerGeneration,
+                connectionId: connectionID
+            ),
             command: command
         ) { _, completion in
             let callback: SPTAppRemoteCallback = { _, error in
@@ -786,7 +791,7 @@ public final class SpotifyProviderAdapter: NSObject {
               bridge.attemptID == attemptID,
               lifecycle.classifyProviderSession(id: providerGeneration) == .current,
               onChange != nil else { return }
-        guard lifecycle.connectionEstablished(id: attemptID, nowMs: connectionNowMs) == .accepted else {
+        guard let connectionID = lifecycle.connectionEstablished(id: attemptID, nowMs: connectionNowMs) else {
             // This callback belongs to the still-installed SDK object, but
             // Rust has already expired its attempt. Disconnect that object so
             // `isConnected` cannot permanently block the next retry.
@@ -799,6 +804,7 @@ public final class SpotifyProviderAdapter: NSObject {
             emitChange()
             return
         }
+        establishedConnectionID = connectionID
 #if DEBUG
         print("spotify_connection_established")
 #endif
@@ -884,6 +890,7 @@ public final class SpotifyProviderAdapter: NSObject {
         appRemoteBridge?.owner = nil
         appRemote = nil
         appRemoteBridge = nil
+        establishedConnectionID = nil
         invalidateArtworkRequest()
         playerState = nil
         artwork = nil

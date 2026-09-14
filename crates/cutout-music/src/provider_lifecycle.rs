@@ -9,8 +9,9 @@ use crate::callback_epoch::{
 use crate::connection::{MusicConnection, MusicConnectionCallback};
 use crate::ids::{
     ArtworkRequestId, ArtworkRetry, ArtworkRetryId, AuthorizationId, CommandFeedback,
-    CommandFeedbackId, ConnectionAttemptId, MonitorGeneration, MonitorId, ObservationRevision,
-    PlayerStateRequestId, ProviderSessionGeneration, ProviderSessionId, TransportRequestId,
+    CommandFeedbackId, ConnectionAttemptId, EstablishedConnectionId, MonitorGeneration, MonitorId,
+    ObservationRevision, PlayerStateRequestId, ProviderSessionGeneration, ProviderSessionId,
+    TransportRequestId,
 };
 use crate::player_request::{
     MusicArtworkRequest, MusicPlayerRequest, MusicPlayerRequestCompletion,
@@ -102,6 +103,32 @@ pub struct MusicConnectionAttemptEffect {
     pub transport: MusicTransportCompletion,
 }
 
+/// Scope that owns one provider transport request.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum MusicTransportOwner {
+    /// Work owned by the logical provider session itself.
+    Provider(ProviderSessionId),
+    /// Work owned by one established provider connection.
+    Connection {
+        /// Logical provider session containing the connection.
+        provider_generation: ProviderSessionId,
+        /// Proof that the connection attempt was established.
+        connection_id: EstablishedConnectionId,
+    },
+}
+
+impl MusicTransportOwner {
+    const fn provider_generation(self) -> ProviderSessionId {
+        match self {
+            Self::Provider(provider_generation)
+            | Self::Connection {
+                provider_generation,
+                ..
+            } => provider_generation,
+        }
+    }
+}
+
 /// Provider work cancelled by a scene suspension.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct MusicProviderSuspension {
@@ -122,8 +149,7 @@ pub struct MusicMonitorEffect {
 
 #[derive(Clone, Copy, Debug)]
 struct PendingTransport {
-    provider_generation: ProviderSessionId,
-    connection_attempt_id: Option<ConnectionAttemptId>,
+    owner: MusicTransportOwner,
     request_id: TransportRequestId,
     started_at: MonotonicTimestamp,
     command: MusicCommand,
@@ -146,8 +172,7 @@ impl Default for MusicTransportState {
 impl MusicTransportState {
     fn begin(
         &mut self,
-        provider_generation: ProviderSessionId,
-        connection_attempt_id: Option<ConnectionAttemptId>,
+        owner: MusicTransportOwner,
         command: MusicCommand,
         now: MonotonicTimestamp,
     ) -> Option<PendingTransport> {
@@ -156,8 +181,7 @@ impl MusicTransportState {
             Self::Pending(_) => return None,
         };
         let pending = PendingTransport {
-            provider_generation,
-            connection_attempt_id,
+            owner,
             request_id,
             started_at: now,
             command,
@@ -179,7 +203,8 @@ impl MusicTransportState {
         request_id: TransportRequestId,
     ) -> Option<PendingTransport> {
         let pending = self.pending().filter(|pending| {
-            pending.provider_generation == provider_generation && pending.request_id == request_id
+            pending.owner.provider_generation() == provider_generation
+                && pending.request_id == request_id
         })?;
         *self = Self::Available {
             last_request_id: pending.request_id,
@@ -445,10 +470,12 @@ impl MusicProviderLifecycle {
         &mut self,
         now_ms: u64,
     ) -> Option<MusicConnectionAttemptEffect> {
-        let previous_id = self.connection.current_id();
+        let previous_id = self.connection.callback_id();
         let attempt_id = self.connection.begin_attempt_id(now_ms)?;
         let transport = previous_id.map_or(MusicTransportCompletion::Stale, |id| {
-            self.cancel_transport_for_connection_current(id)
+            self.cancel_transport_for_connection_current(EstablishedConnectionId::from_raw(
+                id.raw(),
+            ))
         });
         Some(MusicConnectionAttemptEffect {
             attempt_id,
@@ -472,7 +499,7 @@ impl MusicProviderLifecycle {
         &mut self,
         id: ConnectionAttemptId,
         now_ms: u64,
-    ) -> MusicConnectionCallback {
+    ) -> Option<EstablishedConnectionId> {
         self.connection.established_for_at(id, now_ms)
     }
 
@@ -628,26 +655,32 @@ impl MusicProviderLifecycle {
         self.artwork_retry.finish(id)
     }
 
-    /// Starts one transport command, optionally owned by a connection attempt.
+    /// Starts one transport command for a provider or established connection.
     #[must_use]
     pub fn begin_transport_effect(
         &mut self,
-        provider_generation: ProviderSessionId,
-        connection_attempt_id: Option<ConnectionAttemptId>,
+        owner: MusicTransportOwner,
         command: MusicCommand,
         now_ms: u64,
     ) -> Option<MusicDeadlineEffect<TransportRequestId>> {
-        if self.provider_session.classify(provider_generation) == CallbackEpochMatch::Stale
-            || connection_attempt_id.is_some_and(|id| !self.connection.is_connected(id))
-        {
+        let owner_is_current = match owner {
+            MusicTransportOwner::Provider(provider_generation) => {
+                self.provider_session.classify(provider_generation) == CallbackEpochMatch::Current
+            }
+            MusicTransportOwner::Connection {
+                provider_generation,
+                connection_id,
+            } => {
+                self.provider_session.classify(provider_generation) == CallbackEpochMatch::Current
+                    && self.connection.is_established(connection_id)
+            }
+        };
+        if !owner_is_current {
             return None;
         }
-        let pending = self.transport.begin(
-            provider_generation,
-            connection_attempt_id,
-            command,
-            MonotonicTimestamp::new(now_ms),
-        )?;
+        let pending = self
+            .transport
+            .begin(owner, command, MonotonicTimestamp::new(now_ms))?;
         if matches!(command, MusicCommand::Previous | MusicCommand::Next) {
             self.observations
                 .issue_skip(pending.request_id, pending.started_at);
@@ -665,17 +698,18 @@ impl MusicProviderLifecycle {
         provider_generation: ProviderSessionId,
         request_id: TransportRequestId,
         outcome: MusicTransportOutcome,
-        now_ms: u64,
     ) -> MusicTransportCompletion {
         let Some(pending) = self.transport.pending() else {
             return MusicTransportCompletion::Stale;
         };
-        if pending.provider_generation != provider_generation || pending.request_id != request_id {
+        if pending.owner.provider_generation() != provider_generation
+            || pending.request_id != request_id
+        {
             return MusicTransportCompletion::Stale;
         }
-        if pending.connection_attempt_id.is_some_and(|id| {
-            self.connection.classify_at(id, now_ms) == MusicConnectionCallback::Stale
-        }) {
+        if let MusicTransportOwner::Connection { connection_id, .. } = pending.owner
+            && !self.connection.is_established(connection_id)
+        {
             return self.finish_transport_unchecked(
                 provider_generation,
                 request_id,
@@ -715,7 +749,7 @@ impl MusicProviderLifecycle {
         let Some(pending) = self.transport.pending() else {
             return MusicTransportCompletion::Stale;
         };
-        if pending.provider_generation != provider_generation {
+        if pending.owner.provider_generation() != provider_generation {
             return MusicTransportCompletion::Stale;
         }
         if MonotonicTimestamp::new(now_ms)
@@ -746,28 +780,12 @@ impl MusicProviderLifecycle {
         )
     }
 
-    /// Cancels the request owned by a connection that just ended.
-    #[must_use]
-    pub fn cancel_transport_for_connection(
-        &mut self,
-        provider_generation: ProviderSessionId,
-        connection_attempt_id: ConnectionAttemptId,
-    ) -> MusicTransportCompletion {
-        let Some(pending) = self.transport.pending() else {
-            return MusicTransportCompletion::Stale;
-        };
-        if pending.provider_generation != provider_generation {
-            return MusicTransportCompletion::Stale;
-        }
-        self.cancel_transport_for_connection_current(connection_attempt_id)
-    }
-
     fn cancel_current_transport(&mut self) -> MusicTransportCompletion {
         let Some(pending) = self.transport.pending() else {
             return MusicTransportCompletion::Stale;
         };
         self.finish_transport_unchecked(
-            pending.provider_generation,
+            pending.owner.provider_generation(),
             pending.request_id,
             MusicTransportOutcome::Cancelled,
         )
@@ -793,22 +811,30 @@ impl MusicProviderLifecycle {
         self.player_state.reset();
         MusicConnectionEffect {
             callback,
-            transport: self.cancel_transport_for_connection_current(id),
+            transport: self.cancel_transport_for_connection_current(
+                EstablishedConnectionId::from_raw(id.raw()),
+            ),
         }
     }
 
     fn cancel_transport_for_connection_current(
         &mut self,
-        connection_attempt_id: ConnectionAttemptId,
+        connection_id: EstablishedConnectionId,
     ) -> MusicTransportCompletion {
         let Some(pending) = self.transport.pending() else {
             return MusicTransportCompletion::Stale;
         };
-        if pending.connection_attempt_id != Some(connection_attempt_id) {
+        if !matches!(
+            pending.owner,
+            MusicTransportOwner::Connection {
+                connection_id: current,
+                ..
+            } if current == connection_id
+        ) {
             return MusicTransportCompletion::Stale;
         }
         self.finish_transport_unchecked(
-            pending.provider_generation,
+            pending.owner.provider_generation(),
             pending.request_id,
             MusicTransportOutcome::Cancelled,
         )
@@ -842,8 +868,11 @@ impl MusicTransportCompletion {
 
 #[cfg(test)]
 mod tests {
-    use super::MusicTransportState;
-    use crate::{MusicCommand, ids::TransportRequestId};
+    use super::{MusicTransportOwner, MusicTransportState};
+    use crate::{
+        MusicCommand,
+        ids::{ProviderSessionId, TransportRequestId},
+    };
     use cutout_core::MonotonicTimestamp;
 
     #[test]
@@ -855,8 +884,7 @@ mod tests {
         assert!(
             state
                 .begin(
-                    crate::ids::ProviderSessionId::from_raw(1),
-                    None,
+                    MusicTransportOwner::Provider(ProviderSessionId::from_raw(1)),
                     MusicCommand::Play,
                     MonotonicTimestamp::new(0),
                 )

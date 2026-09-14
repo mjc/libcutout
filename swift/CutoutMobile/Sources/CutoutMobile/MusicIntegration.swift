@@ -118,15 +118,13 @@ final class MusicTransportCoordinator {
     func finish(
         providerGeneration: MobileMusicProviderSessionId,
         requestID: MobileMusicTransportRequestId,
-        accepted: Bool,
-        nowMs: UInt64
+        accepted: Bool
     ) {
         apply(
             lifecycle.finishTransport(
                 providerGeneration: providerGeneration,
                 requestId: requestID,
-                outcome: accepted ? .accepted : .failed,
-                nowMs: nowMs
+                outcome: accepted ? .accepted : .failed
             ),
             requestID: requestID
         )
@@ -191,8 +189,7 @@ final class MusicProviderTransportExecutor {
     }
 
     func perform(
-        providerGeneration: MobileMusicProviderSessionId,
-        connectionAttemptID: MobileMusicConnectionAttemptId? = nil,
+        owner: MobileMusicTransportOwner,
         command: MobileMusicCommandDto,
         onTerminal: @escaping @MainActor (MobileMusicTransportRequestId) -> Void = { _ in },
         dispatch: @escaping @MainActor @Sendable (
@@ -201,9 +198,12 @@ final class MusicProviderTransportExecutor {
         ) -> Void
     ) async -> MusicCommandOutcome {
         guard !Task.isCancelled else { return .unavailable }
+        let providerGeneration = switch owner {
+        case let .provider(providerGeneration): providerGeneration
+        case let .connection(providerGeneration, _): providerGeneration
+        }
         let effect = lifecycle.beginTransportEffect(
-            providerGeneration: providerGeneration,
-            connectionAttemptId: connectionAttemptID,
+            owner: owner,
             command: command,
             nowMs: nowMs()
         )
@@ -252,8 +252,7 @@ final class MusicProviderTransportExecutor {
                     self.coordinator.finish(
                         providerGeneration: providerGeneration,
                         requestID: effect.id,
-                        accepted: accepted,
-                        nowMs: self.nowMs()
+                        accepted: accepted
                     )
                 }
             }

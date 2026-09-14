@@ -56,8 +56,7 @@ final class MusicIntegrationTests: XCTestCase {
         var callbacks = [(MobileMusicTransportRequestId, MusicCommandOutcome)]()
 
         let first = try XCTUnwrap(lifecycle.beginTransportEffect(
-            providerGeneration: provider,
-            connectionAttemptId: nil,
+            owner: .provider(providerGeneration: provider),
             command: .play,
             nowMs: 1_000
         ))
@@ -67,21 +66,19 @@ final class MusicIntegrationTests: XCTestCase {
             completion: { callbacks.append(($0, $1)) }
         ))
         XCTAssertNil(lifecycle.beginTransportEffect(
-            providerGeneration: provider,
-            connectionAttemptId: nil,
+            owner: .provider(providerGeneration: provider),
             command: .play,
             nowMs: 1_001
         ))
         coordinator.expire(providerGeneration: provider, requestID: first.id, nowMs: 10_999)
         XCTAssertTrue(callbacks.isEmpty)
         coordinator.expire(providerGeneration: provider, requestID: first.id, nowMs: 11_000)
-        coordinator.finish(providerGeneration: provider, requestID: first.id, accepted: true, nowMs: 11_000)
-        coordinator.finish(providerGeneration: provider, requestID: first.id, accepted: false, nowMs: 11_000)
+        coordinator.finish(providerGeneration: provider, requestID: first.id, accepted: true)
+        coordinator.finish(providerGeneration: provider, requestID: first.id, accepted: false)
         XCTAssertEqual(callbacks.map(\.1), [.failed])
 
         let second = try XCTUnwrap(lifecycle.beginTransportEffect(
-            providerGeneration: provider,
-            connectionAttemptId: nil,
+            owner: .provider(providerGeneration: provider),
             command: .play,
             nowMs: 11_001
         ))
@@ -90,8 +87,8 @@ final class MusicIntegrationTests: XCTestCase {
             effect: second,
             completion: { callbacks.append(($0, $1)) }
         ))
-        coordinator.finish(providerGeneration: provider, requestID: second.id, accepted: true, nowMs: 11_001)
-        coordinator.finish(providerGeneration: provider, requestID: second.id, accepted: false, nowMs: 11_001)
+        coordinator.finish(providerGeneration: provider, requestID: second.id, accepted: true)
+        coordinator.finish(providerGeneration: provider, requestID: second.id, accepted: false)
         XCTAssertEqual(callbacks.map(\.1), [.failed, .accepted])
     }
 
@@ -102,8 +99,7 @@ final class MusicIntegrationTests: XCTestCase {
         let provider = try! XCTUnwrap(lifecycle.beginProviderSession())
         var callbacks = [(MobileMusicTransportRequestId, MusicCommandOutcome)]()
         let request = try XCTUnwrap(lifecycle.beginTransportEffect(
-            providerGeneration: provider,
-            connectionAttemptId: nil,
+            owner: .provider(providerGeneration: provider),
             command: .play,
             nowMs: 100
         ))
@@ -114,7 +110,7 @@ final class MusicIntegrationTests: XCTestCase {
         ))
 
         coordinator.apply(lifecycle.retireProviderSession(id: provider))
-        coordinator.finish(providerGeneration: provider, requestID: request.id, accepted: true, nowMs: 101)
+        coordinator.finish(providerGeneration: provider, requestID: request.id, accepted: true)
 
         XCTAssertEqual(callbacks.map(\.0), [request.id])
         XCTAssertEqual(callbacks.map(\.1), [.unavailable])
@@ -890,8 +886,7 @@ final class MusicIntegrationTests: XCTestCase {
             .recorded
         )
         let transport = try XCTUnwrap(lifecycle.beginTransportEffect(
-            providerGeneration: provider,
-            connectionAttemptId: nil,
+            owner: .provider(providerGeneration: provider),
             command: .next,
             nowMs: 1_150
         ))
@@ -899,8 +894,7 @@ final class MusicIntegrationTests: XCTestCase {
             lifecycle.finishTransport(
                 providerGeneration: provider,
                 requestId: transport.id,
-                outcome: .accepted,
-                nowMs: 1_150
+                outcome: .accepted
             ).state,
             .finished
         )
