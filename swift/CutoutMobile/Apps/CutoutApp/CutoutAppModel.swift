@@ -786,13 +786,13 @@ final class CutoutAppModel {
     }
 
     @discardableResult
-    func beginMusicCommandFeedback() -> UInt64 {
+    func beginMusicCommandFeedback() -> MobileMusicCommandFeedbackId {
         let requestID = musicProviderLifecycle.beginCommandFeedback()
         musicCommandFeedback = MusicCommandFeedback(requestID: requestID, outcome: .accepted)
         return requestID
     }
 
-    func dismissMusicCommandFeedback(requestID: UInt64) {
+    func dismissMusicCommandFeedback(requestID: MobileMusicCommandFeedbackId) {
         guard musicCommandFeedback?.requestID == requestID,
               musicProviderLifecycle.dismissCommandFeedback(id: requestID) == .current
         else { return }
@@ -807,7 +807,7 @@ final class CutoutAppModel {
     func finishMusicCommand(
         _ outcome: MusicCommandOutcome,
         provider: MobileMusicProviderDto,
-        requestID: UInt64
+        requestID: MobileMusicCommandFeedbackId
     ) -> MusicCommandOutcome {
         if selectedMusicProvider == provider,
            musicProviderLifecycle.classifyCommandFeedback(id: requestID) == .current {
@@ -1066,7 +1066,7 @@ final class CutoutAppModel {
     @MainActor
     private static func monitorMusic(
         provider: MobileMusicProviderDto,
-        generation: UInt64,
+        generation: MobileMusicMonitorId,
         allowAuthorization: Bool,
         lifecycle: MobileMusicProviderLifecycle,
         appleMusicProvider: AppleMusicProviderAdapter,
@@ -1157,7 +1157,7 @@ final class CutoutAppModel {
     }
 #endif
 
-    private func finishMusicMonitoring(generation: UInt64) {
+    private func finishMusicMonitoring(generation: MobileMusicMonitorId) {
         guard musicProviderLifecycle.finishMonitor(generation: generation) == .current else { return }
 #if canImport(MediaPlayer) && os(iOS)
         appleMusicProvider.stopMonitoring()

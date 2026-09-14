@@ -26,10 +26,10 @@ public final class SpotifyProviderAdapter: NSObject {
 
     private final class AppRemoteBridge: NSObject, SPTAppRemoteDelegate, SPTAppRemotePlayerStateDelegate {
         weak var owner: SpotifyProviderAdapter?
-        let providerGeneration: UInt64
-        let attemptID: UInt64
+        let providerGeneration: MobileMusicProviderSessionId
+        let attemptID: MobileMusicConnectionAttemptId
 
-        init(owner: SpotifyProviderAdapter, providerGeneration: UInt64, attemptID: UInt64) {
+        init(owner: SpotifyProviderAdapter, providerGeneration: MobileMusicProviderSessionId, attemptID: MobileMusicConnectionAttemptId) {
             self.owner = owner
             self.providerGeneration = providerGeneration
             self.attemptID = attemptID
@@ -76,9 +76,9 @@ public final class SpotifyProviderAdapter: NSObject {
 
     private final class SessionManagerBridge: NSObject, SPTSessionManagerDelegate {
         weak var owner: SpotifyProviderAdapter?
-        let generation: UInt64
+        let generation: MobileMusicAuthorizationId
 
-        init(owner: SpotifyProviderAdapter, generation: UInt64) {
+        init(owner: SpotifyProviderAdapter, generation: MobileMusicAuthorizationId) {
             self.owner = owner
             self.generation = generation
         }
@@ -107,7 +107,7 @@ public final class SpotifyProviderAdapter: NSObject {
     private var sessionManagerBridge: SessionManagerBridge?
     private let lifecycle: MobileMusicProviderLifecycle
     private let effects: MusicProviderEffectExecutor
-    private var authorizationGeneration: UInt64?
+    private var authorizationGeneration: MobileMusicAuthorizationId?
     private var appRemote: SPTAppRemote?
     private var appRemoteBridge: AppRemoteBridge?
     private var accessToken: String?
@@ -115,12 +115,12 @@ public final class SpotifyProviderAdapter: NSObject {
     private var playerState: SPTAppRemotePlayerState?
     private var artwork: MusicArtwork?
     private var artworkCache = MusicArtworkCache()
-    private var artworkRequest: (id: UInt64, trackURI: String, generation: UInt64)?
-    private var artworkRetryID: UInt64?
-    private var playerStateRequestID: UInt64?
+    private var artworkRequest: (id: MobileMusicArtworkRequestId, trackURI: String, generation: MobileMusicProviderSessionId)?
+    private var artworkRetryID: MobileMusicArtworkRetryId?
+    private var playerStateRequestID: MobileMusicPlayerStateRequestId?
     private var onChange: (@MainActor () -> Void)?
     private var lifecycleState: MobileMusicPlaybackStateDto = .disconnected
-    private var appRemoteGeneration: UInt64?
+    private var appRemoteGeneration: MobileMusicProviderSessionId?
     private lazy var transport = MusicProviderTransportExecutor(
         lifecycle: lifecycle,
         effects: effects,
@@ -331,7 +331,7 @@ public final class SpotifyProviderAdapter: NSObject {
     private func makeSessionManager(
         configuration: SPTConfiguration,
         kind: MobileMusicProviderAuthorizationKind
-    ) -> (SPTSessionManager, MobileMusicProviderTimedEffect) {
+    ) -> (SPTSessionManager, MobileMusicAuthorizationEffect) {
         let effect = lifecycle.beginAuthorizationEffect(kind: kind, nowMs: connectionNowMs)
         let bridge = SessionManagerBridge(owner: self, generation: effect.id)
         let manager = SPTSessionManager(configuration: configuration, delegate: bridge)
@@ -341,13 +341,13 @@ public final class SpotifyProviderAdapter: NSObject {
     }
 
     private func beginAuthorizationTimeout(
-        _ effect: MobileMusicProviderTimedEffect,
+        _ effect: MobileMusicAuthorizationEffect,
         kind: MobileMusicProviderAuthorizationKind
     ) {
         guard kind == .renewing else { return }
         effects.run(
             .authorization(effect.id),
-            until: effect,
+            until: effect.deadlineMs,
             nowMs: { [weak self] in self?.connectionNowMs ?? effect.deadlineMs }
         ) { [weak self] in
             guard let self else { return }
@@ -423,8 +423,8 @@ public final class SpotifyProviderAdapter: NSObject {
 
     private func makeAppRemote(
         _ configuration: SPTConfiguration,
-        providerGeneration: UInt64,
-        attemptID: UInt64
+        providerGeneration: MobileMusicProviderSessionId,
+        attemptID: MobileMusicConnectionAttemptId
     ) -> SPTAppRemote {
         invalidateArtworkRequest()
         if let previous = appRemote {
@@ -531,14 +531,14 @@ public final class SpotifyProviderAdapter: NSObject {
         return sessionManager.application(UIApplication.shared, open: url, options: [:])
     }
 
-    private nonisolated func enqueueSession(_ session: SPTSession, generation: UInt64) {
+    private nonisolated func enqueueSession(_ session: SPTSession, generation: MobileMusicAuthorizationId) {
         Task { @MainActor [weak self] in
             self?.acceptSession(generation: generation, session: session)
         }
     }
 
     private nonisolated func enqueueAuthorizationFailure(
-        generation: UInt64,
+        generation: MobileMusicAuthorizationId,
         domain: String,
         code: Int,
         description: String
@@ -553,7 +553,7 @@ public final class SpotifyProviderAdapter: NSObject {
         }
     }
 
-    private func acceptSession(generation: UInt64, session: SPTSession) {
+    private func acceptSession(generation: MobileMusicAuthorizationId, session: SPTSession) {
         guard finishAuthorizationTransaction(generation: generation) != .stale else { return }
         self.session = session
         Self.storeSession(session)
@@ -564,7 +564,7 @@ public final class SpotifyProviderAdapter: NSObject {
     }
 
     private func authorizationDidFail(
-        generation: UInt64,
+        generation: MobileMusicAuthorizationId,
         domain: String,
         code: Int,
         description: String
@@ -592,7 +592,7 @@ public final class SpotifyProviderAdapter: NSObject {
         emitChange()
     }
 
-    private func finishAuthorizationTransaction(generation: UInt64) -> MobileMusicProviderAuthorizationMatch {
+    private func finishAuthorizationTransaction(generation: MobileMusicAuthorizationId) -> MobileMusicProviderAuthorizationMatch {
         guard authorizationGeneration == generation else { return .stale }
         let outcome = lifecycle.finishAuthorization(id: generation)
         guard outcome != .stale else { return .stale }
@@ -626,8 +626,8 @@ public final class SpotifyProviderAdapter: NSObject {
     }
 
     private nonisolated func enqueueConnectionEstablished(
-        providerGeneration: UInt64,
-        attemptID: UInt64
+        providerGeneration: MobileMusicProviderSessionId,
+        attemptID: MobileMusicConnectionAttemptId
     ) {
         Task { @MainActor [weak self] in
             self?.handleAppRemoteDidEstablishConnection(
@@ -638,8 +638,8 @@ public final class SpotifyProviderAdapter: NSObject {
     }
 
     private nonisolated func enqueueConnectionFailure(
-        providerGeneration: UInt64,
-        attemptID: UInt64,
+        providerGeneration: MobileMusicProviderSessionId,
+        attemptID: MobileMusicConnectionAttemptId,
         errorDomain: String?,
         errorCode: Int?
     ) {
@@ -654,8 +654,8 @@ public final class SpotifyProviderAdapter: NSObject {
     }
 
     private nonisolated func enqueueDisconnect(
-        providerGeneration: UInt64,
-        attemptID: UInt64,
+        providerGeneration: MobileMusicProviderSessionId,
+        attemptID: MobileMusicConnectionAttemptId,
         errorDomain: String?,
         errorCode: Int?
     ) {
@@ -671,8 +671,8 @@ public final class SpotifyProviderAdapter: NSObject {
 
     private nonisolated func enqueuePlayerState(
         _ playerState: SPTAppRemotePlayerState,
-        providerGeneration: UInt64,
-        attemptID: UInt64
+        providerGeneration: MobileMusicProviderSessionId,
+        attemptID: MobileMusicConnectionAttemptId
     ) {
         Task { @MainActor [weak self] in
             self?.handlePlayerStateDidChange(
@@ -758,8 +758,8 @@ public final class SpotifyProviderAdapter: NSObject {
     }
 
     private func handleAppRemoteDidEstablishConnection(
-        providerGeneration: UInt64,
-        attemptID: UInt64
+        providerGeneration: MobileMusicProviderSessionId,
+        attemptID: MobileMusicConnectionAttemptId
     ) {
         guard let appRemote = self.appRemote,
               let bridge = appRemoteBridge,
@@ -800,8 +800,8 @@ public final class SpotifyProviderAdapter: NSObject {
     }
 
     private func handleAppRemoteConnectionFailure(
-        providerGeneration: UInt64,
-        attemptID: UInt64,
+        providerGeneration: MobileMusicProviderSessionId,
+        attemptID: MobileMusicConnectionAttemptId,
         errorDomain: String?,
         errorCode: Int?
     ) {
@@ -822,8 +822,8 @@ public final class SpotifyProviderAdapter: NSObject {
     }
 
     private func handleAppRemoteDidDisconnect(
-        providerGeneration: UInt64,
-        attemptID: UInt64,
+        providerGeneration: MobileMusicProviderSessionId,
+        attemptID: MobileMusicConnectionAttemptId,
         errorDomain: String?,
         errorCode: Int?
     ) {
@@ -843,7 +843,7 @@ public final class SpotifyProviderAdapter: NSObject {
         emitChange()
     }
 
-    private func detachAppRemote(providerGeneration: UInt64, attemptID: UInt64) {
+    private func detachAppRemote(providerGeneration: MobileMusicProviderSessionId, attemptID: MobileMusicConnectionAttemptId) {
         guard let bridge = appRemoteBridge,
               bridge.providerGeneration == providerGeneration,
               bridge.attemptID == attemptID else { return }
@@ -860,8 +860,8 @@ public final class SpotifyProviderAdapter: NSObject {
 
     private func handlePlayerStateDidChange(
         _ playerState: SPTAppRemotePlayerState,
-        providerGeneration: UInt64,
-        attemptID: UInt64
+        providerGeneration: MobileMusicProviderSessionId,
+        attemptID: MobileMusicConnectionAttemptId
     ) {
         guard onChange != nil,
               appRemote != nil,
@@ -900,7 +900,7 @@ public final class SpotifyProviderAdapter: NSObject {
 
     private func requestArtwork(
         for track: SPTAppRemoteTrack,
-        generation: UInt64
+        generation: MobileMusicProviderSessionId
     ) {
         guard lifecycle.classifyProviderSession(id: generation) == .current,
               artworkRequest == nil,
@@ -943,13 +943,13 @@ public final class SpotifyProviderAdapter: NSObject {
     }
 
     private func beginArtworkDeadline(
-        effect: MobileMusicProviderTimedEffect,
+        effect: MobileMusicArtworkEffect,
         track: SPTAppRemoteTrack,
-        generation: UInt64
+        generation: MobileMusicProviderSessionId
     ) {
         effects.run(
             .artwork(effect.id),
-            until: effect,
+            until: effect.deadlineMs,
             nowMs: { [weak self] in self?.connectionNowMs ?? effect.deadlineMs }
         ) { [weak self] in
             guard let self,
@@ -968,7 +968,7 @@ public final class SpotifyProviderAdapter: NSObject {
 
     private func scheduleArtworkRetry(
         track: SPTAppRemoteTrack,
-        generation: UInt64
+        generation: MobileMusicProviderSessionId
     ) {
         guard let effect = lifecycle.beginArtworkRetryEffect(
             providerGeneration: generation,
@@ -977,7 +977,7 @@ public final class SpotifyProviderAdapter: NSObject {
         artworkRetryID = effect.id
         effects.run(
             .artworkRetry(effect.id),
-            until: effect,
+            until: effect.deadlineMs,
             nowMs: { [weak self] in self?.connectionNowMs ?? effect.deadlineMs }
         ) { [weak self] in
             guard let self,

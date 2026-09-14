@@ -81,10 +81,10 @@ public enum MusicCommandOutcome: Equatable, Sendable {
 
 /// Visible command feedback derived from the terminal provider outcome.
 public struct MusicCommandFeedback: Equatable, Sendable {
-    public let requestID: UInt64
+    public let requestID: MobileMusicCommandFeedbackId
     public let outcome: MusicCommandOutcome
 
-    public init(requestID: UInt64, outcome: MusicCommandOutcome) {
+    public init(requestID: MobileMusicCommandFeedbackId, outcome: MusicCommandOutcome) {
         self.requestID = requestID
         self.outcome = outcome
     }
@@ -102,18 +102,18 @@ public struct MusicCommandFeedback: Equatable, Sendable {
 /// Resolves one provider transport callback exactly once under the Rust-owned lifecycle.
 @MainActor
 final class MusicTransportCoordinator {
-    typealias Completion = @MainActor (UInt64, MusicCommandOutcome) -> Void
+    typealias Completion = @MainActor (MobileMusicTransportRequestId, MusicCommandOutcome) -> Void
 
     private let lifecycle: MobileMusicProviderLifecycle
-    private var pending: (providerGeneration: UInt64, requestID: UInt64, completion: Completion)?
+    private var pending: (providerGeneration: MobileMusicProviderSessionId, requestID: MobileMusicTransportRequestId, completion: Completion)?
 
     init(lifecycle: MobileMusicProviderLifecycle) {
         self.lifecycle = lifecycle
     }
 
     func register(
-        providerGeneration: UInt64,
-        effect: MobileMusicProviderTimedEffect,
+        providerGeneration: MobileMusicProviderSessionId,
+        effect: MobileMusicTransportEffect,
         completion: @escaping Completion
     ) -> Bool {
         guard pending == nil else { return false }
@@ -121,7 +121,7 @@ final class MusicTransportCoordinator {
         return true
     }
 
-    func finish(providerGeneration: UInt64, requestID: UInt64, accepted: Bool) {
+    func finish(providerGeneration: MobileMusicProviderSessionId, requestID: MobileMusicTransportRequestId, accepted: Bool) {
         apply(
             lifecycle.finishTransport(
                 providerGeneration: providerGeneration,
@@ -132,14 +132,14 @@ final class MusicTransportCoordinator {
         )
     }
 
-    func expire(providerGeneration: UInt64, requestID: UInt64, nowMs: UInt64) {
+    func expire(providerGeneration: MobileMusicProviderSessionId, requestID: MobileMusicTransportRequestId, nowMs: UInt64) {
         apply(
             lifecycle.expireTransport(providerGeneration: providerGeneration, nowMs: nowMs),
             requestID: requestID
         )
     }
 
-    func cancel(providerGeneration: UInt64, requestID: UInt64) {
+    func cancel(providerGeneration: MobileMusicProviderSessionId, requestID: MobileMusicTransportRequestId) {
         apply(
             lifecycle.cancelTransport(
                 providerGeneration: providerGeneration,
@@ -149,7 +149,7 @@ final class MusicTransportCoordinator {
         )
     }
 
-    func resolveCancelled(requestID: UInt64?) {
+    func resolveCancelled(requestID: MobileMusicTransportRequestId?) {
         guard let requestID,
               pending?.requestID == requestID,
               let completion = pending?.completion
@@ -158,7 +158,7 @@ final class MusicTransportCoordinator {
         completion(requestID, .unavailable)
     }
 
-    func apply(_ result: MobileMusicTransportCompletion, requestID fallbackRequestID: UInt64? = nil) {
+    func apply(_ result: MobileMusicTransportCompletion, requestID fallbackRequestID: MobileMusicTransportRequestId? = nil) {
         let requestID = result.requestId ?? fallbackRequestID
         guard let requestID, pending?.requestID == requestID, let completion = pending?.completion else { return }
         if result.state == .stale {
@@ -191,14 +191,14 @@ final class MusicProviderTransportExecutor {
     }
 
     func perform(
-        providerGeneration: UInt64,
-        connectionAttemptID: UInt64? = nil,
+        providerGeneration: MobileMusicProviderSessionId,
+        connectionAttemptID: MobileMusicConnectionAttemptId? = nil,
         dispatch: @escaping @MainActor @Sendable (
             @escaping @MainActor @Sendable (Bool) -> Void
         ) -> Void
     ) async -> MusicCommandOutcome {
         guard !Task.isCancelled else { return .unavailable }
-        let effect: MobileMusicProviderTimedEffect?
+        let effect: MobileMusicTransportEffect?
         if let connectionAttemptID {
             effect = lifecycle.beginTransportEffectForConnection(
                 providerGeneration: providerGeneration,
@@ -239,7 +239,7 @@ final class MusicProviderTransportExecutor {
                 }
                 effects.run(
                     .transport(effect.id),
-                    until: effect,
+                    until: effect.deadlineMs,
                     nowMs: nowMs
                 ) { [weak self] in
                     self?.coordinator.expire(
@@ -572,14 +572,14 @@ public final class MusicProviderEffectExecutor {
     }
 
     public enum Key: Hashable, Sendable {
-        case monitor(UInt64)
-        case authorization(UInt64)
-        case provider(UInt64)
-        case playerState(UInt64)
-        case playerStateTimeout(UInt64)
-        case transport(UInt64)
-        case artwork(UInt64)
-        case artworkRetry(UInt64)
+        case monitor(MobileMusicMonitorId)
+        case authorization(MobileMusicAuthorizationId)
+        case provider(MobileMusicProviderSessionId)
+        case playerState(MobileMusicPlayerStateRequestId)
+        case playerStateTimeout(MobileMusicPlayerStateRequestId)
+        case transport(MobileMusicTransportRequestId)
+        case artwork(MobileMusicArtworkRequestId)
+        case artworkRetry(MobileMusicArtworkRetryId)
 
         var namespace: Namespace {
             switch self {
@@ -613,13 +613,12 @@ public final class MusicProviderEffectExecutor {
 
     func run(
         _ key: Key,
-        until effect: MobileMusicProviderTimedEffect,
+        until deadlineMs: UInt64,
         nowMs: @escaping @MainActor @Sendable () -> UInt64,
         operation: @escaping @MainActor @Sendable () async -> Void
     ) {
-        precondition(key.id == effect.id)
         run(key) {
-            guard await Self.wait(until: effect.deadlineMs, nowMs: nowMs) else { return }
+            guard await Self.wait(until: deadlineMs, nowMs: nowMs) else { return }
             await operation()
         }
     }
@@ -661,17 +660,6 @@ public final class MusicProviderEffectExecutor {
     }
 }
 
-private extension MusicProviderEffectExecutor.Key {
-    var id: UInt64 {
-        switch self {
-        case let .monitor(id), let .authorization(id), let .provider(id),
-             let .playerState(id), let .playerStateTimeout(id), let .transport(id), let .artwork(id),
-             let .artworkRetry(id):
-            id
-        }
-    }
-}
-
 @MainActor
 struct AppleMusicNotificationGeneration {
     private(set) var isActive = false
@@ -708,13 +696,13 @@ final class AppleMusicObservationBridge {
     private let lifecycle: MobileMusicProviderLifecycle
     private let effects: MusicProviderEffectExecutor
     private let playerStateTimeout: Duration
-    private var activeGeneration: UInt64?
+    private var activeGeneration: MobileMusicProviderSessionId?
     private var observedAtMs: (@MainActor () -> UInt64)?
     private var onObservation: (@MainActor (MusicProviderObservation) -> Void)?
     private var readInFlight = false
 
     private(set) var cachedObservation: MusicProviderObservation?
-    var providerGeneration: UInt64? { activeGeneration }
+    var providerGeneration: MobileMusicProviderSessionId? { activeGeneration }
 
     init(
         service: any AppleMusicObservationService,
@@ -739,7 +727,7 @@ final class AppleMusicObservationBridge {
         self.observedAtMs = observedAtMs
         self.onObservation = onObservation
 
-        await service.subscribe(generation: generation) { [weak self] reportedGeneration in
+        await service.subscribe(generation: generation.value) { [weak self] reportedGeneration in
             Task { @MainActor [weak self] in
                 self?.providerDidChange(generation: reportedGeneration)
             }
@@ -777,7 +765,7 @@ final class AppleMusicObservationBridge {
         }
         effects.run(.playerState(requestID)) { [weak self, service] in
             let observation = await service.observation(
-                generation: generation,
+                generation: generation.value,
                 observedAtMs: observedAtMs
             )
             guard let self else { return }
@@ -809,15 +797,16 @@ final class AppleMusicObservationBridge {
         return completion
     }
 
-    private func unsubscribe(generation: UInt64) {
+    private func unsubscribe(generation: MobileMusicProviderSessionId) {
         effects.run(.provider(generation)) { [service] in
-            await service.unsubscribe(generation: generation)
+            await service.unsubscribe(generation: generation.value)
         }
     }
 
     private func providerDidChange(generation: UInt64) {
-        guard activeGeneration == generation,
-              lifecycle.classifyProviderSession(id: generation) == .current,
+        guard activeGeneration?.value == generation,
+              let activeGeneration,
+              lifecycle.classifyProviderSession(id: activeGeneration) == .current,
               let observedAtMs
         else { return }
         refresh(observedAtMs: observedAtMs())

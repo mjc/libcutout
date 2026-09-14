@@ -4,17 +4,17 @@ import CutoutMobileFFI
 
 final class MusicIntegrationTests: XCTestCase {
     func testMusicCommandFeedbackPresentsEveryNonAcceptedOutcome() {
-        XCTAssertNil(MusicCommandFeedback(requestID: 1, outcome: .accepted).messageKey)
+        XCTAssertNil(MusicCommandFeedback(requestID: .init(value: 1), outcome: .accepted).messageKey)
         XCTAssertEqual(
-            MusicCommandFeedback(requestID: 2, outcome: .refused).messageKey,
+            MusicCommandFeedback(requestID: .init(value: 2), outcome: .refused).messageKey,
             "music.command.refused"
         )
         XCTAssertEqual(
-            MusicCommandFeedback(requestID: 3, outcome: .failed).messageKey,
+            MusicCommandFeedback(requestID: .init(value: 3), outcome: .failed).messageKey,
             "music.command.failed"
         )
         XCTAssertEqual(
-            MusicCommandFeedback(requestID: 4, outcome: .unavailable).messageKey,
+            MusicCommandFeedback(requestID: .init(value: 4), outcome: .unavailable).messageKey,
             "music.command.unavailable"
         )
     }
@@ -42,7 +42,7 @@ final class MusicIntegrationTests: XCTestCase {
         let lifecycle = MobileMusicProviderLifecycle()
         let coordinator = MusicTransportCoordinator(lifecycle: lifecycle)
         let provider = lifecycle.beginProviderSession()
-        var callbacks = [(UInt64, MusicCommandOutcome)]()
+        var callbacks = [(MobileMusicTransportRequestId, MusicCommandOutcome)]()
 
         let first = try XCTUnwrap(lifecycle.beginTransportEffect(providerGeneration: provider, nowMs: 1_000))
         XCTAssertTrue(coordinator.register(
@@ -74,7 +74,7 @@ final class MusicIntegrationTests: XCTestCase {
         let lifecycle = MobileMusicProviderLifecycle()
         let coordinator = MusicTransportCoordinator(lifecycle: lifecycle)
         let provider = lifecycle.beginProviderSession()
-        var callbacks = [(UInt64, MusicCommandOutcome)]()
+        var callbacks = [(MobileMusicTransportRequestId, MusicCommandOutcome)]()
         let request = try XCTUnwrap(lifecycle.beginTransportEffect(providerGeneration: provider, nowMs: 100))
         XCTAssertTrue(coordinator.register(
             providerGeneration: provider,

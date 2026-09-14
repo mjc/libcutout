@@ -97,7 +97,7 @@ final class AppleMusicObservationBridgeTests: XCTestCase {
         lifecycle.refresh(observedAtMs: 10)
         await service.waitForRefresh(generation: 1)
         await waitUntil {
-            !effects.isRunning(.playerStateTimeout(1))
+            !effects.isRunning(.playerStateTimeout(.init(value: 1)))
         }
 
         lifecycle.refresh(observedAtMs: 20)
