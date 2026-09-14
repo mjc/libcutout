@@ -631,6 +631,23 @@ private extension MusicProviderEffectExecutor.Key {
     }
 }
 
+@MainActor
+struct AppleMusicNotificationGeneration {
+    private(set) var isActive = false
+
+    mutating func begin(_ operation: () -> Void) {
+        guard !isActive else { return }
+        operation()
+        isActive = true
+    }
+
+    mutating func end(_ operation: () -> Void) {
+        guard isActive else { return }
+        operation()
+        isActive = false
+    }
+}
+
 protocol AppleMusicObservationService: Sendable {
     func subscribe(
         generation: UInt64,
@@ -649,6 +666,7 @@ final class AppleMusicObservationBridge {
     private let service: any AppleMusicObservationService
     private let lifecycle: MobileMusicProviderLifecycle
     private let effects: MusicProviderEffectExecutor
+    private let playerStateTimeout: Duration
     private var activeGeneration: UInt64?
     private var observedAtMs: (@MainActor () -> UInt64)?
     private var onObservation: (@MainActor (MusicProviderObservation) -> Void)?
@@ -660,11 +678,13 @@ final class AppleMusicObservationBridge {
     init(
         service: any AppleMusicObservationService,
         lifecycle: MobileMusicProviderLifecycle,
-        effects: MusicProviderEffectExecutor
+        effects: MusicProviderEffectExecutor,
+        playerStateTimeout: Duration = .seconds(10)
     ) {
         self.service = service
         self.lifecycle = lifecycle
         self.effects = effects
+        self.playerStateTimeout = playerStateTimeout
     }
 
     func startMonitoring(
@@ -699,12 +719,13 @@ final class AppleMusicObservationBridge {
         else { return }
         readInFlight = true
         effects.run(.playerStateTimeout(requestID)) { [weak self] in
-            do { try await Task.sleep(for: .seconds(10)) } catch { return }
+            do { try await Task.sleep(for: self?.playerStateTimeout ?? .seconds(10)) } catch { return }
             guard let self,
                   self.activeGeneration == generation,
                   self.lifecycle.classifyProviderSession(id: generation) == .current,
                   self.lifecycle.completePlayerStateRequest(id: requestID) == .accepted
             else { return }
+            self.readInFlight = false
             self.cachedObservation = self.cachedObservation?.staleProjection
             if let cachedObservation = self.cachedObservation {
                 self.onObservation?(cachedObservation)
@@ -1939,7 +1960,7 @@ private final class SystemAppleMusicObservationService: AppleMusicObservationSer
     private var player: MPMusicPlayerController?
     private var activeGeneration: UInt64?
     private var notificationTokens = [NSObjectProtocol]()
-    private var isGeneratingNotifications = false
+    private var notificationGeneration = AppleMusicNotificationGeneration()
     private var artworkCache = MusicArtworkCache()
 
     init(
@@ -1957,9 +1978,8 @@ private final class SystemAppleMusicObservationService: AppleMusicObservationSer
         removeObservers()
         activeGeneration = generation
         let player = musicPlayer()
-        if !isGeneratingNotifications {
+        notificationGeneration.begin {
             player.beginGeneratingPlaybackNotifications()
-            isGeneratingNotifications = true
         }
         let center = NotificationCenter.default
         let names: [Notification.Name] = [
@@ -1975,10 +1995,12 @@ private final class SystemAppleMusicObservationService: AppleMusicObservationSer
 
     func unsubscribe(generation: UInt64) {
         guard activeGeneration == generation else { return }
+        let player = musicPlayer()
         removeObservers()
+        notificationGeneration.end {
+            player.endGeneratingPlaybackNotifications()
+        }
         activeGeneration = nil
-        // The lazily acquired system-player singleton remains notification-ready.
-        // Ending generation can issue synchronous XPC while the scene is exiting.
     }
 
     func observation(

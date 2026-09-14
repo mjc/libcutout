@@ -844,12 +844,14 @@ final class CutoutAppModel {
     ) {
         switch provider.monitoringMode {
         case .unavailable:
-            spotifyMusicProvider.applySuspension(
-                MobileMusicProviderSuspension(
-                    observationGap: false,
-                    cancelledTransportRequestId: musicProviderLifecycle.cancelMonitor().requestId
-                )
+            let suspension = MobileMusicProviderSuspension(
+                observationGap: false,
+                cancelledTransportRequestId: musicProviderLifecycle.cancelMonitor().requestId
             )
+#if canImport(MediaPlayer) && os(iOS)
+            appleMusicProvider.applySuspension(suspension)
+#endif
+            spotifyMusicProvider.applySuspension(suspension)
             stopMusicMonitoring()
         case .appleMusicSystemPlayer where previousProvider != provider:
             musicProviderLifecycle.requestMonitor(request: .observe)

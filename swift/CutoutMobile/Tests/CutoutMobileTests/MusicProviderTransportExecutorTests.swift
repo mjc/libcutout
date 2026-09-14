@@ -19,7 +19,8 @@ final class MusicProviderTransportExecutorTests: XCTestCase {
                 Task { @MainActor in completion(await gate.wait()) }
             }
         }
-        await gate.waitUntilOperationStarted()
+        let started = await gate.waitUntilOperationStarted()
+        XCTAssertTrue(started)
 
         let overlapping = await transport.perform(providerGeneration: provider) { $0(true) }
         XCTAssertEqual(overlapping, .refused)
@@ -43,7 +44,8 @@ final class MusicProviderTransportExecutorTests: XCTestCase {
                 Task { @MainActor in completion(await gate.wait()) }
             }
         }
-        await gate.waitUntilOperationStarted()
+        let started = await gate.waitUntilOperationStarted()
+        XCTAssertTrue(started)
 
         transport.apply(lifecycle.retireProviderSession(id: apple))
         _ = lifecycle.beginProviderSession()
@@ -67,7 +69,8 @@ final class MusicProviderTransportExecutorTests: XCTestCase {
                 Task { @MainActor in completion(await gate.wait()) }
             }
         }
-        await gate.waitUntilOperationStarted()
+        let started = await gate.waitUntilOperationStarted()
+        XCTAssertTrue(started)
 
         transport.apply(lifecycle.suspend())
 
@@ -120,9 +123,30 @@ private actor TransportOperationGate {
         }
     }
 
-    func waitUntilOperationStarted() async {
-        while continuation == nil {
-            await Task.yield()
+    func waitUntilOperationStarted(timeout: Duration = .seconds(1)) async -> Bool {
+        await withTaskGroup(of: Bool.self) { group in
+            group.addTask {
+                while !Task.isCancelled {
+                    if await self.isOperationStarted() { return true }
+                    await Task.yield()
+                }
+                return false
+            }
+            group.addTask {
+                do {
+                    try await Task.sleep(for: timeout)
+                    return false
+                } catch {
+                    return true
+                }
+            }
+            let result = await group.next() ?? false
+            group.cancelAll()
+            return result
         }
+    }
+
+    func isOperationStarted() -> Bool {
+        continuation != nil
     }
 }

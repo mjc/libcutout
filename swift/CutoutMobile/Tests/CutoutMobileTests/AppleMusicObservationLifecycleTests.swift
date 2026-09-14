@@ -82,6 +82,57 @@ final class AppleMusicObservationBridgeTests: XCTestCase {
         XCTAssertEqual(received.map(\.snapshot.item?.identifier), ["new"])
     }
 
+    func testTimedOutReadReleasesTheReadSlotForRecovery() async {
+        let service = AppleMusicObservationServiceSpy()
+        let rustLifecycle = MobileMusicProviderLifecycle()
+        let effects = MusicProviderEffectExecutor()
+        let lifecycle = AppleMusicObservationBridge(
+            service: service,
+            lifecycle: rustLifecycle,
+            effects: effects,
+            playerStateTimeout: .zero
+        )
+
+        await lifecycle.startMonitoring(observedAtMs: { 10 }) { _ in }
+        lifecycle.refresh(observedAtMs: 10)
+        await service.waitForRefresh(generation: 1)
+        await waitUntil {
+            !effects.isRunning(.playerStateTimeout(1))
+        }
+
+        lifecycle.refresh(observedAtMs: 20)
+        let recovered = await service.waitForRefreshCount(2)
+        XCTAssertTrue(recovered)
+        let refreshCallCount = await service.refreshCallCount
+        XCTAssertEqual(refreshCallCount, 2)
+
+        await service.completeRefresh(
+            generation: 1,
+            with: observation(track: "timed-out", observedAtMs: 10)
+        )
+        await service.completeRefresh(
+            generation: 1,
+            with: observation(track: "recovered", observedAtMs: 20)
+        )
+
+        lifecycle.stopMonitoring()
+        effects.cancelAll()
+    }
+
+    @MainActor
+    func testPlaybackNotificationGenerationBalancesBeginAndEnd() {
+        var generation = AppleMusicNotificationGeneration()
+        var events = [String]()
+
+        generation.begin { events.append("begin") }
+        generation.begin { events.append("duplicate-begin") }
+        generation.end { events.append("end") }
+        generation.end { events.append("duplicate-end") }
+
+        XCTAssertEqual(events, ["begin", "end"])
+        XCTAssertFalse(generation.isActive)
+    }
+
     func testPassiveObservationReadsOnlyTheCache() async {
         let service = AppleMusicObservationServiceSpy()
         let rustLifecycle = MobileMusicProviderLifecycle()
@@ -158,7 +209,7 @@ final class AppleMusicObservationBridgeTests: XCTestCase {
 private actor AppleMusicObservationServiceSpy: AppleMusicObservationService {
     private var callback: (@Sendable (UInt64) -> Void)?
     private var activeGeneration: UInt64?
-    private var pendingRefreshes = [UInt64: CheckedContinuation<MusicProviderObservation?, Never>]()
+    private var pendingRefreshes = [UInt64: [CheckedContinuation<MusicProviderObservation?, Never>]]()
     private var seenRefreshGenerations = Set<UInt64>()
     private(set) var maximumActiveSubscriptionCount = 0
     private(set) var refreshCallCount = 0
@@ -181,7 +232,7 @@ private actor AppleMusicObservationServiceSpy: AppleMusicObservationService {
         refreshCallCount += 1
         seenRefreshGenerations.insert(generation)
         return await withCheckedContinuation { continuation in
-            pendingRefreshes[generation] = continuation
+            pendingRefreshes[generation, default: []].append(continuation)
         }
     }
 
@@ -195,10 +246,25 @@ private actor AppleMusicObservationServiceSpy: AppleMusicObservationService {
         }
     }
 
+    func waitForRefreshCount(_ count: Int, timeout: Duration = .seconds(1)) async -> Bool {
+        let deadline = ContinuousClock.now.advanced(by: timeout)
+        while refreshCallCount < count {
+            guard ContinuousClock.now < deadline else { return false }
+            await Task.yield()
+        }
+        return true
+    }
+
     func completeRefresh(
         generation: UInt64,
         with observation: MusicProviderObservation
     ) {
-        pendingRefreshes.removeValue(forKey: generation)?.resume(returning: observation)
+        guard var continuations = pendingRefreshes[generation], !continuations.isEmpty else { return }
+        continuations.removeFirst().resume(returning: observation)
+        if continuations.isEmpty {
+            pendingRefreshes.removeValue(forKey: generation)
+        } else {
+            pendingRefreshes[generation] = continuations
+        }
     }
 }
