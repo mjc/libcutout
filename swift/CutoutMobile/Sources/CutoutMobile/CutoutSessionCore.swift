@@ -469,6 +469,7 @@ public final class CutoutSessionCore: NSObject {
     public var onCaptureEvent: ((CaptureEvent) -> Void)?
     public var onScanStateChange: ((DevicePickerScanState) -> Void)?
     public var onSettingsChange: ((DeviceSettings) -> Void)?
+    public var onPhoneAlarmActionsAvailable: ((MobilePhoneAlarmActionsDto) -> Void)?
     public var onFaultHistoryReadbackChange: ((FaultHistoryReadback?) -> Void)?
     public var onBmsSnapshotChange: ((BmsSnapshot?) -> Void)?
     public var onPhoneLocationSnapshotChange: ((MobilePhoneLocationSnapshotDto, MonotonicMilliseconds) -> Void)?
@@ -1204,6 +1205,10 @@ public final class CutoutSessionCore: NSObject {
 
     private func disconnectAndScanOnBleQueue() {
         liveOwner?.invalidate()
+        let phoneAlarmActions = rustSessionState.deactivatePhoneAlarmDevice()
+        if !phoneAlarmActions.schedule.isEmpty || !phoneAlarmActions.cancelRequestIds.isEmpty {
+            publishOnMain { self.onPhoneAlarmActionsAvailable?(phoneAlarmActions) }
+        }
         _ = rustSessionState.disconnectConnectionAttempt()
         connectionDeadlineWorkItem?.cancel()
         connectionAttempt = nil
@@ -1292,6 +1297,7 @@ public final class CutoutSessionCore: NSObject {
         if let snapshot = step.snapshot {
             hasObservedSpeedSnapshot = snapshot.speed?.value != nil
         }
+        publishPhoneAlarmActionsAvailable()
         setPhase(.subscribing)
     }
 
@@ -1310,6 +1316,7 @@ public final class CutoutSessionCore: NSObject {
         displayState = displayState.reducing(snapshot: snapshot, receivedAt: receivedAt)
         hasObservedSpeedSnapshot = hasObservedSpeedSnapshot || snapshot?.speed?.value != nil
         publishDisplayState()
+        publishPhoneAlarmActionsAvailable()
         setPhase(.live)
     }
 
@@ -1885,6 +1892,12 @@ public final class CutoutSessionCore: NSObject {
             guard let self, self.connectionSnapshot.revision == value.connection.revision else { return }
             self.onSettingsChange?(value)
         }
+    }
+
+    private func publishPhoneAlarmActionsAvailable() {
+        let actions = rustSessionState.drainPhoneAlarmActions()
+        guard !actions.schedule.isEmpty || !actions.cancelRequestIds.isEmpty else { return }
+        publishOnMain { self.onPhoneAlarmActionsAvailable?(actions) }
     }
 
     private func attachSettingsCallback() {

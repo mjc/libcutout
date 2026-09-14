@@ -1501,12 +1501,12 @@ impl CutoutSessionStateHandle {
             state
                 .alarms
                 .restore_preferences(identity.to_owned(), preferences)
-                .map_err(Into::into)?;
+                .map_err(MobilePhoneAlarmError::from)?;
         }
         state
             .alarms
             .activate_device(identity.to_owned())
-            .map_err(Into::into)
+            .map_err(MobilePhoneAlarmError::from)
     }
 
     fn save_phone_alarm_preferences(

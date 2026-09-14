@@ -3,6 +3,7 @@ import CutoutMobileFFI
 
 @MainActor
 protocol CutoutSessionDriving: AnyObject {
+    var onPhoneAlarmActionsAvailable: ((MobilePhoneAlarmActionsDto) -> Void)? { get set }
     var rideSessionStateHandle: CutoutSessionStateHandle { get }
     /// The Rust-backed map adapter is optional while persistence is unavailable.
     var rideMapStateHandle: MobileRideMapState? { get }
@@ -57,6 +58,11 @@ protocol CutoutSessionDriving: AnyObject {
 extension CutoutSessionCore: CutoutSessionDriving {}
 
 extension CutoutSessionDriving {
+    var onPhoneAlarmActionsAvailable: ((MobilePhoneAlarmActionsDto) -> Void)? {
+        get { nil }
+        set {}
+    }
+
     func setDeviceControlsValidation(token: ConnectionAttemptToken, authorized: Bool) throws {
         throw DeviceSettingSubmissionError.ConnectionUnavailable
     }
