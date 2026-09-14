@@ -1238,7 +1238,9 @@ public final class CutoutSessionCore: NSObject {
         }
 
         bmsPages[pageKey] = update
-        return aggregateBmsSnapshot()
+        // Page ordering is for presentation, not summary recency. The arriving event carries
+        // core's summary of all retained observations, including updates to lower-numbered pages.
+        return aggregateBmsSnapshot()?.mergingBmsPage(update).withoutPageCursor()
     }
 
     private func aggregateBmsSnapshot() -> BmsSnapshot? {
@@ -1523,6 +1525,7 @@ public final class CutoutSessionCore: NSObject {
         guard liveOwner == nil, let advertisement, let token = connectionSnapshot.token,
               rustSessionState.verifiedConnectionAttemptIsCurrent(token: token) else { return }
         do {
+            beginBmsStorageSession()
             let owner = makeDeviceTransport(token: token, advertisement: advertisement, sink: self)
             liveOwner = owner
             attachDeviceControlsCallback()
