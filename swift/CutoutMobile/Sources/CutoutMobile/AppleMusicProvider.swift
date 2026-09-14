@@ -276,6 +276,7 @@ public final class AppleMusicProviderAdapter {
         }
         return await transport.perform(
             providerGeneration: providerGeneration,
+            command: command,
             onTerminal: { [weak self] requestID in
                 guard let self, let taskID = self.commandTaskIDs.removeValue(forKey: requestID) else { return }
                 self.pendingCommandTask.cancel(taskID)

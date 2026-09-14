@@ -193,6 +193,7 @@ final class MusicProviderTransportExecutor {
     func perform(
         providerGeneration: MobileMusicProviderSessionId,
         connectionAttemptID: MobileMusicConnectionAttemptId? = nil,
+        command: MobileMusicCommandDto,
         onTerminal: @escaping @MainActor (MobileMusicTransportRequestId) -> Void = { _ in },
         dispatch: @escaping @MainActor @Sendable (
             MobileMusicTransportRequestId,
@@ -205,11 +206,13 @@ final class MusicProviderTransportExecutor {
             effect = lifecycle.beginTransportEffectForConnection(
                 providerGeneration: providerGeneration,
                 connectionAttemptId: connectionAttemptID,
+                command: command,
                 nowMs: nowMs()
             )
         } else {
             effect = lifecycle.beginTransportEffect(
                 providerGeneration: providerGeneration,
+                command: command,
                 nowMs: nowMs()
             )
         }
@@ -348,13 +351,6 @@ private extension MobileMusicTransportOutcome {
     }
 }
 
-/// A provider command can explain a subsequent item change without replacing
-/// the Rust-owned event kind contract.
-public enum MusicTransitionHint: Equatable, Sendable {
-    /// The provider accepted a previous/next transport command.
-    case skip
-}
-
 /// Describes the provider lifecycle that the app can currently monitor.
 ///
 /// Spotify uses App Remote when the iOS SDK and app credentials are present;
@@ -365,147 +361,6 @@ public enum MusicProviderMonitoringMode: Equatable, Sendable {
     case spotifyAppRemote
     case unavailable
 }
-
-/// Holds a transport hint until the provider reports the resulting state.
-///
-/// System-player notifications can arrive after the immediate post-command
-/// poll, so the hint survives several unchanged snapshots but expires when the
-/// provider never reports a resulting item change.
-public struct MusicTransitionHintTracker: Sendable {
-    private static let maxAgeMilliseconds: UInt64 = 5_000
-    private static let maximumUnchangedObservations = 5
-    private struct PendingHint: Sendable {
-        let id: UInt64
-        let hint: MusicTransitionHint
-        let issuedAtMs: UInt64?
-    }
-
-    private var pendingHints = [PendingHint]()
-    private var nextID: UInt64 = 0
-    private var remainingUnchangedObservations: Int?
-
-    public var pendingHint: MusicTransitionHint? { pendingHints.first?.hint }
-
-    public init() {
-        pendingHints = []
-    }
-
-    public var hint: MusicTransitionHint? { pendingHint }
-
-    @discardableResult
-    public mutating func issue(_ hint: MusicTransitionHint, issuedAtMs: UInt64? = nil) -> UInt64 {
-        let id = nextID
-        nextID &+= 1
-        pendingHints.append(PendingHint(id: id, hint: hint, issuedAtMs: issuedAtMs))
-        remainingUnchangedObservations = Self.maximumUnchangedObservations
-        return id
-    }
-
-    public mutating func hint(atMonotonicMs monotonicMs: UInt64) -> MusicTransitionHint? {
-        pendingHints.removeAll { hint in
-            guard let issuedAtMs = hint.issuedAtMs,
-                  monotonicMs >= issuedAtMs
-            else { return false }
-            return monotonicMs - issuedAtMs > Self.maxAgeMilliseconds
-        }
-        if pendingHints.isEmpty {
-            remainingUnchangedObservations = nil
-        }
-        guard let first = pendingHints.first else { return nil }
-        // A delayed observation must not consume a command issued later.
-        if let issuedAtMs = first.issuedAtMs, monotonicMs < issuedAtMs {
-            return nil
-        }
-        return first.hint
-    }
-
-    public mutating func clear() {
-        pendingHints.removeAll(keepingCapacity: true)
-        remainingUnchangedObservations = nil
-    }
-
-    public mutating func clear(id: UInt64) {
-        let clearsFront = pendingHints.first?.id == id
-        pendingHints.removeAll { $0.id == id }
-        guard clearsFront else { return }
-        remainingUnchangedObservations = pendingHints.isEmpty ? nil : Self.maximumUnchangedObservations
-    }
-
-    public mutating func resolve(
-        previous: MusicNowPlaying?,
-        current: MusicNowPlaying?,
-        appliedHint: MusicTransitionHint?,
-        currentObservedAtMs: UInt64? = nil
-    ) {
-        guard pendingHint == .skip, appliedHint == .skip,
-              let pending = pendingHints.first
-        else { return }
-        if let issuedAtMs = pending.issuedAtMs,
-           let currentObservedAtMs,
-           currentObservedAtMs >= issuedAtMs,
-           currentObservedAtMs - issuedAtMs > Self.maxAgeMilliseconds {
-            removeFirstPending()
-            return
-        }
-        guard let current else {
-            removeFirstPending()
-            return
-        }
-        if MusicTransitionHintTracker.isTerminalState(current.state) {
-            removeFirstPending()
-            return
-        }
-        guard let previous, current.item != nil else {
-            consumeUnchangedObservation()
-            return
-        }
-        if previous.provider != current.provider
-            || previous.item?.identifier != current.item?.identifier
-            || MusicTransitionHintTracker.isSkipOccurrence(previous: previous, current: current)
-        {
-            removeFirstPending()
-        } else {
-            consumeUnchangedObservation()
-        }
-    }
-
-    private mutating func removeFirstPending() {
-        pendingHints.removeFirst()
-        remainingUnchangedObservations = pendingHints.isEmpty
-            ? nil
-            : Self.maximumUnchangedObservations
-    }
-
-    private mutating func consumeUnchangedObservation() {
-        let remaining = remainingUnchangedObservations ?? Self.maximumUnchangedObservations
-        guard remaining > 1 else {
-            removeFirstPending()
-            return
-        }
-        remainingUnchangedObservations = remaining - 1
-    }
-
-    private static func isTerminalState(_ state: MobileMusicPlaybackStateDto) -> Bool {
-        switch state {
-        case .stopped, .unauthorized, .unavailable, .disconnected, .stale:
-            true
-        default:
-            false
-        }
-    }
-
-    fileprivate static func isSkipOccurrence(
-        previous: MusicNowPlaying,
-        current: MusicNowPlaying
-    ) -> Bool {
-        guard previous.item?.identifier == current.item?.identifier,
-              let previousPosition = previous.positionMilliseconds,
-              let currentPosition = current.positionMilliseconds,
-              currentPosition < previousPosition else { return false }
-        return true
-    }
-}
-
 
 public extension MobileMusicProviderDto {
     static var allCases: [Self] { [.appleMusic, .spotify] }
@@ -719,7 +574,7 @@ final class AppleMusicObservationBridge {
     private var activeGeneration: MobileMusicProviderSessionId?
     private var observedAtMs: (@MainActor () -> UInt64)?
     private var onObservation: (@MainActor (MusicProviderObservation) -> Void)?
-    private var readInFlight = false
+    private var readInFlight: MobileMusicPlayerStateRequestId?
 
     private(set) var cachedObservation: MusicProviderObservation?
     var providerGeneration: MobileMusicProviderSessionId? { activeGeneration }
@@ -763,18 +618,22 @@ final class AppleMusicObservationBridge {
     func refresh(observedAtMs: UInt64) {
         guard let generation = activeGeneration,
               lifecycle.classifyProviderSession(id: generation) == .current,
-              !readInFlight,
+              readInFlight == nil,
               let requestID = lifecycle.beginPlayerStateRequest(nowMs: observedAtMs)
         else { return }
-        readInFlight = true
+        readInFlight = requestID
         effects.run(.playerStateTimeout(requestID)) { [weak self] in
             do { try await Task.sleep(for: self?.playerStateTimeout ?? .seconds(10)) } catch { return }
             guard let self,
                   self.activeGeneration == generation,
                   self.lifecycle.classifyProviderSession(id: generation) == .current,
-                  self.lifecycle.completePlayerStateRequest(id: requestID, nowMs: self.observedAtMs?() ?? observedAtMs) == .accepted
+                  self.lifecycle.expirePlayerStateRequest(
+                      id: requestID,
+                      nowMs: self.observedAtMs?() ?? observedAtMs
+                  ) == .expired,
+                  self.readInFlight == requestID
             else { return }
-            self.readInFlight = false
+            self.readInFlight = nil
             self.cachedObservation = self.cachedObservation?.staleProjection(
                 observedAtMs: self.observedAtMs?() ?? observedAtMs
             )
@@ -792,11 +651,24 @@ final class AppleMusicObservationBridge {
             guard self.activeGeneration == generation,
                   self.lifecycle.classifyProviderSession(id: generation) == .current
             else { return }
-            guard self.lifecycle.completePlayerStateRequest(id: requestID, nowMs: self.observedAtMs?() ?? observedAtMs) == .accepted else {
+            let completion = self.lifecycle.completePlayerStateRequest(
+                id: requestID,
+                nowMs: self.observedAtMs?() ?? observedAtMs
+            )
+            guard self.readInFlight == requestID else {
                 return
             }
-            self.readInFlight = false
+            self.readInFlight = nil
             self.effects.cancel(.playerStateTimeout(requestID))
+            guard completion == .accepted else {
+                self.cachedObservation = self.cachedObservation?.staleProjection(
+                    observedAtMs: self.observedAtMs?() ?? observedAtMs
+                )
+                if let cachedObservation = self.cachedObservation {
+                    self.onObservation?(cachedObservation)
+                }
+                return
+            }
             guard let observation else { return }
             self.cachedObservation = observation
             self.onObservation?(observation)
@@ -808,7 +680,7 @@ final class AppleMusicObservationBridge {
         activeGeneration = nil
         effects.cancelAll(in: .playerState)
         effects.cancelAll(in: .playerStateTimeout)
-        readInFlight = false
+        readInFlight = nil
         let completion = lifecycle.retireProviderSession(id: generation)
         cachedObservation = nil
         observedAtMs = nil
@@ -1269,17 +1141,17 @@ enum MusicTimeConversion {
 public final class MusicIntegrationCoordinator {
     public private(set) var nowPlaying: MusicNowPlaying?
     private let rideMapState: MobileRideMapState?
+    private let lifecycle: MobileMusicProviderLifecycle
 
-    private var lastObservedAtByProvider = [MobileMusicProviderDto: UInt64]()
     private var lastCorrelationRideID: String?
-    /// Latest accepted observation, including position-only updates. This is
-    /// the baseline for occurrence/rewind detection.
-    private var lastAcceptedSnapshotByProvider = [MobileMusicProviderDto: MobileMusicSnapshotDto]()
-    private var lastPersistedSnapshotByProvider = [MobileMusicProviderDto: MobileMusicSnapshotDto]()
     private var historyPolicy = MobileMusicHistoryPolicyDto.disabled
     public private(set) var lastRecordedSequence: UInt64?
-    public init(rideMapState: MobileRideMapState?) {
+    public init(
+        rideMapState: MobileRideMapState?,
+        lifecycle: MobileMusicProviderLifecycle = MobileMusicProviderLifecycle()
+    ) {
         self.rideMapState = rideMapState
+        self.lifecycle = lifecycle
     }
 
     public func update(snapshot: MobileMusicSnapshotDto, artwork: MusicArtwork? = nil) {
@@ -1293,15 +1165,13 @@ public final class MusicIntegrationCoordinator {
     public func ingest(
         snapshot: MobileMusicSnapshotDto,
         wallClockAtMs: UInt64,
-        clockUncertaintyMs: UInt64,
-        transitionHint: MusicTransitionHint? = nil
+        clockUncertaintyMs: UInt64
     ) throws -> MobileMusicTimelineOutcomeDto? {
         try ingest(
             snapshot: snapshot,
             artwork: nil,
             wallClockAtMs: wallClockAtMs,
-            clockUncertaintyMs: clockUncertaintyMs,
-            transitionHint: transitionHint
+            clockUncertaintyMs: clockUncertaintyMs
         )
     }
 
@@ -1309,32 +1179,28 @@ public final class MusicIntegrationCoordinator {
         snapshot: MobileMusicSnapshotDto,
         artwork: MusicArtwork?,
         wallClockAtMs: UInt64,
-        clockUncertaintyMs: UInt64,
-        transitionHint: MusicTransitionHint?
+        clockUncertaintyMs: UInt64
     ) throws -> MobileMusicTimelineOutcomeDto? {
         resetCorrelationIfRideChanged()
-        let normalizedSnapshot: MobileMusicSnapshotDto
+        let decision: MobileMusicObservationDecision
         do {
-            normalizedSnapshot = try normalizeMusicSnapshot(snapshot: snapshot)
+            guard let accepted = try lifecycle.observeMusic(snapshot: snapshot) else {
+                return nil
+            }
+            decision = accepted
         } catch {
             if let nowPlaying {
                 self.nowPlaying = nowPlaying.staleProjection
             }
             throw error
         }
-        let previous = lastAcceptedSnapshotByProvider[normalizedSnapshot.provider]
-        guard accept(normalizedSnapshot) else { return nil }
+        let normalizedSnapshot = decision.snapshot
         update(snapshot: normalizedSnapshot, artwork: artwork)
-        guard let kind = try musicTransitionKind(
-            previous: previous,
-            current: normalizedSnapshot,
-            skipHint: transitionHint == .skip
-        ) else {
+        guard let kind = decision.transition else {
             return nil
         }
         do {
             guard let rideMapState else {
-                rememberPersistedState(.disabled, snapshot: normalizedSnapshot)
                 return .disabled
             }
             let result = try rideMapState.recordMusicEventWithSequence(
@@ -1346,14 +1212,11 @@ public final class MusicIntegrationCoordinator {
             )
             lastRecordedSequence = result.sequence
             let outcome = result.outcome
-            rememberPersistedState(outcome, snapshot: normalizedSnapshot)
             return outcome
         } catch MobileRideMapError.noActiveRide {
             if historyPolicy == .disabled {
-                rememberPersistedState(.disabled, snapshot: normalizedSnapshot)
                 return .disabled
             }
-            lastPersistedSnapshotByProvider[normalizedSnapshot.provider] = normalizedSnapshot
             throw MobileRideMapError.noActiveRide
         }
     }
@@ -1364,15 +1227,13 @@ public final class MusicIntegrationCoordinator {
     public func ingest(
         observation: MusicProviderObservation,
         wallClockAtMs: UInt64,
-        clockUncertaintyMs: UInt64,
-        transitionHint: MusicTransitionHint? = nil
+        clockUncertaintyMs: UInt64
     ) throws -> MobileMusicTimelineOutcomeDto? {
         try ingest(
             snapshot: observation.snapshot,
             artwork: observation.artwork,
             wallClockAtMs: wallClockAtMs,
-            clockUncertaintyMs: clockUncertaintyMs,
-            transitionHint: transitionHint
+            clockUncertaintyMs: clockUncertaintyMs
         )
     }
 
@@ -1389,9 +1250,7 @@ public final class MusicIntegrationCoordinator {
     /// Drops provider-local observations before a deliberate provider switch.
     /// Selection itself must not synthesize a stop, disconnect, or item change.
     public func resetProviderCorrelation() {
-        lastObservedAtByProvider.removeAll(keepingCapacity: true)
-        lastAcceptedSnapshotByProvider.removeAll(keepingCapacity: true)
-        lastPersistedSnapshotByProvider.removeAll(keepingCapacity: true)
+        lifecycle.resetObservationCorrelation()
         lastCorrelationRideID = rideMapState?.currentSnapshot()?.rideID
         nowPlaying = nil
         lastRecordedSequence = nil
@@ -1416,8 +1275,10 @@ public final class MusicIntegrationCoordinator {
         clockUncertaintyMs: UInt64
     ) throws -> MobileMusicTimelineOutcomeDto {
         resetCorrelationIfRideChanged()
-        let snapshot = try validatedMusicSnapshot(snapshot)
-        guard accept(snapshot) else { return .outOfOrder }
+        guard let decision = try lifecycle.observeMusic(snapshot: snapshot) else {
+            return .outOfOrder
+        }
+        let snapshot = decision.snapshot
         update(snapshot: snapshot)
         guard let rideMapState else {
             return .rideNotOpen
@@ -1429,7 +1290,6 @@ public final class MusicIntegrationCoordinator {
             wallClockAtMs: wallClockAtMs,
             clockUncertaintyMs: clockUncertaintyMs
         )
-        rememberPersistedState(outcome, snapshot: snapshot)
         return outcome
     }
 
@@ -1441,22 +1301,8 @@ public final class MusicIntegrationCoordinator {
         let rideID = rideMapState?.currentSnapshot()?.rideID
         guard rideID != lastCorrelationRideID else { return }
         lastCorrelationRideID = rideID
-        lastObservedAtByProvider.removeAll()
-        lastAcceptedSnapshotByProvider.removeAll()
-        lastPersistedSnapshotByProvider.removeAll()
+        lifecycle.resetObservationCorrelation()
         lastRecordedSequence = nil
-    }
-
-    private func rememberPersistedState(
-        _ outcome: MobileMusicTimelineOutcomeDto,
-        snapshot: MobileMusicSnapshotDto
-    ) {
-        switch outcome {
-        case .recorded, .duplicate, .disabled:
-            lastPersistedSnapshotByProvider[snapshot.provider] = snapshot
-        case .outOfOrder, .rideNotOpen, .full:
-            break
-        }
     }
 
     private func rebasePersistedState(
@@ -1467,43 +1313,15 @@ public final class MusicIntegrationCoordinator {
         case (.disabled, .opaqueItem), (.disabled, .humanReadable):
             // Enabling history should capture the current item on the next
             // accepted observation, even if it was already playing.
-            lastPersistedSnapshotByProvider.removeAll(keepingCapacity: true)
-            lastAcceptedSnapshotByProvider.removeAll(keepingCapacity: true)
+            lifecycle.resetObservationBaselines()
         case (_, .disabled):
             // Keep the current player as the baseline while history is off so
             // a later re-enable can deliberately start a new association.
-            lastPersistedSnapshotByProvider.removeAll(keepingCapacity: true)
-            lastAcceptedSnapshotByProvider.removeAll(keepingCapacity: true)
+            lifecycle.resetObservationBaselines()
         default:
             // Redaction and display-policy changes are not music transitions.
             // Preserve the baseline so the next poll cannot duplicate one.
             break
-        }
-    }
-
-    private func accept(_ snapshot: MobileMusicSnapshotDto) -> Bool {
-        let lastObservedAtMs = lastObservedAtByProvider[snapshot.provider]
-        guard acceptMusicSnapshot(
-            previousObservedAtMs: lastObservedAtMs,
-            currentObservedAtMs: snapshot.observedAtMs
-        ) else { return false }
-        lastObservedAtByProvider[snapshot.provider] = snapshot.observedAtMs
-        lastAcceptedSnapshotByProvider[snapshot.provider] = snapshot
-        return true
-    }
-
-    private func validatedMusicSnapshot(
-        _ snapshot: MobileMusicSnapshotDto
-    ) throws -> MobileMusicSnapshotDto {
-        do {
-            return try normalizeMusicSnapshot(snapshot: snapshot)
-        } catch let error as MobileRideMapCoreErrorDto {
-            switch error {
-            case let .InvalidMusicInput(message):
-                throw MobileRideMapError.invalidMusicInput(message)
-            default:
-                throw MobileRideMapError.storageError(String(describing: error))
-            }
         }
     }
 

@@ -1,4 +1,6 @@
-use cutout_music::player_request::{MusicPlayerRequest, MusicPlayerRequestCompletion};
+use cutout_music::player_request::{
+    MusicPlayerRequest, MusicPlayerRequestCompletion, MusicPlayerRequestExpiration,
+};
 
 #[test]
 fn lost_callback_times_out_and_late_callback_cannot_clear_retry() {
@@ -77,4 +79,33 @@ fn callback_at_request_deadline_is_stale() {
         MusicPlayerRequestCompletion::Stale
     );
     assert!(request.begin(11_001).is_some());
+}
+
+#[test]
+fn deadline_distinguishes_pending_expired_and_replaced_requests() {
+    let mut request = MusicPlayerRequest::default();
+    let first = request.begin(1_000).expect("request");
+
+    assert_eq!(
+        request.expire(first, 10_999),
+        MusicPlayerRequestExpiration::Pending
+    );
+    assert_eq!(
+        request.expire(first, 11_000),
+        MusicPlayerRequestExpiration::Expired
+    );
+    assert_eq!(
+        request.expire(first, 11_001),
+        MusicPlayerRequestExpiration::Stale
+    );
+
+    let replacement = request.begin(11_001).expect("replacement");
+    assert_eq!(
+        request.expire(first, 21_001),
+        MusicPlayerRequestExpiration::Stale
+    );
+    assert_eq!(
+        request.complete(replacement, 11_002),
+        MusicPlayerRequestCompletion::Accepted
+    );
 }

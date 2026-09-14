@@ -1,3 +1,4 @@
+use cutout_core::MonotonicTimestamp;
 use cutout_music::callback_epoch::{
     AuthorizationTransactionKind, AuthorizationTransactionMatch, CallbackEpochMatch,
 };
@@ -6,7 +7,137 @@ use cutout_music::provider_lifecycle::{
     MusicProviderLifecycle, MusicProviderSuspension, MusicProviderWorkState,
     MusicTransportCompletion, MusicTransportOutcome,
 };
-use cutout_music::{MusicMonitorRequest, MusicMonitorResume, MusicMonitorStart, MusicProvider};
+use cutout_music::{
+    MusicCapabilities, MusicCommand, MusicItem, MusicMonitorRequest, MusicMonitorResume,
+    MusicMonitorStart, MusicObservationOutcome, MusicPlaybackPosition, MusicPlaybackState,
+    MusicProvider, MusicRideEventKind, MusicSnapshot,
+};
+
+fn observation(
+    item: Option<&str>,
+    state: MusicPlaybackState,
+    observed_at_ms: u64,
+) -> MusicSnapshot {
+    MusicSnapshot::new(
+        MusicProvider::AppleMusic,
+        "session",
+        state,
+        item.map(|identifier| MusicItem::new(identifier, None, None).expect("valid item")),
+        MusicPlaybackPosition::default(),
+        MonotonicTimestamp::new(observed_at_ms),
+        MusicCapabilities::new(),
+    )
+    .expect("valid observation")
+}
+
+fn transition(outcome: MusicObservationOutcome) -> Option<MusicRideEventKind> {
+    match outcome {
+        MusicObservationOutcome::Accepted(decision) => decision.transition(),
+        MusicObservationOutcome::OutOfOrder => panic!("observation unexpectedly out of order"),
+    }
+}
+
+#[test]
+fn accepted_skip_transport_correlates_the_next_item_in_the_same_rust_owner() {
+    let mut lifecycle = MusicProviderLifecycle::default();
+    let provider = lifecycle
+        .begin_provider_session()
+        .expect("provider session");
+    assert_eq!(
+        transition(lifecycle.observe_music(observation(
+            Some("first"),
+            MusicPlaybackState::Playing,
+            100,
+        ))),
+        Some(MusicRideEventKind::ItemChanged)
+    );
+    let transport = lifecycle
+        .begin_transport_effect(provider, MusicCommand::Next, 200)
+        .expect("transport");
+    assert!(matches!(
+        lifecycle.finish_transport(provider, transport.id, MusicTransportOutcome::Accepted, 200,),
+        MusicTransportCompletion::Finished { .. }
+    ));
+
+    assert_eq!(
+        transition(lifecycle.observe_music(observation(
+            Some("second"),
+            MusicPlaybackState::Playing,
+            300,
+        ))),
+        Some(MusicRideEventKind::Skip)
+    );
+}
+
+#[test]
+fn failed_skip_transport_does_not_relabel_a_later_item_change() {
+    let mut lifecycle = MusicProviderLifecycle::default();
+    let provider = lifecycle
+        .begin_provider_session()
+        .expect("provider session");
+    let _ = lifecycle.observe_music(observation(Some("first"), MusicPlaybackState::Playing, 100));
+    let transport = lifecycle
+        .begin_transport_effect(provider, MusicCommand::Next, 200)
+        .expect("transport");
+    let _ = lifecycle.finish_transport(provider, transport.id, MusicTransportOutcome::Failed, 200);
+
+    assert_eq!(
+        transition(lifecycle.observe_music(observation(
+            Some("second"),
+            MusicPlaybackState::Playing,
+            300,
+        ))),
+        Some(MusicRideEventKind::ItemChanged)
+    );
+}
+
+#[test]
+fn consecutive_disconnect_observations_emit_one_boundary() {
+    let mut lifecycle = MusicProviderLifecycle::default();
+    assert_eq!(
+        transition(lifecycle.observe_music(observation(
+            None,
+            MusicPlaybackState::Disconnected,
+            100,
+        ))),
+        Some(MusicRideEventKind::ProviderDisconnected)
+    );
+    assert_eq!(
+        transition(lifecycle.observe_music(observation(
+            None,
+            MusicPlaybackState::Disconnected,
+            200,
+        ))),
+        None
+    );
+}
+
+#[test]
+fn connection_end_invalidates_command_feedback() {
+    let mut lifecycle = MusicProviderLifecycle::default();
+    let _provider = lifecycle
+        .begin_provider_session()
+        .expect("provider session");
+    let feedback = lifecycle
+        .begin_command_feedback()
+        .expect("feedback identity");
+    let attempt = lifecycle
+        .begin_connection_attempt(0)
+        .expect("connection attempt")
+        .attempt_id;
+    assert_eq!(
+        lifecycle.connection_established(attempt, 0),
+        MusicConnectionCallback::Accepted
+    );
+
+    let ended = lifecycle.connection_disconnected_effect(attempt, 1);
+
+    assert_eq!(ended.callback, MusicConnectionCallback::Accepted);
+    assert_eq!(
+        lifecycle.classify_command_feedback(feedback),
+        CallbackEpochMatch::Stale
+    );
+}
 
 #[test]
 fn apple_music_and_spotify_share_monitoring_and_observation_gap_policy() {
@@ -103,11 +234,14 @@ fn transport_has_one_terminal_outcome_across_deadline_and_late_callback() {
         .begin_provider_session()
         .expect("provider session");
     let request = lifecycle
-        .begin_transport_effect(generation, 1_000)
+        .begin_transport_effect(generation, MusicCommand::Play, 1_000)
         .expect("request");
 
-    assert_eq!(request.deadline_ms, 11_000);
-    assert_eq!(lifecycle.begin_transport_effect(generation, 1_001), None);
+    assert_eq!(request.deadline.as_milliseconds(), 11_000);
+    assert_eq!(
+        lifecycle.begin_transport_effect(generation, MusicCommand::Play, 1_001),
+        None
+    );
     assert_eq!(
         lifecycle.expire_transport(generation, 10_999),
         MusicTransportCompletion::Pending,
@@ -130,7 +264,7 @@ fn transport_has_one_terminal_outcome_across_deadline_and_late_callback() {
     );
 
     let replacement = lifecycle
-        .begin_transport_effect(generation, 11_001)
+        .begin_transport_effect(generation, MusicCommand::Play, 11_001)
         .expect("replacement request");
     assert_eq!(
         lifecycle.retire_provider_session(generation),
@@ -185,7 +319,7 @@ fn transport_cancellation_is_scoped_to_the_rust_request_and_provider_generation(
         .begin_provider_session()
         .expect("provider session");
     let first = lifecycle
-        .begin_transport_effect(provider, 0)
+        .begin_transport_effect(provider, MusicCommand::Play, 0)
         .expect("first transport");
     assert_eq!(
         lifecycle.cancel_transport(provider, first.id),
@@ -196,7 +330,7 @@ fn transport_cancellation_is_scoped_to_the_rust_request_and_provider_generation(
     );
 
     let replacement = lifecycle
-        .begin_transport_effect(provider, 1)
+        .begin_transport_effect(provider, MusicCommand::Play, 1)
         .expect("replacement transport");
     assert_eq!(
         lifecycle.cancel_transport(provider, first.id),
@@ -222,7 +356,12 @@ fn connection_disconnect_cancels_only_connection_owned_transport() {
         .expect("attempt")
         .attempt_id;
     assert_eq!(
-        lifecycle.begin_transport_effect_for_connection(provider, Some(connection), 0),
+        lifecycle.begin_transport_effect_for_connection(
+            provider,
+            Some(connection),
+            MusicCommand::Play,
+            0,
+        ),
         None,
         "transport cannot be admitted before the connection is established",
     );
@@ -231,7 +370,7 @@ fn connection_disconnect_cancels_only_connection_owned_transport() {
         MusicConnectionCallback::Accepted
     );
     let request = lifecycle
-        .begin_transport_effect_for_connection(provider, Some(connection), 0)
+        .begin_transport_effect_for_connection(provider, Some(connection), MusicCommand::Play, 0)
         .expect("transport");
     assert_eq!(
         lifecycle.cancel_transport_for_connection(provider, connection),
@@ -264,7 +403,7 @@ fn connection_end_releases_player_poll_and_owned_transport_for_reconnect() {
         .begin_player_state_request(0)
         .expect("player poll");
     let command = lifecycle
-        .begin_transport_effect_for_connection(provider, Some(attempt), 0)
+        .begin_transport_effect_for_connection(provider, Some(attempt), MusicCommand::Play, 0)
         .expect("transport");
 
     let failure = lifecycle.connection_failed_effect(attempt, 100);
@@ -283,7 +422,7 @@ fn connection_end_releases_player_poll_and_owned_transport_for_reconnect() {
     assert!(lifecycle.begin_player_state_request(101).is_some());
     assert!(
         lifecycle
-            .begin_transport_effect_for_connection(provider, None, 101)
+            .begin_transport_effect_for_connection(provider, None, MusicCommand::Play, 101)
             .is_some()
     );
 }
@@ -304,7 +443,12 @@ fn stale_connection_cannot_start_owned_transport() {
     );
 
     assert_eq!(
-        lifecycle.begin_transport_effect_for_connection(provider, Some(attempt), 101),
+        lifecycle.begin_transport_effect_for_connection(
+            provider,
+            Some(attempt),
+            MusicCommand::Play,
+            101,
+        ),
         None
     );
 }
@@ -334,7 +478,12 @@ fn an_expired_connection_attempt_rejects_late_callbacks_and_retires_owned_transp
         .expect("replacement attempt")
         .attempt_id;
     assert_eq!(
-        lifecycle.begin_transport_effect_for_connection(provider, Some(replacement), 10_000),
+        lifecycle.begin_transport_effect_for_connection(
+            provider,
+            Some(replacement),
+            MusicCommand::Play,
+            10_000,
+        ),
         None,
         "a replacement attempt must remain unconnected",
     );
@@ -355,7 +504,7 @@ fn replacing_a_timed_out_attempt_cancels_its_transport_before_the_new_attempt() 
         MusicConnectionCallback::Accepted
     );
     let request = lifecycle
-        .begin_transport_effect_for_connection(provider, Some(first), 9_000)
+        .begin_transport_effect_for_connection(provider, Some(first), MusicCommand::Play, 9_000)
         .expect("transport");
 
     let replacement = lifecycle
@@ -394,7 +543,7 @@ fn provider_change_cancels_transport_and_rejects_its_late_completion() {
         .begin_provider_session()
         .expect("provider session");
     let command = lifecycle
-        .begin_transport_effect(apple, 0)
+        .begin_transport_effect(apple, MusicCommand::Play, 0)
         .expect("apple command");
 
     let spotify = lifecycle
@@ -443,7 +592,8 @@ fn rust_effects_own_deadlines_and_monitor_continuation() {
         lifecycle
             .next_monitor_poll(monitor.generation, MusicProviderWorkState::Active, 500)
             .expect("poll")
-            .deadline_ms,
+            .deadline
+            .as_milliseconds(),
         1_500,
     );
     assert_eq!(
@@ -461,15 +611,15 @@ fn rust_effects_own_deadlines_and_monitor_continuation() {
     let authorization = lifecycle
         .begin_authorization_effect(AuthorizationTransactionKind::Authorizing, 1_000)
         .expect("authorization effect");
-    assert_eq!(authorization.deadline_ms, u64::MAX);
+    assert_eq!(authorization.deadline.as_milliseconds(), u64::MAX);
     let renewal = lifecycle
         .begin_authorization_effect(AuthorizationTransactionKind::Renewing, 1_000)
         .expect("renewal effect");
-    assert_eq!(renewal.deadline_ms, 21_000);
+    assert_eq!(renewal.deadline.as_milliseconds(), 21_000);
     let artwork = lifecycle
         .begin_artwork_effect(provider, 2_000)
         .expect("artwork");
-    assert_eq!(artwork.deadline_ms, 7_000);
+    assert_eq!(artwork.deadline.as_milliseconds(), 7_000);
     assert_eq!(
         lifecycle.complete_artwork_request(provider, artwork.id),
         cutout_music::player_request::MusicPlayerRequestCompletion::Accepted,
@@ -477,7 +627,7 @@ fn rust_effects_own_deadlines_and_monitor_continuation() {
     let retry = lifecycle
         .begin_artwork_retry_effect(provider, 7_000)
         .expect("retry");
-    assert_eq!(retry.deadline_ms, 8_000);
+    assert_eq!(retry.deadline.as_milliseconds(), 8_000);
     assert_eq!(
         lifecycle.complete_artwork_retry(provider, retry.id),
         CallbackEpochMatch::Current,

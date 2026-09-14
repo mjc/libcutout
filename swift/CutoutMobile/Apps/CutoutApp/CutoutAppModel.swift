@@ -534,7 +534,6 @@ final class CutoutAppModel {
     private var rideMapHistoryViewportCancellation: MobileRideMapProjectionCancellation?
     private var rideMapHistoryContextTask: Task<Void, Never>?
     private var rideMapRestoreTask: Task<Void, Never>?
-    private var musicTransitionHintTracker = MusicTransitionHintTracker()
     private var rideMapLiveProjectionTask: Task<Void, Never>?
     private var rideMapDurationTask: Task<Void, Never>?
     private var rideMapLiveProjectionCancellation: MobileLiveRideMapProjectionCancellation?
@@ -645,7 +644,10 @@ final class CutoutAppModel {
         self.selectedMusicProvider = musicProviderSelectionStore.provider
         self.musicHistoryPolicyStore = musicHistoryPolicyStore
         self.musicHistoryPolicy = musicHistoryPolicyStore.policy
-        self.musicCoordinator = MusicIntegrationCoordinator(rideMapState: core.rideMapStateHandle)
+        self.musicCoordinator = MusicIntegrationCoordinator(
+            rideMapState: core.rideMapStateHandle,
+            lifecycle: musicProviderLifecycle
+        )
         self.musicTimelineEvents = musicCoordinator.recordedEvents
         hasSavedDevice = selectedDeviceStore.platformIdentifier != nil
         if let identity = selectedDeviceStore.platformIdentifier,
@@ -752,14 +754,6 @@ final class CutoutAppModel {
             )
         }
 #if canImport(MediaPlayer) && os(iOS)
-        let skipHintID: UInt64?
-        switch command {
-        case .previous, .next:
-            let issuedAtMs = core.now().rawValue
-            skipHintID = musicTransitionHintTracker.issue(.skip, issuedAtMs: issuedAtMs)
-        default:
-            skipHintID = nil
-        }
         let outcome: MusicCommandOutcome
         if nowPlaying.provider == .spotify {
             outcome = await spotifyMusicProvider.perform(command)
@@ -768,8 +762,6 @@ final class CutoutAppModel {
         }
         if outcome == .accepted {
             refreshMusicSnapshot()
-        } else if let skipHintID {
-            musicTransitionHintTracker.clear(id: skipHintID)
         }
         return finishMusicCommand(
             outcome,
@@ -787,7 +779,10 @@ final class CutoutAppModel {
 
     @discardableResult
     func beginMusicCommandFeedback() -> MobileMusicCommandFeedbackId? {
-        guard let requestID = musicProviderLifecycle.beginCommandFeedback() else { return nil }
+        guard let requestID = musicProviderLifecycle.beginCommandFeedback() else {
+            musicCommandFeedback = nil
+            return nil
+        }
         musicCommandFeedback = MusicCommandFeedback(requestID: requestID, outcome: .accepted)
         return requestID
     }
@@ -819,7 +814,7 @@ final class CutoutAppModel {
     func dismissMusicPlayer() {
         musicPlayerVisibilityStore.setHidden(true)
         isMusicPlayerHidden = true
-        musicTransitionHintTracker.clear()
+        musicProviderLifecycle.clearPendingCommandCorrelation()
     }
 
     func restoreMusicPlayer() {
@@ -840,7 +835,6 @@ final class CutoutAppModel {
         musicSettingsNowPlaying = projectedMusicNowPlaying()
         musicProviderSelectionStore.set(provider)
         musicMonitoringPreferenceStore.setEnabled(true)
-        musicTransitionHintTracker.clear()
         updateMusicMonitoring(from: previousProvider, to: provider)
     }
 
@@ -872,9 +866,7 @@ final class CutoutAppModel {
         }
     }
 
-    func refreshMusicSnapshot(
-        transitionHint: MusicTransitionHint? = nil
-    ) {
+    func refreshMusicSnapshot() {
 #if canImport(MediaPlayer) && os(iOS)
         let observedAtMs = core.now().rawValue
         let observation: MusicProviderObservation
@@ -889,11 +881,7 @@ final class CutoutAppModel {
                 snapshot: spotifyMusicProvider.unavailableSnapshot(observedAtMs: observedAtMs)
             )
         }
-        _ = ingestMusicObservation(
-            observation,
-            transitionHint: transitionHint
-                ?? musicTransitionHintTracker.hint(atMonotonicMs: observedAtMs)
-        )
+        _ = ingestMusicObservation(observation)
 #endif
     }
 
@@ -901,19 +889,14 @@ final class CutoutAppModel {
     func ingestMusicObservation(
         _ observation: MusicProviderObservation,
         wallClockAtMs: UInt64? = nil,
-        clockUncertaintyMs: UInt64 = 1_000,
-        transitionHint: MusicTransitionHint? = nil
+        clockUncertaintyMs: UInt64 = 1_000
     ) -> Bool {
         let wallClockAtMs = wallClockAtMs ?? UInt64(Date().timeIntervalSince1970 * 1_000)
-        let appliedHint = transitionHint
-            ?? musicTransitionHintTracker.hint(atMonotonicMs: observation.snapshot.observedAtMs)
-        let previousNowPlaying = musicCoordinator.nowPlaying
         do {
             let outcome = try musicCoordinator.ingest(
                 observation: observation,
                 wallClockAtMs: wallClockAtMs,
-                clockUncertaintyMs: clockUncertaintyMs,
-                transitionHint: appliedHint
+                clockUncertaintyMs: clockUncertaintyMs
             )
             if outcome == .recorded {
                 musicHistorySaveError = nil
@@ -932,41 +915,19 @@ final class CutoutAppModel {
                 clearMusicCaptureContext()
                 musicHistorySaveError = .storageError("ride music timeline is full")
             }
-            finishMusicObservation(
-                previousNowPlaying: previousNowPlaying,
-                appliedHint: appliedHint,
-                currentObservedAtMs: observation.snapshot.observedAtMs
-            )
+            finishMusicObservation()
             return outcome != .full
         } catch MobileRideMapError.noActiveRide {
-            finishMusicObservation(
-                previousNowPlaying: previousNowPlaying,
-                appliedHint: appliedHint,
-                currentObservedAtMs: observation.snapshot.observedAtMs
-            )
+            finishMusicObservation()
             return false
         } catch {
             musicHistorySaveError = Self.mapRideMapError(error)
-            finishMusicObservation(
-                previousNowPlaying: previousNowPlaying,
-                appliedHint: appliedHint,
-                currentObservedAtMs: observation.snapshot.observedAtMs
-            )
+            finishMusicObservation()
             return false
         }
     }
 
-    private func finishMusicObservation(
-        previousNowPlaying: MusicNowPlaying?,
-        appliedHint: MusicTransitionHint?,
-        currentObservedAtMs: UInt64
-    ) {
-        musicTransitionHintTracker.resolve(
-            previous: previousNowPlaying,
-            current: musicCoordinator.nowPlaying,
-            appliedHint: appliedHint,
-            currentObservedAtMs: currentObservedAtMs
-        )
+    private func finishMusicObservation() {
         musicTimelineEvents = musicCoordinator.recordedEvents
         musicSettingsNowPlaying = projectedMusicNowPlaying()
     }
@@ -1822,7 +1783,7 @@ final class CutoutAppModel {
                     musicHistoryPolicy = .disabled
                     musicHistoryUnavailable = false
                     musicCoordinator.restoreHistoryPolicy(.disabled)
-                    musicTransitionHintTracker.clear()
+                    musicProviderLifecycle.clearPendingCommandCorrelation()
                     clearMusicCaptureContext()
                     musicTimelineEvents = musicCoordinator.recordedEvents
                 }
@@ -1843,7 +1804,7 @@ final class CutoutAppModel {
         musicHistoryUnavailable = false
         musicHistorySaveError = nil
         musicCoordinator.restoreHistoryPolicy(.disabled)
-        musicTransitionHintTracker.clear()
+        musicProviderLifecycle.clearPendingCommandCorrelation()
         clearMusicCaptureContext()
         musicTimelineEvents = musicCoordinator.recordedEvents
     }

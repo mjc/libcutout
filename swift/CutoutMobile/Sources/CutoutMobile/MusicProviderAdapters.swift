@@ -716,7 +716,8 @@ public final class SpotifyProviderAdapter: NSObject {
         else { return .unavailable }
         return await transport.perform(
             providerGeneration: bridge.providerGeneration,
-            connectionAttemptID: bridge.attemptID
+            connectionAttemptID: bridge.attemptID,
+            command: command
         ) { _, completion in
             let callback: SPTAppRemoteCallback = { _, error in
                 Task { @MainActor in completion(error == nil) }

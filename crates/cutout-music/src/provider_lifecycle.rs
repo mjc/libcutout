@@ -1,5 +1,7 @@
 //! One owner for a provider monitor, callbacks, authorization, and transport.
 
+use cutout_core::{Duration, MonotonicTimestamp};
+
 use crate::callback_epoch::{
     AuthorizationTransaction, AuthorizationTransactionKind, AuthorizationTransactionMatch,
     CallbackEpoch, CallbackEpochMatch,
@@ -12,8 +14,12 @@ use crate::ids::{
 };
 use crate::player_request::{
     MusicArtworkRequest, MusicPlayerRequest, MusicPlayerRequestCompletion,
+    MusicPlayerRequestExpiration,
 };
-use crate::{MusicMonitor, MusicMonitorRequest, MusicMonitorResume, MusicMonitorStart};
+use crate::{
+    MusicCommand, MusicMonitor, MusicMonitorRequest, MusicMonitorResume, MusicMonitorStart,
+    MusicObservationOutcome, MusicSnapshot, observation::MusicObservationTracker,
+};
 
 const MONITOR_POLL_INTERVAL_MS: u64 = 1_000;
 const AUTHORIZATION_TIMEOUT_MS: u64 = 20_000;
@@ -21,13 +27,17 @@ const TRANSPORT_TIMEOUT_MS: u64 = 10_000;
 const ARTWORK_TIMEOUT_MS: u64 = 5_000;
 const ARTWORK_RETRY_DELAY_MS: u64 = 1_000;
 
+const fn deadline_after(now_ms: u64, delay_ms: u64) -> MonotonicTimestamp {
+    MonotonicTimestamp::new(now_ms).saturating_add_duration(Duration::from_milliseconds(delay_ms))
+}
+
 /// One Rust-issued effect identity and its monotonic deadline.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct MusicDeadlineEffect<I> {
     /// Identity used to reject replacement callbacks.
     pub id: I,
     /// Absolute monotonic deadline for the platform executor.
-    pub deadline_ms: u64,
+    pub deadline: MonotonicTimestamp,
 }
 
 /// Provider facts used by Rust to decide whether monitoring should continue.
@@ -115,7 +125,78 @@ struct PendingTransport {
     provider_generation: ProviderSessionId,
     connection_attempt_id: Option<ConnectionAttemptId>,
     request_id: TransportRequestId,
-    started_at_ms: u64,
+    started_at: MonotonicTimestamp,
+    command: MusicCommand,
+}
+
+#[derive(Debug)]
+enum MusicTransportState {
+    Available {
+        last_request_id: Option<TransportRequestId>,
+    },
+    Pending(PendingTransport),
+}
+
+impl Default for MusicTransportState {
+    fn default() -> Self {
+        Self::Available {
+            last_request_id: None,
+        }
+    }
+}
+
+impl MusicTransportState {
+    fn begin(
+        &mut self,
+        provider_generation: ProviderSessionId,
+        connection_attempt_id: Option<ConnectionAttemptId>,
+        command: MusicCommand,
+        now: MonotonicTimestamp,
+    ) -> Option<PendingTransport> {
+        let next_raw = match self {
+            Self::Available { last_request_id } => {
+                last_request_id.map_or(Some(1), |request_id| request_id.raw().checked_add(1))?
+            }
+            Self::Pending(_) => return None,
+        };
+        let pending = PendingTransport {
+            provider_generation,
+            connection_attempt_id,
+            request_id: TransportRequestId::from_raw(next_raw),
+            started_at: now,
+            command,
+        };
+        *self = Self::Pending(pending);
+        Some(pending)
+    }
+
+    const fn pending(&self) -> Option<PendingTransport> {
+        match self {
+            Self::Pending(pending) => Some(*pending),
+            Self::Available { .. } => None,
+        }
+    }
+
+    fn finish(&mut self) -> Option<PendingTransport> {
+        let pending = self.pending()?;
+        *self = Self::Available {
+            last_request_id: Some(pending.request_id),
+        };
+        Some(pending)
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+enum MusicObservationOwnership {
+    #[default]
+    Idle,
+    Active,
+}
+
+impl MusicObservationOwnership {
+    const fn has_gap(self) -> bool {
+        matches!(self, Self::Active)
+    }
 }
 
 /// Shared portable lifecycle for one selected music provider.
@@ -133,9 +214,9 @@ pub struct MusicProviderLifecycle {
     artwork: MusicArtworkRequest,
     artwork_retry: CallbackEpoch<ArtworkRetry>,
     command_feedback: CallbackEpoch<CommandFeedback>,
-    last_transport_id: Option<u64>,
-    pending_transport: Option<PendingTransport>,
-    observing: bool,
+    transport: MusicTransportState,
+    observations: MusicObservationTracker,
+    observation_ownership: MusicObservationOwnership,
 }
 
 impl Default for MusicProviderLifecycle {
@@ -150,9 +231,9 @@ impl Default for MusicProviderLifecycle {
             artwork: MusicArtworkRequest::default(),
             artwork_retry: CallbackEpoch::default(),
             command_feedback: CallbackEpoch::default(),
-            last_transport_id: Some(0),
-            pending_transport: None,
-            observing: false,
+            transport: MusicTransportState::default(),
+            observations: MusicObservationTracker::new(),
+            observation_ownership: MusicObservationOwnership::Idle,
         }
     }
 }
@@ -173,6 +254,26 @@ impl MusicProviderLifecycle {
     /// Retires visible command feedback on a provider-session boundary.
     pub fn invalidate_command_feedback(&mut self) {
         self.command_feedback.invalidate();
+    }
+
+    /// Orders and classifies a provider observation under this session's correlation state.
+    pub fn observe_music(&mut self, snapshot: MusicSnapshot) -> MusicObservationOutcome {
+        self.observations.observe(snapshot)
+    }
+
+    /// Drops provider observation and command correlation without fabricating a transition.
+    pub fn reset_observation_correlation(&mut self) {
+        self.observations.reset();
+    }
+
+    /// Drops observation baselines so the next accepted value starts a new history association.
+    pub fn reset_observation_baselines(&mut self) {
+        self.observations.reset_observations();
+    }
+
+    /// Drops accepted command correlation while preserving provider observations.
+    pub fn clear_pending_command_correlation(&mut self) {
+        self.observations.clear_pending_skips();
     }
 
     /// Dismisses only the matching visible command feedback.
@@ -233,7 +334,7 @@ impl MusicProviderLifecycle {
         }
         Some(MusicDeadlineEffect {
             id: generation,
-            deadline_ms: now_ms.saturating_add(MONITOR_POLL_INTERVAL_MS),
+            deadline: deadline_after(now_ms, MONITOR_POLL_INTERVAL_MS),
         })
     }
 
@@ -248,7 +349,7 @@ impl MusicProviderLifecycle {
     pub fn suspend(&mut self) -> MusicProviderSuspension {
         self.monitor.suspend();
         self.monitor_generation.invalidate();
-        let observation_gap = self.observing;
+        let observation_gap = self.observation_ownership.has_gap();
         let cancelled_transport_request_id = self.cancel_current_transport().finished_request_id();
         self.invalidate_provider_work();
         MusicProviderSuspension {
@@ -274,7 +375,7 @@ impl MusicProviderLifecycle {
         let _ = self.retire_all_provider_work();
         self.command_feedback.invalidate();
         let generation = self.provider_session.begin()?;
-        self.observing = true;
+        self.observation_ownership = MusicObservationOwnership::Active;
         Some(generation)
     }
 
@@ -290,7 +391,7 @@ impl MusicProviderLifecycle {
         if self.provider_session.finish(id) == CallbackEpochMatch::Stale {
             return MusicTransportCompletion::Stale;
         }
-        self.observing = false;
+        self.observation_ownership = MusicObservationOwnership::Idle;
         self.command_feedback.invalidate();
         self.connection.reset();
         self.player_state.reset();
@@ -314,17 +415,17 @@ impl MusicProviderLifecycle {
         kind: AuthorizationTransactionKind,
         now_ms: u64,
     ) -> Option<MusicDeadlineEffect<AuthorizationId>> {
-        let deadline_ms = match kind {
+        let deadline = match kind {
             // Interactive login is completed by the provider handoff. It must
             // not expire while a human is in the provider app.
-            AuthorizationTransactionKind::Authorizing => u64::MAX,
+            AuthorizationTransactionKind::Authorizing => MonotonicTimestamp::new(u64::MAX),
             AuthorizationTransactionKind::Renewing => {
-                now_ms.saturating_add(AUTHORIZATION_TIMEOUT_MS)
+                deadline_after(now_ms, AUTHORIZATION_TIMEOUT_MS)
             }
         };
         Some(MusicDeadlineEffect {
             id: self.begin_authorization(kind)?,
-            deadline_ms,
+            deadline,
         })
     }
 
@@ -406,6 +507,7 @@ impl MusicProviderLifecycle {
                 transport: MusicTransportCompletion::Stale,
             };
         }
+        self.command_feedback.invalidate();
         self.player_state.reset();
         MusicConnectionEffect {
             callback,
@@ -437,6 +539,16 @@ impl MusicProviderLifecycle {
         now_ms: u64,
     ) -> MusicPlayerRequestCompletion {
         self.player_state.complete(id, now_ms)
+    }
+
+    /// Retires only the matching player-state request after its deadline.
+    #[must_use]
+    pub fn expire_player_state_request(
+        &mut self,
+        id: PlayerStateRequestId,
+        now_ms: u64,
+    ) -> MusicPlayerRequestExpiration {
+        self.player_state.expire(id, now_ms)
     }
 
     /// Completes a poll only when no newer authoritative observation arrived.
@@ -480,7 +592,7 @@ impl MusicProviderLifecycle {
         }
         self.artwork.begin().map(|id| MusicDeadlineEffect {
             id,
-            deadline_ms: now_ms.saturating_add(ARTWORK_TIMEOUT_MS),
+            deadline: deadline_after(now_ms, ARTWORK_TIMEOUT_MS),
         })
     }
 
@@ -517,7 +629,7 @@ impl MusicProviderLifecycle {
         }
         Some(MusicDeadlineEffect {
             id: self.artwork_retry.begin()?,
-            deadline_ms: now_ms.saturating_add(ARTWORK_RETRY_DELAY_MS),
+            deadline: deadline_after(now_ms, ARTWORK_RETRY_DELAY_MS),
         })
     }
 
@@ -539,9 +651,10 @@ impl MusicProviderLifecycle {
     pub fn begin_transport_effect(
         &mut self,
         provider_generation: ProviderSessionId,
+        command: MusicCommand,
         now_ms: u64,
     ) -> Option<MusicDeadlineEffect<TransportRequestId>> {
-        self.begin_transport_effect_for_connection(provider_generation, None, now_ms)
+        self.begin_transport_effect_for_connection(provider_generation, None, command, now_ms)
     }
 
     /// Starts one transport command owned by a specific connection attempt.
@@ -550,27 +663,27 @@ impl MusicProviderLifecycle {
         &mut self,
         provider_generation: ProviderSessionId,
         connection_attempt_id: Option<ConnectionAttemptId>,
+        command: MusicCommand,
         now_ms: u64,
     ) -> Option<MusicDeadlineEffect<TransportRequestId>> {
         if self.provider_session.classify(provider_generation) == CallbackEpochMatch::Stale
-            || self.pending_transport.is_some()
             || connection_attempt_id.is_some_and(|id| !self.connection.is_connected(id))
         {
             return None;
         }
-        let request_id = self
-            .last_transport_id
-            .map_or(Some(1), |last_id| last_id.checked_add(1))?;
-        self.last_transport_id = Some(request_id);
-        self.pending_transport = Some(PendingTransport {
+        let pending = self.transport.begin(
             provider_generation,
             connection_attempt_id,
-            request_id: TransportRequestId::from_raw(request_id),
-            started_at_ms: now_ms,
-        });
+            command,
+            MonotonicTimestamp::new(now_ms),
+        )?;
+        if matches!(command, MusicCommand::Previous | MusicCommand::Next) {
+            self.observations
+                .issue_skip(pending.request_id, pending.started_at);
+        }
         Some(MusicDeadlineEffect {
-            id: TransportRequestId::from_raw(request_id),
-            deadline_ms: now_ms.saturating_add(TRANSPORT_TIMEOUT_MS),
+            id: pending.request_id,
+            deadline: deadline_after(now_ms, TRANSPORT_TIMEOUT_MS),
         })
     }
 
@@ -583,7 +696,7 @@ impl MusicProviderLifecycle {
         outcome: MusicTransportOutcome,
         now_ms: u64,
     ) -> MusicTransportCompletion {
-        let Some(pending) = self.pending_transport else {
+        let Some(pending) = self.transport.pending() else {
             return MusicTransportCompletion::Stale;
         };
         if pending.provider_generation != provider_generation || pending.request_id != request_id {
@@ -607,12 +720,19 @@ impl MusicProviderLifecycle {
         request_id: TransportRequestId,
         outcome: MusicTransportOutcome,
     ) -> MusicTransportCompletion {
-        if self.pending_transport.is_none_or(|pending| {
+        if self.transport.pending().is_none_or(|pending| {
             pending.provider_generation != provider_generation || pending.request_id != request_id
         }) {
             return MusicTransportCompletion::Stale;
         }
-        self.pending_transport = None;
+        let Some(pending) = self.transport.finish() else {
+            return MusicTransportCompletion::Stale;
+        };
+        if outcome != MusicTransportOutcome::Accepted
+            && matches!(pending.command, MusicCommand::Previous | MusicCommand::Next)
+        {
+            self.observations.cancel_skip(request_id);
+        }
         MusicTransportCompletion::Finished {
             request_id,
             outcome,
@@ -626,13 +746,17 @@ impl MusicProviderLifecycle {
         provider_generation: ProviderSessionId,
         now_ms: u64,
     ) -> MusicTransportCompletion {
-        let Some(pending) = self.pending_transport else {
+        let Some(pending) = self.transport.pending() else {
             return MusicTransportCompletion::Stale;
         };
         if pending.provider_generation != provider_generation {
             return MusicTransportCompletion::Stale;
         }
-        if now_ms.saturating_sub(pending.started_at_ms) < TRANSPORT_TIMEOUT_MS {
+        if MonotonicTimestamp::new(now_ms)
+            .saturating_duration_since(pending.started_at)
+            .as_milliseconds()
+            < TRANSPORT_TIMEOUT_MS
+        {
             return MusicTransportCompletion::Pending;
         }
         self.finish_transport_unchecked(
@@ -663,7 +787,7 @@ impl MusicProviderLifecycle {
         provider_generation: ProviderSessionId,
         connection_attempt_id: ConnectionAttemptId,
     ) -> MusicTransportCompletion {
-        let Some(pending) = self.pending_transport else {
+        let Some(pending) = self.transport.pending() else {
             return MusicTransportCompletion::Stale;
         };
         if pending.provider_generation != provider_generation
@@ -679,7 +803,7 @@ impl MusicProviderLifecycle {
     }
 
     fn cancel_current_transport(&mut self) -> MusicTransportCompletion {
-        let Some(pending) = self.pending_transport else {
+        let Some(pending) = self.transport.pending() else {
             return MusicTransportCompletion::Stale;
         };
         self.finish_transport_unchecked(
@@ -697,6 +821,7 @@ impl MusicProviderLifecycle {
                 transport: MusicTransportCompletion::Stale,
             };
         }
+        self.command_feedback.invalidate();
         self.player_state.reset();
         MusicConnectionEffect {
             callback,
@@ -708,7 +833,7 @@ impl MusicProviderLifecycle {
         &mut self,
         connection_attempt_id: ConnectionAttemptId,
     ) -> MusicTransportCompletion {
-        let Some(pending) = self.pending_transport else {
+        let Some(pending) = self.transport.pending() else {
             return MusicTransportCompletion::Stale;
         };
         if pending.connection_attempt_id != Some(connection_attempt_id) {
@@ -729,11 +854,12 @@ impl MusicProviderLifecycle {
 
     fn invalidate_provider_work(&mut self) {
         self.provider_session.invalidate();
-        self.observing = false;
+        self.observation_ownership = MusicObservationOwnership::Idle;
         self.connection.reset();
         self.player_state.reset();
         self.artwork.reset();
         self.artwork_retry.invalidate();
+        self.observations.clear_pending_skips();
     }
 }
 
@@ -743,5 +869,36 @@ impl MusicTransportCompletion {
             Self::Finished { request_id, .. } => Some(request_id),
             Self::Pending | Self::Stale => None,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::MusicTransportState;
+    use crate::{MusicCommand, ids::TransportRequestId};
+    use cutout_core::MonotonicTimestamp;
+
+    #[test]
+    fn exhausted_transport_identity_does_not_create_a_pending_state() {
+        let mut state = MusicTransportState::Available {
+            last_request_id: Some(TransportRequestId::from_raw(u64::MAX)),
+        };
+
+        assert!(
+            state
+                .begin(
+                    crate::ids::ProviderSessionId::from_raw(1),
+                    None,
+                    MusicCommand::Play,
+                    MonotonicTimestamp::new(0),
+                )
+                .is_none()
+        );
+        assert!(matches!(
+            state,
+            MusicTransportState::Available {
+                last_request_id: Some(id)
+            } if id == TransportRequestId::from_raw(u64::MAX)
+        ));
     }
 }

@@ -24,7 +24,7 @@ final class AppleMusicObservationBridgeTests: XCTestCase {
         )
         await waitUntil { received.last?.snapshot.item?.identifier == "old" }
 
-        lifecycle.stopMonitoring()
+        _ = lifecycle.stopMonitoring()
         XCTAssertNil(lifecycle.cachedObservation)
 
         await lifecycle.startMonitoring(observedAtMs: { 20 }) { received.append($0) }
@@ -62,7 +62,7 @@ final class AppleMusicObservationBridgeTests: XCTestCase {
         lifecycle.refresh(observedAtMs: 10)
         await service.waitForRefresh(generation: 1)
 
-        lifecycle.stopMonitoring()
+        _ = lifecycle.stopMonitoring()
         await lifecycle.startMonitoring(observedAtMs: { 20 }) { received.append($0) }
         lifecycle.refresh(observedAtMs: 20)
         await service.waitForRefresh(generation: 2)
@@ -92,15 +92,17 @@ final class AppleMusicObservationBridgeTests: XCTestCase {
             effects: effects,
             playerStateTimeout: .zero
         )
+        let clock = AppleMusicTestClock(nowMs: 10)
 
-        await lifecycle.startMonitoring(observedAtMs: { 10 }) { _ in }
+        await lifecycle.startMonitoring(observedAtMs: { clock.nowMs }) { _ in }
         lifecycle.refresh(observedAtMs: 10)
+        clock.nowMs = 10_010
         await service.waitForRefresh(generation: 1)
         await waitUntil {
             !effects.isRunning(.playerStateTimeout(.init(value: 1)))
         }
 
-        lifecycle.refresh(observedAtMs: 20)
+        lifecycle.refresh(observedAtMs: 10_011)
         let recovered = await service.waitForRefreshCount(2)
         XCTAssertTrue(recovered)
         let refreshCallCount = await service.refreshCallCount
@@ -115,7 +117,7 @@ final class AppleMusicObservationBridgeTests: XCTestCase {
             with: observation(track: "recovered", observedAtMs: 20)
         )
 
-        lifecycle.stopMonitoring()
+        _ = lifecycle.stopMonitoring()
         effects.cancelAll()
     }
 
@@ -130,8 +132,9 @@ final class AppleMusicObservationBridgeTests: XCTestCase {
             playerStateTimeout: .milliseconds(20)
         )
         var received = [MusicProviderObservation]()
+        let clock = AppleMusicTestClock(nowMs: 10)
 
-        await lifecycle.startMonitoring(observedAtMs: { 20 }) { received.append($0) }
+        await lifecycle.startMonitoring(observedAtMs: { clock.nowMs }) { received.append($0) }
         lifecycle.refresh(observedAtMs: 10)
         await service.waitForRefresh(generation: 1)
         await service.completeRefresh(
@@ -141,6 +144,7 @@ final class AppleMusicObservationBridgeTests: XCTestCase {
         await waitUntil { received.count == 1 }
 
         lifecycle.refresh(observedAtMs: 20)
+        clock.nowMs = 10_020
         await waitUntil { received.last?.snapshot.state == .stale }
 
         XCTAssertEqual(received.count, 2)
@@ -150,7 +154,7 @@ final class AppleMusicObservationBridgeTests: XCTestCase {
             received[0].snapshot.observedAtMs
         )
 
-        lifecycle.stopMonitoring()
+        _ = lifecycle.stopMonitoring()
         effects.cancelAll()
     }
 
@@ -202,7 +206,7 @@ final class AppleMusicObservationBridgeTests: XCTestCase {
 
         XCTAssertTrue(rustLifecycle.suspend().observationGap)
         XCTAssertFalse(rustLifecycle.suspend().observationGap)
-        lifecycle.stopMonitoring()
+        _ = lifecycle.stopMonitoring()
         effects.cancelAll()
     }
 
@@ -238,6 +242,15 @@ final class AppleMusicObservationBridgeTests: XCTestCase {
             await Task.yield()
         }
         XCTFail("timed out waiting for lifecycle state", file: file, line: line)
+    }
+}
+
+@MainActor
+private final class AppleMusicTestClock {
+    var nowMs: UInt64
+
+    init(nowMs: UInt64) {
+        self.nowMs = nowMs
     }
 }
 

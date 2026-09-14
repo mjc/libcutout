@@ -45,13 +45,21 @@ final class MusicIntegrationTests: XCTestCase {
         let provider = try! XCTUnwrap(lifecycle.beginProviderSession())
         var callbacks = [(MobileMusicTransportRequestId, MusicCommandOutcome)]()
 
-        let first = try XCTUnwrap(lifecycle.beginTransportEffect(providerGeneration: provider, nowMs: 1_000))
+        let first = try XCTUnwrap(lifecycle.beginTransportEffect(
+            providerGeneration: provider,
+            command: .play,
+            nowMs: 1_000
+        ))
         XCTAssertTrue(coordinator.register(
             providerGeneration: provider,
             effect: first,
             completion: { callbacks.append(($0, $1)) }
         ))
-        XCTAssertNil(lifecycle.beginTransportEffect(providerGeneration: provider, nowMs: 1_001))
+        XCTAssertNil(lifecycle.beginTransportEffect(
+            providerGeneration: provider,
+            command: .play,
+            nowMs: 1_001
+        ))
         coordinator.expire(providerGeneration: provider, requestID: first.id, nowMs: 10_999)
         XCTAssertTrue(callbacks.isEmpty)
         coordinator.expire(providerGeneration: provider, requestID: first.id, nowMs: 11_000)
@@ -59,7 +67,11 @@ final class MusicIntegrationTests: XCTestCase {
         coordinator.finish(providerGeneration: provider, requestID: first.id, accepted: false, nowMs: 11_000)
         XCTAssertEqual(callbacks.map(\.1), [.failed])
 
-        let second = try XCTUnwrap(lifecycle.beginTransportEffect(providerGeneration: provider, nowMs: 11_001))
+        let second = try XCTUnwrap(lifecycle.beginTransportEffect(
+            providerGeneration: provider,
+            command: .play,
+            nowMs: 11_001
+        ))
         XCTAssertTrue(coordinator.register(
             providerGeneration: provider,
             effect: second,
@@ -76,7 +88,11 @@ final class MusicIntegrationTests: XCTestCase {
         let coordinator = MusicTransportCoordinator(lifecycle: lifecycle)
         let provider = try! XCTUnwrap(lifecycle.beginProviderSession())
         var callbacks = [(MobileMusicTransportRequestId, MusicCommandOutcome)]()
-        let request = try XCTUnwrap(lifecycle.beginTransportEffect(providerGeneration: provider, nowMs: 100))
+        let request = try XCTUnwrap(lifecycle.beginTransportEffect(
+            providerGeneration: provider,
+            command: .play,
+            nowMs: 100
+        ))
         XCTAssertTrue(coordinator.register(
             providerGeneration: provider,
             effect: request,
@@ -254,76 +270,13 @@ final class MusicIntegrationTests: XCTestCase {
         XCTAssertFalse(store.isEnabled)
     }
 
-    func testTransitionHintRemainsPendingUntilTheItemChanges() {
-        var tracker = MusicTransitionHintTracker()
-        tracker.issue(.skip)
-
-        let unchanged = nowPlaying(trackID: "track-1")
-        XCTAssertEqual(tracker.pendingHint, .skip)
-        XCTAssertEqual(tracker.hint, .skip)
-        tracker.resolve(previous: unchanged, current: unchanged, appliedHint: .skip)
-        XCTAssertEqual(tracker.pendingHint, .skip)
-
-        let changed = nowPlaying(trackID: "track-2")
-        tracker.resolve(previous: unchanged, current: changed, appliedHint: .skip)
-        XCTAssertNil(tracker.pendingHint)
-    }
-
-    func testTransitionHintsQueueAndFailedCommandClearsOnlyItsOwnToken() {
-        var tracker = MusicTransitionHintTracker()
-        let first = tracker.issue(.skip)
-        _ = tracker.issue(.skip)
-
-        tracker.clear(id: first)
-        XCTAssertEqual(tracker.pendingHint, .skip)
-
-        let previous = nowPlaying(trackID: "track-1")
-        tracker.resolve(previous: previous, current: nowPlaying(trackID: "track-2"), appliedHint: .skip)
-        XCTAssertNil(tracker.pendingHint)
-    }
-
-    func testClearingNonFrontHintDoesNotRefreshFrontHintAge() {
-        var tracker = MusicTransitionHintTracker()
-        _ = tracker.issue(.skip)
-        let second = tracker.issue(.skip)
-        let unchanged = nowPlaying(trackID: "track-1")
-
-        for _ in 0..<4 {
-            tracker.resolve(previous: unchanged, current: unchanged, appliedHint: .skip)
-        }
-        tracker.clear(id: second)
-        tracker.resolve(previous: unchanged, current: unchanged, appliedHint: .skip)
-
-        XCTAssertNil(tracker.pendingHint)
-    }
-
-    func testTransitionHintExpiresWhenProviderNeverChangesTheItem() {
-        var tracker = MusicTransitionHintTracker()
-        tracker.issue(.skip, issuedAtMs: 1_000)
-
-        XCTAssertEqual(tracker.hint(atMonotonicMs: 6_000), .skip)
-        XCTAssertNil(tracker.hint(atMonotonicMs: 6_001))
-        XCTAssertNil(tracker.pendingHint)
-    }
-
-    func testTransitionHintExpiresAfterBoundedUnchangedObservations() {
-        var tracker = MusicTransitionHintTracker()
-        tracker.issue(.skip)
-
-        let unchanged = nowPlaying(trackID: "track-1")
-        for _ in 0..<5 {
-            tracker.resolve(previous: unchanged, current: unchanged, appliedHint: .skip)
-        }
-
-        XCTAssertNil(tracker.pendingHint)
-    }
-
     @MainActor
     func testProviderResetDropsCorrelationWithoutWritingAnEvent() throws {
         let state = MobileRideMapState()
         _ = try state.startGpsOnly(atMs: 1_000, lastConnectedVehicle: nil)
         try state.setMusicHistoryPolicy(.humanReadable)
-        let coordinator = MusicIntegrationCoordinator(rideMapState: state)
+        let lifecycle = MobileMusicProviderLifecycle()
+        let coordinator = MusicIntegrationCoordinator(rideMapState: state, lifecycle: lifecycle)
 
         let playing = MobileMusicSnapshotDto(
             provider: .appleMusic,
@@ -403,78 +356,6 @@ final class MusicIntegrationTests: XCTestCase {
         )
 
         XCTAssertEqual(coordinator.recordedEvents.count, 1)
-    }
-
-    func testTransitionHintCanBeClearedWithoutIssuingAnEmptyCommand() {
-        var tracker = MusicTransitionHintTracker()
-        tracker.issue(.skip)
-
-        tracker.clear()
-
-        XCTAssertNil(tracker.pendingHint)
-    }
-
-    func testTransitionHintDoesNotApplyToAnObservationFromBeforeIssue() {
-        var tracker = MusicTransitionHintTracker()
-        tracker.issue(.skip, issuedAtMs: 200)
-
-        XCTAssertNil(tracker.hint(atMonotonicMs: 100))
-        XCTAssertEqual(tracker.hint(atMonotonicMs: 300), .skip)
-    }
-
-    func testTransitionHintClearsWhenProviderLosesItsCurrentItem() {
-        var tracker = MusicTransitionHintTracker()
-        tracker.issue(.skip)
-
-        tracker.resolve(
-            previous: nowPlaying(trackID: "track-1"),
-            current: MusicNowPlaying(
-                provider: .appleMusic,
-                state: .stopped,
-                item: nil,
-                capabilities: .init(
-                    previous: false,
-                    play: true,
-                    pause: false,
-                    next: false,
-                    openProvider: true
-                )
-            ),
-            appliedHint: .skip
-        )
-
-        XCTAssertNil(tracker.pendingHint)
-    }
-
-    func testTransitionHintClearsOnTerminalStateBeforeLaterItemChange() {
-        var tracker = MusicTransitionHintTracker()
-        tracker.issue(.skip)
-
-        let previous = nowPlaying(trackID: "track-1")
-        tracker.resolve(
-            previous: previous,
-            current: MusicNowPlaying(
-                provider: .appleMusic,
-                state: .stopped,
-                item: previous.item,
-                capabilities: .init(
-                    previous: false,
-                    play: true,
-                    pause: false,
-                    next: false,
-                    openProvider: true
-                )
-            ),
-            appliedHint: .skip
-        )
-        XCTAssertNil(tracker.pendingHint)
-
-        tracker.resolve(
-            previous: previous,
-            current: nowPlaying(trackID: "track-2"),
-            appliedHint: .skip
-        )
-        XCTAssertNil(tracker.pendingHint)
     }
 
     func testRustMusicMonitorLifecycleInvalidatesOlderEffects() throws {
@@ -736,7 +617,8 @@ final class MusicIntegrationTests: XCTestCase {
         let state = MobileRideMapState()
         _ = try state.startGpsOnly(atMs: 1_000, lastConnectedVehicle: nil)
         try state.setMusicHistoryPolicy(.humanReadable)
-        let coordinator = MusicIntegrationCoordinator(rideMapState: state)
+        let lifecycle = MobileMusicProviderLifecycle()
+        let coordinator = MusicIntegrationCoordinator(rideMapState: state, lifecycle: lifecycle)
         let malformed = MobileMusicSnapshotDto(
             provider: .appleMusic,
             sessionId: "session",
@@ -793,7 +675,7 @@ final class MusicIntegrationTests: XCTestCase {
     }
 
     @MainActor
-    func testCoordinatorRejectsOversizedProviderMetadataBeforeProjectingIt() throws {
+    func testCoordinatorBoundsOversizedProviderMetadataBeforeProjectingIt() throws {
         let state = MobileRideMapState()
         _ = try state.startGpsOnly(atMs: 1_000, lastConnectedVehicle: nil)
         try state.setMusicHistoryPolicy(.humanReadable)
@@ -956,7 +838,9 @@ final class MusicIntegrationTests: XCTestCase {
         let state = MobileRideMapState()
         _ = try state.startGpsOnly(atMs: 1_000, lastConnectedVehicle: nil)
         try state.setMusicHistoryPolicy(.humanReadable)
-        let coordinator = MusicIntegrationCoordinator(rideMapState: state)
+        let lifecycle = MobileMusicProviderLifecycle()
+        let provider = try XCTUnwrap(lifecycle.beginProviderSession())
+        let coordinator = MusicIntegrationCoordinator(rideMapState: state, lifecycle: lifecycle)
 
         func observation(trackID: String, observedAtMs: UInt64) -> MusicProviderObservation {
             MusicProviderObservation(
@@ -991,12 +875,25 @@ final class MusicIntegrationTests: XCTestCase {
             ),
             .recorded
         )
+        let transport = try XCTUnwrap(lifecycle.beginTransportEffect(
+            providerGeneration: provider,
+            command: .next,
+            nowMs: 1_150
+        ))
+        XCTAssertEqual(
+            lifecycle.finishTransport(
+                providerGeneration: provider,
+                requestId: transport.id,
+                outcome: .accepted,
+                nowMs: 1_150
+            ).state,
+            .finished
+        )
         XCTAssertEqual(
             try coordinator.ingest(
                 observation: observation(trackID: "track-2", observedAtMs: 1_200),
                 wallClockAtMs: 1_700_000_000_200,
-                clockUncertaintyMs: 5,
-                transitionHint: .skip
+                clockUncertaintyMs: 5
             ),
             .recorded
         )

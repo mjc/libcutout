@@ -1,9 +1,11 @@
 //! Correlation and timeout admission for provider player-state callbacks.
 
+use cutout_core::{Duration, MonotonicTimestamp};
+
 use crate::ids::{ArtworkRequestId, ObservationRevision, PlayerStateRequestId};
 
-const REQUEST_TIMEOUT_MS: u64 = 10_000;
-const OBSERVATION_TIMEOUT_MS: u64 = 30_000;
+const REQUEST_TIMEOUT: Duration = Duration::from_milliseconds(10_000);
+const OBSERVATION_TIMEOUT: Duration = Duration::from_milliseconds(30_000);
 const MAX_ARTWORK_ATTEMPTS: u8 = 3;
 
 /// Result of applying a provider player-state callback.
@@ -15,12 +17,51 @@ pub enum MusicPlayerRequestCompletion {
     Stale,
 }
 
+/// Result of applying a player-state request deadline.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum MusicPlayerRequestExpiration {
+    /// The matching request has not reached its deadline.
+    Pending,
+    /// The matching request reached its deadline and was retired.
+    Expired,
+    /// The deadline belonged to a completed or replaced request.
+    Stale,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct PendingPlayerStateRequest {
+    id: PlayerStateRequestId,
+    started_at: MonotonicTimestamp,
+}
+
+#[derive(Debug, Default)]
+enum PlayerStateRequestState {
+    #[default]
+    Available,
+    Pending(PendingPlayerStateRequest),
+}
+
+impl PlayerStateRequestState {
+    const fn pending(&self) -> Option<PendingPlayerStateRequest> {
+        match self {
+            Self::Pending(pending) => Some(*pending),
+            Self::Available => None,
+        }
+    }
+
+    fn retire(&mut self, id: PlayerStateRequestId) -> Option<PendingPlayerStateRequest> {
+        let pending = self.pending().filter(|pending| pending.id == id)?;
+        *self = Self::Available;
+        Some(pending)
+    }
+}
+
 /// One outstanding player-state request, replaceable if its callback is lost.
 #[derive(Debug, Default)]
 pub struct MusicPlayerRequest {
     last_id: u64,
-    pending: Option<(PlayerStateRequestId, u64)>,
-    last_observed_at: Option<u64>,
+    state: PlayerStateRequestState,
+    last_observed_at: Option<MonotonicTimestamp>,
     observation_revision: ObservationRevision,
     observation_revision_exhausted: bool,
 }
@@ -87,14 +128,18 @@ impl MusicPlayerRequest {
     /// The platform supplies a monotonic timestamp and captures the returned ID.
     #[must_use]
     pub fn begin(&mut self, now_ms: u64) -> Option<PlayerStateRequestId> {
-        if let Some((_, started_at)) = self.pending
-            && now_ms.saturating_sub(started_at) < REQUEST_TIMEOUT_MS
+        let now = MonotonicTimestamp::new(now_ms);
+        if let Some(pending) = self.state.pending()
+            && now.saturating_duration_since(pending.started_at) < REQUEST_TIMEOUT
         {
             return None;
         }
         self.last_id = self.last_id.checked_add(1)?;
         let id = PlayerStateRequestId::from_raw(self.last_id);
-        self.pending = Some((id, now_ms));
+        self.state = PlayerStateRequestState::Pending(PendingPlayerStateRequest {
+            id,
+            started_at: now,
+        });
         Some(id)
     }
 
@@ -105,17 +150,39 @@ impl MusicPlayerRequest {
         request_id: PlayerStateRequestId,
         now_ms: u64,
     ) -> MusicPlayerRequestCompletion {
-        if self.pending.is_some_and(|(id, started_at)| {
-            id == request_id && now_ms.saturating_sub(started_at) < REQUEST_TIMEOUT_MS
-        }) {
-            self.pending = None;
+        let Some(pending) = self.state.retire(request_id) else {
+            return MusicPlayerRequestCompletion::Stale;
+        };
+        if MonotonicTimestamp::new(now_ms).saturating_duration_since(pending.started_at)
+            < REQUEST_TIMEOUT
+        {
             MusicPlayerRequestCompletion::Accepted
         } else {
-            if self.pending.is_some_and(|(id, _)| id == request_id) {
-                self.pending = None;
-            }
             MusicPlayerRequestCompletion::Stale
         }
+    }
+
+    /// Retires only a matching request whose deadline has elapsed.
+    #[must_use]
+    pub fn expire(
+        &mut self,
+        request_id: PlayerStateRequestId,
+        now_ms: u64,
+    ) -> MusicPlayerRequestExpiration {
+        let Some(pending) = self
+            .state
+            .pending()
+            .filter(|pending| pending.id == request_id)
+        else {
+            return MusicPlayerRequestExpiration::Stale;
+        };
+        if MonotonicTimestamp::new(now_ms).saturating_duration_since(pending.started_at)
+            < REQUEST_TIMEOUT
+        {
+            return MusicPlayerRequestExpiration::Pending;
+        }
+        let _ = self.state.retire(request_id);
+        MusicPlayerRequestExpiration::Expired
     }
 
     /// Completes a poll only when no newer push observation superseded it.
@@ -128,9 +195,7 @@ impl MusicPlayerRequest {
     ) -> MusicPlayerRequestCompletion {
         if self.observation_revision_exhausted || observation_revision != self.observation_revision
         {
-            if self.pending.is_some_and(|(id, _)| id == request_id) {
-                self.pending = None;
-            }
+            let _ = self.state.retire(request_id);
             return MusicPlayerRequestCompletion::Stale;
         }
         self.complete(request_id, now_ms)
@@ -145,7 +210,7 @@ impl MusicPlayerRequest {
         } else {
             self.observation_revision_exhausted = true;
         }
-        self.last_observed_at = Some(now_ms);
+        self.last_observed_at = Some(MonotonicTimestamp::new(now_ms));
     }
 
     /// Revision of the latest authoritative observation.
@@ -158,13 +223,15 @@ impl MusicPlayerRequest {
     /// as current. An idle request has no observation to expire.
     #[must_use]
     pub fn is_stale(&self, now_ms: u64) -> bool {
-        self.last_observed_at
-            .is_some_and(|observed_at| now_ms.saturating_sub(observed_at) > OBSERVATION_TIMEOUT_MS)
+        self.last_observed_at.is_some_and(|observed_at| {
+            MonotonicTimestamp::new(now_ms).saturating_duration_since(observed_at)
+                > OBSERVATION_TIMEOUT
+        })
     }
 
     /// Invalidates outstanding work without reusing IDs from the old connection.
     pub fn reset(&mut self) {
-        self.pending = None;
+        self.state = PlayerStateRequestState::Available;
         self.last_observed_at = None;
     }
 }

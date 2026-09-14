@@ -10,14 +10,19 @@ use cutout_music::ids::{
     ArtworkRequestId, ArtworkRetryId, AuthorizationId, CommandFeedbackId, ConnectionAttemptId,
     MonitorId, ObservationRevision, PlayerStateRequestId, ProviderSessionId, TransportRequestId,
 };
-use cutout_music::player_request::MusicPlayerRequestCompletion;
+use cutout_music::player_request::{MusicPlayerRequestCompletion, MusicPlayerRequestExpiration};
 use cutout_music::provider_lifecycle::{
     MusicConnectionAttemptEffect, MusicConnectionEffect, MusicProviderLifecycle,
     MusicProviderWorkState, MusicTransportCompletion, MusicTransportOutcome,
 };
-use cutout_music::{MusicMonitorRequest, MusicMonitorResume, MusicMonitorStart};
+use cutout_music::{
+    MusicMonitorRequest, MusicMonitorResume, MusicMonitorStart, MusicObservationOutcome,
+};
 
-use crate::{CoreMusicPlaybackState, MobileMusicPlaybackStateDto};
+use crate::{
+    CoreMusicPlaybackState, CoreMusicSnapshot, MobileMusicCommandDto, MobileMusicPlaybackStateDto,
+    MobileMusicRideEventKindDto, MobileMusicSnapshotDto, MobileRideMapCoreErrorDto,
+};
 
 /// Matches callback paths with only empty/slash root equivalence.
 #[uniffi::export]
@@ -115,6 +120,15 @@ pub struct MobileMusicCommandFeedbackId {
 #[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Record)]
 pub struct MobileMusicTransportRequestId {
     pub value: u64,
+}
+
+/// Canonical observation and optional ride-history transition chosen by Rust.
+#[derive(Clone, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct MobileMusicObservationDecision {
+    /// Canonical snapshot used by presentation and persistence.
+    pub snapshot: MobileMusicSnapshotDto,
+    /// Meaningful transition, when this observation creates one.
+    pub transition: Option<MobileMusicRideEventKindDto>,
 }
 
 /// Rust-owned observation revision.
@@ -255,6 +269,17 @@ pub enum MobileMusicRequestCompletion {
     /// The callback completed the current request.
     Accepted,
     /// The callback belongs to a completed or retired request.
+    Stale,
+}
+
+/// Result of applying a player-state request deadline.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Enum)]
+pub enum MobileMusicRequestExpiration {
+    /// The matching request has not reached its deadline.
+    Pending,
+    /// The matching request reached its deadline and was retired.
+    Expired,
+    /// The deadline belonged to a completed or replaced request.
     Stale,
 }
 
@@ -405,7 +430,7 @@ impl MobileMusicProviderLifecycle {
             )
             .map(|effect| MobileMusicMonitorPollEffect {
                 id: effect.id.into(),
-                deadline_ms: effect.deadline_ms,
+                deadline_ms: effect.deadline.as_milliseconds(),
             })
     }
 
@@ -444,6 +469,42 @@ impl MobileMusicProviderLifecycle {
         self.lock_inner().invalidate_command_feedback();
     }
 
+    /// Canonicalizes, orders, and classifies one provider observation.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`MobileRideMapCoreErrorDto::InvalidMusicInput`] for malformed
+    /// provider identity, position, or metadata.
+    pub fn observe_music(
+        &self,
+        snapshot: MobileMusicSnapshotDto,
+    ) -> Result<Option<MobileMusicObservationDecision>, MobileRideMapCoreErrorDto> {
+        let snapshot = CoreMusicSnapshot::try_from(snapshot)
+            .map_err(MobileRideMapCoreErrorDto::InvalidMusicInput)?;
+        Ok(match self.lock_inner().observe_music(snapshot) {
+            MusicObservationOutcome::Accepted(decision) => Some(MobileMusicObservationDecision {
+                snapshot: decision.snapshot().into(),
+                transition: decision.transition().map(Into::into),
+            }),
+            MusicObservationOutcome::OutOfOrder => None,
+        })
+    }
+
+    /// Drops observation and command correlation without creating a transition.
+    pub fn reset_observation_correlation(&self) {
+        self.lock_inner().reset_observation_correlation();
+    }
+
+    /// Starts a new history association from the next accepted observation.
+    pub fn reset_observation_baselines(&self) {
+        self.lock_inner().reset_observation_baselines();
+    }
+
+    /// Drops accepted command correlation while preserving provider observations.
+    pub fn clear_pending_command_correlation(&self) {
+        self.lock_inner().clear_pending_command_correlation();
+    }
+
     /// Classifies a provider callback without ending its generation.
     #[must_use]
     pub fn classify_provider_session(
@@ -478,7 +539,7 @@ impl MobileMusicProviderLifecycle {
             .begin_authorization_effect(kind.into(), now_ms)?;
         Some(MobileMusicAuthorizationEffect {
             id: effect.id.into(),
-            deadline_ms: effect.deadline_ms,
+            deadline_ms: effect.deadline.as_milliseconds(),
         })
     }
 
@@ -603,6 +664,18 @@ impl MobileMusicProviderLifecycle {
             .into()
     }
 
+    /// Retires only the matching player-state request after its deadline.
+    #[must_use]
+    pub fn expire_player_state_request(
+        &self,
+        id: MobileMusicPlayerStateRequestId,
+        now_ms: u64,
+    ) -> MobileMusicRequestExpiration {
+        self.lock_inner()
+            .expire_player_state_request(PlayerStateRequestId::from_raw(id.value), now_ms)
+            .into()
+    }
+
     /// Completes a poll only when no newer push observation superseded it.
     #[must_use]
     pub fn complete_player_state_request_if_current(
@@ -651,7 +724,7 @@ impl MobileMusicProviderLifecycle {
             )
             .map(|effect| MobileMusicArtworkEffect {
                 id: effect.id.into(),
-                deadline_ms: effect.deadline_ms,
+                deadline_ms: effect.deadline.as_milliseconds(),
             })
     }
 
@@ -689,7 +762,7 @@ impl MobileMusicProviderLifecycle {
             )
             .map(|effect| MobileMusicArtworkRetryEffect {
                 id: effect.id.into(),
-                deadline_ms: effect.deadline_ms,
+                deadline_ms: effect.deadline.as_milliseconds(),
             })
     }
 
@@ -713,16 +786,18 @@ impl MobileMusicProviderLifecycle {
     pub fn begin_transport_effect(
         &self,
         provider_generation: MobileMusicProviderSessionId,
+        command: MobileMusicCommandDto,
         now_ms: u64,
     ) -> Option<MobileMusicTransportEffect> {
         self.lock_inner()
             .begin_transport_effect(
                 ProviderSessionId::from_raw(provider_generation.value),
+                command.into(),
                 now_ms,
             )
             .map(|effect| MobileMusicTransportEffect {
                 id: effect.id.into(),
-                deadline_ms: effect.deadline_ms,
+                deadline_ms: effect.deadline.as_milliseconds(),
             })
     }
 
@@ -732,17 +807,19 @@ impl MobileMusicProviderLifecycle {
         &self,
         provider_generation: MobileMusicProviderSessionId,
         connection_attempt_id: MobileMusicConnectionAttemptId,
+        command: MobileMusicCommandDto,
         now_ms: u64,
     ) -> Option<MobileMusicTransportEffect> {
         self.lock_inner()
             .begin_transport_effect_for_connection(
                 ProviderSessionId::from_raw(provider_generation.value),
                 Some(ConnectionAttemptId::from_raw(connection_attempt_id.value)),
+                command.into(),
                 now_ms,
             )
             .map(|effect| MobileMusicTransportEffect {
                 id: effect.id.into(),
-                deadline_ms: effect.deadline_ms,
+                deadline_ms: effect.deadline.as_milliseconds(),
             })
     }
 
@@ -921,6 +998,16 @@ impl From<MusicPlayerRequestCompletion> for MobileMusicRequestCompletion {
     }
 }
 
+impl From<MusicPlayerRequestExpiration> for MobileMusicRequestExpiration {
+    fn from(value: MusicPlayerRequestExpiration) -> Self {
+        match value {
+            MusicPlayerRequestExpiration::Pending => Self::Pending,
+            MusicPlayerRequestExpiration::Expired => Self::Expired,
+            MusicPlayerRequestExpiration::Stale => Self::Stale,
+        }
+    }
+}
+
 impl From<MobileMusicTransportOutcome> for MusicTransportOutcome {
     fn from(value: MobileMusicTransportOutcome) -> Self {
         match value {
@@ -975,8 +1062,10 @@ mod tests {
         MobileMusicProviderCallbackMatch, MobileMusicProviderConnectionCallback,
         MobileMusicProviderLifecycle, MobileMusicProviderMonitorRequest,
         MobileMusicProviderMonitorResume, MobileMusicProviderMonitorStart,
-        MobileMusicTransportCompletionState, MobileMusicTransportOutcome,
+        MobileMusicRequestExpiration, MobileMusicTransportCompletionState,
+        MobileMusicTransportOutcome,
     };
+    use crate::MobileMusicCommandDto;
 
     #[test]
     fn binding_projects_one_shared_lifecycle() {
@@ -995,7 +1084,7 @@ mod tests {
             .begin_provider_session()
             .expect("provider session");
         let transport = lifecycle
-            .begin_transport_effect(provider, 100)
+            .begin_transport_effect(provider, MobileMusicCommandDto::Play, 100)
             .expect("transport");
 
         let suspension = lifecycle.suspend();
@@ -1048,7 +1137,12 @@ mod tests {
             MobileMusicProviderConnectionCallback::Accepted
         );
         let transport = lifecycle
-            .begin_transport_effect_for_connection(provider, attempt, 0)
+            .begin_transport_effect_for_connection(
+                provider,
+                attempt,
+                MobileMusicCommandDto::Play,
+                0,
+            )
             .expect("transport");
 
         let ended = lifecycle.connection_failed_effect(attempt, 100);
@@ -1064,6 +1158,27 @@ mod tests {
         assert_eq!(
             ended.transport.outcome,
             Some(MobileMusicTransportOutcome::Cancelled)
+        );
+    }
+
+    #[test]
+    fn binding_distinguishes_current_expiry_from_a_stale_deadline() {
+        let lifecycle = MobileMusicProviderLifecycle::new();
+        let request = lifecycle
+            .begin_player_state_request(1_000)
+            .expect("player request");
+
+        assert_eq!(
+            lifecycle.expire_player_state_request(request, 10_999),
+            MobileMusicRequestExpiration::Pending
+        );
+        assert_eq!(
+            lifecycle.expire_player_state_request(request, 11_000),
+            MobileMusicRequestExpiration::Expired
+        );
+        assert_eq!(
+            lifecycle.expire_player_state_request(request, 11_001),
+            MobileMusicRequestExpiration::Stale
         );
     }
 }
