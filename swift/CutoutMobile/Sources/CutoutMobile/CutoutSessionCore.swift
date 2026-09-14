@@ -2640,10 +2640,11 @@ public final class CutoutSessionCore: NSObject {
 
     private func handleCaptureWriterCompletion(_ completion: CaptureWriterCompletion) {
         let succeeded = completion.succeeded
-        _ = rustSessionState.completeCaptureWriter(
+        let isCurrentAttempt = rustSessionState.completeCaptureWriter(
             generation: completion.generation.dto,
             succeeded: succeeded
         )
+        guard isCurrentAttempt else { return }
         if succeeded {
             if completion.databasePublicationSucceeded == false {
                 record("capture_warning=database_publication_failed; saved_file_retained=true")
