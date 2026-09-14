@@ -2339,7 +2339,6 @@ public struct AeroAngleAdjustment: Equatable, Hashable, Sendable {
 
 
 public struct EucSettingsCapabilities: Equatable, Hashable, Sendable {
-    public let validationMode: Bool
     public let resetTripMeter: SettingWriteSupport
     public let pedalMode: SettingWriteSupport
     public let rollAngle: SettingWriteSupport
@@ -2372,7 +2371,6 @@ public struct EucSettingsCapabilities: Equatable, Hashable, Sendable {
     public let aeroAngleAdjustment: SettingWriteSupport
 
     public init(
-        validationMode: Bool = false,
         resetTripMeter: SettingWriteSupport = .unsupported,
         pedalMode: SettingWriteSupport,
         rollAngle: SettingWriteSupport = .unsupported,
@@ -2404,7 +2402,6 @@ public struct EucSettingsCapabilities: Equatable, Hashable, Sendable {
         aeroAlarmSpeed: SettingWriteSupport = .unsupported,
         aeroAngleAdjustment: SettingWriteSupport = .unsupported
     ) {
-        self.validationMode = validationMode
         self.resetTripMeter = resetTripMeter
         self.pedalMode = pedalMode
         self.rollAngle = rollAngle
@@ -2438,7 +2435,6 @@ public struct EucSettingsCapabilities: Equatable, Hashable, Sendable {
     }
 
     fileprivate init(_ dto: MobileEucSettingsCapabilitiesDto) {
-        self.validationMode = dto.validationMode
         self.resetTripMeter = SettingWriteSupport(dto.resetTripMeter)
         self.pedalMode = SettingWriteSupport(dto.pedalMode)
         self.rollAngle = SettingWriteSupport(dto.rollAngle)
@@ -2469,11 +2465,6 @@ public struct EucSettingsCapabilities: Equatable, Hashable, Sendable {
         self.aeroTransportMode = SettingWriteSupport(dto.aeroTransportMode)
         self.aeroAlarmSpeed = SettingWriteSupport(dto.aeroAlarmSpeed)
         self.aeroAngleAdjustment = SettingWriteSupport(dto.aeroAngleAdjustment)
-    }
-
-    public func canSubmit(_ setting: KeyPath<Self, SettingWriteSupport>) -> Bool {
-        let support = self[keyPath: setting]
-        return support == .supported || (validationMode && support == .unverified)
     }
 }
 
@@ -6497,14 +6488,13 @@ public final class ElectricUnicycleSession: @unchecked Sendable {
 
     public init(
         model: ElectricUnicycleModel,
-        deviceIdentity: String? = nil,
-        allowUnverifiedSettings: Bool = false
+        deviceIdentity: String? = nil
     ) throws {
         self.model = model
         self.voltageSagIdentity = deviceIdentity
         self.inner = switch model {
         case .aero:
-            .aero(Self.makeAeroSession(allowUnverifiedSettings: allowUnverifiedSettings))
+            .aero(AeroBenignControlSession())
         case .falcon:
             .falcon(try FalconBenignControlSession())
         }
@@ -6516,14 +6506,6 @@ public final class ElectricUnicycleSession: @unchecked Sendable {
         {
             persistedVoltageSagObservations = model.observations
         }
-    }
-
-    private static func makeAeroSession(allowUnverifiedSettings: Bool) -> AeroBenignControlSession {
-        let session = AeroBenignControlSession()
-        if allowUnverifiedSettings {
-            session.enableSettingsValidation()
-        }
-        return session
     }
 
     public var diagnostics: ParserDiagnostics {
@@ -7246,13 +7228,11 @@ public enum CoreBluetoothSession: Sendable {
 
     public static func electricUnicycle(
         model: ElectricUnicycleModel,
-        deviceIdentity: String? = nil,
-        allowUnverifiedSettings: Bool = false
+        deviceIdentity: String? = nil
     ) throws -> CoreBluetoothSession {
         try .electricUnicycle(ElectricUnicycleSession(
             model: model,
-            deviceIdentity: deviceIdentity,
-            allowUnverifiedSettings: allowUnverifiedSettings
+            deviceIdentity: deviceIdentity
         ))
     }
 

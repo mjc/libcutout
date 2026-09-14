@@ -63,7 +63,7 @@ private struct ValidationAuthorizationSection: View {
                 localizedAppText("settings.validation.title"),
                 isOn: Binding(get: { authorized }, set: setAuthorized)
             )
-            .accessibilityIdentifier("settings.validationMode")
+            .accessibilityIdentifier("settings.validationAuthorization")
         } footer: {
             Text(localizedAppText("settings.validation.description"))
         }

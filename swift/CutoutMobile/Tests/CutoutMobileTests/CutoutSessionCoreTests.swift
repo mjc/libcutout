@@ -1678,21 +1678,6 @@ func testVescRideSnapshotProjectsBatteryLevelAndUpdateTime() throws {
         XCTAssertEqual(falcon.settingsCapabilities.begodeLedMode, .supported)
     }
 
-    func testExplicitValidationModePreservesEvidenceAndAllowsOnlyUnverifiedSettings() throws {
-        let session = try ElectricUnicycleSession(model: .aero, allowUnverifiedSettings: true)
-        let capabilities = session.settingsCapabilities
-
-        XCTAssertTrue(capabilities.validationMode)
-        XCTAssertEqual(capabilities.aeroPwmPercent, .unverified)
-        XCTAssertEqual(capabilities.aeroPedalHardness, .unverified)
-        XCTAssertTrue(capabilities.canSubmit(\.aeroPwmPercent))
-        XCTAssertTrue(capabilities.canSubmit(\.aeroPedalHardness))
-        XCTAssertTrue(capabilities.canSubmit(\.resetTripMeter))
-        XCTAssertTrue(capabilities.canSubmit(\.headlight))
-        XCTAssertFalse(capabilities.canSubmit(\.taillight))
-        XCTAssertEqual(session.tripMeterResetState.kind, .unknown)
-    }
-
     func testAeroPedalHardnessUsesTheDocumentedNumericRange() {
         XCTAssertEqual(AeroPedalHardness(percent: 0)?.percent, 0)
         XCTAssertEqual(AeroPedalHardness(percent: 75)?.percent, 75)
