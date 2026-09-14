@@ -1142,6 +1142,16 @@ impl CutoutSessionStateHandle {
         }
     }
 
+    /// Clears the active phone-alarm device and cancels its native deliveries.
+    pub fn deactivate_phone_alarm_device(&self) -> MobilePhoneAlarmActionsDto {
+        let mut state = self.lock_inner();
+        state.phone_alarms.clear_active_device();
+        state.phone_alarm_activation_error = None;
+        let cancel_request_ids = state.phone_alarms.take_cancelled_request_ids();
+        state.discard_queued_phone_alarm_schedules(&cancel_request_ids);
+        MobilePhoneAlarmActionsDto::cancellations(cancel_request_ids)
+    }
+
     /// Updates the selected device's phone alarm opt-in and persists it through Rust.
     ///
     /// # Errors
@@ -1696,8 +1706,6 @@ impl CutoutSessionStateHandle {
         let mut state = self.lock_inner();
         state.state.reset_device_identity();
         state.detector = DeviceDetectionSession::default();
-        state.phone_alarms.clear_active_device();
-        state.phone_alarm_activation_error = None;
     }
 
     /// Sets the purpose of the selected connection across transport attempts.
@@ -19712,6 +19720,22 @@ mod tests {
                 pwm_headroom_percent: 20,
             })
         );
+        state.reset_device_detection();
+        assert_eq!(
+            state.phone_alarm_preferences(),
+            Some(MobilePhoneAlarmPreferencesDto {
+                device_identity: "wheel-a".to_owned(),
+                enabled: false,
+                pwm_duty_percent: 80,
+                pwm_headroom_percent: 20,
+            })
+        );
+        assert_eq!(
+            state.deactivate_phone_alarm_device(),
+            MobilePhoneAlarmActionsDto::default()
+        );
+        assert_eq!(state.phone_alarm_preferences(), None);
+        state.select_discovered_platform("wheel-a".to_owned());
         state.select_discovered_platform(" \t".to_owned());
         assert_eq!(
             state.phone_alarm_activation_error(),
