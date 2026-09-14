@@ -52,6 +52,51 @@ final class MusicProviderTransportExecutorTests: XCTestCase {
         let outcome = await command.value
         XCTAssertEqual(outcome, .unavailable)
     }
+
+    func testAppleBackgroundSuspensionCompletesPendingCommand() async {
+        let lifecycle = MobileMusicProviderLifecycle()
+        let provider = lifecycle.beginProviderSession()
+        let gate = TransportOperationGate()
+        let transport = MusicProviderTransportExecutor(
+            lifecycle: lifecycle,
+            effects: MusicProviderEffectExecutor(),
+            nowMs: { 0 }
+        )
+        let command = Task { @MainActor in
+            await transport.perform(providerGeneration: provider) { completion in
+                Task { @MainActor in completion(await gate.wait()) }
+            }
+        }
+        await gate.waitUntilOperationStarted()
+
+        transport.apply(lifecycle.suspend())
+
+        let outcome = await command.value
+        XCTAssertEqual(outcome, .unavailable)
+        await gate.resume(returning: true)
+    }
+
+    func testAlreadyCancelledCommandDoesNotDispatchProviderEffect() async {
+        let lifecycle = MobileMusicProviderLifecycle()
+        let provider = lifecycle.beginProviderSession()
+        let transport = MusicProviderTransportExecutor(
+            lifecycle: lifecycle,
+            effects: MusicProviderEffectExecutor(),
+            nowMs: { 0 }
+        )
+        var dispatched = false
+        let command = Task { @MainActor in
+            await transport.perform(providerGeneration: provider) { completion in
+                dispatched = true
+                completion(true)
+            }
+        }
+        command.cancel()
+
+        let outcome = await command.value
+        XCTAssertEqual(outcome, .unavailable)
+        XCTAssertFalse(dispatched)
+    }
 }
 
 private actor TransportOperationGate {

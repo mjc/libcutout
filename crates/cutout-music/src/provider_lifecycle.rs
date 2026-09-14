@@ -108,12 +108,31 @@ pub struct MusicProviderLifecycle {
     player_state: MusicPlayerRequest,
     artwork: MusicArtworkRequest,
     artwork_retry: CallbackEpoch,
+    command_feedback: CallbackEpoch,
     last_transport_id: u64,
     pending_transport: Option<PendingTransport>,
     observing: bool,
 }
 
 impl MusicProviderLifecycle {
+    /// Begins one replaceable command-feedback presentation.
+    #[must_use]
+    pub fn begin_command_feedback(&mut self) -> u64 {
+        self.command_feedback.begin()
+    }
+
+    /// Classifies a command completion without changing the visible request.
+    #[must_use]
+    pub fn classify_command_feedback(&self, id: u64) -> CallbackEpochMatch {
+        self.command_feedback.classify(id)
+    }
+
+    /// Dismisses only the matching visible command feedback.
+    #[must_use]
+    pub fn dismiss_command_feedback(&mut self, id: u64) -> CallbackEpochMatch {
+        self.command_feedback.finish(id)
+    }
+
     /// Records foreground monitoring intent.
     pub fn request_monitor(&mut self, request: MusicMonitorRequest) {
         self.monitor.request(request);

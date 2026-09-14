@@ -81,9 +81,11 @@ public enum MusicCommandOutcome: Equatable, Sendable {
 
 /// Visible command feedback derived from the terminal provider outcome.
 public struct MusicCommandFeedback: Equatable, Sendable {
+    public let requestID: UInt64
     public let outcome: MusicCommandOutcome
 
-    public init(outcome: MusicCommandOutcome) {
+    public init(requestID: UInt64, outcome: MusicCommandOutcome) {
+        self.requestID = requestID
         self.outcome = outcome
     }
 
@@ -194,6 +196,7 @@ final class MusicProviderTransportExecutor {
             @escaping @MainActor @Sendable (Bool) -> Void
         ) -> Void
     ) async -> MusicCommandOutcome {
+        guard !Task.isCancelled else { return .unavailable }
         guard let effect = lifecycle.beginTransportEffect(
             providerGeneration: providerGeneration,
             nowMs: nowMs()
@@ -214,6 +217,13 @@ final class MusicProviderTransportExecutor {
                         requestID: effect.id
                     )
                     continuation.resume(returning: .refused)
+                    return
+                }
+                guard !Task.isCancelled else {
+                    coordinator.cancel(
+                        providerGeneration: providerGeneration,
+                        requestID: effect.id
+                    )
                     return
                 }
                 effects.run(
@@ -2039,6 +2049,10 @@ public final class AppleMusicProviderAdapter {
         if let completion = observationBridge.stopMonitoring() {
             transport.apply(completion)
         }
+    }
+
+    public func applySuspension(_ suspension: MobileMusicProviderSuspension) {
+        transport.apply(suspension)
     }
 
     public func refreshObservation(observedAtMs: UInt64) {

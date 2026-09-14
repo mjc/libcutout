@@ -267,3 +267,27 @@ fn rust_effects_own_deadlines_and_monitor_continuation() {
         CallbackEpochMatch::Current,
     );
 }
+
+#[test]
+fn command_feedback_identity_rejects_older_completion_and_dismissal() {
+    let mut lifecycle = MusicProviderLifecycle::default();
+    let first = lifecycle.begin_command_feedback();
+    let second = lifecycle.begin_command_feedback();
+
+    assert_eq!(
+        lifecycle.classify_command_feedback(first),
+        CallbackEpochMatch::Stale,
+    );
+    assert_eq!(
+        lifecycle.dismiss_command_feedback(first),
+        CallbackEpochMatch::Stale,
+    );
+    assert_eq!(
+        lifecycle.classify_command_feedback(second),
+        CallbackEpochMatch::Current,
+    );
+    assert_eq!(
+        lifecycle.dismiss_command_feedback(second),
+        CallbackEpochMatch::Current,
+    );
+}

@@ -127,10 +127,10 @@ final class CutoutAppModel {
     private(set) var musicHistoryPolicy = MobileMusicHistoryPolicyDto.disabled
     private(set) var musicHistoryUnavailable = false
     private(set) var musicHistorySaveError: MobileRideMapError?
-    private(set) var musicCommandFeedback = MusicCommandFeedback(outcome: .accepted)
+    private(set) var musicCommandFeedback: MusicCommandFeedback?
 
     var musicCommandStatusText: String? {
-        musicCommandFeedback.messageKey.map { pevLocalizedText($0) }
+        musicCommandFeedback?.messageKey.map { pevLocalizedText($0) }
     }
 
     /// Compatibility projection for callers that only display the live map.
@@ -718,7 +718,7 @@ final class CutoutAppModel {
     @discardableResult
     func handleMusicCommand(_ command: MobileMusicCommandDto) async -> MusicCommandOutcome {
         let commandProvider = selectedMusicProvider
-        musicCommandFeedback = MusicCommandFeedback(outcome: .accepted)
+        let feedbackRequestID = beginMusicCommandFeedback()
 #if canImport(MediaPlayer) && os(iOS)
         // Opening the selected provider is a settings action, not a transport
         // capability. It must work before any playback snapshot has arrived.
@@ -726,20 +726,30 @@ final class CutoutAppModel {
             if selectedMusicProvider == .spotify {
                 return finishMusicCommand(
                     await spotifyMusicProvider.perform(.openProvider),
-                    provider: commandProvider
+                    provider: commandProvider,
+                    requestID: feedbackRequestID
                 )
             }
             return finishMusicCommand(
                 await appleMusicProvider.perform(.openProvider),
-                provider: commandProvider
+                provider: commandProvider,
+                requestID: feedbackRequestID
             )
         }
 #endif
         guard let nowPlaying = musicNowPlaying else {
-            return finishMusicCommand(.unavailable, provider: commandProvider)
+            return finishMusicCommand(
+                .unavailable,
+                provider: commandProvider,
+                requestID: feedbackRequestID
+            )
         }
         guard nowPlaying.isCommandAvailable(command) else {
-            return finishMusicCommand(.refused, provider: commandProvider)
+            return finishMusicCommand(
+                .refused,
+                provider: commandProvider,
+                requestID: feedbackRequestID
+            )
         }
 #if canImport(MediaPlayer) && os(iOS)
         let skipHintID: UInt64?
@@ -761,22 +771,42 @@ final class CutoutAppModel {
         } else if let skipHintID {
             musicTransitionHintTracker.clear(id: skipHintID)
         }
-        return finishMusicCommand(outcome, provider: commandProvider)
+        return finishMusicCommand(
+            outcome,
+            provider: commandProvider,
+            requestID: feedbackRequestID
+        )
 #else
-        return finishMusicCommand(.unavailable, provider: commandProvider)
+        return finishMusicCommand(
+            .unavailable,
+            provider: commandProvider,
+            requestID: feedbackRequestID
+        )
 #endif
     }
 
-    func dismissMusicCommandFeedback() {
-        musicCommandFeedback = MusicCommandFeedback(outcome: .accepted)
+    @discardableResult
+    func beginMusicCommandFeedback() -> UInt64 {
+        let requestID = musicProviderLifecycle.beginCommandFeedback()
+        musicCommandFeedback = MusicCommandFeedback(requestID: requestID, outcome: .accepted)
+        return requestID
     }
 
-    private func finishMusicCommand(
+    func dismissMusicCommandFeedback(requestID: UInt64) {
+        guard musicCommandFeedback?.requestID == requestID,
+              musicProviderLifecycle.dismissCommandFeedback(id: requestID) == .current
+        else { return }
+        musicCommandFeedback = nil
+    }
+
+    func finishMusicCommand(
         _ outcome: MusicCommandOutcome,
-        provider: MobileMusicProviderDto
+        provider: MobileMusicProviderDto,
+        requestID: UInt64
     ) -> MusicCommandOutcome {
-        if selectedMusicProvider == provider {
-            musicCommandFeedback = MusicCommandFeedback(outcome: outcome)
+        if selectedMusicProvider == provider,
+           musicProviderLifecycle.classifyCommandFeedback(id: requestID) == .current {
+            musicCommandFeedback = MusicCommandFeedback(requestID: requestID, outcome: outcome)
         }
         return outcome
     }
@@ -2701,6 +2731,9 @@ final class CutoutAppModel {
 
     func appDidEnterBackground() {
         let suspension = musicProviderLifecycle.suspend()
+#if canImport(MediaPlayer) && os(iOS)
+        appleMusicProvider.applySuspension(suspension)
+#endif
         spotifyMusicProvider.applySuspension(suspension)
         if suspension.observationGap {
             let observedAtMs = core.now().rawValue

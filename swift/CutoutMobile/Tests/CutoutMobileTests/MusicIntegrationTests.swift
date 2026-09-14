@@ -4,10 +4,19 @@ import CutoutMobileFFI
 
 final class MusicIntegrationTests: XCTestCase {
     func testMusicCommandFeedbackPresentsEveryNonAcceptedOutcome() {
-        XCTAssertNil(MusicCommandFeedback(outcome: .accepted).messageKey)
-        XCTAssertEqual(MusicCommandFeedback(outcome: .refused).messageKey, "music.command.refused")
-        XCTAssertEqual(MusicCommandFeedback(outcome: .failed).messageKey, "music.command.failed")
-        XCTAssertEqual(MusicCommandFeedback(outcome: .unavailable).messageKey, "music.command.unavailable")
+        XCTAssertNil(MusicCommandFeedback(requestID: 1, outcome: .accepted).messageKey)
+        XCTAssertEqual(
+            MusicCommandFeedback(requestID: 2, outcome: .refused).messageKey,
+            "music.command.refused"
+        )
+        XCTAssertEqual(
+            MusicCommandFeedback(requestID: 3, outcome: .failed).messageKey,
+            "music.command.failed"
+        )
+        XCTAssertEqual(
+            MusicCommandFeedback(requestID: 4, outcome: .unavailable).messageKey,
+            "music.command.unavailable"
+        )
     }
 
     @MainActor

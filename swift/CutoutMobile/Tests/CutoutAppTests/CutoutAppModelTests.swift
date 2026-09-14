@@ -113,6 +113,24 @@ final class CutoutAppModelTests: XCTestCase {
     }
 
     @MainActor
+    func testOlderSameProviderCompletionAndDismissalCannotReplaceNewerFeedback() {
+        let model = CutoutAppModel(core: SessionDriverSpy(rows: []))
+        let first = model.beginMusicCommandFeedback()
+        let second = model.beginMusicCommandFeedback()
+
+        _ = model.finishMusicCommand(.failed, provider: .appleMusic, requestID: first)
+        XCTAssertNil(model.musicCommandStatusText)
+
+        _ = model.finishMusicCommand(.refused, provider: .appleMusic, requestID: second)
+        XCTAssertEqual(model.musicCommandStatusText, pevLocalizedText("music.command.refused"))
+
+        model.dismissMusicCommandFeedback(requestID: first)
+        XCTAssertEqual(model.musicCommandStatusText, pevLocalizedText("music.command.refused"))
+        model.dismissMusicCommandFeedback(requestID: second)
+        XCTAssertNil(model.musicCommandStatusText)
+    }
+
+    @MainActor
     func testMusicSetupShowsUnavailableOnUnsupportedPlatform() {
         let model = CutoutAppModel(core: SessionDriverSpy(rows: []))
 

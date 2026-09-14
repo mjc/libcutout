@@ -48,14 +48,15 @@ struct CutoutApp: App {
                     pevLocalizedText("music.command.title"),
                     isPresented: Binding(
                         get: { model.musicCommandStatusText != nil },
-                        set: { if !$0 { model.dismissMusicCommandFeedback() } }
-                    )
-                ) {
+                        set: { _ in }
+                    ),
+                    presenting: model.musicCommandFeedback
+                ) { feedback in
                     Button(pevLocalizedText("music.command.dismiss")) {
-                        model.dismissMusicCommandFeedback()
+                        model.dismissMusicCommandFeedback(requestID: feedback.requestID)
                     }
-                } message: {
-                    Text(model.musicCommandStatusText ?? "")
+                } message: { feedback in
+                    Text(feedback.messageKey.map { pevLocalizedText($0) } ?? "")
                 }
         }
         .commands {

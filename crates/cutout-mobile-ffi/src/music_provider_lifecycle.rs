@@ -195,6 +195,24 @@ impl MobileMusicProviderLifecycle {
         Arc::new(Self::default())
     }
 
+    /// Begins one replaceable command-feedback presentation.
+    #[must_use]
+    pub fn begin_command_feedback(&self) -> u64 {
+        self.lock_inner().begin_command_feedback()
+    }
+
+    /// Classifies a command completion without changing the visible request.
+    #[must_use]
+    pub fn classify_command_feedback(&self, id: u64) -> MobileMusicProviderCallbackMatch {
+        self.lock_inner().classify_command_feedback(id).into()
+    }
+
+    /// Dismisses only the matching visible command feedback.
+    #[must_use]
+    pub fn dismiss_command_feedback(&self, id: u64) -> MobileMusicProviderCallbackMatch {
+        self.lock_inner().dismiss_command_feedback(id).into()
+    }
+
     /// Records provider monitoring intent.
     pub fn request_monitor(&self, request: MobileMusicProviderMonitorRequest) {
         self.lock_inner().request_monitor(request.into());
