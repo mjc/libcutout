@@ -829,6 +829,7 @@ final class CutoutAppModel {
     func selectMusicProvider(_ provider: MobileMusicProviderDto) {
         let previousProvider = selectedMusicProvider
         musicCoordinator.resetProviderCorrelation()
+        musicProviderLifecycle.invalidateCommandFeedback()
         selectedMusicProvider = provider
         musicSettingsNowPlaying = projectedMusicNowPlaying()
         musicProviderSelectionStore.set(provider)
@@ -896,13 +897,15 @@ final class CutoutAppModel {
         transitionHint: MusicTransitionHint? = nil
     ) -> Bool {
         let wallClockAtMs = wallClockAtMs ?? UInt64(Date().timeIntervalSince1970 * 1_000)
+        let appliedHint = transitionHint
+            ?? musicTransitionHintTracker.hint(atMonotonicMs: observation.snapshot.observedAtMs)
         let previousNowPlaying = musicCoordinator.nowPlaying
         do {
             let outcome = try musicCoordinator.ingest(
                 observation: observation,
                 wallClockAtMs: wallClockAtMs,
                 clockUncertaintyMs: clockUncertaintyMs,
-                transitionHint: transitionHint
+                transitionHint: appliedHint
             )
             if outcome == .recorded {
                 musicHistorySaveError = nil
@@ -919,14 +922,14 @@ final class CutoutAppModel {
             }
             finishMusicObservation(
                 previousNowPlaying: previousNowPlaying,
-                appliedHint: transitionHint,
+                appliedHint: appliedHint,
                 currentObservedAtMs: observation.snapshot.observedAtMs
             )
             return true
         } catch MobileRideMapError.noActiveRide {
             finishMusicObservation(
                 previousNowPlaying: previousNowPlaying,
-                appliedHint: transitionHint,
+                appliedHint: appliedHint,
                 currentObservedAtMs: observation.snapshot.observedAtMs
             )
             return false
@@ -934,7 +937,7 @@ final class CutoutAppModel {
             rideMapLiveError = Self.mapRideMapError(error)
             finishMusicObservation(
                 previousNowPlaying: previousNowPlaying,
-                appliedHint: transitionHint,
+                appliedHint: appliedHint,
                 currentObservedAtMs: observation.snapshot.observedAtMs
             )
             return false

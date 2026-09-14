@@ -19,6 +19,7 @@ pub struct MusicPlayerRequest {
     last_id: u64,
     pending: Option<(u64, u64)>,
     last_observed_at: Option<u64>,
+    observation_revision: u64,
 }
 
 /// Bounded identity and retry admission for provider artwork callbacks.
@@ -92,11 +93,31 @@ impl MusicPlayerRequest {
         }
     }
 
+    /// Completes a poll only when no newer push observation superseded it.
+    #[must_use]
+    pub fn complete_if_current(
+        &mut self,
+        request_id: u64,
+        observation_revision: u64,
+    ) -> MusicPlayerRequestCompletion {
+        if observation_revision != self.observation_revision {
+            return MusicPlayerRequestCompletion::Stale;
+        }
+        self.complete(request_id)
+    }
+
     /// Starts or refreshes the monotonic freshness window for this session.
     /// Connected sessions seed it before the first player-state response;
     /// verified updates then refresh it as they arrive.
     pub fn mark_observed(&mut self, now_ms: u64) {
+        self.observation_revision = self.observation_revision.wrapping_add(1);
         self.last_observed_at = Some(now_ms);
+    }
+
+    /// Revision of the latest authoritative observation.
+    #[must_use]
+    pub const fn observation_revision(&self) -> u64 {
+        self.observation_revision
     }
 
     /// Whether the most recently verified player state is too old to present

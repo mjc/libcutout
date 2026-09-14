@@ -188,6 +188,39 @@ fn transport_cancellation_is_scoped_to_the_rust_request_and_provider_generation(
 }
 
 #[test]
+fn connection_disconnect_cancels_only_connection_owned_transport() {
+    let mut lifecycle = MusicProviderLifecycle::default();
+    let provider = lifecycle.begin_provider_session();
+    let connection = lifecycle.begin_connection_attempt(0).expect("attempt");
+    let request = lifecycle
+        .begin_transport_effect_for_connection(provider, Some(connection), 0)
+        .expect("transport");
+    assert_eq!(
+        lifecycle.cancel_transport_for_connection(provider, connection),
+        MusicTransportCompletion::Finished {
+            request_id: request.id,
+            outcome: MusicTransportOutcome::Cancelled,
+        }
+    );
+    assert_eq!(
+        lifecycle.cancel_transport_for_connection(provider, connection),
+        MusicTransportCompletion::Stale
+    );
+}
+
+#[test]
+fn newer_push_revision_rejects_an_older_player_poll() {
+    let mut lifecycle = MusicProviderLifecycle::default();
+    let request = lifecycle.begin_player_state_request(0).expect("poll");
+    let revision = lifecycle.player_state_observation_revision();
+    lifecycle.mark_player_state_observed(1);
+    assert_eq!(
+        lifecycle.complete_player_state_request_if_current(request, revision),
+        cutout_music::player_request::MusicPlayerRequestCompletion::Stale
+    );
+}
+
+#[test]
 fn provider_change_cancels_transport_and_rejects_its_late_completion() {
     let mut lifecycle = MusicProviderLifecycle::default();
     let apple = lifecycle.begin_provider_session();
@@ -249,7 +282,10 @@ fn rust_effects_own_deadlines_and_monitor_continuation() {
     let provider = lifecycle.begin_provider_session();
     let authorization =
         lifecycle.begin_authorization_effect(AuthorizationTransactionKind::Authorizing, 1_000);
-    assert_eq!(authorization.deadline_ms, 21_000);
+    assert_eq!(authorization.deadline_ms, u64::MAX);
+    let renewal =
+        lifecycle.begin_authorization_effect(AuthorizationTransactionKind::Renewing, 1_000);
+    assert_eq!(renewal.deadline_ms, 21_000);
     let artwork = lifecycle
         .begin_artwork_effect(provider, 2_000)
         .expect("artwork");

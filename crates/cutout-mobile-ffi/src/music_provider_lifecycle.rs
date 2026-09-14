@@ -288,6 +288,11 @@ impl MobileMusicProviderLifecycle {
         self.lock_inner().begin_provider_session()
     }
 
+    /// Invalidates command feedback when the provider session changes.
+    pub fn invalidate_command_feedback(&self) {
+        self.lock_inner().invalidate_command_feedback();
+    }
+
     /// Classifies a provider callback without ending its generation.
     #[must_use]
     pub fn classify_provider_session(&self, id: u64) -> MobileMusicProviderCallbackMatch {
@@ -375,6 +380,24 @@ impl MobileMusicProviderLifecycle {
         self.lock_inner().complete_player_state_request(id).into()
     }
 
+    /// Completes a poll only when no newer push observation superseded it.
+    #[must_use]
+    pub fn complete_player_state_request_if_current(
+        &self,
+        id: u64,
+        observation_revision: u64,
+    ) -> MobileMusicRequestCompletion {
+        self.lock_inner()
+            .complete_player_state_request_if_current(id, observation_revision)
+            .into()
+    }
+
+    /// Returns the latest authoritative player observation revision.
+    #[must_use]
+    pub fn player_state_observation_revision(&self) -> u64 {
+        self.lock_inner().player_state_observation_revision()
+    }
+
     /// Refreshes the current player-state freshness window.
     pub fn mark_player_state_observed(&self, now_ms: u64) {
         self.lock_inner().mark_player_state_observed(now_ms);
@@ -451,6 +474,23 @@ impl MobileMusicProviderLifecycle {
             .map(Into::into)
     }
 
+    /// Begins a transport command owned by one connection attempt.
+    #[must_use]
+    pub fn begin_transport_effect_for_connection(
+        &self,
+        provider_generation: u64,
+        connection_attempt_id: u64,
+        now_ms: u64,
+    ) -> Option<MobileMusicProviderTimedEffect> {
+        self.lock_inner()
+            .begin_transport_effect_for_connection(
+                provider_generation,
+                Some(connection_attempt_id),
+                now_ms,
+            )
+            .map(Into::into)
+    }
+
     /// Finishes the matching transport request exactly once.
     #[must_use]
     pub fn finish_transport(
@@ -485,6 +525,18 @@ impl MobileMusicProviderLifecycle {
     ) -> MobileMusicTransportCompletion {
         self.lock_inner()
             .cancel_transport(provider_generation, request_id)
+            .into()
+    }
+
+    /// Cancels a command owned by a connection attempt that just ended.
+    #[must_use]
+    pub fn cancel_transport_for_connection(
+        &self,
+        provider_generation: u64,
+        connection_attempt_id: u64,
+    ) -> MobileMusicTransportCompletion {
+        self.lock_inner()
+            .cancel_transport_for_connection(provider_generation, connection_attempt_id)
             .into()
     }
 }

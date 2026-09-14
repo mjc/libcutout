@@ -670,7 +670,7 @@ final class MusicIntegrationTests: XCTestCase {
     }
 
     @MainActor
-    func testCoordinatorRejectsMalformedExplicitRecordBeforeProjectingIt() throws {
+    func testCoordinatorTruncatesOversizedExplicitRecordBeforeProjectingIt() throws {
         let state = MobileRideMapState()
         _ = try state.startGpsOnly(atMs: 1_000, lastConnectedVehicle: nil)
         try state.setMusicHistoryPolicy(.humanReadable)
@@ -690,7 +690,7 @@ final class MusicIntegrationTests: XCTestCase {
             capabilities: .init(previous: true, play: false, pause: true, next: true, openProvider: true)
         )
 
-        XCTAssertThrowsError(
+        XCTAssertNoThrow(
             try coordinator.record(
                 snapshot: malformed,
                 kind: .itemChanged,
@@ -699,7 +699,8 @@ final class MusicIntegrationTests: XCTestCase {
                 clockUncertaintyMs: 5
             )
         )
-        XCTAssertNil(coordinator.nowPlaying)
+        XCTAssertEqual(coordinator.nowPlaying?.item?.identifier, "track-1")
+        XCTAssertEqual(coordinator.nowPlaying?.item?.title?.utf8.count, 512)
     }
 
     @MainActor
@@ -719,7 +720,7 @@ final class MusicIntegrationTests: XCTestCase {
             capabilities: .init(previous: true, play: false, pause: true, next: true, openProvider: true)
         )
 
-        XCTAssertNil(
+        XCTAssertThrowsError(
             try coordinator.ingest(
                 snapshot: invalid,
                 wallClockAtMs: 1_700_000_000_100,
@@ -769,15 +770,16 @@ final class MusicIntegrationTests: XCTestCase {
             observedAtMs: 1_200,
             capabilities: valid.capabilities
         )
-        XCTAssertNil(
+        XCTAssertEqual(
             try coordinator.ingest(
                 snapshot: invalid,
                 wallClockAtMs: 1_700_000_000_200,
                 clockUncertaintyMs: 5
-            )
+            ),
+            .recorded
         )
-        XCTAssertEqual(coordinator.nowPlaying?.item?.identifier, "track-1")
-        XCTAssertEqual(coordinator.nowPlaying?.item?.title, "Song")
+        XCTAssertEqual(coordinator.nowPlaying?.item?.identifier, "track-2")
+        XCTAssertEqual(coordinator.nowPlaying?.item?.title?.utf8.count, 512)
     }
 
     @MainActor

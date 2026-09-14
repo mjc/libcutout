@@ -192,15 +192,26 @@ final class MusicProviderTransportExecutor {
 
     func perform(
         providerGeneration: UInt64,
+        connectionAttemptID: UInt64? = nil,
         dispatch: @escaping @MainActor @Sendable (
             @escaping @MainActor @Sendable (Bool) -> Void
         ) -> Void
     ) async -> MusicCommandOutcome {
         guard !Task.isCancelled else { return .unavailable }
-        guard let effect = lifecycle.beginTransportEffect(
-            providerGeneration: providerGeneration,
-            nowMs: nowMs()
-        ) else { return .refused }
+        let effect: MobileMusicProviderTimedEffect?
+        if let connectionAttemptID {
+            effect = lifecycle.beginTransportEffectForConnection(
+                providerGeneration: providerGeneration,
+                connectionAttemptId: connectionAttemptID,
+                nowMs: nowMs()
+            )
+        } else {
+            effect = lifecycle.beginTransportEffect(
+                providerGeneration: providerGeneration,
+                nowMs: nowMs()
+            )
+        }
+        guard let effect else { return .refused }
 
         return await withTaskCancellationHandler {
             await withCheckedContinuation { continuation in
@@ -389,6 +400,7 @@ public struct MusicTransitionHintTracker: Sendable {
         }
         if previous.provider != current.provider
             || previous.item?.identifier != current.item?.identifier
+            || MusicTransitionHintTracker.isSkipOccurrence(previous: previous, current: current)
         {
             removeFirstPending()
         } else {
@@ -419,6 +431,17 @@ public struct MusicTransitionHintTracker: Sendable {
         default:
             false
         }
+    }
+
+    fileprivate static func isSkipOccurrence(
+        previous: MusicNowPlaying,
+        current: MusicNowPlaying
+    ) -> Bool {
+        guard previous.item?.identifier == current.item?.identifier,
+              let previousPosition = previous.positionMilliseconds,
+              let currentPosition = current.positionMilliseconds,
+              currentPosition < previousPosition else { return false }
+        return true
     }
 }
 
@@ -501,6 +524,7 @@ public final class MusicProviderEffectExecutor {
         case authorization
         case provider
         case playerState
+        case playerStateTimeout
         case transport
         case artwork
         case artworkRetry
@@ -511,6 +535,7 @@ public final class MusicProviderEffectExecutor {
         case authorization(UInt64)
         case provider(UInt64)
         case playerState(UInt64)
+        case playerStateTimeout(UInt64)
         case transport(UInt64)
         case artwork(UInt64)
         case artworkRetry(UInt64)
@@ -521,6 +546,7 @@ public final class MusicProviderEffectExecutor {
             case .authorization: .authorization
             case .provider: .provider
             case .playerState: .playerState
+            case .playerStateTimeout: .playerStateTimeout
             case .transport: .transport
             case .artwork: .artwork
             case .artworkRetry: .artworkRetry
@@ -598,7 +624,7 @@ private extension MusicProviderEffectExecutor.Key {
     var id: UInt64 {
         switch self {
         case let .monitor(id), let .authorization(id), let .provider(id),
-             let .playerState(id), let .transport(id), let .artwork(id),
+             let .playerState(id), let .playerStateTimeout(id), let .transport(id), let .artwork(id),
              let .artworkRetry(id):
             id
         }
@@ -626,6 +652,7 @@ final class AppleMusicObservationBridge {
     private var activeGeneration: UInt64?
     private var observedAtMs: (@MainActor () -> UInt64)?
     private var onObservation: (@MainActor (MusicProviderObservation) -> Void)?
+    private var readInFlight = false
 
     private(set) var cachedObservation: MusicProviderObservation?
     var providerGeneration: UInt64? { activeGeneration }
@@ -667,19 +694,38 @@ final class AppleMusicObservationBridge {
     func refresh(observedAtMs: UInt64) {
         guard let generation = activeGeneration,
               lifecycle.classifyProviderSession(id: generation) == .current,
+              !readInFlight,
               let requestID = lifecycle.beginPlayerStateRequest(nowMs: observedAtMs)
         else { return }
+        readInFlight = true
+        effects.run(.playerStateTimeout(requestID)) { [weak self] in
+            do { try await Task.sleep(for: .seconds(10)) } catch { return }
+            guard let self,
+                  self.activeGeneration == generation,
+                  self.lifecycle.classifyProviderSession(id: generation) == .current,
+                  self.lifecycle.completePlayerStateRequest(id: requestID) == .accepted
+            else { return }
+            self.cachedObservation = self.cachedObservation?.staleProjection
+            if let cachedObservation = self.cachedObservation {
+                self.onObservation?(cachedObservation)
+            }
+            self.effects.cancel(.playerState(requestID))
+        }
         effects.run(.playerState(requestID)) { [weak self, service] in
             let observation = await service.observation(
                 generation: generation,
                 observedAtMs: observedAtMs
             )
-            guard let self,
-                  self.activeGeneration == generation,
+            guard let self else { return }
+            guard self.activeGeneration == generation,
                   self.lifecycle.classifyProviderSession(id: generation) == .current,
                   self.lifecycle.completePlayerStateRequest(id: requestID) == .accepted,
-                  let observation
-            else { return }
+                  let observation else {
+                self.readInFlight = false
+                return
+            }
+            self.readInFlight = false
+            self.effects.cancel(.playerStateTimeout(requestID))
             self.cachedObservation = observation
             self.onObservation?(observation)
         }
@@ -689,6 +735,8 @@ final class AppleMusicObservationBridge {
         guard let generation = activeGeneration else { return nil }
         activeGeneration = nil
         effects.cancelAll(in: .playerState)
+        effects.cancelAll(in: .playerStateTimeout)
+        readInFlight = false
         let completion = lifecycle.retireProviderSession(id: generation)
         cachedObservation = nil
         observedAtMs = nil
@@ -787,6 +835,7 @@ public struct MusicNowPlaying: Equatable, Sendable {
     public let provider: MobileMusicProviderDto
     public let state: MobileMusicPlaybackStateDto
     public let item: MobileMusicItemDto?
+    public let positionMilliseconds: UInt64?
     public let capabilities: MobileMusicCapabilitiesDto
     public let artwork: MusicArtwork?
 
@@ -794,6 +843,7 @@ public struct MusicNowPlaying: Equatable, Sendable {
         provider: MobileMusicProviderDto,
         state: MobileMusicPlaybackStateDto,
         item: MobileMusicItemDto? = nil,
+        positionMilliseconds: UInt64? = nil,
         artwork: MusicArtwork? = nil,
         capabilities: MobileMusicCapabilitiesDto = .init(
             previous: false,
@@ -806,6 +856,7 @@ public struct MusicNowPlaying: Equatable, Sendable {
         self.provider = provider
         self.state = state
         self.item = item
+        self.positionMilliseconds = positionMilliseconds
         self.artwork = artwork
         self.capabilities = capabilities
     }
@@ -815,6 +866,7 @@ public struct MusicNowPlaying: Equatable, Sendable {
             provider: snapshot.provider,
             state: snapshot.state,
             item: snapshot.item,
+            positionMilliseconds: snapshot.positionMilliseconds,
             artwork: artwork,
             capabilities: snapshot.capabilities
         )
@@ -890,6 +942,7 @@ public struct MusicNowPlaying: Equatable, Sendable {
             provider: provider,
             state: .stale,
             item: item,
+            positionMilliseconds: positionMilliseconds,
             artwork: artwork,
             capabilities: .init(
                 previous: false,
@@ -1056,6 +1109,28 @@ public struct MusicProviderObservation: Equatable, Sendable {
         artwork = artworkData.flatMap(MusicArtwork.init(data:))
     }
 
+    var staleProjection: Self {
+        Self(
+            snapshot: MobileMusicSnapshotDto(
+                provider: snapshot.provider,
+                sessionId: snapshot.sessionId,
+                state: .stale,
+                item: snapshot.item,
+                positionMilliseconds: snapshot.positionMilliseconds,
+                durationMilliseconds: snapshot.durationMilliseconds,
+                observedAtMs: snapshot.observedAtMs,
+                capabilities: .init(
+                    previous: false,
+                    play: false,
+                    pause: false,
+                    next: false,
+                    openProvider: snapshot.capabilities.openProvider
+                )
+            ),
+            artworkData: artwork?.data
+        )
+    }
+
     public static func unavailable(
         provider: MobileMusicProviderDto,
         sessionId: String,
@@ -1139,39 +1214,47 @@ public final class MusicIntegrationCoordinator {
         transitionHint: MusicTransitionHint?
     ) throws -> MobileMusicTimelineOutcomeDto? {
         resetCorrelationIfRideChanged()
-        guard let snapshot = try? normalizeMusicSnapshot(snapshot: snapshot) else { return nil }
-        guard accept(snapshot) else { return nil }
-        let previous = lastPersistedSnapshotByProvider[snapshot.provider]
-        update(snapshot: snapshot, artwork: artwork)
+        let normalizedSnapshot: MobileMusicSnapshotDto
+        do {
+            normalizedSnapshot = try normalizeMusicSnapshot(snapshot: snapshot)
+        } catch {
+            if let nowPlaying {
+                self.nowPlaying = nowPlaying.staleProjection
+            }
+            throw error
+        }
+        guard accept(normalizedSnapshot) else { return nil }
+        let previous = lastPersistedSnapshotByProvider[normalizedSnapshot.provider]
+        update(snapshot: normalizedSnapshot, artwork: artwork)
         guard let kind = try musicTransitionKind(
             previous: previous,
-            current: snapshot,
+            current: normalizedSnapshot,
             skipHint: transitionHint == .skip
         ) else {
             return nil
         }
         do {
             guard let rideMapState else {
-                rememberPersistedState(.disabled, snapshot: snapshot)
+                rememberPersistedState(.disabled, snapshot: normalizedSnapshot)
                 return .disabled
             }
             let result = try rideMapState.recordMusicEventWithSequence(
-                snapshot: snapshot,
+                snapshot: normalizedSnapshot,
                 kind: kind,
-                monotonicAtMs: snapshot.observedAtMs,
+                monotonicAtMs: normalizedSnapshot.observedAtMs,
                 wallClockAtMs: wallClockAtMs,
                 clockUncertaintyMs: clockUncertaintyMs
             )
             lastRecordedSequence = result.sequence
             let outcome = result.outcome
-            rememberPersistedState(outcome, snapshot: snapshot)
+            rememberPersistedState(outcome, snapshot: normalizedSnapshot)
             return outcome
         } catch MobileRideMapError.noActiveRide {
             if historyPolicy == .disabled {
-                rememberPersistedState(.disabled, snapshot: snapshot)
+                rememberPersistedState(.disabled, snapshot: normalizedSnapshot)
                 return .disabled
             }
-            lastPersistedSnapshotByProvider[snapshot.provider] = snapshot
+            lastPersistedSnapshotByProvider[normalizedSnapshot.provider] = normalizedSnapshot
             throw MobileRideMapError.noActiveRide
         }
     }
@@ -1208,6 +1291,7 @@ public final class MusicIntegrationCoordinator {
     /// Selection itself must not synthesize a stop, disconnect, or item change.
     public func resetProviderCorrelation() {
         lastObservedAtByProvider.removeAll(keepingCapacity: true)
+        lastPersistedSnapshotByProvider.removeAll(keepingCapacity: true)
         lastCorrelationRideID = rideMapState?.currentSnapshot()?.rideID
         nowPlaying = nil
         lastRecordedSequence = nil
@@ -1847,7 +1931,8 @@ public extension View {
 #if canImport(MediaPlayer) && os(iOS)
 @preconcurrency import MediaPlayer
 
-private actor SystemAppleMusicObservationService: AppleMusicObservationService {
+@MainActor
+private final class SystemAppleMusicObservationService: AppleMusicObservationService {
     private static let artworkSize = CGSize(width: 256, height: 256)
 
     private let makePlayer: @Sendable () -> MPMusicPlayerController
@@ -1985,6 +2070,7 @@ public final class AppleMusicProviderAdapter {
     public static let providerURL = URL(string: "https://music.apple.com/")!
     private let observationBridge: AppleMusicObservationBridge
     private let transport: MusicProviderTransportExecutor
+    private var pendingCommandTask: Task<Void, Never>?
 #if canImport(MusicKit) && os(iOS)
     private let makeSystemPlayer: () -> SystemMusicPlayer
     private lazy var systemPlayer = makeSystemPlayer()
@@ -2046,6 +2132,8 @@ public final class AppleMusicProviderAdapter {
     }
 
     public func stopMonitoring() {
+        pendingCommandTask?.cancel()
+        pendingCommandTask = nil
         if let completion = observationBridge.stopMonitoring() {
             transport.apply(completion)
         }
@@ -2107,12 +2195,20 @@ public final class AppleMusicProviderAdapter {
             return .unavailable
         }
         return await transport.perform(providerGeneration: providerGeneration) { [weak self] completion in
-            Task { @MainActor in
-                guard let self else {
+            guard let self else {
+                completion(false)
+                return
+            }
+            self.pendingCommandTask?.cancel()
+            self.pendingCommandTask = Task { @MainActor [weak self] in
+                guard let self,
+                      self.observationBridge.providerGeneration == providerGeneration,
+                      !Task.isCancelled else {
                     completion(false)
                     return
                 }
                 completion(await self.execute(command))
+                self.pendingCommandTask = nil
             }
         }
     }

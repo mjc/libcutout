@@ -8292,23 +8292,25 @@ pub fn normalize_music_snapshot(
     mut snapshot: MobileMusicSnapshotDto,
 ) -> Result<MobileMusicSnapshotDto, MobileRideMapCoreErrorDto> {
     if let Some(item) = snapshot.item.as_mut() {
-        if item
-            .title
-            .as_deref()
-            .is_some_and(|value| value.trim().is_empty())
-        {
-            item.title = None;
-        }
-        if item
-            .artist
-            .as_deref()
-            .is_some_and(|value| value.trim().is_empty())
-        {
-            item.artist = None;
-        }
+        item.title = normalize_music_text(item.title.take());
+        item.artist = normalize_music_text(item.artist.take());
     }
     validate_music_snapshot(snapshot.clone())?;
     Ok(snapshot)
+}
+
+fn normalize_music_text(value: Option<String>) -> Option<String> {
+    value.and_then(|value| {
+        let value = value.trim();
+        if value.is_empty() {
+            return None;
+        }
+        let mut end = value.len().min(cutout_music::MAX_MUSIC_DISPLAY_TEXT_BYTES);
+        while end > 0 && !value.is_char_boundary(end) {
+            end -= 1;
+        }
+        Some(value[..end].to_owned())
+    })
 }
 
 /// Applies the Rust-owned monotonic observation watermark used by provider
@@ -8399,6 +8401,16 @@ pub fn music_transition_kind(
                 MobileMusicRideEventKindDto::ItemChanged
             },
         ));
+    }
+    if skip_hint
+        && previous.item.is_some()
+        && current.item.is_some()
+        && previous
+            .position_milliseconds
+            .zip(current.position_milliseconds)
+            .is_some_and(|(previous, current)| current < previous)
+    {
+        return Ok(Some(MobileMusicRideEventKindDto::Skip));
     }
     Ok(match (previous.state, current.state) {
         (_, MobileMusicPlaybackStateDto::Playing)
@@ -24359,6 +24371,18 @@ mod tests {
         assert!(accept_music_snapshot(Some(1), 2));
         assert!(!accept_music_snapshot(Some(2), 2));
         assert!(!accept_music_snapshot(Some(2), 1));
+    }
+
+    #[test]
+    fn same_item_position_reset_with_skip_hint_is_a_skip() {
+        let previous = test_music_snapshot();
+        let mut current = previous.clone();
+        current.position_milliseconds = Some(0);
+        current.observed_at_ms = 3_000;
+        assert_eq!(
+            music_transition_kind(Some(previous), current, true).expect("valid snapshots"),
+            Some(MobileMusicRideEventKindDto::Skip)
+        );
     }
 
     #[test]
