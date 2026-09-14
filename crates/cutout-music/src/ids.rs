@@ -97,6 +97,7 @@ lifecycle_id!(ArtworkRequest, ArtworkRequestId);
 lifecycle_id!(ArtworkRetry, ArtworkRetryId);
 lifecycle_id!(CommandFeedback, CommandFeedbackId);
 lifecycle_id!(TransportRequest, TransportRequestId);
+lifecycle_id!(HistoryTransition, HistoryTransitionId);
 
 /// Monotonic revision of an authoritative player-state observation.
 #[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq)]

@@ -204,11 +204,15 @@ public final class AppleMusicProviderAdapter {
         observedAtMs: @escaping @MainActor () -> UInt64,
         onObservation: @escaping @MainActor (MusicProviderObservation) -> Void
     ) async {
-        stopMonitoring()
-        await observationBridge.startMonitoring(
+        pendingCommandTask.cancel()
+        commandTaskIDs.removeAll()
+        let completion = await observationBridge.startMonitoring(
             observedAtMs: observedAtMs,
             onObservation: onObservation
         )
+        if let completion {
+            transport.apply(completion)
+        }
     }
 
     public func stopMonitoring() {

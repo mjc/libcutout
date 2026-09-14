@@ -30,7 +30,8 @@ final class AppleMusicObservationBridgeTests: XCTestCase {
         await lifecycle.startMonitoring(observedAtMs: { 20 }) { received.append($0) }
         await service.emitChange(generation: 1)
         await Task.yield()
-        XCTAssertNil(lifecycle.cachedObservation)
+        XCTAssertEqual(lifecycle.cachedObservation?.snapshot.state, .unavailable)
+        XCTAssertFalse(lifecycle.cachedObservation?.snapshot.capabilities.pause ?? true)
 
         lifecycle.refresh(observedAtMs: 20)
         await service.waitForRefresh(generation: 2)
@@ -40,7 +41,7 @@ final class AppleMusicObservationBridgeTests: XCTestCase {
         )
         await waitUntil { received.last?.snapshot.item?.identifier == "new" }
 
-        XCTAssertEqual(received.map(\.snapshot.item?.identifier), ["old", "new"])
+        XCTAssertEqual(received.map(\.snapshot.item?.identifier), [nil, "old", nil, "new"])
         let maximumActiveSubscriptionCount = await service.maximumActiveSubscriptionCount
         let activeSubscriptionCount = await service.activeSubscriptionCount
         XCTAssertEqual(maximumActiveSubscriptionCount, 1)
@@ -79,7 +80,7 @@ final class AppleMusicObservationBridgeTests: XCTestCase {
         await Task.yield()
 
         XCTAssertEqual(lifecycle.cachedObservation?.snapshot.item?.identifier, "new")
-        XCTAssertEqual(received.map(\.snapshot.item?.identifier), ["new"])
+        XCTAssertEqual(received.map(\.snapshot.item?.identifier), [nil, nil, "new"])
     }
 
     func testTimedOutReadReleasesTheReadSlotForRecovery() async {
@@ -141,19 +142,75 @@ final class AppleMusicObservationBridgeTests: XCTestCase {
             generation: 1,
             with: observation(track: "old", observedAtMs: 10)
         )
-        await waitUntil { received.count == 1 }
+        await waitUntil { received.last?.snapshot.item?.identifier == "old" }
 
         lifecycle.refresh(observedAtMs: 20)
         clock.nowMs = 10_020
         await waitUntil { received.last?.snapshot.state == .stale }
 
-        XCTAssertEqual(received.count, 2)
-        XCTAssertEqual(received[1].snapshot.item?.identifier, "old")
+        XCTAssertEqual(received.count, 3)
+        XCTAssertEqual(received[2].snapshot.item?.identifier, "old")
         XCTAssertGreaterThan(
-            received[1].snapshot.observedAtMs,
-            received[0].snapshot.observedAtMs
+            received[2].snapshot.observedAtMs,
+            received[1].snapshot.observedAtMs
         )
 
+        _ = lifecycle.stopMonitoring()
+        effects.cancelAll()
+    }
+
+    func testRestartImmediatelyInvalidatesThePreviousLiveProjection() async {
+        let service = AppleMusicObservationServiceSpy()
+        let rustLifecycle = MobileMusicProviderLifecycle()
+        let effects = MusicProviderEffectExecutor()
+        let lifecycle = AppleMusicObservationBridge(
+            service: service,
+            lifecycle: rustLifecycle,
+            effects: effects
+        )
+        var received = [MusicProviderObservation]()
+
+        await lifecycle.startMonitoring(observedAtMs: { 10 }) { received.append($0) }
+        lifecycle.refresh(observedAtMs: 10)
+        await service.waitForRefresh(generation: 1)
+        await service.completeRefresh(
+            generation: 1,
+            with: observation(track: "old", observedAtMs: 10)
+        )
+        await waitUntil { received.last?.snapshot.item?.identifier == "old" }
+
+        await lifecycle.startMonitoring(observedAtMs: { 20 }) { received.append($0) }
+
+        XCTAssertEqual(received.last?.snapshot.item?.identifier, "old")
+        XCTAssertEqual(received.last?.snapshot.state, .stale)
+        XCTAssertFalse(received.last?.snapshot.capabilities.pause ?? true)
+        _ = lifecycle.stopMonitoring()
+        effects.cancelAll()
+    }
+
+    func testNotificationDuringReadSchedulesOneCoalescedRefresh() async {
+        let service = AppleMusicObservationServiceSpy()
+        let rustLifecycle = MobileMusicProviderLifecycle()
+        let effects = MusicProviderEffectExecutor()
+        let lifecycle = AppleMusicObservationBridge(
+            service: service,
+            lifecycle: rustLifecycle,
+            effects: effects
+        )
+
+        await lifecycle.startMonitoring(observedAtMs: { 20 }) { _ in }
+        lifecycle.refresh(observedAtMs: 10)
+        await service.waitForRefresh(generation: 1)
+        await service.emitChange(generation: 1)
+        await service.completeRefresh(
+            generation: 1,
+            with: observation(track: "first", observedAtMs: 10)
+        )
+
+        let didRefresh = await service.waitForRefreshCount(2)
+        let refreshCallCount = await service.refreshCallCount
+        XCTAssertTrue(didRefresh)
+        XCTAssertEqual(refreshCallCount, 2)
         _ = lifecycle.stopMonitoring()
         effects.cancelAll()
     }
@@ -187,7 +244,8 @@ final class AppleMusicObservationBridgeTests: XCTestCase {
         XCTAssertEqual(refreshCallCount, 0)
 
         await lifecycle.startMonitoring(observedAtMs: { 0 }) { _ in }
-        XCTAssertNil(lifecycle.cachedObservation)
+        XCTAssertEqual(lifecycle.cachedObservation?.snapshot.state, .unavailable)
+        XCTAssertNil(lifecycle.cachedObservation?.snapshot.item)
         refreshCallCount = await service.refreshCallCount
         XCTAssertEqual(refreshCallCount, 0)
     }

@@ -24,7 +24,10 @@ pub mod provider_lifecycle;
 pub use history::*;
 pub use model::*;
 pub use monitor::*;
-pub use observation::{MusicObservationDecision, MusicObservationOutcome};
+pub use observation::{
+    MusicHistoryTransition, MusicHistoryTransitionAcknowledgement, MusicObservationDecision,
+    MusicObservationOutcome, MusicObservationTiming,
+};
 
 #[cfg(test)]
 mod tests {

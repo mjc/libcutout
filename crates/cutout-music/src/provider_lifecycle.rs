@@ -6,7 +6,7 @@ use crate::callback_epoch::{
     AuthorizationTransaction, AuthorizationTransactionKind, AuthorizationTransactionMatch,
     CallbackEpoch, CallbackEpochMatch,
 };
-use crate::connection::{MusicConnection, MusicConnectionCallback};
+use crate::connection::{ConnectionAttemptAdmission, MusicConnection, MusicConnectionCallback};
 use crate::ids::{
     ArtworkRequestId, ArtworkRetry, ArtworkRetryId, AuthorizationId, CommandFeedback,
     CommandFeedbackId, ConnectionAttemptId, EstablishedConnectionId, MonitorGeneration, MonitorId,
@@ -18,8 +18,10 @@ use crate::player_request::{
     MusicPlayerRequestExpiration,
 };
 use crate::{
-    MusicCommand, MusicMonitor, MusicMonitorRequest, MusicMonitorResume, MusicMonitorStart,
-    MusicObservationOutcome, MusicSnapshot, observation::MusicObservationTracker,
+    MusicCommand, MusicHistoryTransitionAcknowledgement, MusicMonitor, MusicMonitorRequest,
+    MusicMonitorResume, MusicMonitorStart, MusicObservationOutcome, MusicObservationTiming,
+    MusicSnapshot,
+    observation::{MusicObservationTracker, SkipCommandOutcome},
 };
 
 const MONITOR_POLL_INTERVAL_MS: u64 = 1_000;
@@ -101,6 +103,19 @@ pub struct MusicConnectionAttemptEffect {
     pub attempt_id: ConnectionAttemptId,
     /// Transport owned by the replaced attempt, when present.
     pub transport: MusicTransportCompletion,
+}
+
+/// Result of asking Rust to admit another bounded provider connection attempt.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum MusicConnectionAttemptAdmission {
+    /// A fresh attempt and any work retired by replacing its predecessor.
+    Started(MusicConnectionAttemptEffect),
+    /// The current attempt is still waiting for its callback deadline.
+    Pending,
+    /// Recovery is waiting for its monotonic retry deadline.
+    WaitingToRetry,
+    /// This provider session requires an explicit recovery trigger.
+    Exhausted,
 }
 
 /// Scope that owns one provider transport request.
@@ -284,8 +299,21 @@ impl MusicProviderLifecycle {
     }
 
     /// Orders and classifies a provider observation under this session's correlation state.
-    pub fn observe_music(&mut self, snapshot: MusicSnapshot) -> MusicObservationOutcome {
-        self.observations.observe(snapshot)
+    pub fn observe_music(
+        &mut self,
+        snapshot: MusicSnapshot,
+        timing: MusicObservationTiming,
+    ) -> MusicObservationOutcome {
+        self.observations.observe(snapshot, timing)
+    }
+
+    /// Removes only the matching command-confirmed transition after durable handling.
+    #[must_use]
+    pub fn acknowledge_history_transition(
+        &mut self,
+        id: crate::ids::HistoryTransitionId,
+    ) -> MusicHistoryTransitionAcknowledgement {
+        self.observations.acknowledge_history_transition(id)
     }
 
     /// Drops provider observation and command correlation without fabricating a transition.
@@ -352,6 +380,7 @@ impl MusicProviderLifecycle {
         now_ms: u64,
     ) -> Option<MusicDeadlineEffect<MonitorId>> {
         if self.monitor_generation.classify(generation) == CallbackEpochMatch::Stale
+            || self.connection.recovery_exhausted_at(now_ms)
             || matches!(
                 work_state,
                 MusicProviderWorkState::RequiresUserAction | MusicProviderWorkState::Unavailable
@@ -466,18 +495,26 @@ impl MusicProviderLifecycle {
 
     /// Begins a bounded provider connection attempt.
     #[must_use]
-    pub fn begin_connection_attempt(
-        &mut self,
-        now_ms: u64,
-    ) -> Option<MusicConnectionAttemptEffect> {
+    pub fn begin_connection_attempt(&mut self, now_ms: u64) -> MusicConnectionAttemptAdmission {
         let previous_id = self.connection.callback_id();
-        let attempt_id = self.connection.begin_attempt_id(now_ms)?;
+        let attempt_id = match self.connection.begin_attempt(now_ms) {
+            ConnectionAttemptAdmission::Started(id) => id,
+            ConnectionAttemptAdmission::Pending => {
+                return MusicConnectionAttemptAdmission::Pending;
+            }
+            ConnectionAttemptAdmission::WaitingToRetry => {
+                return MusicConnectionAttemptAdmission::WaitingToRetry;
+            }
+            ConnectionAttemptAdmission::Exhausted => {
+                return MusicConnectionAttemptAdmission::Exhausted;
+            }
+        };
         let transport = previous_id.map_or(MusicTransportCompletion::Stale, |id| {
             self.cancel_transport_for_connection_current(EstablishedConnectionId::from_raw(
                 id.raw(),
             ))
         });
-        Some(MusicConnectionAttemptEffect {
+        MusicConnectionAttemptAdmission::Started(MusicConnectionAttemptEffect {
             attempt_id,
             transport,
         })
@@ -728,10 +765,13 @@ impl MusicProviderLifecycle {
         let Some(pending) = self.transport.finish(provider_generation, request_id) else {
             return MusicTransportCompletion::Stale;
         };
-        if outcome != MusicTransportOutcome::Accepted
-            && matches!(pending.command, MusicCommand::Previous | MusicCommand::Next)
-        {
-            self.observations.cancel_skip(request_id);
+        if matches!(pending.command, MusicCommand::Previous | MusicCommand::Next) {
+            let skip_outcome = if outcome == MusicTransportOutcome::Accepted {
+                SkipCommandOutcome::Accepted
+            } else {
+                SkipCommandOutcome::Rejected
+            };
+            self.observations.finish_skip(request_id, skip_outcome);
         }
         MusicTransportCompletion::Finished {
             request_id,

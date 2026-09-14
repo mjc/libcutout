@@ -2,22 +2,25 @@
 
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
+use cutout_core::WallClockUnixTimestamp;
 use cutout_music::callback_epoch::{
     AuthorizationTransactionKind, AuthorizationTransactionMatch, CallbackEpochMatch,
 };
 use cutout_music::connection::MusicConnectionCallback;
 use cutout_music::ids::{
     ArtworkRequestId, ArtworkRetryId, AuthorizationId, CommandFeedbackId, ConnectionAttemptId,
-    EstablishedConnectionId, MonitorId, ObservationRevision, PlayerStateRequestId,
-    ProviderSessionId, TransportRequestId,
+    EstablishedConnectionId, HistoryTransitionId, MonitorId, ObservationRevision,
+    PlayerStateRequestId, ProviderSessionId, TransportRequestId,
 };
 use cutout_music::player_request::{MusicPlayerRequestCompletion, MusicPlayerRequestExpiration};
 use cutout_music::provider_lifecycle::{
-    MusicConnectionAttemptEffect, MusicConnectionEffect, MusicProviderLifecycle,
-    MusicProviderWorkState, MusicTransportCompletion, MusicTransportOutcome, MusicTransportOwner,
+    MusicConnectionAttemptAdmission, MusicConnectionAttemptEffect, MusicConnectionEffect,
+    MusicProviderLifecycle, MusicProviderWorkState, MusicTransportCompletion,
+    MusicTransportOutcome, MusicTransportOwner,
 };
 use cutout_music::{
-    MusicMonitorRequest, MusicMonitorResume, MusicMonitorStart, MusicObservationOutcome,
+    MusicHistoryTransitionAcknowledgement, MusicMonitorRequest, MusicMonitorResume,
+    MusicMonitorStart, MusicObservationOutcome, MusicObservationTiming,
 };
 
 use crate::{
@@ -129,13 +132,29 @@ pub struct MobileMusicTransportRequestId {
     pub value: u64,
 }
 
+/// Rust-owned identity for one transition awaiting durable acknowledgement.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct MobileMusicHistoryTransitionId {
+    pub value: u64,
+}
+
+/// Command-confirmed transition awaiting durable history handling.
+#[derive(Clone, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct MobileMusicHistoryTransition {
+    pub id: MobileMusicHistoryTransitionId,
+    pub snapshot: MobileMusicSnapshotDto,
+    pub kind: MobileMusicRideEventKindDto,
+    pub wall_clock_at_ms: u64,
+    pub clock_uncertainty_ms: u64,
+}
+
 /// Canonical observation and optional ride-history transition chosen by Rust.
 #[derive(Clone, Debug, Eq, PartialEq, uniffi::Record)]
 pub struct MobileMusicObservationDecision {
     /// Canonical snapshot used by presentation and persistence.
     pub snapshot: MobileMusicSnapshotDto,
-    /// Meaningful transition, when this observation creates one.
-    pub transition: Option<MobileMusicRideEventKindDto>,
+    /// Oldest confirmed transition still awaiting durable handling.
+    pub history_transition: Option<MobileMusicHistoryTransition>,
 }
 
 /// Rust-owned observation revision.
@@ -192,6 +211,7 @@ boundary_id!(MobileMusicArtworkRequestId, ArtworkRequestId);
 boundary_id!(MobileMusicArtworkRetryId, ArtworkRetryId);
 boundary_id!(MobileMusicCommandFeedbackId, CommandFeedbackId);
 boundary_id!(MobileMusicTransportRequestId, TransportRequestId);
+boundary_id!(MobileMusicHistoryTransitionId, HistoryTransitionId);
 boundary_id!(MobileMusicObservationRevision, ObservationRevision);
 
 /// Provider facts considered by Rust when scheduling another monitor poll.
@@ -250,6 +270,24 @@ pub enum MobileMusicProviderConnectionCallback {
     /// The callback belongs to the current attempt or session.
     Accepted,
     /// The callback belongs to a retired attempt or session.
+    Stale,
+}
+
+/// Admission state for bounded provider connection recovery.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Enum)]
+pub enum MobileMusicProviderConnectionAttemptAdmission {
+    Started {
+        effect: MobileMusicProviderConnectionAttemptEffect,
+    },
+    Pending,
+    WaitingToRetry,
+    Exhausted,
+}
+
+/// Result of acknowledging a transition after durable handling.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Enum)]
+pub enum MobileMusicHistoryTransitionAcknowledgement {
+    Acknowledged,
     Stale,
 }
 
@@ -500,16 +538,41 @@ impl MobileMusicProviderLifecycle {
     pub fn observe_music(
         &self,
         snapshot: MobileMusicSnapshotDto,
+        wall_clock_at_ms: u64,
+        clock_uncertainty_ms: u64,
     ) -> Result<Option<MobileMusicObservationDecision>, MobileRideMapCoreErrorDto> {
         let snapshot = CoreMusicSnapshot::try_from(snapshot)
             .map_err(MobileRideMapCoreErrorDto::InvalidMusicInput)?;
-        Ok(match self.lock_inner().observe_music(snapshot) {
+        let timing = MusicObservationTiming::new(
+            WallClockUnixTimestamp::from_milliseconds(wall_clock_at_ms),
+            clock_uncertainty_ms,
+        );
+        Ok(match self.lock_inner().observe_music(snapshot, timing) {
             MusicObservationOutcome::Accepted(decision) => Some(MobileMusicObservationDecision {
                 snapshot: decision.snapshot().into(),
-                transition: decision.transition().map(Into::into),
+                history_transition: decision.history_transition().map(|transition| {
+                    MobileMusicHistoryTransition {
+                        id: transition.id().into(),
+                        snapshot: transition.snapshot().into(),
+                        kind: transition.kind().into(),
+                        wall_clock_at_ms: transition.timing().wall_clock_at().as_milliseconds(),
+                        clock_uncertainty_ms: transition.timing().clock_uncertainty_milliseconds(),
+                    }
+                }),
             }),
             MusicObservationOutcome::OutOfOrder => None,
         })
+    }
+
+    /// Removes only the matching transition after durable handling.
+    #[must_use]
+    pub fn acknowledge_history_transition(
+        &self,
+        id: MobileMusicHistoryTransitionId,
+    ) -> MobileMusicHistoryTransitionAcknowledgement {
+        self.lock_inner()
+            .acknowledge_history_transition(HistoryTransitionId::from_raw(id.value))
+            .into()
     }
 
     /// Drops observation and command correlation without creating a transition.
@@ -597,10 +660,8 @@ impl MobileMusicProviderLifecycle {
     pub fn begin_connection_attempt(
         &self,
         now_ms: u64,
-    ) -> Option<MobileMusicProviderConnectionAttemptEffect> {
-        self.lock_inner()
-            .begin_connection_attempt(now_ms)
-            .map(Into::into)
+    ) -> MobileMusicProviderConnectionAttemptAdmission {
+        self.lock_inner().begin_connection_attempt(now_ms).into()
     }
 
     /// Classifies a connection or player callback without changing retry state.
@@ -976,6 +1037,28 @@ impl From<MusicConnectionEffect> for MobileMusicProviderConnectionEffect {
     }
 }
 
+impl From<MusicConnectionAttemptAdmission> for MobileMusicProviderConnectionAttemptAdmission {
+    fn from(value: MusicConnectionAttemptAdmission) -> Self {
+        match value {
+            MusicConnectionAttemptAdmission::Started(effect) => Self::Started {
+                effect: effect.into(),
+            },
+            MusicConnectionAttemptAdmission::Pending => Self::Pending,
+            MusicConnectionAttemptAdmission::WaitingToRetry => Self::WaitingToRetry,
+            MusicConnectionAttemptAdmission::Exhausted => Self::Exhausted,
+        }
+    }
+}
+
+impl From<MusicHistoryTransitionAcknowledgement> for MobileMusicHistoryTransitionAcknowledgement {
+    fn from(value: MusicHistoryTransitionAcknowledgement) -> Self {
+        match value {
+            MusicHistoryTransitionAcknowledgement::Acknowledged => Self::Acknowledged,
+            MusicHistoryTransitionAcknowledgement::Stale => Self::Stale,
+        }
+    }
+}
+
 impl From<MusicConnectionAttemptEffect> for MobileMusicProviderConnectionAttemptEffect {
     fn from(value: MusicConnectionAttemptEffect) -> Self {
         Self {
@@ -1055,11 +1138,12 @@ impl From<MusicTransportCompletion> for MobileMusicTransportCompletion {
 mod tests {
     use super::{
         MobileMusicProviderAuthorizationKind, MobileMusicProviderAuthorizationMatch,
-        MobileMusicProviderCallbackMatch, MobileMusicProviderConnectionCallback,
-        MobileMusicProviderLifecycle, MobileMusicProviderMonitorRequest,
-        MobileMusicProviderMonitorResume, MobileMusicProviderMonitorStart,
-        MobileMusicRequestExpiration, MobileMusicTransportCompletionState,
-        MobileMusicTransportOutcome, MobileMusicTransportOwner,
+        MobileMusicProviderCallbackMatch, MobileMusicProviderConnectionAttemptAdmission,
+        MobileMusicProviderConnectionCallback, MobileMusicProviderLifecycle,
+        MobileMusicProviderMonitorRequest, MobileMusicProviderMonitorResume,
+        MobileMusicProviderMonitorStart, MobileMusicRequestExpiration,
+        MobileMusicTransportCompletionState, MobileMusicTransportOutcome,
+        MobileMusicTransportOwner,
     };
     use crate::MobileMusicCommandDto;
 
@@ -1129,10 +1213,12 @@ mod tests {
         let provider = lifecycle
             .begin_provider_session()
             .expect("provider session");
-        let attempt = lifecycle
-            .begin_connection_attempt(0)
-            .expect("attempt")
-            .attempt_id;
+        let MobileMusicProviderConnectionAttemptAdmission::Started { effect } =
+            lifecycle.begin_connection_attempt(0)
+        else {
+            panic!("expected connection attempt");
+        };
+        let attempt = effect.attempt_id;
         let connection = lifecycle
             .connection_established(attempt, 0)
             .expect("established connection");

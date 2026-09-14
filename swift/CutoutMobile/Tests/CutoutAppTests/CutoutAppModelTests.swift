@@ -173,6 +173,67 @@ final class CutoutAppModelTests: XCTestCase {
         XCTAssertEqual(model.musicNowPlaying?.provider, .appleMusic)
         XCTAssertEqual(model.musicNowPlaying?.state, .unavailable)
     }
+
+    @MainActor
+    func testValidObservationClearsRecoveredValidationErrorWithoutATransition() {
+        let model = CutoutAppModel(core: SessionDriverSpy(rows: []))
+        let capabilities = MobileMusicCapabilitiesDto(
+            previous: true,
+            play: false,
+            pause: true,
+            next: true,
+            openProvider: true
+        )
+        func snapshot(
+            observedAtMs: UInt64,
+            positionMilliseconds: UInt64?,
+            durationMilliseconds: UInt64?
+        ) -> MobileMusicSnapshotDto {
+            MobileMusicSnapshotDto(
+                provider: .appleMusic,
+                sessionId: "session",
+                state: .playing,
+                item: MobileMusicItemDto(
+                    identifier: "track-1",
+                    title: "Song",
+                    artist: "Artist"
+                ),
+                positionMilliseconds: positionMilliseconds,
+                durationMilliseconds: durationMilliseconds,
+                observedAtMs: observedAtMs,
+                capabilities: capabilities
+            )
+        }
+
+        XCTAssertTrue(model.ingestMusicObservation(MusicProviderObservation(
+            snapshot: snapshot(
+                observedAtMs: 1,
+                positionMilliseconds: 10,
+                durationMilliseconds: 100
+            )
+        )))
+        XCTAssertFalse(model.ingestMusicObservation(MusicProviderObservation(
+            snapshot: snapshot(
+                observedAtMs: 2,
+                positionMilliseconds: 101,
+                durationMilliseconds: 100
+            )
+        )))
+        XCTAssertNotNil(model.musicHistorySaveError)
+        XCTAssertEqual(model.musicSettingsNowPlaying?.state, .stale)
+        XCTAssertFalse(model.musicSettingsNowPlaying?.capabilities.pause ?? true)
+
+        XCTAssertTrue(model.ingestMusicObservation(MusicProviderObservation(
+            snapshot: snapshot(
+                observedAtMs: 3,
+                positionMilliseconds: 10,
+                durationMilliseconds: 100
+            )
+        )))
+        XCTAssertNil(model.musicHistorySaveError)
+        XCTAssertEqual(model.musicSettingsNowPlaying?.state, .playing)
+        XCTAssertTrue(model.musicSettingsNowPlaying?.capabilities.pause ?? false)
+    }
 #endif
 
     @MainActor

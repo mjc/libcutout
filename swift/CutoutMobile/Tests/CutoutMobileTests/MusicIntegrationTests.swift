@@ -908,6 +908,57 @@ final class MusicIntegrationTests: XCTestCase {
         )
         XCTAssertEqual(coordinator.recordedEvents.map(\.kind), [.itemChanged, .skip])
     }
+
+    func testRustHistoryTransitionRemainsPendingUntilSwiftAcknowledgesIt() throws {
+        let lifecycle = MobileMusicProviderLifecycle()
+
+        func snapshot(trackID: String, observedAtMs: UInt64) -> MobileMusicSnapshotDto {
+            MobileMusicSnapshotDto(
+                provider: .appleMusic,
+                sessionId: "session",
+                state: .playing,
+                item: .init(identifier: trackID, title: trackID, artist: nil),
+                positionMilliseconds: nil,
+                durationMilliseconds: nil,
+                observedAtMs: observedAtMs,
+                capabilities: .init(
+                    previous: true,
+                    play: false,
+                    pause: true,
+                    next: true,
+                    openProvider: true
+                )
+            )
+        }
+
+        let first = try XCTUnwrap(lifecycle.observeMusic(
+            snapshot: snapshot(trackID: "first", observedAtMs: 100),
+            wallClockAtMs: 1_000,
+            clockUncertaintyMs: 5
+        )?.historyTransition)
+        XCTAssertEqual(lifecycle.acknowledgeHistoryTransition(id: first.id), .acknowledged)
+
+        let pending = try XCTUnwrap(lifecycle.observeMusic(
+            snapshot: snapshot(trackID: "second", observedAtMs: 200),
+            wallClockAtMs: 2_000,
+            clockUncertaintyMs: 5
+        )?.historyTransition)
+        let retry = try XCTUnwrap(lifecycle.observeMusic(
+            snapshot: snapshot(trackID: "second", observedAtMs: 300),
+            wallClockAtMs: 3_000,
+            clockUncertaintyMs: 5
+        )?.historyTransition)
+
+        XCTAssertEqual(retry.id, pending.id)
+        XCTAssertEqual(retry.snapshot.observedAtMs, 200)
+        XCTAssertEqual(retry.wallClockAtMs, 2_000)
+        XCTAssertEqual(lifecycle.acknowledgeHistoryTransition(id: retry.id), .acknowledged)
+        XCTAssertNil(try lifecycle.observeMusic(
+            snapshot: snapshot(trackID: "second", observedAtMs: 400),
+            wallClockAtMs: 4_000,
+            clockUncertaintyMs: 5
+        )?.historyTransition)
+    }
 }
 
 private func testArtwork(gray: CGFloat) -> MusicArtwork {

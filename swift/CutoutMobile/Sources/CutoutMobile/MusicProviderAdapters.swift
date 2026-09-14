@@ -433,6 +433,7 @@ public final class SpotifyProviderAdapter: NSObject {
         if authorizationNeedsUserAction { return .requiresUserAction }
         if authorizationGeneration != nil { return .authorizationPending }
         if appRemote?.isConnected == true { return .active }
+        if lifecycleState == .unavailable { return .unavailable }
         if accessToken != nil { return .credentialsAvailable }
         return .unavailable
     }
@@ -465,9 +466,19 @@ public final class SpotifyProviderAdapter: NSObject {
     private func connect(with accessToken: String) {
         guard let configuration,
               let providerGeneration = appRemoteGeneration,
-              lifecycle.classifyProviderSession(id: providerGeneration) == .current,
-              let attemptEffect = lifecycle.beginConnectionAttempt(nowMs: connectionNowMs)
+              lifecycle.classifyProviderSession(id: providerGeneration) == .current
         else { return }
+        let attemptEffect: MobileMusicProviderConnectionAttemptEffect
+        switch lifecycle.beginConnectionAttempt(nowMs: connectionNowMs) {
+        case let .started(effect):
+            attemptEffect = effect
+        case .pending, .waitingToRetry:
+            return
+        case .exhausted:
+            lifecycleState = .unavailable
+            emitChange()
+            return
+        }
         let attemptID = attemptEffect.attemptId
         transport.apply(attemptEffect.transport)
         let appRemote = makeAppRemote(
