@@ -2901,8 +2901,11 @@ final class CutoutAppModel {
         guard let selection = connectionState.selection,
               selection.platformIdentifier == retry.platformIdentifier
         else { return }
-        if case .failed = connectionState { return }
+        if case .failed = phase {
+            phase = .discoveringServices
+        }
         connectionState = .retrying(selection, retry: retry)
+        syncLiveActivity()
     }
 
     private func handleBluetoothRestorationResolved(_ platformIdentifier: String?) {

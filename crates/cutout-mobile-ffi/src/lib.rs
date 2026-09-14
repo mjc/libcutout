@@ -42,8 +42,9 @@ use cutout_core::{
     ChargeEstimateState, ChargeEstimateUnavailableReason, ChargeFlow, ChargeMode, ChargeModeDto,
     ChargeModeReadingDto, ChargeProfileIdentity, ChargeSessionIdentity, ChargeTimeEstimate,
     CommandKindDto, ControlRefusalReason as CoreControlRefusalReason, ControlRefusalReasonDto,
-    CutoutSessionState, DeviceCommand as CoreDeviceCommand, DeviceCommandDto, DeviceEvent,
-    DiscoveryCandidateSnapshot, DiscoveryCandidateSupport as CoreDiscoveryCandidateSupport,
+    CutoutSessionState, DeviceCommand as CoreDeviceCommand, DeviceCommandDto,
+    DeviceConnectionIntent as CoreDeviceConnectionIntent, DeviceEvent, DiscoveryCandidateSnapshot,
+    DiscoveryCandidateSupport as CoreDiscoveryCandidateSupport,
     DiscoveryConnectionRoute as CoreDiscoveryConnectionRoute,
     DiscoveryElectricUnicycleModel as CoreDiscoveryElectricUnicycleModel,
     DiscoveryManufacturerDataSummary as CoreDiscoveryManufacturerDataSummary,
@@ -767,6 +768,27 @@ impl MobileRideSessionDecisionDto {
     }
 }
 
+/// Purpose of a selected device connection across transport attempts.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Enum)]
+pub enum DeviceConnectionIntentDto {
+    /// Identify a device selected for use.
+    Use,
+    /// Recover the selected connection without falling back to capture-only.
+    Reconnect,
+    /// Capture a device without requiring a supported protocol.
+    RecordOnly,
+}
+
+impl From<DeviceConnectionIntentDto> for CoreDeviceConnectionIntent {
+    fn from(intent: DeviceConnectionIntentDto) -> Self {
+        match intent {
+            DeviceConnectionIntentDto::Use => Self::Use,
+            DeviceConnectionIntentDto::Reconnect => Self::Reconnect,
+            DeviceConnectionIntentDto::RecordOnly => Self::RecordOnly,
+        }
+    }
+}
+
 /// Mobile-facing Rust-owned `CutOut` session state handle.
 #[derive(Debug, uniffi::Object)]
 pub struct CutoutSessionStateHandle {
@@ -1357,6 +1379,23 @@ impl CutoutSessionStateHandle {
     pub fn reset_device_detection(&self) {
         let mut state = self.lock_inner();
         state.state.reset_device_identity();
+        state.detector = DeviceDetectionSession::default();
+    }
+
+    /// Sets the purpose of the selected connection across transport attempts.
+    pub fn set_device_connection_intent(&self, intent: DeviceConnectionIntentDto) {
+        self.lock_inner().state.device_connection_intent = intent.into();
+    }
+
+    /// Whether unresolved identification should retry rather than capture-only.
+    pub fn should_retry_identification(&self) -> bool {
+        self.lock_inner().state.should_retry_identification()
+    }
+
+    /// Clears link-local stream buffers and probes while retaining confirmed identity.
+    pub fn reset_device_detection_link(&self) {
+        let mut state = self.lock_inner();
+        state.state.identity_mut().reset_link_probes();
         state.detector = DeviceDetectionSession::default();
     }
 }
@@ -17271,6 +17310,50 @@ mod tests {
             Some(MobileProtocolFamilyDto::VeteranLeaperkimNosfet)
         );
         assert_eq!(resolution.veteran_protocol_model_id, Some(43));
+    }
+
+    #[test]
+    fn mobile_detection_link_reset_isolates_partial_frames() {
+        let session = CutoutSessionStateHandle::new();
+        let frame = synthetic_veteran_frame_with_model_id(43);
+        let _ = session.observe_notification(frame[..20].to_vec());
+
+        session.reset_device_detection_link();
+
+        assert_eq!(
+            session
+                .observe_notification(frame[20..].to_vec())
+                .protocol_family,
+            None
+        );
+        assert_eq!(
+            session
+                .observe_notification(frame.to_vec())
+                .veteran_protocol_model_id,
+            Some(43)
+        );
+    }
+
+    #[test]
+    fn mobile_detection_link_reset_preserves_identity_and_connection_intent() {
+        let session = CutoutSessionStateHandle::new();
+        assert!(!session.should_retry_identification());
+        session.set_device_connection_intent(DeviceConnectionIntentDto::Reconnect);
+        let frame = synthetic_veteran_frame_with_model_id(43);
+        let expected = session.observe_notification(frame.to_vec());
+        let _ = session.begin_identification_probe_at(1_000);
+        let _ = session.mark_begode_probe_responses_missing();
+        let _ = session.begin_identification_probe_at(2_000);
+
+        session.reset_device_detection_link();
+
+        assert!(session.should_retry_identification());
+        assert_eq!(session.resolution(), expected);
+        assert_eq!(session.next_begode_probe_expiry(2_000), None);
+        session.set_device_connection_intent(DeviceConnectionIntentDto::RecordOnly);
+        assert!(!session.should_retry_identification());
+        session.set_device_connection_intent(DeviceConnectionIntentDto::Use);
+        assert!(!session.should_retry_identification());
     }
 
     #[test]

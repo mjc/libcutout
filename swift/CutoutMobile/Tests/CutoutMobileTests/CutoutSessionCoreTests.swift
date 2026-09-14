@@ -616,6 +616,76 @@ final class CutoutSessionCoreTests: XCTestCase {
         XCTAssertEqual(core.phase, .live)
     }
 
+    func testRecoverableGattFailureDoesNotPublishTerminalRideFailure() {
+        let core = CutoutSessionCore()
+        core.applyNotificationStep(
+            CoreBluetoothSessionStep(operations: [], snapshot: nil),
+            receivedAt: MonotonicMilliseconds(100)
+        )
+        XCTAssertEqual(core.phase, .live)
+        var disconnects = 0
+
+        core.recoverConnection(after: .serviceDiscoveryFailed("link lost")) {
+            disconnects += 1
+        }
+
+        XCTAssertEqual(disconnects, 1)
+        XCTAssertEqual(core.phase, .discoveringServices)
+        XCTAssertFalse(core.isRecordOnlyConnection)
+    }
+
+    func testUnresolvedRestoredConnectionRetriesInsteadOfEnteringCaptureOnly() {
+        let core = CutoutSessionCore()
+        core.rideSessionStateHandle.setDeviceConnectionIntent(intent: .reconnect)
+
+        core.recordUnresolvedProtocolDetection(.timedOut, on: nil)
+
+        XCTAssertEqual(core.phase, .discoveringServices)
+        XCTAssertFalse(core.isRecordOnlyConnection)
+        XCTAssertTrue(core.rideSessionStateHandle.shouldRetryIdentification())
+    }
+
+    func testUnresolvedFirstUseCanStillEnterCaptureOnly() {
+        let core = CutoutSessionCore()
+        core.rideSessionStateHandle.setDeviceConnectionIntent(intent: .use)
+
+        core.recordUnresolvedProtocolDetection(.unsupported, on: nil)
+
+        XCTAssertEqual(core.phase, .live)
+        XCTAssertTrue(core.isRecordOnlyConnection)
+    }
+
+    func testTransportTerminationPreservesVerifiedWheelIdentityAcrossRetries() {
+        let scheduler = RecordingReconnectScheduler()
+        let core = CutoutSessionCore(
+            clock: MonotonicClock { MonotonicMilliseconds(1_000) },
+            testScript: CutoutSessionTestScript(
+                candidate: scriptedAeroCandidate,
+                telemetry: nil,
+                connectionDelayMilliseconds: 60_000
+            ),
+            reconnectScheduler: scheduler,
+            reconnectJitter: { 0 }
+        )
+        core.start()
+        XCTAssertTrue(core.pair(platformIdentifier: scriptedAeroCandidate.platformIdentifier))
+        XCTAssertEqual(core.electricUnicycleModel, .aero)
+
+        for _ in 0..<2 {
+            core.handleTransportTermination(
+                platformIdentifier: scriptedAeroCandidate.platformIdentifier,
+                error: nil,
+                reconnect: {}
+            )
+            scheduler.runAll()
+            XCTAssertEqual(core.electricUnicycleModel, .aero)
+            XCTAssertFalse(core.isRecordOnlyConnection)
+        }
+
+        core.disconnectAndScan()
+        XCTAssertNil(core.electricUnicycleModel)
+    }
+
     func testTransportTerminationUsesTheSharedReconnectTransition() {
         let scheduler = RecordingReconnectScheduler()
         let retry = expectation(description: "transport termination schedules retry")

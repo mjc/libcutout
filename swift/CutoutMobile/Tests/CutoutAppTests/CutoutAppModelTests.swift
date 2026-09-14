@@ -1809,6 +1809,35 @@ final class CutoutAppModelTests: XCTestCase {
     }
 
     @MainActor
+    func testExplicitRetryAfterFailureReturnsToLive() throws {
+        let fixture = CutoutUITestSessionFixture.euc
+        let driver = SessionDriverSpy(rows: [fixture.candidate.pickerRow])
+        let model = CutoutAppModel(core: driver)
+        model.start()
+        XCTAssertTrue(model.pair(platformIdentifier: fixture.candidate.platformIdentifier))
+        driver.onPhaseChange?(.subscribing)
+        driver.onPhaseChange?(.live)
+        let selection = try XCTUnwrap(model.connectionState.selection)
+
+        // An explicit retry is new progress, unlike unsolicited late phases.
+        driver.onPhaseChange?(.failed(.serviceDiscoveryFailed("connection lost")))
+        driver.onPhaseChange?(.discoveringServices)
+        let retry = SessionConnectionRetry(
+            platformIdentifier: selection.platformIdentifier,
+            attempt: 1,
+            deadline: MonotonicMilliseconds(1_200),
+            failure: .connectFailed("connection lost")
+        )
+        driver.onReconnectScheduled?(retry)
+        XCTAssertEqual(model.connectionState, .retrying(selection, retry: retry))
+        XCTAssertEqual(model.phase, .discoveringServices)
+        driver.onPhaseChange?(.subscribing)
+        driver.onPhaseChange?(.live)
+        XCTAssertEqual(model.phase, .live)
+        XCTAssertEqual(model.connectionState, .connected(selection))
+    }
+
+    @MainActor
     func testConnectionFailureKeepsTheRememberedDeviceAndIgnoresLateConnectionCallbacks() {
         let row = DevicePickerRow(
             id: "vesc-1234",
@@ -1846,7 +1875,7 @@ final class CutoutAppModelTests: XCTestCase {
 
         driver.onReconnectScheduled?(
             SessionConnectionRetry(
-                platformIdentifier: row.id,
+                platformIdentifier: "other-device",
                 attempt: 2,
                 deadline: MonotonicMilliseconds(800),
                 failure: .connectFailed("timed out")
@@ -1866,6 +1895,7 @@ final class CutoutAppModelTests: XCTestCase {
         )
 
         driver.onPhaseChange?(.discoveringServices)
+        driver.onPhaseChange?(.subscribing)
         driver.onPhaseChange?(.live)
 
         XCTAssertEqual(model.phase, .failed(.connectFailed("timed out")))
