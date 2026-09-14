@@ -2784,6 +2784,9 @@
     "settings.beeper_volume_level.label" : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Beeper level" } } } },
     "settings.beeper_volume_percent.label" : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Beeper volume" } } } },
     "settings.brake_overpressure_alarm.label" : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Brake alarm" } } } },
+    "settings.charge_limit_diagnostic.help" : {
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Raw protocol value. Its voltage meaning for this wheel is unresolved, so it cannot be changed." } } }
+    },
     "settings.charge_limit_diagnostic.label" : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Charge limit (raw)" } } } },
     "settings.charge_mode.label" : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Charge mode" } } } },
     "settings.choice.both_alarm_stages" : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Both alarm stages" } } } },
@@ -2816,6 +2819,9 @@
     "settings.high_beam.label" : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "High beam" } } } },
     "settings.high_speed_mode.label" : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "High-speed mode" } } } },
     "settings.lateral_tilt_limit.label" : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Lateral tilt limit" } } } },
+    "settings.lighting_pattern.help" : {
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "The wheel reports a raw pattern number. Pattern effects have not been verified, so this value is read only." } } }
+    },
     "settings.lighting_pattern.label" : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Lighting pattern" } } } },
     "settings.low_battery_mode.label" : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Low-battery mode" } } } },
     "settings.maximum_speed.label" : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Maximum speed" } } } },
@@ -2824,6 +2830,12 @@
     "settings.pedal_hardness.label" : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Pedal hardness" } } } },
     "settings.pedal_mode.label" : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Pedal mode" } } } },
     "settings.power_off_delay.label" : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Power-off delay" } } } },
+    "settings.pwm_tiltback.help" : {
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Sets the PWM duty where tilt-back begins." } } }
+    },
+    "settings.pwm_tiltback.semantics" : {
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "80% PWM duty leaves 20% headroom." } } }
+    },
     "settings.pwm_tiltback.label" : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "PWM duty tilt-back" } } } },
     "settings.riding_preset.label" : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Riding mode" } } } },
     "settings.roll_angle_mode.label" : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Roll angle" } } } },

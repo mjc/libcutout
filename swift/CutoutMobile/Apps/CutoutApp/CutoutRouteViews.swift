@@ -209,7 +209,12 @@ struct EucTuneRouteView: View {
     var body: some View {
         Group {
             if let snapshot = model.deviceControlsSnapshot {
-                DeviceControlsForm(snapshot: snapshot, submitSetting: model.submitDeviceSetting, submitAction: model.submitDeviceAction)
+                DeviceControlsForm(
+                    snapshot: snapshot,
+                    setValidation: model.setDeviceControlsValidation,
+                    submitSetting: model.submitDeviceSetting,
+                    submitAction: model.submitDeviceAction
+                )
             } else {
                 ContentUnavailableView(localizedAppText("settings.readback.unavailable"), systemImage: "slider.horizontal.3")
             }

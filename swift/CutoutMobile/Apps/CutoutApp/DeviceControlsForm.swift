@@ -7,11 +7,21 @@ import SwiftUI
 /// attempt-scoped row; reported and requested values remain Rust snapshots.
 struct DeviceControlsForm: View {
     let snapshot: DeviceControlsSnapshot
+    let setValidation: (ConnectionAttemptToken, Bool) throws -> Void
     let submitSetting: (ConnectionAttemptToken, DeviceSettingID, DeviceSettingValue) throws -> Void
     let submitAction: (ConnectionAttemptToken, DeviceActionID) throws -> Void
 
     var body: some View {
         Form {
+            if snapshot.validationAuthorized
+                || snapshot.settingDescriptors.contains(where: { $0.access == .unverified })
+                || snapshot.actionDescriptors.contains(where: { $0.access == .unverified })
+            {
+                ValidationAuthorizationSection(
+                    authorized: snapshot.validationAuthorized,
+                    setAuthorized: setValidationAuthorization
+                )
+            }
             ForEach(snapshot.settingDescriptors, id: \.id) { descriptor in
                 DeviceSettingRow(
                     descriptor: descriptor,
@@ -35,6 +45,28 @@ struct DeviceControlsForm: View {
         }
         .id(snapshot.connection.generation)
         .disabled(snapshot.connection.readiness != .verified || snapshot.connection.transport != .connected)
+    }
+
+    private func setValidationAuthorization(_ authorized: Bool) {
+        guard let token = snapshot.connection.token else { return }
+        try? setValidation(token, authorized)
+    }
+}
+
+private struct ValidationAuthorizationSection: View {
+    let authorized: Bool
+    let setAuthorized: @MainActor @Sendable (Bool) -> Void
+
+    var body: some View {
+        Section {
+            Toggle(
+                localizedAppText("settings.validation.title"),
+                isOn: Binding(get: { authorized }, set: setAuthorized)
+            )
+            .accessibilityIdentifier("settings.validationMode")
+        } footer: {
+            Text(localizedAppText("settings.validation.description"))
+        }
     }
 }
 
@@ -97,8 +129,11 @@ private struct DeviceSettingRow: View {
                 } else if descriptor.access == .unverified {
                     Text(localizedAppText("controls.unverified_setting"))
                 }
-                if case .number(_, _, _, _, .kilometresPerHour, _) = descriptor.control {
-                    Text(localizedAppText("controls.speed_steps"))
+                if let helpKey = descriptor.helpKey {
+                    Text(localizedAppText(helpKey))
+                }
+                if let valueSemanticsKey = descriptor.valueSemanticsKey {
+                    Text(localizedAppText(valueSemanticsKey))
                 }
             }
         }

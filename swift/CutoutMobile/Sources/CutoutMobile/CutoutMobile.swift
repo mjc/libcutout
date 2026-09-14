@@ -2306,7 +2306,7 @@ public struct AeroPwmPercent: Equatable, Hashable, Sendable {
     public let percent: UInt8
 
     public init?(percent: UInt8) {
-        guard percent <= 100 else { return nil }
+        guard percent <= 70 else { return nil }
         self.percent = percent
     }
 

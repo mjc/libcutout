@@ -2086,6 +2086,9 @@ final class CutoutAppModel {
     func submitDeviceAction(token: ConnectionAttemptToken, id: DeviceActionID) throws {
         try core.submitDeviceAction(token: token, id: id)
     }
+    func setDeviceControlsValidation(token: ConnectionAttemptToken, authorized: Bool) throws {
+        try core.setDeviceControlsValidation(token: token, authorized: authorized)
+    }
 
     private func handleSettingsReadback(_ readback: SettingsReadback?) {
         settingsReadback = readback

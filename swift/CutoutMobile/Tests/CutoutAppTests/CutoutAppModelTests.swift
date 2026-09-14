@@ -3286,7 +3286,7 @@ private final class SessionDriverSpy: CutoutSessionDriving {
     var isRecordOnlyConnection = false
     var electricUnicycleModel: ElectricUnicycleModel?
     var deviceControlsSnapshot: DeviceControlsSnapshot {
-        rideSessionStateHandle.deviceControlsSnapshot(validationMode: false)
+        rideSessionStateHandle.deviceControlsSnapshot()
     }
     private let scanState: DevicePickerScanState
     private let pairingSucceeds: Bool
@@ -3375,11 +3375,11 @@ private final class SessionDriverSpy: CutoutSessionDriving {
     }
 
     func submitDeviceSetting(token: ConnectionAttemptToken, id: DeviceSettingID, value: DeviceSettingValue) throws {
-        _ = try rideSessionStateHandle.submitSetting(token: token, id: id, value: value, validationMode: false, monotonicMs: nowValue)
+        _ = try rideSessionStateHandle.submitSetting(token: token, id: id, value: value, monotonicMs: nowValue)
         onDeviceControlsChange?(deviceControlsSnapshot)
     }
     func submitDeviceAction(token: ConnectionAttemptToken, id: DeviceActionID) throws {
-        _ = try rideSessionStateHandle.submitAction(token: token, id: id, validationMode: false, monotonicMs: nowValue)
+        _ = try rideSessionStateHandle.submitAction(token: token, id: id, monotonicMs: nowValue)
         onDeviceControlsChange?(deviceControlsSnapshot)
     }
     func now() -> MonotonicMilliseconds {

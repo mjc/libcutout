@@ -40,6 +40,7 @@ protocol CutoutSessionDriving: AnyObject {
     func disconnectAndScan()
     func submitDeviceSetting(token: ConnectionAttemptToken, id: DeviceSettingID, value: DeviceSettingValue) throws
     func submitDeviceAction(token: ConnectionAttemptToken, id: DeviceActionID) throws
+    func setDeviceControlsValidation(token: ConnectionAttemptToken, authorized: Bool) throws
     func now() -> MonotonicMilliseconds
 
     func resetRideMapLocationAdmission()
@@ -54,6 +55,10 @@ protocol CutoutSessionDriving: AnyObject {
 extension CutoutSessionCore: CutoutSessionDriving {}
 
 extension CutoutSessionDriving {
+    func setDeviceControlsValidation(token: ConnectionAttemptToken, authorized: Bool) throws {
+        throw DeviceSettingSubmissionError.ConnectionUnavailable
+    }
+
     var isRecordOnlyConnection: Bool { false }
     var rideMapStateHandle: MobileRideMapState? { nil }
 

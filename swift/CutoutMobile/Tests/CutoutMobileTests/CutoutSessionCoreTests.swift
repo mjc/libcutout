@@ -1759,7 +1759,12 @@ func testVescRideSnapshotProjectsBatteryLevelAndUpdateTime() throws {
         XCTAssertEqual(session.aeroWheelUnitsState.kind, .refused)
         XCTAssertEqual(session.aeroWheelUnitsState.requested, .imperial)
     }
-
+    func testAeroPwmMarginMatchesRustDomain() {
+        XCTAssertEqual(AeroPwmPercent(percent: 0)?.percent, 0)
+        XCTAssertEqual(AeroPwmPercent(percent: 70)?.percent, 70)
+        XCTAssertNil(AeroPwmPercent(percent: 71))
+        XCTAssertNil(AeroPwmPercent(percent: 100))
+    }
 
     func testBegodeWSettingValuesUseDocumentedRanges() {
         XCTAssertEqual(BegodeMaxSpeed(kilometresPerHour: 0)?.kilometresPerHour, 0)

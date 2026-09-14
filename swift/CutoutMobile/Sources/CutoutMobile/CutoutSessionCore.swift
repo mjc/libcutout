@@ -400,7 +400,7 @@ public final class CutoutSessionCore: NSObject {
         onBleQueue { selectedModel }
     }
     public var deviceControlsSnapshot: DeviceControlsSnapshot {
-        rustSessionState.deviceControlsSnapshot(validationMode: false)
+        rustSessionState.deviceControlsSnapshot()
     }
 
 #if DEBUG
@@ -785,6 +785,16 @@ public final class CutoutSessionCore: NSObject {
                     throw DeviceActionSubmissionError.ConnectionUnavailable
                 }
                 _ = try owner.submitAction(id, at: clock.now())
+            }
+        }.get()
+    }
+    public func setDeviceControlsValidation(token: ConnectionAttemptToken, authorized: Bool) throws {
+        try onBleQueue {
+            Result {
+                guard let owner = liveOwner, owner.token == token else {
+                    throw DeviceSettingSubmissionError.ConnectionUnavailable
+                }
+                try owner.setValidationAuthorization(authorized, at: clock.now())
             }
         }.get()
     }

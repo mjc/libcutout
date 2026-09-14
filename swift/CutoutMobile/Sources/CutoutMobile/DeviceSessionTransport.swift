@@ -44,7 +44,7 @@ final class DeviceSessionTransport: @unchecked Sendable {
         self.executor = CoreBluetoothOperationExecutor(sink: operationSink)
         self.queue = queue
         self.clock = clock
-        let controls = state.deviceControlsSnapshot(validationMode: false)
+        let controls = state.deviceControlsSnapshot()
         if controls.connection.token == token, let profile = controls.defaultChargeProfile {
             chargeEstimator.configureProfile(profile: profile)
         }
@@ -92,11 +92,18 @@ final class DeviceSessionTransport: @unchecked Sendable {
     }
 
     func submitSetting(_ id: DeviceSettingID, value: DeviceSettingValue, at: MonotonicMilliseconds) throws -> CoreBluetoothSessionStep {
-        try process(state.submitSetting(token: token, id: id, value: value, validationMode: false, monotonicMs: at.rawValue), at: at)
+        try process(state.submitSetting(token: token, id: id, value: value, monotonicMs: at.rawValue), at: at)
     }
 
     func submitAction(_ id: DeviceActionID, at: MonotonicMilliseconds) throws -> CoreBluetoothSessionStep {
-        try process(state.submitAction(token: token, id: id, validationMode: false, monotonicMs: at.rawValue), at: at)
+        try process(state.submitAction(token: token, id: id, monotonicMs: at.rawValue), at: at)
+    }
+
+    func setValidationAuthorization(_ authorized: Bool, at: MonotonicMilliseconds) throws {
+        guard state.setDeviceControlsValidation(token: token, authorized: authorized) else {
+            throw DeviceSettingSubmissionError.ConnectionUnavailable
+        }
+        publishControls(at: at, immediately: true)
     }
 
     func handleTick(at: MonotonicMilliseconds) throws -> CoreBluetoothSessionStep {
@@ -207,7 +214,7 @@ final class DeviceSessionTransport: @unchecked Sendable {
 
     private func publishControls(at: MonotonicMilliseconds, immediately: Bool) {
         guard immediately || lastControlsPublication.map({ at.elapsed(since: $0).rawValue >= 1_000 }) != false else { return }
-        let value = state.deviceControlsSnapshot(validationMode: false)
+        let value = state.deviceControlsSnapshot()
         guard value.connection.token == token, value != publishedControls else { return }
         publishedControls = value
         lastControlsPublication = at

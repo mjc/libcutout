@@ -58,7 +58,7 @@ final class DeviceSessionTransportTests: XCTestCase {
             transport.handleNotificationStateUpdate(channel: .bluetooth16(0xffe1), isNotifying: true, error: nil)
             _ = try transport.handleNotification(bytes: frame, channel: .bluetooth16(0xffe1), at: MonotonicMilliseconds(2))
             _ = try transport.submitSetting(.highBeam, value: .boolean(value: true), at: MonotonicMilliseconds(3))
-            let controls = state.deviceControlsSnapshot(validationMode: false)
+            let controls = state.deviceControlsSnapshot()
             let highBeam = try XCTUnwrap(controls.settings.first { $0.id == .highBeam })
             XCTAssertEqual(controls.connection.token, token)
             XCTAssertEqual(controls.defaultChargeProfile?.profileId, 43)
