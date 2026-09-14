@@ -108,6 +108,51 @@ private final class CaptureRecorderSpy: CutoutSessionCaptureRecording {
 }
 
 final class CutoutSessionCoreTests: XCTestCase {
+    func testRideMapPublishedSnapshotRejectsOlderRevisionButAcceptsNewRide() {
+        let summary = MobileRideMapSummaryDto(
+            pointCount: 0,
+            distanceMeters: 0,
+            durationMilliseconds: 0
+        )
+        let current = MobileRideMapSnapshotDto(
+            rideID: "ride-a",
+            state: .active,
+            summary: summary,
+            segmentCount: 0,
+            associatedVehicle: nil,
+            revision: 4
+        )
+        let older = MobileRideMapSnapshotDto(
+            rideID: "ride-a",
+            state: .paused,
+            summary: summary,
+            segmentCount: 0,
+            associatedVehicle: nil,
+            revision: 3
+        )
+        let replacement = MobileRideMapSnapshotDto(
+            rideID: "ride-b",
+            state: .active,
+            summary: summary,
+            segmentCount: 0,
+            associatedVehicle: nil,
+            revision: 1
+        )
+
+        XCTAssertFalse(
+            CutoutSessionRideMapPresentation.shouldPublishSnapshot(
+                current: current,
+                incoming: older
+            )
+        )
+        XCTAssertTrue(
+            CutoutSessionRideMapPresentation.shouldPublishSnapshot(
+                current: current,
+                incoming: replacement
+            )
+        )
+    }
+
     func testLocationEffectsRouteUnchangedUpdateInOrderAndIsolateCaptureFailures() {
         let sample = MobilePhoneLocationSampleDto(
             wallClockUnixMs: 1_700_000_000_025,

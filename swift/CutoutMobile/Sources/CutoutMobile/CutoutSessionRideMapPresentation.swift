@@ -22,8 +22,19 @@ final class CutoutSessionRideMapPresentation {
     }
 
     func publishSnapshot(_ snapshot: MobileRideMapSnapshotDto) {
+        guard Self.shouldPublishSnapshot(current: latestSnapshot, incoming: snapshot) else {
+            return
+        }
         latestSnapshot = snapshot
         onSnapshot(snapshot)
+    }
+
+    static func shouldPublishSnapshot(
+        current: MobileRideMapSnapshotDto?,
+        incoming: MobileRideMapSnapshotDto
+    ) -> Bool {
+        guard let current else { return true }
+        return current.rideID != incoming.rideID || incoming.revision >= current.revision
     }
 
     func publishDecision(
