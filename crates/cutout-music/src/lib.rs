@@ -17,6 +17,7 @@ use thiserror::Error;
 pub mod callback_epoch;
 pub mod connection;
 pub mod player_request;
+pub mod provider_lifecycle;
 
 /// Maximum provider/session identifier bytes accepted at the platform boundary.
 pub const MAX_MUSIC_IDENTIFIER_BYTES: usize = 256;

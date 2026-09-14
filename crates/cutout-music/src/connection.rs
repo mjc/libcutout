@@ -28,6 +28,14 @@ pub struct MusicConnection {
 }
 
 impl MusicConnection {
+    /// Invalidates the active attempt/session without reusing callback identities.
+    pub fn reset(&mut self) {
+        *self = Self {
+            next_attempt_id: self.next_attempt_id,
+            ..Self::default()
+        };
+    }
+
     /// Starts an attempt and returns its identity for callback validation.
     #[must_use]
     pub fn begin_attempt_id(&mut self, now_ms: u64) -> Option<u64> {
@@ -50,10 +58,7 @@ impl MusicConnection {
 
     /// Resets retry/session state after success without reusing callback identities.
     pub fn established(&mut self) {
-        *self = Self {
-            next_attempt_id: self.next_attempt_id,
-            ..Self::default()
-        };
+        self.reset();
     }
 
     /// Schedules recovery after a disconnect without granting additional attempts.
