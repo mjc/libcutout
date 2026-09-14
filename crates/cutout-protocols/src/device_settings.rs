@@ -127,6 +127,10 @@ pub struct SettingDescriptor {
     pub id: SettingId,
     /// Shared localization catalog key for the label.
     pub label_key: &'static str,
+    /// Optional Rust-selected explanation for this control.
+    pub help_key: Option<&'static str>,
+    /// Optional Rust-selected explanation of units or value meaning.
+    pub value_semantics_key: Option<&'static str>,
     /// Semantic section.
     pub group: SettingGroup,
     /// Stable display order within the catalog.
@@ -229,6 +233,8 @@ impl DeviceControlProfile {
                 Some(SettingDescriptor {
                     id,
                     label_key,
+                    help_key: setting_help_key(id),
+                    value_semantics_key: value_semantics_key(id),
                     group,
                     order,
                     control,
@@ -591,10 +597,30 @@ const fn command_kind(id: SettingId) -> Option<CommandKind> {
     })
 }
 
+const fn setting_help_key(id: SettingId) -> Option<&'static str> {
+    match id {
+        SettingId::PwmTiltback => Some("settings.pwm_tiltback.help"),
+        SettingId::ChargeLimitDiagnostic => Some("settings.charge_limit_diagnostic.help"),
+        SettingId::LightingPattern => Some("settings.lighting_pattern.help"),
+        _ => None,
+    }
+}
+
+const fn value_semantics_key(id: SettingId) -> Option<&'static str> {
+    match id {
+        SettingId::PwmTiltback => Some("settings.pwm_tiltback.semantics"),
+        SettingId::TiltbackSpeed | SettingId::SpeedAlarmThreshold | SettingId::MaximumSpeed => {
+            Some("controls.speed_steps")
+        }
+        _ => None,
+    }
+}
+
 const fn is_read_only(id: SettingId) -> bool {
     matches!(
         id,
         SettingId::ChargeLimitDiagnostic
+            | SettingId::LightingPattern
             | SettingId::AutoShutdownRemaining
             | SettingId::PowerOffDelay
             | SettingId::ChargeMode
@@ -665,16 +691,16 @@ fn control(id: SettingId) -> SettingControl {
             (1, "settings.choice.charging", false),
         ]),
         SettingId::LightingPattern => choices(&[
-            (0, "settings.choice.pattern_0", true),
-            (1, "settings.choice.pattern_1", true),
-            (2, "settings.choice.pattern_2", true),
-            (3, "settings.choice.pattern_3", true),
-            (4, "settings.choice.pattern_4", true),
-            (5, "settings.choice.pattern_5", true),
-            (6, "settings.choice.pattern_6", true),
-            (7, "settings.choice.pattern_7", true),
-            (8, "settings.choice.pattern_8", true),
-            (9, "settings.choice.pattern_9", true),
+            (0, "settings.choice.pattern_0", false),
+            (1, "settings.choice.pattern_1", false),
+            (2, "settings.choice.pattern_2", false),
+            (3, "settings.choice.pattern_3", false),
+            (4, "settings.choice.pattern_4", false),
+            (5, "settings.choice.pattern_5", false),
+            (6, "settings.choice.pattern_6", false),
+            (7, "settings.choice.pattern_7", false),
+            (8, "settings.choice.pattern_8", false),
+            (9, "settings.choice.pattern_9", false),
         ]),
         SettingId::DisplayUnits => choices(&[
             (0, "settings.choice.metric", true),
@@ -1062,5 +1088,54 @@ mod tests {
                 }
             }
         }
+    }
+    #[test]
+    fn descriptors_select_help_and_value_semantics_in_rust() {
+        let aero = aero_control_profile().descriptors(true);
+        let pwm = aero
+            .iter()
+            .find(|item| item.id == SettingId::PwmTiltback)
+            .unwrap();
+        assert_eq!(pwm.help_key, Some("settings.pwm_tiltback.help"));
+        assert_eq!(
+            pwm.value_semantics_key,
+            Some("settings.pwm_tiltback.semantics")
+        );
+        let speed = aero
+            .iter()
+            .find(|item| item.id == SettingId::TiltbackSpeed)
+            .unwrap();
+        assert_eq!(speed.value_semantics_key, Some("controls.speed_steps"));
+        let raw_charge = aero
+            .iter()
+            .find(|item| item.id == SettingId::ChargeLimitDiagnostic)
+            .unwrap();
+        assert_eq!(
+            raw_charge.help_key,
+            Some("settings.charge_limit_diagnostic.help")
+        );
+    }
+
+    #[test]
+    fn unverified_begode_pattern_values_are_observable_but_read_only() {
+        let profile = falcon_control_profile();
+        let pattern = profile
+            .descriptors(false)
+            .into_iter()
+            .find(|item| item.id == SettingId::LightingPattern)
+            .unwrap();
+        assert_eq!(pattern.access, SettingAccess::ReadOnly);
+        let SettingControl::Choices(choices) = pattern.control else {
+            panic!("pattern must retain its raw choices");
+        };
+        assert!(choices.iter().all(|choice| !choice.writable));
+        assert_eq!(
+            profile.command(
+                SettingId::LightingPattern,
+                DeviceSettingValue::Choice(0),
+                true
+            ),
+            Err(SettingsRequestError::ReadOnly)
+        );
     }
 }

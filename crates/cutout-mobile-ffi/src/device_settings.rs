@@ -216,6 +216,10 @@ pub struct MobileSettingDescriptorDto {
     pub id: MobileSettingIdDto,
     /// Shared localization key.
     pub label_key: String,
+    /// Optional Rust-selected explanation for this control.
+    pub help_key: Option<String>,
+    /// Optional Rust-selected explanation of units or value meaning.
+    pub value_semantics_key: Option<String>,
     /// Semantic presentation group.
     pub group: MobileSettingGroupDto,
     /// Stable order within the catalog.
@@ -233,6 +237,8 @@ impl From<SettingDescriptor> for MobileSettingDescriptorDto {
         Self {
             id: value.id.into(),
             label_key: value.label_key.into(),
+            help_key: value.help_key.map(Into::into),
+            value_semantics_key: value.value_semantics_key.map(Into::into),
             group: value.group.into(),
             order: value.order,
             control: value.control.into(),
