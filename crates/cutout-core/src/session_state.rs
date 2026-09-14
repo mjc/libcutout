@@ -11,6 +11,9 @@ use bytes::Bytes;
 /// Rust-owned durable state for one `CutOut` mobile/device session.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct CutoutSessionState {
+    /// Purpose of the selected device connection across transport attempts.
+    pub device_connection_intent: DeviceConnectionIntent,
+
     /// Attempt identity, deadline and protocol admission state.
     pub connection: crate::ConnectionAttemptLifecycle,
 
@@ -34,6 +37,15 @@ pub struct CutoutSessionState {
 }
 
 impl CutoutSessionState {
+    /// Whether unresolved identification should retry the selected connection.
+    #[must_use]
+    pub const fn should_retry_identification(&self) -> bool {
+        matches!(
+            self.device_connection_intent,
+            DeviceConnectionIntent::Reconnect
+        )
+    }
+
     /// Returns the current identity state without cloning the whole root.
     #[must_use]
     pub const fn identity(&self) -> &DeviceIdentityState {
@@ -189,6 +201,13 @@ pub struct DeviceIdentityState {
 }
 
 impl DeviceIdentityState {
+    /// Clears response bookkeeping from the previous physical link.
+    pub fn reset_link_probes(&mut self) {
+        self.pending_probe_started_at.fill(None);
+        self.missing_probe_response = None;
+        self.malformed_probe_response = None;
+    }
+
     /// Records an identity probe and the monotonic time at which it was written.
     pub fn observe_probe_write(&mut self, probe: PendingProbe, started_at: MonotonicTimestamp) {
         self.pending_probe_started_at[probe.index()].get_or_insert(started_at);
@@ -602,6 +621,18 @@ pub enum DiscoveryConnectionRoute {
     VescOnewheel,
 }
 
+/// Purpose of a selected device connection, independent of the current link.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum DeviceConnectionIntent {
+    /// Identify a device selected for use.
+    #[default]
+    Use,
+    /// Recover a previously selected connection without falling back to capture-only.
+    Reconnect,
+    /// Capture an explicitly selected device without requiring a supported protocol.
+    RecordOnly,
+}
+
 /// Picker/discovery candidate derived from Rust-owned discovery evidence.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct DiscoveryCandidateSnapshot {
@@ -855,6 +886,44 @@ mod tests {
             }],
             rssi_dbm: Some(rssi_dbm),
         }
+    }
+
+    #[test]
+    fn only_reconnect_intent_retries_identification() {
+        let mut state = CutoutSessionState::default();
+        assert!(!state.should_retry_identification());
+        state.device_connection_intent = DeviceConnectionIntent::Reconnect;
+        assert!(state.should_retry_identification());
+        state.device_connection_intent = DeviceConnectionIntent::RecordOnly;
+        assert!(!state.should_retry_identification());
+    }
+
+    #[test]
+    fn link_probe_reset_preserves_confirmed_identity() {
+        let mut state = CutoutSessionState::default();
+        state.identity.protocol_family = Some(ProtocolFamily::VeteranLeaperkimNosfet);
+        state.identity.model = Some("Aero".to_owned());
+        let expected_protocol = state.identity.protocol_family;
+        let expected_model = state.identity.model.clone();
+        state
+            .identity
+            .observe_probe_write(PendingProbe::BegodeName, MonotonicTimestamp::new(42));
+        state.identity.missing_probe_response = Some(PendingProbe::BegodeFirmware);
+        state.identity.malformed_probe_response = Some(PendingProbe::BegodeImu);
+
+        state.identity.reset_link_probes();
+
+        assert_eq!(state.identity.protocol_family, expected_protocol);
+        assert_eq!(state.identity.model, expected_model);
+        assert!(
+            state
+                .identity
+                .pending_probe_started_at
+                .iter()
+                .all(Option::is_none)
+        );
+        assert!(state.identity.missing_probe_response.is_none());
+        assert!(state.identity.malformed_probe_response.is_none());
     }
 
     #[test]
