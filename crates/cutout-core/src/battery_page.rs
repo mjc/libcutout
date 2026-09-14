@@ -49,6 +49,52 @@ pub struct BmsObservationSummary {
     pub observations: Vec<BmsVoltageObservation>,
 }
 
+/// Temperature readings retained from the latest report for every BMS temperature page.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct BmsTemperatureSummary {
+    /// Flattened readings in stable source-page and sensor order.
+    pub readings: Vec<Temperature>,
+    /// Highest reading from the current retained pages.
+    pub highest_temperature: Option<Temperature>,
+}
+
+impl BmsTemperatureSummary {
+    /// Summarizes the latest retained temperature page for each source identity.
+    #[must_use]
+    pub fn from_readbacks(readbacks: &[crate::BatteryReadback]) -> Self {
+        let mut pages: Vec<_> = readbacks
+            .iter()
+            .filter_map(|readback| match readback.page() {
+                Some(BatteryPagePayload::Temperature(page)) => Some(page),
+                Some(BatteryPagePayload::CellVoltage(_) | BatteryPagePayload::Raw(_)) | None => {
+                    None
+                }
+            })
+            .collect();
+        pages.sort_unstable_by_key(|page| {
+            (
+                page.page.tag.map(ProtocolTag::get),
+                page.page.selector.get(),
+            )
+        });
+        let readings: Vec<_> = pages
+            .into_iter()
+            .flat_map(|page| {
+                page.temperatures[..usize::from(page.temperature_count.get())]
+                    .iter()
+                    .copied()
+            })
+            .collect();
+        Self {
+            highest_temperature: readings
+                .iter()
+                .copied()
+                .max_by_key(|temperature| temperature.as_millicelsius()),
+            readings,
+        }
+    }
+}
+
 impl BmsObservationSummary {
     /// Summarizes retained readbacks in oldest-to-newest replacement order.
     ///

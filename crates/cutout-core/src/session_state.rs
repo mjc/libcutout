@@ -702,6 +702,12 @@ impl BmsTelemetryState {
         crate::BmsObservationSummary::from_readbacks(&self.observation_history)
     }
 
+    /// Summarizes the latest retained temperature readings across source pages.
+    #[must_use]
+    pub fn temperature_summary(&self) -> crate::BmsTemperatureSummary {
+        crate::BmsTemperatureSummary::from_readbacks(&self.pages)
+    }
+
     fn observe_readback(&mut self, readback: &BatteryReadback) {
         self.latest = readback.clone();
         if readback.availability() != crate::BatteryReadbackAvailability::Available {
@@ -856,6 +862,47 @@ mod tests {
         ))
         .with_first_observation_index(crate::BmsObservationIndex::new(first_observation_index))
         .with_observed_at(MonotonicTimestamp::new(observed_at_ms))
+    }
+
+    fn temperature_readback(selector: u8, values: &[i32]) -> BatteryReadback {
+        BatteryReadback::available(crate::BatteryPagePayload::temperature_values(
+            BatteryPageMetadata::temperature(
+                crate::ProtocolSelector::new(selector),
+                crate::VerificationStatus::HardwareVerified,
+            ),
+            crate::BatteryInfo::default(),
+            std::array::from_fn(|index| {
+                values.get(index).map(|value| {
+                    crate::Measured::reported(crate::Temperature::from_millicelsius(*value))
+                })
+            }),
+        ))
+    }
+
+    #[test]
+    fn bms_telemetry_retains_latest_temperatures_from_every_source_page() {
+        let mut state = CutoutSessionState::default();
+        for readback in [
+            temperature_readback(3, &[60_000]),
+            temperature_readback(7, &[25_000]),
+            temperature_readback(3, &[61_000]),
+            cell_readback(1, 0, 4_180, 1),
+        ] {
+            state.observe_read_only_response(&ReadOnlyResponse::Battery(readback));
+        }
+
+        let summary = state.telemetry.bms.temperature_summary();
+        assert_eq!(
+            summary.readings,
+            vec![
+                crate::Temperature::from_millicelsius(61_000),
+                crate::Temperature::from_millicelsius(25_000),
+            ]
+        );
+        assert_eq!(
+            summary.highest_temperature,
+            Some(crate::Temperature::from_millicelsius(61_000))
+        );
     }
 
     #[test]

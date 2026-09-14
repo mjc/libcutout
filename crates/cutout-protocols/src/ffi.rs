@@ -497,6 +497,7 @@ where
     S: cutout_core::ProtocolSession,
 {
     let mut summary = None;
+    let mut temperature_summary = None;
     host.drain_outputs()
         .into_iter()
         .map(|output| {
@@ -510,6 +511,21 @@ where
                         host.session_state().telemetry().bms.observation_summary()
                     })
                     .clone();
+                let temperatures = temperature_summary.get_or_insert_with(|| {
+                    host.session_state().telemetry().bms.temperature_summary()
+                });
+                page.temperature = temperatures
+                    .highest_temperature
+                    .map(cutout_core::Measured::reported)
+                    .map(Into::into);
+                page.temperatures = temperatures
+                    .readings
+                    .iter()
+                    .copied()
+                    .map(cutout_core::Measured::reported)
+                    .map(Into::into)
+                    .map(Some)
+                    .collect();
             }
             output
         })
