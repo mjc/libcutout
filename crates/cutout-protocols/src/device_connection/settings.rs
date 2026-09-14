@@ -36,27 +36,39 @@ impl DeviceConnectionSession {
         self.device.as_ref().map_or_else(Vec::new, |device| {
             device
                 .control_profile()
-                .descriptors(self.validation_authorized)
+                .descriptors(self.validation_authorized())
         })
     }
 
-    /// Changes validation authorization only for the current connection attempt.
-    pub fn set_validation_authorization(
-        &mut self,
-        token: &ConnectionAttemptToken,
-        authorized: bool,
-    ) -> bool {
+    /// Grants protocol validation controls only to a verified decoder.
+    pub fn authorize_validation(&mut self, token: &ConnectionAttemptToken) -> bool {
+        if !self.state.connection.is_verified(token) || self.device.is_none() {
+            return false;
+        }
+        self.validation_grant = Some(super::ValidationGrant::for_token(token));
+        true
+    }
+
+    /// Revokes protocol validation controls for the current attempt.
+    pub fn revoke_validation(&mut self, token: &ConnectionAttemptToken) -> bool {
         if !self.state.connection.is_current(token) {
             return false;
         }
-        self.validation_authorized = authorized;
+        self.validation_grant = None;
         true
     }
 
     /// Returns the current attempt's validation authorization.
     #[must_use]
-    pub const fn validation_authorized(&self) -> bool {
-        self.validation_authorized
+    pub fn validation_authorized(&self) -> bool {
+        self.validation_grant.is_some_and(|grant| {
+            self.state
+                .connection
+                .snapshot()
+                .token
+                .as_ref()
+                .is_some_and(|token| grant.matches(token))
+        })
     }
 
     /// Returns immutable observed/requested state for the current connection.
@@ -83,7 +95,7 @@ impl DeviceConnectionSession {
         if !self.state.connection.is_verified(token) {
             return Err(DeviceSettingRequestError::ConnectionUnavailable);
         }
-        let validation_authorized = self.validation_authorized;
+        let validation_authorized = self.validation_authorized();
         let device = self
             .device
             .as_mut()
@@ -251,7 +263,7 @@ mod tests {
                 SettingsRequestError::Unverified
             ))
         );
-        assert!(owner.set_validation_authorization(&token, true));
+        assert!(owner.authorize_validation(&token));
         let refused = owner
             .submit_setting(
                 &token,
@@ -319,7 +331,7 @@ mod tests {
                 .access,
             crate::SettingAccess::Unverified
         );
-        assert!(owner.set_validation_authorization(&first, true));
+        assert!(owner.authorize_validation(&first));
         assert!(owner.validation_authorized());
         assert_eq!(
             owner
@@ -332,9 +344,9 @@ mod tests {
         );
 
         owner.begin_attempt("B".into(), MonotonicTimestamp::new(3));
-        let replacement = owner.state.connection.snapshot().token.clone().unwrap();
+        let replacement = super::super::tests::connected_aero(&mut owner);
         assert!(!owner.validation_authorized());
-        assert!(!owner.set_validation_authorization(&first, true));
-        assert!(owner.set_validation_authorization(&replacement, true));
+        assert!(!owner.authorize_validation(&first));
+        assert!(owner.authorize_validation(&replacement));
     }
 }

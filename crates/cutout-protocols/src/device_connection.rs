@@ -25,6 +25,23 @@ pub struct DeviceConnectionSnapshot {
     pub identity: Option<DeviceSessionIdentity>,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct ValidationGrant {
+    generation: u64,
+}
+
+impl ValidationGrant {
+    fn for_token(token: &ConnectionAttemptToken) -> Self {
+        Self {
+            generation: token.generation(),
+        }
+    }
+
+    fn matches(&self, token: &ConnectionAttemptToken) -> bool {
+        self.generation == token.generation()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -86,7 +103,7 @@ mod tests {
             ConnectionReadiness::RecordOnly
         );
         assert!(owner.snapshot().identity.is_none());
-        owner.fail_capture();
+        owner.fail_capture(&token);
         assert!(!owner.state.connection.is_current(&token));
         assert_eq!(
             owner.snapshot().connection.readiness,
@@ -239,6 +256,38 @@ mod tests {
         );
     }
 
+    #[test]
+    fn verified_decoder_is_retired_when_later_evidence_conflicts() {
+        let mut owner = DeviceConnectionSession::default();
+        let token = connected_aero(&mut owner);
+        assert!(owner.state.connection.is_verified(&token));
+
+        let resolution = owner
+            .observe_for_attempt(
+                &token,
+                DeviceDetectionEvent::Notification { bytes: VESC_REPLY },
+            )
+            .expect("current attempt evidence is retained");
+
+        assert_eq!(resolution.protocol, crate::ProtocolFamilyState::Conflict);
+        assert_eq!(
+            owner.snapshot().connection.readiness,
+            ConnectionReadiness::Conflicted
+        );
+        assert!(owner.snapshot().identity.is_none());
+        assert!(!owner.state.connection.is_current(&token));
+        assert!(
+            owner
+                .ingest(
+                    &token,
+                    &SessionInputDto::Tick {
+                        monotonic_ms: cutout_core::MonotonicMillisDto { milliseconds: 2 },
+                    }
+                )
+                .is_none()
+        );
+    }
+
     pub(super) fn connected_aero(owner: &mut DeviceConnectionSession) -> ConnectionAttemptToken {
         let token = begin(owner, "A");
         let mut frame = vec![0_u8; 42];
@@ -363,22 +412,91 @@ pub struct DeviceConnectionStep {
 #[derive(Debug, Default)]
 pub struct DeviceConnectionSession {
     /// Shared durable state, including ride, identity and settings slices.
-    pub state: CutoutSessionState,
+    state: CutoutSessionState,
     /// Incremental detector retaining validated wire evidence.
-    pub detector: DeviceDetectionSession,
+    detector: DeviceDetectionSession,
     /// Protocol-selected decoder, never selected by native model dispatch.
-    pub device: Option<DeviceSession>,
+    device: Option<DeviceSession>,
     last_input_at: MonotonicTimestamp,
     vesc_board_profile: Option<crate::VescBoardProfile>,
-    validation_authorized: bool,
+    validation_grant: Option<ValidationGrant>,
 }
 
 impl DeviceConnectionSession {
+    /// Borrows the shared session state without exposing connection internals.
+    #[must_use]
+    pub fn session_state(&self) -> &CutoutSessionState {
+        &self.state
+    }
+
+    /// Mutably borrows shared session state for FFI-owned projections.
+    pub fn session_state_mut(&mut self) -> &mut CutoutSessionState {
+        &mut self.state
+    }
+
+    /// Borrows the retained detector evidence.
+    #[must_use]
+    pub fn detector(&self) -> &DeviceDetectionSession {
+        &self.detector
+    }
+
+    /// Replaces detector evidence when starting a new identification pass.
+    pub fn reset_detector(&mut self) {
+        self.detector = DeviceDetectionSession::default();
+    }
+
+    /// Starts protocol-owned identification probes against the current session state.
+    pub fn begin_identification_probes(
+        &mut self,
+        at: MonotonicTimestamp,
+    ) -> crate::IdentificationProbePlan {
+        self.detector
+            .begin_identification_probes(&mut self.state, at)
+    }
+
+    /// Expires protocol-owned probes and returns the missing probes.
+    pub fn expire_pending_probes(
+        &mut self,
+        now: MonotonicTimestamp,
+        timeout: cutout_core::Duration,
+    ) -> Vec<cutout_core::PendingProbe> {
+        self.detector
+            .expire_pending_probes(&mut self.state, now, timeout)
+            .into_iter()
+            .collect()
+    }
+
+    /// Marks all protocol-owned probes missing.
+    pub fn mark_pending_probes_missing(&mut self) -> Vec<cutout_core::PendingProbe> {
+        self.detector
+            .mark_pending_probes_missing(&mut self.state)
+            .into_iter()
+            .collect()
+    }
+
+    /// Observes detector evidence without exposing the detector's mutable state.
+    pub fn observe_detection(
+        &mut self,
+        event: DeviceDetectionEvent<'_>,
+    ) -> DeviceDetectionResolution {
+        self.detector.observe(&mut self.state, event)
+    }
+
+    /// Records an identification probe write at its monotonic start time.
+    pub fn observe_probe_write_at(
+        &mut self,
+        probe: cutout_core::PendingProbe,
+        at: MonotonicTimestamp,
+    ) -> DeviceDetectionResolution {
+        self.detector
+            .observe_probe_write_at(&mut self.state, probe, at)
+    }
+
     /// Replaces all device-scoped state before native work for the new attempt.
     pub fn begin_attempt(&mut self, platform_identifier: String, at: MonotonicTimestamp) {
         self.last_input_at = at;
         self.vesc_board_profile = None;
-        self.validation_authorized = false;
+        self.validation_grant = None;
         self.state.reset_device_identity();
         self.state
             .select_discovered_platform(platform_identifier.clone());
@@ -422,6 +540,7 @@ impl DeviceConnectionSession {
         self.state.settings.disconnect();
         self.state.actions.disconnect();
         self.device = None;
+        self.validation_grant = None;
     }
 
     /// Records link availability and invalidates verified-session work after link loss.
@@ -437,9 +556,21 @@ impl DeviceConnectionSession {
     }
 
     /// Capture storage failure invalidates every device-dependent operation.
-    pub fn fail_capture(&mut self) {
-        self.state.connection.fail_capture();
+    pub fn fail_capture(&mut self, token: &ConnectionAttemptToken) {
+        self.state.connection.fail_capture(token);
         self.clear_failed_device();
+    }
+
+    /// Invalidates a verified decoder when a later notification proves it wrong.
+    pub fn protocol_conflict(&mut self, token: &ConnectionAttemptToken) -> bool {
+        if !self.state.connection.conflict(token) {
+            return false;
+        }
+        self.device = None;
+        self.validation_grant = None;
+        self.state.settings.disconnect();
+        self.state.actions.disconnect();
+        true
     }
 
     fn clear_failed_device(&mut self) {
@@ -457,10 +588,16 @@ impl DeviceConnectionSession {
         token: &ConnectionAttemptToken,
         event: DeviceDetectionEvent<'_>,
     ) -> Option<DeviceDetectionResolution> {
-        self.state
-            .connection
-            .is_current(token)
-            .then(|| self.detector.observe(&mut self.state, event))
+        if !self.state.connection.is_current(token) {
+            return None;
+        }
+        let resolution = self.detector.observe(&mut self.state, event);
+        if resolution.protocol == crate::ProtocolFamilyState::Conflict
+            && self.state.connection.snapshot().readiness == ConnectionReadiness::Verified
+        {
+            self.protocol_conflict(token);
+        }
+        Some(resolution)
     }
 
     /// Resolves readiness from retained wire evidence, respecting the whole-attempt deadline.

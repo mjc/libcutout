@@ -2080,8 +2080,7 @@ public final class CutoutSessionCore: NSObject {
         captureBuilder = builder
         _ = builder.setMusicContext(music: musicCaptureContext.current)
         guard builder.startWriter(path: url.path) else {
-            _ = rustSessionState.failConnectionCapture()
-            publishConnectionSnapshot()
+            failConnectionCapture()
             record("capture_error=writer_start_failed")
             captureBuilder = nil
             captureFileURL = nil
@@ -2099,14 +2098,19 @@ public final class CutoutSessionCore: NSObject {
 
     private func acceptCaptureWrite(_ accepted: Bool) -> Bool {
         guard !accepted else { return true }
-        _ = rustSessionState.failConnectionCapture()
-        publishConnectionSnapshot()
+        failConnectionCapture()
         let status = captureBuilder?.writerStatus()
         record("capture_error=writer_failed \(status?.lastError ?? "unknown")")
         publishCaptureEvent(.failed)
         setPhase(.failed(.sessionFailed("capture writer queue overrun")))
         finishCaptureWriter()
         return false
+    }
+
+    private func failConnectionCapture() {
+        guard let token = connectionAttempt?.token else { return }
+        _ = rustSessionState.failConnectionCapture(token: token)
+        publishConnectionSnapshot()
     }
 
     private func finishCaptureAfterLinkDown() {
@@ -2708,6 +2712,11 @@ extension CutoutSessionCore: CBPeripheralDelegate {
             return
         }
         let detectionResolution = observeDetectionNotification(channel: channel, bytes: value)
+        if rustSessionState.connectionAttemptSnapshot().readiness == .conflicted {
+            setPhase(.failed(.identificationFailed(.conflictingEvidence)))
+            finishCaptureAfterLinkDown()
+            return
+        }
         if isDetectingProtocol {
             guard promoteProtocolDetectionIfResolved(detectionResolution, on: characteristic.service?.peripheral) else {
                 guard captureFrame(
@@ -3078,18 +3087,18 @@ extension CutoutSessionCore {
         case .verified:
             connectionDeadlineWorkItem?.cancel()
             publishConnectionSnapshot()
-        case .pending, .disconnected, .failed:
+        case .pending, .disconnected, .failed, .conflicted:
             return false
         }
-        switch resolution.connectionDisposition(
+        let candidate = rustSessionState.connectionAdmissionCandidate(
             platformIdentifier: advertisement.peripheralIdentifier.rawValue,
             displayName: advertisement.localName
                 ?? protocolIdentityFallbackDisplayName(protocolFamily: resolution.protocolFamily),
             allowClosestMatch: allowClosestMatch
-        ) {
-        case .pending:
-            return false
-        case .promote(let route, let model):
+        )
+        switch DevicePickerCandidateSupport(candidate) {
+        case .supported(let route, let model):
+            guard let route else { return false }
             isDetectingProtocol = false
             clearProtocolDetectionExpiry()
             selectedRoute = route
@@ -3097,7 +3106,10 @@ extension CutoutSessionCore {
             annotateDetection("protocol_detection_resolved=\(route.rawValue)")
             buildOwner(for: peripheral)
             return liveOwner != nil
-        case .refuse(let failure):
+        case .probeRecommended, .unknownRecordable, .knownUnsupported, .ambiguous, .conflicting, .rejectedNoise, .manualEntry, .unsupported:
+            let failure: IdentificationProbeFailure = candidate.support == .conflicting
+                ? .conflictingEvidence
+                : (candidate.support == .unknownRecordable ? .unsupported : .unsupported)
             guard allowClosestMatch else { return false }
             recordUnresolvedProtocolDetection(failure, on: peripheral)
             return false

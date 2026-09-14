@@ -104,11 +104,11 @@ use cutout_protocols::{
     BEGODE_FALCON_REGISTRY_ENTRY, BEGODE_FIELD_LED_AND_LIGHT_MODE, BEGODE_FIELD_SETTINGS_BITS,
     BEGODE_FIELD_TILTBACK_SPEED_KMH, ConcreteAeroBenignControlSession,
     ConcreteFalconBenignControlSession, ConcreteFalconProfileDto, ConcreteSessionErrorDto,
-    ConcreteSessionStepResultDto, DeviceDetectionEvent, DeviceDetectionResolution,
-    DeviceDetectionSession, DeviceFamily, IdentityBannerEvidence, NOSFET_AERO_REGISTRY_ENTRY,
-    PendingProbe, ProtocolFamilyClassification, ProtocolFamilyState, ProtocolModelIdentityEvidence,
-    StagedIdentityInput, StagedIdentityOutcome, VETERAN_FIELD_AUTO_SHUTDOWN_TIME_REMAINING_SECONDS,
-    VETERAN_FIELD_CHARGE_MODE, VETERAN_FIELD_PEDALS_MODE, VETERAN_FIELD_SPEED_ALERT_DECI_KMH,
+    ConcreteSessionStepResultDto, DeviceDetectionEvent, DeviceDetectionResolution, DeviceFamily,
+    IdentityBannerEvidence, NOSFET_AERO_REGISTRY_ENTRY, PendingProbe, ProtocolFamilyClassification,
+    ProtocolFamilyState, ProtocolModelIdentityEvidence, StagedIdentityInput, StagedIdentityOutcome,
+    VETERAN_FIELD_AUTO_SHUTDOWN_TIME_REMAINING_SECONDS, VETERAN_FIELD_CHARGE_MODE,
+    VETERAN_FIELD_PEDALS_MODE, VETERAN_FIELD_SPEED_ALERT_DECI_KMH,
     VETERAN_FIELD_SPEED_TILTBACK_DECI_KMH, VescBatteryType as CoreVescBatteryType,
     VescBoardProfile as CoreVescBoardProfile, VescReadOnlySession as CoreVescReadOnlySession,
     closest_known_model, identify_known_model, new_nosfet_aero_benign_control_session,
@@ -973,28 +973,32 @@ impl CutoutSessionStateHandle {
     /// Observes one mobile discovery advertisement.
     pub fn observe_discovery(&self, observation: DiscoveryObservation) -> DiscoverySnapshot {
         let mut state = self.lock_inner();
-        state.state.observe_discovery(observation.into_core());
-        DiscoverySnapshot::from_state(&state.state)
+        state
+            .session_state_mut()
+            .observe_discovery(observation.into_core());
+        DiscoverySnapshot::from_state(state.session_state())
     }
 
     /// Selects a discovered platform identifier for this session.
     pub fn select_discovered_platform(&self, platform_identifier: String) -> DiscoverySnapshot {
         let mut state = self.lock_inner();
-        state.state.select_discovered_platform(platform_identifier);
-        DiscoverySnapshot::from_state(&state.state)
+        state
+            .session_state_mut()
+            .select_discovered_platform(platform_identifier);
+        DiscoverySnapshot::from_state(state.session_state())
     }
 
     /// Returns the current discovery snapshot.
     #[must_use]
     pub fn discovery_snapshot(&self) -> DiscoverySnapshot {
-        DiscoverySnapshot::from_state(&self.lock_inner().state)
+        DiscoverySnapshot::from_state(self.lock_inner().session_state())
     }
 
     /// Projects retained unknown peripherals for an explicitly opened advanced capture list.
     #[must_use]
     pub fn advanced_capture_candidates(&self) -> Vec<DiscoveryCandidate> {
         self.lock_inner()
-            .state
+            .session_state()
             .discovery()
             .advanced_capture_candidates()
             .into_iter()
@@ -1014,9 +1018,9 @@ impl CutoutSessionStateHandle {
     ) -> Result<MobileRideSessionDecisionDto, MobileRideSessionInputError> {
         let input = input.try_into()?;
         let mut mobile = self.lock_inner();
-        let decision = mobile.state.ride_session.transition(input);
+        let decision = mobile.session_state().ride_session.transition(input);
         let (state, output) = MobileRideSessionDecisionDto::from_core(decision);
-        mobile.state.ride_session = state;
+        mobile.session_state_mut().ride_session = state;
         Ok(output)
     }
 
@@ -1029,7 +1033,7 @@ impl CutoutSessionStateHandle {
         &self,
     ) -> Result<Option<Vec<u8>>, MobileRideSessionMarkerError> {
         self.lock_inner()
-            .state
+            .session_state()
             .ride_session
             .marker()
             .map(|marker| marker.encode().map_err(Into::into))
@@ -1068,14 +1072,14 @@ impl CutoutSessionStateHandle {
         let decision =
             CoreRideSessionLifecycle::recover(marker, restored_platform_identifier.as_deref());
         let (state, output) = MobileRideSessionDecisionDto::from_core(decision);
-        self.lock_inner().state.ride_session = state;
+        self.lock_inner().session_state_mut().ride_session = state;
         Ok(output)
     }
 
     /// Returns the current Rust-owned ride-session snapshot.
     #[must_use]
     pub fn ride_session_snapshot(&self) -> MobileRideSessionSnapshotDto {
-        (&self.lock_inner().state.ride_session).into()
+        (&self.lock_inner().session_state().ride_session).into()
     }
 }
 
@@ -1196,10 +1200,7 @@ impl CutoutSessionStateHandle {
         started_at_ms: u64,
     ) -> MobileIdentificationProbeOutcomeDto {
         let mut inner = self.lock_inner();
-        let MobileSessionState {
-            state, detector, ..
-        } = &mut *inner;
-        match detector.begin_identification_probes(state, MonotonicTimestamp::new(started_at_ms)) {
+        match inner.begin_identification_probes(MonotonicTimestamp::new(started_at_ms)) {
             cutout_protocols::IdentificationProbePlan::Unsupported => {
                 MobileIdentificationProbeOutcomeDto::Unsupported
             }
@@ -1312,12 +1313,8 @@ impl CutoutSessionStateHandle {
         timeout_ms: u64,
     ) -> Vec<MobilePendingProbeDto> {
         let mut state = self.lock_inner();
-        let MobileSessionState {
-            state, detector, ..
-        } = &mut *state;
-        detector
+        state
             .expire_pending_probes(
-                state,
                 MonotonicTimestamp::new(now_ms),
                 CoreDuration::from_milliseconds(timeout_ms),
             )
@@ -1329,11 +1326,8 @@ impl CutoutSessionStateHandle {
     /// Marks every pending Begode probe as missing.
     pub fn mark_begode_probe_responses_missing(&self) -> Vec<MobilePendingProbeDto> {
         let mut state = self.lock_inner();
-        let MobileSessionState {
-            state, detector, ..
-        } = &mut *state;
-        detector
-            .mark_pending_probes_missing(state)
+        state
+            .mark_pending_probes_missing()
             .into_iter()
             .map(MobilePendingProbeDto::from)
             .collect()
@@ -1343,49 +1337,53 @@ impl CutoutSessionStateHandle {
     pub fn next_begode_probe_expiry(&self, timeout_ms: u64) -> Option<u64> {
         let state = self.lock_inner();
         state
-            .detector
-            .next_probe_expiry(&state.state, CoreDuration::from_milliseconds(timeout_ms))
+            .detector()
+            .next_probe_expiry(
+                state.session_state(),
+                CoreDuration::from_milliseconds(timeout_ms),
+            )
             .map(MonotonicTimestamp::as_milliseconds)
     }
 
     /// Returns the current detection resolution.
     pub fn resolution(&self) -> DeviceDetectionResolutionRecord {
         let state = self.lock_inner();
-        state.detector.resolution(&state.state).into()
+        state.detector().resolution(state.session_state()).into()
     }
 
     /// Clears device-specific detection state while preserving discovery observations.
     pub fn reset_device_detection(&self) {
         let mut state = self.lock_inner();
-        state.state.reset_device_identity();
-        state.detector = DeviceDetectionSession::default();
+        state.session_state_mut().reset_device_identity();
+        state.reset_detector();
     }
 
     /// Sets the purpose of the selected connection across transport attempts.
     pub fn set_device_connection_intent(&self, intent: DeviceConnectionIntentDto) {
-        self.lock_inner().state.device_connection_intent = intent.into();
+        self.lock_inner()
+            .session_state_mut()
+            .device_connection_intent = intent.into();
     }
 
     /// Whether unresolved identification should retry rather than capture-only.
     pub fn should_retry_identification(&self) -> bool {
-        self.lock_inner().state.should_retry_identification()
+        self.lock_inner()
+            .session_state()
+            .should_retry_identification()
     }
 
     /// Clears link-local stream buffers and probes while retaining confirmed identity.
     pub fn reset_device_detection_link(&self) {
         let mut state = self.lock_inner();
-        state.state.identity_mut().reset_link_probes();
-        state.detector = DeviceDetectionSession::default();
+        state.session_state_mut().identity_mut().reset_link_probes();
+        state.reset_detector();
     }
 }
 
 impl CutoutSessionStateHandle {
     fn observe(&self, event: DeviceDetectionEvent<'_>) -> DeviceDetectionResolutionRecord {
         let mut state = self.lock_inner();
-        let MobileSessionState {
-            state, detector, ..
-        } = &mut *state;
-        detector.observe(state, event).into()
+        state.observe_detection(event).into()
     }
 
     fn observe_probe_write_at(
@@ -1394,11 +1392,8 @@ impl CutoutSessionStateHandle {
         started_at_ms: u64,
     ) -> DeviceDetectionResolutionRecord {
         let mut state = self.lock_inner();
-        let MobileSessionState {
-            state, detector, ..
-        } = &mut *state;
-        detector
-            .observe_probe_write_at(state, probe, MonotonicTimestamp::new(started_at_ms))
+        state
+            .observe_probe_write_at(probe, MonotonicTimestamp::new(started_at_ms))
             .into()
     }
 }

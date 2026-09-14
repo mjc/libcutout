@@ -159,6 +159,32 @@ impl CutoutSessionStateHandle {
         inner.snapshot().into()
     }
 
+    /// Computes the complete Rust-owned admission candidate from retained evidence.
+    /// Swift consumes this projection; it does not reconstruct route or model policy.
+    pub fn connection_admission_candidate(
+        &self,
+        platform_identifier: String,
+        display_name: String,
+        allow_closest_match: bool,
+    ) -> crate::DiscoveryCandidate {
+        let inner = self.lock_inner();
+        let resolution: DeviceDetectionResolutionRecord =
+            inner.detector().resolution(inner.session_state()).into();
+        if allow_closest_match {
+            crate::mobile_discovery_candidate_from_closest_detection_resolution(
+                platform_identifier,
+                display_name,
+                resolution,
+            )
+        } else {
+            crate::mobile_discovery_candidate_from_detection_resolution(
+                platform_identifier,
+                display_name,
+                resolution,
+            )
+        }
+    }
+
     /// Decodes only for the currently verified attempt and pairs the resulting identity.
     pub fn ingest_device_session(
         &self,

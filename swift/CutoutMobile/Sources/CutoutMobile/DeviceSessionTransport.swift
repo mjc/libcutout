@@ -100,7 +100,10 @@ final class DeviceSessionTransport: @unchecked Sendable {
     }
 
     func setValidationAuthorization(_ authorized: Bool, at: MonotonicMilliseconds) throws {
-        guard state.setDeviceControlsValidation(token: token, authorized: authorized) else {
+        let accepted = authorized
+            ? state.authorizeDeviceControls(token: token)
+            : state.revokeDeviceControls(token: token)
+        guard accepted else {
             throw DeviceSettingSubmissionError.ConnectionUnavailable
         }
         publishControls(at: at, immediately: true)

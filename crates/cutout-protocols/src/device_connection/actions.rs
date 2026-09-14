@@ -183,7 +183,7 @@ mod tests {
         let mut owner = DeviceConnectionSession::default();
         let token = super::super::tests::connected_aero(&mut owner);
         let _ = owner.ingest(&token, &gyro_readback(128, 2));
-        assert!(owner.set_validation_authorization(&token, true));
+        assert!(owner.authorize_validation(&token));
         let step = owner
             .submit_action(
                 &token,
@@ -280,7 +280,7 @@ mod tests {
             ))
         );
         assert_eq!(owner.actions_snapshot(), before_refusal);
-        assert!(owner.set_validation_authorization(&token, true));
+        assert!(owner.authorize_validation(&token));
         let result = owner
             .submit_action(
                 &token,

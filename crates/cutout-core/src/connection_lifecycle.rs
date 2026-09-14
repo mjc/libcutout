@@ -6,9 +6,31 @@ use crate::MonotonicTimestamp;
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ConnectionAttemptToken {
     /// Monotonic attempt generation within this session owner.
-    pub generation: u64,
+    generation: u64,
     /// Platform identifier selected for this attempt.
-    pub platform_identifier: String,
+    platform_identifier: String,
+}
+
+impl ConnectionAttemptToken {
+    /// Constructs a token at an FFI boundary. Callers should retain, not mint, tokens.
+    pub fn new(generation: u64, platform_identifier: String) -> Self {
+        Self {
+            generation,
+            platform_identifier,
+        }
+    }
+
+    /// Returns the attempt generation.
+    #[must_use]
+    pub const fn generation(&self) -> u64 {
+        self.generation
+    }
+
+    /// Returns the selected platform identifier.
+    #[must_use]
+    pub fn platform_identifier(&self) -> &str {
+        &self.platform_identifier
+    }
 }
 
 /// Admission state established by the connection and detector owner.
@@ -25,6 +47,8 @@ pub enum ConnectionReadiness {
     RecordOnly,
     /// Capture storage or a previously verified session failed.
     Failed,
+    /// A verified session observed protocol evidence that conflicts with its decoder.
+    Conflicted,
 }
 
 /// Native link availability, independent of protocol admission.
@@ -70,10 +94,7 @@ impl ConnectionAttemptLifecycle {
         at: MonotonicTimestamp,
     ) -> ConnectionAttemptToken {
         self.snapshot.generation = self.snapshot.generation.wrapping_add(1);
-        let token = ConnectionAttemptToken {
-            generation: self.snapshot.generation,
-            platform_identifier,
-        };
+        let token = ConnectionAttemptToken::new(self.snapshot.generation, platform_identifier);
         self.snapshot.token = Some(token.clone());
         self.snapshot.readiness = ConnectionReadiness::Pending;
         self.snapshot.transport = ConnectionTransportState::Connecting;
@@ -164,16 +185,34 @@ impl ConnectionAttemptLifecycle {
             return self.finish_detection(token, false);
         }
         if self.snapshot.readiness == ConnectionReadiness::Verified {
-            self.fail_capture();
+            self.fail_capture(token);
             return true;
         }
         false
     }
 
+    /// Invalidates a verified attempt whose live protocol evidence became contradictory.
+    pub fn conflict(&mut self, token: &ConnectionAttemptToken) -> bool {
+        if !self.is_current(token) || self.snapshot.readiness != ConnectionReadiness::Verified {
+            return false;
+        }
+        self.snapshot.generation = self.snapshot.generation.wrapping_add(1);
+        self.snapshot.revision = self.snapshot.revision.wrapping_add(1);
+        self.snapshot.token = None;
+        self.snapshot.deadline = None;
+        self.snapshot.readiness = ConnectionReadiness::Conflicted;
+        self.snapshot.transport = ConnectionTransportState::Disconnected;
+        true
+    }
+
     /// Retires the attempt when capture storage can no longer preserve its evidence.
-    pub fn fail_capture(&mut self) {
+    pub fn fail_capture(&mut self, token: &ConnectionAttemptToken) -> bool {
+        if !self.is_current(token) {
+            return false;
+        }
         self.disconnect();
         self.snapshot.readiness = ConnectionReadiness::Failed;
+        true
     }
 
     /// Returns the current immutable state.
@@ -288,5 +327,20 @@ mod tests {
             ConnectionTransportState::Disconnected
         );
         assert!(!lifecycle.connected(&token));
+    }
+
+    #[test]
+    fn protocol_conflict_is_terminal_and_rejects_the_old_token() {
+        let mut lifecycle = ConnectionAttemptLifecycle::default();
+        let token = lifecycle.begin("A".into(), MonotonicTimestamp::new(0));
+        assert!(lifecycle.connected(&token));
+        assert!(lifecycle.finish_detection(&token, true));
+        assert!(lifecycle.conflict(&token));
+        assert_eq!(
+            lifecycle.snapshot().readiness,
+            ConnectionReadiness::Conflicted
+        );
+        assert!(!lifecycle.is_current(&token));
+        assert!(!lifecycle.conflict(&token));
     }
 }

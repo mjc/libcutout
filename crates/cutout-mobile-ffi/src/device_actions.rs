@@ -240,7 +240,7 @@ impl CutoutSessionStateHandle {
     pub fn action_descriptors(&self) -> MobileDeviceActionDescriptorsDto {
         let inner = self.lock_inner();
         MobileDeviceActionDescriptorsDto {
-            connection: inner.state.connection.snapshot().into(),
+            connection: inner.session_state().connection.snapshot().into(),
             validation_authorized: inner.validation_authorized(),
             descriptors: inner
                 .action_descriptors()
@@ -330,7 +330,7 @@ mod tests {
             MobileDeviceActionSubmissionError::Unverified
         );
         assert_eq!(handle.actions_snapshot(), before_refusal);
-        assert!(handle.set_device_controls_validation(token.clone(), true));
+        assert!(handle.authorize_device_controls(token.clone()));
         handle
             .submit_action(token.clone(), MobileDeviceActionIdDto::ResetTripMeter, 3)
             .unwrap();

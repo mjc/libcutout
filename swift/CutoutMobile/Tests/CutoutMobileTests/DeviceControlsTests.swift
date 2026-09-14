@@ -92,7 +92,7 @@ final class DeviceControlsTests: XCTestCase {
             .unverified
         )
 
-        XCTAssertTrue(state.setDeviceControlsValidation(token: token, authorized: true))
+        XCTAssertTrue(state.authorizeDeviceControls(token: token))
         let validation = state.deviceControlsSnapshot()
         XCTAssertTrue(validation.validationAuthorized)
         XCTAssertEqual(
@@ -104,7 +104,7 @@ final class DeviceControlsTests: XCTestCase {
             state.beginConnectionAttempt(platformIdentifier: "B", nowMs: 2).token
         )
         XCTAssertFalse(state.deviceControlsSnapshot().validationAuthorized)
-        XCTAssertFalse(state.setDeviceControlsValidation(token: token, authorized: true))
-        XCTAssertTrue(state.setDeviceControlsValidation(token: replacement, authorized: true))
+        XCTAssertFalse(state.authorizeDeviceControls(token: token))
+        XCTAssertTrue(state.authorizeDeviceControls(token: replacement))
     }
 }

@@ -29,6 +29,8 @@ pub enum MobileConnectionReadinessDto {
     RecordOnly,
     /// Capture storage or a previously verified connection failed.
     Failed,
+    /// A verified decoder observed contradictory protocol evidence.
+    Conflicted,
 }
 
 /// Native connection availability, separate from protocol admission.
@@ -61,10 +63,7 @@ pub struct MobileConnectionAttemptSnapshotDto {
 
 impl From<MobileConnectionAttemptTokenDto> for ConnectionAttemptToken {
     fn from(value: MobileConnectionAttemptTokenDto) -> Self {
-        Self {
-            generation: value.generation,
-            platform_identifier: value.platform_identifier,
-        }
+        Self::new(value.generation, value.platform_identifier)
     }
 }
 
@@ -77,8 +76,8 @@ impl From<&ConnectionAttemptSnapshot> for MobileConnectionAttemptSnapshotDto {
                 .token
                 .as_ref()
                 .map(|token| MobileConnectionAttemptTokenDto {
-                    generation: token.generation,
-                    platform_identifier: token.platform_identifier.clone(),
+                    generation: token.generation(),
+                    platform_identifier: token.platform_identifier().to_owned(),
                 }),
             readiness: match value.readiness {
                 ConnectionReadiness::Disconnected => MobileConnectionReadinessDto::Disconnected,
@@ -86,6 +85,7 @@ impl From<&ConnectionAttemptSnapshot> for MobileConnectionAttemptSnapshotDto {
                 ConnectionReadiness::Verified => MobileConnectionReadinessDto::Verified,
                 ConnectionReadiness::RecordOnly => MobileConnectionReadinessDto::RecordOnly,
                 ConnectionReadiness::Failed => MobileConnectionReadinessDto::Failed,
+                ConnectionReadiness::Conflicted => MobileConnectionReadinessDto::Conflicted,
             },
             transport: match value.transport {
                 ConnectionTransportState::Disconnected => {
@@ -109,8 +109,11 @@ impl CutoutSessionStateHandle {
         token: MobileConnectionAttemptTokenDto,
     ) -> MobileConnectionAttemptSnapshotDto {
         let mut inner = self.lock_inner();
-        inner.state.connection.connected(&token.into());
-        inner.state.connection.snapshot().into()
+        inner
+            .session_state_mut()
+            .connection
+            .connected(&token.into());
+        inner.session_state().connection.snapshot().into()
     }
 
     /// Marks link loss before publishing capture availability or retrying.
@@ -120,7 +123,7 @@ impl CutoutSessionStateHandle {
     ) -> MobileConnectionAttemptSnapshotDto {
         let mut inner = self.lock_inner();
         inner.link_down(&token.into());
-        inner.state.connection.snapshot().into()
+        inner.session_state().connection.snapshot().into()
     }
 
     /// Replaces attempt and detector together, preserving discovery observations.
@@ -131,19 +134,26 @@ impl CutoutSessionStateHandle {
     ) -> MobileConnectionAttemptSnapshotDto {
         let mut inner = self.lock_inner();
         inner.begin_attempt(platform_identifier, MonotonicTimestamp::new(now_ms));
-        inner.state.connection.snapshot().into()
+        inner.session_state().connection.snapshot().into()
     }
 
     /// Returns readiness and identity under one lock.
     #[must_use]
     pub fn connection_attempt_snapshot(&self) -> MobileConnectionAttemptSnapshotDto {
-        self.lock_inner().state.connection.snapshot().into()
+        self.lock_inner()
+            .session_state()
+            .connection
+            .snapshot()
+            .into()
     }
 
     /// Admits raw transport work only for the active attempt.
     #[must_use]
     pub fn connection_attempt_is_current(&self, token: MobileConnectionAttemptTokenDto) -> bool {
-        self.lock_inner().state.connection.is_current(&token.into())
+        self.lock_inner()
+            .session_state()
+            .connection
+            .is_current(&token.into())
     }
 
     /// Admits queued ride work only while the captured attempt remains verified.
@@ -153,7 +163,7 @@ impl CutoutSessionStateHandle {
         token: MobileConnectionAttemptTokenDto,
     ) -> bool {
         self.lock_inner()
-            .state
+            .session_state()
             .connection
             .is_verified(&token.into())
     }
@@ -166,17 +176,17 @@ impl CutoutSessionStateHandle {
     ) -> MobileConnectionAttemptSnapshotDto {
         let mut inner = self.lock_inner();
         inner
-            .state
+            .session_state_mut()
             .connection
             .expire(&token.into(), MonotonicTimestamp::new(now_ms));
-        inner.state.connection.snapshot().into()
+        inner.session_state().connection.snapshot().into()
     }
 
     /// Invalidates before native cancellation so queued consumers reject old work.
     pub fn disconnect_connection_attempt(&self) -> MobileConnectionAttemptSnapshotDto {
         let mut inner = self.lock_inner();
         inner.disconnect();
-        inner.state.connection.snapshot().into()
+        inner.session_state().connection.snapshot().into()
     }
 
     /// Keeps detection errors record-only and invalidates errors after verification.
@@ -186,14 +196,17 @@ impl CutoutSessionStateHandle {
     ) -> MobileConnectionAttemptSnapshotDto {
         let mut inner = self.lock_inner();
         inner.transport_failed(&token.into());
-        inner.state.connection.snapshot().into()
+        inner.session_state().connection.snapshot().into()
     }
 
     /// Invalidates a capture that can no longer preserve incoming evidence.
-    pub fn fail_connection_capture(&self) -> MobileConnectionAttemptSnapshotDto {
+    pub fn fail_connection_capture(
+        &self,
+        token: MobileConnectionAttemptTokenDto,
+    ) -> MobileConnectionAttemptSnapshotDto {
         let mut inner = self.lock_inner();
-        inner.fail_capture();
-        inner.state.connection.snapshot().into()
+        inner.fail_capture(&token.into());
+        inner.session_state().connection.snapshot().into()
     }
 }
 
@@ -212,7 +225,7 @@ mod tests {
             let mut inner = handle.lock_inner();
             assert!(
                 inner
-                    .state
+                    .session_state_mut()
                     .connection
                     .finish_detection(&token.clone().into(), true)
             );

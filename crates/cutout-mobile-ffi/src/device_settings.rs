@@ -436,7 +436,7 @@ impl CutoutSessionStateHandle {
     pub fn settings_descriptors(&self) -> MobileSettingsDescriptorSnapshotDto {
         let inner = self.lock_inner();
         MobileSettingsDescriptorSnapshotDto {
-            connection: inner.state.connection.snapshot().into(),
+            connection: inner.session_state().connection.snapshot().into(),
             validation_authorized: inner.validation_authorized(),
             descriptors: inner
                 .settings_descriptors()
@@ -453,13 +453,15 @@ impl CutoutSessionStateHandle {
     }
 
     /// Changes validation authorization for exactly one current connection attempt.
-    pub fn set_device_controls_validation(
-        &self,
-        token: MobileConnectionAttemptTokenDto,
-        authorized: bool,
-    ) -> bool {
-        self.lock_inner()
-            .set_validation_authorization(&token.into(), authorized)
+    pub fn authorize_device_controls(&self, token: MobileConnectionAttemptTokenDto) -> bool {
+        let token = token.into();
+        self.lock_inner().authorize_validation(&token)
+    }
+
+    /// Revokes validation authorization for exactly one current connection attempt.
+    pub fn revoke_device_controls(&self, token: MobileConnectionAttemptTokenDto) -> bool {
+        let token = token.into();
+        self.lock_inner().revoke_validation(&token)
     }
 
     /// Submits one semantic value through the protocol owner.
@@ -650,7 +652,7 @@ mod tests {
             MobileDeviceSettingRequestError::InvalidValue
         );
         assert_eq!(handle.settings_snapshot(), before);
-        assert!(handle.set_device_controls_validation(token.clone(), true));
+        assert!(handle.authorize_device_controls(token.clone()));
         assert!(handle.settings_descriptors().validation_authorized);
         let next = handle.begin_connection_attempt("B".into(), 4);
         assert_eq!(
@@ -678,7 +680,7 @@ mod tests {
             .token
             .unwrap();
         let mut inner = handle.lock_inner();
-        inner.state.settings.observe_measured(
+        inner.session_state_mut().settings.observe_measured(
             SettingId::PwmTiltback,
             cutout_core::Measured {
                 value: DeviceSettingValue::Disabled,
