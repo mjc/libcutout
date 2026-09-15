@@ -3176,12 +3176,10 @@ extension CutoutSessionCore {
         _ resolution: DeviceDetectionResolution,
         on peripheral: CBPeripheral?
     ) {
-        // FFE0/FFE1 is shared by actively queried Begode devices and passively
-        // reporting Veteran/NOSFET devices.  A missing query plan (or a query
-        // that yielded no answer) is not evidence that the latter has no
-        // protocol identity.  Leave this attempt pending so a valid passive
-        // frame can promote it; the connection deadline owns the capture-only
-        // fallback if no protocol evidence ever arrives.
+        // Transport setup and unanswered probes are not protocol identity.
+        // Leave this attempt pending so a valid frame can promote it; the
+        // connection deadline owns the capture-only fallback if no protocol
+        // evidence ever arrives.
         guard isDetectingProtocol else { return }
         switch ProtocolDetectionFinishDecision(resolution: resolution) {
         case .awaitPassiveEvidence:
