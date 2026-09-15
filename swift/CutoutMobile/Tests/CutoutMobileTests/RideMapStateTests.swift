@@ -3,6 +3,17 @@ import CutoutMobileFFI
 @testable import CutoutMobile
 
 final class RideMapStateTests: XCTestCase {
+    func testActiveSnapshotCarriesAsyncLocationRecordingToken() throws {
+        let state = MobileRideMapState()
+
+        let started = try state.startGpsOnly(atMs: 1_000, lastConnectedVehicle: nil)
+        XCTAssertEqual(started.recordingToken?.rideId, started.rideID)
+        XCTAssertNotNil(started.recordingToken)
+
+        let stopped = try state.stop(atMs: 2_000)
+        XCTAssertNil(stopped.recordingToken)
+    }
+
     func testMusicHistoryProjectsRustRetentionAndObservationTime() throws {
         let state = MobileRideMapState()
         XCTAssertNil(state.currentMusicHistory())

@@ -1,7 +1,8 @@
 use crate::{
     DistanceMillimetres, LocationAdmission, LocationSample, LocationSource, MonotonicMilliseconds,
-    RideEvent, RideLifecycleState, RidePointCount, RideSummary, TransitionError, distance_between,
-    distance_between_millimetres, location::AdmittedLocationSample,
+    RideEvent, RideLifecycleState, RidePointCount, RideSummary, TransitionError,
+    ValidatedRideTransition, distance_between, distance_between_millimetres,
+    location::AdmittedLocationSample,
 };
 
 const MAX_HORIZONTAL_ACCURACY_MILLIMETRES: u32 = 100_000;
@@ -12,9 +13,13 @@ const MAX_IMPLIED_SPEED_MILLIMETRES_PER_SECOND: u64 = 100_000;
 /// Applies route admission policy to a candidate and its latest accepted predecessor.
 #[must_use]
 pub fn route_admission(
+    recording_started_at: Option<MonotonicMilliseconds>,
     previous: Option<&LocationSample>,
     sample: &LocationSample,
 ) -> LocationAdmission {
+    if recording_started_at.is_some_and(|started| sample.monotonic_milliseconds() < started) {
+        return LocationAdmission::OutOfOrder;
+    }
     if sample
         .horizontal_accuracy_millimetres()
         .is_some_and(|accuracy| accuracy > MAX_HORIZONTAL_ACCURACY_MILLIMETRES)
@@ -432,6 +437,65 @@ impl RideRecordingTiming {
     pub const fn completed_duration_milliseconds(self) -> RideDurationMilliseconds {
         self.completed_duration
     }
+
+    /// Returns active recording duration, excluding pauses and interruptions.
+    #[must_use]
+    pub const fn duration_at(
+        self,
+        state: RideLifecycleState,
+        created_at: MonotonicMilliseconds,
+        at: MonotonicMilliseconds,
+    ) -> RideDurationMilliseconds {
+        let at = match state {
+            RideLifecycleState::Active => at,
+            RideLifecycleState::Paused => match self.paused_at {
+                Some(paused_at) => paused_at,
+                None => at,
+            },
+            _ => return self.completed_duration,
+        };
+        RideDurationMilliseconds::new(
+            at.saturating_sub(created_at)
+                .saturating_sub(self.paused_duration.as_u64()),
+        )
+    }
+
+    /// Calculates timing for a validated lifecycle transition.
+    #[must_use]
+    pub fn transitioned(
+        mut self,
+        transition: ValidatedRideTransition,
+        created_at: MonotonicMilliseconds,
+        at: MonotonicMilliseconds,
+    ) -> Self {
+        let previous = transition.previous();
+        let next = transition.next();
+        let at = clamped_transition_timestamp(created_at, Some(self.last_event), at);
+        match (previous, next) {
+            (RideLifecycleState::Active, RideLifecycleState::Paused) => self.paused_at = Some(at),
+            (
+                RideLifecycleState::Paused | RideLifecycleState::Interrupted,
+                RideLifecycleState::Active,
+            ) => {
+                let recorded = self.duration_at(previous, created_at, at);
+                self.paused_duration = RideDurationMilliseconds::new(
+                    at.saturating_sub(created_at)
+                        .saturating_sub(recorded.as_u64()),
+                );
+                self.paused_at = None;
+            }
+            (
+                RideLifecycleState::Active | RideLifecycleState::Paused,
+                RideLifecycleState::Stopped | RideLifecycleState::Interrupted,
+            ) => {
+                self.completed_duration = self.duration_at(previous, created_at, at);
+                self.paused_at = None;
+            }
+            _ => {}
+        }
+        self.last_event = at;
+        self
+    }
 }
 
 /// Clamps a lifecycle timestamp to the monotonic watermark already observed by a ride.
@@ -466,6 +530,7 @@ pub struct RideMapRecorder {
     segment_started: bool,
     background_gap_count: BackgroundGapCount,
     last_monotonic_milliseconds: MonotonicMilliseconds,
+    active_started_at_milliseconds: Option<MonotonicMilliseconds>,
     paused_at_milliseconds: Option<MonotonicMilliseconds>,
     paused_duration_milliseconds: RideDurationMilliseconds,
     completed_duration_milliseconds: RideDurationMilliseconds,
@@ -495,6 +560,7 @@ impl RideMapRecorder {
             segment_started: false,
             background_gap_count: BackgroundGapCount::new(0),
             last_monotonic_milliseconds: MonotonicMilliseconds::new(0),
+            active_started_at_milliseconds: None,
             paused_at_milliseconds: None,
             paused_duration_milliseconds: RideDurationMilliseconds::new(0),
             completed_duration_milliseconds: RideDurationMilliseconds::new(0),
@@ -628,6 +694,8 @@ impl RideMapRecorder {
             associated_at_milliseconds: metadata.associated_at_milliseconds,
             last_telemetry_at_milliseconds: metadata.last_telemetry_at_milliseconds,
             last_monotonic_milliseconds,
+            active_started_at_milliseconds: (state == RideLifecycleState::Active)
+                .then_some(last_monotonic_milliseconds),
             paused_at_milliseconds: (state == RideLifecycleState::Paused)
                 .then_some(last_monotonic_milliseconds),
             paused_duration_milliseconds: RideDurationMilliseconds::new(0),
@@ -685,6 +753,7 @@ impl RideMapRecorder {
             associated_at_milliseconds: metadata.associated_at_milliseconds,
             last_telemetry_at_milliseconds: metadata.last_telemetry_at_milliseconds,
             last_monotonic_milliseconds: last,
+            active_started_at_milliseconds: (state == RideLifecycleState::Active).then_some(last),
             paused_at_milliseconds: (state == RideLifecycleState::Paused)
                 .then_some(paused_at.unwrap_or(last)),
             paused_duration_milliseconds: timing.paused_duration_milliseconds(),
@@ -833,28 +902,12 @@ impl RideMapRecorder {
         &self,
         at_milliseconds: MonotonicMilliseconds,
     ) -> RideDurationMilliseconds {
-        match self.state {
-            Some(RideLifecycleState::Active) => self.active_duration_at(at_milliseconds),
-            Some(RideLifecycleState::Paused) => {
-                let paused_at = match self.paused_at_milliseconds {
-                    Some(value) => value,
-                    None => at_milliseconds,
-                };
-                self.active_duration_at(paused_at)
-            }
-            _ => self.completed_duration_milliseconds,
-        }
-    }
-
-    const fn active_duration_at(
-        &self,
-        at_milliseconds: MonotonicMilliseconds,
-    ) -> RideDurationMilliseconds {
-        RideDurationMilliseconds::new(
-            at_milliseconds
-                .saturating_sub(self.created_at_milliseconds)
-                .saturating_sub(self.paused_duration_milliseconds.as_u64()),
-        )
+        let state = match self.state {
+            Some(state) => state,
+            None => RideLifecycleState::Draft,
+        };
+        self.recording_timing()
+            .duration_at(state, self.created_at_milliseconds, at_milliseconds)
     }
 
     /// Starts a new recording projection.
@@ -881,6 +934,7 @@ impl RideMapRecorder {
         self.state = Some(RideLifecycleState::Active);
         self.created_at_milliseconds = at_milliseconds;
         self.last_monotonic_milliseconds = at_milliseconds;
+        self.active_started_at_milliseconds = Some(at_milliseconds);
         self.candidate_vehicle = candidate_vehicle;
         self.associated_vehicle = None;
         self.associated_at_milliseconds = None;
@@ -905,51 +959,43 @@ impl RideMapRecorder {
     pub fn validate_transition(
         &self,
         event: RideEvent,
-    ) -> Result<RideLifecycleState, TransitionError> {
-        self.state.ok_or(TransitionError::Invalid)?.apply(event)
+    ) -> Result<ValidatedRideTransition, TransitionError> {
+        self.state
+            .ok_or(TransitionError::Invalid)?
+            .transition(event)
     }
 
-    /// Applies a previously validated lifecycle state.
-    pub fn apply_transition(&mut self, state: RideLifecycleState) {
-        self.apply_transition_at(state, self.last_monotonic_milliseconds);
+    /// Applies a transition validated against this recorder's current state.
+    pub fn apply_transition(
+        &mut self,
+        transition: ValidatedRideTransition,
+    ) -> Result<(), TransitionError> {
+        self.apply_transition_at(transition, self.last_monotonic_milliseconds)
     }
 
-    /// Applies a previously validated lifecycle state at a monotonic timestamp.
+    /// Applies a transition at a monotonic timestamp.
     pub fn apply_transition_at(
         &mut self,
-        state: RideLifecycleState,
+        transition: ValidatedRideTransition,
         at_milliseconds: MonotonicMilliseconds,
-    ) {
+    ) -> Result<(), TransitionError> {
+        if self.state != Some(transition.previous()) {
+            return Err(TransitionError::Invalid);
+        }
+        let state = transition.next();
         let at_milliseconds = clamped_transition_timestamp(
             self.created_at_milliseconds,
             Some(self.last_monotonic_milliseconds),
             at_milliseconds,
         );
-        match (self.state, state) {
-            (Some(RideLifecycleState::Active), RideLifecycleState::Paused) => {
-                self.paused_at_milliseconds = Some(at_milliseconds);
-            }
-            (
-                Some(RideLifecycleState::Paused | RideLifecycleState::Interrupted),
-                RideLifecycleState::Active,
-            ) => {
-                let excluded_duration = self.paused_at_milliseconds.take().map_or_else(
-                    || at_milliseconds.saturating_sub(self.last_monotonic_milliseconds),
-                    |paused_at| at_milliseconds.saturating_sub(paused_at),
-                );
-                self.paused_duration_milliseconds = self
-                    .paused_duration_milliseconds
-                    .saturating_add(RideDurationMilliseconds::new(excluded_duration));
-            }
-            (
-                Some(RideLifecycleState::Active | RideLifecycleState::Paused),
-                RideLifecycleState::Stopped | RideLifecycleState::Interrupted,
-            ) => {
-                self.completed_duration_milliseconds =
-                    self.duration_milliseconds_at(at_milliseconds);
-            }
-            _ => {}
-        }
+        let timing = self.recording_timing().transitioned(
+            transition,
+            self.created_at_milliseconds,
+            at_milliseconds,
+        );
+        self.paused_at_milliseconds = timing.paused_at_milliseconds();
+        self.paused_duration_milliseconds = timing.paused_duration_milliseconds();
+        self.completed_duration_milliseconds = timing.completed_duration_milliseconds();
         if matches!(
             self.state,
             Some(RideLifecycleState::Paused | RideLifecycleState::Interrupted)
@@ -960,8 +1006,23 @@ impl RideMapRecorder {
             self.segment_id = self.segment_id.next();
             self.segment_started = true;
         }
+        self.active_started_at_milliseconds = match (transition.previous(), state) {
+            (
+                RideLifecycleState::Active,
+                RideLifecycleState::Paused | RideLifecycleState::Interrupted,
+            )
+            | (RideLifecycleState::Active, RideLifecycleState::Stopped)
+            | (RideLifecycleState::Paused, RideLifecycleState::Stopped)
+            | (RideLifecycleState::Interrupted, RideLifecycleState::Stopped) => None,
+            (
+                RideLifecycleState::Paused | RideLifecycleState::Interrupted,
+                RideLifecycleState::Active,
+            ) => Some(at_milliseconds),
+            _ => self.active_started_at_milliseconds,
+        };
         self.last_monotonic_milliseconds = self.last_monotonic_milliseconds.max(at_milliseconds);
         self.state = Some(state);
+        Ok(())
     }
 
     /// Reconciles one connected vehicle identity with the recording.
@@ -1061,7 +1122,11 @@ impl RideMapRecorder {
     #[must_use]
     pub fn check_sample(&self, sample: &LocationSample) -> LocationAdmission {
         let previous = self.points.last().map(|point| point.sample());
-        route_admission(previous.as_ref(), sample)
+        route_admission(
+            self.active_started_at_milliseconds,
+            previous.as_ref(),
+            sample,
+        )
     }
 
     /// Admits a sample for recording after applying the complete route policy.
@@ -1165,8 +1230,29 @@ mod tests {
     };
     use crate::{
         Coordinate, LocationAdmission, LocationSample, LocationSource, RideEvent,
-        RideLifecycleState, VehicleIdentity, WallClockUnixMilliseconds,
+        RideLifecycleState, ValidatedRideTransition, VehicleIdentity, WallClockUnixMilliseconds,
     };
+
+    #[test]
+    fn imported_recording_does_not_offer_start_as_a_lifecycle_event() {
+        assert!(RideLifecycleState::Imported.recording_actions().is_empty());
+    }
+
+    #[test]
+    fn validated_transition_cannot_be_applied_to_a_different_state() {
+        let mut active = RideMapRecorder::new();
+        active.start(monotonic(1_000), None).expect("starts");
+        let mut paused = RideMapRecorder::new();
+        paused.start(monotonic(1_000), None).expect("starts");
+        let pause = paused.validate_transition(RideEvent::Pause).unwrap();
+        let _ = paused.apply_transition_at(pause, monotonic(2_000));
+        let resume = paused.validate_transition(RideEvent::Resume).unwrap();
+
+        assert_eq!(
+            active.apply_transition_at(resume, monotonic(3_000)),
+            Err(crate::TransitionError::Invalid)
+        );
+    }
 
     fn identity(value: &str) -> VehicleIdentity {
         VehicleIdentity::new(value).expect("valid vehicle identity")
@@ -1205,7 +1291,9 @@ mod tests {
             .start(monotonic(1_000), Some(identity("pev-1")))
             .expect("starts");
         assert_eq!(
-            recorder.validate_transition(RideEvent::Pause),
+            recorder
+                .validate_transition(RideEvent::Pause)
+                .map(ValidatedRideTransition::next),
             Ok(RideLifecycleState::Paused)
         );
         assert_eq!(
@@ -1222,12 +1310,21 @@ mod tests {
             recorder.observe_vehicle(&identity("pev-1"), monotonic(1_002)),
             VehicleAssociation::AlreadyAssociated
         );
-        recorder.apply_transition(RideLifecycleState::Active);
         assert_eq!(recorder.current_segment_id().value(), 0);
-        recorder.apply_transition(RideLifecycleState::Paused);
-        recorder.apply_transition(RideLifecycleState::Active);
+        let _ = recorder.apply_transition_at(
+            recorder.validate_transition(RideEvent::Pause).unwrap(),
+            monotonic(1_003),
+        );
+        let _ = recorder.apply_transition_at(
+            recorder.validate_transition(RideEvent::Resume).unwrap(),
+            monotonic(1_004),
+        );
         assert_eq!(recorder.current_segment_id().value(), 1);
-        assert!(recorder.record_sample(sample(1_003, 40.000_001)));
+        assert_eq!(
+            recorder.check_sample(&sample(1_003, 40.000_001)),
+            LocationAdmission::OutOfOrder
+        );
+        assert!(recorder.record_sample(sample(1_004, 40.000_001)));
         assert_eq!(recorder.segment_count(), RideSegmentCount::new(2));
         assert_eq!(
             recorder
@@ -1252,9 +1349,12 @@ mod tests {
         recorder.start(monotonic(1_000), None).expect("starts");
         assert!(recorder.record_sample(sample(1_001, 40.0)));
 
-        recorder.apply_transition_at(RideLifecycleState::Paused, monotonic(2_000));
-        recorder.apply_transition_at(
-            RideLifecycleState::Active,
+        let _ = recorder.apply_transition_at(
+            recorder.validate_transition(RideEvent::Pause).unwrap(),
+            monotonic(2_000),
+        );
+        let _ = recorder.apply_transition_at(
+            recorder.validate_transition(RideEvent::Resume).unwrap(),
             monotonic(2_000 + super::MAX_GAP_MILLISECONDS + 1),
         );
         assert!(recorder.record_sample(sample(2_000 + super::MAX_GAP_MILLISECONDS + 2, 40.001,)));
@@ -1273,8 +1373,14 @@ mod tests {
         let mut recorder = RideMapRecorder::new();
         recorder.start(monotonic(1_000), None).expect("starts");
         assert!(recorder.record_sample(sample(2_000, 40.0)));
-        recorder.apply_transition_at(RideLifecycleState::Interrupted, monotonic(3_000));
-        recorder.apply_transition_at(RideLifecycleState::Active, monotonic(8_000));
+        let _ = recorder.apply_transition_at(
+            recorder.validate_transition(RideEvent::Interrupt).unwrap(),
+            monotonic(3_000),
+        );
+        let _ = recorder.apply_transition_at(
+            recorder.validate_transition(RideEvent::Resume).unwrap(),
+            monotonic(8_000),
+        );
 
         assert_eq!(
             recorder.duration_milliseconds_at(monotonic(9_000)).as_u64(),
@@ -1295,8 +1401,14 @@ mod tests {
     fn resume_before_the_first_sample_keeps_the_initial_segment() {
         let mut recorder = RideMapRecorder::new();
         recorder.start(monotonic(1_000), None).expect("starts");
-        recorder.apply_transition_at(RideLifecycleState::Paused, monotonic(5_000));
-        recorder.apply_transition_at(RideLifecycleState::Active, monotonic(7_000));
+        let _ = recorder.apply_transition_at(
+            recorder.validate_transition(RideEvent::Pause).unwrap(),
+            monotonic(5_000),
+        );
+        let _ = recorder.apply_transition_at(
+            recorder.validate_transition(RideEvent::Resume).unwrap(),
+            monotonic(7_000),
+        );
 
         assert_eq!(recorder.current_segment_id(), RideMapSegmentId::new(0));
         assert!(recorder.record_sample(sample(8_000, 40.0)));
@@ -1316,19 +1428,28 @@ mod tests {
             RideDurationMilliseconds::new(4_000)
         );
 
-        recorder.apply_transition_at(RideLifecycleState::Paused, monotonic(5_000));
+        let _ = recorder.apply_transition_at(
+            recorder.validate_transition(RideEvent::Pause).unwrap(),
+            monotonic(5_000),
+        );
         assert_eq!(
             recorder.duration_milliseconds_at(monotonic(10_000)),
             RideDurationMilliseconds::new(4_000)
         );
 
-        recorder.apply_transition_at(RideLifecycleState::Active, monotonic(12_000));
+        let _ = recorder.apply_transition_at(
+            recorder.validate_transition(RideEvent::Resume).unwrap(),
+            monotonic(12_000),
+        );
         assert_eq!(
             recorder.duration_milliseconds_at(monotonic(15_000)),
             RideDurationMilliseconds::new(7_000)
         );
 
-        recorder.apply_transition_at(RideLifecycleState::Stopped, monotonic(17_000));
+        let _ = recorder.apply_transition_at(
+            recorder.validate_transition(RideEvent::Stop).unwrap(),
+            monotonic(17_000),
+        );
         assert_eq!(
             recorder.duration_milliseconds_at(monotonic(20_000)),
             RideDurationMilliseconds::new(9_000)
@@ -1389,6 +1510,43 @@ mod tests {
     }
 
     #[test]
+    fn cached_location_before_recording_start_is_rejected() {
+        let mut recorder = RideMapRecorder::new();
+        recorder.start(monotonic(10_000), None).expect("starts");
+        assert_eq!(
+            recorder.check_sample(&sample(9_999, 40.0)),
+            LocationAdmission::OutOfOrder
+        );
+        assert_eq!(
+            recorder.check_sample(&sample(10_000, 40.0)),
+            LocationAdmission::Accepted
+        );
+    }
+
+    #[test]
+    fn cached_location_from_a_paused_interval_is_rejected_after_resume() {
+        let mut recorder = RideMapRecorder::new();
+        recorder.start(monotonic(1_000), None).expect("starts");
+        let _ = recorder.apply_transition_at(
+            recorder.validate_transition(RideEvent::Pause).unwrap(),
+            monotonic(2_000),
+        );
+        let _ = recorder.apply_transition_at(
+            recorder.validate_transition(RideEvent::Resume).unwrap(),
+            monotonic(4_000),
+        );
+
+        assert_eq!(
+            recorder.check_sample(&sample(3_000, 40.0)),
+            LocationAdmission::OutOfOrder
+        );
+        assert_eq!(
+            recorder.check_sample(&sample(4_000, 40.0)),
+            LocationAdmission::Accepted
+        );
+    }
+
+    #[test]
     fn route_admission_applies_accuracy_and_speed_policy_without_recorder_state() {
         let previous = sample(1_000, 40.0);
         let low_accuracy = LocationSample::new(
@@ -1399,13 +1557,13 @@ mod tests {
             LocationSource::Live,
         );
         assert_eq!(
-            route_admission(Some(&previous), &low_accuracy),
+            route_admission(None, Some(&previous), &low_accuracy),
             LocationAdmission::AccuracyTooLow
         );
 
         let unrealistic_jump = sample(1_001, 40.001);
         assert_eq!(
-            route_admission(Some(&previous), &unrealistic_jump),
+            route_admission(None, Some(&previous), &unrealistic_jump),
             LocationAdmission::UnrealisticJump
         );
     }
@@ -1490,8 +1648,14 @@ mod tests {
     fn recording_a_late_sample_does_not_move_the_monotonic_watermark_backwards() {
         let mut recorder = RideMapRecorder::new();
         recorder.start(monotonic(1_000), None).expect("starts");
-        recorder.apply_transition_at(RideLifecycleState::Paused, monotonic(3_000));
-        recorder.apply_transition_at(RideLifecycleState::Active, monotonic(5_000));
+        let _ = recorder.apply_transition_at(
+            recorder.validate_transition(RideEvent::Pause).unwrap(),
+            monotonic(3_000),
+        );
+        let _ = recorder.apply_transition_at(
+            recorder.validate_transition(RideEvent::Resume).unwrap(),
+            monotonic(5_000),
+        );
 
         recorder.record_sample(sample(4_000, 40.0));
 

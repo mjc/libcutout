@@ -43,12 +43,39 @@ pub enum RideEvent {
 }
 
 impl RideLifecycleState {
+    /// Actions offered for the current recording; Start creates a separate new ride.
+    #[must_use]
+    pub fn recording_actions(self) -> Vec<RideEvent> {
+        if matches!(self, Self::Saved | Self::Discarded) {
+            return vec![RideEvent::Start];
+        }
+        [
+            RideEvent::Start,
+            RideEvent::Pause,
+            RideEvent::Resume,
+            RideEvent::Stop,
+            RideEvent::Save,
+            RideEvent::Discard,
+        ]
+        .into_iter()
+        .filter(|event| self.apply(*event).is_ok())
+        .filter(|event| {
+            *event != RideEvent::Discard || matches!(self, Self::Stopped | Self::Interrupted)
+        })
+        .collect()
+    }
+
     /// Applies one event without performing I/O or mutating external state.
     ///
     /// # Errors
     ///
     /// Returns [`TransitionError::Invalid`] when the event is not valid for the current state.
     pub fn apply(self, event: RideEvent) -> Result<Self, TransitionError> {
+        self.transition(event).map(|transition| transition.next())
+    }
+
+    /// Validates an event and retains the state it was validated against.
+    pub fn transition(self, event: RideEvent) -> Result<ValidatedRideTransition, TransitionError> {
         let next = match (self, event) {
             (Self::Draft, RideEvent::Start)
             | (Self::Paused | Self::Interrupted, RideEvent::Resume) => Self::Active,
@@ -63,7 +90,31 @@ impl RideLifecycleState {
             (Self::Stopped | Self::Interrupted, RideEvent::Save) => Self::Saved,
             _ => return Err(TransitionError::Invalid),
         };
-        Ok(next)
+        Ok(ValidatedRideTransition {
+            previous: self,
+            next,
+        })
+    }
+}
+
+/// A lifecycle transition validated against one specific source state.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ValidatedRideTransition {
+    previous: RideLifecycleState,
+    next: RideLifecycleState,
+}
+
+impl ValidatedRideTransition {
+    /// Returns the state used to validate this transition.
+    #[must_use]
+    pub const fn previous(self) -> RideLifecycleState {
+        self.previous
+    }
+
+    /// Returns the validated destination state.
+    #[must_use]
+    pub const fn next(self) -> RideLifecycleState {
+        self.next
     }
 }
 

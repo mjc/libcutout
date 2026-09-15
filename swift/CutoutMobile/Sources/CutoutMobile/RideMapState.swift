@@ -90,6 +90,15 @@ public enum MobileRideMapTelemetryStateDto: Equatable, Hashable, Sendable {
     case unknown
 }
 
+public enum MobileRideMapActionDto: Equatable, Hashable, Sendable {
+    case start
+    case pause
+    case resume
+    case stop
+    case discard
+    case save
+}
+
 public enum MobileRideMapTelemetryObservation: Equatable, Hashable, Sendable {
     case observed
     case alreadyObserved
@@ -441,7 +450,12 @@ public struct MobileRideMapRouteEndpointMetadata: Equatable, Hashable, Sendable 
 
 public struct MobileRideMapSnapshotDto: Equatable, Hashable, Sendable {
     public let rideID: String
+    public let revision: UInt64
+    /// Token captured with an active recording for asynchronous location callbacks.
+    public let recordingToken: MobileRideMapRecordingTokenDto?
     public let state: MobileRideMapStateDto
+    public let allowedActions: [MobileRideMapActionDto]
+    public let telemetryState: MobileRideMapTelemetryStateDto
     public let summary: MobileRideMapSummaryDto
     public let segmentCount: UInt64
     public let associatedVehicle: String?
@@ -449,14 +463,22 @@ public struct MobileRideMapSnapshotDto: Equatable, Hashable, Sendable {
 
     public init(
         rideID: String,
+        revision: UInt64 = 0,
+        recordingToken: MobileRideMapRecordingTokenDto? = nil,
         state: MobileRideMapStateDto,
+        allowedActions: [MobileRideMapActionDto] = [],
+        telemetryState: MobileRideMapTelemetryStateDto = .unknown,
         summary: MobileRideMapSummaryDto,
         segmentCount: UInt64,
         associatedVehicle: String?,
         recordedBoundsAvailable: Bool = false
     ) {
         self.rideID = rideID
+        self.revision = revision
+        self.recordingToken = recordingToken
         self.state = state
+        self.allowedActions = allowedActions
+        self.telemetryState = telemetryState
         self.summary = summary
         self.segmentCount = segmentCount
         self.associatedVehicle = associatedVehicle
@@ -947,12 +969,14 @@ public final class MobileRideMapState: @unchecked Sendable {
 
     /// Forwards one complete Core Location callback to Rust; Rust owns source-time admission.
     public func ingestLocationBatch(
+        recordingToken: MobileRideMapRecordingTokenDto?,
         receiptMonotonicMs: UInt64,
         receiptWallClockUnixMs: UInt64,
         samples: [MobilePhoneLocationSampleDto]
     ) throws -> [MobileRideMapDecisionDto] {
         try withCore {
             try $0.ingestLocationBatch(
+                recording: recordingToken,
                 receiptMonotonicMs: receiptMonotonicMs,
                 receiptWallClockUnixMs: receiptWallClockUnixMs,
                 samples: samples
@@ -1152,7 +1176,11 @@ public final class MobileRideMapState: @unchecked Sendable {
     private func mapSnapshot(_ snapshot: MobileRideMapCoreSnapshotDto) -> MobileRideMapSnapshotDto {
         MobileRideMapSnapshotDto(
             rideID: snapshot.rideId,
+            revision: snapshot.revision,
+            recordingToken: snapshot.recordingToken,
             state: mapState(snapshot.state),
+            allowedActions: snapshot.allowedActions.compactMap(mapAction),
+            telemetryState: map(snapshot.telemetryState),
             summary: MobileRideMapSummaryDto(
                 pointCount: snapshot.summary.pointCount,
                 distanceMeters: snapshot.summary.distanceMeters,
@@ -1346,6 +1374,18 @@ public final class MobileRideMapState: @unchecked Sendable {
         case .associatedFresh: return .associatedFresh
         case .associatedStale: return .associatedStale
         case .unknown: return .unknown
+        }
+    }
+
+    private func mapAction(_ action: MobileRideEventDto) -> MobileRideMapActionDto? {
+        switch action {
+        case .start: return .start
+        case .pause: return .pause
+        case .resume: return .resume
+        case .stop: return .stop
+        case .discard: return .discard
+        case .save: return .save
+        case .interrupt, .import: return nil
         }
     }
 

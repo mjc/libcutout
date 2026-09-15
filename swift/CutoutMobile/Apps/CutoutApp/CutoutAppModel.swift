@@ -438,10 +438,9 @@ final class CutoutAppModel {
         }
         self.core.onRideMapSnapshotChange = { [weak self] snapshot in
             guard let self else { return }
+            guard self.acceptsRideMapSnapshot(snapshot) else { return }
             self.rideMapSnapshot = snapshot
-            self.rideMapLiveTelemetryState = snapshot.associatedVehicle == nil
-                ? .gpsOnly
-                : .associatedNoTelemetry
+            self.rideMapLiveTelemetryState = snapshot.telemetryState
             self.updateRideMapDurationTicker()
         }
         self.core.onRideMapErrorChange = { [weak self] error in
@@ -1028,9 +1027,7 @@ final class CutoutAppModel {
             musicCoordinator.restoreHistoryPolicy(musicHistoryPolicy)
             musicTimelineEvents = []
         }
-        rideMapLiveTelemetryState = rideMapSnapshot?.associatedVehicle == nil
-            ? .gpsOnly
-            : .associatedNoTelemetry
+        rideMapLiveTelemetryState = rideMapSnapshot?.telemetryState
         updateRideMapDurationTicker()
         guard rideMapSnapshot != nil else { return }
         rideMapRestoreTask?.cancel()
@@ -1954,6 +1951,7 @@ final class CutoutAppModel {
         snapshot: MobileRideMapSnapshotDto,
         decision: MobileRideMapDecisionDto
     ) {
+        guard acceptsRideMapSnapshot(snapshot) else { return }
         rideMapLiveError = nil
         rideMapSnapshot = snapshot
         rideMapLastDecision = decision
@@ -1966,6 +1964,12 @@ final class CutoutAppModel {
         case .rejected, .ignored, .storageError:
             break
         }
+    }
+
+    private func acceptsRideMapSnapshot(_ snapshot: MobileRideMapSnapshotDto) -> Bool {
+        guard let current = rideMapSnapshot else { return true }
+        guard snapshot.revision >= current.revision else { return false }
+        return snapshot.revision != current.revision || snapshot.rideID == current.rideID
     }
 
     /// Serializes live projections while allowing a burst of accepted points to coalesce.
@@ -2070,9 +2074,7 @@ final class CutoutAppModel {
             if resetPoints {
                 invalidateLiveProjection(clearPoints: true)
             }
-            rideMapLiveTelemetryState = rideMapSnapshot?.associatedVehicle == nil
-                ? .gpsOnly
-                : .associatedNoTelemetry
+            rideMapLiveTelemetryState = rideMapSnapshot?.telemetryState
             return true
         } catch {
             rideMapLiveError = Self.mapRideMapError(error)

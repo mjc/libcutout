@@ -11,7 +11,7 @@
 mod coordinate;
 pub use coordinate::{Coordinate, CoordinateError, LatitudeE7, LongitudeE7};
 mod lifecycle;
-pub use lifecycle::{RideEvent, RideLifecycleState, TransitionError};
+pub use lifecycle::{RideEvent, RideLifecycleState, TransitionError, ValidatedRideTransition};
 mod location;
 pub use location::{
     LocationAdmission, LocationSample, LocationSource, MonotonicMilliseconds,

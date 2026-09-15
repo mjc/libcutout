@@ -10,6 +10,7 @@ struct RideMapControlsView: View {
     }
 
     let state: MobileRideMapStateDto?
+    let allowedActions: [MobileRideMapActionDto]
     @Binding var isDiscardConfirmationPresented: Bool
     let pause: () -> Void
     let resume: () -> Void
@@ -30,47 +31,44 @@ struct RideMapControlsView: View {
         switch Self.controlSet(for: state) {
         case .recording:
             RideMapAdaptiveControls {
-                Button(action: pause) {
-                    Label(localizedAppText("ride_map.pause"), systemImage: "pause.fill")
-                        .frame(maxWidth: .infinity, minHeight: 48)
-                }
-                .buttonStyle(.borderedProminent)
-                .tint(PevColors.yellow)
-                .accessibilityIdentifier("ride-map.pause")
-                stopButton(prominent: true)
+                if allows(.pause) { pauseButton }
+                if allows(.stop) { stopButton(prominent: true) }
             }
         case .resumable:
             RideMapAdaptiveControls {
-                Button(action: resume) {
-                    Label(localizedAppText("ride_map.resume"), systemImage: "play.fill")
-                        .frame(maxWidth: .infinity, minHeight: 48)
-                }
-                .buttonStyle(.borderedProminent)
-                .tint(PevColors.yellow)
-                .accessibilityIdentifier("ride-map.resume")
-                stopButton(prominent: false)
+                if allows(.resume) { resumeButton }
+                if allows(.stop) { stopButton(prominent: false) }
+                if allows(.save) { saveButton }
+                if allows(.discard) { discardButton }
             }
         case .terminal:
             RideMapAdaptiveControls {
-                Button(action: save) {
-                    Label(localizedAppText("ride_map.save"), systemImage: "checkmark.circle.fill")
-                        .frame(maxWidth: .infinity, minHeight: 48)
-                }
-                .buttonStyle(.borderedProminent)
-                .accessibilityIdentifier("ride-map.save")
-
-                Button(role: .destructive) {
-                    isDiscardConfirmationPresented = true
-                } label: {
-                    Label(localizedAppText("ride_map.discard"), systemImage: "trash")
-                        .frame(maxWidth: .infinity, minHeight: 48)
-                }
-                .buttonStyle(.bordered)
-                .accessibilityIdentifier("ride-map.discard")
+                if allows(.save) { saveButton }
+                if allows(.discard) { discardButton }
             }
         case .start:
-            startButton
+            if allows(.start) { startButton }
         }
+    }
+
+    private var pauseButton: some View {
+        Button(action: pause) {
+            Label(localizedAppText("ride_map.pause"), systemImage: "pause.fill")
+                .frame(maxWidth: .infinity, minHeight: 48)
+        }
+        .buttonStyle(.borderedProminent)
+        .tint(PevColors.yellow)
+        .accessibilityIdentifier("ride-map.pause")
+    }
+
+    private var resumeButton: some View {
+        Button(action: resume) {
+            Label(localizedAppText("ride_map.resume"), systemImage: "play.fill")
+                .frame(maxWidth: .infinity, minHeight: 48)
+        }
+        .buttonStyle(.borderedProminent)
+        .tint(PevColors.yellow)
+        .accessibilityIdentifier("ride-map.resume")
     }
 
     @ViewBuilder
@@ -108,6 +106,30 @@ struct RideMapControlsView: View {
         .buttonStyle(.borderedProminent)
         .tint(PevColors.yellow)
         .accessibilityIdentifier("ride-map.start")
+    }
+
+    private var saveButton: some View {
+        Button(action: save) {
+            Label(localizedAppText("ride_map.save"), systemImage: "checkmark.circle.fill")
+                .frame(maxWidth: .infinity, minHeight: 48)
+        }
+        .buttonStyle(.borderedProminent)
+        .accessibilityIdentifier("ride-map.save")
+    }
+
+    private var discardButton: some View {
+        Button(role: .destructive) {
+            isDiscardConfirmationPresented = true
+        } label: {
+            Label(localizedAppText("ride_map.discard"), systemImage: "trash")
+                .frame(maxWidth: .infinity, minHeight: 48)
+        }
+        .buttonStyle(.bordered)
+        .accessibilityIdentifier("ride-map.discard")
+    }
+
+    private func allows(_ action: MobileRideMapActionDto) -> Bool {
+        allowedActions.contains(action)
     }
 }
 
