@@ -227,6 +227,22 @@ final class RideMapPresentationTests: XCTestCase {
         XCTAssertEqual(second.span.longitudeDelta, first.span.longitudeDelta)
     }
 
+    func testLiveFollowProjectionVersionChangesWhenTerminalSequenceIsReused() {
+        let first = RideMapCanvasView.pathKey(
+            routeID: "live",
+            projectionVersion: 1,
+            points: [point(sequence: 0, latitude: 40, longitude: -105)]
+        )
+        let replacement = RideMapCanvasView.pathKey(
+            routeID: "live",
+            projectionVersion: 2,
+            points: [point(sequence: 0, latitude: 41, longitude: -106)]
+        )
+
+        XCTAssertEqual(first.lastSequence, replacement.lastSequence)
+        XCTAssertNotEqual(first.projectionVersion, replacement.projectionVersion)
+    }
+
     func testInitialFollowClampsWholeRideFitToAStableNavigationScale() {
         let span = RideMapLiveContentView.stableFollowSpan(
             for: MKCoordinateSpan(latitudeDelta: 12, longitudeDelta: 24)

@@ -106,7 +106,7 @@ struct RideMapLiveContentView: View {
             followsLatestPoint = true
             followSpan = nil
         }
-        .onChange(of: displayPoints.last?.sequence, initial: true) { _, _ in
+        .onChange(of: projectionVersion, initial: true) { _, _ in
             guard followsLatestPoint else { return }
             recenterOnLatestPoint()
         }
