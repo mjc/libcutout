@@ -18,6 +18,15 @@ func protocolIdentityFallbackDisplayName(
     }
 }
 
+enum ProtocolDetectionFinishDecision: Equatable {
+    case awaitPassiveEvidence
+    case evaluateResolvedEvidence
+
+    init(resolution: DeviceDetectionResolution) {
+        self = resolution.protocolFamily == nil ? .awaitPassiveEvidence : .evaluateResolvedEvidence
+    }
+}
+
 public enum CaptureWriterHealth: Equatable, Sendable {
     case healthy
     case failed
@@ -3170,13 +3179,28 @@ extension CutoutSessionCore {
         _ resolution: DeviceDetectionResolution,
         on peripheral: CBPeripheral?
     ) {
+        // FFE0/FFE1 is shared by actively queried Begode devices and passively
+        // reporting Veteran/NOSFET devices.  A missing query plan (or a query
+        // that yielded no answer) is not evidence that the latter has no
+        // protocol identity.  Leave this attempt pending so a valid passive
+        // frame can promote it; the connection deadline owns the capture-only
+        // fallback if no protocol evidence ever arrives.
+        guard isDetectingProtocol else { return }
+        switch ProtocolDetectionFinishDecision(resolution: resolution) {
+        case .awaitPassiveEvidence:
+            return
+        case .evaluateResolvedEvidence:
+            break
+        }
+
         guard !promoteProtocolDetectionIfResolved(
             resolution,
             on: peripheral,
             allowClosestMatch: true
-        ), isDetectingProtocol else {
+        ) else {
             return
         }
+
         recordUnresolvedProtocolDetection(.unsupported, on: peripheral)
     }
 
@@ -3212,7 +3236,7 @@ extension CutoutSessionCore {
                 finishProtocolDetectionOrRecord(deviceDetectionSession.resolution, on: peripheral)
             }
         case .unsupported:
-            recordUnresolvedProtocolDetection(.unsupported, on: peripheral)
+            finishProtocolDetectionOrRecord(deviceDetectionSession.resolution, on: peripheral)
         case .writes, .alreadyPending:
             break
         }

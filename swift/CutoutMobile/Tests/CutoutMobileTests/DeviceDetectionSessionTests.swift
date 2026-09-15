@@ -68,6 +68,23 @@ final class DeviceDetectionSessionTests: XCTestCase {
         )
     }
 
+    func testPassiveProtocolEvidenceRemainsEligibleForRideAdmission() {
+        let session = DeviceDetectionSession()
+        let frame = syntheticVeteranFrameWithModelId43()
+
+        XCTAssertEqual(
+            ProtocolDetectionFinishDecision(resolution: session.resolution),
+            .awaitPassiveEvidence
+        )
+
+        _ = session.observeNotification(bytes: frame)
+
+        XCTAssertEqual(
+            ProtocolDetectionFinishDecision(resolution: session.resolution),
+            .evaluateResolvedEvidence
+        )
+    }
+
     func testProbeDispositionRefusesMissingMalformedAndConflictingEvidence() {
         let missingSession = DeviceDetectionSession()
         _ = missingSession.observeBegodeNameProbe()
@@ -97,7 +114,7 @@ final class DeviceDetectionSessionTests: XCTestCase {
         )
     }
 
-    func testIdentificationProbeOutcomeDistinguishesProbeNeededAndUnsupported() {
+    func testAttemptScopedIdentificationProbeOutcomeDistinguishesProbeNeededAndUnsupported() {
         let aeroState = CutoutSessionStateHandle()
         _ = aeroState.observeDiscovery(observation: DiscoveryObservation(
             platformIdentifier: "ios-local-aero",
@@ -107,6 +124,9 @@ final class DeviceDetectionSessionTests: XCTestCase {
             rssiDbm: -48
         ))
         _ = aeroState.selectDiscoveredPlatform(platformIdentifier: "ios-local-aero")
+        XCTAssertNotNil(
+            aeroState.beginConnectionAttempt(platformIdentifier: "ios-local-aero", nowMs: 1_000).token
+        )
 
         let vescState = CutoutSessionStateHandle()
         _ = vescState.observeDiscovery(observation: DiscoveryObservation(
@@ -117,8 +137,10 @@ final class DeviceDetectionSessionTests: XCTestCase {
             rssiDbm: -48
         ))
         _ = vescState.selectDiscoveredPlatform(platformIdentifier: "ios-local-vesc")
+        _ = vescState.beginConnectionAttempt(platformIdentifier: "ios-local-vesc", nowMs: 1_000).token
 
-        guard case let .writes(writes) = DeviceDetectionSession(sessionState: aeroState)
+        let aeroSession = DeviceDetectionSession(sessionState: aeroState)
+        guard case let .writes(writes) = aeroSession
             .beginIdentificationProbe(at: MonotonicMilliseconds(1_000))
         else {
             return XCTFail("FFE0 transport evidence should schedule protocol probes")

@@ -76,9 +76,11 @@ struct ContentView: View {
                 navigate(to: .devicePicker)
             case .returnToPicker:
                 break
+            case .openCapture where route == .devicePicker:
+                navigate(to: .capture)
             case let .openRide(connectionRoute) where route == .devicePicker:
                 navigate(to: CutoutAppRoute.route(for: connectionRoute))
-            case .stay, .openRide:
+            case .stay, .openCapture, .openRide:
                 break
             }
         }

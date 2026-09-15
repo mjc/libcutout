@@ -1737,7 +1737,7 @@ final class CutoutAppModelTests: XCTestCase {
         )
         XCTAssertEqual(
             ConnectionState.connected(selection).navigationIntent(isRecordOnlyCapture: true),
-            .stay
+            .openCapture
         )
     }
 
@@ -1787,7 +1787,7 @@ final class CutoutAppModelTests: XCTestCase {
 
         XCTAssertEqual(store.platformIdentifier, "saved-device")
         XCTAssertTrue(model.hasSavedDevice)
-        XCTAssertEqual(model.connectionState.navigationIntent(isRecordOnlyCapture: true), .stay)
+        XCTAssertEqual(model.connectionState.navigationIntent(isRecordOnlyCapture: true), .openCapture)
     }
 
     @MainActor
@@ -1812,7 +1812,7 @@ final class CutoutAppModelTests: XCTestCase {
         XCTAssertTrue(model.isRecordOnlyCapture)
         XCTAssertEqual(model.recordOnlyDeviceKind, row.title)
         XCTAssertEqual(model.connectionState, .picker)
-        XCTAssertEqual(model.connectionState.navigationIntent(isRecordOnlyCapture: true), .stay)
+        XCTAssertEqual(model.connectionState.navigationIntent(isRecordOnlyCapture: true), .openCapture)
     }
 
     @MainActor
