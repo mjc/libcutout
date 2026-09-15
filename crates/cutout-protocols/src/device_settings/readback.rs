@@ -5,7 +5,7 @@ use cutout_core::{
     SettingsReadback, SpeedAlarmMode,
 };
 
-use super::{DeviceControlProfile, SettingControl, control};
+use super::{DeviceControlProfile, SettingControl};
 use crate::{
     AERO_FIELD_BEEPER_VOLUME_PERCENT, AERO_FIELD_BRAKE_OVERPRESSURE_ALARM_PERCENT,
     AERO_FIELD_DISPLAY_BACKLIGHT_PERCENT, AERO_FIELD_DYNAMIC_ASSIST_PERCENT,
@@ -36,7 +36,7 @@ impl DeviceControlProfile {
     pub fn normalize_readback(self, readback: SettingsReadback) -> Vec<SettingObservation> {
         let mut observations = Vec::new();
         for entry in readback.entries().into_iter().flatten() {
-            normalize_entry(entry, &mut observations);
+            normalize_entry(self, entry, &mut observations);
         }
         let descriptors = self.descriptors(false);
         observations.retain(|entry| descriptors.iter().any(|item| item.id == entry.id));
@@ -61,7 +61,11 @@ fn push(
     });
 }
 
-fn normalize_entry(entry: SettingsEntry, observations: &mut Vec<SettingObservation>) {
+fn normalize_entry(
+    profile: DeviceControlProfile,
+    entry: SettingsEntry,
+    observations: &mut Vec<SettingObservation>,
+) {
     let raw = entry.field.value;
     let id = match entry.field.id {
         AERO_FIELD_PWM_PERCENT => SettingId::PwmTiltback,
@@ -110,10 +114,14 @@ fn normalize_entry(entry: SettingsEntry, observations: &mut Vec<SettingObservati
         }
         _ => return,
     };
-    push(observations, entry, id, semantic_value(id, raw));
+    push(observations, entry, id, semantic_value(profile, id, raw));
 }
 
-fn semantic_value(id: SettingId, raw: i64) -> Option<DeviceSettingValue> {
+fn semantic_value(
+    profile: DeviceControlProfile,
+    id: SettingId,
+    raw: i64,
+) -> Option<DeviceSettingValue> {
     match id {
         SettingId::PwmTiltback => match raw {
             0..=100 => Some(DeviceSettingValue::Number(i32::try_from(raw).ok()?)),
@@ -131,7 +139,7 @@ fn semantic_value(id: SettingId, raw: i64) -> Option<DeviceSettingValue> {
             .contains(&raw)
             .then(|| i32::try_from(raw).ok().map(DeviceSettingValue::Number))
             .flatten(),
-        _ => match control(id) {
+        _ => match profile.control(id)? {
             SettingControl::Boolean => match raw {
                 0 => Some(DeviceSettingValue::Boolean(false)),
                 1 => Some(DeviceSettingValue::Boolean(true)),
