@@ -277,6 +277,8 @@ final class CutoutAppModel {
     private var lastLiveActivityUpdate: MonotonicMilliseconds?
     private var liveActivityRequestID: UInt64 = 0
     private var captureFileName: String?
+    private var latestCaptureGeneration: CaptureGeneration?
+    private var activeCaptureGeneration: CaptureGeneration?
     private var captureNotificationCount = 0
     private var captureLabel: String?
     private var hasStarted = false
@@ -2177,6 +2179,8 @@ final class CutoutAppModel {
             isFinishing: isFinishingCapture,
             activeLabels: activeCaptureLabels,
             fileName: captureFileName,
+            latestGeneration: latestCaptureGeneration,
+            activeGeneration: activeCaptureGeneration,
             notificationCount: captureNotificationCount,
             label: captureLabel,
             deviceKind: recordOnlyDeviceKind
@@ -2193,6 +2197,8 @@ final class CutoutAppModel {
             isFinishingCapture = previousCapture.isFinishing
             activeCaptureLabels = previousCapture.activeLabels
             captureFileName = previousCapture.fileName
+            latestCaptureGeneration = previousCapture.latestGeneration
+            activeCaptureGeneration = previousCapture.activeGeneration
             captureNotificationCount = previousCapture.notificationCount
             captureLabel = previousCapture.label
             recordOnlyDeviceKind = previousCapture.deviceKind
@@ -2218,6 +2224,7 @@ final class CutoutAppModel {
         isFinishingCapture = false
         activeCaptureLabels.removeAll()
         captureFileName = nil
+        activeCaptureGeneration = nil
         captureNotificationCount = 0
         captureLabel = nil
         recordOnlyDeviceKind = nil
@@ -2827,18 +2834,23 @@ final class CutoutAppModel {
 
     func applyCaptureEvent(_ event: CaptureEvent) {
         switch event {
-        case let .started(fileURL):
+        case let .started(generation, fileURL):
+            guard latestCaptureGeneration.map({ generation >= $0 }) ?? true else { return }
+            latestCaptureGeneration = generation
+            activeCaptureGeneration = generation
             captureFileName = fileURL.lastPathComponent
             captureNotificationCount = 0
             captureStatus = captureFileName.map(CaptureStatus.recordingLocally)
-        case .notificationRecorded:
+        case let .notificationRecorded(generation):
+            guard generation == activeCaptureGeneration else { return }
             captureNotificationCount += 1
             captureStatus = .recording(
                 label: captureLabel,
                 notificationCount: captureNotificationCount,
                 fileName: captureFileName
             )
-        case let .progress(progress):
+        case let .progress(generation, progress):
+            guard generation == activeCaptureGeneration else { return }
             captureProgress = progress
             captureNotificationCount = Int(clamping: progress.notificationCount)
             captureStatus = .recording(
@@ -2846,11 +2858,15 @@ final class CutoutAppModel {
                 notificationCount: captureNotificationCount,
                 fileName: captureFileName
             )
-        case let .finished(fileURL):
+        case let .finished(generation, fileURL):
+            guard generation == activeCaptureGeneration else { return }
             captureFileName = fileURL.lastPathComponent
             captureStatus = .saved(fileName: fileURL.lastPathComponent)
-        case .failed:
+            activeCaptureGeneration = nil
+        case let .failed(generation):
+            guard generation == activeCaptureGeneration else { return }
             captureStatus = .failed
+            activeCaptureGeneration = nil
         }
     }
 }

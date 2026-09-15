@@ -2228,6 +2228,37 @@ final class CutoutAppModelTests: XCTestCase {
     }
 
     @MainActor
+    func testLateCaptureTerminalEventsCannotReplaceTheCurrentGeneration() {
+        let model = CutoutAppModel()
+        let first = CaptureGeneration(rawValue: 1)
+        let second = CaptureGeneration(rawValue: 2)
+        let firstURL = URL(fileURLWithPath: "/tmp/first.cutout")
+        let secondURL = URL(fileURLWithPath: "/tmp/second.cutout")
+        let progress = CaptureProgress(
+            elapsedMilliseconds: 1_000,
+            notificationCount: 7,
+            fileSizeBytes: 128,
+            queuedMessageCount: 0,
+            writerError: nil
+        )
+
+        model.applyCaptureEvent(.started(generation: first, fileURL: firstURL))
+        model.applyCaptureEvent(.started(generation: second, fileURL: secondURL))
+        model.applyCaptureEvent(.progress(generation: second, progress))
+        model.applyCaptureEvent(.finished(generation: first, fileURL: firstURL))
+        XCTAssertEqual(
+            model.captureStatus,
+            .recording(label: nil, notificationCount: 7, fileName: "second.cutout")
+        )
+        model.applyCaptureEvent(.failed(generation: first))
+
+        XCTAssertEqual(
+            model.captureStatus,
+            .recording(label: nil, notificationCount: 7, fileName: "second.cutout")
+        )
+    }
+
+    @MainActor
     func testRejectedRecordOnlyCapturePreservesTheExistingSession() {
         let model = CutoutAppModel()
         let priorCapture = URL(fileURLWithPath: "/tmp/prior.cutout")

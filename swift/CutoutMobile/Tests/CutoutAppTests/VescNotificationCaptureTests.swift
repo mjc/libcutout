@@ -104,7 +104,7 @@ final class VescNotificationCaptureTests: XCTestCase {
         var url: URL?
         let core = CutoutSessionCore(testScript: CutoutSessionTestScript(candidate: candidate, telemetry: nil))
         core.onCaptureEvent = { event in
-            if case let .started(fileURL) = event { url = fileURL; started.fulfill() }
+            if case let .started(_, fileURL) = event { url = fileURL; started.fulfill() }
         }
         XCTAssertTrue(core.recordOnly(platformIdentifier: candidate.platformIdentifier))
         await fulfillment(of: [started], timeout: 2)
