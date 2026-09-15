@@ -163,11 +163,25 @@ pub enum SettingsRequestError {
 /// Capability selection over shared settings and actions, without client model switches.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct DeviceControlProfile {
+    settings_adapter: SettingsAdapter,
     pub(crate) available: Capabilities,
     pub(crate) verified: Capabilities,
     confirmation: Capabilities,
     readable: &'static [SettingId],
     default_charge_profile: Option<ChargeProfile>,
+}
+
+/// Protocol-owned settings semantics selected with a verified device profile.
+///
+/// Raw command capabilities alone cannot select a settings adapter: different
+/// protocols can reuse command kinds while assigning different value ranges and
+/// wire encodings to the same semantic setting.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+enum SettingsAdapter {
+    #[default]
+    None,
+    Aero,
+    Falcon,
 }
 
 impl DeviceControlProfile {
@@ -179,12 +193,20 @@ impl DeviceControlProfile {
         confirmation: Capabilities,
     ) -> Self {
         Self {
+            settings_adapter: SettingsAdapter::None,
             available,
             verified,
             confirmation,
             readable: &[],
             default_charge_profile: None,
         }
+    }
+
+    /// Selects the verified protocol's settings semantics.
+    #[must_use]
+    const fn with_settings_adapter(mut self, settings_adapter: SettingsAdapter) -> Self {
+        self.settings_adapter = settings_adapter;
+        self
     }
 
     /// Adds protocol-specific passive observations that have no write command.
@@ -210,6 +232,9 @@ impl DeviceControlProfile {
     /// Returns supported controls, retaining diagnostic-only and unverified definitions.
     #[must_use]
     pub fn descriptors(self, validation_mode: bool) -> Vec<SettingDescriptor> {
+        if self.settings_adapter == SettingsAdapter::None {
+            return Vec::new();
+        }
         CATALOG
             .iter()
             .filter_map(|&(id, label_key, group, order)| {
@@ -334,6 +359,7 @@ pub const fn aero_control_profile() -> DeviceControlProfile {
             CommandKind::SetAeroBrakeOverpressureAlarm,
         ]),
     )
+    .with_settings_adapter(SettingsAdapter::Aero)
     .with_readable_settings(&[SettingId::AutoShutdownRemaining, SettingId::ChargeMode])
     .with_default_charge_profile(ChargeProfile::new(
         ChargeProfileIdentity::new(43),
@@ -360,6 +386,7 @@ pub const fn falcon_control_profile() -> DeviceControlProfile {
             CommandKind::SetSpeedAlarmMode,
         ]),
     )
+    .with_settings_adapter(SettingsAdapter::Falcon)
     .with_readable_settings(&[SettingId::PowerOffDelay])
     .with_default_charge_profile(ChargeProfile::new(
         ChargeProfileIdentity::new(44),
@@ -868,8 +895,8 @@ const fn light(on: bool) -> LightState {
 mod tests {
     use super::*;
     use cutout_core::{
-        AeroPwmSetting, Capabilities, CapacitySource, CommandKind, DeviceCommand,
-        DeviceSettingValue, SettingId, VerificationStatus,
+        Capabilities, CapacitySource, CommandKind, DeviceSettingValue, SettingId,
+        VerificationStatus,
     };
 
     #[test]
@@ -955,7 +982,7 @@ mod tests {
     }
 
     #[test]
-    fn a_new_profile_uses_the_same_semantic_descriptors_and_submission() {
+    fn generic_capabilities_do_not_inherit_an_unrelated_settings_adapter() {
         let capabilities = Capabilities::from_supported_commands([
             CommandKind::SetLights,
             CommandKind::SetAeroPwmPercent,
@@ -963,44 +990,12 @@ mod tests {
         ]);
         let profile =
             DeviceControlProfile::new(capabilities, capabilities, Capabilities::default());
-        let descriptors = profile.descriptors(false);
-        assert_eq!(descriptors.len(), 2);
-        let pwm = descriptors
-            .iter()
-            .find(|entry| entry.id == SettingId::PwmTiltback)
-            .unwrap();
-        assert_eq!(pwm.label_key, "settings.pwm_tiltback.label");
-        assert!(matches!(
-            pwm.control,
-            SettingControl::Number {
-                unit: SettingUnit::PwmDutyPercent,
-                ..
-            }
-        ));
+        assert!(profile.descriptors(false).is_empty());
         assert_eq!(
             profile
                 .command(SettingId::PwmTiltback, DeviceSettingValue::Disabled, false)
-                .unwrap(),
-            DeviceCommand::SetAeroPwmPercent(AeroPwmSetting::Off)
-        );
-        let DeviceCommand::SetAeroPwmPercent(AeroPwmSetting::Margin(margin)) = profile
-            .command(
-                SettingId::PwmTiltback,
-                DeviceSettingValue::Number(80),
-                false,
-            )
-            .unwrap()
-        else {
-            panic!("wrong command")
-        };
-        assert_eq!(margin.percent(), 20);
-        assert_eq!(
-            profile.command(
-                SettingId::PwmTiltback,
-                DeviceSettingValue::Number(20),
-                false
-            ),
-            Err(SettingsRequestError::InvalidValue)
+                .unwrap_err(),
+            SettingsRequestError::Unavailable
         );
     }
 
