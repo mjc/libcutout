@@ -2450,7 +2450,7 @@ func testVescRideSnapshotProjectsBatteryLevelAndUpdateTime() throws {
         XCTAssertEqual(samples.map(\.voltage), [Voltage(value: 4_209), Voltage(value: 4_209)])
     }
 
-    func testBmsSnapshotAggregatesCollectedPagesForPackOverview() {
+    func testBmsSnapshotUsesRustOwnedProjectionWithoutReaggregation() {
         let core = CutoutSessionCore()
         let metadataPage = BmsSnapshot(
             topology: BmsTopology(
@@ -2496,16 +2496,16 @@ func testVescRideSnapshotProjectsBatteryLevelAndUpdateTime() throws {
             receivedAt: MonotonicMilliseconds(43)
         )
 
-        XCTAssertNil(core.bmsSnapshot?.pageSelector)
-        XCTAssertNil(core.bmsSnapshot?.pageKind)
+        XCTAssertEqual(core.bmsSnapshot?.pageSelector, 3)
+        XCTAssertEqual(core.bmsSnapshot?.pageKind, "cell voltage")
         XCTAssertEqual(core.bmsSnapshot?.topology.layoutLabel, "8 observed BMS groups")
-        XCTAssertEqual(core.bmsSnapshot?.voltage, Voltage(value: 95_800))
-        XCTAssertEqual(core.bmsSnapshot?.current, BatteryCurrent(value: 0))
+        XCTAssertNil(core.bmsSnapshot?.voltage)
+        XCTAssertNil(core.bmsSnapshot?.current)
         XCTAssertEqual(core.bmsSnapshot?.cellDelta, VoltageDelta(value: 12))
         XCTAssertEqual(core.bmsSnapshot?.groups.count, 2)
     }
 
-    func testBmsSnapshotUsesArrivingCoreSummaryRatherThanPageSortOrder() {
+    func testBmsSnapshotReplacesPriorRustProjection() {
         let core = CutoutSessionCore()
         let topology = BmsTopology(layoutLabel: "unverified", seriesGroupCount: nil, parallelCount: nil, packCount: 1, bmsCount: 1, confidence: .unverified)
         func receive(_ snapshot: BmsSnapshot, at: UInt64) {
@@ -2522,10 +2522,10 @@ func testVescRideSnapshotProjectsBatteryLevelAndUpdateTime() throws {
         XCTAssertEqual(core.bmsSnapshot?.observedGroupCount, 2)
         receive(BmsSnapshot(topology: topology, pageSelector: 3, cellDelta: VoltageDelta(value: 20), lowestGroupIndex: 16, observedGroupCount: 2, highestGroupIndex: 46, highestTemperature: Temperature(value: 21_000)), at: 3)
         XCTAssertEqual(core.bmsSnapshot?.cellDelta, VoltageDelta(value: 20))
-        XCTAssertEqual(core.bmsSnapshot?.groups.map(\.index), [16, 46])
+        XCTAssertEqual(core.bmsSnapshot?.groups.map(\.index), [])
     }
 
-    func testBmsSnapshotCollectionDoesNotPublishCursorOnlyUpdates() {
+    func testBmsSnapshotPublishesChangedRustProjection() {
         let core = CutoutSessionCore()
         let firstPage = BmsSnapshot(
             topology: BmsTopology(
@@ -2573,12 +2573,12 @@ func testVescRideSnapshotProjectsBatteryLevelAndUpdateTime() throws {
             receivedAt: MonotonicMilliseconds(43)
         )
 
-        XCTAssertEqual(observedSnapshots.count, 1)
-        XCTAssertNil(core.bmsSnapshot?.pageSelector)
-        XCTAssertNil(core.bmsSnapshot?.pageKind)
+        XCTAssertEqual(observedSnapshots.count, 2)
+        XCTAssertEqual(core.bmsSnapshot?.pageSelector, 1)
+        XCTAssertEqual(core.bmsSnapshot?.pageKind, "cell voltage")
     }
 
-    func testBmsSnapshotCollectionKeepsSameSelectorWithDifferentProtocolTags() {
+    func testBmsSnapshotDoesNotMergeProtocolTaggedProjections() {
         let core = CutoutSessionCore()
         let topology = BmsTopology(
             layoutLabel: "64 observed BMS groups",
@@ -2618,10 +2618,10 @@ func testVescRideSnapshotProjectsBatteryLevelAndUpdateTime() throws {
             receivedAt: MonotonicMilliseconds(43)
         )
 
-        XCTAssertEqual(core.bmsSnapshot?.groups.map(\.index), [1, 33])
+        XCTAssertEqual(core.bmsSnapshot?.groups.map(\.index), [33])
     }
 
-    func testBmsSnapshotDoesNotReplaceObservedPackIdentityWithUnknown() {
+    func testBmsSnapshotReplacesChangedRustProjection() {
         let core = CutoutSessionCore()
         let observedPage = BmsSnapshot(
             topology: BmsTopology(
@@ -2655,8 +2655,9 @@ func testVescRideSnapshotProjectsBatteryLevelAndUpdateTime() throws {
             receivedAt: MonotonicMilliseconds(43)
         )
 
-        XCTAssertEqual(core.bmsSnapshot?.topology.layoutLabel, "8 observed BMS groups")
-        XCTAssertEqual(core.bmsSnapshot?.topology.bmsCount, 1)
+        XCTAssertEqual(core.bmsSnapshot?.topology.layoutLabel, "unknown BMS topology")
+        XCTAssertEqual(core.bmsSnapshot?.topology.bmsCount, 0)
+        XCTAssertNil(core.bmsSnapshot?.voltage)
         XCTAssertEqual(core.bmsSnapshot?.current, BatteryCurrent(value: 0))
     }
 

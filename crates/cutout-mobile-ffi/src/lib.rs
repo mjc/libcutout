@@ -19355,6 +19355,53 @@ mod tests {
     }
 
     #[test]
+    fn mobile_bms_projection_uses_rust_owned_observation_history() {
+        let mut output = battery_readback_output_fixture();
+        let SessionOutputDto::ReadOnly(response) = &mut output else {
+            panic!("readback")
+        };
+        let ReadOnlyOutputPayload::Battery(readback) = &mut response.payload else {
+            panic!("battery")
+        };
+        let page = readback.page.as_mut().expect("page");
+        page.observation_summary = cutout_core::BmsObservationSummary {
+            observed_count: 1,
+            lowest_index: Some(cutout_core::BmsObservationIndex::new(0)),
+            highest_index: Some(cutout_core::BmsObservationIndex::new(0)),
+            voltage_spread: Some(cutout_core::VoltageDelta::from_millivolts(0)),
+            observations: vec![cutout_core::BmsVoltageObservation {
+                index: cutout_core::BmsObservationIndex::new(0),
+                pack_index: None,
+                pack_observation_index: None,
+                voltage: cutout_core::Voltage::from_millivolts(3_633),
+                latest_voltage: cutout_core::Voltage::from_millivolts(3_634),
+                samples: vec![
+                    cutout_core::BmsVoltageSample {
+                        voltage: cutout_core::Voltage::from_millivolts(3_633),
+                        observed_at: MonotonicTimestamp::new(1),
+                    },
+                    cutout_core::BmsVoltageSample {
+                        voltage: cutout_core::Voltage::from_millivolts(3_634),
+                        observed_at: MonotonicTimestamp::new(2),
+                    },
+                ],
+            }],
+        };
+        let snapshot = MobileSessionOutputDto::from(output)
+            .bms_snapshot
+            .expect("snapshot");
+
+        assert_eq!(
+            snapshot.groups[0]
+                .recent_voltages
+                .iter()
+                .map(|voltage| voltage.value)
+                .collect::<Vec<_>>(),
+            vec![3_633, 3_634]
+        );
+    }
+
+    #[test]
     fn mobile_bms_projection_keeps_raw_events_outside_the_display_summary() {
         let mut output = battery_readback_output_fixture();
         let SessionOutputDto::ReadOnly(response) = &mut output else {

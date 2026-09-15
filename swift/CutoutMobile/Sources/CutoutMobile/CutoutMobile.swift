@@ -5003,44 +5003,6 @@ public struct BmsSnapshot: Equatable, Hashable, Sendable {
         return rows
     }
 
-    public func mergingBmsPage(_ update: BmsSnapshot) -> BmsSnapshot {
-        guard availability == .available, update.availability == .available else {
-            return update
-        }
-
-        let mergedGroups = update.groups.isEmpty ? groups : mergeGroups(update.groups, into: groups)
-
-        return BmsSnapshot(
-            topology: topology.mergingBmsPage(update.topology),
-            pageSelector: nil,
-            pageTag: nil,
-            pageKind: nil,
-            pageVerification: update.pageVerification ?? pageVerification,
-            energyPercent: update.energyPercent ?? energyPercent,
-            energyPercentSource: update.energyPercent != nil ? update.energyPercentSource : energyPercentSource,
-            voltage: update.voltage ?? voltage,
-            current: update.current ?? current,
-            bmsPackCurrent0: update.bmsPackCurrent0 ?? bmsPackCurrent0,
-            bmsPackCurrent1: update.bmsPackCurrent1 ?? bmsPackCurrent1,
-            cellDelta: update.observedGroupCount != nil ? update.cellDelta : update.cellDelta ?? cellDelta,
-            lowestGroupIndex: update.observedGroupCount != nil ? update.lowestGroupIndex : update.lowestGroupIndex ?? lowestGroupIndex,
-            observedGroupCount: update.observedGroupCount ?? observedGroupCount,
-            highestGroupIndex: update.observedGroupCount != nil ? update.highestGroupIndex : update.highestGroupIndex ?? highestGroupIndex,
-            highestTemperature: update.highestTemperature ?? highestTemperature,
-            temperatureReadings: update.temperatureReadings.isEmpty ? temperatureReadings : update.temperatureReadings,
-            highestTemperatureLabel: update.highestTemperatureLabel ?? highestTemperatureLabel,
-            balancingSummary: update.balancingSummary ?? balancingSummary,
-            balancingDetail: update.balancingDetail ?? balancingDetail,
-            faultSummary: update.faultSummary ?? faultSummary,
-            faultDetail: update.faultDetail ?? faultDetail,
-            groups: mergedGroups,
-            rawObservations: update.rawObservations,
-            faults: update.faults.isEmpty ? faults : update.faults,
-            captureActionTitle: update.captureActionTitle ?? captureActionTitle,
-            captureActionState: update.captureActionState ?? captureActionState
-        )
-    }
-
     public var averageGroupVoltage: Voltage? {
         guard !groupVoltages.isEmpty else {
             return nil
@@ -5397,83 +5359,6 @@ public struct BmsRawVoltageObservation: Equatable, Hashable, Sendable {
             voltage: dto.voltage
         )
     }
-}
-
-public extension BmsSnapshot {
-    func withoutPageCursor() -> BmsSnapshot {
-        return BmsSnapshot(
-            availability: availability,
-            topology: topology,
-            pageSelector: nil,
-            pageTag: nil,
-            pageKind: nil,
-            pageVerification: pageVerification,
-            energyPercent: energyPercent,
-            energyPercentSource: energyPercentSource,
-            voltage: voltage,
-            current: current,
-            bmsPackCurrent0: bmsPackCurrent0,
-            bmsPackCurrent1: bmsPackCurrent1,
-            cellDelta: cellDelta,
-            lowestGroupIndex: lowestGroupIndex,
-            observedGroupCount: observedGroupCount,
-            highestGroupIndex: highestGroupIndex,
-            highestTemperature: highestTemperature,
-            temperatureReadings: temperatureReadings,
-            highestTemperatureLabel: highestTemperatureLabel,
-            balancingSummary: balancingSummary,
-            balancingDetail: balancingDetail,
-            faultSummary: faultSummary,
-            faultDetail: faultDetail,
-            groups: groups,
-            rawObservations: rawObservations,
-            faults: faults,
-            captureActionTitle: captureActionTitle,
-            captureActionState: captureActionState
-        )
-    }
-}
-
-public extension BmsTopology {
-    func mergingBmsPage(_ update: BmsTopology) -> BmsTopology {
-        guard update.hasObservedBmsTopology else {
-            return self
-        }
-        guard hasObservedBmsTopology else {
-            return update
-        }
-        return update.observedRank >= observedRank ? update : self
-    }
-
-    var hasObservedBmsTopology: Bool {
-        bmsCount > 0 || packCount > 0 || seriesGroupCount != nil || layoutLabel.localizedCaseInsensitiveContains("observed")
-    }
-
-    var observedRank: Int {
-        var rank = 0
-        if packCount > 0 { rank += 1 }
-        if bmsCount > 0 { rank += 1 }
-        if seriesGroupCount != nil { rank += 2 }
-        if parallelCount != nil { rank += 1 }
-        if layoutLabel.localizedCaseInsensitiveContains("observed") { rank += 1 }
-        switch confidence {
-        case .verified:
-            rank += 3
-        case .inferred:
-            rank += 2
-        case .unverified:
-            rank += 1
-        }
-        return rank
-    }
-}
-
-private func mergeGroups(_ updates: [BmsGroupSnapshot], into existing: [BmsGroupSnapshot]) -> [BmsGroupSnapshot] {
-    var groupsByIndex = Dictionary(uniqueKeysWithValues: existing.map { ($0.index, $0) })
-    for update in updates {
-        groupsByIndex[update.index] = update
-    }
-    return groupsByIndex.values.sorted { $0.index < $1.index }
 }
 
 private func bmsMetricValue<Value>(
