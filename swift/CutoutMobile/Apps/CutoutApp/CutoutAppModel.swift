@@ -1256,13 +1256,11 @@ final class CutoutAppModel {
         rideMapHistoryDetailMusicError = nil
         rideMapHistoryQueryDateAfterMilliseconds = historyDateAfterMilliseconds
         if let rideMapStorageError {
-            rideMapHistoryLoading = false
-            rideMapHistoryError = .storageError(rideMapStorageError)
+            applyRideMapHistoryLoadFailure(.storageError(rideMapStorageError))
             return
         }
         guard let state = core.rideMapStateHandle else {
-            rideMapHistoryLoading = false
-            rideMapHistoryError = .storageError("Rust ride database is unavailable")
+            applyRideMapHistoryLoadFailure(.storageError("Rust ride database is unavailable"))
             return
         }
         let filter = rideMapHistoryFilter
@@ -1329,14 +1327,22 @@ final class CutoutAppModel {
             } catch {
                 guard !Task.isCancelled, let self else { return }
                 self.rideMapHistoryLoadTask = nil
-                self.rideMapHistoryLoading = false
                 // Preserve the last good page so a transient storage failure does not
-                // turn an otherwise usable history screen into an empty state.
-                self.rideMapHistoryError = Self.mapRideMapError(error)
-                self.rideMapHistoryRouteLoading = false
-                self.rideMapHistoryDetailRouteLoading = false
+                // turn an otherwise usable history screen into an empty state, but never
+                // present its selected route as current after the load that owns it fails.
+                self.applyRideMapHistoryLoadFailure(Self.mapRideMapError(error))
             }
         }
+    }
+
+    private func applyRideMapHistoryLoadFailure(_ error: MobileRideMapError) {
+        rideMapHistoryLoading = false
+        rideMapHistoryError = error
+        clearRideMapHistoryRouteProjection()
+        rideMapHistoryRouteLoading = false
+        rideMapHistoryRouteError = error
+        rideMapHistoryDetailRouteLoading = false
+        rideMapHistoryDetailRouteError = error
     }
 
     @MainActor

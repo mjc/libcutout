@@ -562,6 +562,52 @@ final class CutoutAppModelTests: XCTestCase {
     }
 
     @MainActor
+    func testHistoryReloadFailureClearsThePreviouslySelectedRoute() async throws {
+        let driver = SessionDriverSpy(rows: [])
+        let state = driver.rideMapState
+        _ = try state.startGpsOnly(atMs: 100, lastConnectedVehicle: nil)
+        _ = await Self.settle(state, try state.ingestLocation(
+            monotonicMs: 100,
+            wallClockUnixMs: 1_700_000_000_100,
+            latitudeDegrees: 39.7000,
+            longitudeDegrees: -104.9000,
+            horizontalAccuracyMeters: 5
+        ))
+        _ = await Self.settle(state, try state.ingestLocation(
+            monotonicMs: 1_100,
+            wallClockUnixMs: 1_700_000_001_100,
+            latitudeDegrees: 39.7001,
+            longitudeDegrees: -104.9000,
+            horizontalAccuracyMeters: 5
+        ))
+        _ = try state.stop(atMs: 1_100)
+        let rideID = try state.save().rideID
+
+        let model = CutoutAppModel(core: driver)
+        model.setRideMapHistoryDateFilter(.allTime)
+        model.loadRideMapHistory(selecting: rideID)
+        await Self.waitUntil("selected history route before reload failure", maxTurns: 100_000) {
+            model.selectedRideMapHistoryID == rideID
+                && model.rideMapHistoryDisplayPoints.isEmpty == false
+                && !model.rideMapHistoryRouteLoading
+        }
+
+        driver.setRideMapUnavailable(true)
+        model.loadRideMapHistory(selecting: rideID)
+        await Task.yield()
+
+        XCTAssertTrue(model.rideMapHistoryDisplayPoints.isEmpty)
+        XCTAssertEqual(
+            model.rideMapHistoryRouteError,
+            .storageError("Rust ride database is unavailable")
+        )
+        XCTAssertEqual(
+            model.rideMapHistoryDetailRouteError,
+            .storageError("Rust ride database is unavailable")
+        )
+    }
+
+    @MainActor
     func testHistoryDetailLoadGenerationRejectsDeletedOrReplacedSelection() {
         XCTAssertTrue(
             CutoutAppModel.shouldApplyHistoryDetailLoad(
@@ -3381,7 +3427,7 @@ private actor FailingLiveActivityManager: LiveActivityRideLifecycleManaging {
 private final class SessionDriverSpy: CutoutSessionDriving {
     let rideSessionStateHandle = CutoutSessionStateHandle()
     let rideMapState: MobileRideMapState
-    private let rideMapUnavailable: Bool
+    private var rideMapUnavailable: Bool
     var rideMapStateHandle: MobileRideMapState? { rideMapUnavailable ? nil : rideMapState }
     let rideMapAvailability: MobileRideMapAvailability = .ready
     var onDisplayStateChange: ((RideDisplayState) -> Void)?
@@ -3441,6 +3487,10 @@ private final class SessionDriverSpy: CutoutSessionDriving {
             _ = try? state.discard()
         }
         rideMapState = state
+    }
+
+    func setRideMapUnavailable(_ unavailable: Bool) {
+        rideMapUnavailable = unavailable
     }
 
     func start() {
