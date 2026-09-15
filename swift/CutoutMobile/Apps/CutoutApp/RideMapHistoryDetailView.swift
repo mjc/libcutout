@@ -40,6 +40,7 @@ struct RideMapHistoryDetailView: View {
     let initialHistoryID: String?
     let rides: [MobileRideMapHistorySummaryDto]
     let displayPoints: [MobileRideMapRouteDisplayPoint]
+    var routePresence: MobileRideMapRoutePresence = .emptyRide
     let music: RideMapHistoryMusicDetail
     let projectionRideID: String?
     /// Rust's bounded projection supplies the camera; the default keeps older route-shell
@@ -82,6 +83,9 @@ struct RideMapHistoryDetailView: View {
         }
         if isLoading {
             return .loading
+        }
+        if routePresence == .emptyViewport {
+            return .emptyViewport
         }
         if selectedRide?.summary.pointCount == 0 {
             return .empty

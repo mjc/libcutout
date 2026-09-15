@@ -7716,6 +7716,17 @@ pub struct MobileRideMapCameraRegionDto {
     pub longitude_span_degrees: f64,
 }
 
+/// Rust-owned route presence relative to the requested projection viewport.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Enum)]
+pub enum MobileRideMapRoutePresenceDto {
+    /// The canonical ride has no recorded points.
+    EmptyRide,
+    /// The canonical ride has points, but none are inside the requested viewport.
+    EmptyViewport,
+    /// At least one canonical point is eligible for the requested projection.
+    Visible,
+}
+
 /// Bounded Rust route display projection.
 #[derive(Clone, Debug, PartialEq, uniffi::Record)]
 pub struct MobileRideMapRouteProjectionDto {
@@ -7745,6 +7756,8 @@ pub struct MobileRideMapRouteProjectionDto {
     pub canonical_end_visible: bool,
     /// Rust-computed camera region for the bounded display points.
     pub camera_region: Option<MobileRideMapCameraRegionDto>,
+    /// Rust-owned distinction between an empty ride and an empty viewport.
+    pub route_presence: MobileRideMapRoutePresenceDto,
 }
 
 /// Bounded startup state produced by Rust after recovering interrupted rides.
@@ -8325,6 +8338,23 @@ fn mobile_route_projection_dto(
         canonical_start_visible: projection.endpoint_metadata().start_visible(),
         canonical_end_visible: projection.endpoint_metadata().end_visible(),
         camera_region: projection.camera_region().map(mobile_camera_region_dto),
+        route_presence: mobile_route_presence(
+            projection.source_point_count(),
+            projection.candidate_point_count(),
+        ),
+    }
+}
+
+fn mobile_route_presence(
+    source_point_count: u64,
+    candidate_point_count: u64,
+) -> MobileRideMapRoutePresenceDto {
+    if source_point_count == 0 {
+        MobileRideMapRoutePresenceDto::EmptyRide
+    } else if candidate_point_count == 0 {
+        MobileRideMapRoutePresenceDto::EmptyViewport
+    } else {
+        MobileRideMapRoutePresenceDto::Visible
     }
 }
 
@@ -11424,6 +11454,7 @@ fn project_live_route_points(
         canonical_start_visible: endpoint_metadata.start_visible(),
         canonical_end_visible: endpoint_metadata.end_visible(),
         camera_region,
+        route_presence: mobile_route_presence(source_point_count, candidate_point_count),
     })
 }
 
@@ -17196,6 +17227,22 @@ mod tests {
         assert_eq!(limits.history_context_per_route_budget, 512);
         assert_eq!(limits.history_context_total_point_budget, 4_096);
         assert_eq!(limits.history_recent_window_milliseconds, 2_592_000_000);
+    }
+
+    #[test]
+    fn mobile_route_presence_is_owned_by_the_projection_boundary() {
+        assert_eq!(
+            mobile_route_presence(0, 0),
+            MobileRideMapRoutePresenceDto::EmptyRide
+        );
+        assert_eq!(
+            mobile_route_presence(2, 0),
+            MobileRideMapRoutePresenceDto::EmptyViewport
+        );
+        assert_eq!(
+            mobile_route_presence(2, 1),
+            MobileRideMapRoutePresenceDto::Visible
+        );
     }
 
     static RIDE_DATABASE_TEST_LOCK: Mutex<()> = Mutex::new(());

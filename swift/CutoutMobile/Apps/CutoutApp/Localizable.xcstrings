@@ -2065,6 +2065,10 @@
       "comment" : "Selected historical ride detail state when the route cannot be loaded.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Ride unavailable" } } }
     },
+    "ride_map.detail_viewport_empty" : {
+      "comment" : "History detail map state when a valid viewport contains no points from a non-empty ride.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "No route points in this map area" } } }
+    },
     "music.history.unavailable" : {
       "comment" : "Historical ride detail state when persisted music metadata cannot be loaded.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Music history unavailable" } } }
