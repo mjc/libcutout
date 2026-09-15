@@ -77,12 +77,47 @@ public struct CaptureProgress: Equatable, Sendable {
     }
 }
 
+public struct CaptureGeneration: Comparable, Hashable, Sendable {
+    public let rawValue: UInt64
+
+    public init(rawValue: UInt64) {
+        self.rawValue = rawValue
+    }
+
+    public static let legacy = Self(rawValue: 0)
+
+    public static func < (lhs: Self, rhs: Self) -> Bool {
+        lhs.rawValue < rhs.rawValue
+    }
+}
+
 public enum CaptureEvent: Equatable, Sendable {
-    case started(fileURL: URL)
-    case notificationRecorded
-    case progress(CaptureProgress)
-    case finished(fileURL: URL)
-    case failed
+    case started(generation: CaptureGeneration, fileURL: URL)
+    case notificationRecorded(generation: CaptureGeneration)
+    case progress(generation: CaptureGeneration, CaptureProgress)
+    case finished(generation: CaptureGeneration, fileURL: URL)
+    case failed(generation: CaptureGeneration)
+
+    // Keep hand-authored fixtures source-compatible while production events carry identity.
+    public static func started(fileURL: URL) -> Self {
+        .started(generation: .legacy, fileURL: fileURL)
+    }
+
+    public static var notificationRecorded: Self {
+        .notificationRecorded(generation: .legacy)
+    }
+
+    public static func progress(_ progress: CaptureProgress) -> Self {
+        .progress(generation: .legacy, progress)
+    }
+
+    public static func finished(fileURL: URL) -> Self {
+        .finished(generation: .legacy, fileURL: fileURL)
+    }
+
+    public static var failed: Self {
+        .failed(generation: .legacy)
+    }
 }
 
 struct CaptureMusicContext: Equatable {
@@ -463,6 +498,8 @@ public final class CutoutSessionCore: NSObject {
     private var captureStartedAt: MonotonicMilliseconds?
     private var captureNotificationCount: UInt64 = 0
     private var captureBuilder: MobilePevcapCaptureBuilder?
+    private var nextCaptureGeneration: UInt64 = 0
+    private var captureGeneration: CaptureGeneration?
     private var musicCaptureContext = CaptureMusicContext()
     private var captureMusicHistoryPolicy = MobileMusicHistoryPolicyDto.disabled
     private var captureFileURL: URL?
@@ -485,6 +522,7 @@ public final class CutoutSessionCore: NSObject {
     private var didResolveBluetoothRestoration = false
 #if DEBUG
     private let testScript: CutoutSessionTestScript?
+    var captureFinishWriterGate: (() -> Void)?
     private var testOperationSink: CutoutSessionTestOperationSink?
     private var testScriptWorkItem: DispatchWorkItem?
     private var testScriptUpdateWorkItem: DispatchWorkItem?
@@ -697,15 +735,16 @@ public final class CutoutSessionCore: NSObject {
                         isRecordOnly = false
                         return false
                     }
-                    publishCaptureEvent(.progress(captureProgress()))
+                    publishCaptureProgress()
                     return true
                 }
             }
             let fileURL = URL(fileURLWithPath: "/tmp/ui-test.capture")
+            let generation = beginCaptureGeneration()
             captureFileURL = fileURL
             isRecordOnly = true
-            publishCaptureEvent(.started(fileURL: fileURL))
-            publishCaptureEvent(.progress(CaptureProgress(
+            publishCaptureEvent(.started(generation: generation, fileURL: fileURL))
+            publishCaptureEvent(.progress(generation: generation, CaptureProgress(
                 elapsedMilliseconds: 63_000,
                 notificationCount: 42,
                 fileSizeBytes: 12_288,
@@ -1107,7 +1146,9 @@ public final class CutoutSessionCore: NSObject {
             finishCaptureAfterLinkDown()
         } else if testScript != nil, isRecordOnly, let completedCaptureURL = captureFileURL {
             captureFileURL = nil
-            publishCaptureEvent(.finished(fileURL: completedCaptureURL))
+            let generation = captureGeneration ?? .legacy
+            captureGeneration = nil
+            publishCaptureEvent(.finished(generation: generation, fileURL: completedCaptureURL))
         } else {
             finishCaptureAfterLinkDown()
         }
@@ -1831,6 +1872,23 @@ public final class CutoutSessionCore: NSObject {
         publishOnMain { self.onCaptureEvent?(event) }
     }
 
+    private func beginCaptureGeneration() -> CaptureGeneration {
+        nextCaptureGeneration = nextCaptureGeneration == .max ? 1 : nextCaptureGeneration + 1
+        let generation = CaptureGeneration(rawValue: nextCaptureGeneration)
+        captureGeneration = generation
+        return generation
+    }
+
+    private func publishCaptureProgress() {
+        guard let generation = captureGeneration else { return }
+        publishCaptureEvent(.progress(generation: generation, captureProgress()))
+    }
+
+    private func publishCaptureFailure() {
+        guard let generation = captureGeneration else { return }
+        publishCaptureEvent(.failed(generation: generation))
+    }
+
     private func startRideMapWritePolling() {
         let queue = rideMapQueue
         let reference = WeakCutoutSessionCoreReference(self)
@@ -2007,7 +2065,7 @@ public final class CutoutSessionCore: NSObject {
         case "notify":
             guard let serviceUuid = service.flatMap(BluetoothUuid.init(coreBluetoothUuid:)) else {
                 record("capture_error=notification_missing_service characteristic=\(characteristic.uuidString)")
-                publishCaptureEvent(.failed)
+                publishCaptureFailure()
                 setPhase(.failed(.notificationFailed("missing service UUID for \(characteristic.uuidString)")))
                 finishCaptureWriter()
                 return false
@@ -2045,6 +2103,7 @@ public final class CutoutSessionCore: NSObject {
         annotations extraAnnotations: [String] = [],
         evidence: String = "hardware_tested"
     ) -> Bool {
+        let generation = beginCaptureGeneration()
         captureStartedAt = clock.now()
         captureNotificationCount = 0
 
@@ -2068,22 +2127,23 @@ public final class CutoutSessionCore: NSObject {
         ].forEach { _ = builder.addAnnotation(annotation: $0) }
         extraAnnotations.forEach { _ = builder.addAnnotation(annotation: sanitizedPevcapAnnotation($0)) }
         captureBuilder = builder
+        captureFileURL = url
         _ = builder.setMusicContext(music: musicCaptureContext.current)
+        publishCaptureEvent(.started(generation: generation, fileURL: url))
         guard builder.startWriter(path: url.path) else {
             failConnectionCapture()
             record("capture_error=writer_start_failed")
             captureBuilder = nil
+            captureGeneration = nil
             captureFileURL = nil
             captureStartedAt = nil
-            publishCaptureEvent(.failed)
+            publishCaptureEvent(.failed(generation: generation))
             setPhase(.failed(.sessionFailed("capture writer failed to start")))
             cancelFailedConnectionAttempt()
             return false
         }
         musicCaptureContext.reset()
-        captureFileURL = url
         record("capture_file=\(url.path)")
-        publishCaptureEvent(.started(fileURL: url))
         updateCaptureIdentity()
         return true
     }
@@ -2109,7 +2169,7 @@ public final class CutoutSessionCore: NSObject {
         failConnectionCapture()
         let status = captureBuilder?.writerStatus()
         record("capture_error=writer_failed \(status?.lastError ?? "unknown")")
-        publishCaptureEvent(.failed)
+        publishCaptureFailure()
         setPhase(.failed(.sessionFailed("capture writer queue overrun")))
         finishCaptureWriter()
         return false
@@ -2136,25 +2196,40 @@ public final class CutoutSessionCore: NSObject {
         musicCaptureContext.reset()
         guard let builder = captureBuilder else { return }
         let completedCaptureURL = captureFileURL
+        let completedCaptureGeneration = captureGeneration ?? .legacy
         captureBuilder = nil
+        captureGeneration = nil
         captureFileURL = nil
         captureStartedAt = nil
         musicCaptureContext.reset()
         let finish = DispatchWorkItem { [weak self] in
+            #if DEBUG
+            self?.captureFinishWriterGate?()
+            #endif
             let writerSucceeded = builder.finishWriter()
             let succeeded = priorWriteSucceeded && writerSucceeded
             guard publishesResult, let self else { return }
             self.onBleQueue {
                 if succeeded, let completedCaptureURL {
-                    self.publishCaptureEvent(.finished(fileURL: completedCaptureURL))
+                    self.publishCaptureEvent(
+                        .finished(generation: completedCaptureGeneration, fileURL: completedCaptureURL)
+                    )
                 } else {
                     self.record("capture_error=writer_finish_failed")
-                    self.publishCaptureEvent(.failed)
+                    self.publishCaptureEvent(.failed(generation: completedCaptureGeneration))
                 }
             }
         }
         DispatchQueue.global(qos: .utility).async(execute: finish)
     }
+
+#if DEBUG
+    func finishCaptureForTesting(priorWriteSucceeded: Bool = true) {
+        onBleQueue {
+            self.finishCaptureWriter(publishesResult: true, priorWriteSucceeded: priorWriteSucceeded)
+        }
+    }
+#endif
 
     private func captureElapsedMilliseconds() -> UInt64 {
         guard let captureStartedAt else {
@@ -2701,7 +2776,7 @@ extension CutoutSessionCore: CBPeripheralDelegate {
                     bytes: value
                 ) else { return }
                 captureNotificationCount += 1
-                publishCaptureEvent(.progress(captureProgress()))
+                publishCaptureProgress()
                 if isDetectingProtocol, channel.bluetooth16Value == 0xffe1,
                    deviceDetectionSession.nextBegodeProbeExpiry(
                        timeout: BegodeProbeResponsePolicy.timeoutAfter
@@ -2724,7 +2799,7 @@ extension CutoutSessionCore: CBPeripheralDelegate {
             ) else { return }
             record("record_only_notification=\(characteristic.uuid.uuidString) bytes=\(value.count)")
             captureNotificationCount += 1
-            publishCaptureEvent(.progress(captureProgress()))
+            publishCaptureProgress()
             return
         }
         guard let liveOwner else {
@@ -2751,7 +2826,7 @@ extension CutoutSessionCore: CBPeripheralDelegate {
             ) else { return }
             record("notification=\(characteristic.uuid.uuidString) bytes=\(value.count)")
             captureNotificationCount += 1
-            publishCaptureEvent(.progress(captureProgress()))
+            publishCaptureProgress()
             record("speed=\(step.snapshot?.speed.map { String($0.value) } ?? "nil")")
             record("voltage=\(step.snapshot?.voltage.map { String($0.value) } ?? "nil")")
             record("battery_estimated=\(step.snapshot?.batteryLevelEstimated.map { String($0.value) } ?? "nil")")

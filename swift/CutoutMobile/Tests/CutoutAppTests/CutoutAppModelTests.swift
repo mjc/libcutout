@@ -1,5 +1,6 @@
 import XCTest
 import CoreLocation
+import Foundation
 @testable import CutoutApp
 @testable import CutoutMobile
 import CutoutMobileFFI
@@ -2086,6 +2087,7 @@ final class CutoutAppModelTests: XCTestCase {
         model.applyCaptureEvent(.finished(fileURL: fileURL))
         XCTAssertEqual(model.captureStatus, .saved(fileName: "ride.cutout"))
 
+        model.applyCaptureEvent(.started(fileURL: fileURL))
         model.applyCaptureEvent(.failed)
         XCTAssertEqual(model.captureStatus, .failed)
     }
@@ -2225,6 +2227,122 @@ final class CutoutAppModelTests: XCTestCase {
         XCTAssertNil(model.captureStatusText)
         XCTAssertNil(model.captureProgress)
         XCTAssertTrue(model.activeCaptureLabels.isEmpty)
+    }
+
+    @MainActor
+    func testLateCaptureTerminalEventsCannotReplaceTheCurrentGeneration() {
+        let model = CutoutAppModel()
+        let first = CaptureGeneration(rawValue: 1)
+        let second = CaptureGeneration(rawValue: 2)
+        let firstURL = URL(fileURLWithPath: "/tmp/first.cutout")
+        let secondURL = URL(fileURLWithPath: "/tmp/second.cutout")
+        let progress = CaptureProgress(
+            elapsedMilliseconds: 1_000,
+            notificationCount: 7,
+            fileSizeBytes: 128,
+            queuedMessageCount: 0,
+            writerError: nil
+        )
+
+        model.applyCaptureEvent(.started(generation: first, fileURL: firstURL))
+        model.applyCaptureEvent(.started(generation: second, fileURL: secondURL))
+        model.applyCaptureEvent(.progress(generation: second, progress))
+        model.applyCaptureEvent(.finished(generation: first, fileURL: firstURL))
+        XCTAssertEqual(
+            model.captureStatus,
+            .recording(label: nil, notificationCount: 7, fileName: "second.cutout")
+        )
+        model.applyCaptureEvent(.failed(generation: first))
+
+        XCTAssertEqual(
+            model.captureStatus,
+            .recording(label: nil, notificationCount: 7, fileName: "second.cutout")
+        )
+    }
+
+    @MainActor
+    func testDelayedCaptureSuccessFromAnOlderWriterCannotReplaceTheCurrentCapture() async throws {
+        try await assertDelayedCaptureFinalization(priorWriteSucceeded: true)
+    }
+
+    @MainActor
+    func testDelayedCaptureFailureFromAnOlderWriterCannotReplaceTheCurrentCapture() async throws {
+        try await assertDelayedCaptureFinalization(priorWriteSucceeded: false)
+    }
+
+    @MainActor
+    private func assertDelayedCaptureFinalization(priorWriteSucceeded: Bool) async throws {
+        let fixture = CutoutUITestSessionFixture.euc
+        let core = CutoutSessionCore(testScript: CutoutSessionTestScript(
+            candidate: fixture.candidate,
+            telemetry: fixture.testScript.telemetry,
+            connectionDelayMilliseconds: 0
+        ))
+        let model = CutoutAppModel(core: core)
+        let firstStarted = expectation(description: "capture A starts")
+        let secondStarted = expectation(description: "capture B starts")
+        let firstTerminal = expectation(description: "capture A finalizes")
+        let finishEntered = expectation(description: "capture A finalization is held")
+        let releaseFinish = DispatchSemaphore(value: 0)
+        var firstGeneration: CaptureGeneration?
+        var secondGeneration: CaptureGeneration?
+        var secondFileName: String?
+        var captureURLs = [URL]()
+
+        core.onCaptureEvent = { event in
+            model.applyCaptureEvent(event)
+            switch event {
+            case let .started(generation, fileURL):
+                captureURLs.append(fileURL)
+                if firstGeneration == nil {
+                    firstGeneration = generation
+                    firstStarted.fulfill()
+                } else if secondGeneration == nil {
+                    secondGeneration = generation
+                    secondFileName = fileURL.lastPathComponent
+                    secondStarted.fulfill()
+                }
+            case let .finished(generation, _), let .failed(generation):
+                if generation == firstGeneration {
+                    firstTerminal.fulfill()
+                    XCTAssertEqual(
+                        model.captureStatus,
+                        .recording(label: nil, notificationCount: 0, fileName: secondFileName)
+                    )
+                }
+            case .notificationRecorded, .progress:
+                break
+            }
+        }
+
+        XCTAssertTrue(core.recordOnly(platformIdentifier: fixture.candidate.platformIdentifier))
+        await fulfillment(of: [firstStarted], timeout: 2)
+        core.captureFinishWriterGate = {
+            finishEntered.fulfill()
+            releaseFinish.wait()
+        }
+        core.finishCaptureForTesting(priorWriteSucceeded: priorWriteSucceeded)
+        await fulfillment(of: [finishEntered], timeout: 2)
+
+        XCTAssertTrue(core.recordOnly(platformIdentifier: fixture.candidate.platformIdentifier))
+        await fulfillment(of: [secondStarted], timeout: 2)
+        XCTAssertNotEqual(firstGeneration, secondGeneration)
+        XCTAssertEqual(
+            model.captureStatus,
+            .recording(label: nil, notificationCount: 0, fileName: secondFileName)
+        )
+
+        releaseFinish.signal()
+        await fulfillment(of: [firstTerminal], timeout: 2)
+        XCTAssertEqual(
+            model.captureStatus,
+            .recording(label: nil, notificationCount: 0, fileName: secondFileName)
+        )
+        core.captureFinishWriterGate = nil
+        core.disconnectAndScan()
+        for url in captureURLs {
+            try? FileManager.default.removeItem(at: url)
+        }
     }
 
     @MainActor

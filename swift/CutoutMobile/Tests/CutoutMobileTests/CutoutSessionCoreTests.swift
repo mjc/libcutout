@@ -856,7 +856,8 @@ final class CutoutSessionCoreTests: XCTestCase {
             connectionDelayMilliseconds: 0
         ))
         core.onCaptureEvent = { event in
-            if case let .started(fileURL) = event {
+            if case let .started(generation, fileURL) = event {
+                XCTAssertGreaterThan(generation.rawValue, 0)
                 captureURL = fileURL
                 started.fulfill()
             }
