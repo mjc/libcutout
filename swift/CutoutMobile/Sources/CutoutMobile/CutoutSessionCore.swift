@@ -85,6 +85,10 @@ public struct CaptureGeneration: Comparable, Hashable, Sendable {
     }
 
     public static let legacy = Self(rawValue: 0)
+
+    public static func < (lhs: Self, rhs: Self) -> Bool {
+        lhs.rawValue < rhs.rawValue
+    }
 }
 
 public enum CaptureEvent: Equatable, Sendable {
@@ -518,6 +522,7 @@ public final class CutoutSessionCore: NSObject {
     private var didResolveBluetoothRestoration = false
 #if DEBUG
     private let testScript: CutoutSessionTestScript?
+    var captureFinishWriterGate: (() -> Void)?
     private var testOperationSink: CutoutSessionTestOperationSink?
     private var testScriptWorkItem: DispatchWorkItem?
     private var testScriptUpdateWorkItem: DispatchWorkItem?
@@ -2122,7 +2127,9 @@ public final class CutoutSessionCore: NSObject {
         ].forEach { _ = builder.addAnnotation(annotation: $0) }
         extraAnnotations.forEach { _ = builder.addAnnotation(annotation: sanitizedPevcapAnnotation($0)) }
         captureBuilder = builder
+        captureFileURL = url
         _ = builder.setMusicContext(music: musicCaptureContext.current)
+        publishCaptureEvent(.started(generation: generation, fileURL: url))
         guard builder.startWriter(path: url.path) else {
             failConnectionCapture()
             record("capture_error=writer_start_failed")
@@ -2136,9 +2143,7 @@ public final class CutoutSessionCore: NSObject {
             return false
         }
         musicCaptureContext.reset()
-        captureFileURL = url
         record("capture_file=\(url.path)")
-        publishCaptureEvent(.started(generation: generation, fileURL: url))
         updateCaptureIdentity()
         return true
     }
@@ -2198,6 +2203,9 @@ public final class CutoutSessionCore: NSObject {
         captureStartedAt = nil
         musicCaptureContext.reset()
         let finish = DispatchWorkItem { [weak self] in
+            #if DEBUG
+            self?.captureFinishWriterGate?()
+            #endif
             let writerSucceeded = builder.finishWriter()
             let succeeded = priorWriteSucceeded && writerSucceeded
             guard publishesResult, let self else { return }
@@ -2214,6 +2222,14 @@ public final class CutoutSessionCore: NSObject {
         }
         DispatchQueue.global(qos: .utility).async(execute: finish)
     }
+
+#if DEBUG
+    func finishCaptureForTesting(priorWriteSucceeded: Bool = true) {
+        onBleQueue {
+            self.finishCaptureWriter(publishesResult: true, priorWriteSucceeded: priorWriteSucceeded)
+        }
+    }
+#endif
 
     private func captureElapsedMilliseconds() -> UInt64 {
         guard let captureStartedAt else {
