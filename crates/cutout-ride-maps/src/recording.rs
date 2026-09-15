@@ -530,6 +530,7 @@ pub struct RideMapRecorder {
     segment_started: bool,
     background_gap_count: BackgroundGapCount,
     last_monotonic_milliseconds: MonotonicMilliseconds,
+    active_started_at_milliseconds: Option<MonotonicMilliseconds>,
     paused_at_milliseconds: Option<MonotonicMilliseconds>,
     paused_duration_milliseconds: RideDurationMilliseconds,
     completed_duration_milliseconds: RideDurationMilliseconds,
@@ -559,6 +560,7 @@ impl RideMapRecorder {
             segment_started: false,
             background_gap_count: BackgroundGapCount::new(0),
             last_monotonic_milliseconds: MonotonicMilliseconds::new(0),
+            active_started_at_milliseconds: None,
             paused_at_milliseconds: None,
             paused_duration_milliseconds: RideDurationMilliseconds::new(0),
             completed_duration_milliseconds: RideDurationMilliseconds::new(0),
@@ -692,6 +694,8 @@ impl RideMapRecorder {
             associated_at_milliseconds: metadata.associated_at_milliseconds,
             last_telemetry_at_milliseconds: metadata.last_telemetry_at_milliseconds,
             last_monotonic_milliseconds,
+            active_started_at_milliseconds: (state == RideLifecycleState::Active)
+                .then_some(last_monotonic_milliseconds),
             paused_at_milliseconds: (state == RideLifecycleState::Paused)
                 .then_some(last_monotonic_milliseconds),
             paused_duration_milliseconds: RideDurationMilliseconds::new(0),
@@ -749,6 +753,7 @@ impl RideMapRecorder {
             associated_at_milliseconds: metadata.associated_at_milliseconds,
             last_telemetry_at_milliseconds: metadata.last_telemetry_at_milliseconds,
             last_monotonic_milliseconds: last,
+            active_started_at_milliseconds: (state == RideLifecycleState::Active).then_some(last),
             paused_at_milliseconds: (state == RideLifecycleState::Paused)
                 .then_some(paused_at.unwrap_or(last)),
             paused_duration_milliseconds: timing.paused_duration_milliseconds(),
@@ -929,6 +934,7 @@ impl RideMapRecorder {
         self.state = Some(RideLifecycleState::Active);
         self.created_at_milliseconds = at_milliseconds;
         self.last_monotonic_milliseconds = at_milliseconds;
+        self.active_started_at_milliseconds = Some(at_milliseconds);
         self.candidate_vehicle = candidate_vehicle;
         self.associated_vehicle = None;
         self.associated_at_milliseconds = None;
@@ -1000,6 +1006,20 @@ impl RideMapRecorder {
             self.segment_id = self.segment_id.next();
             self.segment_started = true;
         }
+        self.active_started_at_milliseconds = match (transition.previous(), state) {
+            (
+                RideLifecycleState::Active,
+                RideLifecycleState::Paused | RideLifecycleState::Interrupted,
+            )
+            | (RideLifecycleState::Active, RideLifecycleState::Stopped)
+            | (RideLifecycleState::Paused, RideLifecycleState::Stopped)
+            | (RideLifecycleState::Interrupted, RideLifecycleState::Stopped) => None,
+            (
+                RideLifecycleState::Paused | RideLifecycleState::Interrupted,
+                RideLifecycleState::Active,
+            ) => Some(at_milliseconds),
+            _ => self.active_started_at_milliseconds,
+        };
         self.last_monotonic_milliseconds = self.last_monotonic_milliseconds.max(at_milliseconds);
         self.state = Some(state);
         Ok(())
@@ -1103,7 +1123,7 @@ impl RideMapRecorder {
     pub fn check_sample(&self, sample: &LocationSample) -> LocationAdmission {
         let previous = self.points.last().map(|point| point.sample());
         route_admission(
-            Some(self.created_at_milliseconds),
+            self.active_started_at_milliseconds,
             previous.as_ref(),
             sample,
         )
@@ -1300,7 +1320,11 @@ mod tests {
             monotonic(1_004),
         );
         assert_eq!(recorder.current_segment_id().value(), 1);
-        assert!(recorder.record_sample(sample(1_003, 40.000_001)));
+        assert_eq!(
+            recorder.check_sample(&sample(1_003, 40.000_001)),
+            LocationAdmission::OutOfOrder
+        );
+        assert!(recorder.record_sample(sample(1_004, 40.000_001)));
         assert_eq!(recorder.segment_count(), RideSegmentCount::new(2));
         assert_eq!(
             recorder
@@ -1495,6 +1519,29 @@ mod tests {
         );
         assert_eq!(
             recorder.check_sample(&sample(10_000, 40.0)),
+            LocationAdmission::Accepted
+        );
+    }
+
+    #[test]
+    fn cached_location_from_a_paused_interval_is_rejected_after_resume() {
+        let mut recorder = RideMapRecorder::new();
+        recorder.start(monotonic(1_000), None).expect("starts");
+        let _ = recorder.apply_transition_at(
+            recorder.validate_transition(RideEvent::Pause).unwrap(),
+            monotonic(2_000),
+        );
+        let _ = recorder.apply_transition_at(
+            recorder.validate_transition(RideEvent::Resume).unwrap(),
+            monotonic(4_000),
+        );
+
+        assert_eq!(
+            recorder.check_sample(&sample(3_000, 40.0)),
+            LocationAdmission::OutOfOrder
+        );
+        assert_eq!(
+            recorder.check_sample(&sample(4_000, 40.0)),
             LocationAdmission::Accepted
         );
     }

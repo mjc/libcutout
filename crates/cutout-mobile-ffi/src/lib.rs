@@ -10854,10 +10854,12 @@ impl MobileRideMapCore {
         wall_clock_at_ms: u64,
         clock_uncertainty_ms: u64,
     ) -> Result<MobileMusicTimelineRecordResultDto, MobileRideMapCoreErrorDto> {
-        let snapshot = CoreMusicSnapshot::try_from(snapshot)
-            .map_err(MobileRideMapCoreErrorDto::InvalidMusicInput)?;
         let state = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
         let monotonic_at_ms = state.logical_monotonic_milliseconds(monotonic_at_ms);
+        let mut snapshot = snapshot;
+        snapshot.observed_at_ms = state.logical_monotonic_milliseconds(snapshot.observed_at_ms);
+        let snapshot = CoreMusicSnapshot::try_from(snapshot)
+            .map_err(MobileRideMapCoreErrorDto::InvalidMusicInput)?;
         let Some(ride_id) = state.ride_id.clone() else {
             return Err(MobileRideMapCoreErrorDto::NoActiveRide);
         };
@@ -11210,14 +11212,10 @@ impl MobileRideMapCore {
         Ok(decisions)
     }
 
-    /// Returns whether a location write is waiting for its SQLite completion.
+    /// Returns whether a location write or settled decision still needs publication.
     pub fn has_pending_location_writes(&self) -> bool {
-        !self
-            .inner
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .pending_location_writes
-            .is_empty()
+        let state = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
+        !state.pending_location_writes.is_empty() || !state.settled_location_decisions.is_empty()
     }
 
     ///
@@ -23556,11 +23554,12 @@ mod tests {
         let saved = state.save().expect("recording saves");
         assert_eq!(stopped.summary.point_count, 1);
         assert_eq!(saved.summary.point_count, 1);
-        assert!(!state.has_pending_location_writes());
+        assert!(state.has_pending_location_writes());
         assert!(matches!(
             state.poll_location_writes().as_slice(),
             [MobileRideMapCoreDecisionDto::Accepted { .. }]
         ));
+        assert!(!state.has_pending_location_writes());
         let inner = state.inner.lock().unwrap_or_else(PoisonError::into_inner);
         assert_eq!(inner.recorder.summary().point_count().as_u64(), 1);
         drop(inner);
@@ -23677,7 +23676,12 @@ mod tests {
         let _guard = RIDE_DATABASE_TEST_LOCK
             .lock()
             .unwrap_or_else(PoisonError::into_inner);
-        for use_resume_at in [false, true] {
+        for (use_resume_at, provider) in [
+            (false, MobileMusicProviderDto::AppleMusic),
+            (true, MobileMusicProviderDto::AppleMusic),
+            (false, MobileMusicProviderDto::Spotify),
+            (true, MobileMusicProviderDto::Spotify),
+        ] {
             let path = std::env::temp_dir().join(format!(
                 "cutout-mobile-map-manual-resume-{}.sqlite3",
                 Uuid::new_v4()
@@ -23687,6 +23691,24 @@ mod tests {
                     .expect("database opens");
                 let state = MobileRideMapCore::with_database(database.clone());
                 let started = state.start_gps_only(999_000, None).expect("ride starts");
+                state
+                    .set_music_history_policy(MobileMusicHistoryPolicyDto::HumanReadable)
+                    .expect("music history enables");
+                let mut before_recovery = test_music_snapshot();
+                before_recovery.provider = provider;
+                before_recovery.observed_at_ms = 1_000_000;
+                assert_eq!(
+                    state
+                        .record_music_event(
+                            before_recovery,
+                            MobileMusicRideEventKindDto::Play,
+                            1_000_000,
+                            1_700_000_000_000,
+                            5,
+                        )
+                        .expect("pre-recovery music event records"),
+                    MobileMusicTimelineOutcomeDto::Recorded
+                );
                 state
                     .ingest_location(1_000_000, 1_700_000_000_000, 40.0, -105.0, 3.0)
                     .expect("original point queues");
@@ -23715,6 +23737,30 @@ mod tests {
             .expect("manual recovery resumes without a vehicle connection");
             assert_eq!(resumed.ride_id, original_id);
             assert_eq!(resumed.summary.duration_milliseconds, 1_000);
+            let mut after_recovery = test_music_snapshot();
+            after_recovery.provider = provider;
+            after_recovery.observed_at_ms = 1_500;
+            after_recovery.item = Some(MobileMusicItemDto {
+                identifier: "track-2".to_owned(),
+                title: Some("Next song".to_owned()),
+                artist: Some("Artist".to_owned()),
+            });
+            assert_eq!(
+                state
+                    .record_music_event(
+                        after_recovery,
+                        MobileMusicRideEventKindDto::ItemChanged,
+                        1_500,
+                        1_700_000_010_500,
+                        5,
+                    )
+                    .expect("post-recovery music event records"),
+                MobileMusicTimelineOutcomeDto::Recorded
+            );
+            let music_events = state.current_music_events().expect("music history loads");
+            assert_eq!(music_events.len(), 2);
+            assert_eq!(music_events[0].observed_at_ms, Some(1_000_000));
+            assert_eq!(music_events[1].observed_at_ms, Some(1_000_500));
             assert_eq!(
                 state
                     .current_snapshot(1_500)
@@ -24106,12 +24152,12 @@ mod tests {
         state.pause(2_000).expect("map recording pauses");
         state.resume(3_000).expect("map recording resumes");
         state
-            .ingest_location(2_001, 1_700_000_002_001, 40.0, -104.999, 3.0)
+            .ingest_location(3_001, 1_700_000_003_001, 40.0, -104.999, 3.0)
             .expect("second location is accepted");
         let _ = drain_location_writes(&state);
 
         let snapshot = state
-            .current_snapshot(2_001)
+            .current_snapshot(3_001)
             .expect("active snapshot exists");
         assert_eq!(snapshot.summary.point_count, 2);
         let first = state.points_after(None, 1).unwrap();
