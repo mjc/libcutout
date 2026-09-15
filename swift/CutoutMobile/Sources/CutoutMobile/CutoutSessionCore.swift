@@ -3353,12 +3353,17 @@ extension CutoutSessionCore: CLLocationManagerDelegate {
               let receiptWallClockUnixMs = unixMilliseconds(for: receiptWallClock)
         else { return }
 
+        let recordingToken = rideMapState
+            .currentSnapshot(atMs: receiptMonotonicMs)?
+            .recordingToken
+
         let queue = rideMapQueue
         let reference = WeakCutoutSessionCoreReference(self)
         queue.async {
             guard let self = reference.value else { return }
             do {
                 let decisions = try rideMapState.ingestLocationBatch(
+                    recordingToken: recordingToken,
                     receiptMonotonicMs: receiptMonotonicMs,
                     receiptWallClockUnixMs: receiptWallClockUnixMs,
                     samples: samples

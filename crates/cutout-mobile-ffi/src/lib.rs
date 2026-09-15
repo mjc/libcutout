@@ -23677,7 +23677,14 @@ mod tests {
                 open_ride_database(path.to_string_lossy().into_owned()).expect("database reopens");
             let state = MobileRideMapCore::with_database(database.clone());
             let recovered = state.current_snapshot(1_000).expect("recovered snapshot");
-            assert_eq!(recovered.allowed_actions, vec![MobileRideEventDto::Resume, MobileRideEventDto::Save, MobileRideEventDto::Discard]);
+            assert_eq!(
+                recovered.allowed_actions,
+                vec![
+                    MobileRideEventDto::Resume,
+                    MobileRideEventDto::Save,
+                    MobileRideEventDto::Discard
+                ]
+            );
             assert!(recovered.recording_token.is_none());
             let resumed = if use_resume_at {
                 state.resume_at(1_000)
@@ -24106,7 +24113,10 @@ mod tests {
 
         state.stop(4_000).expect("map recording stops");
         state.save().expect("map recording saves");
-        assert_eq!(state.current_snapshot(4_000).unwrap().state, MobileRideLifecycleStateDto::Saved);
+        assert_eq!(
+            state.current_snapshot(4_000).unwrap().state,
+            MobileRideLifecycleStateDto::Saved
+        );
         let rides = database.list_rides(None, 1).expect("saved ride lists");
         assert!(rides.rides[0].created_at_milliseconds >= 100_000_000_000);
         database.shutdown().expect("map database shuts down");

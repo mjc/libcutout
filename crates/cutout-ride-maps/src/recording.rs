@@ -1091,7 +1091,11 @@ impl RideMapRecorder {
     #[must_use]
     pub fn check_sample(&self, sample: &LocationSample) -> LocationAdmission {
         let previous = self.points.last().map(|point| point.sample());
-        route_admission(Some(self.created_at_milliseconds), previous.as_ref(), sample)
+        route_admission(
+            Some(self.created_at_milliseconds),
+            previous.as_ref(),
+            sample,
+        )
     }
 
     /// Admits a sample for recording after applying the complete route policy.

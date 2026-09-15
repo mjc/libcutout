@@ -441,6 +441,8 @@ public struct MobileRideMapRouteEndpointMetadata: Equatable, Hashable, Sendable 
 
 public struct MobileRideMapSnapshotDto: Equatable, Hashable, Sendable {
     public let rideID: String
+    /// Token captured with an active recording for asynchronous location callbacks.
+    public let recordingToken: MobileRideMapRecordingTokenDto?
     public let state: MobileRideMapStateDto
     public let summary: MobileRideMapSummaryDto
     public let segmentCount: UInt64
@@ -449,6 +451,7 @@ public struct MobileRideMapSnapshotDto: Equatable, Hashable, Sendable {
 
     public init(
         rideID: String,
+        recordingToken: MobileRideMapRecordingTokenDto? = nil,
         state: MobileRideMapStateDto,
         summary: MobileRideMapSummaryDto,
         segmentCount: UInt64,
@@ -456,6 +459,7 @@ public struct MobileRideMapSnapshotDto: Equatable, Hashable, Sendable {
         recordedBoundsAvailable: Bool = false
     ) {
         self.rideID = rideID
+        self.recordingToken = recordingToken
         self.state = state
         self.summary = summary
         self.segmentCount = segmentCount
@@ -947,12 +951,14 @@ public final class MobileRideMapState: @unchecked Sendable {
 
     /// Forwards one complete Core Location callback to Rust; Rust owns source-time admission.
     public func ingestLocationBatch(
+        recordingToken: MobileRideMapRecordingTokenDto?,
         receiptMonotonicMs: UInt64,
         receiptWallClockUnixMs: UInt64,
         samples: [MobilePhoneLocationSampleDto]
     ) throws -> [MobileRideMapDecisionDto] {
         try withCore {
             try $0.ingestLocationBatch(
+                recording: recordingToken,
                 receiptMonotonicMs: receiptMonotonicMs,
                 receiptWallClockUnixMs: receiptWallClockUnixMs,
                 samples: samples
@@ -1152,6 +1158,7 @@ public final class MobileRideMapState: @unchecked Sendable {
     private func mapSnapshot(_ snapshot: MobileRideMapCoreSnapshotDto) -> MobileRideMapSnapshotDto {
         MobileRideMapSnapshotDto(
             rideID: snapshot.rideId,
+            recordingToken: snapshot.recordingToken,
             state: mapState(snapshot.state),
             summary: MobileRideMapSummaryDto(
                 pointCount: snapshot.summary.pointCount,
