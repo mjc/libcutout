@@ -7119,3 +7119,58 @@ fn lowering_music_history_policy_redacts_existing_display_metadata() {
     assert_eq!(redacted[0].artist(), None);
     close_music_test_database(database, path);
 }
+
+#[test]
+fn recovery_metadata_preserves_background_gaps_without_route_projection() {
+    let _guard = test_guard();
+    let path = std::env::temp_dir().join(format!(
+        "libcutout-persistence-background-gap-{}.sqlite",
+        uuid::Uuid::new_v4()
+    ));
+    let database = RideDatabase::open(&path).expect("database opens");
+    let ride = database.create_ride(RideSource::Live, 10).unwrap();
+    database.transition(ride, RideEvent::Start).unwrap();
+    let first = LocationSample::new(
+        Coordinate::from_degrees(40.0, -105.0).unwrap(),
+        1_000,
+        1_700_000_000_000,
+        None,
+        LocationSource::Live,
+    );
+    assert_eq!(
+        database
+            .append_location_with_segment(ride, first, 0)
+            .unwrap(),
+        LocationAdmission::Accepted
+    );
+    let after_gap = LocationSample::new(
+        Coordinate::from_degrees(40.000_01, -105.0).unwrap(),
+        1_001 + MAX_GAP_MILLISECONDS,
+        1_700_000_000_001 + MAX_GAP_MILLISECONDS,
+        None,
+        LocationSource::Live,
+    );
+    assert_eq!(
+        database
+            .append_location_with_segment(ride, after_gap, 1)
+            .unwrap(),
+        LocationAdmission::Accepted
+    );
+    let found = database
+        .find_ride(ride)
+        .expect("find succeeds")
+        .expect("ride exists");
+    let recovered = database
+        .newest_recoverable_ride()
+        .expect("recovery metadata loads")
+        .expect("stopped ride remains recoverable");
+    let page = database
+        .list_rides(None, QueryLimit::new(10).unwrap())
+        .expect("history loads");
+    assert_eq!(found.background_gap_count(), 1);
+    assert_eq!(recovered.background_gap_count(), 1);
+    assert_eq!(page.rides()[0].background_gap_count(), 1);
+    assert_eq!(recovered.segment_count(), 2);
+    database.shutdown().expect("database shuts down");
+    let _ = std::fs::remove_file(path);
+}
