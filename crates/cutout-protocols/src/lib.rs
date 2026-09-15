@@ -48,16 +48,20 @@ mod family;
 pub use family::*;
 mod ffi;
 pub use ffi::*;
+mod device_session;
+pub use device_session::*;
+mod device_connection;
+pub use device_connection::*;
 mod fixture;
 pub use fixture::*;
 mod identification;
 pub use identification::{
     AdvertisedName, DeviceDetectionEvent, DeviceDetectionResolution, DeviceDetectionSession,
-    FirmwareBanner, IdentityBannerEvidence, IdentityConfidence, IdentityEvidence, ImuBanner,
-    ModelBanner, ParsedModelBanner, PendingProbe, ProtocolFamilyState, ProtocolModelIdentity,
-    ProtocolModelIdentityEvidence, StagedIdentityInput, StagedIdentityOutcome,
-    StagedIdentityResolution, closest_known_model, identify_known_model, identify_model,
-    parse_model_banner,
+    FirmwareBanner, IdentificationProbePlan, IdentityBannerEvidence, IdentityConfidence,
+    IdentityEvidence, ImuBanner, ModelBanner, ParsedModelBanner, PendingProbe, ProtocolFamilyState,
+    ProtocolModelIdentity, ProtocolModelIdentityEvidence, StagedIdentityInput,
+    StagedIdentityOutcome, StagedIdentityResolution, closest_known_model, identify_known_model,
+    identify_model, parse_model_banner,
 };
 mod melk_lighting;
 pub use melk_lighting::{
@@ -75,8 +79,12 @@ pub use registry::{
     RegisteredModelDefinition, SESSION_REGISTRATIONS, SessionRegistration, VETERAN_PARSER_KEY,
     begode_falcon_session_with_voltage_profile, find_session_registration,
 };
+mod device_actions;
+mod device_settings;
 mod request_encoder;
 mod session;
+pub use device_actions::*;
+pub use device_settings::*;
 mod simulator;
 pub use simulator::{AeroSettingsReadback, AeroSettingsSimulator, AeroSimulatorWrite};
 mod util;
@@ -92,10 +100,10 @@ pub use refloat_codec::{
     RefloatStreamResult, VESC_COMM_CUSTOM_APP_DATA, encode_refloat_request,
 };
 pub use request_encoder::{
-    AeroControlEncoder, AeroRequestEncoder, EncodedControl, EncodedControlSequence,
-    EncodedControlStep, EncodedIdentificationProbe, EncodedRequest, FalconControlEncoder,
-    FalconRequestEncoder, RequestDisposition, VescCanTarget, VescRequestEncoder,
-    begode_identification_probes,
+    AeroCommandMode, AeroCommandModeDetector, AeroControlEncoder, AeroRequestEncoder,
+    EncodedControl, EncodedControlSequence, EncodedControlStep, EncodedIdentificationProbe,
+    EncodedRequest, FalconControlEncoder, FalconRequestEncoder, RequestDisposition, VescCanTarget,
+    VescRequestEncoder, begode_identification_probes,
 };
 #[cfg(feature = "dangerous-controls")]
 pub use session::DangerousControlSession;

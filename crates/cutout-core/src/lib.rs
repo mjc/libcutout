@@ -22,6 +22,8 @@ mod ffi;
 pub use ffi::*;
 mod session_state;
 pub use session_state::*;
+mod connection_lifecycle;
+pub use connection_lifecycle::*;
 mod ride_lifecycle;
 pub use ride_lifecycle::*;
 mod rider_dashboard;
@@ -36,6 +38,10 @@ mod turn_signals;
 pub use turn_signals::*;
 mod settings;
 pub use settings::*;
+mod device_settings;
+pub use device_settings::*;
+mod device_actions;
+pub use device_actions::*;
 
 #[cfg(test)]
 mod gatt_channel_tests;
@@ -592,6 +598,21 @@ impl AeroGyroCalibrationState {
 pub struct AeroPwmPercent(u8);
 
 impl AeroPwmPercent {
+    /// Creates a warning margin from the PWM utilization shown to the rider.
+    #[must_use]
+    pub const fn from_duty_percent(duty: u8) -> Option<Self> {
+        match 100_u8.checked_sub(duty) {
+            Some(margin) => Self::new(margin),
+            None => None,
+        }
+    }
+
+    /// Returns PWM utilization at the warning threshold.
+    #[must_use]
+    pub const fn duty_percent(self) -> u8 {
+        100 - self.0
+    }
+
     /// Creates a PWM warning margin in EUC World's documented 0..=70 range.
     #[must_use]
     pub const fn new(percent: u8) -> Option<Self> {
@@ -7108,6 +7129,28 @@ pub enum RideOperatingState {
 
     /// Telemetry indicates charger-connected/charging state.
     Charging,
+}
+
+impl RideOperatingState {
+    /// Resolves explicit protocol state before charging and measured-speed fallbacks.
+    #[must_use]
+    pub fn resolve(
+        reported: Option<Self>,
+        charge_mode: Option<ChargeMode>,
+        speed: Option<Speed>,
+    ) -> Self {
+        if let Some(state) = reported.filter(|state| *state != Self::Unknown) {
+            return state;
+        }
+        if charge_mode == Some(ChargeMode::Charging) {
+            return Self::Charging;
+        }
+        match speed.map(Speed::as_millimetres_per_second) {
+            Some(0) => Self::Standing,
+            Some(_) => Self::Riding,
+            None => Self::Unknown,
+        }
+    }
 }
 
 /// Protocol-decoded controller operating mode.

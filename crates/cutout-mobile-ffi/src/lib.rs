@@ -2,6 +2,14 @@
 
 mod rgb;
 pub use rgb::*;
+mod connection_attempt;
+pub use connection_attempt::*;
+mod device_session;
+pub use device_session::*;
+mod device_actions;
+pub use device_actions::*;
+mod device_settings;
+pub use device_settings::*;
 
 use std::{
     collections::VecDeque,
@@ -96,15 +104,15 @@ use cutout_protocols::{
     BEGODE_FALCON_REGISTRY_ENTRY, BEGODE_FIELD_LED_AND_LIGHT_MODE, BEGODE_FIELD_SETTINGS_BITS,
     BEGODE_FIELD_TILTBACK_SPEED_KMH, ConcreteAeroBenignControlSession,
     ConcreteFalconBenignControlSession, ConcreteFalconProfileDto, ConcreteSessionErrorDto,
-    ConcreteSessionStepResultDto, DeviceDetectionEvent, DeviceDetectionResolution,
-    DeviceDetectionSession, DeviceFamily, IdentityBannerEvidence, NOSFET_AERO_REGISTRY_ENTRY,
-    PendingProbe, ProtocolFamilyClassification, ProtocolFamilyState, ProtocolModelIdentityEvidence,
-    StagedIdentityInput, StagedIdentityOutcome, VETERAN_FIELD_AUTO_SHUTDOWN_TIME_REMAINING_SECONDS,
-    VETERAN_FIELD_CHARGE_MODE, VETERAN_FIELD_PEDALS_MODE, VETERAN_FIELD_SPEED_ALERT_DECI_KMH,
+    ConcreteSessionStepResultDto, DeviceDetectionEvent, DeviceDetectionResolution, DeviceFamily,
+    IdentityBannerEvidence, NOSFET_AERO_REGISTRY_ENTRY, PendingProbe, ProtocolFamilyClassification,
+    ProtocolFamilyState, ProtocolModelIdentityEvidence, StagedIdentityInput, StagedIdentityOutcome,
+    VETERAN_FIELD_AUTO_SHUTDOWN_TIME_REMAINING_SECONDS, VETERAN_FIELD_CHARGE_MODE,
+    VETERAN_FIELD_PEDALS_MODE, VETERAN_FIELD_SPEED_ALERT_DECI_KMH,
     VETERAN_FIELD_SPEED_TILTBACK_DECI_KMH, VescBatteryType as CoreVescBatteryType,
     VescBoardProfile as CoreVescBoardProfile, VescReadOnlySession as CoreVescReadOnlySession,
-    begode_identification_probes, closest_known_model, identify_known_model,
-    new_nosfet_aero_benign_control_session, try_new_begode_falcon_benign_control_session,
+    closest_known_model, identify_known_model, new_nosfet_aero_benign_control_session,
+    try_new_begode_falcon_benign_control_session,
 };
 use cutout_ride_maps as ride_maps;
 use libcutout_persistence as persistence;
@@ -789,11 +797,7 @@ pub struct CutoutSessionStateHandle {
     inner: Mutex<MobileSessionState>,
 }
 
-#[derive(Debug, Default)]
-struct MobileSessionState {
-    state: CutoutSessionState,
-    detector: DeviceDetectionSession,
-}
+type MobileSessionState = cutout_protocols::DeviceConnectionSession;
 
 impl DiscoveryObservation {
     fn into_core(self) -> CoreDiscoveryObservation {
@@ -957,6 +961,245 @@ impl From<CoreDiscoveryCandidateSupport> for DiscoveryCandidateSupport {
 
 #[uniffi::export]
 impl CutoutSessionStateHandle {
+    /// Legacy standalone detector entry point used only before connection admission.
+    pub fn begin_identification_probe_at(
+        &self,
+        started_at_ms: u64,
+    ) -> MobileIdentificationProbeOutcomeDto {
+        let mut state = self.lock_inner();
+        match state.begin_identification_probes_unscoped(MonotonicTimestamp::new(started_at_ms)) {
+            cutout_protocols::IdentificationProbePlan::Unsupported => {
+                MobileIdentificationProbeOutcomeDto::Unsupported
+            }
+            cutout_protocols::IdentificationProbePlan::AlreadyPending => {
+                MobileIdentificationProbeOutcomeDto::AlreadyPending
+            }
+            cutout_protocols::IdentificationProbePlan::Writes(probes) => {
+                MobileIdentificationProbeOutcomeDto::Writes {
+                    writes: probes
+                        .iter()
+                        .map(MobileIdentificationProbeWriteDto::from_begode_probe)
+                        .collect(),
+                }
+            }
+        }
+    }
+
+    pub fn observe_advertisement(&self, name: Option<Vec<u8>>) -> DeviceDetectionResolutionRecord {
+        self.observe_advertisement_unscoped(name)
+            .unwrap_or_else(|| self.resolution())
+    }
+
+    pub fn observe_gatt(
+        &self,
+        fingerprints: Vec<MobileGattFingerprintDto>,
+    ) -> DeviceDetectionResolutionRecord {
+        let fingerprints = fingerprints
+            .into_iter()
+            .map(GattFingerprint::from)
+            .collect::<Vec<_>>();
+        let mut state = self.lock_inner();
+        state
+            .observe_gatt_unscoped(&fingerprints)
+            .map(Into::into)
+            .unwrap_or_else(|| state.detector().resolution(state.session_state()).into())
+    }
+
+    pub fn observe_notification(&self, bytes: Vec<u8>) -> DeviceDetectionResolutionRecord {
+        self.observe_notification_unscoped(bytes)
+            .unwrap_or_else(|| self.resolution())
+    }
+
+    pub fn observe_begode_name_probe(&self) -> DeviceDetectionResolutionRecord {
+        self.observe_begode_name_probe_unscoped()
+            .unwrap_or_else(|| self.resolution())
+    }
+    pub fn observe_begode_name_probe_at(
+        &self,
+        started_at_ms: u64,
+    ) -> DeviceDetectionResolutionRecord {
+        self.observe_begode_name_probe_unscoped_at(started_at_ms)
+            .unwrap_or_else(|| self.resolution())
+    }
+    pub fn observe_begode_firmware_probe(&self) -> DeviceDetectionResolutionRecord {
+        self.observe_begode_firmware_probe_unscoped()
+            .unwrap_or_else(|| self.resolution())
+    }
+    pub fn observe_begode_firmware_probe_at(
+        &self,
+        started_at_ms: u64,
+    ) -> DeviceDetectionResolutionRecord {
+        self.observe_begode_firmware_probe_unscoped_at(started_at_ms)
+            .unwrap_or_else(|| self.resolution())
+    }
+    pub fn observe_begode_imu_probe(&self) -> DeviceDetectionResolutionRecord {
+        self.observe_begode_imu_probe_unscoped()
+            .unwrap_or_else(|| self.resolution())
+    }
+    pub fn observe_begode_imu_probe_at(
+        &self,
+        started_at_ms: u64,
+    ) -> DeviceDetectionResolutionRecord {
+        self.observe_begode_imu_probe_unscoped_at(started_at_ms)
+            .unwrap_or_else(|| self.resolution())
+    }
+    pub fn observe_begode_name_probe_timeout(&self) -> DeviceDetectionResolutionRecord {
+        let mut state = self.lock_inner();
+        state
+            .observe_detection_unscoped(DeviceDetectionEvent::ProbeTimeout {
+                probe: PendingProbe::BegodeName,
+            })
+            .map(Into::into)
+            .unwrap_or_else(|| state.detector().resolution(state.session_state()).into())
+    }
+    pub fn observe_begode_firmware_probe_timeout(&self) -> DeviceDetectionResolutionRecord {
+        let mut state = self.lock_inner();
+        state
+            .observe_detection_unscoped(DeviceDetectionEvent::ProbeTimeout {
+                probe: PendingProbe::BegodeFirmware,
+            })
+            .map(Into::into)
+            .unwrap_or_else(|| state.detector().resolution(state.session_state()).into())
+    }
+    pub fn observe_begode_imu_probe_timeout(&self) -> DeviceDetectionResolutionRecord {
+        let mut state = self.lock_inner();
+        state
+            .observe_detection_unscoped(DeviceDetectionEvent::ProbeTimeout {
+                probe: PendingProbe::BegodeImu,
+            })
+            .map(Into::into)
+            .unwrap_or_else(|| state.detector().resolution(state.session_state()).into())
+    }
+    pub fn expire_begode_probe_responses(
+        &self,
+        now_ms: u64,
+        timeout_ms: u64,
+    ) -> Vec<MobilePendingProbeDto> {
+        self.expire_begode_probe_responses_unscoped(now_ms, timeout_ms)
+    }
+    pub fn mark_begode_probe_responses_missing(&self) -> Vec<MobilePendingProbeDto> {
+        self.mark_begode_probe_responses_missing_unscoped()
+    }
+    pub fn reset_device_detection(&self) {
+        let mut state = self.lock_inner();
+        if state.reset_detector_unscoped() {
+            state.session_state_mut().reset_device_identity();
+        }
+    }
+    pub fn reset_device_detection_link(&self) {
+        let mut state = self.lock_inner();
+        if state.reset_detector_unscoped() {
+            state.session_state_mut().identity_mut().reset_link_probes();
+        }
+    }
+
+    /// Allows discovery-only evidence before a connection attempt is admitted.
+    pub fn observe_advertisement_unscoped(
+        &self,
+        name: Option<Vec<u8>>,
+    ) -> Option<DeviceDetectionResolutionRecord> {
+        let mut state = self.lock_inner();
+        state
+            .observe_detection_unscoped(DeviceDetectionEvent::Advertisement {
+                name: name.as_deref(),
+            })
+            .map(Into::into)
+    }
+
+    /// Allows discovery-only notification evidence before a connection attempt is admitted.
+    pub fn observe_notification_unscoped(
+        &self,
+        bytes: Vec<u8>,
+    ) -> Option<DeviceDetectionResolutionRecord> {
+        let mut state = self.lock_inner();
+        state
+            .observe_detection_unscoped(DeviceDetectionEvent::Notification { bytes: &bytes })
+            .map(Into::into)
+    }
+
+    /// Allows discovery-only probe writes before a connection attempt is admitted.
+    pub fn observe_begode_name_probe_unscoped(&self) -> Option<DeviceDetectionResolutionRecord> {
+        self.observe_begode_name_probe_unscoped_at(0)
+    }
+
+    pub fn observe_begode_name_probe_unscoped_at(
+        &self,
+        started_at_ms: u64,
+    ) -> Option<DeviceDetectionResolutionRecord> {
+        let mut state = self.lock_inner();
+        state
+            .observe_probe_write_at_unscoped(
+                PendingProbe::BegodeName,
+                MonotonicTimestamp::new(started_at_ms),
+            )
+            .map(Into::into)
+    }
+
+    /// Allows discovery-only probe writes before a connection attempt is admitted.
+    pub fn observe_begode_firmware_probe_unscoped(
+        &self,
+    ) -> Option<DeviceDetectionResolutionRecord> {
+        self.observe_begode_firmware_probe_unscoped_at(0)
+    }
+
+    pub fn observe_begode_firmware_probe_unscoped_at(
+        &self,
+        started_at_ms: u64,
+    ) -> Option<DeviceDetectionResolutionRecord> {
+        let mut state = self.lock_inner();
+        state
+            .observe_probe_write_at_unscoped(
+                PendingProbe::BegodeFirmware,
+                MonotonicTimestamp::new(started_at_ms),
+            )
+            .map(Into::into)
+    }
+
+    /// Allows discovery-only probe writes before a connection attempt is admitted.
+    pub fn observe_begode_imu_probe_unscoped(&self) -> Option<DeviceDetectionResolutionRecord> {
+        self.observe_begode_imu_probe_unscoped_at(0)
+    }
+
+    pub fn observe_begode_imu_probe_unscoped_at(
+        &self,
+        started_at_ms: u64,
+    ) -> Option<DeviceDetectionResolutionRecord> {
+        let mut state = self.lock_inner();
+        state
+            .observe_probe_write_at_unscoped(
+                PendingProbe::BegodeImu,
+                MonotonicTimestamp::new(started_at_ms),
+            )
+            .map(Into::into)
+    }
+
+    /// Expires standalone probe evidence before connection admission.
+    pub fn expire_begode_probe_responses_unscoped(
+        &self,
+        now_ms: u64,
+        timeout_ms: u64,
+    ) -> Vec<MobilePendingProbeDto> {
+        let mut state = self.lock_inner();
+        state
+            .expire_pending_probes_unscoped(
+                MonotonicTimestamp::new(now_ms),
+                CoreDuration::from_milliseconds(timeout_ms),
+            )
+            .into_iter()
+            .map(MobilePendingProbeDto::from)
+            .collect()
+    }
+
+    /// Marks standalone probe evidence missing before connection admission.
+    pub fn mark_begode_probe_responses_missing_unscoped(&self) -> Vec<MobilePendingProbeDto> {
+        let mut state = self.lock_inner();
+        state
+            .mark_pending_probes_missing_unscoped()
+            .into_iter()
+            .map(MobilePendingProbeDto::from)
+            .collect()
+    }
+
     /// Creates an empty Rust-owned session state handle.
     #[uniffi::constructor]
     #[must_use]
@@ -969,21 +1212,37 @@ impl CutoutSessionStateHandle {
     /// Observes one mobile discovery advertisement.
     pub fn observe_discovery(&self, observation: DiscoveryObservation) -> DiscoverySnapshot {
         let mut state = self.lock_inner();
-        state.state.observe_discovery(observation.into_core());
-        DiscoverySnapshot::from_state(&state.state)
+        state
+            .session_state_mut()
+            .observe_discovery(observation.into_core());
+        DiscoverySnapshot::from_state(state.session_state())
     }
 
     /// Selects a discovered platform identifier for this session.
     pub fn select_discovered_platform(&self, platform_identifier: String) -> DiscoverySnapshot {
         let mut state = self.lock_inner();
-        state.state.select_discovered_platform(platform_identifier);
-        DiscoverySnapshot::from_state(&state.state)
+        state
+            .session_state_mut()
+            .select_discovered_platform(platform_identifier);
+        DiscoverySnapshot::from_state(state.session_state())
     }
 
     /// Returns the current discovery snapshot.
     #[must_use]
     pub fn discovery_snapshot(&self) -> DiscoverySnapshot {
-        DiscoverySnapshot::from_state(&self.lock_inner().state)
+        DiscoverySnapshot::from_state(self.lock_inner().session_state())
+    }
+
+    /// Projects retained unknown peripherals for an explicitly opened advanced capture list.
+    #[must_use]
+    pub fn advanced_capture_candidates(&self) -> Vec<DiscoveryCandidate> {
+        self.lock_inner()
+            .session_state()
+            .discovery()
+            .advanced_capture_candidates()
+            .into_iter()
+            .map(Into::into)
+            .collect()
     }
 
     /// Applies one typed Apple-platform event to the Rust-owned ride lifecycle.
@@ -998,9 +1257,9 @@ impl CutoutSessionStateHandle {
     ) -> Result<MobileRideSessionDecisionDto, MobileRideSessionInputError> {
         let input = input.try_into()?;
         let mut mobile = self.lock_inner();
-        let decision = mobile.state.ride_session.transition(input);
+        let decision = mobile.session_state().ride_session.transition(input);
         let (state, output) = MobileRideSessionDecisionDto::from_core(decision);
-        mobile.state.ride_session = state;
+        mobile.session_state_mut().ride_session = state;
         Ok(output)
     }
 
@@ -1013,7 +1272,7 @@ impl CutoutSessionStateHandle {
         &self,
     ) -> Result<Option<Vec<u8>>, MobileRideSessionMarkerError> {
         self.lock_inner()
-            .state
+            .session_state()
             .ride_session
             .marker()
             .map(|marker| marker.encode().map_err(Into::into))
@@ -1052,14 +1311,14 @@ impl CutoutSessionStateHandle {
         let decision =
             CoreRideSessionLifecycle::recover(marker, restored_platform_identifier.as_deref());
         let (state, output) = MobileRideSessionDecisionDto::from_core(decision);
-        self.lock_inner().state.ride_session = state;
+        self.lock_inner().session_state_mut().ride_session = state;
         Ok(output)
     }
 
     /// Returns the current Rust-owned ride-session snapshot.
     #[must_use]
     pub fn ride_session_snapshot(&self) -> MobileRideSessionSnapshotDto {
-        (&self.lock_inner().state.ride_session).into()
+        (&self.lock_inner().session_state().ride_session).into()
     }
 }
 
@@ -1175,166 +1434,179 @@ impl MobileIdentificationProbeWriteDto {
 #[uniffi::export]
 impl CutoutSessionStateHandle {
     /// Begins the complete ordered non-mutating identification query sequence.
-    pub fn begin_identification_probe_at(
+    pub fn begin_identification_probe_for_attempt_at(
         &self,
+        token: MobileConnectionAttemptTokenDto,
         started_at_ms: u64,
-    ) -> MobileIdentificationProbeOutcomeDto {
-        let probes = begode_identification_probes();
-        let mut state = self.lock_inner();
-        let selected_identifier = state
-            .state
-            .discovery()
-            .selected_platform_identifier
-            .as_deref();
-        let selected_candidate = selected_identifier.and_then(|identifier| {
-            state
-                .state
-                .discovery()
-                .picker_candidates()
-                .into_iter()
-                .find(|candidate| candidate.platform_identifier == identifier)
-        });
-        match selected_candidate {
-            Some(candidate)
-                if candidate.connection_route
-                    == Some(CoreDiscoveryConnectionRoute::VescOnewheel) =>
-            {
-                return MobileIdentificationProbeOutcomeDto::Unsupported;
+    ) -> Option<MobileIdentificationProbeOutcomeDto> {
+        let mut inner = self.lock_inner();
+        let token = token.into();
+        match inner.begin_identification_probes(&token, MonotonicTimestamp::new(started_at_ms)) {
+            None => None,
+            Some(cutout_protocols::IdentificationProbePlan::Unsupported) => {
+                Some(MobileIdentificationProbeOutcomeDto::Unsupported)
             }
-            Some(candidate)
-                if candidate.connection_route
-                    == Some(CoreDiscoveryConnectionRoute::ElectricUnicycle)
-                    || candidate.support == CoreDiscoveryCandidateSupport::ProbeRecommended => {}
-            Some(_) => {
-                return MobileIdentificationProbeOutcomeDto::Unsupported;
+            Some(cutout_protocols::IdentificationProbePlan::AlreadyPending) => {
+                Some(MobileIdentificationProbeOutcomeDto::AlreadyPending)
             }
-            None if selected_identifier.is_some() => {
-                return MobileIdentificationProbeOutcomeDto::Unsupported;
+            Some(cutout_protocols::IdentificationProbePlan::Writes(probes)) => {
+                Some(MobileIdentificationProbeOutcomeDto::Writes {
+                    writes: probes
+                        .iter()
+                        .map(MobileIdentificationProbeWriteDto::from_begode_probe)
+                        .collect(),
+                })
             }
-            None => {}
-        }
-        if state
-            .detector
-            .next_probe_expiry(&state.state, CoreDuration::from_milliseconds(0))
-            .is_some()
-        {
-            return MobileIdentificationProbeOutcomeDto::AlreadyPending;
-        }
-        let MobileSessionState { state, detector } = &mut *state;
-        for probe in &probes {
-            let _ = detector.observe_probe_write_at(
-                state,
-                probe.probe,
-                MonotonicTimestamp::new(started_at_ms),
-            );
-        }
-        MobileIdentificationProbeOutcomeDto::Writes {
-            writes: probes
-                .iter()
-                .map(MobileIdentificationProbeWriteDto::from_begode_probe)
-                .collect(),
         }
     }
 
     /// Observes raw advertisement-name bytes from the mobile BLE stack.
     #[allow(clippy::needless_pass_by_value, reason = "UniFFI exports owned bytes")]
-    pub fn observe_advertisement(&self, name: Option<Vec<u8>>) -> DeviceDetectionResolutionRecord {
-        self.observe(DeviceDetectionEvent::Advertisement {
-            name: name.as_deref(),
-        })
+    pub fn observe_advertisement_for_attempt(
+        &self,
+        token: MobileConnectionAttemptTokenDto,
+        name: Option<Vec<u8>>,
+    ) -> Option<DeviceDetectionResolutionRecord> {
+        self.observe(
+            &token.into(),
+            DeviceDetectionEvent::Advertisement {
+                name: name.as_deref(),
+            },
+        )
     }
 
     /// Observes the current mobile GATT fingerprint snapshot.
-    pub fn observe_gatt(
+    pub fn observe_gatt_for_attempt(
         &self,
+        token: MobileConnectionAttemptTokenDto,
         fingerprints: Vec<MobileGattFingerprintDto>,
-    ) -> DeviceDetectionResolutionRecord {
+    ) -> Option<DeviceDetectionResolutionRecord> {
         let fingerprints = fingerprints
             .into_iter()
             .map(GattFingerprint::from)
             .collect::<Vec<_>>();
-        self.observe(DeviceDetectionEvent::Gatt {
-            gatt: &fingerprints,
-        })
+        self.observe(
+            &token.into(),
+            DeviceDetectionEvent::Gatt {
+                gatt: &fingerprints,
+            },
+        )
     }
 
     /// Observes raw notification bytes from the mobile BLE stack.
     #[allow(clippy::needless_pass_by_value, reason = "UniFFI exports owned bytes")]
-    pub fn observe_notification(&self, bytes: Vec<u8>) -> DeviceDetectionResolutionRecord {
-        self.observe(DeviceDetectionEvent::Notification { bytes: &bytes })
+    pub fn observe_notification_for_attempt(
+        &self,
+        token: MobileConnectionAttemptTokenDto,
+        bytes: Vec<u8>,
+    ) -> Option<DeviceDetectionResolutionRecord> {
+        self.observe(
+            &token.into(),
+            DeviceDetectionEvent::Notification { bytes: &bytes },
+        )
     }
 
     /// Records that the caller issued a Begode `N` name probe.
-    pub fn observe_begode_name_probe(&self) -> DeviceDetectionResolutionRecord {
-        self.observe_begode_name_probe_at(0)
+    pub fn observe_begode_name_probe_for_attempt(
+        &self,
+        token: MobileConnectionAttemptTokenDto,
+    ) -> Option<DeviceDetectionResolutionRecord> {
+        self.observe_begode_name_probe_for_attempt_at(token, 0)
     }
 
     /// Records a Begode `N` name probe with its monotonic write time.
-    pub fn observe_begode_name_probe_at(
+    pub fn observe_begode_name_probe_for_attempt_at(
         &self,
+        token: MobileConnectionAttemptTokenDto,
         started_at_ms: u64,
-    ) -> DeviceDetectionResolutionRecord {
-        self.observe_probe_write_at(PendingProbe::BegodeName, started_at_ms)
+    ) -> Option<DeviceDetectionResolutionRecord> {
+        self.observe_probe_write_at(&token.into(), PendingProbe::BegodeName, started_at_ms)
     }
 
     /// Records that the caller issued a Begode `V` firmware probe.
-    pub fn observe_begode_firmware_probe(&self) -> DeviceDetectionResolutionRecord {
-        self.observe_begode_firmware_probe_at(0)
+    pub fn observe_begode_firmware_probe_for_attempt(
+        &self,
+        token: MobileConnectionAttemptTokenDto,
+    ) -> Option<DeviceDetectionResolutionRecord> {
+        self.observe_begode_firmware_probe_for_attempt_at(token, 0)
     }
 
     /// Records a Begode `V` firmware probe with its monotonic write time.
-    pub fn observe_begode_firmware_probe_at(
+    pub fn observe_begode_firmware_probe_for_attempt_at(
         &self,
+        token: MobileConnectionAttemptTokenDto,
         started_at_ms: u64,
-    ) -> DeviceDetectionResolutionRecord {
-        self.observe_probe_write_at(PendingProbe::BegodeFirmware, started_at_ms)
+    ) -> Option<DeviceDetectionResolutionRecord> {
+        self.observe_probe_write_at(&token.into(), PendingProbe::BegodeFirmware, started_at_ms)
     }
 
     /// Records that the caller issued a Begode `M` IMU probe.
-    pub fn observe_begode_imu_probe(&self) -> DeviceDetectionResolutionRecord {
-        self.observe_begode_imu_probe_at(0)
+    pub fn observe_begode_imu_probe_for_attempt(
+        &self,
+        token: MobileConnectionAttemptTokenDto,
+    ) -> Option<DeviceDetectionResolutionRecord> {
+        self.observe_begode_imu_probe_for_attempt_at(token, 0)
     }
 
     /// Records a Begode `M` IMU probe with its monotonic write time.
-    pub fn observe_begode_imu_probe_at(
+    pub fn observe_begode_imu_probe_for_attempt_at(
         &self,
+        token: MobileConnectionAttemptTokenDto,
         started_at_ms: u64,
-    ) -> DeviceDetectionResolutionRecord {
-        self.observe_probe_write_at(PendingProbe::BegodeImu, started_at_ms)
+    ) -> Option<DeviceDetectionResolutionRecord> {
+        self.observe_probe_write_at(&token.into(), PendingProbe::BegodeImu, started_at_ms)
     }
 
     /// Records that the Begode `N` name probe did not produce a matching response.
-    pub fn observe_begode_name_probe_timeout(&self) -> DeviceDetectionResolutionRecord {
-        self.observe(DeviceDetectionEvent::ProbeTimeout {
-            probe: PendingProbe::BegodeName,
-        })
+    pub fn observe_begode_name_probe_timeout_for_attempt(
+        &self,
+        token: MobileConnectionAttemptTokenDto,
+    ) -> Option<DeviceDetectionResolutionRecord> {
+        self.observe(
+            &token.into(),
+            DeviceDetectionEvent::ProbeTimeout {
+                probe: PendingProbe::BegodeName,
+            },
+        )
     }
 
     /// Records that the Begode `V` firmware probe did not produce a matching response.
-    pub fn observe_begode_firmware_probe_timeout(&self) -> DeviceDetectionResolutionRecord {
-        self.observe(DeviceDetectionEvent::ProbeTimeout {
-            probe: PendingProbe::BegodeFirmware,
-        })
+    pub fn observe_begode_firmware_probe_timeout_for_attempt(
+        &self,
+        token: MobileConnectionAttemptTokenDto,
+    ) -> Option<DeviceDetectionResolutionRecord> {
+        self.observe(
+            &token.into(),
+            DeviceDetectionEvent::ProbeTimeout {
+                probe: PendingProbe::BegodeFirmware,
+            },
+        )
     }
 
     /// Records that the Begode `M` IMU probe did not produce a matching response.
-    pub fn observe_begode_imu_probe_timeout(&self) -> DeviceDetectionResolutionRecord {
-        self.observe(DeviceDetectionEvent::ProbeTimeout {
-            probe: PendingProbe::BegodeImu,
-        })
+    pub fn observe_begode_imu_probe_timeout_for_attempt(
+        &self,
+        token: MobileConnectionAttemptTokenDto,
+    ) -> Option<DeviceDetectionResolutionRecord> {
+        self.observe(
+            &token.into(),
+            DeviceDetectionEvent::ProbeTimeout {
+                probe: PendingProbe::BegodeImu,
+            },
+        )
     }
 
     /// Expires pending Begode probes strictly older than the response timeout.
-    pub fn expire_begode_probe_responses(
+    pub fn expire_begode_probe_responses_for_attempt(
         &self,
+        token: MobileConnectionAttemptTokenDto,
         now_ms: u64,
         timeout_ms: u64,
     ) -> Vec<MobilePendingProbeDto> {
         let mut state = self.lock_inner();
-        let MobileSessionState { state, detector } = &mut *state;
-        detector
+        state
             .expire_pending_probes(
-                state,
+                &token.into(),
                 MonotonicTimestamp::new(now_ms),
                 CoreDuration::from_milliseconds(timeout_ms),
             )
@@ -1344,11 +1616,13 @@ impl CutoutSessionStateHandle {
     }
 
     /// Marks every pending Begode probe as missing.
-    pub fn mark_begode_probe_responses_missing(&self) -> Vec<MobilePendingProbeDto> {
+    pub fn mark_begode_probe_responses_missing_for_attempt(
+        &self,
+        token: MobileConnectionAttemptTokenDto,
+    ) -> Vec<MobilePendingProbeDto> {
         let mut state = self.lock_inner();
-        let MobileSessionState { state, detector } = &mut *state;
-        detector
-            .mark_pending_probes_missing(state)
+        state
+            .mark_pending_probes_missing(&token.into())
             .into_iter()
             .map(MobilePendingProbeDto::from)
             .collect()
@@ -1358,59 +1632,89 @@ impl CutoutSessionStateHandle {
     pub fn next_begode_probe_expiry(&self, timeout_ms: u64) -> Option<u64> {
         let state = self.lock_inner();
         state
-            .detector
-            .next_probe_expiry(&state.state, CoreDuration::from_milliseconds(timeout_ms))
+            .detector()
+            .next_probe_expiry(
+                state.session_state(),
+                CoreDuration::from_milliseconds(timeout_ms),
+            )
             .map(MonotonicTimestamp::as_milliseconds)
     }
 
     /// Returns the current detection resolution.
     pub fn resolution(&self) -> DeviceDetectionResolutionRecord {
         let state = self.lock_inner();
-        state.detector.resolution(&state.state).into()
+        state.detector().resolution(state.session_state()).into()
     }
 
     /// Clears device-specific detection state while preserving discovery observations.
-    pub fn reset_device_detection(&self) {
+    pub fn reset_device_detection_for_attempt(
+        &self,
+        token: MobileConnectionAttemptTokenDto,
+    ) -> bool {
         let mut state = self.lock_inner();
-        state.state.reset_device_identity();
-        state.detector = DeviceDetectionSession::default();
+        if !state
+            .session_state()
+            .connection
+            .is_current(&token.clone().into())
+        {
+            return false;
+        }
+        state.session_state_mut().reset_device_identity();
+        state.reset_detector(&token.into())
     }
 
     /// Sets the purpose of the selected connection across transport attempts.
     pub fn set_device_connection_intent(&self, intent: DeviceConnectionIntentDto) {
-        self.lock_inner().state.device_connection_intent = intent.into();
+        self.lock_inner()
+            .session_state_mut()
+            .device_connection_intent = intent.into();
     }
 
     /// Whether unresolved identification should retry rather than capture-only.
     pub fn should_retry_identification(&self) -> bool {
-        self.lock_inner().state.should_retry_identification()
+        self.lock_inner()
+            .session_state()
+            .should_retry_identification()
     }
 
     /// Clears link-local stream buffers and probes while retaining confirmed identity.
-    pub fn reset_device_detection_link(&self) {
+    pub fn reset_device_detection_link_for_attempt(
+        &self,
+        token: MobileConnectionAttemptTokenDto,
+    ) -> bool {
         let mut state = self.lock_inner();
-        state.state.identity_mut().reset_link_probes();
-        state.detector = DeviceDetectionSession::default();
+        if !state
+            .session_state()
+            .connection
+            .is_current(&token.clone().into())
+        {
+            return false;
+        }
+        state.session_state_mut().identity_mut().reset_link_probes();
+        state.reset_detector(&token.into())
     }
 }
 
 impl CutoutSessionStateHandle {
-    fn observe(&self, event: DeviceDetectionEvent<'_>) -> DeviceDetectionResolutionRecord {
+    fn observe(
+        &self,
+        token: &cutout_core::ConnectionAttemptToken,
+        event: DeviceDetectionEvent<'_>,
+    ) -> Option<DeviceDetectionResolutionRecord> {
         let mut state = self.lock_inner();
-        let MobileSessionState { state, detector } = &mut *state;
-        detector.observe(state, event).into()
+        state.observe_detection(token, event).map(Into::into)
     }
 
     fn observe_probe_write_at(
         &self,
+        token: &cutout_core::ConnectionAttemptToken,
         probe: PendingProbe,
         started_at_ms: u64,
-    ) -> DeviceDetectionResolutionRecord {
+    ) -> Option<DeviceDetectionResolutionRecord> {
         let mut state = self.lock_inner();
-        let MobileSessionState { state, detector } = &mut *state;
-        detector
-            .observe_probe_write_at(state, probe, MonotonicTimestamp::new(started_at_ms))
-            .into()
+        state
+            .observe_probe_write_at(token, probe, MonotonicTimestamp::new(started_at_ms))
+            .map(Into::into)
     }
 }
 
@@ -1426,47 +1730,20 @@ pub fn mobile_discovery_candidate_from_advertisement(
     local_name: Option<String>,
     advertised_service_uuids: Vec<DiscoveryServiceUuid>,
 ) -> DiscoveryCandidate {
+    let observation = CoreDiscoveryObservation {
+        platform_identifier: platform_identifier.clone(),
+        advertised_name: local_name.as_deref().map(|name| name.as_bytes().to_vec()),
+        advertised_service_uuids: advertised_service_uuids
+            .into_iter()
+            .filter_map(|uuid| CoreBluetoothServiceUuid::try_from(uuid.bytes).ok())
+            .collect(),
+        manufacturer_data: Vec::new(),
+        rssi_dbm: None,
+    };
+    if let Some(candidate) = DiscoveryCandidateSnapshot::from_observation(&observation) {
+        return candidate.into();
+    }
     let display_name = local_name.unwrap_or_else(|| "Unknown Bluetooth device".to_owned());
-    let advertised_service_uuids = advertised_service_uuids
-        .into_iter()
-        .filter_map(|uuid| CoreBluetoothServiceUuid::try_from(uuid.bytes).ok())
-        .collect::<Vec<_>>();
-    if advertised_service_uuids.contains(&CoreBluetoothServiceUuid::EUC_SERIAL_FFE0) {
-        return DiscoveryCandidate {
-            platform_identifier,
-            display_name,
-            product_category: "Electric unicycle".to_owned(),
-            evidence: "FFE0/FFE1 transport hint".to_owned(),
-            detail: "Read-only protocol probe recommended".to_owned(),
-            is_picker_candidate: true,
-            support: DiscoveryCandidateSupport::ProbeRecommended,
-            recommended_action: DiscoveryCandidateSupport::ProbeRecommended.recommended_action(),
-            section: DiscoveryCandidateSupport::ProbeRecommended.picker_section(),
-            connection_route: None,
-            electric_unicycle_model: None,
-            disabled_reason: Some("Read-only protocol probe recommended".to_owned()),
-        };
-    }
-
-    if advertised_service_uuids.iter().any(|uuid| {
-        *uuid == CoreBluetoothServiceUuid::VESC_SERIAL_FFF0
-            || *uuid == CoreBluetoothServiceUuid::VESC_NORDIC_UART
-    }) {
-        return DiscoveryCandidate {
-            platform_identifier,
-            display_name,
-            product_category: "VESC Onewheel".to_owned(),
-            evidence: "FFF0 transport hint".to_owned(),
-            detail: "VESC protocol route".to_owned(),
-            is_picker_candidate: true,
-            support: DiscoveryCandidateSupport::Supported,
-            recommended_action: DiscoveryCandidateSupport::Supported.recommended_action(),
-            section: DiscoveryCandidateSupport::Supported.picker_section(),
-            connection_route: Some(DiscoveryConnectionRoute::VescOnewheel),
-            electric_unicycle_model: None,
-            disabled_reason: None,
-        };
-    }
 
     DiscoveryCandidate {
         platform_identifier,
@@ -15199,20 +15476,16 @@ fn ride_operating_state(
     charge_mode: Option<ChargeModeReadingDto>,
     speed: Option<SpeedReadingDto>,
 ) -> RideOperatingState {
-    match operating_state {
-        Some(RideOperatingStateDto::Parked) => return RideOperatingState::Parked,
-        Some(RideOperatingStateDto::Standing) => return RideOperatingState::Standing,
-        Some(RideOperatingStateDto::Riding) => return RideOperatingState::Riding,
-        Some(RideOperatingStateDto::Charging) => return RideOperatingState::Charging,
-        Some(RideOperatingStateDto::Unknown) | None => {}
-    }
-    match charge_mode.map(|mode| mode.value) {
-        Some(ChargeModeDto::Charging) => RideOperatingState::Charging,
-        Some(ChargeModeDto::NotCharging) | None => match speed.map(|speed| speed.value.cmp(&0)) {
-            Some(std::cmp::Ordering::Equal) => RideOperatingState::Standing,
-            Some(_) => RideOperatingState::Riding,
-            None => RideOperatingState::Unknown,
-        },
+    match CoreRideOperatingState::resolve(
+        operating_state.map(Into::into),
+        charge_mode.map(|mode| mode.value.into()),
+        speed.map(|speed| cutout_core::Speed::from_millimetres_per_second(speed.value)),
+    ) {
+        CoreRideOperatingState::Unknown => RideOperatingState::Unknown,
+        CoreRideOperatingState::Parked => RideOperatingState::Parked,
+        CoreRideOperatingState::Standing => RideOperatingState::Standing,
+        CoreRideOperatingState::Riding => RideOperatingState::Riding,
+        CoreRideOperatingState::Charging => RideOperatingState::Charging,
     }
 }
 
@@ -16689,6 +16962,17 @@ impl From<VescBoardProfile> for CoreVescBoardProfile {
         if profile.reports_battery_current {
             core_profile = core_profile.with_reported_battery_current();
         }
+        core_profile.charge_profile = profile.charge_profile.map(|charge| {
+            cutout_core::ChargeProfile::new(
+                ChargeProfileIdentity::new(charge.profile_id),
+                UsablePackCapacity::new(
+                    Capacity::from_milliamp_hours(charge.capacity_milliamp_hours),
+                    charge.capacity_source.into(),
+                    charge.verification.into(),
+                ),
+                charge.charge_flow_verification.into(),
+            )
+        });
         core_profile
     }
 }
@@ -19355,7 +19639,7 @@ mod tests {
     }
 
     #[test]
-    fn mobile_discovery_candidate_routes_vesc_advertisement() {
+    fn mobile_discovery_candidate_keeps_uart_advertisement_unverified() {
         let candidate = mobile_discovery_candidate_from_advertisement(
             "ios-local-unknown".to_owned(),
             Some("Little FOCer".to_owned()),
@@ -19365,14 +19649,16 @@ mod tests {
         );
 
         assert!(candidate.is_picker_candidate);
-        assert_eq!(candidate.product_category, "VESC Onewheel");
-        assert_eq!(candidate.support, DiscoveryCandidateSupport::Supported);
         assert_eq!(
-            candidate.connection_route,
-            Some(DiscoveryConnectionRoute::VescOnewheel)
+            candidate.support,
+            DiscoveryCandidateSupport::ProbeRecommended
         );
+        assert_eq!(candidate.connection_route, None);
         assert_eq!(candidate.electric_unicycle_model, None);
-        assert_eq!(candidate.disabled_reason, None);
+        assert_eq!(
+            candidate.disabled_reason,
+            Some("Read-only protocol probe recommended".to_owned())
+        );
     }
 
     #[test]
@@ -21089,7 +21375,8 @@ mod tests {
             Some(MobileLightStateDto::On)
         );
         assert!(aero_result.outputs.iter().any(|output| {
-            output.kind == MobileSessionOutputKindDto::Write && output.bytes == b"SetLightON"
+            output.kind == MobileSessionOutputKindDto::Write
+                && output.bytes == hex_literal::hex!("4c6b41700d0180800157ed3bd5")
         }));
         assert_eq!(falcon_result.error, None);
         assert!(falcon_result.outputs.iter().any(|output| {

@@ -6,8 +6,8 @@ pub use cutout_core::{
     AdvertisedName, ModelBanner, PendingProbe, ProtocolModelIdentity, ProtocolModelIdentityEvidence,
 };
 use cutout_core::{
-    CutoutSessionState, Duration, GattFingerprint, ModelRegistryEntry, MonotonicTimestamp,
-    ProtocolFamily,
+    BluetoothServiceUuid, CutoutSessionState, Duration, GattFingerprint, ModelRegistryEntry,
+    MonotonicTimestamp, ProtocolFamily,
 };
 
 use crate::{
@@ -17,7 +17,16 @@ use crate::{
     VeteranTelemetry, classify_begode_ascii_banner,
 };
 
-const DETECTION_MAX_GATT_FINGERPRINTS: usize = 16;
+/// Protocol-owned result of requesting identification queries.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum IdentificationProbePlan {
+    /// Available transport evidence does not support these queries.
+    Unsupported,
+    /// A previous query is still awaiting its response.
+    AlreadyPending,
+    /// Ordered read-only writes selected by protocol policy.
+    Writes([crate::EncodedIdentificationProbe; 3]),
+}
 
 /// Confidence level for staged model identification.
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
@@ -333,6 +342,40 @@ struct NotificationDecision<'a> {
 }
 
 impl DeviceDetectionSession {
+    /// Selects and records the non-mutating query sequence from transport evidence.
+    pub fn begin_identification_probes(
+        &mut self,
+        state: &mut CutoutSessionState,
+        at: MonotonicTimestamp,
+    ) -> IdentificationProbePlan {
+        if let Some(selected) = state.discovery().selected_platform_identifier.as_deref() {
+            let supports_queries = state.discovery().observations.iter().any(|observation| {
+                observation.platform_identifier == selected
+                    && observation
+                        .advertised_service_uuids
+                        .contains(&BluetoothServiceUuid::EUC_SERIAL_FFE0)
+            }) || state
+                .identity()
+                .gatt
+                .iter()
+                .any(|gatt| gatt.service == crate::BEGODE_SERVICE_CHANNEL);
+            if !supports_queries {
+                return IdentificationProbePlan::Unsupported;
+            }
+        }
+        if self
+            .next_probe_expiry(state, Duration::from_milliseconds(0))
+            .is_some()
+        {
+            return IdentificationProbePlan::AlreadyPending;
+        }
+        let probes = crate::begode_identification_probes();
+        for probe in &probes {
+            let _ = self.observe_probe_write_at(state, probe.probe, at);
+        }
+        IdentificationProbePlan::Writes(probes)
+    }
+
     /// Creates an empty caller-owned detection session.
     #[must_use]
     pub fn new() -> Self {
@@ -358,10 +401,7 @@ impl DeviceDetectionSession {
             }
             DeviceDetectionEvent::Gatt { gatt } => {
                 state.identity_mut().gatt.clear();
-                state
-                    .identity_mut()
-                    .gatt
-                    .extend(gatt.iter().copied().take(DETECTION_MAX_GATT_FINGERPRINTS));
+                state.identity_mut().gatt.extend_from_slice(gatt);
                 self.refresh_resolution(state, None, None, current.protocol);
             }
             DeviceDetectionEvent::Notification { bytes } => {
@@ -1589,15 +1629,23 @@ mod tests {
     }
 
     #[test]
-    fn caller_owned_detection_session_caps_retained_gatt_fingerprints() {
+    fn caller_owned_detection_session_preserves_complete_gatt_inventory() {
         let mut session = DeviceDetectionSession::new();
-        let mut gatt = [UNKNOWN_GATT; super::DETECTION_MAX_GATT_FINGERPRINTS + 1];
-        gatt[super::DETECTION_MAX_GATT_FINGERPRINTS] = BEGODE_GATT[0];
+        let mut gatt = [UNKNOWN_GATT; 17];
+        gatt[16] = BEGODE_GATT[0];
 
         let update = session.observe(DeviceDetectionEvent::Gatt { gatt: &gatt });
 
-        assert_eq!(update.staged.confidence, IdentityConfidence::NoMatch);
+        assert_eq!(session.root.identity().gatt, gatt);
+        assert_eq!(update.protocol, ProtocolFamilyState::Unknown);
         assert_eq!(update.staged.model, None);
+        session.root.select_discovered_platform("selected".into());
+        assert!(matches!(
+            session
+                .detector
+                .begin_identification_probes(&mut session.root, MonotonicTimestamp::new(1)),
+            crate::IdentificationProbePlan::Writes(_)
+        ));
     }
 
     #[test]

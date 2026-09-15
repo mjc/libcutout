@@ -32,7 +32,7 @@ public struct MonotonicMilliseconds: Equatable, Hashable, Sendable {
         Self(rawValue >= start.rawValue ? rawValue - start.rawValue : 0)
     }
 
-    fileprivate var dto: MobileMonotonicMillisDto {
+    var dto: MobileMonotonicMillisDto {
         MobileMonotonicMillisDto(milliseconds: rawValue)
     }
 }
@@ -44,7 +44,7 @@ public struct TransportWriteLimitBytes: Equatable, Hashable, Sendable {
         self.rawValue = rawValue
     }
 
-    fileprivate var dto: MobileTransportWriteLimitDto {
+    var dto: MobileTransportWriteLimitDto {
         MobileTransportWriteLimitDto(bytes: rawValue)
     }
 }
@@ -298,27 +298,51 @@ public final class DeviceDetectionSession {
     private let inner: CutoutSessionStateHandle
 
     public convenience init() {
-        self.init(sessionState: CutoutSessionStateHandle())
+        let state = CutoutSessionStateHandle()
+        _ = state.beginConnectionAttempt(platformIdentifier: "standalone-detection", nowMs: 0)
+        self.init(sessionState: state)
     }
 
     init(sessionState: CutoutSessionStateHandle) {
         self.inner = sessionState
     }
 
+    private var currentToken: ConnectionAttemptToken? {
+        inner.connectionAttemptSnapshot().token
+    }
+
+    private func currentResolution() -> DeviceDetectionResolution {
+        DeviceDetectionResolution(inner.resolution())
+    }
+
     public func observeAdvertisement(name: Data?) -> DeviceDetectionResolution {
-        DeviceDetectionResolution(inner.observeAdvertisement(name: name))
+        guard let token = currentToken else {
+            return inner.observeAdvertisementUnscoped(name: name).map(DeviceDetectionResolution.init) ?? currentResolution()
+        }
+        guard let resolution = inner.observeAdvertisementForAttempt(token: token, name: name) else { return currentResolution() }
+        return DeviceDetectionResolution(resolution)
     }
 
     public func observeGatt(fingerprints: [DeviceDetectionGattFingerprint]) -> DeviceDetectionResolution {
-        DeviceDetectionResolution(inner.observeGatt(fingerprints: fingerprints.map(\.dto)))
+        guard let token = currentToken,
+              let resolution = inner.observeGattForAttempt(token: token, fingerprints: fingerprints.map(\.dto))
+        else { return currentResolution() }
+        return DeviceDetectionResolution(resolution)
     }
 
     public func observeNotification(bytes: Data) -> DeviceDetectionResolution {
-        DeviceDetectionResolution(inner.observeNotification(bytes: bytes))
+        guard let token = currentToken else {
+            return inner.observeNotificationUnscoped(bytes: bytes).map(DeviceDetectionResolution.init) ?? currentResolution()
+        }
+        guard let resolution = inner.observeNotificationForAttempt(token: token, bytes: bytes) else { return currentResolution() }
+        return DeviceDetectionResolution(resolution)
     }
 
     func beginIdentificationProbe(at startedAt: MonotonicMilliseconds) -> IdentificationProbeOutcome {
-        switch inner.beginIdentificationProbeAt(startedAtMs: startedAt.rawValue) {
+        guard let token = currentToken,
+              let outcome = inner.beginIdentificationProbeForAttemptAt(token: token, startedAtMs: startedAt.rawValue)
+        else { return .unsupported }
+        switch outcome {
         case .noProbeNeeded:
             return .noProbeNeeded
         case .unsupported:
@@ -336,39 +360,69 @@ public final class DeviceDetectionSession {
     }
 
     public func observeBegodeNameProbe() -> DeviceDetectionResolution {
-        DeviceDetectionResolution(inner.observeBegodeNameProbe())
+        guard let token = currentToken else {
+            return inner.observeBegodeNameProbeUnscoped().map(DeviceDetectionResolution.init) ?? currentResolution()
+        }
+        guard let resolution = inner.observeBegodeNameProbeForAttempt(token: token) else { return currentResolution() }
+        return DeviceDetectionResolution(resolution)
     }
 
     func observeBegodeNameProbe(at startedAt: MonotonicMilliseconds) -> DeviceDetectionResolution {
-        DeviceDetectionResolution(inner.observeBegodeNameProbeAt(startedAtMs: startedAt.rawValue))
+        guard let token = currentToken else {
+            return inner.observeBegodeNameProbeUnscopedAt(startedAtMs: startedAt.rawValue).map(DeviceDetectionResolution.init) ?? currentResolution()
+        }
+        guard let resolution = inner.observeBegodeNameProbeForAttemptAt(token: token, startedAtMs: startedAt.rawValue) else { return currentResolution() }
+        return DeviceDetectionResolution(resolution)
     }
 
     public func observeBegodeFirmwareProbe() -> DeviceDetectionResolution {
-        DeviceDetectionResolution(inner.observeBegodeFirmwareProbe())
+        guard let token = currentToken else {
+            return inner.observeBegodeFirmwareProbeUnscoped().map(DeviceDetectionResolution.init) ?? currentResolution()
+        }
+        guard let resolution = inner.observeBegodeFirmwareProbeForAttempt(token: token) else { return currentResolution() }
+        return DeviceDetectionResolution(resolution)
     }
 
     func observeBegodeFirmwareProbe(at startedAt: MonotonicMilliseconds) -> DeviceDetectionResolution {
-        DeviceDetectionResolution(inner.observeBegodeFirmwareProbeAt(startedAtMs: startedAt.rawValue))
+        guard let token = currentToken else {
+            return inner.observeBegodeFirmwareProbeUnscopedAt(startedAtMs: startedAt.rawValue).map(DeviceDetectionResolution.init) ?? currentResolution()
+        }
+        guard let resolution = inner.observeBegodeFirmwareProbeForAttemptAt(token: token, startedAtMs: startedAt.rawValue) else { return currentResolution() }
+        return DeviceDetectionResolution(resolution)
     }
 
     public func observeBegodeImuProbe() -> DeviceDetectionResolution {
-        DeviceDetectionResolution(inner.observeBegodeImuProbe())
+        guard let token = currentToken else {
+            return inner.observeBegodeImuProbeUnscoped().map(DeviceDetectionResolution.init) ?? currentResolution()
+        }
+        guard let resolution = inner.observeBegodeImuProbeForAttempt(token: token) else { return currentResolution() }
+        return DeviceDetectionResolution(resolution)
     }
 
     func observeBegodeImuProbe(at startedAt: MonotonicMilliseconds) -> DeviceDetectionResolution {
-        DeviceDetectionResolution(inner.observeBegodeImuProbeAt(startedAtMs: startedAt.rawValue))
+        guard let token = currentToken else {
+            return inner.observeBegodeImuProbeUnscopedAt(startedAtMs: startedAt.rawValue).map(DeviceDetectionResolution.init) ?? currentResolution()
+        }
+        guard let resolution = inner.observeBegodeImuProbeForAttemptAt(token: token, startedAtMs: startedAt.rawValue) else { return currentResolution() }
+        return DeviceDetectionResolution(resolution)
     }
 
     public func observeBegodeNameProbeTimeout() -> DeviceDetectionResolution {
-        DeviceDetectionResolution(inner.observeBegodeNameProbeTimeout())
+        guard let token = currentToken else { return DeviceDetectionResolution(inner.observeBegodeNameProbeTimeout()) }
+        guard let resolution = inner.observeBegodeNameProbeTimeoutForAttempt(token: token) else { return currentResolution() }
+        return DeviceDetectionResolution(resolution)
     }
 
     public func observeBegodeFirmwareProbeTimeout() -> DeviceDetectionResolution {
-        DeviceDetectionResolution(inner.observeBegodeFirmwareProbeTimeout())
+        guard let token = currentToken else { return DeviceDetectionResolution(inner.observeBegodeFirmwareProbeTimeout()) }
+        guard let resolution = inner.observeBegodeFirmwareProbeTimeoutForAttempt(token: token) else { return currentResolution() }
+        return DeviceDetectionResolution(resolution)
     }
 
     public func observeBegodeImuProbeTimeout() -> DeviceDetectionResolution {
-        DeviceDetectionResolution(inner.observeBegodeImuProbeTimeout())
+        guard let token = currentToken else { return DeviceDetectionResolution(inner.observeBegodeImuProbeTimeout()) }
+        guard let resolution = inner.observeBegodeImuProbeTimeoutForAttempt(token: token) else { return currentResolution() }
+        return DeviceDetectionResolution(resolution)
     }
 
     public var resolution: DeviceDetectionResolution {
@@ -379,12 +433,19 @@ public final class DeviceDetectionSession {
         at now: MonotonicMilliseconds,
         timeout: MonotonicMilliseconds
     ) -> [DeviceDetectionPendingProbe] {
-        inner.expireBegodeProbeResponses(nowMs: now.rawValue, timeoutMs: timeout.rawValue)
+        guard let token = currentToken else {
+            return inner.expireBegodeProbeResponsesUnscoped(nowMs: now.rawValue, timeoutMs: timeout.rawValue)
+                .map(DeviceDetectionPendingProbe.init)
+        }
+        return inner.expireBegodeProbeResponsesForAttempt(token: token, nowMs: now.rawValue, timeoutMs: timeout.rawValue)
             .map(DeviceDetectionPendingProbe.init)
     }
 
     func markBegodeProbeResponsesMissing() -> [DeviceDetectionPendingProbe] {
-        inner.markBegodeProbeResponsesMissing().map(DeviceDetectionPendingProbe.init)
+        guard let token = currentToken else {
+            return inner.markBegodeProbeResponsesMissingUnscoped().map(DeviceDetectionPendingProbe.init)
+        }
+        return inner.markBegodeProbeResponsesMissingForAttempt(token: token).map(DeviceDetectionPendingProbe.init)
     }
 
     func nextBegodeProbeExpiry(timeout: MonotonicMilliseconds) -> MonotonicMilliseconds? {
@@ -392,7 +453,11 @@ public final class DeviceDetectionSession {
     }
 
     func reset() {
-        inner.resetDeviceDetection()
+        guard let token = currentToken else {
+            inner.resetDeviceDetection()
+            return
+        }
+        _ = inner.resetDeviceDetectionForAttempt(token: token)
     }
 }
 
@@ -530,7 +595,7 @@ public struct SessionAction: Equatable, Hashable, Sendable {
         )
     }
 
-    fileprivate init(_ dto: MobileSessionOutputDto) {
+    init(_ dto: MobileSessionOutputDto) {
         self.kind = SessionActionKind(dto.kind)
         self.channel = dto.channel
         self.bytes = dto.bytes
@@ -1009,7 +1074,7 @@ public struct ChargeEstimateState: Equatable, Hashable, Sendable {
         self.observedFor = ChargeEstimateDuration(dto.observedFor)
     }
 
-    fileprivate static var missingProfile: Self {
+    static var missingProfile: Self {
         Self(MobileChargeEstimateStateDto(
             kind: .unavailable,
             estimate: nil,
@@ -1095,7 +1160,7 @@ public struct ChargeEstimateProfile: Equatable, Hashable, Sendable {
         self.chargeFlowVerification = chargeFlowVerification
     }
 
-    fileprivate var dto: MobileChargeProfileDto {
+    var dto: MobileChargeProfileDto {
         MobileChargeProfileDto(
             sessionId: sessionID,
             profileId: profileID,
@@ -2306,7 +2371,7 @@ public struct AeroPwmPercent: Equatable, Hashable, Sendable {
     public let percent: UInt8
 
     public init?(percent: UInt8) {
-        guard percent <= 100 else { return nil }
+        guard percent <= 70 else { return nil }
         self.percent = percent
     }
 
@@ -2339,7 +2404,6 @@ public struct AeroAngleAdjustment: Equatable, Hashable, Sendable {
 
 
 public struct EucSettingsCapabilities: Equatable, Hashable, Sendable {
-    public let validationMode: Bool
     public let resetTripMeter: SettingWriteSupport
     public let pedalMode: SettingWriteSupport
     public let rollAngle: SettingWriteSupport
@@ -2372,7 +2436,6 @@ public struct EucSettingsCapabilities: Equatable, Hashable, Sendable {
     public let aeroAngleAdjustment: SettingWriteSupport
 
     public init(
-        validationMode: Bool = false,
         resetTripMeter: SettingWriteSupport = .unsupported,
         pedalMode: SettingWriteSupport,
         rollAngle: SettingWriteSupport = .unsupported,
@@ -2404,7 +2467,6 @@ public struct EucSettingsCapabilities: Equatable, Hashable, Sendable {
         aeroAlarmSpeed: SettingWriteSupport = .unsupported,
         aeroAngleAdjustment: SettingWriteSupport = .unsupported
     ) {
-        self.validationMode = validationMode
         self.resetTripMeter = resetTripMeter
         self.pedalMode = pedalMode
         self.rollAngle = rollAngle
@@ -2438,7 +2500,6 @@ public struct EucSettingsCapabilities: Equatable, Hashable, Sendable {
     }
 
     fileprivate init(_ dto: MobileEucSettingsCapabilitiesDto) {
-        self.validationMode = dto.validationMode
         self.resetTripMeter = SettingWriteSupport(dto.resetTripMeter)
         self.pedalMode = SettingWriteSupport(dto.pedalMode)
         self.rollAngle = SettingWriteSupport(dto.rollAngle)
@@ -2469,11 +2530,6 @@ public struct EucSettingsCapabilities: Equatable, Hashable, Sendable {
         self.aeroTransportMode = SettingWriteSupport(dto.aeroTransportMode)
         self.aeroAlarmSpeed = SettingWriteSupport(dto.aeroAlarmSpeed)
         self.aeroAngleAdjustment = SettingWriteSupport(dto.aeroAngleAdjustment)
-    }
-
-    public func canSubmit(_ setting: KeyPath<Self, SettingWriteSupport>) -> Bool {
-        let support = self[keyPath: setting]
-        return support == .supported || (validationMode && support == .unverified)
     }
 }
 
@@ -2678,7 +2734,7 @@ public enum DeviceCommand: Equatable, Hashable, Sendable {
         }
     }
 
-    fileprivate var dto: MobileCommandDto {
+    var dto: MobileCommandDto {
         switch self {
         case .requestIdentity:
             .requestIdentity
@@ -2907,7 +2963,7 @@ public struct TelemetrySnapshot: Equatable, Hashable, Sendable {
         self.init(dto, chargeEstimate: nil)
     }
 
-    fileprivate init(_ dto: MobileTelemetrySnapshotDto, chargeEstimate: ChargeEstimateState?) {
+    init(_ dto: MobileTelemetrySnapshotDto, chargeEstimate: ChargeEstimateState?) {
         self.init(
             at: dto.atMs.map { MonotonicMilliseconds($0.milliseconds) },
             speed: dto.speed?.value,
@@ -6304,7 +6360,7 @@ public enum CutoutSessionError: Error, Equatable, Sendable {
     case unsupportedFalconProfile
     case unexpectedStepError(String?)
 
-    fileprivate init(_ dto: MobileSessionStepErrorDto) {
+    init(_ dto: MobileSessionStepErrorDto) {
         switch dto.kind {
         case .commandRefused:
             self = .commandRefused(
@@ -6497,14 +6553,13 @@ public final class ElectricUnicycleSession: @unchecked Sendable {
 
     public init(
         model: ElectricUnicycleModel,
-        deviceIdentity: String? = nil,
-        allowUnverifiedSettings: Bool = false
+        deviceIdentity: String? = nil
     ) throws {
         self.model = model
         self.voltageSagIdentity = deviceIdentity
         self.inner = switch model {
         case .aero:
-            .aero(Self.makeAeroSession(allowUnverifiedSettings: allowUnverifiedSettings))
+            .aero(AeroBenignControlSession())
         case .falcon:
             .falcon(try FalconBenignControlSession())
         }
@@ -6516,14 +6571,6 @@ public final class ElectricUnicycleSession: @unchecked Sendable {
         {
             persistedVoltageSagObservations = model.observations
         }
-    }
-
-    private static func makeAeroSession(allowUnverifiedSettings: Bool) -> AeroBenignControlSession {
-        let session = AeroBenignControlSession()
-        if allowUnverifiedSettings {
-            session.enableSettingsValidation()
-        }
-        return session
     }
 
     public var diagnostics: ParserDiagnostics {
@@ -7246,13 +7293,11 @@ public enum CoreBluetoothSession: Sendable {
 
     public static func electricUnicycle(
         model: ElectricUnicycleModel,
-        deviceIdentity: String? = nil,
-        allowUnverifiedSettings: Bool = false
+        deviceIdentity: String? = nil
     ) throws -> CoreBluetoothSession {
         try .electricUnicycle(ElectricUnicycleSession(
             model: model,
-            deviceIdentity: deviceIdentity,
-            allowUnverifiedSettings: allowUnverifiedSettings
+            deviceIdentity: deviceIdentity
         ))
     }
 
@@ -7665,6 +7710,8 @@ public enum CoreBluetoothSessionEvent: Equatable, Hashable, Sendable {
 }
 
 public struct CoreBluetoothSessionStep: Equatable, Hashable, Sendable {
+    /// Exact Rust attempt that produced this decoded step, absent for legacy replay fixtures.
+    public let connectionAttempt: ConnectionAttemptToken?
     public let operations: [CoreBluetoothPlannedOperation]
     public let snapshot: TelemetrySnapshot?
     public let actions: [SessionAction]
@@ -7674,8 +7721,10 @@ public struct CoreBluetoothSessionStep: Equatable, Hashable, Sendable {
         operations: [CoreBluetoothPlannedOperation],
         snapshot: TelemetrySnapshot?,
         actions: [SessionAction] = [],
-        captureContext: CoreBluetoothCaptureContext? = nil
+        captureContext: CoreBluetoothCaptureContext? = nil,
+        connectionAttempt: ConnectionAttemptToken? = nil
     ) {
+        self.connectionAttempt = connectionAttempt
         self.operations = operations
         self.snapshot = snapshot
         self.actions = actions

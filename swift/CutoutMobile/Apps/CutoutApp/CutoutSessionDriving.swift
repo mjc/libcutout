@@ -11,7 +11,7 @@ protocol CutoutSessionDriving: AnyObject {
     var onReconnectScheduled: ((SessionConnectionRetry) -> Void)? { get set }
     var onCaptureEvent: ((CaptureEvent) -> Void)? { get set }
     var onScanStateChange: ((DevicePickerScanState) -> Void)? { get set }
-    var onSettingsStateChange: ((EucSettingsState) -> Void)? { get set }
+    var onDeviceControlsChange: ((DeviceControlsSnapshot) -> Void)? { get set }
     var onSettingsReadbackChange: ((SettingsReadback?) -> Void)? { get set }
     var onFaultHistoryReadbackChange: ((FaultHistoryReadback?) -> Void)? { get set }
     var onBmsSnapshotChange: ((BmsSnapshot?) -> Void)? { get set }
@@ -25,36 +25,7 @@ protocol CutoutSessionDriving: AnyObject {
     var protocolIdentityCandidate: DevicePickerDiscoveryCandidate? { get }
     var isRecordOnlyConnection: Bool { get }
     var electricUnicycleModel: ElectricUnicycleModel? { get }
-    var settingsCapabilities: EucSettingsCapabilities? { get }
-    var settingsState: EucSettingsState? { get }
-    var tripMeterResetState: TripMeterResetState? { get }
-    var headlightState: LightSettingState? { get }
-    var headlightCommandStatus: LightCommandStatus? { get }
-    var aeroHighBeamState: LightSettingState? { get }
-    var aeroTiltbackSpeedState: AeroSpeedSettingState? { get }
-    var aeroPwmPercentState: AeroPwmSettingState? { get }
-    var aeroGyroCalibrationState: AeroGyroCalibrationSettingState? { get }
-    var aeroRidingModeState: AeroRidingModeSettingState? { get }
-    var aeroBrakeOverpressureAlarmState: AeroBrakeOverpressureAlarmSettingState? { get }
-    var aeroPedalHardnessState: AeroPedalHardnessSettingState? { get }
-    var aeroDisplayBacklightState: AeroDisplayBacklightSettingState? { get }
-    var aeroWheelUnitsState: AeroWheelUnitsSettingState? { get }
-    var aeroBeeperVolumeState: AeroBeeperVolumeSettingState? { get }
-    var aeroDynamicAssistState: AeroDynamicAssistSettingState? { get }
-    var aeroPedalDipCompensationState: AeroPedalDipCompensationSettingState? { get }
-    var aeroLateralTiltLimitState: AeroLateralTiltLimitSettingState? { get }
-    var aeroVoltageCorrectionState: AeroVoltageCorrectionSettingState? { get }
-    var aeroMaxChargeVoltageRawState: AeroMaxChargeVoltageRawSettingState? { get }
-    var aeroHighSpeedModeState: AeroToggleSettingState? { get }
-    var aeroLowBatteryModeState: AeroToggleSettingState? { get }
-    var aeroTransportModeState: AeroToggleSettingState? { get }
-    var aeroAlarmSpeedState: AeroSpeedSettingState? { get }
-    var aeroAngleAdjustmentState: AeroAngleAdjustmentSettingState? { get }
-    var pedalModeState: PedalModeSettingState? { get }
-    var rollAngleState: RollAngleSettingState? { get }
-    var speedAlarmModeState: SpeedAlarmModeSettingState? { get }
-    var accelerationAssistState: AccelerationAssistSettingState? { get }
-    var taillightState: LightSettingState? { get }
+    var deviceControlsSnapshot: DeviceControlsSnapshot { get }
 
     func start()
     func pair(platformIdentifier: String) -> Bool
@@ -67,35 +38,9 @@ protocol CutoutSessionDriving: AnyObject {
     func updateMusicCaptureObservation(_ observation: MobilePevcapMusicEventDto?)
     func flushCapture() async -> Bool
     func disconnectAndScan()
-    func setLights(_ state: LightState) -> SettingCommandResult
-    func setAeroHighBeam(_ state: LightState) -> SettingCommandResult
-    func setPedalMode(_ mode: PedalMode.Kind) -> SettingCommandResult
-    func setRollAngle(_ angle: RollAngle.Kind) -> SettingCommandResult
-    func setSpeedAlarmMode(_ mode: SpeedAlarmMode.Kind) -> SettingCommandResult
-    func setBegodeMaxSpeed(_ speed: BegodeMaxSpeed) -> SettingCommandResult
-    func setBegodeBeeperVolume(_ volume: BegodeBeeperVolume) -> SettingCommandResult
-    func setBegodeLedMode(_ mode: BegodeLedMode) -> SettingCommandResult
-    func resetTripMeter() -> SettingCommandResult
-    func setAeroTiltbackSpeed(_ speed: AeroSpeedSetting) -> SettingCommandResult
-    func setAeroPwmPercent(_ percent: AeroPwmPercent) -> SettingCommandResult
-    func setAeroPwmOff() -> SettingCommandResult
-    func setAeroGyroCalibration() -> SettingCommandResult
-    func setAeroRidingMode(_ mode: AeroRidingMode) -> SettingCommandResult
-    func setAeroBrakeOverpressureAlarm(_ value: AeroBrakeOverpressureAlarm) -> SettingCommandResult
-    func setAeroPedalHardness(_ hardness: AeroPedalHardness) -> SettingCommandResult
-    func setAeroDisplayBacklight(_ value: AeroDisplayBacklight) -> SettingCommandResult
-    func setAeroWheelUnits(_ value: AeroWheelUnits) -> SettingCommandResult
-    func setAeroBeeperVolume(_ value: AeroBeeperVolume) -> SettingCommandResult
-    func setAeroDynamicAssist(_ value: AeroDynamicAssist) -> SettingCommandResult
-    func setAeroPedalDipCompensation(_ value: AeroPedalDipCompensation) -> SettingCommandResult
-    func setAeroLateralTiltLimit(_ value: AeroLateralTiltLimit) -> SettingCommandResult
-    func setAeroVoltageCorrection(_ value: AeroVoltageCorrection) -> SettingCommandResult
-    func setAeroMaxChargeVoltageRaw(_ value: AeroMaxChargeVoltageRaw) -> SettingCommandResult
-    func setAeroHighSpeedMode(_ value: AeroToggle) -> SettingCommandResult
-    func setAeroLowBatteryMode(_ value: AeroToggle) -> SettingCommandResult
-    func setAeroTransportMode(_ value: AeroToggle) -> SettingCommandResult
-    func setAeroAlarmSpeed(_ speed: AeroSpeedSetting) -> SettingCommandResult
-    func setAeroAngleAdjustment(_ angle: AeroAngleAdjustment) -> SettingCommandResult
+    func submitDeviceSetting(token: ConnectionAttemptToken, id: DeviceSettingID, value: DeviceSettingValue) throws
+    func submitDeviceAction(token: ConnectionAttemptToken, id: DeviceActionID) throws
+    func setDeviceControlsValidation(token: ConnectionAttemptToken, authorized: Bool) throws
     func now() -> MonotonicMilliseconds
 
     func resetRideMapLocationAdmission()
@@ -110,35 +55,12 @@ protocol CutoutSessionDriving: AnyObject {
 extension CutoutSessionCore: CutoutSessionDriving {}
 
 extension CutoutSessionDriving {
-    var settingsState: EucSettingsState? { nil }
+    func setDeviceControlsValidation(token: ConnectionAttemptToken, authorized: Bool) throws {
+        throw DeviceSettingSubmissionError.ConnectionUnavailable
+    }
 
     var isRecordOnlyConnection: Bool { false }
-
-    func setAeroPwmOff() -> SettingCommandResult { .failed }
-    func setAeroGyroCalibration() -> SettingCommandResult { .failed }
-    func setAeroMaxChargeVoltageRaw(_ value: AeroMaxChargeVoltageRaw) -> SettingCommandResult { .failed }
-
-    var aeroGyroCalibrationState: AeroGyroCalibrationSettingState? { nil }
-    var aeroRidingModeState: AeroRidingModeSettingState? { nil }
-    var aeroBrakeOverpressureAlarmState: AeroBrakeOverpressureAlarmSettingState? { nil }
-    var aeroMaxChargeVoltageRawState: AeroMaxChargeVoltageRawSettingState? { nil }
-
-    func setAeroRidingMode(_ mode: AeroRidingMode) -> SettingCommandResult { .failed }
-    func setAeroBrakeOverpressureAlarm(_ value: AeroBrakeOverpressureAlarm) -> SettingCommandResult { .failed }
-    var aeroHighSpeedModeState: AeroToggleSettingState? { nil }
-    var aeroLowBatteryModeState: AeroToggleSettingState? { nil }
-    var aeroTransportModeState: AeroToggleSettingState? { nil }
-
-    func setAeroHighSpeedMode(_ value: AeroToggle) -> SettingCommandResult { .failed }
-    func setAeroLowBatteryMode(_ value: AeroToggle) -> SettingCommandResult { .failed }
-    func setAeroTransportMode(_ value: AeroToggle) -> SettingCommandResult { .failed }
-
     var rideMapStateHandle: MobileRideMapState? { nil }
-    var aeroHighBeamState: LightSettingState? { nil }
-    var aeroTiltbackSpeedState: AeroSpeedSettingState? { nil }
-    var aeroPwmPercentState: AeroPwmSettingState? { nil }
-    var aeroAlarmSpeedState: AeroSpeedSettingState? { nil }
-    var aeroAngleAdjustmentState: AeroAngleAdjustmentSettingState? { nil }
 
     var rideMapStorageError: String? {
         guard let state = rideMapStateHandle else { return "Rust ride database is unavailable" }

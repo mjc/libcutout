@@ -14,6 +14,9 @@ pub struct CutoutSessionState {
     /// Purpose of the selected device connection across transport attempts.
     pub device_connection_intent: DeviceConnectionIntent,
 
+    /// Attempt identity, deadline and protocol admission state.
+    pub connection: crate::ConnectionAttemptLifecycle,
+
     /// Logical ride and Live Activity lifecycle state.
     pub ride_session: RideSessionLifecycle,
 
@@ -22,6 +25,12 @@ pub struct CutoutSessionState {
 
     /// Telemetry state accumulated from ride, charge, raw telemetry, and BMS packets.
     pub telemetry: TelemetryState,
+
+    /// Semantic setting observations and command lifecycle for this device.
+    pub settings: crate::DeviceSettingsState,
+
+    /// Semantic device action lifecycle and measured procedure progress.
+    pub actions: crate::DeviceActionsState,
 
     /// Diagnostics accumulated from parser and protocol diagnostic events.
     pub diagnostics: SessionDiagnosticsState,
@@ -447,6 +456,30 @@ impl DiscoveryState {
             .filter_map(DiscoveryCandidateSnapshot::from_observation)
             .collect()
     }
+
+    /// Returns retained unrecognized peripherals only for explicit advanced capture selection.
+    #[must_use]
+    pub fn advanced_capture_candidates(&self) -> Vec<DiscoveryCandidateSnapshot> {
+        self.observations
+            .iter()
+            .filter(|observation| {
+                DiscoveryCandidateSnapshot::from_observation(observation).is_none()
+            })
+            .map(|observation| DiscoveryCandidateSnapshot {
+                platform_identifier: observation.platform_identifier.clone(),
+                display_name: observation
+                    .advertised_name_text()
+                    .unwrap_or("Unknown Bluetooth device")
+                    .to_owned(),
+                product_category: "Unknown device".to_owned(),
+                evidence: "Retained Bluetooth advertisement".to_owned(),
+                detail: "Capture only; protocol unknown".to_owned(),
+                support: DiscoveryCandidateSupport::UnknownRecordable,
+                connection_route: None,
+                electric_unicycle_model: None,
+            })
+            .collect()
+    }
 }
 
 /// A normalized 128-bit Bluetooth service UUID.
@@ -629,7 +662,9 @@ pub struct DiscoveryCandidateSnapshot {
 }
 
 impl DiscoveryCandidateSnapshot {
-    fn from_observation(observation: &DiscoveryObservation) -> Option<Self> {
+    /// Classifies transport hints for probing without claiming a verified protocol.
+    #[must_use]
+    pub fn from_observation(observation: &DiscoveryObservation) -> Option<Self> {
         let display_name = observation
             .advertised_name_text()
             .unwrap_or("Unknown Bluetooth device");
@@ -656,11 +691,11 @@ impl DiscoveryCandidateSnapshot {
             (false, true) => Some(Self {
                 platform_identifier: observation.platform_identifier.clone(),
                 display_name: display_name.to_owned(),
-                product_category: "VESC Onewheel".to_owned(),
-                evidence: "FFF0 transport hint".to_owned(),
-                detail: "VESC protocol route".to_owned(),
-                support: DiscoveryCandidateSupport::Supported,
-                connection_route: Some(DiscoveryConnectionRoute::VescOnewheel),
+                product_category: "UART device".to_owned(),
+                evidence: "FFF0/Nordic UART transport hint".to_owned(),
+                detail: "Read-only protocol probe recommended".to_owned(),
+                support: DiscoveryCandidateSupport::ProbeRecommended,
+                connection_route: None,
                 electric_unicycle_model: None,
             }),
             (false, false) => None,
@@ -851,6 +886,44 @@ mod tests {
             }],
             rssi_dbm: Some(rssi_dbm),
         }
+    }
+
+    #[test]
+    fn only_reconnect_intent_retries_identification() {
+        let mut state = CutoutSessionState::default();
+        assert!(!state.should_retry_identification());
+        state.device_connection_intent = DeviceConnectionIntent::Reconnect;
+        assert!(state.should_retry_identification());
+        state.device_connection_intent = DeviceConnectionIntent::RecordOnly;
+        assert!(!state.should_retry_identification());
+    }
+
+    #[test]
+    fn link_probe_reset_preserves_confirmed_identity() {
+        let mut state = CutoutSessionState::default();
+        state.identity.protocol_family = Some(ProtocolFamily::VeteranLeaperkimNosfet);
+        state.identity.model = Some("Aero".to_owned());
+        let expected_protocol = state.identity.protocol_family;
+        let expected_model = state.identity.model.clone();
+        state
+            .identity
+            .observe_probe_write(PendingProbe::BegodeName, MonotonicTimestamp::new(42));
+        state.identity.missing_probe_response = Some(PendingProbe::BegodeFirmware);
+        state.identity.malformed_probe_response = Some(PendingProbe::BegodeImu);
+
+        state.identity.reset_link_probes();
+
+        assert_eq!(state.identity.protocol_family, expected_protocol);
+        assert_eq!(state.identity.model, expected_model);
+        assert!(
+            state
+                .identity
+                .pending_probe_started_at
+                .iter()
+                .all(Option::is_none)
+        );
+        assert!(state.identity.missing_probe_response.is_none());
+        assert!(state.identity.malformed_probe_response.is_none());
     }
 
     #[test]
@@ -1252,42 +1325,6 @@ mod tests {
     }
 
     #[test]
-    fn only_reconnect_intent_retries_identification() {
-        let mut state = CutoutSessionState::default();
-        assert!(!state.should_retry_identification());
-        state.device_connection_intent = DeviceConnectionIntent::Reconnect;
-        assert!(state.should_retry_identification());
-        state.device_connection_intent = DeviceConnectionIntent::RecordOnly;
-        assert!(!state.should_retry_identification());
-        state.device_connection_intent = DeviceConnectionIntent::Use;
-        assert!(!state.should_retry_identification());
-    }
-
-    #[test]
-    fn link_probe_reset_preserves_confirmed_identity_and_discovery() {
-        let mut state = CutoutSessionState::default();
-        state.observe_discovery(discovery_observation(
-            "peripheral-a",
-            b"NF2557",
-            vec![BluetoothServiceUuid::EUC_SERIAL_FFE0],
-            -42,
-        ));
-        state.select_discovered_platform("peripheral-a".to_owned());
-        state.identity.protocol_family = Some(ProtocolFamily::VeteranLeaperkimNosfet);
-        state.identity.model = Some("Aero".to_owned());
-        let expected_identity = state.identity.clone();
-        state
-            .identity
-            .observe_probe_write(PendingProbe::BegodeName, MonotonicTimestamp::new(42));
-        state.identity.missing_probe_response = Some(PendingProbe::BegodeFirmware);
-        state.identity.malformed_probe_response = Some(PendingProbe::BegodeImu);
-
-        state.identity.reset_link_probes();
-
-        assert_eq!(state.identity, expected_identity);
-    }
-
-    #[test]
     fn identity_reset_preserves_discovery_and_clears_device_evidence() {
         let mut state = CutoutSessionState::default();
         state.observe_discovery(discovery_observation(
@@ -1318,6 +1355,31 @@ mod tests {
                 .next_probe_expiry(crate::Duration::from_milliseconds(2_000)),
             None
         );
+    }
+
+    #[test]
+    fn advanced_capture_retains_unknowns_without_adding_default_picker_noise() {
+        let mut state = CutoutSessionState::default();
+        state.observe_discovery(discovery_observation("unknown", b"My PEV", vec![], -42));
+        state.observe_discovery(discovery_observation(
+            "known-uart",
+            b"UART",
+            vec![BluetoothServiceUuid::VESC_NORDIC_UART],
+            -40,
+        ));
+        let ordinary = state.discovery().picker_candidates();
+        assert_eq!(ordinary.len(), 1);
+        assert_eq!(ordinary[0].platform_identifier, "known-uart");
+        let advanced = state.discovery().advanced_capture_candidates();
+        assert_eq!(advanced.len(), 1);
+        assert_eq!(advanced[0].platform_identifier, "unknown");
+        assert_eq!(
+            advanced[0].support,
+            DiscoveryCandidateSupport::UnknownRecordable
+        );
+        assert!(advanced[0].connection_route.is_none());
+        assert!(advanced[0].electric_unicycle_model.is_none());
+        assert_eq!(state.discovery().observations.len(), 2);
     }
 
     #[test]
@@ -1379,6 +1441,31 @@ mod tests {
     }
 
     #[test]
+    fn advertisement_transport_hints_never_establish_ride_route() {
+        for service in [
+            BluetoothServiceUuid::EUC_SERIAL_FFE0,
+            BluetoothServiceUuid::VESC_SERIAL_FFF0,
+            BluetoothServiceUuid::VESC_NORDIC_UART,
+        ] {
+            let mut state = CutoutSessionState::default();
+            state.observe_discovery(discovery_observation(
+                "unverified",
+                b"Claimed rideable",
+                vec![service],
+                -50,
+            ));
+            let candidates = state.discovery().picker_candidates();
+            assert_eq!(candidates.len(), 1);
+            assert_eq!(
+                candidates[0].support,
+                DiscoveryCandidateSupport::ProbeRecommended
+            );
+            assert_eq!(candidates[0].connection_route, None);
+            assert_eq!(candidates[0].electric_unicycle_model, None);
+        }
+    }
+
+    #[test]
     fn discovery_snapshot_projects_picker_candidates_from_identity_state() {
         let mut state = CutoutSessionState::default();
 
@@ -1426,12 +1513,9 @@ mod tests {
         assert_eq!(picker_candidates[1].platform_identifier, "vesc-id");
         assert_eq!(
             picker_candidates[1].support,
-            DiscoveryCandidateSupport::Supported
+            DiscoveryCandidateSupport::ProbeRecommended
         );
-        assert_eq!(
-            picker_candidates[1].connection_route,
-            Some(DiscoveryConnectionRoute::VescOnewheel)
-        );
+        assert_eq!(picker_candidates[1].connection_route, None);
         assert_eq!(picker_candidates[2].platform_identifier, "unknown-euc-id");
         assert_eq!(
             picker_candidates[2].support,

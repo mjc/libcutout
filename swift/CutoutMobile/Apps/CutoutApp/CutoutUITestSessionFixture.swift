@@ -1,4 +1,5 @@
 import CutoutMobile
+import Foundation
 import CutoutMobileFFI
 
 #if DEBUG
@@ -256,11 +257,26 @@ enum CutoutUITestSessionFixture: Equatable {
         }
     }
 
+    /// Validated identity packets shared with the Rust device-session tests.
+    private var protocolNotifications: [Data] {
+        if isEuc {
+            var frame = Data(repeating: 0, count: 42)
+            frame.replaceSubrange(0..<4, with: [0xdc, 0x5a, 0x5c, 38])
+            frame.replaceSubrange(28..<30, with: [0xa7, 0xf8])
+            return [frame]
+        }
+        return [Data([
+            2, 20, 157, 7, 1, 2, 97, 98, 99, 49, 50, 51, 0, 117, 115, 101,
+            114, 104, 97, 115, 104, 0, 38, 208, 3,
+        ])]
+    }
+
     var testScript: CutoutSessionTestScript {
         let telemetryUpdate = refreshesVescSafetyState ? telemetry : dynamicTelemetryUpdate
         return CutoutSessionTestScript(
             candidate: candidate,
             telemetry: emitsPendingTelemetry ? nil : telemetry,
+            protocolNotifications: protocolNotifications,
             telemetryUpdate: telemetryUpdate,
             telemetryUpdateDelayMilliseconds: telemetryUpdateDelayMilliseconds,
             bmsSnapshot: testBmsSnapshot,
