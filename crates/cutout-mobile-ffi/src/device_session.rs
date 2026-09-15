@@ -226,7 +226,7 @@ mod tests {
             .token
             .unwrap();
         handle.expire_connection_attempt(attempt.clone(), 15_000);
-        handle.observe_notification(VESC_REPLY.to_vec());
+        handle.observe_connection_notification(attempt.clone(), VESC_REPLY.to_vec());
         let snapshot = handle.resolve_device_session(attempt.clone(), true, 15_000);
         assert_eq!(
             snapshot.connection.readiness,
@@ -244,7 +244,7 @@ mod tests {
             .token
             .unwrap();
         handle.connection_link_established(old.clone());
-        handle.observe_notification(VESC_REPLY.to_vec());
+        handle.observe_connection_notification(old.clone(), VESC_REPLY.to_vec());
         let verified = handle.resolve_device_session(old.clone(), false, 0);
         assert_eq!(
             verified.identity.unwrap().vehicle_kind,

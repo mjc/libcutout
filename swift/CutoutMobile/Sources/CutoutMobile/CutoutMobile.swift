@@ -298,27 +298,51 @@ public final class DeviceDetectionSession {
     private let inner: CutoutSessionStateHandle
 
     public convenience init() {
-        self.init(sessionState: CutoutSessionStateHandle())
+        let state = CutoutSessionStateHandle()
+        _ = state.beginConnectionAttempt(platformIdentifier: "standalone-detection", nowMs: 0)
+        self.init(sessionState: state)
     }
 
     init(sessionState: CutoutSessionStateHandle) {
         self.inner = sessionState
     }
 
+    private var currentToken: ConnectionAttemptToken? {
+        inner.connectionAttemptSnapshot().token
+    }
+
+    private func currentResolution() -> DeviceDetectionResolution {
+        DeviceDetectionResolution(inner.resolution())
+    }
+
     public func observeAdvertisement(name: Data?) -> DeviceDetectionResolution {
-        DeviceDetectionResolution(inner.observeAdvertisement(name: name))
+        guard let token = currentToken else {
+            return inner.observeAdvertisementUnscoped(name: name).map(DeviceDetectionResolution.init) ?? currentResolution()
+        }
+        guard let resolution = inner.observeAdvertisementForAttempt(token: token, name: name) else { return currentResolution() }
+        return DeviceDetectionResolution(resolution)
     }
 
     public func observeGatt(fingerprints: [DeviceDetectionGattFingerprint]) -> DeviceDetectionResolution {
-        DeviceDetectionResolution(inner.observeGatt(fingerprints: fingerprints.map(\.dto)))
+        guard let token = currentToken,
+              let resolution = inner.observeGattForAttempt(token: token, fingerprints: fingerprints.map(\.dto))
+        else { return currentResolution() }
+        return DeviceDetectionResolution(resolution)
     }
 
     public func observeNotification(bytes: Data) -> DeviceDetectionResolution {
-        DeviceDetectionResolution(inner.observeNotification(bytes: bytes))
+        guard let token = currentToken else {
+            return inner.observeNotificationUnscoped(bytes: bytes).map(DeviceDetectionResolution.init) ?? currentResolution()
+        }
+        guard let resolution = inner.observeNotificationForAttempt(token: token, bytes: bytes) else { return currentResolution() }
+        return DeviceDetectionResolution(resolution)
     }
 
     func beginIdentificationProbe(at startedAt: MonotonicMilliseconds) -> IdentificationProbeOutcome {
-        switch inner.beginIdentificationProbeAt(startedAtMs: startedAt.rawValue) {
+        guard let token = currentToken,
+              let outcome = inner.beginIdentificationProbeForAttemptAt(token: token, startedAtMs: startedAt.rawValue)
+        else { return .unsupported }
+        switch outcome {
         case .noProbeNeeded:
             return .noProbeNeeded
         case .unsupported:
@@ -336,39 +360,69 @@ public final class DeviceDetectionSession {
     }
 
     public func observeBegodeNameProbe() -> DeviceDetectionResolution {
-        DeviceDetectionResolution(inner.observeBegodeNameProbe())
+        guard let token = currentToken else {
+            return inner.observeBegodeNameProbeUnscoped().map(DeviceDetectionResolution.init) ?? currentResolution()
+        }
+        guard let resolution = inner.observeBegodeNameProbeForAttempt(token: token) else { return currentResolution() }
+        return DeviceDetectionResolution(resolution)
     }
 
     func observeBegodeNameProbe(at startedAt: MonotonicMilliseconds) -> DeviceDetectionResolution {
-        DeviceDetectionResolution(inner.observeBegodeNameProbeAt(startedAtMs: startedAt.rawValue))
+        guard let token = currentToken else {
+            return inner.observeBegodeNameProbeUnscopedAt(startedAtMs: startedAt.rawValue).map(DeviceDetectionResolution.init) ?? currentResolution()
+        }
+        guard let resolution = inner.observeBegodeNameProbeForAttemptAt(token: token, startedAtMs: startedAt.rawValue) else { return currentResolution() }
+        return DeviceDetectionResolution(resolution)
     }
 
     public func observeBegodeFirmwareProbe() -> DeviceDetectionResolution {
-        DeviceDetectionResolution(inner.observeBegodeFirmwareProbe())
+        guard let token = currentToken else {
+            return inner.observeBegodeFirmwareProbeUnscoped().map(DeviceDetectionResolution.init) ?? currentResolution()
+        }
+        guard let resolution = inner.observeBegodeFirmwareProbeForAttempt(token: token) else { return currentResolution() }
+        return DeviceDetectionResolution(resolution)
     }
 
     func observeBegodeFirmwareProbe(at startedAt: MonotonicMilliseconds) -> DeviceDetectionResolution {
-        DeviceDetectionResolution(inner.observeBegodeFirmwareProbeAt(startedAtMs: startedAt.rawValue))
+        guard let token = currentToken else {
+            return inner.observeBegodeFirmwareProbeUnscopedAt(startedAtMs: startedAt.rawValue).map(DeviceDetectionResolution.init) ?? currentResolution()
+        }
+        guard let resolution = inner.observeBegodeFirmwareProbeForAttemptAt(token: token, startedAtMs: startedAt.rawValue) else { return currentResolution() }
+        return DeviceDetectionResolution(resolution)
     }
 
     public func observeBegodeImuProbe() -> DeviceDetectionResolution {
-        DeviceDetectionResolution(inner.observeBegodeImuProbe())
+        guard let token = currentToken else {
+            return inner.observeBegodeImuProbeUnscoped().map(DeviceDetectionResolution.init) ?? currentResolution()
+        }
+        guard let resolution = inner.observeBegodeImuProbeForAttempt(token: token) else { return currentResolution() }
+        return DeviceDetectionResolution(resolution)
     }
 
     func observeBegodeImuProbe(at startedAt: MonotonicMilliseconds) -> DeviceDetectionResolution {
-        DeviceDetectionResolution(inner.observeBegodeImuProbeAt(startedAtMs: startedAt.rawValue))
+        guard let token = currentToken else {
+            return inner.observeBegodeImuProbeUnscopedAt(startedAtMs: startedAt.rawValue).map(DeviceDetectionResolution.init) ?? currentResolution()
+        }
+        guard let resolution = inner.observeBegodeImuProbeForAttemptAt(token: token, startedAtMs: startedAt.rawValue) else { return currentResolution() }
+        return DeviceDetectionResolution(resolution)
     }
 
     public func observeBegodeNameProbeTimeout() -> DeviceDetectionResolution {
-        DeviceDetectionResolution(inner.observeBegodeNameProbeTimeout())
+        guard let token = currentToken else { return DeviceDetectionResolution(inner.observeBegodeNameProbeTimeout()) }
+        guard let resolution = inner.observeBegodeNameProbeTimeoutForAttempt(token: token) else { return currentResolution() }
+        return DeviceDetectionResolution(resolution)
     }
 
     public func observeBegodeFirmwareProbeTimeout() -> DeviceDetectionResolution {
-        DeviceDetectionResolution(inner.observeBegodeFirmwareProbeTimeout())
+        guard let token = currentToken else { return DeviceDetectionResolution(inner.observeBegodeFirmwareProbeTimeout()) }
+        guard let resolution = inner.observeBegodeFirmwareProbeTimeoutForAttempt(token: token) else { return currentResolution() }
+        return DeviceDetectionResolution(resolution)
     }
 
     public func observeBegodeImuProbeTimeout() -> DeviceDetectionResolution {
-        DeviceDetectionResolution(inner.observeBegodeImuProbeTimeout())
+        guard let token = currentToken else { return DeviceDetectionResolution(inner.observeBegodeImuProbeTimeout()) }
+        guard let resolution = inner.observeBegodeImuProbeTimeoutForAttempt(token: token) else { return currentResolution() }
+        return DeviceDetectionResolution(resolution)
     }
 
     public var resolution: DeviceDetectionResolution {
@@ -379,12 +433,19 @@ public final class DeviceDetectionSession {
         at now: MonotonicMilliseconds,
         timeout: MonotonicMilliseconds
     ) -> [DeviceDetectionPendingProbe] {
-        inner.expireBegodeProbeResponses(nowMs: now.rawValue, timeoutMs: timeout.rawValue)
+        guard let token = currentToken else {
+            return inner.expireBegodeProbeResponsesUnscoped(nowMs: now.rawValue, timeoutMs: timeout.rawValue)
+                .map(DeviceDetectionPendingProbe.init)
+        }
+        return inner.expireBegodeProbeResponsesForAttempt(token: token, nowMs: now.rawValue, timeoutMs: timeout.rawValue)
             .map(DeviceDetectionPendingProbe.init)
     }
 
     func markBegodeProbeResponsesMissing() -> [DeviceDetectionPendingProbe] {
-        inner.markBegodeProbeResponsesMissing().map(DeviceDetectionPendingProbe.init)
+        guard let token = currentToken else {
+            return inner.markBegodeProbeResponsesMissingUnscoped().map(DeviceDetectionPendingProbe.init)
+        }
+        return inner.markBegodeProbeResponsesMissingForAttempt(token: token).map(DeviceDetectionPendingProbe.init)
     }
 
     func nextBegodeProbeExpiry(timeout: MonotonicMilliseconds) -> MonotonicMilliseconds? {
@@ -392,7 +453,11 @@ public final class DeviceDetectionSession {
     }
 
     func reset() {
-        inner.resetDeviceDetection()
+        guard let token = currentToken else {
+            inner.resetDeviceDetection()
+            return
+        }
+        _ = inner.resetDeviceDetectionForAttempt(token: token)
     }
 }
 

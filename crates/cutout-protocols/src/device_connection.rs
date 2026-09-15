@@ -7,8 +7,8 @@ pub use settings::{DeviceSettingRequestError, DeviceSettingsSnapshot};
 
 use cutout_core::{
     ConnectionAttemptSnapshot, ConnectionAttemptToken, ConnectionReadiness, CutoutSessionState,
-    DeviceEvent, DeviceSettingsState, MonotonicTimestamp, ParserDiagnosticsDto, ProtocolFamily,
-    ReadOnlyResponse, SessionInputDto, SessionOutput, TelemetrySnapshotDto,
+    DeviceEvent, DeviceSettingsState, GattFingerprint, MonotonicTimestamp, ParserDiagnosticsDto,
+    ProtocolFamily, ReadOnlyResponse, SessionInputDto, SessionOutput, TelemetrySnapshotDto,
 };
 
 use crate::{
@@ -85,6 +85,34 @@ mod tests {
             ConnectionReadiness::Pending
         );
         assert!(owner.snapshot().identity.is_none());
+    }
+
+    #[test]
+    fn stale_attempt_cannot_mutate_detector_or_probe_state() {
+        let mut owner = DeviceConnectionSession::default();
+        let previous = begin(&mut owner, "A");
+        let current = begin(&mut owner, "B");
+
+        assert!(
+            owner
+                .begin_identification_probes(&previous, MonotonicTimestamp::new(1))
+                .is_none()
+        );
+        assert!(
+            owner
+                .observe_detection(
+                    &previous,
+                    DeviceDetectionEvent::Notification { bytes: VESC_REPLY }
+                )
+                .is_none()
+        );
+        assert!(!owner.reset_detector(&previous));
+
+        assert!(
+            owner
+                .begin_identification_probes(&current, MonotonicTimestamp::new(1))
+                .is_some()
+        );
     }
 
     #[test]
@@ -441,12 +469,40 @@ impl DeviceConnectionSession {
     }
 
     /// Replaces detector evidence when starting a new identification pass.
-    pub fn reset_detector(&mut self) {
+    pub fn reset_detector(&mut self, token: &ConnectionAttemptToken) -> bool {
+        if !self.state.connection.is_current(token) {
+            return false;
+        }
         self.detector = DeviceDetectionSession::default();
+        true
+    }
+
+    /// Resets standalone detector evidence before connection admission.
+    pub fn reset_detector_unscoped(&mut self) -> bool {
+        if self.state.connection.snapshot().token.is_some() {
+            return false;
+        }
+        self.detector = DeviceDetectionSession::default();
+        true
     }
 
     /// Starts protocol-owned identification probes against the current session state.
     pub fn begin_identification_probes(
+        &mut self,
+        token: &ConnectionAttemptToken,
+        at: MonotonicTimestamp,
+    ) -> Option<crate::IdentificationProbePlan> {
+        if !self.state.connection.is_current(token) {
+            return None;
+        }
+        Some(
+            self.detector
+                .begin_identification_probes(&mut self.state, at),
+        )
+    }
+
+    /// Begins probes for standalone discovery before connection admission.
+    pub fn begin_identification_probes_unscoped(
         &mut self,
         at: MonotonicTimestamp,
     ) -> crate::IdentificationProbePlan {
@@ -457,9 +513,13 @@ impl DeviceConnectionSession {
     /// Expires protocol-owned probes and returns the missing probes.
     pub fn expire_pending_probes(
         &mut self,
+        token: &ConnectionAttemptToken,
         now: MonotonicTimestamp,
         timeout: cutout_core::Duration,
     ) -> Vec<cutout_core::PendingProbe> {
+        if !self.state.connection.is_current(token) {
+            return Vec::new();
+        }
         self.detector
             .expire_pending_probes(&mut self.state, now, timeout)
             .into_iter()
@@ -467,7 +527,13 @@ impl DeviceConnectionSession {
     }
 
     /// Marks all protocol-owned probes missing.
-    pub fn mark_pending_probes_missing(&mut self) -> Vec<cutout_core::PendingProbe> {
+    pub fn mark_pending_probes_missing(
+        &mut self,
+        token: &ConnectionAttemptToken,
+    ) -> Vec<cutout_core::PendingProbe> {
+        if !self.state.connection.is_current(token) {
+            return Vec::new();
+        }
         self.detector
             .mark_pending_probes_missing(&mut self.state)
             .into_iter()
@@ -477,19 +543,89 @@ impl DeviceConnectionSession {
     /// Observes detector evidence without exposing the detector's mutable state.
     pub fn observe_detection(
         &mut self,
+        token: &ConnectionAttemptToken,
         event: DeviceDetectionEvent<'_>,
-    ) -> DeviceDetectionResolution {
-        self.detector.observe(&mut self.state, event)
+    ) -> Option<DeviceDetectionResolution> {
+        if !self.state.connection.is_current(token) {
+            return None;
+        }
+        Some(self.detector.observe(&mut self.state, event))
     }
 
     /// Records an identification probe write at its monotonic start time.
     pub fn observe_probe_write_at(
         &mut self,
+        token: &ConnectionAttemptToken,
         probe: cutout_core::PendingProbe,
         at: MonotonicTimestamp,
-    ) -> DeviceDetectionResolution {
+    ) -> Option<DeviceDetectionResolution> {
+        if !self.state.connection.is_current(token) {
+            return None;
+        }
+        Some(
+            self.detector
+                .observe_probe_write_at(&mut self.state, probe, at),
+        )
+    }
+
+    /// Applies detector evidence for standalone discovery before an attempt exists.
+    pub fn observe_detection_unscoped(
+        &mut self,
+        event: DeviceDetectionEvent<'_>,
+    ) -> Option<DeviceDetectionResolution> {
+        if self.state.connection.snapshot().token.is_some() {
+            return None;
+        }
+        Some(self.detector.observe(&mut self.state, event))
+    }
+
+    /// Applies a standalone GATT observation before connection admission.
+    pub fn observe_gatt_unscoped(
+        &mut self,
+        fingerprints: &[GattFingerprint],
+    ) -> Option<DeviceDetectionResolution> {
+        self.observe_detection_unscoped(DeviceDetectionEvent::Gatt { gatt: fingerprints })
+    }
+
+    /// Records a standalone probe write before connection admission.
+    pub fn observe_probe_write_at_unscoped(
+        &mut self,
+        probe: cutout_core::PendingProbe,
+        at: MonotonicTimestamp,
+    ) -> Option<DeviceDetectionResolution> {
+        if self.state.connection.snapshot().token.is_some() {
+            return None;
+        }
+        Some(
+            self.detector
+                .observe_probe_write_at(&mut self.state, probe, at),
+        )
+    }
+
+    /// Expires standalone probe evidence before connection admission.
+    pub fn expire_pending_probes_unscoped(
+        &mut self,
+        now: MonotonicTimestamp,
+        timeout: cutout_core::Duration,
+    ) -> Vec<cutout_core::PendingProbe> {
+        if self.state.connection.snapshot().token.is_some() {
+            return Vec::new();
+        }
         self.detector
-            .observe_probe_write_at(&mut self.state, probe, at)
+            .expire_pending_probes(&mut self.state, now, timeout)
+            .into_iter()
+            .collect()
+    }
+
+    /// Marks standalone probe evidence missing before connection admission.
+    pub fn mark_pending_probes_missing_unscoped(&mut self) -> Vec<cutout_core::PendingProbe> {
+        if self.state.connection.snapshot().token.is_some() {
+            return Vec::new();
+        }
+        self.detector
+            .mark_pending_probes_missing(&mut self.state)
+            .into_iter()
+            .collect()
     }
 
     /// Replaces all device-scoped state before native work for the new attempt.

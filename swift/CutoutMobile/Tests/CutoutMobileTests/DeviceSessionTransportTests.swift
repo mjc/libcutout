@@ -90,6 +90,30 @@ final class DeviceSessionTransportTests: XCTestCase {
 
         }
     }
+
+    func testDisabledNotificationReportsSubscriptionFailure() throws {
+        try queue.sync {
+            let state = CutoutSessionStateHandle()
+            let token = try XCTUnwrap(state.beginConnectionAttempt(platformIdentifier: "A", nowMs: 0).token)
+            _ = state.connectionLinkEstablished(token: token)
+            _ = state.observeConnectionNotification(token: token, bytes: vescReply)
+            _ = state.resolveDeviceSession(token: token, identificationComplete: false, nowMs: 1)
+            let sink = TransportSink()
+            let transport = makeTransport(state, token: token, sink: sink)
+            _ = try transport.handleLinkUp(at: MonotonicMilliseconds(1))
+            var failedChannel: BluetoothUuid?
+            transport.onSubscriptionFailure = { channel, error in
+                XCTAssertNil(error)
+                failedChannel = channel
+            }
+            transport.handleNotificationStateUpdate(
+                channel: .vescNordicUartNotify,
+                isNotifying: false,
+                error: nil
+            )
+            XCTAssertEqual(failedChannel, .vescNordicUartNotify)
+        }
+    }
 }
 
 private final class TransportSink: CoreBluetoothOperationSink {

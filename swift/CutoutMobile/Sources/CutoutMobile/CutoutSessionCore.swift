@@ -610,7 +610,6 @@ public final class CutoutSessionCore: NSObject {
     func observeAdvertisement(_ advertisement: CoreBluetoothAdvertisement) {
         onBleQueue {
             let advertisement = advertisement.withVescNordicUartFallbackName()
-            _ = deviceDetectionSession.observeAdvertisement(name: advertisement.localName.map { Data($0.utf8) })
             let snapshot = rustSessionState.observeDiscovery(observation: DiscoveryObservation(advertisement))
             scanState = DevicePickerScanState(status: .scanning, discoverySnapshot: snapshot)
             publishScanState()
@@ -687,11 +686,14 @@ public final class CutoutSessionCore: NSObject {
             if testScript.flushCaptureSucceeds {
                 return onBleQueue {
                     isRecordOnly = true
-                    startCapture(
+                    guard startCapture(
                         reason: note ?? "record-only",
                         annotations: annotations,
                         evidence: "simulator_fixture"
-                    )
+                    ) else {
+                        isRecordOnly = false
+                        return false
+                    }
                     guard captureBuilder != nil else {
                         isRecordOnly = false
                         return false
@@ -1462,12 +1464,12 @@ public final class CutoutSessionCore: NSObject {
         liveOwner = nil
         deviceDetectionSession.reset()
         _ = deviceDetectionSession.observeAdvertisement(name: advertisement.localName.map { Data($0.utf8) })
-        startCapture(
+        guard startCapture(
             reason: "record-only",
             annotations: ["route=record_only"] + annotations + (note.map {
                 [pevcapAnnotation(key: "user_note", value: $0)]
             } ?? [])
-        )
+        ) else { return }
         clearSettingsReadback()
         clearFaultHistoryReadback()
         clearBmsSnapshot()
@@ -1497,7 +1499,8 @@ public final class CutoutSessionCore: NSObject {
         liveOwner = nil
         deviceDetectionSession.reset()
         _ = deviceDetectionSession.observeAdvertisement(name: advertisement.localName.map { Data($0.utf8) })
-        startCapture(reason: "protocol-detection", annotations: ["intent=manual_use"])
+        guard startCapture(reason: "protocol-detection", annotations: ["intent=manual_use"])
+        else { return }
         clearSettingsReadback()
         clearFaultHistoryReadback()
         clearBmsSnapshot()
@@ -1517,6 +1520,14 @@ public final class CutoutSessionCore: NSObject {
             writeLimit: TransportWriteLimitBytes(23), operationSink: sink,
             queue: bleQueue, clock: clock
         )
+        owner.onSubscriptionFailure = { [weak self] channel, error in
+            guard let self, self.liveOwner?.token == token else { return }
+            self.failConnectionCapture()
+            self.cancelFailedConnectionAttempt()
+            self.setPhase(.failed(.notificationFailed(
+                error?.sessionMessage ?? "notifications disabled for \(channel)"
+            )))
+        }
         if let chargeEstimateProfile { owner.configureChargeEstimate(profile: chargeEstimateProfile) }
         return owner
     }
@@ -1624,7 +1635,9 @@ public final class CutoutSessionCore: NSObject {
         isDetectingProtocol = selectedRoute == nil
         rideMapConnectionObserved = false
         liveOwner = nil
-        rustSessionState.resetDeviceDetectionLink()
+        if let token = connectionAttempt?.token {
+            _ = rustSessionState.resetDeviceDetectionLinkForAttempt(token: token)
+        }
         subscribedCharacteristics.removeAll()
         pendingWithoutResponseWrites.removeAll()
         pendingServiceDiscoveries.removeAll()
@@ -1661,10 +1674,10 @@ public final class CutoutSessionCore: NSObject {
                 self.onBleQueue {
                     guard !self.suppressReconnect,
                           self.connectionSnapshot.generation == connectionGeneration else { return }
-                    self.startCapture(
+                    guard self.startCapture(
                         reason: "protocol-detection",
                         annotations: ["intent=previously_connected"]
-                    )
+                    ) else { return }
                     reconnect()
                 }
             }
@@ -2050,11 +2063,12 @@ public final class CutoutSessionCore: NSObject {
         return true
     }
 
+    @discardableResult
     private func startCapture(
         reason: String,
         annotations extraAnnotations: [String] = [],
         evidence: String = "hardware_tested"
-    ) {
+    ) -> Bool {
         captureStartedAt = clock.now()
         captureNotificationCount = 0
 
@@ -2087,13 +2101,31 @@ public final class CutoutSessionCore: NSObject {
             captureStartedAt = nil
             publishCaptureEvent(.failed)
             setPhase(.failed(.sessionFailed("capture writer failed to start")))
-            return
+            cancelFailedConnectionAttempt()
+            return false
         }
         musicCaptureContext.reset()
         captureFileURL = url
         record("capture_file=\(url.path)")
         publishCaptureEvent(.started(fileURL: url))
         updateCaptureIdentity()
+        return true
+    }
+
+    private func cancelFailedConnectionAttempt() {
+        connectionDeadlineWorkItem?.cancel()
+        connectionDeadlineWorkItem = nil
+        liveOwner?.invalidate()
+        liveOwner = nil
+        if let attempt = connectionAttempt {
+            attempt.peripheral.delegate = nil
+            if attempt.peripheral.state != .disconnected {
+                retiringPeripheralIdentifiers.insert(attempt.peripheral.identifier)
+                central?.cancelPeripheralConnection(attempt.peripheral)
+            }
+        }
+        connectionAttempt = nil
+        peripheral = nil
     }
 
     private func acceptCaptureWrite(_ accepted: Bool) -> Bool {
@@ -2383,14 +2415,14 @@ private extension CutoutSessionCore {
                 _ = rustSessionState.connectionLinkEstablished(token: token)
                 publishConnectionSnapshot()
             }
-            prepareRestoredRide()
+            guard prepareRestoredRide() else { return }
             if central?.state == .poweredOn {
                 resumeConnectedPeripheral(restoredPeripheral)
             } else {
                 setPhase(.discoveringServices)
             }
         case .connecting:
-            prepareRestoredRide()
+            guard prepareRestoredRide() else { return }
             setPhase(.discoveringServices)
         case .disconnected, .disconnecting:
             record("central_restore=selected_not_connected")
@@ -2409,12 +2441,15 @@ private extension CutoutSessionCore {
         }
     }
 
-    func prepareRestoredRide() {
-        startCapture(reason: "protocol-detection", annotations: ["intent=previously_connected"])
+    @discardableResult
+    func prepareRestoredRide() -> Bool {
+        guard startCapture(reason: "protocol-detection", annotations: ["intent=previously_connected"])
+        else { return false }
         clearSettingsReadback()
         clearFaultHistoryReadback()
         clearBmsSnapshot()
         clearProtocolIdentityCandidate()
+        return true
     }
 
     func resumeConnectedPeripheral(_ peripheral: CBPeripheral) {

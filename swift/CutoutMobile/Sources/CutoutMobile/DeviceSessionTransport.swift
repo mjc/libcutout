@@ -22,6 +22,7 @@ final class DeviceSessionTransport: @unchecked Sendable {
     private var publishedControls: DeviceControlsSnapshot?
     private var lastControlsPublication: MonotonicMilliseconds?
     var onControlsChange: ((DeviceControlsSnapshot) -> Void)?
+    var onSubscriptionFailure: ((BluetoothUuid, Error?) -> Void)?
 
     init(
         state: CutoutSessionStateHandle,
@@ -130,6 +131,7 @@ final class DeviceSessionTransport: @unchecked Sendable {
         waitingForSubscription = nil
         guard error == nil, isNotifying else {
             pendingOperations.removeAll()
+            onSubscriptionFailure?(channel, error)
             return
         }
         let operations = pendingOperations
