@@ -1723,6 +1723,9 @@ final class CutoutAppModel {
         rideMapHistoryRouteLoading = true
         rideMapHistoryDetailRouteLoading = true
         guard let state = core.rideMapStateHandle else {
+            replaceRideMapHistoryDisplayPoints([], truncated: false)
+            replaceRideMapHistoryDetailDisplayPoints([], truncated: false)
+            rideMapHistoryDetailRoutePresence = .emptyRide
             rideMapHistoryRouteLoading = false
             rideMapHistoryDetailRouteLoading = false
             rideMapHistoryRouteError = .storageError("Rust ride database is unavailable")
@@ -1822,6 +1825,7 @@ final class CutoutAppModel {
                 self.rideMapHistoryDetailMusicError = Self.mapRideMapError(error)
                 self.rideMapHistoryDetailProjectionRideID = nil
                 self.rideMapHistoryDetailRoutePresence = .emptyRide
+                self.replaceRideMapHistoryDisplayPoints([], truncated: false)
                 self.replaceRideMapHistoryDetailDisplayPoints([], truncated: false)
             }
         }

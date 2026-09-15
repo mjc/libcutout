@@ -883,6 +883,15 @@ final class CutoutAppModelTests: XCTestCase {
         XCTAssertEqual(model.rideMapHistoryDetailRoutePresence, .emptyViewport)
         XCTAssertNil(model.rideMapHistoryDetailRouteError)
         XCTAssertEqual(model.rideMapHistoryDetailProjectionRideID, rideID)
+
+        driver.setRideMapUnavailable(true)
+        model.selectRideMapHistory(rideID)
+        await Self.waitUntil("same-ride selection failure") {
+            !model.rideMapHistoryRouteLoading
+                && model.rideMapHistoryRouteError != nil
+        }
+        XCTAssertTrue(model.rideMapHistoryDisplayPoints.isEmpty)
+        XCTAssertTrue(model.rideMapHistoryDetailDisplayPoints.isEmpty)
     }
 
     @MainActor
