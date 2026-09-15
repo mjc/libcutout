@@ -7,7 +7,8 @@ pub use readback::SettingObservation;
 
 use cutout_core::{
     Capabilities, Capacity, CapacitySource, ChargeProfile, ChargeProfileIdentity, CommandKind,
-    DeviceCommand, DeviceSettingValue, SettingId, UsablePackCapacity, VerificationStatus,
+    DeviceCommand, DeviceSettingValue, SettingId, SettingsEntry, UsablePackCapacity,
+    VerificationStatus,
 };
 
 use crate::{BegodeFalconModel, SupportsBenignControls, SupportsSettingsWrites};
@@ -212,6 +213,14 @@ impl SettingsAdapter {
             Self::Falcon => falcon::checked_command(id, value),
         }
     }
+
+    fn normalize_readback(self, entry: SettingsEntry, observations: &mut Vec<SettingObservation>) {
+        match self {
+            Self::None => {}
+            Self::Aero => aero::normalize_readback(entry, observations),
+            Self::Falcon => falcon::normalize_readback(entry, observations),
+        }
+    }
 }
 
 impl DeviceControlProfile {
@@ -257,10 +266,6 @@ impl DeviceControlProfile {
     #[must_use]
     pub const fn default_charge_profile(self) -> Option<ChargeProfile> {
         self.default_charge_profile
-    }
-
-    pub(super) fn control(self, id: SettingId) -> Option<SettingControl> {
-        self.settings_adapter.control(id)
     }
 
     /// Returns supported controls, retaining diagnostic-only and unverified definitions.
@@ -676,6 +681,32 @@ fn choices(entries: &[(u16, &'static str, bool)]) -> SettingControl {
             })
             .collect(),
     )
+}
+
+fn control_value(control: SettingControl, raw: i64) -> Option<DeviceSettingValue> {
+    match control {
+        SettingControl::Boolean => match raw {
+            0 => Some(DeviceSettingValue::Boolean(false)),
+            1 => Some(DeviceSettingValue::Boolean(true)),
+            _ => None,
+        },
+        SettingControl::Choices(choices) => {
+            let value = u16::try_from(raw).ok()?;
+            choices
+                .iter()
+                .any(|choice| choice.id == value)
+                .then_some(DeviceSettingValue::Choice(value))
+        }
+        SettingControl::Number {
+            minimum, maximum, ..
+        } => {
+            let value = i32::try_from(raw).ok()?;
+            (minimum..=maximum)
+                .contains(&value)
+                .then_some(DeviceSettingValue::Number(value))
+        }
+        SettingControl::ReadOnly => None,
+    }
 }
 
 fn checked_number<T, U: TryFrom<i32>>(
