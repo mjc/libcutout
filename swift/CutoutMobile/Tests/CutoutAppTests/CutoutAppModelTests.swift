@@ -856,6 +856,14 @@ final class CutoutAppModelTests: XCTestCase {
             selectedDetailProjectionVersion
         )
 
+        model.projectRideMapHistoryDetailViewport(nil)
+        await Self.waitUntil("nil history detail viewport error") {
+            !model.rideMapHistoryDetailRouteLoading
+                && model.rideMapHistoryDetailRouteError == .invalidRouteProjection
+        }
+        XCTAssertTrue(model.rideMapHistoryDetailDisplayPoints.isEmpty)
+        XCTAssertEqual(model.rideMapHistoryDisplayPoints, historyPoints)
+
         model.projectRideMapHistoryDetailViewport(MobileGeoBoundsDto(
             minimumLatitudeDegrees: 40,
             maximumLatitudeDegrees: 39,

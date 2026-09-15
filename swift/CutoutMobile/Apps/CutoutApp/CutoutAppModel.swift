@@ -1622,8 +1622,7 @@ final class CutoutAppModel {
     }
 
     func projectRideMapHistoryDetailViewport(_ viewport: MobileGeoBoundsDto?) {
-        guard let viewport,
-              let selectedRideMapHistoryID,
+        guard let selectedRideMapHistoryID,
               rideMapHistory.contains(where: { $0.rideID == selectedRideMapHistoryID })
         else {
             return
@@ -1634,9 +1633,18 @@ final class CutoutAppModel {
         rideMapHistoryDetailRouteLoading = true
         let cancellation = MobileRideMapProjectionCancellation()
         rideMapHistoryViewportCancellation = cancellation
+        guard let viewport else {
+            rideMapHistoryDetailRouteLoading = false
+            rideMapHistoryDetailRouteError = .invalidRouteProjection
+            rideMapHistoryDetailRoutePresence = .emptyRide
+            replaceRideMapHistoryDetailDisplayPoints([], truncated: false)
+            return
+        }
         guard let state = core.rideMapStateHandle else {
             rideMapHistoryDetailRouteLoading = false
             rideMapHistoryDetailRouteError = .storageError("Rust ride database is unavailable")
+            rideMapHistoryDetailRoutePresence = .emptyRide
+            replaceRideMapHistoryDetailDisplayPoints([], truncated: false)
             return
         }
         let budget = Self.rideMapLimits.historyPreviewPointLimit
