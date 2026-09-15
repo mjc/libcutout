@@ -827,6 +827,7 @@ final class CutoutAppModelTests: XCTestCase {
         XCTAssertEqual(model.selectedRideMapHistoryID, rideID)
         let historyPoints = model.rideMapHistoryDisplayPoints
         XCTAssertEqual(historyPoints.count, 2)
+        XCTAssertEqual(model.rideMapHistoryDetailRoutePresence, .visible)
         let selectedHistoryProjectionVersion = model.rideMapHistoryProjectionVersion
         XCTAssertGreaterThan(selectedHistoryProjectionVersion, initialHistoryProjectionVersion)
         let selectedDetailProjectionVersion = model.rideMapHistoryDetailProjectionVersion
@@ -867,6 +868,21 @@ final class CutoutAppModelTests: XCTestCase {
         XCTAssertNotNil(model.rideMapHistoryDetailRouteError)
         XCTAssertNil(model.rideMapHistoryRouteError)
         XCTAssertFalse(model.rideMapHistoryDetailRouteLoading)
+
+        model.projectRideMapHistoryDetailViewport(MobileGeoBoundsDto(
+            minimumLatitudeDegrees: 40,
+            maximumLatitudeDegrees: 41,
+            minimumLongitudeDegrees: -104,
+            maximumLongitudeDegrees: -103
+        ))
+        await Self.waitUntil("empty history detail viewport") {
+            !model.rideMapHistoryDetailRouteLoading
+                && model.rideMapHistoryDetailRouteError == nil
+                && model.rideMapHistoryDetailDisplayPoints.isEmpty
+        }
+        XCTAssertEqual(model.rideMapHistoryDetailRoutePresence, .emptyViewport)
+        XCTAssertNil(model.rideMapHistoryDetailRouteError)
+        XCTAssertEqual(model.rideMapHistoryDetailProjectionRideID, rideID)
     }
 
     @MainActor

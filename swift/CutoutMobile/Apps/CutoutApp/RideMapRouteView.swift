@@ -188,6 +188,7 @@ struct RideMapRouteView: View {
                     forgetMusicHistory: { model.forgetMusicHistory(for: $0) }
                 ),
                 projectionRideID: model.rideMapHistoryDetailProjectionRideID,
+                routePresence: model.rideMapHistoryDetailRoutePresence,
                 cameraRegion: model.rideMapHistoryDetailCameraRegion,
                 endpointMetadata: model.rideMapHistoryDetailEndpointMetadata,
                 segments: model.rideMapHistoryDetailSegments,

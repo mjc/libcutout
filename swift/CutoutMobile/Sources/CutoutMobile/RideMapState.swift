@@ -421,6 +421,24 @@ public struct MobileRideMapRouteProjection: Equatable, Hashable, Sendable {
         displayedSegmentCount < candidateSegmentCount
     }
 
+    /// Rust-computed distinction between a route with no recorded points and a viewport that
+    /// simply contains none of an otherwise non-empty route.
+    public var presence: MobileRideMapRoutePresence {
+        if sourcePointCount == 0 {
+            return .emptyRide
+        }
+        if candidatePointCount == 0 {
+            return .emptyViewport
+        }
+        return .visible
+    }
+
+}
+
+public enum MobileRideMapRoutePresence: Equatable, Hashable, Sendable {
+    case emptyRide
+    case emptyViewport
+    case visible
 }
 
 /// Canonical endpoint identity and viewport visibility for a bounded route projection.

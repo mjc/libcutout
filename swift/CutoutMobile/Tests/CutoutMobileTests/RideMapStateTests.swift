@@ -120,6 +120,32 @@ final class RideMapStateTests: XCTestCase {
         )
     }
 
+    func testRouteProjectionPresenceDistinguishesEmptyRideFromEmptyViewport() {
+        let emptyRide = MobileRideMapRouteProjection(
+            points: [],
+            segments: [],
+            sourcePointCount: 0,
+            sourceSegmentCount: 0,
+            candidatePointCount: 0,
+            candidateSegmentCount: 0,
+            displayedSegmentCount: 0,
+            backgroundGapCount: 0
+        )
+        let emptyViewport = MobileRideMapRouteProjection(
+            points: [],
+            segments: [],
+            sourcePointCount: 2,
+            sourceSegmentCount: 1,
+            candidatePointCount: 0,
+            candidateSegmentCount: 0,
+            displayedSegmentCount: 0,
+            backgroundGapCount: 0
+        )
+
+        XCTAssertEqual(emptyRide.presence, .emptyRide)
+        XCTAssertEqual(emptyViewport.presence, .emptyViewport)
+    }
+
     func testHistoryContextProjectionStoresOnlyBoundedRouteProjections() {
         let route = MobileRideMapHistoryContextRoute(
             rideID: "ride-1",

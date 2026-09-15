@@ -92,6 +92,7 @@ final class CutoutAppModel {
     private(set) var rideMapHistoryPointsTruncated = false
     private(set) var rideMapHistorySegmentsOmittedByBudget = false
     private(set) var rideMapHistoryDetailDisplayPoints = [MobileRideMapRouteDisplayPoint]()
+    private(set) var rideMapHistoryDetailRoutePresence = MobileRideMapRoutePresence.emptyRide
     private(set) var rideMapHistoryDetailMusicTimeline = [MobileMusicRideEventDto]()
     private(set) var rideMapHistoryDetailMusicTimelineUnavailable = false
     private(set) var rideMapHistoryDetailMusicState: MobileMusicHistoryStateDto?
@@ -1669,6 +1670,7 @@ final class CutoutAppModel {
                         viewportSegmentsOmittedByBudget: result.segmentsOmittedByBudget
                     )
                 )
+                self.rideMapHistoryDetailRoutePresence = result.presence
                 self.rideMapHistoryDetailRouteError = nil
                 self.rideMapHistoryDetailRouteLoading = false
             } catch {
@@ -1679,6 +1681,7 @@ final class CutoutAppModel {
                 }
                 self.rideMapHistoryDetailRouteError = mappedError
                 self.rideMapHistoryDetailRouteLoading = false
+                self.rideMapHistoryDetailRoutePresence = .emptyRide
                 self.replaceRideMapHistoryDetailDisplayPoints([], truncated: false)
             }
         }
@@ -1792,6 +1795,7 @@ final class CutoutAppModel {
                 self.rideMapHistoryDetailMusicState = musicHistory.state
                 self.rideMapHistoryDetailMusicError = musicHistory.error
                 self.rideMapHistoryDetailProjectionRideID = rideID
+                self.rideMapHistoryDetailRoutePresence = projection.presence
                 self.replaceRideMapHistoryDetailDisplayPoints(
                     projection.points,
                     cameraRegion: projection.cameraRegion,
@@ -1817,6 +1821,7 @@ final class CutoutAppModel {
                 self.rideMapHistoryDetailMusicState = nil
                 self.rideMapHistoryDetailMusicError = Self.mapRideMapError(error)
                 self.rideMapHistoryDetailProjectionRideID = nil
+                self.rideMapHistoryDetailRoutePresence = .emptyRide
                 self.replaceRideMapHistoryDetailDisplayPoints([], truncated: false)
             }
         }
@@ -1885,6 +1890,7 @@ final class CutoutAppModel {
         rideMapHistoryContextProjection = nil
         rideMapHistoryContextRoutes.removeAll(keepingCapacity: true)
         replaceRideMapHistoryDisplayPoints([], truncated: false)
+        rideMapHistoryDetailRoutePresence = .emptyRide
         rideMapHistoryDetailMusicTimeline.removeAll(keepingCapacity: true)
         rideMapHistoryDetailMusicTimelineUnavailable = false
         rideMapHistoryDetailMusicState = nil
