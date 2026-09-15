@@ -1580,10 +1580,10 @@ func testVescRideSnapshotProjectsBatteryLevelAndUpdateTime() throws {
     func testEucLiveOwnerWritesTypedHeadlightCommands() throws {
         let sink = RecordingOperationSink()
         let owner = CoreBluetoothLiveSessionOwner(
-            session: try .electricUnicycle(model: .aero),
+            session: try .electricUnicycle(model: .falcon),
             advertisement: CoreBluetoothAdvertisement(
                 peripheralIdentifier: CoreBluetoothPeripheralIdentifier("headlight-test"),
-                localName: ElectricUnicycleModel.aero.displayName,
+                localName: ElectricUnicycleModel.falcon.displayName,
                 advertisedServiceUuids: []
             ),
             writeLimit: TransportWriteLimitBytes(20),
@@ -1592,8 +1592,7 @@ func testVescRideSnapshotProjectsBatteryLevelAndUpdateTime() throws {
 
         _ = try owner.handleCommand(.setLights(.on), at: MonotonicMilliseconds(1))
 
-        // Official binary default; ASCII requires complete matching telemetry evidence.
-        XCTAssertEqual(sink.writes, [Data([0x4c, 0x6b, 0x41, 0x70, 0x0d, 0x01, 0x80, 0x80, 0x01, 0x57, 0xed, 0x3b, 0xd5])])
+        XCTAssertEqual(sink.writes, [Data("Q".utf8)])
     }
 
     func testFalconLiveOwnerTimesOutPendingHeadlightOnTick() throws {
@@ -1798,7 +1797,7 @@ func testVescRideSnapshotProjectsBatteryLevelAndUpdateTime() throws {
     }
 
     func testElectricUnicycleSessionExposesRustOwnedLightState() throws {
-        let session = try ElectricUnicycleSession(model: .aero)
+        let session = try ElectricUnicycleSession(model: .falcon)
 
         XCTAssertEqual(session.headlightState.kind, .unknown)
         XCTAssertEqual(session.aeroHighBeamState.kind, .unknown)

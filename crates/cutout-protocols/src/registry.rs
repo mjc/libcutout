@@ -238,21 +238,7 @@ mod tests {
     }
 
     #[test]
-    fn registered_sessions_schedule_source_backed_headlight_writes() {
-        let mut aero = find_session_registration(NOSFET_AERO_SESSION_KEY)
-            .expect("Aero model session registration exists")
-            .construct();
-        let mut aero_output = Vec::new();
-        aero.handle(
-            SessionInput::Command(DeviceCommand::SetLights(LightState::On)),
-            &mut aero_output,
-        );
-        assert!(aero_output.iter().any(|item| matches!(
-            item,
-            SessionOutput::Transport(TransportAction::Write { bytes, .. })
-                if bytes.as_slice() == hex_literal::hex!("4c6b41700d0180800157ed3bd5")
-        )));
-
+    fn registered_falcon_session_schedules_source_backed_light_writes() {
         let mut falcon = find_session_registration(BEGODE_FALCON_SESSION_KEY)
             .expect("Falcon model session registration exists")
             .construct();
@@ -435,7 +421,7 @@ mod tests {
         assert!(capabilities.supports_command_kind(CommandKind::RequestTelemetry));
         assert!(capabilities.supports_command_kind(CommandKind::RequestBatteryInfo));
         assert!(capabilities.supports_command_kind(CommandKind::RequestSettings));
-        assert!(capabilities.supports_command_kind(CommandKind::SetLights));
+        assert!(!capabilities.supports_command_kind(CommandKind::SetLights));
         assert!(!capabilities.supports_command_kind(CommandKind::RequestFaultHistory));
     }
 

@@ -781,14 +781,14 @@ mod tests {
     }
 
     #[test]
-    fn concrete_aero_session_maps_set_lights_to_control_write() {
+    fn concrete_aero_session_refuses_generic_lights_without_a_verified_frame() {
         let mut session = new_nosfet_aero_benign_control_session();
 
         let result = session.ingest_checked(&SessionInputDto::Command(
             DeviceCommandDto::SetLights(cutout_core::LightStateDto::On),
         ));
 
-        assert!(result.outputs.iter().any(|output| matches!(
+        assert!(!result.outputs.iter().any(|output| matches!(
             output,
             SessionOutputDto::Transport(TransportActionDto::Write { channel, bytes, .. })
                 if *channel == VETERAN_DATA_CHANNEL.as_bytes()

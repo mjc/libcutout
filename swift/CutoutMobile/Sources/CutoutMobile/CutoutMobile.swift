@@ -298,9 +298,7 @@ public final class DeviceDetectionSession {
     private let inner: CutoutSessionStateHandle
 
     public convenience init() {
-        let state = CutoutSessionStateHandle()
-        _ = state.beginConnectionAttempt(platformIdentifier: "standalone-detection", nowMs: 0)
-        self.init(sessionState: state)
+        self.init(sessionState: CutoutSessionStateHandle())
     }
 
     init(sessionState: CutoutSessionStateHandle) {
@@ -339,9 +337,16 @@ public final class DeviceDetectionSession {
     }
 
     func beginIdentificationProbe(at startedAt: MonotonicMilliseconds) -> IdentificationProbeOutcome {
-        guard let token = currentToken,
-              let outcome = inner.beginIdentificationProbeForAttemptAt(token: token, startedAtMs: startedAt.rawValue)
-        else { return .unsupported }
+        let outcome: CutoutMobileFFI.MobileIdentificationProbeOutcomeDto
+        if let token = currentToken {
+            guard let scoped = inner.beginIdentificationProbeForAttemptAt(
+                token: token,
+                startedAtMs: startedAt.rawValue
+            ) else { return .unsupported }
+            outcome = scoped
+        } else {
+            outcome = inner.beginIdentificationProbeAt(startedAtMs: startedAt.rawValue)
+        }
         switch outcome {
         case .noProbeNeeded:
             return .noProbeNeeded

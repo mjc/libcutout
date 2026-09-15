@@ -419,7 +419,7 @@ fn aero_mode_control_payload(
             b"CLEARMETER".as_slice(),
             aero_binary_frame(*b"LkAp", &[0x00], 1)?,
         ),
-        DeviceCommand::SetLights(state) | DeviceCommand::SetAeroHighBeam(state) => match state {
+        DeviceCommand::SetAeroHighBeam(state) => match state {
             LightState::On => (
                 b"SetLightON".as_slice(),
                 aero_binary_frame(*b"LkAp", &[0x01, 0x80, 0x80], 1)?,
@@ -825,26 +825,30 @@ mod tests {
     use cutout_core::{BegodeBeeperVolume, BegodeLedModeSetting, BegodeMaxSpeed};
 
     #[test]
-    fn aero_control_encoder_defaults_to_the_official_binary_mode() {
-        let on = AeroControlEncoder::encode(DeviceCommand::SetLights(LightState::On))
-            .expect("NOSFET lights-on command encodes");
-        let off = AeroControlEncoder::encode(DeviceCommand::SetLights(LightState::Off))
-            .expect("NOSFET lights-off command encodes");
+    fn aero_control_encoder_reserves_headlight_frames_for_stationary_high_beam() {
+        assert_eq!(
+            AeroControlEncoder::encode(DeviceCommand::SetLights(LightState::On)),
+            None
+        );
+        let on = AeroControlEncoder::encode(DeviceCommand::SetAeroHighBeam(LightState::On))
+            .expect("NOSFET high-beam command encodes");
+        let off = AeroControlEncoder::encode(DeviceCommand::SetAeroHighBeam(LightState::Off))
+            .expect("NOSFET high-beam command encodes");
 
-        assert_eq!(on.command, CommandKind::SetLights);
+        assert_eq!(on.command, CommandKind::SetAeroHighBeam);
         assert_eq!(
             on.payload.as_slice(),
             &hex_literal::hex!("4c6b41700d0180800157ed3bd5")
         );
         assert_eq!(on.mode, WriteMode::WithoutResponse);
-        assert_eq!(off.command, CommandKind::SetLights);
+        assert_eq!(off.command, CommandKind::SetAeroHighBeam);
         assert_eq!(
             off.payload.as_slice(),
             &hex_literal::hex!("4c6b41700d0180800020ea0b43")
         );
         assert_eq!(off.mode, WriteMode::WithoutResponse);
         assert_eq!(
-            AeroControlEncoder::encode(DeviceCommand::SetLights(LightState::Strobe)),
+            AeroControlEncoder::encode(DeviceCommand::SetAeroHighBeam(LightState::Strobe)),
             None
         );
         assert_eq!(
@@ -908,16 +912,6 @@ mod tests {
                 DeviceCommand::ResetTripMeter,
                 b"CLEARMETER".as_slice(),
                 hex_literal::hex!("4c6b41700b0001090a31f8").as_slice(),
-            ),
-            (
-                DeviceCommand::SetLights(LightState::On),
-                b"SetLightON".as_slice(),
-                hex_literal::hex!("4c6b41700d0180800157ed3bd5").as_slice(),
-            ),
-            (
-                DeviceCommand::SetLights(LightState::Off),
-                b"SetLightOFF".as_slice(),
-                hex_literal::hex!("4c6b41700d0180800020ea0b43").as_slice(),
             ),
             (
                 DeviceCommand::SetPedalMode(PedalMode::Soft),
