@@ -291,7 +291,7 @@ mod tests {
         assert!(owner.state.connection.is_verified(&token));
 
         let resolution = owner
-            .observe_for_attempt(
+            .observe_detection(
                 &token,
                 DeviceDetectionEvent::Notification { bytes: VESC_REPLY },
             )
@@ -546,10 +546,7 @@ impl DeviceConnectionSession {
         token: &ConnectionAttemptToken,
         event: DeviceDetectionEvent<'_>,
     ) -> Option<DeviceDetectionResolution> {
-        if !self.state.connection.is_current(token) {
-            return None;
-        }
-        Some(self.detector.observe(&mut self.state, event))
+        self.observe_for_attempt(token, event)
     }
 
     /// Records an identification probe write at its monotonic start time.

@@ -1513,11 +1513,12 @@ public final class CutoutSessionCore: NSObject {
     private func makeDeviceTransport(
         token: ConnectionAttemptToken,
         advertisement: CoreBluetoothAdvertisement,
-        sink: CoreBluetoothOperationSink
+        sink: CoreBluetoothOperationSink,
+        writeLimit: TransportWriteLimitBytes = TransportWriteLimitBytes(23)
     ) -> DeviceSessionTransport {
         let owner = DeviceSessionTransport(
             state: rustSessionState, token: token, advertisement: advertisement,
-            writeLimit: TransportWriteLimitBytes(23), operationSink: sink,
+            writeLimit: writeLimit, operationSink: sink,
             queue: bleQueue, clock: clock
         )
         owner.onSubscriptionFailure = { [weak self] channel, error in
@@ -1537,7 +1538,14 @@ public final class CutoutSessionCore: NSObject {
               rustSessionState.verifiedConnectionAttemptIsCurrent(token: token) else { return }
         do {
             beginBmsStorageSession()
-            let owner = makeDeviceTransport(token: token, advertisement: advertisement, sink: self)
+            let owner = makeDeviceTransport(
+                token: token,
+                advertisement: advertisement,
+                sink: self,
+                writeLimit: TransportWriteLimitBytes(
+                    UInt16(clamping: peripheral.maximumWriteValueLength(for: .withoutResponse))
+                )
+            )
             liveOwner = owner
             attachDeviceControlsCallback()
             setPhase(.subscribing)
