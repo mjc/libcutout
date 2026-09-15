@@ -120,7 +120,8 @@ impl RideWriteState {
             // A lower uptime cannot belong to the interrupted ride's monotonic epoch.
             return Err(TransitionError::Invalid);
         }
-        let lifecycle = self.lifecycle.apply(event)?;
+        let validated_transition = self.lifecycle.transition(event)?;
+        let lifecycle = validated_transition.next();
         let mut monotonic_created_at_ms = self.monotonic_created_at_ms;
         let mut monotonic_last_event_ms = self.monotonic_last_event_ms;
         let mut paused_at_ms = self.paused_at_ms;
@@ -159,8 +160,7 @@ impl RideWriteState {
                 RideDurationMilliseconds::new(completed_duration_ms),
             )
             .transitioned(
-                self.lifecycle,
-                lifecycle,
+                validated_transition,
                 MonotonicMilliseconds::new(monotonic_created_at_ms.unwrap_or(at)),
                 MonotonicMilliseconds::new(at),
             );

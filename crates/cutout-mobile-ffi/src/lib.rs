@@ -9894,6 +9894,7 @@ struct MobileRideMapCoreInner {
     music_history_policy: CoreMusicHistoryPolicy,
     music_restore_failed: bool,
     pending_location_writes: VecDeque<PendingMapLocationWrite>,
+    settled_location_decisions: VecDeque<MobileRideMapCoreDecisionDto>,
     recoverable_updated_at_milliseconds: Option<u64>,
     monotonic_epoch_offset_milliseconds: u64,
     initialization_error: Option<MobileRideMapCoreErrorDto>,
@@ -9989,22 +9990,23 @@ impl MobileRideMapCoreInner {
         &mut self,
         event: MobileRideEventDto,
         at_milliseconds: u64,
-    ) -> Result<(MobileRideIdDto, ride_maps::RideLifecycleState), MobileRideMapCoreErrorDto> {
+    ) -> Result<(MobileRideIdDto, ride_maps::ValidatedRideTransition), MobileRideMapCoreErrorDto>
+    {
         let Some(id) = self.ride_id.clone() else {
             return Err(MobileRideMapCoreErrorDto::NoActiveRide);
         };
         let Some(current) = self.recorder.state() else {
             return Err(MobileRideMapCoreErrorDto::NoActiveRide);
         };
-        let next = current
-            .apply(event.into())
+        let transition = current
+            .transition(event.into())
             .map_err(|_| MobileRideMapCoreErrorDto::InvalidTransition)?;
         if let Some(database) = self.database.as_ref() {
             database
                 .transition_at(id.clone(), event, at_milliseconds)
                 .map_err(map_core_error)?;
         }
-        Ok((id, next))
+        Ok((id, transition))
     }
 
     fn ingest_location(
@@ -10125,6 +10127,7 @@ impl MobileRideMapCoreInner {
             music_history_policy: CoreMusicHistoryPolicy::Disabled,
             music_restore_failed: false,
             pending_location_writes: VecDeque::new(),
+            settled_location_decisions: VecDeque::new(),
             recoverable_updated_at_milliseconds: None,
             monotonic_epoch_offset_milliseconds: 0,
             initialization_error: None,
@@ -10424,6 +10427,7 @@ impl MobileRideMapCoreInner {
         self.reset_music_history_policy();
         self.music_restore_failed = false;
         self.pending_location_writes.clear();
+        self.settled_location_decisions.clear();
         self.recoverable_updated_at_milliseconds = None;
         Ok(self.snapshot(MobileRideLifecycleStateDto::Active))
     }
@@ -11221,10 +11225,10 @@ impl MobileRideMapCore {
     /// a ride that is neither active nor settling after save are discarded so a late completion
     /// cannot affect a newly started ride.
     pub fn poll_location_writes(&self) -> Vec<MobileRideMapCoreDecisionDto> {
-        self.inner
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .poll_location_writes()
+        let mut state = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
+        let mut decisions: Vec<_> = state.settled_location_decisions.drain(..).collect();
+        decisions.extend(state.poll_location_writes());
+        decisions
     }
 
     /// Returns a bounded page of active route points.
@@ -11439,13 +11443,18 @@ impl MobileRideMapCoreInner {
             .recording_timing()
             .last_monotonic_milliseconds()
             .as_u64();
-        let (_, next) = self.transition_state(event, at_milliseconds)?;
-        let _ = self.poll_location_writes();
-        self.recorder.apply_transition(next);
-        self.admission_recorder.apply_transition(next);
+        let (_, transition) = self.transition_state(event, at_milliseconds)?;
+        let decisions = self.poll_location_writes();
+        self.settled_location_decisions.extend(decisions);
+        self.recorder
+            .apply_transition(transition)
+            .map_err(|_| MobileRideMapCoreErrorDto::InvalidTransition)?;
+        self.admission_recorder
+            .apply_transition(transition)
+            .map_err(|_| MobileRideMapCoreErrorDto::InvalidTransition)?;
         self.revision = self.revision.saturating_add(1);
         self.generation = self.generation.saturating_add(1);
-        Ok(self.snapshot(next.into()))
+        Ok(self.snapshot(transition.next().into()))
     }
     fn transition_inner_at(
         &mut self,
@@ -11464,16 +11473,25 @@ impl MobileRideMapCoreInner {
             self.monotonic_epoch_offset_milliseconds
         };
         let at_milliseconds = at_milliseconds.saturating_add(epoch_offset);
-        let (_, next) = self.transition_state(event, at_milliseconds)?;
-        let _ = self.poll_location_writes();
+        let (_, transition) = self.transition_state(event, at_milliseconds)?;
+        let decisions = self.poll_location_writes();
+        self.settled_location_decisions.extend(decisions);
         self.monotonic_epoch_offset_milliseconds = epoch_offset;
         self.recorder
-            .apply_transition_at(next, ride_maps::MonotonicMilliseconds::new(at_milliseconds));
+            .apply_transition_at(
+                transition,
+                ride_maps::MonotonicMilliseconds::new(at_milliseconds),
+            )
+            .map_err(|_| MobileRideMapCoreErrorDto::InvalidTransition)?;
         self.admission_recorder
-            .apply_transition_at(next, ride_maps::MonotonicMilliseconds::new(at_milliseconds));
+            .apply_transition_at(
+                transition,
+                ride_maps::MonotonicMilliseconds::new(at_milliseconds),
+            )
+            .map_err(|_| MobileRideMapCoreErrorDto::InvalidTransition)?;
         self.revision = self.revision.saturating_add(1);
         self.generation = self.generation.saturating_add(1);
-        Ok(self.snapshot_at_logical(next.into(), at_milliseconds))
+        Ok(self.snapshot_at_logical(transition.next().into(), at_milliseconds))
     }
 }
 
@@ -23539,7 +23557,10 @@ mod tests {
         assert_eq!(stopped.summary.point_count, 1);
         assert_eq!(saved.summary.point_count, 1);
         assert!(!state.has_pending_location_writes());
-        assert!(state.poll_location_writes().is_empty());
+        assert!(matches!(
+            state.poll_location_writes().as_slice(),
+            [MobileRideMapCoreDecisionDto::Accepted { .. }]
+        ));
         let inner = state.inner.lock().unwrap_or_else(PoisonError::into_inner);
         assert_eq!(inner.recorder.summary().point_count().as_u64(), 1);
         drop(inner);

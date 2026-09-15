@@ -439,9 +439,7 @@ final class CutoutAppModel {
         self.core.onRideMapSnapshotChange = { [weak self] snapshot in
             guard let self else { return }
             self.rideMapSnapshot = snapshot
-            self.rideMapLiveTelemetryState = snapshot.associatedVehicle == nil
-                ? .gpsOnly
-                : .associatedNoTelemetry
+            self.rideMapLiveTelemetryState = snapshot.telemetryState
             self.updateRideMapDurationTicker()
         }
         self.core.onRideMapErrorChange = { [weak self] error in
@@ -1028,9 +1026,7 @@ final class CutoutAppModel {
             musicCoordinator.restoreHistoryPolicy(musicHistoryPolicy)
             musicTimelineEvents = []
         }
-        rideMapLiveTelemetryState = rideMapSnapshot?.associatedVehicle == nil
-            ? .gpsOnly
-            : .associatedNoTelemetry
+        rideMapLiveTelemetryState = rideMapSnapshot?.telemetryState
         updateRideMapDurationTicker()
         guard rideMapSnapshot != nil else { return }
         rideMapRestoreTask?.cancel()
@@ -2070,9 +2066,7 @@ final class CutoutAppModel {
             if resetPoints {
                 invalidateLiveProjection(clearPoints: true)
             }
-            rideMapLiveTelemetryState = rideMapSnapshot?.associatedVehicle == nil
-                ? .gpsOnly
-                : .associatedNoTelemetry
+            rideMapLiveTelemetryState = rideMapSnapshot?.telemetryState
             return true
         } catch {
             rideMapLiveError = Self.mapRideMapError(error)

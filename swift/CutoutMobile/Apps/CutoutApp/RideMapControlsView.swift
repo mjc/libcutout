@@ -10,6 +10,7 @@ struct RideMapControlsView: View {
     }
 
     let state: MobileRideMapStateDto?
+    let allowedActions: [MobileRideMapActionDto]
     @Binding var isDiscardConfirmationPresented: Bool
     let pause: () -> Void
     let resume: () -> Void
@@ -34,6 +35,7 @@ struct RideMapControlsView: View {
                     Label(localizedAppText("ride_map.pause"), systemImage: "pause.fill")
                         .frame(maxWidth: .infinity, minHeight: 48)
                 }
+                .disabled(!allows(.pause))
                 .buttonStyle(.borderedProminent)
                 .tint(PevColors.yellow)
                 .accessibilityIdentifier("ride-map.pause")
@@ -45,6 +47,7 @@ struct RideMapControlsView: View {
                     Label(localizedAppText("ride_map.resume"), systemImage: "play.fill")
                         .frame(maxWidth: .infinity, minHeight: 48)
                 }
+                .disabled(!allows(.resume))
                 .buttonStyle(.borderedProminent)
                 .tint(PevColors.yellow)
                 .accessibilityIdentifier("ride-map.resume")
@@ -56,6 +59,7 @@ struct RideMapControlsView: View {
                     Label(localizedAppText("ride_map.save"), systemImage: "checkmark.circle.fill")
                         .frame(maxWidth: .infinity, minHeight: 48)
                 }
+                .disabled(!allows(.save))
                 .buttonStyle(.borderedProminent)
                 .accessibilityIdentifier("ride-map.save")
 
@@ -65,6 +69,7 @@ struct RideMapControlsView: View {
                     Label(localizedAppText("ride_map.discard"), systemImage: "trash")
                         .frame(maxWidth: .infinity, minHeight: 48)
                 }
+                .disabled(!allows(.discard))
                 .buttonStyle(.bordered)
                 .accessibilityIdentifier("ride-map.discard")
             }
@@ -80,6 +85,7 @@ struct RideMapControlsView: View {
                 .frame(maxWidth: .infinity, minHeight: 48)
         }
         .modifier(StopButtonStyle(prominent: prominent))
+        .disabled(!allows(.stop))
         .tint(PevColors.red)
         .accessibilityIdentifier("ride-map.stop")
     }
@@ -106,8 +112,13 @@ struct RideMapControlsView: View {
             .frame(maxWidth: .infinity, minHeight: 48)
         }
         .buttonStyle(.borderedProminent)
+        .disabled(!allows(.start))
         .tint(PevColors.yellow)
         .accessibilityIdentifier("ride-map.start")
+    }
+
+    private func allows(_ action: MobileRideMapActionDto) -> Bool {
+        allowedActions.contains(action)
     }
 }
 
