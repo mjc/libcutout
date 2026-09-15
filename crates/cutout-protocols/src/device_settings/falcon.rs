@@ -1,9 +1,13 @@
 use cutout_core::{
     AccelerationAssistState, BegodeBeeperVolume, BegodeLedModeSetting, BegodeMaxSpeed, CommandKind,
-    DeviceCommand, DeviceSettingValue, LightState, PedalMode, RollAngle, SettingId, SpeedAlarmMode,
+    DeviceCommand, DeviceSettingValue, LightState, PedalMode, RollAngle, SettingId, SettingsEntry,
+    SpeedAlarmMode,
 };
 
-use super::{SettingControl, SettingUnit, checked_number, choices, number, speed_control};
+use super::{
+    SettingControl, SettingUnit, checked_number, choices, number, readback::SettingObservation,
+    speed_control,
+};
 
 pub(super) const fn command_kind(id: SettingId) -> Option<CommandKind> {
     Some(match id {
@@ -137,4 +141,98 @@ fn choice_command(id: SettingId, value: u16) -> Option<DeviceCommand> {
 
 const fn light(on: bool) -> LightState {
     if on { LightState::On } else { LightState::Off }
+}
+
+pub(super) fn normalize_readback(entry: SettingsEntry, observations: &mut Vec<SettingObservation>) {
+    use crate::{
+        BEGODE_FIELD_LED_AND_LIGHT_MODE, BEGODE_FIELD_POWER_OFF_TIMER_MINUTES,
+        BEGODE_FIELD_SETTINGS_BITS, BEGODE_FIELD_TILTBACK_SPEED_KMH, BegodeLightMode,
+    };
+
+    let raw = entry.field.value;
+    match entry.field.id {
+        BEGODE_FIELD_POWER_OFF_TIMER_MINUTES => super::readback::push(
+            observations,
+            entry,
+            SettingId::PowerOffDelay,
+            semantic_value(SettingId::PowerOffDelay, raw),
+        ),
+        BEGODE_FIELD_TILTBACK_SPEED_KMH => {
+            let value = u8::try_from(raw)
+                .ok()
+                .filter(|speed| *speed <= 99)
+                .map(|speed| DeviceSettingValue::Number(i32::from(speed) * 10));
+            super::readback::push(observations, entry, SettingId::MaximumSpeed, value);
+        }
+        BEGODE_FIELD_SETTINGS_BITS => {
+            let bits = u16::try_from(raw).ok();
+            super::readback::push(
+                observations,
+                entry,
+                SettingId::PedalMode,
+                bits.and_then(PedalMode::from_begode_settings_bits)
+                    .map(pedal_choice),
+            );
+            super::readback::push(
+                observations,
+                entry,
+                SettingId::RollAngleMode,
+                bits.and_then(RollAngle::from_begode_settings_bits)
+                    .map(roll_choice),
+            );
+            super::readback::push(
+                observations,
+                entry,
+                SettingId::SpeedAlarmMode,
+                bits.and_then(SpeedAlarmMode::from_begode_settings_bits)
+                    .map(speed_alarm_choice),
+            );
+        }
+        BEGODE_FIELD_LED_AND_LIGHT_MODE => {
+            let packed = u16::try_from(raw).ok();
+            let pattern = packed
+                .map(|packed| packed >> 8)
+                .filter(|pattern| *pattern <= 9)
+                .map(DeviceSettingValue::Choice);
+            let light = packed.and_then(|packed| {
+                match BegodeLightMode::new(packed.to_le_bytes()[0]).light_state() {
+                    Some(LightState::Off) => Some(DeviceSettingValue::Boolean(false)),
+                    Some(LightState::On) => Some(DeviceSettingValue::Boolean(true)),
+                    _ => None,
+                }
+            });
+            super::readback::push(observations, entry, SettingId::LightingPattern, pattern);
+            super::readback::push(observations, entry, SettingId::Headlight, light);
+        }
+        _ => {}
+    }
+}
+
+fn semantic_value(id: SettingId, raw: i64) -> Option<DeviceSettingValue> {
+    super::control_value(control(id)?, raw)
+}
+
+fn pedal_choice(value: PedalMode) -> DeviceSettingValue {
+    DeviceSettingValue::Choice(match value {
+        PedalMode::Hard => 0,
+        PedalMode::Medium => 1,
+        PedalMode::Soft => 2,
+    })
+}
+
+fn roll_choice(value: RollAngle) -> DeviceSettingValue {
+    DeviceSettingValue::Choice(match value {
+        RollAngle::Low => 0,
+        RollAngle::Medium => 1,
+        RollAngle::High => 2,
+    })
+}
+
+fn speed_alarm_choice(value: SpeedAlarmMode) -> DeviceSettingValue {
+    DeviceSettingValue::Choice(match value {
+        SpeedAlarmMode::Both => 0,
+        SpeedAlarmMode::StageOneOnly => 1,
+        SpeedAlarmMode::Off => 2,
+        SpeedAlarmMode::PwmTiltback => 3,
+    })
 }
