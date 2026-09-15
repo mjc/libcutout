@@ -43,6 +43,28 @@ pub enum RideEvent {
 }
 
 impl RideLifecycleState {
+    /// Actions offered for the current recording; Start creates a separate new ride.
+    #[must_use]
+    pub fn recording_actions(self) -> Vec<RideEvent> {
+        if matches!(self, Self::Saved | Self::Discarded | Self::Imported) {
+            return vec![RideEvent::Start];
+        }
+        [
+            RideEvent::Start,
+            RideEvent::Pause,
+            RideEvent::Resume,
+            RideEvent::Stop,
+            RideEvent::Save,
+            RideEvent::Discard,
+        ]
+        .into_iter()
+        .filter(|event| self.apply(*event).is_ok())
+        .filter(|event| {
+            *event != RideEvent::Discard || matches!(self, Self::Stopped | Self::Interrupted)
+        })
+        .collect()
+    }
+
     /// Applies one event without performing I/O or mutating external state.
     ///
     /// # Errors

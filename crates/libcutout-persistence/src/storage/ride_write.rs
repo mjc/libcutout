@@ -1,9 +1,9 @@
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use cutout_ride_maps::{
-    LocationAdmission, LocationSample, MonotonicMilliseconds, RideEvent, RideLifecycleState,
-    RideMapSegmentId, TransitionError, clamped_transition_timestamp, distance_between,
-    route_admission,
+    LocationAdmission, LocationSample, MonotonicMilliseconds, RideDurationMilliseconds, RideEvent,
+    RideLifecycleState, RideMapSegmentId, RideRecordingTiming, TransitionError,
+    clamped_transition_timestamp, distance_between, route_admission,
 };
 
 use super::{RideSource, StorageError};
@@ -152,47 +152,24 @@ impl RideWriteState {
             monotonic_created_at_ms = at;
         }
         if let Some(at) = at {
-            let at = monotonic_last_event_ms.map_or(at, |last| last.max(at));
-            monotonic_last_event_ms = Some(at);
-            match (self.lifecycle, lifecycle) {
-                (RideLifecycleState::Active, RideLifecycleState::Paused) => {
-                    paused_at_ms = Some(at);
-                }
-                (
-                    RideLifecycleState::Paused | RideLifecycleState::Interrupted,
-                    RideLifecycleState::Active,
-                ) => {
-                    let excluded_duration = paused_at_ms.take().map_or_else(
-                        || at.saturating_sub(self.monotonic_last_event_ms.unwrap_or(at)),
-                        |paused_at| at.saturating_sub(paused_at),
-                    );
-                    paused_duration_ms = paused_duration_ms.saturating_add(excluded_duration);
-                }
-                (
-                    RideLifecycleState::Active | RideLifecycleState::Paused,
-                    RideLifecycleState::Stopped | RideLifecycleState::Interrupted,
-                ) => {
-                    if self.lifecycle == RideLifecycleState::Paused {
-                        completed_duration_ms = active_duration_at(
-                            monotonic_created_at_ms,
-                            paused_at_ms.unwrap_or(at),
-                            false,
-                            None,
-                            paused_duration_ms,
-                        );
-                    } else {
-                        completed_duration_ms = active_duration_at(
-                            monotonic_created_at_ms,
-                            at,
-                            false,
-                            None,
-                            paused_duration_ms,
-                        );
-                    }
-                    paused_at_ms = None;
-                }
-                _ => {}
-            }
+            let timing = RideRecordingTiming::new(
+                MonotonicMilliseconds::new(monotonic_last_event_ms.unwrap_or(at)),
+                paused_at_ms.map(MonotonicMilliseconds::new),
+                RideDurationMilliseconds::new(paused_duration_ms),
+                RideDurationMilliseconds::new(completed_duration_ms),
+            )
+            .transitioned(
+                self.lifecycle,
+                lifecycle,
+                MonotonicMilliseconds::new(monotonic_created_at_ms.unwrap_or(at)),
+                MonotonicMilliseconds::new(at),
+            );
+            monotonic_last_event_ms = Some(timing.last_monotonic_milliseconds().as_u64());
+            paused_at_ms = timing
+                .paused_at_milliseconds()
+                .map(MonotonicMilliseconds::as_u64);
+            paused_duration_ms = timing.paused_duration_milliseconds().as_u64();
+            completed_duration_ms = timing.completed_duration_milliseconds().as_u64();
         } else if matches!(
             (self.lifecycle, lifecycle),
             (
@@ -244,7 +221,11 @@ impl RideWriteState {
             return Err(self.lifecycle);
         }
 
-        let admission = route_admission(previous.as_ref().map(|(_, sample)| sample), &sample);
+        let admission = route_admission(
+            self.monotonic_created_at_ms.map(MonotonicMilliseconds::new),
+            previous.as_ref().map(|(_, sample)| sample),
+            &sample,
+        );
         if admission != LocationAdmission::Accepted {
             return Ok(LocationWriteDecision::Rejected(admission));
         }
@@ -320,30 +301,6 @@ impl RideTransition {
     pub(super) const fn completed_duration_milliseconds(&self) -> u64 {
         self.completed_duration_ms
     }
-}
-
-const fn active_duration_at(
-    created_at_ms: Option<u64>,
-    at_ms: u64,
-    paused: bool,
-    paused_at_ms: Option<u64>,
-    paused_duration_ms: u64,
-) -> u64 {
-    let Some(created_at_ms) = created_at_ms else {
-        return 0;
-    };
-    let current_pause = if paused {
-        match paused_at_ms {
-            Some(paused_at) => at_ms.saturating_sub(paused_at),
-            None => 0,
-        }
-    } else {
-        0
-    };
-    at_ms
-        .saturating_sub(created_at_ms)
-        .saturating_sub(paused_duration_ms)
-        .saturating_sub(current_pause)
 }
 
 pub(super) enum LocationWriteDecision {
@@ -481,6 +438,43 @@ mod tests {
     }
 
     #[test]
+    fn resuming_an_interrupted_pause_preserves_recorded_duration() {
+        let paused = RideWriteState::with_duration(
+            RideSource::Live,
+            RideLifecycleState::Paused,
+            20,
+            Some(1_000),
+            4_000,
+            Some(5_000),
+            0,
+        );
+        let interrupted = paused
+            .transition_at(RideEvent::Interrupt, 30, Some(10_000))
+            .unwrap();
+        let restored = RideWriteState::from_parts(&RideWriteStateParts {
+            source: RideSource::Live,
+            lifecycle: interrupted.lifecycle(),
+            monotonic_created_at_ms: interrupted.monotonic_created_at_milliseconds(),
+            monotonic_last_event_ms: interrupted.monotonic_last_event_milliseconds(),
+            latest_observed_monotonic_ms: None,
+            paused_at_ms: interrupted.paused_at_milliseconds(),
+            paused_duration_ms: interrupted.paused_duration_milliseconds(),
+            completed_duration_ms: interrupted.duration_milliseconds(),
+            updated_at_ms: interrupted.updated_at_milliseconds(),
+        });
+        let resumed = restored
+            .transition_at(RideEvent::Resume, 40, Some(15_000))
+            .unwrap();
+        assert_eq!(
+            16_000
+                - resumed.monotonic_created_at_milliseconds().unwrap()
+                - resumed.paused_duration_milliseconds(),
+            5_000,
+            "four seconds before pause plus one after resume"
+        );
+    }
+
+    #[test]
     fn interrupted_resume_excludes_the_interruption_gap() {
         let state = RideWriteState::from_parts(&RideWriteStateParts {
             source: RideSource::Live,
@@ -500,13 +494,9 @@ mod tests {
         assert_eq!(transition.lifecycle(), RideLifecycleState::Active);
         assert_eq!(transition.paused_duration_milliseconds(), 5_000);
         assert_eq!(
-            active_duration_at(
-                transition.monotonic_created_at_milliseconds(),
-                9_000,
-                false,
-                transition.paused_at_milliseconds(),
-                transition.paused_duration_milliseconds(),
-            ),
+            9_000
+                - transition.monotonic_created_at_milliseconds().unwrap()
+                - transition.paused_duration_milliseconds(),
             3_000
         );
     }
