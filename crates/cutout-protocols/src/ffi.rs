@@ -606,6 +606,73 @@ mod tests {
     }
 
     #[test]
+    fn drained_bms_pages_keep_history_when_the_source_page_cycles() {
+        struct CyclingPages;
+        impl cutout_core::ProtocolSession for CyclingPages {
+            fn handle(
+                &mut self,
+                input: cutout_core::SessionInput<'_>,
+                output: &mut Vec<cutout_core::SessionOutput>,
+            ) {
+                let cutout_core::SessionInput::Tick { monotonic_ms } = input else {
+                    return;
+                };
+                let (selector, voltage) = match monotonic_ms.get() {
+                    1 => (6, 4_200),
+                    2 => (2, 4_180),
+                    _ => (6, 4_210),
+                };
+                let readback = crate::decode_veteran_bms_page(
+                    cutout_core::ProtocolSelector::new(selector),
+                    (0..15)
+                        .map(|_| cutout_core::Voltage::from_millivolts(voltage))
+                        .collect(),
+                    cutout_core::BatteryInfo::default(),
+                    cutout_core::VerificationStatus::Unverified,
+                )
+                .expect("typed cell page");
+                output.push(cutout_core::SessionOutput::Event(
+                    cutout_core::DeviceEvent::ReadOnlyResponse(
+                        cutout_core::ReadOnlyResponse::Battery(readback),
+                    ),
+                ));
+            }
+        }
+
+        let mut host = cutout_core::HostSession::new(CyclingPages);
+        for monotonic_ms in 1..=2 {
+            host.tick(MonotonicTimestamp::new(monotonic_ms));
+            let _ = super::drain_host_outputs(&mut host);
+        }
+        host.tick(MonotonicTimestamp::new(3));
+        let outputs = super::drain_host_outputs(&mut host);
+        let SessionOutputDto::ReadOnly(response) = &outputs[0] else {
+            panic!("battery output")
+        };
+        let cutout_core::ReadOnlyOutputPayload::Battery(readback) = &response.payload else {
+            panic!("battery readback")
+        };
+        let history = readback
+            .page
+            .as_ref()
+            .expect("battery page")
+            .observation_summary
+            .observations
+            .iter()
+            .find(|observation| observation.samples.len() == 2)
+            .expect("retained sample history");
+
+        assert_eq!(
+            history
+                .samples
+                .iter()
+                .map(|sample| sample.voltage.as_millivolts())
+                .collect::<Vec<_>>(),
+            vec![4_200, 4_210]
+        );
+    }
+
+    #[test]
     fn drained_bms_pages_keep_same_timestamp_events_distinct_from_their_shared_summary() {
         struct TwoPages;
         impl cutout_core::ProtocolSession for TwoPages {

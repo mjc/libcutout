@@ -466,7 +466,6 @@ public final class CutoutSessionCore: NSObject {
     private var musicCaptureContext = CaptureMusicContext()
     private var captureMusicHistoryPolicy = MobileMusicHistoryPolicyDto.disabled
     private var captureFileURL: URL?
-    private var bmsPages: [BmsPageKey: BmsSnapshot] = [:]
     private var bmsStorageSessionIdentifier = UUID().uuidString
     private let deviceDetectionSession: DeviceDetectionSession
     private let identificationProbeTransport: IdentificationProbeTransportCoordinator
@@ -1211,46 +1210,16 @@ public final class CutoutSessionCore: NSObject {
             faultHistoryReadback = action.faultHistoryReadback
             publishFaultHistoryReadback()
         case .bmsSnapshot:
-            let mergedSnapshot = mergedBmsSnapshot(with: action.bmsSnapshot)
-            guard mergedSnapshot != bmsSnapshot else {
+            guard let snapshot = action.bmsSnapshot, snapshot != bmsSnapshot else {
                 return
             }
-            bmsSnapshot = mergedSnapshot
+            bmsSnapshot = snapshot
             publishBmsSnapshot()
         case .event:
             applyProtocolIdentityModelId(action.veteranProtocolModelId)
         case .subscribe, .write, .disconnect, .notificationIngest:
             break
         }
-    }
-
-    private func mergedBmsSnapshot(with update: BmsSnapshot?) -> BmsSnapshot? {
-        guard let update else {
-            return bmsSnapshot
-        }
-
-        guard update.availability == .available else {
-            bmsPages.removeAll()
-            return update
-        }
-
-        let pageKey = BmsPageKey(snapshot: update)
-        guard pageKey.isKnownPage || bmsPages.isEmpty else {
-            return aggregateBmsSnapshot()?.mergingBmsPage(update) ?? update.withoutPageCursor()
-        }
-
-        bmsPages[pageKey] = update
-        // Page ordering is for presentation, not summary recency. The arriving event carries
-        // core's summary of all retained observations, including updates to lower-numbered pages.
-        return aggregateBmsSnapshot()?.mergingBmsPage(update).withoutPageCursor()
-    }
-
-    private func aggregateBmsSnapshot() -> BmsSnapshot? {
-        bmsPages.values
-            .sorted(by: BmsPageKey.sortSnapshots)
-            .reduce(nil as BmsSnapshot?) { aggregate, page in
-                aggregate?.mergingBmsPage(page) ?? page.withoutPageCursor()
-            }
     }
 
     private func applyProtocolIdentityModelId(_ modelId: UInt16?) {
@@ -1293,7 +1262,6 @@ public final class CutoutSessionCore: NSObject {
             return
         }
         bmsSnapshot = nil
-        bmsPages.removeAll()
         publishBmsSnapshot()
     }
 
@@ -2294,47 +2262,6 @@ private extension ElectricUnicycleModel {
             "NOSFET Aero"
         case .falcon:
             "Begode Falcon"
-        }
-    }
-}
-
-private struct BmsPageKey: Hashable {
-    let selector: UInt8?
-    let tag: UInt16?
-    let kind: String
-
-    init(snapshot: BmsSnapshot) {
-        selector = snapshot.pageSelector
-        tag = snapshot.pageTag
-        kind = snapshot.pageKind ?? "unknown"
-    }
-
-    var isKnownPage: Bool {
-        selector != nil || tag != nil || kind != "unknown"
-    }
-
-    static func sortSnapshots(_ lhs: BmsSnapshot, _ rhs: BmsSnapshot) -> Bool {
-        let lhsKey = BmsPageKey(snapshot: lhs)
-        let rhsKey = BmsPageKey(snapshot: rhs)
-        switch (lhsKey.tag, rhsKey.tag) {
-        case let (lhsTag?, rhsTag?) where lhsTag != rhsTag:
-            return lhsTag < rhsTag
-        case (nil, _?):
-            return false
-        case (_?, nil):
-            return true
-        default:
-            break
-        }
-        switch (lhsKey.selector, rhsKey.selector) {
-        case let (lhsSelector?, rhsSelector?) where lhsSelector != rhsSelector:
-            return lhsSelector < rhsSelector
-        case (nil, _?):
-            return false
-        case (_?, nil):
-            return true
-        default:
-            return lhsKey.kind < rhsKey.kind
         }
     }
 }
