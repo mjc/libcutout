@@ -129,7 +129,8 @@ final class RideMapStateTests: XCTestCase {
             candidatePointCount: 0,
             candidateSegmentCount: 0,
             displayedSegmentCount: 0,
-            backgroundGapCount: 0
+            backgroundGapCount: 0,
+            presence: .emptyRide
         )
         let emptyViewport = MobileRideMapRouteProjection(
             points: [],
@@ -139,7 +140,8 @@ final class RideMapStateTests: XCTestCase {
             candidatePointCount: 0,
             candidateSegmentCount: 0,
             displayedSegmentCount: 0,
-            backgroundGapCount: 0
+            backgroundGapCount: 0,
+            presence: .emptyViewport
         )
 
         XCTAssertEqual(emptyRide.presence, .emptyRide)
@@ -161,7 +163,8 @@ final class RideMapStateTests: XCTestCase {
                 canonicalStartSequence: 0,
                 canonicalEndSequence: 1_999,
                 canonicalStartVisible: false,
-                canonicalEndVisible: false
+                canonicalEndVisible: false,
+                presence: .visible
             )
         )
         let context = MobileRideMapHistoryContextProjection(
