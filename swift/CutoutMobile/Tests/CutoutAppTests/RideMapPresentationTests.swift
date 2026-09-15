@@ -208,6 +208,33 @@ final class RideMapPresentationTests: XCTestCase {
         XCTAssertEqual(recentered.span.longitudeDelta, fitted.span.longitudeDelta)
     }
 
+    func testLiveFollowKeepsItsViewportSpanAsTheRouteGrows() throws {
+        let first = try XCTUnwrap(
+            RideMapLiveContentView.followRegion(
+                centeredOn: point(sequence: 1),
+                span: MKCoordinateSpan(latitudeDelta: 0.25, longitudeDelta: 0.5)
+            )
+        )
+        let second = try XCTUnwrap(
+            RideMapLiveContentView.followRegion(
+                centeredOn: point(sequence: 2, latitude: 41, longitude: -106),
+                span: first.span
+            )
+        )
+        XCTAssertEqual(second.center.latitude, 41)
+        XCTAssertEqual(second.center.longitude, -106)
+        XCTAssertEqual(second.span.latitudeDelta, first.span.latitudeDelta)
+        XCTAssertEqual(second.span.longitudeDelta, first.span.longitudeDelta)
+    }
+
+    func testInitialFollowClampsWholeRideFitToAStableNavigationScale() {
+        let span = RideMapLiveContentView.stableFollowSpan(
+            for: MKCoordinateSpan(latitudeDelta: 12, longitudeDelta: 24)
+        )
+        XCTAssertEqual(span.latitudeDelta, 0.05)
+        XCTAssertEqual(span.longitudeDelta, 0.05)
+    }
+
     func testMapRejectsInvalidRecenterInputBeforeItReachesMapKit() {
         let camera = MobileRideMapCameraRegion(
             centerLatitudeDegrees: 40,
