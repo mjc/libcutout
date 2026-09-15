@@ -19,6 +19,23 @@ final class DeviceDetectionSessionTests: XCTestCase {
         XCTAssertNil(resolution.protocolFamily)
     }
 
+    func testDefaultSessionUsesStandaloneGattEvidenceForIdentification() {
+        let session = DeviceDetectionSession()
+        _ = session.observeGatt(fingerprints: [
+            DeviceDetectionGattFingerprint(
+                service: BluetoothUuid.eucSerialFfe0.bytes,
+                characteristic: BluetoothUuid.bluetooth16(0xffe1).bytes,
+                roles: [.read, .write, .writeWithoutResponse, .notify],
+                verification: .hardwareVerified
+            ),
+        ])
+
+        guard case let .writes(writes) = session.beginIdentificationProbe(at: MonotonicMilliseconds(1_000)) else {
+            return XCTFail("standalone GATT evidence should enable identification probes")
+        }
+        XCTAssertEqual(writes.count, 3)
+    }
+
     func testBegodeNameProbeRetainsModelBannerBytes() {
         let session = DeviceDetectionSession()
 

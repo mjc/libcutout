@@ -322,8 +322,11 @@ public final class DeviceDetectionSession {
     }
 
     public func observeGatt(fingerprints: [DeviceDetectionGattFingerprint]) -> DeviceDetectionResolution {
-        guard let token = currentToken,
-              let resolution = inner.observeGattForAttempt(token: token, fingerprints: fingerprints.map(\.dto))
+        let fingerprints = fingerprints.map(\.dto)
+        guard let token = currentToken else {
+            return DeviceDetectionResolution(inner.observeGatt(fingerprints: fingerprints))
+        }
+        guard let resolution = inner.observeGattForAttempt(token: token, fingerprints: fingerprints)
         else { return currentResolution() }
         return DeviceDetectionResolution(resolution)
     }
