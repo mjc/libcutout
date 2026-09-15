@@ -116,6 +116,17 @@ mod tests {
     }
 
     #[test]
+    fn standalone_probes_cannot_mutate_an_active_attempt() {
+        let mut owner = DeviceConnectionSession::default();
+        let _token = begin(&mut owner, "A");
+
+        assert_eq!(
+            owner.begin_identification_probes_unscoped(MonotonicTimestamp::new(1)),
+            crate::IdentificationProbePlan::Unsupported
+        );
+    }
+
+    #[test]
     fn terminal_record_only_keeps_evidence_but_cannot_construct_decoder() {
         let mut owner = DeviceConnectionSession::default();
         let token = begin(&mut owner, "A");
@@ -506,6 +517,9 @@ impl DeviceConnectionSession {
         &mut self,
         at: MonotonicTimestamp,
     ) -> crate::IdentificationProbePlan {
+        if self.state.connection.snapshot().token.is_some() {
+            return crate::IdentificationProbePlan::Unsupported;
+        }
         self.detector
             .begin_identification_probes(&mut self.state, at)
     }

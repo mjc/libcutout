@@ -18,6 +18,15 @@ func protocolIdentityFallbackDisplayName(
     }
 }
 
+enum ProtocolDetectionFinishDecision: Equatable {
+    case awaitPassiveEvidence
+    case evaluateResolvedEvidence
+
+    init(resolution: DeviceDetectionResolution) {
+        self = resolution.protocolFamily == nil ? .awaitPassiveEvidence : .evaluateResolvedEvidence
+    }
+}
+
 public enum CaptureWriterHealth: Equatable, Sendable {
     case healthy
     case failed
@@ -2436,12 +2445,9 @@ private extension CutoutSessionCore {
             setPhase(.discoveringServices)
         case .disconnected, .disconnecting:
             record("central_restore=selected_not_connected")
-            connectionDeadlineWorkItem?.cancel()
-            connectionDeadlineWorkItem = nil
             _ = rustSessionState.disconnectConnectionAttempt()
-            connectionAttempt = nil
+            cancelFailedConnectionAttempt()
             publishConnectionSnapshot()
-            peripheral = nil
             advertisement = nil
             selectedRoute = nil
             selectedModel = nil
@@ -3170,13 +3176,26 @@ extension CutoutSessionCore {
         _ resolution: DeviceDetectionResolution,
         on peripheral: CBPeripheral?
     ) {
+        // Transport setup and unanswered probes are not protocol identity.
+        // Leave this attempt pending so a valid frame can promote it; the
+        // connection deadline owns the capture-only fallback if no protocol
+        // evidence ever arrives.
+        guard isDetectingProtocol else { return }
+        switch ProtocolDetectionFinishDecision(resolution: resolution) {
+        case .awaitPassiveEvidence:
+            return
+        case .evaluateResolvedEvidence:
+            break
+        }
+
         guard !promoteProtocolDetectionIfResolved(
             resolution,
             on: peripheral,
             allowClosestMatch: true
-        ), isDetectingProtocol else {
+        ) else {
             return
         }
+
         recordUnresolvedProtocolDetection(.unsupported, on: peripheral)
     }
 
@@ -3212,7 +3231,7 @@ extension CutoutSessionCore {
                 finishProtocolDetectionOrRecord(deviceDetectionSession.resolution, on: peripheral)
             }
         case .unsupported:
-            recordUnresolvedProtocolDetection(.unsupported, on: peripheral)
+            finishProtocolDetectionOrRecord(deviceDetectionSession.resolution, on: peripheral)
         case .writes, .alreadyPending:
             break
         }

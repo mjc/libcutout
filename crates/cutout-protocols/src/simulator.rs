@@ -945,7 +945,7 @@ mod tests {
     }
 
     #[test]
-    fn simulator_tracks_single_frame_headlight_writes() {
+    fn simulator_refuses_unverified_generic_lights() {
         let mut simulator = AeroSettingsSimulator::default();
         let outputs = simulator.issue(
             DeviceCommand::SetLights(LightState::On),
@@ -954,12 +954,8 @@ mod tests {
             MonotonicTimestamp::new(10),
         );
 
-        assert!(outputs.iter().any(has_transport_write));
-        assert_eq!(simulator.readback().headlight, Some(LightState::On));
-        assert_eq!(simulator.writes().len(), 1);
-        assert_eq!(
-            simulator.writes()[0].payload.as_slice(),
-            &hex_literal::hex!("4c6b41700d0180800157ed3bd5")
-        );
+        assert!(!outputs.iter().any(has_transport_write));
+        assert_eq!(simulator.readback().headlight, Some(LightState::Off));
+        assert!(simulator.writes().is_empty());
     }
 }

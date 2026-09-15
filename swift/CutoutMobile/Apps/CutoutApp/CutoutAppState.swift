@@ -140,7 +140,7 @@ enum ConnectionState: Equatable {
     }
 
     func navigationIntent(isRecordOnlyCapture: Bool) -> PhaseNavigationIntent {
-        guard !isRecordOnlyCapture else { return .stay }
+        guard !isRecordOnlyCapture else { return .openCapture }
 
         switch self {
         case let .connected(selection):
@@ -155,6 +155,7 @@ enum ConnectionState: Equatable {
 
 enum PhaseNavigationIntent: Equatable {
     case stay
+    case openCapture
     case openRide(DevicePickerConnectionRoute)
     case returnToPicker
 }

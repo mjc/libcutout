@@ -1676,7 +1676,7 @@ impl SupportsReadRequests for NosfetAeroModel {
 
 impl SupportsBenignControls for NosfetAeroModel {
     const CONTROL_CAPABILITIES: Capabilities =
-        Capabilities::from_supported_commands([CommandKind::SetLights, CommandKind::SoundHorn]);
+        Capabilities::from_supported_commands([CommandKind::SoundHorn]);
 
     fn encode_benign_control(
         command: DeviceCommand,
@@ -5251,7 +5251,7 @@ mod tests {
     }
 
     #[test]
-    fn aero_benign_control_session_writes_silent_high_beam_state() {
+    fn aero_benign_control_session_refuses_unverified_generic_lights() {
         let mut session = BenignControlSession::<NosfetAeroModel, false>::default();
         let mut output = Vec::new();
 
@@ -5260,17 +5260,10 @@ mod tests {
             &mut output,
         );
 
-        assert_eq!(
-            output,
-            vec![SessionOutput::Transport(TransportAction::Write {
-                channel: VETERAN_DATA_CHANNEL,
-                bytes: WritePayload::try_from_slice(&hex_literal::hex!(
-                    "4c6b41700d0180800157ed3bd5"
-                ))
-                .expect("fixture payload fits"),
-                mode: WriteMode::WithoutResponse,
-            })]
-        );
+        assert!(output.iter().all(|item| !matches!(
+            item,
+            SessionOutput::Transport(TransportAction::Write { .. })
+        )));
     }
 
     #[test]
@@ -5295,14 +5288,11 @@ mod tests {
             );
         }
         output.clear();
-        session.handle(
-            SessionInput::Command(DeviceCommand::SetLights(cutout_core::LightState::On)),
-            &mut output,
-        );
+        session.handle(SessionInput::Command(DeviceCommand::SoundHorn), &mut output);
         assert!(output.iter().any(|item| matches!(
             item,
             SessionOutput::Transport(TransportAction::Write { bytes, .. })
-                if bytes.as_slice() == b"SetLightON"
+                if bytes.as_slice() == b"OLDCMDb"
         )));
 
         session.handle(SessionInput::LinkDown, &mut output);
@@ -5314,14 +5304,11 @@ mod tests {
             &mut output,
         );
         output.clear();
-        session.handle(
-            SessionInput::Command(DeviceCommand::SetLights(cutout_core::LightState::On)),
-            &mut output,
-        );
+        session.handle(SessionInput::Command(DeviceCommand::SoundHorn), &mut output);
         assert!(output.iter().any(|item| matches!(
             item,
             SessionOutput::Transport(TransportAction::Write { bytes, .. })
-                if bytes.as_slice() == hex_literal::hex!("4c6b41700d0180800157ed3bd5")
+                if bytes.as_slice() == hex_literal::hex!("4c6b41700e0080808001ca87e66f")
         )));
     }
 
@@ -5347,37 +5334,12 @@ mod tests {
             );
         }
         output.clear();
-        session.handle(
-            SessionInput::Command(DeviceCommand::SetLights(cutout_core::LightState::On)),
-            &mut output,
-        );
+        session.handle(SessionInput::Command(DeviceCommand::SoundHorn), &mut output);
         assert!(output.iter().any(|item| matches!(
             item,
             SessionOutput::Transport(TransportAction::Write { bytes, .. })
-                if bytes.as_slice() == hex_literal::hex!("4c6b41700d0180800157ed3bd5")
+                if bytes.as_slice() == hex_literal::hex!("4c6b41700e0080808001ca87e66f")
         )));
-    }
-
-    #[test]
-    fn benign_control_session_tracks_accepted_light_request_without_claiming_readback() {
-        let mut session = BenignControlSession::<NosfetAeroModel, false>::default();
-        let mut output = Vec::new();
-
-        assert_eq!(session.light_command_state(), LightCommandState::Unknown);
-
-        session.handle(
-            SessionInput::Command(DeviceCommand::SetLights(cutout_core::LightState::On)),
-            &mut output,
-        );
-
-        assert_eq!(
-            session.light_command_state(),
-            LightCommandState::Requested(RequestedLightState::new(cutout_core::LightState::On))
-        );
-
-        session.handle(SessionInput::LinkDown, &mut output);
-
-        assert_eq!(session.light_command_state(), LightCommandState::Unknown);
     }
 
     #[test]
