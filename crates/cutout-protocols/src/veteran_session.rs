@@ -1,13 +1,12 @@
 use cutout_core::{
     BATTERY_TEMPERATURE_VALUES_PER_PAGE, BatteryCurrent, BatteryInfo, BatteryPageKind,
     BatteryPageMetadata, BatteryPagePayload, BatteryReadback, BatterySpec, Capabilities,
-    CommandKind, Count,
-    DeviceEvent, GattChannel, GattFingerprint, GattRoles, Measured, ModelRegistryEntry,
-    MonotonicTimestamp, NotificationByteLen, NotificationIngestOutcome, ParserError,
-    ParserGapEvidence, PayloadBodyLen, PayloadClassifier, ProtocolFamily, ProtocolSelector,
-    Quantity, ReadOnlyResponse, ReservedPayloadEvidence, SemanticEventCount, SeriesCount,
-    SessionOutput, SessionOutputError, SessionOutputSink, Temperature, Unit, VerificationStatus,
-    VerifiedValue, Voltage,
+    CommandKind, Count, DeviceEvent, GattChannel, GattFingerprint, GattRoles, Measured,
+    ModelRegistryEntry, MonotonicTimestamp, NotificationByteLen, NotificationIngestOutcome,
+    ParserError, ParserGapEvidence, PayloadBodyLen, PayloadClassifier, ProtocolFamily,
+    ProtocolSelector, Quantity, ReadOnlyResponse, ReservedPayloadEvidence, SemanticEventCount,
+    SeriesCount, SessionOutput, SessionOutputError, SessionOutputSink, Temperature, Unit,
+    VerificationStatus, VerifiedValue, Voltage,
 };
 
 use crate::{
