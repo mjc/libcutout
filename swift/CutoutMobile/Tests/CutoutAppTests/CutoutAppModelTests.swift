@@ -639,6 +639,43 @@ final class CutoutAppModelTests: XCTestCase {
     }
 
     @MainActor
+    func testLateHistoryDetailViewportCannotRestoreInvalidatedProjection() {
+        XCTAssertTrue(
+            CutoutAppModel.shouldApplyHistoryDetailViewport(
+                rideID: "ride-a",
+                selectedRideID: "ride-a",
+                expectedProjectionRideID: "ride-a",
+                currentProjectionRideID: "ride-a",
+                loadGeneration: 3,
+                currentGeneration: 3,
+                isCancelled: false
+            )
+        )
+        XCTAssertFalse(
+            CutoutAppModel.shouldApplyHistoryDetailViewport(
+                rideID: "ride-a",
+                selectedRideID: "ride-a",
+                expectedProjectionRideID: "ride-a",
+                currentProjectionRideID: nil,
+                loadGeneration: 3,
+                currentGeneration: 4,
+                isCancelled: false
+            )
+        )
+        XCTAssertFalse(
+            CutoutAppModel.shouldApplyHistoryDetailViewport(
+                rideID: "ride-a",
+                selectedRideID: "ride-a",
+                expectedProjectionRideID: "ride-a",
+                currentProjectionRideID: "ride-b",
+                loadGeneration: 3,
+                currentGeneration: 3,
+                isCancelled: false
+            )
+        )
+    }
+
+    @MainActor
     func testRideMapLifecycleControlsUpdateRecordingState() {
         let driver = SessionDriverSpy(rows: [])
         let model = CutoutAppModel(core: driver)
