@@ -865,10 +865,23 @@ final class CutoutAppModelTests: XCTestCase {
         let historyPoints = model.rideMapHistoryDisplayPoints
         XCTAssertEqual(historyPoints.count, 2)
         XCTAssertEqual(model.rideMapHistoryDetailRoutePresence, .visible)
+        XCTAssertFalse(model.rideMapHistoryDetailDisplayPoints.isEmpty)
         let selectedHistoryProjectionVersion = model.rideMapHistoryProjectionVersion
         XCTAssertGreaterThan(selectedHistoryProjectionVersion, initialHistoryProjectionVersion)
         let selectedDetailProjectionVersion = model.rideMapHistoryDetailProjectionVersion
         XCTAssertGreaterThan(selectedDetailProjectionVersion, initialDetailProjectionVersion)
+
+        model.projectRideMapHistoryDetailViewport(MobileGeoBoundsDto(
+            minimumLatitudeDegrees: 39.70009,
+            maximumLatitudeDegrees: 39.70011,
+            minimumLongitudeDegrees: -104.90001,
+            maximumLongitudeDegrees: -104.89999
+        ))
+        XCTAssertTrue(model.rideMapHistoryDetailRouteLoading)
+        XCTAssertTrue(model.forgetMusicHistory(for: rideID))
+        XCTAssertFalse(model.rideMapHistoryDetailRouteLoading)
+        XCTAssertEqual(model.rideMapHistoryDetailProjectionRideID, rideID)
+        XCTAssertFalse(model.rideMapHistoryDetailDisplayPoints.isEmpty)
 
         model.selectRideMapHistory(rideID)
         await Self.waitUntil("same-shape history route reprojection", maxTurns: 100_000) {
@@ -927,17 +940,6 @@ final class CutoutAppModelTests: XCTestCase {
         }
         XCTAssertEqual(model.rideMapHistoryDetailRoutePresence, .emptyViewport)
         XCTAssertNil(model.rideMapHistoryDetailRouteError)
-        XCTAssertEqual(model.rideMapHistoryDetailProjectionRideID, rideID)
-
-        model.projectRideMapHistoryDetailViewport(MobileGeoBoundsDto(
-            minimumLatitudeDegrees: 39.70009,
-            maximumLatitudeDegrees: 39.70011,
-            minimumLongitudeDegrees: -104.90001,
-            maximumLongitudeDegrees: -104.89999
-        ))
-        XCTAssertTrue(model.rideMapHistoryDetailRouteLoading)
-        XCTAssertTrue(model.forgetMusicHistory(for: rideID))
-        XCTAssertFalse(model.rideMapHistoryDetailRouteLoading)
         XCTAssertEqual(model.rideMapHistoryDetailProjectionRideID, rideID)
 
         driver.setRideMapUnavailable(true)
