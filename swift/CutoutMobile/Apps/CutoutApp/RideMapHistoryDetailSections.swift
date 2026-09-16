@@ -142,6 +142,12 @@ struct RideMapHistoryDetailMap: View {
                     systemImage: "location.slash"
                 )
                 .accessibilityIdentifier("ride-map.detail-no-points")
+            } else if state == .emptyViewport {
+                ContentUnavailableView(
+                    localizedAppText("ride_map.detail_viewport_empty"),
+                    systemImage: "viewfinder"
+                )
+                .accessibilityIdentifier("ride-map.detail-viewport-empty")
             }
         }
     }
@@ -317,7 +323,7 @@ struct RideMapHistoryDetailSummary: View {
                 }
 
                 HStack(spacing: 10) {
-                    if pointsTruncated || state == .error {
+                    if pointsTruncated || state == .error || state == .emptyViewport {
                         Button(
                             state == .error
                                 ? localizedAppText("ride_map.history_retry")

@@ -13,6 +13,7 @@ enum RideMapHistoryRouteState: Equatable {
     case loading
     case error
     case empty
+    case emptyViewport
     case ready
 }
 

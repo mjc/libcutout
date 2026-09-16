@@ -371,6 +371,8 @@ public struct MobileRideMapRouteProjection: Equatable, Hashable, Sendable {
     public let canonicalStartVisible: Bool
     public let canonicalEndVisible: Bool
     public let cameraRegion: MobileRideMapCameraRegion?
+    /// Rust-owned distinction between an empty ride and an empty viewport.
+    public let presence: MobileRideMapRoutePresence
 
     public init(
         points: [MobileRideMapRouteDisplayPoint],
@@ -385,7 +387,8 @@ public struct MobileRideMapRouteProjection: Equatable, Hashable, Sendable {
         canonicalEndSequence: UInt64? = nil,
         canonicalStartVisible: Bool = false,
         canonicalEndVisible: Bool = false,
-        cameraRegion: MobileRideMapCameraRegion? = nil
+        cameraRegion: MobileRideMapCameraRegion? = nil,
+        presence: MobileRideMapRoutePresence
     ) {
         self.points = points
         self.segments = segments
@@ -400,6 +403,7 @@ public struct MobileRideMapRouteProjection: Equatable, Hashable, Sendable {
         self.canonicalStartVisible = canonicalStartVisible
         self.canonicalEndVisible = canonicalEndVisible
         self.cameraRegion = cameraRegion
+        self.presence = presence
     }
 
     public var endpointMetadata: MobileRideMapRouteEndpointMetadata {
@@ -421,6 +425,12 @@ public struct MobileRideMapRouteProjection: Equatable, Hashable, Sendable {
         displayedSegmentCount < candidateSegmentCount
     }
 
+}
+
+public enum MobileRideMapRoutePresence: Equatable, Hashable, Sendable {
+    case emptyRide
+    case emptyViewport
+    case visible
 }
 
 /// Canonical endpoint identity and viewport visibility for a bounded route projection.
@@ -1238,8 +1248,19 @@ public final class MobileRideMapState: @unchecked Sendable {
                     latitudeSpanDegrees: $0.latitudeSpanDegrees,
                     longitudeSpanDegrees: $0.longitudeSpanDegrees
                 )
-            }
+            },
+            presence: map(projection.routePresence)
         )
+    }
+
+    private func map(
+        _ presence: MobileRideMapRoutePresenceDto
+    ) -> MobileRideMapRoutePresence {
+        switch presence {
+        case .emptyRide: return .emptyRide
+        case .emptyViewport: return .emptyViewport
+        case .visible: return .visible
+        }
     }
 
     private static func ffiPrivacyPolicy(

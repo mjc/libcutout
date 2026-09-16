@@ -92,6 +92,7 @@ final class CutoutAppModel {
     private(set) var rideMapHistoryPointsTruncated = false
     private(set) var rideMapHistorySegmentsOmittedByBudget = false
     private(set) var rideMapHistoryDetailDisplayPoints = [MobileRideMapRouteDisplayPoint]()
+    private(set) var rideMapHistoryDetailRoutePresence = MobileRideMapRoutePresence.emptyRide
     private(set) var rideMapHistoryDetailMusicTimeline = [MobileMusicRideEventDto]()
     private(set) var rideMapHistoryDetailMusicTimelineUnavailable = false
     private(set) var rideMapHistoryDetailMusicState: MobileMusicHistoryStateDto?
@@ -1235,11 +1236,7 @@ final class CutoutAppModel {
         rideMapHistoryPageTask?.cancel()
         // A reload changes the query that owns the selected route. Do not let an
         // older route request repopulate points after the new page arrives.
-        rideMapHistorySelectionTask?.cancel()
-        rideMapHistorySelectionCancellation?.cancel()
-        rideMapHistoryDetailLoadGeneration &+= 1
-        rideMapHistoryViewportCancellation?.cancel()
-        rideMapHistoryViewportTask?.cancel()
+        invalidateRideMapHistoryProjectionWork()
         rideMapHistoryContextTask?.cancel()
         rideMapHistoryContextTask = nil
         rideMapHistoryContextProjection = nil
@@ -1256,13 +1253,11 @@ final class CutoutAppModel {
         rideMapHistoryDetailMusicError = nil
         rideMapHistoryQueryDateAfterMilliseconds = historyDateAfterMilliseconds
         if let rideMapStorageError {
-            rideMapHistoryLoading = false
-            rideMapHistoryError = .storageError(rideMapStorageError)
+            applyRideMapHistoryLoadFailure(.storageError(rideMapStorageError))
             return
         }
         guard let state = core.rideMapStateHandle else {
-            rideMapHistoryLoading = false
-            rideMapHistoryError = .storageError("Rust ride database is unavailable")
+            applyRideMapHistoryLoadFailure(.storageError("Rust ride database is unavailable"))
             return
         }
         let filter = rideMapHistoryFilter
@@ -1329,14 +1324,23 @@ final class CutoutAppModel {
             } catch {
                 guard !Task.isCancelled, let self else { return }
                 self.rideMapHistoryLoadTask = nil
-                self.rideMapHistoryLoading = false
                 // Preserve the last good page so a transient storage failure does not
-                // turn an otherwise usable history screen into an empty state.
-                self.rideMapHistoryError = Self.mapRideMapError(error)
-                self.rideMapHistoryRouteLoading = false
-                self.rideMapHistoryDetailRouteLoading = false
+                // turn an otherwise usable history screen into an empty state, but never
+                // present its selected route as current after the load that owns it fails.
+                self.applyRideMapHistoryLoadFailure(Self.mapRideMapError(error))
             }
         }
+    }
+
+    private func applyRideMapHistoryLoadFailure(_ error: MobileRideMapError) {
+        invalidateRideMapHistoryProjectionWork()
+        rideMapHistoryLoading = false
+        rideMapHistoryError = error
+        clearRideMapHistoryRouteProjection()
+        rideMapHistoryRouteLoading = false
+        rideMapHistoryRouteError = error
+        rideMapHistoryDetailRouteLoading = false
+        rideMapHistoryDetailRouteError = error
     }
 
     @MainActor
@@ -1545,9 +1549,8 @@ final class CutoutAppModel {
             rideMapHistoryError = .storageError("Rust ride database is unavailable")
             return false
         }
-        rideMapHistorySelectionTask?.cancel()
-        rideMapHistorySelectionCancellation?.cancel()
-        rideMapHistoryDetailLoadGeneration &+= 1
+        invalidateRideMapHistoryProjectionWork()
+        rideMapHistoryDetailRouteLoading = false
         do {
             if rideMapSnapshot?.rideID == rideID,
                rideMapSnapshot?.state.isOpen == true
@@ -1614,22 +1617,49 @@ final class CutoutAppModel {
         !isCancelled && loadGeneration == currentGeneration && selectedRideID == rideID
     }
 
+    static func shouldApplyHistoryDetailViewport(
+        rideID: String,
+        selectedRideID: String?,
+        expectedProjectionRideID: String?,
+        currentProjectionRideID: String?,
+        loadGeneration: UInt64,
+        currentGeneration: UInt64,
+        isCancelled: Bool
+    ) -> Bool {
+        !isCancelled
+            && loadGeneration == currentGeneration
+            && selectedRideID == rideID
+            && expectedProjectionRideID == rideID
+            && currentProjectionRideID == expectedProjectionRideID
+    }
+
     func projectRideMapHistoryDetailViewport(_ viewport: MobileGeoBoundsDto?) {
-        guard let viewport,
-              let selectedRideMapHistoryID,
-              rideMapHistory.contains(where: { $0.rideID == selectedRideMapHistoryID })
+        guard let selectedRideMapHistoryID,
+              rideMapHistory.contains(where: { $0.rideID == selectedRideMapHistoryID }),
+              let projectionRideID = rideMapHistoryDetailProjectionRideID,
+              projectionRideID == selectedRideMapHistoryID
         else {
             return
         }
+        let detailLoadGeneration = rideMapHistoryDetailLoadGeneration
         rideMapHistoryViewportCancellation?.cancel()
         rideMapHistoryViewportTask?.cancel()
         rideMapHistoryDetailRouteError = nil
         rideMapHistoryDetailRouteLoading = true
         let cancellation = MobileRideMapProjectionCancellation()
         rideMapHistoryViewportCancellation = cancellation
+        guard let viewport else {
+            rideMapHistoryDetailRouteLoading = false
+            rideMapHistoryDetailRouteError = .invalidRouteProjection
+            rideMapHistoryDetailRoutePresence = .emptyRide
+            replaceRideMapHistoryDetailDisplayPoints([], truncated: false)
+            return
+        }
         guard let state = core.rideMapStateHandle else {
             rideMapHistoryDetailRouteLoading = false
             rideMapHistoryDetailRouteError = .storageError("Rust ride database is unavailable")
+            rideMapHistoryDetailRoutePresence = .emptyRide
+            replaceRideMapHistoryDetailDisplayPoints([], truncated: false)
             return
         }
         let budget = Self.rideMapLimits.historyPreviewPointLimit
@@ -1647,7 +1677,17 @@ final class CutoutAppModel {
                 }, onCancel: {
                     cancellation.cancel()
                 })
-                guard !Task.isCancelled, let self else { return }
+                guard let self,
+                      Self.shouldApplyHistoryDetailViewport(
+                          rideID: selectedRideMapHistoryID,
+                          selectedRideID: self.selectedRideMapHistoryID,
+                          expectedProjectionRideID: projectionRideID,
+                          currentProjectionRideID: self.rideMapHistoryDetailProjectionRideID,
+                          loadGeneration: detailLoadGeneration,
+                          currentGeneration: self.rideMapHistoryDetailLoadGeneration,
+                          isCancelled: Task.isCancelled
+                      )
+                else { return }
                 self.replaceRideMapHistoryDetailDisplayPoints(
                     result.points,
                     cameraRegion: result.cameraRegion,
@@ -1663,6 +1703,7 @@ final class CutoutAppModel {
                         viewportSegmentsOmittedByBudget: result.segmentsOmittedByBudget
                     )
                 )
+                self.rideMapHistoryDetailRoutePresence = result.presence
                 self.rideMapHistoryDetailRouteError = nil
                 self.rideMapHistoryDetailRouteLoading = false
             } catch {
@@ -1673,6 +1714,7 @@ final class CutoutAppModel {
                 }
                 self.rideMapHistoryDetailRouteError = mappedError
                 self.rideMapHistoryDetailRouteLoading = false
+                self.rideMapHistoryDetailRoutePresence = .emptyRide
                 self.replaceRideMapHistoryDetailDisplayPoints([], truncated: false)
             }
         }
@@ -1693,12 +1735,8 @@ final class CutoutAppModel {
             clearRideMapHistoryMusic()
             return
         }
-        rideMapHistorySelectionTask?.cancel()
-        rideMapHistorySelectionCancellation?.cancel()
-        rideMapHistoryDetailLoadGeneration &+= 1
+        invalidateRideMapHistoryProjectionWork()
         let detailLoadGeneration = rideMapHistoryDetailLoadGeneration
-        rideMapHistoryViewportCancellation?.cancel()
-        rideMapHistoryViewportTask?.cancel()
         rideMapHistoryContextTask?.cancel()
         rideMapHistoryContextTask = nil
         rideMapHistoryContextProjection = nil
@@ -1714,6 +1752,9 @@ final class CutoutAppModel {
         rideMapHistoryRouteLoading = true
         rideMapHistoryDetailRouteLoading = true
         guard let state = core.rideMapStateHandle else {
+            replaceRideMapHistoryDisplayPoints([], truncated: false)
+            replaceRideMapHistoryDetailDisplayPoints([], truncated: false)
+            rideMapHistoryDetailRoutePresence = .emptyRide
             rideMapHistoryRouteLoading = false
             rideMapHistoryDetailRouteLoading = false
             rideMapHistoryRouteError = .storageError("Rust ride database is unavailable")
@@ -1786,6 +1827,7 @@ final class CutoutAppModel {
                 self.rideMapHistoryDetailMusicState = musicHistory.state
                 self.rideMapHistoryDetailMusicError = musicHistory.error
                 self.rideMapHistoryDetailProjectionRideID = rideID
+                self.rideMapHistoryDetailRoutePresence = projection.presence
                 self.replaceRideMapHistoryDetailDisplayPoints(
                     projection.points,
                     cameraRegion: projection.cameraRegion,
@@ -1811,6 +1853,8 @@ final class CutoutAppModel {
                 self.rideMapHistoryDetailMusicState = nil
                 self.rideMapHistoryDetailMusicError = Self.mapRideMapError(error)
                 self.rideMapHistoryDetailProjectionRideID = nil
+                self.rideMapHistoryDetailRoutePresence = .emptyRide
+                self.replaceRideMapHistoryDisplayPoints([], truncated: false)
                 self.replaceRideMapHistoryDetailDisplayPoints([], truncated: false)
             }
         }
@@ -1879,6 +1923,7 @@ final class CutoutAppModel {
         rideMapHistoryContextProjection = nil
         rideMapHistoryContextRoutes.removeAll(keepingCapacity: true)
         replaceRideMapHistoryDisplayPoints([], truncated: false)
+        rideMapHistoryDetailRoutePresence = .emptyRide
         rideMapHistoryDetailMusicTimeline.removeAll(keepingCapacity: true)
         rideMapHistoryDetailMusicTimelineUnavailable = false
         rideMapHistoryDetailMusicState = nil
@@ -1887,6 +1932,14 @@ final class CutoutAppModel {
         rideMapHistoryDetailSourcePointsOmittedByBudget = false
         rideMapHistoryDetailSourceSegmentsOmittedByBudget = false
         replaceRideMapHistoryDetailDisplayPoints([], truncated: false)
+    }
+
+    private func invalidateRideMapHistoryProjectionWork() {
+        rideMapHistorySelectionTask?.cancel()
+        rideMapHistorySelectionCancellation?.cancel()
+        rideMapHistoryViewportCancellation?.cancel()
+        rideMapHistoryViewportTask?.cancel()
+        rideMapHistoryDetailLoadGeneration &+= 1
     }
 
     private func clearRideMapHistoryMusic() {

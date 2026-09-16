@@ -179,6 +179,7 @@ struct RideMapRouteView: View {
                 initialHistoryID: initialHistoryID,
                 rides: model.rideMapHistory,
                 displayPoints: model.rideMapHistoryDetailDisplayPoints,
+                routePresence: model.rideMapHistoryDetailRoutePresence,
                 music: RideMapHistoryMusicDetail(
                     rideID: initialHistoryID,
                     events: model.rideMapHistoryDetailMusicTimeline,

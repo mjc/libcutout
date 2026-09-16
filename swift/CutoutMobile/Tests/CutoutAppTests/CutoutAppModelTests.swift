@@ -562,6 +562,52 @@ final class CutoutAppModelTests: XCTestCase {
     }
 
     @MainActor
+    func testHistoryReloadFailureClearsThePreviouslySelectedRoute() async throws {
+        let driver = SessionDriverSpy(rows: [])
+        let state = driver.rideMapState
+        _ = try state.startGpsOnly(atMs: 100, lastConnectedVehicle: nil)
+        _ = await Self.settle(state, try state.ingestLocation(
+            monotonicMs: 100,
+            wallClockUnixMs: 1_700_000_000_100,
+            latitudeDegrees: 39.7000,
+            longitudeDegrees: -104.9000,
+            horizontalAccuracyMeters: 5
+        ))
+        _ = await Self.settle(state, try state.ingestLocation(
+            monotonicMs: 1_100,
+            wallClockUnixMs: 1_700_000_001_100,
+            latitudeDegrees: 39.7001,
+            longitudeDegrees: -104.9000,
+            horizontalAccuracyMeters: 5
+        ))
+        _ = try state.stop(atMs: 1_100)
+        let rideID = try state.save().rideID
+
+        let model = CutoutAppModel(core: driver)
+        model.setRideMapHistoryDateFilter(.allTime)
+        model.loadRideMapHistory(selecting: rideID)
+        await Self.waitUntil("selected history route before reload failure", maxTurns: 100_000) {
+            model.selectedRideMapHistoryID == rideID
+                && model.rideMapHistoryDisplayPoints.isEmpty == false
+                && !model.rideMapHistoryRouteLoading
+        }
+
+        driver.setRideMapUnavailable(true)
+        model.loadRideMapHistory(selecting: rideID)
+        await Task.yield()
+
+        XCTAssertTrue(model.rideMapHistoryDisplayPoints.isEmpty)
+        XCTAssertEqual(
+            model.rideMapHistoryRouteError,
+            .storageError("Rust ride database is unavailable")
+        )
+        XCTAssertEqual(
+            model.rideMapHistoryDetailRouteError,
+            .storageError("Rust ride database is unavailable")
+        )
+    }
+
+    @MainActor
     func testHistoryDetailLoadGenerationRejectsDeletedOrReplacedSelection() {
         XCTAssertTrue(
             CutoutAppModel.shouldApplyHistoryDetailLoad(
@@ -585,6 +631,43 @@ final class CutoutAppModelTests: XCTestCase {
             CutoutAppModel.shouldApplyHistoryDetailLoad(
                 rideID: "ride-a",
                 selectedRideID: "ride-b",
+                loadGeneration: 3,
+                currentGeneration: 3,
+                isCancelled: false
+            )
+        )
+    }
+
+    @MainActor
+    func testLateHistoryDetailViewportCannotRestoreInvalidatedProjection() {
+        XCTAssertTrue(
+            CutoutAppModel.shouldApplyHistoryDetailViewport(
+                rideID: "ride-a",
+                selectedRideID: "ride-a",
+                expectedProjectionRideID: "ride-a",
+                currentProjectionRideID: "ride-a",
+                loadGeneration: 3,
+                currentGeneration: 3,
+                isCancelled: false
+            )
+        )
+        XCTAssertFalse(
+            CutoutAppModel.shouldApplyHistoryDetailViewport(
+                rideID: "ride-a",
+                selectedRideID: "ride-a",
+                expectedProjectionRideID: "ride-a",
+                currentProjectionRideID: nil,
+                loadGeneration: 3,
+                currentGeneration: 4,
+                isCancelled: false
+            )
+        )
+        XCTAssertFalse(
+            CutoutAppModel.shouldApplyHistoryDetailViewport(
+                rideID: "ride-a",
+                selectedRideID: "ride-a",
+                expectedProjectionRideID: "ride-a",
+                currentProjectionRideID: "ride-b",
                 loadGeneration: 3,
                 currentGeneration: 3,
                 isCancelled: false
@@ -781,10 +864,24 @@ final class CutoutAppModelTests: XCTestCase {
         XCTAssertEqual(model.selectedRideMapHistoryID, rideID)
         let historyPoints = model.rideMapHistoryDisplayPoints
         XCTAssertEqual(historyPoints.count, 2)
+        XCTAssertEqual(model.rideMapHistoryDetailRoutePresence, .visible)
+        XCTAssertFalse(model.rideMapHistoryDetailDisplayPoints.isEmpty)
         let selectedHistoryProjectionVersion = model.rideMapHistoryProjectionVersion
         XCTAssertGreaterThan(selectedHistoryProjectionVersion, initialHistoryProjectionVersion)
         let selectedDetailProjectionVersion = model.rideMapHistoryDetailProjectionVersion
         XCTAssertGreaterThan(selectedDetailProjectionVersion, initialDetailProjectionVersion)
+
+        model.projectRideMapHistoryDetailViewport(MobileGeoBoundsDto(
+            minimumLatitudeDegrees: 39.70009,
+            maximumLatitudeDegrees: 39.70011,
+            minimumLongitudeDegrees: -104.90001,
+            maximumLongitudeDegrees: -104.89999
+        ))
+        XCTAssertTrue(model.rideMapHistoryDetailRouteLoading)
+        XCTAssertTrue(model.forgetMusicHistory(for: rideID))
+        XCTAssertFalse(model.rideMapHistoryDetailRouteLoading)
+        XCTAssertEqual(model.rideMapHistoryDetailProjectionRideID, rideID)
+        XCTAssertFalse(model.rideMapHistoryDetailDisplayPoints.isEmpty)
 
         model.selectRideMapHistory(rideID)
         await Self.waitUntil("same-shape history route reprojection", maxTurns: 100_000) {
@@ -809,6 +906,14 @@ final class CutoutAppModelTests: XCTestCase {
             selectedDetailProjectionVersion
         )
 
+        model.projectRideMapHistoryDetailViewport(nil)
+        await Self.waitUntil("nil history detail viewport error") {
+            !model.rideMapHistoryDetailRouteLoading
+                && model.rideMapHistoryDetailRouteError == .invalidRouteProjection
+        }
+        XCTAssertTrue(model.rideMapHistoryDetailDisplayPoints.isEmpty)
+        XCTAssertEqual(model.rideMapHistoryDisplayPoints, historyPoints)
+
         model.projectRideMapHistoryDetailViewport(MobileGeoBoundsDto(
             minimumLatitudeDegrees: 40,
             maximumLatitudeDegrees: 39,
@@ -821,6 +926,30 @@ final class CutoutAppModelTests: XCTestCase {
         XCTAssertNotNil(model.rideMapHistoryDetailRouteError)
         XCTAssertNil(model.rideMapHistoryRouteError)
         XCTAssertFalse(model.rideMapHistoryDetailRouteLoading)
+
+        model.projectRideMapHistoryDetailViewport(MobileGeoBoundsDto(
+            minimumLatitudeDegrees: 40,
+            maximumLatitudeDegrees: 41,
+            minimumLongitudeDegrees: -104,
+            maximumLongitudeDegrees: -103
+        ))
+        await Self.waitUntil("empty history detail viewport") {
+            !model.rideMapHistoryDetailRouteLoading
+                && model.rideMapHistoryDetailRouteError == nil
+                && model.rideMapHistoryDetailDisplayPoints.isEmpty
+        }
+        XCTAssertEqual(model.rideMapHistoryDetailRoutePresence, .emptyViewport)
+        XCTAssertNil(model.rideMapHistoryDetailRouteError)
+        XCTAssertEqual(model.rideMapHistoryDetailProjectionRideID, rideID)
+
+        driver.setRideMapUnavailable(true)
+        model.selectRideMapHistory(rideID)
+        await Self.waitUntil("same-ride selection failure") {
+            !model.rideMapHistoryRouteLoading
+                && model.rideMapHistoryRouteError != nil
+        }
+        XCTAssertTrue(model.rideMapHistoryDisplayPoints.isEmpty)
+        XCTAssertTrue(model.rideMapHistoryDetailDisplayPoints.isEmpty)
     }
 
     @MainActor
@@ -3381,7 +3510,7 @@ private actor FailingLiveActivityManager: LiveActivityRideLifecycleManaging {
 private final class SessionDriverSpy: CutoutSessionDriving {
     let rideSessionStateHandle = CutoutSessionStateHandle()
     let rideMapState: MobileRideMapState
-    private let rideMapUnavailable: Bool
+    private var rideMapUnavailable: Bool
     var rideMapStateHandle: MobileRideMapState? { rideMapUnavailable ? nil : rideMapState }
     let rideMapAvailability: MobileRideMapAvailability = .ready
     var onDisplayStateChange: ((RideDisplayState) -> Void)?
@@ -3441,6 +3570,10 @@ private final class SessionDriverSpy: CutoutSessionDriving {
             _ = try? state.discard()
         }
         rideMapState = state
+    }
+
+    func setRideMapUnavailable(_ unavailable: Bool) {
+        rideMapUnavailable = unavailable
     }
 
     func start() {
