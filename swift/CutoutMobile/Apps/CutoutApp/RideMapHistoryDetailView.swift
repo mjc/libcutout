@@ -178,7 +178,7 @@ struct RideMapHistoryDetailView: View {
 
                         if projectionRideID != activeHistoryID {
                             RideMapHistoryDetailUnavailableState(
-                                hasError: routeError != nil,
+                                hasError: historyError != nil || routeError != nil,
                                 retry: retry
                             )
                         } else if let ride = selectedRide {
