@@ -1549,9 +1549,8 @@ final class CutoutAppModel {
             rideMapHistoryError = .storageError("Rust ride database is unavailable")
             return false
         }
-        rideMapHistorySelectionTask?.cancel()
-        rideMapHistorySelectionCancellation?.cancel()
-        rideMapHistoryDetailLoadGeneration &+= 1
+        invalidateRideMapHistoryProjectionWork()
+        rideMapHistoryDetailRouteLoading = false
         do {
             if rideMapSnapshot?.rideID == rideID,
                rideMapSnapshot?.state.isOpen == true

@@ -929,6 +929,17 @@ final class CutoutAppModelTests: XCTestCase {
         XCTAssertNil(model.rideMapHistoryDetailRouteError)
         XCTAssertEqual(model.rideMapHistoryDetailProjectionRideID, rideID)
 
+        model.projectRideMapHistoryDetailViewport(MobileGeoBoundsDto(
+            minimumLatitudeDegrees: 39.70009,
+            maximumLatitudeDegrees: 39.70011,
+            minimumLongitudeDegrees: -104.90001,
+            maximumLongitudeDegrees: -104.89999
+        ))
+        XCTAssertTrue(model.rideMapHistoryDetailRouteLoading)
+        XCTAssertTrue(model.forgetMusicHistory(for: rideID))
+        XCTAssertFalse(model.rideMapHistoryDetailRouteLoading)
+        XCTAssertEqual(model.rideMapHistoryDetailProjectionRideID, rideID)
+
         driver.setRideMapUnavailable(true)
         model.selectRideMapHistory(rideID)
         await Self.waitUntil("same-ride selection failure") {
