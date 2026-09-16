@@ -177,7 +177,10 @@ struct RideMapHistoryDetailView: View {
                         }
 
                         if projectionRideID != activeHistoryID {
-                            RideMapHistoryDetailUnavailableState(hasError: false, retry: retry)
+                            RideMapHistoryDetailUnavailableState(
+                                hasError: routeError != nil,
+                                retry: retry
+                            )
                         } else if let ride = selectedRide {
                             RideMapHistoryDetailSummary(
                                 distance: distanceText(for: ride.summary),
