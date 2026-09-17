@@ -6,6 +6,10 @@
 /captures/
 debug.log
 .direnv/
+.devenv/
+.pre-commit-config.yaml
+devenv.local.nix
+devenv.local.yaml
 .tmp/
 .protocol-references/
 .DS_Store

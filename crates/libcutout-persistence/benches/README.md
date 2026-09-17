@@ -15,8 +15,8 @@ timed loop. Divan measures the same warmed SQLite worker request that mobile
 history uses.
 
 ```sh
-nix develop -c cargo bench -p libcutout-persistence --bench load_ride_ips -- --items-count=1
-nix develop -c cargo bench -p libcutout-persistence --bench load_largest_ride_ips -- --items-count=1
+devenv shell -- cargo bench -p libcutout-persistence --bench load_ride_ips -- --items-count=1
+devenv shell -- cargo bench -p libcutout-persistence --bench load_largest_ride_ips -- --items-count=1
 ```
 
 ## Gungraun instruction counts
@@ -40,17 +40,17 @@ The library and runner versions must match; 0.18.2 preserves this workspace's
 Rust 1.85 minimum. Install the runner locally under ignored build output:
 
 ```sh
-nix develop -c cargo install gungraun-runner --version 0.18.2 --locked --root target/gungraun-runner
+devenv shell -- cargo install gungraun-runner --version 0.18.2 --locked --root target/gungraun-runner
 export GUNGRAUN_RUNNER="$PWD/target/gungraun-runner/bin/gungraun-runner"
-nix develop -c cargo bench -p libcutout-persistence --bench load_ride -- --save-baseline=generated_before --nocapture
-nix develop -c cargo bench -p libcutout-persistence --bench load_ride -- --baseline=generated_before --nocapture
+devenv shell -- cargo bench -p libcutout-persistence --bench load_ride -- --save-baseline=generated_before --nocapture
+devenv shell -- cargo bench -p libcutout-persistence --bench load_ride -- --baseline=generated_before --nocapture
 ```
 
 On Apple Silicon macOS, compile and exercise the identical setup, load, and
 correctness checks without Valgrind or its runner (this produces no counts):
 
 ```sh
-nix develop -c cargo bench -p libcutout-persistence --bench load_ride -- --smoke
+devenv shell -- cargo bench -p libcutout-persistence --bench load_ride -- --smoke
 ```
 
 ## Real imported history
@@ -65,13 +65,13 @@ failure, never a synthetic fallback. Private
 databases and GPS fixtures must not be committed.
 
 ```sh
-CUTOUT_BENCH_DATABASE=/path/to/ride.sqlite nix develop -c cargo bench \
+CUTOUT_BENCH_DATABASE=/path/to/ride.sqlite devenv shell -- cargo bench \
   -p libcutout-persistence --bench load_ride_ips -- --items-count=1
-CUTOUT_BENCH_DATABASE=/path/to/ride.sqlite nix develop -c cargo bench \
+CUTOUT_BENCH_DATABASE=/path/to/ride.sqlite devenv shell -- cargo bench \
   -p libcutout-persistence --bench load_largest_ride_ips -- --items-count=1
-CUTOUT_BENCH_DATABASE=/path/to/ride.sqlite nix develop -c cargo bench \
+CUTOUT_BENCH_DATABASE=/path/to/ride.sqlite devenv shell -- cargo bench \
   -p libcutout-persistence --bench load_ride -- --save-baseline=imported_before --nocapture
-CUTOUT_BENCH_DATABASE=/path/to/ride.sqlite nix develop -c cargo bench \
+CUTOUT_BENCH_DATABASE=/path/to/ride.sqlite devenv shell -- cargo bench \
   -p libcutout-persistence --bench load_ride -- --baseline=imported_before --nocapture
 ```
 
