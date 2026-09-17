@@ -10,7 +10,9 @@ devenv shell -- <command>
 
 On Darwin, the shell uses Xcode beta's Swift compiler and matching Apple SDKs.
 Set `CUTOUT_DEVELOPER_DIR` to select another Xcode installation for both shell
-commands and iOS tasks.
+commands and iOS tasks. `devenv test`, the Xcode preflight, and the Darwin quality
+gate verify this selection and type-check a Foundation import to catch SDK/compiler
+mismatches before building the application.
 
 The main checks and workflows are exposed as named tasks:
 

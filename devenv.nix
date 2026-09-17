@@ -6,6 +6,16 @@
 }:
 
 let
+  swiftToolchainCheck = ''
+    expected_developer_dir="''${CUTOUT_DEVELOPER_DIR:-/Applications/Xcode-beta.app/Contents/Developer}"
+    if [[ "''${DEVELOPER_DIR:-}" != "$expected_developer_dir" || -n "''${SDKROOT:-}" ]]; then
+      echo "Devenv must select $expected_developer_dir and clear inherited SDKROOT before running Swift" >&2
+      exit 1
+    fi
+    # A version check alone misses mismatched SDKs. Exercise SDK module loading
+    # with the same bare Swift compiler used by direct shell commands.
+    printf 'import Foundation\n' | swiftc -typecheck -
+  '';
   swiftTask = command: {
     exec = ''
       source "$DEVENV_ROOT/scripts/swift-package-common.sh"
@@ -86,7 +96,8 @@ in
       "project:lint"
       "project:test"
       "project:dependency-policy"
-    ];
+    ]
+    ++ lib.optionals pkgs.stdenv.isDarwin [ "check:xcode-ios" ];
   };
 
   tasks."build:swift-ffi-package" = {
@@ -100,6 +111,7 @@ in
       echo "iOS and Xcode tasks require Darwin/Xcode" >&2
       exit 1
     fi
+    ${swiftToolchainCheck}
     cutout_use_xcode_developer_dir
     printf 'Using Xcode developer directory: %s\n' "$DEVELOPER_DIR"
     /usr/bin/xcrun --find xcodebuild
@@ -211,12 +223,16 @@ in
     after = [ "check:xcode-ios" ];
   };
 
+  tasks."devenv:enterTest".exec = lib.mkIf pkgs.stdenv.isDarwin swiftToolchainCheck;
+
   enterShell = lib.optionalString pkgs.stdenv.isDarwin ''
     export PATH="/usr/bin:/bin:/usr/sbin:/sbin:$PATH"
     # Nix's SDK setup can supply DEVELOPER_DIR independently of SDKROOT.
     # Keep direct Swift commands on the same Xcode toolchain as the iOS tasks.
     export DEVELOPER_DIR="''${CUTOUT_DEVELOPER_DIR:-/Applications/Xcode-beta.app/Contents/Developer}"
-    unset CC CXX LD AR RANLIB SDKROOT
+    # Task environment propagation retains inherited variables when merely unset.
+    export SDKROOT=""
+    unset CC CXX LD AR RANLIB
     unset NIX_CC NIX_CFLAGS_COMPILE NIX_CXXSTDLIB_COMPILE NIX_LDFLAGS
     unset CARGO_TARGET_AARCH64_APPLE_DARWIN_LINKER
     unset CARGO_TARGET_X86_64_APPLE_DARWIN_LINKER
