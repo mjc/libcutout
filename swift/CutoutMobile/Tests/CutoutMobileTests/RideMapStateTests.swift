@@ -236,18 +236,24 @@ final class RideMapStateTests: XCTestCase {
 
     func testHistoricalVehicleDisplayNameAndFilterOptionsComeFromRustDeviceTable() throws {
         let database = try XCTUnwrap(MobileRideMapState.debugDatabase)
-        // The convenience state finishes and discards any active debug ride left by an earlier
-        // test before this test creates its durable history fixture.
-        let state = MobileRideMapState()
+        let state = MobileRideMapState(database: database)
         let platformIdentifier = "corebluetooth-history-\(UUID().uuidString)"
 
-        let rideID = try state.startGpsOnly(atMs: 1_000).rideID
-        try database.updateRideMapMetadata(
-            id: MobileRideIdDto(bytes: withUnsafeBytes(of: UUID(uuidString: rideID)!) { Data($0) }),
-            candidateVehicle: nil,
-            associatedVehicle: platformIdentifier,
-            associatedAtMilliseconds: 1_001,
-            lastTelemetryAtMilliseconds: nil
+        _ = try state.startGpsOnly(atMs: 1_000)
+        let connectionState = CutoutSessionStateHandle()
+        let token = try XCTUnwrap(
+            connectionState.beginConnectionAttempt(
+                platformIdentifier: platformIdentifier,
+                nowMs: 1_000
+            ).token
+        )
+        _ = connectionState.connectionLinkEstablished(token: token)
+        _ = connectionState.observeConnectionNotification(token: token, bytes: Data(vescReply))
+        _ = connectionState.resolveDeviceSession(token: token, identificationComplete: true, nowMs: 1_001)
+        _ = try state.ensureRecordingForVerifiedConnection(
+            connectionState: connectionState,
+            token: token,
+            atMs: 1_001
         )
         try database.saveDeviceName(
             platformIdentifier: platformIdentifier,
