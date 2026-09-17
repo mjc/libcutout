@@ -280,6 +280,8 @@ pub enum MobileCameraPreviewEventDto {
 pub struct MobileCameraVideoFrameDto {
     /// Encoded frame bytes in the source codec format.
     pub data: Vec<u8>,
+    /// SPS/PPS NAL units extracted by the Rust H.264 boundary.
+    pub parameter_sets: Vec<Vec<u8>>,
     /// Number of lost RTP packets before this frame.
     pub loss: u16,
     /// Whether this frame is a random-access point.
@@ -498,9 +500,11 @@ impl MobileCameraMediaProvenanceInput {
 
 impl From<RetinaVideoFrame> for MobileCameraVideoFrameDto {
     fn from(frame: RetinaVideoFrame) -> Self {
-        let (data, loss, is_random_access_point, timestamp, clock_rate_hz) = frame.into_parts();
+        let (data, parameter_sets, loss, is_random_access_point, timestamp, clock_rate_hz) =
+            frame.into_parts();
         Self {
             data,
+            parameter_sets,
             loss,
             is_random_access_point,
             timestamp,
@@ -18747,6 +18751,7 @@ mod tests {
     fn mobile_preview_frame_conversion_rejects_invalid_clock_rate_and_size() {
         let invalid_clock_rate = MobileCameraVideoFrameDto {
             data: vec![0, 0, 0, 1, 0x65],
+            parameter_sets: Vec::new(),
             loss: 0,
             is_random_access_point: false,
             timestamp: 0,
@@ -18759,6 +18764,7 @@ mod tests {
 
         let oversized = MobileCameraVideoFrameDto {
             data: vec![0; 8 * 1024 * 1024 + 1],
+            parameter_sets: Vec::new(),
             loss: 0,
             is_random_access_point: false,
             timestamp: 0,

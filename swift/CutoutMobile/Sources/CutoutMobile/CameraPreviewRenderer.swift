@@ -37,7 +37,9 @@ public final class CameraPreviewRenderer {
     /// Installs the bounded H.264 decoder configuration advertised by RTSP
     /// SDP before the first access unit arrives.
     public func configure(_ configuration: MobileCameraVideoConfigurationDto) throws {
-        guard let parameterSets = CameraH264AccessUnit.parameterSets(fromAVCC: configuration.extraData) else {
+        guard !configuration.extraData.isEmpty,
+              let parameterSets = CameraH264AccessUnit.parameterSets(fromAVCC: configuration.extraData)
+        else {
             throw CameraPreviewRendererError.missingParameterSets
         }
         formatDescription = try makeFormatDescription(parameterSets: parameterSets)
@@ -49,9 +51,8 @@ public final class CameraPreviewRenderer {
     /// description. Frames received before that point are rejected rather
     /// than displayed with guessed dimensions or codec state.
     public func enqueue(_ frame: MobileCameraVideoFrameDto) async throws {
-        let accessUnit = try CameraH264AccessUnit(data: frame.data)
-        if accessUnit.parameterSets.count == 2 {
-            formatDescription = try makeFormatDescription(parameterSets: accessUnit.parameterSets)
+        if frame.parameterSets.count == 2 {
+            formatDescription = try makeFormatDescription(parameterSets: frame.parameterSets)
         }
         guard let formatDescription else {
             throw CameraPreviewRendererError.missingParameterSets
@@ -65,7 +66,7 @@ public final class CameraPreviewRenderer {
 
         let timestamp = CMTime(value: frame.timestamp, timescale: timescale)
         guard let sampleBuffer = makeSampleBuffer(
-            data: accessUnit.data,
+            data: frame.data,
             timestamp: timestamp,
             formatDescription: formatDescription
         ) else {

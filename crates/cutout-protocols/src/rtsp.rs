@@ -80,6 +80,9 @@ impl RetinaVideoClockRate {
 /// Failure while constructing a bounded encoded video frame.
 #[derive(Clone, Copy, Debug, Eq, Error, PartialEq)]
 pub enum RetinaVideoFrameError {
+    /// The encoded access unit was not a complete length-prefixed H.264 unit.
+    #[error("RTSP video frame is not a valid H.264 access unit")]
+    InvalidAccessUnit,
     /// The encoded access unit exceeded the fixed frame bound.
     #[error("RTSP video frame exceeds {max} bytes")]
     TooLarge {
@@ -92,6 +95,7 @@ pub enum RetinaVideoFrameError {
 #[derive(Debug, Eq, PartialEq)]
 pub struct RetinaVideoFrame {
     data: Vec<u8>,
+    parameter_sets: Vec<Vec<u8>>,
     loss: u16,
     is_random_access_point: bool,
     timestamp: i64,
@@ -234,8 +238,20 @@ impl RetinaVideoFrame {
                 max: RETINA_MAX_VIDEO_FRAME_BYTES,
             });
         }
+        let nals = parse_length_prefixed_access_unit(&data)
+            .map_err(|_| RetinaVideoFrameError::InvalidAccessUnit)?;
+        let sps = nals
+            .iter()
+            .find(|nal| nal.first().is_some_and(|header| header & 0x1f == 7))
+            .map(|nal| nal.to_vec());
+        let pps = nals
+            .iter()
+            .find(|nal| nal.first().is_some_and(|header| header & 0x1f == 8))
+            .map(|nal| nal.to_vec());
+        let parameter_sets = [sps, pps].into_iter().flatten().collect();
         Ok(Self {
             data,
+            parameter_sets,
             loss,
             is_random_access_point,
             timestamp,
@@ -247,6 +263,12 @@ impl RetinaVideoFrame {
     #[must_use]
     pub fn data(&self) -> &[u8] {
         &self.data
+    }
+
+    /// Returns SPS/PPS NAL units found in this validated access unit.
+    #[must_use]
+    pub fn parameter_sets(&self) -> &[Vec<u8>] {
+        &self.parameter_sets
     }
 
     /// Returns the number of lost RTP packets before this frame.
@@ -275,9 +297,10 @@ impl RetinaVideoFrame {
 
     /// Splits the validated frame for a checked FFI DTO conversion.
     #[must_use]
-    pub fn into_parts(self) -> (Vec<u8>, u16, bool, i64, RetinaVideoClockRate) {
+    pub fn into_parts(self) -> (Vec<u8>, Vec<Vec<u8>>, u16, bool, i64, RetinaVideoClockRate) {
         (
             self.data,
+            self.parameter_sets,
             self.loss,
             self.is_random_access_point,
             self.timestamp,
@@ -330,21 +353,11 @@ impl RetinaH264FileSink {
     /// data, or the underlying filesystem error when writing.
     pub fn write_frame(&mut self, frame: &RetinaVideoFrame) -> io::Result<()> {
         let data = frame.data();
-        validate_length_prefixed_access_unit(data)?;
+        let nals = parse_length_prefixed_access_unit(data).map_err(invalid_data)?;
 
-        let mut cursor = 0;
-        while cursor < data.len() {
-            let nal_length = read_nal_length(data, cursor)?;
-            cursor += 4;
-            let nal_end = cursor
-                .checked_add(nal_length)
-                .ok_or_else(|| invalid_data("H.264 NAL length overflows access unit"))?;
+        for nal in nals {
             self.writer.write_all(&[0, 0, 0, 1])?;
-            self.writer.write_all(
-                data.get(cursor..nal_end)
-                    .ok_or_else(|| invalid_data("H.264 NAL length exceeds access unit"))?,
-            )?;
-            cursor = nal_end;
+            self.writer.write_all(nal)?;
         }
         self.frame_count += 1;
         Ok(())
@@ -367,21 +380,24 @@ impl RetinaH264FileSink {
     }
 }
 
-fn validate_length_prefixed_access_unit(data: &[u8]) -> io::Result<()> {
+fn parse_length_prefixed_access_unit(data: &[u8]) -> Result<Vec<&[u8]>, &'static str> {
     if data.is_empty() {
-        return Err(invalid_data("H.264 access unit is empty"));
+        return Err("H.264 access unit is empty");
     }
 
     let mut cursor = 0;
+    let mut nals = Vec::new();
     while cursor < data.len() {
-        let nal_length = read_nal_length(data, cursor)?;
+        let nal_length =
+            read_nal_length(data, cursor).map_err(|_| "H.264 NAL length is invalid")?;
         cursor += 4;
         if nal_length == 0 || nal_length > data.len() - cursor {
-            return Err(invalid_data("H.264 NAL length exceeds access unit"));
+            return Err("H.264 NAL length exceeds access unit");
         }
+        nals.push(&data[cursor..cursor + nal_length]);
         cursor += nal_length;
     }
-    Ok(())
+    Ok(nals)
 }
 
 fn read_nal_length(data: &[u8], cursor: usize) -> io::Result<usize> {
@@ -541,11 +557,14 @@ impl RetinaRtspPreviewSession {
                             timestamp.timestamp(),
                             clock_rate_hz,
                         )
-                        .map_err(
-                            |RetinaVideoFrameError::TooLarge { max }| {
+                        .map_err(|error| match error {
+                            RetinaVideoFrameError::TooLarge { max } => {
                                 RetinaRtspError::VideoFrameTooLarge { max }
-                            },
-                        )?,
+                            }
+                            RetinaVideoFrameError::InvalidAccessUnit => {
+                                RetinaRtspError::Session("invalid H.264 access unit".to_owned())
+                            }
+                        })?,
                     ));
                 }
                 _ => {}
@@ -646,6 +665,7 @@ mod tests {
         .unwrap();
         assert_eq!(frame.timestamp(), 90_000);
         assert_eq!(frame.clock_rate_hz().get(), 90_000);
+        assert_eq!(frame.parameter_sets(), &[vec![0x67, 0x01]]);
 
         let mut sink = RetinaH264FileSink::create(&path).unwrap();
         sink.write_frame(&frame).unwrap();
@@ -659,25 +679,15 @@ mod tests {
     }
 
     #[test]
-    fn h264_file_sink_rejects_truncated_length_prefix() {
-        let path = std::env::temp_dir().join(format!(
-            "cutout-retina-truncated-{}.h264",
-            std::process::id()
-        ));
+    fn h264_frame_rejects_truncated_length_prefix() {
         let frame = RetinaVideoFrame::new(
             vec![0, 0, 0],
             0,
             false,
             0,
             RetinaVideoClockRate::new(90_000).unwrap(),
-        )
-        .unwrap();
-
-        let mut sink = RetinaH264FileSink::create(&path).unwrap();
-        let error = sink.write_frame(&frame).unwrap_err();
-        assert_eq!(error.kind(), io::ErrorKind::InvalidData);
-        drop(sink);
-        fs::remove_file(path).unwrap();
+        );
+        assert_eq!(frame, Err(RetinaVideoFrameError::InvalidAccessUnit));
     }
 
     #[test]

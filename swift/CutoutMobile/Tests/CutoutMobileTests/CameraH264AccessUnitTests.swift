@@ -60,6 +60,7 @@ final class CameraH264AccessUnitTests: XCTestCase {
         let renderer = CameraPreviewRenderer()
         let frame = MobileCameraVideoFrameDto(
             data: Data([0, 0, 0, 2, 0x65, 0x88]),
+            parameterSets: [],
             loss: 0,
             isRandomAccessPoint: true,
             timestamp: 1,
@@ -86,6 +87,14 @@ final class CameraH264AccessUnitTests: XCTestCase {
                 0, 0, 0, 4, 0x68, 0xee, 0x3c, 0xb0,
                 0, 0, 0, 3, 0x65, 0x88, 0x80,
             ]),
+            parameterSets: [
+                Data([
+                    0x67, 0x64, 0x00, 0x33, 0xac, 0x15, 0x4a, 0x0d,
+                    0x43, 0xda, 0x6e, 0x02, 0x02, 0x02, 0x80, 0x00,
+                    0x01, 0xf4, 0x00, 0x00, 0x75, 0x30, 0x02,
+                ]),
+                Data([0x68, 0xee, 0x3c, 0xb0]),
+            ],
             loss: 0,
             isRandomAccessPoint: true,
             timestamp: 0,
