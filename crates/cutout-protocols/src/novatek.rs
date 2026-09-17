@@ -108,6 +108,18 @@ pub enum NovatekOriginError {
     InvalidPort,
 }
 
+/// Failure while proving that a Novatek device belongs to the verified R3V1
+/// profile before a mutating request is constructed.
+#[derive(Clone, Copy, Debug, Eq, Error, PartialEq)]
+pub enum NovatekProfileError {
+    /// The reported firmware is outside the verified R3V1 family.
+    #[error("Novatek firmware is outside the verified R3V1 profile")]
+    UnsupportedFirmware,
+    /// The reported firmware exceeds the bounded identity representation.
+    #[error("Novatek firmware version is too long")]
+    FirmwareVersionTooLong,
+}
+
 /// Error returned when a camera-reported media path cannot become a safe HTTP
 /// download target.
 #[derive(Clone, Copy, Debug, Eq, Error, PartialEq)]
@@ -176,6 +188,36 @@ impl NovatekFirmwareVersion {
     #[must_use]
     pub fn as_str(&self) -> &str {
         self.0.as_str()
+    }
+}
+
+/// Proof that a firmware identity belongs to the verified R3V1 R3 Pro family.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct NovatekR3V1Profile(NovatekFirmwareVersion);
+
+impl NovatekR3V1Profile {
+    /// Parses a bounded firmware identity and retains it as a mutating-command
+    /// capability proof.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`NovatekProfileError::UnsupportedFirmware`] when the firmware
+    /// is outside the verified R3V1 family, or
+    /// [`NovatekProfileError::FirmwareVersionTooLong`] when it cannot be held
+    /// by the bounded firmware identity.
+    pub fn parse(version: &str) -> Result<Self, NovatekProfileError> {
+        if !is_r3_pro_firmware(version) {
+            return Err(NovatekProfileError::UnsupportedFirmware);
+        }
+        let version = ArrayString::try_from(version)
+            .map_err(|_| NovatekProfileError::FirmwareVersionTooLong)?;
+        Ok(Self(NovatekFirmwareVersion(version)))
+    }
+
+    /// Returns the verified firmware identity.
+    #[must_use]
+    pub fn firmware_version(&self) -> &NovatekFirmwareVersion {
+        &self.0
     }
 }
 
@@ -959,17 +1001,19 @@ pub enum NovatekRecordingCommand {
 pub struct NovatekStillCaptureCommand;
 
 impl NovatekStillCaptureCommand {
-    /// Returns the fixed relative target for this still-capture request.
+    /// Returns the fixed relative target for this still-capture request after
+    /// the caller proves the verified R3V1 profile.
     #[must_use]
-    pub const fn request_target(self) -> &'static str {
+    pub const fn request_target_for_profile(self, _profile: &NovatekR3V1Profile) -> &'static str {
         "/?custom=1&cmd=1001"
     }
 }
 
 impl NovatekRecordingCommand {
-    /// Returns the fixed relative target for this recording request.
+    /// Returns the fixed relative target for this recording request after the
+    /// caller proves the verified R3V1 profile.
     #[must_use]
-    pub const fn request_target(self) -> &'static str {
+    pub const fn request_target_for_profile(self, _profile: &NovatekR3V1Profile) -> &'static str {
         match self {
             Self::Start => "/?custom=1&cmd=2001&str=1",
             Self::Stop => "/?custom=1&cmd=2001&str=0",
@@ -1001,21 +1045,31 @@ mod tests {
 
     #[test]
     fn recording_commands_encode_fixed_user_requested_targets() {
+        let profile = NovatekR3V1Profile::parse("R3V1.1_20240411").expect("verified profile");
         assert_eq!(
-            NovatekRecordingCommand::Start.request_target(),
+            NovatekRecordingCommand::Start.request_target_for_profile(&profile),
             "/?custom=1&cmd=2001&str=1"
         );
         assert_eq!(
-            NovatekRecordingCommand::Stop.request_target(),
+            NovatekRecordingCommand::Stop.request_target_for_profile(&profile),
             "/?custom=1&cmd=2001&str=0"
         );
     }
 
     #[test]
     fn still_capture_command_encodes_fixed_user_requested_target() {
+        let profile = NovatekR3V1Profile::parse("R3V1.1_20240411").expect("verified profile");
         assert_eq!(
-            NovatekStillCaptureCommand.request_target(),
+            NovatekStillCaptureCommand.request_target_for_profile(&profile),
             "/?custom=1&cmd=1001"
+        );
+    }
+
+    #[test]
+    fn mutating_commands_reject_an_unverified_firmware_family() {
+        assert_eq!(
+            NovatekR3V1Profile::parse("R4V2.0_20250101"),
+            Err(NovatekProfileError::UnsupportedFirmware)
         );
     }
 

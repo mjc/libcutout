@@ -113,13 +113,19 @@ use cutout_protocols::{
     ConcreteFalconBenignControlSession, ConcreteFalconProfileDto, ConcreteSessionErrorDto,
     ConcreteSessionStepResultDto, DeviceDetectionEvent, DeviceDetectionResolution, DeviceFamily,
     IdentityBannerEvidence, NOSFET_AERO_REGISTRY_ENTRY, NovatekCommandOutcome, NovatekHttpOrigin,
-    NovatekMediaPathError, NovatekOriginError, NovatekReadCommand, NovatekRecordingCommand,
+    NovatekMediaPathError, NovatekOriginError, NovatekProfileError, NovatekR3V1Profile,
+    NovatekReadCommand, NovatekRecordingCommand,
     NovatekStillCaptureCommand, NovatekStoragePresence, PendingProbe, ProtocolFamilyClassification,
     ProtocolFamilyState, ProtocolModelIdentityEvidence, RetinaH264FileSink, RetinaRtspError,
     RetinaRtspPreviewSession, RetinaVideoConfiguration, RetinaVideoFrame, StagedIdentityInput,
     StagedIdentityOutcome,
     VETERAN_FIELD_AUTO_SHUTDOWN_TIME_REMAINING_SECONDS, VETERAN_FIELD_CHARGE_MODE,
     VETERAN_FIELD_PEDALS_MODE, VETERAN_FIELD_SPEED_ALERT_DECI_KMH,
+    NovatekStillCaptureCommand, NovatekStoragePresence, PendingProbe, ProtocolFamilyClassification,
+    ProtocolFamilyState, ProtocolModelIdentityEvidence, RetinaH264FileSink, RetinaRtspError,
+    RetinaRtspPreviewSession, RetinaVideoConfiguration, RetinaVideoFrame, StagedIdentityInput,
+    StagedIdentityOutcome, VETERAN_FIELD_AUTO_SHUTDOWN_TIME_REMAINING_SECONDS,
+    VETERAN_FIELD_CHARGE_MODE, VETERAN_FIELD_PEDALS_MODE, VETERAN_FIELD_SPEED_ALERT_DECI_KMH,
     VETERAN_FIELD_SPEED_TILTBACK_DECI_KMH, VescBatteryType as CoreVescBatteryType,
     VescBoardProfile as CoreVescBoardProfile, VescReadOnlySession as CoreVescReadOnlySession,
     begode_identification_probes, closest_known_model, identify_known_model, is_r3_pro_firmware,
@@ -841,6 +847,27 @@ pub enum MobileNovatekParseError {
     InvalidResponse,
 }
 
+/// Failure returned when a mutating Novatek target is requested without the
+/// verified R3V1 firmware proof.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, thiserror::Error, uniffi::Error)]
+pub enum MobileNovatekProfileError {
+    /// The reported firmware is outside the verified R3V1 family.
+    #[error("unsupported Novatek firmware profile")]
+    UnsupportedFirmware,
+    /// The reported firmware exceeds the bounded identity representation.
+    #[error("Novatek firmware version is too long")]
+    FirmwareVersionTooLong,
+}
+
+impl From<NovatekProfileError> for MobileNovatekProfileError {
+    fn from(error: NovatekProfileError) -> Self {
+        match error {
+            NovatekProfileError::UnsupportedFirmware => Self::UnsupportedFirmware,
+            NovatekProfileError::FirmwareVersionTooLong => Self::FirmwareVersionTooLong,
+        }
+    }
+}
+
 /// Failure returned when validating a mobile-supplied Novatek origin.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, thiserror::Error, uniffi::Error)]
 pub enum MobileNovatekOriginError {
@@ -937,32 +964,38 @@ pub fn mobile_novatek_media_thumbnail_target(
         })
 }
 
-/// Returns the fixed target for an explicit onboard-recording request.
+/// Returns the fixed target for an explicit onboard-recording request after
+/// proving the verified R3V1 firmware profile.
 ///
 /// A successful HTTP request is not recording readback; callers must keep
 /// camera recording state unconfirmed until a camera status response arrives.
 #[uniffi::export]
 #[must_use]
 pub fn mobile_novatek_recording_command_target(
+    firmware_version: String,
     command: MobileNovatekRecordingCommandDto,
-) -> String {
-    NovatekRecordingCommand::from(command)
-        .request_target()
-        .to_owned()
+) -> Result<String, MobileNovatekProfileError> {
+    let profile = NovatekR3V1Profile::parse(&firmware_version)?;
+    Ok(NovatekRecordingCommand::from(command)
+        .request_target_for_profile(&profile)
+        .to_owned())
 }
 
-/// Returns the fixed target for an explicit still-capture request.
+/// Returns the fixed target for an explicit still-capture request after
+/// proving the verified R3V1 firmware profile.
 ///
 /// A successful HTTP request is not camera acknowledgement or media readback;
 /// callers must wait for a later media-list response before presenting a file.
 #[uniffi::export]
 #[must_use]
 pub fn mobile_novatek_still_capture_command_target(
+    firmware_version: String,
     command: MobileNovatekStillCaptureCommandDto,
-) -> String {
-    NovatekStillCaptureCommand::from(command)
-        .request_target()
-        .to_owned()
+) -> Result<String, MobileNovatekProfileError> {
+    let profile = NovatekR3V1Profile::parse(&firmware_version)?;
+    Ok(NovatekStillCaptureCommand::from(command)
+        .request_target_for_profile(&profile)
+        .to_owned())
 }
 
 /// Returns whether a firmware string is in the verified R3V1 R3 Pro family.
