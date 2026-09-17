@@ -1,17 +1,14 @@
 use std::{
-    collections::BTreeSet,
+    collections::{BTreeMap, BTreeSet},
     env,
     ffi::OsStr,
     fmt::Write,
     fs,
-    io::{ErrorKind, Write as _},
     path::{Path, PathBuf},
-    process::{Command, ExitStatus, Stdio},
-    thread,
-    time::{Duration, Instant},
+    process::{Command, ExitStatus},
 };
 
-use anyhow::{Context, Result, anyhow, bail, ensure};
+use anyhow::{Context, Result, bail, ensure};
 use cutout_core::{
     AeroAngleAdjustment, AeroBeeperVolume, AeroBrakeOverpressureAlarm, AeroDisplayBacklight,
     AeroDynamicAssist, AeroHighSpeedMode, AeroLateralTiltLimit, AeroLowBatteryMode,
@@ -23,103 +20,39 @@ use cutout_protocols::AeroSettingsSimulator;
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 
-const GENERATED_PACKAGE: &str = "target/swift-ffi/CutoutMobileFFI";
+const GENERATED_PACKAGE: &str = "target/swift-ffi";
 const CARGO_SWIFT_PACKAGE: &str = "crates/cutout-mobile-ffi/CutoutMobileFFI";
-const SWIFT_FFI_LOCK: &str = "target/swift-ffi/.cutout-swift-ffi.lock";
+const SWIFT_FFI_LOCK: &str = "target/swift-ffi/.generation.lock";
 const FFI_RECEIPT: &str = ".cutout-artifact.json";
 const FFI_CHECKER: &str = ".cutout-ffi-check";
+const FFI_GENERATIONS: &str = "target/swift-ffi/generations";
 
-struct SwiftFfiLock {
-    path: PathBuf,
-}
-
-impl SwiftFfiLock {
-    fn acquire(root: &Path) -> Result<Self> {
-        let path = root.join(SWIFT_FFI_LOCK);
-        if let Some(parent) = path.parent() {
-            fs::create_dir_all(parent)?;
-        }
-        let started = Instant::now();
-        loop {
-            match fs::create_dir(&path) {
-                Ok(()) => {
-                    let owner = path.join("owner");
-                    let mut lock = fs::File::create(&owner)?;
-                    writeln!(lock, "{}", std::process::id())?;
-                    return Ok(Self { path });
-                }
-                Err(error) if error.kind() == ErrorKind::AlreadyExists => {
-                    // The directory is the atomic ownership token. An owner file may be absent
-                    // briefly while the winner records its PID; never reclaim that state.
-                    if !path.is_dir() {
-                        let owner = fs::read_to_string(&path).unwrap_or_default();
-                        let owner_pid = owner.trim().parse::<u32>().ok();
-                        if let Some(pid) = owner_pid {
-                            if process_is_alive(pid) {
-                                ensure!(
-                                    started.elapsed() < Duration::from_secs(120),
-                                    "timed out waiting for Swift FFI generation lock {}",
-                                    path.display()
-                                );
-                                thread::sleep(Duration::from_millis(100));
-                                continue;
-                            }
-                            if fs::read_to_string(&path).unwrap_or_default() == owner {
-                                let _ = fs::remove_file(&path);
-                                continue;
-                            }
-                        }
-                        return Err(anyhow!(
-                            "malformed Swift FFI lock file exists at {}",
-                            path.display()
-                        ));
-                    }
-                    let owner_path = path.join("owner");
-                    let owner = fs::read_to_string(&owner_path).unwrap_or_default();
-                    let owner_pid = owner.trim().parse::<u32>().ok();
-                    if let Some(pid) = owner_pid {
-                        if !process_is_alive(pid)
-                            && fs::read_to_string(&owner_path).unwrap_or_default() == owner
-                        {
-                            let _ = fs::remove_file(&owner_path);
-                            let _ = fs::remove_dir(&path);
-                            continue;
-                        }
-                    }
-                    ensure!(
-                        started.elapsed() < Duration::from_secs(120),
-                        "timed out waiting for Swift FFI generation lock {}",
-                        path.display()
-                    );
-                    thread::sleep(Duration::from_millis(100));
-                }
-                Err(error) => return Err(error).context("acquire Swift FFI generation lock"),
-            }
-        }
-    }
-}
-
-fn process_is_alive(pid: u32) -> bool {
-    Command::new("kill")
-        .args(["-0", &pid.to_string()])
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status()
-        .is_ok_and(|status| status.success())
-}
-
-impl Drop for SwiftFfiLock {
-    fn drop(&mut self) {
-        let _ = fs::remove_file(self.path.join("owner"));
-        let _ = fs::remove_dir(&self.path);
-    }
+fn lock_swift_ffi(root: &Path) -> Result<fs::File> {
+    let path = root.join(SWIFT_FFI_LOCK);
+    fs::create_dir_all(path.parent().context("FFI lock parent")?)?;
+    let lock = fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .open(path)?;
+    // Kernel ownership lasts until the handle closes, including process death.
+    // Never unlink the file: waiters must all lock the same inode.
+    lock.lock().context("lock Swift FFI publication")?;
+    Ok(lock)
 }
 
 #[derive(Debug, Eq, PartialEq)]
 enum DevCommand {
     AeroSettingsSimulator,
     SwiftFfi,
-    SwiftFfiCheck { root: PathBuf, output: PathBuf },
+    Swift(Vec<String>),
+    Xcodebuild(Vec<String>),
+    SwiftFfiCheck {
+        root: PathBuf,
+        package: PathBuf,
+        output: PathBuf,
+    },
     IosDeploy(Vec<String>),
     IosVerifyApp(PathBuf),
     IosCaptures,
@@ -131,7 +64,13 @@ fn main() -> Result<()> {
     match parse_cli(&args)? {
         DevCommand::AeroSettingsSimulator => run_aero_settings_simulator(),
         DevCommand::SwiftFfi => ensure_swift_ffi(&root),
-        DevCommand::SwiftFfiCheck { root, output } => check_swift_ffi_build(&root, &output),
+        DevCommand::Swift(args) => build_apple_client(&root, "swift", &args),
+        DevCommand::Xcodebuild(args) => build_apple_client(&root, "xcodebuild", &args),
+        DevCommand::SwiftFfiCheck {
+            root,
+            package,
+            output,
+        } => check_swift_ffi_build(&root, &package, &output),
         DevCommand::IosDeploy(launch_args) => deploy_ios(&root, &launch_args),
         DevCommand::IosVerifyApp(product) => verify_ios_app(&product),
         DevCommand::IosCaptures => pull_ios_captures(&root),
@@ -144,10 +83,19 @@ fn parse_cli(args: &[String]) -> Result<DevCommand> {
             Ok(DevCommand::AeroSettingsSimulator)
         }
         [command] if command == "swift-ffi" => Ok(DevCommand::SwiftFfi),
-        [command, root, output] if command == "swift-ffi-check" => Ok(DevCommand::SwiftFfiCheck {
-            root: root.into(),
-            output: output.into(),
-        }),
+        [command, separator, arguments @ ..] if command == "swift" && separator == "--" => {
+            Ok(DevCommand::Swift(arguments.to_vec()))
+        }
+        [command, separator, arguments @ ..] if command == "xcodebuild" && separator == "--" => {
+            Ok(DevCommand::Xcodebuild(arguments.to_vec()))
+        }
+        [command, root, package, output] if command == "swift-ffi-check" => {
+            Ok(DevCommand::SwiftFfiCheck {
+                root: root.into(),
+                package: package.into(),
+                output: output.into(),
+            })
+        }
         [ios, captures] if ios == "ios" && captures == "captures" => Ok(DevCommand::IosCaptures),
         [ios, verify, product] if ios == "ios" && verify == "verify-app" => {
             Ok(DevCommand::IosVerifyApp(product.into()))
@@ -161,9 +109,27 @@ fn parse_cli(args: &[String]) -> Result<DevCommand> {
             Ok(DevCommand::IosDeploy(launch_args.to_vec()))
         }
         _ => bail!(
-            "usage: cutout-dev simulator aero-settings | cutout-dev swift-ffi | cutout-dev ios deploy [-- <launch args>...] | cutout-dev ios verify-app <app bundle> | cutout-dev ios captures"
+            "usage: cutout-dev simulator aero-settings | cutout-dev swift-ffi | cutout-dev swift -- <args> | cutout-dev xcodebuild -- <args> | cutout-dev ios deploy [-- <launch args>...] | cutout-dev ios verify-app <app bundle> | cutout-dev ios captures"
         ),
     }
+}
+
+fn build_apple_client(root: &Path, tool: &str, args: &[String]) -> Result<()> {
+    ensure!(
+        !args
+            .iter()
+            .any(|arg| matches!(arg.as_str(), "--skip-build" | "test-without-building")),
+        "the FFI build pipeline requires a build; skip-build cannot verify the executable"
+    );
+    let _lock = lock_swift_ffi(root)?;
+    prepare_swift_ffi(root)?;
+    run(
+        command("/usr/bin/xcrun")
+            .current_dir(root)
+            .arg(tool)
+            .args(args),
+        "build Apple client",
+    )
 }
 
 fn run_aero_settings_simulator() -> Result<()> {
@@ -264,19 +230,19 @@ fn workspace_root() -> PathBuf {
 }
 
 fn ensure_swift_ffi(root: &Path) -> Result<()> {
-    let _lock = SwiftFfiLock::acquire(root)?;
-    let package = root.join(GENERATED_PACKAGE);
-    let expected = source_fingerprint(root)?;
-    if verify_swift_ffi(&package).is_ok() && verify_ffi_receipt(&package, &expected).is_ok() {
-        return Ok(());
-    }
+    let _lock = lock_swift_ffi(root)?;
+    prepare_swift_ffi(root)
+}
 
-    eprintln!("Regenerating stale Swift FFI artifact.");
-    regenerate_swift_ffi(root, &package, &expected)?;
+fn prepare_swift_ffi(root: &Path) -> Result<()> {
+    let expected = source_fingerprint(root)?;
+    // Always ask Cargo. A second source/environment cache cannot reproduce its
+    // dependency, profile, build-script and toolchain invalidation rules.
+    regenerate_swift_ffi(root, &expected)?;
     Ok(())
 }
 
-fn regenerate_swift_ffi(root: &Path, package: &Path, expected: &str) -> Result<()> {
+fn regenerate_swift_ffi(root: &Path, expected: &str) -> Result<()> {
     ensure!(
         cfg!(target_os = "macos"),
         "Swift FFI artifact is stale or missing; regenerate it on macOS with `cargo cutout swift-ffi` before using Swift builds on this host"
@@ -284,37 +250,20 @@ fn regenerate_swift_ffi(root: &Path, package: &Path, expected: &str) -> Result<(
     ensure_empty_wrapper("RUSTC_WRAPPER")?;
     ensure_empty_wrapper("RUSTC_WORKSPACE_WRAPPER")?;
 
-    let cargo_package = root.join(CARGO_SWIFT_PACKAGE);
-    let backup = package.with_file_name(format!(".CutoutMobileFFI.backup.{}", std::process::id()));
-    let cargo_backup = cargo_package.with_file_name(format!(
-        ".CutoutMobileFFI.cargo-backup.{}",
-        std::process::id()
-    ));
-    ensure!(
-        !backup.exists(),
-        "generated-package backup already exists: {}",
-        backup.display()
-    );
-    ensure!(
-        !cargo_backup.exists(),
-        "cargo-swift backup already exists: {}",
-        cargo_backup.display()
-    );
-    if let Some(parent) = package.parent() {
-        fs::create_dir_all(parent)?;
-    }
-    if package.exists() {
-        fs::rename(package, &backup)
-            .with_context(|| format!("backing up {}", package.display()))?;
-    }
+    // Compile a private copy, never the editor's mutable working tree.
+    let snapshot = FfiSourceSnapshot::capture(root, expected)?;
+    let cargo_package = snapshot.path.join(CARGO_SWIFT_PACKAGE);
     if cargo_package.exists() {
-        fs::rename(&cargo_package, &cargo_backup)
-            .with_context(|| format!("backing up {}", cargo_package.display()))?;
+        // Only an unpublished generator output, never a consumer's generation.
+        fs::remove_dir_all(&cargo_package)?;
     }
-
-    let result = run(
+    run(
         command("cargo")
-            .current_dir(root.join("crates/cutout-mobile-ffi"))
+            .current_dir(snapshot.path.join("crates/cutout-mobile-ffi"))
+            .env(
+                "CARGO_TARGET_DIR",
+                root.join("target/swift-ffi/rust-target"),
+            )
             .args([
                 "swift",
                 "package",
@@ -326,6 +275,10 @@ fn regenerate_swift_ffi(root: &Path, package: &Path, expected: &str) -> Result<(
                 "CutoutMobileFFI",
                 "--lib-type",
                 "static",
+                "--exclude-arch",
+                "x86_64-apple-ios",
+                "--exclude-arch",
+                "x86_64-apple-darwin",
                 "--skip-toolchains-check",
                 "--accept-all",
                 "--swift-tools-version",
@@ -333,48 +286,16 @@ fn regenerate_swift_ffi(root: &Path, package: &Path, expected: &str) -> Result<(
                 "--silent",
             ]),
         "generate Swift FFI package",
-    )
-    .and_then(|()| normalize_xcframework_to_arm64(&cargo_package))
-    .and_then(|()| sort_xcframework_plist(&cargo_package))
-    .and_then(|()| trim_generated_sources(&cargo_package))
-    .and_then(|()| seal_swift_ffi(root, &cargo_package, expected))
-    .and_then(|()| {
-        fs::rename(&cargo_package, package).with_context(|| {
-            format!(
-                "moving generated Swift FFI package from {} to {}",
-                cargo_package.display(),
-                package.display()
-            )
-        })
-    })
-    .and_then(|()| verify_ffi_receipt(package, expected).map(|_| ()));
-
-    match result {
-        Ok(()) => {
-            if backup.exists() {
-                fs::remove_dir_all(&backup)?;
-            }
-            if cargo_backup.exists() {
-                fs::remove_dir_all(&cargo_backup)?;
-            }
-            Ok(())
-        }
-        Err(error) => {
-            if package.exists() {
-                fs::remove_dir_all(package)?;
-            }
-            if backup.exists() {
-                fs::rename(&backup, package)?;
-            }
-            if cargo_package.exists() {
-                fs::remove_dir_all(&cargo_package)?;
-            }
-            if cargo_backup.exists() {
-                fs::rename(&cargo_backup, cargo_package)?;
-            }
-            Err(error)
-        }
-    }
+    )?;
+    ensure!(
+        source_fingerprint(&snapshot.path)? == expected,
+        "Cargo changed the FFI source snapshot"
+    );
+    sort_xcframework_plist(&cargo_package)?;
+    trim_generated_sources(&cargo_package)?;
+    seal_swift_ffi(root, &cargo_package, expected)?;
+    publish_swift_ffi(root, &cargo_package, expected)?;
+    Ok(())
 }
 
 fn seal_swift_ffi(root: &Path, package: &Path, expected: &str) -> Result<()> {
@@ -387,7 +308,7 @@ fn seal_swift_ffi(root: &Path, package: &Path, expected: &str) -> Result<()> {
     fs::write(
         package.join("Sources/CutoutMobileFFI/CutoutArtifactIdentity.swift"),
         format!(
-            "// Generated Rust build identity.\npublic let cutoutRustSourceIdentity = \"{expected}\"\n"
+            "// Generated Rust source identity.\npublic let cutoutRustSourceIdentity = \"{expected}\"\n"
         ),
     )?;
     verify_swift_ffi(package)?;
@@ -395,61 +316,90 @@ fn seal_swift_ffi(root: &Path, package: &Path, expected: &str) -> Result<()> {
     Ok(())
 }
 
-/// Keep the generated package limited to architectures used by this project.
-/// cargo-swift emits universal Intel slices by default; no supported workflow
-/// here needs `x86_64`, and retaining those slices makes generation depend on
-/// an Intel macOS SDK being available.
-fn normalize_xcframework_to_arm64(package: &Path) -> Result<()> {
-    const NORMALIZE_PLIST: &str = r#"
-import plistlib, sys
-path = sys.argv[1]
-with open(path, "rb") as source:
-    plist = plistlib.load(source)
-for library in plist["AvailableLibraries"]:
-    identifiers = {
-        "ios-arm64_x86_64-simulator": "ios-arm64-simulator",
-        "macos-arm64_x86_64": "macos-arm64",
-    }
-    library["LibraryIdentifier"] = identifiers.get(
-        library["LibraryIdentifier"], library["LibraryIdentifier"]
-    )
-    library["SupportedArchitectures"] = ["arm64"]
-with open(path, "wb") as destination:
-    plistlib.dump(plist, destination, sort_keys=False)
-"#;
-    ensure!(
-        cfg!(target_os = "macos"),
-        "XCFramework normalization requires macOS"
-    );
-    let xcframework = package.join("cutout_mobile_ffiFFI.xcframework");
-    for (source_name, target_name) in [
-        ("ios-arm64_x86_64-simulator", "ios-arm64-simulator"),
-        ("macos-arm64_x86_64", "macos-arm64"),
-    ] {
-        let source = xcframework.join(source_name);
-        let target = xcframework.join(target_name);
-        if source.exists() {
-            fs::rename(&source, &target)
-                .with_context(|| format!("renaming {source_name} XCFramework slice"))?;
+/// Consumers pin a canonical generation path; publication never mutates it.
+fn publish_swift_ffi(root: &Path, staged: &Path, source: &str) -> Result<PathBuf> {
+    let identity = verify_ffi_receipt(staged, source)?;
+    let generation = root
+        .join(FFI_GENERATIONS)
+        .join(&identity)
+        .join("CutoutMobileFFI");
+    if generation.exists() {
+        ensure!(
+            fs::read(generation.join(FFI_RECEIPT))? == fs::read(staged.join(FFI_RECEIPT))?,
+            "immutable Swift FFI generation has a different receipt"
+        );
+        verify_ffi_receipt(&generation, source)?;
+    } else {
+        let parent = generation.parent().context("generation parent")?;
+        fs::create_dir_all(parent)?;
+        let staging = tempfile::Builder::new()
+            .prefix(".artifact-")
+            .tempdir_in(parent)?;
+        let mut files = BTreeSet::new();
+        collect_files(staged, Path::new(""), &mut files)?;
+        for relative in files {
+            let destination = staging.path().join(&relative);
+            fs::create_dir_all(destination.parent().context("artifact parent")?)?;
+            fs::copy(staged.join(relative), destination)?;
         }
-        let library = target.join("libcutout_mobile_ffi.a");
-        let arm64 = target.join("libcutout_mobile_ffi.arm64.a");
-        run(
-            command("/usr/bin/lipo")
-                .args(["-thin", "arm64", "-output"])
-                .arg(&arm64)
-                .arg(&library),
-            "thin Swift FFI library to arm64",
-        )?;
-        fs::rename(arm64, library).context("install arm64 Swift FFI library")?;
+        verify_ffi_receipt(staging.path(), source)?;
+        fs::rename(staging.path(), &generation)?;
     }
+    let current = root.join(GENERATED_PACKAGE).join("Package.swift");
+    let next = current.with_file_name(format!(".Package.swift-{}", std::process::id()));
+    let manifest = ffi_selector_manifest(&identity);
+    if fs::read_to_string(&current).ok().as_deref() != Some(&manifest) {
+        fs::write(&next, manifest)?;
+        fs::rename(next, current)?;
+    }
+    fs::remove_dir_all(staged)?;
+    Ok(generation)
+}
 
-    run(
-        command("python3")
-            .args(["-c", NORMALIZE_PLIST])
-            .arg(xcframework.join("Info.plist")),
-        "normalize Swift FFI XCFramework metadata",
+fn ffi_selector_manifest(generation: &str) -> String {
+    format!(
+        r#"// swift-tools-version: 6.0
+// cutout-generation: {generation}
+import PackageDescription
+let package = Package(
+    name: "CutoutMobileFFI",
+    platforms: [.iOS(.v18), .macOS(.v15)],
+    products: [.library(name: "CutoutMobileFFI", targets: ["CutoutMobileFFI"])],
+    targets: [
+        .binaryTarget(
+            name: "cutout_mobile_ffiFFI",
+            path: "generations/{generation}/CutoutMobileFFI/cutout_mobile_ffiFFI.xcframework"
+        ),
+        .target(
+            name: "CutoutMobileFFI",
+            dependencies: ["cutout_mobile_ffiFFI"],
+            path: "generations/{generation}/CutoutMobileFFI/Sources/CutoutMobileFFI"
+        ),
+    ]
+)
+"#
     )
+}
+
+fn selected_ffi_generation(root: &Path) -> Result<PathBuf> {
+    let manifest = fs::read_to_string(root.join(GENERATED_PACKAGE).join("Package.swift"))?;
+    let generation = manifest
+        .lines()
+        .find_map(|line| line.strip_prefix("// cutout-generation: "))
+        .context("missing Swift FFI generation selection")?;
+    ensure!(
+        generation.len() == 64 && generation.bytes().all(|byte| byte.is_ascii_hexdigit()),
+        "invalid Swift FFI generation selection"
+    );
+    let package = root
+        .join(FFI_GENERATIONS)
+        .join(generation)
+        .join("CutoutMobileFFI");
+    ensure!(
+        manifest == ffi_selector_manifest(generation),
+        "Swift FFI selector manifest changed after publication"
+    );
+    Ok(package)
 }
 
 fn deploy_ios(root: &Path, launch_args: &[String]) -> Result<()> {
@@ -457,7 +407,8 @@ fn deploy_ios(root: &Path, launch_args: &[String]) -> Result<()> {
         cfg!(target_os = "macos"),
         "iPhone deployment requires macOS"
     );
-    ensure_swift_ffi(root)?;
+    let lock = lock_swift_ffi(root)?;
+    prepare_swift_ffi(root)?;
 
     let device = match env::var("CUTOUT_IOS_DEVICE_UDID") {
         Ok(device) => device,
@@ -465,10 +416,6 @@ fn deploy_ios(root: &Path, launch_args: &[String]) -> Result<()> {
     };
     let derived_data = root.join("target/xcode-device-signed");
     let product = derived_data.join("Build/Products/Debug-iphoneos/CutoutApp.app");
-    if product.exists() {
-        fs::remove_dir_all(&product)?;
-    }
-
     let team = env::var("CUTOUT_IOS_DEVELOPMENT_TEAM")
         .context("CUTOUT_IOS_DEVELOPMENT_TEAM is required for iPhone deployment")?;
     let spotify_client_id = spotify_client_id()?;
@@ -489,6 +436,7 @@ fn deploy_ios(root: &Path, launch_args: &[String]) -> Result<()> {
     build.arg(format!("SPOTIFY_CLIENT_ID={spotify_client_id}"));
     build.arg("build");
     run(&mut build, "build signed iPhone app")?;
+    drop(lock);
     ensure!(
         product.is_dir(),
         "Xcode did not produce {}",
@@ -752,6 +700,10 @@ fn device_list_output_path(root: &Path, process_id: u32) -> PathBuf {
 }
 
 fn source_fingerprint(root: &Path) -> Result<String> {
+    Ok(fingerprint_source_inputs(&source_inputs(root)?))
+}
+
+fn source_inputs(root: &Path) -> Result<BTreeMap<PathBuf, Vec<u8>>> {
     let mut files = BTreeSet::from([
         PathBuf::from("Cargo.lock"),
         PathBuf::from("Cargo.toml"),
@@ -762,6 +714,7 @@ fn source_fingerprint(root: &Path) -> Result<String> {
         "devenv.nix",
         "devenv.yaml",
         "devenv.lock",
+        "README.md",
     ] {
         if root.join(input).is_file() {
             files.insert(PathBuf::from(input));
@@ -775,7 +728,9 @@ fn source_fingerprint(root: &Path) -> Result<String> {
             continue;
         }
         let relative = path.strip_prefix(root)?;
-        for directory in ["src", "registry"] {
+        for directory in [
+            "src", "registry", "tests", "benches", "fixtures", "examples",
+        ] {
             collect_files(root, &relative.join(directory), &mut files)?;
         }
         for name in ["Cargo.toml", "build.rs", "uniffi.toml"] {
@@ -785,10 +740,19 @@ fn source_fingerprint(root: &Path) -> Result<String> {
         }
     }
 
+    files
+        .into_iter()
+        .map(|relative| {
+            let bytes = fs::read(root.join(&relative))
+                .with_context(|| format!("reading fingerprint input {}", relative.display()))?;
+            Ok((relative, bytes))
+        })
+        .collect()
+}
+
+fn fingerprint_source_inputs(inputs: &BTreeMap<PathBuf, Vec<u8>>) -> String {
     let mut aggregate = Sha256::new();
-    for relative in files {
-        let bytes = fs::read(root.join(&relative))
-            .with_context(|| format!("reading fingerprint input {}", relative.display()))?;
+    for (relative, bytes) in inputs {
         let file_hash = hex(Sha256::digest(bytes));
         aggregate.update(relative.as_os_str().as_encoded_bytes());
         aggregate.update(b"  ");
@@ -797,7 +761,49 @@ fn source_fingerprint(root: &Path) -> Result<String> {
         aggregate.update(relative.as_os_str().as_encoded_bytes());
         aggregate.update(b"\n");
     }
-    Ok(hex(aggregate.finalize()))
+    hex(aggregate.finalize())
+}
+
+struct FfiSourceSnapshot {
+    path: PathBuf,
+}
+
+impl FfiSourceSnapshot {
+    fn capture(root: &Path, expected: &str) -> Result<Self> {
+        let inputs = source_inputs(root)?;
+        ensure!(
+            fingerprint_source_inputs(&inputs) == expected,
+            "Rust inputs changed before snapshot capture"
+        );
+        // A sibling retains Cargo's ancestor/global config lookup without
+        // loading the project's copied .cargo/config.toml a second time.
+        let canonical = fs::canonicalize(root)?;
+        let repository = hex(Sha256::digest(canonical.as_os_str().as_encoded_bytes()));
+        let parent = canonical
+            .parent()
+            .context("repository parent")?
+            .join(".cutout-ffi-sources")
+            .join(repository);
+        let path = parent.join(expected);
+        if path.exists() {
+            ensure!(
+                source_fingerprint(&path)? == expected,
+                "FFI source snapshot was modified"
+            );
+            return Ok(Self { path });
+        }
+        fs::create_dir_all(&parent)?;
+        let staging = tempfile::Builder::new()
+            .prefix(".source-")
+            .tempdir_in(parent)?;
+        for (relative, bytes) in inputs {
+            let destination = staging.path().join(relative);
+            fs::create_dir_all(destination.parent().context("source parent")?)?;
+            fs::write(destination, bytes)?;
+        }
+        fs::rename(staging.path(), &path)?;
+        Ok(Self { path })
+    }
 }
 
 fn collect_files(root: &Path, relative: &Path, files: &mut BTreeSet<PathBuf>) -> Result<()> {
@@ -871,7 +877,7 @@ fn ffi_output_hashes(package: &Path) -> Result<Value> {
 
 fn write_ffi_receipt(package: &Path, source: &str) -> Result<()> {
     let receipt = serde_json::json!({
-        "version": 1,
+        "version": 2,
         "source": source,
         "outputs": ffi_output_hashes(package)?,
     });
@@ -885,7 +891,7 @@ fn verify_ffi_receipt(package: &Path, source: &str) -> Result<String> {
         fs::read(package.join(FFI_RECEIPT)).context("missing Swift FFI artifact receipt")?;
     let receipt: Value = serde_json::from_slice(&bytes)?;
     ensure!(
-        receipt["version"] == 1,
+        receipt["version"] == 2,
         "unsupported Swift FFI artifact receipt version"
     );
     ensure!(
@@ -899,9 +905,15 @@ fn verify_ffi_receipt(package: &Path, source: &str) -> Result<String> {
     Ok(hex(Sha256::digest(bytes)))
 }
 
-fn check_swift_ffi_build(root: &Path, output: &Path) -> Result<()> {
-    let identity = verify_ffi_receipt(&root.join(GENERATED_PACKAGE), &source_fingerprint(root)?)
-        .context("Swift FFI is stale or incomplete. Run Swift through `devenv shell -- swift ...` to rebuild automatically")?;
+fn check_swift_ffi_build(root: &Path, package: &Path, output: &Path) -> Result<()> {
+    let selected = selected_ffi_generation(root)?;
+    ensure!(
+        fs::canonicalize(package)? == fs::canonicalize(selected)?,
+        "Swift build graph has an obsolete Rust artifact; resolve the current package"
+    );
+    // Check the dependency selected by this build graph, not the mutable alias.
+    let identity = verify_ffi_receipt(package, &source_fingerprint(root)?)
+        .context("Swift FFI is stale or incomplete. Use `devenv shell -- cargo cutout swift -- ...` to prepare and build in one invocation")?;
     fs::create_dir_all(output)?;
     let path = output.join("CutoutVerifiedArtifact.swift");
     let source = format!(
@@ -1064,8 +1076,131 @@ mod tests {
     use super::*;
 
     #[test]
+    fn apple_build_commands_preserve_native_arguments() {
+        let args = ["swift", "--", "test", "--package-path", "a package"].map(str::to_owned);
+        assert_eq!(
+            parse_cli(&args).unwrap(),
+            DevCommand::Swift(args[2..].to_vec())
+        );
+        let args = ["xcodebuild", "--", "-scheme", "An App", "build"].map(str::to_owned);
+        assert_eq!(
+            parse_cli(&args).unwrap(),
+            DevCommand::Xcodebuild(args[2..].to_vec())
+        );
+        assert!(parse_cli(&["swift".into(), "test".into()]).is_err());
+    }
+
+    #[test]
+    fn apple_build_commands_reject_bypassing_the_build_graph() {
+        for (tool, bypass) in [
+            ("swift", "--skip-build"),
+            ("xcodebuild", "test-without-building"),
+        ] {
+            let error =
+                build_apple_client(Path::new("must-not-be-created"), tool, &[bypass.into()])
+                    .unwrap_err();
+            assert!(error.to_string().contains("requires a build"));
+        }
+    }
+
+    fn fixture_sources(root: &Path) {
+        fs::create_dir_all(root.join("crates/fixture/src")).unwrap();
+        for name in [
+            "Cargo.lock",
+            "Cargo.toml",
+            "rust-toolchain.toml",
+            "crates/fixture/Cargo.toml",
+            "crates/fixture/src/lib.rs",
+        ] {
+            fs::write(root.join(name), "original").unwrap();
+        }
+    }
+
+    fn fixture_artifact(package: &Path, source: &str, build: &str) {
+        for path in required_ffi_inputs(package).into_iter().chain([
+            package.join(FFI_CHECKER),
+            package.join("Sources/CutoutMobileFFI/CutoutArtifactIdentity.swift"),
+        ]) {
+            fs::create_dir_all(path.parent().unwrap()).unwrap();
+            fs::write(path, build).unwrap();
+        }
+        write_ffi_receipt(package, source).unwrap();
+    }
+
+    #[test]
+    fn ffi_source_snapshot_is_independent_of_later_worktree_edits() {
+        let root = env::temp_dir().join(format!("cutout-ffi-snapshot-{}", std::process::id()));
+        fixture_sources(&root);
+        let expected = source_fingerprint(&root).unwrap();
+        let snapshot = FfiSourceSnapshot::capture(&root, &expected).unwrap();
+        fs::write(root.join("crates/fixture/src/lib.rs"), "later edit").unwrap();
+        assert_eq!(source_fingerprint(&snapshot.path).unwrap(), expected);
+        assert_ne!(source_fingerprint(&root).unwrap(), expected);
+        assert!(FfiSourceSnapshot::capture(&root, &expected).is_err());
+        fs::write(root.join("crates/fixture/src/lib.rs"), "original").unwrap();
+        let reused = FfiSourceSnapshot::capture(&root, &expected).unwrap();
+        assert_eq!(reused.path, snapshot.path);
+        fs::remove_dir_all(snapshot.path.parent().unwrap()).unwrap();
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn ffi_publication_preserves_a_pinned_concurrent_reader() {
+        let root = env::temp_dir().join(format!("cutout-ffi-publish-{}", std::process::id()));
+        fixture_sources(&root);
+        let source = source_fingerprint(&root).unwrap();
+        let staged = root.join("staged");
+        fixture_artifact(&staged, &source, "build-a");
+        let first = publish_swift_ffi(&root, &staged, &source).unwrap();
+        let pinned = selected_ffi_generation(&root).unwrap();
+        let (ready_tx, ready_rx) = std::sync::mpsc::channel();
+        let (release_tx, release_rx) = std::sync::mpsc::channel();
+        let reader_root = root.clone();
+        let reader = std::thread::spawn(move || {
+            let before = fs::read(pinned.join(FFI_RECEIPT)).unwrap();
+            check_swift_ffi_build(&reader_root, &pinned, &reader_root.join("plugin-output"))
+                .unwrap();
+            ready_tx.send(()).unwrap();
+            release_rx.recv().unwrap();
+            verify_ffi_receipt(&pinned, &source_fingerprint(&reader_root).unwrap()).unwrap();
+            assert_eq!(fs::read(pinned.join(FFI_RECEIPT)).unwrap(), before);
+        });
+        ready_rx.recv().unwrap();
+        fixture_artifact(&staged, &source, "build-a");
+        fs::write(
+            staged.join("Sources/CutoutMobileFFI/CutoutArtifactIdentity.swift"),
+            "new artifact, same source and build",
+        )
+        .unwrap();
+        write_ffi_receipt(&staged, &source).unwrap();
+        let second = publish_swift_ffi(&root, &staged, &source).unwrap();
+        assert_ne!(first, second);
+        assert_eq!(selected_ffi_generation(&root).unwrap(), second);
+        release_tx.send(()).unwrap();
+        reader.join().unwrap();
+        // A failed/incomplete generation must leave the selection untouched.
+        fs::create_dir_all(&staged).unwrap();
+        assert!(publish_swift_ffi(&root, &staged, &source).is_err());
+        assert_eq!(selected_ffi_generation(&root).unwrap(), second);
+        // Validation must inspect the pinned dependency, even when current is valid.
+        fs::write(
+            first.join("Sources/CutoutMobileFFI/CutoutArtifactIdentity.swift"),
+            "bad",
+        )
+        .unwrap();
+        assert!(check_swift_ffi_build(&root, &first, &root.join("plugin-output")).is_err());
+        assert!(check_swift_ffi_build(&root, &second, &root.join("plugin-output")).is_ok());
+        // An old graph must not pass after preparation selects a different SDK or flags.
+        fixture_artifact(&staged, &source, "build-b");
+        publish_swift_ffi(&root, &staged, &source).unwrap();
+        assert!(check_swift_ffi_build(&root, &second, &root.join("plugin-output")).is_err());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
     fn swift_ffi_package_matches_the_swift_package_dependency() {
-        assert_eq!(GENERATED_PACKAGE, "target/swift-ffi/CutoutMobileFFI");
+        assert_eq!(GENERATED_PACKAGE, "target/swift-ffi");
     }
 
     #[test]
@@ -1310,24 +1445,23 @@ mod tests {
     }
 
     #[test]
-    fn swift_ffi_lock_reclaims_a_dead_owner() {
+    fn swift_ffi_lock_is_exclusive_and_released_with_its_handle() {
         let root =
             env::temp_dir().join(format!("cutout-dev-stale-lock-test-{}", std::process::id()));
         let _ = fs::remove_dir_all(&root);
-        let lock_path = root.join(SWIFT_FFI_LOCK);
-        fs::create_dir_all(lock_path.parent().unwrap()).unwrap();
-        // A PID outside the host's normal process range gives a deterministic dead owner.
-        let exited_pid = 2_147_483_647;
-        fs::create_dir(&lock_path).unwrap();
-        fs::write(lock_path.join("owner"), format!("{exited_pid}\n")).unwrap();
-
-        let lock = SwiftFfiLock::acquire(&root).expect("dead lock owner is reclaimed");
-        assert_eq!(
-            fs::read_to_string(lock_path.join("owner")).unwrap().trim(),
-            std::process::id().to_string()
-        );
+        let lock = lock_swift_ffi(&root).unwrap();
+        let contender = fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(root.join(SWIFT_FFI_LOCK))
+            .unwrap();
+        assert!(matches!(
+            contender.try_lock(),
+            Err(fs::TryLockError::WouldBlock)
+        ));
         drop(lock);
-        assert!(!lock_path.exists());
+        contender.try_lock().unwrap();
+        drop(contender);
         fs::remove_dir_all(root).unwrap();
     }
 }
