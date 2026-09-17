@@ -76,21 +76,22 @@ pub use melk_lighting::{
 mod novatek;
 pub use novatek::{
     NOVATEK_MAX_MEDIA_RESPONSE_BYTES, NOVATEK_MAX_RESPONSE_BYTES,
-    NOVATEK_VERIFIED_R3_PRO_FIRMWARE_PREFIX, NovatekCapabilityError, NovatekCommandOutcome,
-    NovatekCommandStatus, NovatekConfiguration, NovatekConfigurationError, NovatekFirmwareVersion,
-    NovatekHttpOrigin, NovatekLiveViewLinks, NovatekMediaDownloadTarget, NovatekMediaEntry,
-    NovatekMediaList, NovatekMediaPathError, NovatekMediaThumbnailTarget, NovatekOriginError,
-    NovatekProfileError, NovatekR3V1Profile, NovatekReadCommand, NovatekReadOnlySnapshot,
-    NovatekRecordingCapability, NovatekRecordingCommand, NovatekResponseError, NovatekRtspUri,
-    NovatekStillCaptureCapability, NovatekStillCaptureCommand, NovatekStoragePresence,
-    is_r3_pro_firmware, media_download_target, media_thumbnail_target, parse_command_response,
+    NOVATEK_VERIFIED_R3_PRO_FIRMWARE_PREFIX, NovatekCapabilityError, NovatekCommandId,
+    NovatekCommandOutcome, NovatekCommandStatus, NovatekConfiguration, NovatekConfigurationError,
+    NovatekFirmwareVersion, NovatekHttpOrigin, NovatekLiveViewLinks, NovatekMediaDownloadTarget,
+    NovatekMediaEntry, NovatekMediaList, NovatekMediaPathError, NovatekMediaThumbnailTarget,
+    NovatekOriginError, NovatekProfileError, NovatekR3V1Profile, NovatekReadCommand,
+    NovatekReadOnlySnapshot, NovatekRecordingCapability, NovatekRecordingCommand,
+    NovatekResponseError, NovatekRtspUri, NovatekStillCaptureCapability,
+    NovatekStillCaptureCommand, NovatekStoragePresence, is_r3_pro_firmware, media_download_target,
+    media_thumbnail_target, parse_command_response, parse_command_response_for_id,
     parse_configuration_response, parse_firmware_response, parse_live_view_response,
     parse_media_list_response, parse_read_only_snapshot, parse_storage_response,
 };
 mod rtsp;
 pub use rtsp::{
-    RetinaH264FileSink, RetinaRtspError, RetinaRtspPreviewSession, RetinaVideoConfiguration,
-    RetinaVideoFrame,
+    RetinaH264FileSink, RetinaRtspError, RetinaRtspPreviewSession, RetinaVideoCodec,
+    RetinaVideoConfiguration, RetinaVideoFrame,
 };
 mod probe;
 pub use probe::{AeroProbe, FalconProbe, ProtocolProbe};

@@ -12,10 +12,14 @@ import uniffi.cutout_mobile_ffi.MobileCameraSourceKindDto
 import uniffi.cutout_mobile_ffi.MobileCameraVideoFrameDto
 import uniffi.cutout_mobile_ffi.MobileNovatekMediaPathException
 import uniffi.cutout_mobile_ffi.MobileNovatekCommandStatusDto
+import uniffi.cutout_mobile_ffi.MobileNovatekCommandOutcomeDto
 import uniffi.cutout_mobile_ffi.mobileParseNovatekReadOnlySnapshot
+import uniffi.cutout_mobile_ffi.mobileParseNovatekCommandOutcome
 import uniffi.cutout_mobile_ffi.mobileNovatekMediaDownloadTarget
 import uniffi.cutout_mobile_ffi.MobileNovatekRecordingCommandDto
+import uniffi.cutout_mobile_ffi.MobileNovatekStillCaptureCommandDto
 import uniffi.cutout_mobile_ffi.mobileNovatekRecordingCommandTarget
+import uniffi.cutout_mobile_ffi.mobileNovatekStillCaptureCommandTarget
 import uniffi.cutout_mobile_ffi.MobileFalconProfileDto
 import uniffi.cutout_mobile_ffi.MobileGattFingerprintDto
 import uniffi.cutout_mobile_ffi.MobileGattRoleDto
@@ -60,6 +64,7 @@ fun main() {
     }
 
     val cameraFile = File.createTempFile("cutout-camera-ffi-smoke", ".h264")
+    check(cameraFile.delete())
     MobileCameraPreviewFileSink.create(cameraFile.path).use { sink ->
         sink.writeFrame(
             MobileCameraVideoFrameDto(
@@ -157,6 +162,38 @@ fun main() {
             command = MobileNovatekRecordingCommandDto.STOP,
         ) ==
             "/?custom=1&cmd=2001&str=0",
+    )
+    check(
+        mobileNovatekStillCaptureCommandTarget(
+            firmwareVersion = "R3V1.1_20240411",
+            configuration = listOf(
+                MobileNovatekCommandStatusDto(
+                    commandId = 1001u.toUShort(),
+                    status = 0u.toUShort(),
+                ),
+            ),
+            command = MobileNovatekStillCaptureCommandDto.CAPTURE,
+        ) == "/?custom=1&cmd=1001",
+    )
+    check(
+        mobileParseNovatekCommandOutcome(
+            response = "<Function><Cmd>2001</Cmd><Status>0</Status></Function>"
+                .encodeToByteArray(),
+            expectedCommandId = 2001u.toUShort(),
+        ) == MobileNovatekCommandOutcomeDto.ACKNOWLEDGED,
+    )
+    check(
+        mobileParseNovatekCommandOutcome(
+            response = "<Function><Cmd>2001</Cmd><Status>7</Status></Function>"
+                .encodeToByteArray(),
+            expectedCommandId = 2001u.toUShort(),
+        ) == MobileNovatekCommandOutcomeDto.REFUSED,
+    )
+    check(
+        mobileParseNovatekCommandOutcome(
+            response = "<Function><Cmd>2001</Cmd></Function>".encodeToByteArray(),
+            expectedCommandId = 2001u.toUShort(),
+        ) == MobileNovatekCommandOutcomeDto.UNKNOWN,
     )
 }
 

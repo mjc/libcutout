@@ -510,7 +510,7 @@ impl From<RetinaVideoFrame> for MobileCameraVideoFrameDto {
 impl From<&RetinaVideoConfiguration> for MobileCameraVideoConfigurationDto {
     fn from(configuration: &RetinaVideoConfiguration) -> Self {
         Self {
-            codec: configuration.codec.clone(),
+            codec: configuration.codec.as_str().to_owned(),
             width: configuration.width,
             height: configuration.height,
             extra_data: configuration.extra_data.clone(),
@@ -881,7 +881,8 @@ impl From<NovatekConfigurationError> for MobileNovatekProfileError {
     fn from(error: NovatekConfigurationError) -> Self {
         match error {
             NovatekConfigurationError::TooManyStatuses { .. } => Self::ConfigurationTooLarge,
-            NovatekConfigurationError::DuplicateCommand { .. } => Self::ConfigurationMalformed,
+            NovatekConfigurationError::DuplicateCommand { .. }
+            | NovatekConfigurationError::InvalidCommand { .. } => Self::ConfigurationMalformed,
         }
     }
 }
@@ -1142,7 +1143,7 @@ pub fn mobile_parse_novatek_command_outcome(
     response: Vec<u8>,
     expected_command_id: u16,
 ) -> Result<MobileNovatekCommandOutcomeDto, MobileNovatekParseError> {
-    let outcome = cutout_protocols::parse_command_response(&response, expected_command_id)
+    let outcome = cutout_protocols::parse_command_response_for_id(&response, expected_command_id)
         .map_err(|_| MobileNovatekParseError::InvalidResponse)?;
     Ok(match outcome {
         NovatekCommandOutcome::Acknowledged => MobileNovatekCommandOutcomeDto::Acknowledged,
@@ -17574,7 +17575,7 @@ mod tests {
             ),
             Err(MobileNovatekProfileError::CapabilityNotAdvertised)
         );
-        let oversized_configuration = (0..33)
+        let oversized_configuration = (1..34)
             .map(|command_id| MobileNovatekCommandStatusDto {
                 command_id,
                 status: 0,
@@ -17604,6 +17605,38 @@ mod tests {
                 MobileNovatekRecordingCommandDto::Start,
             ),
             Err(MobileNovatekProfileError::ConfigurationMalformed)
+        );
+    }
+
+    #[test]
+    fn novatek_command_outcome_ffi_preserves_ack_refusal_and_unknown() {
+        assert_eq!(
+            mobile_parse_novatek_command_outcome(
+                br"<Function><Cmd>2001</Cmd><Status>0</Status></Function>".to_vec(),
+                2001,
+            ),
+            Ok(MobileNovatekCommandOutcomeDto::Acknowledged)
+        );
+        assert_eq!(
+            mobile_parse_novatek_command_outcome(
+                br"<Function><Cmd>2001</Cmd><Status>7</Status></Function>".to_vec(),
+                2001,
+            ),
+            Ok(MobileNovatekCommandOutcomeDto::Refused)
+        );
+        assert_eq!(
+            mobile_parse_novatek_command_outcome(
+                br"<Function><Cmd>2001</Cmd></Function>".to_vec(),
+                2001,
+            ),
+            Ok(MobileNovatekCommandOutcomeDto::Unknown)
+        );
+        assert_eq!(
+            mobile_parse_novatek_command_outcome(
+                br"<Function><Cmd>3024</Cmd><Status>0</Status></Function>".to_vec(),
+                2001,
+            ),
+            Err(MobileNovatekParseError::InvalidResponse)
         );
     }
 

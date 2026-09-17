@@ -10,7 +10,7 @@ readonly response_limit_bytes=$((1024 * 1024))
 usage() {
   echo "usage: $0 [--dry-run | --self-test | LOG_FILE]"
   echo "run while connected to the camera Wi-Fi; metadata stops at complete responses and video capture is finite"
-  echo "RTSP video is saved beside LOG_FILE as LOG_FILE.rtsp.ts, with a 10-second capture and 10-second stream I/O timeout"
+  echo "metadata and RTSP control probes have no timeout; RTSP video is saved beside LOG_FILE as LOG_FILE.rtsp.ts, with a 10-second capture and 10-second stream I/O timeout"
 }
 
 print_requests() {
@@ -67,7 +67,7 @@ umask 077
   printf 'captured_at_utc=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
   printf 'origin=%s\n' "$origin"
   printf 'http_response_limit_bytes=%s\n' "$response_limit_bytes"
-  printf 'network_connect_timeout_seconds=5\n'
+  printf 'network_timeouts=none\n'
   printf 'completion=xml-end-tags-and-rtsp-response-body\n'
   printf 'rtsp_methods=OPTIONS,DESCRIBE\n'
   printf 'rtsp_video_capture_seconds=%s\n' "$rtsp_capture_seconds"
@@ -139,9 +139,7 @@ my $socket = IO::Socket::INET->new(
     PeerHost => $host,
     PeerPort => $port,
     Proto    => 'tcp',
-    Timeout  => 5,
 ) or die "connect: $!\n";
-$socket->timeout(5);
 $socket->autoflush(1);
 print {$socket} $request_data or die "write request: $!\n";
 
@@ -187,7 +185,6 @@ for probe in "${probes[@]}"; do
   curl_options=(
     --fail-with-body \
     --include \
-    --connect-timeout 5 \
     --noproxy '*' \
     --proto '=http' \
     --request GET \
