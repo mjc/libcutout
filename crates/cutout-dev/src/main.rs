@@ -121,8 +121,8 @@ fn build_apple_client(root: &Path, tool: &str, args: &[String]) -> Result<()> {
             .any(|arg| matches!(arg.as_str(), "--skip-build" | "test-without-building")),
         "the FFI build pipeline requires a build; skip-build cannot verify the executable"
     );
-    let _lock = lock_swift_ffi(root)?;
-    prepare_swift_ffi(root)?;
+    let lock = lock_swift_ffi(root)?;
+    prepare_swift_ffi(root, &lock)?;
     run(
         command("/usr/bin/xcrun")
             .current_dir(root)
@@ -230,19 +230,19 @@ fn workspace_root() -> PathBuf {
 }
 
 fn ensure_swift_ffi(root: &Path) -> Result<()> {
-    let _lock = lock_swift_ffi(root)?;
-    prepare_swift_ffi(root)
+    let lock = lock_swift_ffi(root)?;
+    prepare_swift_ffi(root, &lock)
 }
 
-fn prepare_swift_ffi(root: &Path) -> Result<()> {
+fn prepare_swift_ffi(root: &Path, lock: &fs::File) -> Result<()> {
     let expected = source_fingerprint(root)?;
     // Always ask Cargo. A second source/environment cache cannot reproduce its
     // dependency, profile, build-script and toolchain invalidation rules.
-    regenerate_swift_ffi(root, &expected)?;
+    regenerate_swift_ffi(root, &expected, lock)?;
     Ok(())
 }
 
-fn regenerate_swift_ffi(root: &Path, expected: &str) -> Result<()> {
+fn regenerate_swift_ffi(root: &Path, expected: &str, lock: &fs::File) -> Result<()> {
     ensure!(
         cfg!(target_os = "macos"),
         "Swift FFI artifact is stale or missing; regenerate it on macOS with `cargo cutout swift-ffi` before using Swift builds on this host"
@@ -259,6 +259,8 @@ fn regenerate_swift_ffi(root: &Path, expected: &str) -> Result<()> {
     }
     run(
         command("cargo")
+            // The child retains the same kernel lock if this coordinator is killed.
+            .stdin(lock.try_clone()?)
             .current_dir(snapshot.path.join("crates/cutout-mobile-ffi"))
             .env(
                 "CARGO_TARGET_DIR",
@@ -323,13 +325,9 @@ fn publish_swift_ffi(root: &Path, staged: &Path, source: &str) -> Result<PathBuf
         .join(FFI_GENERATIONS)
         .join(&identity)
         .join("CutoutMobileFFI");
-    if generation.exists() {
-        ensure!(
-            fs::read(generation.join(FFI_RECEIPT))? == fs::read(staged.join(FFI_RECEIPT))?,
-            "immutable Swift FFI generation has a different receipt"
-        );
-        verify_ffi_receipt(&generation, source)?;
-    } else {
+    if !generation.exists()
+        || verify_ffi_receipt(&generation, source).ok().as_deref() != Some(&identity)
+    {
         let parent = generation.parent().context("generation parent")?;
         fs::create_dir_all(parent)?;
         let staging = tempfile::Builder::new()
@@ -343,6 +341,10 @@ fn publish_swift_ffi(root: &Path, staged: &Path, source: &str) -> Result<PathBuf
             fs::copy(staged.join(relative), destination)?;
         }
         verify_ffi_receipt(staging.path(), source)?;
+        if generation.exists() {
+            // Preserve the damaged generation for diagnosis; never edit a pinned tree.
+            quarantine(&generation)?;
+        }
         fs::rename(staging.path(), &generation)?;
     }
     let current = root.join(GENERATED_PACKAGE).join("Package.swift");
@@ -408,7 +410,7 @@ fn deploy_ios(root: &Path, launch_args: &[String]) -> Result<()> {
         "iPhone deployment requires macOS"
     );
     let lock = lock_swift_ffi(root)?;
-    prepare_swift_ffi(root)?;
+    prepare_swift_ffi(root, &lock)?;
 
     let device = match env::var("CUTOUT_IOS_DEVICE_UDID") {
         Ok(device) => device,
@@ -710,6 +712,7 @@ fn source_inputs(root: &Path) -> Result<BTreeMap<PathBuf, Vec<u8>>> {
         PathBuf::from("rust-toolchain.toml"),
     ]);
     for input in [
+        ".cargo/config",
         ".cargo/config.toml",
         "devenv.nix",
         "devenv.yaml",
@@ -785,11 +788,7 @@ impl FfiSourceSnapshot {
             .join(".cutout-ffi-sources")
             .join(repository);
         let path = parent.join(expected);
-        if path.exists() {
-            ensure!(
-                source_fingerprint(&path)? == expected,
-                "FFI source snapshot was modified"
-            );
+        if path.exists() && source_fingerprint(&path).is_ok_and(|actual| actual == expected) {
             return Ok(Self { path });
         }
         fs::create_dir_all(&parent)?;
@@ -801,9 +800,26 @@ impl FfiSourceSnapshot {
             fs::create_dir_all(destination.parent().context("source parent")?)?;
             fs::write(destination, bytes)?;
         }
+        if path.exists() {
+            // Cargo can leave a modified lockfile after an interrupted build.
+            quarantine(&path)?;
+        }
         fs::rename(staging.path(), &path)?;
         Ok(Self { path })
     }
+}
+
+fn quarantine(path: &Path) -> Result<()> {
+    let parent = path.parent().context("quarantine parent")?;
+    let directory = tempfile::Builder::new()
+        .prefix(".quarantine-")
+        .tempdir_in(parent)?
+        .keep();
+    fs::rename(
+        path,
+        directory.join(path.file_name().context("quarantine name")?),
+    )?;
+    Ok(())
 }
 
 fn collect_files(root: &Path, relative: &Path, files: &mut BTreeSet<PathBuf>) -> Result<()> {
@@ -1144,6 +1160,99 @@ mod tests {
         fs::remove_dir_all(root).unwrap();
     }
 
+    #[test]
+    fn ffi_source_snapshot_repairs_poisoned_lockfile_and_copies_cargo_config() {
+        let root = env::temp_dir().join(format!("cutout-ffi-config-{}", std::process::id()));
+        fixture_sources(&root);
+        fs::create_dir_all(root.join(".cargo")).unwrap();
+        for config in [".cargo/config", ".cargo/config.toml"] {
+            fs::write(root.join(config), config).unwrap();
+        }
+        let expected = source_fingerprint(&root).unwrap();
+        let first = FfiSourceSnapshot::capture(&root, &expected).unwrap();
+        for config in [".cargo/config", ".cargo/config.toml"] {
+            assert_eq!(
+                fs::read(first.path.join(config)).unwrap(),
+                config.as_bytes()
+            );
+            fs::write(root.join(config), "changed").unwrap();
+            assert_ne!(source_fingerprint(&root).unwrap(), expected);
+            fs::write(root.join(config), config).unwrap();
+        }
+        fs::write(first.path.join("Cargo.lock"), "poisoned").unwrap();
+        let repaired = FfiSourceSnapshot::capture(&root, &expected).unwrap();
+        assert_eq!(repaired.path, first.path);
+        assert_eq!(source_fingerprint(&repaired.path).unwrap(), expected);
+        assert!(
+            fs::read_dir(repaired.path.parent().unwrap())
+                .unwrap()
+                .any(|entry| entry
+                    .unwrap()
+                    .file_name()
+                    .to_string_lossy()
+                    .starts_with(".quarantine-"))
+        );
+        fs::remove_dir_all(repaired.path.parent().unwrap()).unwrap();
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn ffi_publication_repairs_corrupt_generation_without_rewriting_valid_one() {
+        let root = env::temp_dir().join(format!("cutout-ffi-repair-{}", std::process::id()));
+        fixture_sources(&root);
+        let source = source_fingerprint(&root).unwrap();
+        let staged = root.join("staged");
+        fixture_artifact(&staged, &source, "build-a");
+        let generation = publish_swift_ffi(&root, &staged, &source).unwrap();
+        let selector = fs::read(root.join(GENERATED_PACKAGE).join("Package.swift")).unwrap();
+        fixture_artifact(&staged, &source, "build-a");
+        publish_swift_ffi(&root, &staged, &source).unwrap();
+        assert!(
+            !generation
+                .parent()
+                .unwrap()
+                .read_dir()
+                .unwrap()
+                .any(|entry| {
+                    entry
+                        .unwrap()
+                        .file_name()
+                        .to_string_lossy()
+                        .starts_with(".quarantine-")
+                })
+        );
+        fs::write(
+            generation.join("Sources/CutoutMobileFFI/cutout_mobile_ffi.swift"),
+            "bad",
+        )
+        .unwrap();
+        fixture_artifact(&staged, &source, "build-a");
+        assert_eq!(
+            publish_swift_ffi(&root, &staged, &source).unwrap(),
+            generation
+        );
+        verify_ffi_receipt(&generation, &source).unwrap();
+        assert_eq!(
+            fs::read(root.join(GENERATED_PACKAGE).join("Package.swift")).unwrap(),
+            selector
+        );
+        assert!(
+            generation
+                .parent()
+                .unwrap()
+                .read_dir()
+                .unwrap()
+                .any(|entry| {
+                    entry
+                        .unwrap()
+                        .file_name()
+                        .to_string_lossy()
+                        .starts_with(".quarantine-")
+                })
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
+
     #[cfg(unix)]
     #[test]
     fn ffi_publication_preserves_a_pinned_concurrent_reader() {
@@ -1462,6 +1571,80 @@ mod tests {
         drop(lock);
         contender.try_lock().unwrap();
         drop(contender);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn ffi_child_keeps_lock_after_coordinator_is_killed() {
+        use std::io::{BufRead, Write};
+
+        let root = env::var_os("CUTOUT_FFI_LOCK_TEST_ROOT")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| {
+                env::temp_dir().join(format!("cutout-ffi-orphan-{}", std::process::id()))
+            });
+        if env::var_os("CUTOUT_FFI_LOCK_TEST_CHILD").is_some() {
+            let lock = lock_swift_ffi(&root).unwrap();
+            let mut child = Command::new("sleep")
+                .arg("30")
+                .stdin(lock.try_clone().unwrap())
+                .spawn()
+                .unwrap();
+            println!("{}", child.id());
+            std::io::stdout().flush().unwrap();
+            child.wait().unwrap();
+            return;
+        }
+
+        let mut coordinator = Command::new(env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "tests::ffi_child_keeps_lock_after_coordinator_is_killed",
+                "--nocapture",
+            ])
+            .env("CUTOUT_FFI_LOCK_TEST_CHILD", "1")
+            .env("CUTOUT_FFI_LOCK_TEST_ROOT", &root)
+            .stdout(std::process::Stdio::piped())
+            .spawn()
+            .unwrap();
+        let mut output = std::io::BufReader::new(coordinator.stdout.take().unwrap());
+        let mut line = String::new();
+        let child_pid = loop {
+            line.clear();
+            assert_ne!(
+                output.read_line(&mut line).unwrap(),
+                0,
+                "coordinator exited early"
+            );
+            if let Ok(pid) = line.trim().parse::<u32>() {
+                break pid;
+            }
+        };
+        assert!(
+            Command::new("kill")
+                .args(["-KILL", &coordinator.id().to_string()])
+                .status()
+                .unwrap()
+                .success()
+        );
+        coordinator.wait().unwrap();
+        let contender = fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(root.join(SWIFT_FFI_LOCK))
+            .unwrap();
+        assert!(matches!(
+            contender.try_lock(),
+            Err(fs::TryLockError::WouldBlock)
+        ));
+        assert!(
+            Command::new("kill")
+                .args(["-TERM", &child_pid.to_string()])
+                .status()
+                .unwrap()
+                .success()
+        );
         fs::remove_dir_all(root).unwrap();
     }
 }
