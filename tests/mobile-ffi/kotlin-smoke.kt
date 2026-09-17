@@ -151,6 +151,7 @@ fun main() {
     }
 
     val cameraFile = File.createTempFile("cutout-camera-ffi-smoke", ".h264")
+    check(cameraFile.delete())
     MobileCameraPreviewFileSink.create(cameraFile.path).use { sink ->
         sink.writeFrame(
             MobileCameraVideoFrameDto(
