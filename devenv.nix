@@ -113,31 +113,39 @@ in
     swift test --package-path "$DEVENV_ROOT/swift/CutoutMobile"
   '';
 
-  tasks."validate:aero-live-connection" = swiftTask ''
-    echo "libcutout_commit=$(git rev-parse HEAD)"
-    exec swift run \
-      --package-path "$DEVENV_ROOT/swift/CutoutMobile" \
-      CutoutMobileLiveValidator \
-      "''${CUTOUT_AERO_VALIDATION_TIMEOUT:-45}"
-  '';
+  tasks."validate:aero-live-connection" =
+    (swiftTask ''
+      echo "libcutout_commit=$(git rev-parse HEAD)"
+      exec swift run \
+        --package-path "$DEVENV_ROOT/swift/CutoutMobile" \
+        CutoutMobileLiveValidator \
+        "''${CUTOUT_AERO_VALIDATION_TIMEOUT:-45}"
+    '')
+    // {
+      showOutput = true;
+    };
 
-  tasks."validate:melk-live-controller" = swiftTask ''
-    timeout_seconds="''${CUTOUT_MELK_VALIDATION_TIMEOUT:-60}"
-    platform_identifier="''${CUTOUT_MELK_PLATFORM_IDENTIFIER:-}"
-    if ! [[ "$timeout_seconds" =~ ^[0-9]+([.][0-9]+)?$ ]]; then
-      echo "CUTOUT_MELK_VALIDATION_TIMEOUT must be a non-negative number of seconds" >&2
-      exit 2
-    fi
-    echo "libcutout_commit=$(git rev-parse HEAD)"
-    args=("$timeout_seconds")
-    if [[ -n "$platform_identifier" ]]; then
-      args+=("$platform_identifier")
-    fi
-    exec swift run \
-      --package-path "$DEVENV_ROOT/swift/CutoutMobile" \
-      MelkLightingLiveValidator \
-      "''${args[@]}"
-  '';
+  tasks."validate:melk-live-controller" =
+    (swiftTask ''
+      timeout_seconds="''${CUTOUT_MELK_VALIDATION_TIMEOUT:-60}"
+      platform_identifier="''${CUTOUT_MELK_PLATFORM_IDENTIFIER:-}"
+      if ! [[ "$timeout_seconds" =~ ^[0-9]+([.][0-9]+)?$ ]]; then
+        echo "CUTOUT_MELK_VALIDATION_TIMEOUT must be a non-negative number of seconds" >&2
+        exit 2
+      fi
+      echo "libcutout_commit=$(git rev-parse HEAD)"
+      args=("$timeout_seconds")
+      if [[ -n "$platform_identifier" ]]; then
+        args+=("$platform_identifier")
+      fi
+      exec swift run \
+        --package-path "$DEVENV_ROOT/swift/CutoutMobile" \
+        MelkLightingLiveValidator \
+        "''${args[@]}"
+    '')
+    // {
+      showOutput = true;
+    };
 
   tasks."test:kotlin-bindings-smoke".exec = ''
     cargo build -p cutout-mobile-ffi
