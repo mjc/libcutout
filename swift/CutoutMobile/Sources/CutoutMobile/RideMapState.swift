@@ -718,6 +718,9 @@ public final class MobileRideMapState: @unchecked Sendable {
         }
         self.init(database: database)
         if let core, core.currentSnapshot(atMs: Self.monotonicMillisecondsNow()) != nil {
+            // Discard is only valid for a stopped ride. Finish any leftover debug
+            // ride before clearing it so each convenience instance starts empty.
+            _ = try? core.stop(atMs: Self.monotonicMillisecondsNow())
             _ = try? core.discard()
         }
     }

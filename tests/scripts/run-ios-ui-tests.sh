@@ -113,6 +113,33 @@ fi
 assert_equal "Result.xcresult" "$(basename "$first_result")"
 assert_equal "$tmp/derived-data/TestResults" "$(dirname "$(dirname "$first_result")")"
 
+# A timeout must stop resistant descendants before this runner releases its lock.
+mkdir -p "$tmp/bin"
+cp "$root/tests/scripts/fixtures/ui-test-timeout-cargo.sh" "$tmp/bin/cargo"
+chmod +x "$tmp/bin/cargo"
+if PATH="$tmp/bin:$PATH" CUTOUT_TIMEOUT_TEST_DIR="$tmp" \
+  CUTOUT_IOS_UI_TEST_DERIVED_DATA="$tmp/timeout-derived-data" \
+  "$root/scripts/run-ios-ui-tests.sh" --timeout 1 \
+  -only-testing:CutoutAppUITests/CutoutAppUITests/testExample >"$tmp/timeout.log" 2>&1
+then
+  echo "expected UI test timeout to fail" >&2
+  exit 1
+fi
+[[ -f "$tmp/child-started" && -f "$tmp/child.pid" ]]
+child="$(<"$tmp/child.pid")"
+for attempt in {1..50}; do
+  if ! kill -0 "$child" 2>/dev/null; then
+    break
+  fi
+  sleep 0.1
+done
+if [[ "$child" =~ ^[0-9]+$ ]] && kill -0 "$child" 2>/dev/null; then
+  kill "$child" 2>/dev/null || true
+  echo "UI test timeout left a build descendant running" >&2
+  exit 1
+fi
+[[ ! -e "$tmp/timeout-derived-data/.run-ios-ui-tests.lock" ]]
+
 assert_equal "2" "$(cutout_require_complete_ios_ui_test_summary '{"totalTestCount":2,"skippedTests":0}')"
 if cutout_require_complete_ios_ui_test_summary \
   '{"totalTestCount":2,"skippedTests":1}' >"$tmp/skipped-result.log" 2>&1

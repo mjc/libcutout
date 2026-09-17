@@ -1,4 +1,4 @@
-// swift-tools-version: 6.0
+// swift-tools-version: 6.1
 
 import PackageDescription
 
@@ -12,7 +12,7 @@ let package = Package(
         .library(name: "CutoutMobile", targets: ["CutoutMobile"]),
     ],
     dependencies: [
-        .package(path: "../../target/swift-ffi/CutoutMobileFFI"),
+        .package(name: "CutoutMobileFFI", path: "../../target/swift-ffi"),
         .package(url: "https://github.com/spotify/ios-sdk.git", from: "5.0.1"),
     ],
     targets: [
@@ -22,7 +22,8 @@ let package = Package(
                 .product(name: "CutoutMobileFFI", package: "CutoutMobileFFI"),
                 .product(name: "SpotifyiOS", package: "ios-sdk", condition: .when(platforms: [.iOS])),
             ],
-            resources: [.process("Localizable.xcstrings")]
+            resources: [.process("Localizable.xcstrings")],
+            plugins: [.plugin(name: "VerifyRustArtifact")]
         ),
         .testTarget(
             name: "CutoutMobileTests",
@@ -62,5 +63,6 @@ let package = Package(
             dependencies: ["CutoutMobile"],
             path: "Tests/MelkLightingLiveValidator"
         ),
+        .plugin(name: "VerifyRustArtifact", capability: .buildTool()),
     ]
 )

@@ -38,7 +38,6 @@ source "$script_directory/swift-package-common.sh"
 
 root="$(cutout_repo_root)"
 cd "$root"
-cutout_ensure_swift_ffi_build_input "$root"
 
 cutout_use_xcode_developer_dir
 
@@ -262,8 +261,38 @@ if [[ "$quiet" == true ]]; then
   xcodebuild_args+=(-quiet)
 fi
 
+run_timed_xcodebuild() {
+  local duration="$1"
+  shift
+  local pid deadline=$((SECONDS + duration))
+  "$@" &
+  pid=$!
+  while /bin/kill -0 "$pid" 2>/dev/null; do
+    if (( SECONDS >= deadline )); then
+      kill_descendants() {
+        local signal="$1" parent="$2" child
+        for child in $(/usr/bin/pgrep -P "$parent" 2>/dev/null); do
+          kill_descendants "$signal" "$child"
+          /bin/kill -"$signal" "$child" 2>/dev/null || true
+        done
+      }
+      kill_descendants TERM "$pid"
+      for _ in {1..10}; do
+        /bin/kill -0 "$pid" 2>/dev/null || break
+        sleep 0.1
+      done
+      kill_descendants KILL "$pid"
+      /bin/kill -KILL "$pid" 2>/dev/null || true
+      wait "$pid" 2>/dev/null || true
+      return 124
+    fi
+    sleep 1
+  done
+  wait "$pid"
+}
+
 if [[ "$clean" == true ]]; then
-  /usr/bin/xcrun xcodebuild "${xcodebuild_args[@]}" clean
+  cargo cutout xcodebuild -- "${xcodebuild_args[@]}" clean
 fi
 
 if [[ "$mode" == "enumerate-tests" ]]; then
@@ -272,7 +301,7 @@ if [[ "$mode" == "enumerate-tests" ]]; then
     exit 2
   fi
   mkdir -p "$(dirname "$enumeration_output")"
-  /usr/bin/xcrun xcodebuild \
+  cargo cutout xcodebuild -- \
     "${xcodebuild_args[@]}" \
     -parallel-testing-enabled NO \
     -enumerate-tests \
@@ -302,8 +331,8 @@ if [[ "$mode" == "test" ]]; then
   result_bundle="$(cutout_create_ios_ui_test_result_bundle "$derived_data")"
   test_status=0
   test_started_at=$SECONDS
-  if timeout --foreground --kill-after=30 "$ui_test_run_timeout" \
-    /usr/bin/xcrun xcodebuild \
+  if run_timed_xcodebuild "$ui_test_run_timeout" \
+    cargo cutout xcodebuild -- \
     "${xcodebuild_args[@]}" \
     -parallel-testing-enabled NO \
     -collect-test-diagnostics never \
@@ -332,4 +361,4 @@ if [[ "$mode" == "test" ]]; then
   exit "$test_status"
 fi
 
-/usr/bin/xcrun xcodebuild "${xcodebuild_args[@]}" build-for-testing
+cargo cutout xcodebuild -- "${xcodebuild_args[@]}" build-for-testing

@@ -625,8 +625,10 @@ dependencies = [
  "anyhow",
  "cutout-core",
  "cutout-protocols",
+ "libc",
  "serde_json",
  "sha2",
+ "tempfile",
 ]
 
 [[package]]

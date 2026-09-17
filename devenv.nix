@@ -6,11 +6,20 @@
 }:
 
 let
+  swiftToolchainCheck = ''
+    expected_developer_dir="''${CUTOUT_DEVELOPER_DIR:-/Applications/Xcode-beta.app/Contents/Developer}"
+    if [[ "''${DEVELOPER_DIR:-}" != "$expected_developer_dir" || -n "''${SDKROOT:-}" ]]; then
+      echo "Devenv must select $expected_developer_dir and clear inherited SDKROOT before running Swift" >&2
+      exit 1
+    fi
+    # A version check alone misses mismatched SDKs. Exercise SDK module loading
+    # with the same bare Swift compiler used by direct shell commands.
+    printf 'import Foundation\n' | swiftc -typecheck -
+  '';
   swiftTask = command: {
     exec = ''
       source "$DEVENV_ROOT/scripts/swift-package-common.sh"
       cutout_use_xcode_developer_dir
-      cutout_ensure_swift_ffi_build_input "$DEVENV_ROOT"
       ${command}
     '';
     after = [ "check:xcode-ios" ];
@@ -40,7 +49,9 @@ in
     pkgs.python3Packages.pillow
     pkgs.secretspec
   ]
-  ++ lib.optionals pkgs.stdenv.isDarwin [ pkgs.cargo-swift ]
+  ++ lib.optionals pkgs.stdenv.isDarwin [
+    pkgs.cargo-swift
+  ]
   ++ lib.optionals pkgs.stdenv.isLinux [
     pkgs.dbus
     pkgs.pkg-config
@@ -77,6 +88,20 @@ in
     cargo test --workspace --doc --locked
   '';
 
+  # One deterministic test entry point for local use and CI. Keep live-device
+  # validators and deployment tasks opt-in because they require external state.
+  tasks."project:tests" = {
+    exec = "true";
+    after = [
+      "project:test"
+      "test:kotlin-bindings-smoke"
+    ]
+    ++ lib.optionals pkgs.stdenv.isDarwin [
+      "test:swift-package"
+      "test:shell-regressions"
+    ];
+  };
+
   tasks."project:dependency-policy".exec = "cargo deny --locked check";
 
   tasks."project:quality-gate" = {
@@ -84,8 +109,11 @@ in
     exec = "treefmt --ci";
     after = [
       "project:lint"
-      "project:test"
+      "project:tests"
       "project:dependency-policy"
+    ]
+    ++ lib.optionals pkgs.stdenv.isDarwin [
+      "build:ios-ui-tests"
     ];
   };
 
@@ -100,6 +128,7 @@ in
       echo "iOS and Xcode tasks require Darwin/Xcode" >&2
       exit 1
     fi
+    ${swiftToolchainCheck}
     cutout_use_xcode_developer_dir
     printf 'Using Xcode developer directory: %s\n' "$DEVELOPER_DIR"
     /usr/bin/xcrun --find xcodebuild
@@ -110,11 +139,11 @@ in
   '';
 
   tasks."test:swift-package" = swiftTask ''
-    swift test --package-path "$DEVENV_ROOT/swift/CutoutMobile"
+    cargo cutout swift -- test --package-path "$DEVENV_ROOT/swift/CutoutMobile"
   '';
 
   tasks."test:swift-settings-simulator" = swiftTask ''
-    swift test \
+    cargo cutout swift -- test \
       --package-path "$DEVENV_ROOT/swift/CutoutMobile" \
       --filter AeroSettingsSimulatorTests
   '';
@@ -122,7 +151,7 @@ in
   tasks."validate:aero-live-connection" =
     (swiftTask ''
       echo "libcutout_commit=$(git rev-parse HEAD)"
-      exec swift run \
+      exec cargo cutout swift -- run \
         --package-path "$DEVENV_ROOT/swift/CutoutMobile" \
         CutoutMobileLiveValidator \
         "''${CUTOUT_AERO_VALIDATION_TIMEOUT:-45}"
@@ -138,7 +167,6 @@ in
       exit 1
     fi
     cutout_use_xcode_developer_dir
-    cutout_ensure_swift_ffi_build_input "$DEVENV_ROOT"
     timeout_seconds="''${CUTOUT_MELK_VALIDATION_TIMEOUT:-60}"
     platform_identifier="''${CUTOUT_MELK_PLATFORM_IDENTIFIER:-}"
     if ! [[ "$timeout_seconds" =~ ^[0-9]+([.][0-9]+)?$ ]]; then
@@ -150,7 +178,7 @@ in
     if [[ -n "$platform_identifier" ]]; then
       args+=("$platform_identifier")
     fi
-    exec swift run \
+    exec cargo cutout swift -- run \
       --package-path "$DEVENV_ROOT/swift/CutoutMobile" \
       MelkLightingLiveValidator \
       "''${args[@]}"
@@ -171,14 +199,27 @@ in
       -include-runtime \
       -d target/uniffi-smoke/kotlin-smoke.jar
     java \
-      -Djava.library.path="$DEVENV_ROOT/target/debug" \
+      -Djna.library.path="$PWD/target/debug" \
       -cp "target/uniffi-smoke/kotlin-smoke.jar:$JNA_JAR" \
       Kotlin_smokeKt
   '';
   tasks."build:ios-ui-tests" = {
-    exec = "scripts/run-ios-ui-tests.sh --build-only";
+    exec = "CUTOUT_IOS_TEST_DESTINATION='generic/platform=iOS Simulator' scripts/run-ios-ui-tests.sh --build-only ARCHS=arm64 ONLY_ACTIVE_ARCH=YES";
     after = [ "check:xcode-ios" ];
   };
+  tasks."test:shell-regressions".exec = ''
+    bash tests/scripts/swift-package-common.sh
+    bash tests/scripts/run-ios-ui-tests.sh
+    bash tests/fixtures/ffi-freshness/run.sh
+    bash tests/fixtures/ffi-production/run.sh
+  '';
+  tasks."build:ios-app" = swiftTask ''
+    cargo cutout xcodebuild -- \
+      -project "$DEVENV_ROOT/swift/CutoutMobile/CutoutApp.xcodeproj" \
+      -scheme CutoutApp \
+      -destination 'generic/platform=iOS Simulator' \
+      ARCHS=arm64 ONLY_ACTIVE_ARCH=YES build
+  '';
   tasks."run:ios-app-on-mac" = {
     exec = ''
       source "$DEVENV_ROOT/scripts/swift-package-common.sh"
@@ -211,9 +252,16 @@ in
     after = [ "check:xcode-ios" ];
   };
 
+  tasks."devenv:enterTest".exec = lib.mkIf pkgs.stdenv.isDarwin swiftToolchainCheck;
+
   enterShell = lib.optionalString pkgs.stdenv.isDarwin ''
     export PATH="/usr/bin:/bin:/usr/sbin:/sbin:$PATH"
-    unset CC CXX LD AR RANLIB SDKROOT
+    # Nix's SDK setup can supply DEVELOPER_DIR independently of SDKROOT.
+    # Keep direct Swift commands on the same Xcode toolchain as the iOS tasks.
+    export DEVELOPER_DIR="''${CUTOUT_DEVELOPER_DIR:-/Applications/Xcode-beta.app/Contents/Developer}"
+    # Task environment propagation retains inherited variables when merely unset.
+    export SDKROOT=""
+    unset CC CXX LD AR RANLIB
     unset NIX_CC NIX_CFLAGS_COMPILE NIX_CXXSTDLIB_COMPILE NIX_LDFLAGS
     unset CARGO_TARGET_AARCH64_APPLE_DARWIN_LINKER
     unset CARGO_TARGET_X86_64_APPLE_DARWIN_LINKER
