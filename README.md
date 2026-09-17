@@ -15,7 +15,7 @@ devenv tasks run project:quality-gate
 devenv tasks run test:swift-package
 devenv tasks run build:swift-ffi-package
 devenv tasks run validate:aero-live-connection
-devenv tasks run validate:melk-live-controller
+devenv shell -- cutout-melk-live
 ```
 
 Format Rust and Nix with `devenv shell -- treefmt`. The treefmt hook uses the

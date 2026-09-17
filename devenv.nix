@@ -125,27 +125,30 @@ in
       showOutput = true;
     };
 
-  tasks."validate:melk-live-controller" =
-    (swiftTask ''
-      timeout_seconds="''${CUTOUT_MELK_VALIDATION_TIMEOUT:-60}"
-      platform_identifier="''${CUTOUT_MELK_PLATFORM_IDENTIFIER:-}"
-      if ! [[ "$timeout_seconds" =~ ^[0-9]+([.][0-9]+)?$ ]]; then
-        echo "CUTOUT_MELK_VALIDATION_TIMEOUT must be a non-negative number of seconds" >&2
-        exit 2
-      fi
-      echo "libcutout_commit=$(git rev-parse HEAD)"
-      args=("$timeout_seconds")
-      if [[ -n "$platform_identifier" ]]; then
-        args+=("$platform_identifier")
-      fi
-      exec swift run \
-        --package-path "$DEVENV_ROOT/swift/CutoutMobile" \
-        MelkLightingLiveValidator \
-        "''${args[@]}"
-    '')
-    // {
-      showOutput = true;
-    };
+  scripts.cutout-melk-live.exec = ''
+    source "$DEVENV_ROOT/scripts/swift-package-common.sh"
+    if [[ "$(cutout_host_os)" != Darwin ]]; then
+      echo "MELK validation requires Darwin/CoreBluetooth" >&2
+      exit 1
+    fi
+    cutout_use_xcode_developer_dir
+    cutout_ensure_swift_ffi_build_input "$DEVENV_ROOT"
+    timeout_seconds="''${CUTOUT_MELK_VALIDATION_TIMEOUT:-60}"
+    platform_identifier="''${CUTOUT_MELK_PLATFORM_IDENTIFIER:-}"
+    if ! [[ "$timeout_seconds" =~ ^[0-9]+([.][0-9]+)?$ ]]; then
+      echo "CUTOUT_MELK_VALIDATION_TIMEOUT must be a non-negative number of seconds" >&2
+      exit 2
+    fi
+    echo "libcutout_commit=$(git rev-parse HEAD)"
+    args=("$timeout_seconds")
+    if [[ -n "$platform_identifier" ]]; then
+      args+=("$platform_identifier")
+    fi
+    exec swift run \
+      --package-path "$DEVENV_ROOT/swift/CutoutMobile" \
+      MelkLightingLiveValidator \
+      "''${args[@]}"
+  '';
 
   tasks."test:kotlin-bindings-smoke".exec = ''
     cargo build -p cutout-mobile-ffi

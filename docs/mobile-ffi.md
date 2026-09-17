@@ -113,7 +113,7 @@ The shared ensure operation prepares the ignored package before activating
 SourceKit or building Swift. It is safe to call repeatedly; an unchanged
 fingerprint is a no-op.
 
-Prepare the generated dependency for SourceKit, MCPLS, or Xcode with:
+Prepare the generated dependency for SourceKit or Xcode with:
 
 ```console
 devenv tasks run build:swift-ffi-package
@@ -134,7 +134,7 @@ Useful app commands are:
 devenv tasks run run:ios-app-on-mac
 devenv tasks run deploy:ios-device
 devenv tasks run validate:aero-live-connection
-devenv tasks run validate:melk-live-controller
+devenv shell -- cutout-melk-live
 ```
 
 The Mac command builds the iPhone app for Apple Silicon Mac and opens it. The
