@@ -815,11 +815,24 @@ fn verify_swift_ffi(package: &Path) -> Result<()> {
             let library = package.join(format!(
                 "cutout_mobile_ffiFFI.xcframework/{slice}/libcutout_mobile_ffi.a"
             ));
-            let status = Command::new("/usr/bin/lipo")
+            let output = Command::new("/usr/bin/lipo")
                 .arg(&library)
-                .args(["-verify_arch", "arm64"])
-                .status()?;
-            ensure!(status.success(), "{} lacks arm64", library.display());
+                .arg("-archs")
+                .output()
+                .with_context(|| format!("listing architectures in {}", library.display()))?;
+            ensure!(
+                output.status.success(),
+                "failed to inspect architectures in {}",
+                library.display()
+            );
+            let architectures = String::from_utf8(output.stdout)
+                .with_context(|| format!("decoding architectures in {}", library.display()))?;
+            ensure!(
+                architectures.trim() == "arm64",
+                "{} has unexpected architectures: {}",
+                library.display(),
+                architectures.trim()
+            );
         }
     }
     Ok(())
