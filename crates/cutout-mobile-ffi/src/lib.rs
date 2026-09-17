@@ -118,9 +118,9 @@ use cutout_protocols::{
     NovatekReadCommand, NovatekRecordingCommand, NovatekStillCaptureCommand,
     NovatekStoragePresence, PendingProbe, ProtocolFamilyClassification, ProtocolFamilyState,
     ProtocolModelIdentityEvidence, RetinaH264FileSink, RetinaRtspError, RetinaRtspPreviewSession,
-    RetinaVideoConfiguration, RetinaVideoFrame, StagedIdentityInput, StagedIdentityOutcome,
-    VETERAN_FIELD_AUTO_SHUTDOWN_TIME_REMAINING_SECONDS, VETERAN_FIELD_CHARGE_MODE,
-    VETERAN_FIELD_PEDALS_MODE, VETERAN_FIELD_SPEED_ALERT_DECI_KMH,
+    RetinaVideoClockRate, RetinaVideoConfiguration, RetinaVideoFrame, StagedIdentityInput,
+    StagedIdentityOutcome, VETERAN_FIELD_AUTO_SHUTDOWN_TIME_REMAINING_SECONDS,
+    VETERAN_FIELD_CHARGE_MODE, VETERAN_FIELD_PEDALS_MODE, VETERAN_FIELD_SPEED_ALERT_DECI_KMH,
     VETERAN_FIELD_SPEED_TILTBACK_DECI_KMH, VescBatteryType as CoreVescBatteryType,
     VescBoardProfile as CoreVescBoardProfile, VescReadOnlySession as CoreVescReadOnlySession,
     begode_identification_probes, closest_known_model, identify_known_model, is_r3_pro_firmware,
@@ -498,12 +498,13 @@ impl MobileCameraMediaProvenanceInput {
 
 impl From<RetinaVideoFrame> for MobileCameraVideoFrameDto {
     fn from(frame: RetinaVideoFrame) -> Self {
+        let (data, loss, is_random_access_point, timestamp, clock_rate_hz) = frame.into_parts();
         Self {
-            data: frame.data,
-            loss: frame.loss,
-            is_random_access_point: frame.is_random_access_point,
-            timestamp: frame.timestamp,
-            clock_rate_hz: frame.clock_rate_hz,
+            data,
+            loss,
+            is_random_access_point,
+            timestamp,
+            clock_rate_hz: clock_rate_hz.get(),
         }
     }
 }
@@ -519,15 +520,18 @@ impl From<&RetinaVideoConfiguration> for MobileCameraVideoConfigurationDto {
     }
 }
 
-impl From<MobileCameraVideoFrameDto> for RetinaVideoFrame {
-    fn from(frame: MobileCameraVideoFrameDto) -> Self {
-        Self::new(
-            frame.data,
-            frame.loss,
-            frame.is_random_access_point,
-            frame.timestamp,
-            frame.clock_rate_hz,
+impl MobileCameraVideoFrameDto {
+    fn into_retina_frame(self) -> Result<RetinaVideoFrame, MobileCameraPreviewFileError> {
+        let clock_rate_hz = RetinaVideoClockRate::new(self.clock_rate_hz)
+            .ok_or(MobileCameraPreviewFileError::Write)?;
+        RetinaVideoFrame::new(
+            self.data,
+            self.loss,
+            self.is_random_access_point,
+            self.timestamp,
+            clock_rate_hz,
         )
+        .map_err(|_| MobileCameraPreviewFileError::Write)
     }
 }
 
@@ -696,7 +700,8 @@ impl MobileCameraPreviewFileSink {
         let sink = inner
             .as_mut()
             .ok_or(MobileCameraPreviewFileError::Finished)?;
-        sink.write_frame(&frame.into())
+        let frame = frame.into_retina_frame()?;
+        sink.write_frame(&frame)
             .map_err(|_| MobileCameraPreviewFileError::Write)
     }
 
@@ -18731,6 +18736,33 @@ mod tests {
             parse_mobile_ride_id(&MobileRideIdDto { bytes: vec![0; 15] }),
             Err(MobileRideDatabaseError::InvalidIdentifier)
         ));
+    }
+
+    #[test]
+    fn mobile_preview_frame_conversion_rejects_invalid_clock_rate_and_size() {
+        let invalid_clock_rate = MobileCameraVideoFrameDto {
+            data: vec![0, 0, 0, 1, 0x65],
+            loss: 0,
+            is_random_access_point: false,
+            timestamp: 0,
+            clock_rate_hz: 0,
+        };
+        assert_eq!(
+            invalid_clock_rate.into_retina_frame(),
+            Err(MobileCameraPreviewFileError::Write)
+        );
+
+        let oversized = MobileCameraVideoFrameDto {
+            data: vec![0; 8 * 1024 * 1024 + 1],
+            loss: 0,
+            is_random_access_point: false,
+            timestamp: 0,
+            clock_rate_hz: 90_000,
+        };
+        assert_eq!(
+            oversized.into_retina_frame(),
+            Err(MobileCameraPreviewFileError::Write)
+        );
     }
 
     #[test]
