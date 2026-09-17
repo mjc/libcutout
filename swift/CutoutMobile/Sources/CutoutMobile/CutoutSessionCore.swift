@@ -523,7 +523,9 @@ public final class CutoutSessionCore: NSObject {
     private var bmsStorageSessionIdentifier = UUID().uuidString
     private let deviceDetectionSession: DeviceDetectionSession
     private let identificationProbeTransport: IdentificationProbeTransportCoordinator
-    private let rideMapAutomaticRecordingPolicy: MobileRideMapAutomaticRecordingPolicyDto
+    private var rideMapAutomaticRecordingPolicy: MobileRideMapAutomaticRecordingPolicyDto {
+        selectedDeviceStore.platformIdentifier == nil ? .manualOnly : .startAndResume
+    }
     private var begodeProbeExpiryWorkItem: DispatchWorkItem?
     private var protocolDetectionExpiryWorkItem: DispatchWorkItem?
     private var pendingDisplayState: RideDisplayState?
@@ -605,8 +607,7 @@ public final class CutoutSessionCore: NSObject {
         reconnectJitter: @escaping () -> Double = { Double.random(in: 0...1) },
         selectedDeviceStore: DevicePickerSelectionStore = DevicePickerSelectionStore(),
         wallClock: @escaping () -> Date = { Date() },
-        rideMapState: MobileRideMapState? = nil,
-        rideMapAutomaticRecordingPolicy: MobileRideMapAutomaticRecordingPolicyDto = .manualOnly
+        rideMapState: MobileRideMapState? = nil
     ) {
         let rustSessionState = database.map {
             CutoutSessionStateHandle.withDatabase(database: $0)
@@ -620,7 +621,6 @@ public final class CutoutSessionCore: NSObject {
         self.clock = clock
         self.wallClock = wallClock
         self.rideMapState = rideMapState
-        self.rideMapAutomaticRecordingPolicy = rideMapAutomaticRecordingPolicy
         self.testScript = testScript
         self.reconnectController = ConnectionReconnectController(scheduler: reconnectScheduler)
         self.reconnectJitter = reconnectJitter
@@ -634,8 +634,7 @@ public final class CutoutSessionCore: NSObject {
         clock: MonotonicClock,
         selectedDeviceStore: DevicePickerSelectionStore = DevicePickerSelectionStore(),
         wallClock: @escaping () -> Date = { Date() },
-        rideMapState: MobileRideMapState? = nil,
-        rideMapAutomaticRecordingPolicy: MobileRideMapAutomaticRecordingPolicyDto = .manualOnly
+        rideMapState: MobileRideMapState? = nil
     ) {
         let rustSessionState = database.map {
             CutoutSessionStateHandle.withDatabase(database: $0)
@@ -649,7 +648,6 @@ public final class CutoutSessionCore: NSObject {
         self.clock = clock
         self.wallClock = wallClock
         self.rideMapState = rideMapState
-        self.rideMapAutomaticRecordingPolicy = rideMapAutomaticRecordingPolicy
         self.reconnectController = ConnectionReconnectController(scheduler: MainQueueReconnectScheduler())
         self.reconnectJitter = { Double.random(in: 0...1) }
         self.selectedDeviceStore = selectedDeviceStore

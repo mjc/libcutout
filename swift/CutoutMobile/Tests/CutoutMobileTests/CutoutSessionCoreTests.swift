@@ -526,12 +526,10 @@ final class CutoutSessionCoreTests: XCTestCase {
     func testScriptedLiveConnectionStartsRideMapAndPublishesSnapshot() throws {
         let live = expectation(description: "scripted session reaches live")
         let rideStarted = expectation(description: "ride-map recording starts")
-        rideStarted.assertForOverFulfill = false
         let suiteName = "CutoutSessionCoreTests.rideMapAutoStart.\(UUID().uuidString)"
         let defaults = UserDefaults(suiteName: suiteName)!
         defer { defaults.removePersistentDomain(forName: suiteName) }
-        let database = try XCTUnwrap(MobileRideMapState.debugDatabase)
-        let selectedDeviceStore = DevicePickerSelectionStore(database: database, defaults: defaults)
+        let selectedDeviceStore = DevicePickerSelectionStore(defaults: defaults)
         selectedDeviceStore.save(platformIdentifier: scriptedVescCandidate.platformIdentifier)
         let core = CutoutSessionCore(
             testScript: CutoutSessionTestScript(
@@ -568,8 +566,7 @@ final class CutoutSessionCoreTests: XCTestCase {
         let suiteName = "CutoutSessionCoreTests.rideMapLocation.\(UUID().uuidString)"
         let defaults = UserDefaults(suiteName: suiteName)!
         defer { defaults.removePersistentDomain(forName: suiteName) }
-        let database = try XCTUnwrap(MobileRideMapState.debugDatabase)
-        let selectedDeviceStore = DevicePickerSelectionStore(database: database, defaults: defaults)
+        let selectedDeviceStore = DevicePickerSelectionStore(defaults: defaults)
         selectedDeviceStore.save(platformIdentifier: scriptedVescCandidate.platformIdentifier)
         let core = CutoutSessionCore(
             testScript: CutoutSessionTestScript(
