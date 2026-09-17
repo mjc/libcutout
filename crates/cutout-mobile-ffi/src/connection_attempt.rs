@@ -187,18 +187,16 @@ impl CutoutSessionStateHandle {
         ride_map: Arc<MobileRideMapCore>,
         token: MobileConnectionAttemptTokenDto,
         at_ms: u64,
-    ) -> Result<Option<MobileRideMapCoreSnapshotDto>, MobileRideMapCoreErrorDto> {
+    ) -> Result<MobileRideMapCoreSnapshotDto, MobileRideMapCoreErrorDto> {
         let token = token.into();
-        let state = self.lock_inner();
-        let verified = state
-            .session_state()
-            .connection
-            .verified_attempt(&token)
-            .ok_or(MobileRideMapCoreErrorDto::StaleConnection)?;
+        let _state = self.lock_inner();
+        if !_state.session_state().connection.is_verified(&token) {
+            return Err(MobileRideMapCoreErrorDto::StaleConnection);
+        }
         ride_map.ensure_recording_for_vehicle_on_connection(
-            verified.platform_identifier().to_owned(),
+            token.platform_identifier().to_owned(),
             at_ms,
-            verified.generation(),
+            token.generation(),
         )
     }
 

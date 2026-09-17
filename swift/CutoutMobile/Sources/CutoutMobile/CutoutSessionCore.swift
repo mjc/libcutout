@@ -2050,12 +2050,14 @@ public final class CutoutSessionCore: NSObject {
     private func observeRideMapConnection(at receivedAt: MonotonicMilliseconds) {
         guard let rideMapState,
               rideMapState.initializationError == nil,
-              let platformIdentifier = protocolIdentityCandidate?.platformIdentifier
+              protocolIdentityCandidate != nil
         else {
             return
         }
 
-        let connectionGeneration = connectionSnapshot.generation
+        let snapshot = connectionSnapshot
+        guard let token = snapshot.token else { return }
+        let connectionGeneration = token.generation
         let queue = rideMapQueue
         let reference = WeakCutoutSessionCoreReference(self)
         queue.async {
@@ -2063,14 +2065,10 @@ public final class CutoutSessionCore: NSObject {
                   self.connectionSnapshot.generation == connectionGeneration
             else { return }
             do {
-                _ = try rideMapState.ensureRecordingForVehicleOnConnection(
-                    platformIdentifier: platformIdentifier,
+                _ = try rideMapState.ensureRecordingForVerifiedConnection(
+                    connectionState: self.rustSessionState,
+                    token: token,
                     atMs: receivedAt.rawValue,
-                    connectionGeneration: connectionGeneration
-                )
-                _ = try rideMapState.observeVehicleConnection(
-                    platformIdentifier: platformIdentifier,
-                    atMs: receivedAt.rawValue
                 )
                 if snapshot != nil {
                     // Admission returns the current ride for repeated notifications too.
@@ -2100,6 +2098,8 @@ public final class CutoutSessionCore: NSObject {
                     self.publishRideMapSnapshot(snapshot)
                 }
                 self.synchronizeRideMapLocationDemand()
+            } catch let error as MobileRideMapError where error == .staleConnection {
+                return
             } catch let error as MobileRideMapError {
                 self.publishRideMapError(error)
                 self.recordRideMapDiagnostic("ride_map_connection_error=\(error)")

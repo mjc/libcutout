@@ -4535,6 +4535,9 @@ pub enum MobileRideMapCoreErrorDto {
     /// The connected vehicle identity is empty after trimming.
     #[error("invalid vehicle identity")]
     InvalidVehicleIdentity,
+    /// The connection attempt is no longer the current verified attempt.
+    #[error("stale verified connection attempt")]
+    StaleConnection,
     /// The route display budget, viewport, or privacy policy is invalid.
     #[error("invalid route projection")]
     InvalidRouteProjection,
