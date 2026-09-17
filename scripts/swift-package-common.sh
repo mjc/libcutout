@@ -116,6 +116,17 @@ cutout_build_ios_app_bundle() {
       return 2
       ;;
   esac
+  if [[ "$project" != swift/CutoutMobile/CutoutApp.xcodeproj || "$scheme" != CutoutApp ]]; then
+    echo "iOS app bundle helper only supports the CutoutApp project and scheme" >&2
+    return 2
+  fi
+  case "$destination" in
+    platform=macOS|platform=macOS,*) ;;
+    *)
+      echo "iOS app bundle helper only supports a macOS destination" >&2
+      return 2
+      ;;
+  esac
   product="$derived_data/Build/Products/$configuration-iphoneos/CutoutApp.app"
 
   cutout_use_xcode_developer_dir

@@ -52,9 +52,17 @@ environment resolver or source-fingerprint early reuse shortcut.
 The generator keeps private source snapshots in the repository's sibling
 `.cutout-ffi-sources/<repository-path-hash>/<source-hash>` directory. This preserves
 Cargo's ancestor/global configuration lookup without loading the project's
-configuration twice. It copies those sources once, preserving compilation paths
-and mtimes across repeated prepares so Cargo can reuse its cache. A lock
+configuration twice. Both `.cargo/config` and `.cargo/config.toml`, when present,
+are copied so Cargo applies its normal precedence. It copies those sources once,
+preserving compilation paths and mtimes across repeated prepares so Cargo can
+reuse its cache. A damaged private snapshot (including a Cargo-rewritten lockfile)
+is moved aside and rebuilt from current inputs. A corrupt published generation is
+likewise quarantined and replaced from a verified staged package; healthy pinned
+generations are never modified. Recovery has a brief rename gap for readers of
+the already-corrupt path. A lock
 serializes generation and holds the selector stable throughout supported builds.
+The noninteractive Cargo generator inherits a clone of that lock on stdin, so
+an orphaned generator retains ownership if its coordinating process is killed.
 The native output receipt identifies the immutable
 generation; unchanged output avoids rewriting the selector, but never skips
 the Cargo invocation.
@@ -119,9 +127,9 @@ The treefmt Git hook uses the same configuration. The quality gate runs
 inputs while they run. This command can rewrite files; use a disposable
 checkout in CI. Shell entry does not automatically run the treefmt task.
 
-The `cutout-dev` Rust tests check that generated FFI inputs are present,
-nonempty, and include a package manifest. They run with the workspace tests;
-there is no separate shell validation layer.
+The `cutout-dev` Rust tests check generation, receipts, recovery, and lock
+ownership. The shell tests cover app-product selection and UI-test timeout
+cleanup without running on a device.
 
 The native warm-cache regression changes only a Rust function's implementation
 and verifies A then B at runtime through default SwiftPM and Xcode, without
@@ -203,10 +211,13 @@ devenv tasks run validate:aero-live-connection
 devenv shell -- cutout-melk-live
 ```
 
-The Mac command builds the iPhone app for Apple Silicon Mac and opens it. The
-Mac build, device deployment, and ad-hoc archive check the built app's name,
-Bluetooth usage description, device family, and supported orientations before
-continuing. These checks live in `cutout-dev` and are covered by its Rust tests.
+The Mac command builds the iPhone app for Apple Silicon Mac and opens it. Its
+bundle helper accepts only the CutoutApp project and scheme on a macOS
+destination; other builds must select their own product instead of reusing a
+retained device app. The Mac build, device deployment, and ad-hoc archive check
+the built app's name, Bluetooth usage description, device family, and supported
+orientations before continuing. These checks live in `cutout-dev` and are covered
+by its Rust tests.
 To check an existing Debug or Release bundle directly, use
 `devenv shell -- cargo cutout ios verify-app /path/to/CutoutApp.app`.
 

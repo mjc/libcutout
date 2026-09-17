@@ -301,7 +301,7 @@ if [[ "$mode" == "test" ]]; then
   result_bundle="$(cutout_create_ios_ui_test_result_bundle "$derived_data")"
   test_status=0
   test_started_at=$SECONDS
-  if timeout --foreground --kill-after=30 "$ui_test_run_timeout" \
+  if timeout --kill-after=30 "$ui_test_run_timeout" \
     cargo cutout xcodebuild -- \
     "${xcodebuild_args[@]}" \
     -parallel-testing-enabled NO \

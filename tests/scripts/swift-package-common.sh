@@ -53,6 +53,27 @@ fi
 [[ ! -s "$tmp/result" && -f "$product/keep" ]]
 
 build_status=0
+for override in CUTOUT_IOS_APP_BUILD_DESTINATION CUTOUT_IOS_APP_SCHEME CUTOUT_IOS_APP_PROJECT; do
+  case "$override" in
+    CUTOUT_IOS_APP_BUILD_DESTINATION) value='platform=iOS Simulator,id=simulator' ;;
+    CUTOUT_IOS_APP_SCHEME) value=OtherApp ;;
+    CUTOUT_IOS_APP_PROJECT) value=OtherApp.xcodeproj ;;
+  esac
+  export "$override=$value"
+  : >"$tmp/events"
+  if cutout_build_ios_app_bundle >"$tmp/result" 2>"$tmp/error"; then
+    echo "unsupported $override returned an existing product" >&2
+    exit 1
+  fi
+  [[ ! -s "$tmp/result" && -s "$tmp/error" && ! -s "$tmp/events" ]]
+  unset "$override"
+done
+export CUTOUT_IOS_APP_BUILD_DESTINATION='platform=macOS'
+: >"$tmp/events"
+assert_equal "$product" "$(cutout_build_ios_app_bundle)"
+assert_equal build "$(<"$tmp/events")"
+unset CUTOUT_IOS_APP_BUILD_DESTINATION
+
 expected_archive="$CUTOUT_IOS_AD_HOC_ARCHIVE_PATH"
 : >"$tmp/events"
 assert_equal "$CUTOUT_IOS_AD_HOC_EXPORT_PATH/CutoutApp.ipa" "$(cutout_export_ios_ad_hoc_ipa)"
