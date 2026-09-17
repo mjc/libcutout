@@ -535,10 +535,8 @@ public final class CutoutSessionCore: NSObject {
     private let phoneLocationState = MobilePhoneLocationState()
     private var latestRideMapSnapshot: MobileRideMapSnapshotDto?
     private var rideMapWritePoller: DispatchSourceTimer?
-    private var rideMapRestorationStarted = false
     private var didRequestWhenInUseLocationAuthorization = false
-    private var locationUpdatesDemanded = false
-    private var locationManagerUpdatesStarted = false
+    private var didRequestAlwaysLocationAuthorization = false
     private var didResolveBluetoothRestoration = false
 #if DEBUG
     private let testScript: CutoutSessionTestScript?
@@ -2112,8 +2110,9 @@ public final class CutoutSessionCore: NSObject {
                 if let snapshot {
                     self.publishRideMapSnapshot(snapshot)
                 }
-                let errorContext = MobileRideMapErrorContext(snapshot: snapshot)
-                self.publishRideMapError(error, context: errorContext)
+                self.synchronizeRideMapLocationDemand()
+            } catch let error as MobileRideMapError {
+                self.publishRideMapError(error)
                 self.recordRideMapDiagnostic("ride_map_connection_error=\(error)")
             } catch {
                 self.recordRideMapDiagnostic("ride_map_connection_error=\(error)")
@@ -2194,8 +2193,6 @@ public final class CutoutSessionCore: NSObject {
         let availability: MobileRideMapAvailability
         if rideMapState?.initializationError != nil {
             availability = .storageUnavailable
-        } else if rideMapState?.isReady == false {
-            availability = .checking
         } else if !CLLocationManager.locationServicesEnabled() {
             availability = .servicesDisabled
         } else {
@@ -2224,10 +2221,7 @@ public final class CutoutSessionCore: NSObject {
                 locationManager.stopUpdatingLocation()
                 return
             }
-            guard CLLocationManager.locationServicesEnabled() else {
-                locationManager.stopUpdatingLocation()
-                return
-            }
+            guard CLLocationManager.locationServicesEnabled() else { return }
             switch locationManager.authorizationStatus {
             case .authorizedAlways, .authorizedWhenInUse:
                 locationManager.startUpdatingLocation()
@@ -2236,9 +2230,9 @@ public final class CutoutSessionCore: NSObject {
                 didRequestWhenInUseLocationAuthorization = true
                 locationManager.requestWhenInUseAuthorization()
             case .denied, .restricted:
-                locationManager.stopUpdatingLocation()
+                break
             @unknown default:
-                locationManager.stopUpdatingLocation()
+                break
             }
         }
     }
@@ -3597,17 +3591,20 @@ extension CutoutSessionCore: CLLocationManagerDelegate {
         }
     }
 
-    private func updateLocationManagerDemand() {
-#if os(iOS)
-        locationManager.allowsBackgroundLocationUpdates = locationUpdatesDemanded
-#endif
-
-        guard locationUpdatesDemanded else {
-            if locationManagerUpdatesStarted {
-                locationManager.stopUpdatingLocation()
-                locationManagerUpdatesStarted = false
-            }
-            return
+    public func locationManagerDidChangeAuthorization(_ manager: CLLocationManager) {
+        publishRideMapAvailability()
+        switch manager.authorizationStatus {
+        case .notDetermined:
+            synchronizeRideMapLocationDemand()
+        case .authorizedAlways:
+            synchronizeRideMapLocationDemand()
+        case .authorizedWhenInUse:
+            requestAlwaysLocationAuthorizationIfNeeded()
+            synchronizeRideMapLocationDemand()
+        case .denied, .restricted:
+            synchronizeRideMapLocationDemand()
+        @unknown default:
+            synchronizeRideMapLocationDemand()
         }
 
         guard CLLocationManager.locationServicesEnabled() else {
@@ -3695,9 +3692,15 @@ extension CutoutSessionCore: CLLocationManagerDelegate {
         return rideMapState
     }
 
-    public func startRideMapGpsOnly(atMs: UInt64) throws -> MobileRideMapSnapshotDto {
+    public func startRideMapGpsOnly(
+        atMs: UInt64,
+        lastConnectedVehicle: String?
+    ) throws -> MobileRideMapSnapshotDto {
         let snapshot = try onRideMapQueue {
-            try requireRideMapStateForCommand().startGpsOnly(atMs: atMs)
+            try requireRideMapStateForCommand().startGpsOnly(
+                atMs: atMs,
+                lastConnectedVehicle: lastConnectedVehicle
+            )
         }
         synchronizeRideMapLocationDemand()
         return snapshot
