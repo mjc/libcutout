@@ -430,13 +430,6 @@ final class RideMapStateTests: XCTestCase {
             longitudeDegrees: -104.9903,
             horizontalAccuracyMeters: 4
         ))
-        let connectionState = CutoutSessionStateHandle()
-        let token = try XCTUnwrap(
-            connectionState.beginConnectionAttempt(platformIdentifier: "pev-1", nowMs: 150).token
-        )
-        _ = connectionState.connectionLinkEstablished(token: token)
-        _ = connectionState.observeConnectionNotification(token: token, bytes: Data(vescReply))
-        _ = connectionState.resolveDeviceSession(token: token, identificationComplete: true, nowMs: 200)
         _ = try state.ensureRecordingForVerifiedConnection(
             connectionState: connectionState,
             token: token,

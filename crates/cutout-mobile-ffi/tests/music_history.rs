@@ -37,7 +37,6 @@ fn setup_policy(policy: Option<MobileMusicHistoryPolicyDto>) -> Fixture {
         std::env::temp_dir().join(format!("cutout-music-test-{}.sqlite", uuid::Uuid::new_v4()));
     let db = open_ride_database(path.to_string_lossy().into_owned()).unwrap();
     let core = MobileRideMapCore::with_database(db.clone());
-    core.restore(1_000).unwrap();
     let started = core.start_gps_only(1_000).unwrap();
     if let Some(policy) = policy {
         core.set_music_history_policy(policy).unwrap();
@@ -317,7 +316,6 @@ fn corrupt_optional_music_does_not_disable_ride_recovery() {
     ));
     let database = open_ride_database(path.to_string_lossy().into_owned()).unwrap();
     let core = MobileRideMapCore::with_database(database.clone());
-    core.restore(1_000).unwrap();
     let started = core.start_gps_only(1_000).unwrap();
     let ride_id = MobileRideIdDto {
         bytes: uuid::Uuid::parse_str(&started.ride_id)

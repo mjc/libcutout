@@ -164,7 +164,7 @@ fn pre_music_v16_migration_preserves_existing_capture_tables() {
         connection
             .query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0))
             .unwrap(),
-        24
+        23
     );
     for table in ["pevcap_captures", "pevcap_capture_chunks"] {
         assert!(
@@ -2989,7 +2989,7 @@ fn legacy_schema_versions_migrate_to_the_current_schema() {
         let current_version: i64 = connection
             .pragma_query_value(None, "user_version", |row| row.get(0))
             .unwrap();
-        assert_eq!(current_version, 24);
+        assert_eq!(current_version, 23);
         let music_tables: i64 = connection
             .query_row(
                 "SELECT COUNT(*) FROM sqlite_schema
@@ -3202,7 +3202,7 @@ fn version_20_database_adds_device_scoped_bms_history_without_resetting_existing
     let version: i64 = connection
         .pragma_query_value(None, "user_version", |row| row.get(0))
         .unwrap();
-    assert_eq!(version, crate::storage::CURRENT_SCHEMA_VERSION);
+    assert_eq!(version, 23);
     let table: String = connection
         .query_row(
             "SELECT name FROM sqlite_schema WHERE type = 'table' AND name = 'bms_voltage_samples'",
@@ -3687,7 +3687,7 @@ fn schema_v13_spatial_rows_migrate_without_integer_domain_ids() {
     let version: i64 = connection
         .pragma_query_value(None, "user_version", |row| row.get(0))
         .unwrap();
-    assert_eq!(version, crate::storage::CURRENT_SCHEMA_VERSION);
+    assert_eq!(version, 23);
     let rtree_id: i64 = connection
         .query_row(
             "SELECT rtree_id FROM trail_segment_spatial_keys",
@@ -3755,7 +3755,7 @@ fn schema_v12_singleton_rows_migrate_to_uuid_keys_without_data_loss() {
     let version: i64 = connection
         .pragma_query_value(None, "user_version", |row| row.get(0))
         .unwrap();
-    assert_eq!(version, crate::storage::CURRENT_SCHEMA_VERSION);
+    assert_eq!(version, 23);
     let selected_key_length: u64 = connection
         .query_row(
             "SELECT length(singleton_key) FROM selected_device",
@@ -4304,7 +4304,7 @@ fn version_eight_migration_adds_monotonic_ride_start_column() {
             |row| row.get(0),
         )
         .unwrap();
-    assert_eq!(version, crate::storage::CURRENT_SCHEMA_VERSION);
+    assert_eq!(version, 23);
     assert!(has_monotonic_start);
 
     let _ = std::fs::remove_file(path);

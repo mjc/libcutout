@@ -827,16 +827,9 @@ public final class MobileRideMapState: @unchecked Sendable {
         core?.currentSnapshot(atMs: atMs).map(mapSnapshot)
     }
 
-    public var isReady: Bool {
-        core?.isReady() ?? false
-    }
-
-    /// Completes Rust-owned recovery without projecting the route. The caller owns the queue
-    /// used to invoke this method; subsequent route display uses the cancellable projection API.
-    @discardableResult
-    public func restore(atMs: UInt64) throws -> MobileRideMapSnapshotDto? {
+    public func startGpsOnly(atMs: UInt64) throws -> MobileRideMapSnapshotDto {
         try withCore {
-            try $0.restore(atMs: atMs).map(mapSnapshot)
+            mapSnapshot(try $0.startGpsOnly(atMs: atMs))
         }
     }
 

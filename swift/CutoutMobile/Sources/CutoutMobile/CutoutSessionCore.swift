@@ -3659,15 +3659,9 @@ extension CutoutSessionCore: CLLocationManagerDelegate {
         return rideMapState
     }
 
-    public func startRideMapGpsOnly(
-        atMs: UInt64,
-        lastConnectedVehicle: String?
-    ) throws -> MobileRideMapSnapshotDto {
+    public func startRideMapGpsOnly(atMs: UInt64) throws -> MobileRideMapSnapshotDto {
         let snapshot = try onRideMapQueue {
-            try requireRideMapStateForCommand().startGpsOnly(
-                atMs: atMs,
-                lastConnectedVehicle: lastConnectedVehicle
-            )
+            try requireRideMapStateForCommand().startGpsOnly(atMs: atMs)
         }
         synchronizeRideMapLocationDemand()
         return snapshot

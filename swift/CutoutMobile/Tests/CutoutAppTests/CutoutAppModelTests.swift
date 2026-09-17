@@ -574,23 +574,6 @@ final class CutoutAppModelTests: XCTestCase {
             longitudeDegrees: -104.9903,
             horizontalAccuracyMeters: 5
         ))
-        let connectionState = CutoutSessionStateHandle()
-        let token = try XCTUnwrap(
-            connectionState.beginConnectionAttempt(
-                platformIdentifier: "pev-restored",
-                nowMs: 150
-            ).token
-        )
-        _ = connectionState.connectionLinkEstablished(token: token)
-        _ = connectionState.observeConnectionNotification(token: token, bytes: Data([
-            2, 20, 157, 7, 1, 2, 97, 98, 99, 49, 50, 51, 0, 117, 115, 101, 114, 104, 97, 115, 104,
-            0, 38, 208, 3,
-        ]))
-        _ = connectionState.resolveDeviceSession(
-            token: token,
-            identificationComplete: true,
-            nowMs: 200
-        )
         _ = try driver.rideMapState.ensureRecordingForVerifiedConnection(
             connectionState: connectionState,
             token: token,
