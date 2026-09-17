@@ -113,7 +113,6 @@ final class CutoutAppModel {
     private(set) var rideMapHistoryDetailSegments = [MobileRideMapSegmentDisplayMetadata]()
     private(set) var rideMapHistoryDetailBackgroundGapCount: UInt64 = 0
     private(set) var rideMapHistoryDetailCameraFitVersion: UInt64 = 0
-    private(set) var rideMapHistoryCameraFitVersion: UInt64 = 0
     private(set) var rideMapHistoryDetailPointsTruncated = false
     private(set) var rideMapHistoryDetailSourcePointsOmittedByBudget = false
     private(set) var rideMapHistoryDetailSourceSegmentsOmittedByBudget = false
@@ -2119,7 +2118,6 @@ final class CutoutAppModel {
                 guard let self, self.admits(request, isCancelled: Task.isCancelled)
                 else { return }
                 let (projection, musicHistory) = result
-                self.rideMapHistoryCameraFitVersion &+= 1
                 self.rideMapHistoryDetailCameraFitVersion &+= 1
                 self.rideMapHistoryRouteError = nil
                 self.rideMapHistoryDetailRouteError = nil

@@ -162,14 +162,6 @@ final class RideMapPresentationTests: XCTestCase {
         XCTAssertTrue(replacement.hasPrefix("ride:"))
     }
 
-    func testHistoryCameraFitIdentityChangesForAReplacementProjection() {
-        let initial = RideMapCanvasView.cameraFitID(routeID: "ride", fitVersion: 1)
-        let replacement = RideMapCanvasView.cameraFitID(routeID: "ride", fitVersion: 2)
-
-        XCTAssertNotEqual(initial, replacement)
-        XCTAssertTrue(initial.hasPrefix("ride:fit-"))
-    }
-
     func testHistoryDetailVehicleAndSpeedFormattingKeepUnavailableExplicit() {
         XCTAssertEqual(
             RideMapHistoryDetailView.resolvedVehicleLabel(
