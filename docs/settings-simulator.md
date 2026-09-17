@@ -46,5 +46,5 @@ record remains available for Rust-owned encoder/state assertions.
 hardware:
 
 ```text
-devenv shell -- swift test --package-path swift/CutoutMobile --filter AeroSettingsSimulatorTests
+devenv tasks run test:swift-settings-simulator
 ```

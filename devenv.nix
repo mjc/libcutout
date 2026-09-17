@@ -113,6 +113,12 @@ in
     swift test --package-path "$DEVENV_ROOT/swift/CutoutMobile"
   '';
 
+  tasks."test:swift-settings-simulator" = swiftTask ''
+    swift test \
+      --package-path "$DEVENV_ROOT/swift/CutoutMobile" \
+      --filter AeroSettingsSimulatorTests
+  '';
+
   tasks."validate:aero-live-connection" =
     (swiftTask ''
       echo "libcutout_commit=$(git rev-parse HEAD)"
@@ -180,7 +186,7 @@ in
         echo "CutoutApp iOS-on-Mac requires Apple Silicon" >&2
         exit 1
       fi
-      destination="''${CUTOUT_IOS_ON_MAC_DESTINATION:-platform=macOS,id=00008103-001935121A8A001E}"
+      destination="''${CUTOUT_IOS_ON_MAC_DESTINATION:-platform=macOS}"
       export CUTOUT_IOS_APP_BUILD_DESTINATION="$destination"
       product="''${CUTOUT_IOS_ON_MAC_PRODUCT:-$(cutout_build_ios_app_bundle)}"
       printf 'ios_app_product=%s\n' "$product"
