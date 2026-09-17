@@ -1,15 +1,15 @@
 import CutoutMobile
 import Foundation
+import XCTest
 
-@main
-struct CutoutMobilePackageSmoke {
-    static func main() throws {
+final class MobileBoundaryTests: XCTestCase {
+    func testAeroTelemetryCrossesMobileBoundary() throws {
         let aero = try ElectricUnicycleSession(model: .aero)
         let linkActions = try aero.linkUp(
             at: MonotonicMilliseconds(1),
             writeLimit: TransportWriteLimitBytes(185)
         )
-        precondition(linkActions.contains { $0.kind == .subscribe })
+        XCTAssertTrue(linkActions.contains { $0.kind == .subscribe })
 
         let telemetry = try aero.ingestNotification(
             Data(hex: """
@@ -19,29 +19,32 @@ struct CutoutMobilePackageSmoke {
                 2f0e300e2a0e320e2e0e300e310e300e2d0e2f0e
                 310e2e9e05e3ad
             """),
-            channel: linkActions.firstSubscribeChannel!,
+            channel: try XCTUnwrap(linkActions.firstSubscribeChannel),
             at: MonotonicMilliseconds(2)
         )
-        precondition(telemetry.voltage == Voltage(value: 108_760))
-        precondition(telemetry.speed == Speed(value: 0))
-        precondition(telemetry.operatingState == .standing)
-        precondition(telemetry.powerFlow != nil)
-        precondition(SpeedReadout(snapshot: telemetry).displayValue == "0.0")
-        precondition(SpeedReadout(millimetersPerSecond: nil).displayValue == "--")
-        precondition(SessionConnectionPhase.starting.displayText == "Starting Bluetooth...")
-        precondition(SessionConnectionPhase.scanning.displayText == "Scanning for rides...")
-        precondition(SessionConnectionPhase.live.displayText == "Live")
-        precondition(SessionConnectionPhase.bluetoothUnavailable(rawState: 4).displayText == "Bluetooth unavailable: state 4")
-        precondition(SessionConnectionPhase.failed(.missingNotifyChannel).displayText == "Missing notify channel")
-        precondition(aero.diagnostics.malformedFrames == 0)
+        XCTAssertTrue(telemetry.voltage == Voltage(value: 108_760))
+        XCTAssertTrue(telemetry.speed == Speed(value: 0))
+        XCTAssertTrue(telemetry.operatingState == .standing)
+        XCTAssertTrue(telemetry.powerFlow != nil)
+        XCTAssertTrue(SpeedReadout(snapshot: telemetry).displayValue == "0.0")
+        XCTAssertTrue(SpeedReadout(millimetersPerSecond: nil).displayValue == "--")
+        XCTAssertTrue(SessionConnectionPhase.starting.displayText == "Starting Bluetooth...")
+        XCTAssertTrue(SessionConnectionPhase.scanning.displayText == "Scanning for rides...")
+        XCTAssertTrue(SessionConnectionPhase.live.displayText == "Live")
+        XCTAssertTrue(SessionConnectionPhase.bluetoothUnavailable(rawState: 4).displayText == "Bluetooth unavailable: state 4")
+        XCTAssertTrue(SessionConnectionPhase.failed(.missingNotifyChannel).displayText == "Missing notify channel")
+        XCTAssertTrue(aero.diagnostics.malformedFrames == 0)
 
+    }
+
+    func testFalconTelemetryAndCommandRefusal() throws {
         let falcon = try ElectricUnicycleSession(model: .falcon)
         let falconLinkActions = try falcon.linkUp(
             at: MonotonicMilliseconds(10),
             writeLimit: TransportWriteLimitBytes(23)
         )
-        precondition(falconLinkActions.contains { $0.kind == .subscribe })
-        let falconChannel = falconLinkActions.firstSubscribeChannel!
+        XCTAssertTrue(falconLinkActions.contains { $0.kind == .subscribe })
+        let falconChannel = try XCTUnwrap(falconLinkActions.firstSubscribeChannel)
         for (offset, chunk) in falconRidingChunks.enumerated() {
             _ = try falcon.ingestNotification(
                 Data(chunk),
@@ -49,31 +52,34 @@ struct CutoutMobilePackageSmoke {
                 at: MonotonicMilliseconds(UInt64(11 + offset))
             )
         }
-        precondition(falcon.currentSnapshot.voltage != nil)
+        XCTAssertTrue(falcon.currentSnapshot.voltage != nil)
 
         do {
             _ = try falcon.perform(.soundHorn, at: MonotonicMilliseconds(3))
-            preconditionFailure("Falcon read-only facade must refuse soundHorn")
+            XCTFail("Falcon read-only facade must refuse soundHorn")
         } catch CutoutSessionError.commandRefused(let command, _) {
-            precondition(command == .soundHorn)
+            XCTAssertTrue(command == .soundHorn)
         }
 
+    }
+
+    func testBluetoothTransportAndLiveTelemetry() throws {
         let advertisement = CoreBluetoothAdvertisement(
             peripheralIdentifier: CoreBluetoothPeripheralIdentifier("falcon-001"),
             localName: "device-001",
             advertisedServiceUuids: [BluetoothUuid.bluetooth16(0xffe0)]
         )
-        precondition(advertisement.modelHint == .unknown)
+        XCTAssertTrue(advertisement.modelHint == .unknown)
 
         let coordinator = CoreBluetoothCentralCoordinator(
             scanPolicy: .aeroFalcon,
             writeLimit: TransportWriteLimitBytes(185)
         )
-        precondition(coordinator.startScanning() == .scan(serviceUuids: [
+        XCTAssertTrue(coordinator.startScanning() == .scan(serviceUuids: [
             BluetoothUuid.bluetooth16(0xffe0),
             BluetoothUuid.bluetooth16(0xfff0),
         ]))
-        precondition(coordinator.handleDiscovered(advertisement) == .connect(
+        XCTAssertTrue(coordinator.handleDiscovered(advertisement) == .connect(
             peripheralIdentifier: advertisement.peripheralIdentifier
         ))
         let unknownAdvertisement = CoreBluetoothAdvertisement(
@@ -81,7 +87,7 @@ struct CutoutMobilePackageSmoke {
             localName: "Mystery Wheel",
             advertisedServiceUuids: []
         )
-        precondition(coordinator.handleDiscovered(unknownAdvertisement) == nil)
+        XCTAssertTrue(coordinator.handleDiscovered(unknownAdvertisement) == nil)
         let inventory = CoreBluetoothGattInventory(services: [
             CoreBluetoothGattService(
                 uuid: BluetoothUuid.bluetooth16(0xffe0),
@@ -93,11 +99,11 @@ struct CutoutMobilePackageSmoke {
                 ]
             ),
         ])
-        precondition(coordinator.discoverServices() == .discoverServices([
+        XCTAssertTrue(coordinator.discoverServices() == .discoverServices([
             BluetoothUuid.bluetooth16(0xffe0),
             BluetoothUuid.bluetooth16(0xfff0),
         ]))
-        precondition(coordinator.discoverCharacteristics(in: inventory) == [
+        XCTAssertTrue(coordinator.discoverCharacteristics(in: inventory) == [
             .discoverCharacteristics(
                 service: BluetoothUuid.bluetooth16(0xffe0),
                 characteristics: [BluetoothUuid.bluetooth16(0xffe1)]
@@ -111,14 +117,14 @@ struct CutoutMobilePackageSmoke {
         let writes = CoreBluetoothTransportPlanner(
             writeLimit: TransportWriteLimitBytes(2)
         ).plan(action: writeAction)
-        precondition(writes == [
+        XCTAssertTrue(writes == [
             .writeWithoutResponse(channel: BluetoothUuid.bluetooth16(0xffe1), bytes: Data([0x01, 0x02])),
             .writeWithoutResponse(channel: BluetoothUuid.bluetooth16(0xffe1), bytes: Data([0x03, 0x04])),
             .writeWithoutResponse(channel: BluetoothUuid.bluetooth16(0xffe1), bytes: Data([0x05])),
         ])
         let executorSink = RecordingCoreBluetoothOperationSink()
         CoreBluetoothOperationExecutor(sink: executorSink).execute(writes)
-        precondition(executorSink.recordedOperations == writes)
+        XCTAssertTrue(executorSink.recordedOperations == writes)
 
         let runner = CoreBluetoothSessionRunner(
             session: try .electricUnicycle(model: .aero),
@@ -130,9 +136,9 @@ struct CutoutMobilePackageSmoke {
             )
         )
         let runnerSubscribe = try runner.handle(.linkUp(at: MonotonicMilliseconds(20)))
-        precondition(runnerSubscribe.operations.contains(.subscribe(channel: BluetoothUuid.bluetooth16(0xffe1))))
-        precondition(runnerSubscribe.captureContext?.advertisedServiceUuids == [BluetoothUuid.bluetooth16(0xffe0)])
-        precondition(runnerSubscribe.captureContext?.resolvedModelHint == .unknown)
+        XCTAssertTrue(runnerSubscribe.operations.contains(.subscribe(channel: BluetoothUuid.bluetooth16(0xffe1))))
+        XCTAssertTrue(runnerSubscribe.captureContext?.advertisedServiceUuids == [BluetoothUuid.bluetooth16(0xffe0)])
+        XCTAssertTrue(runnerSubscribe.captureContext?.resolvedModelHint == .unknown)
         let runnerTelemetry = try runner.handle(.notification(
             bytes: Data(hex: """
                 dc5a5c532a7c000000000000ab41001700000cff
@@ -144,10 +150,10 @@ struct CutoutMobilePackageSmoke {
             channel: BluetoothUuid.bluetooth16(0xffe1),
             at: MonotonicMilliseconds(21)
         ))
-        precondition(runnerTelemetry.snapshot?.voltage == Voltage(value: 108_760))
-        precondition(runnerTelemetry.snapshot?.speed == Speed(value: 0))
-        precondition(runnerTelemetry.snapshot?.operatingState == .standing)
-        precondition(runnerTelemetry.snapshot?.powerFlow != nil)
+        XCTAssertTrue(runnerTelemetry.snapshot?.voltage == Voltage(value: 108_760))
+        XCTAssertTrue(runnerTelemetry.snapshot?.speed == Speed(value: 0))
+        XCTAssertTrue(runnerTelemetry.snapshot?.operatingState == .standing)
+        XCTAssertTrue(runnerTelemetry.snapshot?.powerFlow != nil)
 
         let liveSink = RecordingCoreBluetoothOperationSink()
         let liveOwner = CoreBluetoothLiveSessionOwner(
@@ -157,14 +163,14 @@ struct CutoutMobilePackageSmoke {
             operationSink: liveSink
         )
         let linkStep = try liveOwner.handleLinkUp(at: MonotonicMilliseconds(30))
-        precondition(linkStep.operations.contains(.subscribe(channel: BluetoothUuid.bluetooth16(0xffe1))))
-        precondition(liveSink.recordedOperations.contains(.subscribe(channel: BluetoothUuid.bluetooth16(0xffe1))))
-        precondition(liveOwner.records.contains(.linkUp(
+        XCTAssertTrue(linkStep.operations.contains(.subscribe(channel: BluetoothUuid.bluetooth16(0xffe1))))
+        XCTAssertTrue(liveSink.recordedOperations.contains(.subscribe(channel: BluetoothUuid.bluetooth16(0xffe1))))
+        XCTAssertTrue(liveOwner.records.contains(.linkUp(
             platformIdentifier: advertisement.peripheralIdentifier,
             writeLimit: TransportWriteLimitBytes(185)
         )))
         liveOwner.recordInventory(inventory)
-        precondition(liveOwner.records.contains(.gattInventory(
+        XCTAssertTrue(liveOwner.records.contains(.gattInventory(
             platformIdentifier: advertisement.peripheralIdentifier,
             inventory: inventory
         )))
@@ -179,21 +185,21 @@ struct CutoutMobilePackageSmoke {
             channel: BluetoothUuid.bluetooth16(0xffe1),
             at: MonotonicMilliseconds(31)
         )
-        precondition(liveTelemetry.snapshot?.voltage == Voltage(value: 108_760))
-        precondition(liveTelemetry.snapshot?.speed == Speed(value: 0))
-        precondition(liveTelemetry.snapshot?.operatingState == .standing)
-        precondition(liveTelemetry.snapshot?.powerFlow != nil)
+        XCTAssertTrue(liveTelemetry.snapshot?.voltage == Voltage(value: 108_760))
+        XCTAssertTrue(liveTelemetry.snapshot?.speed == Speed(value: 0))
+        XCTAssertTrue(liveTelemetry.snapshot?.operatingState == .standing)
+        XCTAssertTrue(liveTelemetry.snapshot?.powerFlow != nil)
         let initialSpeedState = RideDisplayState()
-        precondition(initialSpeedState.speed.displayValue == "--")
-        precondition(initialSpeedState.notificationCount == 0)
+        XCTAssertTrue(initialSpeedState.speed.displayValue == "--")
+        XCTAssertTrue(initialSpeedState.notificationCount == 0)
         let zeroSpeedState = initialSpeedState.reducing(
             liveTelemetry,
             receivedAt: MonotonicMilliseconds(31)
         )
-        precondition(zeroSpeedState.speed.millimetersPerSecond == 0)
-        precondition(zeroSpeedState.speed.displayValue == "0.0")
-        precondition(zeroSpeedState.notificationCount == 1)
-        precondition(zeroSpeedState.lastUpdate == MonotonicMilliseconds(31))
+        XCTAssertTrue(zeroSpeedState.speed.millimetersPerSecond == 0)
+        XCTAssertTrue(zeroSpeedState.speed.displayValue == "0.0")
+        XCTAssertTrue(zeroSpeedState.notificationCount == 1)
+        XCTAssertTrue(zeroSpeedState.lastUpdate == MonotonicMilliseconds(31))
         let nonzeroSpeedStep = CoreBluetoothSessionStep(
             operations: [],
             snapshot: TelemetrySnapshot(
@@ -204,10 +210,10 @@ struct CutoutMobilePackageSmoke {
             nonzeroSpeedStep,
             receivedAt: MonotonicMilliseconds(32)
         )
-        precondition(nonzeroSpeedState.speed.millimetersPerSecond == 1_000)
-        precondition(nonzeroSpeedState.notificationCount == 2)
-        precondition(nonzeroSpeedState.lastUpdate == MonotonicMilliseconds(32))
-        precondition(liveOwner.records.contains {
+        XCTAssertTrue(nonzeroSpeedState.speed.millimetersPerSecond == 1_000)
+        XCTAssertTrue(nonzeroSpeedState.notificationCount == 2)
+        XCTAssertTrue(nonzeroSpeedState.lastUpdate == MonotonicMilliseconds(32))
+        XCTAssertTrue(liveOwner.records.contains {
             if case .notification(let channel, let byteCount, _) = $0 {
                 channel == BluetoothUuid.bluetooth16(0xffe1) && byteCount.rawValue > 0
             } else {
@@ -215,11 +221,11 @@ struct CutoutMobilePackageSmoke {
             }
         })
         #if canImport(CoreBluetooth)
-        precondition(CoreBluetoothScanPolicy.aeroFalcon.serviceUuids.count == 2)
-        precondition(CoreBluetoothScanPolicy.aeroFalcon.serviceUuids.contains(.bluetooth16(0xffe0)))
-        precondition(CoreBluetoothScanPolicy.aeroFalcon.coreBluetoothServiceUuids.count == 2)
-        precondition(CoreBluetoothScanPolicy.aeroFalcon.coreBluetoothServiceUuids.map(\.uuidString) == ["FFE0", "FFF0"])
-        precondition(coordinator.startScanning().coreBluetoothServiceUuids.count == 2)
+        XCTAssertTrue(CoreBluetoothScanPolicy.aeroFalcon.serviceUuids.count == 2)
+        XCTAssertTrue(CoreBluetoothScanPolicy.aeroFalcon.serviceUuids.contains(.bluetooth16(0xffe0)))
+        XCTAssertTrue(CoreBluetoothScanPolicy.aeroFalcon.coreBluetoothServiceUuids.count == 2)
+        XCTAssertTrue(CoreBluetoothScanPolicy.aeroFalcon.coreBluetoothServiceUuids.map(\.uuidString) == ["FFE0", "FFF0"])
+        XCTAssertTrue(coordinator.startScanning().coreBluetoothServiceUuids.count == 2)
         _ = CoreBluetoothPeripheralOperationSink.self
         _ = CoreBluetoothLiveSessionOwner.self
         #endif
@@ -236,7 +242,7 @@ private let falconRidingChunks: [[UInt8]] = [
     [0, 0, 1, 3, 90, 90, 90, 90, 85, 170, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
 ]
 
-final class RecordingCoreBluetoothOperationSink: CoreBluetoothOperationSink {
+private final class RecordingCoreBluetoothOperationSink: CoreBluetoothOperationSink {
     private(set) var recordedOperations: [CoreBluetoothPlannedOperation] = []
 
     func subscribe(channel: BluetoothUuid) {
@@ -261,7 +267,7 @@ private extension Array where Element == SessionAction {
 private extension Data {
     init(hex text: String) {
         let digits = text.filter { !$0.isWhitespace }
-        precondition(digits.count.isMultiple(of: 2))
+        XCTAssertTrue(digits.count.isMultiple(of: 2))
         self = stride(from: 0, to: digits.count, by: 2).reduce(into: Data()) { bytes, offset in
             let start = digits.index(digits.startIndex, offsetBy: offset)
             let end = digits.index(start, offsetBy: 2)
