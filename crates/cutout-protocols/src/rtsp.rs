@@ -299,7 +299,11 @@ impl RetinaRtspPreviewSession {
         expected_address: Option<Ipv4Addr>,
     ) -> Result<Self, RetinaRtspError> {
         let url = Url::parse(uri).map_err(|_| RetinaRtspError::InvalidUri)?;
-        if url.scheme() != "rtsp" || url.host_str().is_none() {
+        if url.scheme() != "rtsp"
+            || url.host_str().is_none()
+            || !url.username().is_empty()
+            || url.password().is_some()
+        {
             return Err(RetinaRtspError::InvalidUri);
         }
         let host = url
@@ -450,6 +454,17 @@ mod tests {
             )
             .await,
             Err(RetinaRtspError::OriginMismatch)
+        ));
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn rtsp_session_rejects_uri_userinfo_before_network_io() {
+        assert!(matches!(
+            RetinaRtspPreviewSession::connect(
+                "rtsp://camera-user:camera-password@192.168.1.254/xxx.mov"
+            )
+            .await,
+            Err(RetinaRtspError::InvalidUri)
         ));
     }
 
