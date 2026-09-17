@@ -21521,16 +21521,19 @@ mod tests {
             command: Some(MobileCommandDto::SetLights(state)),
         };
 
-        let aero_result = aero.ingest_checked(command_input(MobileLightStateDto::On));
+        let aero_result = aero.ingest_checked(MobileSessionInputDto {
+            command: Some(MobileCommandDto::SetAeroHighBeam(MobileLightStateDto::On)),
+            ..command_input(MobileLightStateDto::On)
+        });
         let falcon_result = falcon.ingest_checked(command_input(MobileLightStateDto::Off));
 
         assert_eq!(aero_result.error, None);
         assert_eq!(
-            aero.headlight_state().kind,
+            aero.aero_high_beam_state().kind,
             MobileSettingStateKindDto::Pending
         );
         assert_eq!(
-            aero.headlight_state().requested,
+            aero.aero_high_beam_state().requested,
             Some(MobileLightStateDto::On)
         );
         assert!(aero_result.outputs.iter().any(|output| {
@@ -21634,6 +21637,7 @@ mod tests {
     #[test]
     fn mobile_light_state_tracks_accepted_write_until_matching_readback() {
         let session = AeroBenignControlSession::new();
+        assert!(arm_stationary_aero(&session));
 
         assert_eq!(
             session.headlight_state(),
@@ -21646,15 +21650,15 @@ mod tests {
             max_write_len: None,
             channel: Vec::new(),
             bytes: Vec::new(),
-            command: Some(MobileCommandDto::SetLights(MobileLightStateDto::On)),
+            command: Some(MobileCommandDto::SetAeroHighBeam(MobileLightStateDto::On)),
         });
         assert_eq!(result.error, None);
         assert_eq!(
-            session.headlight_state().kind,
+            session.aero_high_beam_state().kind,
             MobileSettingStateKindDto::Pending
         );
 
-        let state = session.headlight_state();
+        let state = session.aero_high_beam_state();
         assert_eq!(state.current, None);
         assert_eq!(state.requested, Some(MobileLightStateDto::On));
         assert_eq!(state.submitted_at_ms, Some(10));
@@ -21745,6 +21749,7 @@ mod tests {
     #[test]
     fn aero_light_state_remains_unconfirmed_without_readback() {
         let session = AeroBenignControlSession::new();
+        assert!(arm_stationary_aero(&session));
 
         let _ = session.ingest_checked(MobileSessionInputDto {
             kind: MobileSessionInputKindDto::Command,
@@ -21752,10 +21757,10 @@ mod tests {
             max_write_len: None,
             channel: Vec::new(),
             bytes: Vec::new(),
-            command: Some(MobileCommandDto::SetLights(MobileLightStateDto::On)),
+            command: Some(MobileCommandDto::SetAeroHighBeam(MobileLightStateDto::On)),
         });
         assert_eq!(
-            session.headlight_state().kind,
+            session.aero_high_beam_state().kind,
             MobileSettingStateKindDto::Pending
         );
 
@@ -21768,8 +21773,8 @@ mod tests {
             command: None,
         });
 
-        let state = session.headlight_state();
-        assert_eq!(state.kind, MobileSettingStateKindDto::Pending);
+        let state = session.aero_high_beam_state();
+        assert_eq!(state.kind, MobileSettingStateKindDto::TimedOut);
         assert_eq!(state.requested, Some(MobileLightStateDto::On));
     }
 

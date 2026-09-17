@@ -1,6 +1,6 @@
 import java.io.File
-import uniffi.cutout_mobile_ffi.AeroReadOnlySession
-import uniffi.cutout_mobile_ffi.FalconReadOnlySession
+import uniffi.cutout_mobile_ffi.AeroBenignControlSession
+import uniffi.cutout_mobile_ffi.FalconBenignControlSession
 import uniffi.cutout_mobile_ffi.MobileCommandDto
 import uniffi.cutout_mobile_ffi.MobileFalconProfileDto
 import uniffi.cutout_mobile_ffi.MobileGattFingerprintDto
@@ -20,7 +20,7 @@ import uniffi.cutout_mobile_ffi.MobileVerifiedStringDto
 import uniffi.cutout_mobile_ffi.MobileWallClockUnixMillisDto
 
 fun main() {
-    AeroReadOnlySession().use { aero ->
+    AeroBenignControlSession().use { aero ->
         val link = MobileSessionInputDto(
             kind = MobileSessionInputKindDto.LINK_UP,
             monotonicMs = MobileMonotonicMillisDto(1UL),
@@ -56,22 +56,22 @@ fun main() {
         check(aero.diagnostics().malformedFrames.count == 0UL)
     }
 
-    FalconReadOnlySession().use { falcon ->
+    FalconBenignControlSession().use { falcon ->
         val horn = MobileSessionInputDto(
             kind = MobileSessionInputKindDto.COMMAND,
             monotonicMs = MobileMonotonicMillisDto(2UL),
             maxWriteLen = null,
             channel = ByteArray(0),
             bytes = ByteArray(0),
-            command = MobileCommandDto.SOUND_HORN,
+            command = MobileCommandDto.SoundHorn,
         )
         val result = falcon.ingestChecked(horn)
         check(result.error?.kind == MobileSessionStepErrorKindDto.COMMAND_REFUSED)
-        check(result.error?.command == MobileCommandDto.SOUND_HORN)
+        check(result.error?.command == MobileCommandDto.SoundHorn)
     }
 
     try {
-        FalconReadOnlySession.withProfile(MobileFalconProfileDto.UNSUPPORTED)
+        FalconBenignControlSession.withProfile(MobileFalconProfileDto.UNSUPPORTED)
         error("unsupported Falcon profile should throw")
     } catch (_: MobileSessionConstructorException.UnsupportedFalconProfile) {
     }
@@ -114,6 +114,7 @@ fun main() {
             ),
         )
         val captureFile = File.createTempFile("cutout-mobile-ffi-smoke", ".jsonl")
+        check(captureFile.delete())
         check(capture.startWriter(captureFile.path))
         check(capture.recordLinkUp(
             monotonicMs = MobileMonotonicMillisDto(1UL),

@@ -199,7 +199,7 @@ in
       -include-runtime \
       -d target/uniffi-smoke/kotlin-smoke.jar
     java \
-      -Djava.library.path="$DEVENV_ROOT/target/debug" \
+      -Djna.library.path="$PWD/target/debug" \
       -cp "target/uniffi-smoke/kotlin-smoke.jar:$JNA_JAR" \
       Kotlin_smokeKt
   '';
