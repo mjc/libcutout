@@ -105,6 +105,10 @@ final class DeviceControlsTests: XCTestCase {
         )
         XCTAssertFalse(state.deviceControlsSnapshot().validationAuthorized)
         XCTAssertFalse(state.authorizeDeviceControls(token: token))
+
+        _ = state.connectionLinkEstablished(token: replacement)
+        _ = state.observeConnectionNotification(token: replacement, bytes: frame)
+        _ = state.resolveDeviceSession(token: replacement, identificationComplete: false, nowMs: 3)
         XCTAssertTrue(state.authorizeDeviceControls(token: replacement))
     }
 }
