@@ -4,8 +4,12 @@ use cutout_core::{
     ConnectionAttemptSnapshot, ConnectionAttemptToken, ConnectionReadiness,
     ConnectionTransportState,
 };
+use std::sync::Arc;
 
-use crate::{CutoutSessionStateHandle, MonotonicTimestamp};
+use crate::{
+    CutoutSessionStateHandle, MobileRideMapCore, MobileRideMapCoreErrorDto,
+    MobileRideMapCoreSnapshotDto, MonotonicTimestamp,
+};
 
 /// Identity captured with native callbacks and decoded telemetry.
 #[derive(Clone, Debug, Eq, PartialEq, uniffi::Record)]
@@ -168,6 +172,34 @@ impl CutoutSessionStateHandle {
             .is_verified(&token.into())
     }
 
+    /// Atomically admits one verified connection to the Rust-owned ride-map core.
+    ///
+    /// The session-state lock remains held while the map core consumes the token, so connection
+    /// invalidation cannot race between verification and ride admission. Swift supplies only the
+    /// Rust-issued attempt token; it cannot choose a separate identity or automatic policy.
+    ///
+    /// # Errors
+    ///
+    /// Returns `StaleConnection` when the token is no longer the current verified attempt, or a
+    /// typed ride-map error when the map core cannot admit the connection.
+    pub fn ensure_ride_recording_for_verified_connection(
+        &self,
+        ride_map: Arc<MobileRideMapCore>,
+        token: MobileConnectionAttemptTokenDto,
+        at_ms: u64,
+    ) -> Result<MobileRideMapCoreSnapshotDto, MobileRideMapCoreErrorDto> {
+        let token = token.into();
+        let _state = self.lock_inner();
+        if !_state.session_state().connection.is_verified(&token) {
+            return Err(MobileRideMapCoreErrorDto::StaleConnection);
+        }
+        ride_map.ensure_recording_for_vehicle_on_connection(
+            token.platform_identifier().to_owned(),
+            at_ms,
+            token.generation(),
+        )
+    }
+
     /// Expires pending detection without allowing a late response to promote it.
     pub fn expire_connection_attempt(
         &self,
@@ -234,6 +266,33 @@ mod tests {
         handle.begin_connection_attempt("A".into(), 20);
         assert!(!handle.verified_connection_attempt_is_current(token.clone()));
         assert!(!handle.connection_attempt_is_current(token));
+    }
+
+    #[test]
+    fn stale_verified_connection_is_rejected_before_ride_admission() {
+        let handle = CutoutSessionStateHandle::new();
+        let snapshot = handle.begin_connection_attempt("A".into(), 10);
+        let token = snapshot.token.unwrap();
+
+        assert_eq!(
+            handle
+                .ensure_ride_recording_for_verified_connection(MobileRideMapCore::new(), token, 20)
+                .expect_err("pending connection cannot enter the ride path"),
+            MobileRideMapCoreErrorDto::StaleConnection
+        );
+
+        let replacement = handle.begin_connection_attempt("B".into(), 30);
+        let replacement_token = replacement.token.unwrap();
+        assert_eq!(
+            handle
+                .ensure_ride_recording_for_verified_connection(
+                    MobileRideMapCore::new(),
+                    replacement_token,
+                    40
+                )
+                .expect_err("replacement must still be verified before admission"),
+            MobileRideMapCoreErrorDto::StaleConnection
+        );
     }
 
     #[test]
