@@ -55,12 +55,17 @@ Cargo's ancestor/global configuration lookup without loading the project's
 configuration twice. Both `.cargo/config` and `.cargo/config.toml`, when present,
 are copied so Cargo applies its normal precedence. It copies those sources once,
 preserving compilation paths and mtimes across repeated prepares so Cargo can
-reuse its cache. A damaged private snapshot (including a Cargo-rewritten lockfile)
+reuse its cache. Relative files and directories named by those Cargo
+configuration files are copied into the snapshot at their original paths. A
+damaged private snapshot (including a Cargo-rewritten lockfile)
 is moved aside and rebuilt from current inputs. A corrupt published generation is
 likewise quarantined and replaced from a verified staged package; healthy pinned
 generations are never modified. Recovery has a brief rename gap for readers of
 the already-corrupt path. A lock
 serializes generation and holds the selector stable throughout supported builds.
+The snapshot cache retains the current snapshot and three recent snapshots, and
+keeps four quarantine directories for diagnosis; older unused entries are
+removed while that lock is held.
 The noninteractive Cargo generator inherits a clone of that lock on stdin, so
 an orphaned generator retains ownership if its coordinating process is killed.
 The native output receipt identifies the immutable

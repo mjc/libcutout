@@ -191,7 +191,7 @@ in
       Kotlin_smokeKt
   '';
   tasks."build:ios-ui-tests" = {
-    exec = "scripts/run-ios-ui-tests.sh --build-only";
+    exec = "CUTOUT_IOS_TEST_DESTINATION='generic/platform=iOS Simulator' scripts/run-ios-ui-tests.sh --build-only ARCHS=arm64 ONLY_ACTIVE_ARCH=YES";
     after = [ "check:xcode-ios" ];
   };
   tasks."build:ios-app" = swiftTask ''

@@ -6,6 +6,7 @@ use std::{
     fs,
     path::{Path, PathBuf},
     process::{Command, ExitStatus},
+    time::SystemTime,
 };
 
 use anyhow::{Context, Result, bail, ensure};
@@ -26,6 +27,8 @@ const SWIFT_FFI_LOCK: &str = "target/swift-ffi/.generation.lock";
 const FFI_RECEIPT: &str = ".cutout-artifact.json";
 const FFI_CHECKER: &str = ".cutout-ffi-check";
 const FFI_GENERATIONS: &str = "target/swift-ffi/generations";
+const MAX_SOURCE_SNAPSHOTS: usize = 4;
+const MAX_QUARANTINE_DIRECTORIES: usize = 4;
 
 fn lock_swift_ffi(root: &Path) -> Result<fs::File> {
     let path = root.join(SWIFT_FFI_LOCK);
@@ -289,10 +292,15 @@ fn regenerate_swift_ffi(root: &Path, expected: &str, lock: &fs::File) -> Result<
             ]),
         "generate Swift FFI package",
     )?;
-    ensure!(
-        source_fingerprint(&snapshot.path)? == expected,
-        "Cargo changed the FFI source snapshot"
-    );
+    if source_fingerprint(&snapshot.path)? != expected {
+        let lockfile_changed =
+            fs::read(snapshot.path.join("Cargo.lock"))? != fs::read(root.join("Cargo.lock"))?;
+        ensure!(
+            !lockfile_changed,
+            "Cargo.lock is out of date; run `cargo check` from the repository root to refresh it before preparing the Swift FFI"
+        );
+        bail!("Cargo changed the FFI source snapshot");
+    }
     sort_xcframework_plist(&cargo_package)?;
     trim_generated_sources(&cargo_package)?;
     seal_swift_ffi(root, &cargo_package, expected)?;
@@ -742,6 +750,7 @@ fn source_inputs(root: &Path) -> Result<BTreeMap<PathBuf, Vec<u8>>> {
             }
         }
     }
+    collect_config_referenced_inputs(root, &mut files)?;
 
     files
         .into_iter()
@@ -753,9 +762,43 @@ fn source_inputs(root: &Path) -> Result<BTreeMap<PathBuf, Vec<u8>>> {
         .collect()
 }
 
+fn collect_config_referenced_inputs(root: &Path, files: &mut BTreeSet<PathBuf>) -> Result<()> {
+    for config in [".cargo/config", ".cargo/config.toml"] {
+        let path = root.join(config);
+        let Ok(contents) = fs::read_to_string(&path) else {
+            continue;
+        };
+        let bases = [root.to_path_buf(), root.join(".cargo")];
+        for quote in ['"', '\''] {
+            for (index, value) in contents.split(quote).enumerate() {
+                if index % 2 == 0 || value.is_empty() {
+                    continue;
+                }
+                for base in &bases {
+                    let candidate = base.join(value);
+                    let Ok(relative) = candidate.strip_prefix(root) else {
+                        continue;
+                    };
+                    if candidate.is_file() {
+                        files.insert(relative.to_path_buf());
+                    } else if candidate.is_dir() {
+                        collect_files(root, relative, files)?;
+                    }
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
 fn fingerprint_source_inputs(inputs: &BTreeMap<PathBuf, Vec<u8>>) -> String {
     let mut aggregate = Sha256::new();
     for (relative, bytes) in inputs {
+        // README is required by Cargo package metadata but cannot affect the
+        // compiled Rust/Swift artifact identity.
+        if relative == Path::new("README.md") {
+            continue;
+        }
         let file_hash = hex(Sha256::digest(bytes));
         aggregate.update(relative.as_os_str().as_encoded_bytes());
         aggregate.update(b"  ");
@@ -778,8 +821,9 @@ impl FfiSourceSnapshot {
             fingerprint_source_inputs(&inputs) == expected,
             "Rust inputs changed before snapshot capture"
         );
-        // A sibling retains Cargo's ancestor/global config lookup without
-        // loading the project's copied .cargo/config.toml a second time.
+        // Keep the snapshot as a sibling so Cargo's ancestor/global config
+        // lookup stays stable; project config and its relative inputs are
+        // copied into matching paths below.
         let canonical = fs::canonicalize(root)?;
         let repository = hex(Sha256::digest(canonical.as_os_str().as_encoded_bytes()));
         let parent = canonical
@@ -789,12 +833,13 @@ impl FfiSourceSnapshot {
             .join(repository);
         let path = parent.join(expected);
         if path.exists() && source_fingerprint(&path).is_ok_and(|actual| actual == expected) {
+            prune_source_snapshots(&parent, &path)?;
             return Ok(Self { path });
         }
         fs::create_dir_all(&parent)?;
         let staging = tempfile::Builder::new()
             .prefix(".source-")
-            .tempdir_in(parent)?;
+            .tempdir_in(&parent)?;
         for (relative, bytes) in inputs {
             let destination = staging.path().join(relative);
             fs::create_dir_all(destination.parent().context("source parent")?)?;
@@ -805,8 +850,48 @@ impl FfiSourceSnapshot {
             quarantine(&path)?;
         }
         fs::rename(staging.path(), &path)?;
+        prune_source_snapshots(&parent, &path)?;
         Ok(Self { path })
     }
+}
+
+fn prune_source_snapshots(parent: &Path, current: &Path) -> Result<()> {
+    let mut snapshots = Vec::new();
+    let mut quarantines = Vec::new();
+    for entry in fs::read_dir(parent)? {
+        let entry = entry?;
+        let path = entry.path();
+        if !path.is_dir() {
+            continue;
+        }
+        let name = entry.file_name();
+        let modified = entry
+            .metadata()
+            .and_then(|metadata| metadata.modified())
+            .unwrap_or(SystemTime::UNIX_EPOCH);
+        if name.to_str().is_some_and(|name| {
+            name.len() == 64 && name.bytes().all(|byte| byte.is_ascii_hexdigit())
+        }) {
+            snapshots.push((path, modified));
+        } else if name.to_string_lossy().starts_with(".quarantine-") {
+            quarantines.push((path, modified));
+        }
+    }
+    snapshots.sort_by_key(|(_, modified)| *modified);
+    let mut retained = 0;
+    for (path, _) in snapshots {
+        if path == current || retained < MAX_SOURCE_SNAPSHOTS.saturating_sub(1) {
+            retained += usize::from(path != current);
+        } else {
+            fs::remove_dir_all(path)?;
+        }
+    }
+    quarantines.sort_by_key(|(_, modified)| *modified);
+    while quarantines.len() > MAX_QUARANTINE_DIRECTORIES {
+        let (path, _) = quarantines.remove(0);
+        fs::remove_dir_all(path)?;
+    }
+    Ok(())
 }
 
 fn quarantine(path: &Path) -> Result<()> {
@@ -1125,6 +1210,7 @@ mod tests {
             "Cargo.lock",
             "Cargo.toml",
             "rust-toolchain.toml",
+            "README.md",
             "crates/fixture/Cargo.toml",
             "crates/fixture/src/lib.rs",
         ] {
@@ -1149,6 +1235,16 @@ mod tests {
         fixture_sources(&root);
         let expected = source_fingerprint(&root).unwrap();
         let snapshot = FfiSourceSnapshot::capture(&root, &expected).unwrap();
+        assert_eq!(
+            fs::read_to_string(snapshot.path.join("README.md")).unwrap(),
+            "original"
+        );
+        fs::write(root.join("README.md"), "documentation-only edit").unwrap();
+        assert_eq!(source_fingerprint(&root).unwrap(), expected);
+        assert_eq!(
+            FfiSourceSnapshot::capture(&root, &expected).unwrap().path,
+            snapshot.path
+        );
         fs::write(root.join("crates/fixture/src/lib.rs"), "later edit").unwrap();
         assert_eq!(source_fingerprint(&snapshot.path).unwrap(), expected);
         assert_ne!(source_fingerprint(&root).unwrap(), expected);
