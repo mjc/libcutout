@@ -155,6 +155,12 @@ pub enum NovatekConfigurationError {
         /// Repeated command identifier.
         command_id: u16,
     },
+    /// The supplied evidence contained the reserved zero command identifier.
+    #[error("Novatek configuration contains an invalid command id")]
+    InvalidCommand {
+        /// Invalid command identifier.
+        command_id: u16,
+    },
 }
 
 /// Error returned when a camera-reported media path cannot become a safe HTTP
@@ -180,6 +186,27 @@ pub enum NovatekMediaPathError {
 pub struct NovatekHttpOrigin {
     address: Ipv4Addr,
     port: NonZeroU16,
+}
+
+/// A nonzero Novatek command identifier.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub struct NovatekCommandId(NonZeroU16);
+
+impl NovatekCommandId {
+    /// Creates a command identifier, rejecting the reserved zero value.
+    #[must_use]
+    pub const fn new(value: u16) -> Option<Self> {
+        match NonZeroU16::new(value) {
+            Some(value) => Some(Self(value)),
+            None => None,
+        }
+    }
+
+    /// Returns the numeric command identifier.
+    #[must_use]
+    pub const fn get(self) -> u16 {
+        self.0.get()
+    }
 }
 
 impl NovatekHttpOrigin {
@@ -341,7 +368,7 @@ pub enum NovatekStoragePresence {
 /// One command/status pair reported by Novatek command `3014`.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct NovatekCommandStatus {
-    command_id: u16,
+    command_id: NovatekCommandId,
     status: u16,
 }
 
@@ -349,7 +376,7 @@ impl NovatekCommandStatus {
     /// Returns the reported command id.
     #[must_use]
     pub const fn command_id(self) -> u16 {
-        self.command_id
+        self.command_id.get()
     }
 
     /// Returns the reported status value.
@@ -390,6 +417,8 @@ impl NovatekConfiguration {
         let mut statuses: ArrayVec<NovatekCommandStatus, NOVATEK_MAX_COMMAND_STATUS_ENTRIES> =
             ArrayVec::new();
         for (command_id, status) in pairs {
+            let command_id = NovatekCommandId::new(command_id)
+                .ok_or(NovatekConfigurationError::InvalidCommand { command_id })?;
             if statuses.is_full() {
                 return Err(NovatekConfigurationError::TooManyStatuses {
                     max: NOVATEK_MAX_COMMAND_STATUS_ENTRIES,
@@ -399,7 +428,9 @@ impl NovatekConfiguration {
                 .iter()
                 .any(|existing| existing.command_id == command_id)
             {
-                return Err(NovatekConfigurationError::DuplicateCommand { command_id });
+                return Err(NovatekConfigurationError::DuplicateCommand {
+                    command_id: command_id.get(),
+                });
             }
             statuses.push(NovatekCommandStatus { command_id, status });
         }
@@ -421,6 +452,7 @@ impl NovatekConfiguration {
     /// Returns the status for a raw reported command id, when present.
     #[must_use]
     pub fn status_for_command_id(&self, command_id: u16) -> Option<u16> {
+        let command_id = NovatekCommandId::new(command_id)?;
         self.statuses
             .iter()
             .find(|entry| entry.command_id == command_id)
@@ -719,10 +751,15 @@ pub fn parse_command_response(
     expected_command_id: u16,
 ) -> Result<NovatekCommandOutcome, NovatekResponseError> {
     let xml = bounded_xml(response)?;
+    let expected_command_id =
+        NovatekCommandId::new(expected_command_id).ok_or(NovatekResponseError::InvalidCommand)?;
     let command = match extract_tag(xml, "Cmd", "<Cmd>", "</Cmd>") {
-        Ok(value) => value
-            .parse()
-            .map_err(|_| NovatekResponseError::InvalidCommand)?,
+        Ok(value) => {
+            let value = value
+                .parse()
+                .map_err(|_| NovatekResponseError::InvalidCommand)?;
+            NovatekCommandId::new(value).ok_or(NovatekResponseError::InvalidCommand)?
+        }
         Err(NovatekResponseError::MissingTag { tag: "Cmd" }) => {
             return Ok(NovatekCommandOutcome::Unknown);
         }
@@ -730,8 +767,8 @@ pub fn parse_command_response(
     };
     if command != expected_command_id {
         return Err(NovatekResponseError::UnexpectedCommand {
-            actual: command,
-            expected: expected_command_id,
+            actual: command.get(),
+            expected: expected_command_id.get(),
         });
     }
     match parse_status(xml) {
@@ -773,6 +810,8 @@ pub fn parse_configuration_response(
             .trim()
             .parse()
             .map_err(|_| NovatekResponseError::InvalidCommand)?;
+        let command_id =
+            NovatekCommandId::new(command_id).ok_or(NovatekResponseError::InvalidCommand)?;
 
         let after_command = xml
             .get(command_end + "</Cmd>".len()..)
@@ -812,7 +851,9 @@ pub fn parse_configuration_response(
             .iter()
             .any(|existing| existing.command_id == command_id)
         {
-            return Err(NovatekResponseError::DuplicateCommand { command_id });
+            return Err(NovatekResponseError::DuplicateCommand {
+                command_id: command_id.get(),
+            });
         }
         statuses.push(NovatekCommandStatus { command_id, status });
         cursor = status_end + "</Status>".len();
@@ -1022,11 +1063,16 @@ fn parse_status(xml: &str) -> Result<u16, NovatekResponseError> {
 }
 
 fn parse_expected_command(xml: &str, expected: u16) -> Result<(), NovatekResponseError> {
+    let expected = NovatekCommandId::new(expected).ok_or(NovatekResponseError::InvalidCommand)?;
     let actual = extract_tag(xml, "Cmd", "<Cmd>", "</Cmd>")?
         .parse()
         .map_err(|_| NovatekResponseError::InvalidCommand)?;
+    let actual = NovatekCommandId::new(actual).ok_or(NovatekResponseError::InvalidCommand)?;
     if actual != expected {
-        return Err(NovatekResponseError::UnexpectedCommand { actual, expected });
+        return Err(NovatekResponseError::UnexpectedCommand {
+            actual: actual.get(),
+            expected: expected.get(),
+        });
     }
     Ok(())
 }
@@ -1221,7 +1267,7 @@ mod tests {
 
     #[test]
     fn adapter_configuration_rejects_more_than_the_fixed_status_bound() {
-        let statuses = (0..33).map(|command_id| (command_id, 0));
+        let statuses = (1..34).map(|command_id| (command_id, 0));
         assert_eq!(
             NovatekConfiguration::from_status_pairs(statuses),
             Err(NovatekConfigurationError::TooManyStatuses { max: 32 })
@@ -1233,6 +1279,14 @@ mod tests {
         assert_eq!(
             NovatekConfiguration::from_status_pairs([(2001, 0), (2001, 7)]),
             Err(NovatekConfigurationError::DuplicateCommand { command_id: 2001 })
+        );
+    }
+
+    #[test]
+    fn adapter_configuration_rejects_zero_command_evidence() {
+        assert_eq!(
+            NovatekConfiguration::from_status_pairs([(0, 0)]),
+            Err(NovatekConfigurationError::InvalidCommand { command_id: 0 })
         );
     }
 
@@ -1269,6 +1323,24 @@ mod tests {
                 actual: 3024,
                 expected: 2001,
             })
+        );
+    }
+
+    #[test]
+    fn command_response_rejects_zero_command_ids() {
+        assert_eq!(
+            parse_command_response(
+                br"<Function><Cmd>0</Cmd><Status>0</Status></Function>",
+                2001,
+            ),
+            Err(NovatekResponseError::InvalidCommand)
+        );
+        assert_eq!(
+            parse_command_response(
+                br"<Function><Cmd>2001</Cmd><Status>0</Status></Function>",
+                0,
+            ),
+            Err(NovatekResponseError::InvalidCommand)
         );
     }
 

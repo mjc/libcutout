@@ -882,7 +882,8 @@ impl From<NovatekConfigurationError> for MobileNovatekProfileError {
     fn from(error: NovatekConfigurationError) -> Self {
         match error {
             NovatekConfigurationError::TooManyStatuses { .. } => Self::ConfigurationTooLarge,
-            NovatekConfigurationError::DuplicateCommand { .. } => Self::ConfigurationMalformed,
+            NovatekConfigurationError::DuplicateCommand { .. }
+            | NovatekConfigurationError::InvalidCommand { .. } => Self::ConfigurationMalformed,
         }
     }
 }
@@ -18764,7 +18765,7 @@ mod tests {
             ),
             Err(MobileNovatekProfileError::CapabilityNotAdvertised)
         );
-        let oversized_configuration = (0..33)
+        let oversized_configuration = (1..34)
             .map(|command_id| MobileNovatekCommandStatusDto {
                 command_id,
                 status: 0,
