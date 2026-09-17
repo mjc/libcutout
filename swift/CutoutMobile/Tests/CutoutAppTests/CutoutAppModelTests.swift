@@ -1048,6 +1048,44 @@ final class CutoutAppModelTests: XCTestCase {
     }
 
     @MainActor
+    func testLateRideMapErrorCannotOverwriteAnotherRide() {
+        let current = MobileRideMapSnapshotDto(
+            rideID: "ride-b",
+            recordingToken: MobileRideMapRecordingTokenDto(rideId: "ride-b", generation: 4),
+            state: .active,
+            summary: MobileRideMapSummaryDto(
+                pointCount: 0,
+                distanceMeters: 0,
+                durationMilliseconds: 0
+            ),
+            segmentCount: 0,
+            associatedVehicle: nil
+        )
+        let staleRide = MobileRideMapErrorContext(
+            recordingToken: MobileRideMapRecordingTokenDto(rideId: "ride-a", generation: 3)
+        )
+        let staleGeneration = MobileRideMapErrorContext(
+            recordingToken: MobileRideMapRecordingTokenDto(rideId: "ride-b", generation: 3)
+        )
+        let currentRide = MobileRideMapErrorContext(
+            recordingToken: MobileRideMapRecordingTokenDto(rideId: "ride-b", generation: 4)
+        )
+
+        XCTAssertFalse(CutoutAppModel.shouldApplyRideMapError(
+            context: staleRide,
+            currentSnapshot: current
+        ))
+        XCTAssertFalse(CutoutAppModel.shouldApplyRideMapError(
+            context: staleGeneration,
+            currentSnapshot: current
+        ))
+        XCTAssertTrue(CutoutAppModel.shouldApplyRideMapError(
+            context: currentRide,
+            currentSnapshot: current
+        ))
+    }
+
+    @MainActor
     func testRestoredProjectionDoesNotReplaceNewerLiveState() {
         XCTAssertTrue(
             CutoutAppModel.shouldApplyRestoredLiveProjection(
@@ -3602,7 +3640,7 @@ private final class SessionDriverSpy: CutoutSessionDriving {
     var onPhoneLocationSnapshotChange: ((MobilePhoneLocationSnapshotDto, MonotonicMilliseconds) -> Void)?
     var onRideMapDecisionChange: ((MobileRideMapSnapshotDto, MobileRideMapDecisionDto) -> Void)?
     var onRideMapSnapshotChange: ((MobileRideMapSnapshotDto) -> Void)?
-    var onRideMapErrorChange: ((MobileRideMapError) -> Void)?
+    var onRideMapErrorChange: ((MobileRideMapErrorEvent) -> Void)?
     var onRideMapAvailabilityChange: ((MobileRideMapAvailability) -> Void)?
     var onProtocolIdentityCandidateChange: ((DevicePickerDiscoveryCandidate?) -> Void)?
     var onBluetoothRestorationResolved: ((String?) -> Void)?

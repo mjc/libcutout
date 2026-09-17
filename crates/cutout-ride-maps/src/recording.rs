@@ -1130,7 +1130,11 @@ impl RideMapRecorder {
     }
 
     /// Admits a sample for recording after applying the complete route policy.
-    pub(crate) fn admit_sample(
+    ///
+    /// # Errors
+    ///
+    /// Returns the route-admission reason when the sample is not accepted.
+    pub fn admit_sample(
         &self,
         sample: LocationSample,
     ) -> Result<AdmittedLocationSample, LocationAdmission> {
@@ -1142,9 +1146,34 @@ impl RideMapRecorder {
 
     /// Records a sample after durable storage has accepted it.
     pub fn record_sample(&mut self, sample: LocationSample) -> bool {
+        if self.state != Some(RideLifecycleState::Active) {
+            return false;
+        }
         let Ok(admitted_sample) = self.admit_sample(sample) else {
             return false;
         };
+        self.record_admitted_sample(admitted_sample)
+    }
+
+    /// Settles a sample that was admitted while recording was active.
+    ///
+    /// Durable location writes may complete after a pause, interruption, stop, or save. The
+    /// admission capability proves that the sample passed route policy before the write was
+    /// queued; the lifecycle check here prevents a stale completion from mutating a discarded
+    /// or otherwise closed projection.
+    pub fn record_admitted_sample(&mut self, admitted_sample: AdmittedLocationSample) -> bool {
+        if !matches!(
+            self.state,
+            Some(
+                RideLifecycleState::Active
+                    | RideLifecycleState::Paused
+                    | RideLifecycleState::Interrupted
+                    | RideLifecycleState::Stopped
+                    | RideLifecycleState::Saved
+            )
+        ) {
+            return false;
+        }
         let sample = admitted_sample.sample();
         let (next_segment_id, segment_started, segment_start_reason) =
             self.next_sample_metadata(sample);
@@ -1341,6 +1370,41 @@ mod tests {
             recorder.points()[1].segment_start_reason(),
             RideSegmentStartReason::Resume
         );
+    }
+
+    #[test]
+    fn record_sample_requires_an_active_lifecycle() {
+        let first = sample(1_001, 40.0);
+        let mut recorder = RideMapRecorder::new();
+        assert!(!recorder.record_sample(first));
+        assert_eq!(recorder.point_count(), 0);
+
+        recorder.start(monotonic(1_000), None).expect("starts");
+        recorder.record_sample(first);
+        let pause = recorder
+            .validate_transition(RideEvent::Pause)
+            .expect("pause validates");
+        recorder
+            .apply_transition_at(pause, monotonic(1_002))
+            .expect("pauses");
+        assert!(!recorder.record_sample(sample(1_003, 40.000_001)));
+        assert_eq!(recorder.point_count(), 1);
+    }
+
+    #[test]
+    fn admitted_sample_can_settle_after_stop() {
+        let mut recorder = RideMapRecorder::new();
+        recorder.start(monotonic(1_000), None).expect("starts");
+        let admitted = recorder.admit_sample(sample(1_001, 40.0)).expect("admits");
+        let stop = recorder
+            .validate_transition(RideEvent::Stop)
+            .expect("stop validates");
+        recorder
+            .apply_transition_at(stop, monotonic(1_002))
+            .expect("stops");
+
+        assert!(recorder.record_admitted_sample(admitted));
+        assert_eq!(recorder.point_count(), 1);
     }
 
     #[test]

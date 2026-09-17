@@ -467,7 +467,7 @@ public final class CutoutSessionCore: NSObject {
     public var onPhoneLocationSnapshotChange: ((MobilePhoneLocationSnapshotDto, MonotonicMilliseconds) -> Void)?
     public var onRideMapDecisionChange: ((MobileRideMapSnapshotDto, MobileRideMapDecisionDto) -> Void)?
     public var onRideMapSnapshotChange: ((MobileRideMapSnapshotDto) -> Void)?
-    public var onRideMapErrorChange: ((MobileRideMapError) -> Void)?
+    public var onRideMapErrorChange: ((MobileRideMapErrorEvent) -> Void)?
     public var onRideMapAvailabilityChange: ((MobileRideMapAvailability) -> Void)?
     public var onProtocolIdentityCandidateChange: ((DevicePickerDiscoveryCandidate?) -> Void)?
     public var onBluetoothRestorationResolved: ((String?) -> Void)?
@@ -1956,7 +1956,14 @@ public final class CutoutSessionCore: NSObject {
             } catch let error as MobileRideMapError where error == .staleConnection {
                 return
             } catch let error as MobileRideMapError {
-                self.publishRideMapError(error)
+                // Admission can create or replace the ride while this queue is awaiting Rust.
+                // Capture the context at the failure boundary so a first auto-start and a
+                // terminal-ride replacement cannot publish an unscoped error that the app
+                // model incorrectly rejects as stale.
+                let errorContext = MobileRideMapErrorContext(
+                    snapshot: rideMapState.currentSnapshot(atMs: receivedAt.rawValue)
+                )
+                self.publishRideMapError(error, context: errorContext)
                 self.recordRideMapDiagnostic("ride_map_connection_error=\(error)")
             } catch {
                 self.recordRideMapDiagnostic("ride_map_connection_error=\(error)")
@@ -2005,7 +2012,10 @@ public final class CutoutSessionCore: NSObject {
         for decision in decisions {
             switch decision {
             case let .storageError(message):
-                publishRideMapError(.storageError(message))
+                publishRideMapError(
+                    .storageError(message),
+                    context: MobileRideMapErrorContext(snapshot: snapshot)
+                )
             default:
                 guard let snapshot else { continue }
                 publishOnMain {
@@ -2021,8 +2031,12 @@ public final class CutoutSessionCore: NSObject {
         publishOnMain { self.onRideMapSnapshotChange?(snapshot) }
     }
 
-    private func publishRideMapError(_ error: MobileRideMapError) {
-        publishOnMain { self.onRideMapErrorChange?(error) }
+    private func publishRideMapError(
+        _ error: MobileRideMapError,
+        context: MobileRideMapErrorContext
+    ) {
+        let event = MobileRideMapErrorEvent(context: context, error: error)
+        publishOnMain { self.onRideMapErrorChange?(event) }
     }
 
     private func publishRideMapAvailability() {
@@ -2057,7 +2071,10 @@ public final class CutoutSessionCore: NSObject {
                 locationManager.stopUpdatingLocation()
                 return
             }
-            guard CLLocationManager.locationServicesEnabled() else { return }
+            guard CLLocationManager.locationServicesEnabled() else {
+                locationManager.stopUpdatingLocation()
+                return
+            }
             switch locationManager.authorizationStatus {
             case .authorizedAlways, .authorizedWhenInUse:
                 locationManager.startUpdatingLocation()
@@ -2066,9 +2083,9 @@ public final class CutoutSessionCore: NSObject {
                 didRequestWhenInUseLocationAuthorization = true
                 locationManager.requestWhenInUseAuthorization()
             case .denied, .restricted:
-                break
+                locationManager.stopUpdatingLocation()
             @unknown default:
-                break
+                locationManager.stopUpdatingLocation()
             }
         }
     }
@@ -3434,6 +3451,7 @@ extension CutoutSessionCore: CLLocationManagerDelegate {
         let recordingToken = rideMapState
             .currentSnapshot(atMs: receiptMonotonicMs)?
             .recordingToken
+        let errorContext = MobileRideMapErrorContext(recordingToken: recordingToken)
 
         let queue = rideMapQueue
         let reference = WeakCutoutSessionCoreReference(self)
@@ -3448,7 +3466,7 @@ extension CutoutSessionCore: CLLocationManagerDelegate {
                 )
                 self.publishRideMapDecisions(decisions)
             } catch let error as MobileRideMapError {
-                self.publishRideMapError(error)
+                self.publishRideMapError(error, context: errorContext)
                 self.recordRideMapDiagnostic("ride_map_ingest_error=\(error)")
             } catch {
                 self.recordRideMapDiagnostic("ride_map_ingest_error=\(error)")

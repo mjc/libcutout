@@ -84,14 +84,14 @@ pub struct LocationSample {
 /// The private field prevents callers from manufacturing an admitted sample without using
 /// [`crate::RideMapRecorder::admit_sample`].
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(super) struct AdmittedLocationSample(LocationSample);
+pub struct AdmittedLocationSample(LocationSample);
 
 impl AdmittedLocationSample {
-    pub(super) const fn new(sample: LocationSample) -> Self {
+    pub(crate) const fn new(sample: LocationSample) -> Self {
         Self(sample)
     }
 
-    pub(super) const fn sample(self) -> LocationSample {
+    pub(crate) const fn sample(self) -> LocationSample {
         self.0
     }
 }

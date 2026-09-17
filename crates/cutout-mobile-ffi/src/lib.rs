@@ -9963,7 +9963,7 @@ struct MobileRideMapCoreInner {
 #[derive(Debug)]
 struct PendingMapLocationWrite {
     ride_id: MobileRideIdDto,
-    sample: ride_maps::LocationSample,
+    admitted_sample: ride_maps::AdmittedLocationSample,
     point: MobileRideMapCorePointDto,
     write: persistence::PendingLocationWrite,
 }
@@ -10061,13 +10061,22 @@ impl MobileRideMapCoreInner {
             }
             completed.push(match result {
                 Ok(result) if result.admission() == ride_maps::LocationAdmission::Accepted => {
-                    self.recorder.record_sample(pending.sample);
-                    self.revision = self.revision.saturating_add(1);
-                    let mut point = pending.point;
-                    if let Some(sequence) = result.sequence() {
-                        point.sequence = sequence;
+                    if !self
+                        .recorder
+                        .record_admitted_sample(pending.admitted_sample)
+                    {
+                        MobileRideMapCoreDecisionDto::StorageError {
+                            message: "accepted location could not settle into ride projection"
+                                .to_owned(),
+                        }
+                    } else {
+                        self.revision = self.revision.saturating_add(1);
+                        let mut point = pending.point;
+                        if let Some(sequence) = result.sequence() {
+                            point.sequence = sequence;
+                        }
+                        MobileRideMapCoreDecisionDto::Accepted { point }
                     }
-                    MobileRideMapCoreDecisionDto::Accepted { point }
                 }
                 Ok(result) if result.admission() == ride_maps::LocationAdmission::Duplicate => {
                     MobileRideMapCoreDecisionDto::Ignored {
@@ -10106,7 +10115,7 @@ impl MobileRideMapCoreInner {
         // still pending. This removes a pending point after a durable rejection.
         let mut rebuilt = self.recorder.clone();
         for pending in &self.pending_location_writes {
-            rebuilt.record_sample(pending.sample);
+            rebuilt.record_admitted_sample(pending.admitted_sample);
         }
         self.admission_recorder = rebuilt;
         completed
@@ -10174,29 +10183,34 @@ impl MobileRideMapCoreInner {
             return Err(MobileRideMapCoreErrorDto::InvalidLocation);
         }
         let sample = mobile_ride_location(location).map_err(map_core_error)?;
-        match self.admission_recorder.check_sample(&sample) {
-            ride_maps::LocationAdmission::Duplicate => {
+        let admitted_sample = match self.admission_recorder.admit_sample(sample) {
+            Ok(admitted_sample) => admitted_sample,
+            Err(ride_maps::LocationAdmission::Duplicate) => {
                 return Ok(MobileRideMapCoreDecisionDto::Ignored {
                     reason: MobileRideMapDecisionReasonDto::DuplicateLocation,
                 });
             }
-            ride_maps::LocationAdmission::OutOfOrder => {
+            Err(ride_maps::LocationAdmission::OutOfOrder) => {
                 return Ok(MobileRideMapCoreDecisionDto::Rejected {
                     reason: MobileRideMapDecisionReasonDto::TimestampOutOfOrder,
                 });
             }
-            ride_maps::LocationAdmission::AccuracyTooLow => {
+            Err(ride_maps::LocationAdmission::AccuracyTooLow) => {
                 return Ok(MobileRideMapCoreDecisionDto::Rejected {
                     reason: MobileRideMapDecisionReasonDto::AccuracyTooLow,
                 });
             }
-            ride_maps::LocationAdmission::UnrealisticJump => {
+            Err(ride_maps::LocationAdmission::UnrealisticJump) => {
                 return Ok(MobileRideMapCoreDecisionDto::Rejected {
                     reason: MobileRideMapDecisionReasonDto::UnrealisticJump,
                 });
             }
-            ride_maps::LocationAdmission::Accepted => {}
-        }
+            Err(ride_maps::LocationAdmission::Accepted) => {
+                return Ok(MobileRideMapCoreDecisionDto::StorageError {
+                    message: "location admission returned an invalid accepted error".to_owned(),
+                });
+            }
+        };
         let telemetry_state =
             self.admission_recorder
                 .telemetry_state_at(ride_maps::MonotonicMilliseconds::new(
@@ -10226,17 +10240,19 @@ impl MobileRideMapCoreInner {
                 telemetry_state.into(),
             )
             .map_err(map_core_error)?;
-            self.admission_recorder.record_sample(sample);
+            self.admission_recorder
+                .record_admitted_sample(admitted_sample);
             self.pending_location_writes
                 .push_back(PendingMapLocationWrite {
                     ride_id: id,
-                    sample,
+                    admitted_sample,
                     point,
                     write,
                 });
             return Ok(MobileRideMapCoreDecisionDto::Pending { point });
         }
-        self.admission_recorder.record_sample(sample);
+        self.admission_recorder
+            .record_admitted_sample(admitted_sample);
         self.recorder = self.admission_recorder.clone();
         self.revision = self.revision.saturating_add(1);
         Ok(MobileRideMapCoreDecisionDto::Accepted { point })

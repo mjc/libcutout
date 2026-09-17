@@ -40,6 +40,33 @@ public enum MobileRideMapError: Error, Equatable, Hashable, Sendable {
     case storageError(String)
 }
 
+/// Rust-owned ride identity captured when an asynchronous map operation starts.
+public struct MobileRideMapErrorContext: Equatable, Hashable, Sendable {
+    public let rideID: String?
+    public let generation: UInt64?
+
+    public init(recordingToken: MobileRideMapRecordingTokenDto?) {
+        rideID = recordingToken?.rideId
+        generation = recordingToken?.generation
+    }
+
+    public init(snapshot: MobileRideMapSnapshotDto?) {
+        rideID = snapshot?.recordingToken?.rideId ?? snapshot?.rideID
+        generation = snapshot?.recordingToken?.generation
+    }
+}
+
+/// An asynchronous map error paired with the Rust identity that produced it.
+public struct MobileRideMapErrorEvent: Equatable, Hashable, Sendable {
+    public let context: MobileRideMapErrorContext
+    public let error: MobileRideMapError
+
+    public init(context: MobileRideMapErrorContext, error: MobileRideMapError) {
+        self.context = context
+        self.error = error
+    }
+}
+
 
 
 /// Swift-owned handle for cancelling one Rust durable route projection.
