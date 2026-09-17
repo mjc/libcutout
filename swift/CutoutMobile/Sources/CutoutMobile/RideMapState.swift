@@ -782,9 +782,9 @@ public final class MobileRideMapState: @unchecked Sendable {
         core?.currentSnapshot(atMs: atMs).map(mapSnapshot)
     }
 
-    public func startGpsOnly(atMs: UInt64, lastConnectedVehicle: String?) throws -> MobileRideMapSnapshotDto {
+    public func startGpsOnly(atMs: UInt64) throws -> MobileRideMapSnapshotDto {
         try withCore {
-            mapSnapshot(try $0.startGpsOnly(atMs: atMs, lastConnectedVehicle: lastConnectedVehicle))
+            mapSnapshot(try $0.startGpsOnly(atMs: atMs))
         }
     }
 
@@ -792,13 +792,13 @@ public final class MobileRideMapState: @unchecked Sendable {
         connectionState: CutoutSessionStateHandle,
         token: ConnectionAttemptToken,
         atMs: UInt64
-    ) throws -> MobileRideMapSnapshotDto {
+    ) throws -> MobileRideMapSnapshotDto? {
         try withCore {
-            mapSnapshot(try connectionState.ensureRideRecordingForVerifiedConnection(
+            try connectionState.ensureRideRecordingForVerifiedConnection(
                 rideMap: $0,
                 token: token,
                 atMs: atMs
-            ))
+            ).map(mapSnapshot)
         }
     }
 

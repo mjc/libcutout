@@ -283,7 +283,7 @@ final class MusicIntegrationTests: XCTestCase {
     @MainActor
     func testProviderResetDropsCorrelationWithoutWritingAnEvent() throws {
         let state = MobileRideMapState()
-        _ = try state.startGpsOnly(atMs: 1_000, lastConnectedVehicle: nil)
+        _ = try state.startGpsOnly(atMs: 1_000)
         try state.setMusicHistoryPolicy(.humanReadable)
         let lifecycle = MobileMusicProviderLifecycle()
         let coordinator = MusicIntegrationCoordinator(rideMapState: state, lifecycle: lifecycle)
@@ -330,7 +330,7 @@ final class MusicIntegrationTests: XCTestCase {
     @MainActor
     func testEnablingHistorySeedsTheCurrentTrackAfterDisabledObservation() throws {
         let state = MobileRideMapState()
-        _ = try state.startGpsOnly(atMs: 1_000, lastConnectedVehicle: nil)
+        _ = try state.startGpsOnly(atMs: 1_000)
         let coordinator = makeCoordinator(rideMapState: state)
         let playing = MobileMusicSnapshotDto(
             provider: .appleMusic,
@@ -465,7 +465,7 @@ final class MusicIntegrationTests: XCTestCase {
     @MainActor
     func testProviderArtworkReachesPresentationOnlyNowPlaying() throws {
         let rideMapState = MobileRideMapState()
-        _ = try rideMapState.startGpsOnly(atMs: 1_000, lastConnectedVehicle: nil)
+        _ = try rideMapState.startGpsOnly(atMs: 1_000)
         let coordinator = makeCoordinator(rideMapState: rideMapState)
         try coordinator.setHistoryPolicy(.humanReadable)
         let snapshot = MobileMusicSnapshotDto(
@@ -625,7 +625,7 @@ final class MusicIntegrationTests: XCTestCase {
     @MainActor
     func testCoordinatorTruncatesOversizedExplicitRecordBeforeProjectingIt() throws {
         let state = MobileRideMapState()
-        _ = try state.startGpsOnly(atMs: 1_000, lastConnectedVehicle: nil)
+        _ = try state.startGpsOnly(atMs: 1_000)
         try state.setMusicHistoryPolicy(.humanReadable)
         let lifecycle = MobileMusicProviderLifecycle()
         let coordinator = MusicIntegrationCoordinator(rideMapState: state, lifecycle: lifecycle)
@@ -660,7 +660,7 @@ final class MusicIntegrationTests: XCTestCase {
     @MainActor
     func testCoordinatorRejectsImpossiblePlaybackPositionBeforeProjectingIt() throws {
         let state = MobileRideMapState()
-        _ = try state.startGpsOnly(atMs: 1_000, lastConnectedVehicle: nil)
+        _ = try state.startGpsOnly(atMs: 1_000)
         try state.setMusicHistoryPolicy(.humanReadable)
         let coordinator = makeCoordinator(rideMapState: state)
         let invalid = MobileMusicSnapshotDto(
@@ -687,7 +687,7 @@ final class MusicIntegrationTests: XCTestCase {
     @MainActor
     func testCoordinatorBoundsOversizedProviderMetadataBeforeProjectingIt() throws {
         let state = MobileRideMapState()
-        _ = try state.startGpsOnly(atMs: 1_000, lastConnectedVehicle: nil)
+        _ = try state.startGpsOnly(atMs: 1_000)
         try state.setMusicHistoryPolicy(.humanReadable)
         let coordinator = makeCoordinator(rideMapState: state)
 
@@ -739,7 +739,7 @@ final class MusicIntegrationTests: XCTestCase {
     @MainActor
     func testCoordinatorNormalizesBlankOptionalMetadataLikeRust() throws {
         let state = MobileRideMapState()
-        _ = try state.startGpsOnly(atMs: 1_000, lastConnectedVehicle: nil)
+        _ = try state.startGpsOnly(atMs: 1_000)
         try state.setMusicHistoryPolicy(.humanReadable)
         let coordinator = makeCoordinator(rideMapState: state)
         let snapshot = MobileMusicSnapshotDto(
@@ -846,7 +846,7 @@ final class MusicIntegrationTests: XCTestCase {
     @MainActor
     func testCoordinatorClassifiesAcceptedItemSkipSeparatelyFromItemChange() throws {
         let state = MobileRideMapState()
-        _ = try state.startGpsOnly(atMs: 1_000, lastConnectedVehicle: nil)
+        _ = try state.startGpsOnly(atMs: 1_000)
         try state.setMusicHistoryPolicy(.humanReadable)
         let lifecycle = MobileMusicProviderLifecycle()
         let provider = try XCTUnwrap(lifecycle.beginProviderSession())

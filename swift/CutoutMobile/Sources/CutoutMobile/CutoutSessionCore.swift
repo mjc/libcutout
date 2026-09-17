@@ -1941,14 +1941,16 @@ public final class CutoutSessionCore: NSObject {
                   self.connectionSnapshot.generation == connectionGeneration
             else { return }
             do {
-                _ = try rideMapState.ensureRecordingForVerifiedConnection(
+                let snapshot = try rideMapState.ensureRecordingForVerifiedConnection(
                     connectionState: self.rustSessionState,
                     token: token,
                     atMs: receivedAt.rawValue,
                 )
-                _ = try rideMapState.observeTelemetry(atMs: receivedAt.rawValue)
-                if let snapshot = rideMapState.currentSnapshot(atMs: receivedAt.rawValue) {
-                    self.publishRideMapSnapshot(snapshot)
+                if snapshot != nil {
+                    _ = try rideMapState.observeTelemetry(atMs: receivedAt.rawValue)
+                    if let snapshot = rideMapState.currentSnapshot(atMs: receivedAt.rawValue) {
+                        self.publishRideMapSnapshot(snapshot)
+                    }
                 }
                 self.synchronizeRideMapLocationDemand()
             } catch let error as MobileRideMapError where error == .staleConnection {
@@ -3468,15 +3470,9 @@ extension CutoutSessionCore: CLLocationManagerDelegate {
         return rideMapState
     }
 
-    public func startRideMapGpsOnly(
-        atMs: UInt64,
-        lastConnectedVehicle: String?
-    ) throws -> MobileRideMapSnapshotDto {
+    public func startRideMapGpsOnly(atMs: UInt64) throws -> MobileRideMapSnapshotDto {
         let snapshot = try onRideMapQueue {
-            try requireRideMapStateForCommand().startGpsOnly(
-                atMs: atMs,
-                lastConnectedVehicle: lastConnectedVehicle
-            )
+            try requireRideMapStateForCommand().startGpsOnly(atMs: atMs)
         }
         synchronizeRideMapLocationDemand()
         return snapshot

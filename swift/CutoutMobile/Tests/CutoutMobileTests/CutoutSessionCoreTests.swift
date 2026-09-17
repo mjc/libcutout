@@ -162,7 +162,7 @@ final class CutoutSessionCoreTests: XCTestCase {
             _ = try? state.stop(atMs: 200)
             _ = try? state.discard()
         }
-        _ = try state.startGpsOnly(atMs: 100, lastConnectedVehicle: nil)
+        _ = try state.startGpsOnly(atMs: 100)
         let decision = try state.ingestLocation(
             monotonicMs: 100,
             wallClockUnixMs: 1_700_000_000_100,

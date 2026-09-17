@@ -1081,10 +1081,7 @@ final class CutoutAppModel {
     func startGpsOnlyRide() -> Bool {
         core.resetRideMapLocationAdmission()
         let started = applyRideMapCommand(resetPoints: true) {
-            try core.startRideMapGpsOnly(
-                atMs: currentMonotonicTime.rawValue,
-                lastConnectedVehicle: selectedDeviceStore.platformIdentifier
-            )
+            try core.startRideMapGpsOnly(atMs: currentMonotonicTime.rawValue)
         }
         guard started else { return false }
         // Apply the user's default to the fresh Rust-owned ride timeline.

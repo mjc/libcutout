@@ -45,7 +45,7 @@ protocol CutoutSessionDriving: AnyObject {
 
     func resetRideMapLocationAdmission()
     func updateRideLocationDemand(for state: MobileRideMapStateDto)
-    func startRideMapGpsOnly(atMs: UInt64, lastConnectedVehicle: String?) throws -> MobileRideMapSnapshotDto
+    func startRideMapGpsOnly(atMs: UInt64) throws -> MobileRideMapSnapshotDto
     func pauseRideMap(atMs: UInt64) throws -> MobileRideMapSnapshotDto
     func resumeRideMap(atMs: UInt64) throws -> MobileRideMapSnapshotDto
     func stopRideMap(atMs: UInt64) throws -> MobileRideMapSnapshotDto
@@ -82,8 +82,8 @@ extension CutoutSessionDriving {
 
     func resetRideMapLocationAdmission() {}
 
-    func startRideMapGpsOnly(atMs: UInt64, lastConnectedVehicle: String?) throws -> MobileRideMapSnapshotDto {
-        try requireRideMapState().startGpsOnly(atMs: atMs, lastConnectedVehicle: lastConnectedVehicle)
+    func startRideMapGpsOnly(atMs: UInt64) throws -> MobileRideMapSnapshotDto {
+        try requireRideMapState().startGpsOnly(atMs: atMs)
     }
 
     func pauseRideMap(atMs: UInt64) throws -> MobileRideMapSnapshotDto {

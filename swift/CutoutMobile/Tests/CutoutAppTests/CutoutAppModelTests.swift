@@ -505,18 +505,7 @@ final class CutoutAppModelTests: XCTestCase {
 
     @MainActor
     func testRideMapStateRestoresTheRustSnapshotAndRouteBeforeSessionStart() async throws {
-        let driver = SessionDriverSpy(rows: [])
-        _ = try driver.rideMapState.startGpsOnly(
-            atMs: 100,
-            lastConnectedVehicle: "pev-restored"
-        )
-        _ = await Self.settle(driver.rideMapState, try driver.rideMapState.ingestLocation(
-            monotonicMs: 100,
-            wallClockUnixMs: 1_700_000_000_100,
-            latitudeDegrees: 39.7392,
-            longitudeDegrees: -104.9903,
-            horizontalAccuracyMeters: 5
-        ))
+        let driver = SessionDriverSpy(rows: [], rideMapState: MobileRideMapState())
         let connectionState = CutoutSessionStateHandle()
         let token = try XCTUnwrap(
             connectionState.beginConnectionAttempt(
@@ -534,6 +523,19 @@ final class CutoutAppModelTests: XCTestCase {
             identificationComplete: true,
             nowMs: 200
         )
+        _ = try driver.rideMapState.ensureRecordingForVerifiedConnection(
+            connectionState: connectionState,
+            token: token,
+            atMs: 200
+        )
+        _ = try driver.rideMapState.startGpsOnly(atMs: 100)
+        _ = await Self.settle(driver.rideMapState, try driver.rideMapState.ingestLocation(
+            monotonicMs: 100,
+            wallClockUnixMs: 1_700_000_000_100,
+            latitudeDegrees: 39.7392,
+            longitudeDegrees: -104.9903,
+            horizontalAccuracyMeters: 5
+        ))
         _ = try driver.rideMapState.ensureRecordingForVerifiedConnection(
             connectionState: connectionState,
             token: token,
@@ -580,7 +582,7 @@ final class CutoutAppModelTests: XCTestCase {
     func testHistoryReloadFailureRetainsThePreviouslySelectedRoute() async throws {
         let driver = SessionDriverSpy(rows: [])
         let state = driver.rideMapState
-        _ = try state.startGpsOnly(atMs: 100, lastConnectedVehicle: nil)
+        _ = try state.startGpsOnly(atMs: 100)
         _ = await Self.settle(state, try state.ingestLocation(
             monotonicMs: 100,
             wallClockUnixMs: 1_700_000_000_100,
@@ -803,7 +805,7 @@ final class CutoutAppModelTests: XCTestCase {
     func testHistoryRoutePreviewActionLoadsTheLargestBoundedPreview() async throws {
         let driver = SessionDriverSpy(rows: [])
         let state = driver.rideMapState
-        _ = try state.startGpsOnly(atMs: 100, lastConnectedVehicle: nil)
+        _ = try state.startGpsOnly(atMs: 100)
         for index in 0 ... 4_096 {
             _ = await Self.settle(state, try state.ingestLocation(
                 monotonicMs: 100 + UInt64(index) * 1_000,
@@ -847,7 +849,7 @@ final class CutoutAppModelTests: XCTestCase {
         let state = driver.rideMapState
 
         func saveRide(startingAt startMs: UInt64) async throws -> String {
-            _ = try state.startGpsOnly(atMs: startMs, lastConnectedVehicle: nil)
+            _ = try state.startGpsOnly(atMs: startMs)
             _ = await Self.settle(state, try state.ingestLocation(
                 monotonicMs: startMs,
                 wallClockUnixMs: 1_700_000_000_000 + startMs,
@@ -886,7 +888,7 @@ final class CutoutAppModelTests: XCTestCase {
     func testDetailViewportProjectionDoesNotReplaceHistoryProjection() async throws {
         let driver = SessionDriverSpy(rows: [])
         let state = driver.rideMapState
-        _ = try state.startGpsOnly(atMs: 100, lastConnectedVehicle: nil)
+        _ = try state.startGpsOnly(atMs: 100)
         _ = await Self.settle(state, try state.ingestLocation(
             monotonicMs: 100,
             wallClockUnixMs: 1_700_000_000_100,
@@ -1056,7 +1058,7 @@ final class CutoutAppModelTests: XCTestCase {
 
     func testRouteProjectionUsesRustBoundedProjection() async throws {
         let state = MobileRideMapState()
-        _ = try state.startGpsOnly(atMs: 100, lastConnectedVehicle: nil)
+        _ = try state.startGpsOnly(atMs: 100)
         for sequence in 0 ..< 10 {
             _ = await Self.settle(state, try state.ingestLocation(
                 monotonicMs: UInt64(1_000 + sequence * 1_000),
@@ -3612,6 +3614,7 @@ private final class SessionDriverSpy: CutoutSessionDriving {
 
     init(
         rows: [DevicePickerRow],
+        rideMapState: MobileRideMapState? = nil,
         pairingSucceeds: Bool = true,
         flushSucceeds: Bool = true,
         restoredPlatformIdentifier: String? = nil,
@@ -3624,12 +3627,13 @@ private final class SessionDriverSpy: CutoutSessionDriving {
         self.restoredPlatformIdentifier = restoredPlatformIdentifier
         self.notifyBluetoothRestorationOnStart = notifyBluetoothRestorationOnStart
         self.rideMapUnavailable = rideMapUnavailable
-        let state = RustPersistenceStore.shared.map(MobileRideMapState.init(database:))
+        let state = rideMapState
+            ?? RustPersistenceStore.shared.map(MobileRideMapState.init(database:))
             ?? MobileRideMapState()
         if state.currentSnapshot() != nil {
             _ = try? state.discard()
         }
-        rideMapState = state
+        self.rideMapState = state
     }
 
     func setRideMapUnavailable(_ unavailable: Bool) {

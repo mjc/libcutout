@@ -187,7 +187,7 @@ impl CutoutSessionStateHandle {
         ride_map: Arc<MobileRideMapCore>,
         token: MobileConnectionAttemptTokenDto,
         at_ms: u64,
-    ) -> Result<MobileRideMapCoreSnapshotDto, MobileRideMapCoreErrorDto> {
+    ) -> Result<Option<MobileRideMapCoreSnapshotDto>, MobileRideMapCoreErrorDto> {
         let token = token.into();
         let state = self.lock_inner();
         let verified = state
