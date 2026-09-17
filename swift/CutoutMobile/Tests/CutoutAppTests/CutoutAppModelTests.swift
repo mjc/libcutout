@@ -2404,7 +2404,17 @@ final class CutoutAppModelTests: XCTestCase {
 
         model.applyCaptureEvent(.finished(fileURL: URL(fileURLWithPath: "/tmp/ride.jsonl")))
         model.recordCameraMediaReference(media: media, localURL: localURL)
+        let lateMedia = CameraMediaEvidence(
+            name: "late.TS",
+            path: #"A:\Novatek\Movie\late.TS"#,
+            sizeBytes: 43,
+            timecode: 8,
+            time: "2025/01/01 00:00:01",
+            attributes: 32
+        )
+        model.recordCameraMediaReference(media: lateMedia, localURL: URL(fileURLWithPath: "/tmp/late.TS"))
         XCTAssertEqual(model.cameraMediaReferences.count, 1)
+        XCTAssertEqual(model.cameraSessionStateHandle.cameraMediaProvenance().count, 1)
 
         model.applyCaptureEvent(.started(fileURL: URL(fileURLWithPath: "/tmp/next-ride.jsonl")))
         XCTAssertTrue(model.cameraSessionStateHandle.cameraMediaProvenance().isEmpty)
