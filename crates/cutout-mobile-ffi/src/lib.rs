@@ -7317,8 +7317,7 @@ impl MobileRideMapCore {
             at_ms,
             None,
             Some(automatic_policy),
-        )?
-        .ok_or(MobileRideMapCoreErrorDto::NoActiveRide)
+        )
     }
 
     /// Applies connection policy for an already verified Rust connection attempt.
@@ -7327,7 +7326,7 @@ impl MobileRideMapCore {
         platform_identifier: String,
         at_ms: u64,
         connection_generation: u64,
-    ) -> Result<Option<MobileRideMapCoreSnapshotDto>, MobileRideMapCoreErrorDto> {
+    ) -> Result<MobileRideMapCoreSnapshotDto, MobileRideMapCoreErrorDto> {
         self.ensure_recording_for_vehicle_with_connection_generation(
             platform_identifier,
             at_ms,
@@ -7344,7 +7343,6 @@ impl MobileRideMapCore {
         at_ms: u64,
     ) -> Result<MobileRideMapCoreAssociationDto, MobileRideMapCoreErrorDto> {
         let mut state = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
-        state.require_ready()?;
         let mut staged = state.admission_recorder.clone();
         let mut durable_staged = state.recorder.clone();
         let Some(identity) = ride_maps::VehicleIdentity::new(&platform_identifier) else {
@@ -8223,57 +8221,6 @@ impl MobileRideMapCore {
         let mut state = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
         state.require_ready()?;
         state.start_gps_only(at_ms)
-    }
-
-    /// Applies the connection recording policy and associates a connected vehicle.
-    ///
-    /// With `ManualOnly`, a connection never creates or resumes a ride, but an already-open
-    /// GPS-only ride is associated with this vehicle. With `StartAndResume`, a fresh connection
-    /// starts a new live ride when no open ride exists and a matching recent interrupted ride is
-    /// resumed. In both cases, the route recorded before the Bluetooth connection was available
-    /// is preserved.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error when the identifier is invalid, no ride can be created, or association
-    /// metadata cannot be persisted.
-    pub fn ensure_recording_for_vehicle(
-        &self,
-        platform_identifier: String,
-        at_ms: u64,
-        automatic_policy: MobileRideMapAutomaticRecordingPolicyDto,
-    ) -> Result<MobileRideMapCoreSnapshotDto, MobileRideMapCoreErrorDto> {
-        self.ensure_recording_for_vehicle_with_connection_generation(
-            platform_identifier,
-            at_ms,
-            None,
-            Some(automatic_policy),
-        )
-    }
-
-    /// Applies connection-triggered recording policy once for one native connection generation.
-    ///
-    /// Repeated BLE notifications for the same connection are idempotent. A failed attempt is
-    /// not recorded as handled, so a later notification can retry it. The connection generation
-    /// is supplied by the native transport adapter; Rust owns whether automatic policy has
-    /// already been applied and still verifies the vehicle identity before changing a ride.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error when the identifier is invalid, no ride can be created, or association
-    /// metadata cannot be persisted.
-    pub fn ensure_recording_for_vehicle_on_connection(
-        &self,
-        platform_identifier: String,
-        at_ms: u64,
-        connection_generation: u64,
-    ) -> Result<MobileRideMapCoreSnapshotDto, MobileRideMapCoreErrorDto> {
-        self.ensure_recording_for_vehicle_with_connection_generation(
-            platform_identifier,
-            at_ms,
-            Some(connection_generation),
-            None,
-        )
     }
 
     fn ensure_recording_for_vehicle_with_connection_generation(

@@ -9,17 +9,6 @@ private let vescReply: [UInt8] = [
 ]
 
 final class RideMapStateTests: XCTestCase {
-    func testInvalidConnectionIdentitySurfacesTypedRustError() {
-        let state = MobileRideMapState()
-        XCTAssertThrowsError(try state.ensureRecordingForVehicle(
-            platformIdentifier: "   ",
-            atMs: 1_000,
-            automaticPolicy: .startAndResume
-        )) { error in
-            XCTAssertEqual(error as? MobileRideMapError, .invalidVehicleIdentity)
-        }
-    }
-
     func testActiveSnapshotCarriesAsyncLocationRecordingToken() throws {
         let state = MobileRideMapState()
 
@@ -441,6 +430,13 @@ final class RideMapStateTests: XCTestCase {
             longitudeDegrees: -104.9903,
             horizontalAccuracyMeters: 4
         ))
+        let connectionState = CutoutSessionStateHandle()
+        let token = try XCTUnwrap(
+            connectionState.beginConnectionAttempt(platformIdentifier: "pev-1", nowMs: 150).token
+        )
+        _ = connectionState.connectionLinkEstablished(token: token)
+        _ = connectionState.observeConnectionNotification(token: token, bytes: Data(vescReply))
+        _ = connectionState.resolveDeviceSession(token: token, identificationComplete: true, nowMs: 200)
         _ = try state.ensureRecordingForVerifiedConnection(
             connectionState: connectionState,
             token: token,
