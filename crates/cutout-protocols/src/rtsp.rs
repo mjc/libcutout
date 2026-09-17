@@ -422,16 +422,6 @@ impl std::fmt::Debug for RetinaRtspPreviewSession {
 }
 
 impl RetinaRtspPreviewSession {
-    /// Connects to an RTSP URI, negotiates TCP interleaving, and starts playback.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if the URI is invalid, no video stream is advertised,
-    /// or Retina cannot complete DESCRIBE/SETUP/PLAY.
-    pub async fn connect(uri: &str) -> Result<Self, RetinaRtspError> {
-        Self::connect_inner(uri, None).await
-    }
-
     /// Connects only when the RTSP host matches the selected camera origin.
     ///
     /// The live-view URI is camera-reported input. Binding it to the origin
@@ -447,13 +437,10 @@ impl RetinaRtspPreviewSession {
         uri: &str,
         expected_address: Ipv4Addr,
     ) -> Result<Self, RetinaRtspError> {
-        Self::connect_inner(uri, Some(expected_address)).await
+        Self::connect_inner(uri, expected_address).await
     }
 
-    async fn connect_inner(
-        uri: &str,
-        expected_address: Option<Ipv4Addr>,
-    ) -> Result<Self, RetinaRtspError> {
+    async fn connect_inner(uri: &str, expected_address: Ipv4Addr) -> Result<Self, RetinaRtspError> {
         tokio::time::timeout(
             RETINA_RTSP_HANDSHAKE_TIMEOUT,
             Self::connect_inner_unbounded(uri, expected_address),
@@ -464,7 +451,7 @@ impl RetinaRtspPreviewSession {
 
     async fn connect_inner_unbounded(
         uri: &str,
-        expected_address: Option<Ipv4Addr>,
+        expected_address: Ipv4Addr,
     ) -> Result<Self, RetinaRtspError> {
         let url = Url::parse(uri).map_err(|_| RetinaRtspError::InvalidUri)?;
         if url.scheme() != "rtsp"
@@ -478,7 +465,7 @@ impl RetinaRtspPreviewSession {
             .host_str()
             .and_then(|host| host.parse::<Ipv4Addr>().ok())
             .ok_or(RetinaRtspError::NonLocalUri)?;
-        if expected_address.is_some_and(|expected| expected != host) {
+        if expected_address != host {
             return Err(RetinaRtspError::OriginMismatch);
         }
         NovatekHttpOrigin::new(host, url.port().unwrap_or(554))
@@ -545,7 +532,6 @@ impl RetinaRtspPreviewSession {
                     let is_random_access_point = frame.is_random_access_point();
                     let timestamp = frame.timestamp();
                     let data = frame.into_data();
-                    ensure_video_frame_size(data.len())?;
                     let clock_rate_hz = RetinaVideoClockRate::from_nonzero(timestamp.clock_rate());
                     return Ok(Some(
                         RetinaVideoFrame::new(
@@ -590,15 +576,6 @@ fn video_configuration_for_stream(
         })
 }
 
-fn ensure_video_frame_size(length: usize) -> Result<(), RetinaRtspError> {
-    if length > RETINA_MAX_VIDEO_FRAME_BYTES {
-        return Err(RetinaRtspError::VideoFrameTooLarge {
-            max: RETINA_MAX_VIDEO_FRAME_BYTES,
-        });
-    }
-    Ok(())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -607,15 +584,27 @@ mod tests {
     #[tokio::test(flavor = "current_thread")]
     async fn rtsp_session_rejects_non_rtsp_or_authorityless_uris_before_network_io() {
         assert!(matches!(
-            RetinaRtspPreviewSession::connect("http://192.168.1.254/xxx.mov").await,
+            RetinaRtspPreviewSession::connect_for_origin(
+                "http://192.168.1.254/xxx.mov",
+                Ipv4Addr::new(192, 168, 1, 254),
+            )
+            .await,
             Err(RetinaRtspError::InvalidUri)
         ));
         assert!(matches!(
-            RetinaRtspPreviewSession::connect("rtsp:///xxx.mov").await,
+            RetinaRtspPreviewSession::connect_for_origin(
+                "rtsp:///xxx.mov",
+                Ipv4Addr::new(192, 168, 1, 254),
+            )
+            .await,
             Err(RetinaRtspError::InvalidUri)
         ));
         assert!(matches!(
-            RetinaRtspPreviewSession::connect("rtsp://example.com/xxx.mov").await,
+            RetinaRtspPreviewSession::connect_for_origin(
+                "rtsp://example.com/xxx.mov",
+                Ipv4Addr::new(192, 168, 1, 254),
+            )
+            .await,
             Err(RetinaRtspError::NonLocalUri)
         ));
     }
@@ -635,8 +624,9 @@ mod tests {
     #[tokio::test(flavor = "current_thread")]
     async fn rtsp_session_rejects_uri_userinfo_before_network_io() {
         assert!(matches!(
-            RetinaRtspPreviewSession::connect(
-                "rtsp://camera-user:camera-password@192.168.1.254/xxx.mov"
+            RetinaRtspPreviewSession::connect_for_origin(
+                "rtsp://camera-user:camera-password@192.168.1.254/xxx.mov",
+                Ipv4Addr::new(192, 168, 1, 254),
             )
             .await,
             Err(RetinaRtspError::InvalidUri)
@@ -688,15 +678,6 @@ mod tests {
         assert_eq!(error.kind(), io::ErrorKind::InvalidData);
         drop(sink);
         fs::remove_file(path).unwrap();
-    }
-
-    #[test]
-    fn rtsp_frame_size_is_bounded_before_crossing_the_mobile_boundary() {
-        assert!(ensure_video_frame_size(RETINA_MAX_VIDEO_FRAME_BYTES).is_ok());
-        assert!(matches!(
-            ensure_video_frame_size(RETINA_MAX_VIDEO_FRAME_BYTES + 1),
-            Err(RetinaRtspError::VideoFrameTooLarge { .. })
-        ));
     }
 
     #[test]
