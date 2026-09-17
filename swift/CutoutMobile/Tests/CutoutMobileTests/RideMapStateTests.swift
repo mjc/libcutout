@@ -339,15 +339,18 @@ final class RideMapStateTests: XCTestCase {
     func testMapStateReportsTypedAdmissionReasons() throws {
         let state = MobileRideMapState()
 
-        XCTAssertThrowsError(
-            try state.ingestLocation(
+        do {
+            let decision = try state.ingestLocation(
                 monotonicMs: 1,
                 wallClockUnixMs: 1_700_000_000_001,
                 latitudeDegrees: 39.7392,
                 longitudeDegrees: -104.9903,
                 horizontalAccuracyMeters: 4
             )
-        ) { error in
+            // A discarded debug snapshot remains addressable but is no longer
+            // recordable; both representations are typed no-active outcomes.
+            XCTAssertEqual(decision, .ignored(reason: .rideNotRecording))
+        } catch {
             XCTAssertEqual(error as? MobileRideMapError, .noActiveRide)
         }
 

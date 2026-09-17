@@ -246,7 +246,7 @@ final class CutoutAppModelTests: XCTestCase {
         policyStore.set(.opaqueItem)
 
         let model = CutoutAppModel(
-            core: SessionDriverSpy(rows: []),
+            core: SessionDriverSpy(rows: [], rideMapUnavailable: true),
             musicHistoryPolicyStore: policyStore
         )
 
