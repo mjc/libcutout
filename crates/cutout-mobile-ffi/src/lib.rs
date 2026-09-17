@@ -8250,15 +8250,6 @@ impl MobileRideMapCore {
             .ok_or(MobileRideMapCoreErrorDto::InvalidVehicleIdentity)?;
         let platform_identifier = identity.as_str().to_owned();
         let mut state = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
-        state.last_connected_vehicle = Some(identity.clone());
-        if let Some(database) = state.database.as_ref() {
-            database
-                .inner
-                .remember_last_connected_device(&platform_identifier, wall_clock_milliseconds()?)
-                .map_err(map_storage_core_error)?;
-        }
-        let automatic_policy =
-            explicit_policy.unwrap_or(state.automatic_policy_for_vehicle(&platform_identifier)?);
         if connection_generation.is_some_and(|generation| {
             state.last_connection_transition_generation == Some(generation)
         }) {
@@ -8268,6 +8259,15 @@ impl MobileRideMapCore {
                 .ok_or(MobileRideMapCoreErrorDto::NoActiveRide)?;
             return Ok(Some(state.snapshot(lifecycle.into())));
         }
+        if let Some(database) = state.database.as_ref() {
+            database
+                .inner
+                .remember_last_connected_device(&platform_identifier, wall_clock_milliseconds()?)
+                .map_err(map_storage_core_error)?;
+        }
+        state.last_connected_vehicle = Some(identity.clone());
+        let automatic_policy =
+            explicit_policy.unwrap_or(state.automatic_policy_for_vehicle(&platform_identifier)?);
         if automatic_policy == MobileRideMapAutomaticRecordingPolicyDto::StartAndResume
             && state.recorder.state() == Some(ride_maps::RideLifecycleState::Interrupted)
         {
@@ -18654,6 +18654,77 @@ mod tests {
         assert_ne!(next.ride_id, first.ride_id);
 
         database.shutdown().expect("database shuts down");
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn repeated_verified_connection_generation_does_not_repeat_durable_admission() {
+        let _guard = RIDE_DATABASE_TEST_LOCK
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        let path = std::env::temp_dir().join(format!(
+            "cutout-mobile-map-connection-idempotency-{}-{}.sqlite3",
+            std::process::id(),
+            Uuid::new_v4()
+        ));
+        let _ = fs::remove_file(&path);
+        let database =
+            open_ride_database(path.to_string_lossy().into_owned()).expect("database opens");
+        database
+            .remember_selected_device("pev-1".to_owned(), None, 1_000)
+            .expect("remembered device persists");
+        let state = MobileRideMapCore::with_database(database.clone());
+        let first = state
+            .ensure_recording_for_vehicle_on_connection("pev-1".to_owned(), 1_000, 7)
+            .expect("first verified connection is admitted")
+            .expect("automatic admission produces a snapshot");
+
+        database.shutdown().expect("database shuts down");
+
+        let repeated = state
+            .ensure_recording_for_vehicle_on_connection("pev-1".to_owned(), 1_001, 7)
+            .expect("a repeated generation is an in-memory idempotent result")
+            .expect("the original ride snapshot remains available");
+        assert_eq!(repeated, first);
+
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn failed_last_connection_persistence_does_not_mutate_memory() {
+        let _guard = RIDE_DATABASE_TEST_LOCK
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        let path = std::env::temp_dir().join(format!(
+            "cutout-mobile-map-connection-persistence-{}-{}.sqlite3",
+            std::process::id(),
+            Uuid::new_v4()
+        ));
+        let _ = fs::remove_file(&path);
+        let database =
+            open_ride_database(path.to_string_lossy().into_owned()).expect("database opens");
+        let state = MobileRideMapCore::with_database(database.clone());
+        assert_eq!(
+            state
+                .ensure_recording_for_vehicle_on_connection("pev-1".to_owned(), 1_000, 7)
+                .expect("manual-only observation is an expected no-op"),
+            None
+        );
+        database.shutdown().expect("database shuts down");
+
+        assert!(matches!(
+            state.ensure_recording_for_vehicle_on_connection("pev-2".to_owned(), 1_001, 8),
+            Err(MobileRideMapCoreErrorDto::Storage(_))
+        ));
+        let inner = state.inner.lock().unwrap_or_else(PoisonError::into_inner);
+        assert_eq!(
+            inner
+                .last_connected_vehicle
+                .as_ref()
+                .map(ride_maps::VehicleIdentity::as_str),
+            Some("pev-1")
+        );
+
         let _ = fs::remove_file(path);
     }
 
