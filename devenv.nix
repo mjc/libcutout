@@ -198,6 +198,8 @@ in
   tasks."test:shell-regressions".exec = ''
     bash tests/scripts/swift-package-common.sh
     bash tests/scripts/run-ios-ui-tests.sh
+    bash tests/fixtures/ffi-freshness/run.sh
+    bash tests/fixtures/ffi-production/run.sh
   '';
   tasks."build:ios-app" = swiftTask ''
     cargo cutout xcodebuild -- \
