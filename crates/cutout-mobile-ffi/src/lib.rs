@@ -9943,6 +9943,7 @@ struct MobileRideMapCoreInner {
     pending_location_writes: VecDeque<PendingMapLocationWrite>,
     settled_location_decisions: VecDeque<MobileRideMapCoreDecisionDto>,
     recoverable_updated_at_milliseconds: Option<u64>,
+    last_connection_transition_generation: Option<u64>,
     monotonic_epoch_offset_milliseconds: u64,
     initialization_error: Option<MobileRideMapCoreErrorDto>,
 }
@@ -10176,6 +10177,7 @@ impl MobileRideMapCoreInner {
             pending_location_writes: VecDeque::new(),
             settled_location_decisions: VecDeque::new(),
             recoverable_updated_at_milliseconds: None,
+            last_connection_transition_generation: None,
             monotonic_epoch_offset_milliseconds: 0,
             initialization_error: None,
         };
@@ -10632,10 +10634,61 @@ impl MobileRideMapCore {
         at_ms: u64,
         automatic_policy: MobileRideMapAutomaticRecordingPolicyDto,
     ) -> Result<MobileRideMapCoreSnapshotDto, MobileRideMapCoreErrorDto> {
+        self.ensure_recording_for_vehicle_with_connection_generation(
+            platform_identifier,
+            at_ms,
+            None,
+            Some(automatic_policy),
+        )
+    }
+
+    /// Applies connection-triggered recording policy once for one native connection generation.
+    ///
+    /// Repeated BLE notifications for the same connection are idempotent. A failed attempt is
+    /// not recorded as handled, so a later notification can retry it. The connection generation
+    /// is supplied by the native transport adapter; Rust owns whether automatic policy has
+    /// already been applied and still verifies the vehicle identity before changing a ride.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the identifier is invalid, no ride can be created, or association
+    /// metadata cannot be persisted.
+    pub fn ensure_recording_for_vehicle_on_connection(
+        &self,
+        platform_identifier: String,
+        at_ms: u64,
+        connection_generation: u64,
+    ) -> Result<MobileRideMapCoreSnapshotDto, MobileRideMapCoreErrorDto> {
+        self.ensure_recording_for_vehicle_with_connection_generation(
+            platform_identifier,
+            at_ms,
+            Some(connection_generation),
+            None,
+        )
+    }
+
+    fn ensure_recording_for_vehicle_with_connection_generation(
+        &self,
+        platform_identifier: String,
+        at_ms: u64,
+        connection_generation: Option<u64>,
+        explicit_policy: Option<MobileRideMapAutomaticRecordingPolicyDto>,
+    ) -> Result<MobileRideMapCoreSnapshotDto, MobileRideMapCoreErrorDto> {
         let identity = ride_maps::VehicleIdentity::new(&platform_identifier)
             .ok_or(MobileRideMapCoreErrorDto::InvalidVehicleIdentity)?;
         let platform_identifier = identity.as_str().to_owned();
         let mut state = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
+        let automatic_policy =
+            explicit_policy.unwrap_or(state.automatic_policy_for_vehicle(&platform_identifier)?);
+        if connection_generation.is_some_and(|generation| {
+            state.last_connection_transition_generation == Some(generation)
+        }) {
+            let lifecycle = state
+                .recorder
+                .state()
+                .ok_or(MobileRideMapCoreErrorDto::NoActiveRide)?;
+            return Ok(state.snapshot(lifecycle.into()));
+        }
         if automatic_policy == MobileRideMapAutomaticRecordingPolicyDto::StartAndResume
             && state.recorder.state() == Some(ride_maps::RideLifecycleState::Interrupted)
         {
@@ -10704,6 +10757,9 @@ impl MobileRideMapCore {
         }
         state.recorder = durable_staged;
         state.admission_recorder = staged;
+        if let Some(generation) = connection_generation {
+            state.last_connection_transition_generation = Some(generation);
+        }
         let lifecycle = state
             .recorder
             .state()
@@ -10808,6 +10864,10 @@ impl MobileRideMapCore {
         let snapshot = state.transition_inner(MobileRideEventDto::Discard)?;
         state.pending_location_writes.clear();
         state.admission_recorder = state.recorder.clone();
+        state.ride_id = None;
+        state.recoverable_updated_at_milliseconds = None;
+        state.reset_music_history_policy();
+        state.music_restore_failed = false;
         Ok(snapshot)
     }
 
@@ -11486,6 +11546,24 @@ fn project_live_route_points(
 }
 
 impl MobileRideMapCoreInner {
+    fn automatic_policy_for_vehicle(
+        &self,
+        platform_identifier: &str,
+    ) -> Result<MobileRideMapAutomaticRecordingPolicyDto, MobileRideMapCoreErrorDto> {
+        let Some(database) = self.database.as_ref() else {
+            return Ok(MobileRideMapAutomaticRecordingPolicyDto::ManualOnly);
+        };
+        let remembered = database
+            .inner
+            .selected_device()
+            .map_err(map_storage_core_error)?;
+        Ok(if remembered.as_deref() == Some(platform_identifier) {
+            MobileRideMapAutomaticRecordingPolicyDto::StartAndResume
+        } else {
+            MobileRideMapAutomaticRecordingPolicyDto::ManualOnly
+        })
+    }
+
     fn logical_monotonic_milliseconds(&self, raw: u64) -> u64 {
         raw.saturating_add(self.monotonic_epoch_offset_milliseconds)
     }
@@ -23771,6 +23849,51 @@ mod tests {
     }
 
     #[test]
+    fn mobile_ride_map_core_applies_connection_policy_once_per_generation() {
+        let _guard = RIDE_DATABASE_TEST_LOCK
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        let path = std::env::temp_dir().join(format!(
+            "cutout-mobile-map-connection-policy-{}-{}.sqlite3",
+            std::process::id(),
+            Uuid::new_v4()
+        ));
+        let _ = fs::remove_file(&path);
+        let database =
+            open_ride_database(path.to_string_lossy().into_owned()).expect("database opens");
+        database
+            .remember_selected_device("pev-1".to_owned(), None, 1_000)
+            .expect("remembered device persists");
+        let state = MobileRideMapCore::with_database(database.clone());
+        let first = state
+            .ensure_recording_for_vehicle_on_connection("pev-1".to_owned(), 1_000, 7)
+            .expect("the first connection starts a ride");
+        state.stop(2_000).expect("the ride stops");
+        state.save().expect("the ride saves");
+
+        let repeated = state
+            .ensure_recording_for_vehicle_on_connection("pev-1".to_owned(), 3_000, 7)
+            .expect("repeated notifications are idempotent");
+        assert_eq!(repeated.ride_id, first.ride_id);
+        assert_eq!(repeated.state, MobileRideLifecycleStateDto::Saved);
+
+        let mismatched = state
+            .ensure_recording_for_vehicle_on_connection("pev-2".to_owned(), 3_500, 8)
+            .expect("a different vehicle must not auto-start a ride");
+        assert_eq!(mismatched.ride_id, first.ride_id);
+        assert_eq!(mismatched.state, MobileRideLifecycleStateDto::Saved);
+
+        let next = state
+            .ensure_recording_for_vehicle_on_connection("pev-1".to_owned(), 4_000, 9)
+            .expect("a new connection may start the next ride");
+        assert_eq!(next.state, MobileRideLifecycleStateDto::Active);
+        assert_ne!(next.ride_id, first.ride_id);
+
+        database.shutdown().expect("database shuts down");
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
     fn mobile_ride_map_core_manual_only_connection_never_creates_a_ride() {
         let state = MobileRideMapCore::new();
 
@@ -25181,6 +25304,32 @@ mod tests {
                 .current_music_events()
                 .is_some_and(|events| events.is_empty())
         );
+        database.shutdown().expect("database shuts down");
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn discarded_ride_has_no_current_music_history() {
+        let _guard = RIDE_DATABASE_TEST_LOCK
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        let path = std::env::temp_dir().join(format!(
+            "libcutout-mobile-music-discard-{}.sqlite",
+            Uuid::new_v4()
+        ));
+        let database =
+            open_ride_database(path.to_string_lossy().into_owned()).expect("database opens");
+        let state = MobileRideMapCore::with_database(database.clone());
+        state.start_gps_only(1_000, None).expect("ride starts");
+        state
+            .set_music_history_policy(MobileMusicHistoryPolicyDto::HumanReadable)
+            .expect("policy enables history");
+        state.stop_at(2_000).expect("ride stops");
+        state.discard().expect("ride discards");
+
+        assert!(state.current_snapshot(2_000).is_none());
+        assert!(state.current_music_history().is_none());
+
         database.shutdown().expect("database shuts down");
         let _ = fs::remove_file(path);
     }

@@ -801,6 +801,20 @@ public final class MobileRideMapState: @unchecked Sendable {
         }
     }
 
+    public func ensureRecordingForVehicleOnConnection(
+        platformIdentifier: String,
+        atMs: UInt64,
+        connectionGeneration: UInt64
+    ) throws -> MobileRideMapSnapshotDto {
+        try withCore {
+            mapSnapshot(try $0.ensureRecordingForVehicleOnConnection(
+                platformIdentifier: platformIdentifier,
+                atMs: atMs,
+                connectionGeneration: connectionGeneration
+            ))
+        }
+    }
+
     public func pause(atMs: UInt64) throws -> MobileRideMapSnapshotDto {
         try transition { try $0.pauseAt(atMs: atMs) }
     }

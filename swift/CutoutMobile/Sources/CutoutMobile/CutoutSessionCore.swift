@@ -515,7 +515,6 @@ public final class CutoutSessionCore: NSObject {
     private var bmsStorageSessionIdentifier = UUID().uuidString
     private let deviceDetectionSession: DeviceDetectionSession
     private let identificationProbeTransport: IdentificationProbeTransportCoordinator
-    private let rideMapAutomaticRecordingPolicy: MobileRideMapAutomaticRecordingPolicyDto
     private var begodeProbeExpiryWorkItem: DispatchWorkItem?
     private var protocolDetectionExpiryWorkItem: DispatchWorkItem?
     private var pendingDisplayState: RideDisplayState?
@@ -526,7 +525,6 @@ public final class CutoutSessionCore: NSObject {
     private let rideMapState: MobileRideMapState?
     private let phoneLocationState = MobilePhoneLocationState()
     private var latestRideMapSnapshot: MobileRideMapSnapshotDto?
-    private var rideMapConnectionObserved = false
     private var rideMapWritePoller: DispatchSourceTimer?
     private var locationUpdatesDemanded = false
     private var locationManagerUpdatesStarted = false
@@ -563,11 +561,13 @@ public final class CutoutSessionCore: NSObject {
 #if DEBUG
     public convenience init(
         testScript: CutoutSessionTestScript,
-        rideMapState: MobileRideMapState? = nil
+        rideMapState: MobileRideMapState? = nil,
+        selectedDeviceStore: DevicePickerSelectionStore = DevicePickerSelectionStore()
     ) {
         self.init(
             clock: MonotonicClock(),
             testScript: testScript,
+            selectedDeviceStore: selectedDeviceStore,
             rideMapState: rideMapState
         )
     }
@@ -579,8 +579,7 @@ public final class CutoutSessionCore: NSObject {
         reconnectJitter: @escaping () -> Double = { Double.random(in: 0...1) },
         selectedDeviceStore: DevicePickerSelectionStore = DevicePickerSelectionStore(),
         wallClock: @escaping () -> Date = { Date() },
-        rideMapState: MobileRideMapState? = nil,
-        rideMapAutomaticRecordingPolicy: MobileRideMapAutomaticRecordingPolicyDto = .manualOnly
+        rideMapState: MobileRideMapState? = nil
     ) {
         let rustSessionState = CutoutSessionStateHandle()
         self.rustSessionState = rustSessionState
@@ -592,7 +591,6 @@ public final class CutoutSessionCore: NSObject {
         self.clock = clock
         self.wallClock = wallClock
         self.rideMapState = rideMapState
-        self.rideMapAutomaticRecordingPolicy = rideMapAutomaticRecordingPolicy
         self.testScript = testScript
         self.reconnectController = ConnectionReconnectController(scheduler: reconnectScheduler)
         self.reconnectJitter = reconnectJitter
@@ -606,8 +604,7 @@ public final class CutoutSessionCore: NSObject {
         clock: MonotonicClock,
         selectedDeviceStore: DevicePickerSelectionStore = DevicePickerSelectionStore(),
         wallClock: @escaping () -> Date = { Date() },
-        rideMapState: MobileRideMapState? = nil,
-        rideMapAutomaticRecordingPolicy: MobileRideMapAutomaticRecordingPolicyDto = .manualOnly
+        rideMapState: MobileRideMapState? = nil
     ) {
         let rustSessionState = CutoutSessionStateHandle()
         self.rustSessionState = rustSessionState
@@ -619,7 +616,6 @@ public final class CutoutSessionCore: NSObject {
         self.clock = clock
         self.wallClock = wallClock
         self.rideMapState = rideMapState
-        self.rideMapAutomaticRecordingPolicy = rideMapAutomaticRecordingPolicy
         self.reconnectController = ConnectionReconnectController(scheduler: MainQueueReconnectScheduler())
         self.reconnectJitter = { Double.random(in: 0...1) }
         self.selectedDeviceStore = selectedDeviceStore
@@ -1174,7 +1170,6 @@ public final class CutoutSessionCore: NSObject {
         isDetectingProtocol = false
         selectedModel = nil
         selectedRoute = nil
-        rideMapConnectionObserved = false
         chargeEstimateProfile = nil
         vescBoardProfile = nil
         liveOwner = nil
@@ -1484,7 +1479,6 @@ public final class CutoutSessionCore: NSObject {
         self.advertisement = advertisement
         selectedModel = nil
         selectedRoute = nil
-        rideMapConnectionObserved = false
         liveOwner = nil
         deviceDetectionSession.reset()
         _ = deviceDetectionSession.observeAdvertisement(name: advertisement.localName.map { Data($0.utf8) })
@@ -1519,7 +1513,6 @@ public final class CutoutSessionCore: NSObject {
         self.advertisement = advertisement
         selectedModel = nil
         selectedRoute = nil
-        rideMapConnectionObserved = false
         liveOwner = nil
         deviceDetectionSession.reset()
         _ = deviceDetectionSession.observeAdvertisement(name: advertisement.localName.map { Data($0.utf8) })
@@ -1665,7 +1658,6 @@ public final class CutoutSessionCore: NSObject {
         let wasRecordOnlyConnection = isRecordOnly
         isRecordOnly = false
         isDetectingProtocol = selectedRoute == nil
-        rideMapConnectionObserved = false
         liveOwner = nil
         if let token = connectionAttempt?.token {
             _ = rustSessionState.resetDeviceDetectionLinkForAttempt(token: token)
@@ -1721,7 +1713,6 @@ public final class CutoutSessionCore: NSObject {
         }
 
         isDetectingProtocol = selectedRoute == nil
-        rideMapConnectionObserved = false
         setPhase(.discoveringServices)
 
         let now = clock.now().rawValue
@@ -1938,27 +1929,23 @@ public final class CutoutSessionCore: NSObject {
               let rideMapState,
               rideMapState.initializationError == nil,
               let platformIdentifier = protocolIdentityCandidate?.platformIdentifier
-                ?? peripheral?.identifier.uuidString
         else {
             return
         }
 
-        let shouldEnsureRecording = !rideMapConnectionObserved
-        rideMapConnectionObserved = true
+        let connectionGeneration = connectionSnapshot.generation
         let queue = rideMapQueue
         let reference = WeakCutoutSessionCoreReference(self)
         queue.async {
-            guard let self = reference.value else { return }
+            guard let self = reference.value,
+                  self.connectionSnapshot.generation == connectionGeneration
+            else { return }
             do {
-                if shouldEnsureRecording {
-                    // Auto-start/resume is a connection-transition action. Repeating it for every
-                    // notification would restart a ride after the user explicitly stopped it.
-                    _ = try rideMapState.ensureRecordingForVehicle(
-                        platformIdentifier: platformIdentifier,
-                        atMs: receivedAt.rawValue,
-                        automaticPolicy: self.rideMapAutomaticRecordingPolicy
-                    )
-                }
+                _ = try rideMapState.ensureRecordingForVehicleOnConnection(
+                    platformIdentifier: platformIdentifier,
+                    atMs: receivedAt.rawValue,
+                    connectionGeneration: connectionGeneration
+                )
                 _ = try rideMapState.observeVehicleConnection(
                     platformIdentifier: platformIdentifier,
                     atMs: receivedAt.rawValue
@@ -2468,7 +2455,6 @@ private extension CutoutSessionCore {
         peripheral = restoredPeripheral
         selectedRoute = nil
         selectedModel = nil
-        rideMapConnectionObserved = false
         isRecordOnly = false
         isDetectingProtocol = true
         suppressReconnect = false
@@ -2502,7 +2488,6 @@ private extension CutoutSessionCore {
             advertisement = nil
             selectedRoute = nil
             selectedModel = nil
-            rideMapConnectionObserved = false
         @unknown default:
             record("central_restore=unknown_peripheral_state")
         }

@@ -3426,11 +3426,18 @@ final class CutoutAppModelTests: XCTestCase {
     @MainActor
     func testProductionRideMapDecisionReachesAppModelWithoutMapMounted() async throws {
         let fixture = CutoutUITestSessionFixture.autoVescLiveActivity
+        let suiteName = "CutoutAppModelTests.rideMapAutoStart.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let database = try XCTUnwrap(MobileRideMapState.debugDatabase)
+        let selectedDeviceStore = DevicePickerSelectionStore(database: database, defaults: defaults)
+        selectedDeviceStore.save(platformIdentifier: fixture.candidate.platformIdentifier)
         let core = CutoutSessionCore(
             testScript: fixture.testScript,
-            rideMapState: MobileRideMapState()
+            rideMapState: MobileRideMapState(),
+            selectedDeviceStore: selectedDeviceStore
         )
-        let model = CutoutAppModel(core: core)
+        let model = CutoutAppModel(core: core, selectedDeviceStore: selectedDeviceStore)
 
         core.start()
         XCTAssertTrue(core.pair(platformIdentifier: fixture.candidate.platformIdentifier))
