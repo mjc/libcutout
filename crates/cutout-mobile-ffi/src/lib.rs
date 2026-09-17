@@ -7406,22 +7406,13 @@ impl MobileRideMapCoreInner {
             }
             completed.push(match result {
                 Ok(result) if result.admission() == ride_maps::LocationAdmission::Accepted => {
-                    if !self
-                        .recorder
-                        .record_admitted_sample(pending.admitted_sample)
-                    {
-                        MobileRideMapCoreDecisionDto::StorageError {
-                            message: "accepted location could not settle into ride projection"
-                                .to_owned(),
-                        }
-                    } else {
-                        self.revision = self.revision.saturating_add(1);
-                        let mut point = pending.point;
-                        if let Some(sequence) = result.sequence() {
-                            point.sequence = sequence;
-                        }
-                        MobileRideMapCoreDecisionDto::Accepted { point }
+                    self.recorder.record_sample(pending.sample);
+                    self.revision = self.revision.saturating_add(1);
+                    let mut point = pending.point;
+                    if let Some(sequence) = result.sequence() {
+                        point.sequence = sequence;
                     }
+                    MobileRideMapCoreDecisionDto::Accepted { point }
                 }
                 Ok(result) if result.admission() == ride_maps::LocationAdmission::Duplicate => {
                     MobileRideMapCoreDecisionDto::Ignored {
