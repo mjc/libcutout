@@ -793,7 +793,7 @@ public final class CameraLocalNetworkAdapter {
         guard readOnlyOriginMatches(origin) else {
             throw CameraCommandRequestError.originMismatch
         }
-        guard readOnlyEvidence?.supportsOnboardRecording == true else {
+        guard evidence.supportsOnboardRecording else {
             throw CameraCommandRequestError.unsupported
         }
         let command: MobileNovatekRecordingCommandDto = start ? .start : .stop
@@ -801,6 +801,7 @@ public final class CameraLocalNetworkAdapter {
         do {
             target = try mobileNovatekRecordingCommandTarget(
                 firmwareVersion: evidence.firmwareVersion,
+                configuration: evidence.commandCapabilityConfiguration,
                 command: command
             )
         } catch {
@@ -852,13 +853,14 @@ public final class CameraLocalNetworkAdapter {
         guard readOnlyOriginMatches(origin) else {
             throw CameraCommandRequestError.originMismatch
         }
-        guard readOnlyEvidence?.supportsStillCapture == true else {
+        guard evidence.supportsStillCapture else {
             throw CameraCommandRequestError.unsupported
         }
         let target: String
         do {
             target = try mobileNovatekStillCaptureCommandTarget(
                 firmwareVersion: evidence.firmwareVersion,
+                configuration: evidence.commandCapabilityConfiguration,
                 command: .capture
             )
         } catch {

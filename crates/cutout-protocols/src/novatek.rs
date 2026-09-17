@@ -120,6 +120,18 @@ pub enum NovatekProfileError {
     FirmwareVersionTooLong,
 }
 
+/// Failure while proving that a verified profile advertises a mutating
+/// command before its target can be constructed.
+#[derive(Clone, Copy, Debug, Eq, Error, PartialEq)]
+pub enum NovatekCapabilityError {
+    /// The read-only configuration did not advertise the requested command.
+    #[error("Novatek command {command_id} is not advertised by the profile")]
+    NotAdvertised {
+        /// Command identifier that was not advertised.
+        command_id: u16,
+    },
+}
+
 /// Error returned when a camera-reported media path cannot become a safe HTTP
 /// download target.
 #[derive(Clone, Copy, Debug, Eq, Error, PartialEq)]
@@ -195,9 +207,18 @@ impl NovatekFirmwareVersion {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct NovatekR3V1Profile(NovatekFirmwareVersion);
 
+/// Proof that verified R3V1 read-only evidence advertises recording control.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct NovatekRecordingCapability(NovatekR3V1Profile);
+
+/// Proof that verified R3V1 read-only evidence advertises still capture.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct NovatekStillCaptureCapability(NovatekR3V1Profile);
+
 impl NovatekR3V1Profile {
-    /// Parses a bounded firmware identity and retains it as a mutating-command
-    /// capability proof.
+    /// Parses a bounded firmware identity and retains it as an R3V1 profile
+    /// proof. Command-specific capabilities are derived separately from the
+    /// profile and the camera's read-only configuration evidence.
     ///
     /// # Errors
     ///
@@ -212,6 +233,26 @@ impl NovatekR3V1Profile {
         let version = ArrayString::try_from(version)
             .map_err(|_| NovatekProfileError::FirmwareVersionTooLong)?;
         Ok(Self(NovatekFirmwareVersion(version)))
+    }
+
+    /// Proves that read-only configuration advertises onboard recording.
+    pub fn recording_capability(
+        &self,
+        advertised: bool,
+    ) -> Result<NovatekRecordingCapability, NovatekCapabilityError> {
+        advertised
+            .then(|| NovatekRecordingCapability(self.clone()))
+            .ok_or(NovatekCapabilityError::NotAdvertised { command_id: 2001 })
+    }
+
+    /// Proves that read-only configuration advertises still capture.
+    pub fn still_capture_capability(
+        &self,
+        advertised: bool,
+    ) -> Result<NovatekStillCaptureCapability, NovatekCapabilityError> {
+        advertised
+            .then(|| NovatekStillCaptureCapability(self.clone()))
+            .ok_or(NovatekCapabilityError::NotAdvertised { command_id: 1001 })
     }
 
     /// Returns the verified firmware identity.
@@ -1002,18 +1043,24 @@ pub struct NovatekStillCaptureCommand;
 
 impl NovatekStillCaptureCommand {
     /// Returns the fixed relative target for this still-capture request after
-    /// the caller proves the verified R3V1 profile.
+    /// the caller proves the verified R3V1 capability.
     #[must_use]
-    pub const fn request_target_for_profile(self, _profile: &NovatekR3V1Profile) -> &'static str {
+    pub const fn request_target_for_capability(
+        self,
+        _capability: &NovatekStillCaptureCapability,
+    ) -> &'static str {
         "/?custom=1&cmd=1001"
     }
 }
 
 impl NovatekRecordingCommand {
     /// Returns the fixed relative target for this recording request after the
-    /// caller proves the verified R3V1 profile.
+    /// caller proves the verified R3V1 capability.
     #[must_use]
-    pub const fn request_target_for_profile(self, _profile: &NovatekR3V1Profile) -> &'static str {
+    pub const fn request_target_for_capability(
+        self,
+        _capability: &NovatekRecordingCapability,
+    ) -> &'static str {
         match self {
             Self::Start => "/?custom=1&cmd=2001&str=1",
             Self::Stop => "/?custom=1&cmd=2001&str=0",
@@ -1046,12 +1093,15 @@ mod tests {
     #[test]
     fn recording_commands_encode_fixed_user_requested_targets() {
         let profile = NovatekR3V1Profile::parse("R3V1.1_20240411").expect("verified profile");
+        let capability = profile
+            .recording_capability(true)
+            .expect("advertised recording capability");
         assert_eq!(
-            NovatekRecordingCommand::Start.request_target_for_profile(&profile),
+            NovatekRecordingCommand::Start.request_target_for_capability(&capability),
             "/?custom=1&cmd=2001&str=1"
         );
         assert_eq!(
-            NovatekRecordingCommand::Stop.request_target_for_profile(&profile),
+            NovatekRecordingCommand::Stop.request_target_for_capability(&capability),
             "/?custom=1&cmd=2001&str=0"
         );
     }
@@ -1059,8 +1109,11 @@ mod tests {
     #[test]
     fn still_capture_command_encodes_fixed_user_requested_target() {
         let profile = NovatekR3V1Profile::parse("R3V1.1_20240411").expect("verified profile");
+        let capability = profile
+            .still_capture_capability(true)
+            .expect("advertised still capability");
         assert_eq!(
-            NovatekStillCaptureCommand.request_target_for_profile(&profile),
+            NovatekStillCaptureCommand.request_target_for_capability(&capability),
             "/?custom=1&cmd=1001"
         );
     }
@@ -1070,6 +1123,19 @@ mod tests {
         assert_eq!(
             NovatekR3V1Profile::parse("R4V2.0_20250101"),
             Err(NovatekProfileError::UnsupportedFirmware)
+        );
+    }
+
+    #[test]
+    fn mutating_commands_reject_missing_capability_evidence() {
+        let profile = NovatekR3V1Profile::parse("R3V1.1_20240411").expect("verified profile");
+        assert_eq!(
+            profile.recording_capability(false),
+            Err(NovatekCapabilityError::NotAdvertised { command_id: 2001 })
+        );
+        assert_eq!(
+            profile.still_capture_capability(false),
+            Err(NovatekCapabilityError::NotAdvertised { command_id: 1001 })
         );
     }
 
