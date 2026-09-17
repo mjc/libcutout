@@ -1,6 +1,6 @@
 # Live NOSFET Aero NF2557 capture.
 # Date: 2026-06-21
-# Command: devenv shell -- cargo run -p cutout-cli -- capture-aero --name-contains NF2557 --seconds 1
+# Command: devenv shell -- cargo run -p cutout-cli -- capture --name-contains NF2557 --seconds 1
 # Platform: macOS CoreBluetooth
 # CoreBluetooth id: 8de871ff-6aa1-a767-34dd-608e584b610e
 # Advertised name: NF2557
