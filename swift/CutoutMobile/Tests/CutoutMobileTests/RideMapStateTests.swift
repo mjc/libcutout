@@ -1,19 +1,14 @@
 import XCTest
+import Foundation
 import CutoutMobileFFI
 @testable import CutoutMobile
 
-final class RideMapStateTests: XCTestCase {
-    func testInvalidConnectionIdentitySurfacesTypedRustError() {
-        let state = MobileRideMapState()
-        XCTAssertThrowsError(try state.ensureRecordingForVehicle(
-            platformIdentifier: "   ",
-            atMs: 1_000,
-            automaticPolicy: .startAndResume
-        )) { error in
-            XCTAssertEqual(error as? MobileRideMapError, .invalidVehicleIdentity)
-        }
-    }
+private let vescReply: [UInt8] = [
+    2, 20, 157, 7, 1, 2, 97, 98, 99, 49, 50, 51, 0, 117, 115, 101, 114, 104, 97, 115, 104,
+    0, 38, 208, 3,
+]
 
+final class RideMapStateTests: XCTestCase {
     func testActiveSnapshotCarriesAsyncLocationRecordingToken() throws {
         let state = MobileRideMapState()
 
@@ -420,7 +415,18 @@ final class RideMapStateTests: XCTestCase {
             longitudeDegrees: -104.9903,
             horizontalAccuracyMeters: 4
         ))
-        XCTAssertEqual(try state.observeVehicleConnection(platformIdentifier: "pev-1", atMs: 200), .associated)
+        let connectionState = CutoutSessionStateHandle()
+        let token = try XCTUnwrap(
+            connectionState.beginConnectionAttempt(platformIdentifier: "pev-1", nowMs: 150).token
+        )
+        _ = connectionState.connectionLinkEstablished(token: token)
+        _ = connectionState.observeConnectionNotification(token: token, bytes: Data(vescReply))
+        _ = connectionState.resolveDeviceSession(token: token, identificationComplete: true, nowMs: 200)
+        _ = try state.ensureRecordingForVerifiedConnection(
+            connectionState: connectionState,
+            token: token,
+            atMs: 200
+        )
 
         guard case let .accepted(point, _) = decision else {
             return XCTFail("expected the location to be admitted")

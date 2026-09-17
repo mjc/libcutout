@@ -788,34 +788,6 @@ public final class MobileRideMapState: @unchecked Sendable {
         }
     }
 
-    public func ensureRecordingForVehicle(
-        platformIdentifier: String,
-        atMs: UInt64,
-        automaticPolicy: MobileRideMapAutomaticRecordingPolicyDto
-    ) throws -> MobileRideMapSnapshotDto {
-        try withCore {
-            mapSnapshot(try $0.ensureRecordingForVehicle(
-                platformIdentifier: platformIdentifier,
-                atMs: atMs,
-                automaticPolicy: automaticPolicy
-            ))
-        }
-    }
-
-    public func ensureRecordingForVehicleOnConnection(
-        platformIdentifier: String,
-        atMs: UInt64,
-        connectionGeneration: UInt64
-    ) throws -> MobileRideMapSnapshotDto {
-        try withCore {
-            mapSnapshot(try $0.ensureRecordingForVehicleOnConnection(
-                platformIdentifier: platformIdentifier,
-                atMs: atMs,
-                connectionGeneration: connectionGeneration
-            ))
-        }
-    }
-
     public func ensureRecordingForVerifiedConnection(
         connectionState: CutoutSessionStateHandle,
         token: ConnectionAttemptToken,
@@ -848,12 +820,6 @@ public final class MobileRideMapState: @unchecked Sendable {
 
     public func discard() throws -> MobileRideMapSnapshotDto {
         try transition { try $0.discard() }
-    }
-
-    public func observeVehicleConnection(platformIdentifier: String, atMs: UInt64) throws -> MobileRideMapAssociationDto {
-        try withCore {
-            map(try $0.observeVehicleConnection(platformIdentifier: platformIdentifier, atMs: atMs))
-        }
     }
 
     public func observeTelemetry(atMs: UInt64) throws -> MobileRideMapTelemetryObservation {

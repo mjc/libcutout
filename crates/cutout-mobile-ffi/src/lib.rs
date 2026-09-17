@@ -9960,6 +9960,83 @@ struct PendingMapLocationWrite {
     write: persistence::PendingLocationWrite,
 }
 
+impl MobileRideMapCore {
+    /// Applies an explicit policy from Rust-owned callers only.
+    ///
+    /// Native clients must enter through `CutoutSessionStateHandle`, which proves that the
+    /// connection is current and verified before this operation can run.
+    #[cfg(test)]
+    pub(crate) fn ensure_recording_for_vehicle(
+        &self,
+        platform_identifier: String,
+        at_ms: u64,
+        automatic_policy: MobileRideMapAutomaticRecordingPolicyDto,
+    ) -> Result<MobileRideMapCoreSnapshotDto, MobileRideMapCoreErrorDto> {
+        self.ensure_recording_for_vehicle_with_connection_generation(
+            platform_identifier,
+            at_ms,
+            None,
+            Some(automatic_policy),
+        )
+    }
+
+    /// Applies connection policy for an already verified Rust connection attempt.
+    pub(crate) fn ensure_recording_for_vehicle_on_connection(
+        &self,
+        platform_identifier: String,
+        at_ms: u64,
+        connection_generation: u64,
+    ) -> Result<MobileRideMapCoreSnapshotDto, MobileRideMapCoreErrorDto> {
+        self.ensure_recording_for_vehicle_with_connection_generation(
+            platform_identifier,
+            at_ms,
+            Some(connection_generation),
+            None,
+        )
+    }
+
+    /// Associates a verified vehicle with the active recording for Rust-owned tests and flows.
+    #[cfg(test)]
+    pub(crate) fn observe_vehicle_connection(
+        &self,
+        platform_identifier: String,
+        at_ms: u64,
+    ) -> Result<MobileRideMapCoreAssociationDto, MobileRideMapCoreErrorDto> {
+        let mut state = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
+        let mut staged = state.admission_recorder.clone();
+        let mut durable_staged = state.recorder.clone();
+        let Some(identity) = ride_maps::VehicleIdentity::new(&platform_identifier) else {
+            return Ok(ride_maps::VehicleAssociation::CandidateMissing.into());
+        };
+        let at_ms = state.logical_monotonic_milliseconds(at_ms);
+        let association =
+            staged.observe_vehicle(&identity, ride_maps::MonotonicMilliseconds::new(at_ms));
+        if association == ride_maps::VehicleAssociation::Associated {
+            let _ = durable_staged
+                .observe_vehicle(&identity, ride_maps::MonotonicMilliseconds::new(at_ms));
+            if let (Some(database), Some(id)) = (state.database.as_ref(), state.ride_id.clone()) {
+                database
+                    .update_ride_map_metadata(
+                        id,
+                        staged.candidate_vehicle().map(str::to_owned),
+                        Some(platform_identifier.clone()),
+                        staged
+                            .associated_at_milliseconds()
+                            .map(ride_maps::MonotonicMilliseconds::as_u64),
+                        staged
+                            .last_telemetry_at_milliseconds()
+                            .map(ride_maps::MonotonicMilliseconds::as_u64),
+                    )
+                    .map_err(map_core_error)?;
+            }
+            state.revision = state.revision.saturating_add(1);
+        }
+        state.recorder = durable_staged;
+        state.admission_recorder = staged;
+        Ok(association.into())
+    }
+}
+
 impl MobileRideMapCoreInner {
     fn poll_location_writes(&mut self) -> Vec<MobileRideMapCoreDecisionDto> {
         let current_ride_id = self.ride_id.clone();
@@ -10619,57 +10696,6 @@ impl MobileRideMapCore {
         state.start_gps_only(at_ms, last_connected_vehicle)
     }
 
-    /// Applies the connection recording policy and associates a connected vehicle.
-    ///
-    /// With `ManualOnly`, a connection never creates or resumes a ride, but an already-open
-    /// GPS-only ride is associated with this vehicle. With `StartAndResume`, a fresh connection
-    /// starts a new live ride when no open ride exists and a matching recent interrupted ride is
-    /// resumed. In both cases, the route recorded before the Bluetooth connection was available
-    /// is preserved.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error when the identifier is invalid, no ride can be created, or association
-    /// metadata cannot be persisted.
-    pub fn ensure_recording_for_vehicle(
-        &self,
-        platform_identifier: String,
-        at_ms: u64,
-        automatic_policy: MobileRideMapAutomaticRecordingPolicyDto,
-    ) -> Result<MobileRideMapCoreSnapshotDto, MobileRideMapCoreErrorDto> {
-        self.ensure_recording_for_vehicle_with_connection_generation(
-            platform_identifier,
-            at_ms,
-            None,
-            Some(automatic_policy),
-        )
-    }
-
-    /// Applies connection-triggered recording policy once for one native connection generation.
-    ///
-    /// Repeated BLE notifications for the same connection are idempotent. A failed attempt is
-    /// not recorded as handled, so a later notification can retry it. The connection generation
-    /// is supplied by the native transport adapter; Rust owns whether automatic policy has
-    /// already been applied and still verifies the vehicle identity before changing a ride.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error when the identifier is invalid, no ride can be created, or association
-    /// metadata cannot be persisted.
-    pub fn ensure_recording_for_vehicle_on_connection(
-        &self,
-        platform_identifier: String,
-        at_ms: u64,
-        connection_generation: u64,
-    ) -> Result<MobileRideMapCoreSnapshotDto, MobileRideMapCoreErrorDto> {
-        self.ensure_recording_for_vehicle_with_connection_generation(
-            platform_identifier,
-            at_ms,
-            Some(connection_generation),
-            None,
-        )
-    }
-
     fn ensure_recording_for_vehicle_with_connection_generation(
         &self,
         platform_identifier: String,
@@ -11157,51 +11183,6 @@ impl MobileRideMapCore {
             .map_err(map_storage_core_error)?;
         state.reset_music_history_policy();
         Ok(())
-    }
-
-    /// Associates a connected vehicle with the active recording.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error when durable association metadata cannot be persisted.
-    #[allow(clippy::needless_pass_by_value)]
-    pub fn observe_vehicle_connection(
-        &self,
-        platform_identifier: String,
-        at_ms: u64,
-    ) -> Result<MobileRideMapCoreAssociationDto, MobileRideMapCoreErrorDto> {
-        let mut state = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
-        let mut staged = state.admission_recorder.clone();
-        let mut durable_staged = state.recorder.clone();
-        let Some(identity) = ride_maps::VehicleIdentity::new(&platform_identifier) else {
-            return Ok(ride_maps::VehicleAssociation::CandidateMissing.into());
-        };
-        let at_ms = state.logical_monotonic_milliseconds(at_ms);
-        let association =
-            staged.observe_vehicle(&identity, ride_maps::MonotonicMilliseconds::new(at_ms));
-        if association == ride_maps::VehicleAssociation::Associated {
-            let _ = durable_staged
-                .observe_vehicle(&identity, ride_maps::MonotonicMilliseconds::new(at_ms));
-            if let (Some(database), Some(id)) = (state.database.as_ref(), state.ride_id.clone()) {
-                database
-                    .update_ride_map_metadata(
-                        id,
-                        staged.candidate_vehicle().map(str::to_owned),
-                        Some(platform_identifier.clone()),
-                        staged
-                            .associated_at_milliseconds()
-                            .map(ride_maps::MonotonicMilliseconds::as_u64),
-                        staged
-                            .last_telemetry_at_milliseconds()
-                            .map(ride_maps::MonotonicMilliseconds::as_u64),
-                    )
-                    .map_err(map_core_error)?;
-            }
-            state.revision = state.revision.saturating_add(1);
-        }
-        state.recorder = durable_staged;
-        state.admission_recorder = staged;
-        Ok(association.into())
     }
 
     /// Records a confirmed vehicle telemetry timestamp without backfilling route points.
