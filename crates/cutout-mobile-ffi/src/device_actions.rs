@@ -160,7 +160,7 @@ impl From<cutout_core::DeviceActionSnapshot> for MobileDeviceActionSnapshotDto {
                     verification: progress.verification.into(),
                 }),
             status: value.status.into(),
-            age_ms: value.age.map(|age| age.as_milliseconds()),
+            age_ms: value.age.map(cutout_core::Quantity::as_milliseconds),
             requested_step: value.requested_step.map(Into::into),
             next_step: value.next_step.into(),
             refusal: value

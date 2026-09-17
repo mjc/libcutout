@@ -783,10 +783,8 @@ impl BmsTelemetryState {
             return;
         }
         let sequence = self.next_observation_event_sequence;
-        self.next_observation_event_sequence = self
-            .next_observation_event_sequence
-            .checked_add(1)
-            .expect("BMS observation event sequence exhausted");
+        self.next_observation_event_sequence =
+            self.next_observation_event_sequence.saturating_add(1);
         *readback = readback.clone().with_observation_event_sequence(sequence);
     }
 

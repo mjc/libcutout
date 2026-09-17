@@ -42,7 +42,7 @@ pub struct AeroSettingsReadback {
     /// Current simulated voltage correction, when explicitly set.
     pub voltage_correction: Option<AeroVoltageCorrection>,
 
-    /// Current official MxV raw maximum-charge value.
+    /// Current official `MxV` raw maximum-charge value.
     pub max_charge_voltage_raw: Option<AeroMaxChargeVoltageRaw>,
 
     /// Current numeric MD pedal hardness, when the simulator has a value.
@@ -387,6 +387,7 @@ impl AeroSettingsSimulator {
         )))
     }
 
+    #[allow(clippy::too_many_lines)]
     fn settings_readback(&self) -> SettingsReadback {
         SettingsReadback::available([
             self.readback.tiltback_speed.map(|value| {

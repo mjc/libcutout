@@ -123,7 +123,7 @@ use cutout_protocols::{
     VETERAN_FIELD_CHARGE_MODE, VETERAN_FIELD_PEDALS_MODE, VETERAN_FIELD_SPEED_ALERT_DECI_KMH,
     VETERAN_FIELD_SPEED_TILTBACK_DECI_KMH, VescBatteryType as CoreVescBatteryType,
     VescBoardProfile as CoreVescBoardProfile, VescReadOnlySession as CoreVescReadOnlySession,
-    begode_identification_probes, closest_known_model, identify_known_model, is_r3_pro_firmware,
+    closest_known_model, identify_known_model, is_r3_pro_firmware,
     new_nosfet_aero_benign_control_session, parse_read_only_snapshot,
     try_new_begode_falcon_benign_control_session,
 };
@@ -1003,8 +1003,13 @@ pub fn mobile_novatek_media_thumbnail_target(
 ///
 /// A successful HTTP request is not recording readback; callers must keep
 /// camera recording state unconfirmed until a camera status response arrives.
+///
+/// # Errors
+///
+/// Returns [`MobileNovatekProfileError`] when the firmware or advertised command capability is
+/// outside the verified R3V1 profile.
 #[uniffi::export]
-#[must_use]
+#[allow(clippy::needless_pass_by_value)]
 pub fn mobile_novatek_recording_command_target(
     firmware_version: String,
     configuration: Vec<MobileNovatekCommandStatusDto>,
@@ -1027,8 +1032,13 @@ pub fn mobile_novatek_recording_command_target(
 ///
 /// A successful HTTP request is not camera acknowledgement or media readback;
 /// callers must wait for a later media-list response before presenting a file.
+///
+/// # Errors
+///
+/// Returns [`MobileNovatekProfileError`] when the firmware or advertised command capability is
+/// outside the verified R3V1 profile.
 #[uniffi::export]
-#[must_use]
+#[allow(clippy::needless_pass_by_value)]
 pub fn mobile_novatek_still_capture_command_target(
     firmware_version: String,
     configuration: Vec<MobileNovatekCommandStatusDto>,
@@ -2004,6 +2014,7 @@ impl From<CoreDiscoveryCandidateSupport> for DiscoveryCandidateSupport {
 }
 
 #[uniffi::export]
+#[allow(clippy::needless_pass_by_value)]
 impl CutoutSessionStateHandle {
     /// Legacy standalone detector entry point used only before connection admission.
     pub fn begin_identification_probe_at(
@@ -2043,10 +2054,10 @@ impl CutoutSessionStateHandle {
             .map(GattFingerprint::from)
             .collect::<Vec<_>>();
         let mut state = self.lock_inner();
-        state
-            .observe_gatt_unscoped(&fingerprints)
-            .map(Into::into)
-            .unwrap_or_else(|| state.detector().resolution(state.session_state()).into())
+        state.observe_gatt_unscoped(&fingerprints).map_or_else(
+            || state.detector().resolution(state.session_state()).into(),
+            Into::into,
+        )
     }
 
     pub fn observe_notification(&self, bytes: Vec<u8>) -> DeviceDetectionResolutionRecord {
@@ -2093,8 +2104,10 @@ impl CutoutSessionStateHandle {
             .observe_detection_unscoped(DeviceDetectionEvent::ProbeTimeout {
                 probe: PendingProbe::BegodeName,
             })
-            .map(Into::into)
-            .unwrap_or_else(|| state.detector().resolution(state.session_state()).into())
+            .map_or_else(
+                || state.detector().resolution(state.session_state()).into(),
+                Into::into,
+            )
     }
     pub fn observe_begode_firmware_probe_timeout(&self) -> DeviceDetectionResolutionRecord {
         let mut state = self.lock_inner();
@@ -2102,8 +2115,10 @@ impl CutoutSessionStateHandle {
             .observe_detection_unscoped(DeviceDetectionEvent::ProbeTimeout {
                 probe: PendingProbe::BegodeFirmware,
             })
-            .map(Into::into)
-            .unwrap_or_else(|| state.detector().resolution(state.session_state()).into())
+            .map_or_else(
+                || state.detector().resolution(state.session_state()).into(),
+                Into::into,
+            )
     }
     pub fn observe_begode_imu_probe_timeout(&self) -> DeviceDetectionResolutionRecord {
         let mut state = self.lock_inner();
@@ -2111,8 +2126,10 @@ impl CutoutSessionStateHandle {
             .observe_detection_unscoped(DeviceDetectionEvent::ProbeTimeout {
                 probe: PendingProbe::BegodeImu,
             })
-            .map(Into::into)
-            .unwrap_or_else(|| state.detector().resolution(state.session_state()).into())
+            .map_or_else(
+                || state.detector().resolution(state.session_state()).into(),
+                Into::into,
+            )
     }
     pub fn expire_begode_probe_responses(
         &self,
@@ -3585,7 +3602,7 @@ pub enum MobileCommandDto {
     /// Set the Aero voltage correction in tenths of a percent.
     SetAeroVoltageCorrection(MobileAeroVoltageCorrectionDto),
 
-    /// Set the official NOSFET MxV raw maximum-charge value (0..=70).
+    /// Set the official NOSFET `MxV` raw maximum-charge value (0..=70).
     SetAeroMaxChargeVoltageRaw(MobileAeroMaxChargeVoltageRawDto),
 
     /// Set the wheel display units independently of phone formatting.
@@ -3698,7 +3715,7 @@ pub struct MobileAeroVoltageCorrectionDto {
     pub tenths_of_percent: i8,
 }
 
-/// Official NOSFET MxV raw maximum-charge value.
+/// Official NOSFET `MxV` raw maximum-charge value.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Record)]
 pub struct MobileAeroMaxChargeVoltageRawDto {
     /// Raw value accepted by the official 0..=70 progress control.
@@ -4070,7 +4087,7 @@ pub struct MobileEucSettingsCapabilitiesDto {
     /// NOSFET brake overpressure alarm write support.
     pub aero_brake_overpressure_alarm: MobileSettingWriteSupportDto,
 
-    /// NOSFET Aero raw MxV maximum-charge write support.
+    /// NOSFET Aero raw `MxV` maximum-charge write support.
     pub aero_max_charge_voltage_raw: MobileSettingWriteSupportDto,
 
     /// NOSFET/Veteran MD pedal-hardness write support.
@@ -4594,7 +4611,7 @@ aero_setting_state_dto!(
 aero_setting_state_dto!(
     MobileAeroMaxChargeVoltageRawStateDto,
     MobileAeroMaxChargeVoltageRawDto,
-    "Aero raw MxV maximum-charge lifecycle state."
+    "Aero raw `MxV` maximum-charge lifecycle state."
 );
 aero_setting_state_dto!(
     MobileAeroHighSpeedModeStateDto,
@@ -5500,6 +5517,7 @@ impl MobileEucSettingTrackers {
         }
     }
 
+    #[allow(clippy::too_many_lines)]
     fn observe_command(
         &mut self,
         command: Option<MobileCommandDto>,
@@ -5563,8 +5581,9 @@ impl MobileEucSettingTrackers {
                     Some(CoreAeroGyroCalibrationState::Waiting) => {
                         CoreAeroGyroCalibrationState::Complete
                     }
-                    Some(CoreAeroGyroCalibrationState::Idle)
-                    | Some(CoreAeroGyroCalibrationState::Complete)
+                    Some(
+                        CoreAeroGyroCalibrationState::Idle | CoreAeroGyroCalibrationState::Complete,
+                    )
                     | None => CoreAeroGyroCalibrationState::Waiting,
                 };
                 self.aero_gyro_calibration
@@ -5664,6 +5683,7 @@ impl MobileEucSettingTrackers {
         }
     }
 
+    #[allow(clippy::too_many_lines)]
     fn observe_readback(&mut self, readback: &MobileSettingsReadbackDto, now: MonotonicTimestamp) {
         if let Some(value) =
             settings_entry(&readback.entries, cutout_protocols::AERO_FIELD_WHEEL_UNITS)
@@ -6380,6 +6400,7 @@ fn mobile_aero_speed_setting_state(
     snapshot
 }
 
+#[allow(clippy::too_many_lines)]
 fn mobile_aero_pwm_setting_state(
     state: CoreSettingState<CoreAeroPwmSetting>,
 ) -> MobileAeroPwmSettingStateDto {
@@ -9876,6 +9897,7 @@ impl RideDatabaseHandle {
     ///
     /// Returns a typed database error when the device identity, timestamp, queue, or storage
     /// transaction is invalid.
+    #[allow(clippy::needless_pass_by_value)]
     pub fn record_bms_voltage_samples(
         &self,
         device_identity: String,
@@ -16091,7 +16113,7 @@ pub struct MobileAeroSettingsSimulatorReadbackDto {
     pub lateral_tilt_limit: Option<MobileAeroLateralTiltLimitDto>,
     pub voltage_correction: Option<MobileAeroVoltageCorrectionDto>,
 
-    /// Current official MxV raw maximum-charge value.
+    /// Current official `MxV` raw maximum-charge value.
     pub max_charge_voltage_raw: Option<MobileAeroMaxChargeVoltageRawDto>,
 
     /// Simulated wheel display units.
@@ -16457,7 +16479,7 @@ impl AeroBenignControlSession {
     pub fn aero_voltage_correction_state(&self) -> MobileAeroVoltageCorrectionStateDto {
         self.lock_settings().aero_voltage_correction()
     }
-    /// Returns the Rust-owned raw MxV maximum-charge lifecycle state.
+    /// Returns the Rust-owned raw `MxV` maximum-charge lifecycle state.
     pub fn aero_max_charge_voltage_raw_state(&self) -> MobileAeroMaxChargeVoltageRawStateDto {
         self.lock_settings().aero_max_charge_voltage_raw()
     }
@@ -16542,8 +16564,9 @@ fn mobile_aero_setting_support(
         MobileCommandDto::SetAeroHighBeam(_) => capabilities.aero_high_beam,
         MobileCommandDto::ResetTripMeter => capabilities.reset_trip_meter,
         MobileCommandDto::SetAeroTiltbackSpeed(_) => capabilities.aero_tiltback_speed,
-        MobileCommandDto::SetAeroPwmPercent(_) => capabilities.aero_pwm_percent,
-        MobileCommandDto::SetAeroPwmOff => capabilities.aero_pwm_percent,
+        MobileCommandDto::SetAeroPwmPercent(_) | MobileCommandDto::SetAeroPwmOff => {
+            capabilities.aero_pwm_percent
+        }
         MobileCommandDto::SetAeroGyroCalibration => capabilities.aero_gyro_calibration,
         MobileCommandDto::SetAeroRidingMode(_) => capabilities.aero_riding_mode,
         MobileCommandDto::SetAeroBrakeOverpressureAlarm(_) => {
@@ -16632,11 +16655,6 @@ fn mobile_command_is_valid(command: MobileCommandDto) -> bool {
         MobileCommandDto::SetAeroMaxChargeVoltageRaw(value) => {
             CoreAeroMaxChargeVoltageRaw::new(value.raw).is_some()
         }
-        MobileCommandDto::SetAeroHighSpeedMode(_)
-        | MobileCommandDto::SetAeroLowBatteryMode(_)
-        | MobileCommandDto::SetAeroTransportMode(_) => true,
-        MobileCommandDto::SetAeroGyroCalibration => true,
-        MobileCommandDto::SetAeroRidingMode(_) => true,
         MobileCommandDto::SetAeroBrakeOverpressureAlarm(value) => {
             CoreAeroBrakeOverpressureAlarm::new(value.percent).is_some()
         }
@@ -16713,6 +16731,7 @@ fn mobile_channel_bytes(channel: &[u8]) -> [u8; 16] {
 }
 
 impl From<MobileCommandDto> for DeviceCommandDto {
+    #[allow(clippy::too_many_lines)]
     fn from(command: MobileCommandDto) -> Self {
         match command {
             MobileCommandDto::RequestIdentity => Self::RequestIdentity,
@@ -16866,9 +16885,9 @@ fn mobile_command_from_command_kind(command: CommandKindDto) -> Option<MobileCom
         CommandKindDto::SoundHorn => Some(MobileCommandDto::SoundHorn),
         CommandKindDto::SetAeroPwmOff => Some(MobileCommandDto::SetAeroPwmOff),
         CommandKindDto::SetAeroGyroCalibration => Some(MobileCommandDto::SetAeroGyroCalibration),
-        CommandKindDto::SetAeroRidingMode => None,
-        CommandKindDto::SetAeroBrakeOverpressureAlarm => None,
         CommandKindDto::SetAeroTiltbackSpeed
+        | CommandKindDto::SetAeroRidingMode
+        | CommandKindDto::SetAeroBrakeOverpressureAlarm
         | CommandKindDto::SetAeroPwmPercent
         | CommandKindDto::SetAeroPedalHardness
         | CommandKindDto::SetAeroDisplayBacklight
@@ -18477,7 +18496,7 @@ impl FalconBenignControlSession {
     pub fn aero_voltage_correction_state(&self) -> MobileAeroVoltageCorrectionStateDto {
         self.lock_settings().aero_voltage_correction()
     }
-    /// Returns the unsupported raw MxV maximum-charge lifecycle state.
+    /// Returns the unsupported raw `MxV` maximum-charge lifecycle state.
     pub fn aero_max_charge_voltage_raw_state(&self) -> MobileAeroMaxChargeVoltageRawStateDto {
         self.lock_settings().aero_max_charge_voltage_raw()
     }
@@ -22041,7 +22060,7 @@ mod tests {
             VerificationStatus::HardwareVerified,
         )
         .expect("documented Veteran cell page")
-        .with_observed_at(cutout_core::MonotonicTimestamp::new(42));
+        .with_observed_at(MonotonicTimestamp::new(42));
 
         let snapshot = MobileBmsSnapshotDto::from(BatteryReadbackDto::from(readback));
 
@@ -26391,6 +26410,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::too_many_lines)]
     fn mobile_ride_map_core_manual_resume_rebases_a_recovered_clock() {
         let _guard = RIDE_DATABASE_TEST_LOCK
             .lock()
@@ -27460,7 +27480,7 @@ mod tests {
                 course_degrees: None,
                 course_accuracy_degrees: None,
             }];
-            let stale = state
+            let stale_points = state
                 .ingest_location_batch(
                     original.recording_token,
                     4_000,
@@ -27469,7 +27489,7 @@ mod tests {
                 )
                 .unwrap();
             assert!(
-                stale.is_empty(),
+                stale_points.is_empty(),
                 "old input generation cannot write to resumed or new ride"
             );
             assert_eq!(

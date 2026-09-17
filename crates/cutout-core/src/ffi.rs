@@ -2466,6 +2466,10 @@ pub enum SessionEventDto {
     DiagnosticError(DiagnosticErrorDto),
 }
 
+#[allow(
+    clippy::large_enum_variant,
+    reason = "FFI projection preserves the owned read-only response without another allocation"
+)]
 enum SessionEventProjection {
     Event(SessionEventDto),
     ReadOnly(ReadOnlyResponse),

@@ -1176,7 +1176,7 @@ async fn dashboard(args: DashboardArgs) -> Result<()> {
             info!("dashboard battery level unavailable from standard BLE characteristic");
         }
     }
-    run_live_dashboard(state, connection, args.profile, tx, rx)
+    run_live_dashboard(state, connection, tx, rx)
 }
 
 fn dashboard_live_target(args: &DashboardArgs) -> Result<ConnectionTarget> {
@@ -1194,7 +1194,6 @@ fn dashboard_live_target(args: &DashboardArgs) -> Result<ConnectionTarget> {
 fn run_live_dashboard(
     state: DashboardState,
     connection: ConnectedPeripheral,
-    profile: SessionProfile,
     tx: mpsc::Sender<DashboardUpdate>,
     rx: mpsc::Receiver<DashboardUpdate>,
 ) -> Result<()> {
@@ -1206,7 +1205,7 @@ fn run_live_dashboard(
         state,
         tx,
         rx,
-        move |tx| run_dashboard_live_updates(connection, profile, tx),
+        move |tx| run_dashboard_live_updates(connection, tx),
         |state, rx| run_dashboard_with_updates(state, &rx),
     )
 }
@@ -1304,7 +1303,6 @@ where
 
 async fn run_dashboard_live_updates(
     connection: ConnectedPeripheral,
-    profile: SessionProfile,
     tx: mpsc::Sender<DashboardUpdate>,
 ) {
     info!("dashboard live update task entered");
@@ -1941,6 +1939,7 @@ fn aero_write_was_sent(report: &SessionBridgeReport) -> bool {
     report.protocol_writes.get() > 0 && report.writes.get() > 0
 }
 
+#[allow(clippy::too_many_lines)]
 fn parse_aero_write_command(setting: AeroSetting, value: &str) -> Result<DeviceCommand> {
     match setting {
         AeroSetting::Headlight => Ok(DeviceCommand::SetLights(parse_light_state(value)?)),
@@ -2695,6 +2694,7 @@ fn selected_session_profile_for_catalog_entry(
     })
 }
 
+#[cfg(test)]
 fn dashboard_session_profile(profile: SessionProfile) -> Result<SelectedSessionProfile> {
     require_explicit_live_profile(profile)?;
     Ok(selected_session_profile(profile))
@@ -6807,6 +6807,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::too_many_lines)]
     fn aero_setting_readback_matches_all_decoded_source_backed_fields() {
         let entry = |id, value| cutout_core::SettingsEntry {
             field: cutout_core::RawFieldValue::new(id, value),

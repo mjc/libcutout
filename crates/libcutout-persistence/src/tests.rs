@@ -2960,6 +2960,7 @@ fn newer_schema_is_rejected_without_resetting_the_database() {
 }
 
 #[test]
+#[allow(clippy::type_complexity)]
 fn bms_voltage_samples_are_durable_without_a_ride_and_duplicate_batches_are_idempotent() {
     let _guard = test_guard();
     let path = std::env::temp_dir().join(format!(
