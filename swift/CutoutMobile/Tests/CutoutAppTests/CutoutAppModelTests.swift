@@ -577,7 +577,7 @@ final class CutoutAppModelTests: XCTestCase {
     }
 
     @MainActor
-    func testHistoryReloadFailureClearsThePreviouslySelectedRoute() async throws {
+    func testHistoryReloadFailureRetainsThePreviouslySelectedRoute() async throws {
         let driver = SessionDriverSpy(rows: [])
         let state = driver.rideMapState
         _ = try state.startGpsOnly(atMs: 100, lastConnectedVehicle: nil)
@@ -611,7 +611,9 @@ final class CutoutAppModelTests: XCTestCase {
         model.loadRideMapHistory(selecting: rideID)
         await Task.yield()
 
-        XCTAssertTrue(model.rideMapHistoryDisplayPoints.isEmpty)
+        XCTAssertFalse(model.rideMapHistoryDisplayPoints.isEmpty)
+        XCTAssertEqual(model.selectedRideMapHistoryID, rideID)
+        XCTAssertEqual(model.rideMapHistoryDetailProjectionRideID, rideID)
         XCTAssertEqual(
             model.rideMapHistoryRouteError,
             .storageError("Rust ride database is unavailable")
@@ -649,6 +651,31 @@ final class CutoutAppModelTests: XCTestCase {
                 loadGeneration: 3,
                 currentGeneration: 3,
                 isCancelled: false
+            )
+        )
+    }
+
+    @MainActor
+    func testHistoryQueryGenerationRejectsLateReloadOrPageResults() {
+        XCTAssertTrue(
+            CutoutAppModel.shouldApplyHistoryQuery(
+                generation: 7,
+                currentGeneration: 7,
+                isCancelled: false
+            )
+        )
+        XCTAssertFalse(
+            CutoutAppModel.shouldApplyHistoryQuery(
+                generation: 7,
+                currentGeneration: 8,
+                isCancelled: false
+            )
+        )
+        XCTAssertFalse(
+            CutoutAppModel.shouldApplyHistoryQuery(
+                generation: 7,
+                currentGeneration: 7,
+                isCancelled: true
             )
         )
     }
