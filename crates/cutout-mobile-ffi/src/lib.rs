@@ -1144,7 +1144,7 @@ pub fn mobile_parse_novatek_command_outcome(
     response: Vec<u8>,
     expected_command_id: u16,
 ) -> Result<MobileNovatekCommandOutcomeDto, MobileNovatekParseError> {
-    let outcome = cutout_protocols::parse_command_response(&response, expected_command_id)
+    let outcome = cutout_protocols::parse_command_response_for_id(&response, expected_command_id)
         .map_err(|_| MobileNovatekParseError::InvalidResponse)?;
     Ok(match outcome {
         NovatekCommandOutcome::Acknowledged => MobileNovatekCommandOutcomeDto::Acknowledged,

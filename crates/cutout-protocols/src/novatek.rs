@@ -748,11 +748,9 @@ pub fn parse_storage_response(
 /// or contains a malformed status value.
 pub fn parse_command_response(
     response: &[u8],
-    expected_command_id: u16,
+    expected_command_id: NovatekCommandId,
 ) -> Result<NovatekCommandOutcome, NovatekResponseError> {
     let xml = bounded_xml(response)?;
-    let expected_command_id =
-        NovatekCommandId::new(expected_command_id).ok_or(NovatekResponseError::InvalidCommand)?;
     let command = match extract_tag(xml, "Cmd", "<Cmd>", "</Cmd>") {
         Ok(value) => {
             let value = value
@@ -779,6 +777,25 @@ pub fn parse_command_response(
         }
         Err(error) => Err(error),
     }
+}
+
+/// Parses a bounded command response after validating a raw expected ID.
+///
+/// This adapter is intended for FFI callers whose generated bindings represent
+/// numeric command IDs. Rust callers should prefer [`parse_command_response`]
+/// with a [`NovatekCommandId`] so an invalid zero ID cannot be represented.
+///
+/// # Errors
+///
+/// Returns [`NovatekResponseError::InvalidCommand`] for zero, or forwards the
+/// bounded response/parser errors from [`parse_command_response`].
+pub fn parse_command_response_for_id(
+    response: &[u8],
+    expected_command_id: u16,
+) -> Result<NovatekCommandOutcome, NovatekResponseError> {
+    let expected_command_id =
+        NovatekCommandId::new(expected_command_id).ok_or(NovatekResponseError::InvalidCommand)?;
+    parse_command_response(response, expected_command_id)
 }
 
 /// Parses the bounded XML response for Novatek command `3014`.
@@ -1178,6 +1195,10 @@ mod tests {
 
     use super::*;
 
+    fn command_id(value: u16) -> NovatekCommandId {
+        NovatekCommandId::new(value).expect("test command id must be nonzero")
+    }
+
     #[test]
     fn source_backed_read_commands_encode_exact_relative_targets() {
         let cases = [
@@ -1295,19 +1316,19 @@ mod tests {
         assert_eq!(
             parse_command_response(
                 br"<Function><Cmd>2001</Cmd><Status>0</Status></Function>",
-                2001
+                command_id(2001)
             ),
             Ok(NovatekCommandOutcome::Acknowledged)
         );
         assert_eq!(
             parse_command_response(
                 br"<Function><Cmd>2001</Cmd><Status>7</Status></Function>",
-                2001
+                command_id(2001)
             ),
             Ok(NovatekCommandOutcome::Refused { status: 7 })
         );
         assert_eq!(
-            parse_command_response(br"<Function><Cmd>2001</Cmd></Function>", 2001),
+            parse_command_response(br"<Function><Cmd>2001</Cmd></Function>", command_id(2001),),
             Ok(NovatekCommandOutcome::Unknown)
         );
     }
@@ -1317,7 +1338,7 @@ mod tests {
         assert_eq!(
             parse_command_response(
                 br"<Function><Cmd>3024</Cmd><Status>0</Status></Function>",
-                2001,
+                command_id(2001),
             ),
             Err(NovatekResponseError::UnexpectedCommand {
                 actual: 3024,
@@ -1331,12 +1352,12 @@ mod tests {
         assert_eq!(
             parse_command_response(
                 br"<Function><Cmd>0</Cmd><Status>0</Status></Function>",
-                2001,
+                command_id(2001),
             ),
             Err(NovatekResponseError::InvalidCommand)
         );
         assert_eq!(
-            parse_command_response(
+            parse_command_response_for_id(
                 br"<Function><Cmd>2001</Cmd><Status>0</Status></Function>",
                 0,
             ),
