@@ -193,6 +193,7 @@ struct RideMapRouteView: View {
                 endpointMetadata: model.rideMapHistoryDetailEndpointMetadata,
                 segments: model.rideMapHistoryDetailSegments,
                 projectionVersion: model.rideMapHistoryDetailProjectionVersion,
+                cameraFitVersion: model.rideMapHistoryDetailCameraFitVersion,
                 pointsTruncated: model.rideMapHistoryDetailPointsTruncated,
                 segmentsOmittedByBudget: model.rideMapHistoryDetailSegmentsOmittedByBudget,
                 canonicalBackgroundGapCount: model.rideMapHistoryDetailBackgroundGapCount,

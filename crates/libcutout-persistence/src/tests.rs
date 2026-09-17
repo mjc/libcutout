@@ -4282,6 +4282,52 @@ fn route_projection_is_bounded_viewport_aware_and_cancellable() {
 }
 
 #[test]
+fn route_projection_camera_bounds_include_points_omitted_by_display_lod() {
+    let _guard = test_guard();
+    let path = std::env::temp_dir().join(format!(
+        "libcutout-persistence-route-camera-bounds-{}.sqlite",
+        uuid::Uuid::new_v4()
+    ));
+    let database = RideDatabase::open(&path).unwrap();
+    let ride = database.create_ride(RideSource::Live, 10).unwrap();
+    database.transition(ride, RideEvent::Start).unwrap();
+
+    for (sequence, latitude) in [(0_u64, 40.0), (1, 40.01), (2, 40.0)] {
+        let sample = LocationSample::new(
+            Coordinate::from_degrees(latitude, -105.0).unwrap(),
+            1_000 + sequence * 60_000,
+            1_700_000_000_000 + sequence * 60_000,
+            None,
+            LocationSource::Live,
+        );
+        assert_eq!(
+            database.append_location(ride, sample).unwrap(),
+            LocationAdmission::Accepted
+        );
+    }
+
+    let projection = database
+        .project_route_points(
+            ride,
+            None,
+            RouteDisplayBudget::new(2).unwrap(),
+            RoutePrivacyPolicy::Precise,
+        )
+        .unwrap();
+    assert_eq!(projection.points().len(), 2);
+    let display_region = projection.camera_region().unwrap();
+    let canonical_region = projection.canonical_camera_region().unwrap();
+    assert!(
+        canonical_region.latitude_span_degrees() > display_region.latitude_span_degrees(),
+        "canonical bounds must include extrema omitted by display LOD: canonical={canonical_region:?}, display={display_region:?}"
+    );
+    assert!((canonical_region.center_latitude_degrees() - 40.005).abs() < 0.000_001);
+
+    database.shutdown().unwrap();
+    let _ = std::fs::remove_file(path);
+}
+
+#[test]
 fn route_projection_preserves_each_segment_metadata() {
     let _guard = test_guard();
     let path = std::env::temp_dir().join(format!(

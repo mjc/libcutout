@@ -31,6 +31,7 @@ public enum MobileRideMapError: Error, Equatable, Hashable, Sendable {
     case noActiveRide
     case invalidTransition
     case invalidLocation
+    case invalidVehicleIdentity
     case invalidRouteProjection
     case invalidMusicInput(String)
     case rideNotFound
@@ -371,6 +372,7 @@ public struct MobileRideMapRouteProjection: Equatable, Hashable, Sendable {
     public let canonicalStartVisible: Bool
     public let canonicalEndVisible: Bool
     public let cameraRegion: MobileRideMapCameraRegion?
+    public let canonicalCameraRegion: MobileRideMapCameraRegion?
     /// Rust-owned distinction between an empty ride and an empty viewport.
     public let presence: MobileRideMapRoutePresence
 
@@ -388,6 +390,7 @@ public struct MobileRideMapRouteProjection: Equatable, Hashable, Sendable {
         canonicalStartVisible: Bool = false,
         canonicalEndVisible: Bool = false,
         cameraRegion: MobileRideMapCameraRegion? = nil,
+        canonicalCameraRegion: MobileRideMapCameraRegion? = nil,
         presence: MobileRideMapRoutePresence
     ) {
         self.points = points
@@ -403,6 +406,7 @@ public struct MobileRideMapRouteProjection: Equatable, Hashable, Sendable {
         self.canonicalStartVisible = canonicalStartVisible
         self.canonicalEndVisible = canonicalEndVisible
         self.cameraRegion = cameraRegion
+        self.canonicalCameraRegion = canonicalCameraRegion
         self.presence = presence
     }
 
@@ -1254,6 +1258,14 @@ public final class MobileRideMapState: @unchecked Sendable {
                     longitudeSpanDegrees: $0.longitudeSpanDegrees
                 )
             },
+            canonicalCameraRegion: projection.canonicalCameraRegion.map {
+                MobileRideMapCameraRegion(
+                    centerLatitudeDegrees: $0.centerLatitudeDegrees,
+                    centerLongitudeDegrees: $0.centerLongitudeDegrees,
+                    latitudeSpanDegrees: $0.latitudeSpanDegrees,
+                    longitudeSpanDegrees: $0.longitudeSpanDegrees
+                )
+            },
             presence: map(projection.routePresence)
         )
     }
@@ -1453,6 +1465,7 @@ public final class MobileRideMapState: @unchecked Sendable {
         case .NoActiveRide: return .noActiveRide
         case .InvalidTransition: return .invalidTransition
         case .InvalidLocation: return .invalidLocation
+        case .InvalidVehicleIdentity: return .invalidVehicleIdentity
         case .InvalidRouteProjection: return .invalidRouteProjection
         case .Cancelled: return .cancelled
         case let .InvalidMusicInput(message): return .invalidMusicInput(message)
