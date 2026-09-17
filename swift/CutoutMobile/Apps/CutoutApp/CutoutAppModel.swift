@@ -1079,11 +1079,11 @@ final class CutoutAppModel {
 
     @discardableResult
     func startGpsOnlyRide() -> Bool {
-        core.resetRideMapLocationAdmission()
         let started = applyRideMapCommand(resetPoints: true) {
             try core.startRideMapGpsOnly(atMs: currentMonotonicTime.rawValue)
         }
         guard started else { return false }
+        core.resetRideMapLocationAdmission()
         // Apply the user's default to the fresh Rust-owned ride timeline.
         core.updateMusicCaptureObservation(nil)
         let defaultPolicy = musicHistoryPolicyStore.policy
@@ -2048,9 +2048,9 @@ final class CutoutAppModel {
         rideMapSnapshot = snapshot
         rideMapLastDecision = decision
         switch decision {
-        case let .pending(point, _):
+        case let .pending(point):
             rideMapLiveTelemetryState = point.telemetryState
-        case let .accepted(point, _):
+        case let .accepted(point):
             rideMapLiveTelemetryState = point.telemetryState
             requestLiveProjection()
         case .rejected, .ignored, .storageError:

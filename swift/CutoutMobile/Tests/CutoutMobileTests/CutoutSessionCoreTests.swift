@@ -171,7 +171,7 @@ final class CutoutSessionCoreTests: XCTestCase {
             horizontalAccuracyMeters: 4
         )
 
-        guard case let .pending(point, segmentStarted) = decision else {
+        guard case let .pending(point) = decision else {
             return XCTFail("database-backed ingestion should return pending, got \(decision)")
         }
 
@@ -187,11 +187,10 @@ final class CutoutSessionCoreTests: XCTestCase {
         }
 
 
-        guard case let .accepted(acceptedPoint, acceptedSegmentStarted) = accepted else {
+        guard case let .accepted(acceptedPoint) = accepted else {
             return XCTFail("pending location did not produce a durable acceptance")
         }
         XCTAssertEqual(acceptedPoint, point)
-        XCTAssertEqual(acceptedSegmentStarted, segmentStarted)
     }
 
 

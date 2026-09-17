@@ -690,8 +690,8 @@ public enum MobileRideMapDecisionReason: Equatable, Hashable, Sendable {
 
 public enum MobileRideMapDecisionDto: Equatable, Hashable, Sendable {
     /// The point passed admission but is still awaiting durable SQLite confirmation.
-    case pending(point: MobileRideMapPointDto, segmentStarted: Bool)
-    case accepted(point: MobileRideMapPointDto, segmentStarted: Bool)
+    case pending(point: MobileRideMapPointDto)
+    case accepted(point: MobileRideMapPointDto)
     case rejected(reason: MobileRideMapDecisionReason)
     case ignored(reason: MobileRideMapDecisionReason)
     /// Durable persistence could not confirm this point. The point is not part of the durable ride.
@@ -1324,10 +1324,10 @@ public final class MobileRideMapState: @unchecked Sendable {
 
     private func map(_ decision: MobileRideMapCoreDecisionDto) -> MobileRideMapDecisionDto {
         switch decision {
-        case let .pending(point, segmentStarted):
-            return .pending(point: mapPoint(point), segmentStarted: segmentStarted)
-        case let .accepted(point, segmentStarted):
-            return .accepted(point: mapPoint(point), segmentStarted: segmentStarted)
+        case let .pending(point):
+            return .pending(point: mapPoint(point))
+        case let .accepted(point):
+            return .accepted(point: mapPoint(point))
         case let .rejected(reason):
             return .rejected(reason: map(reason))
         case let .ignored(reason):

@@ -7454,15 +7454,11 @@ pub enum MobileRideMapCoreDecisionDto {
     Accepted {
         /// The resulting route point.
         point: MobileRideMapCorePointDto,
-        /// Whether this point starts a new route segment.
-        segment_started: bool,
     },
     /// The sample passed in-memory admission and is queued for durable persistence.
     Pending {
         /// The point already admitted to the Rust-owned in-memory route.
         point: MobileRideMapCorePointDto,
-        /// Whether this point starts a new route segment.
-        segment_started: bool,
     },
     /// The location was rejected as invalid input.
     Rejected {
@@ -9558,7 +9554,7 @@ impl RideDatabaseHandle {
     /// # Errors
     ///
     /// Returns a typed database error when the worker cannot create the ride.
-    pub fn create_ride(
+    fn create_ride(
         &self,
         source: MobileRideSourceDto,
         created_at_milliseconds: u64,
@@ -9637,7 +9633,7 @@ impl RideDatabaseHandle {
         clippy::needless_pass_by_value,
         reason = "UniFFI owns boundary DTOs and strings"
     )]
-    pub fn update_ride_map_metadata(
+    fn update_ride_map_metadata(
         &self,
         id: MobileRideIdDto,
         candidate_vehicle: Option<String>,
@@ -9663,7 +9659,7 @@ impl RideDatabaseHandle {
     ///
     /// Returns a typed database error when the transition or worker rejects the event.
     #[allow(clippy::needless_pass_by_value, reason = "UniFFI owns boundary DTOs")]
-    pub fn transition(
+    fn transition(
         &self,
         id: MobileRideIdDto,
         event: MobileRideEventDto,
@@ -9685,7 +9681,7 @@ impl RideDatabaseHandle {
     ///
     /// Returns a typed database error when the sample, ride, or worker rejects the append.
     #[allow(clippy::needless_pass_by_value, reason = "UniFFI owns boundary DTOs")]
-    pub fn append_location(
+    fn append_location(
         &self,
         id: MobileRideIdDto,
         location: MobileRideLocationDto,
@@ -9699,7 +9695,7 @@ impl RideDatabaseHandle {
     ///
     /// Returns a typed database error when the sample, ride, or worker rejects the append.
     #[allow(clippy::needless_pass_by_value, reason = "UniFFI owns boundary DTOs")]
-    pub fn append_location_with_segment(
+    fn append_location_with_segment(
         &self,
         id: MobileRideIdDto,
         location: MobileRideLocationDto,
@@ -9719,7 +9715,7 @@ impl RideDatabaseHandle {
     ///
     /// Returns a typed database error when the sample, ride, or worker rejects the append.
     #[allow(clippy::needless_pass_by_value, reason = "UniFFI owns boundary DTOs")]
-    pub fn append_location_with_segment_and_telemetry(
+    fn append_location_with_segment_and_telemetry(
         &self,
         id: MobileRideIdDto,
         location: MobileRideLocationDto,
@@ -9747,7 +9743,7 @@ impl RideDatabaseHandle {
     /// Returns a typed database error when the durable append is rejected by the worker. A
     /// successful result still reports duplicate, out-of-order, or other admission outcomes.
     #[allow(clippy::needless_pass_by_value, reason = "UniFFI owns boundary DTOs")]
-    pub fn enqueue_location_with_segment_and_telemetry(
+    fn enqueue_location_with_segment_and_telemetry(
         &self,
         id: MobileRideIdDto,
         location: MobileRideLocationDto,
@@ -9969,7 +9965,6 @@ struct PendingMapLocationWrite {
     ride_id: MobileRideIdDto,
     sample: ride_maps::LocationSample,
     point: MobileRideMapCorePointDto,
-    segment_started: bool,
     write: persistence::PendingLocationWrite,
 }
 
@@ -10072,10 +10067,7 @@ impl MobileRideMapCoreInner {
                     if let Some(sequence) = result.sequence() {
                         point.sequence = sequence;
                     }
-                    MobileRideMapCoreDecisionDto::Accepted {
-                        point,
-                        segment_started: pending.segment_started,
-                    }
+                    MobileRideMapCoreDecisionDto::Accepted { point }
                 }
                 Ok(result) if result.admission() == ride_maps::LocationAdmission::Duplicate => {
                     MobileRideMapCoreDecisionDto::Ignored {
@@ -10211,8 +10203,7 @@ impl MobileRideMapCoreInner {
                     location.monotonic_milliseconds,
                 ));
         let sequence = self.admission_recorder.point_count();
-        let (segment_id, segment_started, start_reason) =
-            self.admission_recorder.next_sample_metadata(sample);
+        let (segment_id, _, start_reason) = self.admission_recorder.next_sample_metadata(sample);
         let point = Self::point_from_location(
             location,
             sequence,
@@ -10241,21 +10232,14 @@ impl MobileRideMapCoreInner {
                     ride_id: id,
                     sample,
                     point,
-                    segment_started,
                     write,
                 });
-            return Ok(MobileRideMapCoreDecisionDto::Pending {
-                point,
-                segment_started,
-            });
+            return Ok(MobileRideMapCoreDecisionDto::Pending { point });
         }
         self.admission_recorder.record_sample(sample);
         self.recorder = self.admission_recorder.clone();
         self.revision = self.revision.saturating_add(1);
-        Ok(MobileRideMapCoreDecisionDto::Accepted {
-            point,
-            segment_started,
-        })
+        Ok(MobileRideMapCoreDecisionDto::Accepted { point })
     }
 
     fn new(database: Option<Arc<RideDatabaseHandle>>) -> Self {
@@ -23637,7 +23621,6 @@ mod tests {
                     horizontal_accuracy_meters: Some(3.0),
                     telemetry_state: MobileRideMapCoreTelemetryStateDto::AssociatedNoTelemetry,
                 },
-                segment_started: true,
             }
         );
         assert_eq!(
