@@ -10,7 +10,7 @@ stay in the iOS adapter.
 ## Build and registration
 
 1. In the Spotify Developer Dashboard, register bundle identifier
-   `io.cutout.cutoutapp`, redirect URI
+   `lol.cutout.app`, redirect URI
    `cutout-spotify://spotify-login-callback`, and the iOS SDK. These values must
    match exactly.
 2. Install Spotify and sign in on the physical iPhone used for validation. A

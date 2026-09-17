@@ -34,7 +34,7 @@
 			<key>CFBundleTypeRole</key>
 			<string>Editor</string>
 			<key>CFBundleURLName</key>
-			<string>io.cutout.cutoutapp.spotify</string>
+			<string>lol.cutout.app.spotify</string>
 			<key>CFBundleURLSchemes</key>
 			<array>
 				<string>cutout-spotify</string>
@@ -42,15 +42,11 @@
 		</dict>
 	</array>
 	<key>NSBluetoothAlwaysUsageDescription</key>
-	<string>CutOut uses Bluetooth to read live vehicle telemetry.</string>
+	<string>CutOut connects to your vehicle over Bluetooth to show live telemetry and keep an active ride recording when the screen is locked.</string>
 	<key>NSAppleMusicUsageDescription</key>
 	<string>CutOut lets you view and control Apple Music playback. If you enable listening history, it saves song identifiers, timestamps, and optionally titles and artists on this device so you can see what you listened to during a ride. CutOut does not record audio.</string>
 	<key>NSLocationWhenInUseUsageDescription</key>
-	<string>CutOut records ride location, altitude, speed, and direction with vehicle telemetry.</string>
-	<key>NSLocationAlwaysUsageDescription</key>
-	<string>CutOut records ride location, altitude, speed, and direction while an active ride continues in the background.</string>
-	<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
-	<string>CutOut records ride location, altitude, speed, and direction while an active ride continues in the background.</string>
+	<string>CutOut uses your location to record your ride route. An active ride can continue recording when the screen is locked.</string>
 	<key>NSSupportsLiveActivities</key>
 	<true/>
 	<key>NSSupportsLiveActivitiesFrequentUpdates</key>

@@ -2122,6 +2122,9 @@ final class CutoutAppModel {
     ) -> Bool {
         do {
             rideMapSnapshot = try command()
+            if let rideMapSnapshot {
+                core.updateRideLocationDemand(for: rideMapSnapshot.state)
+            }
             rideMapLiveError = nil
             updateRideMapDurationTicker()
             if resetPoints {

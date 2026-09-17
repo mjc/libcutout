@@ -684,12 +684,17 @@ final class CutoutAppModelTests: XCTestCase {
         XCTAssertTrue(model.startGpsOnlyRide())
         XCTAssertEqual(driver.resetRideMapLocationAdmissionCount, 1)
         XCTAssertTrue(model.isRideMapRecording)
+        XCTAssertEqual(driver.rideLocationDemandStates, [.active])
         XCTAssertTrue(model.pauseRideMap())
         XCTAssertFalse(model.isRideMapRecording)
         XCTAssertTrue(model.isRideMapPaused)
+        XCTAssertEqual(driver.rideLocationDemandStates, [.active, .paused])
+        XCTAssertTrue(model.resumeRideMap())
+        XCTAssertEqual(driver.rideLocationDemandStates, [.active, .paused, .active])
         XCTAssertTrue(model.stopRideMap())
         XCTAssertFalse(model.isRideMapRecording)
         XCTAssertFalse(model.isRideMapPaused)
+        XCTAssertEqual(driver.rideLocationDemandStates.last, .stopped)
     }
 
     @MainActor
@@ -3548,6 +3553,7 @@ private final class SessionDriverSpy: CutoutSessionDriving {
     private(set) var flushCaptureCount = 0
     private(set) var disconnectCount = 0
     private(set) var resetRideMapLocationAdmissionCount = 0
+    private(set) var rideLocationDemandStates = [MobileRideMapStateDto]()
     var nowValue: UInt64 = 0
 
     init(
@@ -3623,6 +3629,10 @@ private final class SessionDriverSpy: CutoutSessionDriving {
 
     func resetRideMapLocationAdmission() {
         resetRideMapLocationAdmissionCount += 1
+    }
+
+    func updateRideLocationDemand(for state: MobileRideMapStateDto) {
+        rideLocationDemandStates.append(state)
     }
 
     func submitDeviceSetting(token: ConnectionAttemptToken, id: DeviceSettingID, value: DeviceSettingValue) throws {

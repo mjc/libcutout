@@ -527,7 +527,8 @@ public final class CutoutSessionCore: NSObject {
     private var latestRideMapSnapshot: MobileRideMapSnapshotDto?
     private var rideMapConnectionObserved = false
     private var rideMapWritePoller: DispatchSourceTimer?
-    private var didRequestAlwaysLocationAuthorization = false
+    private var locationUpdatesDemanded = false
+    private var locationManagerUpdatesStarted = false
     private var didResolveBluetoothRestoration = false
 #if DEBUG
     private let testScript: CutoutSessionTestScript?
@@ -549,9 +550,6 @@ public final class CutoutSessionCore: NSObject {
         manager.delegate = self
         manager.desiredAccuracy = kCLLocationAccuracyBestForNavigation
         manager.activityType = .fitness
-#if os(iOS)
-        manager.allowsBackgroundLocationUpdates = true
-#endif
         return manager
     }()
 
@@ -629,6 +627,9 @@ public final class CutoutSessionCore: NSObject {
     public func start() {
         startRideMapWritePolling()
         publishRideMapAvailability()
+        if let snapshot = rideMapState?.currentSnapshot(atMs: clock.now().rawValue) {
+            updateRideLocationDemand(for: snapshot.state)
+        }
 #if DEBUG
         if let testScript {
             publishOnMain { self.onBluetoothRestorationResolved?(nil) }
@@ -2022,6 +2023,7 @@ public final class CutoutSessionCore: NSObject {
 
     private func publishRideMapSnapshot(_ snapshot: MobileRideMapSnapshotDto) {
         latestRideMapSnapshot = snapshot
+        updateRideLocationDemand(for: snapshot.state)
         publishOnMain { self.onRideMapSnapshotChange?(snapshot) }
     }
 
@@ -3333,26 +3335,49 @@ extension CutoutSessionCore {
 }
 
 extension CutoutSessionCore: CLLocationManagerDelegate {
-    private func requestAlwaysLocationAuthorizationIfNeeded() {
-        guard !didRequestAlwaysLocationAuthorization else { return }
-        didRequestAlwaysLocationAuthorization = true
-        locationManager.requestAlwaysAuthorization()
+    public func updateRideLocationDemand(for state: MobileRideMapStateDto) {
+        publishOnMain {
+            self.locationUpdatesDemanded = state == .active
+            self.updateLocationManagerDemand()
+        }
     }
 
-    public func locationManagerDidChangeAuthorization(_ manager: CLLocationManager) {
-        switch manager.authorizationStatus {
-        case .notDetermined:
-            manager.requestWhenInUseAuthorization()
-        case .authorizedAlways:
-            manager.startUpdatingLocation()
-        case .authorizedWhenInUse:
-            requestAlwaysLocationAuthorizationIfNeeded()
-            manager.startUpdatingLocation()
-        case .denied, .restricted:
-            break
-        @unknown default:
-            break
+    private func updateLocationManagerDemand() {
+#if os(iOS)
+        locationManager.allowsBackgroundLocationUpdates = locationUpdatesDemanded
+#endif
+
+        guard locationUpdatesDemanded else {
+            if locationManagerUpdatesStarted {
+                locationManager.stopUpdatingLocation()
+                locationManagerUpdatesStarted = false
+            }
+            return
         }
+
+        guard CLLocationManager.locationServicesEnabled() else {
+            publishRideMapAvailability()
+            return
+        }
+
+        switch locationManager.authorizationStatus {
+        case .notDetermined:
+            locationManager.requestWhenInUseAuthorization()
+        case .authorizedAlways:
+            locationManager.startUpdatingLocation()
+            locationManagerUpdatesStarted = true
+        case .authorizedWhenInUse:
+            locationManager.startUpdatingLocation()
+            locationManagerUpdatesStarted = true
+        case .denied, .restricted:
+            publishRideMapAvailability()
+        @unknown default:
+            publishRideMapAvailability()
+        }
+    }
+
+    public func locationManagerDidChangeAuthorization(_: CLLocationManager) {
+        updateLocationManagerDemand()
     }
 
     public func locationManager(_: CLLocationManager, didUpdateLocations locations: [CLLocation]) {
