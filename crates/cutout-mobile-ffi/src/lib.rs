@@ -113,13 +113,14 @@ use cutout_protocols::{
     ConcreteFalconBenignControlSession, ConcreteFalconProfileDto, ConcreteSessionErrorDto,
     ConcreteSessionStepResultDto, DeviceDetectionEvent, DeviceDetectionResolution, DeviceFamily,
     IdentityBannerEvidence, NOSFET_AERO_REGISTRY_ENTRY, NovatekCapabilityError,
-    NovatekCommandOutcome, NovatekHttpOrigin, NovatekMediaPathError, NovatekOriginError,
-    NovatekProfileError, NovatekR3V1Profile, NovatekReadCommand, NovatekRecordingCommand,
-    NovatekStillCaptureCommand, NovatekStoragePresence, PendingProbe, ProtocolFamilyClassification,
-    ProtocolFamilyState, ProtocolModelIdentityEvidence, RetinaH264FileSink, RetinaRtspError,
-    RetinaRtspPreviewSession, RetinaVideoConfiguration, RetinaVideoFrame, StagedIdentityInput,
-    StagedIdentityOutcome, VETERAN_FIELD_AUTO_SHUTDOWN_TIME_REMAINING_SECONDS,
-    VETERAN_FIELD_CHARGE_MODE, VETERAN_FIELD_PEDALS_MODE, VETERAN_FIELD_SPEED_ALERT_DECI_KMH,
+    NovatekCommandOutcome, NovatekConfiguration, NovatekConfigurationError, NovatekHttpOrigin,
+    NovatekMediaPathError, NovatekOriginError, NovatekProfileError, NovatekR3V1Profile,
+    NovatekReadCommand, NovatekRecordingCommand, NovatekStillCaptureCommand,
+    NovatekStoragePresence, PendingProbe, ProtocolFamilyClassification, ProtocolFamilyState,
+    ProtocolModelIdentityEvidence, RetinaH264FileSink, RetinaRtspError, RetinaRtspPreviewSession,
+    RetinaVideoConfiguration, RetinaVideoFrame, StagedIdentityInput, StagedIdentityOutcome,
+    VETERAN_FIELD_AUTO_SHUTDOWN_TIME_REMAINING_SECONDS, VETERAN_FIELD_CHARGE_MODE,
+    VETERAN_FIELD_PEDALS_MODE, VETERAN_FIELD_SPEED_ALERT_DECI_KMH,
     VETERAN_FIELD_SPEED_TILTBACK_DECI_KMH, VescBatteryType as CoreVescBatteryType,
     VescBoardProfile as CoreVescBoardProfile, VescReadOnlySession as CoreVescReadOnlySession,
     begode_identification_probes, closest_known_model, identify_known_model, is_r3_pro_firmware,
@@ -854,6 +855,9 @@ pub enum MobileNovatekProfileError {
     /// Read-only configuration did not advertise the requested command.
     #[error("Novatek command capability is not advertised")]
     CapabilityNotAdvertised,
+    /// The adapter supplied more command/status pairs than Rust retains.
+    #[error("Novatek configuration is too large")]
+    ConfigurationTooLarge,
 }
 
 impl From<NovatekProfileError> for MobileNovatekProfileError {
@@ -868,6 +872,12 @@ impl From<NovatekProfileError> for MobileNovatekProfileError {
 impl From<NovatekCapabilityError> for MobileNovatekProfileError {
     fn from(_: NovatekCapabilityError) -> Self {
         Self::CapabilityNotAdvertised
+    }
+}
+
+impl From<NovatekConfigurationError> for MobileNovatekProfileError {
+    fn from(_: NovatekConfigurationError) -> Self {
+        Self::ConfigurationTooLarge
     }
 }
 
@@ -980,11 +990,12 @@ pub fn mobile_novatek_recording_command_target(
     command: MobileNovatekRecordingCommandDto,
 ) -> Result<String, MobileNovatekProfileError> {
     let profile = NovatekR3V1Profile::parse(&firmware_version)?;
-    let capability = profile.recording_capability(
+    let configuration = NovatekConfiguration::from_status_pairs(
         configuration
-            .iter()
-            .any(|status| status.command_id == 2001 && status.status == 0),
+            .into_iter()
+            .map(|status| (status.command_id, status.status)),
     )?;
+    let capability = profile.recording_capability(&configuration)?;
     Ok(NovatekRecordingCommand::from(command)
         .request_target_for_capability(&capability)
         .to_owned())
@@ -1003,11 +1014,12 @@ pub fn mobile_novatek_still_capture_command_target(
     command: MobileNovatekStillCaptureCommandDto,
 ) -> Result<String, MobileNovatekProfileError> {
     let profile = NovatekR3V1Profile::parse(&firmware_version)?;
-    let capability = profile.still_capture_capability(
+    let configuration = NovatekConfiguration::from_status_pairs(
         configuration
-            .iter()
-            .any(|status| status.command_id == 1001 && status.status == 0),
+            .into_iter()
+            .map(|status| (status.command_id, status.status)),
     )?;
+    let capability = profile.still_capture_capability(&configuration)?;
     Ok(NovatekStillCaptureCommand::from(command)
         .request_target_for_capability(&capability)
         .to_owned())
@@ -18745,6 +18757,20 @@ mod tests {
                 MobileNovatekRecordingCommandDto::Start,
             ),
             Err(MobileNovatekProfileError::CapabilityNotAdvertised)
+        );
+        let oversized_configuration = (0..33)
+            .map(|command_id| MobileNovatekCommandStatusDto {
+                command_id,
+                status: 0,
+            })
+            .collect();
+        assert_eq!(
+            mobile_novatek_recording_command_target(
+                "R3V1.1_20240411".to_owned(),
+                oversized_configuration,
+                MobileNovatekRecordingCommandDto::Start,
+            ),
+            Err(MobileNovatekProfileError::ConfigurationTooLarge)
         );
     }
 

@@ -132,6 +132,18 @@ pub enum NovatekCapabilityError {
     },
 }
 
+/// Failure while constructing bounded command/status evidence at an adapter
+/// boundary.
+#[derive(Clone, Copy, Debug, Eq, Error, PartialEq)]
+pub enum NovatekConfigurationError {
+    /// The supplied status pairs exceeded the fixed configuration bound.
+    #[error("Novatek configuration contains more than {max} status entries")]
+    TooManyStatuses {
+        /// Maximum number of retained status pairs.
+        max: usize,
+    },
+}
+
 /// Error returned when a camera-reported media path cannot become a safe HTTP
 /// download target.
 #[derive(Clone, Copy, Debug, Eq, Error, PartialEq)]
@@ -238,9 +250,9 @@ impl NovatekR3V1Profile {
     /// Proves that read-only configuration advertises onboard recording.
     pub fn recording_capability(
         &self,
-        advertised: bool,
+        configuration: &NovatekConfiguration,
     ) -> Result<NovatekRecordingCapability, NovatekCapabilityError> {
-        advertised
+        (configuration.status_for_command_id(2001) == Some(0))
             .then(|| NovatekRecordingCapability(self.clone()))
             .ok_or(NovatekCapabilityError::NotAdvertised { command_id: 2001 })
     }
@@ -248,9 +260,9 @@ impl NovatekR3V1Profile {
     /// Proves that read-only configuration advertises still capture.
     pub fn still_capture_capability(
         &self,
-        advertised: bool,
+        configuration: &NovatekConfiguration,
     ) -> Result<NovatekStillCaptureCapability, NovatekCapabilityError> {
-        advertised
+        (configuration.status_for_command_id(1001) == Some(0))
             .then(|| NovatekStillCaptureCapability(self.clone()))
             .ok_or(NovatekCapabilityError::NotAdvertised { command_id: 1001 })
     }
@@ -355,6 +367,25 @@ pub struct NovatekConfiguration {
 }
 
 impl NovatekConfiguration {
+    /// Builds bounded command/status evidence from an adapter-owned sequence.
+    ///
+    /// The iterator is consumed directly into fixed storage so an untrusted
+    /// mobile vector cannot allocate an unbounded intermediate collection.
+    pub fn from_status_pairs(
+        pairs: impl IntoIterator<Item = (u16, u16)>,
+    ) -> Result<Self, NovatekConfigurationError> {
+        let mut statuses = ArrayVec::new();
+        for (command_id, status) in pairs {
+            if statuses.is_full() {
+                return Err(NovatekConfigurationError::TooManyStatuses {
+                    max: NOVATEK_MAX_COMMAND_STATUS_ENTRIES,
+                });
+            }
+            statuses.push(NovatekCommandStatus { command_id, status });
+        }
+        Ok(Self { statuses })
+    }
+
     /// Returns all command/status pairs in response order.
     #[must_use]
     pub fn statuses(&self) -> &[NovatekCommandStatus] {
@@ -1093,8 +1124,10 @@ mod tests {
     #[test]
     fn recording_commands_encode_fixed_user_requested_targets() {
         let profile = NovatekR3V1Profile::parse("R3V1.1_20240411").expect("verified profile");
+        let configuration =
+            NovatekConfiguration::from_status_pairs([(2001, 0)]).expect("bounded configuration");
         let capability = profile
-            .recording_capability(true)
+            .recording_capability(&configuration)
             .expect("advertised recording capability");
         assert_eq!(
             NovatekRecordingCommand::Start.request_target_for_capability(&capability),
@@ -1109,8 +1142,10 @@ mod tests {
     #[test]
     fn still_capture_command_encodes_fixed_user_requested_target() {
         let profile = NovatekR3V1Profile::parse("R3V1.1_20240411").expect("verified profile");
+        let configuration =
+            NovatekConfiguration::from_status_pairs([(1001, 0)]).expect("bounded configuration");
         let capability = profile
-            .still_capture_capability(true)
+            .still_capture_capability(&configuration)
             .expect("advertised still capability");
         assert_eq!(
             NovatekStillCaptureCommand.request_target_for_capability(&capability),
@@ -1129,13 +1164,25 @@ mod tests {
     #[test]
     fn mutating_commands_reject_missing_capability_evidence() {
         let profile = NovatekR3V1Profile::parse("R3V1.1_20240411").expect("verified profile");
+        let configuration =
+            NovatekConfiguration::from_status_pairs(std::iter::empty::<(u16, u16)>())
+                .expect("empty adapter configuration is bounded");
         assert_eq!(
-            profile.recording_capability(false),
+            profile.recording_capability(&configuration),
             Err(NovatekCapabilityError::NotAdvertised { command_id: 2001 })
         );
         assert_eq!(
-            profile.still_capture_capability(false),
+            profile.still_capture_capability(&configuration),
             Err(NovatekCapabilityError::NotAdvertised { command_id: 1001 })
+        );
+    }
+
+    #[test]
+    fn adapter_configuration_rejects_more_than_the_fixed_status_bound() {
+        let statuses = (0..33).map(|command_id| (command_id, 0));
+        assert_eq!(
+            NovatekConfiguration::from_status_pairs(statuses),
+            Err(NovatekConfigurationError::TooManyStatuses { max: 32 })
         );
     }
 
