@@ -18700,6 +18700,24 @@ mod tests {
     }
 
     #[test]
+    fn novatek_mutating_targets_require_the_verified_r3v1_profile() {
+        assert_eq!(
+            mobile_novatek_recording_command_target(
+                "R3V1.1_20240411".to_owned(),
+                MobileNovatekRecordingCommandDto::Start,
+            ),
+            Ok("/?custom=1&cmd=2001&str=1".to_owned())
+        );
+        assert_eq!(
+            mobile_novatek_still_capture_command_target(
+                "R4V2.0_20250101".to_owned(),
+                MobileNovatekStillCaptureCommandDto::Capture,
+            ),
+            Err(MobileNovatekProfileError::UnsupportedFirmware)
+        );
+    }
+
+    #[test]
     fn production_snapshot_projects_supported_rider_metrics_through_mobile_ffi() {
         let core_snapshot = cutout_core::TelemetrySnapshot {
             voltage: Some(Measured::reported(CoreVoltage::from_millivolts(62_800))),
