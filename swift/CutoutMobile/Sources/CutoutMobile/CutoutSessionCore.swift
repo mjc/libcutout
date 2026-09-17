@@ -2053,14 +2053,12 @@ public final class CutoutSessionCore: NSObject {
     private func observeRideMapConnection(at receivedAt: MonotonicMilliseconds) {
         guard let rideMapState,
               rideMapState.initializationError == nil,
-              rideMapState.isReady
+              let platformIdentifier = protocolIdentityCandidate?.platformIdentifier
         else {
             return
         }
 
-        let snapshot = connectionSnapshot
-        guard let token = snapshot.token else { return }
-        let connectionGeneration = token.generation
+        let connectionGeneration = connectionSnapshot.generation
         let queue = rideMapQueue
         let reference = WeakCutoutSessionCoreReference(self)
         queue.async {
@@ -2068,15 +2066,12 @@ public final class CutoutSessionCore: NSObject {
                   self.connectionSnapshot.generation == connectionGeneration
             else { return }
             do {
-                if shouldEnsureRecording {
-                    // Auto-start/resume is a connection-transition action. Repeating it for every
-                    // notification would restart a ride after the user explicitly stopped it.
-                    _ = try rideMapState.ensureRecordingForVehicle(
-                        platformIdentifier: platformIdentifier,
-                        atMs: receivedAt.rawValue,
-                        automaticPolicy: self.rideMapAutomaticRecordingPolicy
-                    )
-                }
+                _ = try rideMapState.ensureRecordingForVehicleOnConnection(
+                    platformIdentifier: platformIdentifier,
+                    atMs: receivedAt.rawValue,
+                    connectionGeneration: connectionGeneration,
+                    automaticPolicy: self.rideMapAutomaticRecordingPolicy
+                )
                 _ = try rideMapState.observeVehicleConnection(
                     platformIdentifier: platformIdentifier,
                     atMs: receivedAt.rawValue

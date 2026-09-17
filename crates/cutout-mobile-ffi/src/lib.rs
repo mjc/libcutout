@@ -7276,10 +7276,7 @@ struct MobileRideMapCoreInner {
     pending_location_writes: VecDeque<PendingMapLocationWrite>,
     settled_location_decisions: VecDeque<MobileRideMapCoreDecisionDto>,
     recoverable_updated_at_milliseconds: Option<u64>,
-    /// Last verified vehicle retained as the candidate for a later GPS-only start.
-    last_connected_vehicle: Option<ride_maps::VehicleIdentity>,
     last_connection_transition_generation: Option<u64>,
-    last_connection_transition_ride_id: Option<MobileRideIdDto>,
     monotonic_epoch_offset_milliseconds: u64,
     initialization_error: Option<MobileRideMapCoreErrorDto>,
     restoration_state: MobileRideMapRestorationState,
@@ -7605,9 +7602,7 @@ impl MobileRideMapCoreInner {
             pending_location_writes: VecDeque::new(),
             settled_location_decisions: VecDeque::new(),
             recoverable_updated_at_milliseconds: None,
-            last_connected_vehicle: None,
             last_connection_transition_generation: None,
-            last_connection_transition_ride_id: None,
             monotonic_epoch_offset_milliseconds: 0,
             initialization_error: None,
             restoration_state: if needs_restoration {
@@ -8245,10 +8240,60 @@ impl MobileRideMapCore {
         at_ms: u64,
         automatic_policy: MobileRideMapAutomaticRecordingPolicyDto,
     ) -> Result<MobileRideMapCoreSnapshotDto, MobileRideMapCoreErrorDto> {
+        self.ensure_recording_for_vehicle_with_connection_generation(
+            platform_identifier,
+            at_ms,
+            None,
+            automatic_policy,
+        )
+    }
+
+    /// Applies connection-triggered recording policy once for one native connection generation.
+    ///
+    /// Repeated BLE notifications for the same connection are idempotent. A failed attempt is
+    /// not recorded as handled, so a later notification can retry it. The connection generation
+    /// is supplied by the native transport adapter; Rust owns whether automatic policy has
+    /// already been applied and still verifies the vehicle identity before changing a ride.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the identifier is invalid, no ride can be created, or association
+    /// metadata cannot be persisted.
+    pub fn ensure_recording_for_vehicle_on_connection(
+        &self,
+        platform_identifier: String,
+        at_ms: u64,
+        connection_generation: u64,
+        automatic_policy: MobileRideMapAutomaticRecordingPolicyDto,
+    ) -> Result<MobileRideMapCoreSnapshotDto, MobileRideMapCoreErrorDto> {
+        self.ensure_recording_for_vehicle_with_connection_generation(
+            platform_identifier,
+            at_ms,
+            Some(connection_generation),
+            automatic_policy,
+        )
+    }
+
+    fn ensure_recording_for_vehicle_with_connection_generation(
+        &self,
+        platform_identifier: String,
+        at_ms: u64,
+        connection_generation: Option<u64>,
+        automatic_policy: MobileRideMapAutomaticRecordingPolicyDto,
+    ) -> Result<MobileRideMapCoreSnapshotDto, MobileRideMapCoreErrorDto> {
         let identity = ride_maps::VehicleIdentity::new(&platform_identifier)
             .ok_or(MobileRideMapCoreErrorDto::InvalidVehicleIdentity)?;
         let platform_identifier = identity.as_str().to_owned();
         let mut state = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
+        if connection_generation.is_some_and(|generation| {
+            state.last_connection_transition_generation == Some(generation)
+        }) {
+            let lifecycle = state
+                .recorder
+                .state()
+                .ok_or(MobileRideMapCoreErrorDto::NoActiveRide)?;
+            return Ok(state.snapshot(lifecycle.into()));
+        }
         if automatic_policy == MobileRideMapAutomaticRecordingPolicyDto::StartAndResume
             && state.recorder.state() == Some(ride_maps::RideLifecycleState::Interrupted)
         {
@@ -8317,6 +8362,9 @@ impl MobileRideMapCore {
         }
         state.recorder = durable_staged;
         state.admission_recorder = staged;
+        if let Some(generation) = connection_generation {
+            state.last_connection_transition_generation = Some(generation);
+        }
         let lifecycle = state
             .recorder
             .state()
@@ -18576,6 +18624,43 @@ mod tests {
             .expect("a later connection starts a fresh live map ride");
         assert_eq!(restarted.state, MobileRideLifecycleStateDto::Active);
         assert_ne!(restarted.ride_id, snapshot.ride_id);
+    }
+
+    #[test]
+    fn mobile_ride_map_core_applies_connection_policy_once_per_generation() {
+        let state = MobileRideMapCore::new();
+        let first = state
+            .ensure_recording_for_vehicle_on_connection(
+                "pev-1".to_owned(),
+                1_000,
+                7,
+                MobileRideMapAutomaticRecordingPolicyDto::StartAndResume,
+            )
+            .expect("the first connection starts a ride");
+        state.stop(2_000).expect("the ride stops");
+        state.save().expect("the ride saves");
+
+        let repeated = state
+            .ensure_recording_for_vehicle_on_connection(
+                "pev-1".to_owned(),
+                3_000,
+                7,
+                MobileRideMapAutomaticRecordingPolicyDto::StartAndResume,
+            )
+            .expect("repeated notifications are idempotent");
+        assert_eq!(repeated.ride_id, first.ride_id);
+        assert_eq!(repeated.state, MobileRideLifecycleStateDto::Saved);
+
+        let next = state
+            .ensure_recording_for_vehicle_on_connection(
+                "pev-1".to_owned(),
+                4_000,
+                8,
+                MobileRideMapAutomaticRecordingPolicyDto::StartAndResume,
+            )
+            .expect("a new connection may start the next ride");
+        assert_eq!(next.state, MobileRideLifecycleStateDto::Active);
+        assert_ne!(next.ride_id, first.ride_id);
     }
 
     #[test]
