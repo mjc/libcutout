@@ -2064,37 +2064,16 @@ public final class CutoutSessionCore: NSObject {
                   self.connectionSnapshot.generation == connectionGeneration
             else { return }
             do {
-                _ = try rideMapState.ensureRecordingForVerifiedConnection(
+                let snapshot = try rideMapState.ensureRecordingForVerifiedConnection(
                     connectionState: self.rustSessionState,
                     token: token,
                     atMs: receivedAt.rawValue,
                 )
                 if snapshot != nil {
-                    // Admission returns the current ride for repeated notifications too.
-                    // Only reset when Rust created a different ride, so reconnects and
-                    // telemetry notifications cannot clear the same trip repeatedly.
-                    if snapshot?.rideID != previousRideID {
-                        _ = self.resetTripMeterForNewRide()
-                    }
                     _ = try rideMapState.observeTelemetry(atMs: receivedAt.rawValue)
                     if let snapshot = rideMapState.currentSnapshot(atMs: receivedAt.rawValue) {
                         self.publishRideMapSnapshot(snapshot)
                     }
-                }
-                self.synchronizeRideMapLocationDemand()
-            } catch let error as MobileRideMapError where error == .staleConnection {
-                return
-            } catch let error as MobileRideMapError {
-                // Admission can create or replace the ride while this queue is awaiting Rust.
-                // Capture the context at the failure boundary so a first auto-start and a
-                // terminal-ride replacement cannot publish an unscoped error that the app
-                // model incorrectly rejects as stale.
-                let snapshot = rideMapState.currentSnapshot(atMs: receivedAt.rawValue)
-                // Publish the authoritative post-admission snapshot before its scoped error.
-                // The model rejects ride-scoped errors until it has seen that ride; ordering the
-                // pair makes the stale-work invariant hold for first starts and replacements.
-                if let snapshot {
-                    self.publishRideMapSnapshot(snapshot)
                 }
                 self.synchronizeRideMapLocationDemand()
             } catch let error as MobileRideMapError where error == .staleConnection {

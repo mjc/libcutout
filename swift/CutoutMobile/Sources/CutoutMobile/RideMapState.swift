@@ -844,13 +844,13 @@ public final class MobileRideMapState: @unchecked Sendable {
         connectionState: CutoutSessionStateHandle,
         token: ConnectionAttemptToken,
         atMs: UInt64
-    ) throws -> MobileRideMapSnapshotDto {
+    ) throws -> MobileRideMapSnapshotDto? {
         try withCore {
-            mapSnapshot(try connectionState.ensureRideRecordingForVerifiedConnection(
+            try connectionState.ensureRideRecordingForVerifiedConnection(
                 rideMap: $0,
                 token: token,
                 atMs: atMs
-            ))
+            ).map(mapSnapshot)
         }
     }
 
