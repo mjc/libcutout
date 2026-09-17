@@ -802,6 +802,22 @@ final class CutoutAppModelTests: XCTestCase {
     }
 
     @MainActor
+    func testRejectedRideMapStartDoesNotResetLocationAdmission() {
+        let driver = SessionDriverSpy(rows: [])
+        let model = CutoutAppModel(core: driver)
+
+        XCTAssertTrue(model.startGpsOnlyRide())
+        XCTAssertEqual(driver.resetRideMapLocationAdmissionCount, 1)
+
+        XCTAssertFalse(model.startGpsOnlyRide())
+        XCTAssertEqual(
+            driver.resetRideMapLocationAdmissionCount,
+            1,
+            "a rejected start must not clear location context for the existing ride"
+        )
+    }
+
+    @MainActor
     func testHistoryReloadPreservesTheSelectedRideWhenItStillMatches() {
         XCTAssertEqual(
             CutoutAppModel.preferredHistorySelection(
