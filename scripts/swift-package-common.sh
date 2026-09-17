@@ -60,50 +60,8 @@ cutout_verify_embedded_spotify_client_id() {
   fi
 }
 
-cutout_swift_ffi_package_dir() {
-  printf '%s\n' "$1/target/swift-ffi/CutoutMobileFFI"
-}
-
-cutout_validate_swift_ffi_build_input() {
-  local root package
-  local -a required
-  root="$1"
-  package="$(cutout_swift_ffi_package_dir "$root")"
-  required=(
-    "$package/Package.swift"
-    "$package/Sources/CutoutMobileFFI/cutout_mobile_ffi.swift"
-    "$package/cutout_mobile_ffiFFI.xcframework/Info.plist"
-    "$package/cutout_mobile_ffiFFI.xcframework/ios-arm64/libcutout_mobile_ffi.a"
-    "$package/cutout_mobile_ffiFFI.xcframework/ios-arm64/Headers/cutout_mobile_ffiFFI/cutout_mobile_ffiFFI.h"
-    "$package/cutout_mobile_ffiFFI.xcframework/ios-arm64/Headers/cutout_mobile_ffiFFI/module.modulemap"
-    "$package/cutout_mobile_ffiFFI.xcframework/ios-arm64-simulator/libcutout_mobile_ffi.a"
-    "$package/cutout_mobile_ffiFFI.xcframework/ios-arm64-simulator/Headers/cutout_mobile_ffiFFI/cutout_mobile_ffiFFI.h"
-    "$package/cutout_mobile_ffiFFI.xcframework/ios-arm64-simulator/Headers/cutout_mobile_ffiFFI/module.modulemap"
-    "$package/cutout_mobile_ffiFFI.xcframework/macos-arm64/libcutout_mobile_ffi.a"
-    "$package/cutout_mobile_ffiFFI.xcframework/macos-arm64/Headers/cutout_mobile_ffiFFI/cutout_mobile_ffiFFI.h"
-    "$package/cutout_mobile_ffiFFI.xcframework/macos-arm64/Headers/cutout_mobile_ffiFFI/module.modulemap"
-  )
-
-  for input in "${required[@]}"; do
-    if [[ ! -s "$input" ]]; then
-      echo "missing Swift FFI build input: $input" >&2
-      echo "Run: nix develop -c ./scripts/regenerate-swift-ffi.sh" >&2
-      return 1
-    fi
-  done
-
-  if ! grep -Eq 'Package[[:space:]]*\(' "$package/Package.swift"; then
-    echo "invalid Swift FFI Package.swift: $package/Package.swift" >&2
-    echo "Run: nix develop -c ./scripts/regenerate-swift-ffi.sh" >&2
-    return 1
-  fi
-}
-
 cutout_ensure_swift_ffi_build_input() {
-  local root
-  root="$1"
-  (cd "$root" && cargo run --quiet -p cutout-dev -- swift-ffi) || return
-  cutout_validate_swift_ffi_build_input "$root"
+  (cd "$1" && cargo cutout swift-ffi)
 }
 
 cutout_create_ios_ui_test_result_bundle() {
@@ -146,44 +104,6 @@ cutout_xcode_auth_args() {
   fi
 }
 
-cutout_connected_ios_device_udid() {
-  local device_json
-  cutout_use_xcode_developer_dir
-
-  device_json="$(mktemp "${TMPDIR:-/tmp}/cutout-devicectl.XXXXXX.json")"
-  trap 'rm -f "$device_json"' RETURN
-
-  xcrun devicectl --quiet list devices --json-output "$device_json" >/dev/null
-
-  python3 - "$device_json" <<'PY'
-import json
-import sys
-
-with open(sys.argv[1], "r", encoding="utf-8") as fh:
-    data = json.load(fh)
-
-devices = data.get("result", {}).get("devices", [])
-for device in devices:
-    hardware = device.get("hardwareProperties", {})
-    properties = device.get("properties", {})
-    state = properties.get("state", {})
-
-    if hardware.get("platform") != "iOS":
-        continue
-    if hardware.get("reality") != "physical":
-        continue
-    if state.get("bootState") != "booted":
-        continue
-
-    udid = properties.get("hardware", {}).get("udid")
-    if udid:
-        print(udid)
-        raise SystemExit(0)
-
-raise SystemExit("no connected booted physical iOS device found")
-PY
-}
-
 cutout_build_ios_app_bundle() {
   local root project scheme destination derived_data product configuration spotify_client_id
   root="$(cutout_repo_root)"
@@ -223,63 +143,12 @@ cutout_build_ios_app_bundle() {
     echo "expected installed product not found: $product" >&2
     return 1
   fi
+  (cd "$root" && cargo cutout ios verify-app "$product") || return
   if [[ -n "$spotify_client_id" ]]; then
     cutout_verify_embedded_spotify_client_id "$product" "$spotify_client_id" || return
   fi
 
   printf '%s\n' "$product"
-}
-
-cutout_build_ios_device_app_bundle() {
-  local root project scheme device_udid destination derived_data product
-  local development_team bundle_id spotify_client_id
-  root="$(cutout_repo_root)"
-  project="${CUTOUT_IOS_APP_PROJECT:-swift/CutoutMobile/CutoutApp.xcodeproj}"
-  scheme="${CUTOUT_IOS_APP_SCHEME:-CutoutApp}"
-  device_udid="${CUTOUT_IOS_DEVICE_UDID:-$(cutout_connected_ios_device_udid)}"
-  destination="${CUTOUT_IOS_DEVICE_DESTINATION:-platform=iOS,id=$device_udid}"
-  derived_data="${CUTOUT_IOS_DEVICE_DERIVED_DATA:-$root/target/xcode-device-signed}"
-  product="$derived_data/Build/Products/Debug-iphoneos/CutoutApp.app"
-  development_team="$(cutout_ios_development_team)"
-  bundle_id="${CUTOUT_IOS_APP_BUNDLE_ID:-}"
-  spotify_client_id="$(cutout_require_spotify_client_id)"
-
-  cutout_use_xcode_developer_dir
-  cutout_ensure_swift_ffi_build_input "$root" || return
-
-  rm -rf "$product"
-
-  if ! /usr/bin/xcrun xcodebuild \
-      -project "$root/$project" \
-      -scheme "$scheme" \
-      -destination "$destination" \
-      -derivedDataPath "$derived_data" \
-      -allowProvisioningUpdates \
-      CODE_SIGNING_ALLOWED=YES \
-      CODE_SIGNING_REQUIRED=YES \
-      CODE_SIGN_STYLE=Automatic \
-      CODE_SIGN_IDENTITY="Apple Development" \
-      ${development_team:+DEVELOPMENT_TEAM="$development_team"} \
-      ${bundle_id:+PRODUCT_BUNDLE_IDENTIFIER="$bundle_id"} \
-      SPOTIFY_CLIENT_ID="$spotify_client_id" \
-      build >&2; then
-    rm -rf "$product"
-    return 1
-  fi
-
-  if [[ ! -d "$product" ]]; then
-    echo "expected installed product not found: $product" >&2
-    return 1
-  fi
-  cutout_verify_embedded_spotify_client_id "$product" "$spotify_client_id" || return
-
-  printf '%s\n' "$product"
-}
-
-cutout_ios_app_bundle_identifier() {
-  local product
-  product="$1"
-  /usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$product/Info.plist"
 }
 
 cutout_archive_ios_release_testing_app() {
@@ -332,6 +201,7 @@ cutout_archive_ios_release_testing_app() {
     echo "expected archive not found: $archive_path" >&2
     return 1
   fi
+  (cd "$root" && cargo cutout ios verify-app "$archive_path/Products/Applications/CutoutApp.app") || return
   cutout_verify_embedded_spotify_client_id \
     "$archive_path/Products/Applications/CutoutApp.app" \
     "$spotify_client_id" || return

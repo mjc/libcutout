@@ -40,7 +40,6 @@ final class AeroSettingsSimulatorTests: XCTestCase {
             .setAeroAngleAdjustment(MobileAeroAngleAdjustmentDto(tenthsOfDegree: -12)),
             .setPedalMode(.hard),
             .setAeroHighBeam(.on),
-            .setLights(.on),
             .resetTripMeter,
         ]
 
@@ -79,17 +78,18 @@ final class AeroSettingsSimulatorTests: XCTestCase {
         XCTAssertEqual(readback.tripMeterResetCount, 1)
     }
 
-    func testSingleFrameHeadlightUpdatesTypedSimulatorSnapshot() {
+    func testSingleFrameHeadlightIsRejectedByAeroSimulator() {
         let simulator = AeroSettingsSimulator()
 
-        _ = simulator.issue(
+        let outputs = simulator.issue(
             command: .setLights(.on),
             operatingState: .parked,
             speed: nil,
             monotonicMs: MobileMonotonicMillisDto(milliseconds: 10)
         )
 
-        XCTAssertEqual(simulator.readback().headlight, .on)
+        XCTAssertFalse(outputs.contains { $0.kind == .write })
+        XCTAssertEqual(simulator.readback().headlight, .off)
     }
 
     func testHighBeamSequenceUpdatesTypedSimulatorSnapshot() {

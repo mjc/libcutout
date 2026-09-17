@@ -118,6 +118,8 @@ enum DevCommand {
     AeroSettingsSimulator,
     SwiftFfi,
     IosDeploy(Vec<String>),
+    IosVerifyApp(PathBuf),
+    IosCaptures,
 }
 
 fn main() -> Result<()> {
@@ -127,6 +129,8 @@ fn main() -> Result<()> {
         DevCommand::AeroSettingsSimulator => run_aero_settings_simulator(),
         DevCommand::SwiftFfi => ensure_swift_ffi(&root),
         DevCommand::IosDeploy(launch_args) => deploy_ios(&root, &launch_args),
+        DevCommand::IosVerifyApp(product) => verify_ios_app(&product),
+        DevCommand::IosCaptures => pull_ios_captures(&root),
     }
 }
 
@@ -136,6 +140,10 @@ fn parse_cli(args: &[String]) -> Result<DevCommand> {
             Ok(DevCommand::AeroSettingsSimulator)
         }
         [command] if command == "swift-ffi" => Ok(DevCommand::SwiftFfi),
+        [ios, captures] if ios == "ios" && captures == "captures" => Ok(DevCommand::IosCaptures),
+        [ios, verify, product] if ios == "ios" && verify == "verify-app" => {
+            Ok(DevCommand::IosVerifyApp(product.into()))
+        }
         [ios, deploy] if ios == "ios" && deploy == "deploy" => {
             Ok(DevCommand::IosDeploy(Vec::new()))
         }
@@ -145,7 +153,7 @@ fn parse_cli(args: &[String]) -> Result<DevCommand> {
             Ok(DevCommand::IosDeploy(launch_args.to_vec()))
         }
         _ => bail!(
-            "usage: cutout-dev simulator aero-settings | cutout-dev swift-ffi | cutout-dev ios deploy [-- <launch args>...]"
+            "usage: cutout-dev simulator aero-settings | cutout-dev swift-ffi | cutout-dev ios deploy [-- <launch args>...] | cutout-dev ios verify-app <app bundle> | cutout-dev ios captures"
         ),
     }
 }
@@ -469,6 +477,7 @@ fn deploy_ios(root: &Path, launch_args: &[String]) -> Result<()> {
         product.display()
     );
 
+    verify_ios_app(&product)?;
     let bundle_id = plist_value(&product.join("Info.plist"), ":CFBundleIdentifier")?;
     let embedded_spotify_client_id = plist_value(&product.join("Info.plist"), ":SpotifyClientID")?;
     ensure!(
@@ -508,6 +517,143 @@ fn deploy_ios(root: &Path, launch_args: &[String]) -> Result<()> {
     println!("ios_device_udid={device}");
     println!("ios_app_bundle_id={bundle_id}");
     println!("ios_app_product={}", product.display());
+    Ok(())
+}
+
+fn pull_ios_captures(root: &Path) -> Result<()> {
+    ensure!(cfg!(target_os = "macos"), "iOS capture pull requires macOS");
+    let device =
+        env::var("CUTOUT_IOS_DEVICE_UDID").map_or_else(|_| discover_ios_device(root), Ok)?;
+    let bundle =
+        env::var("CUTOUT_IOS_APP_BUNDLE_ID").unwrap_or_else(|_| "io.cutout.cutoutapp".into());
+    let destination = env::var_os("CUTOUT_IOS_CAPTURE_DESTINATION")
+        .map_or_else(|| root.join("target/ios-captures"), PathBuf::from);
+    let limit = env::var("CUTOUT_IOS_CAPTURE_LIMIT")
+        .unwrap_or_else(|_| "5".into())
+        .parse::<usize>()
+        .context("CUTOUT_IOS_CAPTURE_LIMIT must be a positive integer")?;
+    ensure!(limit > 0, "CUTOUT_IOS_CAPTURE_LIMIT must be positive");
+    fs::create_dir_all(root.join("target"))?;
+    let listing = root.join(format!(
+        "target/devicectl-captures-{}.json",
+        std::process::id()
+    ));
+    let listed = run(
+        command("xcrun")
+            .args([
+                "devicectl",
+                "--quiet",
+                "device",
+                "info",
+                "files",
+                "--device",
+                &device,
+                "--domain-type",
+                "appDataContainer",
+                "--domain-identifier",
+                &bundle,
+                "--subdirectory",
+                "Documents",
+                "--json-output",
+            ])
+            .arg(&listing),
+        &format!("list captures on device {device} in {bundle}"),
+    );
+    let bytes = fs::read(&listing);
+    let _ = fs::remove_file(&listing);
+    listed?;
+    let document = serde_json::from_slice(&bytes?)?;
+    let captures = capture_names(&document, limit)?;
+    ensure!(
+        !captures.is_empty(),
+        "no cutout-btle-capture JSONL files found in {bundle} Documents"
+    );
+    fs::create_dir_all(&destination)?;
+    for name in captures {
+        let path = destination.join(name);
+        run(
+            command("xcrun")
+                .args([
+                    "devicectl",
+                    "--quiet",
+                    "device",
+                    "copy",
+                    "from",
+                    "--device",
+                    &device,
+                    "--domain-type",
+                    "appDataContainer",
+                    "--domain-identifier",
+                    &bundle,
+                    "--source",
+                    &format!("Documents/{name}"),
+                    "--destination",
+                ])
+                .arg(&path),
+            &format!("copy {name} from device {device} in {bundle}"),
+        )?;
+        println!("{}", path.display());
+    }
+    Ok(())
+}
+
+fn capture_names(document: &Value, limit: usize) -> Result<Vec<&str>> {
+    let files = document["result"]["files"]
+        .as_array()
+        .context("device listing has no files array")?;
+    let mut captures = files
+        .iter()
+        .filter_map(|file| {
+            let name = file["name"].as_str()?;
+            (name.starts_with("cutout-btle-capture-")
+                && Path::new(name).extension() == Some(OsStr::new("jsonl"))
+                && !name.contains(['/', '\\']))
+            .then(|| {
+                (
+                    name,
+                    file["metadata"]["lastModDate"].as_str().unwrap_or_default(),
+                )
+            })
+        })
+        .collect::<Vec<_>>();
+    captures.sort_by(|a, b| b.1.cmp(a.1).then_with(|| a.0.cmp(b.0)));
+    Ok(captures
+        .into_iter()
+        .take(limit)
+        .map(|(name, _)| name)
+        .collect())
+}
+
+fn verify_ios_app(product: &Path) -> Result<()> {
+    let output = command("/usr/bin/plutil")
+        .args(["-convert", "json", "-o", "-", "--"])
+        .arg(product.join("Info.plist"))
+        .output()?;
+    ensure_success(output.status, "read built app metadata")?;
+    verify_ios_metadata(&serde_json::from_slice(&output.stdout)?)
+}
+
+fn verify_ios_metadata(metadata: &Value) -> Result<()> {
+    let expected = serde_json::json!({
+        "CFBundleDisplayName": "CutOut",
+        "NSBluetoothAlwaysUsageDescription": "CutOut uses Bluetooth to read live vehicle telemetry.",
+        "UIDeviceFamily": [1],
+        "UISupportedInterfaceOrientations": [
+            "UIInterfaceOrientationPortrait",
+            "UIInterfaceOrientationLandscapeLeft",
+            "UIInterfaceOrientationLandscapeRight"
+        ]
+    });
+    for (key, value) in expected
+        .as_object()
+        .expect("metadata expectations are an object")
+    {
+        ensure!(
+            metadata[key] == *value,
+            "app metadata mismatch for {key}: expected {value}, got {}",
+            metadata[key]
+        );
+    }
     Ok(())
 }
 
@@ -663,35 +809,52 @@ fn required_ffi_inputs(package: &Path) -> Vec<PathBuf> {
 }
 
 fn verify_swift_ffi(package: &Path) -> Result<()> {
-    for input in required_ffi_inputs(package) {
-        ensure!(
-            input.is_file(),
-            "missing Swift FFI build input: {}",
-            input.display()
-        );
-    }
+    verify_swift_ffi_files(package)?;
     if cfg!(target_os = "macos") {
-        for (slice, architectures) in [
-            ("ios-arm64", &["arm64"][..]),
-            ("ios-arm64-simulator", &["arm64"][..]),
-            ("macos-arm64", &["arm64"][..]),
-        ] {
+        for slice in ["ios-arm64", "ios-arm64-simulator", "macos-arm64"] {
             let library = package.join(format!(
                 "cutout_mobile_ffiFFI.xcframework/{slice}/libcutout_mobile_ffi.a"
             ));
-            for architecture in architectures {
-                let status = Command::new("/usr/bin/lipo")
-                    .arg(&library)
-                    .args(["-verify_arch", architecture])
-                    .status()?;
-                ensure!(
-                    status.success(),
-                    "{} lacks {architecture}",
-                    library.display()
-                );
-            }
+            let output = Command::new("/usr/bin/lipo")
+                .arg(&library)
+                .arg("-archs")
+                .output()
+                .with_context(|| format!("listing architectures in {}", library.display()))?;
+            ensure!(
+                output.status.success(),
+                "failed to inspect architectures in {}",
+                library.display()
+            );
+            let architectures = String::from_utf8(output.stdout)
+                .with_context(|| format!("decoding architectures in {}", library.display()))?;
+            ensure!(
+                architectures.trim() == "arm64",
+                "{} has unexpected architectures: {}",
+                library.display(),
+                architectures.trim()
+            );
         }
     }
+    Ok(())
+}
+
+fn verify_swift_ffi_files(package: &Path) -> Result<()> {
+    for input in required_ffi_inputs(package) {
+        ensure!(
+            input.is_file() && fs::metadata(&input)?.len() > 0,
+            "missing or empty Swift FFI build input: {}",
+            input.display()
+        );
+    }
+    let manifest = fs::read_to_string(package.join("Package.swift"))?;
+    ensure!(
+        manifest.match_indices("Package").any(|(offset, _)| {
+            manifest[offset + "Package".len()..]
+                .trim_start()
+                .starts_with('(')
+        }),
+        "invalid Swift FFI Package.swift"
+    );
     Ok(())
 }
 
@@ -810,6 +973,43 @@ mod tests {
     }
 
     #[test]
+    fn swift_ffi_rejects_missing_empty_and_invalid_inputs() {
+        let package =
+            env::temp_dir().join(format!("cutout-dev-ffi-inputs-test-{}", std::process::id()));
+        let inputs = required_ffi_inputs(&package);
+        for input in &inputs {
+            fs::create_dir_all(input.parent().unwrap()).unwrap();
+            fs::write(input, "generated\n").unwrap();
+        }
+        let manifest = package.join("Package.swift");
+        fs::write(
+            &manifest,
+            "let package = Package (name: \"CutoutMobileFFI\")\n",
+        )
+        .unwrap();
+        verify_swift_ffi_files(&package).unwrap();
+        for input in &inputs {
+            let contents = fs::read(input).unwrap();
+            fs::remove_file(input).unwrap();
+            assert!(
+                verify_swift_ffi_files(&package).is_err(),
+                "{}",
+                input.display()
+            );
+            fs::write(input, "").unwrap();
+            assert!(
+                verify_swift_ffi_files(&package).is_err(),
+                "{}",
+                input.display()
+            );
+            fs::write(input, contents).unwrap();
+        }
+        fs::write(&manifest, "not a package manifest\n").unwrap();
+        assert!(verify_swift_ffi_files(&package).is_err());
+        fs::remove_dir_all(package).unwrap();
+    }
+
+    #[test]
     fn ios_deploy_accepts_launch_arguments_after_separator() {
         let args = ["ios", "deploy", "--", "--launch-smoke"].map(str::to_owned);
 
@@ -824,6 +1024,64 @@ mod tests {
         let args = ["simulator", "aero-settings"].map(str::to_owned);
 
         assert_eq!(parse_cli(&args).unwrap(), DevCommand::AeroSettingsSimulator);
+    }
+
+    #[test]
+    fn ios_metadata_rejects_missing_and_incorrect_values() {
+        let valid = serde_json::json!({
+            "CFBundleDisplayName": "CutOut",
+            "NSBluetoothAlwaysUsageDescription": "CutOut uses Bluetooth to read live vehicle telemetry.",
+            "UIDeviceFamily": [1],
+            "UISupportedInterfaceOrientations": [
+                "UIInterfaceOrientationPortrait",
+                "UIInterfaceOrientationLandscapeLeft",
+                "UIInterfaceOrientationLandscapeRight"
+            ]
+        });
+        verify_ios_metadata(&valid).unwrap();
+        for key in valid.as_object().unwrap().keys() {
+            let mut changed = valid.clone();
+            changed.as_object_mut().unwrap().remove(key);
+            assert!(verify_ios_metadata(&changed).is_err(), "missing {key}");
+            changed[key] = serde_json::json!("incorrect");
+            assert!(verify_ios_metadata(&changed).is_err(), "incorrect {key}");
+        }
+        assert_eq!(
+            parse_cli(&["ios".into(), "verify-app".into(), "Cutout App.app".into()]).unwrap(),
+            DevCommand::IosVerifyApp(PathBuf::from("Cutout App.app"))
+        );
+    }
+
+    #[test]
+    fn capture_selection_filters_sorts_and_limits_device_files() {
+        let files = serde_json::json!({"result": {"files": [
+            {"name": "cutout-btle-capture-old.jsonl", "metadata": {"lastModDate": "2026-01-01"}},
+            {"name": "unrelated.jsonl", "metadata": {"lastModDate": "2026-12-01"}},
+            {"name": "cutout-btle-capture-new.jsonl", "metadata": {"lastModDate": "2026-02-01"}},
+            {"name": "cutout-btle-capture-../../bad.jsonl"},
+            {"name": "cutout-btle-capture-backup.txt"}
+        ]}});
+        assert_eq!(
+            capture_names(&files, 1).unwrap(),
+            ["cutout-btle-capture-new.jsonl"]
+        );
+        assert_eq!(
+            capture_names(&files, 5).unwrap(),
+            [
+                "cutout-btle-capture-new.jsonl",
+                "cutout-btle-capture-old.jsonl"
+            ]
+        );
+        assert!(capture_names(&serde_json::json!({}), 5).is_err());
+        assert!(
+            capture_names(&serde_json::json!({"result": {"files": []}}), 5)
+                .unwrap()
+                .is_empty()
+        );
+        assert_eq!(
+            parse_cli(&["ios".into(), "captures".into()]).unwrap(),
+            DevCommand::IosCaptures
+        );
     }
 
     #[test]

@@ -53,11 +53,6 @@ let package = Package(
             resources: [.process("Assets.xcassets")]
         ),
         .executableTarget(
-            name: "CutoutMobileSmoke",
-            dependencies: ["CutoutMobile"],
-            path: "Tests/CutoutMobileSmoke"
-        ),
-        .executableTarget(
             name: "CutoutMobileLiveValidator",
             dependencies: ["CutoutMobile"],
             path: "Tests/CutoutMobileLiveValidator"
