@@ -2049,8 +2049,7 @@ public final class CutoutSessionCore: NSObject {
 
     private func observeRideMapConnection(at receivedAt: MonotonicMilliseconds) {
         guard let rideMapState,
-              rideMapState.initializationError == nil,
-              protocolIdentityCandidate != nil
+              rideMapState.initializationError == nil
         else {
             return
         }
