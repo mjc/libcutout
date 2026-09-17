@@ -78,6 +78,13 @@ pub enum NovatekResponseError {
         /// Command id associated with the request.
         expected: u16,
     },
+    /// The configuration repeated a command identifier, making its evidence
+    /// ambiguous.
+    #[error("Novatek configuration repeats command {command_id}")]
+    DuplicateCommand {
+        /// Repeated command identifier.
+        command_id: u16,
+    },
     /// The response contained more repeated entries than the parser stores.
     #[error("Novatek response contains more than {max} <{tag}> entries")]
     TooManyEntries {
@@ -141,6 +148,12 @@ pub enum NovatekConfigurationError {
     TooManyStatuses {
         /// Maximum number of retained status pairs.
         max: usize,
+    },
+    /// The supplied evidence repeated a command identifier.
+    #[error("Novatek configuration repeats command {command_id}")]
+    DuplicateCommand {
+        /// Repeated command identifier.
+        command_id: u16,
     },
 }
 
@@ -374,12 +387,19 @@ impl NovatekConfiguration {
     pub fn from_status_pairs(
         pairs: impl IntoIterator<Item = (u16, u16)>,
     ) -> Result<Self, NovatekConfigurationError> {
-        let mut statuses = ArrayVec::new();
+        let mut statuses: ArrayVec<NovatekCommandStatus, NOVATEK_MAX_COMMAND_STATUS_ENTRIES> =
+            ArrayVec::new();
         for (command_id, status) in pairs {
             if statuses.is_full() {
                 return Err(NovatekConfigurationError::TooManyStatuses {
                     max: NOVATEK_MAX_COMMAND_STATUS_ENTRIES,
                 });
+            }
+            if statuses
+                .iter()
+                .any(|existing| existing.command_id == command_id)
+            {
+                return Err(NovatekConfigurationError::DuplicateCommand { command_id });
             }
             statuses.push(NovatekCommandStatus { command_id, status });
         }
@@ -735,7 +755,8 @@ pub fn parse_configuration_response(
 ) -> Result<NovatekConfiguration, NovatekResponseError> {
     let xml = bounded_xml(response)?;
     let mut cursor = 0;
-    let mut statuses = ArrayVec::new();
+    let mut statuses: ArrayVec<NovatekCommandStatus, NOVATEK_MAX_COMMAND_STATUS_ENTRIES> =
+        ArrayVec::new();
 
     while let Some(command_offset) = xml
         .get(cursor..)
@@ -786,6 +807,12 @@ pub fn parse_configuration_response(
                 tag: "Cmd",
                 max: NOVATEK_MAX_COMMAND_STATUS_ENTRIES,
             });
+        }
+        if statuses
+            .iter()
+            .any(|existing| existing.command_id == command_id)
+        {
+            return Err(NovatekResponseError::DuplicateCommand { command_id });
         }
         statuses.push(NovatekCommandStatus { command_id, status });
         cursor = status_end + "</Status>".len();
@@ -1178,11 +1205,34 @@ mod tests {
     }
 
     #[test]
+    fn mutating_commands_reject_nonzero_capability_status() {
+        let profile = NovatekR3V1Profile::parse("R3V1.1_20240411").expect("verified profile");
+        let configuration = NovatekConfiguration::from_status_pairs([(2001, 7), (1001, 9)])
+            .expect("bounded configuration");
+        assert_eq!(
+            profile.recording_capability(&configuration),
+            Err(NovatekCapabilityError::NotAdvertised { command_id: 2001 })
+        );
+        assert_eq!(
+            profile.still_capture_capability(&configuration),
+            Err(NovatekCapabilityError::NotAdvertised { command_id: 1001 })
+        );
+    }
+
+    #[test]
     fn adapter_configuration_rejects_more_than_the_fixed_status_bound() {
         let statuses = (0..33).map(|command_id| (command_id, 0));
         assert_eq!(
             NovatekConfiguration::from_status_pairs(statuses),
             Err(NovatekConfigurationError::TooManyStatuses { max: 32 })
+        );
+    }
+
+    #[test]
+    fn adapter_configuration_rejects_duplicate_command_evidence() {
+        assert_eq!(
+            NovatekConfiguration::from_status_pairs([(2001, 0), (2001, 7)]),
+            Err(NovatekConfigurationError::DuplicateCommand { command_id: 2001 })
         );
     }
 
@@ -1353,6 +1403,19 @@ mod tests {
             Some(0)
         );
         assert_eq!(configuration.status_for_command_id(2002), Some(11));
+    }
+
+    #[test]
+    fn configuration_response_rejects_duplicate_command_evidence() {
+        let response = br"<Function>
+<Cmd>2001</Cmd><Status>0</Status>
+<Cmd>2001</Cmd><Status>7</Status>
+</Function>";
+
+        assert_eq!(
+            parse_configuration_response(response),
+            Err(NovatekResponseError::DuplicateCommand { command_id: 2001 })
+        );
     }
 
     #[test]

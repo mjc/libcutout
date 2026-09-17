@@ -858,6 +858,9 @@ pub enum MobileNovatekProfileError {
     /// The adapter supplied more command/status pairs than Rust retains.
     #[error("Novatek configuration is too large")]
     ConfigurationTooLarge,
+    /// The adapter supplied ambiguous duplicate command/status evidence.
+    #[error("Novatek configuration is malformed")]
+    ConfigurationMalformed,
 }
 
 impl From<NovatekProfileError> for MobileNovatekProfileError {
@@ -876,8 +879,11 @@ impl From<NovatekCapabilityError> for MobileNovatekProfileError {
 }
 
 impl From<NovatekConfigurationError> for MobileNovatekProfileError {
-    fn from(_: NovatekConfigurationError) -> Self {
-        Self::ConfigurationTooLarge
+    fn from(error: NovatekConfigurationError) -> Self {
+        match error {
+            NovatekConfigurationError::TooManyStatuses { .. } => Self::ConfigurationTooLarge,
+            NovatekConfigurationError::DuplicateCommand { .. } => Self::ConfigurationMalformed,
+        }
     }
 }
 
@@ -18771,6 +18777,23 @@ mod tests {
                 MobileNovatekRecordingCommandDto::Start,
             ),
             Err(MobileNovatekProfileError::ConfigurationTooLarge)
+        );
+        assert_eq!(
+            mobile_novatek_recording_command_target(
+                "R3V1.1_20240411".to_owned(),
+                vec![
+                    MobileNovatekCommandStatusDto {
+                        command_id: 2001,
+                        status: 0,
+                    },
+                    MobileNovatekCommandStatusDto {
+                        command_id: 2001,
+                        status: 7,
+                    },
+                ],
+                MobileNovatekRecordingCommandDto::Start,
+            ),
+            Err(MobileNovatekProfileError::ConfigurationMalformed)
         );
     }
 
