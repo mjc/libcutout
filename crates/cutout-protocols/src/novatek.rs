@@ -193,6 +193,12 @@ pub struct NovatekHttpOrigin {
 pub struct NovatekCommandId(NonZeroU16);
 
 impl NovatekCommandId {
+    /// Command identifier used by the verified recording capability proof.
+    pub const RECORDING: Self = Self(NonZeroU16::new(2001).unwrap());
+
+    /// Command identifier used by the verified still-capture capability proof.
+    pub const STILL_CAPTURE: Self = Self(NonZeroU16::new(1001).unwrap());
+
     /// Creates a command identifier, rejecting the reserved zero value.
     #[must_use]
     pub const fn new(value: u16) -> Option<Self> {
@@ -292,7 +298,7 @@ impl NovatekR3V1Profile {
         &self,
         configuration: &NovatekConfiguration,
     ) -> Result<NovatekRecordingCapability, NovatekCapabilityError> {
-        (configuration.status_for_command_id(2001) == Some(0))
+        (configuration.status_for_command_id(NovatekCommandId::RECORDING) == Some(0))
             .then(|| NovatekRecordingCapability(self.clone()))
             .ok_or(NovatekCapabilityError::NotAdvertised { command_id: 2001 })
     }
@@ -302,7 +308,7 @@ impl NovatekR3V1Profile {
         &self,
         configuration: &NovatekConfiguration,
     ) -> Result<NovatekStillCaptureCapability, NovatekCapabilityError> {
-        (configuration.status_for_command_id(1001) == Some(0))
+        (configuration.status_for_command_id(NovatekCommandId::STILL_CAPTURE) == Some(0))
             .then(|| NovatekStillCaptureCapability(self.clone()))
             .ok_or(NovatekCapabilityError::NotAdvertised { command_id: 1001 })
     }
@@ -449,10 +455,9 @@ impl NovatekConfiguration {
         self.status_for_command_id(command.command_id())
     }
 
-    /// Returns the status for a raw reported command id, when present.
+    /// Returns the status for a validated command id, when present.
     #[must_use]
-    pub fn status_for_command_id(&self, command_id: u16) -> Option<u16> {
-        let command_id = NovatekCommandId::new(command_id)?;
+    pub fn status_for_command_id(&self, command_id: NovatekCommandId) -> Option<u16> {
         self.statuses
             .iter()
             .find(|entry| entry.command_id == command_id)
@@ -1121,10 +1126,17 @@ pub enum NovatekReadCommand {
 }
 
 impl NovatekReadCommand {
-    /// Returns the source-reported numeric command ID.
+    /// Returns the validated source-reported command ID.
     #[must_use]
-    pub const fn command_id(self) -> u16 {
-        self as u16
+    pub const fn command_id(self) -> NovatekCommandId {
+        match self {
+            Self::Command2016 => NovatekCommandId::new(2016).unwrap(),
+            Self::LiveViewFormat => NovatekCommandId::new(2019).unwrap(),
+            Self::FirmwareVersion => NovatekCommandId::new(3012).unwrap(),
+            Self::Configuration => NovatekCommandId::new(3014).unwrap(),
+            Self::MediaList => NovatekCommandId::new(3015).unwrap(),
+            Self::StoragePresent => NovatekCommandId::new(3024).unwrap(),
+        }
     }
 
     /// Returns the relative control target for a selected local camera origin.
@@ -1511,7 +1523,10 @@ mod tests {
             configuration.status_for(NovatekReadCommand::Command2016),
             Some(0)
         );
-        assert_eq!(configuration.status_for_command_id(2002), Some(11));
+        assert_eq!(
+            configuration.status_for_command_id(NovatekCommandId::new(2002).unwrap()),
+            Some(11)
+        );
     }
 
     #[test]
@@ -1665,7 +1680,9 @@ mod tests {
             "rtsp://192.168.1.254/xxx.mov"
         );
         assert_eq!(
-            snapshot.configuration().status_for_command_id(2016),
+            snapshot
+                .configuration()
+                .status_for_command_id(NovatekCommandId::new(2016).unwrap()),
             Some(0)
         );
         assert_eq!(snapshot.storage(), NovatekStoragePresence::Present);
