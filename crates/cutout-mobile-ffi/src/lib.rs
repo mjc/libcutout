@@ -8244,7 +8244,7 @@ impl MobileRideMapCore {
             platform_identifier,
             at_ms,
             None,
-            automatic_policy,
+            Some(automatic_policy),
         )
     }
 
@@ -8264,13 +8264,12 @@ impl MobileRideMapCore {
         platform_identifier: String,
         at_ms: u64,
         connection_generation: u64,
-        automatic_policy: MobileRideMapAutomaticRecordingPolicyDto,
     ) -> Result<MobileRideMapCoreSnapshotDto, MobileRideMapCoreErrorDto> {
         self.ensure_recording_for_vehicle_with_connection_generation(
             platform_identifier,
             at_ms,
             Some(connection_generation),
-            automatic_policy,
+            None,
         )
     }
 
@@ -8279,12 +8278,14 @@ impl MobileRideMapCore {
         platform_identifier: String,
         at_ms: u64,
         connection_generation: Option<u64>,
-        automatic_policy: MobileRideMapAutomaticRecordingPolicyDto,
+        explicit_policy: Option<MobileRideMapAutomaticRecordingPolicyDto>,
     ) -> Result<MobileRideMapCoreSnapshotDto, MobileRideMapCoreErrorDto> {
         let identity = ride_maps::VehicleIdentity::new(&platform_identifier)
             .ok_or(MobileRideMapCoreErrorDto::InvalidVehicleIdentity)?;
         let platform_identifier = identity.as_str().to_owned();
         let mut state = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
+        let automatic_policy =
+            explicit_policy.unwrap_or(state.automatic_policy_for_vehicle(&platform_identifier)?);
         if connection_generation.is_some_and(|generation| {
             state.last_connection_transition_generation == Some(generation)
         }) {
@@ -18628,39 +18629,47 @@ mod tests {
 
     #[test]
     fn mobile_ride_map_core_applies_connection_policy_once_per_generation() {
-        let state = MobileRideMapCore::new();
+        let _guard = RIDE_DATABASE_TEST_LOCK
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        let path = std::env::temp_dir().join(format!(
+            "cutout-mobile-map-connection-policy-{}-{}.sqlite3",
+            std::process::id(),
+            Uuid::new_v4()
+        ));
+        let _ = fs::remove_file(&path);
+        let database =
+            open_ride_database(path.to_string_lossy().into_owned()).expect("database opens");
+        database
+            .remember_selected_device("pev-1".to_owned(), None, 1_000)
+            .expect("remembered device persists");
+        let state = MobileRideMapCore::with_database(database.clone());
         let first = state
-            .ensure_recording_for_vehicle_on_connection(
-                "pev-1".to_owned(),
-                1_000,
-                7,
-                MobileRideMapAutomaticRecordingPolicyDto::StartAndResume,
-            )
+            .ensure_recording_for_vehicle_on_connection("pev-1".to_owned(), 1_000, 7)
             .expect("the first connection starts a ride");
         state.stop(2_000).expect("the ride stops");
         state.save().expect("the ride saves");
 
         let repeated = state
-            .ensure_recording_for_vehicle_on_connection(
-                "pev-1".to_owned(),
-                3_000,
-                7,
-                MobileRideMapAutomaticRecordingPolicyDto::StartAndResume,
-            )
+            .ensure_recording_for_vehicle_on_connection("pev-1".to_owned(), 3_000, 7)
             .expect("repeated notifications are idempotent");
         assert_eq!(repeated.ride_id, first.ride_id);
         assert_eq!(repeated.state, MobileRideLifecycleStateDto::Saved);
 
+        let mismatched = state
+            .ensure_recording_for_vehicle_on_connection("pev-2".to_owned(), 3_500, 8)
+            .expect("a different vehicle must not auto-start a ride");
+        assert_eq!(mismatched.ride_id, first.ride_id);
+        assert_eq!(mismatched.state, MobileRideLifecycleStateDto::Saved);
+
         let next = state
-            .ensure_recording_for_vehicle_on_connection(
-                "pev-1".to_owned(),
-                4_000,
-                8,
-                MobileRideMapAutomaticRecordingPolicyDto::StartAndResume,
-            )
+            .ensure_recording_for_vehicle_on_connection("pev-1".to_owned(), 4_000, 9)
             .expect("a new connection may start the next ride");
         assert_eq!(next.state, MobileRideLifecycleStateDto::Active);
         assert_ne!(next.ride_id, first.ride_id);
+
+        database.shutdown().expect("database shuts down");
+        let _ = fs::remove_file(path);
     }
 
     #[test]

@@ -529,7 +529,8 @@ final class CutoutSessionCoreTests: XCTestCase {
         let suiteName = "CutoutSessionCoreTests.rideMapAutoStart.\(UUID().uuidString)"
         let defaults = UserDefaults(suiteName: suiteName)!
         defer { defaults.removePersistentDomain(forName: suiteName) }
-        let selectedDeviceStore = DevicePickerSelectionStore(defaults: defaults)
+        let database = try XCTUnwrap(MobileRideMapState.debugDatabase)
+        let selectedDeviceStore = DevicePickerSelectionStore(database: database, defaults: defaults)
         selectedDeviceStore.save(platformIdentifier: scriptedVescCandidate.platformIdentifier)
         let core = CutoutSessionCore(
             testScript: CutoutSessionTestScript(
@@ -566,7 +567,8 @@ final class CutoutSessionCoreTests: XCTestCase {
         let suiteName = "CutoutSessionCoreTests.rideMapLocation.\(UUID().uuidString)"
         let defaults = UserDefaults(suiteName: suiteName)!
         defer { defaults.removePersistentDomain(forName: suiteName) }
-        let selectedDeviceStore = DevicePickerSelectionStore(defaults: defaults)
+        let database = try XCTUnwrap(MobileRideMapState.debugDatabase)
+        let selectedDeviceStore = DevicePickerSelectionStore(database: database, defaults: defaults)
         selectedDeviceStore.save(platformIdentifier: scriptedVescCandidate.platformIdentifier)
         let core = CutoutSessionCore(
             testScript: CutoutSessionTestScript(

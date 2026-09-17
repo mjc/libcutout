@@ -523,9 +523,6 @@ public final class CutoutSessionCore: NSObject {
     private var bmsStorageSessionIdentifier = UUID().uuidString
     private let deviceDetectionSession: DeviceDetectionSession
     private let identificationProbeTransport: IdentificationProbeTransportCoordinator
-    private var rideMapAutomaticRecordingPolicy: MobileRideMapAutomaticRecordingPolicyDto {
-        selectedDeviceStore.platformIdentifier == nil ? .manualOnly : .startAndResume
-    }
     private var begodeProbeExpiryWorkItem: DispatchWorkItem?
     private var protocolDetectionExpiryWorkItem: DispatchWorkItem?
     private var pendingDisplayState: RideDisplayState?
@@ -2069,8 +2066,7 @@ public final class CutoutSessionCore: NSObject {
                 _ = try rideMapState.ensureRecordingForVehicleOnConnection(
                     platformIdentifier: platformIdentifier,
                     atMs: receivedAt.rawValue,
-                    connectionGeneration: connectionGeneration,
-                    automaticPolicy: self.rideMapAutomaticRecordingPolicy
+                    connectionGeneration: connectionGeneration
                 )
                 _ = try rideMapState.observeVehicleConnection(
                     platformIdentifier: platformIdentifier,

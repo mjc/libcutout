@@ -3612,7 +3612,8 @@ final class CutoutAppModelTests: XCTestCase {
         let suiteName = "CutoutAppModelTests.rideMapAutoStart.\(UUID().uuidString)"
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
         defer { defaults.removePersistentDomain(forName: suiteName) }
-        let selectedDeviceStore = DevicePickerSelectionStore(defaults: defaults)
+        let database = try XCTUnwrap(MobileRideMapState.debugDatabase)
+        let selectedDeviceStore = DevicePickerSelectionStore(database: database, defaults: defaults)
         selectedDeviceStore.save(platformIdentifier: fixture.candidate.platformIdentifier)
         let core = CutoutSessionCore(
             testScript: fixture.testScript,
