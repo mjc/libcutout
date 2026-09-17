@@ -106,13 +106,16 @@ extension CameraCommandStatusEvidence {
 }
 
 /// One bounded media record returned by the Rust Novatek parser.
-public struct CameraMediaEvidence: Equatable, Sendable {
+public struct CameraMediaEvidence: Equatable, Identifiable, Sendable {
     public let name: String
     public let path: String
     public let sizeBytes: UInt64
     public let timecode: UInt64
     public let time: String
     public let attributes: UInt32
+
+    /// The camera path is the stable identity of a media record.
+    public var id: String { path }
 
     public init(
         name: String,

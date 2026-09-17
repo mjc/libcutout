@@ -795,13 +795,7 @@ public final class CameraLocalNetworkAdapter {
         start: Bool,
         fetch: @escaping CameraReadOnlyFetcher
     ) async throws -> CameraCommandOutcome {
-        let origin = try mobileValidateNovatekHttpOrigin(address: address, port: port)
-        guard let evidence = readOnlyEvidence else {
-            throw CameraCommandRequestError.unsupported
-        }
-        guard readOnlyOriginMatches(origin) else {
-            throw CameraCommandRequestError.originMismatch
-        }
+        let (origin, evidence) = try commandContext(address: address, port: port)
         guard evidence.supportsOnboardRecording else {
             throw CameraCommandRequestError.unsupported
         }
@@ -855,13 +849,7 @@ public final class CameraLocalNetworkAdapter {
         port: UInt16,
         fetch: @escaping CameraReadOnlyFetcher
     ) async throws -> CameraCommandOutcome {
-        let origin = try mobileValidateNovatekHttpOrigin(address: address, port: port)
-        guard let evidence = readOnlyEvidence else {
-            throw CameraCommandRequestError.unsupported
-        }
-        guard readOnlyOriginMatches(origin) else {
-            throw CameraCommandRequestError.originMismatch
-        }
+        let (origin, evidence) = try commandContext(address: address, port: port)
         guard evidence.supportsStillCapture else {
             throw CameraCommandRequestError.unsupported
         }
@@ -940,6 +928,20 @@ public final class CameraLocalNetworkAdapter {
         } catch {
             return .unknown
         }
+    }
+
+    private func commandContext(
+        address: String,
+        port: UInt16
+    ) throws -> (origin: MobileNovatekHttpOriginDto, evidence: CameraReadOnlyEvidence) {
+        let origin = try mobileValidateNovatekHttpOrigin(address: address, port: port)
+        guard let evidence = readOnlyEvidence else {
+            throw CameraCommandRequestError.unsupported
+        }
+        guard readOnlyOriginMatches(origin) else {
+            throw CameraCommandRequestError.originMismatch
+        }
+        return (origin, evidence)
     }
 
     func apply(pathStatus: CameraLocalNetworkPathStatus, usesWiFi: Bool) {
