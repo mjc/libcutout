@@ -4535,9 +4535,6 @@ pub enum MobileRideMapCoreErrorDto {
     /// The connected vehicle identity is empty after trimming.
     #[error("invalid vehicle identity")]
     InvalidVehicleIdentity,
-    /// The connection attempt is no longer the current verified attempt.
-    #[error("stale verified connection attempt")]
-    StaleConnection,
     /// The route display budget, viewport, or privacy policy is invalid.
     #[error("invalid route projection")]
     InvalidRouteProjection,
@@ -8248,6 +8245,9 @@ impl MobileRideMapCore {
         at_ms: u64,
         automatic_policy: MobileRideMapAutomaticRecordingPolicyDto,
     ) -> Result<MobileRideMapCoreSnapshotDto, MobileRideMapCoreErrorDto> {
+        let identity = ride_maps::VehicleIdentity::new(&platform_identifier)
+            .ok_or(MobileRideMapCoreErrorDto::InvalidVehicleIdentity)?;
+        let platform_identifier = identity.as_str().to_owned();
         let mut state = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
         if automatic_policy == MobileRideMapAutomaticRecordingPolicyDto::StartAndResume
             && state.recorder.state() == Some(ride_maps::RideLifecycleState::Interrupted)
@@ -18606,6 +18606,40 @@ mod tests {
             .expect("manual-only connections may associate an open ride");
         assert_eq!(associated.ride_id, started.ride_id);
         assert_eq!(associated.state, MobileRideLifecycleStateDto::Active);
+    }
+
+    #[test]
+    fn mobile_ride_map_core_rejects_invalid_connection_identity_before_starting() {
+        let state = MobileRideMapCore::new();
+
+        assert_eq!(
+            state
+                .ensure_recording_for_vehicle(
+                    "   ".to_owned(),
+                    1_000,
+                    MobileRideMapAutomaticRecordingPolicyDto::StartAndResume,
+                )
+                .expect_err("an empty identity must be rejected before auto-start"),
+            MobileRideMapCoreErrorDto::InvalidVehicleIdentity
+        );
+        assert!(state.current_snapshot(1_000).is_none());
+    }
+
+    #[test]
+    fn mobile_ride_map_core_normalizes_connection_identity_before_association() {
+        let state = MobileRideMapCore::new();
+        let started = state.start_gps_only(1_000, None).expect("ride starts");
+
+        let associated = state
+            .ensure_recording_for_vehicle(
+                "  pev-1  ".to_owned(),
+                1_001,
+                MobileRideMapAutomaticRecordingPolicyDto::ManualOnly,
+            )
+            .expect("trimmed identity associates");
+
+        assert_eq!(associated.ride_id, started.ride_id);
+        assert_eq!(associated.associated_vehicle, Some("pev-1".to_owned()));
     }
 
     #[test]
