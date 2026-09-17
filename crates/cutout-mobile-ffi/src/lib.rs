@@ -19982,8 +19982,8 @@ mod tests {
         ));
         let database =
             open_ride_database(path.to_string_lossy().into_owned()).expect("database opens");
-        let state = restored_database_core(database.clone());
-        state.start_gps_only(1_000).expect("ride starts");
+        let state = MobileRideMapCore::with_database(database.clone());
+        state.start_gps_only(1_000, None).expect("ride starts");
         state
             .set_music_history_policy(MobileMusicHistoryPolicyDto::HumanReadable)
             .expect("policy enables history");
