@@ -74,16 +74,16 @@ pub enum NovatekResponseError {
     #[error("Novatek response command {actual} does not match expected command {expected}")]
     UnexpectedCommand {
         /// Command id reported by the camera.
-        actual: u16,
+        actual: NovatekCommandId,
         /// Command id associated with the request.
-        expected: u16,
+        expected: NovatekCommandId,
     },
     /// The configuration repeated a command identifier, making its evidence
     /// ambiguous.
     #[error("Novatek configuration repeats command {command_id}")]
     DuplicateCommand {
         /// Repeated command identifier.
-        command_id: u16,
+        command_id: NovatekCommandId,
     },
     /// The response contained more repeated entries than the parser stores.
     #[error("Novatek response contains more than {max} <{tag}> entries")]
@@ -135,7 +135,7 @@ pub enum NovatekCapabilityError {
     #[error("Novatek command {command_id} is not advertised by the profile")]
     NotAdvertised {
         /// Command identifier that was not advertised.
-        command_id: u16,
+        command_id: NovatekCommandId,
     },
 }
 
@@ -153,7 +153,7 @@ pub enum NovatekConfigurationError {
     #[error("Novatek configuration repeats command {command_id}")]
     DuplicateCommand {
         /// Repeated command identifier.
-        command_id: u16,
+        command_id: NovatekCommandId,
     },
     /// The supplied evidence contained the reserved zero command identifier.
     #[error("Novatek configuration contains an invalid command id")]
@@ -212,6 +212,12 @@ impl NovatekCommandId {
     #[must_use]
     pub const fn get(self) -> u16 {
         self.0.get()
+    }
+}
+
+impl std::fmt::Display for NovatekCommandId {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.get().fmt(formatter)
     }
 }
 
@@ -294,6 +300,11 @@ impl NovatekR3V1Profile {
     }
 
     /// Proves that read-only configuration advertises onboard recording.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`NovatekCapabilityError::NotAdvertised`] when the bounded
+    /// configuration does not acknowledge the recording command.
     pub fn recording_capability(
         &self,
         configuration: &NovatekConfiguration,
@@ -301,10 +312,17 @@ impl NovatekR3V1Profile {
         (configuration.status_for_command_id(NovatekCommandId::RECORDING)
             == Some(NovatekStatusCode::ACKNOWLEDGED))
         .then(|| NovatekRecordingCapability(self.clone()))
-        .ok_or(NovatekCapabilityError::NotAdvertised { command_id: 2001 })
+        .ok_or(NovatekCapabilityError::NotAdvertised {
+            command_id: NovatekCommandId::RECORDING,
+        })
     }
 
     /// Proves that read-only configuration advertises still capture.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`NovatekCapabilityError::NotAdvertised`] when the bounded
+    /// configuration does not acknowledge the still-capture command.
     pub fn still_capture_capability(
         &self,
         configuration: &NovatekConfiguration,
@@ -312,7 +330,9 @@ impl NovatekR3V1Profile {
         (configuration.status_for_command_id(NovatekCommandId::STILL_CAPTURE)
             == Some(NovatekStatusCode::ACKNOWLEDGED))
         .then(|| NovatekStillCaptureCapability(self.clone()))
-        .ok_or(NovatekCapabilityError::NotAdvertised { command_id: 1001 })
+        .ok_or(NovatekCapabilityError::NotAdvertised {
+            command_id: NovatekCommandId::STILL_CAPTURE,
+        })
     }
 
     /// Returns the verified firmware identity.
@@ -444,6 +464,12 @@ impl NovatekConfiguration {
     ///
     /// The iterator is consumed directly into fixed storage so an untrusted
     /// mobile vector cannot allocate an unbounded intermediate collection.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`NovatekConfigurationError::TooManyStatuses`] when the fixed
+    /// status bound is exceeded, or a command validation error for zero or
+    /// duplicate command identifiers.
     pub fn from_status_pairs(
         pairs: impl IntoIterator<Item = (u16, u16)>,
     ) -> Result<Self, NovatekConfigurationError> {
@@ -461,9 +487,7 @@ impl NovatekConfiguration {
                 .iter()
                 .any(|existing| existing.command_id == command_id)
             {
-                return Err(NovatekConfigurationError::DuplicateCommand {
-                    command_id: command_id.get(),
-                });
+                return Err(NovatekConfigurationError::DuplicateCommand { command_id });
             }
             statuses.push(NovatekCommandStatus {
                 command_id,
@@ -718,7 +742,7 @@ pub fn parse_firmware_response(
     response: &[u8],
 ) -> Result<NovatekFirmwareVersion, NovatekResponseError> {
     let xml = bounded_xml(response)?;
-    parse_expected_command(xml, NovatekReadCommand::FirmwareVersion as u16)?;
+    parse_expected_command(xml, NovatekReadCommand::FirmwareVersion.command_id())?;
     let status = parse_status(xml)?;
     if status != 0 {
         return Err(NovatekResponseError::StatusFailure { status });
@@ -758,7 +782,7 @@ pub fn parse_storage_response(
     response: &[u8],
 ) -> Result<NovatekStoragePresence, NovatekResponseError> {
     let xml = bounded_xml(response)?;
-    parse_expected_command(xml, NovatekReadCommand::StoragePresent as u16)?;
+    parse_expected_command(xml, NovatekReadCommand::StoragePresent.command_id())?;
     let status = parse_status(xml)?;
     if status != 0 {
         return Err(NovatekResponseError::StatusFailure { status });
@@ -800,8 +824,8 @@ pub fn parse_command_response(
     };
     if command != expected_command_id {
         return Err(NovatekResponseError::UnexpectedCommand {
-            actual: command.get(),
-            expected: expected_command_id.get(),
+            actual: command,
+            expected: expected_command_id,
         });
     }
     match parse_status(xml) {
@@ -905,9 +929,7 @@ pub fn parse_configuration_response(
             .iter()
             .any(|existing| existing.command_id == command_id)
         {
-            return Err(NovatekResponseError::DuplicateCommand {
-                command_id: command_id.get(),
-            });
+            return Err(NovatekResponseError::DuplicateCommand { command_id });
         }
         statuses.push(NovatekCommandStatus {
             command_id,
@@ -958,7 +980,7 @@ pub fn parse_media_list_response(
             .get(file_start..file_end)
             .ok_or(NovatekResponseError::MissingTag { tag: "File" })?;
         let entry = parse_media_entry(file)?;
-        if !paths.insert(entry.path.clone()) {
+        if !paths.insert(entry.path) {
             return Err(NovatekResponseError::DuplicateMediaPath);
         }
         entries.push(entry);
@@ -1120,17 +1142,16 @@ fn parse_status(xml: &str) -> Result<u16, NovatekResponseError> {
         .map_err(|_| NovatekResponseError::InvalidStatus)
 }
 
-fn parse_expected_command(xml: &str, expected: u16) -> Result<(), NovatekResponseError> {
-    let expected = NovatekCommandId::new(expected).ok_or(NovatekResponseError::InvalidCommand)?;
+fn parse_expected_command(
+    xml: &str,
+    expected: NovatekCommandId,
+) -> Result<(), NovatekResponseError> {
     let actual = extract_tag(xml, "Cmd", "<Cmd>", "</Cmd>")?
         .parse()
         .map_err(|_| NovatekResponseError::InvalidCommand)?;
     let actual = NovatekCommandId::new(actual).ok_or(NovatekResponseError::InvalidCommand)?;
     if actual != expected {
-        return Err(NovatekResponseError::UnexpectedCommand {
-            actual: actual.get(),
-            expected: expected.get(),
-        });
+        return Err(NovatekResponseError::UnexpectedCommand { actual, expected });
     }
     Ok(())
 }
@@ -1161,16 +1182,23 @@ pub enum NovatekReadCommand {
 }
 
 impl NovatekReadCommand {
+    const COMMAND_2016: NovatekCommandId = NovatekCommandId::new(2016).unwrap();
+    const LIVE_VIEW_FORMAT: NovatekCommandId = NovatekCommandId::new(2019).unwrap();
+    const FIRMWARE_VERSION: NovatekCommandId = NovatekCommandId::new(3012).unwrap();
+    const CONFIGURATION: NovatekCommandId = NovatekCommandId::new(3014).unwrap();
+    const MEDIA_LIST: NovatekCommandId = NovatekCommandId::new(3015).unwrap();
+    const STORAGE_PRESENT: NovatekCommandId = NovatekCommandId::new(3024).unwrap();
+
     /// Returns the validated source-reported command ID.
     #[must_use]
     pub const fn command_id(self) -> NovatekCommandId {
         match self {
-            Self::Command2016 => NovatekCommandId::new(2016).unwrap(),
-            Self::LiveViewFormat => NovatekCommandId::new(2019).unwrap(),
-            Self::FirmwareVersion => NovatekCommandId::new(3012).unwrap(),
-            Self::Configuration => NovatekCommandId::new(3014).unwrap(),
-            Self::MediaList => NovatekCommandId::new(3015).unwrap(),
-            Self::StoragePresent => NovatekCommandId::new(3024).unwrap(),
+            Self::Command2016 => Self::COMMAND_2016,
+            Self::LiveViewFormat => Self::LIVE_VIEW_FORMAT,
+            Self::FirmwareVersion => Self::FIRMWARE_VERSION,
+            Self::Configuration => Self::CONFIGURATION,
+            Self::MediaList => Self::MEDIA_LIST,
+            Self::StoragePresent => Self::STORAGE_PRESENT,
         }
     }
 
@@ -1311,11 +1339,15 @@ mod tests {
                 .expect("empty adapter configuration is bounded");
         assert_eq!(
             profile.recording_capability(&configuration),
-            Err(NovatekCapabilityError::NotAdvertised { command_id: 2001 })
+            Err(NovatekCapabilityError::NotAdvertised {
+                command_id: command_id(2001),
+            })
         );
         assert_eq!(
             profile.still_capture_capability(&configuration),
-            Err(NovatekCapabilityError::NotAdvertised { command_id: 1001 })
+            Err(NovatekCapabilityError::NotAdvertised {
+                command_id: NovatekCommandId::STILL_CAPTURE,
+            })
         );
     }
 
@@ -1326,11 +1358,15 @@ mod tests {
             .expect("bounded configuration");
         assert_eq!(
             profile.recording_capability(&configuration),
-            Err(NovatekCapabilityError::NotAdvertised { command_id: 2001 })
+            Err(NovatekCapabilityError::NotAdvertised {
+                command_id: NovatekCommandId::RECORDING,
+            })
         );
         assert_eq!(
             profile.still_capture_capability(&configuration),
-            Err(NovatekCapabilityError::NotAdvertised { command_id: 1001 })
+            Err(NovatekCapabilityError::NotAdvertised {
+                command_id: NovatekCommandId::STILL_CAPTURE,
+            })
         );
     }
 
@@ -1347,7 +1383,9 @@ mod tests {
     fn adapter_configuration_rejects_duplicate_command_evidence() {
         assert_eq!(
             NovatekConfiguration::from_status_pairs([(2001, 0), (2001, 7)]),
-            Err(NovatekConfigurationError::DuplicateCommand { command_id: 2001 })
+            Err(NovatekConfigurationError::DuplicateCommand {
+                command_id: NovatekCommandId::RECORDING,
+            })
         );
     }
 
@@ -1391,8 +1429,8 @@ mod tests {
                 command_id(2001),
             ),
             Err(NovatekResponseError::UnexpectedCommand {
-                actual: 3024,
-                expected: 2001,
+                actual: command_id(3024),
+                expected: command_id(2001),
             })
         );
     }
@@ -1436,8 +1474,8 @@ mod tests {
         assert_eq!(
             parse_firmware_response(response),
             Err(NovatekResponseError::UnexpectedCommand {
-                actual: 3024,
-                expected: 3012,
+                actual: command_id(3024),
+                expected: command_id(3012),
             })
         );
     }
@@ -1487,8 +1525,8 @@ mod tests {
         assert_eq!(
             parse_storage_response(response),
             Err(NovatekResponseError::UnexpectedCommand {
-                actual: 3012,
-                expected: 3024,
+                actual: command_id(3012),
+                expected: command_id(3024),
             })
         );
     }
@@ -1579,7 +1617,9 @@ mod tests {
 
         assert_eq!(
             parse_configuration_response(response),
-            Err(NovatekResponseError::DuplicateCommand { command_id: 2001 })
+            Err(NovatekResponseError::DuplicateCommand {
+                command_id: NovatekCommandId::RECORDING,
+            })
         );
     }
 
