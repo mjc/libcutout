@@ -282,6 +282,24 @@ final class CutoutAppModel {
         }
     }
 
+    func recordCameraMediaReference(
+        source: CameraSourceKind,
+        media: CameraMediaEvidence,
+        localURL: URL
+    ) {
+        guard let captureFileName else { return }
+        recordCameraMediaReference(
+            captureFileName: captureFileName,
+            source: source,
+            media: media,
+            localURL: localURL
+        )
+    }
+
+    func recordCameraMediaReference(media: CameraMediaEvidence, localURL: URL) {
+        recordCameraMediaReference(source: .novatekR3Pro, media: media, localURL: localURL)
+    }
+
     private let core: any CutoutSessionDriving
     let rideHistory: RideHistoryModel
     private let liveActivityCoordinator: LiveActivityRideLifecycleCoordinator
@@ -1352,6 +1370,10 @@ final class CutoutAppModel {
     }
 
     func applyCaptureEvent(_ event: CaptureEvent) {
+        if case .started = event {
+            core.rideSessionStateHandle.clearCameraMediaProvenance()
+            cameraMediaReferences.removeAll(keepingCapacity: true)
+        }
         capture.apply(event)
     }
 

@@ -1,6 +1,6 @@
 //! Source-backed requests for the Novatek HTTP API targeted by R3 Pro support.
 
-use std::{net::Ipv4Addr, num::NonZeroU16, str};
+use std::{collections::HashSet, net::Ipv4Addr, num::NonZeroU16, str};
 
 use arrayvec::{ArrayString, ArrayVec};
 use thiserror::Error;
@@ -86,6 +86,9 @@ pub enum NovatekResponseError {
         /// Maximum number of stored entries.
         max: usize,
     },
+    /// The media list repeated a path, which would alias UI and download state.
+    #[error("Novatek media list repeats a file path")]
+    DuplicateMediaPath,
     /// A media metadata value was malformed.
     #[error("Novatek media <{tag}> is invalid")]
     InvalidMediaValue {
@@ -695,6 +698,7 @@ pub fn parse_media_list_response(
     }
     let mut cursor = 0;
     let mut entries = Vec::with_capacity(64);
+    let mut paths = HashSet::with_capacity(64);
 
     while let Some(file_offset) = xml
         .get(cursor..)
@@ -714,7 +718,11 @@ pub fn parse_media_list_response(
         let file = xml
             .get(file_start..file_end)
             .ok_or(NovatekResponseError::MissingTag { tag: "File" })?;
-        entries.push(parse_media_entry(file)?);
+        let entry = parse_media_entry(file)?;
+        if !paths.insert(entry.path.clone()) {
+            return Err(NovatekResponseError::DuplicateMediaPath);
+        }
+        entries.push(entry);
         cursor = file_end + "</File>".len();
     }
 
@@ -1256,6 +1264,19 @@ mod tests {
         assert_eq!(
             parse_media_list_response(response),
             Err(NovatekResponseError::InvalidMediaValue { tag: "FPATH" })
+        );
+    }
+
+    #[test]
+    fn media_list_rejects_duplicate_paths() {
+        let response = br#"<LIST>
+<File><NAME>one.TS</NAME><FPATH>A:\Novatek\Movie\one.TS</FPATH><SIZE>1</SIZE><TIMECODE>1</TIMECODE><TIME>2025/01/01 00:00:00</TIME><ATTR>0</ATTR></File>
+<File><NAME>duplicate.TS</NAME><FPATH>A:\Novatek\Movie\one.TS</FPATH><SIZE>2</SIZE><TIMECODE>2</TIMECODE><TIME>2025/01/01 00:00:01</TIME><ATTR>0</ATTR></File>
+</LIST>"#;
+
+        assert_eq!(
+            parse_media_list_response(response),
+            Err(NovatekResponseError::DuplicateMediaPath)
         );
     }
 

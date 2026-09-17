@@ -23,13 +23,13 @@ cutout-core = { path = "../cutout-core", version = "0.1.0" }
 futures-util.workspace = true
 retina.workspace = true
 thiserror.workspace = true
+tokio.workspace = true
 url.workspace = true
 vesc.workspace = true
 
 [dev-dependencies]
 hex-literal.workspace = true
 proptest.workspace = true
-tokio.workspace = true
 
 [build-dependencies]
 serde.workspace = true

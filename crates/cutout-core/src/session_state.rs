@@ -1,9 +1,9 @@
 //! Rust-owned session-state root and typed state slices.
 
 use crate::{
-    BatteryPageMetadata, BatteryPagePayload, BatteryReadback, CameraMediaProvenance,
-    CameraProvenanceState, CameraSessionState, DeviceEvent, FirmwareInfo, GattFingerprint,
-    MonotonicTimestamp, ParserDiagnostics, ProtocolFamily, RawTelemetryReadback, ReadOnlyResponse,
+    BatteryPageMetadata, BatteryReadback, CameraMediaProvenance, CameraProvenanceState,
+    CameraSessionState, DeviceEvent, FirmwareInfo, GattFingerprint, MonotonicTimestamp,
+    ParserDiagnostics, ProtocolFamily, RawTelemetryReadback, ReadOnlyResponse,
     RideSessionLifecycle, SessionOutput, TelemetryDelta, TelemetrySnapshot,
 };
 use arrayvec::ArrayVec;
