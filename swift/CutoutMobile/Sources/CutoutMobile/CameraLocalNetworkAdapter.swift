@@ -787,20 +787,30 @@ public final class CameraLocalNetworkAdapter {
         fetch: @escaping CameraReadOnlyFetcher
     ) async throws -> CameraCommandOutcome {
         let origin = try mobileValidateNovatekHttpOrigin(address: address, port: port)
-        guard readOnlyEvidence != nil else {
+        guard let evidence = readOnlyEvidence else {
             throw CameraCommandRequestError.unsupported
         }
         guard readOnlyOriginMatches(origin) else {
             throw CameraCommandRequestError.originMismatch
         }
-        guard readOnlyEvidence?.supportsOnboardRecording == true else {
+        guard evidence.supportsOnboardRecording else {
             throw CameraCommandRequestError.unsupported
         }
         let command: MobileNovatekRecordingCommandDto = start ? .start : .stop
+        let target: String
+        do {
+            target = try mobileNovatekRecordingCommandTarget(
+                firmwareVersion: evidence.firmwareVersion,
+                configuration: evidence.commandCapabilityConfiguration,
+                command: command
+            )
+        } catch {
+            throw CameraCommandRequestError.unsupported
+        }
         return try await requestCommand(
             url: requestURL(
                 origin: origin,
-                target: mobileNovatekRecordingCommandTarget(command: command)
+                target: target
             ),
             expectedCommandID: 2001,
             fetch: fetch
@@ -837,19 +847,29 @@ public final class CameraLocalNetworkAdapter {
         fetch: @escaping CameraReadOnlyFetcher
     ) async throws -> CameraCommandOutcome {
         let origin = try mobileValidateNovatekHttpOrigin(address: address, port: port)
-        guard readOnlyEvidence != nil else {
+        guard let evidence = readOnlyEvidence else {
             throw CameraCommandRequestError.unsupported
         }
         guard readOnlyOriginMatches(origin) else {
             throw CameraCommandRequestError.originMismatch
         }
-        guard readOnlyEvidence?.supportsStillCapture == true else {
+        guard evidence.supportsStillCapture else {
+            throw CameraCommandRequestError.unsupported
+        }
+        let target: String
+        do {
+            target = try mobileNovatekStillCaptureCommandTarget(
+                firmwareVersion: evidence.firmwareVersion,
+                configuration: evidence.commandCapabilityConfiguration,
+                command: .capture
+            )
+        } catch {
             throw CameraCommandRequestError.unsupported
         }
         return try await requestCommand(
             url: requestURL(
                 origin: origin,
-                target: mobileNovatekStillCaptureCommandTarget(command: .capture)
+                target: target
             ),
             expectedCommandID: 1001,
             fetch: fetch

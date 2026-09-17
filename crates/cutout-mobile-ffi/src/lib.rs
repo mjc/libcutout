@@ -107,13 +107,15 @@ use cutout_music::{
 use cutout_protocols::{
     BEGODE_DATA_CHANNEL, BEGODE_FALCON_REGISTRY_ENTRY, ConcreteSessionErrorDto,
     ConcreteSessionStepResultDto, DeviceDetectionEvent, DeviceDetectionResolution, DeviceFamily,
-    IdentityBannerEvidence, NOSFET_AERO_REGISTRY_ENTRY, NovatekCommandOutcome, NovatekHttpOrigin,
-    NovatekMediaPathError, NovatekOriginError, NovatekReadCommand, NovatekRecordingCommand,
-    NovatekStillCaptureCommand, NovatekStoragePresence, PendingProbe, ProtocolFamilyClassification,
-    ProtocolFamilyState, ProtocolModelIdentityEvidence, RetinaH264FileSink, RetinaRtspError,
-    RetinaRtspPreviewSession, RetinaVideoConfiguration, RetinaVideoFrame, StagedIdentityInput,
-    StagedIdentityOutcome, VETERAN_FIELD_AUTO_SHUTDOWN_TIME_REMAINING_SECONDS,
-    VETERAN_FIELD_CHARGE_MODE, VETERAN_FIELD_PEDALS_MODE, VETERAN_FIELD_SPEED_ALERT_DECI_KMH,
+    IdentityBannerEvidence, NOSFET_AERO_REGISTRY_ENTRY, NovatekCapabilityError,
+    NovatekCommandOutcome, NovatekConfiguration, NovatekConfigurationError, NovatekHttpOrigin,
+    NovatekMediaPathError, NovatekOriginError, NovatekProfileError, NovatekR3V1Profile,
+    NovatekReadCommand, NovatekRecordingCommand, NovatekStillCaptureCommand,
+    NovatekStoragePresence, PendingProbe, ProtocolFamilyClassification, ProtocolFamilyState,
+    ProtocolModelIdentityEvidence, RetinaH264FileSink, RetinaRtspError, RetinaRtspPreviewSession,
+    RetinaVideoConfiguration, RetinaVideoFrame, StagedIdentityInput, StagedIdentityOutcome,
+    VETERAN_FIELD_AUTO_SHUTDOWN_TIME_REMAINING_SECONDS, VETERAN_FIELD_CHARGE_MODE,
+    VETERAN_FIELD_PEDALS_MODE, VETERAN_FIELD_SPEED_ALERT_DECI_KMH,
     VETERAN_FIELD_SPEED_TILTBACK_DECI_KMH, VescBatteryType as CoreVescBatteryType,
     VescBoardProfile as CoreVescBoardProfile, VescReadOnlySession as CoreVescReadOnlySession,
     begode_identification_probes, closest_known_model, identify_known_model, is_r3_pro_firmware,
@@ -835,6 +837,51 @@ pub enum MobileNovatekParseError {
     InvalidResponse,
 }
 
+/// Failure returned when a mutating Novatek target is requested without the
+/// verified R3V1 firmware and command-capability proofs.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, thiserror::Error, uniffi::Error)]
+pub enum MobileNovatekProfileError {
+    /// The reported firmware is outside the verified R3V1 family.
+    #[error("unsupported Novatek firmware profile")]
+    UnsupportedFirmware,
+    /// The reported firmware exceeds the bounded identity representation.
+    #[error("Novatek firmware version is too long")]
+    FirmwareVersionTooLong,
+    /// Read-only configuration did not advertise the requested command.
+    #[error("Novatek command capability is not advertised")]
+    CapabilityNotAdvertised,
+    /// The adapter supplied more command/status pairs than Rust retains.
+    #[error("Novatek configuration is too large")]
+    ConfigurationTooLarge,
+    /// The adapter supplied ambiguous duplicate command/status evidence.
+    #[error("Novatek configuration is malformed")]
+    ConfigurationMalformed,
+}
+
+impl From<NovatekProfileError> for MobileNovatekProfileError {
+    fn from(error: NovatekProfileError) -> Self {
+        match error {
+            NovatekProfileError::UnsupportedFirmware => Self::UnsupportedFirmware,
+            NovatekProfileError::FirmwareVersionTooLong => Self::FirmwareVersionTooLong,
+        }
+    }
+}
+
+impl From<NovatekCapabilityError> for MobileNovatekProfileError {
+    fn from(_: NovatekCapabilityError) -> Self {
+        Self::CapabilityNotAdvertised
+    }
+}
+
+impl From<NovatekConfigurationError> for MobileNovatekProfileError {
+    fn from(error: NovatekConfigurationError) -> Self {
+        match error {
+            NovatekConfigurationError::TooManyStatuses { .. } => Self::ConfigurationTooLarge,
+            NovatekConfigurationError::DuplicateCommand { .. } => Self::ConfigurationMalformed,
+        }
+    }
+}
+
 /// Failure returned when validating a mobile-supplied Novatek origin.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, thiserror::Error, uniffi::Error)]
 pub enum MobileNovatekOriginError {
@@ -931,32 +978,52 @@ pub fn mobile_novatek_media_thumbnail_target(
         })
 }
 
-/// Returns the fixed target for an explicit onboard-recording request.
+/// Returns the fixed target for an explicit onboard-recording request after
+/// proving the verified R3V1 firmware profile and `3014` capability evidence.
 ///
 /// A successful HTTP request is not recording readback; callers must keep
 /// camera recording state unconfirmed until a camera status response arrives.
 #[uniffi::export]
 #[must_use]
 pub fn mobile_novatek_recording_command_target(
+    firmware_version: String,
+    configuration: Vec<MobileNovatekCommandStatusDto>,
     command: MobileNovatekRecordingCommandDto,
-) -> String {
-    NovatekRecordingCommand::from(command)
-        .request_target()
-        .to_owned()
+) -> Result<String, MobileNovatekProfileError> {
+    let profile = NovatekR3V1Profile::parse(&firmware_version)?;
+    let configuration = NovatekConfiguration::from_status_pairs(
+        configuration
+            .into_iter()
+            .map(|status| (status.command_id, status.status)),
+    )?;
+    let capability = profile.recording_capability(&configuration)?;
+    Ok(NovatekRecordingCommand::from(command)
+        .request_target_for_capability(&capability)
+        .to_owned())
 }
 
-/// Returns the fixed target for an explicit still-capture request.
+/// Returns the fixed target for an explicit still-capture request after
+/// proving the verified R3V1 firmware profile and `3014` capability evidence.
 ///
 /// A successful HTTP request is not camera acknowledgement or media readback;
 /// callers must wait for a later media-list response before presenting a file.
 #[uniffi::export]
 #[must_use]
 pub fn mobile_novatek_still_capture_command_target(
+    firmware_version: String,
+    configuration: Vec<MobileNovatekCommandStatusDto>,
     command: MobileNovatekStillCaptureCommandDto,
-) -> String {
-    NovatekStillCaptureCommand::from(command)
-        .request_target()
-        .to_owned()
+) -> Result<String, MobileNovatekProfileError> {
+    let profile = NovatekR3V1Profile::parse(&firmware_version)?;
+    let configuration = NovatekConfiguration::from_status_pairs(
+        configuration
+            .into_iter()
+            .map(|status| (status.command_id, status.status)),
+    )?;
+    let capability = profile.still_capture_capability(&configuration)?;
+    Ok(NovatekStillCaptureCommand::from(command)
+        .request_target_for_capability(&capability)
+        .to_owned())
 }
 
 /// Returns whether a firmware string is in the verified R3V1 R3 Pro family.
@@ -14373,6 +14440,71 @@ mod tests {
             parse_mobile_ride_id(&MobileRideIdDto { bytes: vec![0; 15] }),
             Err(MobileRideDatabaseError::InvalidIdentifier)
         ));
+    }
+
+    #[test]
+    fn novatek_mutating_targets_require_the_verified_r3v1_profile() {
+        assert_eq!(
+            mobile_novatek_recording_command_target(
+                "R3V1.1_20240411".to_owned(),
+                vec![MobileNovatekCommandStatusDto {
+                    command_id: 2001,
+                    status: 0,
+                }],
+                MobileNovatekRecordingCommandDto::Start,
+            ),
+            Ok("/?custom=1&cmd=2001&str=1".to_owned())
+        );
+        assert_eq!(
+            mobile_novatek_still_capture_command_target(
+                "R4V2.0_20250101".to_owned(),
+                vec![MobileNovatekCommandStatusDto {
+                    command_id: 1001,
+                    status: 0,
+                }],
+                MobileNovatekStillCaptureCommandDto::Capture,
+            ),
+            Err(MobileNovatekProfileError::UnsupportedFirmware)
+        );
+        assert_eq!(
+            mobile_novatek_recording_command_target(
+                "R3V1.1_20240411".to_owned(),
+                Vec::new(),
+                MobileNovatekRecordingCommandDto::Start,
+            ),
+            Err(MobileNovatekProfileError::CapabilityNotAdvertised)
+        );
+        let oversized_configuration = (0..33)
+            .map(|command_id| MobileNovatekCommandStatusDto {
+                command_id,
+                status: 0,
+            })
+            .collect();
+        assert_eq!(
+            mobile_novatek_recording_command_target(
+                "R3V1.1_20240411".to_owned(),
+                oversized_configuration,
+                MobileNovatekRecordingCommandDto::Start,
+            ),
+            Err(MobileNovatekProfileError::ConfigurationTooLarge)
+        );
+        assert_eq!(
+            mobile_novatek_recording_command_target(
+                "R3V1.1_20240411".to_owned(),
+                vec![
+                    MobileNovatekCommandStatusDto {
+                        command_id: 2001,
+                        status: 0,
+                    },
+                    MobileNovatekCommandStatusDto {
+                        command_id: 2001,
+                        status: 7,
+                    },
+                ],
+                MobileNovatekRecordingCommandDto::Start,
+            ),
+            Err(MobileNovatekProfileError::ConfigurationMalformed)
+        );
     }
 
     #[test]

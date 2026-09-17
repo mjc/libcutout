@@ -11,6 +11,7 @@ import uniffi.cutout_mobile_ffi.MobileCameraPreviewFileSink
 import uniffi.cutout_mobile_ffi.MobileCameraSourceKindDto
 import uniffi.cutout_mobile_ffi.MobileCameraVideoFrameDto
 import uniffi.cutout_mobile_ffi.MobileNovatekMediaPathException
+import uniffi.cutout_mobile_ffi.MobileNovatekCommandStatusDto
 import uniffi.cutout_mobile_ffi.mobileParseNovatekReadOnlySnapshot
 import uniffi.cutout_mobile_ffi.mobileNovatekMediaDownloadTarget
 import uniffi.cutout_mobile_ffi.MobileNovatekRecordingCommandDto
@@ -132,11 +133,29 @@ fun main() {
     }
 
     check(
-        mobileNovatekRecordingCommandTarget(MobileNovatekRecordingCommandDto.START) ==
+        mobileNovatekRecordingCommandTarget(
+            firmwareVersion = "R3V1.1_20240411",
+            configuration = listOf(
+                MobileNovatekCommandStatusDto(
+                    commandId = 2001u.toUShort(),
+                    status = 0u.toUShort(),
+                ),
+            ),
+            command = MobileNovatekRecordingCommandDto.START,
+        ) ==
             "/?custom=1&cmd=2001&str=1",
     )
     check(
-        mobileNovatekRecordingCommandTarget(MobileNovatekRecordingCommandDto.STOP) ==
+        mobileNovatekRecordingCommandTarget(
+            firmwareVersion = "R3V1.1_20240411",
+            configuration = listOf(
+                MobileNovatekCommandStatusDto(
+                    commandId = 2001u.toUShort(),
+                    status = 0u.toUShort(),
+                ),
+            ),
+            command = MobileNovatekRecordingCommandDto.STOP,
+        ) ==
             "/?custom=1&cmd=2001&str=0",
     )
 }
