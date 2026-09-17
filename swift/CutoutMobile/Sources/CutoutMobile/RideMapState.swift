@@ -840,23 +840,17 @@ public final class MobileRideMapState: @unchecked Sendable {
         }
     }
 
-    public func startGpsOnly(atMs: UInt64) throws -> MobileRideMapSnapshotDto {
+    public func ensureRecordingForVehicle(
+        platformIdentifier: String,
+        atMs: UInt64,
+        automaticPolicy: MobileRideMapAutomaticRecordingPolicyDto
+    ) throws -> MobileRideMapSnapshotDto {
         try withCore {
-            mapSnapshot(try $0.startGpsOnly(atMs: atMs))
-        }
-    }
-
-    public func ensureRecordingForVerifiedConnection(
-        connectionState: CutoutSessionStateHandle,
-        token: ConnectionAttemptToken,
-        atMs: UInt64
-    ) throws -> MobileRideMapSnapshotDto? {
-        try withCore {
-            try connectionState.ensureRideRecordingForVerifiedConnection(
-                rideMap: $0,
-                token: token,
-                atMs: atMs
-            ).map(mapSnapshot)
+            mapSnapshot(try $0.ensureRecordingForVehicle(
+                platformIdentifier: platformIdentifier,
+                atMs: atMs,
+                automaticPolicy: automaticPolicy
+            ))
         }
     }
 

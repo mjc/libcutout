@@ -2069,12 +2069,18 @@ public final class CutoutSessionCore: NSObject {
                   self.connectionSnapshot.generation == connectionGeneration
             else { return }
             do {
-                let previousRideID = rideMapState
-                    .currentSnapshot(atMs: receivedAt.rawValue)?.rideID
-                let snapshot = try rideMapState.ensureRecordingForVerifiedConnection(
-                    connectionState: self.rustSessionState,
-                    token: token,
-                    atMs: receivedAt.rawValue,
+                if shouldEnsureRecording {
+                    // Auto-start/resume is a connection-transition action. Repeating it for every
+                    // notification would restart a ride after the user explicitly stopped it.
+                    _ = try rideMapState.ensureRecordingForVehicle(
+                        platformIdentifier: platformIdentifier,
+                        atMs: receivedAt.rawValue,
+                        automaticPolicy: .startAndResume
+                    )
+                }
+                _ = try rideMapState.observeVehicleConnection(
+                    platformIdentifier: platformIdentifier,
+                    atMs: receivedAt.rawValue
                 )
                 if snapshot != nil {
                     // Admission returns the current ride for repeated notifications too.
