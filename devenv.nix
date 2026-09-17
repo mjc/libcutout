@@ -98,7 +98,10 @@ in
       "project:test"
       "project:dependency-policy"
     ]
-    ++ lib.optionals pkgs.stdenv.isDarwin [ "check:xcode-ios" ];
+    ++ lib.optionals pkgs.stdenv.isDarwin [
+      "test:swift-package"
+      "build:ios-ui-tests"
+    ];
   };
 
   tasks."build:swift-ffi-package" = {
@@ -191,6 +194,13 @@ in
     exec = "scripts/run-ios-ui-tests.sh --build-only";
     after = [ "check:xcode-ios" ];
   };
+  tasks."build:ios-app" = swiftTask ''
+    cargo cutout xcodebuild -- \
+      -project "$DEVENV_ROOT/swift/CutoutMobile/CutoutApp.xcodeproj" \
+      -scheme CutoutApp \
+      -destination 'generic/platform=iOS Simulator' \
+      ARCHS=arm64 ONLY_ACTIVE_ARCH=YES build
+  '';
   tasks."run:ios-app-on-mac" = {
     exec = ''
       source "$DEVENV_ROOT/scripts/swift-package-common.sh"

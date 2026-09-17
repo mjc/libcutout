@@ -172,7 +172,9 @@ notification bytes, telemetry snapshots, parser diagnostics, command refusal,
 and PEVCAP behavior through the generated boundary.
 
 The canonical non-device quality gate combines formatting, `-D warnings`
-Clippy, nextest (including FFI validation), doctests, and dependency policy:
+Clippy, nextest (including FFI validation), doctests, and dependency policy.
+On Darwin it also runs the Swift package tests and builds the iOS UI-test
+graph. Both Swift/Xcode tasks prepare stale Rust FFI in the same invocation:
 
 ```console
 devenv tasks run project:quality-gate
@@ -205,13 +207,15 @@ missing local package.
 Useful app commands are:
 
 ```console
+devenv tasks run build:ios-app
 devenv tasks run run:ios-app-on-mac
 devenv tasks run deploy:ios-device
 devenv tasks run validate:aero-live-connection
 devenv shell -- cutout-melk-live
 ```
 
-The Mac command builds the iPhone app for Apple Silicon Mac and opens it. Its
+The app build task targets an ARM64 iOS Simulator. The Mac command builds the
+iPhone app for Apple Silicon Mac and opens it. Its
 bundle helper accepts only the CutoutApp project and scheme on a macOS
 destination; other builds must select their own product instead of reusing a
 retained device app. The Mac build, device deployment, and ad-hoc archive check

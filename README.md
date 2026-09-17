@@ -19,7 +19,7 @@ The main checks and workflows are exposed as named tasks:
 ```console
 devenv tasks run project:quality-gate
 devenv tasks run test:swift-package
-devenv tasks run build:swift-ffi-package
+devenv tasks run build:ios-app
 devenv tasks run validate:aero-live-connection
 devenv shell -- cutout-melk-live
 ```
@@ -38,4 +38,6 @@ devenv shell -- secretspec set --profile development NAME --provider keyring
 
 See [the mobile FFI guide](docs/mobile-ffi.md) for Swift, Kotlin, Xcode, and
 capture workflows. `devenv test` only checks Devenv's lightweight lifecycle;
-the project quality gate is the canonical non-device check.
+the project quality gate is the canonical non-device check. On Darwin it also
+runs Swift package tests and builds the iOS UI-test graph. The named Swift and
+Xcode tasks rebuild stale Rust FFI without a separate preparation run.
