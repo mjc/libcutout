@@ -32,8 +32,15 @@ public typealias CameraReadOnlyFetcher = @Sendable (URL) async throws -> Data
 
 private let maximumCameraThumbnailBytes = 2 * 1024 * 1024
 private let maximumCameraReadResponseBytes = 512 * 1024
+private let cameraReadTimeoutSeconds: TimeInterval = 10
 
-private final class CameraURLSessionDelegate: NSObject, URLSessionTaskDelegate {
+private final class CameraURLSessionDelegate: NSObject, URLSessionTaskDelegate, URLSessionDownloadDelegate {
+    let maximumDownloadBytes: Int64?
+
+    init(maximumDownloadBytes: Int64? = nil) {
+        self.maximumDownloadBytes = maximumDownloadBytes
+    }
+
     func urlSession(
         _: URLSession,
         task _: URLSessionTask,
@@ -47,6 +54,20 @@ private final class CameraURLSessionDelegate: NSObject, URLSessionTaskDelegate {
         // turn a read into a mutating GET, so no redirect is followed.
         completionHandler(nil)
     }
+
+    func urlSession(
+        _: URLSession,
+        downloadTask: URLSessionDownloadTask,
+        didWriteData _: Int64,
+        totalBytesWritten: Int64,
+        totalBytesExpectedToWrite _: Int64
+    ) {
+        if let maximumDownloadBytes, totalBytesWritten > maximumDownloadBytes {
+            downloadTask.cancel()
+        }
+    }
+
+    func urlSession(_: URLSession, downloadTask _: URLSessionDownloadTask, didFinishDownloadingTo _: URL) {}
 }
 
 private func cameraURLMatchesOrigin(
@@ -63,12 +84,16 @@ private func cameraURLMatchesOrigin(
     return true
 }
 
-private func cameraSession() -> URLSession {
+private func cameraSession(maximumDownloadBytes: Int64? = nil) -> URLSession {
     URLSession(
         configuration: .ephemeral,
-        delegate: CameraURLSessionDelegate(),
+        delegate: CameraURLSessionDelegate(maximumDownloadBytes: maximumDownloadBytes),
         delegateQueue: nil
     )
+}
+
+private func invalidateCameraSession(_ session: URLSession) {
+    session.finishTasksAndInvalidate()
 }
 
 private func cameraData(
@@ -77,7 +102,10 @@ private func cameraData(
     maximumBytes: Int = maximumCameraReadResponseBytes
 ) async throws -> Data {
     let session = cameraSession()
-    let (bytes, response) = try await session.bytes(from: url)
+    defer { invalidateCameraSession(session) }
+    var request = URLRequest(url: url)
+    request.timeoutInterval = cameraReadTimeoutSeconds
+    let (bytes, response) = try await session.bytes(for: request)
     guard cameraResponseMatchesOrigin(response, origin: origin) else {
         throw CameraReadOnlyRequestError.originMismatch
     }
@@ -103,40 +131,28 @@ private func cameraDownload(
     origin: MobileNovatekHttpOriginDto,
     maximumBytes: UInt64
 ) async throws -> URL {
-    let session = cameraSession()
-    let (bytes, response) = try await session.bytes(from: url)
+    let session = cameraSession(maximumDownloadBytes: Int64(clamping: maximumBytes))
+    defer { invalidateCameraSession(session) }
+    let (downloadedURL, response) = try await session.download(from: url)
     guard cameraURLMatchesOrigin(response.url, origin: origin) else {
         throw CameraMediaDownloadError.originMismatch
     }
     if let http = response as? HTTPURLResponse, !(200..<300).contains(http.statusCode) {
         throw CameraMediaDownloadError.unexpectedHTTPStatus(http.statusCode)
     }
-    if response.expectedContentLength > Int64(maximumBytes) {
+    if response.expectedContentLength >= 0,
+       UInt64(response.expectedContentLength) > maximumBytes {
         throw CameraMediaDownloadError.responseTooLarge
     }
     let temporaryURL = FileManager.default.temporaryDirectory
         .appendingPathComponent("cutout-camera-download-\(UUID().uuidString).tmp")
     do {
-        FileManager.default.createFile(atPath: temporaryURL.path, contents: nil)
-        let handle = try FileHandle(forWritingTo: temporaryURL)
-        defer { try? handle.close() }
-        var pending = Data()
-        pending.reserveCapacity(64 * 1024)
-        var count: UInt64 = 0
-        for try await byte in bytes {
-            count += 1
-            guard count <= maximumBytes else {
-                throw CameraMediaDownloadError.responseTooLarge
-            }
-            pending.append(byte)
-            if pending.count == 64 * 1024 {
-                try handle.write(contentsOf: pending)
-                pending.removeAll(keepingCapacity: true)
-            }
+        let attributes = try FileManager.default.attributesOfItem(atPath: downloadedURL.path)
+        let count = (attributes[.size] as? NSNumber)?.uint64Value ?? 0
+        guard count <= maximumBytes else {
+            throw CameraMediaDownloadError.responseTooLarge
         }
-        if !pending.isEmpty {
-            try handle.write(contentsOf: pending)
-        }
+        try FileManager.default.moveItem(at: downloadedURL, to: temporaryURL)
         return temporaryURL
     } catch {
         try? FileManager.default.removeItem(at: temporaryURL)
@@ -175,7 +191,7 @@ public typealias CameraMediaDownloadFetcher = @Sendable (URL) async throws -> UR
 /// A throwing handler reports that the consumer could not use the frame. The
 /// adapter treats that as an interrupted preview instead of claiming that a
 /// transport-delivered but undisplayable stream is live.
-public typealias CameraPreviewFrameHandler = @MainActor @Sendable (MobileCameraVideoFrameDto) async throws -> Void
+public typealias CameraPreviewFrameHandler = @MainActor @Sendable (MobileCameraVideoFrameDto) async throws -> Bool
 public typealias CameraPreviewConfigurationHandler = @MainActor @Sendable (MobileCameraVideoConfigurationDto) throws -> Void
 
 /// Maps Apple path evidence to a conservative camera connection state.
@@ -211,6 +227,8 @@ public final class CameraLocalNetworkAdapter {
     private var previewConfigurationHandler: CameraPreviewConfigurationHandler?
     private var commandInFlight = false
     private var readOnlyEvidenceGeneration: UInt64 = 0
+    private var pathObservationGeneration: UInt64 = 0
+    private var evidencePathObservationGeneration: UInt64 = 0
     private var readOnlyOrigin: MobileNovatekHttpOriginDto?
     private let monitorQueue = DispatchQueue(label: "org.cutout.camera-local-network")
 
@@ -275,6 +293,7 @@ public final class CameraLocalNetworkAdapter {
         }
         readOnlyEvidence = evidence
         readOnlyOrigin = origin
+        evidencePathObservationGeneration = pathObservationGeneration
         presentation.connection = .connected
         presentation.profileName = "FreedConn R3 Pro · Novatek"
         presentation.storage = evidence.storagePresent ? .present : .missing
@@ -381,17 +400,43 @@ public final class CameraLocalNetworkAdapter {
             do {
                 while !Task.isCancelled {
                     guard let frame = try await session.nextVideoFrame() else { break }
-                    try fileSink?.writeFrame(frame: frame)
                     guard let self else { break }
-                    let savedURL = await MainActor.run { self.previewFileState.recordFrame() }
-                    if let savedURL {
-                        await MainActor.run { self.savedPreviewFileURL = savedURL }
+                    guard await MainActor.run(body: {
+                        self.isCurrentPreview(generation: generation)
+                    }) else { break }
+                    try fileSink?.writeFrame(frame: frame)
+                    let rendered = try await frameHandler?(frame) ?? true
+                    guard !Task.isCancelled else { break }
+                    let savedURL: URL? = await MainActor.run {
+                        guard self.isCurrentPreview(generation: generation) else { return nil }
+                        return self.previewFileState.recordFrame()
                     }
-                    try await frameHandler?(frame)
-                    await MainActor.run { self.recordPreviewFrame() }
+                    if let savedURL {
+                        await MainActor.run {
+                            guard self.isCurrentPreview(generation: generation) else { return }
+                            self.savedPreviewFileURL = savedURL
+                        }
+                    }
+                    guard rendered else { continue }
+                    await MainActor.run {
+                        guard self.isCurrentPreview(generation: generation) else { return }
+                        self.recordPreviewFrame()
+                    }
                 }
                 if !Task.isCancelled {
-                    await MainActor.run { self?.interruptPreview() }
+                    let terminated = await MainActor.run {
+                        self?.terminatePreviewAfterTaskEnd(
+                            generation: generation,
+                            session: session,
+                            fileSink: fileSink
+                        ) ?? false
+                    }
+                    if !terminated {
+                        session.stop()
+                        try? fileSink?.finish()
+                    }
+                } else {
+                    session.stop()
                 }
                 try? fileSink?.finish()
             } catch {
@@ -452,6 +497,25 @@ public final class CameraLocalNetworkAdapter {
         return true
     }
 
+    private func terminatePreviewAfterTaskEnd(
+        generation: UInt64,
+        session: MobileCameraPreviewSession,
+        fileSink: MobileCameraPreviewFileSink?
+    ) -> Bool {
+        guard generation == previewGeneration else { return false }
+        session.stop()
+        try? fileSink?.finish()
+        previewSession = nil
+        previewFileSink = nil
+        previewTask = nil
+        reducePreviewEvent(.interrupted)
+        return true
+    }
+
+    private func isCurrentPreview(generation: UInt64) -> Bool {
+        generation == previewGeneration
+    }
+
     /// Stops the foreground preview lifecycle.
     public func stopPreview() {
         previewGeneration &+= 1
@@ -486,6 +550,7 @@ public final class CameraLocalNetworkAdapter {
         clearReadOnlyEvidence()
         let requestGeneration = readOnlyEvidenceGeneration
         let origin = try mobileValidateNovatekHttpOrigin(address: address, port: port)
+        observeDiscoveryStarted()
 
         let firmware = try await fetch(try requestURL(origin: origin, command: .firmwareVersion))
         let liveView = try await fetch(try requestURL(origin: origin, command: .liveViewFormat))
@@ -516,7 +581,8 @@ public final class CameraLocalNetworkAdapter {
     ///
     /// The camera origin is still supplied by the caller; no LAN scan or
     /// guessed destination is performed. URL loading cancellation propagates
-    /// through the async call, and no custom request timeout is installed.
+    /// through the async call; bounded metadata requests use a finite
+    /// connection/read timeout while media downloads remain cancellable streams.
     public func loadReadOnlyEvidence(
         address: String,
         port: UInt16
@@ -848,6 +914,11 @@ public final class CameraLocalNetworkAdapter {
     }
 
     func apply(pathStatus: CameraLocalNetworkPathStatus, usesWiFi: Bool) {
+        pathObservationGeneration &+= 1
+        if readOnlyEvidence != nil,
+           evidencePathObservationGeneration != pathObservationGeneration {
+            clearReadOnlyEvidence()
+        }
         let nextConnection = cameraConnectionPresentation(
             pathStatus: pathStatus,
             usesWiFi: usesWiFi,
@@ -859,6 +930,16 @@ public final class CameraLocalNetworkAdapter {
             return
         }
         presentation.connection = nextConnection
+    }
+
+    /// Records that Local Network permission has not yet been granted.
+    public func observePermissionRequired() {
+        presentation.connection = .permissionRequired
+    }
+
+    /// Marks a read-only probe as in progress for the camera route.
+    public func observeDiscoveryStarted() {
+        presentation.connection = .discovering
     }
 
     private func clearReadOnlyEvidence() {

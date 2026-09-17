@@ -284,7 +284,7 @@ final class CameraLocalNetworkAdapterTests: XCTestCase {
     }
 
     @MainActor
-    func testSatisfiedWiFiPathPreservesConnectedCameraEvidence() {
+    func testSatisfiedWiFiPathInvalidatesEvidenceAfterAPathObservation() {
         let adapter = CameraLocalNetworkAdapter()
         let evidence = CameraReadOnlyEvidence(MobileNovatekReadOnlySnapshotDto(
             firmwareVersion: "R3V1.1_20240411",
@@ -298,8 +298,8 @@ final class CameraLocalNetworkAdapterTests: XCTestCase {
 
         adapter.apply(pathStatus: .satisfied, usesWiFi: true)
 
-        XCTAssertEqual(adapter.presentation.connection, .connected)
-        XCTAssertEqual(adapter.readOnlyEvidence, evidence)
+        XCTAssertEqual(adapter.presentation.connection, .notConfigured)
+        XCTAssertNil(adapter.readOnlyEvidence)
     }
 
     @MainActor
@@ -430,7 +430,7 @@ final class CameraLocalNetworkAdapterTests: XCTestCase {
         let adapter = CameraLocalNetworkAdapter()
         adapter.apply(readOnlyEvidence: cameraEvidence(advertisedCommandIDs: []), origin: testCameraOrigin)
         let path = URL(fileURLWithPath: NSTemporaryDirectory())
-            .appendingPathComponent("cutout-camera-(UUID().uuidString).h264")
+            .appendingPathComponent("cutout-camera-\(UUID().uuidString).h264")
 
         do {
             try await adapter.startPreview(
@@ -957,7 +957,13 @@ private func cameraEvidence(
     ))
 }
 
-private let testCameraOrigin = try! mobileValidateNovatekHttpOrigin(address: "192.168.1.254", port: 80)
+private let testCameraOrigin: MobileNovatekHttpOriginDto = {
+    do {
+        return try mobileValidateNovatekHttpOrigin(address: "192.168.1.254", port: 80)
+    } catch {
+        preconditionFailure("valid camera test origin rejected: \(error)")
+    }
+}()
 
 private actor DownloadURLCapture {
     private var recordedURL: URL?

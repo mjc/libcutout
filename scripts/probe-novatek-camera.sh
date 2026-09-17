@@ -67,7 +67,7 @@ umask 077
   printf 'captured_at_utc=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
   printf 'origin=%s\n' "$origin"
   printf 'http_response_limit_bytes=%s\n' "$response_limit_bytes"
-  printf 'network_timeouts=none\n'
+  printf 'network_connect_timeout_seconds=5\n'
   printf 'completion=xml-end-tags-and-rtsp-response-body\n'
   printf 'rtsp_methods=OPTIONS,DESCRIBE\n'
   printf 'rtsp_video_capture_seconds=%s\n' "$rtsp_capture_seconds"
@@ -139,7 +139,9 @@ my $socket = IO::Socket::INET->new(
     PeerHost => $host,
     PeerPort => $port,
     Proto    => 'tcp',
+    Timeout  => 5,
 ) or die "connect: $!\n";
+$socket->timeout(5);
 $socket->autoflush(1);
 print {$socket} $request_data or die "write request: $!\n";
 
@@ -185,6 +187,7 @@ for probe in "${probes[@]}"; do
   curl_options=(
     --fail-with-body \
     --include \
+    --connect-timeout 5 \
     --noproxy '*' \
     --proto '=http' \
     --request GET \
