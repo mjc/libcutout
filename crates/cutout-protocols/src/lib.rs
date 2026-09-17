@@ -77,7 +77,7 @@ pub use novatek::{
     NovatekMediaEntry, NovatekMediaList, NovatekMediaPathError, NovatekMediaThumbnailTarget,
     NovatekOriginError, NovatekProfileError, NovatekR3V1Profile, NovatekReadCommand,
     NovatekReadOnlySnapshot, NovatekRecordingCapability, NovatekRecordingCommand,
-    NovatekResponseError, NovatekRtspUri, NovatekStillCaptureCapability,
+    NovatekResponseError, NovatekRtspUri, NovatekStatusCode, NovatekStillCaptureCapability,
     NovatekStillCaptureCommand, NovatekStoragePresence, is_r3_pro_firmware, media_download_target,
     media_thumbnail_target, parse_command_response, parse_command_response_for_id,
     parse_configuration_response, parse_firmware_response, parse_live_view_response,

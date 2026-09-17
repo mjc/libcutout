@@ -298,9 +298,10 @@ impl NovatekR3V1Profile {
         &self,
         configuration: &NovatekConfiguration,
     ) -> Result<NovatekRecordingCapability, NovatekCapabilityError> {
-        (configuration.status_for_command_id(NovatekCommandId::RECORDING) == Some(0))
-            .then(|| NovatekRecordingCapability(self.clone()))
-            .ok_or(NovatekCapabilityError::NotAdvertised { command_id: 2001 })
+        (configuration.status_for_command_id(NovatekCommandId::RECORDING)
+            == Some(NovatekStatusCode::ACKNOWLEDGED))
+        .then(|| NovatekRecordingCapability(self.clone()))
+        .ok_or(NovatekCapabilityError::NotAdvertised { command_id: 2001 })
     }
 
     /// Proves that read-only configuration advertises still capture.
@@ -308,9 +309,10 @@ impl NovatekR3V1Profile {
         &self,
         configuration: &NovatekConfiguration,
     ) -> Result<NovatekStillCaptureCapability, NovatekCapabilityError> {
-        (configuration.status_for_command_id(NovatekCommandId::STILL_CAPTURE) == Some(0))
-            .then(|| NovatekStillCaptureCapability(self.clone()))
-            .ok_or(NovatekCapabilityError::NotAdvertised { command_id: 1001 })
+        (configuration.status_for_command_id(NovatekCommandId::STILL_CAPTURE)
+            == Some(NovatekStatusCode::ACKNOWLEDGED))
+        .then(|| NovatekStillCaptureCapability(self.clone()))
+        .ok_or(NovatekCapabilityError::NotAdvertised { command_id: 1001 })
     }
 
     /// Returns the verified firmware identity.
@@ -375,7 +377,32 @@ pub enum NovatekStoragePresence {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct NovatekCommandStatus {
     command_id: NovatekCommandId,
-    status: u16,
+    status: NovatekStatusCode,
+}
+
+/// Camera-reported Novatek command status.
+///
+/// A status is intentionally distinct from a command identifier even though
+/// both are encoded as unsigned integers on the wire.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct NovatekStatusCode(u16);
+
+impl NovatekStatusCode {
+    /// The camera acknowledged the requested command.
+    pub const ACKNOWLEDGED: Self = Self(0);
+
+    /// Wraps a camera-reported status value without assigning semantics to
+    /// unknown vendor-specific values.
+    #[must_use]
+    pub const fn new(value: u16) -> Self {
+        Self(value)
+    }
+
+    /// Returns the numeric status for an FFI or error boundary.
+    #[must_use]
+    pub const fn get(self) -> u16 {
+        self.0
+    }
 }
 
 impl NovatekCommandStatus {
@@ -387,7 +414,7 @@ impl NovatekCommandStatus {
 
     /// Returns the reported status value.
     #[must_use]
-    pub const fn status(self) -> u16 {
+    pub const fn status(self) -> NovatekStatusCode {
         self.status
     }
 }
@@ -400,7 +427,7 @@ pub enum NovatekCommandOutcome {
     /// The response reported a nonzero status.
     Refused {
         /// Camera-reported refusal status.
-        status: u16,
+        status: NovatekStatusCode,
     },
     /// The bounded response did not contain a status.
     Unknown,
@@ -438,7 +465,10 @@ impl NovatekConfiguration {
                     command_id: command_id.get(),
                 });
             }
-            statuses.push(NovatekCommandStatus { command_id, status });
+            statuses.push(NovatekCommandStatus {
+                command_id,
+                status: NovatekStatusCode::new(status),
+            });
         }
         Ok(Self { statuses })
     }
@@ -451,13 +481,13 @@ impl NovatekConfiguration {
 
     /// Returns the status for a source-backed read command, when reported.
     #[must_use]
-    pub fn status_for(&self, command: NovatekReadCommand) -> Option<u16> {
+    pub fn status_for(&self, command: NovatekReadCommand) -> Option<NovatekStatusCode> {
         self.status_for_command_id(command.command_id())
     }
 
     /// Returns the status for a validated command id, when present.
     #[must_use]
-    pub fn status_for_command_id(&self, command_id: NovatekCommandId) -> Option<u16> {
+    pub fn status_for_command_id(&self, command_id: NovatekCommandId) -> Option<NovatekStatusCode> {
         self.statuses
             .iter()
             .find(|entry| entry.command_id == command_id)
@@ -776,7 +806,9 @@ pub fn parse_command_response(
     }
     match parse_status(xml) {
         Ok(0) => Ok(NovatekCommandOutcome::Acknowledged),
-        Ok(status) => Ok(NovatekCommandOutcome::Refused { status }),
+        Ok(status) => Ok(NovatekCommandOutcome::Refused {
+            status: NovatekStatusCode::new(status),
+        }),
         Err(NovatekResponseError::MissingTag { tag: "Status" }) => {
             Ok(NovatekCommandOutcome::Unknown)
         }
@@ -877,7 +909,10 @@ pub fn parse_configuration_response(
                 command_id: command_id.get(),
             });
         }
-        statuses.push(NovatekCommandStatus { command_id, status });
+        statuses.push(NovatekCommandStatus {
+            command_id,
+            status: NovatekStatusCode::new(status),
+        });
         cursor = status_end + "</Status>".len();
     }
 
@@ -1338,7 +1373,9 @@ mod tests {
                 br"<Function><Cmd>2001</Cmd><Status>7</Status></Function>",
                 command_id(2001)
             ),
-            Ok(NovatekCommandOutcome::Refused { status: 7 })
+            Ok(NovatekCommandOutcome::Refused {
+                status: NovatekStatusCode::new(7),
+            })
         );
         assert_eq!(
             parse_command_response(br"<Function><Cmd>2001</Cmd></Function>", command_id(2001),),
@@ -1521,11 +1558,11 @@ mod tests {
         assert_eq!(configuration.statuses().len(), 3);
         assert_eq!(
             configuration.status_for(NovatekReadCommand::Command2016),
-            Some(0)
+            Some(NovatekStatusCode::ACKNOWLEDGED)
         );
         assert_eq!(
             configuration.status_for_command_id(NovatekCommandId::new(2002).unwrap()),
-            Some(11)
+            Some(NovatekStatusCode::new(11))
         );
     }
 
@@ -1683,7 +1720,7 @@ mod tests {
             snapshot
                 .configuration()
                 .status_for_command_id(NovatekCommandId::new(2016).unwrap()),
-            Some(0)
+            Some(NovatekStatusCode::ACKNOWLEDGED)
         );
         assert_eq!(snapshot.storage(), NovatekStoragePresence::Present);
         assert_eq!(snapshot.media().entries()[0].size_bytes(), 42);

@@ -1107,7 +1107,7 @@ pub fn mobile_parse_novatek_read_only_snapshot(
             .iter()
             .map(|status| MobileNovatekCommandStatusDto {
                 command_id: status.command_id(),
-                status: status.status(),
+                status: status.status().get(),
             })
             .collect(),
         storage_present: snapshot.storage() == NovatekStoragePresence::Present,
