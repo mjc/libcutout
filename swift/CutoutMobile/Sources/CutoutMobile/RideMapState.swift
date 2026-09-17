@@ -32,6 +32,7 @@ public enum MobileRideMapError: Error, Equatable, Hashable, Sendable {
     case invalidTransition
     case invalidLocation
     case invalidVehicleIdentity
+    case staleConnection
     case invalidRouteProjection
     case invalidMusicInput(String)
     case rideNotFound
@@ -781,23 +782,23 @@ public final class MobileRideMapState: @unchecked Sendable {
         core?.currentSnapshot(atMs: atMs).map(mapSnapshot)
     }
 
-    public func startGpsOnly(atMs: UInt64, lastConnectedVehicle: String?) throws -> MobileRideMapSnapshotDto {
+    public func startGpsOnly(atMs: UInt64) throws -> MobileRideMapSnapshotDto {
         try withCore {
-            mapSnapshot(try $0.startGpsOnly(atMs: atMs, lastConnectedVehicle: lastConnectedVehicle))
+            mapSnapshot(try $0.startGpsOnly(atMs: atMs))
         }
     }
 
-    public func ensureRecordingForVehicle(
-        platformIdentifier: String,
-        atMs: UInt64,
-        automaticPolicy: MobileRideMapAutomaticRecordingPolicyDto
-    ) throws -> MobileRideMapSnapshotDto {
+    public func ensureRecordingForVerifiedConnection(
+        connectionState: CutoutSessionStateHandle,
+        token: ConnectionAttemptToken,
+        atMs: UInt64
+    ) throws -> MobileRideMapSnapshotDto? {
         try withCore {
-            mapSnapshot(try $0.ensureRecordingForVehicle(
-                platformIdentifier: platformIdentifier,
-                atMs: atMs,
-                automaticPolicy: automaticPolicy
-            ))
+            try connectionState.ensureRideRecordingForVerifiedConnection(
+                rideMap: $0,
+                token: token,
+                atMs: atMs
+            ).map(mapSnapshot)
         }
     }
 
@@ -819,12 +820,6 @@ public final class MobileRideMapState: @unchecked Sendable {
 
     public func discard() throws -> MobileRideMapSnapshotDto {
         try transition { try $0.discard() }
-    }
-
-    public func observeVehicleConnection(platformIdentifier: String, atMs: UInt64) throws -> MobileRideMapAssociationDto {
-        try withCore {
-            map(try $0.observeVehicleConnection(platformIdentifier: platformIdentifier, atMs: atMs))
-        }
     }
 
     public func observeTelemetry(atMs: UInt64) throws -> MobileRideMapTelemetryObservation {
@@ -1466,6 +1461,7 @@ public final class MobileRideMapState: @unchecked Sendable {
         case .InvalidTransition: return .invalidTransition
         case .InvalidLocation: return .invalidLocation
         case .InvalidVehicleIdentity: return .invalidVehicleIdentity
+        case .StaleConnection: return .staleConnection
         case .InvalidRouteProjection: return .invalidRouteProjection
         case .Cancelled: return .cancelled
         case let .InvalidMusicInput(message): return .invalidMusicInput(message)

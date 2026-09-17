@@ -1079,6 +1079,18 @@ impl RideSessionMarkerKey {
     }
 }
 
+/// Stable key for the one last-connected-device row.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct LastConnectedDeviceKey(Uuid);
+
+impl LastConnectedDeviceKey {
+    pub(crate) const VALUE: Self = Self(Uuid::from_u128(3));
+
+    pub(crate) fn blob(self) -> Vec<u8> {
+        self.0.as_bytes().to_vec()
+    }
+}
+
 /// Validated `SQLite` row identifier used only to connect a spatial table to its R*Tree row.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct SpatialRowId(i64);
@@ -2177,6 +2189,47 @@ impl RideDatabase {
     /// Returns [`StorageError`] when the worker cannot commit the deletion.
     pub fn clear_selected_device(&self) -> Result<(), StorageError> {
         self.request(|reply| Command::ClearSelectedDevice { reply })
+    }
+
+    /// Stores the last verified platform-local device identity independently of user selection.
+    ///
+    /// This record is Rust-owned connection history. It is deliberately not changed by clearing
+    /// the user's selected device, because a later explicit GPS-only start may still use the
+    /// last verified connection as an association candidate.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StorageError`] when the identity is empty or the worker cannot commit it.
+    pub fn remember_last_connected_device(
+        &self,
+        platform_identifier: &str,
+        updated_at_ms: u64,
+    ) -> Result<(), StorageError> {
+        let platform_identifier =
+            normalize_stored_text(platform_identifier, "platform identifier")?;
+        self.request(move |reply| Command::RememberLastConnectedDevice {
+            platform_identifier,
+            updated_at_ms,
+            reply,
+        })
+    }
+
+    /// Loads the last verified platform-local device identity.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StorageError`] when the worker cannot query the value.
+    pub fn last_connected_device(&self) -> Result<Option<String>, StorageError> {
+        self.request(|reply| Command::LastConnectedDevice { reply })
+    }
+
+    /// Clears the Rust-owned last-connected-device record.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StorageError`] when the worker cannot commit the deletion.
+    pub fn clear_last_connected_device(&self) -> Result<(), StorageError> {
+        self.request(|reply| Command::ClearLastConnectedDevice { reply })
     }
 
     /// Stores the opt-in music-history policy for one ride.
@@ -3447,6 +3500,17 @@ enum Command {
         reply: Reply<Option<String>>,
     },
     ClearSelectedDevice {
+        reply: Reply<()>,
+    },
+    RememberLastConnectedDevice {
+        platform_identifier: String,
+        updated_at_ms: u64,
+        reply: Reply<()>,
+    },
+    LastConnectedDevice {
+        reply: Reply<Option<String>>,
+    },
+    ClearLastConnectedDevice {
         reply: Reply<()>,
     },
     RecordMusicEvent {
@@ -5202,6 +5266,44 @@ fn selected_device(connection: &Connection) -> Result<Option<String>, StorageErr
         )
         .optional()
         .map_err(StorageError::from)
+}
+
+fn remember_last_connected_device(
+    connection: &Connection,
+    platform_identifier: &str,
+    updated_at_ms: u64,
+) -> Result<(), StorageError> {
+    connection.execute(
+        "INSERT INTO last_connected_device (singleton_key, platform_identifier, updated_at_ms)
+         VALUES (?1, ?2, ?3)
+         ON CONFLICT(singleton_key) DO UPDATE SET platform_identifier = excluded.platform_identifier,
+             updated_at_ms = excluded.updated_at_ms",
+        params![
+            LastConnectedDeviceKey::VALUE.blob(),
+            platform_identifier,
+            updated_at_ms
+        ],
+    )?;
+    Ok(())
+}
+
+fn last_connected_device(connection: &Connection) -> Result<Option<String>, StorageError> {
+    connection
+        .query_row(
+            "SELECT platform_identifier FROM last_connected_device WHERE singleton_key = ?1",
+            [LastConnectedDeviceKey::VALUE.blob()],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(StorageError::from)
+}
+
+fn clear_last_connected_device(connection: &Connection) -> Result<(), StorageError> {
+    connection.execute(
+        "DELETE FROM last_connected_device WHERE singleton_key = ?1",
+        [LastConnectedDeviceKey::VALUE.blob()],
+    )?;
+    Ok(())
 }
 
 /// Durable music retention state, separate from whether any events exist.

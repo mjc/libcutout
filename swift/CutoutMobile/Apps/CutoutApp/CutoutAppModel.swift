@@ -292,6 +292,7 @@ final class CutoutAppModel {
     private var rideMapVehicleNameCache = [String: String]()
     private var rideMapHistoryLoadTask: Task<Void, Never>?
     private var rideMapHistoryPageTask: Task<Void, Never>?
+    private var rideMapHistoryQueryGeneration: UInt64 = 0
     private var rideMapHistorySelectionTask: Task<Void, Never>?
     private var rideMapHistoryDetailLoadGeneration: UInt64 = 0
     private var rideMapHistorySelectionCancellation: MobileRideMapProjectionCancellation?
@@ -1080,10 +1081,7 @@ final class CutoutAppModel {
     func startGpsOnlyRide() -> Bool {
         core.resetRideMapLocationAdmission()
         let started = applyRideMapCommand(resetPoints: true) {
-            try core.startRideMapGpsOnly(
-                atMs: currentMonotonicTime.rawValue,
-                lastConnectedVehicle: selectedDeviceStore.platformIdentifier
-            )
+            try core.startRideMapGpsOnly(atMs: currentMonotonicTime.rawValue)
         }
         guard started else { return false }
         // Apply the user's default to the fresh Rust-owned ride timeline.
@@ -1235,6 +1233,8 @@ final class CutoutAppModel {
     func loadRideMapHistory(selecting requestedRideID: String? = nil) {
         rideMapHistoryLoadTask?.cancel()
         rideMapHistoryPageTask?.cancel()
+        rideMapHistoryQueryGeneration &+= 1
+        let queryGeneration = rideMapHistoryQueryGeneration
         // A reload changes the query that owns the selected route. Do not let an
         // older route request repopulate points after the new page arrives.
         invalidateRideMapHistoryProjectionWork()
@@ -1262,7 +1262,6 @@ final class CutoutAppModel {
             return
         }
         let filter = rideMapHistoryFilter
-        let existingSelectedID = selectedRideMapHistoryID
         rideMapHistoryLoadTask = Task { [weak self] in
             do {
                 let result = try await Self.runCancellableDetached(priority: .userInitiated) {
@@ -1284,7 +1283,13 @@ final class CutoutAppModel {
                     }
                     return (summaries, page.nextCursor, vehicleOptions)
                 }
-                guard !Task.isCancelled, let self else { return }
+                guard let self,
+                      Self.shouldApplyHistoryQuery(
+                          generation: queryGeneration,
+                          currentGeneration: self.rideMapHistoryQueryGeneration,
+                          isCancelled: Task.isCancelled
+                      )
+                else { return }
                 self.rideMapHistoryLoadTask = nil
                 self.rideMapHistoryLoading = false
                 self.rideMapHistory = result.0
@@ -1309,7 +1314,9 @@ final class CutoutAppModel {
                 )
                 let selectedID = Self.preferredHistorySelection(
                     requestedID: requestedRideID,
-                    currentID: existingSelectedID,
+                    // Selection is mutable while the query is off-main. Read it only after
+                    // the result is admitted so a user selection made during the reload wins.
+                    currentID: self.selectedRideMapHistoryID,
                     summaries: result.0
                 )
                 guard let selectedID else {
@@ -1323,11 +1330,18 @@ final class CutoutAppModel {
                 }
                 self.selectRideMapHistory(selectedID)
             } catch {
-                guard !Task.isCancelled, let self else { return }
+                guard let self,
+                      Self.shouldApplyHistoryQuery(
+                          generation: queryGeneration,
+                          currentGeneration: self.rideMapHistoryQueryGeneration,
+                          isCancelled: Task.isCancelled
+                      )
+                else { return }
                 self.rideMapHistoryLoadTask = nil
-                // Preserve the last good page so a transient storage failure does not
-                // turn an otherwise usable history screen into an empty state, but never
-                // present its selected route as current after the load that owns it fails.
+                // Preserve the last good page and selected route so a transient storage failure does
+                // not turn an otherwise usable history screen into an empty state. The error remains
+                // visible while the retained projection and identity keep the map and Retry action
+                // usable; explicit source invalidation clears the projection separately.
                 self.applyRideMapHistoryLoadFailure(Self.mapRideMapError(error))
             }
         }
@@ -1337,7 +1351,6 @@ final class CutoutAppModel {
         invalidateRideMapHistoryProjectionWork()
         rideMapHistoryLoading = false
         rideMapHistoryError = error
-        clearRideMapHistoryRouteProjection()
         rideMapHistoryRouteLoading = false
         rideMapHistoryRouteError = error
         rideMapHistoryDetailRouteLoading = false
@@ -1449,6 +1462,8 @@ final class CutoutAppModel {
               rideMapHistoryLoading == false
         else { return }
         rideMapHistoryPageTask?.cancel()
+        rideMapHistoryQueryGeneration &+= 1
+        let queryGeneration = rideMapHistoryQueryGeneration
         guard let state = core.rideMapStateHandle else { return }
         let cursor = rideMapHistoryCursor
         let filter = rideMapHistoryFilter
@@ -1461,7 +1476,14 @@ final class CutoutAppModel {
                         filter: filter
                     )
                 }
-                guard !Task.isCancelled, let self else { return }
+                guard let self,
+                      Self.shouldApplyHistoryQuery(
+                          generation: queryGeneration,
+                          currentGeneration: self.rideMapHistoryQueryGeneration,
+                          isCancelled: Task.isCancelled
+                      )
+                else { return }
+                self.rideMapHistoryPageTask = nil
                 self.rideMapHistory = Self.appendingUniqueHistory(
                     existing: self.rideMapHistory,
                     incoming: page.summaries,
@@ -1483,7 +1505,14 @@ final class CutoutAppModel {
                 self.rideMapHistoryCanLoadMore = page.nextCursor != nil
                 self.rideMapHistoryError = nil
             } catch {
-                guard !Task.isCancelled, let self else { return }
+                guard let self,
+                      Self.shouldApplyHistoryQuery(
+                          generation: queryGeneration,
+                          currentGeneration: self.rideMapHistoryQueryGeneration,
+                          isCancelled: Task.isCancelled
+                      )
+                else { return }
+                self.rideMapHistoryPageTask = nil
                 self.rideMapHistoryError = Self.mapRideMapError(error)
             }
         }
@@ -1616,6 +1645,14 @@ final class CutoutAppModel {
         isCancelled: Bool
     ) -> Bool {
         !isCancelled && loadGeneration == currentGeneration && selectedRideID == rideID
+    }
+
+    static func shouldApplyHistoryQuery(
+        generation: UInt64,
+        currentGeneration: UInt64,
+        isCancelled: Bool
+    ) -> Bool {
+        !isCancelled && generation == currentGeneration
     }
 
     static func shouldApplyHistoryDetailViewport(

@@ -1,7 +1,7 @@
 use super::{MapPointId, SpatialRowId, StorageError};
 use rusqlite::{Connection, OptionalExtension, params};
 
-const CURRENT_SCHEMA_VERSION: i64 = 22;
+const CURRENT_SCHEMA_VERSION: i64 = 23;
 const APPLICATION_ID: i64 = 0x4355_544f;
 
 fn current_schema_pragmas() -> String {
@@ -43,6 +43,7 @@ pub(super) fn migrate(connection: &mut Connection) -> Result<(), StorageError> {
         19 => migrate_v19_to_current(connection)?,
         20 => migrate_v20_to_current(connection)?,
         21 => migrate_v21_to_current(connection)?,
+        22 => migrate_v22_to_current(connection)?,
         CURRENT_SCHEMA_VERSION => {
             if application_id != APPLICATION_ID {
                 return Err(StorageError::InvalidDatabaseIdentity);
@@ -218,6 +219,11 @@ pub(crate) fn create_current_schema(connection: &Connection) -> Result<(), Stora
         CREATE TABLE devices (
             platform_identifier TEXT PRIMARY KEY NOT NULL CHECK (length(platform_identifier) BETWEEN 1 AND 512),
             display_name TEXT NOT NULL CHECK (length(display_name) BETWEEN 1 AND 512),
+            updated_at_ms INTEGER NOT NULL CHECK (updated_at_ms >= 0)
+        );
+        CREATE TABLE last_connected_device (
+            singleton_key BLOB PRIMARY KEY NOT NULL CHECK (length(singleton_key) = 16),
+            platform_identifier TEXT NOT NULL CHECK (length(platform_identifier) BETWEEN 1 AND 512),
             updated_at_ms INTEGER NOT NULL CHECK (updated_at_ms >= 0)
         );
         CREATE TABLE voltage_sag_models (
@@ -1118,6 +1124,20 @@ fn migrate_v21_to_current(connection: &mut Connection) -> Result<(), StorageErro
     Ok(())
 }
 
+fn migrate_v22_to_current(connection: &mut Connection) -> Result<(), StorageError> {
+    let transaction = connection.transaction()?;
+    transaction.execute_batch(
+        "CREATE TABLE last_connected_device (
+             singleton_key BLOB PRIMARY KEY NOT NULL CHECK (length(singleton_key) = 16),
+             platform_identifier TEXT NOT NULL CHECK (length(platform_identifier) BETWEEN 1 AND 512),
+             updated_at_ms INTEGER NOT NULL CHECK (updated_at_ms >= 0)
+         );",
+    )?;
+    transaction.execute_batch(&current_schema_pragmas())?;
+    transaction.commit()?;
+    Ok(())
+}
+
 fn table_has_column(
     connection: &Connection,
     table: &str,
@@ -1159,6 +1179,7 @@ pub(super) fn verify_current_schema(connection: &Connection) -> Result<(), Stora
         "ride_music_history",
         "ride_music_event",
         "bms_voltage_samples",
+        "last_connected_device",
     ] {
         let exists: bool = connection.query_row(
             "SELECT EXISTS(SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = ?1)",
@@ -1170,6 +1191,7 @@ pub(super) fn verify_current_schema(connection: &Connection) -> Result<(), Stora
         }
     }
     verify_singleton_schema(connection, "selected_device", "platform_identifier")?;
+    verify_singleton_schema(connection, "last_connected_device", "platform_identifier")?;
     verify_singleton_schema(connection, "ride_session_marker", "marker")?;
     verify_device_schema(connection)?;
     verify_ride_segment_schema(connection)?;
