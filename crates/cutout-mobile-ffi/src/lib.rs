@@ -523,7 +523,7 @@ impl From<&RetinaVideoConfiguration> for MobileCameraVideoConfigurationDto {
 impl MobileCameraVideoFrameDto {
     fn into_retina_frame(self) -> Result<RetinaVideoFrame, MobileCameraPreviewFileError> {
         let clock_rate_hz = RetinaVideoClockRate::new(self.clock_rate_hz)
-            .ok_or(MobileCameraPreviewFileError::Write)?;
+            .ok_or(MobileCameraPreviewFileError::InvalidFrame)?;
         RetinaVideoFrame::new(
             self.data,
             self.loss,
@@ -531,7 +531,7 @@ impl MobileCameraVideoFrameDto {
             self.timestamp,
             clock_rate_hz,
         )
-        .map_err(|_| MobileCameraPreviewFileError::Write)
+        .map_err(|_| MobileCameraPreviewFileError::InvalidFrame)
     }
 }
 
@@ -660,7 +660,10 @@ pub enum MobileCameraPreviewFileError {
     /// The destination could not be created.
     #[error("could not create preview file")]
     Create,
-    /// A frame could not be written or was not valid Retina H.264 data.
+    /// The supplied frame was not a valid bounded preview frame.
+    #[error("invalid preview frame")]
+    InvalidFrame,
+    /// A valid frame could not be written or was not valid Retina H.264 data.
     #[error("could not write preview frame")]
     Write,
     /// The sink has already been finished.
@@ -689,9 +692,10 @@ impl MobileCameraPreviewFileSink {
     ///
     /// # Errors
     ///
-    /// Returns [`MobileCameraPreviewFileError::Finished`] after finishing, or
-    /// [`MobileCameraPreviewFileError::Write`] for malformed data or an I/O
-    /// failure.
+    /// Returns [`MobileCameraPreviewFileError::Finished`] after finishing,
+    /// [`MobileCameraPreviewFileError::InvalidFrame`] for an invalid DTO, or
+    /// [`MobileCameraPreviewFileError::Write`] for malformed H.264 data or an
+    /// I/O failure.
     pub fn write_frame(
         &self,
         frame: MobileCameraVideoFrameDto,
@@ -18749,7 +18753,7 @@ mod tests {
         };
         assert_eq!(
             invalid_clock_rate.into_retina_frame(),
-            Err(MobileCameraPreviewFileError::Write)
+            Err(MobileCameraPreviewFileError::InvalidFrame)
         );
 
         let oversized = MobileCameraVideoFrameDto {
@@ -18761,7 +18765,7 @@ mod tests {
         };
         assert_eq!(
             oversized.into_retina_frame(),
-            Err(MobileCameraPreviewFileError::Write)
+            Err(MobileCameraPreviewFileError::InvalidFrame)
         );
     }
 
