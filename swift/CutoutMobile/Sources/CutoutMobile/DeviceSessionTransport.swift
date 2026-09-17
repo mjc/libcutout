@@ -87,11 +87,6 @@ final class DeviceSessionTransport: @unchecked Sendable {
         return try ingest(.notification, at: at, channel: channel.bytes, bytes: bytes)
     }
 
-    func handleCommand(_ command: DeviceCommand, at: MonotonicMilliseconds) throws -> CoreBluetoothSessionStep {
-        record(.command(command, at: at))
-        return try ingest(.command, at: at, command: command)
-    }
-
     func submitSetting(_ id: DeviceSettingID, value: DeviceSettingValue, at: MonotonicMilliseconds) throws -> CoreBluetoothSessionStep {
         try process(state.submitSetting(token: token, id: id, value: value, monotonicMs: at.rawValue), at: at)
     }
@@ -150,17 +145,15 @@ final class DeviceSessionTransport: @unchecked Sendable {
         at: MonotonicMilliseconds,
         writeLimit: TransportWriteLimitBytes? = nil,
         channel: Data = Data(),
-        bytes: Data = Data(),
-        command: DeviceCommand? = nil
+        bytes: Data = Data()
     ) throws -> CoreBluetoothSessionStep {
         guard let step = state.ingestDeviceSession(token: token, input: MobileSessionInputDto(
             kind: kind, monotonicMs: at.dto, maxWriteLen: writeLimit?.dto,
-            channel: channel, bytes: bytes, command: command?.dto
+            channel: channel, bytes: bytes
         )) else {
             throw DeviceSettingSubmissionError.ConnectionUnavailable
         }
-        let immediate = kind != .tick && (kind != .notification
-            || step.result.outputs.contains { $0.kind == .settingsReadback })
+        let immediate = kind != .tick && kind != .notification
         return try process(step, at: at, publishImmediately: immediate)
     }
 

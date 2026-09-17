@@ -68,7 +68,6 @@ final class CutoutAppModel {
     private(set) var phase = SessionConnectionPhase.starting
     private(set) var devicePickerScanState: DevicePickerScanState?
     private(set) var connectionState = ConnectionState.picker
-    private(set) var settingsReadback: SettingsReadback?
     private(set) var faultHistoryReadback: FaultHistoryReadback?
     private(set) var bmsSnapshot: BmsSnapshot?
     private(set) var phoneLocationReadback = PhoneLocationReadback(
@@ -467,9 +466,6 @@ final class CutoutAppModel {
             guard let self, self.phase == .live,
                   self.core.rideSessionStateHandle.connectionAttemptSnapshot().revision == snapshot.connection.revision else { return }
             self.deviceControlsSnapshot = snapshot
-        }
-        self.core.onSettingsReadbackChange = { [weak self] settingsReadback in
-            self?.handleSettingsReadback(settingsReadback)
         }
         self.core.onFaultHistoryReadbackChange = { [weak self] faultHistoryReadback in
             self?.faultHistoryReadback = faultHistoryReadback
@@ -2311,9 +2307,6 @@ final class CutoutAppModel {
         try core.setDeviceControlsValidation(token: token, authorized: authorized)
     }
 
-    private func handleSettingsReadback(_ readback: SettingsReadback?) {
-        settingsReadback = readback
-    }
     func pair(platformIdentifier: String) -> Bool {
         switch connectionState {
         case .connecting, .retrying, .connected:

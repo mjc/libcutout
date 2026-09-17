@@ -37,14 +37,7 @@ model and firmware, then compare the captured write and readback with this
 simulator transcript. This scenario covers the implemented subset; it does not
 establish [complete Aero settings coverage](aero-settings-coverage.md).
 
-The same simulator is available through the Rust-owned mobile FFI as
-`AeroSettingsSimulator`. It accepts the existing typed mobile command DTOs and
-returns the existing mobile session output DTOs, including the same limited
-production-shaped settings-readback events. Its typed simulator readback
-record remains available for Rust-owned encoder/state assertions.
-`AeroSettingsSimulatorTests` exercises that facade from Swift without Bluetooth
-hardware:
-
-```text
-devenv tasks run test:swift-settings-simulator
-```
+The simulator is intentionally not exported through the mobile FFI. Mobile
+callers use the generic device-session and semantic settings/action boundaries;
+the deterministic simulator remains a Rust development tool and is covered by
+the protocol-layer tests above.

@@ -200,10 +200,10 @@ struct IdentificationProbeTransportCoordinator {
         guard let linkActions = try? session.linkUp(
             at: now,
             writeLimit: TransportWriteLimitBytes(512)
-        ), let requestActions = try? session.perform(.requestTelemetry, at: now) else {
+        ) else {
             return
         }
-        (linkActions + requestActions)
+        linkActions
             .filter { $0.kind == .write }
             .forEach { action in
                 guard let channel = BluetoothUuid(action.channel) else { return }
@@ -429,7 +429,6 @@ public final class CutoutSessionCore: NSObject {
     public var droppedRecordCount: Int { diagnosticLog.droppedCount }
     public private(set) var hasObservedSpeedSnapshot = false
     public private(set) var scanState = DevicePickerScanState(status: .idle, rows: [])
-    public private(set) var settingsReadback: SettingsReadback?
     public private(set) var faultHistoryReadback: FaultHistoryReadback?
     public private(set) var bmsSnapshot: BmsSnapshot?
     public private(set) var phoneLocationSnapshot = MobilePhoneLocationSnapshotDto(latestSample: nil, gpsSpeed: nil)
@@ -461,7 +460,6 @@ public final class CutoutSessionCore: NSObject {
     public var onCaptureEvent: ((CaptureEvent) -> Void)?
     public var onScanStateChange: ((DevicePickerScanState) -> Void)?
     public var onDeviceControlsChange: ((DeviceControlsSnapshot) -> Void)?
-    public var onSettingsReadbackChange: ((SettingsReadback?) -> Void)?
     public var onFaultHistoryReadbackChange: ((FaultHistoryReadback?) -> Void)?
     public var onBmsSnapshotChange: ((BmsSnapshot?) -> Void)?
     public var onPhoneLocationSnapshotChange: ((MobilePhoneLocationSnapshotDto, MonotonicMilliseconds) -> Void)?
@@ -1187,7 +1185,6 @@ public final class CutoutSessionCore: NSObject {
         connectionGattInventory.removeAll()
         displayState = RideDisplayState()
         hasObservedSpeedSnapshot = false
-        clearSettingsReadback()
         clearFaultHistoryReadback()
         clearBmsSnapshot()
         clearProtocolIdentityCandidate()
@@ -1255,13 +1252,7 @@ public final class CutoutSessionCore: NSObject {
 
     private func applySessionAction(_ action: SessionAction) {
         switch action.kind {
-        case .settingsReadback:
-            if let update = action.settingsReadback {
-                settingsReadback = settingsReadback?.merging(update) ?? update
-            } else {
-                settingsReadback = nil
-            }
-            publishSettingsReadback()
+
         case .faultHistoryReadback:
             faultHistoryReadback = action.faultHistoryReadback
             publishFaultHistoryReadback()
@@ -1297,13 +1288,6 @@ public final class CutoutSessionCore: NSObject {
         }
     }
 
-    private func clearSettingsReadback() {
-        guard settingsReadback != nil else {
-            return
-        }
-        settingsReadback = nil
-        publishSettingsReadback()
-    }
 
     private func clearFaultHistoryReadback() {
         guard faultHistoryReadback != nil else {
@@ -1493,7 +1477,6 @@ public final class CutoutSessionCore: NSObject {
                 [pevcapAnnotation(key: "user_note", value: $0)]
             } ?? [])
         ) else { return }
-        clearSettingsReadback()
         clearFaultHistoryReadback()
         clearBmsSnapshot()
         clearProtocolIdentityCandidate()
@@ -1523,7 +1506,6 @@ public final class CutoutSessionCore: NSObject {
         _ = deviceDetectionSession.observeAdvertisement(name: advertisement.localName.map { Data($0.utf8) })
         guard startCapture(reason: "protocol-detection", annotations: ["intent=manual_use"])
         else { return }
-        clearSettingsReadback()
         clearFaultHistoryReadback()
         clearBmsSnapshot()
         clearProtocolIdentityCandidate()
@@ -1834,10 +1816,6 @@ public final class CutoutSessionCore: NSObject {
         publishOnMain { self.onScanStateChange?(value) }
     }
 
-    private func publishSettingsReadback() {
-        let value = settingsReadback
-        publishOnMain { self.onSettingsReadbackChange?(value) }
-    }
 
     private func publishDeviceControls(_ value: DeviceControlsSnapshot) {
         publishOnMain { [weak self] in
@@ -2576,7 +2554,6 @@ private extension CutoutSessionCore {
     func prepareRestoredRide() -> Bool {
         guard startCapture(reason: "protocol-detection", annotations: ["intent=previously_connected"])
         else { return false }
-        clearSettingsReadback()
         clearFaultHistoryReadback()
         clearBmsSnapshot()
         clearProtocolIdentityCandidate()

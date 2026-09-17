@@ -26,7 +26,7 @@ final class DeviceControlsTests: XCTestCase {
         _ = state.resolveDeviceSession(token: token, identificationComplete: false, nowMs: 1)
         _ = state.ingestDeviceSession(token: token, input: MobileSessionInputDto(
             kind: .linkUp, monotonicMs: .init(milliseconds: 1), maxWriteLen: nil,
-            channel: Data(), bytes: Data(), command: nil
+            channel: Data(), bytes: Data()
         ))
         let result = try state.submitAction(token: token, id: .horn, monotonicMs: 2)
         XCTAssertNil(result.telemetry.speed)
@@ -47,11 +47,11 @@ final class DeviceControlsTests: XCTestCase {
         _ = state.resolveDeviceSession(token: token, identificationComplete: false, nowMs: 1)
         _ = state.ingestDeviceSession(token: token, input: MobileSessionInputDto(
             kind: .linkUp, monotonicMs: .init(milliseconds: 1), maxWriteLen: nil,
-            channel: Data(), bytes: Data(), command: nil
+            channel: Data(), bytes: Data()
         ))
         _ = state.ingestDeviceSession(token: token, input: MobileSessionInputDto(
             kind: .notification, monotonicMs: .init(milliseconds: 1), maxWriteLen: nil,
-            channel: BluetoothUuid.bluetooth16(0xffe1).bytes, bytes: frame, command: nil
+            channel: BluetoothUuid.bluetooth16(0xffe1).bytes, bytes: frame
         ))
         let requested = DeviceSettingValue.boolean(value: true)
         _ = try state.submitSetting(token: token, id: .highBeam, value: requested, monotonicMs: 2)

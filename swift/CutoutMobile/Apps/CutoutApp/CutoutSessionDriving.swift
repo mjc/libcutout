@@ -12,7 +12,6 @@ protocol CutoutSessionDriving: AnyObject {
     var onCaptureEvent: ((CaptureEvent) -> Void)? { get set }
     var onScanStateChange: ((DevicePickerScanState) -> Void)? { get set }
     var onDeviceControlsChange: ((DeviceControlsSnapshot) -> Void)? { get set }
-    var onSettingsReadbackChange: ((SettingsReadback?) -> Void)? { get set }
     var onFaultHistoryReadbackChange: ((FaultHistoryReadback?) -> Void)? { get set }
     var onBmsSnapshotChange: ((BmsSnapshot?) -> Void)? { get set }
     var onPhoneLocationSnapshotChange: ((MobilePhoneLocationSnapshotDto, MonotonicMilliseconds) -> Void)? { get set }

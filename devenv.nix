@@ -142,12 +142,6 @@ in
     cargo cutout swift -- test --package-path "$DEVENV_ROOT/swift/CutoutMobile"
   '';
 
-  tasks."test:swift-settings-simulator" = swiftTask ''
-    cargo cutout swift -- test \
-      --package-path "$DEVENV_ROOT/swift/CutoutMobile" \
-      --filter AeroSettingsSimulatorTests
-  '';
-
   tasks."validate:aero-live-connection" =
     (swiftTask ''
       echo "libcutout_commit=$(git rev-parse HEAD)"

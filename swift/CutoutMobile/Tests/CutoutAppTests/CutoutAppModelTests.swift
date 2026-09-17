@@ -3680,7 +3680,6 @@ private final class SessionDriverSpy: CutoutSessionDriving {
     var onCaptureEvent: ((CaptureEvent) -> Void)?
     var onScanStateChange: ((DevicePickerScanState) -> Void)?
     var onDeviceControlsChange: ((DeviceControlsSnapshot) -> Void)?
-    var onSettingsReadbackChange: ((SettingsReadback?) -> Void)?
     var onFaultHistoryReadbackChange: ((FaultHistoryReadback?) -> Void)?
     var onBmsSnapshotChange: ((BmsSnapshot?) -> Void)?
     var onPhoneLocationSnapshotChange: ((MobilePhoneLocationSnapshotDto, MonotonicMilliseconds) -> Void)?
