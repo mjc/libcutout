@@ -4,7 +4,7 @@
 settings simulator without Bluetooth hardware:
 
 ```text
-nix develop -c cargo run -p cutout-dev -- simulator aero-settings
+devenv shell -- cargo run -p cutout-dev -- simulator aero-settings
 ```
 
 The simulator is Rust-owned and wraps the production
@@ -46,5 +46,5 @@ record remains available for Rust-owned encoder/state assertions.
 hardware:
 
 ```text
-nix develop -c swift test --package-path swift/CutoutMobile --filter AeroSettingsSimulatorTests
+devenv shell -- swift test --package-path swift/CutoutMobile --filter AeroSettingsSimulatorTests
 ```

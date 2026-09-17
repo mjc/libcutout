@@ -117,7 +117,7 @@ not establish speed parity with the official app.
 - Optional reconnect restore uses the last confirmed settings for the same
   accessory identity. Requested state is not a claim of physical confirmation.
 - Manual clock scheduling sends validated controller-local clock and slot writes. The editor shows the protocol shape without claiming timer readback or physical device state.
-- The Mac-only MelkLightingLiveValidator executable uses CoreBluetooth to discover the Aero-installed MELK-OC21, verify FFF0/FFF3/FFF4, and exercise candidate commands without sharing the ride telemetry connection. Run `nix develop -c ./scripts/validate-melk-corebluetooth.sh [timeout-seconds] [platform-UUID]`; the optional UUID retries a previously observed CoreBluetooth identity and is parsed fail-closed. For a fresh pairing, enter `select <UUID>` for the printed candidate before the timeout expires.
+- The Mac-only MelkLightingLiveValidator executable uses CoreBluetooth to discover the Aero-installed MELK-OC21, verify FFF0/FFF3/FFF4, and exercise candidate commands without sharing the ride telemetry connection. Run `devenv tasks run validate:melk-live-controller`; set `CUTOUT_MELK_VALIDATION_TIMEOUT` to change the timeout or `CUTOUT_MELK_PLATFORM_IDENTIFIER` to retry a previously observed CoreBluetooth identity. The identity is parsed fail-closed. For a fresh pairing, enter `select <UUID>` for the printed candidate before the timeout expires.
   If recovery and the subsequent scan do not reach `ready` before timeout, the
   validator exits nonzero.
 - Saving a schedule sends a clock sync followed by the selected slot; opening the editor never writes. The controller has no timer readback, so the editor retains drafts rather than claiming device state.

@@ -30,35 +30,23 @@
             inherit system;
             overlays = [ rust-overlay.overlays.default ];
           };
-          toolchain = (pkgs.rust-bin.fromRustupToolchainFile ./rust-toolchain.toml).override {
-            targets = [
-              "aarch64-apple-ios"
-              "aarch64-apple-ios-sim"
-              "x86_64-apple-ios"
-              "x86_64-apple-darwin"
-            ];
-          };
-          devRust =
-            if pkgs.stdenv.isDarwin then
-              toolchain.overrideAttrs {
-                depsHostHostPropagated = [ ];
-                propagatedBuildInputs = [ ];
-                depsTargetTargetPropagated = [ ];
-              }
-            else
-              toolchain;
+          toolchain = pkgs.rust-bin.fromRustupToolchainFile ./rust-toolchain.toml;
           craneLib = (crane.mkLib pkgs).overrideToolchain toolchain;
           commonArgs = {
             src = craneLib.cleanCargoSource ./.;
             pname = "libcutout";
             version = "0.1.0";
             strictDeps = true;
+            nativeBuildInputs = nixpkgs.lib.optionals pkgs.stdenv.isLinux [
+              pkgs.pkg-config
+              pkgs.rustPlatform.bindgenHook
+            ];
+            buildInputs = nixpkgs.lib.optionals pkgs.stdenv.isLinux [ pkgs.dbus ];
           };
         in
         {
           inherit
             pkgs
-            devRust
             craneLib
             commonArgs
             ;
@@ -69,7 +57,11 @@
       packages = forAllSystems (
         system:
         let
-          inherit (systemContext system) craneLib commonArgs cargoArtifacts;
+          inherit (systemContext system)
+            craneLib
+            commonArgs
+            cargoArtifacts
+            ;
         in
         {
           default = self.packages.${system}.cutout-cli;
@@ -95,7 +87,12 @@
       checks = forAllSystems (
         system:
         let
-          inherit (systemContext system) craneLib commonArgs cargoArtifacts;
+          inherit (systemContext system)
+            pkgs
+            craneLib
+            commonArgs
+            cargoArtifacts
+            ;
         in
         {
           inherit (self.packages.${system}) cutout-cli;
@@ -104,71 +101,17 @@
             commonArgs
             // {
               inherit cargoArtifacts;
-              cargoClippyExtraArgs = "--workspace --all-targets --all-features -- -D warnings";
+              cargoClippyExtraArgs = "--workspace --all-targets --all-features --locked -- -D warnings";
             }
           );
           test = craneLib.cargoTest (
             commonArgs
             // {
               inherit cargoArtifacts;
-              cargoExtraArgs = "--workspace";
+              cargoExtraArgs = "--workspace --locked";
             }
           );
           deny = craneLib.cargoDeny commonArgs;
-        }
-      );
-
-      devShells = forAllSystems (
-        system:
-        let
-          inherit (systemContext system) pkgs devRust;
-          nightlyRust = pkgs.rust-bin.nightly.latest.default;
-          cutoutCargoFuzz = pkgs.writeShellScriptBin "cutout-cargo-fuzz" ''
-            export PATH="${nightlyRust}/bin:${pkgs.cargo-fuzz}/bin:$PATH"
-            exec cargo fuzz "$@"
-          '';
-        in
-        {
-          default = (if pkgs.stdenv.isDarwin then pkgs.mkShellNoCC else pkgs.mkShell) {
-            nativeBuildInputs = pkgs.lib.optionals pkgs.stdenv.isLinux [
-              pkgs.rustPlatform.bindgenHook
-            ];
-            packages = [
-              devRust
-              cutoutCargoFuzz
-              pkgs.cargo-deny
-              pkgs.cargo-fuzz
-              pkgs.cargo-mutants
-              pkgs.cargo-nextest
-              pkgs.jna
-              pkgs.kotlin
-              pkgs.python3Packages.pillow
-            ]
-            ++ pkgs.lib.optionals pkgs.stdenv.isDarwin [
-              pkgs.cargo-swift
-            ]
-            ++ pkgs.lib.optionals pkgs.stdenv.isLinux [
-              pkgs.valgrind
-            ]
-            ++ [
-              pkgs.nixfmt
-            ];
-
-            shellHook = ''
-              ${pkgs.lib.optionalString pkgs.stdenv.isDarwin ''
-                export PATH="/usr/bin:/bin:/usr/sbin:/sbin:$PATH"
-                unset CC CXX LD AR RANLIB SDKROOT
-                unset NIX_CC NIX_CFLAGS_COMPILE NIX_CXXSTDLIB_COMPILE NIX_LDFLAGS
-                unset CARGO_TARGET_AARCH64_APPLE_DARWIN_LINKER
-                unset CARGO_TARGET_X86_64_APPLE_DARWIN_LINKER
-                export RUSTC_WRAPPER=""
-                export RUSTC_WORKSPACE_WRAPPER=""
-              ''}
-              echo "Cutout dev shell"
-              echo "  stable: ${devRust.name}"
-              echo "  miri:   tracked separately in cutout-dly"
-            '';
-          };
         }
       );
 
