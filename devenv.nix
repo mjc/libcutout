@@ -100,6 +100,7 @@ in
     ]
     ++ lib.optionals pkgs.stdenv.isDarwin [
       "test:swift-package"
+      "test:shell-regressions"
       "build:ios-ui-tests"
     ];
   };
@@ -194,6 +195,10 @@ in
     exec = "CUTOUT_IOS_TEST_DESTINATION='generic/platform=iOS Simulator' scripts/run-ios-ui-tests.sh --build-only ARCHS=arm64 ONLY_ACTIVE_ARCH=YES";
     after = [ "check:xcode-ios" ];
   };
+  tasks."test:shell-regressions".exec = ''
+    bash tests/scripts/swift-package-common.sh
+    bash tests/scripts/run-ios-ui-tests.sh
+  '';
   tasks."build:ios-app" = swiftTask ''
     cargo cutout xcodebuild -- \
       -project "$DEVENV_ROOT/swift/CutoutMobile/CutoutApp.xcodeproj" \

@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Stand in for a coordinator that spawned a long-running build process.
+# Stand in for a coordinator that spawned a build process which ignores TERM.
 bash -c '
-  trap '\''touch "$CUTOUT_TIMEOUT_TEST_DIR/child-stopped"; exit 0'\'' TERM
+  trap '\'' '\'' TERM
   touch "$CUTOUT_TIMEOUT_TEST_DIR/child-started"
   while :; do sleep 0.1; done
 ' &

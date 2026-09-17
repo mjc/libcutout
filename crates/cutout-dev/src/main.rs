@@ -126,13 +126,35 @@ fn build_apple_client(root: &Path, tool: &str, args: &[String]) -> Result<()> {
     );
     let lock = lock_swift_ffi(root)?;
     prepare_swift_ffi(root, &lock)?;
-    run(
-        command("/usr/bin/xcrun")
-            .current_dir(root)
-            .arg(tool)
-            .args(args),
-        "build Apple client",
-    )
+    let mut build = command("/usr/bin/xcrun");
+    build.current_dir(root).arg(tool).args(args);
+    let _inherited_lock = attach_lock_handle(&mut build, &lock)?;
+    run(&mut build, "build Apple client")
+}
+
+#[cfg(unix)]
+#[allow(unsafe_code)]
+fn attach_lock_handle(command: &mut Command, lock: &fs::File) -> Result<fs::File> {
+    use std::os::{fd::AsRawFd, unix::process::CommandExt};
+
+    let inherited_lock = lock.try_clone()?;
+    let lock_fd = inherited_lock.as_raw_fd();
+    // SAFETY: dup2 is async-signal-safe, and the duplicated descriptor is
+    // intentionally left open across exec so the native build keeps the lock.
+    unsafe {
+        command.pre_exec(move || {
+            if libc::dup2(lock_fd, 3) == -1 {
+                return Err(std::io::Error::last_os_error());
+            }
+            Ok(())
+        });
+    }
+    Ok(inherited_lock)
+}
+
+#[cfg(not(unix))]
+fn attach_lock_handle(_command: &mut Command, _lock: &fs::File) -> Result<fs::File> {
+    bail!("native Apple builds require Unix file-descriptor inheritance")
 }
 
 fn run_aero_settings_simulator() -> Result<()> {
@@ -1701,6 +1723,79 @@ mod tests {
             ])
             .env("CUTOUT_FFI_LOCK_TEST_CHILD", "1")
             .env("CUTOUT_FFI_LOCK_TEST_ROOT", &root)
+            .stdout(std::process::Stdio::piped())
+            .spawn()
+            .unwrap();
+        let mut output = std::io::BufReader::new(coordinator.stdout.take().unwrap());
+        let mut line = String::new();
+        let child_pid = loop {
+            line.clear();
+            assert_ne!(
+                output.read_line(&mut line).unwrap(),
+                0,
+                "coordinator exited early"
+            );
+            if let Ok(pid) = line.trim().parse::<u32>() {
+                break pid;
+            }
+        };
+        assert!(
+            Command::new("kill")
+                .args(["-KILL", &coordinator.id().to_string()])
+                .status()
+                .unwrap()
+                .success()
+        );
+        coordinator.wait().unwrap();
+        let contender = fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(root.join(SWIFT_FFI_LOCK))
+            .unwrap();
+        assert!(matches!(
+            contender.try_lock(),
+            Err(fs::TryLockError::WouldBlock)
+        ));
+        assert!(
+            Command::new("kill")
+                .args(["-TERM", &child_pid.to_string()])
+                .status()
+                .unwrap()
+                .success()
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn native_child_keeps_lock_after_coordinator_is_killed() {
+        use std::io::{BufRead, Write};
+
+        let root = env::var_os("CUTOUT_NATIVE_LOCK_TEST_ROOT")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| {
+                env::temp_dir().join(format!("cutout-native-orphan-{}", std::process::id()))
+            });
+        if env::var_os("CUTOUT_NATIVE_LOCK_TEST_CHILD").is_some() {
+            let lock = lock_swift_ffi(&root).unwrap();
+            let mut child = Command::new("sleep");
+            child.arg("30");
+            let _inherited_lock = attach_lock_handle(&mut child, &lock).unwrap();
+            let mut child = child.spawn().unwrap();
+            println!("{}", child.id());
+            std::io::stdout().flush().unwrap();
+            child.wait().unwrap();
+            return;
+        }
+
+        let mut coordinator = Command::new(env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "tests::native_child_keeps_lock_after_coordinator_is_killed",
+                "--nocapture",
+            ])
+            .env("CUTOUT_NATIVE_LOCK_TEST_CHILD", "1")
+            .env("CUTOUT_NATIVE_LOCK_TEST_ROOT", &root)
             .stdout(std::process::Stdio::piped())
             .spawn()
             .unwrap();

@@ -10952,6 +10952,9 @@ impl MobileRideMapCore {
     pub fn current_music_history(&self) -> Option<MobileMusicHistoryDto> {
         let mut state = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
         let ride_id = state.ride_id.as_ref()?;
+        if state.recorder.state() == Some(ride_maps::RideLifecycleState::Discarded) {
+            return None;
+        }
         let Some(database) = state.database.as_ref() else {
             return Some(MobileMusicHistoryDto {
                 status: MobileMusicHistoryStatusDto::Unavailable,
