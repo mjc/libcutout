@@ -22,7 +22,8 @@ let package = Package(
                 .product(name: "CutoutMobileFFI", package: "CutoutMobileFFI"),
                 .product(name: "SpotifyiOS", package: "ios-sdk", condition: .when(platforms: [.iOS])),
             ],
-            resources: [.process("Localizable.xcstrings")]
+            resources: [.process("Localizable.xcstrings")],
+            plugins: [.plugin(name: "VerifyRustArtifact")]
         ),
         .testTarget(
             name: "CutoutMobileTests",
@@ -62,5 +63,6 @@ let package = Package(
             dependencies: ["CutoutMobile"],
             path: "Tests/MelkLightingLiveValidator"
         ),
+        .plugin(name: "VerifyRustArtifact", capability: .buildTool()),
     ]
 )

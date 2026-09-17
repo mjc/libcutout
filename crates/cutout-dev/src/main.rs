@@ -26,6 +26,8 @@ use sha2::{Digest, Sha256};
 const GENERATED_PACKAGE: &str = "target/swift-ffi/CutoutMobileFFI";
 const CARGO_SWIFT_PACKAGE: &str = "crates/cutout-mobile-ffi/CutoutMobileFFI";
 const SWIFT_FFI_LOCK: &str = "target/swift-ffi/.cutout-swift-ffi.lock";
+const FFI_RECEIPT: &str = ".cutout-artifact.json";
+const FFI_CHECKER: &str = ".cutout-ffi-check";
 
 struct SwiftFfiLock {
     path: PathBuf,
@@ -117,6 +119,7 @@ impl Drop for SwiftFfiLock {
 enum DevCommand {
     AeroSettingsSimulator,
     SwiftFfi,
+    SwiftFfiCheck { root: PathBuf, output: PathBuf },
     IosDeploy(Vec<String>),
     IosVerifyApp(PathBuf),
     IosCaptures,
@@ -128,6 +131,7 @@ fn main() -> Result<()> {
     match parse_cli(&args)? {
         DevCommand::AeroSettingsSimulator => run_aero_settings_simulator(),
         DevCommand::SwiftFfi => ensure_swift_ffi(&root),
+        DevCommand::SwiftFfiCheck { root, output } => check_swift_ffi_build(&root, &output),
         DevCommand::IosDeploy(launch_args) => deploy_ios(&root, &launch_args),
         DevCommand::IosVerifyApp(product) => verify_ios_app(&product),
         DevCommand::IosCaptures => pull_ios_captures(&root),
@@ -140,6 +144,10 @@ fn parse_cli(args: &[String]) -> Result<DevCommand> {
             Ok(DevCommand::AeroSettingsSimulator)
         }
         [command] if command == "swift-ffi" => Ok(DevCommand::SwiftFfi),
+        [command, root, output] if command == "swift-ffi-check" => Ok(DevCommand::SwiftFfiCheck {
+            root: root.into(),
+            output: output.into(),
+        }),
         [ios, captures] if ios == "ios" && captures == "captures" => Ok(DevCommand::IosCaptures),
         [ios, verify, product] if ios == "ios" && verify == "verify-app" => {
             Ok(DevCommand::IosVerifyApp(product.into()))
@@ -259,25 +267,16 @@ fn ensure_swift_ffi(root: &Path) -> Result<()> {
     let _lock = SwiftFfiLock::acquire(root)?;
     let package = root.join(GENERATED_PACKAGE);
     let expected = source_fingerprint(root)?;
-    let current = fs::read_to_string(package.join(".cutout-source.sha256"))
-        .unwrap_or_default()
-        .trim()
-        .to_owned();
-    if current == expected && verify_swift_ffi(&package).is_ok() {
+    if verify_swift_ffi(&package).is_ok() && verify_ffi_receipt(&package, &expected).is_ok() {
         return Ok(());
     }
 
     eprintln!("Regenerating stale Swift FFI artifact.");
-    regenerate_swift_ffi(root, &package)?;
-    fs::write(
-        package.join(".cutout-source.sha256"),
-        format!("{expected}\n"),
-    )?;
-    verify_swift_ffi(&package)?;
+    regenerate_swift_ffi(root, &package, &expected)?;
     Ok(())
 }
 
-fn regenerate_swift_ffi(root: &Path, package: &Path) -> Result<()> {
+fn regenerate_swift_ffi(root: &Path, package: &Path, expected: &str) -> Result<()> {
     ensure!(
         cfg!(target_os = "macos"),
         "Swift FFI artifact is stale or missing; regenerate it on macOS with `cargo cutout swift-ffi` before using Swift builds on this host"
@@ -338,6 +337,7 @@ fn regenerate_swift_ffi(root: &Path, package: &Path) -> Result<()> {
     .and_then(|()| normalize_xcframework_to_arm64(&cargo_package))
     .and_then(|()| sort_xcframework_plist(&cargo_package))
     .and_then(|()| trim_generated_sources(&cargo_package))
+    .and_then(|()| seal_swift_ffi(root, &cargo_package, expected))
     .and_then(|()| {
         fs::rename(&cargo_package, package).with_context(|| {
             format!(
@@ -347,7 +347,7 @@ fn regenerate_swift_ffi(root: &Path, package: &Path) -> Result<()> {
             )
         })
     })
-    .and_then(|()| verify_swift_ffi(package));
+    .and_then(|()| verify_ffi_receipt(package, expected).map(|_| ()));
 
     match result {
         Ok(()) => {
@@ -377,11 +377,46 @@ fn regenerate_swift_ffi(root: &Path, package: &Path) -> Result<()> {
     }
 }
 
+fn seal_swift_ffi(root: &Path, package: &Path, expected: &str) -> Result<()> {
+    ensure!(
+        source_fingerprint(root)? == expected,
+        "Rust inputs changed during Swift FFI generation; refusing to publish a mixed build"
+    );
+    fs::copy(env::current_exe()?, package.join(FFI_CHECKER))?;
+    // A Rust implementation-only change must also change a Swift compilation input.
+    fs::write(
+        package.join("Sources/CutoutMobileFFI/CutoutArtifactIdentity.swift"),
+        format!(
+            "// Generated Rust build identity.\npublic let cutoutRustSourceIdentity = \"{expected}\"\n"
+        ),
+    )?;
+    verify_swift_ffi(package)?;
+    write_ffi_receipt(package, expected)?;
+    Ok(())
+}
+
 /// Keep the generated package limited to architectures used by this project.
 /// cargo-swift emits universal Intel slices by default; no supported workflow
-/// here needs x86_64, and retaining those slices makes generation depend on
+/// here needs `x86_64`, and retaining those slices makes generation depend on
 /// an Intel macOS SDK being available.
 fn normalize_xcframework_to_arm64(package: &Path) -> Result<()> {
+    const NORMALIZE_PLIST: &str = r#"
+import plistlib, sys
+path = sys.argv[1]
+with open(path, "rb") as source:
+    plist = plistlib.load(source)
+for library in plist["AvailableLibraries"]:
+    identifiers = {
+        "ios-arm64_x86_64-simulator": "ios-arm64-simulator",
+        "macos-arm64_x86_64": "macos-arm64",
+    }
+    library["LibraryIdentifier"] = identifiers.get(
+        library["LibraryIdentifier"], library["LibraryIdentifier"]
+    )
+    library["SupportedArchitectures"] = ["arm64"]
+with open(path, "wb") as destination:
+    plistlib.dump(plist, destination, sort_keys=False)
+"#;
     ensure!(
         cfg!(target_os = "macos"),
         "XCFramework normalization requires macOS"
@@ -409,23 +444,6 @@ fn normalize_xcframework_to_arm64(package: &Path) -> Result<()> {
         fs::rename(arm64, library).context("install arm64 Swift FFI library")?;
     }
 
-    const NORMALIZE_PLIST: &str = r#"
-import plistlib, sys
-path = sys.argv[1]
-with open(path, "rb") as source:
-    plist = plistlib.load(source)
-for library in plist["AvailableLibraries"]:
-    identifiers = {
-        "ios-arm64_x86_64-simulator": "ios-arm64-simulator",
-        "macos-arm64_x86_64": "macos-arm64",
-    }
-    library["LibraryIdentifier"] = identifiers.get(
-        library["LibraryIdentifier"], library["LibraryIdentifier"]
-    )
-    library["SupportedArchitectures"] = ["arm64"]
-with open(path, "wb") as destination:
-    plistlib.dump(plist, destination, sort_keys=False)
-"#;
     run(
         command("python3")
             .args(["-c", NORMALIZE_PLIST])
@@ -739,6 +757,16 @@ fn source_fingerprint(root: &Path) -> Result<String> {
         PathBuf::from("Cargo.toml"),
         PathBuf::from("rust-toolchain.toml"),
     ]);
+    for input in [
+        ".cargo/config.toml",
+        "devenv.nix",
+        "devenv.yaml",
+        "devenv.lock",
+    ] {
+        if root.join(input).is_file() {
+            files.insert(PathBuf::from(input));
+        }
+    }
     // Include workspace sources, including transitive FFI dependencies and the
     // generator itself. Generated packages and build artifacts are not inputs.
     for entry in fs::read_dir(root.join("crates"))? {
@@ -806,6 +834,83 @@ fn required_ffi_inputs(package: &Path) -> Vec<PathBuf> {
         package.join("cutout_mobile_ffiFFI.xcframework/macos-arm64/Headers/cutout_mobile_ffiFFI/module.modulemap"),
     ]
     .into()
+}
+
+fn ffi_output_hashes(package: &Path) -> Result<Value> {
+    let mut inputs = BTreeSet::new();
+    collect_files(package, Path::new("Sources"), &mut inputs)?;
+    collect_files(
+        package,
+        Path::new("cutout_mobile_ffiFFI.xcframework"),
+        &mut inputs,
+    )?;
+    // Require the known files, and also inventory additions SwiftPM could compile or link.
+    for input in required_ffi_inputs(package).into_iter().chain([
+        package.join(FFI_CHECKER),
+        package.join("Sources/CutoutMobileFFI/CutoutArtifactIdentity.swift"),
+    ]) {
+        inputs.insert(input.strip_prefix(package)?.to_path_buf());
+    }
+    let mut hashes = serde_json::Map::new();
+    for relative in inputs {
+        let input = package.join(&relative);
+        let bytes = fs::read(&input)
+            .with_context(|| format!("reading Swift FFI artifact {}", input.display()))?;
+        ensure!(
+            !bytes.is_empty(),
+            "empty Swift FFI artifact: {}",
+            input.display()
+        );
+        hashes.insert(
+            relative.to_string_lossy().into_owned(),
+            Value::String(hex(Sha256::digest(bytes))),
+        );
+    }
+    Ok(Value::Object(hashes))
+}
+
+fn write_ffi_receipt(package: &Path, source: &str) -> Result<()> {
+    let receipt = serde_json::json!({
+        "version": 1,
+        "source": source,
+        "outputs": ffi_output_hashes(package)?,
+    });
+    fs::write(package.join(FFI_RECEIPT), serde_json::to_vec(&receipt)?)?;
+    Ok(())
+}
+
+/// Read-only so the SwiftPM/Xcode build-tool sandbox can run it on every build.
+fn verify_ffi_receipt(package: &Path, source: &str) -> Result<String> {
+    let bytes =
+        fs::read(package.join(FFI_RECEIPT)).context("missing Swift FFI artifact receipt")?;
+    let receipt: Value = serde_json::from_slice(&bytes)?;
+    ensure!(
+        receipt["version"] == 1,
+        "unsupported Swift FFI artifact receipt version"
+    );
+    ensure!(
+        receipt["source"] == source,
+        "Swift FFI was built from different Rust inputs"
+    );
+    ensure!(
+        receipt["outputs"] == ffi_output_hashes(package)?,
+        "Swift FFI artifact contents changed after generation"
+    );
+    Ok(hex(Sha256::digest(bytes)))
+}
+
+fn check_swift_ffi_build(root: &Path, output: &Path) -> Result<()> {
+    let identity = verify_ffi_receipt(&root.join(GENERATED_PACKAGE), &source_fingerprint(root)?)
+        .context("Swift FFI is stale or incomplete. Run Swift through `devenv shell -- swift ...` to rebuild automatically")?;
+    fs::create_dir_all(output)?;
+    let path = output.join("CutoutVerifiedArtifact.swift");
+    let source = format!(
+        "// Verified by the Rust FFI build boundary.\nlet cutoutVerifiedArtifact = \"{identity}\"\n"
+    );
+    if fs::read_to_string(&path).ok().as_deref() != Some(source.as_str()) {
+        fs::write(path, source)?;
+    }
+    Ok(())
 }
 
 fn verify_swift_ffi(package: &Path) -> Result<()> {
@@ -1006,6 +1111,42 @@ mod tests {
         }
         fs::write(&manifest, "not a package manifest\n").unwrap();
         assert!(verify_swift_ffi_files(&package).is_err());
+        fs::remove_dir_all(package).unwrap();
+    }
+
+    #[test]
+    fn ffi_receipt_rejects_stale_sources_and_changed_artifacts() {
+        let package = env::temp_dir().join(format!("cutout-ffi-receipt-{}", std::process::id()));
+        for path in required_ffi_inputs(&package).into_iter().chain([
+            package.join(FFI_CHECKER),
+            package.join("Sources/CutoutMobileFFI/CutoutArtifactIdentity.swift"),
+        ]) {
+            fs::create_dir_all(path.parent().unwrap()).unwrap();
+            fs::write(path, "original").unwrap();
+        }
+        assert!(verify_ffi_receipt(&package, "rust-a").is_err());
+        write_ffi_receipt(&package, "rust-a").unwrap();
+        let original = verify_ffi_receipt(&package, "rust-a").unwrap();
+        assert!(verify_ffi_receipt(&package, "rust-b").is_err());
+        let added = package.join("Sources/CutoutMobileFFI/Unexpected.swift");
+        fs::write(&added, "let unexpected = true").unwrap();
+        assert!(
+            verify_ffi_receipt(&package, "rust-a").is_err(),
+            "new compiled source must fail"
+        );
+        fs::remove_file(added).unwrap();
+        let library =
+            package.join("cutout_mobile_ffiFFI.xcframework/macos-arm64/libcutout_mobile_ffi.a");
+        fs::write(&library, "modified").unwrap();
+        assert!(
+            verify_ffi_receipt(&package, "rust-a").is_err(),
+            "same-size archive replacement must fail"
+        );
+        fs::write(&library, "original").unwrap();
+        write_ffi_receipt(&package, "rust-b").unwrap();
+        assert_ne!(original, verify_ffi_receipt(&package, "rust-b").unwrap());
+        fs::remove_file(&library).unwrap();
+        assert!(verify_ffi_receipt(&package, "rust-b").is_err());
         fs::remove_dir_all(package).unwrap();
     }
 

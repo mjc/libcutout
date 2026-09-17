@@ -20,7 +20,6 @@ let
     exec = ''
       source "$DEVENV_ROOT/scripts/swift-package-common.sh"
       cutout_use_xcode_developer_dir
-      cutout_ensure_swift_ffi_build_input "$DEVENV_ROOT"
       ${command}
     '';
     after = [ "check:xcode-ios" ];
@@ -29,6 +28,9 @@ let
   cutoutCargoFuzz = pkgs.writeShellScriptBin "cutout-cargo-fuzz" ''
     export PATH="${nightlyRust}/bin:${pkgs.cargo-fuzz}/bin:$PATH"
     exec cargo fuzz "$@"
+  '';
+  cutoutSwift = pkgs.writeShellScriptBin "swift" ''
+    exec ${pkgs.bash}/bin/bash "$DEVENV_ROOT/scripts/swift.sh" "$@"
   '';
 in
 {
@@ -50,7 +52,10 @@ in
     pkgs.python3Packages.pillow
     pkgs.secretspec
   ]
-  ++ lib.optionals pkgs.stdenv.isDarwin [ pkgs.cargo-swift ]
+  ++ lib.optionals pkgs.stdenv.isDarwin [
+    pkgs.cargo-swift
+    cutoutSwift
+  ]
   ++ lib.optionals pkgs.stdenv.isLinux [
     pkgs.dbus
     pkgs.pkg-config
@@ -150,7 +155,6 @@ in
       exit 1
     fi
     cutout_use_xcode_developer_dir
-    cutout_ensure_swift_ffi_build_input "$DEVENV_ROOT"
     timeout_seconds="''${CUTOUT_MELK_VALIDATION_TIMEOUT:-60}"
     platform_identifier="''${CUTOUT_MELK_PLATFORM_IDENTIFIER:-}"
     if ! [[ "$timeout_seconds" =~ ^[0-9]+([.][0-9]+)?$ ]]; then
@@ -226,7 +230,7 @@ in
   tasks."devenv:enterTest".exec = lib.mkIf pkgs.stdenv.isDarwin swiftToolchainCheck;
 
   enterShell = lib.optionalString pkgs.stdenv.isDarwin ''
-    export PATH="/usr/bin:/bin:/usr/sbin:/sbin:$PATH"
+    export PATH="${cutoutSwift}/bin:/usr/bin:/bin:/usr/sbin:/sbin:$PATH"
     # Nix's SDK setup can supply DEVELOPER_DIR independently of SDKROOT.
     # Keep direct Swift commands on the same Xcode toolchain as the iOS tasks.
     export DEVELOPER_DIR="''${CUTOUT_DEVELOPER_DIR:-/Applications/Xcode-beta.app/Contents/Developer}"

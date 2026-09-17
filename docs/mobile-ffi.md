@@ -16,10 +16,12 @@ target/swift-ffi/CutoutMobileFFI
 The XCFramework contains static iOS device, iOS simulator, and macOS slices.
 `swift/CutoutMobile/Package.swift` depends on that package by local path, so
 SwiftPM, Xcode, SourceKit, tests, and app builds all use the same artifacts.
-Repository Swift/Xcode scripts ensure that the package exists, contains the
-required architectures, and was generated from the current Rust inputs before
-building. Normal Swift-only work does not set dynamic-library paths or pass
-custom linker flags.
+The devenv `swift` command and repository Swift/Xcode scripts ensure that the
+package exists, contains the required architectures, and was generated from
+the current Rust inputs before building. `swift build`, `swift test`, and
+`swift run` automatically prepare this dependency when targeting CutoutMobile,
+including from a package subdirectory. Normal Swift-only work does not set
+dynamic-library paths or pass custom linker flags.
 
 ## Regenerating the Swift package
 
@@ -37,6 +39,36 @@ The Swift FFI generator records a fingerprint of the Rust source inputs beside
 the package. All repository Swift/Xcode entry points run the same idempotent
 ensure operation before building and regenerate only when the package is
 missing, incomplete, stale, or has a wrong-architecture slice.
+
+Every build of the shared `CutoutMobile` target also runs the `VerifyRustArtifact`
+build-tool plugin. Its sandboxed Rust checker compares the source fingerprint
+and hashes of the bindings, manifest, headers, module maps, and static libraries
+with the receipt written after successful generation. Missing or changed inputs
+fail the build, including when a direct native Swift/Xcode invocation bypasses
+devenv preparation. The checker writes only its plugin output directory.
+Generation refuses to publish if Rust inputs changed while it was compiling.
+
+A generated Swift source records the Rust build identity. The plugin emits a
+second Swift source with the verified artifact identity, preserving it when
+unchanged. These compilation inputs invalidate linking after an implementation-only
+Rust change even when the UniFFI interface is identical. Generated receipts and
+checker executables remain ignored alongside the generated package.
+
+Use the normal command; no separate regeneration invocation is needed:
+
+```console
+devenv shell -- swift test --package-path swift/CutoutMobile
+```
+
+The project wrapper rejects `test --skip-build` and `run --skip-build`: those
+commands skip the build graph and cannot check freshness. An explicit native
+`/usr/bin/swift` invocation bypasses automatic preparation, so stale inputs fail
+at the plugin instead. Opening Xcode still requires the initial package bootstrap.
+
+Devenv environment reload watches configuration, not Rust build inputs. A future
+optional watcher can warm the same ensure operation; it cannot replace build-time
+verification. Avoid regenerating the package concurrently with a native build
+that is consuming it.
 
 The generated package is never committed. Do not copy its sources or archives
 into the app package.
