@@ -82,7 +82,7 @@ pub use novatek::{
     NovatekMediaEntry, NovatekMediaList, NovatekMediaPathError, NovatekMediaThumbnailTarget,
     NovatekOriginError, NovatekProfileError, NovatekR3V1Profile, NovatekReadCommand,
     NovatekReadOnlySnapshot, NovatekRecordingCapability, NovatekRecordingCommand,
-    NovatekResponseError, NovatekRtspUri, NovatekStillCaptureCapability,
+    NovatekResponseError, NovatekRtspUri, NovatekStatusCode, NovatekStillCaptureCapability,
     NovatekStillCaptureCommand, NovatekStoragePresence, is_r3_pro_firmware, media_download_target,
     media_thumbnail_target, parse_command_response, parse_command_response_for_id,
     parse_configuration_response, parse_firmware_response, parse_live_view_response,
@@ -90,8 +90,9 @@ pub use novatek::{
 };
 mod rtsp;
 pub use rtsp::{
-    RetinaH264FileSink, RetinaRtspError, RetinaRtspPreviewSession, RetinaVideoCodec,
-    RetinaVideoConfiguration, RetinaVideoFrame,
+    RetinaH264FileSink, RetinaRtspError, RetinaRtspPreviewSession, RetinaVideoClockRate,
+    RetinaVideoCodec, RetinaVideoConfiguration, RetinaVideoConfigurationError,
+    RetinaVideoDimensions, RetinaVideoFrame, RetinaVideoFrameError,
 };
 mod probe;
 pub use probe::{AeroProbe, FalconProbe, ProtocolProbe};
