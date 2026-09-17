@@ -8,6 +8,10 @@ Use the pinned Devenv environment for repository commands:
 devenv shell -- <command>
 ```
 
+On Darwin, the shell uses Xcode beta's Swift compiler and matching Apple SDKs.
+Set `CUTOUT_DEVELOPER_DIR` to select another Xcode installation for both shell
+commands and iOS tasks.
+
 The main checks and workflows are exposed as named tasks:
 
 ```console

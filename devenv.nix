@@ -213,6 +213,9 @@ in
 
   enterShell = lib.optionalString pkgs.stdenv.isDarwin ''
     export PATH="/usr/bin:/bin:/usr/sbin:/sbin:$PATH"
+    # Nix's SDK setup can supply DEVELOPER_DIR independently of SDKROOT.
+    # Keep direct Swift commands on the same Xcode toolchain as the iOS tasks.
+    export DEVELOPER_DIR="''${CUTOUT_DEVELOPER_DIR:-/Applications/Xcode-beta.app/Contents/Developer}"
     unset CC CXX LD AR RANLIB SDKROOT
     unset NIX_CC NIX_CFLAGS_COMPILE NIX_CXXSTDLIB_COMPILE NIX_LDFLAGS
     unset CARGO_TARGET_AARCH64_APPLE_DARWIN_LINKER
