@@ -159,6 +159,17 @@ final class CutoutAppModel {
     private(set) var cameraMediaReferences: [CameraMediaReference] = []
     private static let maximumCameraMediaReferences = 64
 
+    /// Supplies the active capture identity to the camera route without
+    /// giving the view ownership of capture state.
+    var currentCameraCaptureFileName: () -> String? {
+        { [weak self] in self?.captureFileName }
+    }
+
+    /// Exposes the Rust-owned camera/session state to the camera route.
+    var cameraSessionStateHandle: CutoutSessionStateHandle {
+        core.rideSessionStateHandle
+    }
+
     var selectedRideTitle: String? {
         connectionState.selection?.title
     }
@@ -439,9 +450,10 @@ final class CutoutAppModel {
         localURL: URL
     ) {
         guard !captureFileName.isEmpty else { return }
+        guard activeCaptureGeneration != nil else { return }
+        guard captureFileName == self.captureFileName else { return }
         guard !cameraMediaReferences.contains(where: {
-            $0.source == source
-                && $0.rideCaptureFileName == captureFileName
+            $0.rideCaptureFileName == captureFileName
                 && $0.cameraPath == media.path
         }) else { return }
 
@@ -469,7 +481,6 @@ final class CutoutAppModel {
         }
 
         let reference = CameraMediaReference(provenance: provenance, localURL: localURL)
-        guard captureFileName == self.captureFileName else { return }
         cameraMediaReferences.append(reference)
         if cameraMediaReferences.count > Self.maximumCameraMediaReferences {
             cameraMediaReferences.removeFirst()

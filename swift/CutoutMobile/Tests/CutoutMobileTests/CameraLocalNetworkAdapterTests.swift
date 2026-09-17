@@ -400,6 +400,22 @@ final class CameraLocalNetworkAdapterTests: XCTestCase {
     }
 
     @MainActor
+    func testPreviewStartRejectsRTSPUriUserinfoBeforeNetwork() async {
+        let adapter = CameraLocalNetworkAdapter()
+        adapter.apply(readOnlyEvidence: cameraEvidence(advertisedCommandIDs: []), origin: testCameraOrigin)
+
+        do {
+            try await adapter.startPreview(
+                uri: "rtsp://camera-user:camera-password@192.168.1.254/xxx.mov",
+                expectedAddress: "192.168.1.254"
+            )
+            XCTFail("RTSP camera credentials must be rejected before network I/O")
+        } catch {
+            XCTAssertEqual(adapter.presentation.preview, .stopped)
+        }
+    }
+
+    @MainActor
     func testPreviewStartRemainsBoundToTheReadOnlyOriginWhenAddressIsOverridden() async throws {
         let adapter = CameraLocalNetworkAdapter()
         let evidence = CameraReadOnlyEvidence(MobileNovatekReadOnlySnapshotDto(
