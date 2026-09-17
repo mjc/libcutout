@@ -116,18 +116,15 @@ use cutout_protocols::{
     NovatekMediaPathError, NovatekOriginError, NovatekReadCommand, NovatekRecordingCommand,
     NovatekStillCaptureCommand, NovatekStoragePresence, PendingProbe, ProtocolFamilyClassification,
     ProtocolFamilyState, ProtocolModelIdentityEvidence, RetinaH264FileSink, RetinaRtspError,
-    RetinaRtspPreviewSession, RetinaVideoFrame, StagedIdentityInput, StagedIdentityOutcome,
+    RetinaRtspPreviewSession, RetinaVideoConfiguration, RetinaVideoFrame, StagedIdentityInput,
+    StagedIdentityOutcome,
     VETERAN_FIELD_AUTO_SHUTDOWN_TIME_REMAINING_SECONDS, VETERAN_FIELD_CHARGE_MODE,
     VETERAN_FIELD_PEDALS_MODE, VETERAN_FIELD_SPEED_ALERT_DECI_KMH,
     VETERAN_FIELD_SPEED_TILTBACK_DECI_KMH, VescBatteryType as CoreVescBatteryType,
     VescBoardProfile as CoreVescBoardProfile, VescReadOnlySession as CoreVescReadOnlySession,
     begode_identification_probes, closest_known_model, identify_known_model, is_r3_pro_firmware,
     new_nosfet_aero_benign_control_session, try_new_begode_falcon_benign_control_session,
-    RetinaH264FileSink, RetinaRtspError, RetinaRtspPreviewSession, RetinaVideoFrame,
-    RetinaVideoConfiguration,
-    NovatekCommandOutcome, NovatekHttpOrigin, NovatekMediaPathError, NovatekOriginError,
-    NovatekReadCommand, NovatekRecordingCommand, NovatekStillCaptureCommand,
-    NovatekStoragePresence, is_r3_pro_firmware, parse_read_only_snapshot,
+    parse_read_only_snapshot,
 };
 use cutout_ride_maps as ride_maps;
 use libcutout_persistence as persistence;
@@ -1088,7 +1085,6 @@ pub fn mobile_parse_novatek_command_outcome(
         NovatekCommandOutcome::Unknown => MobileNovatekCommandOutcomeDto::Unknown,
     })
 }
-
 
 /// Mobile discovery candidate support state.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Enum)]
@@ -2215,13 +2211,13 @@ impl CutoutSessionStateHandle {
     /// Returns the current Rust-owned camera preview and recording state.
     #[must_use]
     pub fn camera_snapshot(&self) -> MobileCameraSnapshotDto {
-        self.lock_inner().state.camera().to_owned().into()
+        self.lock_inner().session_state().camera().to_owned().into()
     }
 
     /// Records a foreground preview observation without changing recording truth.
     pub fn observe_camera_preview(&self, preview: MobileCameraPreviewStateDto) {
         self.lock_inner()
-            .state
+            .session_state_mut()
             .camera_mut()
             .observe_preview(preview.into());
     }
@@ -2236,7 +2232,7 @@ impl CutoutSessionStateHandle {
             MobileCameraPreviewEventDto::Unavailable => CoreCameraPreviewState::Unavailable,
         };
         self.lock_inner()
-            .state
+            .session_state_mut()
             .camera_mut()
             .observe_preview(preview);
     }
@@ -2247,7 +2243,7 @@ impl CutoutSessionStateHandle {
         onboard_recording: MobileCameraOnboardRecordingStateDto,
     ) {
         self.lock_inner()
-            .state
+            .session_state_mut()
             .camera_mut()
             .observe_onboard_recording(onboard_recording.into());
     }
@@ -2265,7 +2261,7 @@ impl CutoutSessionStateHandle {
     ) -> Result<(), MobileCameraMediaProvenanceError> {
         let record = input.into_core()?;
         self.lock_inner()
-            .state
+            .session_state_mut()
             .record_camera_media_provenance(record);
         Ok(())
     }
@@ -2274,7 +2270,7 @@ impl CutoutSessionStateHandle {
     #[must_use]
     pub fn camera_media_provenance(&self) -> Vec<MobileCameraMediaProvenanceDto> {
         self.lock_inner()
-            .state
+            .session_state()
             .camera_provenance()
             .media()
             .iter()
@@ -2284,7 +2280,10 @@ impl CutoutSessionStateHandle {
 
     /// Clears camera-media provenance for the next ride capture.
     pub fn clear_camera_media_provenance(&self) {
-        self.lock_inner().state.camera_provenance.clear();
+        self.lock_inner()
+            .session_state_mut()
+            .camera_provenance
+            .clear();
     }
 
     /// Applies one typed Apple-platform event to the Rust-owned ride lifecycle.
