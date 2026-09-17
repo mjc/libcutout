@@ -1038,6 +1038,7 @@ fn is_valid_rtsp_uri(value: &str) -> bool {
         return false;
     };
     !authority.is_empty()
+        && !authority.contains('@')
         && !path.is_empty()
         && !value.chars().any(|character| character.is_ascii_control())
         && !value.chars().any(char::is_whitespace)
@@ -1459,6 +1460,21 @@ mod tests {
     fn live_view_rejects_non_rtsp_links() {
         let response = br"<LIST>
 <MovieLiveViewLink>http://192.168.1.254/xxx.mov</MovieLiveViewLink>
+<PhotoLiveViewLink>rtsp://192.168.1.254/xxx.mov</PhotoLiveViewLink>
+</LIST>";
+
+        assert_eq!(
+            parse_live_view_response(response),
+            Err(NovatekResponseError::InvalidRtspUri {
+                tag: "MovieLiveViewLink"
+            })
+        );
+    }
+
+    #[test]
+    fn live_view_rejects_uri_userinfo() {
+        let response = br"<LIST>
+<MovieLiveViewLink>rtsp://camera-user:camera-password@192.168.1.254/xxx.mov</MovieLiveViewLink>
 <PhotoLiveViewLink>rtsp://192.168.1.254/xxx.mov</PhotoLiveViewLink>
 </LIST>";
 
