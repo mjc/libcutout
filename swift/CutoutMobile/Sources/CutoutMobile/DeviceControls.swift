@@ -27,3 +27,29 @@ public typealias DeviceActionStatus = CutoutMobileFFI.MobileDeviceActionStatusDt
 public typealias DeviceActionNextStep = CutoutMobileFFI.MobileDeviceActionNextStepDto
 public typealias DeviceActionStep = CutoutMobileFFI.MobileDeviceActionStepDto
 public typealias DeviceActionSubmissionError = CutoutMobileFFI.MobileDeviceActionSubmissionError
+
+public extension DeviceSettingsDescriptorSnapshot {
+    /// Returns the descriptor for one semantic setting, if this profile exposes it.
+    func descriptor(for id: DeviceSettingID) -> DeviceSettingDescriptor? {
+        descriptors.first { $0.id == id }
+    }
+}
+
+public extension DeviceSettingsSnapshot {
+    /// Returns the lifecycle snapshot for one semantic setting, if it exists.
+    func setting(for id: DeviceSettingID) -> DeviceSettingSnapshot? {
+        settings.first { $0.id == id }
+    }
+}
+
+public extension DeviceControlsSnapshot {
+    /// Returns the descriptor for one semantic setting, if this profile exposes it.
+    func descriptor(for id: DeviceSettingID) -> DeviceSettingDescriptor? {
+        settingDescriptors.first { $0.id == id }
+    }
+
+    /// Returns the lifecycle snapshot for one semantic setting, if it exists.
+    func setting(for id: DeviceSettingID) -> DeviceSettingSnapshot? {
+        settings.first { $0.id == id }
+    }
+}

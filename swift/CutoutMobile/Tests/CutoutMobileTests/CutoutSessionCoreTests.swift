@@ -445,7 +445,7 @@ final class CutoutSessionCoreTests: XCTestCase {
             XCTAssertEqual($0 as? DeviceSettingSubmissionError, .Unverified)
         }
         try core.submitDeviceSetting(token: current, id: .highBeam, value: .boolean(value: true))
-        let highBeam = try XCTUnwrap(core.deviceControlsSnapshot.settings.first { $0.id == .highBeam })
+        let highBeam = try XCTUnwrap(core.deviceControlsSnapshot.setting(for: .highBeam))
         XCTAssertEqual(highBeam.requested, .boolean(value: true))
         XCTAssertEqual(highBeam.status, .sentWithoutConfirmation)
         XCTAssertNil(highBeam.current)

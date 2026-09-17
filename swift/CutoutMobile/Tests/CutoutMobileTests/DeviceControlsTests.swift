@@ -56,7 +56,7 @@ final class DeviceControlsTests: XCTestCase {
         let requested = DeviceSettingValue.boolean(value: true)
         _ = try state.submitSetting(token: token, id: .highBeam, value: requested, monotonicMs: 2)
         let snapshot: DeviceSettingsSnapshot = state.settingsSnapshot()
-        let highBeam = try XCTUnwrap(snapshot.settings.first { $0.id == .highBeam })
+        let highBeam = try XCTUnwrap(snapshot.setting(for: .highBeam))
         XCTAssertEqual(snapshot.connection.token, token)
         XCTAssertEqual(highBeam.requested, requested)
         XCTAssertNil(highBeam.current)
@@ -88,15 +88,19 @@ final class DeviceControlsTests: XCTestCase {
         let ordinary = state.deviceControlsSnapshot()
         XCTAssertFalse(ordinary.validationAuthorized)
         XCTAssertEqual(
-            ordinary.settingDescriptors.first { $0.id == .pwmTiltback }?.access,
+            ordinary.descriptor(for: .pwmTiltback)?.access,
             .unverified
+        )
+        XCTAssertEqual(
+            ordinary.descriptor(for: .pwmTiltback)?.id,
+            .pwmTiltback
         )
 
         XCTAssertTrue(state.authorizeDeviceControls(token: token))
         let validation = state.deviceControlsSnapshot()
         XCTAssertTrue(validation.validationAuthorized)
         XCTAssertEqual(
-            validation.settingDescriptors.first { $0.id == .pwmTiltback }?.access,
+            validation.descriptor(for: .pwmTiltback)?.access,
             .writable
         )
 
@@ -110,5 +114,20 @@ final class DeviceControlsTests: XCTestCase {
         _ = state.observeConnectionNotification(token: replacement, bytes: frame)
         _ = state.resolveDeviceSession(token: replacement, identificationComplete: false, nowMs: 3)
         XCTAssertTrue(state.authorizeDeviceControls(token: replacement))
+    }
+
+    func testSemanticSnapshotLookupDoesNotDependOnVendorNames() throws {
+        let state = CutoutSessionStateHandle()
+        let token = try XCTUnwrap(state.beginConnectionAttempt(platformIdentifier: "A", nowMs: 0).token)
+        _ = state.connectionLinkEstablished(token: token)
+        var frame = Data(repeating: 0, count: 42)
+        frame.replaceSubrange(0..<4, with: [0xdc, 0x5a, 0x5c, 38])
+        frame.replaceSubrange(28..<30, with: [0xa7, 0xf8])
+        _ = state.observeConnectionNotification(token: token, bytes: frame)
+        _ = state.resolveDeviceSession(token: token, identificationComplete: false, nowMs: 1)
+
+        let controls = state.deviceControlsSnapshot()
+        XCTAssertEqual(controls.descriptor(for: .highBeam)?.group, .interface)
+        XCTAssertNil(controls.setting(for: .highBeam))
     }
 }

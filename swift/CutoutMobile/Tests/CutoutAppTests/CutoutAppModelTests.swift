@@ -457,15 +457,15 @@ final class CutoutAppModelTests: XCTestCase {
         let token = try XCTUnwrap(snapshot.connection.token)
         XCTAssertEqual(snapshot.connection.readiness, .verified)
         XCTAssertEqual(snapshot.settingDescriptors, core.deviceControlsSnapshot.settingDescriptors)
-        XCTAssertEqual(snapshot.settingDescriptors.first { $0.id == .pwmTiltback }?.access, .unverified)
+        XCTAssertEqual(snapshot.descriptor(for: .pwmTiltback)?.access, .unverified)
         XCTAssertThrowsError(try model.submitDeviceSetting(token: token, id: .pwmTiltback, value: .number(value: 80))) {
             XCTAssertEqual($0 as? DeviceSettingSubmissionError, .Unverified)
         }
         try model.submitDeviceSetting(token: token, id: .highBeam, value: .boolean(value: true))
         await Self.waitUntil("unconfirmed request publication") {
-            model.deviceControlsSnapshot?.settings.first { $0.id == .highBeam }?.requested == .boolean(value: true)
+            model.deviceControlsSnapshot?.setting(for: .highBeam)?.requested == .boolean(value: true)
         }
-        let highBeam = try XCTUnwrap(model.deviceControlsSnapshot?.settings.first { $0.id == .highBeam })
+        let highBeam = try XCTUnwrap(model.deviceControlsSnapshot?.setting(for: .highBeam))
         XCTAssertEqual(highBeam.status, .sentWithoutConfirmation)
         XCTAssertNil(highBeam.current)
         core.onPhaseChange?(.failed(.sessionFailed("write channel unavailable")))

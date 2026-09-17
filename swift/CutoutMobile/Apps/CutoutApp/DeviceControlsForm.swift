@@ -25,7 +25,7 @@ struct DeviceControlsForm: View {
             ForEach(snapshot.settingDescriptors, id: \.id) { descriptor in
                 DeviceSettingRow(
                     descriptor: descriptor,
-                    state: snapshot.settings.first { $0.id == descriptor.id },
+                    state: snapshot.setting(for: descriptor.id),
                     submit: { value in
                         guard let token = snapshot.connection.token else { throw DeviceSettingSubmissionError.ConnectionUnavailable }
                         try submitSetting(token, descriptor.id, value)
