@@ -10,7 +10,7 @@ use cutout_ride_maps::{
     RouteDisplayBudget, RouteDisplayPoint, RouteEndpointMetadata, RoutePrivacyPolicy,
     RouteProjectionAccumulator, RouteSegmentDisplayMetadata, RouteTelemetryState, RouteViewport,
     TransitionError, VehicleIdentity, WallClockUnixMilliseconds, count_segment_runs,
-    route_camera_region, route_segment_display_metadata,
+    route_camera_region, route_camera_region_with_privacy, route_segment_display_metadata,
 };
 use hex::encode as hex_encode;
 use rusqlite::{Connection, ErrorCode, OptionalExtension, params};
@@ -1478,6 +1478,7 @@ pub struct LocationWriteResult {
 pub struct RoutePointProjection {
     points: Vec<RouteDisplayPoint>,
     camera_region: Option<RouteCameraRegion>,
+    canonical_camera_region: Option<RouteCameraRegion>,
     source_point_count: u64,
     source_segment_count: u64,
     candidate_point_count: u64,
@@ -1512,6 +1513,12 @@ impl RoutePointProjection {
     #[must_use]
     pub const fn camera_region(&self) -> Option<RouteCameraRegion> {
         self.camera_region
+    }
+
+    /// Returns the camera region for all canonical route points after privacy projection.
+    #[must_use]
+    pub const fn canonical_camera_region(&self) -> Option<RouteCameraRegion> {
+        self.canonical_camera_region
     }
 
     /// Returns the complete durable point count before LOD or viewport filtering.
@@ -6997,6 +7004,12 @@ fn project_route_points(
         return Ok(RoutePointProjection {
             points: Vec::new(),
             camera_region: None,
+            canonical_camera_region: canonical_route_camera_region(
+                connection,
+                &ride_id,
+                privacy,
+                cancellation,
+            )?,
             source_point_count: counts.source_point_count,
             source_segment_count: counts.source_segment_count,
             candidate_point_count: counts.candidate_point_count,
@@ -7020,6 +7033,12 @@ fn project_route_points(
     Ok(RoutePointProjection {
         points: projected.points,
         camera_region: projected.camera_region,
+        canonical_camera_region: canonical_route_camera_region(
+            connection,
+            &ride_id,
+            privacy,
+            cancellation,
+        )?,
         source_point_count: counts.source_point_count,
         source_segment_count: counts.source_segment_count,
         candidate_point_count: counts.candidate_point_count,
@@ -7029,6 +7048,37 @@ fn project_route_points(
         endpoint_metadata,
         segments: projected.segments,
     })
+}
+
+fn canonical_route_camera_region(
+    connection: &Connection,
+    ride_id: &str,
+    privacy: RoutePrivacyPolicy,
+    cancellation: Option<&RouteProjectionCancellation>,
+) -> Result<Option<RouteCameraRegion>, StorageError> {
+    projection_checkpoint(cancellation)?;
+    let mut statement = projection_sqlite(
+        connection.prepare(
+            "SELECT latitude_e7, longitude_e7
+             FROM ride_points WHERE ride_id = ?1 ORDER BY sequence ASC",
+        ),
+        cancellation,
+    )?;
+    let mut rows = projection_sqlite(statement.query([ride_id]), cancellation)?;
+    let mut coordinates = Vec::new();
+    while let Some(row) = projection_sqlite(rows.next(), cancellation)? {
+        projection_checkpoint(cancellation)?;
+        let coordinate =
+            Coordinate::from_fixed_parts(row.get(0)?, row.get(1)?).map_err(|error| {
+                rusqlite::Error::FromSqlConversionFailure(
+                    0,
+                    rusqlite::types::Type::Integer,
+                    Box::new(error),
+                )
+            })?;
+        coordinates.push(coordinate);
+    }
+    Ok(route_camera_region_with_privacy(coordinates, privacy))
 }
 
 fn project_route_candidates(

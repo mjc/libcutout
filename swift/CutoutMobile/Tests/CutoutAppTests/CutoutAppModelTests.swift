@@ -784,6 +784,7 @@ final class CutoutAppModelTests: XCTestCase {
         }
 
         XCTAssertTrue(model.rideMapHistoryPointsTruncated)
+        let initialCameraFitVersion = model.rideMapHistoryDetailCameraFitVersion
         model.loadRoutePreviewMapHistory()
         await Self.waitUntil("largest bounded history route preview", maxTurns: 100_000) {
             model.rideMapHistoryDisplayPoints.count == 4_097
@@ -792,6 +793,10 @@ final class CutoutAppModelTests: XCTestCase {
 
         XCTAssertEqual(model.rideMapHistoryDisplayPoints.count, 4_097)
         XCTAssertFalse(model.rideMapHistoryPointsTruncated)
+        XCTAssertNotEqual(
+            model.rideMapHistoryDetailCameraFitVersion,
+            initialCameraFitVersion
+        )
     }
 
     @MainActor

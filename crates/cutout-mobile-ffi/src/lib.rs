@@ -7768,6 +7768,8 @@ pub struct MobileRideMapRouteProjectionDto {
     pub canonical_end_visible: bool,
     /// Rust-computed camera region for the bounded display points.
     pub camera_region: Option<MobileRideMapCameraRegionDto>,
+    /// Rust-computed camera region for all canonical route points after privacy projection.
+    pub canonical_camera_region: Option<MobileRideMapCameraRegionDto>,
     /// Rust-owned distinction between an empty ride and an empty viewport.
     pub route_presence: MobileRideMapRoutePresenceDto,
 }
@@ -8350,6 +8352,9 @@ fn mobile_route_projection_dto(
         canonical_start_visible: projection.endpoint_metadata().start_visible(),
         canonical_end_visible: projection.endpoint_metadata().end_visible(),
         camera_region: projection.camera_region().map(mobile_camera_region_dto),
+        canonical_camera_region: projection
+            .canonical_camera_region()
+            .map(mobile_camera_region_dto),
         route_presence: mobile_route_presence(
             projection.source_point_count(),
             projection.candidate_point_count(),
@@ -11446,6 +11451,11 @@ fn project_live_route_points(
     let camera_region =
         ride_maps::route_camera_region(projected_points.iter().map(|point| point.coordinate()))
             .map(mobile_camera_region_dto);
+    let canonical_camera_region = ride_maps::route_camera_region_with_privacy(
+        points.iter().map(|point| point.sample().coordinate()),
+        privacy,
+    )
+    .map(mobile_camera_region_dto);
     let segments = ride_maps::route_segment_display_metadata(projected_points.iter().copied())
         .into_iter()
         .map(mobile_segment_display_metadata_dto)
@@ -11470,6 +11480,7 @@ fn project_live_route_points(
         canonical_start_visible: endpoint_metadata.start_visible(),
         canonical_end_visible: endpoint_metadata.end_visible(),
         camera_region,
+        canonical_camera_region,
         route_presence: mobile_route_presence(source_point_count, candidate_point_count),
     })
 }

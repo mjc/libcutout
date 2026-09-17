@@ -3,6 +3,17 @@ import CutoutMobileFFI
 @testable import CutoutMobile
 
 final class RideMapStateTests: XCTestCase {
+    func testInvalidConnectionIdentitySurfacesTypedRustError() {
+        let state = MobileRideMapState()
+        XCTAssertThrowsError(try state.ensureRecordingForVehicle(
+            platformIdentifier: "   ",
+            atMs: 1_000,
+            automaticPolicy: .startAndResume
+        )) { error in
+            XCTAssertEqual(error as? MobileRideMapError, .invalidVehicleIdentity)
+        }
+    }
+
     func testActiveSnapshotCarriesAsyncLocationRecordingToken() throws {
         let state = MobileRideMapState()
 
