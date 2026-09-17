@@ -251,6 +251,17 @@ public struct CameraReadOnlyEvidence: Equatable, Sendable {
         advertises(commandID: 4001)
     }
 
+    /// The bounded `3014` status pairs used when proving a mutating command
+    /// capability. The command target does not need to copy the media list.
+    var commandCapabilityConfiguration: [MobileNovatekCommandStatusDto] {
+        configuration.map {
+            MobileNovatekCommandStatusDto(
+                commandId: $0.commandID,
+                status: $0.status
+            )
+        }
+    }
+
     public init(_ snapshot: MobileNovatekReadOnlySnapshotDto) {
         self.init(
             firmwareVersion: snapshot.firmwareVersion,
