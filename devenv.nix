@@ -29,9 +29,6 @@ let
     export PATH="${nightlyRust}/bin:${pkgs.cargo-fuzz}/bin:$PATH"
     exec cargo fuzz "$@"
   '';
-  cutoutSwift = pkgs.writeShellScriptBin "swift" ''
-    exec ${pkgs.bash}/bin/bash "$DEVENV_ROOT/scripts/swift.sh" "$@"
-  '';
 in
 {
   languages.rust = {
@@ -54,7 +51,6 @@ in
   ]
   ++ lib.optionals pkgs.stdenv.isDarwin [
     pkgs.cargo-swift
-    cutoutSwift
   ]
   ++ lib.optionals pkgs.stdenv.isLinux [
     pkgs.dbus
@@ -127,11 +123,11 @@ in
   '';
 
   tasks."test:swift-package" = swiftTask ''
-    swift test --package-path "$DEVENV_ROOT/swift/CutoutMobile"
+    cargo cutout swift -- test --package-path "$DEVENV_ROOT/swift/CutoutMobile"
   '';
 
   tasks."test:swift-settings-simulator" = swiftTask ''
-    swift test \
+    cargo cutout swift -- test \
       --package-path "$DEVENV_ROOT/swift/CutoutMobile" \
       --filter AeroSettingsSimulatorTests
   '';
@@ -139,7 +135,7 @@ in
   tasks."validate:aero-live-connection" =
     (swiftTask ''
       echo "libcutout_commit=$(git rev-parse HEAD)"
-      exec swift run \
+      exec cargo cutout swift -- run \
         --package-path "$DEVENV_ROOT/swift/CutoutMobile" \
         CutoutMobileLiveValidator \
         "''${CUTOUT_AERO_VALIDATION_TIMEOUT:-45}"
@@ -166,7 +162,7 @@ in
     if [[ -n "$platform_identifier" ]]; then
       args+=("$platform_identifier")
     fi
-    exec swift run \
+    exec cargo cutout swift -- run \
       --package-path "$DEVENV_ROOT/swift/CutoutMobile" \
       MelkLightingLiveValidator \
       "''${args[@]}"
@@ -230,7 +226,7 @@ in
   tasks."devenv:enterTest".exec = lib.mkIf pkgs.stdenv.isDarwin swiftToolchainCheck;
 
   enterShell = lib.optionalString pkgs.stdenv.isDarwin ''
-    export PATH="${cutoutSwift}/bin:/usr/bin:/bin:/usr/sbin:/sbin:$PATH"
+    export PATH="/usr/bin:/bin:/usr/sbin:/sbin:$PATH"
     # Nix's SDK setup can supply DEVELOPER_DIR independently of SDKROOT.
     # Keep direct Swift commands on the same Xcode toolchain as the iOS tasks.
     export DEVELOPER_DIR="''${CUTOUT_DEVELOPER_DIR:-/Applications/Xcode-beta.app/Contents/Developer}"

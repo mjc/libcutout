@@ -38,7 +38,6 @@ source "$script_directory/swift-package-common.sh"
 
 root="$(cutout_repo_root)"
 cd "$root"
-cutout_ensure_swift_ffi_build_input "$root"
 
 cutout_use_xcode_developer_dir
 
@@ -263,7 +262,7 @@ if [[ "$quiet" == true ]]; then
 fi
 
 if [[ "$clean" == true ]]; then
-  /usr/bin/xcrun xcodebuild "${xcodebuild_args[@]}" clean
+  cargo cutout xcodebuild -- "${xcodebuild_args[@]}" clean
 fi
 
 if [[ "$mode" == "enumerate-tests" ]]; then
@@ -272,7 +271,7 @@ if [[ "$mode" == "enumerate-tests" ]]; then
     exit 2
   fi
   mkdir -p "$(dirname "$enumeration_output")"
-  /usr/bin/xcrun xcodebuild \
+  cargo cutout xcodebuild -- \
     "${xcodebuild_args[@]}" \
     -parallel-testing-enabled NO \
     -enumerate-tests \
@@ -303,7 +302,7 @@ if [[ "$mode" == "test" ]]; then
   test_status=0
   test_started_at=$SECONDS
   if timeout --foreground --kill-after=30 "$ui_test_run_timeout" \
-    /usr/bin/xcrun xcodebuild \
+    cargo cutout xcodebuild -- \
     "${xcodebuild_args[@]}" \
     -parallel-testing-enabled NO \
     -collect-test-diagnostics never \
@@ -332,4 +331,4 @@ if [[ "$mode" == "test" ]]; then
   exit "$test_status"
 fi
 
-/usr/bin/xcrun xcodebuild "${xcodebuild_args[@]}" build-for-testing
+cargo cutout xcodebuild -- "${xcodebuild_args[@]}" build-for-testing

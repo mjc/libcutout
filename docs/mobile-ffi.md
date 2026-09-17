@@ -4,24 +4,31 @@
 the Swift and Kotlin clients. Rust owns the transport-independent DTOs and
 concrete protocol sessions; platform code owns Bluetooth and UI concerns.
 
-The Swift app consumes a generated Cargo Swift package in ignored build state:
+The Swift app consumes a generated package selector in ignored build state:
 
 ```text
-target/swift-ffi/CutoutMobileFFI
+target/swift-ffi
 ├── Package.swift
-├── Sources/CutoutMobileFFI/cutout_mobile_ffi.swift
-└── cutout_mobile_ffiFFI.xcframework
+└── generations/<receipt>/CutoutMobileFFI
+    ├── Sources/CutoutMobileFFI/cutout_mobile_ffi.swift
+    └── cutout_mobile_ffiFFI.xcframework
 ```
 
 The XCFramework contains static iOS device, iOS simulator, and macOS slices.
-`swift/CutoutMobile/Package.swift` depends on that package by local path, so
-SwiftPM, Xcode, SourceKit, tests, and app builds all use the same artifacts.
-The devenv `swift` command and repository Swift/Xcode scripts ensure that the
-package exists, contains the required architectures, and was generated from
-the current Rust inputs before building. `swift build`, `swift test`, and
-`swift run` automatically prepare this dependency when targeting CutoutMobile,
-including from a package subdirectory. Normal Swift-only work does not set
-dynamic-library paths or pass custom linker flags.
+`swift/CutoutMobile/Package.swift` depends on `target/swift-ffi` by local path.
+The selector manifest contains literal paths to the Sources and XCFramework
+inside one immutable `generations/<receipt>/CutoutMobileFFI` directory. SwiftPM,
+Xcode, SourceKit, tests, and app builds therefore resolve a specific generation.
+Publishing a new selector leaves previously selected generations intact.
+
+Normal tasks use `cargo cutout swift -- <native swift args>` or
+`cargo cutout xcodebuild -- <native xcodebuild args>`. The shared Rust pipeline
+ensures current FFI inputs, then invokes `/usr/bin/xcrun swift` or
+`/usr/bin/xcrun xcodebuild` in the same invocation. No rerun is needed after
+generation. Devenv leaves native `swift` on PATH and selects Xcode beta with its
+matching SDK. The build uses no watcher, mutable generation symlink, cache
+deletion, custom exported symbols, dynamic-library paths, or per-consumer
+linker flags.
 
 ## Regenerating the Swift package
 
@@ -32,23 +39,42 @@ output remains ignored):
 devenv tasks run build:swift-ffi-package
 ```
 
+The standalone ensure command is `devenv shell -- cargo cutout swift-ffi`.
+
 Cargo Swift 0.11 cannot spell the Xcode 27 platform enum in its generated
 manifest, so the generated binary package uses compatible iOS 18 and macOS 15
 floors. The app package and Xcode targets still require iOS 27 and macOS 27.
-The Swift FFI generator records a fingerprint of the Rust source inputs beside
-the package. All repository Swift/Xcode entry points run the same idempotent
-ensure operation before building and regenerate only when the package is
-missing, incomplete, stale, or has a wrong-architecture slice.
+Every supported prepare operation invokes `cargo swift`, including when the
+source hash and selected generation are unchanged. Cargo owns incremental
+compilation and configuration freshness; the project has no separate Cargo
+environment resolver or source-fingerprint early reuse shortcut.
+
+The generator keeps private source snapshots in the repository's sibling
+`.cutout-ffi-sources/<repository-path-hash>/<source-hash>` directory. This preserves
+Cargo's ancestor/global configuration lookup without loading the project's
+configuration twice. It copies those sources once, preserving compilation paths
+and mtimes across repeated prepares so Cargo can reuse its cache. A lock
+serializes generation and holds the selector stable throughout supported builds.
+The native output receipt identifies the immutable
+generation; unchanged output avoids rewriting the selector, but never skips
+the Cargo invocation.
 
 Every build of the shared `CutoutMobile` target also runs the `VerifyRustArtifact`
-build-tool plugin. Its sandboxed Rust checker compares the source fingerprint
-and hashes of the bindings, manifest, headers, module maps, and static libraries
-with the receipt written after successful generation. Missing or changed inputs
-fail the build, including when a direct native Swift/Xcode invocation bypasses
-devenv preparation. The checker writes only its plugin output directory.
-Generation refuses to publish if Rust inputs changed while it was compiling.
+build-tool plugin. Its sandboxed Rust checker validates the generation pinned
+by the resolved package graph, comparing the source fingerprint and hashes of
+the bindings, manifest, headers, module maps, and static libraries with its
+receipt. Missing or changed inputs fail the build. The checker writes only its
+plugin output directory. Generation refuses to publish if Rust inputs changed
+while it was compiling.
 
-A generated Swift source records the Rust build identity. The plugin emits a
+For a direct native build, the checker also compares the pinned generation's
+receipt with the selected generation's receipt. This checks against the
+currently selected prepared output; it does not inspect the actual Rust
+toolchain or resolve Cargo configuration. The selected generation is expected
+to have been prepared with the current build configuration. Use the explicit
+Cargo pipeline to establish that freshness.
+
+A generated Swift source records the Rust source identity. The plugin emits a
 second Swift source with the verified artifact identity, preserving it when
 unchanged. These compilation inputs invalidate linking after an implementation-only
 Rust change even when the UniFFI interface is identical. Generated receipts and
@@ -57,18 +83,17 @@ checker executables remain ignored alongside the generated package.
 Use the normal command; no separate regeneration invocation is needed:
 
 ```console
-devenv shell -- swift test --package-path swift/CutoutMobile
+devenv shell -- cargo cutout swift -- test --package-path swift/CutoutMobile
+devenv shell -- cargo cutout xcodebuild -- -project swift/CutoutMobile/CutoutApp.xcodeproj -scheme CutoutApp -destination 'generic/platform=iOS Simulator' ARCHS=arm64 ONLY_ACTIVE_ARCH=YES build
 ```
 
-The project wrapper rejects `test --skip-build` and `run --skip-build`: those
-commands skip the build graph and cannot check freshness. An explicit native
-`/usr/bin/swift` invocation bypasses automatic preparation, so stale inputs fail
-at the plugin instead. Opening Xcode still requires the initial package bootstrap.
-
-Devenv environment reload watches configuration, not Rust build inputs. A future
-optional watcher can warm the same ensure operation; it cannot replace build-time
-verification. Avoid regenerating the package concurrently with a native build
-that is consuming it.
+Normal tasks ensure FFI and run the native incremental build. Direct native
+Swift or Xcode builds check their pinned inputs through the plugin, but the
+plugin cannot generate Rust artifacts before package graph resolution. A missing
+selector therefore needs standalone preparation; stale inputs require the
+explicit Cargo pipeline or standalone ensure before a new native build.
+Commands that skip building also skip plugin verification and cannot establish
+freshness. There is no hidden Swift executable interception or argument parser.
 
 The generated package is never committed. Do not copy its sources or archives
 into the app package.
@@ -98,6 +123,14 @@ The `cutout-dev` Rust tests check that generated FFI inputs are present,
 nonempty, and include a package manifest. They run with the workspace tests;
 there is no separate shell validation layer.
 
+The native warm-cache regression changes only a Rust function's implementation
+and verifies A then B at runtime through default SwiftPM and Xcode, without
+cleaning either build directory:
+
+```console
+devenv shell -- bash tests/fixtures/ffi-freshness/run.sh --xcode
+```
+
 Run the Swift package tests, including the mobile-boundary protocol and
 Bluetooth transport assertions:
 
@@ -111,8 +144,9 @@ Build the real iOS UI-test graph without running UI automation:
 devenv tasks run build:ios-ui-tests
 ```
 
-Every UI-test invocation performs Xcode's normal incremental
-`build-for-testing` before it runs. There is deliberately no
+Every UI-test invocation uses the shared Rust pipeline followed by Xcode's
+normal incremental `test` action; `--build-only` uses `build-for-testing`.
+There is deliberately no
 `test-without-building` shortcut that can reuse an app from an older source
 revision.
 
@@ -142,8 +176,8 @@ does not run this project gate automatically so entering a shell stays cheap.
 ## SourceKit and app commands
 
 The shared ensure operation prepares the ignored package before activating
-SourceKit or building Swift. It is safe to call repeatedly; an unchanged
-fingerprint is a no-op.
+SourceKit or building Swift. Each call invokes `cargo swift`; Cargo reuses
+unchanged compilation inputs, and unchanged output leaves the selector intact.
 
 Prepare the generated dependency for SourceKit or Xcode with:
 
@@ -222,6 +256,12 @@ while the export command runs. SecretSpec does not commit the material.
 release-testing IPA with the `ios-ad-hoc-export` scope. It uses Xcode's current
 export method and the signing environment documented in the shared Swift
 tooling.
+
+Default exports always build and verify a current archive through the shared
+Rust pipeline, even when `CUTOUT_IOS_AD_HOC_ARCHIVE_PATH` already exists.
+Set `CUTOUT_IOS_AD_HOC_ARCHIVE` explicitly to export an existing archive without
+rebuilding; a missing explicit archive is an error. Failed builds stop the
+workflow without deleting existing app products or archives.
 
 Xcode beta may still emit App Intents metadata warnings even though the app has
 no App Intents dependency. Those warnings come from Xcode's build pipeline and

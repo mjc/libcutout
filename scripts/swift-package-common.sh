@@ -60,10 +60,6 @@ cutout_verify_embedded_spotify_client_id() {
   fi
 }
 
-cutout_ensure_swift_ffi_build_input() {
-  (cd "$1" && cargo cutout swift-ffi)
-}
-
 cutout_create_ios_ui_test_result_bundle() {
   local derived_data result_directory
   derived_data="$1"
@@ -123,19 +119,15 @@ cutout_build_ios_app_bundle() {
   product="$derived_data/Build/Products/$configuration-iphoneos/CutoutApp.app"
 
   cutout_use_xcode_developer_dir
-  cutout_ensure_swift_ffi_build_input "$root" || return
 
-  rm -rf "$product"
-
-  if ! /usr/bin/xcrun xcodebuild \
+  if ! (cd "$root" && cargo cutout xcodebuild -- \
       -project "$root/$project" \
       -scheme "$scheme" \
       -destination "$destination" \
       -derivedDataPath "$derived_data" \
       -configuration "$configuration" \
       ${spotify_client_id:+SPOTIFY_CLIENT_ID="$spotify_client_id"} \
-      build >&2; then
-    rm -rf "$product"
+      build) >&2; then
     return 1
   fi
 
@@ -157,13 +149,12 @@ cutout_archive_ios_release_testing_app() {
   local -a auth_args=()
 
   root="$(cutout_repo_root)"
-  cutout_ensure_swift_ffi_build_input "$root" || return
   project="${CUTOUT_IOS_APP_PROJECT:-swift/CutoutMobile/CutoutApp.xcodeproj}"
   scheme="${CUTOUT_IOS_APP_SCHEME:-CutoutApp}"
   archive_path="${CUTOUT_IOS_AD_HOC_ARCHIVE_PATH:-$root/target/xcode-ad-hoc/CutoutApp.xcarchive}"
   development_team="$(cutout_ios_development_team)"
   bundle_id="${CUTOUT_IOS_APP_BUNDLE_ID:-}"
-  spotify_client_id="$(cutout_require_spotify_client_id)"
+  spotify_client_id="$(cutout_require_spotify_client_id)" || return
 
   cutout_use_xcode_developer_dir
 
@@ -177,23 +168,20 @@ cutout_archive_ios_release_testing_app() {
     done < <(cutout_xcode_auth_args)
   fi
 
-  rm -rf "$archive_path"
-
-  if ! /usr/bin/xcrun xcodebuild \
+  if ! (cd "$root" && cargo cutout xcodebuild -- \
       -project "$root/$project" \
       -scheme "$scheme" \
       -destination "generic/platform=iOS" \
       -archivePath "$archive_path" \
       -allowProvisioningUpdates \
-      "${auth_args[@]}" \
+      ${auth_args[@]+"${auth_args[@]}"} \
       CODE_SIGNING_ALLOWED=YES \
       CODE_SIGNING_REQUIRED=YES \
       CODE_SIGN_STYLE=Automatic \
       DEVELOPMENT_TEAM="$development_team" \
       ${bundle_id:+PRODUCT_BUNDLE_IDENTIFIER="$bundle_id"} \
       SPOTIFY_CLIENT_ID="$spotify_client_id" \
-      archive >&2; then
-    rm -rf "$archive_path"
+      archive) >&2; then
     return 1
   fi
 
@@ -215,10 +203,9 @@ cutout_export_ios_ad_hoc_ipa() {
   local -a auth_args=()
 
   root="$(cutout_repo_root)"
-  archive_path="${CUTOUT_IOS_AD_HOC_ARCHIVE_PATH:-$root/target/xcode-ad-hoc/CutoutApp.xcarchive}"
   export_path="${CUTOUT_IOS_AD_HOC_EXPORT_PATH:-$root/target/xcode-ad-hoc/export}"
-  archive_path="${CUTOUT_IOS_AD_HOC_ARCHIVE:-$archive_path}"
-  if [[ -n "${CUTOUT_IOS_AD_HOC_ARCHIVE:-}" && ! -d "$archive_path" ]]; then
+  archive_path="${CUTOUT_IOS_AD_HOC_ARCHIVE:-}"
+  if [[ -n "$archive_path" && ! -d "$archive_path" ]]; then
     printf 'CUTOUT_IOS_AD_HOC_ARCHIVE does not exist: %s\n' "$archive_path" >&2
     return 1
   fi
@@ -232,8 +219,8 @@ cutout_export_ios_ad_hoc_ipa() {
     signing_style="manual"
   fi
 
-  if [[ ! -d "$archive_path" ]]; then
-    archive_path="$(cutout_archive_ios_release_testing_app)"
+  if [[ -z "$archive_path" ]]; then
+    archive_path="$(cutout_archive_ios_release_testing_app)" || return
   fi
 
   if [[ -n "${CUTOUT_APPSTORE_AUTH_KEY_PATH:-}" ]]; then
@@ -277,7 +264,7 @@ PY
     -exportPath "$export_path" \
     -exportOptionsPlist "$options_plist" \
     -allowProvisioningUpdates \
-    "${auth_args[@]}" >&2; then
+    ${auth_args[@]+"${auth_args[@]}"} >&2; then
     return 1
   fi
 
