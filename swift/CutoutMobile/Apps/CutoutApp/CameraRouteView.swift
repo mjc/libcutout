@@ -720,10 +720,7 @@ private struct CameraStatusCard: View {
                     Text(localizedAppText("camera.evidence.media_title"))
                         .font(.subheadline.weight(.semibold))
                     LazyVStack(alignment: .leading, spacing: 12) {
-                        ForEach(
-                            Array(readOnlyEvidence.media.prefix(mediaPage * Self.mediaPageSize).enumerated()),
-                            id: \.offset
-                        ) { _, media in
+                        ForEach(readOnlyEvidence.media.prefix(mediaPage * Self.mediaPageSize)) { media in
                         HStack(alignment: .top, spacing: 10) {
                             VStack(alignment: .leading, spacing: 3) {
                                 Text(media.name)

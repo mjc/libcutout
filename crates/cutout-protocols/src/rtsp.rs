@@ -80,6 +80,9 @@ impl RetinaVideoClockRate {
 /// Failure while constructing a bounded encoded video frame.
 #[derive(Clone, Copy, Debug, Eq, Error, PartialEq)]
 pub enum RetinaVideoFrameError {
+    /// The encoded access unit was not a complete length-prefixed H.264 unit.
+    #[error("RTSP video frame is not a valid H.264 access unit")]
+    InvalidAccessUnit,
     /// The encoded access unit exceeded the fixed frame bound.
     #[error("RTSP video frame exceeds {max} bytes")]
     TooLarge {
@@ -92,6 +95,7 @@ pub enum RetinaVideoFrameError {
 #[derive(Debug, Eq, PartialEq)]
 pub struct RetinaVideoFrame {
     data: Vec<u8>,
+    parameter_sets: Vec<Vec<u8>>,
     loss: u16,
     is_random_access_point: bool,
     timestamp: i64,
@@ -234,8 +238,20 @@ impl RetinaVideoFrame {
                 max: RETINA_MAX_VIDEO_FRAME_BYTES,
             });
         }
+        let nals = parse_length_prefixed_access_unit(&data)
+            .map_err(|_| RetinaVideoFrameError::InvalidAccessUnit)?;
+        let sps = nals
+            .iter()
+            .find(|nal| nal.first().is_some_and(|header| header & 0x1f == 7))
+            .map(|nal| nal.to_vec());
+        let pps = nals
+            .iter()
+            .find(|nal| nal.first().is_some_and(|header| header & 0x1f == 8))
+            .map(|nal| nal.to_vec());
+        let parameter_sets = [sps, pps].into_iter().flatten().collect();
         Ok(Self {
             data,
+            parameter_sets,
             loss,
             is_random_access_point,
             timestamp,
@@ -247,6 +263,12 @@ impl RetinaVideoFrame {
     #[must_use]
     pub fn data(&self) -> &[u8] {
         &self.data
+    }
+
+    /// Returns SPS/PPS NAL units found in this validated access unit.
+    #[must_use]
+    pub fn parameter_sets(&self) -> &[Vec<u8>] {
+        &self.parameter_sets
     }
 
     /// Returns the number of lost RTP packets before this frame.
@@ -275,9 +297,10 @@ impl RetinaVideoFrame {
 
     /// Splits the validated frame for a checked FFI DTO conversion.
     #[must_use]
-    pub fn into_parts(self) -> (Vec<u8>, u16, bool, i64, RetinaVideoClockRate) {
+    pub fn into_parts(self) -> (Vec<u8>, Vec<Vec<u8>>, u16, bool, i64, RetinaVideoClockRate) {
         (
             self.data,
+            self.parameter_sets,
             self.loss,
             self.is_random_access_point,
             self.timestamp,
@@ -330,21 +353,11 @@ impl RetinaH264FileSink {
     /// data, or the underlying filesystem error when writing.
     pub fn write_frame(&mut self, frame: &RetinaVideoFrame) -> io::Result<()> {
         let data = frame.data();
-        validate_length_prefixed_access_unit(data)?;
+        let nals = parse_length_prefixed_access_unit(data).map_err(invalid_data)?;
 
-        let mut cursor = 0;
-        while cursor < data.len() {
-            let nal_length = read_nal_length(data, cursor)?;
-            cursor += 4;
-            let nal_end = cursor
-                .checked_add(nal_length)
-                .ok_or_else(|| invalid_data("H.264 NAL length overflows access unit"))?;
+        for nal in nals {
             self.writer.write_all(&[0, 0, 0, 1])?;
-            self.writer.write_all(
-                data.get(cursor..nal_end)
-                    .ok_or_else(|| invalid_data("H.264 NAL length exceeds access unit"))?,
-            )?;
-            cursor = nal_end;
+            self.writer.write_all(nal)?;
         }
         self.frame_count += 1;
         Ok(())
@@ -367,21 +380,24 @@ impl RetinaH264FileSink {
     }
 }
 
-fn validate_length_prefixed_access_unit(data: &[u8]) -> io::Result<()> {
+fn parse_length_prefixed_access_unit(data: &[u8]) -> Result<Vec<&[u8]>, &'static str> {
     if data.is_empty() {
-        return Err(invalid_data("H.264 access unit is empty"));
+        return Err("H.264 access unit is empty");
     }
 
     let mut cursor = 0;
+    let mut nals = Vec::new();
     while cursor < data.len() {
-        let nal_length = read_nal_length(data, cursor)?;
+        let nal_length =
+            read_nal_length(data, cursor).map_err(|_| "H.264 NAL length is invalid")?;
         cursor += 4;
         if nal_length == 0 || nal_length > data.len() - cursor {
-            return Err(invalid_data("H.264 NAL length exceeds access unit"));
+            return Err("H.264 NAL length exceeds access unit");
         }
+        nals.push(&data[cursor..cursor + nal_length]);
         cursor += nal_length;
     }
-    Ok(())
+    Ok(nals)
 }
 
 fn read_nal_length(data: &[u8], cursor: usize) -> io::Result<usize> {
@@ -422,16 +438,6 @@ impl std::fmt::Debug for RetinaRtspPreviewSession {
 }
 
 impl RetinaRtspPreviewSession {
-    /// Connects to an RTSP URI, negotiates TCP interleaving, and starts playback.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if the URI is invalid, no video stream is advertised,
-    /// or Retina cannot complete DESCRIBE/SETUP/PLAY.
-    pub async fn connect(uri: &str) -> Result<Self, RetinaRtspError> {
-        Self::connect_inner(uri, None).await
-    }
-
     /// Connects only when the RTSP host matches the selected camera origin.
     ///
     /// The live-view URI is camera-reported input. Binding it to the origin
@@ -447,13 +453,10 @@ impl RetinaRtspPreviewSession {
         uri: &str,
         expected_address: Ipv4Addr,
     ) -> Result<Self, RetinaRtspError> {
-        Self::connect_inner(uri, Some(expected_address)).await
+        Self::connect_inner(uri, expected_address).await
     }
 
-    async fn connect_inner(
-        uri: &str,
-        expected_address: Option<Ipv4Addr>,
-    ) -> Result<Self, RetinaRtspError> {
+    async fn connect_inner(uri: &str, expected_address: Ipv4Addr) -> Result<Self, RetinaRtspError> {
         tokio::time::timeout(
             RETINA_RTSP_HANDSHAKE_TIMEOUT,
             Self::connect_inner_unbounded(uri, expected_address),
@@ -464,7 +467,7 @@ impl RetinaRtspPreviewSession {
 
     async fn connect_inner_unbounded(
         uri: &str,
-        expected_address: Option<Ipv4Addr>,
+        expected_address: Ipv4Addr,
     ) -> Result<Self, RetinaRtspError> {
         let url = Url::parse(uri).map_err(|_| RetinaRtspError::InvalidUri)?;
         if url.scheme() != "rtsp"
@@ -478,7 +481,7 @@ impl RetinaRtspPreviewSession {
             .host_str()
             .and_then(|host| host.parse::<Ipv4Addr>().ok())
             .ok_or(RetinaRtspError::NonLocalUri)?;
-        if expected_address.is_some_and(|expected| expected != host) {
+        if expected_address != host {
             return Err(RetinaRtspError::OriginMismatch);
         }
         NovatekHttpOrigin::new(host, url.port().unwrap_or(554))
@@ -545,7 +548,6 @@ impl RetinaRtspPreviewSession {
                     let is_random_access_point = frame.is_random_access_point();
                     let timestamp = frame.timestamp();
                     let data = frame.into_data();
-                    ensure_video_frame_size(data.len())?;
                     let clock_rate_hz = RetinaVideoClockRate::from_nonzero(timestamp.clock_rate());
                     return Ok(Some(
                         RetinaVideoFrame::new(
@@ -555,11 +557,14 @@ impl RetinaRtspPreviewSession {
                             timestamp.timestamp(),
                             clock_rate_hz,
                         )
-                        .map_err(
-                            |RetinaVideoFrameError::TooLarge { max }| {
+                        .map_err(|error| match error {
+                            RetinaVideoFrameError::TooLarge { max } => {
                                 RetinaRtspError::VideoFrameTooLarge { max }
-                            },
-                        )?,
+                            }
+                            RetinaVideoFrameError::InvalidAccessUnit => {
+                                RetinaRtspError::Session("invalid H.264 access unit".to_owned())
+                            }
+                        })?,
                     ));
                 }
                 _ => {}
@@ -590,15 +595,6 @@ fn video_configuration_for_stream(
         })
 }
 
-fn ensure_video_frame_size(length: usize) -> Result<(), RetinaRtspError> {
-    if length > RETINA_MAX_VIDEO_FRAME_BYTES {
-        return Err(RetinaRtspError::VideoFrameTooLarge {
-            max: RETINA_MAX_VIDEO_FRAME_BYTES,
-        });
-    }
-    Ok(())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -607,15 +603,27 @@ mod tests {
     #[tokio::test(flavor = "current_thread")]
     async fn rtsp_session_rejects_non_rtsp_or_authorityless_uris_before_network_io() {
         assert!(matches!(
-            RetinaRtspPreviewSession::connect("http://192.168.1.254/xxx.mov").await,
+            RetinaRtspPreviewSession::connect_for_origin(
+                "http://192.168.1.254/xxx.mov",
+                Ipv4Addr::new(192, 168, 1, 254),
+            )
+            .await,
             Err(RetinaRtspError::InvalidUri)
         ));
         assert!(matches!(
-            RetinaRtspPreviewSession::connect("rtsp:///xxx.mov").await,
+            RetinaRtspPreviewSession::connect_for_origin(
+                "rtsp:///xxx.mov",
+                Ipv4Addr::new(192, 168, 1, 254),
+            )
+            .await,
             Err(RetinaRtspError::InvalidUri)
         ));
         assert!(matches!(
-            RetinaRtspPreviewSession::connect("rtsp://example.com/xxx.mov").await,
+            RetinaRtspPreviewSession::connect_for_origin(
+                "rtsp://example.com/xxx.mov",
+                Ipv4Addr::new(192, 168, 1, 254),
+            )
+            .await,
             Err(RetinaRtspError::NonLocalUri)
         ));
     }
@@ -635,8 +643,9 @@ mod tests {
     #[tokio::test(flavor = "current_thread")]
     async fn rtsp_session_rejects_uri_userinfo_before_network_io() {
         assert!(matches!(
-            RetinaRtspPreviewSession::connect(
-                "rtsp://camera-user:camera-password@192.168.1.254/xxx.mov"
+            RetinaRtspPreviewSession::connect_for_origin(
+                "rtsp://camera-user:camera-password@192.168.1.254/xxx.mov",
+                Ipv4Addr::new(192, 168, 1, 254),
             )
             .await,
             Err(RetinaRtspError::InvalidUri)
@@ -656,6 +665,7 @@ mod tests {
         .unwrap();
         assert_eq!(frame.timestamp(), 90_000);
         assert_eq!(frame.clock_rate_hz().get(), 90_000);
+        assert_eq!(frame.parameter_sets(), &[vec![0x67, 0x01]]);
 
         let mut sink = RetinaH264FileSink::create(&path).unwrap();
         sink.write_frame(&frame).unwrap();
@@ -669,34 +679,15 @@ mod tests {
     }
 
     #[test]
-    fn h264_file_sink_rejects_truncated_length_prefix() {
-        let path = std::env::temp_dir().join(format!(
-            "cutout-retina-truncated-{}.h264",
-            std::process::id()
-        ));
+    fn h264_frame_rejects_truncated_length_prefix() {
         let frame = RetinaVideoFrame::new(
             vec![0, 0, 0],
             0,
             false,
             0,
             RetinaVideoClockRate::new(90_000).unwrap(),
-        )
-        .unwrap();
-
-        let mut sink = RetinaH264FileSink::create(&path).unwrap();
-        let error = sink.write_frame(&frame).unwrap_err();
-        assert_eq!(error.kind(), io::ErrorKind::InvalidData);
-        drop(sink);
-        fs::remove_file(path).unwrap();
-    }
-
-    #[test]
-    fn rtsp_frame_size_is_bounded_before_crossing_the_mobile_boundary() {
-        assert!(ensure_video_frame_size(RETINA_MAX_VIDEO_FRAME_BYTES).is_ok());
-        assert!(matches!(
-            ensure_video_frame_size(RETINA_MAX_VIDEO_FRAME_BYTES + 1),
-            Err(RetinaRtspError::VideoFrameTooLarge { .. })
-        ));
+        );
+        assert_eq!(frame, Err(RetinaVideoFrameError::InvalidAccessUnit));
     }
 
     #[test]

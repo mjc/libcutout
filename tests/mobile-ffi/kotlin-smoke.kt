@@ -69,6 +69,7 @@ fun main() {
         sink.writeFrame(
             MobileCameraVideoFrameDto(
                 data = byteArrayOf(0, 0, 0, 2, 0x65, 0x88.toByte()),
+                parameterSets = emptyList(),
                 loss = 0U,
                 isRandomAccessPoint = true,
                 timestamp = 90_000L,
