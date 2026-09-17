@@ -515,6 +515,7 @@ public final class CutoutSessionCore: NSObject {
     private var bmsStorageSessionIdentifier = UUID().uuidString
     private let deviceDetectionSession: DeviceDetectionSession
     private let identificationProbeTransport: IdentificationProbeTransportCoordinator
+    private let rideMapAutomaticRecordingPolicy: MobileRideMapAutomaticRecordingPolicyDto
     private var begodeProbeExpiryWorkItem: DispatchWorkItem?
     private var protocolDetectionExpiryWorkItem: DispatchWorkItem?
     private var pendingDisplayState: RideDisplayState?
@@ -578,7 +579,8 @@ public final class CutoutSessionCore: NSObject {
         reconnectJitter: @escaping () -> Double = { Double.random(in: 0...1) },
         selectedDeviceStore: DevicePickerSelectionStore = DevicePickerSelectionStore(),
         wallClock: @escaping () -> Date = { Date() },
-        rideMapState: MobileRideMapState? = nil
+        rideMapState: MobileRideMapState? = nil,
+        rideMapAutomaticRecordingPolicy: MobileRideMapAutomaticRecordingPolicyDto = .manualOnly
     ) {
         let rustSessionState = CutoutSessionStateHandle()
         self.rustSessionState = rustSessionState
@@ -590,6 +592,7 @@ public final class CutoutSessionCore: NSObject {
         self.clock = clock
         self.wallClock = wallClock
         self.rideMapState = rideMapState
+        self.rideMapAutomaticRecordingPolicy = rideMapAutomaticRecordingPolicy
         self.testScript = testScript
         self.reconnectController = ConnectionReconnectController(scheduler: reconnectScheduler)
         self.reconnectJitter = reconnectJitter
@@ -603,7 +606,8 @@ public final class CutoutSessionCore: NSObject {
         clock: MonotonicClock,
         selectedDeviceStore: DevicePickerSelectionStore = DevicePickerSelectionStore(),
         wallClock: @escaping () -> Date = { Date() },
-        rideMapState: MobileRideMapState? = nil
+        rideMapState: MobileRideMapState? = nil,
+        rideMapAutomaticRecordingPolicy: MobileRideMapAutomaticRecordingPolicyDto = .manualOnly
     ) {
         let rustSessionState = CutoutSessionStateHandle()
         self.rustSessionState = rustSessionState
@@ -615,6 +619,7 @@ public final class CutoutSessionCore: NSObject {
         self.clock = clock
         self.wallClock = wallClock
         self.rideMapState = rideMapState
+        self.rideMapAutomaticRecordingPolicy = rideMapAutomaticRecordingPolicy
         self.reconnectController = ConnectionReconnectController(scheduler: MainQueueReconnectScheduler())
         self.reconnectJitter = { Double.random(in: 0...1) }
         self.selectedDeviceStore = selectedDeviceStore
@@ -1950,7 +1955,8 @@ public final class CutoutSessionCore: NSObject {
                     // notification would restart a ride after the user explicitly stopped it.
                     _ = try rideMapState.ensureRecordingForVehicle(
                         platformIdentifier: platformIdentifier,
-                        atMs: receivedAt.rawValue
+                        atMs: receivedAt.rawValue,
+                        automaticPolicy: self.rideMapAutomaticRecordingPolicy
                     )
                 }
                 _ = try rideMapState.observeVehicleConnection(
@@ -1961,6 +1967,7 @@ public final class CutoutSessionCore: NSObject {
                 if let snapshot = rideMapState.currentSnapshot(atMs: receivedAt.rawValue) {
                     self.publishRideMapSnapshot(snapshot)
                 }
+                self.synchronizeRideMapLocationDemand()
             } catch let error as MobileRideMapError {
                 self.publishRideMapError(error)
                 self.recordRideMapDiagnostic("ride_map_connection_error=\(error)")
@@ -2032,9 +2039,51 @@ public final class CutoutSessionCore: NSObject {
     }
 
     private func publishRideMapAvailability() {
-        let availability: MobileRideMapAvailability =
-            rideMapState?.initializationError == nil ? .ready : .storageUnavailable
+        let availability: MobileRideMapAvailability
+        if rideMapState?.initializationError != nil {
+            availability = .storageUnavailable
+        } else if !CLLocationManager.locationServicesEnabled() {
+            availability = .servicesDisabled
+        } else {
+            switch locationManager.authorizationStatus {
+            case .notDetermined:
+                availability = .permissionRequired
+            case .authorizedAlways, .authorizedWhenInUse:
+                availability = .ready
+            case .denied:
+                availability = .denied
+            case .restricted:
+                availability = .restricted
+            @unknown default:
+                availability = .locationUnavailable
+            }
+        }
         publishOnMain { self.onRideMapAvailabilityChange?(availability) }
+    }
+
+    private func synchronizeRideMapLocationDemand() {
+        let shouldReceiveLocations = onRideMapQueue {
+            rideMapState?.currentSnapshot(atMs: clock.now().rawValue)?.state == .active
+        }
+        onBleQueue {
+            guard shouldReceiveLocations else {
+                locationManager.stopUpdatingLocation()
+                return
+            }
+            guard CLLocationManager.locationServicesEnabled() else { return }
+            switch locationManager.authorizationStatus {
+            case .authorizedAlways, .authorizedWhenInUse:
+                locationManager.startUpdatingLocation()
+            case .notDetermined:
+                guard !didRequestWhenInUseLocationAuthorization else { return }
+                didRequestWhenInUseLocationAuthorization = true
+                locationManager.requestWhenInUseAuthorization()
+            case .denied, .restricted:
+                break
+            @unknown default:
+                break
+            }
+        }
     }
 
     /// Records one bounded music observation independently of BLE frame arrival.
@@ -3440,32 +3489,44 @@ extension CutoutSessionCore: CLLocationManagerDelegate {
         atMs: UInt64,
         lastConnectedVehicle: String?
     ) throws -> MobileRideMapSnapshotDto {
-        try onRideMapQueue {
+        let snapshot = try onRideMapQueue {
             try requireRideMapStateForCommand().startGpsOnly(
                 atMs: atMs,
                 lastConnectedVehicle: lastConnectedVehicle
             )
         }
+        synchronizeRideMapLocationDemand()
+        return snapshot
     }
 
     public func pauseRideMap(atMs: UInt64) throws -> MobileRideMapSnapshotDto {
-        try onRideMapQueue { try requireRideMapStateForCommand().pause(atMs: atMs) }
+        let snapshot = try onRideMapQueue { try requireRideMapStateForCommand().pause(atMs: atMs) }
+        synchronizeRideMapLocationDemand()
+        return snapshot
     }
 
     public func resumeRideMap(atMs: UInt64) throws -> MobileRideMapSnapshotDto {
-        try onRideMapQueue { try requireRideMapStateForCommand().resume(atMs: atMs) }
+        let snapshot = try onRideMapQueue { try requireRideMapStateForCommand().resume(atMs: atMs) }
+        synchronizeRideMapLocationDemand()
+        return snapshot
     }
 
     public func stopRideMap(atMs: UInt64) throws -> MobileRideMapSnapshotDto {
-        try onRideMapQueue { try requireRideMapStateForCommand().stop(atMs: atMs) }
+        let snapshot = try onRideMapQueue { try requireRideMapStateForCommand().stop(atMs: atMs) }
+        synchronizeRideMapLocationDemand()
+        return snapshot
     }
 
     public func saveRideMap() throws -> MobileRideMapSnapshotDto {
-        try onRideMapQueue { try requireRideMapStateForCommand().save() }
+        let snapshot = try onRideMapQueue { try requireRideMapStateForCommand().save() }
+        synchronizeRideMapLocationDemand()
+        return snapshot
     }
 
     public func discardRideMap() throws -> MobileRideMapSnapshotDto {
-        try onRideMapQueue { try requireRideMapStateForCommand().discard() }
+        let snapshot = try onRideMapQueue { try requireRideMapStateForCommand().discard() }
+        synchronizeRideMapLocationDemand()
+        return snapshot
     }
 
     /// Clears the Rust-owned location context before starting a new capture.

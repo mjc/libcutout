@@ -785,12 +785,14 @@ public final class MobileRideMapState: @unchecked Sendable {
 
     public func ensureRecordingForVehicle(
         platformIdentifier: String,
-        atMs: UInt64
+        atMs: UInt64,
+        automaticPolicy: MobileRideMapAutomaticRecordingPolicyDto
     ) throws -> MobileRideMapSnapshotDto {
         try withCore {
             mapSnapshot(try $0.ensureRecordingForVehicle(
                 platformIdentifier: platformIdentifier,
-                atMs: atMs
+                atMs: atMs,
+                automaticPolicy: automaticPolicy
             ))
         }
     }
