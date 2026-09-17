@@ -1106,7 +1106,7 @@ pub fn mobile_parse_novatek_read_only_snapshot(
             .statuses()
             .iter()
             .map(|status| MobileNovatekCommandStatusDto {
-                command_id: status.command_id(),
+                command_id: status.command_id().get(),
                 status: status.status().get(),
             })
             .collect(),

@@ -408,8 +408,8 @@ impl NovatekStatusCode {
 impl NovatekCommandStatus {
     /// Returns the reported command id.
     #[must_use]
-    pub const fn command_id(self) -> u16 {
-        self.command_id.get()
+    pub const fn command_id(self) -> NovatekCommandId {
+        self.command_id
     }
 
     /// Returns the reported status value.
@@ -1556,6 +1556,10 @@ mod tests {
         let configuration = parse_configuration_response(response).expect("fixture is valid");
 
         assert_eq!(configuration.statuses().len(), 3);
+        assert_eq!(
+            configuration.statuses()[0].command_id(),
+            NovatekCommandId::new(1002).unwrap()
+        );
         assert_eq!(
             configuration.status_for(NovatekReadCommand::Command2016),
             Some(NovatekStatusCode::ACKNOWLEDGED)
