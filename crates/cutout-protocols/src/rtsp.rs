@@ -116,17 +116,103 @@ impl RetinaVideoCodec {
     }
 }
 
+/// Nonzero coded dimensions advertised by an RTSP video stream.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct RetinaVideoDimensions {
+    width: NonZeroU32,
+    height: NonZeroU32,
+}
+
+impl RetinaVideoDimensions {
+    /// Creates dimensions, rejecting a missing coded width or height.
+    #[must_use]
+    pub const fn new(width: u32, height: u32) -> Option<Self> {
+        let (Some(width), Some(height)) = (NonZeroU32::new(width), NonZeroU32::new(height)) else {
+            return None;
+        };
+        Some(Self { width, height })
+    }
+
+    /// Returns the coded width in pixels.
+    #[must_use]
+    pub const fn width(self) -> u32 {
+        self.width.get()
+    }
+
+    /// Returns the coded height in pixels.
+    #[must_use]
+    pub const fn height(self) -> u32 {
+        self.height.get()
+    }
+}
+
+/// Failure while constructing a bounded RTSP video configuration.
+#[derive(Clone, Copy, Debug, Eq, Error, PartialEq)]
+pub enum RetinaVideoConfigurationError {
+    /// The stream advertised a zero coded dimension.
+    #[error("RTSP video dimensions must be nonzero")]
+    InvalidDimensions,
+    /// The codec-specific configuration exceeded the fixed bound.
+    #[error("RTSP codec configuration exceeds {max} bytes")]
+    ExtraDataTooLarge {
+        /// Maximum accepted codec-specific configuration size.
+        max: usize,
+    },
+}
+
 /// Codec configuration advertised by the RTSP video stream.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RetinaVideoConfiguration {
-    /// RFC 6381 codec identifier, for example `avc1.4D401E`.
-    pub codec: RetinaVideoCodec,
-    /// Coded width in pixels.
-    pub width: u32,
-    /// Coded height in pixels.
-    pub height: u32,
-    /// Codec-specific decoder configuration (H.264 `avcC` bytes).
-    pub extra_data: Vec<u8>,
+    codec: RetinaVideoCodec,
+    dimensions: RetinaVideoDimensions,
+    extra_data: Vec<u8>,
+}
+
+impl RetinaVideoConfiguration {
+    /// Creates a bounded codec configuration from stream metadata.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RetinaVideoConfigurationError::InvalidDimensions`] for a zero
+    /// coded width or height, or [`RetinaVideoConfigurationError::ExtraDataTooLarge`]
+    /// when codec-specific data exceeds the fixed boundary.
+    pub fn new(
+        codec: RetinaVideoCodec,
+        width: u32,
+        height: u32,
+        extra_data: Vec<u8>,
+    ) -> Result<Self, RetinaVideoConfigurationError> {
+        let dimensions = RetinaVideoDimensions::new(width, height)
+            .ok_or(RetinaVideoConfigurationError::InvalidDimensions)?;
+        if extra_data.len() > RETINA_MAX_VIDEO_CONFIGURATION_BYTES {
+            return Err(RetinaVideoConfigurationError::ExtraDataTooLarge {
+                max: RETINA_MAX_VIDEO_CONFIGURATION_BYTES,
+            });
+        }
+        Ok(Self {
+            codec,
+            dimensions,
+            extra_data,
+        })
+    }
+
+    /// Returns the bounded RFC 6381 codec identifier.
+    #[must_use]
+    pub fn codec(&self) -> &RetinaVideoCodec {
+        &self.codec
+    }
+
+    /// Returns the nonzero coded dimensions.
+    #[must_use]
+    pub const fn dimensions(&self) -> RetinaVideoDimensions {
+        self.dimensions
+    }
+
+    /// Returns the codec-specific decoder configuration without copying.
+    #[must_use]
+    pub fn extra_data(&self) -> &[u8] {
+        &self.extra_data
+    }
 }
 
 impl RetinaVideoFrame {
@@ -489,18 +575,17 @@ fn video_configuration_for_stream(
     stream
         .and_then(client::Stream::parameters)
         .and_then(|parameters| match parameters {
-            ParametersRef::Video(parameters)
-                if parameters.extra_data().len() <= RETINA_MAX_VIDEO_CONFIGURATION_BYTES =>
-            {
-                RetinaVideoCodec::new(parameters.rfc6381_codec()).map(|codec| {
-                    RetinaVideoConfiguration {
+            ParametersRef::Video(parameters) => RetinaVideoCodec::new(parameters.rfc6381_codec())
+                .and_then(|codec| {
+                    let (width, height) = parameters.pixel_dimensions();
+                    RetinaVideoConfiguration::new(
                         codec,
-                        width: parameters.pixel_dimensions().0,
-                        height: parameters.pixel_dimensions().1,
-                        extra_data: parameters.extra_data().to_owned(),
-                    }
-                })
-            }
+                        width,
+                        height,
+                        parameters.extra_data().to_owned(),
+                    )
+                    .ok()
+                }),
             _ => None,
         })
 }
@@ -639,6 +724,28 @@ mod tests {
             ),
             Err(RetinaVideoFrameError::TooLarge {
                 max: RETINA_MAX_VIDEO_FRAME_BYTES,
+            })
+        );
+    }
+
+    #[test]
+    fn rtsp_video_configuration_rejects_invalid_metadata() {
+        let codec = RetinaVideoCodec::new("avc1.4D401E").unwrap();
+        assert_eq!(
+            RetinaVideoConfiguration::new(codec, 0, 480, vec![1, 2, 3]),
+            Err(RetinaVideoConfigurationError::InvalidDimensions)
+        );
+
+        let codec = RetinaVideoCodec::new("avc1.4D401E").unwrap();
+        assert_eq!(
+            RetinaVideoConfiguration::new(
+                codec,
+                848,
+                480,
+                vec![0; RETINA_MAX_VIDEO_CONFIGURATION_BYTES + 1],
+            ),
+            Err(RetinaVideoConfigurationError::ExtraDataTooLarge {
+                max: RETINA_MAX_VIDEO_CONFIGURATION_BYTES,
             })
         );
     }

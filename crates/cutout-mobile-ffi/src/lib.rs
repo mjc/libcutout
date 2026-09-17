@@ -511,11 +511,12 @@ impl From<RetinaVideoFrame> for MobileCameraVideoFrameDto {
 
 impl From<&RetinaVideoConfiguration> for MobileCameraVideoConfigurationDto {
     fn from(configuration: &RetinaVideoConfiguration) -> Self {
+        let dimensions = configuration.dimensions();
         Self {
-            codec: configuration.codec.as_str().to_owned(),
-            width: configuration.width,
-            height: configuration.height,
-            extra_data: configuration.extra_data.clone(),
+            codec: configuration.codec().as_str().to_owned(),
+            width: dimensions.width(),
+            height: dimensions.height(),
+            extra_data: configuration.extra_data().to_owned(),
         }
     }
 }
