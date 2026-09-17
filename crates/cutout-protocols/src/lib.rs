@@ -85,8 +85,8 @@ pub use novatek::{
 };
 mod rtsp;
 pub use rtsp::{
-    RetinaH264FileSink, RetinaRtspError, RetinaRtspPreviewSession, RetinaVideoConfiguration,
-    RetinaVideoFrame,
+    RetinaH264FileSink, RetinaRtspError, RetinaRtspPreviewSession, RetinaVideoCodec,
+    RetinaVideoConfiguration, RetinaVideoFrame,
 };
 mod probe;
 pub use probe::{AeroProbe, FalconProbe, ProtocolProbe};

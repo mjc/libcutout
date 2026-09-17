@@ -9,6 +9,7 @@ use std::{
 };
 
 use crate::NovatekHttpOrigin;
+use arrayvec::ArrayString;
 use futures_util::StreamExt;
 use retina::{
     client,
@@ -20,6 +21,7 @@ use url::Url;
 /// Maximum encoded H.264 access-unit size accepted from an RTSP camera.
 const RETINA_MAX_VIDEO_FRAME_BYTES: usize = 8 * 1024 * 1024;
 const RETINA_MAX_VIDEO_CONFIGURATION_BYTES: usize = 64 * 1024;
+const RETINA_MAX_VIDEO_CODEC_BYTES: usize = 64;
 const RETINA_RTSP_HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
 const RETINA_RTSP_IDLE_TIMEOUT: Duration = Duration::from_secs(15);
 
@@ -64,11 +66,29 @@ pub struct RetinaVideoFrame {
     pub clock_rate_hz: u32,
 }
 
+/// A bounded RFC 6381 codec identifier advertised by an RTSP stream.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RetinaVideoCodec(ArrayString<RETINA_MAX_VIDEO_CODEC_BYTES>);
+
+impl RetinaVideoCodec {
+    /// Retains a codec identifier only when it fits the descriptor bound.
+    #[must_use]
+    pub fn new(value: &str) -> Option<Self> {
+        ArrayString::try_from(value).ok().map(Self)
+    }
+
+    /// Returns the bounded codec identifier.
+    #[must_use]
+    pub fn as_str(&self) -> &str {
+        self.0.as_str()
+    }
+}
+
 /// Codec configuration advertised by the RTSP video stream.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RetinaVideoConfiguration {
     /// RFC 6381 codec identifier, for example `avc1.4D401E`.
-    pub codec: String,
+    pub codec: RetinaVideoCodec,
     /// Coded width in pixels.
     pub width: u32,
     /// Coded height in pixels.
@@ -378,11 +398,13 @@ fn video_configuration_for_stream(
             ParametersRef::Video(parameters)
                 if parameters.extra_data().len() <= RETINA_MAX_VIDEO_CONFIGURATION_BYTES =>
             {
-                Some(RetinaVideoConfiguration {
-                    codec: parameters.rfc6381_codec().to_owned(),
-                    width: parameters.pixel_dimensions().0,
-                    height: parameters.pixel_dimensions().1,
-                    extra_data: parameters.extra_data().to_owned(),
+                RetinaVideoCodec::new(parameters.rfc6381_codec()).map(|codec| {
+                    RetinaVideoConfiguration {
+                        codec,
+                        width: parameters.pixel_dimensions().0,
+                        height: parameters.pixel_dimensions().1,
+                        extra_data: parameters.extra_data().to_owned(),
+                    }
                 })
             }
             _ => None,
@@ -483,5 +505,12 @@ mod tests {
             ensure_video_frame_size(RETINA_MAX_VIDEO_FRAME_BYTES + 1),
             Err(RetinaRtspError::VideoFrameTooLarge { .. })
         ));
+    }
+
+    #[test]
+    fn rtsp_codec_identifier_is_bounded() {
+        let codec = "c".repeat(RETINA_MAX_VIDEO_CODEC_BYTES);
+        assert_eq!(RetinaVideoCodec::new(&codec).unwrap().as_str(), codec);
+        assert!(RetinaVideoCodec::new(&format!("{codec}c")).is_none());
     }
 }
