@@ -88,6 +88,20 @@ in
     cargo test --workspace --doc --locked
   '';
 
+  # One deterministic test entry point for local use and CI. Keep live-device
+  # validators and deployment tasks opt-in because they require external state.
+  tasks."project:tests" = {
+    exec = "true";
+    after = [
+      "project:test"
+      "test:kotlin-bindings-smoke"
+    ]
+    ++ lib.optionals pkgs.stdenv.isDarwin [
+      "test:swift-package"
+      "test:shell-regressions"
+    ];
+  };
+
   tasks."project:dependency-policy".exec = "cargo deny --locked check";
 
   tasks."project:quality-gate" = {
@@ -95,12 +109,10 @@ in
     exec = "treefmt --ci";
     after = [
       "project:lint"
-      "project:test"
+      "project:tests"
       "project:dependency-policy"
     ]
     ++ lib.optionals pkgs.stdenv.isDarwin [
-      "test:swift-package"
-      "test:shell-regressions"
       "build:ios-ui-tests"
     ];
   };
