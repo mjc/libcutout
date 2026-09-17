@@ -18798,6 +18798,38 @@ mod tests {
     }
 
     #[test]
+    fn novatek_command_outcome_ffi_preserves_ack_refusal_and_unknown() {
+        assert_eq!(
+            mobile_parse_novatek_command_outcome(
+                br"<Function><Cmd>2001</Cmd><Status>0</Status></Function>".to_vec(),
+                2001,
+            ),
+            Ok(MobileNovatekCommandOutcomeDto::Acknowledged)
+        );
+        assert_eq!(
+            mobile_parse_novatek_command_outcome(
+                br"<Function><Cmd>2001</Cmd><Status>7</Status></Function>".to_vec(),
+                2001,
+            ),
+            Ok(MobileNovatekCommandOutcomeDto::Refused)
+        );
+        assert_eq!(
+            mobile_parse_novatek_command_outcome(
+                br"<Function><Cmd>2001</Cmd></Function>".to_vec(),
+                2001,
+            ),
+            Ok(MobileNovatekCommandOutcomeDto::Unknown)
+        );
+        assert_eq!(
+            mobile_parse_novatek_command_outcome(
+                br"<Function><Cmd>3024</Cmd><Status>0</Status></Function>".to_vec(),
+                2001,
+            ),
+            Err(MobileNovatekParseError::InvalidResponse)
+        );
+    }
+
+    #[test]
     fn production_snapshot_projects_supported_rider_metrics_through_mobile_ffi() {
         let core_snapshot = cutout_core::TelemetrySnapshot {
             voltage: Some(Measured::reported(CoreVoltage::from_millivolts(62_800))),
