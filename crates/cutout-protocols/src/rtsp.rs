@@ -4,6 +4,7 @@ use std::{
     fs::File,
     io::{self, BufWriter, Write},
     net::Ipv4Addr,
+    num::NonZeroU32,
     path::Path,
     time::Duration,
 };
@@ -51,19 +52,50 @@ pub enum RetinaRtspError {
     },
 }
 
-/// One encoded video access unit emitted by a Retina preview session.
+/// A nonzero RTP clock rate associated with an encoded video frame.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct RetinaVideoClockRate(NonZeroU32);
+
+impl RetinaVideoClockRate {
+    /// Creates a clock rate, rejecting zero because it cannot be a time scale.
+    #[must_use]
+    pub const fn new(value: u32) -> Option<Self> {
+        match NonZeroU32::new(value) {
+            Some(value) => Some(Self(value)),
+            None => None,
+        }
+    }
+
+    const fn from_nonzero(value: NonZeroU32) -> Self {
+        Self(value)
+    }
+
+    /// Returns the numeric clock rate in hertz for an FFI boundary.
+    #[must_use]
+    pub const fn get(self) -> u32 {
+        self.0.get()
+    }
+}
+
+/// Failure while constructing a bounded encoded video frame.
+#[derive(Clone, Copy, Debug, Eq, Error, PartialEq)]
+pub enum RetinaVideoFrameError {
+    /// The encoded access unit exceeded the fixed frame bound.
+    #[error("RTSP video frame exceeds {max} bytes")]
+    TooLarge {
+        /// Maximum accepted encoded frame size.
+        max: usize,
+    },
+}
+
+/// One bounded encoded video access unit emitted by a Retina preview session.
 #[derive(Debug, Eq, PartialEq)]
 pub struct RetinaVideoFrame {
-    /// Encoded frame bytes in Retina's codec-specific format.
-    pub data: Vec<u8>,
-    /// Number of lost RTP packets before this frame.
-    pub loss: u16,
-    /// Whether this frame is a random-access point.
-    pub is_random_access_point: bool,
-    /// Presentation timestamp in the stream's clock units.
-    pub timestamp: i64,
-    /// Clock rate associated with [`Self::timestamp`], in Hz.
-    pub clock_rate_hz: u32,
+    data: Vec<u8>,
+    loss: u16,
+    is_random_access_point: bool,
+    timestamp: i64,
+    clock_rate_hz: RetinaVideoClockRate,
 }
 
 /// A bounded RFC 6381 codec identifier advertised by an RTSP stream.
@@ -84,36 +116,173 @@ impl RetinaVideoCodec {
     }
 }
 
+/// Nonzero coded dimensions advertised by an RTSP video stream.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct RetinaVideoDimensions {
+    width: NonZeroU32,
+    height: NonZeroU32,
+}
+
+impl RetinaVideoDimensions {
+    /// Creates dimensions, rejecting a missing coded width or height.
+    #[must_use]
+    pub const fn new(width: u32, height: u32) -> Option<Self> {
+        let (Some(width), Some(height)) = (NonZeroU32::new(width), NonZeroU32::new(height)) else {
+            return None;
+        };
+        Some(Self { width, height })
+    }
+
+    /// Returns the coded width in pixels.
+    #[must_use]
+    pub const fn width(self) -> u32 {
+        self.width.get()
+    }
+
+    /// Returns the coded height in pixels.
+    #[must_use]
+    pub const fn height(self) -> u32 {
+        self.height.get()
+    }
+}
+
+/// Failure while constructing a bounded RTSP video configuration.
+#[derive(Clone, Copy, Debug, Eq, Error, PartialEq)]
+pub enum RetinaVideoConfigurationError {
+    /// The stream advertised a zero coded dimension.
+    #[error("RTSP video dimensions must be nonzero")]
+    InvalidDimensions,
+    /// The codec-specific configuration exceeded the fixed bound.
+    #[error("RTSP codec configuration exceeds {max} bytes")]
+    ExtraDataTooLarge {
+        /// Maximum accepted codec-specific configuration size.
+        max: usize,
+    },
+}
+
 /// Codec configuration advertised by the RTSP video stream.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RetinaVideoConfiguration {
-    /// RFC 6381 codec identifier, for example `avc1.4D401E`.
-    pub codec: RetinaVideoCodec,
-    /// Coded width in pixels.
-    pub width: u32,
-    /// Coded height in pixels.
-    pub height: u32,
-    /// Codec-specific decoder configuration (H.264 `avcC` bytes).
-    pub extra_data: Vec<u8>,
+    codec: RetinaVideoCodec,
+    dimensions: RetinaVideoDimensions,
+    extra_data: Vec<u8>,
+}
+
+impl RetinaVideoConfiguration {
+    /// Creates a bounded codec configuration from stream metadata.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RetinaVideoConfigurationError::InvalidDimensions`] for a zero
+    /// coded width or height, or [`RetinaVideoConfigurationError::ExtraDataTooLarge`]
+    /// when codec-specific data exceeds the fixed boundary.
+    pub fn new(
+        codec: RetinaVideoCodec,
+        width: u32,
+        height: u32,
+        extra_data: Vec<u8>,
+    ) -> Result<Self, RetinaVideoConfigurationError> {
+        let dimensions = RetinaVideoDimensions::new(width, height)
+            .ok_or(RetinaVideoConfigurationError::InvalidDimensions)?;
+        if extra_data.len() > RETINA_MAX_VIDEO_CONFIGURATION_BYTES {
+            return Err(RetinaVideoConfigurationError::ExtraDataTooLarge {
+                max: RETINA_MAX_VIDEO_CONFIGURATION_BYTES,
+            });
+        }
+        Ok(Self {
+            codec,
+            dimensions,
+            extra_data,
+        })
+    }
+
+    /// Returns the bounded RFC 6381 codec identifier.
+    #[must_use]
+    pub fn codec(&self) -> &RetinaVideoCodec {
+        &self.codec
+    }
+
+    /// Returns the nonzero coded dimensions.
+    #[must_use]
+    pub const fn dimensions(&self) -> RetinaVideoDimensions {
+        self.dimensions
+    }
+
+    /// Returns the codec-specific decoder configuration without copying.
+    #[must_use]
+    pub fn extra_data(&self) -> &[u8] {
+        &self.extra_data
+    }
 }
 
 impl RetinaVideoFrame {
     /// Creates one encoded video access unit with its stream timing.
-    #[must_use]
-    pub const fn new(
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RetinaVideoFrameError::TooLarge`] when the encoded access
+    /// unit exceeds the fixed transport boundary.
+    pub fn new(
         data: Vec<u8>,
         loss: u16,
         is_random_access_point: bool,
         timestamp: i64,
-        clock_rate_hz: u32,
-    ) -> Self {
-        Self {
+        clock_rate_hz: RetinaVideoClockRate,
+    ) -> Result<Self, RetinaVideoFrameError> {
+        if data.len() > RETINA_MAX_VIDEO_FRAME_BYTES {
+            return Err(RetinaVideoFrameError::TooLarge {
+                max: RETINA_MAX_VIDEO_FRAME_BYTES,
+            });
+        }
+        Ok(Self {
             data,
             loss,
             is_random_access_point,
             timestamp,
             clock_rate_hz,
-        }
+        })
+    }
+
+    /// Returns the encoded access-unit bytes without copying.
+    #[must_use]
+    pub fn data(&self) -> &[u8] {
+        &self.data
+    }
+
+    /// Returns the number of lost RTP packets before this frame.
+    #[must_use]
+    pub const fn loss(&self) -> u16 {
+        self.loss
+    }
+
+    /// Returns whether this frame is a random-access point.
+    #[must_use]
+    pub const fn is_random_access_point(&self) -> bool {
+        self.is_random_access_point
+    }
+
+    /// Returns the presentation timestamp in the stream's clock units.
+    #[must_use]
+    pub const fn timestamp(&self) -> i64 {
+        self.timestamp
+    }
+
+    /// Returns the nonzero stream clock rate.
+    #[must_use]
+    pub const fn clock_rate_hz(&self) -> RetinaVideoClockRate {
+        self.clock_rate_hz
+    }
+
+    /// Splits the validated frame for a checked FFI DTO conversion.
+    #[must_use]
+    pub fn into_parts(self) -> (Vec<u8>, u16, bool, i64, RetinaVideoClockRate) {
+        (
+            self.data,
+            self.loss,
+            self.is_random_access_point,
+            self.timestamp,
+            self.clock_rate_hz,
+        )
     }
 }
 
@@ -160,20 +329,19 @@ impl RetinaH264FileSink {
     /// Returns [`io::ErrorKind::InvalidData`] for malformed length-prefixed
     /// data, or the underlying filesystem error when writing.
     pub fn write_frame(&mut self, frame: &RetinaVideoFrame) -> io::Result<()> {
-        validate_length_prefixed_access_unit(&frame.data)?;
+        let data = frame.data();
+        validate_length_prefixed_access_unit(data)?;
 
         let mut cursor = 0;
-        while cursor < frame.data.len() {
-            let nal_length = read_nal_length(&frame.data, cursor)?;
+        while cursor < data.len() {
+            let nal_length = read_nal_length(data, cursor)?;
             cursor += 4;
             let nal_end = cursor
                 .checked_add(nal_length)
                 .ok_or_else(|| invalid_data("H.264 NAL length overflows access unit"))?;
             self.writer.write_all(&[0, 0, 0, 1])?;
             self.writer.write_all(
-                frame
-                    .data
-                    .get(cursor..nal_end)
+                data.get(cursor..nal_end)
                     .ok_or_else(|| invalid_data("H.264 NAL length exceeds access unit"))?,
             )?;
             cursor = nal_end;
@@ -378,13 +546,21 @@ impl RetinaRtspPreviewSession {
                     let timestamp = frame.timestamp();
                     let data = frame.into_data();
                     ensure_video_frame_size(data.len())?;
-                    return Ok(Some(RetinaVideoFrame::new(
-                        data,
-                        loss,
-                        is_random_access_point,
-                        timestamp.timestamp(),
-                        timestamp.clock_rate().get(),
-                    )));
+                    let clock_rate_hz = RetinaVideoClockRate::from_nonzero(timestamp.clock_rate());
+                    return Ok(Some(
+                        RetinaVideoFrame::new(
+                            data,
+                            loss,
+                            is_random_access_point,
+                            timestamp.timestamp(),
+                            clock_rate_hz,
+                        )
+                        .map_err(
+                            |RetinaVideoFrameError::TooLarge { max }| {
+                                RetinaRtspError::VideoFrameTooLarge { max }
+                            },
+                        )?,
+                    ));
                 }
                 _ => {}
             }
@@ -399,18 +575,17 @@ fn video_configuration_for_stream(
     stream
         .and_then(client::Stream::parameters)
         .and_then(|parameters| match parameters {
-            ParametersRef::Video(parameters)
-                if parameters.extra_data().len() <= RETINA_MAX_VIDEO_CONFIGURATION_BYTES =>
-            {
-                RetinaVideoCodec::new(parameters.rfc6381_codec()).map(|codec| {
-                    RetinaVideoConfiguration {
+            ParametersRef::Video(parameters) => RetinaVideoCodec::new(parameters.rfc6381_codec())
+                .and_then(|codec| {
+                    let (width, height) = parameters.pixel_dimensions();
+                    RetinaVideoConfiguration::new(
                         codec,
-                        width: parameters.pixel_dimensions().0,
-                        height: parameters.pixel_dimensions().1,
-                        extra_data: parameters.extra_data().to_owned(),
-                    }
-                })
-            }
+                        width,
+                        height,
+                        parameters.extra_data().to_owned(),
+                    )
+                    .ok()
+                }),
             _ => None,
         })
 }
@@ -471,15 +646,16 @@ mod tests {
     #[test]
     fn h264_file_sink_writes_annex_b_access_units() {
         let path = std::env::temp_dir().join(format!("cutout-retina-{}.h264", std::process::id()));
-        let frame = RetinaVideoFrame {
-            data: [0u8, 0, 0, 2, 0x67, 0x01, 0, 0, 0, 1, 0x65].to_vec(),
-            loss: 0,
-            is_random_access_point: true,
-            timestamp: 90_000,
-            clock_rate_hz: 90_000,
-        };
-        assert_eq!(frame.timestamp, 90_000);
-        assert_eq!(frame.clock_rate_hz, 90_000);
+        let frame = RetinaVideoFrame::new(
+            [0u8, 0, 0, 2, 0x67, 0x01, 0, 0, 0, 1, 0x65].to_vec(),
+            0,
+            true,
+            90_000,
+            RetinaVideoClockRate::new(90_000).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(frame.timestamp(), 90_000);
+        assert_eq!(frame.clock_rate_hz().get(), 90_000);
 
         let mut sink = RetinaH264FileSink::create(&path).unwrap();
         sink.write_frame(&frame).unwrap();
@@ -498,13 +674,14 @@ mod tests {
             "cutout-retina-truncated-{}.h264",
             std::process::id()
         ));
-        let frame = RetinaVideoFrame {
-            data: vec![0, 0, 0],
-            loss: 0,
-            is_random_access_point: false,
-            timestamp: 0,
-            clock_rate_hz: 90_000,
-        };
+        let frame = RetinaVideoFrame::new(
+            vec![0, 0, 0],
+            0,
+            false,
+            0,
+            RetinaVideoClockRate::new(90_000).unwrap(),
+        )
+        .unwrap();
 
         let mut sink = RetinaH264FileSink::create(&path).unwrap();
         let error = sink.write_frame(&frame).unwrap_err();
@@ -527,5 +704,49 @@ mod tests {
         let codec = "c".repeat(RETINA_MAX_VIDEO_CODEC_BYTES);
         assert_eq!(RetinaVideoCodec::new(&codec).unwrap().as_str(), codec);
         assert!(RetinaVideoCodec::new(&format!("{codec}c")).is_none());
+    }
+
+    #[test]
+    fn rtsp_video_clock_rate_rejects_zero() {
+        assert!(RetinaVideoClockRate::new(0).is_none());
+    }
+
+    #[test]
+    fn rtsp_video_frame_constructor_rejects_oversized_data() {
+        let data = vec![0; RETINA_MAX_VIDEO_FRAME_BYTES + 1];
+        assert_eq!(
+            RetinaVideoFrame::new(
+                data,
+                0,
+                false,
+                0,
+                RetinaVideoClockRate::new(90_000).unwrap(),
+            ),
+            Err(RetinaVideoFrameError::TooLarge {
+                max: RETINA_MAX_VIDEO_FRAME_BYTES,
+            })
+        );
+    }
+
+    #[test]
+    fn rtsp_video_configuration_rejects_invalid_metadata() {
+        let codec = RetinaVideoCodec::new("avc1.4D401E").unwrap();
+        assert_eq!(
+            RetinaVideoConfiguration::new(codec, 0, 480, vec![1, 2, 3]),
+            Err(RetinaVideoConfigurationError::InvalidDimensions)
+        );
+
+        let codec = RetinaVideoCodec::new("avc1.4D401E").unwrap();
+        assert_eq!(
+            RetinaVideoConfiguration::new(
+                codec,
+                848,
+                480,
+                vec![0; RETINA_MAX_VIDEO_CONFIGURATION_BYTES + 1],
+            ),
+            Err(RetinaVideoConfigurationError::ExtraDataTooLarge {
+                max: RETINA_MAX_VIDEO_CONFIGURATION_BYTES,
+            })
+        );
     }
 }
