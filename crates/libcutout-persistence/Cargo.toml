@@ -23,12 +23,12 @@ uuid.workspace = true
 
 [dev-dependencies]
 divan = "=0.1.21"
-gungraun = "=0.18.2"
+gungraun = "=0.19.4"
 rusqlite = { workspace = true, features = ["backup"] }
 tempfile = "3"
 
 [target.'cfg(target_os = "linux")'.dev-dependencies]
-gungraun = { version = "=0.18.2", features = ["client_requests"] }
+gungraun = { version = "=0.19.4", features = ["client_requests"] }
 
 [[bench]]
 name = "load_ride"
