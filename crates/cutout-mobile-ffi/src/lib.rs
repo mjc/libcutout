@@ -7191,8 +7191,11 @@ pub struct MobileRideLocationDto {
 /// Stable ride identifier returned by Rust.
 #[derive(Clone, Debug, Eq, PartialEq, uniffi::Record)]
 pub struct MobileRideIdDto {
-    /// UUID string created by Rust.
-    pub value: String,
+    /// UUID bytes in canonical RFC 4122 network order.
+    ///
+    /// Rust validates the length and converts this once at the FFI boundary. Consumers must
+    /// retain this as an identifier, not reinterpret it as arbitrary payload data.
+    pub bytes: Vec<u8>,
 }
 
 /// Result of admitting a location sample.
@@ -8120,9 +8123,7 @@ fn map_ride_database_error(error: persistence::StorageError) -> MobileRideDataba
 fn mobile_ride_record_dto(ride: &persistence::RideRecord) -> MobileRideRecordDto {
     let summary = ride.summary();
     MobileRideRecordDto {
-        id: MobileRideIdDto {
-            value: ride.id().uuid().to_string(),
-        },
+        id: mobile_ride_id(ride.id()),
         source: ride.source().into(),
         state: ride.state().into(),
         created_at_milliseconds: ride.created_at_milliseconds(),
@@ -8151,9 +8152,29 @@ fn mobile_ride_record_dto(ride: &persistence::RideRecord) -> MobileRideRecordDto
 fn parse_mobile_ride_id(
     id: &MobileRideIdDto,
 ) -> Result<persistence::RideId, MobileRideDatabaseError> {
-    Uuid::parse_str(&id.value)
+    <[u8; 16]>::try_from(id.bytes.as_slice())
+        .map(Uuid::from_bytes)
         .map(persistence::RideId::from_uuid)
         .map_err(|_| MobileRideDatabaseError::InvalidIdentifier)
+}
+
+fn mobile_ride_id(id: persistence::RideId) -> MobileRideIdDto {
+    MobileRideIdDto {
+        bytes: id.uuid().into_bytes().to_vec(),
+    }
+}
+
+fn mobile_ride_id_from_uuid(id: Uuid) -> MobileRideIdDto {
+    MobileRideIdDto {
+        bytes: id.into_bytes().to_vec(),
+    }
+}
+
+fn mobile_ride_id_string(id: &MobileRideIdDto) -> String {
+    Uuid::from_slice(&id.bytes)
+        .expect("Rust-created ride identifiers always contain 16 UUID bytes")
+        .hyphenated()
+        .to_string()
 }
 
 fn parse_mobile_trail_id(
@@ -8393,9 +8414,7 @@ fn mobile_history_context_projection_dto(
             .routes()
             .iter()
             .map(|route| MobileRideHistoryContextRouteDto {
-                ride_id: MobileRideIdDto {
-                    value: route.ride_id().uuid().to_string(),
-                },
+                ride_id: mobile_ride_id(route.ride_id()),
                 projection: mobile_route_projection_dto(route.projection()),
             })
             .collect(),
@@ -8513,9 +8532,7 @@ fn mobile_pevcap_receipt(
     receipt: persistence::PevcapImportReceipt,
 ) -> MobilePevcapImportReceiptDto {
     MobilePevcapImportReceiptDto {
-        ride_id: receipt.ride_id.map(|ride_id| MobileRideIdDto {
-            value: ride_id.uuid().to_string(),
-        }),
+        ride_id: receipt.ride_id.map(mobile_ride_id),
         artifact_digest: receipt.artifact_digest,
         managed_artifact_path: receipt.managed_artifact_path.to_string_lossy().into_owned(),
         outcome: receipt.outcome.into(),
@@ -8725,9 +8742,8 @@ impl RideDatabaseHandle {
                 .bootstrap()
                 .recovered_rides()
                 .iter()
-                .map(|id| MobileRideIdDto {
-                    value: id.uuid().to_string(),
-                })
+                .copied()
+                .map(mobile_ride_id)
                 .collect(),
         }
     }
@@ -8817,9 +8833,7 @@ impl RideDatabaseHandle {
                 rides: page.rides().iter().map(mobile_ride_record_dto).collect(),
                 next_cursor: page.next_cursor().map(|cursor| MobileRideCursorDto {
                     created_at_milliseconds: cursor.created_at_milliseconds(),
-                    ride_id: MobileRideIdDto {
-                        value: cursor.ride_id().uuid().to_string(),
-                    },
+                    ride_id: mobile_ride_id(cursor.ride_id()),
                 }),
             })
             .map_err(map_ride_database_error)
@@ -9561,9 +9575,7 @@ impl RideDatabaseHandle {
     ) -> Result<MobileRideIdDto, MobileRideDatabaseError> {
         self.inner
             .create_ride(source.into(), created_at_milliseconds)
-            .map(|id| MobileRideIdDto {
-                value: id.uuid().to_string(),
-            })
+            .map(mobile_ride_id)
             .map_err(map_ride_database_error)
     }
 
@@ -9583,9 +9595,7 @@ impl RideDatabaseHandle {
                 created_at_milliseconds,
                 monotonic_created_at_milliseconds,
             )
-            .map(|id| MobileRideIdDto {
-                value: id.uuid().to_string(),
-            })
+            .map(mobile_ride_id)
             .map_err(map_ride_database_error)
     }
 
@@ -9607,9 +9617,7 @@ impl RideDatabaseHandle {
                 monotonic_created_at_milliseconds,
                 candidate_vehicle.as_deref(),
             )
-            .map(|id| MobileRideIdDto {
-                value: id.uuid().to_string(),
-            })
+            .map(mobile_ride_id)
             .map_err(map_ride_database_error)
     }
 
@@ -9880,9 +9888,7 @@ impl RideDatabaseHandle {
                 monotonic_created_at_milliseconds,
                 candidate_vehicle,
             )
-            .map(|id| MobileRideIdDto {
-                value: id.uuid().to_string(),
-            })
+            .map(mobile_ride_id)
             .map_err(map_ride_database_error)
     }
 
@@ -9903,11 +9909,7 @@ impl RideDatabaseHandle {
                 monotonic_at_milliseconds,
                 replacement_candidate_vehicle,
             )
-            .map(|replacement| {
-                replacement.map(|id| MobileRideIdDto {
-                    value: id.uuid().to_string(),
-                })
-            })
+            .map(|replacement| replacement.map(mobile_ride_id))
             .map_err(map_ride_database_error)
     }
 
@@ -9988,6 +9990,7 @@ struct MobileRideMapCoreInner {
     /// Last verified vehicle retained as the candidate for a later GPS-only start.
     last_connected_vehicle: Option<ride_maps::VehicleIdentity>,
     last_connection_transition_generation: Option<u64>,
+    last_connection_transition_ride_id: Option<MobileRideIdDto>,
     monotonic_epoch_offset_milliseconds: u64,
     initialization_error: Option<MobileRideMapCoreErrorDto>,
     restoration_state: MobileRideMapRestorationState,
@@ -10315,6 +10318,7 @@ impl MobileRideMapCoreInner {
             recoverable_updated_at_milliseconds: None,
             last_connected_vehicle: None,
             last_connection_transition_generation: None,
+            last_connection_transition_ride_id: None,
             monotonic_epoch_offset_milliseconds: 0,
             initialization_error: None,
             restoration_state: if needs_restoration {
@@ -10325,44 +10329,6 @@ impl MobileRideMapCoreInner {
         }
     }
 
-    fn restored_route_sample(
-        database: &RideDatabaseHandle,
-        ride_id: &MobileRideIdDto,
-        point_count: u64,
-    ) -> Result<Vec<ride_maps::RideMapPoint>, MobileRideMapCoreErrorDto> {
-        let Some(sequence) = point_count.checked_sub(1) else {
-            return Ok(Vec::new());
-        };
-        let page = database
-            .route_points(
-                ride_id.clone(),
-                sequence
-                    .checked_sub(1)
-                    .map(|sequence| MobileRoutePointCursorDto { sequence }),
-                1,
-            )
-            .map_err(map_core_error)?;
-        page.points
-            .into_iter()
-            .map(|point| {
-                mobile_ride_location(point.location).and_then(|sample| {
-                    map_ride_telemetry_state(point.telemetry_state)
-                        .map_err(|_| MobileRideDatabaseError::StorageFailure)
-                        .map(|telemetry_state| {
-                            ride_maps::RideMapPoint::new_with_start_reason(
-                                sample,
-                                ride_maps::RideMapSegmentId::new(point.segment_id),
-                                telemetry_state,
-                                mobile_segment_start_reason(point.start_reason),
-                            )
-                        })
-                })
-            })
-            .collect::<Result<Vec<_>, _>>()
-            .map_err(map_core_error)
-    }
-
-    #[cfg(test)]
     fn restored_route_samples(
         database: &RideDatabaseHandle,
         ride_id: &MobileRideIdDto,
@@ -10412,7 +10378,6 @@ impl MobileRideMapCoreInner {
         &mut self,
         at_ms: u64,
         apply_automatic_recovery: bool,
-        _restore_full_route_for_test: bool,
     ) -> Result<(), MobileRideMapCoreErrorDto> {
         let Some(database) = self.database.as_ref() else {
             return Ok(());
@@ -10426,14 +10391,11 @@ impl MobileRideMapCoreInner {
         let Some(ride) = database.newest_recoverable_ride().map_err(map_core_error)? else {
             return Ok(());
         };
-        #[cfg(test)]
-        let samples = if _restore_full_route_for_test {
-            Self::restored_route_samples(database, &ride.id, ride.summary.point_count)?
-        } else {
-            Self::restored_route_sample(database, &ride.id, ride.summary.point_count)?
-        };
-        #[cfg(not(test))]
-        let samples = Self::restored_route_sample(database, &ride.id, ride.summary.point_count)?;
+        // Keep the recorder's live tail bounded but complete. Swift can publish a separate
+        // cancellable durable projection for the whole ride, while Rust must retain enough of
+        // the route to preserve the live recorder and its canonical timing/segment metadata
+        // when the first new location arrives after relaunch.
+        let samples = Self::restored_route_samples(database, &ride.id, ride.summary.point_count)?;
         let last_restored_monotonic = samples
             .last()
             .map(|sample| sample.sample().monotonic_milliseconds().as_u64());
@@ -10455,10 +10417,19 @@ impl MobileRideMapCoreInner {
             ride_maps::RideDurationMilliseconds::new(ride.completed_duration_milliseconds),
         );
         let explicit_pause = ride.paused_at_milliseconds.is_some();
-        let restored_state = if apply_automatic_recovery && explicit_pause {
-            ride_maps::RideLifecycleState::Paused
-        } else {
+        let persisted_state = map_ride_lifecycle_state(ride.state);
+        let restored_state = match persisted_state {
+            ride_maps::RideLifecycleState::Active => ride_maps::RideLifecycleState::Active,
+            ride_maps::RideLifecycleState::Paused => ride_maps::RideLifecycleState::Paused,
             ride_maps::RideLifecycleState::Interrupted
+                if apply_automatic_recovery && explicit_pause =>
+            {
+                ride_maps::RideLifecycleState::Paused
+            }
+            ride_maps::RideLifecycleState::Interrupted => {
+                ride_maps::RideLifecycleState::Interrupted
+            }
+            _ => return Err(MobileRideMapCoreErrorDto::NoActiveRide),
         };
         self.recorder = ride_maps::RideMapRecorder::restored_with_metadata_and_summary_and_timing(
             restored_state,
@@ -10478,9 +10449,8 @@ impl MobileRideMapCoreInner {
                 last_telemetry_at_milliseconds: ride
                     .last_telemetry_at_milliseconds
                     .map(ride_maps::MonotonicMilliseconds::new),
-                // The complete projection, including background-gap metadata and camera fit,
-                // is loaded by the cancellable display projection after startup. The recorder
-                // only needs its last sample to continue route admission correctly.
+                // The display projection still owns complete-route camera fitting and gap
+                // metadata; this recorder tail is only the bounded live admission state.
                 background_gap_count: ride_maps::BackgroundGapCount::default(),
             },
             samples,
@@ -10506,6 +10476,10 @@ impl MobileRideMapCoreInner {
         }
 
         if !apply_automatic_recovery {
+            return Ok(());
+        }
+        if persisted_state == ride_maps::RideLifecycleState::Active {
+            self.recoverable_updated_at_milliseconds = None;
             return Ok(());
         }
         let now = wall_clock_milliseconds()?;
@@ -10645,14 +10619,14 @@ impl MobileRideMapCoreInner {
             ride_id: self
                 .ride_id
                 .as_ref()
-                .map_or_else(String::new, |id| id.value.clone()),
+                .map_or_else(String::new, mobile_ride_id_string),
             revision: self.revision,
             recording_token: (state == MobileRideLifecycleStateDto::Active).then(|| {
                 MobileRideMapRecordingTokenDto {
                     ride_id: self
                         .ride_id
                         .as_ref()
-                        .map_or_else(String::new, |id| id.value.clone()),
+                        .map_or_else(String::new, mobile_ride_id_string),
                     generation: self.generation,
                 }
             }),
@@ -10768,9 +10742,7 @@ impl MobileRideMapCoreInner {
                 )
                 .map_err(map_core_error)?
         } else {
-            MobileRideIdDto {
-                value: Uuid::new_v4().to_string(),
-            }
+            mobile_ride_id_from_uuid(Uuid::new_v4())
         };
         self.recorder = staged_recorder.clone();
         self.admission_recorder = staged_recorder;
@@ -10876,15 +10848,9 @@ impl MobileRideMapCore {
     #[uniffi::constructor]
     #[must_use]
     pub fn with_database(database: Arc<RideDatabaseHandle>) -> Arc<Self> {
-        let core = Arc::new(Self {
+        Arc::new(Self {
             inner: Mutex::new(MobileRideMapCoreInner::new(Some(database))),
-        });
-        // Existing Rust unit tests construct a database-backed core and immediately exercise
-        // commands. Production callers use the explicit async restore boundary in Swift; keep
-        // the test constructor source-compatible while the tests migrate to that boundary.
-        #[cfg(test)]
-        let _ = core.restore_without_automatic_recovery_for_test();
-        core
+        })
     }
 
     /// Returns the active ride snapshot, if one exists.
@@ -10938,7 +10904,7 @@ impl MobileRideMapCore {
                 .map(|lifecycle| state.snapshot_at(lifecycle.into(), at_ms)));
         }
         state.initialization_error = None;
-        if let Err(error) = state.restore_active_ride(at_ms, true, false) {
+        if let Err(error) = state.restore_active_ride(at_ms, true) {
             state.initialization_error = Some(error.clone());
             state.restoration_state = MobileRideMapRestorationState::Failed;
             return Err(error);
@@ -10981,6 +10947,7 @@ impl MobileRideMapCore {
         state.require_ready()?;
         if connection_generation.is_some_and(|generation| {
             state.last_connection_transition_generation == Some(generation)
+                && state.last_connection_transition_ride_id == state.ride_id
         }) {
             let lifecycle = state
                 .recorder
@@ -10997,6 +10964,23 @@ impl MobileRideMapCore {
         state.last_connected_vehicle = Some(identity.clone());
         let automatic_policy =
             explicit_policy.unwrap_or(state.automatic_policy_for_vehicle(&platform_identifier)?);
+        let current_vehicle = state
+            .recorder
+            .associated_vehicle()
+            .or_else(|| state.recorder.candidate_vehicle());
+        let current_ride_belongs_to_another_vehicle =
+            state.recorder.state().is_some_and(|lifecycle| {
+                matches!(
+                    lifecycle,
+                    ride_maps::RideLifecycleState::Active | ride_maps::RideLifecycleState::Paused
+                ) && current_vehicle.is_some_and(|vehicle| vehicle != platform_identifier)
+            });
+        if automatic_policy == MobileRideMapAutomaticRecordingPolicyDto::StartAndResume
+            && current_ride_belongs_to_another_vehicle
+        {
+            state.transition_inner_at(MobileRideEventDto::Stop, at_ms)?;
+            state.transition_inner_at(MobileRideEventDto::Save, at_ms)?;
+        }
         if automatic_policy == MobileRideMapAutomaticRecordingPolicyDto::StartAndResume
             && state.recorder.state() == Some(ride_maps::RideLifecycleState::Interrupted)
         {
@@ -11091,6 +11075,7 @@ impl MobileRideMapCore {
             .ok_or(MobileRideMapCoreErrorDto::NoActiveRide)?;
         if let Some(generation) = connection_generation {
             state.last_connection_transition_generation = Some(generation);
+            state.last_connection_transition_ride_id = state.ride_id.clone();
         }
         Ok(Some(state.snapshot(lifecycle.into())))
     }
@@ -11166,6 +11151,21 @@ impl MobileRideMapCore {
         at_ms: u64,
     ) -> Result<MobileRideMapCoreSnapshotDto, MobileRideMapCoreErrorDto> {
         self.transition_at(MobileRideEventDto::Stop, at_ms)
+    }
+
+    /// Marks the open ride interrupted after a platform interruption.
+    ///
+    /// Rust persists the interruption before the native client releases its current core, so a
+    /// later restore can apply the configured recovery window without losing the ride identity.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when no open ride exists or durable storage rejects the transition.
+    pub fn interrupt_at(
+        &self,
+        at_ms: u64,
+    ) -> Result<MobileRideMapCoreSnapshotDto, MobileRideMapCoreErrorDto> {
+        self.transition_at(MobileRideEventDto::Interrupt, at_ms)
     }
 
     /// Saves a stopped ride and removes it from the active projection.
@@ -11573,7 +11573,8 @@ impl MobileRideMapCore {
         let Some(recording) = recording else {
             return Ok(Vec::new());
         };
-        if state.ride_id.as_ref().map(|id| id.value.as_str()) != Some(recording.ride_id.as_str())
+        if state.ride_id.as_ref().map(mobile_ride_id_string)
+            != Some(recording.ride_id.as_str().to_owned())
             || state.generation != recording.generation
             || state.recorder.state() != Some(ride_maps::RideLifecycleState::Active)
         {
@@ -11927,24 +11928,6 @@ impl MobileRideMapCoreInner {
 }
 
 impl MobileRideMapCore {
-    #[cfg(test)]
-    pub(crate) fn restore_without_automatic_recovery_for_test(
-        &self,
-    ) -> Result<Option<MobileRideMapCoreSnapshotDto>, MobileRideMapCoreErrorDto> {
-        let mut state = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
-        state.initialization_error = None;
-        if let Err(error) = state.restore_active_ride(0, false, true) {
-            state.initialization_error = Some(error.clone());
-            state.restoration_state = MobileRideMapRestorationState::Failed;
-            return Err(error);
-        }
-        state.restoration_state = MobileRideMapRestorationState::Ready;
-        Ok(state
-            .recorder
-            .state()
-            .map(|lifecycle| state.snapshot(lifecycle.into())))
-    }
-
     #[cfg(test)]
     pub(crate) fn start_gps_only_with_candidate(
         &self,
@@ -17595,6 +17578,32 @@ mod tests {
         BEGODE_DATA_CHANNEL, BEGODE_SERVICE_CHANNEL, VESC_COMM_CUSTOM_APP_DATA, VESC_NOTIFY_CHANNEL,
     };
 
+    fn restored_database_core(database: Arc<RideDatabaseHandle>) -> Arc<MobileRideMapCore> {
+        restored_database_core_at(database, 0)
+    }
+
+    fn restored_database_core_at(
+        database: Arc<RideDatabaseHandle>,
+        at_ms: u64,
+    ) -> Arc<MobileRideMapCore> {
+        let core = MobileRideMapCore::with_database(database);
+        core.restore(at_ms)
+            .expect("database-backed test core restores successfully");
+        core
+    }
+
+    fn test_mobile_ride_id(value: &str) -> MobileRideIdDto {
+        mobile_ride_id_from_uuid(Uuid::parse_str(value).expect("test ride ID is a UUID"))
+    }
+
+    #[test]
+    fn mobile_ride_id_boundary_rejects_non_uuid_bytes() {
+        assert!(matches!(
+            parse_mobile_ride_id(&MobileRideIdDto { bytes: vec![0; 15] }),
+            Err(MobileRideDatabaseError::InvalidIdentifier)
+        ));
+    }
+
     #[test]
     fn production_snapshot_projects_supported_rider_metrics_through_mobile_ffi() {
         let core_snapshot = cutout_core::TelemetrySnapshot {
@@ -17688,6 +17697,98 @@ mod tests {
     }
 
     #[test]
+    fn retry_restore_adopts_a_ride_resumed_by_a_cancelled_core() {
+        let _guard = RIDE_DATABASE_TEST_LOCK
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        let path = std::env::temp_dir().join(format!(
+            "cutout-mobile-map-restore-retry-{}.sqlite3",
+            Uuid::new_v4()
+        ));
+        let database =
+            open_ride_database(path.to_string_lossy().into_owned()).expect("database opens");
+        let seed = restored_database_core(database.clone());
+        let started = seed.start_gps_only(1_000).expect("ride starts");
+        database
+            .transition(
+                test_mobile_ride_id(&started.ride_id),
+                MobileRideEventDto::Interrupt,
+                2_000,
+            )
+            .expect("ride becomes interrupted");
+        drop(seed);
+
+        let first = Arc::new(MobileRideMapCore {
+            inner: Mutex::new(MobileRideMapCoreInner::new(Some(database.clone()))),
+        });
+        let restored = first
+            .restore(2_000)
+            .expect("first restore succeeds")
+            .expect("ride is adopted");
+        assert_eq!(restored.ride_id, started.ride_id);
+        assert_eq!(restored.state, MobileRideLifecycleStateDto::Active);
+        drop(first);
+
+        let retry = Arc::new(MobileRideMapCore {
+            inner: Mutex::new(MobileRideMapCoreInner::new(Some(database.clone()))),
+        });
+        let adopted = retry
+            .restore(2_100)
+            .expect("retry restore succeeds")
+            .expect("already resumed ride remains adoptable");
+        assert_eq!(adopted.ride_id, started.ride_id);
+        assert_eq!(adopted.state, MobileRideLifecycleStateDto::Active);
+
+        database.shutdown().expect("database shuts down");
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn restored_explicit_pause_can_stop_and_persist_after_reopen() {
+        let _guard = RIDE_DATABASE_TEST_LOCK
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        let path = std::env::temp_dir().join(format!(
+            "cutout-mobile-map-paused-stop-{}.sqlite3",
+            Uuid::new_v4()
+        ));
+        let ride_id = {
+            let database =
+                open_ride_database(path.to_string_lossy().into_owned()).expect("database opens");
+            let state = restored_database_core(database.clone());
+            state.start_gps_only(1_000).expect("ride starts");
+            let paused = state.pause_at(2_000).expect("ride pauses");
+            database.shutdown().expect("database shuts down");
+            paused.ride_id
+        };
+
+        let database =
+            open_ride_database(path.to_string_lossy().into_owned()).expect("database reopens");
+        let state = Arc::new(MobileRideMapCore {
+            inner: Mutex::new(MobileRideMapCoreInner::new(Some(database.clone()))),
+        });
+        let restored = state
+            .restore(3_000)
+            .expect("paused ride restores")
+            .expect("paused ride remains visible");
+        assert_eq!(restored.state, MobileRideLifecycleStateDto::Paused);
+        let stopped = state.stop_at(4_000).expect("paused ride stops");
+        assert_eq!(stopped.state, MobileRideLifecycleStateDto::Stopped);
+        let persisted = database
+            .find_ride(test_mobile_ride_id(&ride_id))
+            .expect("ride loads")
+            .expect("ride exists");
+        assert_eq!(persisted.state, MobileRideLifecycleStateDto::Stopped);
+        assert_eq!(
+            persisted.duration_milliseconds,
+            stopped.summary.duration_milliseconds
+        );
+
+        database.shutdown().expect("database shuts down");
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
     fn deferred_restore_auto_resumes_at_the_three_hour_boundary_without_ble() {
         let _guard = RIDE_DATABASE_TEST_LOCK
             .lock()
@@ -17699,7 +17800,7 @@ mod tests {
         let original_ride_id = {
             let database =
                 open_ride_database(path.to_string_lossy().into_owned()).expect("database opens");
-            let state = MobileRideMapCore::with_database(database.clone());
+            let state = restored_database_core(database.clone());
             let started = state
                 .start_gps_only_with_candidate(1_000, Some("pev-1".to_owned()))
                 .expect("ride starts");
@@ -17746,7 +17847,7 @@ mod tests {
                 .expect("ride history loads")
                 .rides
                 .iter()
-                .any(|ride| ride.id.value == original_ride_id
+                .any(|ride| mobile_ride_id_string(&ride.id) == original_ride_id
                     && ride.state == MobileRideLifecycleStateDto::Active)
         );
 
@@ -17767,7 +17868,7 @@ mod tests {
             {
                 let database = open_ride_database(path.to_string_lossy().into_owned())
                     .expect("database opens");
-                let state = MobileRideMapCore::with_database(database.clone());
+                let state = restored_database_core(database.clone());
                 let started = state.start_gps_only(1_000).expect("ride starts");
                 let decision = state
                     .ingest_location(2_000, 1_700_000_002_000, 40.0, -105.0, 3.0)
@@ -17813,7 +17914,7 @@ mod tests {
         assert_eq!(
             rides
                 .iter()
-                .find(|ride| ride.id.value == original_ride_id)
+                .find(|ride| mobile_ride_id_string(&ride.id) == original_ride_id)
                 .map(|ride| ride.state),
             Some(MobileRideLifecycleStateDto::Saved)
         );
@@ -17834,7 +17935,7 @@ mod tests {
         let original_ride_id = {
             let database =
                 open_ride_database(path.to_string_lossy().into_owned()).expect("database opens");
-            let state = MobileRideMapCore::with_database(database.clone());
+            let state = restored_database_core(database.clone());
             let started = state
                 .ensure_recording_for_vehicle(
                     "pev-1".to_owned(),
@@ -17883,7 +17984,7 @@ mod tests {
             .expect("ride history loads")
             .rides;
         assert!(rides.iter().any(|ride| {
-            ride.id.value == replacement.ride_id
+            mobile_ride_id_string(&ride.id) == replacement.ride_id
                 && ride.state == MobileRideLifecycleStateDto::Active
                 && ride.candidate_vehicle.as_deref() == Some("pev-1")
         }));
@@ -17913,7 +18014,7 @@ mod tests {
         {
             let database =
                 open_ride_database(path.to_string_lossy().into_owned()).expect("database opens");
-            let state = MobileRideMapCore::with_database(database.clone());
+            let state = restored_database_core(database.clone());
             state.start_gps_only(1_000).expect("ride starts");
             state.pause_at(2_000).expect("ride pauses explicitly");
             database.shutdown().expect("database shuts down");
@@ -17967,7 +18068,7 @@ mod tests {
         let original_ride_id = {
             let database =
                 open_ride_database(path.to_string_lossy().into_owned()).expect("database opens");
-            let state = MobileRideMapCore::with_database(database.clone());
+            let state = restored_database_core(database.clone());
             state.start_gps_only(1_000).expect("ride starts");
             state.pause_at(2_000).expect("ride pauses explicitly");
             let ride_id = state
@@ -18018,7 +18119,7 @@ mod tests {
         let original_ride_id = {
             let database =
                 open_ride_database(path.to_string_lossy().into_owned()).expect("database opens");
-            let state = MobileRideMapCore::with_database(database.clone());
+            let state = restored_database_core(database.clone());
             state.start_gps_only(1_000).expect("ride starts");
             state.pause_at(2_000).expect("ride pauses explicitly");
             database
@@ -24385,7 +24486,7 @@ mod tests {
         let _ = fs::remove_file(&path);
         let database =
             open_ride_database(path.to_string_lossy().into_owned()).expect("database opens");
-        let state = MobileRideMapCore::with_database(database.clone());
+        let state = restored_database_core(database.clone());
         state.start_gps_only(1_000).expect("recording starts");
 
         let pending = state
@@ -24432,7 +24533,7 @@ mod tests {
         let _ = fs::remove_file(&path);
         let database =
             open_ride_database(path.to_string_lossy().into_owned()).expect("database opens");
-        let state = MobileRideMapCore::with_database(database.clone());
+        let state = restored_database_core(database.clone());
         let started = state.start_gps_only(1_000).expect("recording starts");
 
         assert!(matches!(
@@ -24456,9 +24557,7 @@ mod tests {
         drop(inner);
         assert_eq!(
             database
-                .summary(MobileRideIdDto {
-                    value: started.ride_id,
-                })
+                .summary(test_mobile_ride_id(&started.ride_id))
                 .expect("durable summary loads")
                 .point_count,
             1
@@ -24481,7 +24580,7 @@ mod tests {
         let _ = fs::remove_file(&path);
         let database =
             open_ride_database(path.to_string_lossy().into_owned()).expect("database opens");
-        let state = MobileRideMapCore::with_database(database.clone());
+        let state = restored_database_core(database.clone());
         state.start_gps_only(1_000).expect("recording starts");
 
         for index in 0..MAX_PENDING_LOCATION_WRITES {
@@ -24598,7 +24697,7 @@ mod tests {
         database
             .remember_selected_device("pev-1".to_owned(), None, 1_000)
             .expect("remembered device persists");
-        let state = MobileRideMapCore::with_database(database.clone());
+        let state = restored_database_core(database.clone());
         let first = state
             .ensure_recording_for_vehicle_on_connection("pev-1".to_owned(), 1_000, 7)
             .expect("the first connection starts a ride")
@@ -24647,7 +24746,7 @@ mod tests {
         database
             .remember_selected_device("pev-1".to_owned(), None, 1_000)
             .expect("remembered device persists");
-        let state = MobileRideMapCore::with_database(database.clone());
+        let state = restored_database_core(database.clone());
         let first = state
             .ensure_recording_for_vehicle_on_connection("pev-1".to_owned(), 1_000, 7)
             .expect("first verified connection is admitted")
@@ -24677,7 +24776,7 @@ mod tests {
         let _ = fs::remove_file(&path);
         let database =
             open_ride_database(path.to_string_lossy().into_owned()).expect("database opens");
-        let state = MobileRideMapCore::with_database(database.clone());
+        let state = restored_database_core(database.clone());
         assert_eq!(
             state
                 .ensure_recording_for_vehicle_on_connection("pev-1".to_owned(), 1_000, 7)
@@ -24756,6 +24855,34 @@ mod tests {
     }
 
     #[test]
+    fn connection_generation_deduplication_is_scoped_to_the_ride() {
+        let state = MobileRideMapCore::new();
+        let first = state.start_gps_only(1_000).expect("first ride starts");
+        let associated_first = state
+            .ensure_recording_for_vehicle_on_connection("pev-1".to_owned(), 1_001, 7)
+            .expect("first connection associates")
+            .expect("first ride remains visible");
+        assert_eq!(associated_first.ride_id, first.ride_id);
+        assert_eq!(
+            associated_first.associated_vehicle.as_deref(),
+            Some("pev-1")
+        );
+
+        state.stop(2_000).expect("first ride stops");
+        state.save().expect("first ride saves");
+        let second = state.start_gps_only(3_000).expect("second ride starts");
+        let associated_second = state
+            .ensure_recording_for_vehicle_on_connection("pev-1".to_owned(), 3_001, 7)
+            .expect("same connection associates with the new ride")
+            .expect("second ride remains visible");
+        assert_eq!(associated_second.ride_id, second.ride_id);
+        assert_eq!(
+            associated_second.associated_vehicle.as_deref(),
+            Some("pev-1")
+        );
+    }
+
+    #[test]
     fn mobile_ride_map_core_uses_rust_owned_last_connection_for_manual_start() {
         let _guard = RIDE_DATABASE_TEST_LOCK
             .lock()
@@ -24768,7 +24895,7 @@ mod tests {
         let _ = fs::remove_file(&path);
         let database =
             open_ride_database(path.to_string_lossy().into_owned()).expect("database opens");
-        let state = MobileRideMapCore::with_database(database.clone());
+        let state = restored_database_core(database.clone());
 
         assert_eq!(
             state
@@ -24790,7 +24917,7 @@ mod tests {
             .expect("explicit start creates the ride");
         let rides = database.list_rides(None, 10).expect("started ride lists");
         assert_eq!(rides.rides[0].candidate_vehicle.as_deref(), Some("pev-1"));
-        assert_eq!(rides.rides[0].id.value, started.ride_id);
+        assert_eq!(mobile_ride_id_string(&rides.rides[0].id), started.ride_id);
 
         database.shutdown().expect("database shuts down");
         let _ = fs::remove_file(path);
@@ -24848,7 +24975,7 @@ mod tests {
             let original_id = {
                 let database = open_ride_database(path.to_string_lossy().into_owned())
                     .expect("database opens");
-                let state = MobileRideMapCore::with_database(database.clone());
+                let state = restored_database_core(database.clone());
                 let started = state.start_gps_only(999_000).expect("ride starts");
                 state
                     .set_music_history_policy(MobileMusicHistoryPolicyDto::HumanReadable)
@@ -24872,20 +24999,19 @@ mod tests {
                     .ingest_location(1_000_000, 1_700_000_000_000, 40.0, -105.0, 3.0)
                     .expect("original point queues");
                 let _ = drain_location_writes(&state);
+                state.pause_at(1_001_000).expect("ride pauses explicitly");
                 database.shutdown().expect("database shuts down");
                 started.ride_id
             };
             let database =
                 open_ride_database(path.to_string_lossy().into_owned()).expect("database reopens");
-            let state = MobileRideMapCore::with_database(database.clone());
+            let state = restored_database_core(database.clone());
             let recovered = state.current_snapshot(1_000).expect("recovered snapshot");
-            assert_eq!(
-                recovered.allowed_actions,
-                vec![
-                    MobileRideEventDto::Resume,
-                    MobileRideEventDto::Save,
-                    MobileRideEventDto::Discard
-                ]
+            assert_eq!(recovered.state, MobileRideLifecycleStateDto::Paused);
+            assert!(
+                recovered
+                    .allowed_actions
+                    .contains(&MobileRideEventDto::Resume)
             );
             assert!(recovered.recording_token.is_none());
             let resumed = if use_resume_at {
@@ -24895,7 +25021,7 @@ mod tests {
             }
             .expect("manual recovery resumes without a vehicle connection");
             assert_eq!(resumed.ride_id, original_id);
-            assert_eq!(resumed.summary.duration_milliseconds, 1_000);
+            assert_eq!(resumed.summary.duration_milliseconds, 2_000);
             let mut after_recovery = test_music_snapshot();
             after_recovery.provider = provider;
             after_recovery.observed_at_ms = 1_500;
@@ -24919,14 +25045,14 @@ mod tests {
             let music_events = state.current_music_events().expect("music history loads");
             assert_eq!(music_events.len(), 2);
             assert_eq!(music_events[0].observed_at_ms, Some(1_000_000));
-            assert_eq!(music_events[1].observed_at_ms, Some(1_000_500));
+            assert_eq!(music_events[1].observed_at_ms, Some(1_001_500));
             assert_eq!(
                 state
                     .current_snapshot(1_500)
                     .unwrap()
                     .summary
                     .duration_milliseconds,
-                1_500,
+                2_500,
                 "duration advances in the new clock epoch"
             );
             assert!(matches!(
@@ -24939,7 +25065,7 @@ mod tests {
             let points = state.points_after(None, 10).expect("route loads").points;
             assert_eq!(points.len(), 2);
             assert_eq!(points[0].monotonic_ms, 1_000_000);
-            assert_eq!(points[1].monotonic_ms, 1_000_500);
+            assert_eq!(points[1].monotonic_ms, 1_001_500);
             assert_eq!(points[1].sequence, 1);
             assert_eq!(
                 points[1].start_reason,
@@ -24957,7 +25083,7 @@ mod tests {
             let history = database
                 .list_rides(None, 10)
                 .expect("durable history loads");
-            assert_eq!(history.rides[0].duration_milliseconds, 1_500);
+            assert_eq!(history.rides[0].duration_milliseconds, 2_500);
             state.pause_at(1_600).expect("recovered ride pauses");
             state
                 .resume_at(2_600)
@@ -24968,7 +25094,7 @@ mod tests {
                     .unwrap()
                     .summary
                     .duration_milliseconds,
-                1_700,
+                2_700,
                 "ordinary pause and resume retain the recovered epoch offset"
             );
             database.shutdown().expect("database shuts down");
@@ -24989,7 +25115,7 @@ mod tests {
         let original_ride_id = {
             let database =
                 open_ride_database(path.to_string_lossy().into_owned()).expect("database opens");
-            let state = MobileRideMapCore::with_database(database.clone());
+            let state = restored_database_core(database.clone());
             let snapshot = state
                 .ensure_recording_for_vehicle(
                     "pev-1".to_owned(),
@@ -25003,10 +25129,10 @@ mod tests {
 
         let database =
             open_ride_database(path.to_string_lossy().into_owned()).expect("database reopens");
-        let state = MobileRideMapCore::with_database(database.clone());
+        let state = restored_database_core(database.clone());
         assert_eq!(
             state.current_snapshot(2_000).map(|snapshot| snapshot.state),
-            Some(MobileRideLifecycleStateDto::Interrupted)
+            Some(MobileRideLifecycleStateDto::Active)
         );
         let resumed = state
             .ensure_recording_for_vehicle(
@@ -25042,7 +25168,7 @@ mod tests {
         let original_ride_id = {
             let database =
                 open_ride_database(path.to_string_lossy().into_owned()).expect("database opens");
-            let state = MobileRideMapCore::with_database(database.clone());
+            let state = restored_database_core(database.clone());
             let snapshot = state
                 .ensure_recording_for_vehicle(
                     "pev-1".to_owned(),
@@ -25056,7 +25182,7 @@ mod tests {
 
         let database =
             open_ride_database(path.to_string_lossy().into_owned()).expect("database reopens");
-        let state = MobileRideMapCore::with_database(database.clone());
+        let state = restored_database_core(database.clone());
         let started = state
             .ensure_recording_for_vehicle(
                 "pev-2".to_owned(),
@@ -25085,7 +25211,7 @@ mod tests {
         let original_ride_id = {
             let database =
                 open_ride_database(path.to_string_lossy().into_owned()).expect("database opens");
-            let state = MobileRideMapCore::with_database(database.clone());
+            let state = restored_database_core(database.clone());
             let snapshot = state
                 .ensure_recording_for_vehicle(
                     "pev-1".to_owned(),
@@ -25116,7 +25242,7 @@ mod tests {
 
         let database =
             open_ride_database(path.to_string_lossy().into_owned()).expect("database reopens");
-        let state = MobileRideMapCore::with_database(database.clone());
+        let state = restored_database_core(database.clone());
         let started = state
             .ensure_recording_for_vehicle(
                 "pev-1".to_owned(),
@@ -25144,7 +25270,7 @@ mod tests {
         let _ = fs::remove_file(&path);
         let database =
             open_ride_database(path.to_string_lossy().into_owned()).expect("database opens");
-        let state = MobileRideMapCore::with_database(database.clone());
+        let state = restored_database_core(database.clone());
         let invalid_candidate = "x".repeat(513);
 
         assert!(matches!(
@@ -25203,7 +25329,7 @@ mod tests {
         let _ = fs::remove_file(&path);
         let database =
             open_ride_database(path.to_string_lossy().into_owned()).expect("database opens");
-        let state = MobileRideMapCore::with_database(database.clone());
+        let state = restored_database_core(database.clone());
         state
             .start_gps_only_with_candidate(1_000, Some("pev-1".to_owned()))
             .expect("recording starts");
@@ -25236,7 +25362,7 @@ mod tests {
         let _ = fs::remove_file(&path);
         let database =
             open_ride_database(path.to_string_lossy().into_owned()).expect("database opens");
-        let state = MobileRideMapCore::with_database(database.clone());
+        let state = restored_database_core(database.clone());
 
         assert!(matches!(
             state.start_gps_only_with_candidate(1_000, Some("   ".to_owned())),
@@ -25321,7 +25447,7 @@ mod tests {
         let _ = fs::remove_file(&path);
         let database =
             open_ride_database(path.to_string_lossy().into_owned()).expect("map database opens");
-        let state = MobileRideMapCore::with_database(database.clone());
+        let state = restored_database_core(database.clone());
         state.start_gps_only(1_000).expect("map recording starts");
         assert!(matches!(
             state
@@ -25384,7 +25510,7 @@ mod tests {
         let _ = fs::remove_file(&path);
         let database =
             open_ride_database(path.to_string_lossy().into_owned()).expect("database opens");
-        let state = MobileRideMapCore::with_database(database.clone());
+        let state = restored_database_core(database.clone());
         state.start_gps_only(1_000).expect("map recording starts");
         state
             .ingest_location(1_000, 1_700_000_000_000, 40.0, -105.0, 3.0)
@@ -25423,7 +25549,7 @@ mod tests {
         let _ = fs::remove_file(&path);
         let database =
             open_ride_database(path.to_string_lossy().into_owned()).expect("database opens");
-        let state = MobileRideMapCore::with_database(database.clone());
+        let state = restored_database_core(database.clone());
         state.start_gps_only(1_000).expect("map recording starts");
         assert!(matches!(
             state
@@ -25461,9 +25587,7 @@ mod tests {
             vec![0, 1]
         );
         let durable_summary = database
-            .summary(MobileRideIdDto {
-                value: snapshot.ride_id,
-            })
+            .summary(test_mobile_ride_id(&snapshot.ride_id))
             .expect("durable summary loads");
         assert_eq!(durable_summary.distance_millimetres, 0);
         assert_eq!(durable_summary.average_speed_millimetres_per_second, None);
@@ -25485,7 +25609,7 @@ mod tests {
         let _ = fs::remove_file(&path);
         let database =
             open_ride_database(path.to_string_lossy().into_owned()).expect("database opens");
-        let state = MobileRideMapCore::with_database(database.clone());
+        let state = restored_database_core(database.clone());
         state.start_gps_only(1_000).expect("map recording starts");
         state
             .ingest_location(1_001, 1_700_000_000_001, 40.0, -105.0, 3.0)
@@ -25535,7 +25659,7 @@ mod tests {
         let _ = fs::remove_file(&path);
         let database =
             open_ride_database(path.to_string_lossy().into_owned()).expect("database opens");
-        let state = MobileRideMapCore::with_database(database.clone());
+        let state = restored_database_core(database.clone());
         let snapshot = state.start_gps_only(1_000).expect("map recording starts");
         let location = MobileRideLocationDto {
             latitude_degrees: 40.0,
@@ -25547,12 +25671,7 @@ mod tests {
         };
         assert_eq!(
             database
-                .append_location(
-                    MobileRideIdDto {
-                        value: snapshot.ride_id,
-                    },
-                    location,
-                )
+                .append_location(test_mobile_ride_id(&snapshot.ride_id), location,)
                 .expect("external durable append succeeds"),
             MobileRideLocationAdmissionDto::Accepted
         );
@@ -25601,13 +25720,11 @@ mod tests {
         let _ = fs::remove_file(&path);
         let database =
             open_ride_database(path.to_string_lossy().into_owned()).expect("database opens");
-        let state = MobileRideMapCore::with_database(database.clone());
+        let state = restored_database_core(database.clone());
         let snapshot = state.start_gps_only(1_000).expect("map recording starts");
         database
             .append_location(
-                MobileRideIdDto {
-                    value: snapshot.ride_id,
-                },
+                test_mobile_ride_id(&snapshot.ride_id),
                 MobileRideLocationDto {
                     latitude_degrees: 40.0,
                     longitude_degrees: -105.0,
@@ -25641,7 +25758,7 @@ mod tests {
         {
             let database =
                 open_ride_database(path.to_string_lossy().into_owned()).expect("database opens");
-            let state = MobileRideMapCore::with_database(database.clone());
+            let state = restored_database_core(database.clone());
             state
                 .start_gps_only_with_candidate(1_000, Some("pev-1".to_owned()))
                 .expect("map recording starts");
@@ -25662,11 +25779,11 @@ mod tests {
 
         let database =
             open_ride_database(path.to_string_lossy().into_owned()).expect("database reopens");
-        let state = MobileRideMapCore::with_database(database.clone());
+        let state = restored_database_core_at(database.clone(), 5_100_000);
         let snapshot = state
             .current_snapshot(5_100_000)
             .expect("interrupted ride restores");
-        assert_eq!(snapshot.state, MobileRideLifecycleStateDto::Interrupted);
+        assert_eq!(snapshot.state, MobileRideLifecycleStateDto::Active);
         assert_eq!(
             snapshot.summary.point_count,
             ride_maps::MAX_LIVE_ROUTE_POINTS as u64 + 2
@@ -25735,7 +25852,7 @@ mod tests {
 
         let database =
             open_ride_database(path.to_string_lossy().into_owned()).expect("database reopens");
-        let state = MobileRideMapCore::with_database(database.clone());
+        let state = restored_database_core_at(database.clone(), 2_051);
         assert!(
             state.current_snapshot(2_051).is_some(),
             "restore failed: {:?}",
@@ -25745,7 +25862,7 @@ mod tests {
             state
                 .current_snapshot(2_051)
                 .map(|snapshot| snapshot.ride_id),
-            Some(recoverable.value)
+            Some(mobile_ride_id_string(&recoverable))
         );
 
         database.shutdown().expect("reopened database shuts down");
@@ -25767,7 +25884,11 @@ mod tests {
             open_ride_database(path.to_string_lossy().into_owned()).expect("database opens");
         database.shutdown().expect("database shuts down");
 
-        let state = MobileRideMapCore::with_database(database);
+        let state = Arc::new(MobileRideMapCore {
+            inner: Mutex::new(MobileRideMapCoreInner::new(Some(database))),
+        });
+        assert!(!state.is_ready());
+        let _ = state.restore(0);
         assert!(matches!(
             state.initialization_error(),
             Some(MobileRideMapCoreErrorDto::Storage(_))
@@ -25789,7 +25910,7 @@ mod tests {
         {
             let database =
                 open_ride_database(path.to_string_lossy().into_owned()).expect("database opens");
-            let state = MobileRideMapCore::with_database(database.clone());
+            let state = restored_database_core(database.clone());
             state.start_gps_only(1_000).expect("map recording starts");
             state.pause_at(5_000).expect("recording pauses");
             state.resume_at(7_000).expect("recording resumes");
@@ -25815,11 +25936,9 @@ mod tests {
 
         let database =
             open_ride_database(path.to_string_lossy().into_owned()).expect("database reopens");
-        let state = MobileRideMapCore::with_database(database.clone());
-        let snapshot = state
-            .current_snapshot(8_000)
-            .expect("interrupted ride restores");
-        assert_eq!(snapshot.state, MobileRideLifecycleStateDto::Interrupted);
+        let state = restored_database_core_at(database.clone(), 8_000);
+        let snapshot = state.current_snapshot(8_000).expect("recent ride restores");
+        assert_eq!(snapshot.state, MobileRideLifecycleStateDto::Active);
         assert_eq!(snapshot.summary.duration_milliseconds, 5_000);
         let rides = database.list_rides(None, 10).expect("recovered ride lists");
         assert_eq!(rides.rides[0].duration_milliseconds, 5_000);
@@ -25970,7 +26089,7 @@ mod tests {
             std::env::temp_dir().join(format!("cutout-music-restore-{}.sqlite", Uuid::new_v4()));
         let database =
             open_ride_database(path.to_string_lossy().into_owned()).expect("database opens");
-        let core = MobileRideMapCore::with_database(database.clone());
+        let core = restored_database_core(database.clone());
         core.start_gps_only(1_000).expect("ride starts");
         core.set_music_history_policy(MobileMusicHistoryPolicyDto::HumanReadable)
             .expect("enable history");
@@ -25987,12 +26106,12 @@ mod tests {
             database
                 .inner
                 .music_history_policy(
-                    parse_mobile_ride_id(&MobileRideIdDto {
-                        value: core
+                    parse_mobile_ride_id(&test_mobile_ride_id(
+                        &core
                             .current_snapshot(1_000)
                             .expect("ride remains available")
                             .ride_id,
-                    })
+                    ))
                     .expect("ride identifier")
                 )
                 .expect("policy remains readable"),
@@ -26060,7 +26179,7 @@ mod tests {
             std::env::temp_dir().join(format!("libcutout-mobile-music-{}.sqlite", Uuid::new_v4()));
         let database =
             open_ride_database(path.to_string_lossy().into_owned()).expect("database opens");
-        let state = MobileRideMapCore::with_database(database.clone());
+        let state = restored_database_core(database.clone());
         state.start_gps_only(1_000).expect("ride starts");
         let snapshot = test_music_snapshot();
 
@@ -26178,7 +26297,7 @@ mod tests {
         ));
         let database =
             open_ride_database(path.to_string_lossy().into_owned()).expect("database opens");
-        let state = MobileRideMapCore::with_database(database.clone());
+        let state = restored_database_core(database.clone());
         state.start_gps_only(1_000).expect("ride starts");
         state
             .set_music_history_policy(MobileMusicHistoryPolicyDto::HumanReadable)
@@ -26204,7 +26323,7 @@ mod tests {
         ));
         let database =
             open_ride_database(path.to_string_lossy().into_owned()).expect("database opens");
-        let state = MobileRideMapCore::with_database(database.clone());
+        let state = restored_database_core(database.clone());
         state.start_gps_only(1_000).expect("ride starts");
         state
             .set_music_history_policy(MobileMusicHistoryPolicyDto::HumanReadable)
@@ -26257,9 +26376,9 @@ mod tests {
                 if message == "Rust ride database is unavailable"
         ));
         assert!(matches!(
-            state.stored_music_events(MobileRideIdDto {
-                value: "00000000-0000-0000-0000-000000000000".to_owned(),
-            }),
+            state.stored_music_events(test_mobile_ride_id(
+                "00000000-0000-0000-0000-000000000000"
+            )),
             Err(MobileRideMapCoreErrorDto::Storage(message))
                 if message == "Rust ride database is unavailable"
         ));
@@ -26270,9 +26389,7 @@ mod tests {
         let state = MobileRideMapCore::new();
 
         let error = state
-            .stored_music_events(MobileRideIdDto {
-                value: Uuid::new_v4().to_string(),
-            })
+            .stored_music_events(mobile_ride_id_from_uuid(Uuid::new_v4()))
             .expect_err("music history must not look empty when storage is unavailable");
 
         assert_eq!(
@@ -26294,7 +26411,7 @@ mod tests {
         let _ = fs::remove_file(&path);
         let database =
             open_ride_database(path.to_string_lossy().into_owned()).expect("database opens");
-        let state = MobileRideMapCore::with_database(database.clone());
+        let state = restored_database_core(database.clone());
         state.start_gps_only(1_000).expect("ride starts");
         state
             .set_music_history_policy(MobileMusicHistoryPolicyDto::OpaqueItem)
@@ -26351,7 +26468,7 @@ mod tests {
         let _ = fs::remove_file(&path);
         let database =
             open_ride_database(path.to_string_lossy().into_owned()).expect("database opens");
-        let state = MobileRideMapCore::with_database(database.clone());
+        let state = restored_database_core(database.clone());
         state.start_gps_only(1_000).expect("ride starts");
         state
             .set_music_history_policy(MobileMusicHistoryPolicyDto::HumanReadable)
@@ -26413,7 +26530,7 @@ mod tests {
         let _ = fs::remove_file(&path);
         let database =
             open_ride_database(path.to_string_lossy().into_owned()).expect("database opens");
-        let state = MobileRideMapCore::with_database(database.clone());
+        let state = restored_database_core(database.clone());
         state.start_gps_only(1_000).expect("ride starts");
         state
             .set_music_history_policy(MobileMusicHistoryPolicyDto::OpaqueItem)

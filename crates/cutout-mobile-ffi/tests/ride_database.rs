@@ -10,6 +10,15 @@ use cutout_mobile_ffi::{
 
 static TEST_LOCK: Mutex<()> = Mutex::new(());
 
+fn mobile_ride_id(value: &str) -> MobileRideIdDto {
+    MobileRideIdDto {
+        bytes: uuid::Uuid::parse_str(value)
+            .expect("ride identifier is a UUID")
+            .into_bytes()
+            .to_vec(),
+    }
+}
+
 #[test]
 fn mobile_clients_open_the_rust_owned_database() {
     let _guard = TEST_LOCK.lock().unwrap_or_else(PoisonError::into_inner);
@@ -90,12 +99,13 @@ fn mobile_clients_bootstrap_recovered_rides_and_page_history() {
     let path_string = path.to_string_lossy().into_owned();
     let handle = open_ride_database(path_string.clone()).expect("database opens");
     let state = MobileRideMapCore::with_database(handle.clone());
-    let ride_id = MobileRideIdDto {
-        value: state
+    state.restore(100).expect("map state restores");
+    let ride_id = mobile_ride_id(
+        &state
             .start_gps_only(100)
             .expect("ride is created and started")
             .ride_id,
-    };
+    );
     state
         .ingest_location(101, 102, 39.7392, -104.9903, 1.0)
         .expect("location is admitted");

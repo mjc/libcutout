@@ -1,6 +1,16 @@
 use cutout_mobile_ffi::*;
 use std::sync::{Arc, Mutex, MutexGuard};
 static DATABASE_LOCK: Mutex<()> = Mutex::new(());
+
+fn mobile_ride_id(value: &str) -> MobileRideIdDto {
+    MobileRideIdDto {
+        bytes: uuid::Uuid::parse_str(value)
+            .expect("ride identifier is a UUID")
+            .into_bytes()
+            .to_vec(),
+    }
+}
+
 struct Fixture {
     db: Arc<RideDatabaseHandle>,
     core: Arc<MobileRideMapCore>,
@@ -27,6 +37,7 @@ fn setup_policy(policy: Option<MobileMusicHistoryPolicyDto>) -> Fixture {
         std::env::temp_dir().join(format!("cutout-music-test-{}.sqlite", uuid::Uuid::new_v4()));
     let db = open_ride_database(path.to_string_lossy().into_owned()).unwrap();
     let core = MobileRideMapCore::with_database(db.clone());
+    core.restore(1_000).unwrap();
     let started = core.start_gps_only(1_000).unwrap();
     if let Some(policy) = policy {
         core.set_music_history_policy(policy).unwrap();
@@ -34,9 +45,7 @@ fn setup_policy(policy: Option<MobileMusicHistoryPolicyDto>) -> Fixture {
     Fixture {
         db,
         core,
-        id: MobileRideIdDto {
-            value: started.ride_id,
-        },
+        id: mobile_ride_id(&started.ride_id),
         path,
         _guard: guard,
     }
@@ -147,6 +156,7 @@ fn restoring_core_preserves_observation_watermark() {
     let (db, core) = (&fixture.db, &fixture.core);
     record(core, 2_000, 5_000, MobileMusicRideEventKindDto::Play).unwrap();
     let restored = MobileRideMapCore::with_database(db.clone());
+    restored.restore(6_000).unwrap();
     assert!(restored.initialization_error().is_none());
     assert_eq!(
         record(&restored, 3_000, 6_000, MobileMusicRideEventKindDto::Pause).unwrap(),
@@ -183,6 +193,7 @@ fn history_status_survives_core_recreation_and_privacy_changes() {
     fixture.db.delete_music_history(fixture.id.clone()).unwrap();
     assert!(fixture.core.current_music_events().unwrap().is_empty());
     let restored = MobileRideMapCore::with_database(fixture.db.clone());
+    restored.restore(4_000).unwrap();
     assert_eq!(
         restored.current_music_history().unwrap().status,
         MobileMusicHistoryStatusDto::Deleted
@@ -221,6 +232,7 @@ fn duplicate_observation_watermark_survives_core_recreation() {
         MobileMusicTimelineOutcomeDto::Duplicate
     );
     let restored = MobileRideMapCore::with_database(fixture.db.clone());
+    restored.restore(6_000).unwrap();
     assert_eq!(
         record(&restored, 3_000, 6_000, MobileMusicRideEventKindDto::Pause).unwrap(),
         MobileMusicTimelineOutcomeDto::OutOfOrder
@@ -232,6 +244,7 @@ fn duplicate_observation_watermark_survives_core_recreation() {
 fn stale_core_cannot_write_after_durable_ride_stop() {
     let fixture = setup();
     let controller = MobileRideMapCore::with_database(fixture.db.clone());
+    controller.restore(2_500).unwrap();
     controller.stop_at(2_500).unwrap();
     assert_eq!(
         fixture
@@ -304,9 +317,13 @@ fn corrupt_optional_music_does_not_disable_ride_recovery() {
     ));
     let database = open_ride_database(path.to_string_lossy().into_owned()).unwrap();
     let core = MobileRideMapCore::with_database(database.clone());
+    core.restore(1_000).unwrap();
     let started = core.start_gps_only(1_000).unwrap();
     let ride_id = MobileRideIdDto {
-        value: started.ride_id.clone(),
+        bytes: uuid::Uuid::parse_str(&started.ride_id)
+            .unwrap()
+            .into_bytes()
+            .to_vec(),
     };
     core.set_music_history_policy(MobileMusicHistoryPolicyDto::HumanReadable)
         .unwrap();
@@ -332,6 +349,7 @@ fn corrupt_optional_music_does_not_disable_ride_recovery() {
     drop(connection);
     let reopened = open_ride_database(path.to_string_lossy().into_owned()).unwrap();
     let restored = MobileRideMapCore::with_database(reopened.clone());
+    restored.restore(4_000).unwrap();
     assert!(restored.initialization_error().is_none());
     assert!(restored.current_snapshot(4_000).is_some());
     assert_eq!(
@@ -343,7 +361,6 @@ fn corrupt_optional_music_does_not_disable_ride_recovery() {
         restored.current_music_history().unwrap().status,
         MobileMusicHistoryStatusDto::Deleted
     );
-    restored.resume_at(5_000).unwrap();
     restored
         .set_music_history_policy(MobileMusicHistoryPolicyDto::HumanReadable)
         .unwrap();
@@ -367,6 +384,7 @@ fn stale_core_cannot_change_policy_after_durable_ride_stop() {
     )
     .unwrap();
     let controller = MobileRideMapCore::with_database(fixture.db.clone());
+    controller.restore(3_000).unwrap();
     controller.stop_at(3_000).unwrap();
     assert_eq!(
         fixture
@@ -383,10 +401,7 @@ fn stale_core_cannot_change_policy_after_durable_ride_stop() {
 #[test]
 fn historical_redaction_does_not_opt_in_an_interrupted_ride() {
     let fixture = setup_policy(Some(MobileMusicHistoryPolicyDto::Disabled));
-    fixture
-        .db
-        .transition(fixture.id.clone(), MobileRideEventDto::Interrupt, 2_000)
-        .unwrap();
+    fixture.core.interrupt_at(2_000).unwrap();
     let result = fixture
         .db
         .save_music_history_policy(fixture.id.clone(), MobileMusicHistoryPolicyDto::OpaqueItem);
