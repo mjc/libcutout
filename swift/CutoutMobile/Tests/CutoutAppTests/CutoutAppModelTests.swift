@@ -2083,7 +2083,6 @@ final class CutoutAppModelTests: XCTestCase {
         model.start()
 
         XCTAssertTrue(model.pair(platformIdentifier: row.id))
-        driver.onPhaseChange?(.subscribing)
         driver.isRecordOnlyConnection = true
         driver.onPhaseChange?(.live)
 

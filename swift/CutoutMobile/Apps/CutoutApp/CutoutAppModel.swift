@@ -2688,6 +2688,8 @@ final class CutoutAppModel {
             switch connectionState {
             case .connecting(_, phase: .subscribing), .identified:
                 break
+            case .connecting(_, phase: .discoveringServices) where core.isRecordOnlyConnection:
+                break
             default:
                 return
             }
