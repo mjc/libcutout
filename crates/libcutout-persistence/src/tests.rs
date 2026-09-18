@@ -3633,6 +3633,7 @@ fn newer_schema_is_rejected_without_resetting_the_database() {
 }
 
 #[test]
+#[allow(clippy::type_complexity)]
 fn bms_voltage_samples_are_durable_without_a_ride_and_duplicate_batches_are_idempotent() {
     type BmsSampleRow = (String, u64, u64, u16, Option<u16>, Option<u16>, i32);
     let _guard = test_guard();

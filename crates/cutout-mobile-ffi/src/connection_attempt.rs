@@ -4,7 +4,6 @@ use cutout_core::{
     ConnectionAttemptSnapshot, ConnectionAttemptToken, ConnectionReadiness,
     ConnectionTransportState,
 };
-use std::sync::Arc;
 
 use crate::{
     CutoutSessionStateHandle, MobileRideMapCore, MobileRideMapCoreErrorDto,
@@ -188,7 +187,7 @@ impl CutoutSessionStateHandle {
     )]
     pub fn ensure_ride_recording_for_verified_connection(
         &self,
-        ride_map: Arc<MobileRideMapCore>,
+        ride_map: &MobileRideMapCore,
         token: MobileConnectionAttemptTokenDto,
         at_ms: u64,
     ) -> Result<Option<MobileRideMapCoreSnapshotDto>, MobileRideMapCoreErrorDto> {
@@ -282,7 +281,7 @@ mod tests {
 
         assert_eq!(
             handle
-                .ensure_ride_recording_for_verified_connection(MobileRideMapCore::new(), token, 20)
+                .ensure_ride_recording_for_verified_connection(&MobileRideMapCore::new(), token, 20)
                 .expect_err("pending connection cannot enter the ride path"),
             MobileRideMapCoreErrorDto::StaleConnection
         );
@@ -292,7 +291,7 @@ mod tests {
         assert_eq!(
             handle
                 .ensure_ride_recording_for_verified_connection(
-                    MobileRideMapCore::new(),
+                    &MobileRideMapCore::new(),
                     replacement_token,
                     40
                 )

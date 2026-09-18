@@ -2444,8 +2444,17 @@ pub enum SessionEventDto {
     DiagnosticError(DiagnosticErrorDto),
 }
 
-impl SessionOutputDto {
-    fn from_event(event: DeviceEvent) -> Self {
+#[allow(
+    clippy::large_enum_variant,
+    reason = "FFI projection preserves the owned read-only response without another allocation"
+)]
+enum SessionEventProjection {
+    Event(SessionEventDto),
+    ReadOnly(ReadOnlyResponse),
+}
+
+impl SessionEventDto {
+    fn from_event(event: DeviceEvent) -> SessionEventProjection {
         match event {
             DeviceEvent::LinkUp(link) => Self::Event(SessionEventDto::LinkUp {
                 monotonic_ms: MonotonicMillisDto::from_core(link.monotonic_ms),

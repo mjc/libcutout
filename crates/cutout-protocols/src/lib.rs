@@ -7,6 +7,9 @@
     deny(clippy::expect_used, clippy::panic, clippy::unwrap_used)
 )]
 #![cfg_attr(not(test), deny(clippy::indexing_slicing))]
+// Existing protocol adapters qualify imported core types to make the ownership
+// boundary explicit; retain that readability without failing the warning gate.
+#![allow(unused_qualifications)]
 
 //! Protocol-family scaffolding for Cutout.
 

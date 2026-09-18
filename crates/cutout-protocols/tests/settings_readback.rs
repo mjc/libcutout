@@ -66,13 +66,15 @@ fn pwm_readback_is_duty_and_readability_does_not_grant_a_write() {
                 &read(profile, AERO_FIELD_PWM_PERCENT, duty),
                 SettingId::PwmTiltback
             ),
-            Some(DeviceSettingValue::Number(duty_i32))
+            Some(DeviceSettingValue::Number(
+                i32::try_from(duty).expect("test duty fits i32"),
+            ))
         );
         assert_eq!(
             profile
                 .command(
                     SettingId::PwmTiltback,
-                    DeviceSettingValue::Number(duty_i32),
+                    DeviceSettingValue::Number(i32::try_from(duty).expect("test duty fits i32")),
                     true
                 )
                 .is_ok(),
@@ -233,7 +235,9 @@ fn normalization_preserves_signed_fixed_point_and_original_evidence() {
                 &read(profile, AERO_FIELD_VOLTAGE_CORRECTION_TENTHS_PERCENT, raw),
                 SettingId::VoltageCorrection
             ),
-            Some(DeviceSettingValue::Number(raw_i32))
+            Some(DeviceSettingValue::Number(
+                i32::try_from(raw).expect("test value fits i32"),
+            ))
         );
     }
     let measured = Measured {

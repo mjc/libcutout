@@ -48,7 +48,7 @@ pub struct AeroSettingsReadback {
     pub voltage_correction: Option<VeteranVoltageCorrection>,
 
     /// Current official `MxV` raw maximum-charge value.
-    pub max_charge_voltage_raw: Option<VeteranMaxChargeVoltageRaw>,
+    pub max_charge_voltage_raw: Option<AeroMaxChargeVoltageRaw>,
 
     /// Current numeric MD pedal hardness, when the simulator has a value.
     pub pedal_hardness: Option<VeteranPedalHardness>,
@@ -340,108 +340,7 @@ impl AeroSettingsSimulator {
         )))
     }
 
-    fn apply_setting_readback(&mut self, id: SettingId, value: DeviceSettingValue) {
-        match (id, value) {
-            (SettingId::TiltbackSpeed, DeviceSettingValue::Number(value)) => {
-                self.readback.tiltback_speed = u8::try_from(value / 10)
-                    .ok()
-                    .and_then(VeteranSpeedSetting::new);
-            }
-            (SettingId::SpeedAlarmThreshold, DeviceSettingValue::Number(value)) => {
-                self.readback.alarm_speed = u8::try_from(value / 10)
-                    .ok()
-                    .and_then(VeteranSpeedSetting::new);
-            }
-            (SettingId::PedalAngle, DeviceSettingValue::Number(value)) => {
-                self.readback.angle_adjustment = i8::try_from(value)
-                    .ok()
-                    .and_then(VeteranAngleAdjustment::new);
-            }
-            (SettingId::PwmTiltback, DeviceSettingValue::Disabled) => {
-                self.readback.pwm_percent = Some(VeteranPwmSetting::Off);
-            }
-            (SettingId::PwmTiltback, DeviceSettingValue::Number(value)) => {
-                self.readback.pwm_percent = u8::try_from(value)
-                    .ok()
-                    .and_then(|duty| 100_u8.checked_sub(duty))
-                    .and_then(VeteranPwmPercent::new)
-                    .map(VeteranPwmSetting::Margin);
-            }
-            (SettingId::BrakeOverpressureAlarm, DeviceSettingValue::Number(value)) => {
-                self.readback.brake_overpressure_alarm = u8::try_from(value)
-                    .ok()
-                    .and_then(VeteranBrakeOverpressureAlarm::new);
-            }
-            (SettingId::DisplayBrightness, DeviceSettingValue::Number(value)) => {
-                self.readback.display_backlight = u8::try_from(value)
-                    .ok()
-                    .and_then(VeteranDisplayBacklight::new);
-            }
-            (SettingId::BeeperVolumePercent, DeviceSettingValue::Number(value)) => {
-                self.readback.beeper_volume =
-                    u8::try_from(value).ok().and_then(VeteranBeeperVolume::new);
-            }
-            (SettingId::DynamicAssist, DeviceSettingValue::Number(value)) => {
-                self.readback.dynamic_assist =
-                    u8::try_from(value).ok().and_then(VeteranDynamicAssist::new);
-            }
-            (SettingId::PedalDipCompensation, DeviceSettingValue::Number(value)) => {
-                self.readback.pedal_dip_compensation = u8::try_from(value)
-                    .ok()
-                    .and_then(VeteranPedalDipCompensation::new);
-            }
-            (SettingId::LateralTiltLimit, DeviceSettingValue::Number(value)) => {
-                self.readback.lateral_tilt_limit = u8::try_from(value)
-                    .ok()
-                    .and_then(VeteranLateralTiltLimit::new);
-            }
-            (SettingId::VoltageCorrection, DeviceSettingValue::Number(value)) => {
-                self.readback.voltage_correction = i8::try_from(value)
-                    .ok()
-                    .and_then(VeteranVoltageCorrection::new);
-            }
-            (SettingId::ChargeLimitDiagnostic, DeviceSettingValue::Number(value)) => {
-                self.readback.max_charge_voltage_raw = u8::try_from(value)
-                    .ok()
-                    .and_then(VeteranMaxChargeVoltageRaw::new);
-            }
-            (SettingId::PedalHardness, DeviceSettingValue::Number(value)) => {
-                self.readback.pedal_hardness =
-                    u8::try_from(value).ok().and_then(VeteranPedalHardness::new);
-            }
-            (SettingId::DisplayUnits, DeviceSettingValue::Choice(value)) => {
-                self.readback.wheel_units = u8::try_from(value)
-                    .ok()
-                    .and_then(VeteranWheelUnits::from_display_mode);
-            }
-            (SettingId::HighSpeedMode, DeviceSettingValue::Boolean(value)) => {
-                self.readback.high_speed_mode = Some(VeteranHighSpeedMode::new(value));
-            }
-            (SettingId::LowBatteryMode, DeviceSettingValue::Boolean(value)) => {
-                self.readback.low_battery_mode = Some(VeteranLowBatteryMode::new(value));
-            }
-            (SettingId::TransportMode, DeviceSettingValue::Boolean(value)) => {
-                self.readback.transport_mode = Some(VeteranTransportMode::new(value));
-            }
-            (SettingId::RidingPreset, DeviceSettingValue::Choice(value)) => {
-                self.readback.pedal_mode = match value {
-                    0 => Some(PedalMode::Hard),
-                    1 => Some(PedalMode::Medium),
-                    2 => Some(PedalMode::Soft),
-                    _ => None,
-                };
-            }
-            (SettingId::HighBeam, DeviceSettingValue::Boolean(value)) => {
-                self.readback.high_beam = Some(if value {
-                    LightState::On
-                } else {
-                    LightState::Off
-                });
-            }
-            _ => {}
-        }
-    }
-
+    #[allow(clippy::too_many_lines)]
     fn settings_readback(&self) -> SettingsReadback {
         SettingsReadback::available::<18>(std::array::from_fn(|index| self.settings_entry(index)))
     }

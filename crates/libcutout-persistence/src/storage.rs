@@ -2139,7 +2139,8 @@ impl RideDatabase {
     ///
     /// # Errors
     ///
-    /// Returns [`StorageError`] when the transaction or replacement validation fails.
+    /// Returns [`StorageError`] when either ride finalization or replacement creation cannot be
+    /// validated or committed by the storage worker.
     pub fn settle_recovered_ride(
         &self,
         ride_id: RideId,
