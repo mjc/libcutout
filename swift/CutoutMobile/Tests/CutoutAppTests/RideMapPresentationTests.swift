@@ -95,6 +95,25 @@ final class RideMapPresentationTests: XCTestCase {
         XCTAssertTrue(snapshot(.imported, true).recordedBoundsAvailable)
     }
 
+    func testLiveRouteIdentityTracksRustRideIdentity() {
+        let summary = MobileRideMapSummaryDto(
+            pointCount: 0,
+            distanceMeters: 0,
+            durationMilliseconds: 0
+        )
+        let snapshot = MobileRideMapSnapshotDto(
+            rideID: "ride-b",
+            state: .active,
+            summary: summary,
+            segmentCount: 0,
+            associatedVehicle: nil,
+            recordedBoundsAvailable: false
+        )
+
+        XCTAssertEqual(RideMapRouteView.liveRouteID(for: nil), "live")
+        XCTAssertEqual(RideMapRouteView.liveRouteID(for: snapshot), "ride-b")
+    }
+
     func testHistoryPresentationUsesSingularAndPluralPointStrings() {
         XCTAssertEqual(RideMapHistoryListView.pointCountText(1), "1 point")
         XCTAssertEqual(RideMapHistoryListView.pointCountText(2), "2 points")
@@ -141,6 +160,14 @@ final class RideMapPresentationTests: XCTestCase {
         XCTAssertNotEqual(initial, replacement)
         XCTAssertTrue(initial.hasPrefix("ride:"))
         XCTAssertTrue(replacement.hasPrefix("ride:"))
+    }
+
+    func testHistoryCameraFitIdentityChangesForAReplacementProjection() {
+        let initial = RideMapCanvasView.cameraFitID(routeID: "ride", fitVersion: 1)
+        let replacement = RideMapCanvasView.cameraFitID(routeID: "ride", fitVersion: 2)
+
+        XCTAssertNotEqual(initial, replacement)
+        XCTAssertTrue(initial.hasPrefix("ride:fit-"))
     }
 
     func testHistoryDetailVehicleAndSpeedFormattingKeepUnavailableExplicit() {

@@ -40,6 +40,33 @@ public enum MobileRideMapError: Error, Equatable, Hashable, Sendable {
     case storageError(String)
 }
 
+/// Rust-owned ride identity captured when an asynchronous map operation starts.
+public struct MobileRideMapErrorContext: Equatable, Hashable, Sendable {
+    public let rideID: String?
+    public let generation: UInt64?
+
+    public init(recordingToken: MobileRideMapRecordingTokenDto?) {
+        rideID = recordingToken?.rideId
+        generation = recordingToken?.generation
+    }
+
+    public init(snapshot: MobileRideMapSnapshotDto?) {
+        rideID = snapshot?.recordingToken?.rideId ?? snapshot?.rideID
+        generation = snapshot?.recordingToken?.generation
+    }
+}
+
+/// An asynchronous map error paired with the Rust identity that produced it.
+public struct MobileRideMapErrorEvent: Equatable, Hashable, Sendable {
+    public let context: MobileRideMapErrorContext
+    public let error: MobileRideMapError
+
+    public init(context: MobileRideMapErrorContext, error: MobileRideMapError) {
+        self.context = context
+        self.error = error
+    }
+}
+
 
 
 /// Swift-owned handle for cancelling one Rust durable route projection.
@@ -690,8 +717,8 @@ public enum MobileRideMapDecisionReason: Equatable, Hashable, Sendable {
 
 public enum MobileRideMapDecisionDto: Equatable, Hashable, Sendable {
     /// The point passed admission but is still awaiting durable SQLite confirmation.
-    case pending(point: MobileRideMapPointDto, segmentStarted: Bool)
-    case accepted(point: MobileRideMapPointDto, segmentStarted: Bool)
+    case pending(point: MobileRideMapPointDto)
+    case accepted(point: MobileRideMapPointDto)
     case rejected(reason: MobileRideMapDecisionReason)
     case ignored(reason: MobileRideMapDecisionReason)
     /// Durable persistence could not confirm this point. The point is not part of the durable ride.
@@ -1324,10 +1351,10 @@ public final class MobileRideMapState: @unchecked Sendable {
 
     private func map(_ decision: MobileRideMapCoreDecisionDto) -> MobileRideMapDecisionDto {
         switch decision {
-        case let .pending(point, segmentStarted):
-            return .pending(point: mapPoint(point), segmentStarted: segmentStarted)
-        case let .accepted(point, segmentStarted):
-            return .accepted(point: mapPoint(point), segmentStarted: segmentStarted)
+        case let .pending(point):
+            return .pending(point: mapPoint(point))
+        case let .accepted(point):
+            return .accepted(point: mapPoint(point))
         case let .rejected(reason):
             return .rejected(reason: map(reason))
         case let .ignored(reason):

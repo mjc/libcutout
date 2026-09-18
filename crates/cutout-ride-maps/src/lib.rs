@@ -14,8 +14,8 @@ mod lifecycle;
 pub use lifecycle::{RideEvent, RideLifecycleState, TransitionError, ValidatedRideTransition};
 mod location;
 pub use location::{
-    LocationAdmission, LocationSample, LocationSource, MonotonicMilliseconds,
-    WallClockUnixMilliseconds,
+    AdmittedLocationSample, LocationAdmission, LocationSample, LocationSource,
+    MonotonicMilliseconds, WallClockUnixMilliseconds,
 };
 mod summary;
 pub use summary::{

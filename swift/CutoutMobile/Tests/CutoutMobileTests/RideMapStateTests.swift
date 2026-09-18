@@ -236,24 +236,32 @@ final class RideMapStateTests: XCTestCase {
 
     func testHistoricalVehicleDisplayNameAndFilterOptionsComeFromRustDeviceTable() throws {
         let database = try XCTUnwrap(MobileRideMapState.debugDatabase)
+        let state = MobileRideMapState(database: database)
         let platformIdentifier = "corebluetooth-history-\(UUID().uuidString)"
 
-        let rideID = try database.createRide(source: .live, createdAtMilliseconds: 1_000)
-        _ = try database.transition(id: rideID, event: .start, monotonicAtMilliseconds: 1_000)
+        _ = try state.startGpsOnly(atMs: 1_000)
+        let connectionState = CutoutSessionStateHandle()
+        let token = try XCTUnwrap(
+            connectionState.beginConnectionAttempt(
+                platformIdentifier: platformIdentifier,
+                nowMs: 1_000
+            ).token
+        )
+        _ = connectionState.connectionLinkEstablished(token: token)
+        _ = connectionState.observeConnectionNotification(token: token, bytes: Data(vescReply))
+        _ = connectionState.resolveDeviceSession(token: token, identificationComplete: true, nowMs: 1_001)
+        _ = try state.ensureRecordingForVerifiedConnection(
+            connectionState: connectionState,
+            token: token,
+            atMs: 1_001
+        )
         try database.saveDeviceName(
             platformIdentifier: platformIdentifier,
             displayName: "NF2557",
             updatedAtMilliseconds: 1_001
         )
-        try database.updateRideMapMetadata(
-            id: rideID,
-            candidateVehicle: nil,
-            associatedVehicle: platformIdentifier,
-            associatedAtMilliseconds: nil,
-            lastTelemetryAtMilliseconds: nil
-        )
-        _ = try database.transition(id: rideID, event: .stop, monotonicAtMilliseconds: 2_000)
-        _ = try database.transition(id: rideID, event: .save, monotonicAtMilliseconds: 2_000)
+        _ = try state.stop(atMs: 2_000)
+        _ = try state.save()
 
         let page = try database.listRidesFiltered(
             cursor: nil,
@@ -433,7 +441,7 @@ final class RideMapStateTests: XCTestCase {
             atMs: 200
         )
 
-        guard case let .accepted(point, _) = decision else {
+        guard case let .accepted(point) = decision else {
             return XCTFail("expected the location to be admitted")
         }
         let secondDecision = await settle(state, try state.ingestLocation(
@@ -456,8 +464,7 @@ final class RideMapStateTests: XCTestCase {
                     monotonicMs: 2_000,
                     horizontalAccuracyMeters: 4,
                     telemetryState: .associatedNoTelemetry
-                ),
-                segmentStarted: false
+                )
             )
         )
         let stopped = try state.stop(atMs: 2_000)
