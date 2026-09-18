@@ -19,7 +19,8 @@ and Aero the model used by the NF2557 fixture.
 
 | Setting | Rust / CLI / mobile / Tune | Live confirmation |
 | --- | --- | --- |
-| Headlight | Implemented as the one canonical Aero lighting control with direct Off/On values | A live NF2557 test physically confirmed both `SetLightON` and `SetLightOFF`; the wheel does not expose a decoded light-state readback |
+| Headlight power | Implemented as the one canonical Aero lighting power control with direct Off/On values | A live NF2557 test physically confirmed both `SetLightON` and `SetLightOFF`; the wheel does not expose a decoded light-state readback |
+| Headlight intensity modes | Not implemented as a generic Boolean setting | The AERO has multiple physical headlight modes, but no brightness-cycle wire command has been established from EUC World, DarknessBot, or the NF2557 capture; keep this separate from confirmed power control |
 | Trip reset | Implemented, with reset lifecycle feedback | Transport submission is not confirmation |
 | Legacy hard / medium / soft | Implemented as the semantic riding preset | Generic family pedal readback does not establish Aero numeric MD state |
 | Speed limit / TLT stop speed (V) | Implemented by the semantic `SettingId::TiltbackSpeed` control | EUC World `vn_speed_limit` and the official `StopSpeedSettingActivity` share LdAp position 12; typed page-8 byte 52 readback; new writes still need device proof |
@@ -92,7 +93,8 @@ restoration. Preserve positive reports without using them to close other paths:
 | --- | --- | --- |
 | Beeper volume, tilt-back speed, PWM tilt-back, pedal hardness, dynamic assist, pedal dip, voltage correction | User reported working | Individually record exact targets, units, effect, available readback and restoration under the repaired lifecycle |
 | Display brightness | User previously reported working; a live mirrored NF2557 test requested 1%, displayed `Wheel 0%`, and ended `Not confirmed`; the requested target was restored to 0% | Determine whether the request was submitted, why no matching readback arrived, and why the operation did not produce a clean terminal result |
-| Headlight | The old binary `LkAp` frame was transmitted but had no physical effect on NF2557; the corrected literal commands turned the lamp on and off in a live test | Keep the exact command bytes and physical result as the acceptance evidence; no decoded light-state readback is expected |
+| Headlight power | The old binary `LkAp` frame was transmitted but had no physical effect on NF2557; the corrected literal commands turned the lamp on and off in a live test | Keep the exact command bytes and physical result as the acceptance evidence; no decoded light-state readback is expected |
+| Headlight intensity modes | The user reports three usable brightness levels from the wheel buttons | Find and independently validate the device's brightness-cycle command before adding a typed control or UI; do not treat `SetLightON` as a brightness selector |
 | Horn, reset trip, pedal angle | User reported no effect | Establish correct applicability/encoding and required physical effect; transport submission alone is insufficient |
 | Lateral tilt and speed alarm | Repeated unconfirmed/timeout results; speed alarm also had a reported crash | Resolve encoding, display-unit conversion, observation acquisition and terminal outcomes; reproduce the crash path offline |
 | Brake alarm | Initially reported working without updating the wheel percentage; later 120 reported sent without confirmation | Establish desired effect and fresh reported percentage separately |
@@ -195,10 +197,12 @@ and device effects are independently established.
   static 6.1.0 artifact and decoded AOT frame inventory are recorded in the
   linked RE inventory; static construction evidence remains distinct from
   physical write/readback proof.
-- The ignored `.protocol-references/nosfet-official` decompilation is the
-  authoritative Aero cross-check for lighting: its `BtManager` sends the
-  high-beam `LkAp` frame alone. The older `LdAp` companion capture is not sent
-  for this Aero control.
+- The ignored `.protocol-references/nosfet-official` decompilation was the
+  initial static cross-check for a legacy high-beam `LkAp` frame. The live
+  NF2557 result disproved that frame for the modern Aero: it was transmitted
+  but had no physical effect. The confirmed modern path is the literal
+  `SetLightON`/`SetLightOFF` pair; the separate physical brightness-cycle
+  command remains unidentified.
 
 External app/reference source stays in the ignored `.protocol-references`
 directory. No APK, decompiled source, or vendor binary belongs in the branch.
