@@ -307,6 +307,7 @@ public enum CutoutSessionTestInitialBluetoothState: Sendable {
 public struct CutoutSessionTestScript {
     public let candidate: DevicePickerDiscoveryCandidate
     public let protocolNotifications: [Data]
+    public let protocolNotificationIntervalMilliseconds: UInt64?
     public let telemetry: TelemetrySnapshot?
     public let telemetryUpdate: TelemetrySnapshot?
     public let telemetryUpdateDelayMilliseconds: UInt64
@@ -329,6 +330,7 @@ public struct CutoutSessionTestScript {
         candidate: DevicePickerDiscoveryCandidate,
         telemetry: TelemetrySnapshot?,
         protocolNotifications: [Data] = [],
+        protocolNotificationIntervalMilliseconds: UInt64? = nil,
         telemetryUpdate: TelemetrySnapshot? = nil,
         telemetryUpdateDelayMilliseconds: UInt64 = 0,
         bmsSnapshot: BmsSnapshot? = nil,
@@ -348,6 +350,7 @@ public struct CutoutSessionTestScript {
     ) {
         self.candidate = candidate
         self.protocolNotifications = protocolNotifications
+        self.protocolNotificationIntervalMilliseconds = protocolNotificationIntervalMilliseconds
         self.telemetry = telemetry
         self.telemetryUpdate = telemetryUpdate
         self.telemetryUpdateDelayMilliseconds = telemetryUpdateDelayMilliseconds
@@ -535,10 +538,14 @@ public final class CutoutSessionCore: NSObject {
     private var testOperationSink: CutoutSessionTestOperationSink?
     private var testScriptWorkItem: DispatchWorkItem?
     private var testScriptUpdateWorkItem: DispatchWorkItem?
+    private var testProtocolNotificationTimer: DispatchSourceTimer?
     private var testScriptDidReconnect = false
 #endif
 
     deinit {
+#if DEBUG
+        testProtocolNotificationTimer?.cancel()
+#endif
         connectionDeadlineWorkItem?.cancel()
         protocolDetectionExpiryWorkItem?.cancel()
         rideMapWritePoller?.cancel()
@@ -1020,6 +1027,7 @@ public final class CutoutSessionCore: NSObject {
                     for bytes in testScript.protocolNotifications {
                         _ = try owner.handleNotification(bytes: bytes, channel: channel, at: clock.now())
                     }
+                    repeatTestProtocolNotifications(testScript, token: token, channel: channel)
                 }
             } catch {
                 setPhase(.failed(.sessionFailed(error.sessionMessage)))
@@ -1058,6 +1066,35 @@ public final class CutoutSessionCore: NSObject {
         scheduleTestTelemetryUpdateIfNeeded(testScript, token: token)
         scheduleTestReconnectIfNeeded(testScript, token: token)
         scheduleTestBluetoothLossIfNeeded(testScript, token: token)
+    }
+
+    private func repeatTestProtocolNotifications(_ script: CutoutSessionTestScript, token: ConnectionAttemptToken, channel: BluetoothUuid) {
+        testProtocolNotificationTimer?.cancel()
+        testProtocolNotificationTimer = nil
+        guard let interval = script.protocolNotificationIntervalMilliseconds, interval > 0 else { return }
+        let timer = DispatchSource.makeTimerSource(queue: bleQueue)
+        timer.schedule(deadline: .now() + .milliseconds(Int(clamping: interval)), repeating: .milliseconds(Int(clamping: interval)))
+        timer.setEventHandler { [weak self] in
+            guard let self else { return }
+            guard self.rustSessionState.verifiedConnectionAttemptIsCurrent(token: token),
+                  let owner = self.liveOwner, owner.token == token else {
+                self.testProtocolNotificationTimer?.cancel()
+                self.testProtocolNotificationTimer = nil
+                return
+            }
+            do {
+                for bytes in script.protocolNotifications {
+                    let at = self.clock.now()
+                    self.applyNotificationStep(try owner.handleNotification(bytes: bytes, channel: channel, at: at), receivedAt: at)
+                }
+            } catch {
+                self.testProtocolNotificationTimer?.cancel()
+                self.testProtocolNotificationTimer = nil
+                self.setPhase(.failed(.notificationIngestFailed(error.sessionMessage)))
+            }
+        }
+        testProtocolNotificationTimer = timer
+        timer.resume()
     }
 
     private func scheduleTestTelemetryUpdateIfNeeded(_ testScript: CutoutSessionTestScript, token: ConnectionAttemptToken) {
@@ -3009,6 +3046,12 @@ extension CutoutSessionCore: CoreBluetoothOperationSink {
         }
         guard characteristic.properties.contains(.notify) || characteristic.properties.contains(.indicate) else {
             setPhase(.failed(.missingNotifyChannel))
+            return
+        }
+        if characteristic.isNotifying {
+            // Protocol detection owns the initial subscription. The live owner
+            // must adopt it without waiting for a second state-change callback.
+            liveOwner?.handleNotificationStateUpdate(channel: channel, isNotifying: true, error: nil)
             return
         }
         peripheral?.setNotifyValue(true, for: characteristic)

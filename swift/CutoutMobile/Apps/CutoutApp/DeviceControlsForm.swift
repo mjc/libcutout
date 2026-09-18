@@ -7,65 +7,73 @@ import SwiftUI
 /// attempt-scoped row; reported and requested values remain Rust snapshots.
 struct DeviceControlsForm: View {
     let snapshot: DeviceControlsSnapshot
-    let setValidation: (ConnectionAttemptToken, Bool) throws -> Void
     let submitSetting: (ConnectionAttemptToken, DeviceSettingID, DeviceSettingValue) throws -> Void
     let submitAction: (ConnectionAttemptToken, DeviceActionID) throws -> Void
 
     var body: some View {
-        Form {
-            if snapshot.validationAuthorized
-                || snapshot.settingDescriptors.contains(where: { $0.access == .unverified })
-                || snapshot.actionDescriptors.contains(where: { $0.access == .unverified })
-            {
-                ValidationAuthorizationSection(
-                    authorized: snapshot.validationAuthorized,
-                    setAuthorized: setValidationAuthorization
-                )
-            }
-            ForEach(snapshot.settingDescriptors, id: \.id) { descriptor in
-                DeviceSettingRow(
-                    descriptor: descriptor,
-                    state: snapshot.setting(for: descriptor.id),
-                    submit: { value in
-                        guard let token = snapshot.connection.token else { throw DeviceSettingSubmissionError.ConnectionUnavailable }
-                        try submitSetting(token, descriptor.id, value)
+        ScrollView {
+            VStack(alignment: .leading, spacing: 20) {
+                Text(localizedAppText("controls.tune.title")).font(.largeTitle.bold())
+                if !snapshot.settingDescriptors.contains(where: { $0.access == .writable })
+                    && !snapshot.actionDescriptors.contains(where: { $0.access == .available })
+                {
+                    Text(localizedAppText("controls.empty"))
+                        .foregroundStyle(PevColors.muted)
+                        .accessibilityIdentifier("settings.empty")
+                }
+                ForEach(DeviceControlPresentation.groups, id: \.self) { group in
+                    let descriptors = DeviceControlPresentation.settings(snapshot.settingDescriptors, in: group)
+                    if !descriptors.isEmpty {
+                        controlsCard(title: DeviceControlPresentation.groupTitle(group)) {
+                            settingRows(descriptors)
+                        }
                     }
-                )
-            }
-            ForEach(snapshot.actionDescriptors, id: \.id) { descriptor in
-                DeviceActionRow(
-                    descriptor: descriptor,
-                    state: snapshot.actions.first { $0.id == descriptor.id },
-                    submit: {
-                        guard let token = snapshot.connection.token else { throw DeviceActionSubmissionError.ConnectionUnavailable }
-                        try submitAction(token, descriptor.id)
+                }
+                let actions = snapshot.actionDescriptors.filter { $0.access != .unverified }
+                if !actions.isEmpty {
+                    controlsCard(title: localizedAppText("controls.actions")) {
+                        actionRows(actions)
                     }
-                )
+                }
             }
+            .padding(24)
         }
+        .background(PevColors.pageBackground)
+        .foregroundStyle(PevColors.primaryText)
+        .tint(PevColors.yellow)
         .id(snapshot.connection.generation)
         .disabled(snapshot.connection.readiness != .verified || snapshot.connection.transport != .connected)
     }
 
-    private func setValidationAuthorization(_ authorized: Bool) {
-        guard let token = snapshot.connection.token else { return }
-        try? setValidation(token, authorized)
+    private func controlsCard(title: String, @ViewBuilder content: () -> some View) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text(title).font(.headline).accessibilityAddTraits(.isHeader)
+            VStack(alignment: .leading, spacing: 0, content: content)
+                .padding(.horizontal, 16)
+                .background(PevDashboardCardBackground(cornerRadius: 22))
+        }
     }
-}
 
-private struct ValidationAuthorizationSection: View {
-    let authorized: Bool
-    let setAuthorized: @MainActor @Sendable (Bool) -> Void
+    private func settingRows(_ descriptors: [DeviceSettingDescriptor]) -> some View {
+        ForEach(descriptors, id: \.id) { descriptor in
+            VStack(spacing: 0) {
+                if descriptor.id != descriptors.first?.id { Divider() }
+                DeviceSettingRow(descriptor: descriptor, state: snapshot.setting(for: descriptor.id)) { value in
+                    guard let token = snapshot.connection.token else { throw DeviceSettingSubmissionError.ConnectionUnavailable }
+                    try submitSetting(token, descriptor.id, value)
+                }
+                .padding(.vertical, 12)
+            }
+        }
+    }
 
-    var body: some View {
-        Section {
-            Toggle(
-                localizedAppText("settings.validation.title"),
-                isOn: Binding(get: { authorized }, set: setAuthorized)
-            )
-            .accessibilityIdentifier("settings.validationAuthorization")
-        } footer: {
-            Text(localizedAppText("settings.validation.description"))
+    private func actionRows(_ descriptors: [DeviceActionDescriptor]) -> some View {
+        ForEach(descriptors, id: \.id) { descriptor in
+            DeviceActionRow(descriptor: descriptor, state: snapshot.actions.first { $0.id == descriptor.id }) {
+                guard let token = snapshot.connection.token else { throw DeviceActionSubmissionError.ConnectionUnavailable }
+                try submitAction(token, descriptor.id)
+            }
+            .padding(.vertical, 12)
         }
     }
 }
@@ -74,68 +82,205 @@ private struct DeviceSettingRow: View {
     let descriptor: DeviceSettingDescriptor
     let state: DeviceSettingSnapshot?
     let submit: (DeviceSettingValue) throws -> Void
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @State private var draft: DeviceSettingValue?
+    @State private var submittedDraft: DeviceSettingValue?
     @State private var submissionError: String?
 
+    private var displayedValue: String {
+        DeviceControlPresentation.value(draft ?? state?.current, control: descriptor.control)
+    }
+
     var body: some View {
-        Section {
-            LabeledContent(localizedAppText("controls.current"), value: DeviceControlPresentation.value(state?.current, control: descriptor.control))
-            if state?.current != nil, let age = state?.ageMs {
-                Text(localizedAppText("controls.reported_age", Int64(clamping: age / 1_000)))
-                    .foregroundStyle(.secondary)
-            }
-            if let requested = state?.requested {
-                LabeledContent(localizedAppText("controls.requested"), value: DeviceControlPresentation.value(requested, control: descriptor.control))
-            }
-            if descriptor.access == .writable {
-                Picker(localizedAppText("controls.new_value"), selection: $draft) {
-                    Text(localizedAppText("controls.choose")).tag(nil as DeviceSettingValue?)
-                    ForEach(DeviceControlPresentation.options(descriptor.control), id: \.self) { value in
-                        Text(DeviceControlPresentation.value(value, control: descriptor.control))
-                            .tag(Optional(value))
+        VStack(alignment: .leading, spacing: 8) {
+            switch descriptor.control {
+            case .boolean:
+                ViewThatFits(in: .horizontal) {
+                    if !dynamicTypeSize.isAccessibilitySize {
+                        HStack(spacing: 12) {
+                            titleAndValue.fixedSize(horizontal: true, vertical: false)
+                            Spacer(minLength: 0)
+                            booleanButtons
+                        }
+                    }
+                    VStack(alignment: .leading, spacing: 8) {
+                        titleAndValue
+                        booleanButtons
                     }
                 }
-                .pickerStyle(.menu)
-                .accessibilityIdentifier("settings.draft.\(descriptor.id)")
-                Button(localizedAppText("controls.apply")) {
-                    guard let draft else { return }
-                    do {
-                        try submit(draft)
-                        self.draft = nil
-                        submissionError = nil
-                    } catch {
-                        submissionError = DeviceControlPresentation.error(error)
+            case .choices:
+                ViewThatFits(in: .horizontal) {
+                    HStack {
+                        title.fixedSize(horizontal: true, vertical: false)
+                        Spacer(minLength: 8)
+                        choicePicker
+                    }
+                    VStack(alignment: .leading) {
+                        title
+                        choicePicker
                     }
                 }
-                .disabled(draft == nil)
-                .accessibilityIdentifier("settings.apply.\(descriptor.id)")
+                applyButton
+            case let .number(minimum, maximum, step, _, _, canDisable):
+                titleAndValue
+                let layout = dynamicTypeSize.isAccessibilitySize
+                    ? AnyLayout(VStackLayout(alignment: .leading, spacing: 8))
+                    : AnyLayout(HStackLayout(spacing: 12))
+                layout {
+                    if minimum < maximum, step > 0 {
+                        Slider(value: Binding(get: {
+                            if case let .number(value) = draft ?? state?.current {
+                                return Double(min(max(value, minimum), maximum))
+                            }
+                            return Double(minimum)
+                        }, set: { value in
+                            edit(.number(value: Int32(value.rounded())))
+                        }), in: Double(minimum)...Double(maximum), step: Double(step))
+                        .accessibilityLabel(localizedAppText(descriptor.labelKey))
+                        .accessibilityValue(displayedValue)
+                        .accessibilityIdentifier("settings.slider.\(descriptor.id)")
+                    }
+                    numericStepper
+                }
+                HStack(spacing: 12) {
+                    if canDisable {
+                        Button { edit(.disabled) } label: {
+                            Text(localizedAppText("settings.choice.off")).frame(minWidth: 44, minHeight: 44)
+                        }
+                        .buttonStyle(.borderless)
+                        .accessibilityIdentifier("settings.disable.\(descriptor.id)")
+                    }
+                    applyButton
+                }
+            case .readOnly:
+                titleAndValue
             }
-            if let submissionError {
-                Text(submissionError).foregroundStyle(.red)
+            if let error = submissionError ?? state?.refusal.map(DeviceControlPresentation.refusal) {
+                Text(error).font(.footnote).foregroundStyle(PevColors.red)
+                    .accessibilityIdentifier("settings.error.\(descriptor.id)")
+            } else if let state, let status = DeviceControlPresentation.status(state.status) {
+                Text(status).font(.footnote)
+                    .foregroundStyle(state.status == .waitingForConfirmation ? PevColors.muted : PevColors.red)
+                    .accessibilityIdentifier("settings.status.\(descriptor.id)")
             }
-            if let state, let status = DeviceControlPresentation.status(state.status) {
-                Text(status).foregroundStyle(.secondary)
+        }
+        .onChange(of: state) { reconcileDraft() }
+    }
+
+    private var title: some View {
+        Text(localizedAppText(descriptor.labelKey))
+            .font(.body.weight(.semibold))
+            .accessibilityIdentifier("settings.control.\(descriptor.id)")
+    }
+
+    private var titleAndValue: some View {
+        HStack(alignment: .firstTextBaseline) {
+            title
+            Spacer(minLength: 8)
+            if descriptor.control != .boolean || state?.current != nil {
+                Text(displayedValue)
+                    .monospacedDigit()
+                    .foregroundStyle(PevColors.muted)
+                    .accessibilityIdentifier(draft == nil ? "settings.current.\(descriptor.id)" : "settings.draft.\(descriptor.id)")
             }
-            if let refusal = state?.refusal {
-                Text(DeviceControlPresentation.refusal(refusal)).foregroundStyle(.secondary)
+        }
+    }
+
+    private var booleanButtons: some View {
+        HStack(spacing: 8) {
+            booleanButton(false)
+            booleanButton(true)
+        }
+    }
+
+    private var choicePicker: some View {
+        Menu {
+            ForEach(DeviceControlPresentation.options(descriptor.control), id: \.self) { value in
+                Button(DeviceControlPresentation.value(value, control: descriptor.control)) { edit(value) }
+                    .accessibilityIdentifier("settings.choice.\(descriptor.id).\(value)")
             }
-        } header: {
+        } label: {
+            HStack(spacing: 6) {
+                Text(displayedValue)
+                Image(systemName: "chevron.up.chevron.down").accessibilityHidden(true)
+            }
+            .frame(minWidth: 44, minHeight: 44)
+        }
+        .accessibilityLabel(localizedAppText(descriptor.labelKey))
+        .accessibilityValue(displayedValue)
+        .accessibilityIdentifier("settings.picker.\(descriptor.id)")
+    }
+
+    private var numericStepper: some View {
+        Stepper {
             Text(localizedAppText(descriptor.labelKey))
-                .accessibilityIdentifier("settings.control.\(descriptor.id)")
-        } footer: {
-            VStack(alignment: .leading) {
-                if descriptor.access == .readOnly {
-                    Text(localizedAppText("controls.read_only"))
-                } else if descriptor.access == .unverified {
-                    Text(localizedAppText("controls.unverified_setting"))
-                }
-                if let helpKey = descriptor.helpKey {
-                    Text(localizedAppText(helpKey))
-                }
-                if let valueSemanticsKey = descriptor.valueSemanticsKey {
-                    Text(localizedAppText(valueSemanticsKey))
-                }
+        } onIncrement: {
+            edit(DeviceControlPresentation.steppedValue(draft: draft, current: state?.current, control: descriptor.control, increasing: true))
+        } onDecrement: {
+            edit(DeviceControlPresentation.steppedValue(draft: draft, current: state?.current, control: descriptor.control, increasing: false))
+        }
+        .labelsHidden()
+        .fixedSize(horizontal: true, vertical: false)
+        .frame(minHeight: 44)
+        .accessibilityLabel(localizedAppText(descriptor.labelKey))
+        .accessibilityValue(displayedValue)
+        .accessibilityIdentifier("settings.stepper.\(descriptor.id)")
+    }
+
+    private func booleanButton(_ value: Bool) -> some View {
+        let selected = DeviceControlPresentation.booleanSelection(state) == value
+        return Button {
+            send(.boolean(value: value))
+        } label: {
+            Text(DeviceControlPresentation.value(.boolean(value: value), control: .boolean))
+                .font(.body.weight(.semibold))
+                .padding(.horizontal, 8)
+                .frame(minWidth: 44, minHeight: 44)
+                .background(selected ? PevColors.yellow.opacity(0.2) : .clear, in: .rect(cornerRadius: 10))
+        }
+        .buttonStyle(.borderless)
+        .accessibilityLabel(localizedAppText("controls.boolean.action", localizedAppText(descriptor.labelKey), DeviceControlPresentation.value(.boolean(value: value), control: .boolean)))
+        .accessibilityAddTraits(selected ? [.isSelected] : [])
+        .accessibilityValue(selected ? localizedAppText(state?.current == .boolean(value: value) ? "controls.accessibility.reported" : "controls.accessibility.requested") : "")
+        .accessibilityIdentifier("settings.\(value ? "on" : "off").\(descriptor.id)")
+    }
+
+    @ViewBuilder private var applyButton: some View {
+        if DeviceControlPresentation.hasChanges(draft: draft, current: state?.current), draft != submittedDraft {
+            Button {
+                guard let draft else { return }
+                send(draft)
+            } label: {
+                Text(localizedAppText("controls.apply")).frame(minWidth: 44, minHeight: 44)
             }
+            .buttonStyle(.borderless)
+            .accessibilityIdentifier("settings.apply.\(descriptor.id)")
+        }
+    }
+
+    private func send(_ value: DeviceSettingValue) {
+        do {
+            try submit(value)
+            submittedDraft = draft
+            submissionError = nil
+        } catch {
+            submissionError = DeviceControlPresentation.error(error)
+        }
+    }
+
+    private func edit(_ value: DeviceSettingValue?) {
+        draft = value
+        submittedDraft = nil
+    }
+
+    private func reconcileDraft() {
+        guard let submittedDraft, submittedDraft == draft else { return }
+        if state?.current == submittedDraft {
+            draft = nil
+            self.submittedDraft = nil
+        } else if state?.requested == submittedDraft,
+                  state?.status == .failed || state?.status == .refused || state?.status == .timedOut {
+            self.submittedDraft = nil
         }
     }
 }
@@ -148,7 +293,7 @@ private struct DeviceActionRow: View {
     @State private var submissionError: String?
 
     var body: some View {
-        Section {
+        VStack(alignment: .leading, spacing: 8) {
             Button(DeviceControlPresentation.actionTitle(descriptor: descriptor, state: state)) {
                 if descriptor.role == .destructive {
                     confirmsDestructiveAction = true
@@ -161,16 +306,11 @@ private struct DeviceActionRow: View {
             if let submissionError {
                 Text(submissionError).foregroundStyle(.red)
             }
-            if let state, let text = DeviceControlPresentation.actionStatus(state.status) {
+            if let refusal = state?.refusal {
+                Text(DeviceControlPresentation.refusal(refusal)).foregroundStyle(PevColors.red)
+            } else if let state, let text = DeviceControlPresentation.actionStatus(state.status) {
                 Text(text).foregroundStyle(.secondary)
             }
-            if let refusal = state?.refusal {
-                Text(DeviceControlPresentation.refusal(refusal)).foregroundStyle(.secondary)
-            }
-        } header: {
-            Text(localizedAppText(descriptor.labelKey))
-        } footer: {
-            Text(localizedAppText(descriptor.helpKey))
         }
         .confirmationDialog(localizedAppText(descriptor.labelKey), isPresented: $confirmsDestructiveAction) {
             Button(localizedAppText(descriptor.labelKey), role: .destructive, action: send)
@@ -190,13 +330,63 @@ private struct DeviceActionRow: View {
 }
 
 enum DeviceControlPresentation {
+    static let groups: [DeviceSettingGroup] = [.interface, .limits, .riding, .modes, .diagnostics]
+
+    static func groupTitle(_ group: DeviceSettingGroup) -> String {
+        switch group {
+        case .interface: localizedAppText("controls.group.interface")
+        case .limits: localizedAppText("controls.group.limits")
+        case .riding: localizedAppText("controls.group.riding")
+        case .modes: localizedAppText("controls.group.modes")
+        case .diagnostics: localizedAppText("controls.group.diagnostics")
+        }
+    }
+
+    static func settings(_ descriptors: [DeviceSettingDescriptor], in group: DeviceSettingGroup) -> [DeviceSettingDescriptor] {
+        descriptors.filter { $0.group == group && $0.access == .writable }.sorted { $0.order < $1.order }
+    }
+
+    static func hasChanges(draft: DeviceSettingValue?, current: DeviceSettingValue?) -> Bool {
+        draft != nil && draft != current
+    }
+
+    static func acceptsRequestedSelection(_ status: DeviceSettingStatus?) -> Bool {
+        status == .waitingForConfirmation || status == .sentWithoutConfirmation
+    }
+
+    static func booleanSelection(_ state: DeviceSettingSnapshot?) -> Bool? {
+        if acceptsRequestedSelection(state?.status), case let .boolean(value) = state?.requested {
+            return value
+        }
+        if case let .boolean(value) = state?.current { return value }
+        return nil
+    }
+
+    /// Adjust a local draft on the descriptor's fixed-point lattice. Readback
+    /// can seed an edit, but never becomes a draft before a user interaction.
+    static func steppedValue(draft: DeviceSettingValue?, current: DeviceSettingValue?, control: DeviceSettingControl, increasing: Bool) -> DeviceSettingValue? {
+        guard case let .number(minimum, maximum, step, _, _, _) = control,
+              minimum <= maximum, step > 0 else { return nil }
+        guard case let .number(value) = draft ?? current else { return .number(value: minimum) }
+        let lower = Int64(minimum)
+        let stride = Int64(step)
+        let lastIndex = (Int64(maximum) - lower) / stride
+        let offset = Int64(value) - lower
+        let index: Int64
+        if increasing {
+            index = offset < 0 ? 0 : offset / stride + 1
+        } else {
+            index = offset <= 0 ? 0 : (offset - 1) / stride
+        }
+        return .number(value: Int32(lower + min(max(index, 0), lastIndex) * stride))
+    }
+
     static func options(_ control: DeviceSettingControl) -> [DeviceSettingValue] {
         switch control {
         case .boolean:
             [.boolean(value: false), .boolean(value: true)]
-        case let .number(minimum, maximum, step, _, _, canDisable):
-            stride(from: minimum, through: maximum, by: Int(step)).map { .number(value: $0) }
-                + (canDisable ? [.disabled] : [])
+        case .number:
+            []
         case let .choices(choices):
             choices.filter(\.writable).map { .choice(id: $0.id) }
         case .readOnly:
@@ -205,7 +395,7 @@ enum DeviceControlPresentation {
     }
 
     static func value(_ value: DeviceSettingValue?, control: DeviceSettingControl) -> String {
-        guard let value else { return localizedAppText("settings.readback.unavailable") }
+        guard let value else { return "—" }
         switch value {
         case .disabled:
             return localizedAppText("settings.choice.off")
@@ -214,7 +404,7 @@ enum DeviceControlPresentation {
         case let .choice(id):
             guard case let .choices(choices) = control,
                   let choice = choices.first(where: { $0.id == id }) else {
-                return localizedAppText("settings.readback.unavailable")
+                return "—"
             }
             return localizedAppText(choice.labelKey)
         case let .number(value):
@@ -222,8 +412,7 @@ enum DeviceControlPresentation {
             let amount = Double(value) / pow(10, Double(precision))
             let text = amount.formatted(.number.precision(.fractionLength(Int(precision))))
             switch unit {
-            case .pwmDutyPercent: return localizedAppText("controls.pwm_duty.value", text)
-            case .percent: return "\(text)%"
+            case .pwmDutyPercent, .percent: return "\(text)%"
             case .kilometresPerHour:
                 let speed = SpeedReadout(millimetersPerSecond: Int32((amount / 3.6 * 1_000).rounded()))
                 return "\(speed.displayValue) \(speed.displayUnit)"
@@ -237,10 +426,8 @@ enum DeviceControlPresentation {
 
     static func status(_ status: DeviceSettingStatus) -> String? {
         switch status {
-        case .idle: nil
+        case .idle, .sentWithoutConfirmation, .confirmed: nil
         case .waitingForConfirmation: localizedAppText("settings.state.pending")
-        case .sentWithoutConfirmation: localizedAppText("controls.sent_unconfirmed")
-        case .confirmed: localizedAppText("settings.state.confirmed")
         case .refused: localizedAppText("settings.state.refused")
         case .timedOut: localizedAppText("settings.state.timed_out")
         case .failed: localizedAppText("settings.state.failed")
@@ -265,10 +452,9 @@ enum DeviceControlPresentation {
 
     static func actionStatus(_ status: DeviceActionStatus) -> String? {
         switch status {
-        case .idle: nil
+        case .idle, .sentWithoutConfirmation: nil
         case .waitingForProgress: localizedAppText("controls.waiting")
         case .readyForNextStep: localizedAppText("controls.ready")
-        case .sentWithoutConfirmation: localizedAppText("controls.sent_unconfirmed")
         case .refused: localizedAppText("settings.state.refused")
         case .failed: localizedAppText("settings.state.failed")
         }

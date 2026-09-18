@@ -88,11 +88,13 @@ final class DeviceSessionTransport: @unchecked Sendable {
     }
 
     func submitSetting(_ id: DeviceSettingID, value: DeviceSettingValue, at: MonotonicMilliseconds) throws -> CoreBluetoothSessionStep {
-        try process(state.submitSetting(token: token, id: id, value: value, monotonicMs: at.rawValue), at: at)
+        guard waitingForSubscription == nil else { throw DeviceSettingSubmissionError.ConnectionUnavailable }
+        return try process(state.submitSetting(token: token, id: id, value: value, monotonicMs: at.rawValue), at: at)
     }
 
     func submitAction(_ id: DeviceActionID, at: MonotonicMilliseconds) throws -> CoreBluetoothSessionStep {
-        try process(state.submitAction(token: token, id: id, monotonicMs: at.rawValue), at: at)
+        guard waitingForSubscription == nil else { throw DeviceActionSubmissionError.ConnectionUnavailable }
+        return try process(state.submitAction(token: token, id: id, monotonicMs: at.rawValue), at: at)
     }
 
     func setValidationAuthorization(_ authorized: Bool, at: MonotonicMilliseconds) throws {
@@ -187,9 +189,11 @@ final class DeviceSessionTransport: @unchecked Sendable {
                 pendingOperations.append(operation)
                 continue
             }
+            // An already-enabled characteristic can acknowledge synchronously.
+            // Install the wait before asking the native sink to subscribe.
+            if case .subscribe(let channel) = operation { waitingForSubscription = channel }
             executor.execute(operation)
             record(.operation(platformIdentifier: context.platformIdentifier, operation: operation))
-            if case .subscribe(let channel) = operation { waitingForSubscription = channel }
         }
     }
 

@@ -11,6 +11,22 @@ use cutout_protocols::{
     VETERAN_FIELD_SPEED_TILTBACK_DECI_KMH, aero_control_profile, falcon_control_profile,
 };
 
+#[test]
+fn legacy_pedal_mode_does_not_confirm_the_modern_aero_riding_preset() {
+    let profile = aero_control_profile();
+    for raw in [-1, 0, 1, 2, 3, 1920, i64::MAX] {
+        assert!(read(profile, cutout_protocols::VETERAN_FIELD_PEDALS_MODE, raw).is_empty());
+    }
+    let preset = profile
+        .descriptors(false)
+        .into_iter()
+        .find(|descriptor| descriptor.id == SettingId::RidingPreset)
+        .unwrap();
+    assert_eq!(preset.access, SettingAccess::Writable);
+    assert!(!preset.confirmation_supported);
+    assert_eq!(preset.write_verification, VerificationStatus::Unverified);
+}
+
 fn read(profile: DeviceControlProfile, field: u16, raw: i64) -> Vec<SettingObservation> {
     profile.normalize_readback(SettingsReadback::available([Some(SettingsEntry {
         field: RawFieldValue {

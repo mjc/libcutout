@@ -441,9 +441,11 @@ final class CutoutSessionCoreTests: XCTestCase {
             XCTAssertEqual($0 as? DeviceSettingSubmissionError, .ConnectionUnavailable)
         }
         XCTAssertEqual(core.deviceControlsSnapshot.settings, before.settings)
-        XCTAssertThrowsError(try core.submitDeviceSetting(token: current, id: .pwmTiltback, value: .number(value: 80))) {
-            XCTAssertEqual($0 as? DeviceSettingSubmissionError, .Unverified)
+        XCTAssertThrowsError(try core.submitDeviceSetting(token: current, id: .pwmTiltback, value: .number(value: 101))) {
+            XCTAssertEqual($0 as? DeviceSettingSubmissionError, .InvalidValue)
         }
+        try core.submitDeviceSetting(token: current, id: .pwmTiltback, value: .number(value: 80))
+        XCTAssertFalse(core.deviceControlsSnapshot.validationAuthorized)
         try core.submitDeviceSetting(token: current, id: .highBeam, value: .boolean(value: true))
         let highBeam = try XCTUnwrap(core.deviceControlsSnapshot.setting(for: .highBeam))
         XCTAssertEqual(highBeam.requested, .boolean(value: true))

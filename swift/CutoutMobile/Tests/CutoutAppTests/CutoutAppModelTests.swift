@@ -457,10 +457,13 @@ final class CutoutAppModelTests: XCTestCase {
         let token = try XCTUnwrap(snapshot.connection.token)
         XCTAssertEqual(snapshot.connection.readiness, .verified)
         XCTAssertEqual(snapshot.settingDescriptors, core.deviceControlsSnapshot.settingDescriptors)
-        XCTAssertEqual(snapshot.descriptor(for: .pwmTiltback)?.access, .unverified)
-        XCTAssertThrowsError(try model.submitDeviceSetting(token: token, id: .pwmTiltback, value: .number(value: 80))) {
-            XCTAssertEqual($0 as? DeviceSettingSubmissionError, .Unverified)
+        XCTAssertEqual(snapshot.descriptor(for: .pwmTiltback)?.access, .writable)
+        XCTAssertEqual(snapshot.settingDescriptors.filter { $0.access == .writable }.count, 18)
+        XCTAssertFalse(snapshot.validationAuthorized)
+        XCTAssertThrowsError(try model.submitDeviceSetting(token: token, id: .pwmTiltback, value: .number(value: 101))) {
+            XCTAssertEqual($0 as? DeviceSettingSubmissionError, .InvalidValue)
         }
+        try model.submitDeviceSetting(token: token, id: .pwmTiltback, value: .number(value: 80))
         try model.submitDeviceSetting(token: token, id: .highBeam, value: .boolean(value: true))
         await Self.waitUntil("unconfirmed request publication") {
             model.deviceControlsSnapshot?.setting(for: .highBeam)?.requested == .boolean(value: true)

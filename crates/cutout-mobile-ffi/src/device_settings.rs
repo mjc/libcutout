@@ -228,6 +228,8 @@ pub struct MobileSettingDescriptorDto {
     pub control: MobileSettingControlDto,
     /// Static submission availability.
     pub access: MobileSettingAccessDto,
+    /// Write evidence, independent of availability and observed values.
+    pub write_verification: MobileVerificationStatusDto,
     /// Whether actual readback can confirm an accepted request.
     pub confirmation_supported: bool,
 }
@@ -243,6 +245,7 @@ impl From<SettingDescriptor> for MobileSettingDescriptorDto {
             order: value.order,
             control: value.control.into(),
             access: value.access.into(),
+            write_verification: value.write_verification.into(),
             confirmation_supported: value.confirmation_supported,
         }
     }
@@ -652,6 +655,52 @@ mod tests {
             MobileDeviceSettingRequestError::InvalidValue
         );
         assert_eq!(handle.settings_snapshot(), before);
+        let writable: Vec<_> = descriptors
+            .descriptors
+            .iter()
+            .filter(|descriptor| descriptor.access == MobileSettingAccessDto::Writable)
+            .collect();
+        assert_eq!(writable.len(), 18);
+        for descriptor in writable {
+            assert_eq!(
+                descriptor.write_verification,
+                if descriptor.id == MobileSettingIdDto::HighBeam {
+                    MobileVerificationStatusDto::HardwareVerified
+                } else {
+                    MobileVerificationStatusDto::Unverified
+                }
+            );
+            let value = match &descriptor.control {
+                MobileSettingControlDto::Boolean => MobileSettingValueDto::Boolean { value: true },
+                MobileSettingControlDto::Number { minimum, .. } => {
+                    MobileSettingValueDto::Number { value: *minimum }
+                }
+                MobileSettingControlDto::Choices { choices } => {
+                    MobileSettingValueDto::Choice { id: choices[0].id }
+                }
+                MobileSettingControlDto::ReadOnly => unreachable!(),
+            };
+            let step = handle
+                .submit_setting(token.clone(), descriptor.id, value, 3)
+                .unwrap();
+            assert!(step.result.error.is_none(), "{:?}", descriptor.id);
+            let settings = handle.settings_snapshot();
+            let setting = settings
+                .settings
+                .iter()
+                .find(|item| item.id == descriptor.id)
+                .unwrap();
+            assert_eq!(setting.requested, Some(value));
+            assert_eq!(
+                setting.status,
+                if descriptor.confirmation_supported {
+                    MobileSettingStatusDto::WaitingForConfirmation
+                } else {
+                    MobileSettingStatusDto::SentWithoutConfirmation
+                }
+            );
+        }
+        assert!(!handle.settings_descriptors().validation_authorized);
         assert!(handle.authorize_device_controls(token.clone()));
         assert!(handle.settings_descriptors().validation_authorized);
         let next = handle.begin_connection_attempt("B".into(), 4);

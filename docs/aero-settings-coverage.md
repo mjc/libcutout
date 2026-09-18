@@ -13,8 +13,7 @@ write API.
 
 | Setting | Rust / CLI / mobile / Tune | Live confirmation |
 | --- | --- | --- |
-| Manual headlight | Not exposed by the Aero settings profile | The shared vocabulary retains `SettingId::Headlight`, but Aero's verified profile does not advertise this control; the generic write path therefore emits no Aero write |
-| High beam | Implemented with the official single `LkAp` frame | Physical behavior was observed; no decoded light-state readback |
+| Headlight | Implemented as the one canonical Aero lighting control with direct Off/On values | The Aero profile emits the official single `LkAp` frame; there is no second high-beam/headlight control or decoded light-state readback |
 | Trip reset | Implemented, with reset lifecycle feedback | Transport submission is not confirmation |
 | Legacy hard / medium / soft | Implemented as the semantic riding preset | Generic family pedal readback does not establish Aero numeric MD state |
 | Speed limit / TLT stop speed (V) | Implemented by the semantic `SettingId::TiltbackSpeed` control | EUC World `vn_speed_limit` and the official `StopSpeedSettingActivity` share LdAp position 12; typed page-8 byte 52 readback; new writes still need device proof |
@@ -35,9 +34,11 @@ write API.
 | Modern binary riding mode (T) | Implemented as a distinct hard/medium/soft command | EUC World source-backed LkAp frames; new writes still need device proof |
 | Brake overpressure alarm | Implemented as a typed 90–125% command | Official NOSFET source-backed LdAp frame and page-8 byte 65; new writes still need device proof |
 
-Release capability evidence remains separate from explicit validation-mode
-permission. Validation mode exposes source-backed unverified writes for phone
-testing and continues to label them unverified. Rust applies the model,
+The production Tune catalog exposes all 18 source-backed editable settings
+without a validation-mode switch: four lights/display controls, five limits
+and alarms, five ride-feel controls, and four wheel modes. Source/hardware
+evidence remains distinct from ordinary command availability;
+the production descriptor does not claim a physical test. Rust applies the model,
 value-bound, fresh-speed, command sequencing, and lifecycle rules. Swift submits
 typed values and renders state. Simulator state is synthetic evidence and must
 not become a live readback claim.
@@ -74,9 +75,9 @@ The max-charge field is intentionally different from the other source-backed
 settings: it is present in the captured page-8 payload and its raw transport
 frame is source-backed, but the official NOSFET/EUC World generic conversion
 produces a voltage that cannot be valid for the identified 126 V Aero pack.
-Keep the mobile control raw and explicitly unverified until an Aero-specific
-source or controlled capture establishes its meaning and safe range; do not
-label it as volts.
+Keep the field in engineering diagnostics, outside the production Tune screen,
+until an Aero-specific source or controlled capture establishes its meaning and
+safe range; do not label it as volts or manufacture a charging-limit control.
 
 Unknown payloads remain out of the write surface. An Unsupported row does not
 mean the setting is implemented, and a simulator cannot supply missing wire

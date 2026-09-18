@@ -12,15 +12,29 @@ Every setting uses these states when the protocol exposes them:
 - **Current**: the last value reported by the wheel (with source and age).
 - **Pending**: a typed request was accepted locally and is awaiting a result.
 - **Confirmed**: a matching, fresh readback arrived after submission.
-- **Unconfirmed**: transport accepted the write but the protocol has no usable
-  readback. The UI must say this explicitly and must not present it as current.
+- **Unconfirmed**: the request has no usable confirming readback. Retain this
+  distinction in the model; do not overwrite current state or show a success claim.
 - **Refused/failed/expired**: no state change is implied. Keep the last reported
   value and show the typed refusal or transport error.
 
 Controls must not default an unknown value to `Off`, `false`, or a numeric
-default. Render `Unavailable`/`Unknown` until Rust supplies a current value.
-While pending, show the requested value as pending only; readback rows continue
-to show the prior current value or an explicit pending label.
+default. Compose ordinary screens from typed availability: omit absent optional
+readbacks and unsupported controls, and omit groups left empty by that filtering.
+Real zero, `false`, and `Off` values remain visible. Do not filter by matching
+localized placeholder text.
+
+A writable control remains actionable even if its protocol cannot report its
+current value. Do not add a limitation paragraph, a verification badge, or a
+`Current: Unavailable` diagnostic row. Direct On/Off commands
+need no draft picker or separate Apply step. Numeric edits retain their draft
+until the rider explicitly submits it; telemetry must not overwrite an edit.
+While pending, show the requested value as pending only and retain any known
+reported value separately. Protocol acceptance alone is not evidence that the
+native Bluetooth write was delivered or that the physical state changed.
+
+Requested-operation errors stay beside the affected control. If the whole
+screen has no usable controls, show one concise explanation. Loss of previously
+live safety telemetry warrants a clear warning, not a wall of missing-value rows.
 
 ## Before submission
 
@@ -33,9 +47,10 @@ Rust must reject a settings write unless all applicable checks pass:
 4. The wheel is not charging and the arm has not expired.
 5. The value is a typed, range-checked value for the resolved dialect.
 
-The UI disables controls while these checks are false and surfaces the reason
-through localized text and accessibility hints. Validation-mode writes remain
-visibly marked as source-backed but unverified.
+The session enforces these checks and returns actionable refusal reasons.
+Ordinary supported settings do not require a rider-facing validation mode.
+Source and hardware verification remain engineering evidence, not settings
+screen copy. Unsupported commands do not acquire an encoder through UI policy.
 
 ## Reversibility and retries
 
@@ -59,11 +74,16 @@ its separate feature and runtime gate.
 
 ## Accessibility and copy
 
-Every control has a stable accessibility identifier, a localized label, its
-unit/range, and a hint describing whether the result is confirmed or
-unconfirmed. Error and refusal text must explain the next safe action without
-claiming a physical effect. Large text and unavailable/unknown states are part
-of simulator/UI coverage.
+The production screen contains grouped setting labels, values, and controls.
+No validation toggle, verification badges, provenance/details disclosure,
+raw diagnostic card, permanent request-status paragraph, or instructional
+subtitle belongs on this surface. All supported editable settings appear in
+their normal groups. Apply appears only for an explicit local draft.
+
+Every control has a stable accessibility identifier, a localized label, and
+accessible units and adjustment bounds. Error and refusal text appears when
+an operation fails and explains the next action without claiming a physical
+effect. Large text and unknown-value states are part of simulator/UI coverage.
 
 The complete command classification and runtime enforcement live in
 [`control-safety-matrix.md`](control-safety-matrix.md). This document defines

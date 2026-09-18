@@ -3,7 +3,7 @@
 use cutout_core::{
     CommandKind, DeviceActionId, DeviceActionProgress, DeviceActionRequest, DeviceActionStep,
     DeviceActionsState, DeviceCommand, Measured, MonotonicTimestamp, SettingsEntry,
-    SettingsReadback,
+    SettingsReadback, VerificationStatus,
 };
 
 use crate::{AERO_FIELD_GYRO_CALIBRATION_STATE, DeviceControlProfile};
@@ -50,8 +50,10 @@ pub struct ActionDescriptor {
     pub order: u16,
     /// Presentation and confirmation behavior.
     pub role: ActionRole,
-    /// Static write evidence.
+    /// Static invocation availability.
     pub access: ActionAccess,
+    /// Write evidence, independent of production availability and progress evidence.
+    pub write_verification: VerificationStatus,
     /// Device evidence available after invocation.
     pub confirmation: ActionConfirmation,
 }
@@ -95,10 +97,15 @@ impl DeviceControlProfile {
                         help_key,
                         order,
                         role,
-                        access: if validation_mode || self.verified.supports_command_kind(kind) {
+                        access: if validation_mode || self.production.supports_command_kind(kind) {
                             ActionAccess::Available
                         } else {
                             ActionAccess::Unverified
+                        },
+                        write_verification: if self.verified.supports_command_kind(kind) {
+                            VerificationStatus::HardwareVerified
+                        } else {
+                            VerificationStatus::Unverified
                         },
                         confirmation,
                     })

@@ -89,7 +89,7 @@ final class DeviceControlsTests: XCTestCase {
         XCTAssertFalse(ordinary.validationAuthorized)
         XCTAssertEqual(
             ordinary.descriptor(for: .pwmTiltback)?.access,
-            .unverified
+            .writable
         )
         XCTAssertEqual(
             ordinary.descriptor(for: .pwmTiltback)?.id,

@@ -211,7 +211,6 @@ struct EucTuneRouteView: View {
             if let snapshot = model.deviceControlsSnapshot {
                 DeviceControlsForm(
                     snapshot: snapshot,
-                    setValidation: model.setDeviceControlsValidation,
                     submitSetting: model.submitDeviceSetting,
                     submitAction: model.submitDeviceAction
                 )

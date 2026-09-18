@@ -107,7 +107,7 @@ impl SettingControl {
 /// Static write availability. The session also checks live conditions at execution.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum SettingAccess {
-    /// Protocol write is verified, or explicit validation mode allows testing it.
+    /// The profile permits this write; live session guards still apply.
     Writable,
     /// A candidate encoder exists but has not been verified.
     Unverified,
@@ -134,6 +134,8 @@ pub struct SettingDescriptor {
     pub control: SettingControl,
     /// Static availability in the selected validation mode.
     pub access: SettingAccess,
+    /// Write evidence, independent of production availability and readback evidence.
+    pub write_verification: VerificationStatus,
     /// Whether device readback can confirm a submitted value.
     pub confirmation_supported: bool,
 }
@@ -161,6 +163,7 @@ pub struct DeviceControlProfile {
     settings_adapter: SettingsAdapter,
     pub(crate) available: Capabilities,
     pub(crate) verified: Capabilities,
+    pub(crate) production: Capabilities,
     confirmation: Capabilities,
     available_settings: &'static [SettingId],
     verified_settings: &'static [SettingId],
@@ -231,6 +234,7 @@ impl DeviceControlProfile {
             settings_adapter: SettingsAdapter::None,
             available,
             verified,
+            production: verified,
             confirmation,
             available_settings: &[],
             verified_settings: &[],
@@ -244,6 +248,13 @@ impl DeviceControlProfile {
     #[must_use]
     const fn with_settings_adapter(mut self, settings_adapter: SettingsAdapter) -> Self {
         self.settings_adapter = settings_adapter;
+        self
+    }
+
+    /// Admits source-backed commands without promoting their hardware evidence.
+    #[must_use]
+    const fn with_production_commands(mut self, production: Capabilities) -> Self {
+        self.production = production;
         self
     }
 
@@ -294,9 +305,14 @@ impl DeviceControlProfile {
                     return None;
                 }
                 let mut control = adapter.control(id)?;
+                let writable = self.available_settings.contains(&id)
+                    && (self
+                        .production
+                        .supports_command_kind(CommandKind::SetSetting)
+                        || validation_mode
+                        || self.verified_settings.contains(&id));
                 if let SettingControl::Number { can_disable, .. } = &mut control {
-                    *can_disable = id == SettingId::PwmTiltback
-                        && (validation_mode || self.verified_settings.contains(&id));
+                    *can_disable = id == SettingId::PwmTiltback && writable;
                 }
                 Some(SettingDescriptor {
                     id,
@@ -308,10 +324,15 @@ impl DeviceControlProfile {
                     control,
                     access: if adapter.is_read_only(id) {
                         SettingAccess::ReadOnly
-                    } else if validation_mode || self.verified_settings.contains(&id) {
+                    } else if writable {
                         SettingAccess::Writable
                     } else {
                         SettingAccess::Unverified
+                    },
+                    write_verification: if self.verified_settings.contains(&id) {
+                        VerificationStatus::HardwareVerified
+                    } else {
+                        VerificationStatus::Unverified
                     },
                     confirmation_supported: !adapter.is_read_only(id)
                         && self.confirmation_settings.contains(&id),
@@ -353,16 +374,18 @@ impl DeviceControlProfile {
 /// Aero controls retain explicit per-command verification; charge raw stays diagnostic-only.
 #[must_use]
 pub const fn aero_control_profile() -> DeviceControlProfile {
+    let available = Capabilities::from_supported_commands([
+        CommandKind::SetSetting,
+        CommandKind::SoundHorn,
+        CommandKind::ResetTripMeter,
+        CommandKind::GyroCalibration,
+    ]);
     DeviceControlProfile::new(
-        Capabilities::from_supported_commands([
-            CommandKind::SetSetting,
-            CommandKind::SoundHorn,
-            CommandKind::ResetTripMeter,
-            CommandKind::GyroCalibration,
-        ]),
+        available,
         Capabilities::from_supported_commands([CommandKind::SetSetting, CommandKind::SoundHorn]),
         Capabilities::from_supported_commands([CommandKind::SetSetting]),
     )
+    .with_production_commands(available)
     .with_settings_adapter(SettingsAdapter::Aero)
     .with_setting_capabilities(
         &[
@@ -436,8 +459,6 @@ pub const fn falcon_control_profile() -> DeviceControlProfile {
             SettingId::MaximumSpeed,
             SettingId::BeeperVolumeLevel,
             SettingId::LightingPattern,
-            SettingId::AccelerationAssist,
-            SettingId::Taillight,
         ],
         &[
             SettingId::Headlight,
@@ -447,8 +468,6 @@ pub const fn falcon_control_profile() -> DeviceControlProfile {
             SettingId::MaximumSpeed,
             SettingId::BeeperVolumeLevel,
             SettingId::LightingPattern,
-            SettingId::AccelerationAssist,
-            SettingId::Taillight,
         ],
         &[
             SettingId::PedalMode,
@@ -916,19 +935,133 @@ mod tests {
             ),
             Err(SettingsRequestError::ReadOnly)
         );
-        assert_eq!(
-            profile.command(
-                SettingId::PwmTiltback,
-                DeviceSettingValue::Number(80),
-                false
-            ),
-            Err(SettingsRequestError::Unverified)
+        assert!(
+            profile
+                .command(
+                    SettingId::PwmTiltback,
+                    DeviceSettingValue::Number(80),
+                    false
+                )
+                .is_ok()
         );
         assert!(
             profile
                 .command(SettingId::PwmTiltback, DeviceSettingValue::Number(80), true)
                 .is_ok()
         );
+    }
+
+    #[test]
+    fn ordinary_aero_catalog_encodes_every_supported_value_without_promoting_evidence() {
+        let profile = aero_control_profile();
+        let expected = [
+            SettingId::HighBeam,
+            SettingId::TiltbackSpeed,
+            SettingId::PwmTiltback,
+            SettingId::RidingPreset,
+            SettingId::BrakeOverpressureAlarm,
+            SettingId::PedalHardness,
+            SettingId::DisplayBrightness,
+            SettingId::BeeperVolumePercent,
+            SettingId::DynamicAssist,
+            SettingId::PedalDipCompensation,
+            SettingId::LateralTiltLimit,
+            SettingId::VoltageCorrection,
+            SettingId::DisplayUnits,
+            SettingId::HighSpeedMode,
+            SettingId::LowBatteryMode,
+            SettingId::TransportMode,
+            SettingId::SpeedAlarmThreshold,
+            SettingId::PedalAngle,
+        ];
+        let descriptors = profile.descriptors(false);
+        assert_eq!(descriptors, profile.descriptors(true));
+        assert_eq!(
+            descriptors
+                .iter()
+                .filter(|item| item.access == SettingAccess::Writable)
+                .count(),
+            expected.len()
+        );
+        for id in expected {
+            let descriptor = descriptors.iter().find(|item| item.id == id).unwrap();
+            assert_eq!(descriptor.access, SettingAccess::Writable, "{id:?}");
+            assert_eq!(
+                descriptor.write_verification,
+                if id == SettingId::HighBeam {
+                    VerificationStatus::HardwareVerified
+                } else {
+                    VerificationStatus::Unverified
+                },
+                "{id:?}"
+            );
+            let values: Vec<_> = match &descriptor.control {
+                SettingControl::Boolean => vec![
+                    DeviceSettingValue::Boolean(false),
+                    DeviceSettingValue::Boolean(true),
+                ],
+                SettingControl::Choices(choices) => choices
+                    .iter()
+                    .filter(|choice| choice.writable)
+                    .map(|choice| DeviceSettingValue::Choice(choice.id))
+                    .collect(),
+                SettingControl::Number {
+                    minimum,
+                    maximum,
+                    step,
+                    can_disable,
+                    ..
+                } => {
+                    let mut values: Vec<_> = (*minimum..=*maximum)
+                        .step_by(*step as usize)
+                        .map(DeviceSettingValue::Number)
+                        .collect();
+                    if *can_disable {
+                        values.push(DeviceSettingValue::Disabled);
+                    }
+                    values
+                }
+                SettingControl::ReadOnly => panic!("ordinary setting is read-only: {id:?}"),
+            };
+            assert!(!values.is_empty());
+            for value in values {
+                let command = profile.command(id, value, false).unwrap();
+                assert_eq!(
+                    command.safety_class(),
+                    cutout_core::SafetyClass::StationaryOnly
+                );
+                for mode in [
+                    crate::AeroCommandMode::Binary,
+                    crate::AeroCommandMode::Ascii,
+                ] {
+                    let encoded = crate::AeroControlEncoder::encode_in_mode(command, mode)
+                        .unwrap_or_else(|| panic!("missing encoder: {id:?} {value:?} {mode:?}"));
+                    assert!(!encoded.payload.as_slice().is_empty());
+                    assert_eq!(encoded.mode, cutout_core::WriteMode::WithoutResponse);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn falcon_unencoded_toggles_cannot_acquire_write_authority() {
+        let profile = falcon_control_profile();
+        for validation_mode in [false, true] {
+            for id in [SettingId::Taillight, SettingId::AccelerationAssist] {
+                assert!(
+                    profile
+                        .descriptors(validation_mode)
+                        .iter()
+                        .all(|descriptor| descriptor.id != id)
+                );
+                for value in [false, true] {
+                    assert_eq!(
+                        profile.command(id, DeviceSettingValue::Boolean(value), validation_mode),
+                        Err(SettingsRequestError::Unavailable)
+                    );
+                }
+            }
+        }
     }
 
     #[test]

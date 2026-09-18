@@ -68,10 +68,13 @@ final class DeviceSessionTransportTests: XCTestCase {
             XCTAssertEqual(highBeam.status, .sentWithoutConfirmation)
             XCTAssertNil(highBeam.current)
             let count = sink.writes.count
-            XCTAssertThrowsError(try transport.submitSetting(.tiltbackSpeed, value: .number(value: 400), at: MonotonicMilliseconds(4))) { error in
-                XCTAssertEqual(error as? DeviceSettingSubmissionError, .Unverified)
+            XCTAssertThrowsError(try transport.submitSetting(.tiltbackSpeed, value: .number(value: 99), at: MonotonicMilliseconds(4))) { error in
+                XCTAssertEqual(error as? DeviceSettingSubmissionError, .InvalidValue)
             }
             XCTAssertEqual(sink.writes.count, count)
+            _ = try transport.submitSetting(.tiltbackSpeed, value: .number(value: 400), at: MonotonicMilliseconds(5))
+            XCTAssertEqual(sink.writes.count, count + 1)
+            XCTAssertFalse(state.deviceControlsSnapshot().validationAuthorized)
             transport.invalidate()
 
         }
@@ -89,6 +92,70 @@ final class DeviceSessionTransportTests: XCTestCase {
             XCTAssertNil(reference)
             transport.invalidate()
 
+        }
+    }
+
+    func testAlreadyEnabledNotificationsDoNotStrandHeadlightWrites() throws {
+        try queue.sync {
+            let state = CutoutSessionStateHandle()
+            let token = try XCTUnwrap(state.beginConnectionAttempt(platformIdentifier: "NF2557", nowMs: 0).token)
+            _ = state.connectionLinkEstablished(token: token)
+            var frame = Data(repeating: 0, count: 42)
+            frame.replaceSubrange(0..<4, with: [0xdc, 0x5a, 0x5c, 38])
+            frame.replaceSubrange(28..<30, with: [0xa7, 0xf8])
+            _ = state.observeConnectionNotification(token: token, bytes: frame)
+            _ = state.resolveDeviceSession(token: token, identificationComplete: false, nowMs: 1)
+            let sink = TransportSink()
+            let transport = makeTransport(state, token: token, sink: sink)
+            defer { transport.invalidate() }
+            // Detection already enabled this characteristic. The native sink
+            // acknowledges the existing subscription without a new BLE callback.
+            sink.onSubscribe = { [weak transport] channel in
+                transport?.handleNotificationStateUpdate(channel: channel, isNotifying: true, error: nil)
+            }
+            _ = try transport.handleLinkUp(at: MonotonicMilliseconds(1))
+            _ = try transport.handleNotification(bytes: frame, channel: .bluetooth16(0xffe1), at: MonotonicMilliseconds(2))
+            let before = sink.writes.count
+            _ = try transport.submitSetting(.highBeam, value: .boolean(value: true), at: MonotonicMilliseconds(3))
+            XCTAssertEqual(sink.writes.count, before + 1, "On must reach the transport, not remain queued behind subscription")
+            XCTAssertEqual(sink.writes.last, Data([0x4c, 0x6b, 0x41, 0x70, 0x0d, 0x01, 0x80, 0x80, 0x01, 0x57, 0xed, 0x3b, 0xd5]))
+            _ = try transport.submitSetting(.highBeam, value: .boolean(value: false), at: MonotonicMilliseconds(4))
+            XCTAssertEqual(sink.writes.count, before + 2)
+            XCTAssertEqual(sink.writes.last, Data([0x4c, 0x6b, 0x41, 0x70, 0x0d, 0x01, 0x80, 0x80, 0x00, 0x20, 0xea, 0x0b, 0x43]))
+            let highBeam = try XCTUnwrap(state.deviceControlsSnapshot().setting(for: .highBeam))
+            XCTAssertEqual(highBeam.requested, .boolean(value: false))
+            XCTAssertNil(highBeam.current, "A write-only setting must not invent readback")
+        }
+    }
+
+    func testUnreadySubscriptionRejectsControlsWithoutDeferringThem() throws {
+        try queue.sync {
+            let state = CutoutSessionStateHandle()
+            let token = try XCTUnwrap(state.beginConnectionAttempt(platformIdentifier: "NF2557", nowMs: 0).token)
+            _ = state.connectionLinkEstablished(token: token)
+            var frame = Data(repeating: 0, count: 42)
+            frame.replaceSubrange(0..<4, with: [0xdc, 0x5a, 0x5c, 38])
+            frame.replaceSubrange(28..<30, with: [0xa7, 0xf8])
+            _ = state.observeConnectionNotification(token: token, bytes: frame)
+            _ = state.resolveDeviceSession(token: token, identificationComplete: false, nowMs: 1)
+            let sink = TransportSink()
+            let transport = makeTransport(state, token: token, sink: sink)
+            defer { transport.invalidate() }
+            _ = try transport.handleLinkUp(at: MonotonicMilliseconds(1))
+            _ = try transport.handleNotification(bytes: frame, channel: .bluetooth16(0xffe1), at: MonotonicMilliseconds(2))
+            let before = state.deviceControlsSnapshot()
+            XCTAssertThrowsError(try transport.submitSetting(.highBeam, value: .boolean(value: true), at: MonotonicMilliseconds(3))) {
+                XCTAssertEqual($0 as? DeviceSettingSubmissionError, .ConnectionUnavailable)
+            }
+            XCTAssertThrowsError(try transport.submitAction(.horn, at: MonotonicMilliseconds(4))) {
+                XCTAssertEqual($0 as? DeviceActionSubmissionError, .ConnectionUnavailable)
+            }
+            XCTAssertEqual(state.deviceControlsSnapshot().settings, before.settings)
+            XCTAssertEqual(state.deviceControlsSnapshot().actions, before.actions)
+            XCTAssertTrue(sink.writes.isEmpty)
+            transport.handleNotificationStateUpdate(channel: .bluetooth16(0xffe1), isNotifying: true, error: nil)
+            XCTAssertFalse(sink.writes.contains(Data([0x4c, 0x6b, 0x41, 0x70, 0x0d, 0x01, 0x80, 0x80, 0x01, 0x57, 0xed, 0x3b, 0xd5])), "The rejected light command must not execute after subscription")
+            XCTAssertNil(state.deviceControlsSnapshot().setting(for: .highBeam)?.requested)
         }
     }
 
@@ -121,7 +188,11 @@ private final class TransportSink: CoreBluetoothOperationSink {
     var subscriptions: [BluetoothUuid] = []
     var writes: [Data] = []
     var clears = 0
-    func subscribe(channel: BluetoothUuid) { subscriptions.append(channel) }
+    var onSubscribe: ((BluetoothUuid) -> Void)?
+    func subscribe(channel: BluetoothUuid) {
+        subscriptions.append(channel)
+        onSubscribe?(channel)
+    }
     func writeWithoutResponse(channel: BluetoothUuid, bytes: Data) { writes.append(bytes) }
     func disconnect() {}
     func clearPendingWithoutResponseWrites() { clears += 1 }

@@ -90,7 +90,7 @@ are not unconditional family-wide encodings. Preserve protocol/firmware gates.
 | `transportation_mode` | W | 0/1, Ld pos 17 | Page-8 byte 57; typed encoder/readback/UI implemented on the settings branch; physical write proof pending |
 | `charging_voltage_limit` | G | Raw page-8 byte 64; official generic UI uses decivolts minus 1450 at Ld pos 24 | Raw readback is retained as a diagnostic; no write or voltage conversion is exposed because the generic `145 + raw / 10` display would report 149.6 V for a 126 V Aero pack |
 | `voltage_correction` | X | Signed −15…15, displayed in tenths of a percent, Ld pos 19 | Page-8 byte 59 signed; typed mobile readback implemented; not a volts offset |
-| `headlight_mode` | M | Off/On; binary pos 8 or legacy ASCII | Page-8 byte 47; the shared vocabulary retains this as a model-specific control, but the Aero profile does not emit it without a verified model/firmware gate |
+| `headlight_mode` | M | Off/On; binary pos 8 or legacy ASCII | This EUC World menu field is not the command used by Cutout's canonical Aero Headlight control; Cutout follows the official Aero light frame and does not infer a second light setting from this entry |
 | `riding_mode` | T | UI hard/medium/soft → binary 3/2/1 at pos 7, or legacy ASCII | Distinct from MD; Cutout exposes both the modern binary command and legacy presets |
 
 Remaining menu keys are accounted for separately, not invented as new wheel writes:
@@ -127,9 +127,9 @@ capabilities remain Unverified until physical write behavior is established.
 The same capture reports page-8 byte 64 as raw `46`. Although the generic
 NOSFET/EUC World setting path labels that byte as a 145–151.6 V charging limit,
 that conversion is incompatible with the identified 126 V Aero pack. Cutout
-keeps the source-backed transport as an explicitly raw, unverified read/write;
-the mobile surface must not present it as volts until an Aero-specific
-conversion and safe range are physically established.
+keeps the source-backed transport as an engineering-only raw observation; the
+production mobile surface omits it until an Aero-specific conversion and safe
+range are established.
 
 FreeWheel's Veteran decoder calls page-8 byte 68 `acceleration_limit`, while
 EUC World 2.66.1 exposes the same wire position as

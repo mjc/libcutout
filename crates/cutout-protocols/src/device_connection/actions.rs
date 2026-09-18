@@ -183,7 +183,7 @@ mod tests {
         let mut owner = DeviceConnectionSession::default();
         let token = super::super::tests::connected_aero(&mut owner);
         let _ = owner.ingest(&token, &gyro_readback(128, 2));
-        assert!(owner.authorize_validation(&token));
+        assert!(!owner.validation_authorized());
         let step = owner
             .submit_action(
                 &token,
@@ -254,6 +254,69 @@ mod tests {
     }
 
     #[test]
+    fn ordinary_aero_actions_preserve_evidence_roles_and_stationary_guards() {
+        let profile = crate::aero_control_profile();
+        assert_eq!(
+            profile.action_descriptors(false),
+            profile.action_descriptors(true)
+        );
+        for (id, role) in [
+            (
+                DeviceActionId::ResetTripMeter,
+                crate::ActionRole::Destructive,
+            ),
+            (
+                DeviceActionId::GyroCalibration,
+                crate::ActionRole::Procedure,
+            ),
+        ] {
+            let descriptor = profile
+                .action_descriptors(false)
+                .into_iter()
+                .find(|item| item.id == id)
+                .unwrap();
+            assert_eq!(descriptor.access, crate::ActionAccess::Available);
+            assert_eq!(descriptor.role, role);
+            assert_eq!(
+                descriptor.write_verification,
+                cutout_core::VerificationStatus::Unverified
+            );
+            for (speed, age) in [(None, 0), (Some(20_u16), 1), (Some(0), 2_001)] {
+                let mut owner = DeviceConnectionSession::default();
+                let token = super::super::tests::connected_aero(&mut owner);
+                if let Some(speed) = speed {
+                    let mut frame = vec![0_u8; 42];
+                    frame[..4].copy_from_slice(&[0xdc, 0x5a, 0x5c, 38]);
+                    frame[6..8].copy_from_slice(&speed.to_be_bytes());
+                    frame[28..30].copy_from_slice(&43_000_u16.to_be_bytes());
+                    owner
+                        .ingest(
+                            &token,
+                            &SessionInputDto::Notification {
+                                channel: crate::VETERAN_DATA_CHANNEL.as_bytes(),
+                                bytes: frame,
+                                monotonic_ms: cutout_core::MonotonicMillisDto { milliseconds: 10 },
+                            },
+                        )
+                        .unwrap();
+                }
+                assert!(!owner.validation_authorized());
+                let step = owner
+                    .submit_action(&token, id, MonotonicTimestamp::new(10 + age))
+                    .unwrap();
+                assert!(
+                    step.result.error.is_some(),
+                    "{id:?} speed={speed:?} age={age}"
+                );
+                assert!(!step.result.outputs.iter().any(|output| matches!(
+                    output,
+                    SessionOutput::Transport(TransportAction::Write { .. })
+                )));
+            }
+        }
+    }
+
+    #[test]
     fn semantic_reset_is_unconfirmed_and_rejects_replacement_identity() {
         let mut owner = DeviceConnectionSession::default();
         let token = super::super::tests::connected_aero(&mut owner);
@@ -268,19 +331,7 @@ mod tests {
                 monotonic_ms: cutout_core::MonotonicMillisDto { milliseconds: 2 },
             },
         );
-        let before_refusal = owner.actions_snapshot();
-        assert_eq!(
-            owner.submit_action(
-                &token,
-                DeviceActionId::ResetTripMeter,
-                MonotonicTimestamp::new(3)
-            ),
-            Err(DeviceActionSubmissionError::Profile(
-                ActionRequestError::Unverified
-            ))
-        );
-        assert_eq!(owner.actions_snapshot(), before_refusal);
-        assert!(owner.authorize_validation(&token));
+        assert!(!owner.validation_authorized());
         let result = owner
             .submit_action(
                 &token,

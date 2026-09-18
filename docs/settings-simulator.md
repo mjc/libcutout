@@ -15,8 +15,8 @@ output conversion as the live session. Its simulated readback event is emitted
 only after the complete transport write sequence is emitted.
 
 The simulator's private typed snapshot records every implemented setting, including
-MD numeric pedal hardness, PWT, the seven additional numeric Aero controls, wheel
-units, ANG, high beam, headlight, and trip-reset count. PWT is represented as an
+MD numeric pedal hardness, PWT, the additional numeric Aero controls, wheel
+units, ANG, the canonical Headlight command, and trip-reset count. PWT is represented as an
 explicit margin or disabled wire setting, and the mobile Tune control exposes both
 forms. The production-shaped
 settings event intentionally contains only fields the live Veteran readback
@@ -34,8 +34,9 @@ the library path is deterministic and write-safe; they do not prove a wheel's
 physical effect, firmware acknowledgement, or rollback behavior. Device-proof
 work must record those observations separately for the protocol-confirmed
 model and firmware, then compare the captured write and readback with this
-simulator transcript. This scenario covers the implemented subset; it does not
-establish [complete Aero settings coverage](aero-settings-coverage.md).
+simulator transcript. This scenario covers the complete source-backed Aero Tune
+write catalog; it still does not establish a wheel's physical effect or
+firmware acknowledgement.
 
 The simulator is intentionally not exported through the mobile FFI. Mobile
 callers use the generic device-session and semantic settings/action boundaries;
