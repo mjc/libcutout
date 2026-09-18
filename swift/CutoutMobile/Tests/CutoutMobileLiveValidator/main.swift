@@ -26,6 +26,7 @@ private final class CutoutLiveValidator {
     private let settingsTest: Bool
     private let targetFilter: String?
     private let allowUnrestorableWrites: Bool
+    private let includeHeadlight: Bool
     private let includeAudibleControls: Bool
     private let includeAlarmModes: Bool
     private let includeTripReset: Bool
@@ -41,6 +42,7 @@ private final class CutoutLiveValidator {
     private var skippedWrites = 0
     private var missingControls = 0
     private var validationFinished = false
+    private var didRecordControlInventory = false
     private(set) var didValidate = false
 
     private let expectedSettings: [SettingPlan] = [
@@ -74,6 +76,7 @@ private final class CutoutLiveValidator {
             ? (environment["CUTOUT_AERO_TARGET"] ?? "NF2557")
             : environment["CUTOUT_AERO_TARGET"]
         allowUnrestorableWrites = environment["CUTOUT_AERO_ALLOW_UNRESTORABLE_WRITES"] == "1"
+        includeHeadlight = environment["CUTOUT_AERO_INCLUDE_HEADLIGHT"] == "1"
         includeAudibleControls = environment["CUTOUT_AERO_INCLUDE_AUDIBLE"] == "1"
         includeAlarmModes = environment["CUTOUT_AERO_INCLUDE_ALARM_MODES"] == "1"
         includeTripReset = environment["CUTOUT_AERO_INCLUDE_TRIP_RESET"] == "1"
@@ -89,6 +92,7 @@ private final class CutoutLiveValidator {
         }
         core.onDeviceControlsChange = { [weak self] controls in
             self?.latestControls = controls
+            self?.recordControlInventoryIfNeeded(controls)
         }
     }
 
@@ -96,6 +100,7 @@ private final class CutoutLiveValidator {
         if settingsTest {
             appendDiagnostic("settings_test=enabled target=\(targetFilter ?? "any")")
             appendDiagnostic("settings_unrestorable_writes=\(allowUnrestorableWrites)")
+            appendDiagnostic("settings_headlight=\(includeHeadlight)")
             appendDiagnostic("settings_audible_controls=\(includeAudibleControls)")
             appendDiagnostic("settings_alarm_modes=\(includeAlarmModes)")
             appendDiagnostic("settings_trip_reset=\(includeTripReset)")
@@ -199,7 +204,37 @@ private final class CutoutLiveValidator {
         return hardFailures == 0 && missingControls == 0
     }
 
+    private func recordControlInventoryIfNeeded(_ controls: DeviceControlsSnapshot) {
+        guard !didRecordControlInventory,
+              !controls.settingDescriptors.isEmpty || !controls.actionDescriptors.isEmpty else {
+            return
+        }
+        didRecordControlInventory = true
+        appendDiagnostic("controls_inventory validation_authorized=\(controls.validationAuthorized)")
+        for descriptor in controls.settingDescriptors.sorted(by: { $0.order < $1.order }) {
+            let state = controls.setting(for: descriptor.id)
+            appendDiagnostic(
+                "control id=\(descriptor.id) access=\(descriptor.access) "
+                    + "confirmation=\(descriptor.confirmationSupported) "
+                    + "control=\(descriptor.control) current=\(String(describing: state?.current)) "
+                    + "status=\(String(describing: state?.status))"
+            )
+        }
+        for descriptor in controls.actionDescriptors.sorted(by: { $0.order < $1.order }) {
+            let state = controls.actions.first(where: { $0.id == descriptor.id })
+            appendDiagnostic(
+                "action_inventory id=\(descriptor.id) access=\(descriptor.access) "
+                    + "confirmation=\(descriptor.confirmation) status=\(String(describing: state?.status))"
+            )
+        }
+    }
+
     private func testSetting(_ plan: SettingPlan, token: ConnectionAttemptToken) {
+        if plan.id == .highBeam && !includeHeadlight {
+            skippedWrites += 1
+            appendDiagnostic("setting=\(plan.name) result=skipped_headlight_opt_in_required")
+            return
+        }
         if plan.id == .beeperVolumePercent && !includeAudibleControls {
             skippedWrites += 1
             appendDiagnostic("setting=\(plan.name) result=skipped_audible_opt_in_required")

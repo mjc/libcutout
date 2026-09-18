@@ -254,11 +254,13 @@ equating a BLE write with a working control. Settings with a readable current
 value are restored after their probe.
 
 Unknown numeric current values are skipped by default so a live test cannot
-leave an unreadable setting changed. Headlight writes end in `off` when their
-current state is unreadable. Audible controls (beeper volume and horn), alarm
-mode writes, and trip reset are skipped unless their separate opt-ins are set:
+leave an unreadable setting changed. Headlight writes are also skipped unless
+`CUTOUT_AERO_INCLUDE_HEADLIGHT=1` is set. Audible controls (beeper volume and
+horn), alarm mode writes, and trip reset are skipped unless their separate
+opt-ins are set:
 
 ```console
+CUTOUT_AERO_INCLUDE_HEADLIGHT=1   # high-beam on/off sequence
 CUTOUT_AERO_INCLUDE_AUDIBLE=1       # beeper volume and horn
 CUTOUT_AERO_INCLUDE_ALARM_MODES=1  # high-speed and low-battery modes
 CUTOUT_AERO_INCLUDE_TRIP_RESET=1   # reset trip meter
