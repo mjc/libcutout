@@ -145,10 +145,14 @@ in
   tasks."validate:aero-live-connection" =
     (swiftTask ''
       echo "libcutout_commit=$(git rev-parse HEAD)"
+      validator_args=( "''${CUTOUT_AERO_VALIDATION_TIMEOUT:-45}" )
+      if [[ "''${CUTOUT_AERO_SETTINGS_TEST:-0}" == "1" ]]; then
+        validator_args+=(--settings)
+      fi
       exec cargo cutout swift -- run \
         --package-path "$DEVENV_ROOT/swift/CutoutMobile" \
         CutoutMobileLiveValidator \
-        "''${CUTOUT_AERO_VALIDATION_TIMEOUT:-45}"
+        "''${validator_args[@]}"
     '')
     // {
       showOutput = true;

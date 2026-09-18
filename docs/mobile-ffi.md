@@ -229,6 +229,46 @@ devenv tasks run validate:aero-live-connection
 devenv shell -- cutout-melk-live
 ```
 
+### Live Aero settings validation on macOS
+
+`validate:aero-live-connection` remains read-only unless the settings mode is
+explicitly enabled. With the wheel powered on, stationary, and advertising,
+run the macOS CoreBluetooth validator against the NF2557 fixture:
+
+```console
+CUTOUT_AERO_SETTINGS_TEST=1 \
+CUTOUT_AERO_TARGET=NF2557 \
+CUTOUT_AERO_VALIDATION_TIMEOUT=180 \
+devenv tasks run validate:aero-live-connection
+```
+
+The settings mode waits for live telemetry and Rust-owned validation
+authorization, then exercises the controls that have been problematic on the
+Aero: high beam/headlight, tiltback speed, PWM tiltback, pedal hardness,
+display brightness, beeper volume, dynamic assist, pedal dip, lateral tilt
+limit, voltage correction, high-speed mode, low-battery mode, speed-alarm
+threshold, pedal angle, brake alarm, horn, and trip reset. It submits one
+request at a time and logs the semantic lifecycle result (`confirmed`,
+`sent_without_confirmation`, `timed_out`, `failed`, or `refused`) instead of
+equating a BLE write with a working control. Settings with a readable current
+value are restored after their probe.
+
+Unknown numeric current values are skipped by default so a live test cannot
+leave an unreadable setting changed. Headlight writes end in `off` when their
+current state is unreadable. Audible controls (beeper volume and horn), alarm
+mode writes, and trip reset are skipped unless their separate opt-ins are set:
+
+```console
+CUTOUT_AERO_INCLUDE_AUDIBLE=1       # beeper volume and horn
+CUTOUT_AERO_INCLUDE_ALARM_MODES=1  # high-speed and low-battery modes
+CUTOUT_AERO_INCLUDE_TRIP_RESET=1   # reset trip meter
+```
+
+To deliberately test an unknown numeric setting that cannot be restored, also
+set `CUTOUT_AERO_ALLOW_UNRESTORABLE_WRITES=1`; the output marks those writes
+and they may require manual restoration on the wheel. The validator never runs
+pedal/gyro calibration.
+
 The app build task targets an ARM64 iOS Simulator. The Mac command builds the
 iPhone app for Apple Silicon Mac and opens it. Its
 bundle helper accepts only the CutoutApp project and scheme on a macOS
