@@ -52,14 +52,14 @@ use cutout_core::{
     CameraMediaProvenance as CoreCameraMediaProvenance,
     CameraMediaProvenanceError as CoreCameraMediaProvenanceError,
     CameraOnboardRecordingState as CoreCameraOnboardRecordingState,
-    CameraPreviewState as CoreCameraPreviewState, CameraSourceKind as CoreCameraSourceKind,
-    Capacity, ChargeEstimateError, ChargeEstimateInput, ChargeEstimateResetReason,
-    ChargeEstimateState, ChargeEstimateUnavailableReason, ChargeFlow, ChargeMode, ChargeModeDto,
-    ChargeModeReadingDto, ChargeProfileIdentity, ChargeSessionIdentity, ChargeTimeEstimate,
-    CommandKindDto, ControlRefusalReason as CoreControlRefusalReason, ControlRefusalReasonDto,
-    CutoutSessionState, DeviceCommand as CoreDeviceCommand, DeviceCommandDto,
-    DeviceConnectionIntent as CoreDeviceConnectionIntent, DeviceEvent, DiscoveryCandidateSnapshot,
-    DiscoveryCandidateSupport as CoreDiscoveryCandidateSupport,
+    CameraPreviewState as CoreCameraPreviewState, CameraSessionToken as CoreCameraSessionToken,
+    CameraSourceKind as CoreCameraSourceKind, Capacity, ChargeEstimateError, ChargeEstimateInput,
+    ChargeEstimateResetReason, ChargeEstimateState, ChargeEstimateUnavailableReason, ChargeFlow,
+    ChargeMode, ChargeModeDto, ChargeModeReadingDto, ChargeProfileIdentity, ChargeSessionIdentity,
+    ChargeTimeEstimate, CommandKindDto, ControlRefusalReason as CoreControlRefusalReason,
+    ControlRefusalReasonDto, CutoutSessionState, DeviceCommand as CoreDeviceCommand,
+    DeviceCommandDto, DeviceConnectionIntent as CoreDeviceConnectionIntent, DeviceEvent,
+    DiscoveryCandidateSnapshot, DiscoveryCandidateSupport as CoreDiscoveryCandidateSupport,
     DiscoveryConnectionRoute as CoreDiscoveryConnectionRoute,
     DiscoveryElectricUnicycleModel as CoreDiscoveryElectricUnicycleModel,
     DiscoveryManufacturerDataSummary as CoreDiscoveryManufacturerDataSummary,
@@ -172,6 +172,27 @@ pub struct MobileCameraSnapshotDto {
     pub preview: MobileCameraPreviewStateDto,
     /// Camera-reported onboard recording state.
     pub onboard_recording: MobileCameraOnboardRecordingStateDto,
+}
+
+/// Opaque identity for asynchronous work belonging to one camera lifecycle.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct MobileCameraSessionTokenDto {
+    /// Lifecycle generation captured when the work began.
+    pub generation: u64,
+}
+
+impl From<CoreCameraSessionToken> for MobileCameraSessionTokenDto {
+    fn from(token: CoreCameraSessionToken) -> Self {
+        Self {
+            generation: token.generation(),
+        }
+    }
+}
+
+impl From<MobileCameraSessionTokenDto> for CoreCameraSessionToken {
+    fn from(token: MobileCameraSessionTokenDto) -> Self {
+        Self::new(token.generation)
+    }
 }
 
 /// Camera source identity attached to media provenance.
@@ -2378,6 +2399,37 @@ impl CutoutSessionStateHandle {
     #[must_use]
     pub fn camera_snapshot(&self) -> MobileCameraSnapshotDto {
         self.lock_inner().session_state().camera().to_owned().into()
+    }
+
+    /// Captures an identity for asynchronous camera work.
+    #[must_use]
+    pub fn camera_session_token(&self) -> MobileCameraSessionTokenDto {
+        self.lock_inner().session_state().camera().token().into()
+    }
+
+    /// Returns whether asynchronous camera work still belongs to the lifecycle.
+    #[must_use]
+    pub fn camera_session_token_is_current(&self, token: MobileCameraSessionTokenDto) -> bool {
+        self.lock_inner()
+            .session_state()
+            .camera()
+            .is_current(token.into())
+    }
+
+    /// Retires asynchronous camera work without changing presentation truth.
+    pub fn advance_camera_generation(&self) {
+        self.lock_inner()
+            .session_state_mut()
+            .camera_mut()
+            .advance_generation();
+    }
+
+    /// Retires the camera lifecycle and returns it to its non-optimistic baseline.
+    pub fn invalidate_camera_lifecycle(&self) {
+        self.lock_inner()
+            .session_state_mut()
+            .camera_mut()
+            .invalidate();
     }
 
     /// Records a foreground preview observation without changing recording truth.
