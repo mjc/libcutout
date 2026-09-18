@@ -1,6 +1,6 @@
 use cutout_core::{
-    DeviceCommand, DeviceSettingValue, Measured, RawFieldValue, SettingId, SettingsEntry,
-    SettingsReadback, ValueQuality, ValueSource, VerificationStatus,
+    DeviceCommand, DeviceSettingValue, Measured, ProtocolFamily, RawFieldValue, SettingId,
+    SettingsEntry, SettingsReadback, ValueQuality, ValueSource, VerificationStatus,
 };
 use cutout_protocols::{
     AERO_FIELD_PWM_PERCENT, AERO_FIELD_VOLTAGE_CORRECTION_TENTHS_PERCENT,
@@ -51,6 +51,12 @@ fn value(observations: &[SettingObservation], id: SettingId) -> Option<DeviceSet
 #[test]
 fn pwm_readback_is_duty_and_readability_does_not_grant_a_write() {
     let profile = aero_control_profile();
+    assert_eq!(
+        read(profile, AERO_FIELD_PWM_PERCENT, 50)
+            .first()
+            .and_then(|observation| observation.protocol),
+        Some(ProtocolFamily::VeteranLeaperkimNosfet)
+    );
     for duty in 0..=100 {
         assert_eq!(
             value(

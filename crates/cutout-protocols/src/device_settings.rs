@@ -7,8 +7,8 @@ pub use readback::SettingObservation;
 
 use cutout_core::{
     Capabilities, Capacity, CapacitySource, ChargeProfile, ChargeProfileIdentity, CommandKind,
-    DeviceCommand, DeviceSettingValue, SettingId, SettingsEntry, UsablePackCapacity,
-    VerificationStatus,
+    DeviceCommand, DeviceSettingValue, ProtocolFamily, SettingId, SettingsEntry,
+    UsablePackCapacity, VerificationStatus,
 };
 
 /// Meaning of a fixed-point numeric value before native display-unit conversion.
@@ -218,6 +218,14 @@ impl SettingsAdapter {
             Self::None => {}
             Self::Aero => aero::normalize_readback(entry, observations),
             Self::Falcon => falcon::normalize_readback(entry, observations),
+        }
+    }
+
+    fn protocol(self) -> Option<ProtocolFamily> {
+        match self {
+            Self::None => None,
+            Self::Aero => Some(ProtocolFamily::VeteranLeaperkimNosfet),
+            Self::Falcon => Some(ProtocolFamily::BegodeGotway),
         }
     }
 }
