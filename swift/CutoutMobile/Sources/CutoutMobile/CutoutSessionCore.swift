@@ -526,6 +526,7 @@ public final class CutoutSessionCore: NSObject {
     private let phoneLocationState = MobilePhoneLocationState()
     private var latestRideMapSnapshot: MobileRideMapSnapshotDto?
     private var rideMapWritePoller: DispatchSourceTimer?
+    private var didRequestWhenInUseLocationAuthorization = false
     private var locationUpdatesDemanded = false
     private var locationManagerUpdatesStarted = false
     private var didResolveBluetoothRestoration = false
