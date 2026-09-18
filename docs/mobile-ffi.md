@@ -246,19 +246,25 @@ devenv shell -- cutout-melk-live
 ### Live Aero settings validation on macOS
 
 `validate:aero-live-connection` is the existing macOS CoreBluetooth harness,
-not currently a settings acceptance procedure. Repair it offline before further
-mutating runs. The checkpoint can repeat a failed suite, treat pending as
-terminal, begin restoration too soon, and report success despite skipped or
-unconfirmed cases. An attempted restore is not proof of restoration.
+not a settings acceptance procedure. The unsafe mutating sweep has been removed:
+`--settings` and all legacy mutation opt-ins now fail before constructing the
+Bluetooth session. The remaining connection smoke check runs once, streams logs
+as they arrive, uses a finite timeout, and explicitly reports
+`settings_validation=not_run`. It does not inventory settings observations.
+
+The terminal native-tool handoff replaces the build coordinator on Unix instead
+of leaving a waiting parent. Offline subprocess tests cover retained PID/FFI
+lock, INT/TERM exit, and lock cleanup after failed exec. This fixes that handoff,
+not cancellation of every outer launcher/descendant or native queued write.
 
 Existing configuration is recorded here for code review, not as a run recipe:
 
-| Switch | Checkpoint behavior / limitation |
+| Switch | Current behavior / limitation |
 | --- | --- |
-| `CUTOUT_AERO_SETTINGS_TEST` | Enables the mutating suite; does not fix its retry or terminal-outcome defects |
-| `CUTOUT_AERO_INCLUDE_HEADLIGHT`, `CUTOUT_AERO_INCLUDE_AUDIBLE`, `CUTOUT_AERO_INCLUDE_ALARM_MODES`, `CUTOUT_AERO_INCLUDE_TRIP_RESET` | Broad opt-ins for control groups, not reviewed individual cases or evidence of safety |
-| `CUTOUT_AERO_ALLOW_UNRESTORABLE_WRITES` | Allows guessed targets without known restorable state; not an acceptable testing policy |
-| `CUTOUT_AERO_TARGET`, `CUTOUT_AERO_VALIDATION_TIMEOUT` | Select target and overall timeout; neither establishes settings-page coverage or a per-operation deadline |
+| `CUTOUT_AERO_SETTINGS_TEST` | Value `1` is rejected before Bluetooth starts |
+| `CUTOUT_AERO_INCLUDE_HEADLIGHT`, `CUTOUT_AERO_INCLUDE_AUDIBLE`, `CUTOUT_AERO_INCLUDE_ALARM_MODES`, `CUTOUT_AERO_INCLUDE_TRIP_RESET` | Value `1` is rejected, even without settings mode |
+| `CUTOUT_AERO_ALLOW_UNRESTORABLE_WRITES` | Value `1` is rejected; unknown baselines never authorize generated probes |
+| `CUTOUT_AERO_TARGET`, `CUTOUT_AERO_VALIDATION_TIMEOUT` | Select target and connection timeout (default 45 seconds, finite, greater than 0 and at most 600); neither establishes settings-page coverage or a per-operation deadline |
 
 Disabling the settings suite does not make connection-only discovery proven
 harmless. A recorded NF2557 connection emitted Begode N/V/M probes and flushed
@@ -266,7 +272,7 @@ queued probe bytes after Veteran identity resolved. FFE0/FFE1 is shared; probe
 eligibility and retirement of incompatible queued work need repair. “Read-only”
 describes intended semantic operations, not an absence of transport writes.
 
-The recent descriptor inventory ran before settings telemetry and exited once
+The removed descriptor inventory ran before settings telemetry and exited once
 ride telemetry was live. Its `current=nil` values do not show lack of device
 readback. Bounds and confirmation flags came from library declarations, not
 wheel negotiation. The replacement observation mode must run for a bounded

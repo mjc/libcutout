@@ -58,6 +58,11 @@ let package = Package(
             dependencies: ["CutoutMobile"],
             path: "Tests/CutoutMobileLiveValidator"
         ),
+        .testTarget(
+            name: "CutoutMobileLiveValidatorTests",
+            dependencies: ["CutoutMobileLiveValidator"],
+            path: "Tests/CutoutMobileLiveValidatorTests"
+        ),
         .executableTarget(
             name: "MelkLightingLiveValidator",
             dependencies: ["CutoutMobile"],

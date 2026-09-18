@@ -31,7 +31,19 @@ the symptom ceased; it does not identify the command that caused it or prove
 that every setting was restored. No additional hardware writes are needed to
 review this design.
 
-## Concrete gaps in the checkpoint
+## Concrete gaps in the reviewed checkpoint
+
+The first LIBCU-836 containment change removes the mutating sweep and rejects
+its legacy opt-ins before constructing a Bluetooth session. Its offline tests
+cover that gate, finite argument bounds, one connection attempt, and verdicts
+that never equate connection success with settings acceptance. The harness rows
+below describe the removed implementation, not remaining callable test cases.
+The replacement settings observation/case runner is still unimplemented; active
+discovery and native queued-write cancellation remain separate open problems.
+The terminal native-tool coordinator now uses Unix exec; offline subprocess
+tests prove PID preservation, inherited FFI lock ownership, signal exit and
+failed-exec cleanup. Full launcher-chain and queued-write cancellation remain
+unproven.
 
 | Boundary | Source evidence | Consequence |
 | --- | --- | --- |
@@ -125,7 +137,7 @@ operations. The checkpoint UI changes are not renewed visual approval.
 
 ## Replace the live-test procedure
 
-The default harness inventories descriptors and observes notifications for a
+The replacement default harness must inventory descriptors and observe notifications for a
 bounded interval sufficient to see the relevant settings pages. It reports
 which pages/fields were actually seen and distinguishes library declarations
 from observations. It must not infer unsupported readback from an early sample.

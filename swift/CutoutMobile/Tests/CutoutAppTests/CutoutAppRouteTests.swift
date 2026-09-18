@@ -101,7 +101,7 @@ final class CutoutAppRouteTests: XCTestCase {
         XCTAssertEqual(localizedAppText("settings.state.confirmed"), "Confirmed")
         XCTAssertEqual(localizedAppText("settings.state.confirmed_ago", Int64(2)), "Confirmed 2s ago")
         XCTAssertEqual(localizedAppText("settings.state.refused"), "Refused")
-        XCTAssertEqual(localizedAppText("settings.state.timed_out"), "Timed out")
+        XCTAssertEqual(localizedAppText("settings.state.timed_out"), "Not confirmed")
         XCTAssertEqual(localizedAppText("settings.state.failed"), "Failed")
         XCTAssertEqual(localizedAppText("settings.pedal_mode.title"), "Pedal mode")
         XCTAssertEqual(localizedAppText("settings.roll_angle.title"), "Roll angle")
