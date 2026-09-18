@@ -115,11 +115,11 @@ use cutout_protocols::{
     IdentityBannerEvidence, NOSFET_AERO_REGISTRY_ENTRY, NovatekCapabilityError,
     NovatekCommandOutcome, NovatekConfiguration, NovatekConfigurationError, NovatekHttpOrigin,
     NovatekMediaPathError, NovatekOriginError, NovatekProfileError, NovatekR3V1Profile,
-    NovatekReadCommand, NovatekRecordingCommand, NovatekStillCaptureCommand,
-    NovatekStoragePresence, PendingProbe, ProtocolFamilyClassification, ProtocolFamilyState,
-    ProtocolModelIdentityEvidence, RetinaH264FileSink, RetinaRtspError, RetinaRtspPreviewSession,
-    RetinaVideoClockRate, RetinaVideoConfiguration, RetinaVideoFrame, StagedIdentityInput,
-    StagedIdentityOutcome, VETERAN_FIELD_AUTO_SHUTDOWN_TIME_REMAINING_SECONDS,
+    NovatekR3V1Session, NovatekReadCommand, NovatekRecordingCommand, NovatekSessionError,
+    NovatekStillCaptureCommand, NovatekStoragePresence, PendingProbe, ProtocolFamilyClassification,
+    ProtocolFamilyState, ProtocolModelIdentityEvidence, RetinaH264FileSink, RetinaRtspError,
+    RetinaRtspPreviewSession, RetinaVideoClockRate, RetinaVideoConfiguration, RetinaVideoFrame,
+    StagedIdentityInput, StagedIdentityOutcome, VETERAN_FIELD_AUTO_SHUTDOWN_TIME_REMAINING_SECONDS,
     VETERAN_FIELD_CHARGE_MODE, VETERAN_FIELD_PEDALS_MODE, VETERAN_FIELD_SPEED_ALERT_DECI_KMH,
     VETERAN_FIELD_SPEED_TILTBACK_DECI_KMH, VescBatteryType as CoreVescBatteryType,
     VescBoardProfile as CoreVescBoardProfile, VescReadOnlySession as CoreVescReadOnlySession,
@@ -899,6 +899,145 @@ impl From<NovatekConfigurationError> for MobileNovatekProfileError {
             NovatekConfigurationError::DuplicateCommand { .. }
             | NovatekConfigurationError::InvalidCommand { .. } => Self::ConfigurationMalformed,
         }
+    }
+}
+
+/// Failure while establishing the Rust-owned validated Novatek session.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, thiserror::Error, uniffi::Error)]
+pub enum MobileNovatekSessionError {
+    /// The selected origin was not a validated local IPv4 origin.
+    #[error("invalid Novatek camera origin")]
+    InvalidOrigin,
+    /// The reported firmware is outside the verified R3V1 family.
+    #[error("unsupported Novatek firmware profile")]
+    UnsupportedFirmware,
+    /// The reported firmware exceeds the bounded identity representation.
+    #[error("Novatek firmware version is too long")]
+    FirmwareVersionTooLong,
+    /// The supplied configuration exceeds Rust's fixed bound.
+    #[error("Novatek configuration is too large")]
+    ConfigurationTooLarge,
+    /// The supplied configuration contains ambiguous or reserved evidence.
+    #[error("Novatek configuration is malformed")]
+    ConfigurationMalformed,
+}
+
+impl From<NovatekSessionError> for MobileNovatekSessionError {
+    fn from(error: NovatekSessionError) -> Self {
+        match error {
+            NovatekSessionError::Profile(NovatekProfileError::UnsupportedFirmware) => {
+                Self::UnsupportedFirmware
+            }
+            NovatekSessionError::Profile(NovatekProfileError::FirmwareVersionTooLong) => {
+                Self::FirmwareVersionTooLong
+            }
+            NovatekSessionError::Configuration(NovatekConfigurationError::TooManyStatuses {
+                ..
+            }) => Self::ConfigurationTooLarge,
+            NovatekSessionError::Configuration(
+                NovatekConfigurationError::DuplicateCommand { .. }
+                | NovatekConfigurationError::InvalidCommand { .. },
+            ) => Self::ConfigurationMalformed,
+        }
+    }
+}
+
+/// Rust-owned validated R3V1 Novatek session evidence.
+#[derive(Debug, uniffi::Object)]
+pub struct MobileNovatekSession {
+    inner: NovatekR3V1Session,
+}
+
+#[uniffi::export]
+impl MobileNovatekSession {
+    /// Establishes one session from a validated local origin and read-only evidence.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the origin, firmware gate, or bounded `3014`
+    /// configuration evidence is invalid.
+    #[uniffi::constructor]
+    #[allow(
+        clippy::needless_pass_by_value,
+        reason = "UniFFI constructors own boundary DTOs and strings"
+    )]
+    pub fn new(
+        origin: MobileNovatekHttpOriginDto,
+        firmware_version: String,
+        configuration: Vec<MobileNovatekCommandStatusDto>,
+    ) -> Result<Arc<Self>, MobileNovatekSessionError> {
+        let address = origin
+            .address
+            .parse::<Ipv4Addr>()
+            .map_err(|_| MobileNovatekSessionError::InvalidOrigin)?;
+        let origin = NovatekHttpOrigin::new(address, origin.port)
+            .map_err(|_| MobileNovatekSessionError::InvalidOrigin)?;
+        let inner = NovatekR3V1Session::new(
+            origin,
+            &firmware_version,
+            configuration
+                .into_iter()
+                .map(|status| (status.command_id, status.status)),
+        )?;
+        Ok(Arc::new(Self { inner }))
+    }
+
+    /// Returns the retained validated local origin.
+    #[must_use]
+    pub fn origin(&self) -> MobileNovatekHttpOriginDto {
+        MobileNovatekHttpOriginDto {
+            address: self.inner.origin().address().to_string(),
+            port: self.inner.origin().port(),
+        }
+    }
+
+    /// Returns the retained verified firmware identity.
+    #[must_use]
+    pub fn firmware_version(&self) -> String {
+        self.inner.firmware_version().to_owned()
+    }
+
+    /// Returns the bounded `3014` command/status evidence retained by Rust.
+    #[must_use]
+    pub fn configuration(&self) -> Vec<MobileNovatekCommandStatusDto> {
+        self.inner
+            .configuration()
+            .statuses()
+            .iter()
+            .map(|status| MobileNovatekCommandStatusDto {
+                command_id: status.command_id().get(),
+                status: status.status().get(),
+            })
+            .collect()
+    }
+
+    /// Builds a recording target from the retained firmware and capability proofs.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`MobileNovatekProfileError::CapabilityNotAdvertised`] when the
+    /// retained configuration does not acknowledge command `2001`.
+    pub fn recording_command_target(
+        &self,
+        command: MobileNovatekRecordingCommandDto,
+    ) -> Result<String, MobileNovatekProfileError> {
+        self.inner
+            .recording_command_target(command.into())
+            .map(str::to_owned)
+            .map_err(Into::into)
+    }
+
+    /// Builds a still-capture target from the retained firmware and capability proofs.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`MobileNovatekProfileError::CapabilityNotAdvertised`] when the
+    /// retained configuration does not acknowledge command `1001`.
+    pub fn still_capture_command_target(&self) -> Result<String, MobileNovatekProfileError> {
+        self.inner
+            .still_capture_command_target(NovatekStillCaptureCommand)
+            .map(str::to_owned)
+            .map_err(Into::into)
     }
 }
 
@@ -18878,6 +19017,44 @@ mod tests {
                 MobileNovatekRecordingCommandDto::Start,
             ),
             Err(MobileNovatekProfileError::ConfigurationMalformed)
+        );
+    }
+
+    #[test]
+    fn novatek_session_retains_validated_origin_and_capability_evidence() {
+        let session = MobileNovatekSession::new(
+            MobileNovatekHttpOriginDto {
+                address: "192.168.1.254".to_owned(),
+                port: 80,
+            },
+            "R3V1.1_20240411".to_owned(),
+            vec![
+                MobileNovatekCommandStatusDto {
+                    command_id: 2001,
+                    status: 0,
+                },
+                MobileNovatekCommandStatusDto {
+                    command_id: 1001,
+                    status: 0,
+                },
+            ],
+        )
+        .expect("validated R3V1 evidence establishes the session");
+
+        assert_eq!(session.origin().address, "192.168.1.254");
+        assert_eq!(session.firmware_version(), "R3V1.1_20240411");
+        assert_eq!(session.configuration().len(), 2);
+        assert_eq!(
+            session
+                .recording_command_target(MobileNovatekRecordingCommandDto::Start)
+                .expect("recording capability is retained"),
+            "/?custom=1&cmd=2001&str=1"
+        );
+        assert_eq!(
+            session
+                .still_capture_command_target()
+                .expect("still capability is retained"),
+            "/?custom=1&cmd=1001"
         );
     }
 

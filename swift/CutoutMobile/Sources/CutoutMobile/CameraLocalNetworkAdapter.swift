@@ -230,6 +230,7 @@ public final class CameraLocalNetworkAdapter {
     private var pathObservationGeneration: UInt64 = 0
     private var evidencePathObservationGeneration: UInt64 = 0
     private var readOnlyOrigin: MobileNovatekHttpOriginDto?
+    private var novatekSession: MobileNovatekSession?
     private let monitorQueue = DispatchQueue(label: "org.cutout.camera-local-network")
 
     public init(
@@ -242,6 +243,7 @@ public final class CameraLocalNetworkAdapter {
         self.sessionState = sessionState
         self.previewFrameHandler = nil
         self.readOnlyOrigin = nil
+        self.novatekSession = nil
     }
 
     /// Starts observing the Wi-Fi path without adding a timeout or scanner.
@@ -269,6 +271,7 @@ public final class CameraLocalNetworkAdapter {
         monitor = nil
         readOnlyEvidence = nil
         readOnlyOrigin = nil
+        novatekSession = nil
         presentation = .initial
     }
 
@@ -293,6 +296,13 @@ public final class CameraLocalNetworkAdapter {
         }
         readOnlyEvidence = evidence
         readOnlyOrigin = origin
+        novatekSession = origin.flatMap { origin in
+            try? MobileNovatekSession(
+                origin: origin,
+                firmwareVersion: evidence.firmwareVersion,
+                configuration: evidence.commandCapabilityConfiguration
+            )
+        }
         evidencePathObservationGeneration = pathObservationGeneration
         presentation.connection = .connected
         presentation.profileName = "FreedConn R3 Pro · Novatek"
@@ -786,18 +796,11 @@ public final class CameraLocalNetworkAdapter {
         start: Bool,
         fetch: @escaping CameraReadOnlyFetcher
     ) async throws -> CameraCommandOutcome {
-        let (origin, evidence) = try commandContext(address: address, port: port)
-        guard evidence.supportsOnboardRecording else {
-            throw CameraCommandRequestError.unsupported
-        }
+        let (origin, session) = try commandContext(address: address, port: port)
         let command: MobileNovatekRecordingCommandDto = start ? .start : .stop
         let target: String
         do {
-            target = try mobileNovatekRecordingCommandTarget(
-                firmwareVersion: evidence.firmwareVersion,
-                configuration: evidence.commandCapabilityConfiguration,
-                command: command
-            )
+            target = try session.recordingCommandTarget(command: command)
         } catch {
             throw CameraCommandRequestError.unsupported
         }
@@ -840,17 +843,10 @@ public final class CameraLocalNetworkAdapter {
         port: UInt16,
         fetch: @escaping CameraReadOnlyFetcher
     ) async throws -> CameraCommandOutcome {
-        let (origin, evidence) = try commandContext(address: address, port: port)
-        guard evidence.supportsStillCapture else {
-            throw CameraCommandRequestError.unsupported
-        }
+        let (origin, session) = try commandContext(address: address, port: port)
         let target: String
         do {
-            target = try mobileNovatekStillCaptureCommandTarget(
-                firmwareVersion: evidence.firmwareVersion,
-                configuration: evidence.commandCapabilityConfiguration,
-                command: .capture
-            )
+            target = try session.stillCaptureCommandTarget()
         } catch {
             throw CameraCommandRequestError.unsupported
         }
@@ -924,15 +920,15 @@ public final class CameraLocalNetworkAdapter {
     private func commandContext(
         address: String,
         port: UInt16
-    ) throws -> (origin: MobileNovatekHttpOriginDto, evidence: CameraReadOnlyEvidence) {
+    ) throws -> (origin: MobileNovatekHttpOriginDto, session: MobileNovatekSession) {
         let origin = try mobileValidateNovatekHttpOrigin(address: address, port: port)
-        guard let evidence = readOnlyEvidence else {
+        guard let session = novatekSession else {
             throw CameraCommandRequestError.unsupported
         }
-        guard readOnlyOriginMatches(origin) else {
+        guard session.origin() == origin else {
             throw CameraCommandRequestError.originMismatch
         }
-        return (origin, evidence)
+        return (origin, session)
     }
 
     func apply(pathStatus: CameraLocalNetworkPathStatus, usesWiFi: Bool) {
@@ -968,6 +964,7 @@ public final class CameraLocalNetworkAdapter {
         invalidateCameraLifecycle()
         readOnlyEvidence = nil
         readOnlyOrigin = nil
+        novatekSession = nil
         presentation.connection = .notConfigured
         presentation.profileName = nil
         presentation.storage = .unknown
