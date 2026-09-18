@@ -2,7 +2,7 @@
 
 /// NOSFET/Veteran modern binary T riding mode.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum AeroRidingMode {
+pub enum VeteranRidingMode {
     /// Firm riding response.
     Hard,
     /// Medium riding response.
@@ -11,7 +11,7 @@ pub enum AeroRidingMode {
     Soft,
 }
 
-impl AeroRidingMode {
+impl VeteranRidingMode {
     /// Decodes the modern binary T wire value documented by EUC World.
     #[must_use]
     pub const fn from_wire(value: u8) -> Option<Self> {
@@ -36,9 +36,9 @@ impl AeroRidingMode {
 
 /// NOSFET/Veteran speed setting accepted by the documented binary frame.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct AeroSpeedSetting(u8);
+pub struct VeteranSpeedSetting(u8);
 
-impl AeroSpeedSetting {
+impl VeteranSpeedSetting {
     /// Creates a speed setting in the wheel's documented 10..=200 km/h range.
     #[must_use]
     pub const fn new(kilometres_per_hour: u8) -> Option<Self> {
@@ -57,7 +57,7 @@ impl AeroSpeedSetting {
 
 /// NOSFET Aero gyro-calibration lifecycle reported by page-8 settings.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum AeroGyroCalibrationState {
+pub enum VeteranGyroCalibrationState {
     /// The wheel is ready to start calibration.
     Idle,
     /// Calibration has started and the wheel is waiting for completion.
@@ -66,7 +66,7 @@ pub enum AeroGyroCalibrationState {
     Complete,
 }
 
-impl AeroGyroCalibrationState {
+impl VeteranGyroCalibrationState {
     /// Decodes the page-8 state byte documented by the official app.
     #[must_use]
     pub const fn from_wire(value: u8) -> Option<Self> {
@@ -91,9 +91,9 @@ impl AeroGyroCalibrationState {
 
 /// NOSFET/Veteran brake overpressure alarm threshold, in percent.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct AeroBrakeOverpressureAlarm(u8);
+pub struct VeteranBrakeOverpressureAlarm(u8);
 
-impl AeroBrakeOverpressureAlarm {
+impl VeteranBrakeOverpressureAlarm {
     /// Creates a brake overpressure threshold in the source-backed range.
     #[must_use]
     pub const fn new(percent: u8) -> Option<Self> {
@@ -112,9 +112,9 @@ impl AeroBrakeOverpressureAlarm {
 
 /// NOSFET/Veteran PWT warning margin, measured as unused PWM percentage.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct AeroPwmPercent(u8);
+pub struct VeteranPwmPercent(u8);
 
-impl AeroPwmPercent {
+impl VeteranPwmPercent {
     /// Creates a warning margin from the PWM utilization shown to the rider.
     #[must_use]
     pub const fn from_duty_percent(duty: u8) -> Option<Self> {
@@ -149,24 +149,24 @@ impl AeroPwmPercent {
 
 /// NOSFET/Veteran PWT warning configuration.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum AeroPwmSetting {
+pub enum VeteranPwmSetting {
     /// Disable the PWM warning.
     Off,
     /// Warn when the unused PWM percentage reaches this margin.
-    Margin(AeroPwmPercent),
+    Margin(VeteranPwmPercent),
 }
 
-impl From<AeroPwmPercent> for AeroPwmSetting {
-    fn from(percent: AeroPwmPercent) -> Self {
+impl From<VeteranPwmPercent> for VeteranPwmSetting {
+    fn from(percent: VeteranPwmPercent) -> Self {
         Self::Margin(percent)
     }
 }
 
 /// NOSFET/Veteran MD pedal hardness, independently of the three pedal modes.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct AeroPedalHardness(u8);
+pub struct VeteranPedalHardness(u8);
 
-impl AeroPedalHardness {
+impl VeteranPedalHardness {
     /// Creates the documented 0..=100 percent ride-mode setting.
     #[must_use]
     pub const fn new(percent: u8) -> Option<Self> {
@@ -186,14 +186,14 @@ impl AeroPedalHardness {
 
 /// Units shown by the NOSFET Aero wheel display.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum AeroWheelUnits {
+pub enum VeteranWheelUnits {
     /// Kilometres and kilometres per hour.
     Metric,
     /// Miles and miles per hour.
     Imperial,
 }
 
-impl AeroWheelUnits {
+impl VeteranWheelUnits {
     /// Decodes the documented wheel-display mode; other values are unavailable.
     #[must_use]
     pub const fn from_display_mode(value: u8) -> Option<Self> {
@@ -238,15 +238,15 @@ macro_rules! aero_toggle_setting {
 
 aero_toggle_setting!(
     /// Aero high-speed mode, which changes the wheel's high-speed behavior.
-    AeroHighSpeedMode
+    VeteranHighSpeedMode
 );
 aero_toggle_setting!(
     /// Aero low-battery mode, which changes the wheel's low-voltage behavior.
-    AeroLowBatteryMode
+    VeteranLowBatteryMode
 );
 aero_toggle_setting!(
     /// Aero transportation mode, which prevents normal motor startup.
-    AeroTransportMode
+    VeteranTransportMode
 );
 
 macro_rules! aero_bounded_setting {
@@ -276,34 +276,34 @@ macro_rules! aero_bounded_setting {
 
 aero_bounded_setting!(
     /// Aero wheel display backlight brightness, from 0 through 100 percent.
-    AeroDisplayBacklight(u8), 0..=100, percent
+    VeteranDisplayBacklight(u8), 0..=100, percent
 );
 aero_bounded_setting!(
     /// Aero wheel beeper volume, from 0 through 100 percent.
-    AeroBeeperVolume(u8), 0..=100, percent
+    VeteranBeeperVolume(u8), 0..=100, percent
 );
 aero_bounded_setting!(
     /// Aero dynamic assist, from 0 through 100 percent.
-    AeroDynamicAssist(u8), 0..=100, percent
+    VeteranDynamicAssist(u8), 0..=100, percent
 );
 aero_bounded_setting!(
     /// Aero pedal-dip compensation, from 0 through 100 percent.
-    AeroPedalDipCompensation(u8), 0..=100, percent
+    VeteranPedalDipCompensation(u8), 0..=100, percent
 );
 aero_bounded_setting!(
     /// Aero lateral tilt limit, from 35 through 75 degrees.
-    AeroLateralTiltLimit(u8), 35..=75, degrees
+    VeteranLateralTiltLimit(u8), 35..=75, degrees
 );
 aero_bounded_setting!(
     /// Aero voltage correction, from -1.5 through +1.5 percent.
-    AeroVoltageCorrection(i8), -15..=15, tenths_of_percent
+    VeteranVoltageCorrection(i8), -15..=15, tenths_of_percent
 );
 
 /// NOSFET/Veteran ANG (vertical angle) adjustment in tenths of a degree.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct AeroAngleAdjustment(i8);
+pub struct VeteranAngleAdjustment(i8);
 
-impl AeroAngleAdjustment {
+impl VeteranAngleAdjustment {
     /// Creates an angle adjustment in the documented -8.0..=8.0 degree range.
     #[must_use]
     pub const fn new(tenths_of_degree: i8) -> Option<Self> {
@@ -323,9 +323,9 @@ impl AeroAngleAdjustment {
 
 /// NOSFET Aero maximum-charge voltage control in the official raw range.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct AeroMaxChargeVoltageRaw(u8);
+pub struct VeteranMaxChargeVoltageRaw(u8);
 
-impl AeroMaxChargeVoltageRaw {
+impl VeteranMaxChargeVoltageRaw {
     /// Creates a maximum-charge setting in the official 0..=70 raw range.
     #[must_use]
     pub const fn new(raw: u8) -> Option<Self> {
@@ -407,50 +407,59 @@ mod tests {
 
     #[test]
     fn documented_aero_ranges_are_enforced() {
-        assert!(AeroSpeedSetting::new(9).is_none());
-        assert!(AeroSpeedSetting::new(10).is_some());
-        assert!(AeroSpeedSetting::new(200).is_some());
-        assert!(AeroSpeedSetting::new(201).is_none());
-        assert!(AeroPwmPercent::new(0).is_some());
-        assert!(AeroPwmPercent::new(70).is_some());
-        assert!(AeroPwmPercent::new(71).is_none());
-        assert!(AeroMaxChargeVoltageRaw::new(70).is_some());
-        assert!(AeroMaxChargeVoltageRaw::new(71).is_none());
-        assert!(AeroLateralTiltLimit::new(35).is_some());
-        assert!(AeroLateralTiltLimit::new(75).is_some());
-        assert!(AeroLateralTiltLimit::new(76).is_none());
-        assert!(AeroVoltageCorrection::new(-15).is_some());
-        assert!(AeroVoltageCorrection::new(15).is_some());
-        assert!(AeroVoltageCorrection::new(16).is_none());
-        assert!(AeroAngleAdjustment::new(-80).is_some());
-        assert!(AeroAngleAdjustment::new(80).is_some());
-        assert!(AeroAngleAdjustment::new(81).is_none());
-        assert!(AeroBrakeOverpressureAlarm::new(90).is_some());
-        assert!(AeroBrakeOverpressureAlarm::new(125).is_some());
-        assert!(AeroBrakeOverpressureAlarm::new(126).is_none());
+        assert!(VeteranSpeedSetting::new(9).is_none());
+        assert!(VeteranSpeedSetting::new(10).is_some());
+        assert!(VeteranSpeedSetting::new(200).is_some());
+        assert!(VeteranSpeedSetting::new(201).is_none());
+        assert!(VeteranPwmPercent::new(0).is_some());
+        assert!(VeteranPwmPercent::new(70).is_some());
+        assert!(VeteranPwmPercent::new(71).is_none());
+        assert!(VeteranMaxChargeVoltageRaw::new(70).is_some());
+        assert!(VeteranMaxChargeVoltageRaw::new(71).is_none());
+        assert!(VeteranLateralTiltLimit::new(35).is_some());
+        assert!(VeteranLateralTiltLimit::new(75).is_some());
+        assert!(VeteranLateralTiltLimit::new(76).is_none());
+        assert!(VeteranVoltageCorrection::new(-15).is_some());
+        assert!(VeteranVoltageCorrection::new(15).is_some());
+        assert!(VeteranVoltageCorrection::new(16).is_none());
+        assert!(VeteranAngleAdjustment::new(-80).is_some());
+        assert!(VeteranAngleAdjustment::new(80).is_some());
+        assert!(VeteranAngleAdjustment::new(81).is_none());
+        assert!(VeteranBrakeOverpressureAlarm::new(90).is_some());
+        assert!(VeteranBrakeOverpressureAlarm::new(125).is_some());
+        assert!(VeteranBrakeOverpressureAlarm::new(126).is_none());
     }
 
     #[test]
     fn documented_aero_wire_enums_round_trip() {
-        assert_eq!(AeroRidingMode::from_wire(1), Some(AeroRidingMode::Soft));
-        assert_eq!(AeroRidingMode::from_wire(2), Some(AeroRidingMode::Medium));
-        assert_eq!(AeroRidingMode::from_wire(3), Some(AeroRidingMode::Hard));
-        assert_eq!(AeroRidingMode::from_wire(0), None);
-        assert_eq!(AeroRidingMode::Hard.wire_value(), 3);
-        assert_eq!(AeroRidingMode::Medium.wire_value(), 2);
-        assert_eq!(AeroRidingMode::Soft.wire_value(), 1);
         assert_eq!(
-            AeroGyroCalibrationState::from_wire(0),
-            Some(AeroGyroCalibrationState::Idle)
+            VeteranRidingMode::from_wire(1),
+            Some(VeteranRidingMode::Soft)
         );
         assert_eq!(
-            AeroGyroCalibrationState::from_wire(1),
-            Some(AeroGyroCalibrationState::Waiting)
+            VeteranRidingMode::from_wire(2),
+            Some(VeteranRidingMode::Medium)
         );
         assert_eq!(
-            AeroGyroCalibrationState::from_wire(2),
-            Some(AeroGyroCalibrationState::Complete)
+            VeteranRidingMode::from_wire(3),
+            Some(VeteranRidingMode::Hard)
         );
-        assert_eq!(AeroGyroCalibrationState::from_wire(3), None);
+        assert_eq!(VeteranRidingMode::from_wire(0), None);
+        assert_eq!(VeteranRidingMode::Hard.wire_value(), 3);
+        assert_eq!(VeteranRidingMode::Medium.wire_value(), 2);
+        assert_eq!(VeteranRidingMode::Soft.wire_value(), 1);
+        assert_eq!(
+            VeteranGyroCalibrationState::from_wire(0),
+            Some(VeteranGyroCalibrationState::Idle)
+        );
+        assert_eq!(
+            VeteranGyroCalibrationState::from_wire(1),
+            Some(VeteranGyroCalibrationState::Waiting)
+        );
+        assert_eq!(
+            VeteranGyroCalibrationState::from_wire(2),
+            Some(VeteranGyroCalibrationState::Complete)
+        );
+        assert_eq!(VeteranGyroCalibrationState::from_wire(3), None);
     }
 }

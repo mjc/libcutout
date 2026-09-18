@@ -16,22 +16,21 @@ use cutout_core::{
 };
 
 use crate::{
-    AeroCommandMode, AeroCommandModeDetector, AeroControlEncoder, AeroProbe, AeroRequestEncoder,
-    BEGODE_DATA_CHANNEL, BEGODE_SERVICE_CHANNEL, BegodeBmsCellPage, BegodeBmsPageError,
-    BegodeBmsSummary, BegodeFrame, BegodeFrameError, BegodeFrameParseResult,
+    AeroProbe, AeroRequestEncoder, BEGODE_DATA_CHANNEL, BEGODE_SERVICE_CHANNEL, BegodeBmsCellPage,
+    BegodeBmsPageError, BegodeBmsSummary, BegodeFrame, BegodeFrameError, BegodeFrameParseResult,
     BegodeFrameReassembler, BegodeLiveATelemetry, BegodeLiveBTelemetry, BegodePackVoltageProfile,
-    BegodeTelemetryContext, BegodeTelemetryError, EncodedControl, EncodedControlSequence,
-    EncodedControlStep, EncodedRequest, FalconControlEncoder, FalconProbe, FalconRequestEncoder,
-    RefloatCodecError, RefloatReadOnlyRequest, RefloatReply, RefloatStreamDecoder,
-    RefloatStreamResult, RequestDisposition, VESC_COMM_CUSTOM_APP_DATA, VESC_MAX_FRAME_LEN,
-    VESC_NOTIFY_CHANNEL, VESC_WRITE_CHANNEL, VETERAN_DATA_CHANNEL, VETERAN_SERVICE_CHANNEL,
-    VescBoardProfile, VescCodecError, VescReadOnlyCodec, VescReadOnlyReply, VescReadOnlyRequest,
+    BegodeTelemetryContext, BegodeTelemetryError, EncodedControlStep, EncodedRequest,
+    FalconDialect, FalconProbe, FalconRequestEncoder, NosfetDialect, RefloatCodecError,
+    RefloatReadOnlyRequest, RefloatReply, RefloatStreamDecoder, RefloatStreamResult,
+    RequestDisposition, VESC_COMM_CUSTOM_APP_DATA, VESC_MAX_FRAME_LEN, VESC_NOTIFY_CHANNEL,
+    VESC_WRITE_CHANNEL, VETERAN_DATA_CHANNEL, VETERAN_SERVICE_CHANNEL, VescBoardProfile,
+    VescCodecError, VescReadOnlyCodec, VescReadOnlyReply, VescReadOnlyRequest,
     VescReadOnlyStreamDecoder, VescReadOnlyStreamResult, VescRequestEncoder, VescStatsMask,
     VescStatsTelemetry, VescValuesMask, VescValuesTelemetry, VeteranBmsCellPage,
-    VeteranBmsMetadataPage, VeteranBmsPageEvidence, VeteranBmsTemperaturePage, VeteranFrame,
-    VeteranFrameParseResult, VeteranFrameReassembler, VeteranReassemblyError, VeteranTelemetry,
-    VeteranTelemetryError, begode_falcon_target_voltage_profile, decode_veteran_bms_page,
-    util::u64_to_i64_saturating,
+    VeteranBmsMetadataPage, VeteranBmsPageEvidence, VeteranBmsTemperaturePage, VeteranCommandMode,
+    VeteranCommandModeDetector, VeteranFrame, VeteranFrameParseResult, VeteranFrameReassembler,
+    VeteranReassemblyError, VeteranTelemetry, VeteranTelemetryError,
+    begode_falcon_target_voltage_profile, decode_veteran_bms_page, util::u64_to_i64_saturating,
 };
 
 /// Raw VESC electrical RPM telemetry field id.
@@ -199,7 +198,7 @@ pub enum ControlEncodingContext {
     #[default]
     Default,
     /// NOSFET command representation selected from complete telemetry packets.
-    Aero(AeroCommandMode),
+    Veteran(VeteranCommandMode),
 }
 
 /// No-op notification decoder for models without typed notification decoding yet.
@@ -232,7 +231,7 @@ impl ReadOnlyNotificationDecoder for NoopNotificationDecoder {
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct VeteranNotificationDecoder {
     reassembler: VeteranFrameReassembler,
-    command_mode: AeroCommandModeDetector,
+    command_mode: VeteranCommandModeDetector,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -251,7 +250,7 @@ impl ReadOnlyNotificationDecoder for VeteranNotificationDecoder {
     }
 
     fn control_encoding_context(&self) -> ControlEncodingContext {
-        ControlEncodingContext::Aero(self.command_mode.mode())
+        ControlEncodingContext::Veteran(self.command_mode.mode())
     }
 
     fn handle_notification(
@@ -1529,28 +1528,12 @@ fn push_parser_error(error: ParserError, output: &mut Vec<SessionOutput>) {
 }
 
 /// Type-level settings-write capability.
-pub trait SupportsSettingsWrites: ProtocolModelSpec {
+pub trait SupportsSettingsWrites: ProtocolModelSpec + crate::control_wire::Model {
     /// Commands this model can write after stationary-state validation.
     const WRITE_CAPABILITIES: Capabilities;
 
     /// Optional sub-one-mph settings-write window for models that document it.
     const MAX_SETTINGS_SPEED: Option<cutout_core::Speed> = None;
-
-    /// Encodes a supported settings write.
-    fn encode_settings_write(
-        command: DeviceCommand,
-        context: ControlEncodingContext,
-    ) -> Option<EncodedControl>;
-
-    /// Encodes a supported multi-step settings write, when the protocol requires timing.
-    #[must_use]
-    fn encode_settings_sequence(
-        command: DeviceCommand,
-        context: ControlEncodingContext,
-    ) -> Option<EncodedControlSequence> {
-        let _ = (command, context);
-        None
-    }
 
     /// Issues a short-lived settings arm from current ride-state evidence.
     #[must_use]
@@ -1568,19 +1551,13 @@ pub trait SupportsSettingsWrites: ProtocolModelSpec {
 }
 
 /// Type-level benign-control capability.
-pub trait SupportsBenignControls: ProtocolModelSpec {
+pub trait SupportsBenignControls: ProtocolModelSpec + crate::control_wire::Model {
     /// Commands this model can control through benign write paths.
     const CONTROL_CAPABILITIES: Capabilities;
-
-    /// Encodes a supported benign control.
-    fn encode_benign_control(
-        command: DeviceCommand,
-        context: ControlEncodingContext,
-    ) -> Option<EncodedControl>;
 }
 
 /// Type-level dangerous-actuation capability.
-pub trait SupportsDangerousActuation: ProtocolModelSpec {
+pub trait SupportsDangerousActuation: ProtocolModelSpec + crate::control_wire::Model {
     /// Commands this model can use for direct actuation.
     const ACTUATION_CAPABILITIES: Capabilities;
 }
@@ -1674,20 +1651,14 @@ impl SupportsReadRequests for NosfetAeroModel {
     }
 }
 
+impl crate::control_wire::Model for NosfetAeroModel {
+    type Protocol = crate::VeteranProtocol;
+    type WireDialect = NosfetDialect;
+}
+
 impl SupportsBenignControls for NosfetAeroModel {
     const CONTROL_CAPABILITIES: Capabilities =
         Capabilities::from_supported_commands([CommandKind::SoundHorn]);
-
-    fn encode_benign_control(
-        command: DeviceCommand,
-        context: ControlEncodingContext,
-    ) -> Option<EncodedControl> {
-        let mode = match context {
-            ControlEncodingContext::Aero(mode) => mode,
-            ControlEncodingContext::Default => AeroCommandMode::Binary,
-        };
-        AeroControlEncoder::encode_in_mode(command, mode)
-    }
 }
 
 impl SupportsSettingsWrites for NosfetAeroModel {
@@ -1698,17 +1669,6 @@ impl SupportsSettingsWrites for NosfetAeroModel {
     ]);
     const MAX_SETTINGS_SPEED: Option<cutout_core::Speed> =
         Some(cutout_core::Speed::from_millimetres_per_second(500));
-
-    fn encode_settings_write(
-        command: DeviceCommand,
-        context: ControlEncodingContext,
-    ) -> Option<EncodedControl> {
-        let mode = match context {
-            ControlEncodingContext::Aero(mode) => mode,
-            ControlEncodingContext::Default => AeroCommandMode::Binary,
-        };
-        AeroControlEncoder::encode_in_mode(command, mode)
-    }
 }
 
 /// Begode Falcon read-only model spec.
@@ -1764,35 +1724,19 @@ impl SupportsReadRequests for BegodeFalconModel {
     }
 }
 
+impl crate::control_wire::Model for BegodeFalconModel {
+    type Protocol = crate::BegodeProtocol;
+    type WireDialect = FalconDialect;
+}
+
 impl SupportsBenignControls for BegodeFalconModel {
     const CONTROL_CAPABILITIES: Capabilities =
         Capabilities::from_supported_commands([CommandKind::SetLights]);
-
-    fn encode_benign_control(
-        command: DeviceCommand,
-        _context: ControlEncodingContext,
-    ) -> Option<EncodedControl> {
-        FalconControlEncoder::encode(command)
-    }
 }
 
 impl SupportsSettingsWrites for BegodeFalconModel {
     const WRITE_CAPABILITIES: Capabilities =
         Capabilities::from_supported_commands([CommandKind::SetSetting]);
-
-    fn encode_settings_write(
-        command: DeviceCommand,
-        _context: ControlEncodingContext,
-    ) -> Option<EncodedControl> {
-        FalconControlEncoder::encode(command)
-    }
-
-    fn encode_settings_sequence(
-        command: DeviceCommand,
-        _context: ControlEncodingContext,
-    ) -> Option<EncodedControlSequence> {
-        FalconControlEncoder::encode_settings_sequence(command)
-    }
 }
 
 /// Generic VESC read-only model spec.
@@ -2043,7 +1987,10 @@ fn handle_benign_control<M: ReadOnlyModelSpec + SupportsBenignControls>(
 ) {
     let kind = command.kind();
     if M::CONTROL_CAPABILITIES.supports_command_kind(kind) {
-        if let Some(encoded) = M::encode_benign_control(command, context) {
+        if let Some(encoded) =
+            <M::WireDialect as crate::control_wire::Dialect>::select(command, context)
+                .and_then(|selection| selection.single(command))
+        {
             output.push(SessionOutput::Transport(TransportAction::Write {
                 channel: M::WRITE_CHANNEL,
                 bytes: encoded.payload,
@@ -2148,7 +2095,10 @@ impl<M: ReadOnlyModelSpec + SupportsBenignControls, const ACCEPT_ANY_NOTIFICATIO
             && M::CONTROL_CAPABILITIES.supports_command_kind(kind)
         {
             let context = self.read_only.decoder.control_encoding_context();
-            if let Some(encoded) = M::encode_benign_control(command, context) {
+            if let Some(encoded) =
+                <M::WireDialect as crate::control_wire::Dialect>::select(command, context)
+                    .and_then(|selection| selection.single(command))
+            {
                 if let DeviceCommand::SetLights(state) = command {
                     self.light_command_state =
                         LightCommandState::Requested(RequestedLightState::new(state));
@@ -2408,7 +2358,10 @@ impl<
         }
 
         let context = self.read_only.decoder.control_encoding_context();
-        if let Some(sequence) = M::encode_settings_sequence(command, context) {
+        if let Some(sequence) =
+            <M::WireDialect as crate::control_wire::Dialect>::select(command, context)
+                .and_then(|selection| selection.sequence(command))
+        {
             let mut steps = sequence.steps.into_iter();
             let Some(first) = steps.next() else {
                 output.push(SessionOutput::Event(DeviceEvent::ControlRefusal(
@@ -2441,7 +2394,10 @@ impl<
             return;
         }
 
-        if let Some(encoded) = M::encode_settings_write(command, context) {
+        if let Some(encoded) =
+            <M::WireDialect as crate::control_wire::Dialect>::select(command, context)
+                .and_then(|selection| selection.single(command))
+        {
             output.push(SessionOutput::Transport(TransportAction::Write {
                 channel: M::WRITE_CHANNEL,
                 bytes: encoded.payload,
@@ -2610,6 +2566,12 @@ mod tests {
 
     struct TestModel;
 
+    // This session fixture delegates encoding to the checked Aero adapter.
+    impl crate::control_wire::Model for TestModel {
+        type Protocol = crate::VeteranProtocol;
+        type WireDialect = NosfetDialect;
+    }
+
     impl ProtocolModelSpec for TestModel {
         const MANUFACTURER: Manufacturer = Manufacturer::Nosfet;
         const MODEL: &'static str = "test";
@@ -2633,24 +2595,10 @@ mod tests {
     impl SupportsSettingsWrites for TestModel {
         const WRITE_CAPABILITIES: Capabilities =
             Capabilities::from_supported_commands([CommandKind::SetSetting]);
-
-        fn encode_settings_write(
-            command: DeviceCommand,
-            _context: ControlEncodingContext,
-        ) -> Option<EncodedControl> {
-            AeroControlEncoder::encode(command)
-        }
     }
 
     impl SupportsBenignControls for TestModel {
         const CONTROL_CAPABILITIES: Capabilities = Capabilities::from_supported_commands([]);
-
-        fn encode_benign_control(
-            _command: DeviceCommand,
-            _context: ControlEncodingContext,
-        ) -> Option<EncodedControl> {
-            None
-        }
     }
 
     struct SilentSemanticReadbackModel;
@@ -4860,7 +4808,7 @@ mod tests {
     fn nosfet_aero_decoder_reports_oversized_frame_as_parser_diagnostic_ingest() {
         let mut decoder = VeteranNotificationDecoder {
             reassembler: VeteranFrameReassembler::saturated_candidate_for_test(),
-            command_mode: AeroCommandModeDetector::default(),
+            command_mode: VeteranCommandModeDetector::default(),
         };
         let mut output = Vec::new();
 

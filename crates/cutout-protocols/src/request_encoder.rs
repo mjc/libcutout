@@ -1,4 +1,5 @@
 use arrayvec::ArrayVec;
+#[cfg(test)]
 use crc32fast::hash as crc32;
 use cutout_core::{
     CommandKind, DeviceActionId, DeviceActionStep, DeviceCommand, DeviceSettingValue, LightState,
@@ -6,6 +7,7 @@ use cutout_core::{
     VescControllerId, WriteMode, WritePayload,
 };
 
+use crate::control_wire::{BegodeWire, NosfetWire, VeteranWire, WireCommand};
 use crate::settings_wire::*;
 use crate::{
     AeroProbe, FalconProbe, RefloatReadOnlyRequest, VescCanReadOnlyRequest, VescReadOnlyCodec,
@@ -77,13 +79,27 @@ pub struct EncodedControlSequence {
     pub steps: ArrayVec<EncodedControlStep, 5>,
 }
 
-/// NOSFET Aero benign-control encoder.
+/// NOSFET control dialect of the community-named Veteran protocol.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub struct AeroControlEncoder;
+pub struct NosfetDialect;
+
+impl crate::control_wire::Dialect for NosfetDialect {
+    type Protocol = crate::VeteranProtocol;
+    fn select(
+        command: DeviceCommand,
+        context: crate::session::ControlEncodingContext,
+    ) -> Option<crate::control_wire::Selection<crate::VeteranProtocol>> {
+        let mode = match context {
+            crate::session::ControlEncodingContext::Veteran(mode) => mode,
+            crate::session::ControlEncodingContext::Default => VeteranCommandMode::Binary,
+        };
+        Self::select_in_mode(command, mode)
+    }
+}
 
 /// NOSFET command representation selected from complete telemetry packets.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum AeroCommandMode {
+pub enum VeteranCommandMode {
     /// Legacy string commands without a checksum.
     Ascii,
     /// Modern binary commands with a trailing CRC32.
@@ -92,34 +108,34 @@ pub enum AeroCommandMode {
 
 /// Connection-scoped detector matching the official two-packet command-mode selection.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub struct AeroCommandModeDetector {
-    previous: Option<AeroCommandMode>,
-    latched: Option<AeroCommandMode>,
+pub struct VeteranCommandModeDetector {
+    previous: Option<VeteranCommandMode>,
+    latched: Option<VeteranCommandMode>,
 }
 
 #[derive(Clone, Copy, Debug)]
-enum AeroWireCommand {
-    SetAeroDisplayBacklight(AeroDisplayBacklight),
-    SetAeroBeeperVolume(AeroBeeperVolume),
-    SetAeroDynamicAssist(AeroDynamicAssist),
-    SetAeroPedalDipCompensation(AeroPedalDipCompensation),
-    SetAeroLateralTiltLimit(AeroLateralTiltLimit),
-    SetAeroVoltageCorrection(AeroVoltageCorrection),
-    SetAeroTiltbackSpeed(AeroSpeedSetting),
-    SetAeroPwmPercent(AeroPwmSetting),
-    SetAeroGyroCalibration,
-    SetAeroBrakeOverpressureAlarm(AeroBrakeOverpressureAlarm),
-    SetAeroPedalHardness(AeroPedalHardness),
-    SetAeroWheelUnits(AeroWheelUnits),
-    SetAeroHighSpeedMode(AeroHighSpeedMode),
-    SetAeroLowBatteryMode(AeroLowBatteryMode),
-    SetAeroTransportMode(AeroTransportMode),
-    SetAeroAlarmSpeed(AeroSpeedSetting),
-    SetAeroAngleAdjustment(AeroAngleAdjustment),
-    SetAeroRidingMode(AeroRidingMode),
+enum NosfetCommand {
+    DisplayBacklight(VeteranDisplayBacklight),
+    BeeperVolume(VeteranBeeperVolume),
+    DynamicAssist(VeteranDynamicAssist),
+    PedalDipCompensation(VeteranPedalDipCompensation),
+    LateralTiltLimit(VeteranLateralTiltLimit),
+    VoltageCorrection(VeteranVoltageCorrection),
+    TiltbackSpeed(VeteranSpeedSetting),
+    PwmPercent(VeteranPwmSetting),
+    GyroCalibration,
+    BrakeOverpressureAlarm(VeteranBrakeOverpressureAlarm),
+    PedalHardness(VeteranPedalHardness),
+    WheelUnits(VeteranWheelUnits),
+    HighSpeedMode(VeteranHighSpeedMode),
+    LowBatteryMode(VeteranLowBatteryMode),
+    TransportMode(VeteranTransportMode),
+    AlarmSpeed(VeteranSpeedSetting),
+    AngleAdjustment(VeteranAngleAdjustment),
+    RidingMode(VeteranRidingMode),
 }
 
-fn aero_wire_command(command: DeviceCommand) -> Option<AeroWireCommand> {
+fn nosfet_command(command: DeviceCommand) -> Option<NosfetCommand> {
     let DeviceCommand::SetSetting { id, value } = command else {
         if let DeviceCommand::InvokeAction(request) = command
             && request.id == DeviceActionId::GyroCalibration
@@ -130,94 +146,90 @@ fn aero_wire_command(command: DeviceCommand) -> Option<AeroWireCommand> {
                     | DeviceActionStep::StartGyroCalibration
             )
         {
-            return Some(AeroWireCommand::SetAeroGyroCalibration);
+            return Some(NosfetCommand::GyroCalibration);
         }
         return None;
     };
     let number = |value| u8::try_from(value).ok();
     match (id, value) {
         (SettingId::DisplayBrightness, DeviceSettingValue::Number(value)) => Some(
-            AeroWireCommand::SetAeroDisplayBacklight(AeroDisplayBacklight::new(number(value)?)?),
+            NosfetCommand::DisplayBacklight(VeteranDisplayBacklight::new(number(value)?)?),
         ),
         (SettingId::BeeperVolumePercent, DeviceSettingValue::Number(value)) => Some(
-            AeroWireCommand::SetAeroBeeperVolume(AeroBeeperVolume::new(number(value)?)?),
+            NosfetCommand::BeeperVolume(VeteranBeeperVolume::new(number(value)?)?),
         ),
         (SettingId::DynamicAssist, DeviceSettingValue::Number(value)) => Some(
-            AeroWireCommand::SetAeroDynamicAssist(AeroDynamicAssist::new(number(value)?)?),
+            NosfetCommand::DynamicAssist(VeteranDynamicAssist::new(number(value)?)?),
         ),
-        (SettingId::PedalDipCompensation, DeviceSettingValue::Number(value)) => {
-            Some(AeroWireCommand::SetAeroPedalDipCompensation(
-                AeroPedalDipCompensation::new(number(value)?)?,
-            ))
-        }
+        (SettingId::PedalDipCompensation, DeviceSettingValue::Number(value)) => Some(
+            NosfetCommand::PedalDipCompensation(VeteranPedalDipCompensation::new(number(value)?)?),
+        ),
         (SettingId::LateralTiltLimit, DeviceSettingValue::Number(value)) => Some(
-            AeroWireCommand::SetAeroLateralTiltLimit(AeroLateralTiltLimit::new(number(value)?)?),
+            NosfetCommand::LateralTiltLimit(VeteranLateralTiltLimit::new(number(value)?)?),
         ),
         (SettingId::VoltageCorrection, DeviceSettingValue::Number(value)) => {
-            Some(AeroWireCommand::SetAeroVoltageCorrection(
-                AeroVoltageCorrection::new(i8::try_from(value).ok()?)?,
+            Some(NosfetCommand::VoltageCorrection(
+                VeteranVoltageCorrection::new(i8::try_from(value).ok()?)?,
             ))
         }
         (SettingId::TiltbackSpeed, DeviceSettingValue::Number(value)) => Some(
-            AeroWireCommand::SetAeroTiltbackSpeed(AeroSpeedSetting::new(number(value / 10)?)?),
+            NosfetCommand::TiltbackSpeed(VeteranSpeedSetting::new(number(value / 10)?)?),
         ),
         (SettingId::PwmTiltback, DeviceSettingValue::Number(value)) => {
-            Some(AeroWireCommand::SetAeroPwmPercent(
-                AeroPwmPercent::new(100_u8.checked_sub(number(value)?)?)?.into(),
+            Some(NosfetCommand::PwmPercent(
+                VeteranPwmPercent::new(100_u8.checked_sub(number(value)?)?)?.into(),
             ))
         }
         (SettingId::PwmTiltback, DeviceSettingValue::Disabled) => {
-            Some(AeroWireCommand::SetAeroPwmPercent(AeroPwmSetting::Off))
+            Some(NosfetCommand::PwmPercent(VeteranPwmSetting::Off))
         }
         (SettingId::BrakeOverpressureAlarm, DeviceSettingValue::Number(value)) => {
-            Some(AeroWireCommand::SetAeroBrakeOverpressureAlarm(
-                AeroBrakeOverpressureAlarm::new(number(value)?)?,
+            Some(NosfetCommand::BrakeOverpressureAlarm(
+                VeteranBrakeOverpressureAlarm::new(number(value)?)?,
             ))
         }
         (SettingId::PedalHardness, DeviceSettingValue::Number(value)) => Some(
-            AeroWireCommand::SetAeroPedalHardness(AeroPedalHardness::new(number(value)?)?),
+            NosfetCommand::PedalHardness(VeteranPedalHardness::new(number(value)?)?),
         ),
         (SettingId::DisplayUnits, DeviceSettingValue::Choice(0)) => {
-            Some(AeroWireCommand::SetAeroWheelUnits(AeroWheelUnits::Metric))
+            Some(NosfetCommand::WheelUnits(VeteranWheelUnits::Metric))
         }
         (SettingId::DisplayUnits, DeviceSettingValue::Choice(1)) => {
-            Some(AeroWireCommand::SetAeroWheelUnits(AeroWheelUnits::Imperial))
+            Some(NosfetCommand::WheelUnits(VeteranWheelUnits::Imperial))
         }
         (SettingId::HighSpeedMode, DeviceSettingValue::Boolean(value)) => Some(
-            AeroWireCommand::SetAeroHighSpeedMode(AeroHighSpeedMode::new(value)),
+            NosfetCommand::HighSpeedMode(VeteranHighSpeedMode::new(value)),
         ),
         (SettingId::LowBatteryMode, DeviceSettingValue::Boolean(value)) => Some(
-            AeroWireCommand::SetAeroLowBatteryMode(AeroLowBatteryMode::new(value)),
+            NosfetCommand::LowBatteryMode(VeteranLowBatteryMode::new(value)),
         ),
         (SettingId::TransportMode, DeviceSettingValue::Boolean(value)) => Some(
-            AeroWireCommand::SetAeroTransportMode(AeroTransportMode::new(value)),
+            NosfetCommand::TransportMode(VeteranTransportMode::new(value)),
         ),
         (SettingId::SpeedAlarmThreshold, DeviceSettingValue::Number(value)) => Some(
-            AeroWireCommand::SetAeroAlarmSpeed(AeroSpeedSetting::new(number(value / 10)?)?),
+            NosfetCommand::AlarmSpeed(VeteranSpeedSetting::new(number(value / 10)?)?),
         ),
-        (SettingId::PedalAngle, DeviceSettingValue::Number(value)) => {
-            Some(AeroWireCommand::SetAeroAngleAdjustment(
-                AeroAngleAdjustment::new(i8::try_from(value).ok()?)?,
-            ))
-        }
+        (SettingId::PedalAngle, DeviceSettingValue::Number(value)) => Some(
+            NosfetCommand::AngleAdjustment(VeteranAngleAdjustment::new(i8::try_from(value).ok()?)?),
+        ),
         (SettingId::RidingPreset, DeviceSettingValue::Choice(0)) => {
-            Some(AeroWireCommand::SetAeroRidingMode(AeroRidingMode::Hard))
+            Some(NosfetCommand::RidingMode(VeteranRidingMode::Hard))
         }
         (SettingId::RidingPreset, DeviceSettingValue::Choice(1)) => {
-            Some(AeroWireCommand::SetAeroRidingMode(AeroRidingMode::Medium))
+            Some(NosfetCommand::RidingMode(VeteranRidingMode::Medium))
         }
         (SettingId::RidingPreset, DeviceSettingValue::Choice(2)) => {
-            Some(AeroWireCommand::SetAeroRidingMode(AeroRidingMode::Soft))
+            Some(NosfetCommand::RidingMode(VeteranRidingMode::Soft))
         }
         _ => None,
     }
 }
 
-impl AeroCommandModeDetector {
+impl VeteranCommandModeDetector {
     /// Returns the selected mode. The official client starts in binary mode before detection.
     #[must_use]
-    pub fn mode(self) -> AeroCommandMode {
-        self.latched.unwrap_or(AeroCommandMode::Binary)
+    pub fn mode(self) -> VeteranCommandMode {
+        self.latched.unwrap_or(VeteranCommandMode::Binary)
     }
 
     /// Returns whether two consecutive complete packets selected a mode.
@@ -232,9 +244,9 @@ impl AeroCommandModeDetector {
             return;
         }
         let observed = if packet_len < 47 {
-            AeroCommandMode::Ascii
+            VeteranCommandMode::Ascii
         } else {
-            AeroCommandMode::Binary
+            VeteranCommandMode::Binary
         };
         if self.previous == Some(observed) {
             self.latched = Some(observed);
@@ -249,437 +261,264 @@ impl AeroCommandModeDetector {
     }
 }
 
-impl AeroControlEncoder {
-    /// Encodes a supported NOSFET Aero benign control.
+impl NosfetDialect {
+    /// Encodes a supported control in the NOSFET dialect of Veteran.
     #[must_use]
     pub fn encode(command: DeviceCommand) -> Option<EncodedControl> {
-        Self::encode_in_mode(command, AeroCommandMode::Binary)
+        Self::encode_in_mode(command, VeteranCommandMode::Binary)
     }
 
-    /// Encodes a control through the connection-selected command representation.
+    /// Encodes using the connection-selected Veteran command representation.
     #[must_use]
-    pub fn encode_in_mode(command: DeviceCommand, mode: AeroCommandMode) -> Option<EncodedControl> {
-        if let Some(payload) = aero_mode_control_payload(command, mode) {
-            return Some(EncodedControl {
-                command: command.kind(),
-                payload,
-                mode: WriteMode::WithoutResponse,
-            });
+    pub fn encode_in_mode(
+        command: DeviceCommand,
+        mode: VeteranCommandMode,
+    ) -> Option<EncodedControl> {
+        Self::select_in_mode(command, mode)?.single(command)
+    }
+
+    fn select_in_mode(
+        command: DeviceCommand,
+        mode: VeteranCommandMode,
+    ) -> Option<crate::control_wire::Selection<crate::VeteranProtocol>> {
+        if let Some(selection) = veteran_mode_control_payload(command, mode) {
+            return Some(selection);
         }
-        let wire_command = aero_wire_command(command)?;
-        match wire_command {
-            AeroWireCommand::SetAeroDisplayBacklight(value) => {
-                return Some(EncodedControl {
-                    command: command.kind(),
-                    payload: aero_setting_frames::LdField::DisplayBrightness
-                        .encode(value.percent())?,
-                    mode: WriteMode::WithoutResponse,
-                });
+        Some(match nosfet_command(command)? {
+            NosfetCommand::DisplayBacklight(value) => {
+                VeteranWire::DisplayBrightness.select(value.percent())
             }
-            AeroWireCommand::SetAeroBeeperVolume(value) => {
-                return Some(EncodedControl {
-                    command: command.kind(),
-                    payload: aero_setting_frames::LdField::BeeperVolume.encode(value.percent())?,
-                    mode: WriteMode::WithoutResponse,
-                });
+            NosfetCommand::BeeperVolume(value) => VeteranWire::BeeperVolume.select(value.percent()),
+            NosfetCommand::DynamicAssist(value) => {
+                VeteranWire::DynamicAssist.select(value.percent())
             }
-            AeroWireCommand::SetAeroDynamicAssist(value) => {
-                return Some(EncodedControl {
-                    command: command.kind(),
-                    payload: aero_setting_frames::LdField::DynamicAssist.encode(value.percent())?,
-                    mode: WriteMode::WithoutResponse,
-                });
+            NosfetCommand::PedalDipCompensation(value) => {
+                VeteranWire::PedalDipCompensation.select(value.percent())
             }
-            AeroWireCommand::SetAeroPedalDipCompensation(value) => {
-                return Some(EncodedControl {
-                    command: command.kind(),
-                    payload: aero_setting_frames::LdField::PedalDipCompensation
-                        .encode(value.percent())?,
-                    mode: WriteMode::WithoutResponse,
-                });
+            NosfetCommand::LateralTiltLimit(value) => {
+                VeteranWire::LateralTilt.select(value.degrees())
             }
-            AeroWireCommand::SetAeroLateralTiltLimit(value) => {
-                return Some(EncodedControl {
-                    command: command.kind(),
-                    payload: aero_setting_frames::LkField::LateralTilt.encode(value.degrees())?,
-                    mode: WriteMode::WithoutResponse,
-                });
+            NosfetCommand::VoltageCorrection(value) => VeteranWire::VoltageCorrection
+                .select(u8::from_ne_bytes(value.tenths_of_percent().to_ne_bytes())),
+            NosfetCommand::TiltbackSpeed(speed) => {
+                VeteranWire::TiltbackSpeed.select(speed.kilometres_per_hour())
             }
-            AeroWireCommand::SetAeroVoltageCorrection(value) => {
-                return Some(EncodedControl {
-                    command: command.kind(),
-                    payload: aero_setting_frames::LdField::VoltageCorrection
-                        .encode(u8::from_ne_bytes(value.tenths_of_percent().to_ne_bytes()))?,
-                    mode: WriteMode::WithoutResponse,
-                });
+            NosfetCommand::PwmPercent(percent) => VeteranWire::PwmTiltback.select(match percent {
+                VeteranPwmSetting::Off => 200,
+                VeteranPwmSetting::Margin(margin) => 100 - margin.percent(),
+            }),
+            NosfetCommand::GyroCalibration => VeteranWire::GyroCalibration.select(1),
+            NosfetCommand::BrakeOverpressureAlarm(value) => {
+                NosfetWire::BrakeOverpressureAlarm.select(value.percent())
             }
-            AeroWireCommand::SetAeroTiltbackSpeed(speed) => {
-                return Some(EncodedControl {
-                    command: command.kind(),
-                    payload: aero_setting_frames::LdField::TiltbackSpeed
-                        .encode(speed.kilometres_per_hour())?,
-                    mode: WriteMode::WithoutResponse,
-                });
+            NosfetCommand::PedalHardness(percent) => {
+                VeteranWire::PedalHardness.select(percent.percent())
             }
-            AeroWireCommand::SetAeroPwmPercent(percent) => {
-                let wire_value = match percent {
-                    AeroPwmSetting::Off => 200,
-                    AeroPwmSetting::Margin(margin) => 100 - margin.percent(),
-                };
-                return Some(EncodedControl {
-                    command: command.kind(),
-                    payload: aero_setting_frames::LdField::PwmTiltback.encode(wire_value)?,
-                    mode: WriteMode::WithoutResponse,
-                });
+            NosfetCommand::WheelUnits(units) => {
+                VeteranWire::DisplayUnits.select(units.display_mode())
             }
-            AeroWireCommand::SetAeroGyroCalibration => {
-                return Some(EncodedControl {
-                    command: command.kind(),
-                    payload: aero_setting_frames::LdField::GyroCalibration.encode(1)?,
-                    mode: WriteMode::WithoutResponse,
-                });
+            NosfetCommand::HighSpeedMode(value) => {
+                VeteranWire::HighSpeedMode.select(u8::from(value.enabled()))
             }
-            AeroWireCommand::SetAeroBrakeOverpressureAlarm(value) => {
-                return Some(EncodedControl {
-                    command: command.kind(),
-                    payload: aero_setting_frames::LdField::BrakeOverpressureAlarm
-                        .encode(value.percent())?,
-                    mode: WriteMode::WithoutResponse,
-                });
+            NosfetCommand::LowBatteryMode(value) => {
+                VeteranWire::LowBatteryMode.select(u8::from(value.enabled()))
             }
-            AeroWireCommand::SetAeroPedalHardness(percent) => {
-                return Some(EncodedControl {
-                    command: command.kind(),
-                    payload: aero_setting_frames::LdField::PedalHardness
-                        .encode(percent.percent())?,
-                    mode: WriteMode::WithoutResponse,
-                });
+            NosfetCommand::TransportMode(value) => {
+                VeteranWire::TransportMode.select(u8::from(value.enabled()))
             }
-            AeroWireCommand::SetAeroWheelUnits(units) => {
-                return Some(EncodedControl {
-                    command: command.kind(),
-                    payload: aero_setting_frames::LdField::DisplayUnits
-                        .encode(units.display_mode())?,
-                    mode: WriteMode::WithoutResponse,
-                });
+            NosfetCommand::AlarmSpeed(speed) => {
+                VeteranWire::SpeedAlarm.select(speed.kilometres_per_hour())
             }
-            AeroWireCommand::SetAeroHighSpeedMode(value) => {
-                return Some(EncodedControl {
-                    command: command.kind(),
-                    payload: aero_setting_frames::LdField::HighSpeedMode
-                        .encode(u8::from(value.enabled()))?,
-                    mode: WriteMode::WithoutResponse,
-                });
+            NosfetCommand::AngleAdjustment(angle) => VeteranWire::PedalAngle
+                .select(u8::from_ne_bytes(angle.tenths_of_degree().to_ne_bytes())),
+            NosfetCommand::RidingMode(mode_value) => {
+                return veteran_riding_mode_payload(mode_value.wire_value(), mode);
             }
-            AeroWireCommand::SetAeroLowBatteryMode(value) => {
-                return Some(EncodedControl {
-                    command: command.kind(),
-                    payload: aero_setting_frames::LdField::LowBatteryMode
-                        .encode(u8::from(value.enabled()))?,
-                    mode: WriteMode::WithoutResponse,
-                });
-            }
-            AeroWireCommand::SetAeroTransportMode(value) => {
-                return Some(EncodedControl {
-                    command: command.kind(),
-                    payload: aero_setting_frames::LdField::TransportMode
-                        .encode(u8::from(value.enabled()))?,
-                    mode: WriteMode::WithoutResponse,
-                });
-            }
-            AeroWireCommand::SetAeroAlarmSpeed(speed) => {
-                return Some(EncodedControl {
-                    command: command.kind(),
-                    payload: aero_setting_frames::LkField::SpeedAlarm
-                        .encode(speed.kilometres_per_hour())?,
-                    mode: WriteMode::WithoutResponse,
-                });
-            }
-            AeroWireCommand::SetAeroAngleAdjustment(angle) => {
-                return Some(EncodedControl {
-                    command: command.kind(),
-                    payload: aero_setting_frames::LkField::PedalAngle
-                        .encode(u8::from_ne_bytes(angle.tenths_of_degree().to_ne_bytes()))?,
-                    mode: WriteMode::WithoutResponse,
-                });
-            }
-            AeroWireCommand::SetAeroRidingMode(riding_mode) => {
-                let (ascii, binary) = aero_riding_mode_payload(riding_mode.wire_value())?;
-                let payload = match mode {
-                    AeroCommandMode::Ascii => request_payload(ascii),
-                    AeroCommandMode::Binary => binary,
-                };
-                return Some(EncodedControl {
-                    command: command.kind(),
-                    payload,
-                    mode: WriteMode::WithoutResponse,
-                });
-            }
-        }
+        })
     }
 }
 
-fn aero_mode_control_payload(
+fn veteran_mode_control_payload(
     command: DeviceCommand,
-    mode: AeroCommandMode,
-) -> Option<WritePayload> {
-    let (ascii, binary) = match command {
+    mode: VeteranCommandMode,
+) -> Option<crate::control_wire::Selection<crate::VeteranProtocol>> {
+    let (ascii, binary, value) = match command {
         DeviceCommand::SoundHorn
         | DeviceCommand::InvokeAction(cutout_core::DeviceActionRequest {
             id: DeviceActionId::Horn,
             step: DeviceActionStep::Invoke,
-        }) => (
-            b"OLDCMDb".as_slice(),
-            aero_binary_frame(*b"LkAp", &[0x00, 0x80, 0x80, 0x80], 1)?,
-        ),
+        }) => (VeteranWire::AsciiHorn, VeteranWire::Horn, 1),
         DeviceCommand::InvokeAction(cutout_core::DeviceActionRequest {
             id: DeviceActionId::ResetTripMeter,
             step: DeviceActionStep::Invoke,
-        }) => (
-            b"CLEARMETER".as_slice(),
-            aero_binary_frame(*b"LkAp", &[0x00], 1)?,
-        ),
+        }) => (VeteranWire::AsciiResetTrip, VeteranWire::ResetTrip, 1),
         DeviceCommand::SetSetting {
             id: SettingId::HighBeam,
             value: DeviceSettingValue::Boolean(enabled),
-        } => match enabled {
-            true => (
-                b"SetLightON".as_slice(),
-                aero_binary_frame(*b"LkAp", &[0x01, 0x80, 0x80], 1)?,
-            ),
-            false => (
-                b"SetLightOFF".as_slice(),
-                aero_binary_frame(*b"LkAp", &[0x01, 0x80, 0x80], 0)?,
-            ),
-        },
+        } => (
+            if enabled {
+                VeteranWire::AsciiHeadlightOn
+            } else {
+                VeteranWire::AsciiHeadlightOff
+            },
+            VeteranWire::Headlight,
+            u8::from(enabled),
+        ),
         DeviceCommand::SetSetting {
             id: SettingId::RidingPreset,
             value: DeviceSettingValue::Choice(value),
-        } => aero_riding_mode_payload(match value {
-            0 => 3,
-            1 => 2,
-            2 => 1,
-            _ => return None,
-        })?,
+        } => {
+            return veteran_riding_mode_payload(
+                match value {
+                    0 => 3,
+                    1 => 2,
+                    2 => 1,
+                    _ => return None,
+                },
+                mode,
+            );
+        }
         _ => return None,
     };
     Some(match mode {
-        AeroCommandMode::Ascii => request_payload(ascii),
-        AeroCommandMode::Binary => binary,
+        VeteranCommandMode::Ascii => ascii.select(value),
+        VeteranCommandMode::Binary => binary.select(value),
     })
 }
 
-fn aero_riding_mode_payload(value: u8) -> Option<(&'static [u8], WritePayload)> {
+fn veteran_riding_mode_payload(
+    value: u8,
+    mode: VeteranCommandMode,
+) -> Option<crate::control_wire::Selection<crate::VeteranProtocol>> {
     let ascii = match value {
-        1 => b"SETs".as_slice(),
-        2 => b"SETm".as_slice(),
-        3 => b"SETh".as_slice(),
+        1 => VeteranWire::AsciiRidingSoft,
+        2 => VeteranWire::AsciiRidingMedium,
+        3 => VeteranWire::AsciiRidingHard,
         _ => return None,
     };
-    Some((ascii, aero_binary_frame(*b"LkAp", &[0x01, 0x80], value)?))
+    Some(match mode {
+        VeteranCommandMode::Ascii => ascii.select(value),
+        VeteranCommandMode::Binary => VeteranWire::RidingPreset.select(value),
+    })
 }
 
-fn aero_binary_frame(magic: [u8; 4], payload_head: &[u8], value: u8) -> Option<WritePayload> {
-    let length = payload_head.len() + 10;
-    let length = u8::try_from(length).ok()?;
-    let mut frame = ArrayVec::<u8, 33>::new();
-    frame.try_extend_from_slice(&magic).ok()?;
-    frame.push(length);
-    frame.try_extend_from_slice(payload_head).ok()?;
-    frame.push(value);
-    let crc = crc32(frame.as_slice()).to_be_bytes();
-    frame.try_extend_from_slice(&crc).ok()?;
-    Some(request_payload(frame.as_slice()))
-}
-
-// Field offsets are enum discriminants: Rust rejects duplicates within a bank.
-// Each bank owns its serializer; callers cannot supply a header or offset.
-mod aero_setting_frames {
-    use cutout_core::WritePayload;
-
-    #[derive(Clone, Copy)]
-    #[repr(u8)]
-    pub(super) enum LkField {
-        PedalAngle = 11,
-        SpeedAlarm = 12,
-        LateralTilt = 17,
-    }
-
-    #[derive(Clone, Copy)]
-    #[repr(u8)]
-    pub(super) enum LdField {
-        PedalHardness = 10,
-        TiltbackSpeed = 12,
-        PwmTiltback = 13,
-        DisplayBrightness = 15,
-        GyroCalibration = 16,
-        TransportMode = 17,
-        DisplayUnits = 18,
-        VoltageCorrection = 19,
-        LowBatteryMode = 20,
-        HighSpeedMode = 21,
-        BeeperVolume = 23,
-        BrakeOverpressureAlarm = 25,
-        DynamicAssist = 26,
-        PedalDipCompensation = 28,
-    }
-
-    impl LkField {
-        pub(super) fn encode(self, value: u8) -> Option<WritePayload> {
-            let mut head = [0x80; 12];
-            head[0] = 0x01;
-            super::aero_binary_frame(*b"LkAp", &head[..self as usize - 5], value)
-        }
-    }
-
-    impl LdField {
-        pub(super) fn encode(self, value: u8) -> Option<WritePayload> {
-            let mut head = [0x80; 23];
-            head[0] = 0x01;
-            head[1] = 0x02;
-            super::aero_binary_frame(*b"LdAp", &head[..self as usize - 5], value)
-        }
-    }
-}
-
-/// Begode Falcon benign-control encoder.
+/// Falcon model's control dialect of the Begode protocol.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub struct FalconControlEncoder;
+pub struct FalconDialect;
+
+impl crate::control_wire::Dialect for FalconDialect {
+    type Protocol = crate::BegodeProtocol;
+    fn select(
+        command: DeviceCommand,
+        _context: crate::session::ControlEncodingContext,
+    ) -> Option<crate::control_wire::Selection<crate::BegodeProtocol>> {
+        Self::select(command)
+    }
+}
 
 #[derive(Clone, Copy, Debug)]
-enum FalconWireCommand {
-    SetLights(LightState),
-    SetPedalMode(PedalMode),
-    SetRollAngle(RollAngle),
-    SetSpeedAlarmMode(SpeedAlarmMode),
-    SetBegodeMaxSpeed(BegodeMaxSpeed),
-    SetBegodeBeeperVolume(BegodeBeeperVolume),
-    SetBegodeLedMode(BegodeLedModeSetting),
+enum BegodeWireCommand {
+    Lights(LightState),
+    PedalMode(PedalMode),
+    RollAngle(RollAngle),
+    SpeedAlarmMode(SpeedAlarmMode),
+    MaxSpeed(BegodeMaxSpeed),
+    BeeperVolume(BegodeBeeperVolume),
+    LedMode(BegodeLedModeSetting),
 }
 
-fn falcon_wire_command(command: DeviceCommand) -> Option<FalconWireCommand> {
+fn begode_wire_command(command: DeviceCommand) -> Option<BegodeWireCommand> {
     let (id, value) = match command {
         DeviceCommand::SetLights(state) => {
-            return Some(FalconWireCommand::SetLights(state));
+            return Some(BegodeWireCommand::Lights(state));
         }
         DeviceCommand::SetSetting { id, value } => (id, value),
         _ => return None,
     };
     match (id, value) {
         (SettingId::Headlight, DeviceSettingValue::Boolean(true)) => {
-            Some(FalconWireCommand::SetLights(LightState::On))
+            Some(BegodeWireCommand::Lights(LightState::On))
         }
         (SettingId::Headlight, DeviceSettingValue::Boolean(false)) => {
-            Some(FalconWireCommand::SetLights(LightState::Off))
+            Some(BegodeWireCommand::Lights(LightState::Off))
         }
         (SettingId::PedalMode, DeviceSettingValue::Choice(0)) => {
-            Some(FalconWireCommand::SetPedalMode(PedalMode::Hard))
+            Some(BegodeWireCommand::PedalMode(PedalMode::Hard))
         }
         (SettingId::PedalMode, DeviceSettingValue::Choice(1)) => {
-            Some(FalconWireCommand::SetPedalMode(PedalMode::Medium))
+            Some(BegodeWireCommand::PedalMode(PedalMode::Medium))
         }
         (SettingId::PedalMode, DeviceSettingValue::Choice(2)) => {
-            Some(FalconWireCommand::SetPedalMode(PedalMode::Soft))
+            Some(BegodeWireCommand::PedalMode(PedalMode::Soft))
         }
         (SettingId::RollAngleMode, DeviceSettingValue::Choice(0)) => {
-            Some(FalconWireCommand::SetRollAngle(RollAngle::Low))
+            Some(BegodeWireCommand::RollAngle(RollAngle::Low))
         }
         (SettingId::RollAngleMode, DeviceSettingValue::Choice(1)) => {
-            Some(FalconWireCommand::SetRollAngle(RollAngle::Medium))
+            Some(BegodeWireCommand::RollAngle(RollAngle::Medium))
         }
         (SettingId::RollAngleMode, DeviceSettingValue::Choice(2)) => {
-            Some(FalconWireCommand::SetRollAngle(RollAngle::High))
+            Some(BegodeWireCommand::RollAngle(RollAngle::High))
         }
         (SettingId::SpeedAlarmMode, DeviceSettingValue::Choice(0)) => {
-            Some(FalconWireCommand::SetSpeedAlarmMode(SpeedAlarmMode::Both))
+            Some(BegodeWireCommand::SpeedAlarmMode(SpeedAlarmMode::Both))
         }
         (SettingId::SpeedAlarmMode, DeviceSettingValue::Choice(1)) => Some(
-            FalconWireCommand::SetSpeedAlarmMode(SpeedAlarmMode::StageOneOnly),
+            BegodeWireCommand::SpeedAlarmMode(SpeedAlarmMode::StageOneOnly),
         ),
-        (SettingId::MaximumSpeed, DeviceSettingValue::Number(value)) => {
-            Some(FalconWireCommand::SetBegodeMaxSpeed(BegodeMaxSpeed::new(
-                u8::try_from(value / 10).ok()?,
-            )?))
-        }
-        (SettingId::BeeperVolumeLevel, DeviceSettingValue::Number(value)) => {
-            Some(FalconWireCommand::SetBegodeBeeperVolume(
-                BegodeBeeperVolume::new(u8::try_from(value).ok()?)?,
-            ))
-        }
-        (SettingId::LightingPattern, DeviceSettingValue::Choice(value)) => {
-            Some(FalconWireCommand::SetBegodeLedMode(
-                BegodeLedModeSetting::new(u8::try_from(value).ok()?)?,
-            ))
-        }
+        (SettingId::MaximumSpeed, DeviceSettingValue::Number(value)) => Some(
+            BegodeWireCommand::MaxSpeed(BegodeMaxSpeed::new(u8::try_from(value / 10).ok()?)?),
+        ),
+        (SettingId::BeeperVolumeLevel, DeviceSettingValue::Number(value)) => Some(
+            BegodeWireCommand::BeeperVolume(BegodeBeeperVolume::new(u8::try_from(value).ok()?)?),
+        ),
+        (SettingId::LightingPattern, DeviceSettingValue::Choice(value)) => Some(
+            BegodeWireCommand::LedMode(BegodeLedModeSetting::new(u8::try_from(value).ok()?)?),
+        ),
         _ => None,
     }
 }
 
-impl FalconControlEncoder {
-    /// Encodes a supported Begode Falcon benign control.
+impl FalconDialect {
+    /// Encodes a single control in the Falcon dialect of Begode.
     #[must_use]
     pub fn encode(command: DeviceCommand) -> Option<EncodedControl> {
-        let wire_command = falcon_wire_command(command)?;
-        let payload = match wire_command {
-            FalconWireCommand::SetLights(LightState::On) => b"Q".as_slice(),
-            FalconWireCommand::SetLights(LightState::Off) => b"E".as_slice(),
-            FalconWireCommand::SetLights(LightState::Strobe) => b"T".as_slice(),
-            FalconWireCommand::SetPedalMode(PedalMode::Hard) => b"h".as_slice(),
-            FalconWireCommand::SetPedalMode(PedalMode::Medium) => b"f".as_slice(),
-            FalconWireCommand::SetPedalMode(PedalMode::Soft) => b"s".as_slice(),
-            FalconWireCommand::SetRollAngle(RollAngle::Low) => b">".as_slice(),
-            FalconWireCommand::SetRollAngle(RollAngle::Medium) => b"=".as_slice(),
-            FalconWireCommand::SetRollAngle(RollAngle::High) => b"<".as_slice(),
-            FalconWireCommand::SetSpeedAlarmMode(SpeedAlarmMode::Both) => b"o".as_slice(),
-            FalconWireCommand::SetSpeedAlarmMode(SpeedAlarmMode::StageOneOnly) => b"u".as_slice(),
-            _ => return None,
-        };
-        Some(EncodedControl {
-            command: command.kind(),
-            payload: request_payload(payload),
-            mode: WriteMode::WithoutResponse,
-        })
+        Self::select(command)?.single(command)
     }
 
-    /// Encodes a documented Begode `W` submenu as timed transport writes.
+    /// Encodes a documented Begode submenu as timed transport writes.
     #[must_use]
     pub fn encode_settings_sequence(command: DeviceCommand) -> Option<EncodedControlSequence> {
-        let mut steps = ArrayVec::new();
-        let mut push = |delay_ms, payload: &[u8]| {
-            steps.push(EncodedControlStep {
-                delay_ms,
-                payload: request_payload(payload),
-                mode: WriteMode::WithoutResponse,
-            });
+        Self::select(command)?.sequence(command)
+    }
+
+    fn select(
+        command: DeviceCommand,
+    ) -> Option<crate::control_wire::Selection<crate::BegodeProtocol>> {
+        let (wire, value) = match begode_wire_command(command)? {
+            BegodeWireCommand::Lights(LightState::On) => (BegodeWire::LightOn, 0),
+            BegodeWireCommand::Lights(LightState::Off) => (BegodeWire::LightOff, 0),
+            BegodeWireCommand::Lights(LightState::Strobe) => (BegodeWire::LightStrobe, 0),
+            BegodeWireCommand::PedalMode(PedalMode::Hard) => (BegodeWire::PedalHard, 0),
+            BegodeWireCommand::PedalMode(PedalMode::Medium) => (BegodeWire::PedalMedium, 0),
+            BegodeWireCommand::PedalMode(PedalMode::Soft) => (BegodeWire::PedalSoft, 0),
+            BegodeWireCommand::RollAngle(RollAngle::Low) => (BegodeWire::RollLow, 0),
+            BegodeWireCommand::RollAngle(RollAngle::Medium) => (BegodeWire::RollMedium, 0),
+            BegodeWireCommand::RollAngle(RollAngle::High) => (BegodeWire::RollHigh, 0),
+            BegodeWireCommand::SpeedAlarmMode(SpeedAlarmMode::Both) => (BegodeWire::AlarmBoth, 0),
+            BegodeWireCommand::SpeedAlarmMode(SpeedAlarmMode::StageOneOnly) => {
+                (BegodeWire::AlarmStageOne, 0)
+            }
+            BegodeWireCommand::MaxSpeed(value) => {
+                (BegodeWire::MaxSpeed, value.kilometres_per_hour())
+            }
+            BegodeWireCommand::BeeperVolume(value) => (BegodeWire::BeeperVolume, value.level()),
+            BegodeWireCommand::LedMode(value) => (BegodeWire::LedMode, value.mode()),
+            BegodeWireCommand::SpeedAlarmMode(
+                SpeedAlarmMode::Off | SpeedAlarmMode::PwmTiltback,
+            ) => return None,
         };
-        let wire_command = falcon_wire_command(command)?;
-        match wire_command {
-            FalconWireCommand::SetBegodeMaxSpeed(speed) => {
-                let value = speed.kilometres_per_hour();
-                push(0, b"W");
-                push(100, b"Y");
-                push(200, &[b'0' + value / 10]);
-                push(200, &[b'0' + value % 10]);
-                push(200, b"b");
-            }
-            FalconWireCommand::SetBegodeBeeperVolume(volume) => {
-                push(0, b"W");
-                push(100, b"B");
-                push(200, &[b'0' + volume.level()]);
-                push(200, b"b");
-            }
-            FalconWireCommand::SetBegodeLedMode(mode) => {
-                push(0, b"W");
-                push(100, b"M");
-                push(200, &[b'0' + mode.mode()]);
-                push(200, b"b");
-            }
-            _ => return None,
-        }
-        Some(EncodedControlSequence {
-            command: command.kind(),
-            steps,
-        })
+        Some(wire.select(value))
     }
 }
 
@@ -904,7 +743,7 @@ impl VescCanTarget {
     }
 }
 
-fn request_payload(bytes: &[u8]) -> WritePayload {
+pub(crate) fn request_payload(bytes: &[u8]) -> WritePayload {
     let Ok(payload) = WritePayload::try_from_slice(bytes) else {
         unreachable!("bounded protocol request exceeds the transport maximum");
     };
@@ -920,15 +759,15 @@ mod tests {
     #[test]
     fn aero_control_encoder_reserves_headlight_frames_for_stationary_high_beam() {
         assert_eq!(
-            AeroControlEncoder::encode(DeviceCommand::SetLights(LightState::On)),
+            NosfetDialect::encode(DeviceCommand::SetLights(LightState::On)),
             None
         );
-        let on = AeroControlEncoder::encode(DeviceCommand::SetSetting {
+        let on = NosfetDialect::encode(DeviceCommand::SetSetting {
             id: SettingId::HighBeam,
             value: DeviceSettingValue::Boolean(true),
         })
         .expect("NOSFET high-beam command encodes");
-        let off = AeroControlEncoder::encode(DeviceCommand::SetSetting {
+        let off = NosfetDialect::encode(DeviceCommand::SetSetting {
             id: SettingId::HighBeam,
             value: DeviceSettingValue::Boolean(false),
         })
@@ -947,14 +786,14 @@ mod tests {
         );
         assert_eq!(off.mode, WriteMode::WithoutResponse);
         assert_eq!(
-            AeroControlEncoder::encode(DeviceCommand::SetSetting {
+            NosfetDialect::encode(DeviceCommand::SetSetting {
                 id: SettingId::HighBeam,
                 value: DeviceSettingValue::Choice(2),
             }),
             None
         );
         assert_eq!(
-            AeroControlEncoder::encode(DeviceCommand::InvokeAction(
+            NosfetDialect::encode(DeviceCommand::InvokeAction(
                 cutout_core::DeviceActionRequest {
                     id: DeviceActionId::Horn,
                     step: DeviceActionStep::Invoke,
@@ -969,7 +808,7 @@ mod tests {
 
     #[test]
     fn aero_control_encoder_resets_the_trip_meter_with_the_documented_command() {
-        let reset = AeroControlEncoder::encode(DeviceCommand::InvokeAction(
+        let reset = NosfetDialect::encode(DeviceCommand::InvokeAction(
             cutout_core::DeviceActionRequest {
                 id: DeviceActionId::ResetTripMeter,
                 step: DeviceActionStep::Invoke,
@@ -987,29 +826,29 @@ mod tests {
 
     #[test]
     fn aero_command_mode_latches_only_after_two_matching_complete_packets() {
-        let mut mode = AeroCommandModeDetector::default();
-        assert_eq!(mode.mode(), AeroCommandMode::Binary);
+        let mut mode = VeteranCommandModeDetector::default();
+        assert_eq!(mode.mode(), VeteranCommandMode::Binary);
         assert!(!mode.is_latched());
 
         mode.observe_complete_packet_len(5);
         mode.observe_complete_packet_len(5);
-        assert_eq!(mode.mode(), AeroCommandMode::Binary);
+        assert_eq!(mode.mode(), VeteranCommandMode::Binary);
         assert!(!mode.is_latched());
 
         mode.observe_complete_packet_len(46);
         mode.observe_complete_packet_len(47);
-        assert_eq!(mode.mode(), AeroCommandMode::Binary);
+        assert_eq!(mode.mode(), VeteranCommandMode::Binary);
         assert!(!mode.is_latched());
 
         mode.observe_complete_packet_len(46);
         mode.observe_complete_packet_len(46);
-        assert_eq!(mode.mode(), AeroCommandMode::Ascii);
+        assert_eq!(mode.mode(), VeteranCommandMode::Ascii);
         assert!(mode.is_latched());
 
         mode.observe_complete_packet_len(47);
-        assert_eq!(mode.mode(), AeroCommandMode::Ascii);
+        assert_eq!(mode.mode(), VeteranCommandMode::Ascii);
         mode.reset();
-        assert_eq!(mode, AeroCommandModeDetector::default());
+        assert_eq!(mode, VeteranCommandModeDetector::default());
     }
 
     #[test]
@@ -1057,14 +896,14 @@ mod tests {
             ),
         ] {
             assert_eq!(
-                AeroControlEncoder::encode_in_mode(command, AeroCommandMode::Ascii)
+                NosfetDialect::encode_in_mode(command, VeteranCommandMode::Ascii)
                     .unwrap()
                     .payload
                     .as_slice(),
                 ascii
             );
             assert_eq!(
-                AeroControlEncoder::encode_in_mode(command, AeroCommandMode::Binary)
+                NosfetDialect::encode_in_mode(command, VeteranCommandMode::Binary)
                     .unwrap()
                     .payload
                     .as_slice(),
@@ -1075,22 +914,22 @@ mod tests {
 
     #[test]
     fn model_specific_aero_aliases_share_the_mode_aware_encoder() {
-        let high_beam = AeroControlEncoder::encode_in_mode(
+        let high_beam = NosfetDialect::encode_in_mode(
             DeviceCommand::SetSetting {
                 id: SettingId::HighBeam,
                 value: DeviceSettingValue::Boolean(true),
             },
-            AeroCommandMode::Ascii,
+            VeteranCommandMode::Ascii,
         )
         .unwrap();
         assert_eq!(high_beam.payload.as_slice(), b"SetLightON");
 
-        let riding = AeroControlEncoder::encode_in_mode(
+        let riding = NosfetDialect::encode_in_mode(
             DeviceCommand::SetSetting {
                 id: SettingId::RidingPreset,
                 value: DeviceSettingValue::Choice(1),
             },
-            AeroCommandMode::Ascii,
+            VeteranCommandMode::Ascii,
         )
         .unwrap();
         assert_eq!(riding.payload.as_slice(), b"SETm");
@@ -1149,7 +988,7 @@ mod tests {
         ];
 
         for (command, magic, length, body) in cases {
-            let encoded = AeroControlEncoder::encode(command).expect("Aero setting encodes");
+            let encoded = NosfetDialect::encode(command).expect("Aero setting encodes");
             assert_eq!(encoded.command, command.kind());
             assert_eq!(encoded.mode, WriteMode::WithoutResponse);
             assert_eq!(&encoded.payload.as_slice()[..4], &magic);
@@ -1164,7 +1003,7 @@ mod tests {
     #[test]
     fn aero_alarm_and_lateral_tilt_do_not_target_other_settings() {
         let encode = |id, value| {
-            AeroControlEncoder::encode(DeviceCommand::SetSetting { id, value })
+            NosfetDialect::encode(DeviceCommand::SetSetting { id, value })
                 .unwrap()
                 .payload
         };
@@ -1190,7 +1029,7 @@ mod tests {
 
     #[test]
     fn aero_pwm_off_is_distinct_from_zero_margin() {
-        let disabled = AeroControlEncoder::encode(DeviceCommand::SetSetting {
+        let disabled = NosfetDialect::encode(DeviceCommand::SetSetting {
             id: SettingId::PwmTiltback,
             value: DeviceSettingValue::Disabled,
         })
@@ -1199,7 +1038,7 @@ mod tests {
             disabled.payload.as_slice(),
             &hex_literal::hex!("4c644170120102808080808080c8d24c759e")
         );
-        let zero = AeroControlEncoder::encode(DeviceCommand::SetSetting {
+        let zero = NosfetDialect::encode(DeviceCommand::SetSetting {
             id: SettingId::PwmTiltback,
             value: DeviceSettingValue::Number(100),
         })
@@ -1226,7 +1065,7 @@ mod tests {
         ];
 
         for (mode, expected) in cases {
-            let encoded = AeroControlEncoder::encode(DeviceCommand::SetSetting {
+            let encoded = NosfetDialect::encode(DeviceCommand::SetSetting {
                 id: SettingId::RidingPreset,
                 value: mode,
             })
@@ -1289,8 +1128,7 @@ mod tests {
             ),
         ];
         for (command, expected) in cases {
-            let encoded =
-                AeroControlEncoder::encode(command).expect("source-backed setting encodes");
+            let encoded = NosfetDialect::encode(command).expect("source-backed setting encodes");
             assert_eq!(encoded.payload.as_slice(), expected);
             assert_eq!(encoded.command, command.kind());
             assert_eq!(encoded.mode, WriteMode::WithoutResponse);
@@ -1329,7 +1167,7 @@ mod tests {
         ];
 
         for (command, expected) in cases {
-            let encoded = AeroControlEncoder::encode(command).expect("Aero toggle encodes");
+            let encoded = NosfetDialect::encode(command).expect("Aero toggle encodes");
             assert_eq!(encoded.payload.as_slice(), expected);
             assert_eq!(encoded.command, command.kind());
             assert_eq!(encoded.mode, WriteMode::WithoutResponse);
@@ -1342,7 +1180,7 @@ mod tests {
             id: DeviceActionId::GyroCalibration,
             step: DeviceActionStep::Invoke,
         });
-        let encoded = AeroControlEncoder::encode(command).expect("gyro calibration encodes");
+        let encoded = NosfetDialect::encode(command).expect("gyro calibration encodes");
         assert_eq!(
             encoded.payload.as_slice(),
             &hex_literal::hex!("4c64417015010280808080808080808001ab8c09e5")
@@ -1361,7 +1199,7 @@ mod tests {
             id: SettingId::BrakeOverpressureAlarm,
             value: DeviceSettingValue::Number(100),
         };
-        let encoded = AeroControlEncoder::encode(command).expect("brake alarm encodes");
+        let encoded = NosfetDialect::encode(command).expect("brake alarm encodes");
         assert_eq!(
             encoded.payload.as_slice(),
             &hex_literal::hex!("4c6441701e01028080808080808080808080808080808080806453681869")
@@ -1380,7 +1218,7 @@ mod tests {
             id: SettingId::ChargeLimitDiagnostic,
             value: DeviceSettingValue::Number(46),
         };
-        assert!(AeroControlEncoder::encode(command).is_none());
+        assert!(NosfetDialect::encode(command).is_none());
     }
 
     #[test]
@@ -1389,7 +1227,7 @@ mod tests {
             id: SettingId::PedalHardness,
             value: DeviceSettingValue::Number(100),
         };
-        let encoded = AeroControlEncoder::encode(command).expect("MD is supported");
+        let encoded = NosfetDialect::encode(command).expect("MD is supported");
         // Independent IEEE CRC32 fixture for EUC Planet's 15-byte ride-mode frame.
         assert_eq!(
             encoded.payload.as_slice(),
@@ -1408,7 +1246,7 @@ mod tests {
             id: SettingId::DisplayUnits,
             value: DeviceSettingValue::Choice(1),
         };
-        let encoded = AeroControlEncoder::encode(command).expect("wheel display units supported");
+        let encoded = NosfetDialect::encode(command).expect("wheel display units supported");
         assert_eq!(
             encoded.payload.as_slice(),
             &hex_literal::hex!("4c6441701701028080808080808080808080011ff96e85")
@@ -1422,12 +1260,12 @@ mod tests {
 
     #[test]
     fn aero_high_beam_encodes_the_official_single_lkap_frame() {
-        let encoded = AeroControlEncoder::encode_in_mode(
+        let encoded = NosfetDialect::encode_in_mode(
             DeviceCommand::SetSetting {
                 id: SettingId::HighBeam,
                 value: DeviceSettingValue::Boolean(true),
             },
-            AeroCommandMode::Binary,
+            VeteranCommandMode::Binary,
         )
         .expect("Aero high beam encodes");
 
@@ -1443,9 +1281,9 @@ mod tests {
 
     #[test]
     fn falcon_control_encoder_uses_explicit_begode_light_commands() {
-        let on = FalconControlEncoder::encode(DeviceCommand::SetLights(LightState::On))
+        let on = FalconDialect::encode(DeviceCommand::SetLights(LightState::On))
             .expect("Begode lights-on command encodes");
-        let off = FalconControlEncoder::encode(DeviceCommand::SetLights(LightState::Off))
+        let off = FalconDialect::encode(DeviceCommand::SetLights(LightState::Off))
             .expect("Begode lights-off command encodes");
 
         assert_eq!(on.command, CommandKind::SetLights);
@@ -1454,17 +1292,17 @@ mod tests {
         assert_eq!(off.command, CommandKind::SetLights);
         assert_eq!(off.payload.as_slice(), b"E");
         assert_eq!(off.mode, WriteMode::WithoutResponse);
-        let strobe = FalconControlEncoder::encode(DeviceCommand::SetLights(LightState::Strobe))
+        let strobe = FalconDialect::encode(DeviceCommand::SetLights(LightState::Strobe))
             .expect("Begode strobe command encodes");
         assert_eq!(strobe.command, CommandKind::SetLights);
         assert_eq!(strobe.payload.as_slice(), b"T");
         assert_eq!(strobe.mode, WriteMode::WithoutResponse);
-        assert_eq!(FalconControlEncoder::encode(DeviceCommand::SoundHorn), None);
+        assert_eq!(FalconDialect::encode(DeviceCommand::SoundHorn), None);
     }
 
     #[test]
     fn documented_pedal_mode_encoders_match_veteran_and_begode_bytes() {
-        let aero = AeroControlEncoder::encode(DeviceCommand::SetSetting {
+        let aero = NosfetDialect::encode(DeviceCommand::SetSetting {
             id: SettingId::RidingPreset,
             value: DeviceSettingValue::Choice(0),
         })
@@ -1475,7 +1313,7 @@ mod tests {
             &hex_literal::hex!("4c6b41700c01800346e935ac")
         );
 
-        let falcon = FalconControlEncoder::encode(DeviceCommand::SetSetting {
+        let falcon = FalconDialect::encode(DeviceCommand::SetSetting {
             id: SettingId::PedalMode,
             value: DeviceSettingValue::Choice(2),
         })
@@ -1486,17 +1324,17 @@ mod tests {
 
     #[test]
     fn documented_falcon_roll_angle_encoders_match_protocol_bytes() {
-        let low = FalconControlEncoder::encode(DeviceCommand::SetSetting {
+        let low = FalconDialect::encode(DeviceCommand::SetSetting {
             id: SettingId::RollAngleMode,
             value: DeviceSettingValue::Choice(0),
         })
         .expect("Begode low roll-angle encoder");
-        let medium = FalconControlEncoder::encode(DeviceCommand::SetSetting {
+        let medium = FalconDialect::encode(DeviceCommand::SetSetting {
             id: SettingId::RollAngleMode,
             value: DeviceSettingValue::Choice(1),
         })
         .expect("Begode medium roll-angle encoder");
-        let high = FalconControlEncoder::encode(DeviceCommand::SetSetting {
+        let high = FalconDialect::encode(DeviceCommand::SetSetting {
             id: SettingId::RollAngleMode,
             value: DeviceSettingValue::Choice(2),
         })
@@ -1508,7 +1346,7 @@ mod tests {
         assert_eq!(high.payload.as_slice(), b"<");
         assert_eq!(low.mode, WriteMode::WithoutResponse);
         assert_eq!(
-            AeroControlEncoder::encode(DeviceCommand::SetSetting {
+            NosfetDialect::encode(DeviceCommand::SetSetting {
                 id: SettingId::RollAngleMode,
                 value: DeviceSettingValue::Choice(0),
             }),
@@ -1518,12 +1356,12 @@ mod tests {
 
     #[test]
     fn documented_falcon_speed_alarm_encoders_match_protocol_bytes() {
-        let both = FalconControlEncoder::encode(DeviceCommand::SetSetting {
+        let both = FalconDialect::encode(DeviceCommand::SetSetting {
             id: SettingId::SpeedAlarmMode,
             value: DeviceSettingValue::Choice(0),
         })
         .expect("Begode both-alarms encoder");
-        let stage_one = FalconControlEncoder::encode(DeviceCommand::SetSetting {
+        let stage_one = FalconDialect::encode(DeviceCommand::SetSetting {
             id: SettingId::SpeedAlarmMode,
             value: DeviceSettingValue::Choice(1),
         })
@@ -1534,7 +1372,7 @@ mod tests {
         assert_eq!(stage_one.payload.as_slice(), b"u");
         assert_eq!(both.mode, WriteMode::WithoutResponse);
         assert_eq!(
-            AeroControlEncoder::encode(DeviceCommand::SetSetting {
+            NosfetDialect::encode(DeviceCommand::SetSetting {
                 id: SettingId::SpeedAlarmMode,
                 value: DeviceSettingValue::Choice(0),
             }),
@@ -1544,7 +1382,7 @@ mod tests {
 
     #[test]
     fn falcon_w_settings_encode_as_delayed_ordered_writes() {
-        let max_speed = FalconControlEncoder::encode_settings_sequence(DeviceCommand::SetSetting {
+        let max_speed = FalconDialect::encode_settings_sequence(DeviceCommand::SetSetting {
             id: SettingId::MaximumSpeed,
             value: DeviceSettingValue::Number(300),
         })
@@ -1565,7 +1403,7 @@ mod tests {
             ]
         );
 
-        let volume = FalconControlEncoder::encode_settings_sequence(DeviceCommand::SetSetting {
+        let volume = FalconDialect::encode_settings_sequence(DeviceCommand::SetSetting {
             id: SettingId::BeeperVolumeLevel,
             value: DeviceSettingValue::Number(7),
         })
@@ -1585,7 +1423,7 @@ mod tests {
             ]
         );
 
-        let led = FalconControlEncoder::encode_settings_sequence(DeviceCommand::SetSetting {
+        let led = FalconDialect::encode_settings_sequence(DeviceCommand::SetSetting {
             id: SettingId::LightingPattern,
             value: DeviceSettingValue::Choice(4),
         })

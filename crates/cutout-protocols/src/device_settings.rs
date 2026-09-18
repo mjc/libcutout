@@ -1045,10 +1045,10 @@ mod tests {
                     cutout_core::SafetyClass::StationaryOnly
                 );
                 for mode in [
-                    crate::AeroCommandMode::Binary,
-                    crate::AeroCommandMode::Ascii,
+                    crate::VeteranCommandMode::Binary,
+                    crate::VeteranCommandMode::Ascii,
                 ] {
-                    let encoded = crate::AeroControlEncoder::encode_in_mode(command, mode)
+                    let encoded = crate::NosfetDialect::encode_in_mode(command, mode)
                         .unwrap_or_else(|| panic!("missing encoder: {id:?} {value:?} {mode:?}"));
                     assert!(!encoded.payload.as_slice().is_empty());
                     assert_eq!(encoded.mode, cutout_core::WriteMode::WithoutResponse);

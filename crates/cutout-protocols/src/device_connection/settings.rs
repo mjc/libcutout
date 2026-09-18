@@ -501,10 +501,9 @@ mod tests {
                     "{id:?} speed={speed:?} age={age}"
                 );
                 if accepted {
-                    let encoded = crate::AeroControlEncoder::encode(
-                        profile.command(id, value, false).unwrap(),
-                    )
-                    .unwrap();
+                    let encoded =
+                        crate::NosfetDialect::encode(profile.command(id, value, false).unwrap())
+                            .unwrap();
                     assert_eq!(writes, [encoded.payload.as_slice()], "{id:?}");
                     let state = owner
                         .settings_snapshot()

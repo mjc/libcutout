@@ -75,10 +75,10 @@ That does **not** authorize replacing a field's header and discriminator while
 keeping its offset: `LdAp` position 12 is tilt-back, not speed alarm, and
 `LdAp` position 17 is transport mode, not lateral tilt.
 
-Cutout's setting encoder now represents these banks with separate `LkField`
-and `LdField` types. Each field's byte offset is an explicit enum discriminant,
-so duplicate offsets within a bank fail compilation. Each bank owns its header
-and discriminator; setting call sites supply neither raw bytes nor offsets.
+Cutout's shared [protocol/dialect wire contract](control-wire-contract.md)
+checks the complete Veteran schema and its NOSFET dialect at compile time.
+Duplicate bank/offset destinations fail compilation, including inherited fields;
+the checked schema also supplies the emitted header, discriminator, and offset.
 The speed-alarm/lateral-tilt regression checks both bank separation and the
 resulting frames, and the session test checks the bytes scheduled for transport.
 These checks prevent the discovered aliasing bug; they do not establish that
