@@ -13,13 +13,13 @@ write API.
 
 | Setting | Rust / CLI / mobile / Tune | Live confirmation |
 | --- | --- | --- |
-| Manual headlight | Implemented | Physical light behavior was observed; no decoded light-state readback |
+| Manual headlight | Not exposed by the Aero settings profile | The shared vocabulary retains `SettingId::Headlight`, but Aero's verified profile does not advertise this control; the generic write path therefore emits no Aero write |
 | High beam | Implemented with the official single `LkAp` frame | Physical behavior was observed; no decoded light-state readback |
 | Trip reset | Implemented, with reset lifecycle feedback | Transport submission is not confirmation |
-| Legacy hard / medium / soft | Implemented | Generic family pedal readback does not establish Aero numeric MD state |
-| Speed limit / TLT stop speed (V) | Implemented by the typed `SetAeroTiltbackSpeed` control | EUC World `vn_speed_limit` and the official `StopSpeedSettingActivity` share LdAp position 12; typed page-8 byte 52 readback; new writes still need device proof |
+| Legacy hard / medium / soft | Implemented as the semantic riding preset | Generic family pedal readback does not establish Aero numeric MD state |
+| Speed limit / TLT stop speed (V) | Implemented by the semantic `SettingId::TiltbackSpeed` control | EUC World `vn_speed_limit` and the official `StopSpeedSettingActivity` share LdAp position 12; typed page-8 byte 52 readback; new writes still need device proof |
 | ALM speed alarm | Implemented | Typed telemetry field; matching readback still required |
-| Stop power / PWT PWM tilt-back threshold (U) | Implemented as a 0–70% margin control, with an explicit Disable PWT action | EUC World `vn_safety_margin_limit` and the official `StopPowerSettingActivity` share LdAp position 13; page-8 byte 53 decodes both margin and wire-200 Off; capture reports 21% margin (wire value 79); new writes still need device proof |
+| Stop power / PWT PWM tilt-back threshold (U) | Implemented as a semantic 30–100% duty control, with an explicit `Disabled` value | EUC World `vn_safety_margin_limit` and the official `StopPowerSettingActivity` share LdAp position 13; page-8 byte 53 decodes both duty and wire-200 Off; capture reports 21% margin (wire value 79); new writes still need device proof |
 | ANG vertical angle | Implemented with the documented −8.0°…8.0° bound | No decoded setting readback |
 | MD numeric pedal hardness | Implemented as a distinct 0–100 percent command | Page-8 readback decoded; capture reports 50%; new writes still need device proof |
 | High-speed mode (N) | Implemented as a typed toggle | Page-8 byte 61 readback decoded; new writes still need device proof |
@@ -50,11 +50,11 @@ not become a live readback claim.
 | ANG TLT gyro re-centering | No corresponding `vn_*` wheel setter in EUC World 2.66.1; the manufacturer source-backed command is implemented above | Physical calibration effect still needs device proof |
 | ALM torque alarm | EUC World exposes current/torque alarms as app alarm preferences, not the Veteran wheel-settings path | No Aero wheel command established |
 | BRT automatic headlight | EUC World’s automatic-headlight controls are Inmotion (`in_*`) settings, not Veteran/NOSFET | No Aero wheel command established |
-| MxV charging ceiling | Raw page-8 readback and raw `LdAp` write are available; Tune exposes the validated `0..=70` raw control | The NF2557 fixture reports page-8 byte 64 as raw `46`. The official generic UI's `145.0 + raw / 10` V display conflicts with Aero's 126 V pack, so the mobile surface keeps this explicitly raw/unverified until an Aero-specific conversion and safe range are established |
+| MxV charging ceiling | Raw page-8 readback is exposed as a diagnostic; no write command is available | The NF2557 fixture reports page-8 byte 64 as raw `46`. The official generic UI's `145.0 + raw / 10` V display conflicts with Aero's 126 V pack, so the mobile surface keeps this explicitly raw and read-only until an Aero-specific conversion and safe range are established |
 | CAL gyro calibration | Covered by the source-backed ANG TLT gyro command above; it remains a lifecycle rather than a scalar setting | Keep requested, reported, and physically confirmed states separate |
 | Running lights / stealth | No corresponding Veteran/NOSFET entry exists in the inspected EUC World menu | Exact Aero commands remain unknown |
 | App-only persistence, scaling, logs, and firmware entries | `vn_headlight_persistent`, `vn_safety_margin_scaling`, `vn_download_event_log`, and firmware preferences do not mutate the wheel setting page | Kept outside the settings-write surface |
-| PWT disabled setting | EUC World maps its −1 Off choice to wire 200; Rust and the mobile Tune surface preserve this as an explicit `Off` write |
+| PWT disabled setting | EUC World maps its −1 Off choice to wire 200; Rust and the mobile Tune surface preserve this as an explicit `Disabled` write |
 
 EUC World's `beeper_volume` and the official app's `key tone` control share the
 same page-8 byte 63 and `LdAp` position; they are one wire setting, not two

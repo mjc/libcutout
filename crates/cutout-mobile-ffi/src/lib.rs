@@ -34,10 +34,9 @@ use cutout_core::{
     BluetoothServiceUuid as CoreBluetoothServiceUuid, Capacity, ChargeEstimateError,
     ChargeEstimateInput, ChargeEstimateResetReason, ChargeEstimateState,
     ChargeEstimateUnavailableReason, ChargeFlow, ChargeMode, ChargeModeDto, ChargeModeReadingDto,
-    ChargeProfileIdentity, ChargeSessionIdentity, ChargeTimeEstimate, CommandKindDto,
-    ControlRefusalReasonDto, CutoutSessionState,
-    DeviceConnectionIntent as CoreDeviceConnectionIntent, DiscoveryCandidateSnapshot,
-    DiscoveryCandidateSupport as CoreDiscoveryCandidateSupport,
+    ChargeProfileIdentity, ChargeSessionIdentity, ChargeTimeEstimate, ControlRefusalReasonDto,
+    CutoutSessionState, DeviceConnectionIntent as CoreDeviceConnectionIntent,
+    DiscoveryCandidateSnapshot, DiscoveryCandidateSupport as CoreDiscoveryCandidateSupport,
     DiscoveryConnectionRoute as CoreDiscoveryConnectionRoute,
     DiscoveryElectricUnicycleModel as CoreDiscoveryElectricUnicycleModel,
     DiscoveryManufacturerDataSummary as CoreDiscoveryManufacturerDataSummary,
@@ -13096,6 +13095,7 @@ impl VescReadOnlySession {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use cutout_core::CommandKindDto;
     use cutout_core::{PevcapCapture, PevcapEncoding};
     use cutout_protocols::{
         BEGODE_DATA_CHANNEL, BEGODE_SERVICE_CHANNEL, VESC_COMM_CUSTOM_APP_DATA, VESC_NOTIFY_CHANNEL,
@@ -15724,7 +15724,7 @@ mod tests {
             VerificationStatus::HardwareVerified,
         )
         .expect("documented Veteran cell page")
-        .with_observed_at(cutout_core::MonotonicTimestamp::new(42));
+        .with_observed_at(MonotonicTimestamp::new(42));
 
         let snapshot = MobileBmsSnapshotDto::from(BatteryReadbackDto::from(readback));
 

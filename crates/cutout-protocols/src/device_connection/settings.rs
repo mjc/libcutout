@@ -143,7 +143,10 @@ mod tests {
         let before = owner.settings_snapshot();
         for command in [
             cutout_core::DeviceCommand::SetLights(cutout_core::LightState::On),
-            cutout_core::DeviceCommand::ResetTripMeter,
+            cutout_core::DeviceCommand::InvokeAction(cutout_core::DeviceActionRequest {
+                id: cutout_core::DeviceActionId::ResetTripMeter,
+                step: cutout_core::DeviceActionStep::Invoke,
+            }),
         ] {
             assert!(
                 owner

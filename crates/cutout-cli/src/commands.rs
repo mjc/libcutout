@@ -24,22 +24,18 @@ use cutout_btle::{
     scan_peripherals,
 };
 use cutout_core::{
-    AeroAngleAdjustment, AeroBeeperVolume, AeroBrakeOverpressureAlarm, AeroDisplayBacklight,
-    AeroDynamicAssist, AeroHighSpeedMode, AeroLateralTiltLimit, AeroLowBatteryMode,
-    AeroMaxChargeVoltageRaw, AeroPedalDipCompensation, AeroPedalHardness, AeroPwmPercent,
-    AeroPwmSetting, AeroRidingMode, AeroSpeedSetting, AeroTransportMode, AeroVoltageCorrection,
-    AeroWheelUnits, BatteryPageKind, BatteryPagePayload, BatteryReadback,
-    BatteryReadbackAvailability, CaptureDistribution, CaptureEvidence, CapturePrivacy,
-    CaptureSessionLabel, CatalogModelResolution, CommandKind, DeviceCommand, DeviceEvent,
-    DiagnosticError, DiagnosticErrorKind, DiagnosticSnapshot, FirmwareInfo, GattChannel,
-    GattFingerprint, HostSession, LightState, Measured, ModelCatalog, MonotonicTimestamp,
-    NotificationByteLen, ParserDiagnostics, PedalMode, PevcapCapture, PevcapDirection,
-    PevcapEncoding, PevcapHeader, PevcapReader, PevcapRecord, PevcapReplayMode, PevcapReplayStats,
-    PevcapResolvedIdentity, ProtocolFamily, ProtocolSession, ReadOnlyResponse,
-    ReplayChunkComparison, RideOperatingState, SessionInput, SessionKey, SessionOutput,
-    SettingsReadback, SettingsReadbackAvailability, TelemetrySnapshot, TransportAction,
-    TransportWriteLimit, ValueQuality, ValueSource, VerificationStatus, VerifiedValue,
-    WallClockUnixTimestamp, WriteMode, WritePayload,
+    BatteryPageKind, BatteryPagePayload, BatteryReadback, BatteryReadbackAvailability,
+    CaptureDistribution, CaptureEvidence, CapturePrivacy, CaptureSessionLabel,
+    CatalogModelResolution, CommandKind, DeviceActionId, DeviceActionRequest, DeviceActionStep,
+    DeviceCommand, DeviceEvent, DeviceSettingValue, DiagnosticError, DiagnosticErrorKind,
+    DiagnosticSnapshot, FirmwareInfo, GattChannel, GattFingerprint, HostSession, LightState,
+    Measured, ModelCatalog, MonotonicTimestamp, NotificationByteLen, ParserDiagnostics,
+    PevcapCapture, PevcapDirection, PevcapEncoding, PevcapHeader, PevcapReader, PevcapRecord,
+    PevcapReplayMode, PevcapReplayStats, PevcapResolvedIdentity, ProtocolFamily, ProtocolSession,
+    ReadOnlyResponse, ReplayChunkComparison, RideOperatingState, SessionInput, SessionKey,
+    SessionOutput, SettingId, SettingsReadback, SettingsReadbackAvailability, TelemetrySnapshot,
+    TransportAction, TransportWriteLimit, ValueQuality, ValueSource, VerificationStatus,
+    VerifiedValue, WallClockUnixTimestamp, WriteMode, WritePayload,
 };
 use cutout_protocols::{
     AERO_FIELD_BEEPER_VOLUME_PERCENT, AERO_FIELD_BRAKE_OVERPRESSURE_ALARM_PERCENT,
@@ -1176,7 +1172,7 @@ async fn dashboard(args: DashboardArgs) -> Result<()> {
             info!("dashboard battery level unavailable from standard BLE characteristic");
         }
     }
-    run_live_dashboard(state, connection, args.profile, tx, rx)
+    run_live_dashboard(state, connection, tx, rx)
 }
 
 fn dashboard_live_target(args: &DashboardArgs) -> Result<ConnectionTarget> {
@@ -1194,7 +1190,6 @@ fn dashboard_live_target(args: &DashboardArgs) -> Result<ConnectionTarget> {
 fn run_live_dashboard(
     state: DashboardState,
     connection: ConnectedPeripheral,
-    profile: SessionProfile,
     tx: mpsc::Sender<DashboardUpdate>,
     rx: mpsc::Receiver<DashboardUpdate>,
 ) -> Result<()> {
@@ -1206,7 +1201,7 @@ fn run_live_dashboard(
         state,
         tx,
         rx,
-        move |tx| run_dashboard_live_updates(connection, profile, tx),
+        move |tx| run_dashboard_live_updates(connection, tx),
         |state, rx| run_dashboard_with_updates(state, &rx),
     )
 }
@@ -1304,7 +1299,6 @@ where
 
 async fn run_dashboard_live_updates(
     connection: ConnectedPeripheral,
-    profile: SessionProfile,
     tx: mpsc::Sender<DashboardUpdate>,
 ) {
     info!("dashboard live update task entered");
@@ -1856,71 +1850,60 @@ fn aero_setting_readback_matches(
     after: &[SettingsReadback],
 ) -> Option<bool> {
     let (field_id, expected_value) = match command {
-        DeviceCommand::SetAeroAlarmSpeed(speed) => (
-            VETERAN_FIELD_SPEED_ALERT_DECI_KMH,
-            i64::from(speed.kilometres_per_hour()) * 10,
-        ),
-        DeviceCommand::SetAeroTiltbackSpeed(speed) => (
-            VETERAN_FIELD_SPEED_TILTBACK_DECI_KMH,
-            i64::from(speed.kilometres_per_hour()) * 10,
-        ),
-        DeviceCommand::SetAeroPwmPercent(setting) => (
-            AERO_FIELD_PWM_PERCENT,
-            match setting {
-                AeroPwmSetting::Off => 200,
-                AeroPwmSetting::Margin(margin) => 100 - i64::from(margin.percent()),
-            },
-        ),
-        DeviceCommand::SetAeroPwmOff => (AERO_FIELD_PWM_PERCENT, 200),
-        DeviceCommand::SetAeroBrakeOverpressureAlarm(value) => (
-            AERO_FIELD_BRAKE_OVERPRESSURE_ALARM_PERCENT,
-            i64::from(value.percent()),
-        ),
-        DeviceCommand::SetAeroPedalHardness(value) => (
-            AERO_FIELD_PEDAL_HARDNESS_PERCENT,
-            i64::from(value.percent()),
-        ),
-        DeviceCommand::SetAeroDisplayBacklight(value) => (
-            AERO_FIELD_DISPLAY_BACKLIGHT_PERCENT,
-            i64::from(value.percent()),
-        ),
-        DeviceCommand::SetAeroBeeperVolume(value) => {
-            (AERO_FIELD_BEEPER_VOLUME_PERCENT, i64::from(value.percent()))
-        }
-        DeviceCommand::SetAeroDynamicAssist(value) => (
-            AERO_FIELD_DYNAMIC_ASSIST_PERCENT,
-            i64::from(value.percent()),
-        ),
-        DeviceCommand::SetAeroPedalDipCompensation(value) => (
-            AERO_FIELD_PEDAL_DIP_COMPENSATION_PERCENT,
-            i64::from(value.percent()),
-        ),
-        DeviceCommand::SetAeroLateralTiltLimit(value) => (
-            AERO_FIELD_LATERAL_TILT_LIMIT_DEGREES,
-            i64::from(value.degrees()),
-        ),
-        DeviceCommand::SetAeroVoltageCorrection(value) => (
-            AERO_FIELD_VOLTAGE_CORRECTION_TENTHS_PERCENT,
-            i64::from(value.tenths_of_percent()),
-        ),
-        DeviceCommand::SetAeroMaxChargeVoltageRaw(value) => {
-            (AERO_FIELD_MAX_CHARGE_VOLTAGE_RAW, i64::from(value.raw()))
-        }
-        DeviceCommand::SetAeroWheelUnits(value) => {
-            (AERO_FIELD_WHEEL_UNITS, i64::from(value.display_mode()))
-        }
-        DeviceCommand::SetAeroHighSpeedMode(value) => (
-            AERO_FIELD_HIGH_SPEED_MODE,
-            i64::from(u8::from(value.enabled())),
-        ),
-        DeviceCommand::SetAeroLowBatteryMode(value) => (
-            AERO_FIELD_LOW_BATTERY_MODE,
-            i64::from(u8::from(value.enabled())),
-        ),
-        DeviceCommand::SetAeroTransportMode(value) => (
-            AERO_FIELD_TRANSPORT_MODE,
-            i64::from(u8::from(value.enabled())),
-        ),
+        DeviceCommand::SetSetting { id, value } => match (id, value) {
+            (SettingId::SpeedAlarmThreshold, DeviceSettingValue::Number(value)) => {
+                (VETERAN_FIELD_SPEED_ALERT_DECI_KMH, i64::from(value))
+            }
+            (SettingId::TiltbackSpeed, DeviceSettingValue::Number(value)) => {
+                (VETERAN_FIELD_SPEED_TILTBACK_DECI_KMH, i64::from(value))
+            }
+            (SettingId::PwmTiltback, DeviceSettingValue::Disabled) => (AERO_FIELD_PWM_PERCENT, 200),
+            (SettingId::PwmTiltback, DeviceSettingValue::Number(value)) => {
+                (AERO_FIELD_PWM_PERCENT, i64::from(value))
+            }
+            (SettingId::BrakeOverpressureAlarm, DeviceSettingValue::Number(value)) => (
+                AERO_FIELD_BRAKE_OVERPRESSURE_ALARM_PERCENT,
+                i64::from(value),
+            ),
+            (SettingId::PedalHardness, DeviceSettingValue::Number(value)) => {
+                (AERO_FIELD_PEDAL_HARDNESS_PERCENT, i64::from(value))
+            }
+            (SettingId::DisplayBrightness, DeviceSettingValue::Number(value)) => {
+                (AERO_FIELD_DISPLAY_BACKLIGHT_PERCENT, i64::from(value))
+            }
+            (SettingId::BeeperVolumePercent, DeviceSettingValue::Number(value)) => {
+                (AERO_FIELD_BEEPER_VOLUME_PERCENT, i64::from(value))
+            }
+            (SettingId::DynamicAssist, DeviceSettingValue::Number(value)) => {
+                (AERO_FIELD_DYNAMIC_ASSIST_PERCENT, i64::from(value))
+            }
+            (SettingId::PedalDipCompensation, DeviceSettingValue::Number(value)) => {
+                (AERO_FIELD_PEDAL_DIP_COMPENSATION_PERCENT, i64::from(value))
+            }
+            (SettingId::LateralTiltLimit, DeviceSettingValue::Number(value)) => {
+                (AERO_FIELD_LATERAL_TILT_LIMIT_DEGREES, i64::from(value))
+            }
+            (SettingId::VoltageCorrection, DeviceSettingValue::Number(value)) => (
+                AERO_FIELD_VOLTAGE_CORRECTION_TENTHS_PERCENT,
+                i64::from(value),
+            ),
+            (SettingId::ChargeLimitDiagnostic, DeviceSettingValue::Number(value)) => {
+                (AERO_FIELD_MAX_CHARGE_VOLTAGE_RAW, i64::from(value))
+            }
+            (SettingId::DisplayUnits, DeviceSettingValue::Choice(value)) => {
+                (AERO_FIELD_WHEEL_UNITS, i64::from(value))
+            }
+            (SettingId::HighSpeedMode, DeviceSettingValue::Boolean(value)) => {
+                (AERO_FIELD_HIGH_SPEED_MODE, i64::from(u8::from(value)))
+            }
+            (SettingId::LowBatteryMode, DeviceSettingValue::Boolean(value)) => {
+                (AERO_FIELD_LOW_BATTERY_MODE, i64::from(u8::from(value)))
+            }
+            (SettingId::TransportMode, DeviceSettingValue::Boolean(value)) => {
+                (AERO_FIELD_TRANSPORT_MODE, i64::from(u8::from(value)))
+            }
+            _ => return None,
+        },
         _ => return None,
     };
 
@@ -1944,138 +1927,157 @@ fn aero_write_was_sent(report: &SessionBridgeReport) -> bool {
 fn parse_aero_write_command(setting: AeroSetting, value: &str) -> Result<DeviceCommand> {
     match setting {
         AeroSetting::Headlight => Ok(DeviceCommand::SetLights(parse_light_state(value)?)),
-        AeroSetting::HighBeam => Ok(DeviceCommand::SetAeroHighBeam(parse_light_state(value)?)),
-        AeroSetting::Pedal => Ok(DeviceCommand::SetPedalMode(match value {
-            "hard" => PedalMode::Hard,
-            "medium" => PedalMode::Medium,
-            "soft" => PedalMode::Soft,
-            _ => bail!("pedal value must be hard, medium, or soft"),
-        })),
-        AeroSetting::RidingMode => Ok(DeviceCommand::SetAeroRidingMode(parse_riding_mode(value)?)),
-        AeroSetting::TiltbackSpeed => Ok(DeviceCommand::SetAeroTiltbackSpeed(
-            AeroSpeedSetting::new(
-                value
-                    .parse()
-                    .context("tiltback speed must be 10..=200 km/h")?,
+        AeroSetting::HighBeam => semantic_setting(
+            SettingId::HighBeam,
+            DeviceSettingValue::Boolean(parse_toggle(value)?),
+        ),
+        AeroSetting::Pedal => semantic_choice(SettingId::PedalMode, value, "pedal"),
+        AeroSetting::RidingMode => semantic_choice(SettingId::RidingPreset, value, "riding mode"),
+        AeroSetting::TiltbackSpeed => semantic_speed(SettingId::TiltbackSpeed, value, "tiltback"),
+        AeroSetting::PedalHardness => semantic_range(
+            SettingId::PedalHardness,
+            value,
+            0..=100,
+            "MD hardness must be 0..=100 percent",
+        ),
+        AeroSetting::Pwm if value == "off" => {
+            semantic_setting(SettingId::PwmTiltback, DeviceSettingValue::Disabled)
+        }
+        AeroSetting::Pwm => {
+            let margin: i32 = value.parse().context("PWT margin must be 0..=70")?;
+            if !(0..=70).contains(&margin) {
+                bail!("PWT margin must be 0..=70");
+            }
+            semantic_setting(
+                SettingId::PwmTiltback,
+                DeviceSettingValue::Number(100 - margin),
             )
-            .context("tiltback speed must be 10..=200 km/h")?,
-        )),
-        AeroSetting::PedalHardness => Ok(DeviceCommand::SetAeroPedalHardness(
-            AeroPedalHardness::new(
-                value
-                    .parse()
-                    .context("MD hardness must be 0..=100 percent")?,
-            )
-            .context("MD hardness must be 0..=100 percent")?,
-        )),
-        AeroSetting::Pwm if value == "off" => Ok(DeviceCommand::SetAeroPwmOff),
-        AeroSetting::Pwm => Ok(DeviceCommand::SetAeroPwmPercent(
-            AeroPwmPercent::new(value.parse().context("PWT margin must be 0..=70")?)
-                .context("PWT margin must be 0..=70")?
-                .into(),
-        )),
-        AeroSetting::AlarmSpeed => Ok(DeviceCommand::SetAeroAlarmSpeed(
-            AeroSpeedSetting::new(value.parse().context("alarm speed must be 10..=200 km/h")?)
-                .context("alarm speed must be 10..=200 km/h")?,
-        )),
-        AeroSetting::Angle => Ok(DeviceCommand::SetAeroAngleAdjustment(
-            AeroAngleAdjustment::new(value.parse().context("angle must be -80..=80 tenths")?)
-                .context("angle must be -80..=80 tenths")?,
-        )),
+        }
+        AeroSetting::AlarmSpeed => semantic_speed(SettingId::SpeedAlarmThreshold, value, "alarm"),
+        AeroSetting::Angle => semantic_range(
+            SettingId::PedalAngle,
+            value,
+            -80..=80,
+            "angle must be -80..=80 tenths",
+        ),
         AeroSetting::GyroCalibration if matches!(value, "start" | "calibrate") => {
-            Ok(DeviceCommand::SetAeroGyroCalibration)
+            Ok(DeviceCommand::InvokeAction(DeviceActionRequest {
+                id: DeviceActionId::GyroCalibration,
+                step: DeviceActionStep::PrepareGyroCalibration,
+            }))
         }
         AeroSetting::GyroCalibration => bail!("gyro-calibration value must be start or calibrate"),
-        AeroSetting::BrakeOverpressureAlarm => Ok(DeviceCommand::SetAeroBrakeOverpressureAlarm(
-            AeroBrakeOverpressureAlarm::new(
-                value
-                    .parse()
-                    .context("brake overpressure alarm must be 90..=125 percent")?,
-            )
-            .context("brake overpressure alarm must be 90..=125 percent")?,
-        )),
-        AeroSetting::DisplayBacklight => Ok(DeviceCommand::SetAeroDisplayBacklight(
-            AeroDisplayBacklight::new(
-                value
-                    .parse()
-                    .context("display backlight must be 0..=100 percent")?,
-            )
-            .context("display backlight must be 0..=100 percent")?,
-        )),
-        AeroSetting::BeeperVolume => Ok(DeviceCommand::SetAeroBeeperVolume(
-            AeroBeeperVolume::new(
-                value
-                    .parse()
-                    .context("beeper volume must be 0..=100 percent")?,
-            )
-            .context("beeper volume must be 0..=100 percent")?,
-        )),
-        AeroSetting::DynamicAssist => Ok(DeviceCommand::SetAeroDynamicAssist(
-            AeroDynamicAssist::new(
-                value
-                    .parse()
-                    .context("dynamic assist must be 0..=100 percent")?,
-            )
-            .context("dynamic assist must be 0..=100 percent")?,
-        )),
-        AeroSetting::PedalDipCompensation => Ok(DeviceCommand::SetAeroPedalDipCompensation(
-            AeroPedalDipCompensation::new(
-                value
-                    .parse()
-                    .context("pedal dip compensation must be 0..=100 percent")?,
-            )
-            .context("pedal dip compensation must be 0..=100 percent")?,
-        )),
-        AeroSetting::LateralTiltLimit => Ok(DeviceCommand::SetAeroLateralTiltLimit(
-            AeroLateralTiltLimit::new(
-                value
-                    .parse()
-                    .context("lateral tilt limit must be 35..=75 degrees")?,
-            )
-            .context("lateral tilt limit must be 35..=75 degrees")?,
-        )),
-        AeroSetting::VoltageCorrection => Ok(DeviceCommand::SetAeroVoltageCorrection(
-            AeroVoltageCorrection::new(
-                value
-                    .parse()
-                    .context("voltage correction must be -15..=15 tenths of a percent")?,
-            )
-            .context("voltage correction must be -15..=15 tenths of a percent")?,
-        )),
-        AeroSetting::MaxChargeVoltageRaw => Ok(DeviceCommand::SetAeroMaxChargeVoltageRaw(
-            AeroMaxChargeVoltageRaw::new(
-                value
-                    .parse()
-                    .context("maximum charge raw value must be 0..=70")?,
-            )
-            .context("maximum charge raw value must be 0..=70")?,
-        )),
-        AeroSetting::WheelUnits => Ok(DeviceCommand::SetAeroWheelUnits(match value {
-            "metric" => AeroWheelUnits::Metric,
-            "imperial" => AeroWheelUnits::Imperial,
-            _ => bail!("wheel units value must be metric or imperial"),
-        })),
-        AeroSetting::HighSpeedMode => Ok(DeviceCommand::SetAeroHighSpeedMode(
-            AeroHighSpeedMode::new(parse_toggle(value)?),
-        )),
-        AeroSetting::LowBatteryMode => Ok(DeviceCommand::SetAeroLowBatteryMode(
-            AeroLowBatteryMode::new(parse_toggle(value)?),
-        )),
-        AeroSetting::TransportMode => Ok(DeviceCommand::SetAeroTransportMode(
-            AeroTransportMode::new(parse_toggle(value)?),
-        )),
-        AeroSetting::TripReset if value == "reset" => Ok(DeviceCommand::ResetTripMeter),
+        AeroSetting::BrakeOverpressureAlarm => semantic_range(
+            SettingId::BrakeOverpressureAlarm,
+            value,
+            90..=125,
+            "brake overpressure alarm must be 90..=125 percent",
+        ),
+        AeroSetting::DisplayBacklight => semantic_range(
+            SettingId::DisplayBrightness,
+            value,
+            0..=100,
+            "display backlight must be 0..=100 percent",
+        ),
+        AeroSetting::BeeperVolume => semantic_range(
+            SettingId::BeeperVolumePercent,
+            value,
+            0..=100,
+            "beeper volume must be 0..=100 percent",
+        ),
+        AeroSetting::DynamicAssist => semantic_range(
+            SettingId::DynamicAssist,
+            value,
+            0..=100,
+            "dynamic assist must be 0..=100 percent",
+        ),
+        AeroSetting::PedalDipCompensation => semantic_range(
+            SettingId::PedalDipCompensation,
+            value,
+            0..=100,
+            "pedal dip compensation must be 0..=100 percent",
+        ),
+        AeroSetting::LateralTiltLimit => semantic_range(
+            SettingId::LateralTiltLimit,
+            value,
+            35..=75,
+            "lateral tilt limit must be 35..=75 degrees",
+        ),
+        AeroSetting::VoltageCorrection => semantic_range(
+            SettingId::VoltageCorrection,
+            value,
+            -15..=15,
+            "voltage correction must be -15..=15 tenths of a percent",
+        ),
+        AeroSetting::MaxChargeVoltageRaw => {
+            bail!("maximum charge raw value is read-only")
+        }
+        AeroSetting::WheelUnits => semantic_choice(SettingId::DisplayUnits, value, "wheel units"),
+        AeroSetting::HighSpeedMode => semantic_setting(
+            SettingId::HighSpeedMode,
+            DeviceSettingValue::Boolean(parse_toggle(value)?),
+        ),
+        AeroSetting::LowBatteryMode => semantic_setting(
+            SettingId::LowBatteryMode,
+            DeviceSettingValue::Boolean(parse_toggle(value)?),
+        ),
+        AeroSetting::TransportMode => semantic_setting(
+            SettingId::TransportMode,
+            DeviceSettingValue::Boolean(parse_toggle(value)?),
+        ),
+        AeroSetting::TripReset if value == "reset" => {
+            Ok(DeviceCommand::InvokeAction(DeviceActionRequest {
+                id: DeviceActionId::ResetTripMeter,
+                step: DeviceActionStep::Invoke,
+            }))
+        }
         AeroSetting::TripReset => bail!("trip-reset value must be reset"),
     }
 }
 
-fn parse_riding_mode(value: &str) -> Result<AeroRidingMode> {
-    match value {
-        "hard" => Ok(AeroRidingMode::Hard),
-        "medium" => Ok(AeroRidingMode::Medium),
-        "soft" => Ok(AeroRidingMode::Soft),
-        _ => bail!("riding mode value must be hard, medium, or soft"),
+fn semantic_setting(id: SettingId, value: DeviceSettingValue) -> Result<DeviceCommand> {
+    Ok(DeviceCommand::SetSetting { id, value })
+}
+
+fn semantic_range(
+    id: SettingId,
+    value: &str,
+    range: std::ops::RangeInclusive<i32>,
+    message: &'static str,
+) -> Result<DeviceCommand> {
+    let value = value.parse::<i32>().context(message)?;
+    if !range.contains(&value) {
+        bail!("{message}");
     }
+    semantic_setting(id, DeviceSettingValue::Number(value))
+}
+
+fn semantic_speed(id: SettingId, value: &str, label: &str) -> Result<DeviceCommand> {
+    let speed = value
+        .parse::<i32>()
+        .with_context(|| format!("{label} speed must be 10..=200 km/h"))?;
+    if !(10..=200).contains(&speed) {
+        bail!("{label} speed must be 10..=200 km/h");
+    }
+    semantic_setting(id, DeviceSettingValue::Number(speed * 10))
+}
+
+fn semantic_choice(id: SettingId, value: &str, label: &str) -> Result<DeviceCommand> {
+    let choice = if label == "wheel units" {
+        match value {
+            "metric" => 0,
+            "imperial" => 1,
+            _ => bail!("wheel units value must be metric or imperial"),
+        }
+    } else {
+        match value {
+            "hard" => 0,
+            "medium" => 1,
+            "soft" => 2,
+            _ => bail!("{label} value must be hard, medium, or soft"),
+        }
+    };
+    semantic_setting(id, DeviceSettingValue::Choice(choice))
 }
 
 fn parse_toggle(value: &str) -> Result<bool> {
@@ -2695,6 +2697,7 @@ fn selected_session_profile_for_catalog_entry(
     })
 }
 
+#[cfg(test)]
 fn dashboard_session_profile(profile: SessionProfile) -> Result<SelectedSessionProfile> {
     require_explicit_live_profile(profile)?;
     Ok(selected_session_profile(profile))
@@ -3716,35 +3719,9 @@ const fn command_kind_name(kind: CommandKind) -> &'static str {
         CommandKind::RequestFaultHistory => "request_fault_history",
         CommandKind::RequestSettings => "request_settings",
         CommandKind::ResetTripMeter => "reset_trip_meter",
-        CommandKind::SetAeroTiltbackSpeed => "set_aero_tiltback_speed",
-        CommandKind::SetAeroPwmPercent => "set_aero_pwm_percent",
-        CommandKind::SetAeroPwmOff => "set_aero_pwm_off",
-        CommandKind::SetAeroGyroCalibration => "set_aero_gyro_calibration",
-        CommandKind::SetAeroRidingMode => "set_aero_riding_mode",
-        CommandKind::SetAeroBrakeOverpressureAlarm => "set_aero_brake_overpressure_alarm",
-        CommandKind::SetAeroPedalHardness => "set_aero_pedal_hardness",
-        CommandKind::SetAeroDisplayBacklight => "set_aero_display_backlight",
-        CommandKind::SetAeroBeeperVolume => "set_aero_beeper_volume",
-        CommandKind::SetAeroDynamicAssist => "set_aero_dynamic_assist",
-        CommandKind::SetAeroPedalDipCompensation => "set_aero_pedal_dip_compensation",
-        CommandKind::SetAeroLateralTiltLimit => "set_aero_lateral_tilt_limit",
-        CommandKind::SetAeroVoltageCorrection => "set_aero_voltage_correction",
-        CommandKind::SetAeroMaxChargeVoltageRaw => "set_aero_max_charge_voltage_raw",
-        CommandKind::SetAeroWheelUnits => "set_aero_wheel_units",
-        CommandKind::SetAeroHighSpeedMode => "set_aero_high_speed_mode",
-        CommandKind::SetAeroLowBatteryMode => "set_aero_low_battery_mode",
-        CommandKind::SetAeroTransportMode => "set_aero_transport_mode",
-        CommandKind::SetAeroAlarmSpeed => "set_aero_alarm_speed",
-        CommandKind::SetAeroAngleAdjustment => "set_aero_angle_adjustment",
-        CommandKind::SetAeroHighBeam => "set_aero_high_beam",
-        CommandKind::SetAccelerationAssist => "set_acceleration_assist",
+        CommandKind::GyroCalibration => "gyro_calibration",
+        CommandKind::SetSetting => "set_setting",
         CommandKind::SetLights => "set_lights",
-        CommandKind::SetPedalMode => "set_pedal_mode",
-        CommandKind::SetRollAngle => "set_roll_angle",
-        CommandKind::SetSpeedAlarmMode => "set_speed_alarm_mode",
-        CommandKind::SetBegodeMaxSpeed => "set_begode_max_speed",
-        CommandKind::SetBegodeBeeperVolume => "set_begode_beeper_volume",
-        CommandKind::SetBegodeLedMode => "set_begode_led_mode",
         CommandKind::SetTaillight => "set_taillight",
         CommandKind::SoundHorn => "sound_horn",
         CommandKind::SetRawMotorCurrent => "set_raw_motor_current",
@@ -4093,37 +4070,44 @@ mod tests {
         );
         assert_eq!(
             parse_aero_write_command(AeroSetting::Pedal, "hard").expect("pedal parses"),
-            DeviceCommand::SetPedalMode(PedalMode::Hard)
+            DeviceCommand::SetSetting {
+                id: SettingId::PedalMode,
+                value: DeviceSettingValue::Choice(0),
+            }
         );
         assert_eq!(
             parse_aero_write_command(AeroSetting::TiltbackSpeed, "31")
                 .expect("tiltback parses")
                 .kind(),
-            CommandKind::SetAeroTiltbackSpeed
+            CommandKind::SetSetting
         );
         assert_eq!(
             parse_aero_write_command(AeroSetting::Pwm, "64")
                 .expect("PWM parses")
                 .kind(),
-            CommandKind::SetAeroPwmPercent
+            CommandKind::SetSetting
         );
         assert_eq!(
             parse_aero_write_command(AeroSetting::Angle, "-12")
                 .expect("angle parses")
                 .kind(),
-            CommandKind::SetAeroAngleAdjustment
+            CommandKind::SetSetting
         );
         assert_eq!(
             parse_aero_write_command(AeroSetting::TripReset, "reset").expect("trip reset parses"),
-            DeviceCommand::ResetTripMeter
+            DeviceCommand::InvokeAction(DeviceActionRequest {
+                id: DeviceActionId::ResetTripMeter,
+                step: DeviceActionStep::Invoke,
+            })
         );
         assert!(parse_aero_write_command(AeroSetting::Pwm, "101").is_err());
         for value in ["0", "30", "64", "100"] {
             assert_eq!(
                 parse_aero_write_command(AeroSetting::PedalHardness, value).unwrap(),
-                DeviceCommand::SetAeroPedalHardness(
-                    AeroPedalHardness::new(value.parse().unwrap()).unwrap()
-                )
+                DeviceCommand::SetSetting {
+                    id: SettingId::PedalHardness,
+                    value: DeviceSettingValue::Number(value.parse().unwrap()),
+                }
             );
         }
         for value in ["101", "-1", "hard"] {
@@ -4214,15 +4198,15 @@ mod tests {
 
     #[test]
     fn aero_write_refreshes_settings_after_the_mutation() {
+        let command = DeviceCommand::SetSetting {
+            id: SettingId::DisplayBrightness,
+            value: DeviceSettingValue::Number(50),
+        };
         assert_eq!(
-            aero_write_commands(DeviceCommand::SetAeroDisplayBacklight(
-                AeroDisplayBacklight::new(50).expect("50 percent fits"),
-            )),
+            aero_write_commands(command),
             [
                 DeviceCommand::RequestTelemetry,
-                DeviceCommand::SetAeroDisplayBacklight(
-                    AeroDisplayBacklight::new(50).expect("50 percent fits"),
-                ),
+                command,
                 DeviceCommand::RequestSettings,
             ]
         );
@@ -6672,25 +6656,30 @@ mod tests {
 
         assert_eq!(
             aero_setting_readback_matches(
-                DeviceCommand::SetAeroTiltbackSpeed(
-                    AeroSpeedSetting::new(53).expect("53 km/h fits"),
-                ),
+                DeviceCommand::SetSetting {
+                    id: SettingId::TiltbackSpeed,
+                    value: DeviceSettingValue::Number(530),
+                },
                 &readbacks,
             ),
             Some(true)
         );
         assert_eq!(
             aero_setting_readback_matches(
-                DeviceCommand::SetAeroAlarmSpeed(AeroSpeedSetting::new(54).expect("54 km/h fits"),),
+                DeviceCommand::SetSetting {
+                    id: SettingId::SpeedAlarmThreshold,
+                    value: DeviceSettingValue::Number(540),
+                },
                 &readbacks,
             ),
             Some(false)
         );
         assert_eq!(
             aero_setting_readback_matches(
-                DeviceCommand::SetAeroPwmPercent(AeroPwmSetting::Margin(
-                    AeroPwmPercent::new(64).expect("64 percent fits"),
-                )),
+                DeviceCommand::SetSetting {
+                    id: SettingId::PwmTiltback,
+                    value: DeviceSettingValue::Number(36),
+                },
                 &readbacks,
             ),
             Some(false)
@@ -6698,9 +6687,10 @@ mod tests {
 
         assert_eq!(
             aero_setting_readback_matches(
-                DeviceCommand::SetAeroTiltbackSpeed(
-                    AeroSpeedSetting::new(54).expect("54 km/h fits"),
-                ),
+                DeviceCommand::SetSetting {
+                    id: SettingId::TiltbackSpeed,
+                    value: DeviceSettingValue::Number(540),
+                },
                 &before,
             ),
             Some(true)
@@ -6710,87 +6700,42 @@ mod tests {
     #[test]
     fn aero_write_parser_exposes_every_source_backed_aero_setting() {
         let cases = [
-            (
-                AeroSetting::RidingMode,
-                "hard",
-                CommandKind::SetAeroRidingMode,
-            ),
-            (
-                AeroSetting::TiltbackSpeed,
-                "200",
-                CommandKind::SetAeroTiltbackSpeed,
-            ),
-            (AeroSetting::Pwm, "off", CommandKind::SetAeroPwmOff),
-            (
-                AeroSetting::AlarmSpeed,
-                "10",
-                CommandKind::SetAeroAlarmSpeed,
-            ),
+            (AeroSetting::RidingMode, "hard", CommandKind::SetSetting),
+            (AeroSetting::TiltbackSpeed, "200", CommandKind::SetSetting),
+            (AeroSetting::Pwm, "off", CommandKind::SetSetting),
+            (AeroSetting::AlarmSpeed, "10", CommandKind::SetSetting),
             (
                 AeroSetting::GyroCalibration,
                 "start",
-                CommandKind::SetAeroGyroCalibration,
+                CommandKind::GyroCalibration,
             ),
             (
                 AeroSetting::BrakeOverpressureAlarm,
                 "125",
-                CommandKind::SetAeroBrakeOverpressureAlarm,
+                CommandKind::SetSetting,
             ),
             (
                 AeroSetting::DisplayBacklight,
                 "100",
-                CommandKind::SetAeroDisplayBacklight,
+                CommandKind::SetSetting,
             ),
-            (
-                AeroSetting::BeeperVolume,
-                "0",
-                CommandKind::SetAeroBeeperVolume,
-            ),
-            (
-                AeroSetting::DynamicAssist,
-                "42",
-                CommandKind::SetAeroDynamicAssist,
-            ),
+            (AeroSetting::BeeperVolume, "0", CommandKind::SetSetting),
+            (AeroSetting::DynamicAssist, "42", CommandKind::SetSetting),
             (
                 AeroSetting::PedalDipCompensation,
                 "42",
-                CommandKind::SetAeroPedalDipCompensation,
+                CommandKind::SetSetting,
             ),
-            (
-                AeroSetting::LateralTiltLimit,
-                "35",
-                CommandKind::SetAeroLateralTiltLimit,
-            ),
+            (AeroSetting::LateralTiltLimit, "35", CommandKind::SetSetting),
             (
                 AeroSetting::VoltageCorrection,
                 "-15",
-                CommandKind::SetAeroVoltageCorrection,
+                CommandKind::SetSetting,
             ),
-            (
-                AeroSetting::MaxChargeVoltageRaw,
-                "70",
-                CommandKind::SetAeroMaxChargeVoltageRaw,
-            ),
-            (
-                AeroSetting::WheelUnits,
-                "imperial",
-                CommandKind::SetAeroWheelUnits,
-            ),
-            (
-                AeroSetting::HighSpeedMode,
-                "on",
-                CommandKind::SetAeroHighSpeedMode,
-            ),
-            (
-                AeroSetting::LowBatteryMode,
-                "off",
-                CommandKind::SetAeroLowBatteryMode,
-            ),
-            (
-                AeroSetting::TransportMode,
-                "on",
-                CommandKind::SetAeroTransportMode,
-            ),
+            (AeroSetting::WheelUnits, "imperial", CommandKind::SetSetting),
+            (AeroSetting::HighSpeedMode, "on", CommandKind::SetSetting),
+            (AeroSetting::LowBatteryMode, "off", CommandKind::SetSetting),
+            (AeroSetting::TransportMode, "on", CommandKind::SetSetting),
         ];
 
         for (setting, value, kind) in cases {
@@ -6803,6 +6748,7 @@ mod tests {
         }
         assert!(parse_aero_write_command(AeroSetting::TiltbackSpeed, "9").is_err());
         assert!(parse_aero_write_command(AeroSetting::Pwm, "71").is_err());
+        assert!(parse_aero_write_command(AeroSetting::MaxChargeVoltageRaw, "70").is_err());
         assert!(parse_aero_write_command(AeroSetting::GyroCalibration, "stop").is_err());
     }
 
@@ -6816,93 +6762,122 @@ mod tests {
         };
         let cases = [
             (
-                DeviceCommand::SetAeroPwmPercent(AeroPwmSetting::Margin(
-                    AeroPwmPercent::new(64).expect("64 percent fits"),
-                )),
+                DeviceCommand::SetSetting {
+                    id: SettingId::PwmTiltback,
+                    value: DeviceSettingValue::Number(36),
+                },
                 0x0835,
                 36,
             ),
-            (DeviceCommand::SetAeroPwmOff, 0x0835, 200),
             (
-                DeviceCommand::SetAeroBrakeOverpressureAlarm(
-                    AeroBrakeOverpressureAlarm::new(110).expect("110 percent fits"),
-                ),
+                DeviceCommand::SetSetting {
+                    id: SettingId::PwmTiltback,
+                    value: DeviceSettingValue::Disabled,
+                },
+                0x0835,
+                200,
+            ),
+            (
+                DeviceCommand::SetSetting {
+                    id: SettingId::BrakeOverpressureAlarm,
+                    value: DeviceSettingValue::Number(110),
+                },
                 0x0841,
                 110,
             ),
             (
-                DeviceCommand::SetAeroPedalHardness(
-                    AeroPedalHardness::new(50).expect("50 percent fits"),
-                ),
+                DeviceCommand::SetSetting {
+                    id: SettingId::PedalHardness,
+                    value: DeviceSettingValue::Number(50),
+                },
                 0x0832,
                 50,
             ),
             (
-                DeviceCommand::SetAeroDisplayBacklight(
-                    AeroDisplayBacklight::new(75).expect("75 percent fits"),
-                ),
+                DeviceCommand::SetSetting {
+                    id: SettingId::DisplayBrightness,
+                    value: DeviceSettingValue::Number(75),
+                },
                 0x0837,
                 75,
             ),
             (
-                DeviceCommand::SetAeroBeeperVolume(
-                    AeroBeeperVolume::new(25).expect("25 percent fits"),
-                ),
+                DeviceCommand::SetSetting {
+                    id: SettingId::BeeperVolumePercent,
+                    value: DeviceSettingValue::Number(25),
+                },
                 0x083f,
                 25,
             ),
             (
-                DeviceCommand::SetAeroDynamicAssist(
-                    AeroDynamicAssist::new(42).expect("42 percent fits"),
-                ),
+                DeviceCommand::SetSetting {
+                    id: SettingId::DynamicAssist,
+                    value: DeviceSettingValue::Number(42),
+                },
                 0x0842,
                 42,
             ),
             (
-                DeviceCommand::SetAeroPedalDipCompensation(
-                    AeroPedalDipCompensation::new(33).expect("33 percent fits"),
-                ),
+                DeviceCommand::SetSetting {
+                    id: SettingId::PedalDipCompensation,
+                    value: DeviceSettingValue::Number(33),
+                },
                 0x0844,
                 33,
             ),
             (
-                DeviceCommand::SetAeroLateralTiltLimit(
-                    AeroLateralTiltLimit::new(55).expect("55 degrees fits"),
-                ),
+                DeviceCommand::SetSetting {
+                    id: SettingId::LateralTiltLimit,
+                    value: DeviceSettingValue::Number(55),
+                },
                 0x022f,
                 55,
             ),
             (
-                DeviceCommand::SetAeroVoltageCorrection(
-                    AeroVoltageCorrection::new(-5).expect("-5 tenths fits"),
-                ),
+                DeviceCommand::SetSetting {
+                    id: SettingId::VoltageCorrection,
+                    value: DeviceSettingValue::Number(-5),
+                },
                 0x083b,
                 -5,
             ),
             (
-                DeviceCommand::SetAeroMaxChargeVoltageRaw(
-                    AeroMaxChargeVoltageRaw::new(46).expect("46 raw fits"),
-                ),
+                DeviceCommand::SetSetting {
+                    id: SettingId::ChargeLimitDiagnostic,
+                    value: DeviceSettingValue::Number(46),
+                },
                 0x0840,
                 46,
             ),
             (
-                DeviceCommand::SetAeroWheelUnits(AeroWheelUnits::Imperial),
+                DeviceCommand::SetSetting {
+                    id: SettingId::DisplayUnits,
+                    value: DeviceSettingValue::Choice(1),
+                },
                 0x083a,
                 1,
             ),
             (
-                DeviceCommand::SetAeroHighSpeedMode(AeroHighSpeedMode::new(true)),
+                DeviceCommand::SetSetting {
+                    id: SettingId::HighSpeedMode,
+                    value: DeviceSettingValue::Boolean(true),
+                },
                 0x083d,
                 1,
             ),
             (
-                DeviceCommand::SetAeroLowBatteryMode(AeroLowBatteryMode::new(false)),
+                DeviceCommand::SetSetting {
+                    id: SettingId::LowBatteryMode,
+                    value: DeviceSettingValue::Boolean(false),
+                },
                 0x083c,
                 0,
             ),
             (
-                DeviceCommand::SetAeroTransportMode(AeroTransportMode::new(true)),
+                DeviceCommand::SetSetting {
+                    id: SettingId::TransportMode,
+                    value: DeviceSettingValue::Boolean(true),
+                },
                 0x0839,
                 1,
             ),
@@ -7200,22 +7175,11 @@ mod tests {
     }
 
     #[test]
-    fn command_kind_names_cover_aero_settings_commands() {
+    fn command_kind_names_cover_generic_settings_and_actions() {
         for (kind, expected) in [
             (CommandKind::ResetTripMeter, "reset_trip_meter"),
-            (CommandKind::SetAeroTiltbackSpeed, "set_aero_tiltback_speed"),
-            (CommandKind::SetAeroPwmPercent, "set_aero_pwm_percent"),
-            (
-                CommandKind::SetAeroGyroCalibration,
-                "set_aero_gyro_calibration",
-            ),
-            (CommandKind::SetAeroPedalHardness, "set_aero_pedal_hardness"),
-            (CommandKind::SetAeroAlarmSpeed, "set_aero_alarm_speed"),
-            (
-                CommandKind::SetAeroAngleAdjustment,
-                "set_aero_angle_adjustment",
-            ),
-            (CommandKind::SetAeroHighBeam, "set_aero_high_beam"),
+            (CommandKind::GyroCalibration, "gyro_calibration"),
+            (CommandKind::SetSetting, "set_setting"),
         ] {
             assert_eq!(command_kind_name(kind), expected);
         }

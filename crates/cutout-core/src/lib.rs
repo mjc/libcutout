@@ -334,95 +334,19 @@ pub enum DeviceCommand {
     /// Request current settings without changing device state.
     RequestSettings,
 
-    /// Reset the device trip meter; this command is stationary-only.
-    ResetTripMeter,
+    /// Submit one checked semantic setting request.
+    SetSetting {
+        /// Stable semantic setting identity.
+        id: SettingId,
+        /// Descriptor-shaped value in semantic units.
+        value: DeviceSettingValue,
+    },
 
-    /// Set the NOSFET/Veteran tilt-back speed in whole km/h.
-    SetAeroTiltbackSpeed(AeroSpeedSetting),
-
-    /// Set the NOSFET/Veteran PWT (PWM tilt-back alarm) percentage.
-    SetAeroPwmPercent(AeroPwmSetting),
-
-    /// Disable the NOSFET/Veteran PWT alarm using its distinct wire setting.
-    SetAeroPwmOff,
-
-    /// Start or finish NOSFET Aero gyro calibration; this command is stationary-only.
-    SetAeroGyroCalibration,
-
-    /// Set the NOSFET/Veteran modern binary T riding mode.
-    SetAeroRidingMode(AeroRidingMode),
-
-    /// Set the NOSFET Aero brake overpressure alarm percentage.
-    SetAeroBrakeOverpressureAlarm(AeroBrakeOverpressureAlarm),
-
-    /// Set the NOSFET/Veteran MD pedal hardness percentage.
-    SetAeroPedalHardness(AeroPedalHardness),
-
-    /// Set the Aero wheel display backlight brightness.
-    SetAeroDisplayBacklight(AeroDisplayBacklight),
-
-    /// Set the Aero wheel beeper volume.
-    SetAeroBeeperVolume(AeroBeeperVolume),
-
-    /// Set the Aero dynamic assist.
-    SetAeroDynamicAssist(AeroDynamicAssist),
-
-    /// Set the Aero pedal-dip compensation.
-    SetAeroPedalDipCompensation(AeroPedalDipCompensation),
-
-    /// Set the Aero lateral tilt limit.
-    SetAeroLateralTiltLimit(AeroLateralTiltLimit),
-
-    /// Set the Aero voltage correction.
-    SetAeroVoltageCorrection(AeroVoltageCorrection),
-
-    /// Set the NOSFET Aero maximum charge voltage using the official raw `MxV` value.
-    SetAeroMaxChargeVoltageRaw(AeroMaxChargeVoltageRaw),
-
-    /// Set the wheel display units independently of host display preferences.
-    SetAeroWheelUnits(AeroWheelUnits),
-
-    /// Enable or disable the Aero high-speed mode.
-    SetAeroHighSpeedMode(AeroHighSpeedMode),
-
-    /// Enable or disable the Aero low-battery mode.
-    SetAeroLowBatteryMode(AeroLowBatteryMode),
-
-    /// Enable or disable the Aero transportation mode.
-    SetAeroTransportMode(AeroTransportMode),
-
-    /// Set the NOSFET/Veteran speed alarm in whole km/h.
-    SetAeroAlarmSpeed(AeroSpeedSetting),
-
-    /// Set the NOSFET/Veteran ANG (vertical angle) adjustment in tenths of a degree.
-    SetAeroAngleAdjustment(AeroAngleAdjustment),
-
-    /// Set the NOSFET/Veteran high beam through the official binary frame.
-    SetAeroHighBeam(LightState),
+    /// Invoke a protocol-owned semantic action.
+    InvokeAction(DeviceActionRequest),
 
     /// Set the device lights.
     SetLights(LightState),
-
-    /// Set pedal stiffness; this command is stationary-only.
-    SetPedalMode(PedalMode),
-
-    /// Set roll-angle sensitivity; this command is stationary-only.
-    SetRollAngle(RollAngle),
-
-    /// Set the speed-alarm mode; this command is stationary-only.
-    SetSpeedAlarmMode(SpeedAlarmMode),
-
-    /// Set the Begode max speed through its timed `W` submenu.
-    SetBegodeMaxSpeed(BegodeMaxSpeed),
-
-    /// Set the Begode beeper volume through its timed `W` submenu.
-    SetBegodeBeeperVolume(BegodeBeeperVolume),
-
-    /// Set the Begode LED mode through its timed `W` submenu.
-    SetBegodeLedMode(BegodeLedModeSetting),
-
-    /// Enable or disable acceleration assist; this command is stationary-only.
-    SetAccelerationAssist(AccelerationAssistState),
 
     /// Set the taillight state independently of the existing light control.
     SetTaillight(LightState),
@@ -449,36 +373,13 @@ impl DeviceCommand {
             Self::RequestDiagnostics => CommandKind::RequestDiagnostics,
             Self::RequestFaultHistory => CommandKind::RequestFaultHistory,
             Self::RequestSettings => CommandKind::RequestSettings,
-            Self::ResetTripMeter => CommandKind::ResetTripMeter,
-            Self::SetAeroTiltbackSpeed(_) => CommandKind::SetAeroTiltbackSpeed,
-            Self::SetAeroPwmPercent(_) => CommandKind::SetAeroPwmPercent,
-            Self::SetAeroPwmOff => CommandKind::SetAeroPwmOff,
-            Self::SetAeroGyroCalibration => CommandKind::SetAeroGyroCalibration,
-            Self::SetAeroRidingMode(_) => CommandKind::SetAeroRidingMode,
-            Self::SetAeroBrakeOverpressureAlarm(_) => CommandKind::SetAeroBrakeOverpressureAlarm,
-            Self::SetAeroPedalHardness(_) => CommandKind::SetAeroPedalHardness,
-            Self::SetAeroDisplayBacklight(_) => CommandKind::SetAeroDisplayBacklight,
-            Self::SetAeroBeeperVolume(_) => CommandKind::SetAeroBeeperVolume,
-            Self::SetAeroDynamicAssist(_) => CommandKind::SetAeroDynamicAssist,
-            Self::SetAeroPedalDipCompensation(_) => CommandKind::SetAeroPedalDipCompensation,
-            Self::SetAeroLateralTiltLimit(_) => CommandKind::SetAeroLateralTiltLimit,
-            Self::SetAeroVoltageCorrection(_) => CommandKind::SetAeroVoltageCorrection,
-            Self::SetAeroMaxChargeVoltageRaw(_) => CommandKind::SetAeroMaxChargeVoltageRaw,
-            Self::SetAeroWheelUnits(_) => CommandKind::SetAeroWheelUnits,
-            Self::SetAeroHighSpeedMode(_) => CommandKind::SetAeroHighSpeedMode,
-            Self::SetAeroLowBatteryMode(_) => CommandKind::SetAeroLowBatteryMode,
-            Self::SetAeroTransportMode(_) => CommandKind::SetAeroTransportMode,
-            Self::SetAeroAlarmSpeed(_) => CommandKind::SetAeroAlarmSpeed,
-            Self::SetAeroAngleAdjustment(_) => CommandKind::SetAeroAngleAdjustment,
-            Self::SetAeroHighBeam(_) => CommandKind::SetAeroHighBeam,
+            Self::SetSetting { .. } => CommandKind::SetSetting,
+            Self::InvokeAction(request) => match request.id {
+                DeviceActionId::Horn => CommandKind::SoundHorn,
+                DeviceActionId::ResetTripMeter => CommandKind::ResetTripMeter,
+                DeviceActionId::GyroCalibration => CommandKind::GyroCalibration,
+            },
             Self::SetLights(_) => CommandKind::SetLights,
-            Self::SetPedalMode(_) => CommandKind::SetPedalMode,
-            Self::SetRollAngle(_) => CommandKind::SetRollAngle,
-            Self::SetSpeedAlarmMode(_) => CommandKind::SetSpeedAlarmMode,
-            Self::SetBegodeMaxSpeed(_) => CommandKind::SetBegodeMaxSpeed,
-            Self::SetBegodeBeeperVolume(_) => CommandKind::SetBegodeBeeperVolume,
-            Self::SetBegodeLedMode(_) => CommandKind::SetBegodeLedMode,
-            Self::SetAccelerationAssist(_) => CommandKind::SetAccelerationAssist,
             Self::SetTaillight(_) => CommandKind::SetTaillight,
             Self::SoundHorn => CommandKind::SoundHorn,
             Self::SetRawMotorCurrent { .. } => CommandKind::SetRawMotorCurrent,
@@ -1170,95 +1071,17 @@ pub enum CommandKind {
     /// Request current settings without changing device state.
     RequestSettings,
 
-    /// Reset the device trip meter.
+    /// Invoke the trip-meter reset action.
     ResetTripMeter,
 
-    /// Set the NOSFET/Veteran tilt-back speed.
-    SetAeroTiltbackSpeed,
+    /// Invoke the gyro-calibration action.
+    GyroCalibration,
 
-    /// Set the NOSFET/Veteran PWT (PWM tilt-back alarm) percentage.
-    SetAeroPwmPercent,
-
-    /// Disable the NOSFET/Veteran PWT alarm.
-    SetAeroPwmOff,
-
-    /// Start or finish NOSFET Aero gyro calibration.
-    SetAeroGyroCalibration,
-
-    /// Set the NOSFET/Veteran modern binary T riding mode.
-    SetAeroRidingMode,
-
-    /// Set the NOSFET Aero brake overpressure alarm percentage.
-    SetAeroBrakeOverpressureAlarm,
-
-    /// Set the NOSFET/Veteran MD pedal hardness percentage.
-    SetAeroPedalHardness,
-
-    /// Set the Aero wheel display backlight brightness.
-    SetAeroDisplayBacklight,
-
-    /// Set the Aero wheel beeper volume.
-    SetAeroBeeperVolume,
-
-    /// Set the Aero dynamic assist.
-    SetAeroDynamicAssist,
-
-    /// Set the Aero pedal-dip compensation.
-    SetAeroPedalDipCompensation,
-
-    /// Set the Aero lateral tilt limit.
-    SetAeroLateralTiltLimit,
-
-    /// Set the Aero voltage correction.
-    SetAeroVoltageCorrection,
-
-    /// Set the NOSFET Aero maximum charge voltage.
-    SetAeroMaxChargeVoltageRaw,
-
-    /// Set the wheel display units.
-    SetAeroWheelUnits,
-
-    /// Enable or disable the Aero high-speed mode.
-    SetAeroHighSpeedMode,
-
-    /// Enable or disable the Aero low-battery mode.
-    SetAeroLowBatteryMode,
-
-    /// Enable or disable the Aero transportation mode.
-    SetAeroTransportMode,
-
-    /// Set the NOSFET/Veteran speed alarm.
-    SetAeroAlarmSpeed,
-
-    /// Set the NOSFET/Veteran ANG (vertical angle) adjustment.
-    SetAeroAngleAdjustment,
-
-    /// Set the NOSFET/Veteran high beam.
-    SetAeroHighBeam,
+    /// Submit a semantic settings request.
+    SetSetting,
 
     /// Set the device lights.
     SetLights,
-
-    /// Set pedal stiffness.
-    SetPedalMode,
-
-    /// Set roll-angle sensitivity.
-    SetRollAngle,
-
-    /// Set the speed-alarm mode.
-    SetSpeedAlarmMode,
-
-    /// Set the Begode max speed.
-    SetBegodeMaxSpeed,
-
-    /// Set the Begode beeper volume.
-    SetBegodeBeeperVolume,
-
-    /// Set the Begode LED mode.
-    SetBegodeLedMode,
-
-    /// Enable or disable acceleration assist.
-    SetAccelerationAssist,
 
     /// Set the taillight state.
     SetTaillight,
@@ -1283,35 +1106,9 @@ impl CommandKind {
             | Self::RequestFaultHistory
             | Self::RequestSettings => SafetyClass::ReadOnly,
             Self::SetLights | Self::SetTaillight | Self::SoundHorn => SafetyClass::BenignControl,
-            Self::ResetTripMeter
-            | Self::SetAeroTiltbackSpeed
-            | Self::SetAeroPwmPercent
-            | Self::SetAeroPwmOff
-            | Self::SetAeroGyroCalibration
-            | Self::SetAeroRidingMode
-            | Self::SetAeroBrakeOverpressureAlarm
-            | Self::SetAeroPedalHardness
-            | Self::SetAeroDisplayBacklight
-            | Self::SetAeroBeeperVolume
-            | Self::SetAeroDynamicAssist
-            | Self::SetAeroPedalDipCompensation
-            | Self::SetAeroLateralTiltLimit
-            | Self::SetAeroVoltageCorrection
-            | Self::SetAeroMaxChargeVoltageRaw
-            | Self::SetAeroWheelUnits
-            | Self::SetAeroHighSpeedMode
-            | Self::SetAeroLowBatteryMode
-            | Self::SetAeroTransportMode
-            | Self::SetAeroAlarmSpeed
-            | Self::SetAeroAngleAdjustment
-            | Self::SetAeroHighBeam
-            | Self::SetPedalMode
-            | Self::SetRollAngle
-            | Self::SetSpeedAlarmMode
-            | Self::SetBegodeMaxSpeed
-            | Self::SetBegodeBeeperVolume
-            | Self::SetBegodeLedMode
-            | Self::SetAccelerationAssist => SafetyClass::StationaryOnly,
+            Self::ResetTripMeter | Self::GyroCalibration | Self::SetSetting => {
+                SafetyClass::StationaryOnly
+            }
             Self::SetRawMotorCurrent => SafetyClass::Actuation,
         }
     }
@@ -2973,7 +2770,7 @@ impl RegistryHashBuilder {
     }
 }
 
-const ALL_COMMAND_KINDS: [CommandKind; 37] = [
+const ALL_COMMAND_KINDS: [CommandKind; 14] = [
     CommandKind::RequestIdentity,
     CommandKind::RequestTelemetry,
     CommandKind::RequestFirmwareInfo,
@@ -2982,32 +2779,9 @@ const ALL_COMMAND_KINDS: [CommandKind; 37] = [
     CommandKind::RequestFaultHistory,
     CommandKind::RequestSettings,
     CommandKind::ResetTripMeter,
-    CommandKind::SetAeroTiltbackSpeed,
-    CommandKind::SetAeroPwmPercent,
-    CommandKind::SetAeroPwmOff,
-    CommandKind::SetAeroGyroCalibration,
-    CommandKind::SetAeroRidingMode,
-    CommandKind::SetAeroBrakeOverpressureAlarm,
-    CommandKind::SetAeroPedalHardness,
-    CommandKind::SetAeroDisplayBacklight,
-    CommandKind::SetAeroBeeperVolume,
-    CommandKind::SetAeroDynamicAssist,
-    CommandKind::SetAeroPedalDipCompensation,
-    CommandKind::SetAeroLateralTiltLimit,
-    CommandKind::SetAeroVoltageCorrection,
-    CommandKind::SetAeroMaxChargeVoltageRaw,
-    CommandKind::SetAeroWheelUnits,
-    CommandKind::SetAeroAlarmSpeed,
-    CommandKind::SetAeroAngleAdjustment,
-    CommandKind::SetAeroHighBeam,
+    CommandKind::GyroCalibration,
+    CommandKind::SetSetting,
     CommandKind::SetLights,
-    CommandKind::SetPedalMode,
-    CommandKind::SetRollAngle,
-    CommandKind::SetSpeedAlarmMode,
-    CommandKind::SetBegodeMaxSpeed,
-    CommandKind::SetBegodeBeeperVolume,
-    CommandKind::SetBegodeLedMode,
-    CommandKind::SetAccelerationAssist,
     CommandKind::SetTaillight,
     CommandKind::SoundHorn,
     CommandKind::SetRawMotorCurrent,
@@ -9618,36 +9392,9 @@ mod tests {
                     | DeviceCommand::RequestDiagnostics
                     | DeviceCommand::RequestFaultHistory
                     | DeviceCommand::RequestSettings
-                    | DeviceCommand::ResetTripMeter
-                    | DeviceCommand::SetAeroTiltbackSpeed(_)
-                    | DeviceCommand::SetAeroPwmPercent(_)
-                    | DeviceCommand::SetAeroPwmOff
-                    | DeviceCommand::SetAeroGyroCalibration
-                    | DeviceCommand::SetAeroRidingMode(_)
-                    | DeviceCommand::SetAeroBrakeOverpressureAlarm(_)
-                    | DeviceCommand::SetAeroPedalHardness(_)
-                    | DeviceCommand::SetAeroDisplayBacklight(_)
-                    | DeviceCommand::SetAeroBeeperVolume(_)
-                    | DeviceCommand::SetAeroDynamicAssist(_)
-                    | DeviceCommand::SetAeroPedalDipCompensation(_)
-                    | DeviceCommand::SetAeroLateralTiltLimit(_)
-                    | DeviceCommand::SetAeroVoltageCorrection(_)
-                    | DeviceCommand::SetAeroMaxChargeVoltageRaw(_)
-                    | DeviceCommand::SetAeroWheelUnits(_)
-                    | DeviceCommand::SetAeroHighSpeedMode(_)
-                    | DeviceCommand::SetAeroLowBatteryMode(_)
-                    | DeviceCommand::SetAeroTransportMode(_)
-                    | DeviceCommand::SetAeroAlarmSpeed(_)
-                    | DeviceCommand::SetAeroAngleAdjustment(_)
-                    | DeviceCommand::SetAeroHighBeam(_)
+                    | DeviceCommand::SetSetting { .. }
+                    | DeviceCommand::InvokeAction(_)
                     | DeviceCommand::SetLights(_)
-                    | DeviceCommand::SetPedalMode(_)
-                    | DeviceCommand::SetRollAngle(_)
-                    | DeviceCommand::SetSpeedAlarmMode(_)
-                    | DeviceCommand::SetBegodeMaxSpeed(_)
-                    | DeviceCommand::SetBegodeBeeperVolume(_)
-                    | DeviceCommand::SetBegodeLedMode(_)
-                    | DeviceCommand::SetAccelerationAssist(_)
                     | DeviceCommand::SetTaillight(_)
                     | DeviceCommand::SoundHorn
                     | DeviceCommand::SetRawMotorCurrent { .. },
@@ -11313,14 +11060,13 @@ mod tests {
 
     #[test]
     fn remaining_euc_setting_intents_are_typed_and_safety_classified() {
-        let acceleration =
-            DeviceCommand::SetAccelerationAssist(crate::AccelerationAssistState::Enabled);
+        let acceleration = DeviceCommand::SetSetting {
+            id: crate::SettingId::AccelerationAssist,
+            value: crate::DeviceSettingValue::Boolean(true),
+        };
         let taillight = DeviceCommand::SetTaillight(LightState::On);
 
-        assert_eq!(
-            acceleration.kind(),
-            crate::CommandKind::SetAccelerationAssist
-        );
+        assert_eq!(acceleration.kind(), crate::CommandKind::SetSetting);
         assert_eq!(
             acceleration.safety_class(),
             crate::SafetyClass::StationaryOnly
@@ -11421,7 +11167,10 @@ mod tests {
             ),
             (
                 crate::SafetyClass::StationaryOnly,
-                &[crate::CommandKind::SetPedalMode][..],
+                &[
+                    crate::CommandKind::SetSetting,
+                    crate::CommandKind::GyroCalibration,
+                ][..],
             ),
             (
                 crate::SafetyClass::Actuation,

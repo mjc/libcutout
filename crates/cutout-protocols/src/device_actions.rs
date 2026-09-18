@@ -128,8 +128,9 @@ impl DeviceControlProfile {
         }
         Ok(match request.id {
             DeviceActionId::Horn => DeviceCommand::SoundHorn,
-            DeviceActionId::ResetTripMeter => DeviceCommand::ResetTripMeter,
-            DeviceActionId::GyroCalibration => DeviceCommand::SetAeroGyroCalibration,
+            DeviceActionId::ResetTripMeter | DeviceActionId::GyroCalibration => {
+                DeviceCommand::InvokeAction(request)
+            }
         })
     }
 
@@ -138,7 +139,7 @@ impl DeviceControlProfile {
     pub fn normalize_action_readback(self, readback: SettingsReadback) -> Vec<ActionObservation> {
         if !self
             .available
-            .supports_command_kind(CommandKind::SetAeroGyroCalibration)
+            .supports_command_kind(CommandKind::GyroCalibration)
         {
             return Vec::new();
         }
@@ -236,6 +237,6 @@ const fn action_kind(id: DeviceActionId) -> CommandKind {
     match id {
         DeviceActionId::Horn => CommandKind::SoundHorn,
         DeviceActionId::ResetTripMeter => CommandKind::ResetTripMeter,
-        DeviceActionId::GyroCalibration => CommandKind::SetAeroGyroCalibration,
+        DeviceActionId::GyroCalibration => CommandKind::GyroCalibration,
     }
 }

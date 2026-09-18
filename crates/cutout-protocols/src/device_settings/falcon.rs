@@ -1,28 +1,10 @@
 use cutout_core::{
-    AccelerationAssistState, BegodeBeeperVolume, BegodeLedModeSetting, BegodeMaxSpeed, CommandKind,
-    DeviceCommand, DeviceSettingValue, LightState, PedalMode, RollAngle, SettingId, SettingsEntry,
-    SpeedAlarmMode,
+    DeviceSettingValue, LightState, PedalMode, RollAngle, SettingId, SettingsEntry, SpeedAlarmMode,
 };
 
 use super::{
-    SettingControl, SettingUnit, checked_number, choices, number, readback::SettingObservation,
-    speed_control,
+    SettingControl, SettingUnit, choices, number, readback::SettingObservation, speed_control,
 };
-
-pub(super) const fn command_kind(id: SettingId) -> Option<CommandKind> {
-    Some(match id {
-        SettingId::Headlight => CommandKind::SetLights,
-        SettingId::PedalMode => CommandKind::SetPedalMode,
-        SettingId::RollAngleMode => CommandKind::SetRollAngle,
-        SettingId::SpeedAlarmMode => CommandKind::SetSpeedAlarmMode,
-        SettingId::MaximumSpeed => CommandKind::SetBegodeMaxSpeed,
-        SettingId::BeeperVolumeLevel => CommandKind::SetBegodeBeeperVolume,
-        SettingId::LightingPattern => CommandKind::SetBegodeLedMode,
-        SettingId::AccelerationAssist => CommandKind::SetAccelerationAssist,
-        SettingId::Taillight => CommandKind::SetTaillight,
-        _ => return None,
-    })
-}
 
 pub(super) fn control(id: SettingId) -> Option<SettingControl> {
     Some(match id {
@@ -66,81 +48,6 @@ pub(super) fn control(id: SettingId) -> Option<SettingControl> {
 
 pub(super) const fn is_read_only(id: SettingId) -> bool {
     matches!(id, SettingId::LightingPattern | SettingId::PowerOffDelay)
-}
-
-pub(super) fn checked_command(id: SettingId, value: DeviceSettingValue) -> Option<DeviceCommand> {
-    match value {
-        DeviceSettingValue::Number(value) => numeric_command(id, value),
-        DeviceSettingValue::Choice(value) => choice_command(id, value),
-        DeviceSettingValue::Boolean(on) => boolean_command(id, on),
-        DeviceSettingValue::Disabled => None,
-    }
-}
-
-fn boolean_command(id: SettingId, on: bool) -> Option<DeviceCommand> {
-    Some(match id {
-        SettingId::Headlight => DeviceCommand::SetLights(light(on)),
-        SettingId::AccelerationAssist => DeviceCommand::SetAccelerationAssist(if on {
-            AccelerationAssistState::Enabled
-        } else {
-            AccelerationAssistState::Disabled
-        }),
-        SettingId::Taillight => DeviceCommand::SetTaillight(light(on)),
-        _ => return None,
-    })
-}
-
-fn numeric_command(id: SettingId, value: i32) -> Option<DeviceCommand> {
-    let value = if id == SettingId::MaximumSpeed {
-        if value % 10 != 0 {
-            return None;
-        }
-        value / 10
-    } else {
-        value
-    };
-    match id {
-        SettingId::MaximumSpeed => {
-            checked_number(value, BegodeMaxSpeed::new).map(DeviceCommand::SetBegodeMaxSpeed)
-        }
-        SettingId::BeeperVolumeLevel => {
-            checked_number(value, BegodeBeeperVolume::new).map(DeviceCommand::SetBegodeBeeperVolume)
-        }
-        _ => None,
-    }
-}
-
-fn choice_command(id: SettingId, value: u16) -> Option<DeviceCommand> {
-    match id {
-        SettingId::PedalMode => match value {
-            0 => Some(DeviceCommand::SetPedalMode(PedalMode::Hard)),
-            1 => Some(DeviceCommand::SetPedalMode(PedalMode::Medium)),
-            2 => Some(DeviceCommand::SetPedalMode(PedalMode::Soft)),
-            _ => None,
-        },
-        SettingId::RollAngleMode => match value {
-            0 => Some(DeviceCommand::SetRollAngle(RollAngle::Low)),
-            1 => Some(DeviceCommand::SetRollAngle(RollAngle::Medium)),
-            2 => Some(DeviceCommand::SetRollAngle(RollAngle::High)),
-            _ => None,
-        },
-        SettingId::SpeedAlarmMode => match value {
-            0 => Some(DeviceCommand::SetSpeedAlarmMode(SpeedAlarmMode::Both)),
-            1 => Some(DeviceCommand::SetSpeedAlarmMode(
-                SpeedAlarmMode::StageOneOnly,
-            )),
-            _ => None,
-        },
-        SettingId::LightingPattern => u8::try_from(value)
-            .ok()
-            .and_then(BegodeLedModeSetting::new)
-            .map(DeviceCommand::SetBegodeLedMode),
-        _ => None,
-    }
-}
-
-const fn light(on: bool) -> LightState {
-    if on { LightState::On } else { LightState::Off }
 }
 
 pub(super) fn normalize_readback(entry: SettingsEntry, observations: &mut Vec<SettingObservation>) {

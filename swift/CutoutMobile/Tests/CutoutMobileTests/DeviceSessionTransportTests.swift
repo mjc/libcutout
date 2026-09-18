@@ -82,7 +82,8 @@ final class DeviceSessionTransportTests: XCTestCase {
             let state = CutoutSessionStateHandle()
             let token = try XCTUnwrap(state.beginConnectionAttempt(platformIdentifier: "A", nowMs: 0).token)
             var sink: TransportSink? = TransportSink()
-            weak var reference = sink
+            weak var reference: TransportSink?
+            reference = sink
             let transport = makeTransport(state, token: token, sink: try XCTUnwrap(sink))
             sink = nil
             XCTAssertNil(reference)

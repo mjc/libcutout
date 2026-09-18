@@ -577,12 +577,8 @@ impl MelkLightingProfile {
     pub const fn encode(command: RgbLightingCommand) -> [u8; MELK_FRAME_LEN] {
         match command {
             RgbLightingCommand::SetPower(power) => match power {
-                cutout_core::LightingPowerState::On => {
-                    [0x7e, 0x00, 0x04, 0x01, 0x00, 0x00, 0x00, 0x00, 0xef]
-                }
-                cutout_core::LightingPowerState::Off => {
-                    [0x7e, 0x00, 0x04, 0x00, 0x00, 0x00, 0xff, 0x00, 0xef]
-                }
+                LightingPowerState::On => [0x7e, 0x00, 0x04, 0x01, 0x00, 0x00, 0x00, 0x00, 0xef],
+                LightingPowerState::Off => [0x7e, 0x00, 0x04, 0x00, 0x00, 0x00, 0xff, 0x00, 0xef],
             },
             RgbLightingCommand::SetSolidColor(color) => {
                 let [red, green, blue] = color.channels();

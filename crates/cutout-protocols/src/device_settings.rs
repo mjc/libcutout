@@ -11,8 +11,6 @@ use cutout_core::{
     VerificationStatus,
 };
 
-use crate::{BegodeFalconModel, SupportsBenignControls, SupportsSettingsWrites};
-
 /// Meaning of a fixed-point numeric value before native display-unit conversion.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum SettingUnit {
@@ -164,6 +162,9 @@ pub struct DeviceControlProfile {
     pub(crate) available: Capabilities,
     pub(crate) verified: Capabilities,
     confirmation: Capabilities,
+    available_settings: &'static [SettingId],
+    verified_settings: &'static [SettingId],
+    confirmation_settings: &'static [SettingId],
     readable: &'static [SettingId],
     default_charge_profile: Option<ChargeProfile>,
 }
@@ -182,14 +183,6 @@ enum SettingsAdapter {
 }
 
 impl SettingsAdapter {
-    const fn command_kind(self, id: SettingId) -> Option<CommandKind> {
-        match self {
-            Self::None => None,
-            Self::Aero => aero::command_kind(id),
-            Self::Falcon => falcon::command_kind(id),
-        }
-    }
-
     fn control(self, id: SettingId) -> Option<SettingControl> {
         match self {
             Self::None => None,
@@ -206,11 +199,14 @@ impl SettingsAdapter {
         }
     }
 
-    fn checked_command(self, id: SettingId, value: DeviceSettingValue) -> Option<DeviceCommand> {
+    fn checked_request(self, id: SettingId, value: DeviceSettingValue) -> Option<DeviceCommand> {
         match self {
             Self::None => None,
-            Self::Aero => aero::checked_command(id, value),
-            Self::Falcon => falcon::checked_command(id, value),
+            // The profile has already validated the semantic descriptor, including
+            // controls such as the explicitly-disabled PWM option. The adapter only
+            // selects the protocol family; it must not repeat a weaker wire-shaped
+            // validation pass here.
+            Self::Aero | Self::Falcon => Some(DeviceCommand::SetSetting { id, value }),
         }
     }
 
@@ -236,6 +232,9 @@ impl DeviceControlProfile {
             available,
             verified,
             confirmation,
+            available_settings: &[],
+            verified_settings: &[],
+            confirmation_settings: &[],
             readable: &[],
             default_charge_profile: None,
         }
@@ -245,6 +244,19 @@ impl DeviceControlProfile {
     #[must_use]
     const fn with_settings_adapter(mut self, settings_adapter: SettingsAdapter) -> Self {
         self.settings_adapter = settings_adapter;
+        self
+    }
+
+    #[must_use]
+    const fn with_setting_capabilities(
+        mut self,
+        available: &'static [SettingId],
+        verified: &'static [SettingId],
+        confirmation: &'static [SettingId],
+    ) -> Self {
+        self.available_settings = available;
+        self.verified_settings = verified;
+        self.confirmation_settings = confirmation;
         self
     }
 
@@ -278,22 +290,13 @@ impl DeviceControlProfile {
         CATALOG
             .iter()
             .filter_map(|&(id, label_key, group, order)| {
-                let kind = adapter.command_kind(id);
-                if !self.readable.contains(&id)
-                    && !kind.is_some_and(|kind| self.available.supports_command_kind(kind))
-                {
+                if !self.readable.contains(&id) && !self.available_settings.contains(&id) {
                     return None;
                 }
                 let mut control = adapter.control(id)?;
                 if let SettingControl::Number { can_disable, .. } = &mut control {
                     *can_disable = id == SettingId::PwmTiltback
-                        && self
-                            .available
-                            .supports_command_kind(CommandKind::SetAeroPwmOff)
-                        && (validation_mode
-                            || self
-                                .verified
-                                .supports_command_kind(CommandKind::SetAeroPwmOff));
+                        && (validation_mode || self.verified_settings.contains(&id));
                 }
                 Some(SettingDescriptor {
                     id,
@@ -305,15 +308,13 @@ impl DeviceControlProfile {
                     control,
                     access: if adapter.is_read_only(id) {
                         SettingAccess::ReadOnly
-                    } else if validation_mode
-                        || kind.is_some_and(|kind| self.verified.supports_command_kind(kind))
-                    {
+                    } else if validation_mode || self.verified_settings.contains(&id) {
                         SettingAccess::Writable
                     } else {
                         SettingAccess::Unverified
                     },
                     confirmation_supported: !adapter.is_read_only(id)
-                        && kind.is_some_and(|kind| self.confirmation.supports_command_kind(kind)),
+                        && self.confirmation_settings.contains(&id),
                 })
             })
             .collect()
@@ -344,7 +345,7 @@ impl DeviceControlProfile {
             return Err(SettingsRequestError::InvalidValue);
         }
         self.settings_adapter
-            .checked_command(id, value)
+            .checked_request(id, value)
             .ok_or(SettingsRequestError::InvalidValue)
     }
 }
@@ -354,53 +355,56 @@ impl DeviceControlProfile {
 pub const fn aero_control_profile() -> DeviceControlProfile {
     DeviceControlProfile::new(
         Capabilities::from_supported_commands([
-            CommandKind::SetAeroHighBeam,
-            CommandKind::SetAeroTiltbackSpeed,
-            CommandKind::SetAeroPwmPercent,
-            CommandKind::SetAeroPwmOff,
-            CommandKind::SetAeroRidingMode,
-            CommandKind::SetAeroBrakeOverpressureAlarm,
-            CommandKind::SetAeroPedalHardness,
-            CommandKind::SetAeroDisplayBacklight,
-            CommandKind::SetAeroBeeperVolume,
-            CommandKind::SetAeroDynamicAssist,
-            CommandKind::SetAeroPedalDipCompensation,
-            CommandKind::SetAeroLateralTiltLimit,
-            CommandKind::SetAeroVoltageCorrection,
-            CommandKind::SetAeroMaxChargeVoltageRaw,
-            CommandKind::SetAeroWheelUnits,
-            CommandKind::SetAeroHighSpeedMode,
-            CommandKind::SetAeroLowBatteryMode,
-            CommandKind::SetAeroTransportMode,
-            CommandKind::SetAeroAlarmSpeed,
-            CommandKind::SetAeroAngleAdjustment,
+            CommandKind::SetSetting,
             CommandKind::SoundHorn,
             CommandKind::ResetTripMeter,
-            CommandKind::SetAeroGyroCalibration,
+            CommandKind::GyroCalibration,
         ]),
-        Capabilities::from_supported_commands([
-            CommandKind::SetAeroHighBeam,
-            CommandKind::SoundHorn,
-        ]),
-        Capabilities::from_supported_commands([
-            CommandKind::SetAeroTiltbackSpeed,
-            CommandKind::SetAeroAlarmSpeed,
-            CommandKind::SetAeroPwmPercent,
-            CommandKind::SetAeroPedalHardness,
-            CommandKind::SetAeroDisplayBacklight,
-            CommandKind::SetAeroWheelUnits,
-            CommandKind::SetAeroBeeperVolume,
-            CommandKind::SetAeroDynamicAssist,
-            CommandKind::SetAeroPedalDipCompensation,
-            CommandKind::SetAeroLateralTiltLimit,
-            CommandKind::SetAeroVoltageCorrection,
-            CommandKind::SetAeroHighSpeedMode,
-            CommandKind::SetAeroLowBatteryMode,
-            CommandKind::SetAeroTransportMode,
-            CommandKind::SetAeroBrakeOverpressureAlarm,
-        ]),
+        Capabilities::from_supported_commands([CommandKind::SetSetting, CommandKind::SoundHorn]),
+        Capabilities::from_supported_commands([CommandKind::SetSetting]),
     )
     .with_settings_adapter(SettingsAdapter::Aero)
+    .with_setting_capabilities(
+        &[
+            SettingId::HighBeam,
+            SettingId::TiltbackSpeed,
+            SettingId::PwmTiltback,
+            SettingId::RidingPreset,
+            SettingId::BrakeOverpressureAlarm,
+            SettingId::PedalHardness,
+            SettingId::DisplayBrightness,
+            SettingId::BeeperVolumePercent,
+            SettingId::DynamicAssist,
+            SettingId::PedalDipCompensation,
+            SettingId::LateralTiltLimit,
+            SettingId::VoltageCorrection,
+            SettingId::ChargeLimitDiagnostic,
+            SettingId::DisplayUnits,
+            SettingId::HighSpeedMode,
+            SettingId::LowBatteryMode,
+            SettingId::TransportMode,
+            SettingId::SpeedAlarmThreshold,
+            SettingId::PedalAngle,
+        ],
+        &[SettingId::HighBeam],
+        &[
+            SettingId::TiltbackSpeed,
+            SettingId::SpeedAlarmThreshold,
+            SettingId::PwmTiltback,
+            SettingId::PedalHardness,
+            SettingId::DisplayBrightness,
+            SettingId::DisplayUnits,
+            SettingId::BeeperVolumePercent,
+            SettingId::DynamicAssist,
+            SettingId::PedalDipCompensation,
+            SettingId::LateralTiltLimit,
+            SettingId::VoltageCorrection,
+            SettingId::HighSpeedMode,
+            SettingId::LowBatteryMode,
+            SettingId::TransportMode,
+            SettingId::BrakeOverpressureAlarm,
+        ],
+    )
     .with_readable_settings(&[SettingId::AutoShutdownRemaining, SettingId::ChargeMode])
     .with_default_charge_profile(ChargeProfile::new(
         ChargeProfileIdentity::new(43),
@@ -416,18 +420,42 @@ pub const fn aero_control_profile() -> DeviceControlProfile {
 /// Falcon writes with no readable acknowledgement remain explicitly unconfirmed.
 #[must_use]
 pub const fn falcon_control_profile() -> DeviceControlProfile {
-    let available =
-        BegodeFalconModel::WRITE_CAPABILITIES.union(BegodeFalconModel::CONTROL_CAPABILITIES);
+    let available = Capabilities::from_supported_commands([CommandKind::SetSetting]);
     DeviceControlProfile::new(
         available,
         available,
-        Capabilities::from_supported_commands([
-            CommandKind::SetPedalMode,
-            CommandKind::SetRollAngle,
-            CommandKind::SetSpeedAlarmMode,
-        ]),
+        Capabilities::from_supported_commands([CommandKind::SetSetting]),
     )
     .with_settings_adapter(SettingsAdapter::Falcon)
+    .with_setting_capabilities(
+        &[
+            SettingId::Headlight,
+            SettingId::PedalMode,
+            SettingId::RollAngleMode,
+            SettingId::SpeedAlarmMode,
+            SettingId::MaximumSpeed,
+            SettingId::BeeperVolumeLevel,
+            SettingId::LightingPattern,
+            SettingId::AccelerationAssist,
+            SettingId::Taillight,
+        ],
+        &[
+            SettingId::Headlight,
+            SettingId::PedalMode,
+            SettingId::RollAngleMode,
+            SettingId::SpeedAlarmMode,
+            SettingId::MaximumSpeed,
+            SettingId::BeeperVolumeLevel,
+            SettingId::LightingPattern,
+            SettingId::AccelerationAssist,
+            SettingId::Taillight,
+        ],
+        &[
+            SettingId::PedalMode,
+            SettingId::RollAngleMode,
+            SettingId::SpeedAlarmMode,
+        ],
+    )
     .with_readable_settings(&[SettingId::PowerOffDelay])
     .with_default_charge_profile(ChargeProfile::new(
         ChargeProfileIdentity::new(44),
@@ -709,19 +737,12 @@ fn control_value(control: SettingControl, raw: i64) -> Option<DeviceSettingValue
     }
 }
 
-fn checked_number<T, U: TryFrom<i32>>(
-    value: i32,
-    constructor: impl FnOnce(U) -> Option<T>,
-) -> Option<T> {
-    U::try_from(value).ok().and_then(constructor)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use cutout_core::{
-        AeroPwmSetting, Capabilities, CapacitySource, CommandKind, DeviceCommand,
-        DeviceSettingValue, SettingId, VerificationStatus,
+        Capabilities, CapacitySource, CommandKind, DeviceCommand, DeviceSettingValue, SettingId,
+        VerificationStatus,
     };
 
     #[test]
@@ -808,11 +829,7 @@ mod tests {
 
     #[test]
     fn generic_capabilities_do_not_inherit_an_unrelated_settings_adapter() {
-        let capabilities = Capabilities::from_supported_commands([
-            CommandKind::SetLights,
-            CommandKind::SetAeroPwmPercent,
-            CommandKind::SetAeroPwmOff,
-        ]);
+        let capabilities = Capabilities::from_supported_commands([CommandKind::SetLights]);
         let profile =
             DeviceControlProfile::new(capabilities, capabilities, Capabilities::default());
         assert!(profile.descriptors(false).is_empty());
@@ -851,7 +868,10 @@ mod tests {
         assert_eq!(
             aero.command(SettingId::PwmTiltback, DeviceSettingValue::Disabled, true)
                 .unwrap(),
-            DeviceCommand::SetAeroPwmPercent(AeroPwmSetting::Off)
+            DeviceCommand::SetSetting {
+                id: SettingId::PwmTiltback,
+                value: DeviceSettingValue::Disabled,
+            }
         );
     }
 

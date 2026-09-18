@@ -1692,29 +1692,9 @@ impl SupportsBenignControls for NosfetAeroModel {
 
 impl SupportsSettingsWrites for NosfetAeroModel {
     const WRITE_CAPABILITIES: Capabilities = Capabilities::from_supported_commands([
-        CommandKind::SetPedalMode,
+        CommandKind::SetSetting,
         CommandKind::ResetTripMeter,
-        CommandKind::SetAeroTiltbackSpeed,
-        CommandKind::SetAeroPwmPercent,
-        CommandKind::SetAeroPwmOff,
-        CommandKind::SetAeroGyroCalibration,
-        CommandKind::SetAeroRidingMode,
-        CommandKind::SetAeroBrakeOverpressureAlarm,
-        CommandKind::SetAeroPedalHardness,
-        CommandKind::SetAeroDisplayBacklight,
-        CommandKind::SetAeroBeeperVolume,
-        CommandKind::SetAeroDynamicAssist,
-        CommandKind::SetAeroPedalDipCompensation,
-        CommandKind::SetAeroLateralTiltLimit,
-        CommandKind::SetAeroVoltageCorrection,
-        CommandKind::SetAeroMaxChargeVoltageRaw,
-        CommandKind::SetAeroWheelUnits,
-        CommandKind::SetAeroHighSpeedMode,
-        CommandKind::SetAeroLowBatteryMode,
-        CommandKind::SetAeroTransportMode,
-        CommandKind::SetAeroAlarmSpeed,
-        CommandKind::SetAeroAngleAdjustment,
-        CommandKind::SetAeroHighBeam,
+        CommandKind::GyroCalibration,
     ]);
     const MAX_SETTINGS_SPEED: Option<cutout_core::Speed> =
         Some(cutout_core::Speed::from_millimetres_per_second(500));
@@ -1797,14 +1777,8 @@ impl SupportsBenignControls for BegodeFalconModel {
 }
 
 impl SupportsSettingsWrites for BegodeFalconModel {
-    const WRITE_CAPABILITIES: Capabilities = Capabilities::from_supported_commands([
-        CommandKind::SetPedalMode,
-        CommandKind::SetRollAngle,
-        CommandKind::SetSpeedAlarmMode,
-        CommandKind::SetBegodeMaxSpeed,
-        CommandKind::SetBegodeBeeperVolume,
-        CommandKind::SetBegodeLedMode,
-    ]);
+    const WRITE_CAPABILITIES: Capabilities =
+        Capabilities::from_supported_commands([CommandKind::SetSetting]);
 
     fn encode_settings_write(
         command: DeviceCommand,
@@ -1915,7 +1889,7 @@ fn handle_read_only_session<M: ReadOnlyModelSpec, const ACCEPT_ANY_NOTIFICATION:
             }
             ReadOnlyCommandGate::Unsupported(CommandKind::RequestBatteryInfo) => {
                 output.push(SessionOutput::Event(DeviceEvent::ReadOnlyResponse(
-                    ReadOnlyResponse::Battery(cutout_core::BatteryReadback::unsupported()),
+                    ReadOnlyResponse::Battery(BatteryReadback::unsupported()),
                 )));
             }
             ReadOnlyCommandGate::Unsupported(_) => {}
@@ -1925,9 +1899,9 @@ fn handle_read_only_session<M: ReadOnlyModelSpec, const ACCEPT_ANY_NOTIFICATION:
 
 fn unavailable_readback_response(kind: CommandKind) -> Option<ReadOnlyResponse> {
     match kind {
-        CommandKind::RequestBatteryInfo => Some(ReadOnlyResponse::Battery(
-            cutout_core::BatteryReadback::unavailable(),
-        )),
+        CommandKind::RequestBatteryInfo => {
+            Some(ReadOnlyResponse::Battery(BatteryReadback::unavailable()))
+        }
         CommandKind::RequestFaultHistory => Some(ReadOnlyResponse::FaultHistory(
             cutout_core::FaultHistoryReadback::unavailable(),
         )),
@@ -1939,35 +1913,9 @@ fn unavailable_readback_response(kind: CommandKind) -> Option<ReadOnlyResponse> 
         | CommandKind::RequestTelemetry
         | CommandKind::RequestDiagnostics
         | CommandKind::ResetTripMeter
-        | CommandKind::SetAeroTiltbackSpeed
-        | CommandKind::SetAeroPwmPercent
-        | CommandKind::SetAeroPwmOff
-        | CommandKind::SetAeroGyroCalibration
-        | CommandKind::SetAeroRidingMode
-        | CommandKind::SetAeroBrakeOverpressureAlarm
-        | CommandKind::SetAeroPedalHardness
-        | CommandKind::SetAeroDisplayBacklight
-        | CommandKind::SetAeroBeeperVolume
-        | CommandKind::SetAeroDynamicAssist
-        | CommandKind::SetAeroPedalDipCompensation
-        | CommandKind::SetAeroLateralTiltLimit
-        | CommandKind::SetAeroVoltageCorrection
-        | CommandKind::SetAeroMaxChargeVoltageRaw
-        | CommandKind::SetAeroWheelUnits
-        | CommandKind::SetAeroHighSpeedMode
-        | CommandKind::SetAeroLowBatteryMode
-        | CommandKind::SetAeroTransportMode
-        | CommandKind::SetAeroAlarmSpeed
-        | CommandKind::SetAeroAngleAdjustment
-        | CommandKind::SetAeroHighBeam
-        | CommandKind::SetAccelerationAssist
+        | CommandKind::GyroCalibration
+        | CommandKind::SetSetting
         | CommandKind::SetLights
-        | CommandKind::SetPedalMode
-        | CommandKind::SetRollAngle
-        | CommandKind::SetSpeedAlarmMode
-        | CommandKind::SetBegodeMaxSpeed
-        | CommandKind::SetBegodeBeeperVolume
-        | CommandKind::SetBegodeLedMode
         | CommandKind::SetTaillight
         | CommandKind::SoundHorn
         | CommandKind::SetRawMotorCurrent => None,
@@ -2652,7 +2600,7 @@ mod tests {
     use arrayvec::ArrayVec;
     use core::mem::size_of;
     use cutout_core::{
-        BatteryPageKind, BegodeMaxSpeed, Duration, LinkInfo, Measured, ProtocolTag, RawFieldValue,
+        BatteryPageKind, Duration, LinkInfo, Measured, ProtocolTag, RawFieldValue,
         ReadOnlyResponse, RideOperatingState, StationarySettingsPolicy, TelemetryDelta,
         TransportAction, VerificationStatus, WriteMode,
     };
@@ -2684,7 +2632,7 @@ mod tests {
 
     impl SupportsSettingsWrites for TestModel {
         const WRITE_CAPABILITIES: Capabilities =
-            Capabilities::from_supported_commands([CommandKind::SetPedalMode]);
+            Capabilities::from_supported_commands([CommandKind::SetSetting]);
 
         fn encode_settings_write(
             command: DeviceCommand,
@@ -5361,7 +5309,10 @@ mod tests {
             &mut output,
         );
         session.handle(
-            SessionInput::Command(DeviceCommand::SetPedalMode(cutout_core::PedalMode::Hard)),
+            SessionInput::Command(DeviceCommand::SetSetting {
+                id: cutout_core::SettingId::RidingPreset,
+                value: cutout_core::DeviceSettingValue::Choice(0),
+            }),
             &mut output,
         );
 
@@ -5391,7 +5342,12 @@ mod tests {
             &mut output,
         );
         session.handle(
-            SessionInput::Command(DeviceCommand::ResetTripMeter),
+            SessionInput::Command(DeviceCommand::InvokeAction(
+                cutout_core::DeviceActionRequest {
+                    id: cutout_core::DeviceActionId::ResetTripMeter,
+                    step: cutout_core::DeviceActionStep::Invoke,
+                },
+            )),
             &mut output,
         );
 
@@ -5406,35 +5362,37 @@ mod tests {
     fn aero_stationary_settings_session_schedules_tlt_pwt_alm_and_ang() {
         let cases = [
             (
-                DeviceCommand::SetAeroTiltbackSpeed(
-                    cutout_core::AeroSpeedSetting::new(53).expect("53 km/h fits"),
-                ),
+                DeviceCommand::SetSetting {
+                    id: cutout_core::SettingId::TiltbackSpeed,
+                    value: cutout_core::DeviceSettingValue::Number(530),
+                },
                 *b"LdAp",
                 12,
                 53,
             ),
             (
-                DeviceCommand::SetAeroPwmPercent(
-                    cutout_core::AeroPwmPercent::new(64)
-                        .expect("64 percent fits")
-                        .into(),
-                ),
+                DeviceCommand::SetSetting {
+                    id: cutout_core::SettingId::PwmTiltback,
+                    value: cutout_core::DeviceSettingValue::Number(64),
+                },
                 *b"LdAp",
                 13,
-                36,
+                64,
             ),
             (
-                DeviceCommand::SetAeroAlarmSpeed(
-                    cutout_core::AeroSpeedSetting::new(56).expect("56 km/h fits"),
-                ),
+                DeviceCommand::SetSetting {
+                    id: cutout_core::SettingId::SpeedAlarmThreshold,
+                    value: cutout_core::DeviceSettingValue::Number(560),
+                },
                 *b"LkAp",
                 12,
                 56,
             ),
             (
-                DeviceCommand::SetAeroAngleAdjustment(
-                    cutout_core::AeroAngleAdjustment::new(-12).expect("-1.2 degrees fits"),
-                ),
+                DeviceCommand::SetSetting {
+                    id: cutout_core::SettingId::PedalAngle,
+                    value: cutout_core::DeviceSettingValue::Number(-12),
+                },
                 *b"LkAp",
                 11,
                 244,
@@ -5487,7 +5445,10 @@ mod tests {
         output.clear();
 
         session.handle(
-            SessionInput::Command(DeviceCommand::SetAeroHighBeam(cutout_core::LightState::On)),
+            SessionInput::Command(DeviceCommand::SetSetting {
+                id: cutout_core::SettingId::HighBeam,
+                value: cutout_core::DeviceSettingValue::Boolean(true),
+            }),
             &mut output,
         );
         assert!(matches!(
@@ -5528,7 +5489,10 @@ mod tests {
             &mut output,
         );
         session.handle(
-            SessionInput::Command(DeviceCommand::SetPedalMode(cutout_core::PedalMode::Hard)),
+            SessionInput::Command(DeviceCommand::SetSetting {
+                id: cutout_core::SettingId::PedalMode,
+                value: cutout_core::DeviceSettingValue::Choice(0),
+            }),
             &mut output,
         );
 
@@ -5558,7 +5522,10 @@ mod tests {
             &mut output,
         );
         session.handle(
-            SessionInput::Command(DeviceCommand::SetRollAngle(cutout_core::RollAngle::High)),
+            SessionInput::Command(DeviceCommand::SetSetting {
+                id: cutout_core::SettingId::RollAngleMode,
+                value: cutout_core::DeviceSettingValue::Choice(2),
+            }),
             &mut output,
         );
 
@@ -5588,9 +5555,10 @@ mod tests {
             &mut output,
         );
         session.handle(
-            SessionInput::Command(DeviceCommand::SetSpeedAlarmMode(
-                cutout_core::SpeedAlarmMode::StageOneOnly,
-            )),
+            SessionInput::Command(DeviceCommand::SetSetting {
+                id: cutout_core::SettingId::SpeedAlarmMode,
+                value: cutout_core::DeviceSettingValue::Choice(1),
+            }),
             &mut output,
         );
 
@@ -5622,9 +5590,10 @@ mod tests {
         output.clear();
 
         session.handle(
-            SessionInput::Command(DeviceCommand::SetBegodeMaxSpeed(
-                BegodeMaxSpeed::new(30).expect("30 km/h is encodable"),
-            )),
+            SessionInput::Command(DeviceCommand::SetSetting {
+                id: cutout_core::SettingId::MaximumSpeed,
+                value: cutout_core::DeviceSettingValue::Number(300),
+            }),
             &mut output,
         );
         assert!(matches!(
@@ -5682,9 +5651,10 @@ mod tests {
         output.clear();
 
         session.handle(
-            SessionInput::Command(DeviceCommand::SetBegodeMaxSpeed(
-                BegodeMaxSpeed::new(30).expect("30 km/h is encodable"),
-            )),
+            SessionInput::Command(DeviceCommand::SetSetting {
+                id: cutout_core::SettingId::MaximumSpeed,
+                value: cutout_core::DeviceSettingValue::Number(300),
+            }),
             &mut output,
         );
         output.clear();
@@ -5727,7 +5697,10 @@ mod tests {
                 .expect("stationary"),
         );
         session.handle(
-            SessionInput::Command(DeviceCommand::SetAeroHighBeam(cutout_core::LightState::On)),
+            SessionInput::Command(DeviceCommand::SetSetting {
+                id: cutout_core::SettingId::HighBeam,
+                value: cutout_core::DeviceSettingValue::Boolean(true),
+            }),
             &mut outputs,
         );
         session.arm(
@@ -5764,7 +5737,10 @@ mod tests {
                 .expect("stationary"),
         );
         session.handle(
-            SessionInput::Command(DeviceCommand::SetAeroHighBeam(cutout_core::LightState::On)),
+            SessionInput::Command(DeviceCommand::SetSetting {
+                id: cutout_core::SettingId::HighBeam,
+                value: cutout_core::DeviceSettingValue::Boolean(true),
+            }),
             &mut outputs,
         );
         let mut frame = live_aero_frame();
@@ -5793,7 +5769,12 @@ mod tests {
         )));
         outputs.clear();
         session.handle(
-            SessionInput::Command(DeviceCommand::ResetTripMeter),
+            SessionInput::Command(DeviceCommand::InvokeAction(
+                cutout_core::DeviceActionRequest {
+                    id: cutout_core::DeviceActionId::ResetTripMeter,
+                    step: cutout_core::DeviceActionStep::Invoke,
+                },
+            )),
             &mut outputs,
         );
         assert!(
@@ -5834,7 +5815,10 @@ mod tests {
     fn stationary_settings_session_requires_fresh_stationary_arm() {
         let mut session = StationarySettingsWriteSession::<TestModel, false>::default();
         let mut output = Vec::new();
-        let command = DeviceCommand::SetPedalMode(cutout_core::PedalMode::Hard);
+        let command = DeviceCommand::SetSetting {
+            id: cutout_core::SettingId::RidingPreset,
+            value: cutout_core::DeviceSettingValue::Choice(0),
+        };
 
         session.handle(SessionInput::Command(command), &mut output);
 
@@ -5842,7 +5826,7 @@ mod tests {
             output,
             vec![SessionOutput::Event(DeviceEvent::ControlRefusal(
                 ControlRefusal {
-                    command: CommandKind::SetPedalMode,
+                    command: CommandKind::SetSetting,
                     safety_class: SafetyClass::StationaryOnly,
                     reason: ControlRefusalReason::MissingArm,
                 }
@@ -5954,9 +5938,10 @@ mod tests {
         let mut output = Vec::new();
 
         session.handle(
-            SessionInput::Command(DeviceCommand::SetAccelerationAssist(
-                cutout_core::AccelerationAssistState::Enabled,
-            )),
+            SessionInput::Command(DeviceCommand::SetSetting {
+                id: cutout_core::SettingId::AccelerationAssist,
+                value: cutout_core::DeviceSettingValue::Boolean(true),
+            }),
             &mut output,
         );
 
@@ -5964,7 +5949,7 @@ mod tests {
             output,
             vec![SessionOutput::Event(DeviceEvent::ControlRefusal(
                 ControlRefusal {
-                    command: CommandKind::SetAccelerationAssist,
+                    command: CommandKind::SetSetting,
                     safety_class: SafetyClass::StationaryOnly,
                     reason: ControlRefusalReason::UnsupportedCommand,
                 }
@@ -6057,7 +6042,7 @@ mod tests {
         assert_eq!(
             output,
             vec![SessionOutput::Event(DeviceEvent::ReadOnlyResponse(
-                ReadOnlyResponse::Battery(cutout_core::BatteryReadback::unavailable())
+                ReadOnlyResponse::Battery(BatteryReadback::unavailable())
             ))]
         );
     }
@@ -6080,7 +6065,7 @@ mod tests {
         assert_eq!(
             output,
             vec![SessionOutput::Event(DeviceEvent::ReadOnlyResponse(
-                ReadOnlyResponse::Battery(cutout_core::BatteryReadback::unsupported())
+                ReadOnlyResponse::Battery(BatteryReadback::unsupported())
             ))]
         );
     }
@@ -6158,7 +6143,7 @@ mod tests {
             output,
             vec![
                 SessionOutput::Event(DeviceEvent::ReadOnlyResponse(ReadOnlyResponse::Battery(
-                    cutout_core::BatteryReadback::unavailable()
+                    BatteryReadback::unavailable()
                 ))),
                 SessionOutput::Event(DeviceEvent::ReadOnlyResponse(
                     ReadOnlyResponse::FaultHistory(cutout_core::FaultHistoryReadback::unavailable())
@@ -6211,7 +6196,7 @@ mod tests {
         assert_eq!(
             output,
             vec![SessionOutput::Event(DeviceEvent::ReadOnlyResponse(
-                ReadOnlyResponse::Battery(cutout_core::BatteryReadback::unavailable())
+                ReadOnlyResponse::Battery(BatteryReadback::unavailable())
             ))]
         );
     }

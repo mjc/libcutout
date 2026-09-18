@@ -29,16 +29,16 @@ for the settings already implemented in Rust:
 
 | DarknessBot method | Decoded frame shape | Existing Cutout command |
 | --- | --- | --- |
-| `changeGyroLevel` | `LkAp`, declared length 16, value at absolute byte 11 | `SetAeroAngleAdjustment` |
-| `changeMaxRollAngle` | `LkAp`, declared length 22, value at absolute byte 17 | `SetAeroLateralTiltLimit` |
-| `changeSafeMode` | `LdAp`, declared length 25, value at absolute byte 20 | `SetAeroLowBatteryMode` |
-| `changeMaxSpeed` | `LdAp`, declared length 17, value at absolute byte 12 | `SetAeroTiltbackSpeed` |
-| `changeVolume` | `LdAp`, declared length 28, value at absolute byte 23 | `SetAeroBeeperVolume` |
+| `changeGyroLevel` | `LkAp`, declared length 16, value at absolute byte 11 | `SettingId::PedalAngle` |
+| `changeMaxRollAngle` | `LkAp`, declared length 22, value at absolute byte 17 | `SettingId::LateralTiltLimit` |
+| `changeSafeMode` | `LdAp`, declared length 25, value at absolute byte 20 | `SettingId::LowBatteryMode` |
+| `changeMaxSpeed` | `LdAp`, declared length 17, value at absolute byte 12 | `SettingId::TiltbackSpeed` |
+| `changeVolume` | `LdAp`, declared length 28, value at absolute byte 23 | `SettingId::BeeperVolumePercent` |
 | `changeTorchMode` | Modern branch uses the ASCII `SetLightON`/`SetLightOFF` commands; an older branch constructs model-gated binary frames | `SetLights` for the modern branch |
-| `changeRidingLevel` | Selects an advanced `LdAp` frame (declared length 24) or a legacy binary frame based on the adapter's riding-mode flag | `SetAeroRidingMode` covers the source-backed modern command; legacy selection still needs a model/firmware gate |
-| `changeLimitSpeed` | Stores the app's limit-speed preference and delegates to `changeMaxSpeed` only when the adapter's limit-mode flag is enabled; it is not a second wheel setting | `SetAeroTiltbackSpeed`; no separate limit-mode wheel write is inferred |
+| `changeRidingLevel` | Selects an advanced `LdAp` frame (declared length 24) or a legacy binary frame based on the adapter's riding-mode flag | `SettingId::RidingPreset` covers the source-backed modern command; legacy selection still needs a model/firmware gate |
+| `changeLimitSpeed` | Stores the app's limit-speed preference and delegates to `changeMaxSpeed` only when the adapter's limit-mode flag is enabled; it is not a second wheel setting | `SettingId::TiltbackSpeed`; no separate limit-mode wheel write is inferred |
 | `changeLimitMode` | Updates the app/device preference record and conditionally invokes `changeMaxSpeed`; no independent command builder is present | App policy, not a separate benign wheel command |
-| `resetSingleMileage` | Protocol-v2 branch constructs a multi-write reset sequence; the recovered AOT does not expose a stable setting key or generic model gate | `ResetTripMeter` exists, but the multi-step legacy sequence remains outside the generic API |
+| `resetSingleMileage` | Protocol-v2 branch constructs a multi-write reset sequence; the recovered AOT does not expose a stable setting key or generic model gate | `DeviceActionId::ResetTripMeter` exists, but the multi-step legacy sequence remains outside the generic API |
 
 The byte shapes, positions, and CRCs are covered by the existing Rust golden
 frame tests. The older `changeTorchMode` branch is recorded as evidence but is
@@ -76,7 +76,7 @@ are not unconditional family-wide encodings. Preserve protocol/firmware gates.
 | --- | --- | --- | --- |
 | `alarm_speed` | E | 10–200 km/h, Lk pos 12 | Header 24–25 deci-km/h; typed Cutout setting uses 10–200 |
 | `speed_limit` | V | 10–200 km/h, Ld pos 12 | Header 26–27 and page-8 byte 52; typed Cutout setting uses 10–200 |
-| `safety_margin_limit` | U | UI 0–70% → wire `100 − UI`, Ld pos 13; UI −1 = Off → wire 200 | Page-8 byte 53; Cutout exposes margin and explicit Off writes |
+| `safety_margin_limit` | U | UI 0–70% → wire `100 − UI`, Ld pos 13; UI −1 = Off → wire 200 | Page-8 byte 53; Cutout exposes semantic duty and explicit `Disabled` writes |
 | `display_mode` | K | 0/1, Ld pos 18 | Page-8 byte 58; typed wheel-units readback and write implemented |
 | `display_backlight` | J | 0–100%, Ld pos 15 | Page-8 byte 55; typed mobile readback implemented |
 | `beeper_volume` | F | 0–100%, Ld pos 23 | Page-8 byte 63; typed mobile readback implemented; not the fixed PWM alarm |
@@ -88,9 +88,9 @@ are not unconditional family-wide encodings. Preserve protocol/firmware gates.
 | `high_speed_mode` | N | 0/1, Ld pos 21 | Page-8 byte 61; typed encoder/readback/UI implemented on the settings branch; physical write proof pending |
 | `low_battery_mode` | P | 0/1, Ld pos 20 | Page-8 byte 60; typed encoder/readback/UI implemented on the settings branch; physical write proof pending |
 | `transportation_mode` | W | 0/1, Ld pos 17 | Page-8 byte 57; typed encoder/readback/UI implemented on the settings branch; physical write proof pending |
-| `charging_voltage_limit` | G | Raw page-8 byte 64; official generic UI uses decivolts minus 1450 at Ld pos 24 | Raw readback, write, and a `0..=70` raw Tune control are implemented for protocol validation, but no voltage conversion or safe Aero range is claimed: the generic `145 + raw / 10` display would report 149.6 V for a 126 V Aero pack |
+| `charging_voltage_limit` | G | Raw page-8 byte 64; official generic UI uses decivolts minus 1450 at Ld pos 24 | Raw readback is retained as a diagnostic; no write or voltage conversion is exposed because the generic `145 + raw / 10` display would report 149.6 V for a 126 V Aero pack |
 | `voltage_correction` | X | Signed −15…15, displayed in tenths of a percent, Ld pos 19 | Page-8 byte 59 signed; typed mobile readback implemented; not a volts offset |
-| `headlight_mode` | M | Off/On; binary pos 8 or legacy ASCII | Page-8 byte 47; existing writes; readback/beam applicability needs separate proof |
+| `headlight_mode` | M | Off/On; binary pos 8 or legacy ASCII | Page-8 byte 47; the shared vocabulary retains this as a model-specific control, but the Aero profile does not emit it without a verified model/firmware gate |
 | `riding_mode` | T | UI hard/medium/soft → binary 3/2/1 at pos 7, or legacy ASCII | Distinct from MD; Cutout exposes both the modern binary command and legacy presets |
 
 Remaining menu keys are accounted for separately, not invented as new wheel writes:

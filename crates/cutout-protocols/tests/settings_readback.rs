@@ -104,17 +104,20 @@ fn fractional_speed_is_preserved_without_rounding_into_a_confirmable_request() {
             )
             .is_err()
     );
-    let DeviceCommand::SetAeroTiltbackSpeed(speed) = profile
+    let command = profile
         .command(
             SettingId::TiltbackSpeed,
             DeviceSettingValue::Number(120),
             true,
         )
-        .unwrap()
-    else {
-        panic!("wrong command")
-    };
-    assert_eq!(speed.kilometres_per_hour(), 12);
+        .unwrap();
+    assert_eq!(
+        command,
+        DeviceCommand::SetSetting {
+            id: SettingId::TiltbackSpeed,
+            value: DeviceSettingValue::Number(120),
+        }
+    );
     assert_eq!(
         value(
             &read(

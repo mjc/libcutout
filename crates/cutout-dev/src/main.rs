@@ -11,11 +11,8 @@ use std::{
 
 use anyhow::{Context, Result, bail, ensure};
 use cutout_core::{
-    AeroAngleAdjustment, AeroBeeperVolume, AeroBrakeOverpressureAlarm, AeroDisplayBacklight,
-    AeroDynamicAssist, AeroHighSpeedMode, AeroLateralTiltLimit, AeroLowBatteryMode,
-    AeroMaxChargeVoltageRaw, AeroPedalDipCompensation, AeroPedalHardness, AeroPwmPercent,
-    AeroPwmSetting, AeroRidingMode, AeroSpeedSetting, AeroTransportMode, AeroVoltageCorrection,
-    AeroWheelUnits, DeviceCommand, LightState, MonotonicTimestamp, PedalMode, RideOperatingState,
+    DeviceActionId, DeviceActionRequest, DeviceActionStep, DeviceCommand, DeviceSettingValue,
+    LightState, MonotonicTimestamp, RideOperatingState, SettingId,
 };
 use cutout_protocols::AeroSettingsSimulator;
 use serde_json::Value;
@@ -159,57 +156,53 @@ fn attach_lock_handle(_command: &mut Command, _lock: &fs::File) -> Result<fs::Fi
 
 fn run_aero_settings_simulator() -> Result<()> {
     let commands = [
-        DeviceCommand::SetAeroTiltbackSpeed(
-            AeroSpeedSetting::new(53).context("53 km/h is a valid Aero tiltback speed")?,
+        setting(SettingId::TiltbackSpeed, DeviceSettingValue::Number(530)),
+        setting(SettingId::PwmTiltback, DeviceSettingValue::Number(64)),
+        setting(
+            SettingId::SpeedAlarmThreshold,
+            DeviceSettingValue::Number(560),
         ),
-        DeviceCommand::SetAeroPwmPercent(AeroPwmSetting::Margin(
-            AeroPwmPercent::new(64).context("64% is a valid Aero PWM setting")?,
-        )),
-        DeviceCommand::SetAeroAlarmSpeed(
-            AeroSpeedSetting::new(56).context("56 km/h is a valid Aero alarm speed")?,
+        setting(SettingId::PedalAngle, DeviceSettingValue::Number(-12)),
+        setting(SettingId::PedalMode, DeviceSettingValue::Choice(0)),
+        setting(SettingId::RidingPreset, DeviceSettingValue::Choice(1)),
+        setting(SettingId::PedalHardness, DeviceSettingValue::Number(64)),
+        setting(SettingId::DisplayBrightness, DeviceSettingValue::Number(80)),
+        setting(
+            SettingId::BeeperVolumePercent,
+            DeviceSettingValue::Number(40),
         ),
-        DeviceCommand::SetAeroAngleAdjustment(
-            AeroAngleAdjustment::new(-12).context("-1.2 degrees is a valid Aero angle")?,
+        setting(SettingId::DynamicAssist, DeviceSettingValue::Number(35)),
+        setting(
+            SettingId::PedalDipCompensation,
+            DeviceSettingValue::Number(25),
         ),
-        DeviceCommand::SetPedalMode(PedalMode::Hard),
-        DeviceCommand::SetAeroRidingMode(AeroRidingMode::Medium),
-        DeviceCommand::SetAeroPedalHardness(
-            AeroPedalHardness::new(64).context("64% is a source-documented MD hardness")?,
+        setting(SettingId::LateralTiltLimit, DeviceSettingValue::Number(55)),
+        setting(SettingId::VoltageCorrection, DeviceSettingValue::Number(-5)),
+        setting(
+            SettingId::ChargeLimitDiagnostic,
+            DeviceSettingValue::Number(46),
         ),
-        DeviceCommand::SetAeroDisplayBacklight(
-            AeroDisplayBacklight::new(80).context("80% is a valid Aero backlight")?,
+        setting(SettingId::DisplayUnits, DeviceSettingValue::Choice(1)),
+        setting(SettingId::HighSpeedMode, DeviceSettingValue::Boolean(true)),
+        setting(
+            SettingId::LowBatteryMode,
+            DeviceSettingValue::Boolean(false),
         ),
-        DeviceCommand::SetAeroBeeperVolume(
-            AeroBeeperVolume::new(40).context("40% is a valid Aero beeper volume")?,
+        setting(SettingId::TransportMode, DeviceSettingValue::Boolean(true)),
+        setting(
+            SettingId::BrakeOverpressureAlarm,
+            DeviceSettingValue::Number(110),
         ),
-        DeviceCommand::SetAeroDynamicAssist(
-            AeroDynamicAssist::new(35).context("35% is a valid Aero dynamic assist")?,
-        ),
-        DeviceCommand::SetAeroPedalDipCompensation(
-            AeroPedalDipCompensation::new(25)
-                .context("25% is a valid Aero pedal-dip compensation")?,
-        ),
-        DeviceCommand::SetAeroLateralTiltLimit(
-            AeroLateralTiltLimit::new(55).context("55 degrees is a valid Aero lateral limit")?,
-        ),
-        DeviceCommand::SetAeroVoltageCorrection(
-            AeroVoltageCorrection::new(-5).context("-0.5% is a valid Aero voltage correction")?,
-        ),
-        DeviceCommand::SetAeroMaxChargeVoltageRaw(
-            AeroMaxChargeVoltageRaw::new(46).context("46 is a valid raw Aero MxV value")?,
-        ),
-        DeviceCommand::SetAeroWheelUnits(AeroWheelUnits::Imperial),
-        DeviceCommand::SetAeroHighSpeedMode(AeroHighSpeedMode::new(true)),
-        DeviceCommand::SetAeroLowBatteryMode(AeroLowBatteryMode::new(false)),
-        DeviceCommand::SetAeroTransportMode(AeroTransportMode::new(true)),
-        DeviceCommand::SetAeroBrakeOverpressureAlarm(
-            AeroBrakeOverpressureAlarm::new(110)
-                .context("110% is a valid Aero brake overpressure alarm")?,
-        ),
-        DeviceCommand::SetAeroGyroCalibration,
-        DeviceCommand::SetAeroHighBeam(LightState::On),
+        DeviceCommand::InvokeAction(DeviceActionRequest {
+            id: DeviceActionId::GyroCalibration,
+            step: DeviceActionStep::Invoke,
+        }),
+        setting(SettingId::HighBeam, DeviceSettingValue::Boolean(true)),
         DeviceCommand::SetLights(LightState::On),
-        DeviceCommand::ResetTripMeter,
+        DeviceCommand::InvokeAction(DeviceActionRequest {
+            id: DeviceActionId::ResetTripMeter,
+            step: DeviceActionStep::Invoke,
+        }),
     ];
     let mut simulator = AeroSettingsSimulator::default();
     println!("model={}", AeroSettingsSimulator::registry_entry().model);
@@ -219,7 +212,13 @@ fn run_aero_settings_simulator() -> Result<()> {
     );
 
     for (index, command) in commands.into_iter().enumerate() {
-        let high_beam = matches!(command, DeviceCommand::SetAeroHighBeam(_));
+        let high_beam = matches!(
+            command,
+            DeviceCommand::SetSetting {
+                id: SettingId::HighBeam,
+                ..
+            }
+        );
         let before = simulator.writes().len();
         let monotonic_ms =
             10 + u64::try_from(index).context("scenario index fits in a timestamp")?;
@@ -244,6 +243,10 @@ fn run_aero_settings_simulator() -> Result<()> {
         println!("  readback={:?}", simulator.readback());
     }
     Ok(())
+}
+
+const fn setting(id: SettingId, value: DeviceSettingValue) -> DeviceCommand {
+    DeviceCommand::SetSetting { id, value }
 }
 
 fn workspace_root() -> PathBuf {

@@ -1,7 +1,7 @@
 use cutout_core::{
-    DeviceActionId, DeviceActionProgress, DeviceActionStatus, DeviceActionStep, DeviceActionsState,
-    DeviceCommand, MonotonicTimestamp, RawFieldValue, SettingsEntry, SettingsReadback,
-    ValueQuality, ValueSource, VerificationStatus,
+    DeviceActionId, DeviceActionProgress, DeviceActionRequest, DeviceActionStatus,
+    DeviceActionStep, DeviceActionsState, DeviceCommand, MonotonicTimestamp, RawFieldValue,
+    SettingsEntry, SettingsReadback, ValueQuality, ValueSource, VerificationStatus,
 };
 use cutout_protocols::{
     AERO_FIELD_GYRO_CALIBRATION_STATE, ActionAccess, ActionConfirmation, ActionRole,
@@ -72,7 +72,10 @@ fn aero_actions_are_typed_and_remain_unverified_outside_validation_mode() {
     );
     assert_eq!(
         profile.action_command(gyro, true),
-        Ok(DeviceCommand::SetAeroGyroCalibration)
+        Ok(DeviceCommand::InvokeAction(DeviceActionRequest {
+            id: DeviceActionId::GyroCalibration,
+            step: DeviceActionStep::PrepareGyroCalibration,
+        }))
     );
     assert!(falcon_control_profile().action_descriptors(true).is_empty());
     assert!(
@@ -84,7 +87,7 @@ fn aero_actions_are_typed_and_remain_unverified_outside_validation_mode() {
 
 #[test]
 fn action_commands_reject_steps_that_do_not_belong_to_the_action() {
-    let invalid = cutout_core::DeviceActionRequest {
+    let invalid = DeviceActionRequest {
         id: DeviceActionId::ResetTripMeter,
         step: DeviceActionStep::StartGyroCalibration,
     };
