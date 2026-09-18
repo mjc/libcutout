@@ -47,6 +47,7 @@ pub use battery_profile::{
 mod family;
 pub use family::*;
 mod ffi;
+pub mod settings_wire;
 pub use ffi::*;
 mod device_session;
 pub use device_session::*;

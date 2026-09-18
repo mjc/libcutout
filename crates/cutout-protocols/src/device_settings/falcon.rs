@@ -77,21 +77,21 @@ pub(super) fn normalize_readback(entry: SettingsEntry, observations: &mut Vec<Se
                 observations,
                 entry,
                 SettingId::PedalMode,
-                bits.and_then(PedalMode::from_begode_settings_bits)
+                bits.and_then(pedal_mode_from_begode_settings_bits)
                     .map(pedal_choice),
             );
             super::readback::push(
                 observations,
                 entry,
                 SettingId::RollAngleMode,
-                bits.and_then(RollAngle::from_begode_settings_bits)
+                bits.and_then(roll_angle_from_begode_settings_bits)
                     .map(roll_choice),
             );
             super::readback::push(
                 observations,
                 entry,
                 SettingId::SpeedAlarmMode,
-                bits.and_then(SpeedAlarmMode::from_begode_settings_bits)
+                bits.and_then(speed_alarm_mode_from_begode_settings_bits)
                     .map(speed_alarm_choice),
             );
         }
@@ -112,6 +112,34 @@ pub(super) fn normalize_readback(entry: SettingsEntry, observations: &mut Vec<Se
             super::readback::push(observations, entry, SettingId::Headlight, light);
         }
         _ => {}
+    }
+}
+
+const fn pedal_mode_from_begode_settings_bits(raw: u16) -> Option<PedalMode> {
+    match (raw >> 13) & 0x03 {
+        0 => Some(PedalMode::Soft),
+        1 => Some(PedalMode::Medium),
+        2 => Some(PedalMode::Hard),
+        _ => None,
+    }
+}
+
+const fn roll_angle_from_begode_settings_bits(raw: u16) -> Option<RollAngle> {
+    match (raw >> 7) & 0x03 {
+        0 => Some(RollAngle::Low),
+        1 => Some(RollAngle::Medium),
+        2 => Some(RollAngle::High),
+        _ => None,
+    }
+}
+
+const fn speed_alarm_mode_from_begode_settings_bits(raw: u16) -> Option<SpeedAlarmMode> {
+    match (raw >> 10) & 0x03 {
+        0 => Some(SpeedAlarmMode::Both),
+        1 => Some(SpeedAlarmMode::StageOneOnly),
+        2 => Some(SpeedAlarmMode::Off),
+        3 => Some(SpeedAlarmMode::PwmTiltback),
+        _ => None,
     }
 }
 
@@ -142,4 +170,63 @@ fn speed_alarm_choice(value: SpeedAlarmMode) -> DeviceSettingValue {
         SpeedAlarmMode::Off => 2,
         SpeedAlarmMode::PwmTiltback => 3,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn begode_pedal_mode_uses_the_documented_inverted_mapping() {
+        assert_eq!(
+            pedal_mode_from_begode_settings_bits(0x0000),
+            Some(PedalMode::Soft)
+        );
+        assert_eq!(
+            pedal_mode_from_begode_settings_bits(0x2000),
+            Some(PedalMode::Medium)
+        );
+        assert_eq!(
+            pedal_mode_from_begode_settings_bits(0x4000),
+            Some(PedalMode::Hard)
+        );
+        assert_eq!(pedal_mode_from_begode_settings_bits(0x6000), None);
+    }
+
+    #[test]
+    fn begode_roll_angle_uses_the_documented_mapping() {
+        assert_eq!(
+            roll_angle_from_begode_settings_bits(0x0000),
+            Some(RollAngle::Low)
+        );
+        assert_eq!(
+            roll_angle_from_begode_settings_bits(0x0080),
+            Some(RollAngle::Medium)
+        );
+        assert_eq!(
+            roll_angle_from_begode_settings_bits(0x0100),
+            Some(RollAngle::High)
+        );
+        assert_eq!(roll_angle_from_begode_settings_bits(0x0180), None);
+    }
+
+    #[test]
+    fn begode_speed_alarm_uses_the_documented_mapping() {
+        assert_eq!(
+            speed_alarm_mode_from_begode_settings_bits(0x0000),
+            Some(SpeedAlarmMode::Both)
+        );
+        assert_eq!(
+            speed_alarm_mode_from_begode_settings_bits(0x0400),
+            Some(SpeedAlarmMode::StageOneOnly)
+        );
+        assert_eq!(
+            speed_alarm_mode_from_begode_settings_bits(0x0800),
+            Some(SpeedAlarmMode::Off)
+        );
+        assert_eq!(
+            speed_alarm_mode_from_begode_settings_bits(0x0c00),
+            Some(SpeedAlarmMode::PwmTiltback)
+        );
+    }
 }

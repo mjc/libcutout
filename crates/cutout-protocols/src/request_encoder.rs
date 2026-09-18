@@ -1,15 +1,12 @@
 use arrayvec::ArrayVec;
 use crc32fast::hash as crc32;
 use cutout_core::{
-    AeroAngleAdjustment, AeroBeeperVolume, AeroBrakeOverpressureAlarm, AeroDisplayBacklight,
-    AeroDynamicAssist, AeroHighSpeedMode, AeroLateralTiltLimit, AeroLowBatteryMode,
-    AeroPedalDipCompensation, AeroPedalHardness, AeroPwmPercent, AeroPwmSetting, AeroRidingMode,
-    AeroSpeedSetting, AeroTransportMode, AeroVoltageCorrection, AeroWheelUnits, BegodeBeeperVolume,
-    BegodeLedModeSetting, BegodeMaxSpeed, CommandKind, DeviceActionId, DeviceActionStep,
-    DeviceCommand, DeviceSettingValue, LightState, PedalMode, PendingProbe, RequestKey,
-    RequestTarget, RollAngle, SettingId, SpeedAlarmMode, VescControllerId, WriteMode, WritePayload,
+    CommandKind, DeviceActionId, DeviceActionStep, DeviceCommand, DeviceSettingValue, LightState,
+    PedalMode, PendingProbe, RequestKey, RequestTarget, RollAngle, SettingId, SpeedAlarmMode,
+    VescControllerId, WriteMode, WritePayload,
 };
 
+use crate::settings_wire::*;
 use crate::{
     AeroProbe, FalconProbe, RefloatReadOnlyRequest, VescCanReadOnlyRequest, VescReadOnlyCodec,
     VescReadOnlyRequest,

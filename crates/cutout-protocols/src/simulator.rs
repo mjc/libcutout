@@ -1,8 +1,4 @@
 use cutout_core::{
-    AeroAngleAdjustment, AeroBeeperVolume, AeroBrakeOverpressureAlarm, AeroDisplayBacklight,
-    AeroDynamicAssist, AeroGyroCalibrationState, AeroHighSpeedMode, AeroLateralTiltLimit,
-    AeroLowBatteryMode, AeroMaxChargeVoltageRaw, AeroPedalDipCompensation, AeroPedalHardness,
-    AeroPwmPercent, AeroPwmSetting, AeroSpeedSetting, AeroTransportMode, AeroVoltageCorrection,
     DeviceActionId, DeviceActionRequest, DeviceCommand, DeviceEvent, DeviceSettingValue, Duration,
     GattChannel, GattFingerprint, HostSession, LightState, LinkInfo, ModelRegistryEntry,
     MonotonicTimestamp, PedalMode, RawFieldValue, ReadOnlyResponse, RideOperatingState,
@@ -11,6 +7,7 @@ use cutout_core::{
     WritePayload,
 };
 
+use crate::settings_wire::*;
 use crate::{
     NOSFET_AERO_REGISTRY_ENTRY, NosfetAeroModel, ProtocolModelSpec, StationarySettingsWriteSession,
     SupportsSettingsWrites,
@@ -50,7 +47,7 @@ pub struct AeroSettingsReadback {
     pub pedal_hardness: Option<AeroPedalHardness>,
 
     /// Simulated wheel display units, independent of host formatting preferences.
-    pub wheel_units: Option<cutout_core::AeroWheelUnits>,
+    pub wheel_units: Option<AeroWheelUnits>,
 
     /// Current high-speed mode, when explicitly set.
     pub high_speed_mode: Option<AeroHighSpeedMode>,
@@ -403,7 +400,7 @@ impl AeroSettingsSimulator {
             (SettingId::DisplayUnits, DeviceSettingValue::Choice(value)) => {
                 self.readback.wheel_units = u8::try_from(value)
                     .ok()
-                    .and_then(cutout_core::AeroWheelUnits::from_display_mode);
+                    .and_then(AeroWheelUnits::from_display_mode);
             }
             (SettingId::HighSpeedMode, DeviceSettingValue::Boolean(value)) => {
                 self.readback.high_speed_mode = Some(AeroHighSpeedMode::new(value));

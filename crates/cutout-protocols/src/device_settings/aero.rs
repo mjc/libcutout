@@ -83,7 +83,7 @@ pub(super) fn normalize_readback(entry: SettingsEntry, observations: &mut Vec<Se
         VETERAN_FIELD_PEDALS_MODE => {
             let value = u16::try_from(raw)
                 .ok()
-                .and_then(PedalMode::from_veteran_raw)
+                .and_then(pedal_mode_from_veteran_raw)
                 .map(pedal_choice);
             super::readback::push(observations, entry, SettingId::PedalMode, value);
             return;
@@ -91,6 +91,15 @@ pub(super) fn normalize_readback(entry: SettingsEntry, observations: &mut Vec<Se
         _ => return,
     };
     super::readback::push(observations, entry, id, semantic_value(id, raw));
+}
+
+const fn pedal_mode_from_veteran_raw(raw: u16) -> Option<PedalMode> {
+    match raw {
+        0 => Some(PedalMode::Hard),
+        1 => Some(PedalMode::Medium),
+        2 => Some(PedalMode::Soft),
+        _ => None,
+    }
 }
 
 fn semantic_value(id: SettingId, raw: i64) -> Option<DeviceSettingValue> {
@@ -118,4 +127,17 @@ fn pedal_choice(value: PedalMode) -> DeviceSettingValue {
         PedalMode::Medium => 1,
         PedalMode::Soft => 2,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn veteran_pedal_mode_uses_the_documented_mapping() {
+        assert_eq!(pedal_mode_from_veteran_raw(0), Some(PedalMode::Hard));
+        assert_eq!(pedal_mode_from_veteran_raw(1), Some(PedalMode::Medium));
+        assert_eq!(pedal_mode_from_veteran_raw(2), Some(PedalMode::Soft));
+        assert_eq!(pedal_mode_from_veteran_raw(1920), None);
+    }
 }

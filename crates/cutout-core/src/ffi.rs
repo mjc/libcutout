@@ -1,22 +1,21 @@
 use crate::{
-    AccelerationAssistState, AeroRidingMode, Angle, BatteryCurrent, BatteryInfo, BatteryLevel,
-    BatteryPageKind, BatteryPageMetadata, BatteryPagePayload, BatteryReadback,
-    BatteryReadbackAvailability, BmsCellIndex, BmsObservationIndex, BmsPackCurrents, BmsPackIndex,
-    ChargeMode, CommandKind, ControlRefusal, ControlRefusalReason, DeviceActionId,
-    DeviceActionRequest, DeviceActionStep, DeviceCommand, DeviceEvent, DeviceSettingValue,
-    DiagnosticDetail, DiagnosticError, DiagnosticErrorKind, DiagnosticReadback, DiagnosticSeverity,
-    Distance, DutyCycle, FaultCode, FaultHistoryAvailability, FaultHistoryEntry,
-    FaultHistoryReadback, FirmwareInfo, FootpadContactState, FootpadTelemetry,
-    IgnoredNotificationEvidence, IgnoredNotificationReason, LightState, Measured,
-    MonotonicTimestamp, NotificationByteLen, NotificationEvidence, NotificationIngestOutcome,
-    ParserDiagnosticCount, ParserDiagnostics, ParserDroppedBytes, ParserError, ParserFrameLen,
-    ParserGapEvidence, PayloadBodyLen, PedalMode, PhaseCurrent, Power, ProtocolFamily, ProtocolTag,
-    RawFieldValue, RawTelemetryReadback, ReadOnlyResponse, ReservedPayloadEvidence,
-    RideOperatingMode, RideOperatingState, RideStopReason, RideWarning, RollAngle, SafetyClass,
-    SemanticEventCount, SessionInput, SessionOutput, SettingId, SettingsEntry, SettingsReadback,
-    SettingsReadbackAvailability, Speed, SpeedAlarmMode, TelemetryDelta, TelemetrySnapshot,
-    Temperature, TransportAction, TransportWriteLimit, ValueQuality, ValueSource,
-    VerificationStatus, Voltage, WriteMode,
+    AccelerationAssistState, Angle, BatteryCurrent, BatteryInfo, BatteryLevel, BatteryPageKind,
+    BatteryPageMetadata, BatteryPagePayload, BatteryReadback, BatteryReadbackAvailability,
+    BmsCellIndex, BmsObservationIndex, BmsPackCurrents, BmsPackIndex, ChargeMode, CommandKind,
+    ControlRefusal, ControlRefusalReason, DeviceActionId, DeviceActionRequest, DeviceActionStep,
+    DeviceCommand, DeviceEvent, DeviceSettingValue, DiagnosticDetail, DiagnosticError,
+    DiagnosticErrorKind, DiagnosticReadback, DiagnosticSeverity, Distance, DutyCycle, FaultCode,
+    FaultHistoryAvailability, FaultHistoryEntry, FaultHistoryReadback, FirmwareInfo,
+    FootpadContactState, FootpadTelemetry, IgnoredNotificationEvidence, IgnoredNotificationReason,
+    LightState, Measured, MonotonicTimestamp, NotificationByteLen, NotificationEvidence,
+    NotificationIngestOutcome, ParserDiagnosticCount, ParserDiagnostics, ParserDroppedBytes,
+    ParserError, ParserFrameLen, ParserGapEvidence, PayloadBodyLen, PedalMode, PhaseCurrent, Power,
+    ProtocolFamily, ProtocolTag, RawFieldValue, RawTelemetryReadback, ReadOnlyResponse,
+    ReservedPayloadEvidence, RideOperatingMode, RideOperatingState, RideStopReason, RideWarning,
+    RollAngle, SafetyClass, SemanticEventCount, SessionInput, SessionOutput, SettingId,
+    SettingsEntry, SettingsReadback, SettingsReadbackAvailability, Speed, SpeedAlarmMode,
+    TelemetryDelta, TelemetrySnapshot, Temperature, TransportAction, TransportWriteLimit,
+    ValueQuality, ValueSource, VerificationStatus, Voltage, WriteMode,
 };
 
 /// UniFFI-ready owned read-only output.
@@ -706,39 +705,6 @@ impl From<PedalModeDto> for PedalMode {
             PedalModeDto::Hard => Self::Hard,
             PedalModeDto::Medium => Self::Medium,
             PedalModeDto::Soft => Self::Soft,
-        }
-    }
-}
-
-/// UniFFI-ready NOSFET/Veteran modern binary T riding mode.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum AeroRidingModeDto {
-    /// Firm riding response.
-    Hard,
-
-    /// Mid-range riding response.
-    Medium,
-
-    /// Soft riding response.
-    Soft,
-}
-
-impl From<AeroRidingMode> for AeroRidingModeDto {
-    fn from(mode: AeroRidingMode) -> Self {
-        match mode {
-            AeroRidingMode::Hard => Self::Hard,
-            AeroRidingMode::Medium => Self::Medium,
-            AeroRidingMode::Soft => Self::Soft,
-        }
-    }
-}
-
-impl From<AeroRidingModeDto> for AeroRidingMode {
-    fn from(mode: AeroRidingModeDto) -> Self {
-        match mode {
-            AeroRidingModeDto::Hard => Self::Hard,
-            AeroRidingModeDto::Medium => Self::Medium,
-            AeroRidingModeDto::Soft => Self::Soft,
         }
     }
 }
