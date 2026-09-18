@@ -12,8 +12,8 @@ use super::{
     remember_last_connected_device, remember_selected_device, remove_voltage_sag_model,
     ride_session_marker, route_points, save_device_name, save_music_event,
     save_music_history_policy, save_ride_session_marker, save_selected_device,
-    save_voltage_sag_model, selected_device, sqlite_capabilities, trail_segments_in_bounds,
-    transition_ride, update_ride_map_metadata, voltage_sag_model,
+    save_voltage_sag_model, selected_device, settle_recovered_ride, sqlite_capabilities,
+    trail_segments_in_bounds, transition_ride, update_ride_map_metadata, voltage_sag_model,
 };
 use rusqlite::Connection;
 use std::ops::ControlFlow;
@@ -128,6 +128,23 @@ impl DatabaseWorker<'_> {
                     created_at_ms,
                     monotonic_created_at_ms,
                     candidate_vehicle.as_deref(),
+                ));
+            }
+            Command::SettleRecoveredRide {
+                ride_id,
+                discard_empty,
+                occurred_at_ms,
+                monotonic_at_ms,
+                replacement_candidate_vehicle,
+                reply,
+            } => {
+                let _ = reply.send(settle_recovered_ride(
+                    connection,
+                    ride_id,
+                    discard_empty,
+                    occurred_at_ms,
+                    monotonic_at_ms,
+                    replacement_candidate_vehicle.as_deref(),
                 ));
             }
             Command::CreateStartedRide {

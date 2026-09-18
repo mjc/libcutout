@@ -731,7 +731,10 @@ public enum MobileRideMapDecisionDto: Equatable, Hashable, Sendable {
 public final class MobileRideMapState: @unchecked Sendable {
     private let core: MobileRideMapCore?
     private let database: RideDatabaseHandle?
-    public let initializationError: MobileRideMapError?
+    public var initializationError: MobileRideMapError? {
+        if let storageUnavailableError { return storageUnavailableError }
+        return core?.initializationError().map(Self.mapCoreError)
+    }
     private let storageUnavailableError: MobileRideMapError?
 
 #if DEBUG
@@ -749,6 +752,7 @@ public final class MobileRideMapState: @unchecked Sendable {
             return
         }
         self.init(database: database)
+        _ = try? restore(atMs: Self.monotonicMillisecondsNow())
         if let core, core.currentSnapshot(atMs: Self.monotonicMillisecondsNow()) != nil {
             // Discard is only valid for a stopped ride. Finish any leftover debug
             // ride before clearing it so each convenience instance starts empty.
@@ -760,18 +764,15 @@ public final class MobileRideMapState: @unchecked Sendable {
 
     public init(database: RideDatabaseHandle) {
         let core = MobileRideMapCore.withDatabase(database: database)
-        let initializationError = core.initializationError().map(Self.mapCoreError)
-        self.core = initializationError == nil ? core : nil
+        self.core = core
         self.database = database
-        self.initializationError = initializationError
-        storageUnavailableError = initializationError
+        storageUnavailableError = nil
     }
 
     init(storageUnavailable message: String) {
         core = nil
         database = nil
         let error = MobileRideMapError.storageError(message)
-        initializationError = error
         storageUnavailableError = error
     }
 
@@ -807,6 +808,19 @@ public final class MobileRideMapState: @unchecked Sendable {
 
     public func currentSnapshot(atMs: UInt64) -> MobileRideMapSnapshotDto? {
         core?.currentSnapshot(atMs: atMs).map(mapSnapshot)
+    }
+
+    public var isReady: Bool {
+        core?.isReady() ?? false
+    }
+
+    /// Completes Rust-owned recovery without projecting the route. The caller owns the queue
+    /// used to invoke this method; subsequent route display uses the cancellable projection API.
+    @discardableResult
+    public func restore(atMs: UInt64) throws -> MobileRideMapSnapshotDto? {
+        try withCore {
+            try $0.restore(atMs: atMs).map(mapSnapshot)
+        }
     }
 
     public func startGpsOnly(atMs: UInt64) throws -> MobileRideMapSnapshotDto {

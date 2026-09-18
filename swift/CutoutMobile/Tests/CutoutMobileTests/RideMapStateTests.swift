@@ -236,24 +236,18 @@ final class RideMapStateTests: XCTestCase {
 
     func testHistoricalVehicleDisplayNameAndFilterOptionsComeFromRustDeviceTable() throws {
         let database = try XCTUnwrap(MobileRideMapState.debugDatabase)
-        let state = MobileRideMapState(database: database)
+        // The convenience state finishes and discards any active debug ride left by an earlier
+        // test before this test creates its durable history fixture.
+        let state = MobileRideMapState()
         let platformIdentifier = "corebluetooth-history-\(UUID().uuidString)"
 
-        _ = try state.startGpsOnly(atMs: 1_000)
-        let connectionState = CutoutSessionStateHandle()
-        let token = try XCTUnwrap(
-            connectionState.beginConnectionAttempt(
-                platformIdentifier: platformIdentifier,
-                nowMs: 1_000
-            ).token
-        )
-        _ = connectionState.connectionLinkEstablished(token: token)
-        _ = connectionState.observeConnectionNotification(token: token, bytes: Data(vescReply))
-        _ = connectionState.resolveDeviceSession(token: token, identificationComplete: true, nowMs: 1_001)
-        _ = try state.ensureRecordingForVerifiedConnection(
-            connectionState: connectionState,
-            token: token,
-            atMs: 1_001
+        let rideID = try state.startGpsOnly(atMs: 1_000).rideID
+        try database.updateRideMapMetadata(
+            id: MobileRideIdDto(value: rideID),
+            candidateVehicle: nil,
+            associatedVehicle: platformIdentifier,
+            associatedAtMilliseconds: 1_001,
+            lastTelemetryAtMilliseconds: nil
         )
         try database.saveDeviceName(
             platformIdentifier: platformIdentifier,
@@ -272,6 +266,7 @@ final class RideMapStateTests: XCTestCase {
             ),
             limit: 50
         )
+        XCTAssertEqual(page.rides.first?.associatedVehicle, platformIdentifier)
         XCTAssertEqual(page.rides.first?.associatedVehicleName, "NF2557")
         let options = try database.listRideHistoryVehicleOptions()
         XCTAssertTrue(options.contains(

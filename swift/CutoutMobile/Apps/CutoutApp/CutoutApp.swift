@@ -9,9 +9,12 @@ struct CutoutApp: App {
     #if os(macOS)
     @NSApplicationDelegateAdaptor(CutoutAppDelegate.self) private var appDelegate
     #endif
-    @State private var model = CutoutAppModel()
+    @State private var model: CutoutAppModel?
     @State private var rideMapPresentation = RideMapPresentationState()
-    @State private var lighting = LightingRouteModel()
+    @State private var lighting: LightingRouteModel?
+    @State private var startupError: String?
+    @State private var startupAttempt = 0
+    @State private var pendingMusicURL: URL?
     @State private var navigationPath = CutoutAppRoute.navigationPath(for: .initialRoute())
     @Environment(\.scenePhase) private var scenePhase
 
@@ -25,19 +28,19 @@ struct CutoutApp: App {
     var body: some Scene {
         WindowGroup("CutOut") {
             rootView
-                .task {
-                    model.start()
-                    lighting.startIfRemembered()
+                .task(id: startupAttempt) {
+                    await openApplication()
                 }
                 .onOpenURL { url in
-                    _ = model.handleMusicURL(url)
+                    if let model { _ = model.handleMusicURL(url) }
+                    else { pendingMusicURL = url }
                 }
                 .onChange(of: scenePhase) {
                     switch scenePhase {
                     case .active:
-                        model.appDidBecomeActive()
+                        model?.appDidBecomeActive()
                     case .background:
-                        model.appDidEnterBackground()
+                        model?.appDidEnterBackground()
                     case .inactive:
                         break
                     @unknown default:
@@ -47,51 +50,83 @@ struct CutoutApp: App {
                 .alert(
                     pevLocalizedText("music.command.title"),
                     isPresented: Binding(
-                        get: { model.musicCommandStatusText != nil },
+                        get: { model?.musicCommandStatusText != nil },
                         set: { isPresented in
                             guard !isPresented else { return }
-                            model.dismissMusicCommandFeedback()
+                            model?.dismissMusicCommandFeedback()
                         }
                     ),
-                    presenting: model.musicCommandFeedback
+                    presenting: model?.musicCommandFeedback
                 ) { feedback in
                     Button(pevLocalizedText("music.command.dismiss")) {
-                        model.dismissMusicCommandFeedback(requestID: feedback.requestID)
+                        model?.dismissMusicCommandFeedback(requestID: feedback.requestID)
                     }
                 } message: { feedback in
                     Text(feedback.messageKey.map { pevLocalizedText($0) } ?? "")
                 }
         }
         .commands {
-            CutoutNavigationCommands(
-                navigationTabs: navigationTabs,
-                currentRoute: currentRoute,
-                connectionRoute: model.selectedConnectionRoute,
-                navigationPath: $navigationPath,
-                canDisconnect: model.selectedConnectionRoute != nil,
-                disconnect: model.disconnectTransport
-            )
+            if let model {
+                CutoutNavigationCommands(
+                    navigationTabs: navigationTabs,
+                    currentRoute: currentRoute,
+                    connectionRoute: model.selectedConnectionRoute,
+                    navigationPath: $navigationPath,
+                    canDisconnect: model.selectedConnectionRoute != nil,
+                    disconnect: model.disconnectTransport
+                )
+            }
         }
     }
 
     @ViewBuilder
     private var rootView: some View {
-        #if os(macOS)
+        if let model, let lighting {
             ContentView(
                 model: model,
                 rideMapPresentation: rideMapPresentation,
                 lighting: lighting,
                 navigationPath: $navigationPath
             )
+            #if os(macOS)
             .frame(minWidth: 360, minHeight: 280)
-        #else
-        ContentView(
-            model: model,
-            rideMapPresentation: rideMapPresentation,
-            lighting: lighting,
-            navigationPath: $navigationPath
-        )
-        #endif
+            #endif
+        } else if let startupError {
+            ContentUnavailableView {
+                Label(localizedAppText("app.startup.unavailable"), systemImage: "externaldrive.badge.exclamationmark")
+            } description: {
+                Text(startupError)
+            } actions: {
+                Button(localizedAppText("app.startup.retry")) { startupAttempt += 1 }
+            }
+        } else {
+            ProgressView(localizedAppText("app.startup.loading"))
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
+    }
+
+    @MainActor
+    private func openApplication() async {
+        guard model == nil else { return }
+        startupError = nil
+        do {
+            let opened = try await CutoutAppModel.open()
+            try Task.checkCancellation()
+            let lighting = LightingRouteModel()
+            self.lighting = lighting
+            model = opened
+            opened.start()
+            lighting.startIfRemembered()
+            if let pendingMusicURL {
+                _ = opened.handleMusicURL(pendingMusicURL)
+                self.pendingMusicURL = nil
+            }
+        } catch is CancellationError {
+            // A later scene task may retry the same durable bootstrap.
+        } catch {
+            guard !Task.isCancelled else { return }
+            startupError = String(describing: error)
+        }
     }
 
     private var currentRoute: CutoutAppRoute {
@@ -99,7 +134,7 @@ struct CutoutApp: App {
     }
 
     private var navigationTabs: [PevScreenTab] {
-        currentRoute.availableNavigationTabs(for: model.selectedConnectionRoute)
+        currentRoute.availableNavigationTabs(for: model?.selectedConnectionRoute)
     }
 }
 

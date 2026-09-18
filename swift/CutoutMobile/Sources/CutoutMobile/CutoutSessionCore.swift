@@ -526,6 +526,7 @@ public final class CutoutSessionCore: NSObject {
     private let phoneLocationState = MobilePhoneLocationState()
     private var latestRideMapSnapshot: MobileRideMapSnapshotDto?
     private var rideMapWritePoller: DispatchSourceTimer?
+    private var rideMapRestorationStarted = false
     private var didRequestWhenInUseLocationAuthorization = false
     private var locationUpdatesDemanded = false
     private var locationManagerUpdatesStarted = false
@@ -552,6 +553,11 @@ public final class CutoutSessionCore: NSObject {
         manager.activityType = .fitness
         return manager
     }()
+
+    /// Composes transport around a database handle opened off the main actor.
+    public convenience init(rideMapState: MobileRideMapState) {
+        self.init(clock: MonotonicClock(), rideMapState: rideMapState)
+    }
 
     public override convenience init() {
         let rideMapState = RustPersistenceStore.shared.map(MobileRideMapState.init(database:))
@@ -629,9 +635,7 @@ public final class CutoutSessionCore: NSObject {
     public func start() {
         startRideMapWritePolling()
         publishRideMapAvailability()
-        if let snapshot = rideMapState?.currentSnapshot(atMs: clock.now().rawValue) {
-            updateRideLocationDemand(for: snapshot.state)
-        }
+        startRideMapRestoration()
 #if DEBUG
         if let testScript {
             publishOnMain { self.onBluetoothRestorationResolved?(nil) }
@@ -1915,8 +1919,56 @@ public final class CutoutSessionCore: NSObject {
         }
     }
 
+    private func startRideMapRestoration() {
+        let queue = rideMapQueue
+        let reference = WeakCutoutSessionCoreReference(self)
+        queue.async {
+            guard let self = reference.value,
+                  !self.rideMapRestorationStarted
+            else { return }
+            self.rideMapRestorationStarted = true
+            guard let rideMapState = self.rideMapState else {
+                self.publishRideMapAvailability()
+                return
+            }
+            do {
+                let snapshot = try rideMapState.restore(atMs: self.clock.now().rawValue)
+                if let snapshot {
+                    self.publishRideMapSnapshot(snapshot)
+                }
+                self.publishRideMapAvailability()
+                self.synchronizeRideMapLocationDemand()
+                // A verified connection can complete while restoration is pending. Replay the
+                // current BLE admission after readiness so that auto-start and reassociation do
+                // not depend on a second notification arriving from the peripheral.
+                self.onBleQueue { [weak self] in
+                    guard let self else { return }
+                    self.observeRideMapConnection(at: self.clock.now())
+                }
+            } catch let error as MobileRideMapError {
+                self.rideMapRestorationStarted = false
+                self.publishRideMapError(
+                    error,
+                    context: MobileRideMapErrorContext(snapshot: nil)
+                )
+                self.publishRideMapAvailability()
+            } catch {
+                self.rideMapRestorationStarted = false
+                let mapped = MobileRideMapError.storageError(String(describing: error))
+                self.publishRideMapError(
+                    mapped,
+                    context: MobileRideMapErrorContext(snapshot: nil)
+                )
+                self.publishRideMapAvailability()
+            }
+        }
+    }
+
     private func drainRideMapWrites() {
-        guard let rideMapState, rideMapState.initializationError == nil else { return }
+        guard let rideMapState,
+              rideMapState.initializationError == nil,
+              rideMapState.isReady
+        else { return }
         guard rideMapState.hasPendingLocationWrites
             || rideMapState.currentSnapshot(atMs: clock.now().rawValue)?.state.isOpen == true
         else {
@@ -1927,7 +1979,8 @@ public final class CutoutSessionCore: NSObject {
 
     private func observeRideMapConnection(at receivedAt: MonotonicMilliseconds) {
         guard let rideMapState,
-              rideMapState.initializationError == nil
+              rideMapState.initializationError == nil,
+              rideMapState.isReady
         else {
             return
         }
@@ -1975,6 +2028,7 @@ public final class CutoutSessionCore: NSObject {
     private func persistBmsSamples(_ observations: [BmsRawVoltageObservation]) {
         guard let rideMapState,
               rideMapState.initializationError == nil,
+              rideMapState.isReady,
               let deviceIdentity = protocolIdentityCandidate?.platformIdentifier
                 ?? peripheral?.identifier.uuidString,
               let wallClockMilliseconds = unixMilliseconds(for: wallClock())
@@ -2044,6 +2098,8 @@ public final class CutoutSessionCore: NSObject {
         let availability: MobileRideMapAvailability
         if rideMapState?.initializationError != nil {
             availability = .storageUnavailable
+        } else if rideMapState?.isReady == false {
+            availability = .checking
         } else if !CLLocationManager.locationServicesEnabled() {
             availability = .servicesDisabled
         } else {

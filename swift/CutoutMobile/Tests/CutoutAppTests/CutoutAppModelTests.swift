@@ -2890,11 +2890,19 @@ final class CutoutAppModelTests: XCTestCase {
     }
 
     @MainActor
-    func testAutoLiveActivityUsesTheCandidateDisplayName() async {
+    func testAutoLiveActivityUsesTheCandidateDisplayName() async throws {
         let fixture = CutoutUITestSessionFixture.autoVescLiveActivity
         let manager = FailingLiveActivityManager(error: nil)
+        let suiteName = "CutoutAppModelTests.autoLiveActivity.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let selectedDeviceStore = DevicePickerSelectionStore(defaults: defaults)
         let model = CutoutAppModel(
-            core: CutoutSessionCore(testScript: fixture.testScript),
+            core: CutoutSessionCore(
+                testScript: fixture.testScript,
+                selectedDeviceStore: selectedDeviceStore
+            ),
+            selectedDeviceStore: selectedDeviceStore,
             liveActivityManager: manager
         )
 

@@ -3619,6 +3619,35 @@ fn reopen_recovers_recording_rides_and_reports_them_in_bootstrap() {
 }
 
 #[test]
+fn settling_a_recovered_ride_and_replacement_is_atomic() {
+    let _guard = test_guard();
+    let path = std::env::temp_dir().join(format!(
+        "libcutout-persistence-recovery-replacement-{}.sqlite",
+        uuid::Uuid::new_v4()
+    ));
+    let database = RideDatabase::open(&path).unwrap();
+    let ride = database.create_ride(RideSource::Live, 10).unwrap();
+    database.transition_at(ride, RideEvent::Start, 100).unwrap();
+    database.shutdown().unwrap();
+
+    let database = RideDatabase::open(&path).unwrap();
+    let replacement = database
+        .settle_recovered_ride(ride, false, 20, 200, Some("pev-1"))
+        .unwrap()
+        .expect("automatic recovery creates its replacement");
+    assert_ne!(replacement, ride);
+    assert_eq!(
+        database.find_ride(ride).unwrap().unwrap().state(),
+        RideLifecycleState::Saved
+    );
+    let replacement_record = database.find_ride(replacement).unwrap().unwrap();
+    assert_eq!(replacement_record.state(), RideLifecycleState::Active);
+    assert_eq!(replacement_record.candidate_vehicle(), Some("pev-1"));
+    database.shutdown().unwrap();
+    let _ = std::fs::remove_file(path);
+}
+
+#[test]
 fn ride_history_and_route_queries_are_stably_bounded() {
     let _guard = test_guard();
     let path = std::env::temp_dir().join(format!(

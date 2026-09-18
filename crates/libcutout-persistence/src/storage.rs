@@ -2081,6 +2081,34 @@ impl RideDatabase {
         })
     }
 
+    /// Atomically settles one recovered ride and optionally creates its replacement.
+    ///
+    /// The old ride and replacement share one SQLite transaction. A failed replacement therefore
+    /// rolls back finalization instead of leaving recovery with a saved ride and no new session.
+    /// Retrying after a committed transaction observes the replacement as the next recoverable
+    /// ride after the next database acquisition, so recovery cannot duplicate it.
+    pub fn settle_recovered_ride(
+        &self,
+        ride_id: RideId,
+        discard_empty: bool,
+        occurred_at_ms: u64,
+        monotonic_at_ms: u64,
+        replacement_candidate_vehicle: Option<&str>,
+    ) -> Result<Option<RideId>, StorageError> {
+        let replacement_candidate_vehicle = normalize_optional_stored_text(
+            replacement_candidate_vehicle,
+            "replacement candidate vehicle",
+        )?;
+        self.request_blocking(move |reply| Command::SettleRecoveredRide {
+            ride_id,
+            discard_empty,
+            occurred_at_ms,
+            monotonic_at_ms,
+            replacement_candidate_vehicle,
+            reply,
+        })
+    }
+
     /// Replaces the Rust-owned candidate, association, and telemetry metadata for one ride.
     ///
     /// Every argument is written as given. A `None` argument clears that stored column, so
@@ -3042,7 +3070,10 @@ impl RideDatabase {
         self.request(move |reply| Command::FindRide { ride_id, reply })
     }
 
-    /// Finds the newest ride that still needs lifecycle recovery.
+    /// Finds the newest ride that the database-open recovery pass marked interrupted.
+    ///
+    /// Terminal rides must never be treated as an active ride on launch. In particular, a
+    /// recently saved ride is history, not a recovery candidate.
     ///
     /// # Errors
     ///
@@ -3448,6 +3479,14 @@ enum Command {
         monotonic_created_at_ms: u64,
         candidate_vehicle: Option<String>,
         reply: Reply<RideId>,
+    },
+    SettleRecoveredRide {
+        ride_id: RideId,
+        discard_empty: bool,
+        occurred_at_ms: u64,
+        monotonic_at_ms: u64,
+        replacement_candidate_vehicle: Option<String>,
+        reply: Reply<Option<RideId>>,
     },
     CreateStartedRide {
         source: RideSource,
@@ -4095,6 +4134,59 @@ fn create_started_live_ride(
     candidate_vehicle: Option<&str>,
 ) -> Result<RideId, StorageError> {
     let transaction = connection.transaction()?;
+    let ride_id = create_started_live_ride_in_transaction(
+        &transaction,
+        created_at_ms,
+        monotonic_created_at_ms,
+        candidate_vehicle,
+    )?;
+    transaction.commit()?;
+    Ok(ride_id)
+}
+
+fn settle_recovered_ride(
+    connection: &mut Connection,
+    ride_id: RideId,
+    discard_empty: bool,
+    occurred_at_ms: u64,
+    monotonic_at_ms: u64,
+    replacement_candidate_vehicle: Option<&str>,
+) -> Result<Option<RideId>, StorageError> {
+    let transaction = connection.transaction()?;
+    let terminal_event = if discard_empty {
+        RideEvent::Discard
+    } else {
+        RideEvent::Save
+    };
+    transition_ride(
+        &transaction,
+        ride_id,
+        terminal_event,
+        occurred_at_ms,
+        Some(monotonic_at_ms),
+    )?;
+    let replacement = replacement_candidate_vehicle.map(|candidate| {
+        create_started_live_ride_in_transaction(
+            &transaction,
+            occurred_at_ms,
+            monotonic_at_ms,
+            Some(candidate),
+        )
+    });
+    let replacement = match replacement {
+        Some(result) => Some(result?),
+        None => None,
+    };
+    transaction.commit()?;
+    Ok(replacement)
+}
+
+fn create_started_live_ride_in_transaction(
+    transaction: &rusqlite::Transaction<'_>,
+    created_at_ms: u64,
+    monotonic_created_at_ms: u64,
+    candidate_vehicle: Option<&str>,
+) -> Result<RideId, StorageError> {
     let ride_id = RideId::new();
     transaction.execute(
         "INSERT INTO rides
@@ -4108,7 +4200,6 @@ fn create_started_live_ride(
             candidate_vehicle,
         ],
     )?;
-    transaction.commit()?;
     Ok(ride_id)
 }
 
@@ -6743,7 +6834,7 @@ fn newest_recoverable_ride(connection: &Connection) -> Result<Option<RideRecord>
                     (SELECT display_name FROM devices
                      WHERE platform_identifier = rides.associated_vehicle)
              FROM rides
-             WHERE state IN ('active', 'paused', 'stopped', 'interrupted')
+             WHERE state = 'interrupted'
              ORDER BY created_at_ms DESC, id DESC
              LIMIT 1",
             [],

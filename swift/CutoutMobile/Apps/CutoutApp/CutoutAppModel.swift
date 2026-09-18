@@ -323,6 +323,37 @@ final class CutoutAppModel {
         stopMusicMonitoring()
     }
 
+    /// Opens and restores durable state before constructing the main-actor presentation model.
+    ///
+    /// Database creation, migration, and ride recovery happen inside Rust and are deliberately
+    /// kept off the main actor. The synchronous convenience initializer remains for deterministic
+    /// tests and injected drivers; the application uses this path.
+    static func open() async throws -> CutoutAppModel {
+        let database = try await RustPersistenceStore.open()
+        try Task.checkCancellation()
+        let state = MobileRideMapState(database: database)
+        try await runCancellableDetached(priority: .userInitiated) {
+            let now = UInt64(ProcessInfo.processInfo.systemUptime * 1_000)
+            _ = try state.restore(atMs: now)
+        }
+        try Task.checkCancellation()
+        #if DEBUG
+        let permitsStoredDeviceAutoPairing = uiTestFixture == nil
+        #else
+        let permitsStoredDeviceAutoPairing = true
+        #endif
+        return CutoutAppModel(
+            core: makeSessionDriver(rideMapState: state),
+            permitsStoredDeviceAutoPairing: permitsStoredDeviceAutoPairing,
+            selectedDeviceStore: DevicePickerSelectionStore(),
+            rideSessionMarkerStore: RideSessionMarkerStore(),
+            liveActivityManager: LiveActivityRideActivityKitManager(),
+            musicHistoryPolicyStore: MusicHistoryPolicyStore(),
+            musicProviderSelectionStore: MusicProviderSelectionStore(),
+            musicMonitoringPreferenceStore: MusicMonitoringPreferenceStore()
+        )
+    }
+
     convenience init() {
         #if DEBUG
         let permitsStoredDeviceAutoPairing = Self.uiTestFixture == nil
@@ -457,6 +488,9 @@ final class CutoutAppModel {
             self.rideMapSnapshot = snapshot
             self.rideMapLiveTelemetryState = snapshot.telemetryState
             self.updateRideMapDurationTicker()
+            if self.rideMapRestoreTask == nil {
+                self.restoreRideMapState()
+            }
         }
         self.core.onRideMapErrorChange = { [weak self] event in
             guard let self,
@@ -1050,14 +1084,20 @@ final class CutoutAppModel {
         }
         rideMapLiveTelemetryState = rideMapSnapshot?.telemetryState
         updateRideMapDurationTicker()
-        guard rideMapSnapshot != nil else { return }
+        guard let restoredRideID = rideMapSnapshot?.rideID else { return }
         rideMapRestoreTask?.cancel()
         let previewLimit = Self.rideMapLimits.liveTailPointLimit
         let restorationGeneration = rideMapLiveProjectionGeneration
         rideMapRestoreTask = Task { [weak self] in
             do {
                 let result = try await Self.runCancellableDetached(priority: .userInitiated) {
-                    try state.projectPoints(budget: previewLimit)
+                    // Restoration loads only the recorder tail synchronously. Project the
+                    // durable route here so relaunch preserves the whole ride and its canonical
+                    // camera bounds; subsequent live updates may use the bounded recorder path.
+                    try state.projectStoredPoints(
+                        rideID: restoredRideID,
+                        budget: previewLimit
+                    )
                 }
                 guard !Task.isCancelled, let self else { return }
                 guard Self.shouldApplyRestoredLiveProjection(
@@ -2788,13 +2828,17 @@ final class CutoutAppModel {
         }
     }
 
-    private static func makeSessionDriver() -> any CutoutSessionDriving {
-        #if DEBUG
+    private static func makeSessionDriver(
+        rideMapState: MobileRideMapState? = nil
+    ) -> any CutoutSessionDriving {
+#if DEBUG
         if let fixture = uiTestFixture {
-            let rideMapState = RustPersistenceStore.shared.map(MobileRideMapState.init(database:))
             return CutoutSessionCore(testScript: fixture.testScript, rideMapState: rideMapState)
         }
-        #endif
+#endif
+        if let rideMapState {
+            return CutoutSessionCore(rideMapState: rideMapState)
+        }
         return CutoutSessionCore()
     }
 

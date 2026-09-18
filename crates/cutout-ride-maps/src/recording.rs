@@ -1221,7 +1221,7 @@ impl RideMapRecorder {
                 .as_u64(),
         );
         self.segment_started = false;
-        segment_started
+        true
     }
 
     fn segment_start_reason_for_sample(
@@ -1389,6 +1389,15 @@ mod tests {
             .expect("pauses");
         assert!(!recorder.record_sample(sample(1_003, 40.000_001)));
         assert_eq!(recorder.point_count(), 1);
+    }
+
+    #[test]
+    fn recording_an_ordinary_followup_sample_reports_success() {
+        let mut recorder = RideMapRecorder::new();
+        recorder.start(monotonic(1_000), None).expect("starts");
+        assert!(recorder.record_sample(sample(1_001, 40.0)));
+        assert!(recorder.record_sample(sample(2_000, 40.000_001)));
+        assert_eq!(recorder.point_count(), 2);
     }
 
     #[test]
