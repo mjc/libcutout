@@ -14,7 +14,7 @@ final class DeviceControlsPresentationTests: XCTestCase {
         XCTAssertEqual(DeviceControlPresentation.value(.boolean(value: true), control: .boolean), "On")
     }
 
-    func testSubmissionFeedbackOnlyShowsPendingAndFailures() {
+    func testSubmissionFeedbackShowsPendingUnconfirmedAndFailures() {
         for raw: Int32 in [0, 46, 70] {
             XCTAssertEqual(DeviceControlPresentation.value(.number(value: raw), control: .readOnly), String(raw))
         }
@@ -23,7 +23,7 @@ final class DeviceControlsPresentationTests: XCTestCase {
         XCTAssertNil(DeviceControlPresentation.status(.idle))
         XCTAssertNil(DeviceControlPresentation.actionStatus(.idle))
         XCTAssertEqual(DeviceControlPresentation.status(.failed), "Failed")
-        XCTAssertNil(DeviceControlPresentation.status(.sentWithoutConfirmation))
+        XCTAssertEqual(DeviceControlPresentation.status(.sentWithoutConfirmation), "Sent; no confirmation")
         XCTAssertEqual(DeviceControlPresentation.refusal(.busy), "The wheel is processing another command.")
     }
 
@@ -81,10 +81,22 @@ final class DeviceControlsPresentationTests: XCTestCase {
         state.status = .sentWithoutConfirmation
         XCTAssertNil(state.current)
         XCTAssertEqual(DeviceControlPresentation.value(state.requested, control: .boolean), "On")
-        XCTAssertNil(DeviceControlPresentation.status(state.status))
+        XCTAssertEqual(DeviceControlPresentation.status(state.status), "Sent; no confirmation")
         state.current = .boolean(value: false)
         XCTAssertEqual(DeviceControlPresentation.value(state.current, control: .boolean), "Off")
         XCTAssertEqual(DeviceControlPresentation.value(state.requested, control: .boolean), "On")
+    }
+
+    func testSourceLabelsKeepWheelReadbackSeparateFromRequests() {
+        XCTAssertEqual(DeviceControlPresentation.sourceLabel(.liveReadback), "Wheel")
+        XCTAssertEqual(DeviceControlPresentation.sourceLabel(.captureReplay), "Replay")
+        XCTAssertEqual(DeviceControlPresentation.sourceLabel(.userRequest), "Requested")
+        XCTAssertEqual(DeviceControlPresentation.sourceLabel(nil), "Wheel")
+        XCTAssertEqual(
+            DeviceControlPresentation.status(.sentWithoutConfirmation),
+            "Sent; no confirmation"
+        )
+        XCTAssertEqual(localizedAppText("settings.state.timed_out"), "Not confirmed")
     }
 
     func testNumericDraftWinsOverChangingReadbackAndRespectsFixedPointBounds() {
@@ -135,7 +147,7 @@ final class DeviceControlsPresentationTests: XCTestCase {
         XCTAssertFalse(DeviceControlPresentation.hasChanges(draft: .disabled, current: .disabled))
         XCTAssertEqual(DeviceControlPresentation.value(nil, control: .boolean), "—")
         XCTAssertNil(DeviceControlPresentation.status(.confirmed))
-        XCTAssertNil(DeviceControlPresentation.actionStatus(.sentWithoutConfirmation))
+        XCTAssertEqual(DeviceControlPresentation.actionStatus(.sentWithoutConfirmation), "Sent; no confirmation")
         XCTAssertNotNil(DeviceControlPresentation.status(.waitingForConfirmation))
         XCTAssertNotNil(DeviceControlPresentation.status(.timedOut))
         XCTAssertNotNil(DeviceControlPresentation.status(.refused))

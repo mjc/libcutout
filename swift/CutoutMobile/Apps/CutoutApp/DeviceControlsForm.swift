@@ -177,13 +177,57 @@ private struct DeviceSettingRow: View {
         HStack(alignment: .firstTextBaseline) {
             title
             Spacer(minLength: 8)
-            if descriptor.control != .boolean || state?.current != nil {
-                Text(displayedValue)
-                    .monospacedDigit()
-                    .foregroundStyle(PevColors.muted)
-                    .accessibilityIdentifier(draft == nil ? "settings.current.\(descriptor.id)" : "settings.draft.\(descriptor.id)")
+            valueSummary
+        }
+    }
+
+    private var valueSummary: some View {
+        VStack(alignment: .trailing, spacing: 2) {
+            if let draft {
+                labeledValue(
+                    draftLabel,
+                    draft,
+                    identifier: "settings.draft.\(descriptor.id)"
+                )
+            }
+            if let current = state?.current {
+                labeledValue(
+                    DeviceControlPresentation.sourceLabel(state?.currentSource),
+                    current,
+                    identifier: "settings.current.\(descriptor.id)"
+                )
+            } else {
+                labeledValue(
+                    DeviceControlPresentation.sourceLabel(nil),
+                    nil,
+                    identifier: "settings.current.\(descriptor.id)"
+                )
             }
         }
+        .accessibilityElement(children: .contain)
+    }
+
+    private var draftLabel: String {
+        guard let state, state.requested == draft, state.status != .idle else {
+            return localizedAppText("settings.value.draft")
+        }
+        return localizedAppText("settings.value.requested")
+    }
+
+    private func labeledValue(
+        _ label: String,
+        _ value: DeviceSettingValue?,
+        identifier: String
+    ) -> some View {
+        HStack(spacing: 4) {
+            Text(label)
+                .font(.caption)
+                .foregroundStyle(PevColors.muted)
+            Text(DeviceControlPresentation.value(value, control: descriptor.control))
+                .monospacedDigit()
+        }
+        .accessibilityElement(children: .combine)
+        .accessibilityIdentifier(identifier)
     }
 
     private var booleanButtons: some View {
@@ -424,9 +468,19 @@ enum DeviceControlPresentation {
         }
     }
 
+    static func sourceLabel(_ source: DeviceSettingValueSource?) -> String {
+        switch source {
+        case .liveReadback: localizedAppText("settings.value.wheel")
+        case .captureReplay: localizedAppText("settings.value.replay")
+        case .userRequest: localizedAppText("settings.value.requested")
+        case .unknown, nil: localizedAppText("settings.value.wheel")
+        }
+    }
+
     static func status(_ status: DeviceSettingStatus) -> String? {
         switch status {
-        case .idle, .sentWithoutConfirmation, .confirmed: nil
+        case .idle, .confirmed: nil
+        case .sentWithoutConfirmation: localizedAppText("settings.state.sent_without_confirmation")
         case .waitingForConfirmation: localizedAppText("settings.state.pending")
         case .refused: localizedAppText("settings.state.refused")
         case .timedOut: localizedAppText("settings.state.timed_out")
@@ -452,7 +506,8 @@ enum DeviceControlPresentation {
 
     static func actionStatus(_ status: DeviceActionStatus) -> String? {
         switch status {
-        case .idle, .sentWithoutConfirmation: nil
+        case .idle: nil
+        case .sentWithoutConfirmation: localizedAppText("settings.state.sent_without_confirmation")
         case .waitingForProgress: localizedAppText("controls.waiting")
         case .readyForNextStep: localizedAppText("controls.ready")
         case .refused: localizedAppText("settings.state.refused")

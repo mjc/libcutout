@@ -16,6 +16,7 @@ public typealias DeviceSettingAccess = CutoutMobileFFI.MobileSettingAccessDto
 public typealias DeviceSettingStatus = CutoutMobileFFI.MobileSettingStatusDto
 public typealias DeviceSettingEvidence = CutoutMobileFFI.MobileSettingEvidenceDto
 public typealias DeviceSettingUnit = CutoutMobileFFI.MobileSettingUnitDto
+public typealias DeviceSettingValueSource = CutoutMobileFFI.MobileSettingValueSourceDto
 
 public typealias DeviceActionID = CutoutMobileFFI.MobileDeviceActionIdDto
 public typealias DeviceActionDescriptor = CutoutMobileFFI.MobileDeviceActionDescriptorDto

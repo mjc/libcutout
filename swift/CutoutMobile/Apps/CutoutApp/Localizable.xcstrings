@@ -933,6 +933,10 @@
       "comment" : "Status for a setting command awaiting completion.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Pending" } } }
     },
+    "settings.state.sent_without_confirmation" : {
+      "comment" : "Status for a setting command sent to a wheel whose physical effect has no confirmation path.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Sent; no confirmation" } } }
+    },
     "settings.state.confirmed" : {
       "comment" : "Status for a setting command confirmed by the device.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Confirmed" } } }
@@ -946,8 +950,8 @@
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Refused" } } }
     },
     "settings.state.timed_out" : {
-      "comment" : "Status for a setting command that was not confirmed in time.",
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Timed out" } } }
+      "comment" : "Status for a setting command whose effect was not confirmed by wheel readback.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Not confirmed" } } }
     },
     "settings.state.failed" : {
       "comment" : "Status for a setting command that failed.",
@@ -2718,6 +2722,10 @@
     "controls.actions" : {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "Wheel actions"}}}},
     "controls.boolean.action" : {"comment": "Accessible command label: setting name, then On or Off.", "localizations": {"en": {"stringUnit": {"state": "translated", "value": "%@: %@"}}}},
     "controls.apply" : {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "Apply"}}}},
+    "settings.value.wheel" : {"comment": "Value read from the connected wheel, or the unknown-value label when the wheel has not reported it.", "localizations": {"en": {"stringUnit": {"state": "translated", "value": "Wheel"}}}},
+    "settings.value.draft" : {"comment": "A local value edited by the user but not submitted.", "localizations": {"en": {"stringUnit": {"state": "translated", "value": "Draft"}}}},
+    "settings.value.requested" : {"comment": "A value submitted to the wheel whose readback is not yet confirmed.", "localizations": {"en": {"stringUnit": {"state": "translated", "value": "Requested"}}}},
+    "settings.value.replay" : {"comment": "A value originating from replay data rather than the connected wheel.", "localizations": {"en": {"stringUnit": {"state": "translated", "value": "Replay"}}}},
     "controls.prepare" : {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "Calibrate pedals"}}}},
     "controls.start" : {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "Start calibration"}}}},
     "controls.waiting" : {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "Waiting for the wheel"}}}},
