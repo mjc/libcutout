@@ -21,6 +21,16 @@ inside one immutable `generations/<receipt>/CutoutMobileFFI` directory. SwiftPM,
 Xcode, SourceKit, tests, and app builds therefore resolve a specific generation.
 Publishing a new selector leaves previously selected generations intact.
 
+`crates/cutout-mobile-ffi/src/**/*.rs` is handwritten Rust source. It defines
+the UniFFI records, enums, objects, exports, and adapter behavior consumed by
+the generator; it is not generated output. The generated Swift package exists
+only under the selected immutable generation shown above. In particular,
+`target/swift-ffi/CutoutMobileFFI` and
+`crates/cutout-mobile-ffi/CutoutMobileFFI` are unsupported legacy output paths,
+not alternate inputs or package locations. Do not inspect or edit them. If
+either path is present in a checkout, remove that exact legacy directory; the
+supported selector is the only generated package that native builds consume.
+
 Normal tasks use `cargo cutout swift -- <native swift args>` or
 `cargo cutout xcodebuild -- <native xcodebuild args>`. The shared Rust pipeline
 ensures current FFI inputs, then invokes `/usr/bin/xcrun swift` or
