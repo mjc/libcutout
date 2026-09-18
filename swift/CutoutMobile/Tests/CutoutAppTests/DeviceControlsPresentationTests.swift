@@ -164,7 +164,7 @@ final class DeviceControlsPresentationTests: XCTestCase {
     }
 
     private func makeState() -> DeviceSettingSnapshot {
-        .init(id: .highBeam, current: nil, currentSource: nil, evidence: nil, requested: nil, status: .idle, ageMs: nil, refusal: nil)
+        .init(id: .highBeam, current: nil, currentSource: nil, evidence: nil, requested: nil, status: .idle, transport: nil, ageMs: nil, refusal: nil)
     }
 
     func testActionButtonsFollowRustNextStepWithoutInferringFromStatus() {

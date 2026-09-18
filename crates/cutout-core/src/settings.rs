@@ -49,6 +49,22 @@ pub enum SettingCommandStatus {
     Failed,
 }
 
+/// Host transport evidence for the most recent setting request.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum SettingTransportStatus {
+    /// The semantic request was accepted before a transport write was attempted.
+    Accepted,
+
+    /// The request is waiting in a host-side or native BLE queue.
+    Queued,
+
+    /// The host handed the bytes to the peripheral transport.
+    Submitted,
+
+    /// The request was rejected before it reached the peripheral transport.
+    Rejected,
+}
+
 /// A setting value paired with its provenance.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct SettingValue<Value> {

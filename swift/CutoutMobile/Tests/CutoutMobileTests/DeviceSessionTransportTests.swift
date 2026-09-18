@@ -193,7 +193,10 @@ private final class TransportSink: CoreBluetoothOperationSink {
         subscriptions.append(channel)
         onSubscribe?(channel)
     }
-    func writeWithoutResponse(channel: BluetoothUuid, bytes: Data) { writes.append(bytes) }
+    func writeWithoutResponse(channel: BluetoothUuid, bytes: Data) -> CoreBluetoothWriteDisposition {
+        writes.append(bytes)
+        return .submitted
+    }
     func disconnect() {}
     func clearPendingWithoutResponseWrites() { clears += 1 }
 }

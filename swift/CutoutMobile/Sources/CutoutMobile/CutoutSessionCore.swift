@@ -183,7 +183,7 @@ struct IdentificationProbeTransportCoordinator {
     ) -> IdentificationProbeOutcome {
         let outcome = detectionSession.beginIdentificationProbe(at: now)
         if case .writes(let writes) = outcome {
-            writes.forEach { sink.writeWithoutResponse(channel: $0.channel, bytes: $0.bytes) }
+            writes.forEach { _ = sink.writeWithoutResponse(channel: $0.channel, bytes: $0.bytes) }
         }
         return outcome
     }
@@ -207,7 +207,7 @@ struct IdentificationProbeTransportCoordinator {
             .filter { $0.kind == .write }
             .forEach { action in
                 guard let channel = BluetoothUuid(action.channel) else { return }
-                sink.writeWithoutResponse(channel: channel, bytes: action.bytes)
+                _ = sink.writeWithoutResponse(channel: channel, bytes: action.bytes)
             }
     }
 }
@@ -377,8 +377,9 @@ private final class CutoutSessionTestOperationSink: CoreBluetoothOperationSink {
 
     func subscribe(channel _: BluetoothUuid) {}
 
-    func writeWithoutResponse(channel: BluetoothUuid, bytes: Data) {
+    func writeWithoutResponse(channel: BluetoothUuid, bytes: Data) -> CoreBluetoothWriteDisposition {
         writes.append((channel, bytes))
+        return .submitted
     }
 
     func disconnect() {}
@@ -3057,23 +3058,23 @@ extension CutoutSessionCore: CoreBluetoothOperationSink {
         peripheral?.setNotifyValue(true, for: characteristic)
     }
 
-    public func writeWithoutResponse(channel: BluetoothUuid, bytes: Data) {
+    public func writeWithoutResponse(channel: BluetoothUuid, bytes: Data) -> CoreBluetoothWriteDisposition {
         observeDetectionProbeWrite(channel: channel, bytes: bytes)
         guard let characteristic = subscribedCharacteristics[channel] else {
             setPhase(.failed(.missingWriteChannel))
-            return
+            return .rejected
         }
         guard characteristic.properties.contains(.writeWithoutResponse) else {
             setPhase(.failed(.missingWriteChannel))
-            return
+            return .rejected
         }
-        guard let peripheral else { return }
+        guard let peripheral else { return .rejected }
         guard captureFrame(
             direction: "write_without_response",
             characteristic: channel.coreBluetoothUuid,
             bytes: bytes
         ) else {
-            return
+            return .rejected
         }
         guard pendingWithoutResponseWrites.isEmpty, peripheral.canSendWriteWithoutResponse else {
             if pendingWithoutResponseWrites.count >= Self.maximumPendingWithoutResponseWrites {
@@ -3083,10 +3084,11 @@ extension CutoutSessionCore: CoreBluetoothOperationSink {
             pendingWithoutResponseWrites.append((characteristic, bytes))
             record("write_without_response_queued=\(channel.coreBluetoothUuid.uuidString) bytes=\(bytes.count)")
             flushPendingWithoutResponseWrites()
-            return
+            return .queued
         }
         peripheral.writeValue(bytes, for: characteristic, type: .withoutResponse)
         record("write_without_response=\(channel.coreBluetoothUuid.uuidString) bytes=\(bytes.count)")
+        return .submitted
     }
 
     public func canSubmitWithoutResponse() -> Bool {

@@ -1,6 +1,9 @@
 //! Native settings records and conversions; validation and lifecycle live in Rust owners.
 
-use cutout_core::{DeviceSettingSnapshot, DeviceSettingValue, SettingCommandStatus, SettingId};
+use cutout_core::{
+    DeviceSettingSnapshot, DeviceSettingValue, SettingCommandStatus, SettingId,
+    SettingTransportStatus,
+};
 use cutout_protocols::{
     DeviceSettingRequestError, DeviceSettingsSnapshot, SettingAccess, SettingControl,
     SettingDescriptor, SettingGroup, SettingUnit, SettingsRequestError,
@@ -65,6 +68,12 @@ setting_enum!(
         ChargeMode,
         PowerOffDelay
     ]
+);
+setting_enum!(
+    MobileSettingTransportStatusDto,
+    SettingTransportStatus,
+    "Host transport evidence for the most recent setting request.",
+    [Accepted, Queued, Submitted, Rejected]
 );
 setting_enum!(
     MobileSettingUnitDto,
@@ -277,6 +286,8 @@ pub struct MobileSettingSnapshotDto {
     pub requested: Option<MobileSettingValueDto>,
     /// Shared request lifecycle.
     pub status: MobileSettingStatusDto,
+    /// Host transport evidence, independent of wheel readback confirmation.
+    pub transport: Option<MobileSettingTransportStatusDto>,
     /// Observation age at the snapshot timestamp.
     pub age_ms: Option<u64>,
     /// Protocol guard refusal, if any.
@@ -296,6 +307,7 @@ impl From<DeviceSettingSnapshot> for MobileSettingSnapshotDto {
             }),
             requested: value.requested.map(Into::into),
             status: value.status.into(),
+            transport: value.transport.map(Into::into),
             age_ms: value.age.map(|age| age.as_milliseconds()),
             refusal: value
                 .refusal
@@ -484,6 +496,25 @@ impl CutoutSessionStateHandle {
             )
             .map(Into::into)
             .map_err(Into::into)
+    }
+
+    /// Records host transport evidence for one accepted setting request.
+    pub fn mark_setting_transport(
+        &self,
+        token: MobileConnectionAttemptTokenDto,
+        id: MobileSettingIdDto,
+        status: MobileSettingTransportStatusDto,
+    ) -> bool {
+        let token = token.into();
+        let mut inner = self.lock_inner();
+        if !inner.session_state().connection.is_current(&token) {
+            return false;
+        }
+        inner
+            .session_state_mut()
+            .settings
+            .transport(id.into(), status.into());
+        true
     }
 }
 

@@ -4,8 +4,8 @@ use std::collections::BTreeMap;
 
 use crate::{
     ControlRefusalReason, Duration, Measured, MonotonicTimestamp, SETTING_CONFIRMATION_TIMEOUT,
-    SettingCommandStatus, SettingState, SettingValue, SettingValueSource, ValueQuality,
-    ValueSource, VerificationStatus,
+    SettingCommandStatus, SettingState, SettingTransportStatus, SettingValue, SettingValueSource,
+    ValueQuality, ValueSource, VerificationStatus,
 };
 
 /// Stable semantic identity, independent of protocol fields or model names.
@@ -112,6 +112,8 @@ pub struct DeviceSettingSnapshot {
     pub requested: Option<DeviceSettingValue>,
     /// Rust-owned confirmation state.
     pub status: SettingCommandStatus,
+    /// Host transport evidence for the most recent request.
+    pub transport: Option<SettingTransportStatus>,
     /// Age of the current observation; absent when no value has been observed.
     pub age: Option<Duration>,
     /// Reason for the last refused request.
@@ -124,6 +126,7 @@ struct SettingRecord {
     observed_at: Option<MonotonicTimestamp>,
     evidence: Option<Measured<()>>,
     confirmation_supported: bool,
+    transport: Option<SettingTransportStatus>,
 }
 
 impl Default for SettingRecord {
@@ -133,6 +136,7 @@ impl Default for SettingRecord {
             observed_at: None,
             evidence: None,
             confirmation_supported: true,
+            transport: None,
         }
     }
 }
@@ -251,11 +255,24 @@ impl DeviceSettingsState {
     ) {
         let record = self.records.entry(id).or_default();
         record.confirmation_supported = confirmation_supported;
+        record.transport = Some(match outcome {
+            SettingSubmissionOutcome::Accepted => SettingTransportStatus::Accepted,
+            SettingSubmissionOutcome::Refused(_) | SettingSubmissionOutcome::Failed => {
+                SettingTransportStatus::Rejected
+            }
+        });
         record.state.submit(requested, submitted_at);
         match outcome {
             SettingSubmissionOutcome::Accepted => {}
             SettingSubmissionOutcome::Refused(reason) => record.state.refuse(reason),
             SettingSubmissionOutcome::Failed => record.state.fail(),
+        }
+    }
+
+    /// Records host transport evidence without changing readback confirmation state.
+    pub fn transport(&mut self, id: SettingId, status: SettingTransportStatus) {
+        if let Some(record) = self.records.get_mut(&id) {
+            record.transport = Some(status);
         }
     }
 
@@ -292,6 +309,7 @@ impl DeviceSettingsState {
                 status: record
                     .state
                     .command_status(now, record.confirmation_supported),
+                transport: record.transport,
                 age: record
                     .observed_at
                     .filter(|_| record.state.current_readback().is_some())
@@ -476,6 +494,39 @@ mod tests {
         assert_eq!(pwm.current.unwrap().value, DeviceSettingValue::Disabled);
         assert_eq!(pwm.age.unwrap().as_milliseconds(), 10);
         assert_eq!(pwm.status, SettingCommandStatus::Idle);
+    }
+
+    #[test]
+    fn transport_evidence_is_separate_from_wheel_confirmation() {
+        let mut settings = DeviceSettingsState::default();
+        let id = SettingId::DisplayBrightness;
+        settings.submission(
+            id,
+            DeviceSettingValue::Number(1),
+            SettingSubmissionOutcome::Accepted,
+            true,
+            time(10),
+        );
+        let accepted = settings.snapshot(time(10));
+        assert_eq!(
+            accepted[0].status,
+            SettingCommandStatus::WaitingForConfirmation
+        );
+        assert_eq!(
+            accepted[0].transport,
+            Some(SettingTransportStatus::Accepted)
+        );
+
+        settings.transport(id, SettingTransportStatus::Submitted);
+        let submitted = settings.snapshot(time(20));
+        assert_eq!(
+            submitted[0].status,
+            SettingCommandStatus::WaitingForConfirmation
+        );
+        assert_eq!(
+            submitted[0].transport,
+            Some(SettingTransportStatus::Submitted)
+        );
     }
 
     #[test]

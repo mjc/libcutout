@@ -957,6 +957,22 @@
       "comment" : "Status for a setting command that failed.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Failed" } } }
     },
+    "settings.transport.accepted" : {
+      "comment" : "Transport evidence for a setting request accepted by the Rust owner before a BLE write.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Accepted by app" } } }
+    },
+    "settings.transport.queued" : {
+      "comment" : "Transport evidence for a setting request queued for Bluetooth submission.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Queued for Bluetooth" } } }
+    },
+    "settings.transport.submitted" : {
+      "comment" : "Transport evidence for a setting request handed to the wheel's Bluetooth transport.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Sent to wheel" } } }
+    },
+    "settings.transport.rejected" : {
+      "comment" : "Transport evidence for a setting request rejected before reaching the wheel.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Rejected before Bluetooth" } } }
+    },
     "settings.pedal_mode.title" : {
       "comment" : "Label for the EUC pedal mode setting.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Pedal mode" } } }

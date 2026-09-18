@@ -2043,7 +2043,7 @@ func testVescRideSnapshotProjectsBatteryLevelAndUpdateTime() throws {
     func testBegodeProbeWriteDoesNotUseSkippedWriteGuard() {
         let core = CutoutSessionCore()
 
-        core.writeWithoutResponse(channel: .bluetooth16(0xffe1), bytes: Data("N".utf8))
+        _ = core.writeWithoutResponse(channel: .bluetooth16(0xffe1), bytes: Data("N".utf8))
 
         XCTAssertEqual(core.phase, .failed(.missingWriteChannel))
         XCTAssertTrue(core.records.contains("begode_probe_write=model"))
@@ -2052,7 +2052,7 @@ func testVescRideSnapshotProjectsBatteryLevelAndUpdateTime() throws {
     func testVescTelemetryRequestDoesNotUseSkippedWriteGuard() {
         let core = CutoutSessionCore()
 
-        core.writeWithoutResponse(
+        _ = core.writeWithoutResponse(
             channel: .vescNordicUartWrite,
             bytes: Data([0x02, 0x01, 0x04, 0x40, 0x84, 0x03])
         )
@@ -2063,7 +2063,7 @@ func testVescRideSnapshotProjectsBatteryLevelAndUpdateTime() throws {
     func testVescRealtimeTelemetryRequestDoesNotUseReadOnlyWriteGuard() {
         let core = CutoutSessionCore()
 
-        core.writeWithoutResponse(
+        _ = core.writeWithoutResponse(
             channel: .vescNordicUartWrite,
             bytes: Data([0x02, 0x01, 0x0e, 0xe1, 0xce, 0x03])
         )
@@ -2102,7 +2102,7 @@ func testVescRideSnapshotProjectsBatteryLevelAndUpdateTime() throws {
     func testUnrelatedWriteReachesNormalTransportValidation() {
         let core = CutoutSessionCore()
 
-        core.writeWithoutResponse(channel: .bluetooth16(0xffe1), bytes: Data([0x01]))
+        _ = core.writeWithoutResponse(channel: .bluetooth16(0xffe1), bytes: Data([0x01]))
 
         XCTAssertEqual(core.phase, .failed(.missingWriteChannel))
         XCTAssertFalse(core.records.contains("begode_probe_write=model"))
@@ -2111,7 +2111,7 @@ func testVescRideSnapshotProjectsBatteryLevelAndUpdateTime() throws {
     func testMultiBytePayloadStartingWithProbeByteReachesNormalTransportValidation() {
         let core = CutoutSessionCore()
 
-        core.writeWithoutResponse(channel: .bluetooth16(0xffe1), bytes: Data("NAME".utf8))
+        _ = core.writeWithoutResponse(channel: .bluetooth16(0xffe1), bytes: Data("NAME".utf8))
 
         XCTAssertEqual(core.phase, .failed(.missingWriteChannel))
         XCTAssertFalse(core.records.contains("begode_probe_write=model"))
@@ -3115,12 +3115,13 @@ private final class RecordingOperationSink: CoreBluetoothOperationSink {
         recordedEvents.append(.subscribe)
     }
 
-    func writeWithoutResponse(channel: BluetoothUuid, bytes: Data) {
+    func writeWithoutResponse(channel: BluetoothUuid, bytes: Data) -> CoreBluetoothWriteDisposition {
         writesChanged.lock()
         recordedWrites.append(bytes)
         recordedEvents.append(.write)
         writesChanged.broadcast()
         writesChanged.unlock()
+        return .submitted
     }
 
     func disconnect() {}

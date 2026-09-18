@@ -158,10 +158,17 @@ private struct DeviceSettingRow: View {
             if let error = submissionError ?? state?.refusal.map(DeviceControlPresentation.refusal) {
                 Text(error).font(.footnote).foregroundStyle(PevColors.red)
                     .accessibilityIdentifier("settings.error.\(descriptor.id)")
-            } else if let state, let status = DeviceControlPresentation.status(state.status) {
-                Text(status).font(.footnote)
-                    .foregroundStyle(state.status == .waitingForConfirmation ? PevColors.muted : PevColors.red)
-                    .accessibilityIdentifier("settings.status.\(descriptor.id)")
+            } else {
+                if let state, let transport = DeviceControlPresentation.transportStatus(state.transport) {
+                    Text(transport).font(.footnote)
+                        .foregroundStyle(PevColors.muted)
+                        .accessibilityIdentifier("settings.transport.\(descriptor.id)")
+                }
+                if let state, let status = DeviceControlPresentation.status(state.status) {
+                    Text(status).font(.footnote)
+                        .foregroundStyle(state.status == .waitingForConfirmation ? PevColors.muted : PevColors.red)
+                        .accessibilityIdentifier("settings.status.\(descriptor.id)")
+                }
             }
         }
         .onChange(of: state) { reconcileDraft() }
@@ -485,6 +492,16 @@ enum DeviceControlPresentation {
         case .refused: localizedAppText("settings.state.refused")
         case .timedOut: localizedAppText("settings.state.timed_out")
         case .failed: localizedAppText("settings.state.failed")
+        }
+    }
+
+    static func transportStatus(_ status: MobileSettingTransportStatusDto?) -> String? {
+        switch status {
+        case .accepted: localizedAppText("settings.transport.accepted")
+        case .queued: localizedAppText("settings.transport.queued")
+        case .submitted: localizedAppText("settings.transport.submitted")
+        case .rejected: localizedAppText("settings.transport.rejected")
+        case nil: nil
         }
     }
 
