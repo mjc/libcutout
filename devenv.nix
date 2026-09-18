@@ -7,7 +7,7 @@
 
 let
   swiftToolchainCheck = ''
-    expected_developer_dir="''${CUTOUT_DEVELOPER_DIR:-/Applications/Xcode-beta.app/Contents/Developer}"
+    expected_developer_dir="''${CUTOUT_DEVELOPER_DIR:-/Applications/Xcode.app/Contents/Developer}"
     if [[ "''${DEVELOPER_DIR:-}" != "$expected_developer_dir" || -n "''${SDKROOT:-}" ]]; then
       echo "Devenv must select $expected_developer_dir and clear inherited SDKROOT before running Swift" >&2
       exit 1
@@ -258,7 +258,7 @@ in
     export PATH="/usr/bin:/bin:/usr/sbin:/sbin:$PATH"
     # Nix's SDK setup can supply DEVELOPER_DIR independently of SDKROOT.
     # Keep direct Swift commands on the same Xcode toolchain as the iOS tasks.
-    export DEVELOPER_DIR="''${CUTOUT_DEVELOPER_DIR:-/Applications/Xcode-beta.app/Contents/Developer}"
+    export DEVELOPER_DIR="''${CUTOUT_DEVELOPER_DIR:-/Applications/Xcode.app/Contents/Developer}"
     # Task environment propagation retains inherited variables when merely unset.
     export SDKROOT=""
     unset CC CXX LD AR RANLIB

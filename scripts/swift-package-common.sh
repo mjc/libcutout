@@ -11,7 +11,7 @@ cutout_host_os() {
 
 cutout_use_xcode_developer_dir() {
   local default_developer_dir
-  default_developer_dir="${1:-/Applications/Xcode-beta.app/Contents/Developer}"
+  default_developer_dir="${1:-/Applications/Xcode.app/Contents/Developer}"
   export DEVELOPER_DIR="${CUTOUT_DEVELOPER_DIR:-$default_developer_dir}"
   unset SDKROOT
 }
