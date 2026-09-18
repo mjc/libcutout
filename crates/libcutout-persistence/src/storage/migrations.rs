@@ -1065,8 +1065,10 @@ fn migrate_v19_to_current(connection: &mut Connection) -> Result<(), StorageErro
 fn migrate_v20_to_current(connection: &mut Connection) -> Result<(), StorageError> {
     if table_exists(connection, "bms_voltage_samples")? {
         if table_has_column(connection, "bms_voltage_samples", "session_identifier")? {
-            connection.execute_batch(&current_schema_pragmas())?;
-            return Ok(());
+            connection.execute_batch(&format!(
+                "PRAGMA application_id = {APPLICATION_ID}; PRAGMA user_version = 22;"
+            ))?;
+            return migrate_v22_to_current(connection);
         }
         return migrate_v21_to_current(connection);
     }
@@ -1119,15 +1121,17 @@ fn migrate_v21_to_current(connection: &mut Connection) -> Result<(), StorageErro
          CREATE INDEX bms_voltage_samples_history
              ON bms_voltage_samples(device_identity, observation_index, wall_clock_ms DESC);",
     )?;
-    transaction.execute_batch(&current_schema_pragmas())?;
+    transaction.execute_batch(&format!(
+        "PRAGMA application_id = {APPLICATION_ID}; PRAGMA user_version = 22;"
+    ))?;
     transaction.commit()?;
-    Ok(())
+    migrate_v22_to_current(connection)
 }
 
 fn migrate_v22_to_current(connection: &mut Connection) -> Result<(), StorageError> {
     let transaction = connection.transaction()?;
     transaction.execute_batch(
-        "CREATE TABLE last_connected_device (
+        "CREATE TABLE IF NOT EXISTS last_connected_device (
              singleton_key BLOB PRIMARY KEY NOT NULL CHECK (length(singleton_key) = 16),
              platform_identifier TEXT NOT NULL CHECK (length(platform_identifier) BETWEEN 1 AND 512),
              updated_at_ms INTEGER NOT NULL CHECK (updated_at_ms >= 0)

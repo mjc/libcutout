@@ -3078,6 +3078,7 @@ fn version_20_database_adds_device_scoped_bms_history_without_resetting_existing
     connection
         .execute_batch(
             "DROP TABLE bms_voltage_samples;
+             DROP TABLE last_connected_device;
              PRAGMA application_id = 1129665615;
              PRAGMA user_version = 20;",
         )
@@ -3116,6 +3117,7 @@ fn version_21_bms_history_preserves_existing_samples_with_legacy_event_identitie
     connection
         .execute_batch(
             "DROP TABLE bms_voltage_samples;
+             DROP TABLE last_connected_device;
              CREATE TABLE bms_voltage_samples (
                  device_identity TEXT NOT NULL,
                  monotonic_ms INTEGER NOT NULL,
@@ -3140,6 +3142,17 @@ fn version_21_bms_history_preserves_existing_samples_with_legacy_event_identitie
     database.shutdown().unwrap();
 
     let connection = Connection::open(&path).unwrap();
+    assert_eq!(
+        connection
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM sqlite_schema
+                 WHERE type = 'table' AND name = 'last_connected_device')",
+                [],
+                |row| row.get::<_, bool>(0),
+            )
+            .unwrap(),
+        true
+    );
     let sample: (String, u64, u64, u16, Option<u16>, Option<u16>, i32) = connection
         .query_row(
             "SELECT session_identifier, event_sequence, monotonic_ms, observation_index,
@@ -3164,6 +3177,65 @@ fn version_21_bms_history_preserves_existing_samples_with_legacy_event_identitie
         ("legacy".to_owned(), 1, 1_000, 45, Some(1), Some(15), 4_193)
     );
     drop(connection);
+    let _ = std::fs::remove_file(path);
+}
+
+#[test]
+fn version_20_database_with_v21_bms_shape_runs_the_remaining_migrations() {
+    let _guard = test_guard();
+    let path = std::env::temp_dir().join(format!(
+        "libcutout-persistence-bms-v20-shortcut-{}.sqlite",
+        uuid::Uuid::new_v4()
+    ));
+    let connection = Connection::open(&path).unwrap();
+    crate::storage::create_current_schema(&connection).unwrap();
+    connection
+        .execute_batch(
+            "DROP TABLE bms_voltage_samples;
+             DROP TABLE last_connected_device;
+             CREATE TABLE bms_voltage_samples (
+                 device_identity TEXT NOT NULL,
+                 session_identifier TEXT NOT NULL,
+                 event_sequence INTEGER NOT NULL,
+                 monotonic_ms INTEGER NOT NULL,
+                 wall_clock_ms INTEGER NOT NULL,
+                 observation_index INTEGER NOT NULL,
+                 pack_index INTEGER,
+                 pack_observation_index INTEGER,
+                 millivolts INTEGER NOT NULL,
+                 PRIMARY KEY (device_identity, session_identifier, event_sequence, observation_index)
+             );
+             PRAGMA application_id = 1129665615;
+             PRAGMA user_version = 20;",
+        )
+        .unwrap();
+    drop(connection);
+
+    let database = RideDatabase::open(&path).unwrap();
+    database.shutdown().unwrap();
+
+    let connection = Connection::open(&path).unwrap();
+    assert_eq!(
+        connection
+            .pragma_query_value(None, "user_version", |row| row.get::<_, i64>(0))
+            .unwrap(),
+        23
+    );
+    assert_eq!(
+        connection
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM sqlite_schema
+                 WHERE type = 'table' AND name = 'last_connected_device')",
+                [],
+                |row| row.get::<_, bool>(0),
+            )
+            .unwrap(),
+        true
+    );
+    drop(connection);
+
+    let reopened = RideDatabase::open(&path).unwrap();
+    reopened.shutdown().unwrap();
     let _ = std::fs::remove_file(path);
 }
 

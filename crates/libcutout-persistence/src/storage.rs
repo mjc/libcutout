@@ -3070,10 +3070,11 @@ impl RideDatabase {
         self.request(move |reply| Command::FindRide { ride_id, reply })
     }
 
-    /// Finds the newest ride that the database-open recovery pass marked interrupted.
+    /// Finds the newest open ride that can be adopted by a map core.
     ///
-    /// Terminal rides must never be treated as an active ride on launch. In particular, a
-    /// recently saved ride is history, not a recovery candidate.
+    /// A database-open pass normally changes active and paused rides to interrupted. The active
+    /// and paused cases remain here for same-process retries after another core has already
+    /// durably restored the ride. Terminal rides are never recovery candidates.
     ///
     /// # Errors
     ///
@@ -6834,7 +6835,7 @@ fn newest_recoverable_ride(connection: &Connection) -> Result<Option<RideRecord>
                     (SELECT display_name FROM devices
                      WHERE platform_identifier = rides.associated_vehicle)
              FROM rides
-             WHERE state = 'interrupted'
+             WHERE state IN ('active', 'paused', 'interrupted')
              ORDER BY created_at_ms DESC, id DESC
              LIMIT 1",
             [],

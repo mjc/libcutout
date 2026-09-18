@@ -120,7 +120,16 @@ impl RideWriteState {
             // A lower uptime cannot belong to the interrupted ride's monotonic epoch.
             return Err(TransitionError::Invalid);
         }
-        let validated_transition = self.lifecycle.transition(event)?;
+        // Database-open recovery stores an explicitly paused ride as Interrupted so the next
+        // core can apply the 24-hour recovery policy. Preserve the pause intent for terminal
+        // commands: the authoritative state still permits Stop exactly as a paused ride does.
+        let transition_state =
+            if self.lifecycle == RideLifecycleState::Interrupted && self.paused_at_ms.is_some() {
+                RideLifecycleState::Paused
+            } else {
+                self.lifecycle
+            };
+        let validated_transition = transition_state.transition(event)?;
         let lifecycle = validated_transition.next();
         let mut monotonic_created_at_ms = self.monotonic_created_at_ms;
         let mut monotonic_last_event_ms = self.monotonic_last_event_ms;
