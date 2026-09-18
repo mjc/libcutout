@@ -1,7 +1,8 @@
 # Settings correctness tracker reconciliation
 
-Reconciled 2026-09-18 for PR #106. This records documentation and planning changes,
-not completed protocol repairs. No hardware writes were made for this update.
+Reconciled 2026-09-18 for PR #106. This records documentation, planning and the
+bounded protocol repairs on the settings branch; it does not claim complete
+settings acceptance. No hardware writes were made for this update.
 
 ## Authoritative contract and delivery
 
@@ -28,6 +29,14 @@ not completed protocol repairs. No hardware writes were made for this update.
 | Generic clients, clean final UI and exact display-unit interaction | LIBCU-793 and SET tickets under LIBCU-664 | 1146, 1329 |
 | Individual physical effect, readback and restoration cases | [LIBCU-390](https://lific.mjc.lol/LIBCU/issues/LIBCU-390), LIBCU-346 | 1329 |
 | Reconcile separate software, UI and hardware acceptance evidence | LIBCU-664 | 1147 |
+
+The current PR checkpoint adds exact speed conversion rejection in the NOSFET
+and Falcon encoders, a subscription-channel gate for selected notification
+decoders, protocol provenance on normalized read observations, and retirement
+of incompatible Rust-side detection probes after stronger protocol evidence.
+These are containment and binding invariants, not completion of the typed
+control-definition refactor. Native queued writes, operation receipts and
+acknowledgment semantics remain open under LIBCU-477/LIBCU-505/LIBCU-476.
 
 LIBCU-836, LIBCU-477, LIBCU-641 and LIBCU-505 explicitly block LIBCU-390;
 LIBCU-836 also blocks LIBCU-346. These are actual prerequisites, not a claim that

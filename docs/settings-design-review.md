@@ -40,6 +40,13 @@ that never equate connection success with settings acceptance. The harness rows
 below describe the removed implementation, not remaining callable test cases.
 The replacement settings observation/case runner is still unimplemented; active
 discovery and native queued-write cancellation remain separate open problems.
+The protocol checkpoint now contains three bounded repairs: exact speed inputs
+are rejected by the low-level NOSFET and Falcon encoders instead of being
+truncated; the selected decoder is fenced to its subscription channel even
+through the legacy accept-any session path; and incompatible Rust-side probe
+state is retired after Veteran, VESC or conflict evidence. The detector still
+needs a candidate-wide safe probe plan, and retiring Rust state does not cancel
+bytes already queued in the native transport.
 The terminal native-tool coordinator now uses Unix exec; offline subprocess
 tests prove PID preservation, inherited FFI lock ownership, signal exit and
 failed-exec cleanup. Full launcher-chain and queued-write cancellation remain
@@ -48,13 +55,13 @@ unproven.
 | Boundary | Source evidence | Consequence |
 | --- | --- | --- |
 | Control definition | `device_settings.rs`, `device_settings/aero.rs`, `request_encoder.rs`, and `control_wire/` separately define membership, bounds, mappings and confirmation | A collision-free wire schema can still encode the wrong semantic control or accept a differently scaled value. |
-| Encoding | `request_encoder.rs` divides semantic speed by 10 before checked wire-value construction | The low-level encoder can truncate nonrepresentable values even when the descriptor path rejects them. |
+| Encoding | `request_encoder.rs` now requires canonical deci-km/h inputs to be divisible by 10 before checked wire-value construction | The low-level NOSFET and Falcon encoders no longer silently truncate an inexact speed value; display-unit conversion and end-to-end request provenance remain open. |
 | Transport outcome | `device_connection/settings.rs::submit_setting` records acceptance; Swift `DeviceSessionTransport.process` publishes controls before executing native operations | An accepted plan can appear sent before the host actually submits it. |
 | Native backpressure | `CutoutSessionCore.writeWithoutResponse` drops the oldest queued write when full; queue entries contain a characteristic and bytes | A dropped command or partial sequence lacks a request-specific failure; captured write intent is not evidence of host submission. |
 | Live harness | `start` repeats the suite after a false result, and `waitForSettingResult` accepts any non-idle state | Pending writes cause premature timeout reporting and can trigger repeated settings/actions. |
 | Harness verdict | `runSettingsValidation` ignores skips and unconfirmed counts when deciding success | An incomplete run can report `validation=ok`. |
 | Probe selection | `validNumericProbes` invents values; `testUnknownBoolean` chooses false/true/false; invalid-value tests call the live submission API | A legal range does not establish a safe experiment; a broken validator can turn a negative test into a real write. |
-| Detection | A recorded NF2557 run sent Begode N/V/M probes and flushed queued probe bytes after Veteran identity resolved | Shared GATT characteristics cannot by themselves establish that a probe is harmless for the connected protocol. |
+| Detection | `identification.rs` now suppresses Begode probes once Veteran/VESC/conflict evidence resolves the protocol and retires their pending Rust state; the historical NF2557 run sent Begode N/V/M probes and flushed queued bytes after Veteran identity resolved | Shared GATT characteristics cannot by themselves establish that a probe is harmless. Native queued-write cancellation and safe probing while multiple protocols remain plausible are still open. |
 
 Paths above are under `crates/cutout-protocols/src/` or
 `swift/CutoutMobile/Sources/CutoutMobile/`; harness findings refer to
@@ -127,7 +134,10 @@ desired value was observed; absent an echoed request ID, do not claim causal
 acknowledgment from telemetry alone. Start applicable deadlines at the specified
 transport/response boundary, not merely when a client asks to enqueue a command.
 
-Observations retain source, age and validity separately from requests. Distinguish
+Observations retain protocol provenance, source, age and validity separately from
+requests. The current readback normalization tags observations with the selected
+adapter's protocol; that is a useful binding invariant, not independent proof of
+packet origin or device acknowledgment. Distinguish
 not-yet-observed, explicitly unavailable, stale and undecodable evidence without
 inventing a current value. Known factory defaults require independent provenance
 and never become current device readings automatically. The public UI should

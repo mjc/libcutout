@@ -267,16 +267,23 @@ Existing configuration is recorded here for code review, not as a run recipe:
 | `CUTOUT_AERO_TARGET`, `CUTOUT_AERO_VALIDATION_TIMEOUT` | Select target and connection timeout (default 45 seconds, finite, greater than 0 and at most 600); neither establishes settings-page coverage or a per-operation deadline |
 
 Disabling the settings suite does not make connection-only discovery proven
-harmless. A recorded NF2557 connection emitted Begode N/V/M probes and flushed
-queued probe bytes after Veteran identity resolved. FFE0/FFE1 is shared; probe
-eligibility and retirement of incompatible queued work need repair. “Read-only”
-describes intended semantic operations, not an absence of transport writes.
+harmless. The Rust detector now avoids starting Begode N/V/M probes after
+Veteran, VESC or conflict evidence resolves the protocol, and retires the
+corresponding pending Rust probe state. A recorded NF2557 connection emitted
+those probes and flushed queued bytes after Veteran identity resolved; native
+queue cancellation is still not implemented. FFE0/FFE1 is shared, so probe
+eligibility while multiple protocols remain plausible still needs a safe plan.
+“Read-only” describes intended semantic operations, not an absence of transport
+writes.
 
 The removed descriptor inventory ran before settings telemetry and exited once
 ride telemetry was live. Its `current=nil` values do not show lack of device
 readback. Bounds and confirmation flags came from library declarations, not
-wheel negotiation. The replacement observation mode must run for a bounded
-relevant page cycle and report actual fields/pages received separately.
+wheel negotiation. The Rust readback boundary now carries the selected protocol
+on normalized observations, but that tag is not independent packet provenance
+and does not turn a matching observation into an acknowledgment. The replacement
+observation mode must run for a bounded relevant page cycle and report actual
+fields/pages received separately.
 
 The [design review](settings-design-review.md) specifies the replacement:
 fake-transport tests for zero control writes in inventory mode, exactly-once
