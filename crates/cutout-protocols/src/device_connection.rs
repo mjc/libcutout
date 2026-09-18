@@ -37,7 +37,7 @@ impl ValidationGrant {
         }
     }
 
-    fn matches(&self, token: &ConnectionAttemptToken) -> bool {
+    fn matches(self, token: &ConnectionAttemptToken) -> bool {
         self.generation == token.generation()
     }
 }

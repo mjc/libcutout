@@ -140,6 +140,11 @@ impl AeroControlEncoder {
 
     /// Encodes a control through the connection-selected command representation.
     #[must_use]
+    #[allow(
+        clippy::needless_return,
+        clippy::too_many_lines,
+        clippy::match_same_arms
+    )]
     pub fn encode_in_mode(command: DeviceCommand, mode: AeroCommandMode) -> Option<EncodedControl> {
         if let Some(payload) = aero_mode_control_payload(command, mode) {
             return Some(EncodedControl {

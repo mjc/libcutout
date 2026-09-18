@@ -61,6 +61,7 @@ in
   ];
 
   env.JNA_JAR = "${pkgs.jna}/share/java/jna.jar";
+  env.KOTLIN_COROUTINES_JAR = "${pkgs.kotlin}/lib/kotlinx-coroutines-core-jvm.jar";
 
   treefmt = {
     enable = true;
@@ -195,12 +196,13 @@ in
     kotlinc \
       target/uniffi-smoke/kotlin/uniffi/cutout_mobile_ffi/cutout_mobile_ffi.kt \
       tests/mobile-ffi/kotlin-smoke.kt \
-      -cp "$JNA_JAR" \
+      -cp "$JNA_JAR:$KOTLIN_COROUTINES_JAR" \
       -include-runtime \
       -d target/uniffi-smoke/kotlin-smoke.jar
     java \
-      -Djna.library.path="$PWD/target/debug" \
-      -cp "target/uniffi-smoke/kotlin-smoke.jar:$JNA_JAR" \
+      -Djava.library.path="$DEVENV_ROOT/target/debug" \
+      -Djna.library.path="$DEVENV_ROOT/target/debug" \
+      -cp "target/uniffi-smoke/kotlin-smoke.jar:$JNA_JAR:$KOTLIN_COROUTINES_JAR" \
       Kotlin_smokeKt
   '';
   tasks."build:ios-ui-tests" = {

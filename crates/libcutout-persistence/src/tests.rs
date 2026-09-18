@@ -2960,6 +2960,7 @@ fn newer_schema_is_rejected_without_resetting_the_database() {
 }
 
 #[test]
+#[allow(clippy::type_complexity)]
 fn bms_voltage_samples_are_durable_without_a_ride_and_duplicate_batches_are_idempotent() {
     let _guard = test_guard();
     let path = std::env::temp_dir().join(format!(
@@ -3142,7 +3143,7 @@ fn version_21_bms_history_preserves_existing_samples_with_legacy_event_identitie
     database.shutdown().unwrap();
 
     let connection = Connection::open(&path).unwrap();
-    assert_eq!(
+    assert!(
         connection
             .query_row(
                 "SELECT EXISTS(SELECT 1 FROM sqlite_schema
@@ -3150,8 +3151,7 @@ fn version_21_bms_history_preserves_existing_samples_with_legacy_event_identitie
                 [],
                 |row| row.get::<_, bool>(0),
             )
-            .unwrap(),
-        true
+            .unwrap()
     );
     let sample: (String, u64, u64, u16, Option<u16>, Option<u16>, i32) = connection
         .query_row(
@@ -3221,7 +3221,7 @@ fn version_20_database_with_v21_bms_shape_runs_the_remaining_migrations() {
             .unwrap(),
         23
     );
-    assert_eq!(
+    assert!(
         connection
             .query_row(
                 "SELECT EXISTS(SELECT 1 FROM sqlite_schema
@@ -3229,8 +3229,7 @@ fn version_20_database_with_v21_bms_shape_runs_the_remaining_migrations() {
                 [],
                 |row| row.get::<_, bool>(0),
             )
-            .unwrap(),
-        true
+            .unwrap()
     );
     drop(connection);
 

@@ -39,6 +39,7 @@ impl VerifiedConnectionAttempt<'_> {
 
 impl ConnectionAttemptToken {
     /// Constructs a token at an FFI boundary. Callers should retain, not mint, tokens.
+    #[must_use]
     pub fn new(generation: u64, platform_identifier: String) -> Self {
         Self {
             generation,

@@ -293,7 +293,7 @@ impl From<DeviceSettingSnapshot> for MobileSettingSnapshotDto {
             }),
             requested: value.requested.map(Into::into),
             status: value.status.into(),
-            age_ms: value.age.map(|age| age.as_milliseconds()),
+            age_ms: value.age.map(cutout_core::Quantity::as_milliseconds),
             refusal: value
                 .refusal
                 .map(|reason| cutout_core::ControlRefusalReasonDto::from(reason).into()),
@@ -465,6 +465,11 @@ impl CutoutSessionStateHandle {
     }
 
     /// Submits one semantic value through the protocol owner.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`MobileDeviceSettingRequestError`] when the token or requested setting is not
+    /// admitted by the Rust-owned protocol state.
     pub fn submit_setting(
         &self,
         token: MobileConnectionAttemptTokenDto,

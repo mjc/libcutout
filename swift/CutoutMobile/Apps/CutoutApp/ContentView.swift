@@ -164,6 +164,14 @@ struct ContentView: View {
         navigationPath.removeLast()
     }
 
+    private func openCamera() {
+        navigationPath = CutoutAppRoute.navigationPath(openingCameraFrom: route)
+    }
+
+    private func closeCamera() {
+        guard navigationPath.last == .camera else { return }
+        navigationPath.removeLast()
+    }
     private func disconnectAndReturnToPicker() {
         model.disconnectTransport()
         navigate(to: .devicePicker)
@@ -186,7 +194,7 @@ struct ContentView: View {
                     }
                 }
                 .accessibilityFocused($focusedRoute, equals: destination)
-        } else if destination == .capture {
+        } else if destination == .capture || destination == .camera {
             ZStack {
                 PevColors.pageBackground
                     .ignoresSafeArea()
@@ -266,7 +274,8 @@ struct ContentView: View {
             if usesConnectedShell {
                 PevAppShell(
                     sectionTitle: appSectionTitle(for: destination),
-                    disconnect: disconnectAndReturnToPicker
+                    disconnect: disconnectAndReturnToPicker,
+                    openCamera: openCamera
                 ) {
                     routedContent(for: destination)
                 }
@@ -302,6 +311,14 @@ struct ContentView: View {
             VescDebugRouteView(model: model)
         case .capture:
             CaptureRouteView(model: model, finishCapture: finishCaptureAndReturnToPicker)
+        case .camera:
+            CameraRouteContainerView(
+                close: closeCamera,
+                annotateCapture: model.annotateCapture(key:value:),
+                recordMediaReference: model.recordCameraMediaReference(captureFileName:source:media:localURL:),
+                currentCaptureFileName: model.currentCameraCaptureFileName,
+                sessionState: model.cameraSessionStateHandle
+            )
         case .rideMap:
             RideMapRouteView(model: model, presentation: rideMapPresentation, { rideID in
                 model.rideMapMode = .history
@@ -337,6 +354,8 @@ struct ContentView: View {
             localizedAppText("navigation.section.debug")
         case .capture:
             localizedAppText("navigation.section.capture")
+        case .camera:
+            localizedAppText("navigation.section.camera")
         case .rideMap, .rideMapDetail:
             localizedAppText("navigation.section.map")
         case .devicePicker:

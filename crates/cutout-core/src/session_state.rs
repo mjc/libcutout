@@ -1,8 +1,9 @@
 //! Rust-owned session-state root and typed state slices.
 
 use crate::{
-    BatteryPageMetadata, BatteryReadback, DeviceEvent, FirmwareInfo, GattFingerprint,
-    MonotonicTimestamp, ParserDiagnostics, ProtocolFamily, RawTelemetryReadback, ReadOnlyResponse,
+    BatteryPageMetadata, BatteryReadback, CameraMediaProvenance, CameraProvenanceState,
+    CameraSessionState, DeviceEvent, FirmwareInfo, GattFingerprint, MonotonicTimestamp,
+    ParserDiagnostics, ProtocolFamily, RawTelemetryReadback, ReadOnlyResponse,
     RideSessionLifecycle, SessionOutput, TelemetryDelta, TelemetrySnapshot,
 };
 use arrayvec::ArrayVec;
@@ -19,6 +20,12 @@ pub struct CutoutSessionState {
 
     /// Logical ride and Live Activity lifecycle state.
     pub ride_session: RideSessionLifecycle,
+
+    /// External ride-camera state, independent of the ride lifecycle.
+    pub camera: CameraSessionState,
+
+    /// Bounded camera-media associations, kept separate from video bytes and ride capture data.
+    pub camera_provenance: CameraProvenanceState,
 
     /// Device identity state accumulated from discovery, protocol, and model evidence.
     pub identity: DeviceIdentityState,
@@ -44,6 +51,29 @@ impl CutoutSessionState {
             self.device_connection_intent,
             DeviceConnectionIntent::Reconnect
         )
+    }
+
+    /// Returns external ride-camera state without cloning the session root.
+    #[must_use]
+    pub const fn camera(&self) -> &CameraSessionState {
+        &self.camera
+    }
+
+    /// Returns mutable external ride-camera state to typed camera adapters.
+    #[must_use]
+    pub const fn camera_mut(&mut self) -> &mut CameraSessionState {
+        &mut self.camera
+    }
+
+    /// Returns bounded camera-media associations without cloning the session root.
+    #[must_use]
+    pub const fn camera_provenance(&self) -> &CameraProvenanceState {
+        &self.camera_provenance
+    }
+
+    /// Records one validated camera-media association.
+    pub fn record_camera_media_provenance(&mut self, record: CameraMediaProvenance) {
+        self.camera_provenance.record_media(record);
     }
 
     /// Returns the current identity state without cloning the whole root.
@@ -753,10 +783,8 @@ impl BmsTelemetryState {
             return;
         }
         let sequence = self.next_observation_event_sequence;
-        self.next_observation_event_sequence = self
-            .next_observation_event_sequence
-            .checked_add(1)
-            .expect("BMS observation event sequence exhausted");
+        self.next_observation_event_sequence =
+            self.next_observation_event_sequence.saturating_add(1);
         *readback = readback.clone().with_observation_event_sequence(sequence);
     }
 
@@ -854,6 +882,7 @@ pub struct SessionDiagnosticsState {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::{CameraOnboardRecordingState, CameraPreviewState};
 
     #[test]
     fn bluetooth_service_uuid_normalizes_standard_and_custom_services() {
@@ -1309,6 +1338,26 @@ mod tests {
                 .iter()
                 .all(|observation| observation.samples.len() == 7)
         );
+    }
+
+    #[test]
+    fn camera_observations_leave_the_ride_lifecycle_unchanged() {
+        let mut state = CutoutSessionState::default();
+        let ride_session = state.ride_session.clone();
+
+        state
+            .camera_mut()
+            .observe_onboard_recording(CameraOnboardRecordingState::Recording);
+        state
+            .camera_mut()
+            .observe_preview(CameraPreviewState::Interrupted);
+
+        assert_eq!(state.ride_session, ride_session);
+        assert_eq!(
+            state.camera().onboard_recording(),
+            CameraOnboardRecordingState::Recording
+        );
+        assert_eq!(state.camera().preview(), CameraPreviewState::Interrupted);
     }
 
     #[test]

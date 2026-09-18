@@ -16,6 +16,7 @@ use std::{
     convert::TryFrom,
     fs::{self, File, OpenOptions},
     io::{BufRead, BufReader, BufWriter, Write},
+    net::Ipv4Addr,
     path::{Path, PathBuf},
     sync::{
         Arc, Mutex, MutexGuard, PoisonError,
@@ -46,13 +47,19 @@ use cutout_core::{
     BatteryPageKindDto, BatteryReadbackAvailabilityDto, BatteryReadbackDto,
     BegodeBeeperVolume as CoreBegodeBeeperVolume, BegodeLedModeSetting as CoreBegodeLedModeSetting,
     BegodeMaxSpeed as CoreBegodeMaxSpeed, BluetoothServiceUuid as CoreBluetoothServiceUuid,
-    Capacity, ChargeEstimateError, ChargeEstimateInput, ChargeEstimateResetReason,
-    ChargeEstimateState, ChargeEstimateUnavailableReason, ChargeFlow, ChargeMode, ChargeModeDto,
-    ChargeModeReadingDto, ChargeProfileIdentity, ChargeSessionIdentity, ChargeTimeEstimate,
-    CommandKindDto, ControlRefusalReason as CoreControlRefusalReason, ControlRefusalReasonDto,
-    CutoutSessionState, DeviceCommand as CoreDeviceCommand, DeviceCommandDto,
-    DeviceConnectionIntent as CoreDeviceConnectionIntent, DeviceEvent, DiscoveryCandidateSnapshot,
-    DiscoveryCandidateSupport as CoreDiscoveryCandidateSupport,
+    CameraClockUncertainty as CoreCameraClockUncertainty,
+    CameraMediaCaptureTiming as CoreCameraMediaCaptureTiming,
+    CameraMediaProvenance as CoreCameraMediaProvenance,
+    CameraMediaProvenanceError as CoreCameraMediaProvenanceError,
+    CameraOnboardRecordingState as CoreCameraOnboardRecordingState,
+    CameraPreviewState as CoreCameraPreviewState, CameraSessionToken as CoreCameraSessionToken,
+    CameraSourceKind as CoreCameraSourceKind, Capacity, ChargeEstimateError, ChargeEstimateInput,
+    ChargeEstimateResetReason, ChargeEstimateState, ChargeEstimateUnavailableReason, ChargeFlow,
+    ChargeMode, ChargeModeDto, ChargeModeReadingDto, ChargeProfileIdentity, ChargeSessionIdentity,
+    ChargeTimeEstimate, CommandKindDto, ControlRefusalReason as CoreControlRefusalReason,
+    ControlRefusalReasonDto, CutoutSessionState, DeviceCommand as CoreDeviceCommand,
+    DeviceCommandDto, DeviceConnectionIntent as CoreDeviceConnectionIntent, DeviceEvent,
+    DiscoveryCandidateSnapshot, DiscoveryCandidateSupport as CoreDiscoveryCandidateSupport,
     DiscoveryConnectionRoute as CoreDiscoveryConnectionRoute,
     DiscoveryElectricUnicycleModel as CoreDiscoveryElectricUnicycleModel,
     DiscoveryManufacturerDataSummary as CoreDiscoveryManufacturerDataSummary,
@@ -105,23 +112,1159 @@ use cutout_protocols::{
     BEGODE_FIELD_TILTBACK_SPEED_KMH, ConcreteAeroBenignControlSession,
     ConcreteFalconBenignControlSession, ConcreteFalconProfileDto, ConcreteSessionErrorDto,
     ConcreteSessionStepResultDto, DeviceDetectionEvent, DeviceDetectionResolution, DeviceFamily,
-    IdentityBannerEvidence, NOSFET_AERO_REGISTRY_ENTRY, PendingProbe, ProtocolFamilyClassification,
-    ProtocolFamilyState, ProtocolModelIdentityEvidence, StagedIdentityInput, StagedIdentityOutcome,
-    VETERAN_FIELD_AUTO_SHUTDOWN_TIME_REMAINING_SECONDS, VETERAN_FIELD_CHARGE_MODE,
-    VETERAN_FIELD_PEDALS_MODE, VETERAN_FIELD_SPEED_ALERT_DECI_KMH,
+    IdentityBannerEvidence, NOSFET_AERO_REGISTRY_ENTRY, NovatekCapabilityError,
+    NovatekCommandOutcome, NovatekConfigurationError, NovatekHttpOrigin, NovatekMediaPathError,
+    NovatekOriginError, NovatekProfileError, NovatekR3V1Session, NovatekReadCommand,
+    NovatekRecordingCommand, NovatekSessionError, NovatekStillCaptureCommand,
+    NovatekStoragePresence, PendingProbe, ProtocolFamilyClassification, ProtocolFamilyState,
+    ProtocolModelIdentityEvidence, RetinaH264FileSink, RetinaRtspError, RetinaRtspPreviewSession,
+    RetinaVideoClockRate, RetinaVideoConfiguration, RetinaVideoFrame, StagedIdentityInput,
+    StagedIdentityOutcome, VETERAN_FIELD_AUTO_SHUTDOWN_TIME_REMAINING_SECONDS,
+    VETERAN_FIELD_CHARGE_MODE, VETERAN_FIELD_PEDALS_MODE, VETERAN_FIELD_SPEED_ALERT_DECI_KMH,
     VETERAN_FIELD_SPEED_TILTBACK_DECI_KMH, VescBatteryType as CoreVescBatteryType,
     VescBoardProfile as CoreVescBoardProfile, VescReadOnlySession as CoreVescReadOnlySession,
-    closest_known_model, identify_known_model, new_nosfet_aero_benign_control_session,
+    closest_known_model, identify_known_model, is_r3_pro_firmware,
+    new_nosfet_aero_benign_control_session, parse_read_only_snapshot,
     try_new_begode_falcon_benign_control_session,
 };
 use cutout_ride_maps as ride_maps;
 use libcutout_persistence as persistence;
+use tokio::sync::Notify;
 use uuid::Uuid;
 
 uniffi::setup_scaffolding!();
 
 mod music_provider_lifecycle;
 pub use music_provider_lifecycle::*;
+
+/// Foreground preview state owned by the Rust camera session.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Enum)]
+pub enum MobileCameraPreviewStateDto {
+    /// No preview is active.
+    Stopped,
+    /// Preview is waiting for usable media.
+    Buffering,
+    /// Preview is receiving current media.
+    Live,
+    /// The most recent preview media is no longer current.
+    Stale,
+    /// An active preview was interrupted.
+    Interrupted,
+    /// The selected camera cannot provide a preview.
+    Unavailable,
+}
+
+/// Authoritative onboard recording state owned by the Rust camera session.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Enum)]
+pub enum MobileCameraOnboardRecordingStateDto {
+    /// Recording readback has not arrived.
+    Unknown,
+    /// Camera confirmed that onboard recording is stopped.
+    Stopped,
+    /// Camera confirmed that onboard recording is active.
+    Recording,
+}
+
+/// Current camera state returned by the Rust session handle.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct MobileCameraSnapshotDto {
+    /// Foreground RTSP preview state.
+    pub preview: MobileCameraPreviewStateDto,
+    /// Camera-reported onboard recording state.
+    pub onboard_recording: MobileCameraOnboardRecordingStateDto,
+}
+
+/// Opaque identity for asynchronous work belonging to one camera lifecycle.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct MobileCameraSessionTokenDto {
+    /// Lifecycle generation captured when the work began.
+    pub generation: u64,
+}
+
+impl From<CoreCameraSessionToken> for MobileCameraSessionTokenDto {
+    fn from(token: CoreCameraSessionToken) -> Self {
+        Self {
+            generation: token.generation(),
+        }
+    }
+}
+
+impl From<MobileCameraSessionTokenDto> for CoreCameraSessionToken {
+    fn from(token: MobileCameraSessionTokenDto) -> Self {
+        Self::new(token.generation)
+    }
+}
+
+/// Camera source identity attached to media provenance.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Enum)]
+pub enum MobileCameraSourceKindDto {
+    /// Verified `FreedConn` R3 Pro Novatek profile.
+    NovatekR3Pro,
+    /// Standard RTSP camera source.
+    Rtsp,
+    /// Deterministic fixture source used by tests and replay.
+    Fixture,
+}
+
+/// Confidence available for camera/phone clock alignment.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Enum)]
+pub enum MobileCameraClockUncertaintyDto {
+    /// No clock relationship was established.
+    Unknown,
+    /// Clocks may differ by at most this many milliseconds.
+    Milliseconds { value: u64 },
+}
+
+/// Camera-media provenance submitted by a mobile adapter after a bounded download.
+#[derive(Clone, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct MobileCameraMediaProvenanceInput {
+    /// Camera source identity.
+    pub source: MobileCameraSourceKindDto,
+    /// Camera-reported media path.
+    pub camera_path: String,
+    /// Camera-reported media size in bytes.
+    pub size_bytes: u64,
+    /// Camera-reported media timecode.
+    pub camera_timecode: u64,
+    /// Camera-reported display time, when available.
+    pub camera_time: String,
+    /// Associated ride capture file name.
+    pub ride_capture_file_name: String,
+    /// Host monotonic time when the association was captured.
+    pub captured_at_monotonic_ms: u64,
+    /// Host wall-clock time when the association was captured.
+    pub captured_at_wall_clock_ms: u64,
+    /// Explicit camera/phone clock uncertainty.
+    pub clock_uncertainty: MobileCameraClockUncertaintyDto,
+}
+
+/// Camera-media provenance returned from the Rust session state.
+#[derive(Clone, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct MobileCameraMediaProvenanceDto {
+    /// Camera source identity.
+    pub source: MobileCameraSourceKindDto,
+    /// Camera-reported media path.
+    pub camera_path: String,
+    /// Camera-reported media size in bytes.
+    pub size_bytes: u64,
+    /// Camera-reported media timecode.
+    pub camera_timecode: u64,
+    /// Camera-reported display time, when available.
+    pub camera_time: String,
+    /// Associated ride capture file name.
+    pub ride_capture_file_name: String,
+    /// Host monotonic time when the association was captured.
+    pub captured_at_monotonic_ms: u64,
+    /// Host wall-clock time when the association was captured.
+    pub captured_at_wall_clock_ms: u64,
+    /// Explicit camera/phone clock uncertainty.
+    pub clock_uncertainty: MobileCameraClockUncertaintyDto,
+}
+
+/// Failure returned when a mobile adapter submits unbounded camera provenance.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, thiserror::Error, uniffi::Error)]
+pub enum MobileCameraMediaProvenanceError {
+    /// The camera path is empty.
+    #[error("camera media path is empty")]
+    EmptyCameraPath,
+    /// The camera path exceeds Rust's bound.
+    #[error("camera media path is too long")]
+    CameraPathTooLong,
+    /// The camera display time exceeds Rust's bound.
+    #[error("camera media time is too long")]
+    CameraTimeTooLong,
+    /// The ride capture name is empty.
+    #[error("ride capture file name is empty")]
+    EmptyRideCaptureFileName,
+    /// The ride capture name exceeds Rust's bound.
+    #[error("ride capture file name is too long")]
+    RideCaptureFileNameTooLong,
+}
+
+/// Lifecycle observation emitted by a platform RTSP transport.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Enum)]
+pub enum MobileCameraPreviewEventDto {
+    /// A preview transport has started and is waiting for its first frame.
+    Started,
+    /// An encoded preview frame was received.
+    FrameReceived,
+    /// An active preview transport was interrupted.
+    Interrupted,
+    /// The preview transport was deliberately stopped.
+    Stopped,
+    /// The selected source cannot provide a preview.
+    Unavailable,
+}
+
+/// One encoded video access unit returned by the Retina preview session.
+#[derive(Clone, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct MobileCameraVideoFrameDto {
+    /// Encoded frame bytes in the source codec format.
+    pub data: Vec<u8>,
+    /// SPS/PPS NAL units extracted by the Rust H.264 boundary.
+    pub parameter_sets: Vec<Vec<u8>>,
+    /// Number of lost RTP packets before this frame.
+    pub loss: u16,
+    /// Whether this frame is a random-access point.
+    pub is_random_access_point: bool,
+    /// Presentation timestamp in the stream's clock units.
+    pub timestamp: i64,
+    /// Clock rate associated with `timestamp`, in Hz.
+    pub clock_rate_hz: u32,
+}
+
+/// Codec configuration advertised by the camera's RTSP SDP.
+#[derive(Clone, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct MobileCameraVideoConfigurationDto {
+    /// RFC 6381 codec identifier, for example `avc1.4D401E`.
+    pub codec: String,
+    /// Coded width in pixels.
+    pub width: u32,
+    /// Coded height in pixels.
+    pub height: u32,
+    /// Codec-specific decoder configuration, such as H.264 `avcC` bytes.
+    pub extra_data: Vec<u8>,
+}
+
+/// Failure returned by the mobile RTSP preview object.
+#[derive(Clone, Debug, Eq, PartialEq, thiserror::Error, uniffi::Error)]
+pub enum MobileCameraPreviewError {
+    /// The supplied URI was not an RTSP URI.
+    #[error("invalid RTSP URI")]
+    InvalidUri,
+    /// The URI did not identify a validated local IPv4 camera origin.
+    #[error("RTSP endpoint is not local")]
+    NonLocalUri,
+    /// The URI differs from the explicitly selected camera origin.
+    #[error("RTSP endpoint does not match the camera origin")]
+    OriginMismatch,
+    /// The RTSP server advertised no H.264 video stream.
+    #[error("RTSP session has no H.264 video stream")]
+    UnsupportedVideoCodec,
+    /// An encoded access unit exceeded the fixed mobile memory budget.
+    #[error("RTSP video frame is too large")]
+    VideoFrameTooLarge,
+    /// The preview object has already been stopped or ended.
+    #[error("RTSP preview is not running")]
+    NotRunning,
+    /// Retina failed while negotiating or consuming the session.
+    #[error("RTSP session failed")]
+    Session,
+}
+
+impl From<RetinaRtspError> for MobileCameraPreviewError {
+    fn from(error: RetinaRtspError) -> Self {
+        match error {
+            RetinaRtspError::InvalidUri => Self::InvalidUri,
+            RetinaRtspError::NonLocalUri => Self::NonLocalUri,
+            RetinaRtspError::OriginMismatch => Self::OriginMismatch,
+            RetinaRtspError::UnsupportedVideoCodec => Self::UnsupportedVideoCodec,
+            RetinaRtspError::VideoFrameTooLarge { .. } => Self::VideoFrameTooLarge,
+            RetinaRtspError::Session(_) => Self::Session,
+        }
+    }
+}
+
+/// Async mobile RTSP preview session backed by the Rust Retina transport.
+#[derive(Debug, uniffi::Object)]
+pub struct MobileCameraPreviewSession {
+    inner: Mutex<Option<RetinaRtspPreviewSession>>,
+    video_configuration: Mutex<Option<RetinaVideoConfiguration>>,
+    stop: Arc<Notify>,
+    stopped: AtomicBool,
+    generation: AtomicU64,
+}
+
+impl From<CoreCameraPreviewState> for MobileCameraPreviewStateDto {
+    fn from(state: CoreCameraPreviewState) -> Self {
+        match state {
+            CoreCameraPreviewState::Stopped => Self::Stopped,
+            CoreCameraPreviewState::Buffering => Self::Buffering,
+            CoreCameraPreviewState::Live => Self::Live,
+            CoreCameraPreviewState::Stale => Self::Stale,
+            CoreCameraPreviewState::Interrupted => Self::Interrupted,
+            _ => Self::Unavailable,
+        }
+    }
+}
+
+impl From<MobileCameraPreviewStateDto> for CoreCameraPreviewState {
+    fn from(state: MobileCameraPreviewStateDto) -> Self {
+        match state {
+            MobileCameraPreviewStateDto::Stopped => Self::Stopped,
+            MobileCameraPreviewStateDto::Buffering => Self::Buffering,
+            MobileCameraPreviewStateDto::Live => Self::Live,
+            MobileCameraPreviewStateDto::Stale => Self::Stale,
+            MobileCameraPreviewStateDto::Interrupted => Self::Interrupted,
+            MobileCameraPreviewStateDto::Unavailable => Self::Unavailable,
+        }
+    }
+}
+
+impl From<CoreCameraOnboardRecordingState> for MobileCameraOnboardRecordingStateDto {
+    fn from(state: CoreCameraOnboardRecordingState) -> Self {
+        match state {
+            CoreCameraOnboardRecordingState::Stopped => Self::Stopped,
+            CoreCameraOnboardRecordingState::Recording => Self::Recording,
+            _ => Self::Unknown,
+        }
+    }
+}
+
+impl From<MobileCameraOnboardRecordingStateDto> for CoreCameraOnboardRecordingState {
+    fn from(state: MobileCameraOnboardRecordingStateDto) -> Self {
+        match state {
+            MobileCameraOnboardRecordingStateDto::Unknown => Self::Unknown,
+            MobileCameraOnboardRecordingStateDto::Stopped => Self::Stopped,
+            MobileCameraOnboardRecordingStateDto::Recording => Self::Recording,
+        }
+    }
+}
+
+impl From<cutout_core::CameraSessionState> for MobileCameraSnapshotDto {
+    fn from(state: cutout_core::CameraSessionState) -> Self {
+        Self {
+            preview: state.preview().into(),
+            onboard_recording: state.onboard_recording().into(),
+        }
+    }
+}
+
+impl From<MobileCameraSourceKindDto> for CoreCameraSourceKind {
+    fn from(source: MobileCameraSourceKindDto) -> Self {
+        match source {
+            MobileCameraSourceKindDto::NovatekR3Pro => Self::NovatekR3Pro,
+            MobileCameraSourceKindDto::Rtsp => Self::Rtsp,
+            MobileCameraSourceKindDto::Fixture => Self::Fixture,
+        }
+    }
+}
+
+impl From<CoreCameraSourceKind> for MobileCameraSourceKindDto {
+    fn from(source: CoreCameraSourceKind) -> Self {
+        match source {
+            CoreCameraSourceKind::NovatekR3Pro => Self::NovatekR3Pro,
+            CoreCameraSourceKind::Rtsp => Self::Rtsp,
+            CoreCameraSourceKind::Fixture => Self::Fixture,
+        }
+    }
+}
+
+impl From<MobileCameraClockUncertaintyDto> for CoreCameraClockUncertainty {
+    fn from(uncertainty: MobileCameraClockUncertaintyDto) -> Self {
+        match uncertainty {
+            MobileCameraClockUncertaintyDto::Unknown => Self::Unknown,
+            MobileCameraClockUncertaintyDto::Milliseconds { value } => Self::Milliseconds(value),
+        }
+    }
+}
+
+impl From<CoreCameraClockUncertainty> for MobileCameraClockUncertaintyDto {
+    fn from(uncertainty: CoreCameraClockUncertainty) -> Self {
+        match uncertainty {
+            CoreCameraClockUncertainty::Unknown => Self::Unknown,
+            CoreCameraClockUncertainty::Milliseconds(value) => Self::Milliseconds { value },
+        }
+    }
+}
+
+impl From<&CoreCameraMediaProvenance> for MobileCameraMediaProvenanceDto {
+    fn from(record: &CoreCameraMediaProvenance) -> Self {
+        Self {
+            source: record.source().into(),
+            camera_path: record.camera_path().to_owned(),
+            size_bytes: record.size_bytes(),
+            camera_timecode: record.camera_timecode(),
+            camera_time: record.camera_time().to_owned(),
+            ride_capture_file_name: record.ride_capture_file_name().to_owned(),
+            captured_at_monotonic_ms: record.captured_at_monotonic().as_milliseconds(),
+            captured_at_wall_clock_ms: record.captured_at_wall_clock().as_milliseconds(),
+            clock_uncertainty: record.clock_uncertainty().into(),
+        }
+    }
+}
+
+impl From<CoreCameraMediaProvenanceError> for MobileCameraMediaProvenanceError {
+    fn from(error: CoreCameraMediaProvenanceError) -> Self {
+        match error {
+            CoreCameraMediaProvenanceError::EmptyCameraPath => Self::EmptyCameraPath,
+            CoreCameraMediaProvenanceError::CameraPathTooLong => Self::CameraPathTooLong,
+            CoreCameraMediaProvenanceError::CameraTimeTooLong => Self::CameraTimeTooLong,
+            CoreCameraMediaProvenanceError::EmptyRideCaptureFileName => {
+                Self::EmptyRideCaptureFileName
+            }
+            CoreCameraMediaProvenanceError::RideCaptureFileNameTooLong => {
+                Self::RideCaptureFileNameTooLong
+            }
+        }
+    }
+}
+
+impl MobileCameraMediaProvenanceInput {
+    fn into_core(self) -> Result<CoreCameraMediaProvenance, MobileCameraMediaProvenanceError> {
+        CoreCameraMediaProvenance::new(
+            self.source.into(),
+            &self.camera_path,
+            self.size_bytes,
+            self.camera_timecode,
+            &self.camera_time,
+            &self.ride_capture_file_name,
+            CoreCameraMediaCaptureTiming {
+                captured_at_monotonic: MonotonicTimestamp::new(self.captured_at_monotonic_ms),
+                captured_at_wall_clock: WallClockUnixTimestamp::new(self.captured_at_wall_clock_ms),
+                clock_uncertainty: self.clock_uncertainty.into(),
+            },
+        )
+        .map_err(Into::into)
+    }
+}
+
+impl From<RetinaVideoFrame> for MobileCameraVideoFrameDto {
+    fn from(frame: RetinaVideoFrame) -> Self {
+        let (data, parameter_sets, loss, is_random_access_point, timestamp, clock_rate_hz) =
+            frame.into_parts();
+        Self {
+            data,
+            parameter_sets,
+            loss,
+            is_random_access_point,
+            timestamp,
+            clock_rate_hz: clock_rate_hz.get(),
+        }
+    }
+}
+
+impl From<&RetinaVideoConfiguration> for MobileCameraVideoConfigurationDto {
+    fn from(configuration: &RetinaVideoConfiguration) -> Self {
+        let dimensions = configuration.dimensions();
+        Self {
+            codec: configuration.codec().as_str().to_owned(),
+            width: dimensions.width(),
+            height: dimensions.height(),
+            extra_data: configuration.extra_data().to_owned(),
+        }
+    }
+}
+
+impl MobileCameraVideoFrameDto {
+    fn into_retina_frame(self) -> Result<RetinaVideoFrame, MobileCameraPreviewFileError> {
+        let clock_rate_hz = RetinaVideoClockRate::new(self.clock_rate_hz)
+            .ok_or(MobileCameraPreviewFileError::InvalidFrame)?;
+        RetinaVideoFrame::new(
+            self.data,
+            self.loss,
+            self.is_random_access_point,
+            self.timestamp,
+            clock_rate_hz,
+        )
+        .map_err(|_| MobileCameraPreviewFileError::InvalidFrame)
+    }
+}
+
+#[uniffi::export(async_runtime = "tokio")]
+impl MobileCameraPreviewSession {
+    /// Waits for the next encoded video frame from the running session.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`MobileCameraPreviewError::NotRunning`] after [`Self::stop`]
+    /// or a transport/depacketization failure from Retina.
+    pub async fn next_video_frame(
+        &self,
+    ) -> Result<Option<MobileCameraVideoFrameDto>, MobileCameraPreviewError> {
+        // Create the notification future before checking state so a stop that
+        // races this call cannot be missed between the check and the select.
+        let stop = Arc::clone(&self.stop);
+        let notified = stop.notified();
+        tokio::pin!(notified);
+        if self.stopped.load(Ordering::Acquire) {
+            return Err(MobileCameraPreviewError::NotRunning);
+        }
+        let generation = self.generation.load(Ordering::Acquire);
+        let mut session = {
+            let mut inner = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
+            inner.take().ok_or(MobileCameraPreviewError::NotRunning)?
+        };
+        let result = tokio::select! {
+            result = session.next_video_frame() => result,
+            () = &mut notified => return Ok(None),
+        };
+        match result {
+            Ok(Some(frame)) => {
+                // A completed read belongs to the generation that started it.
+                // Do not resurrect a session after stop (or a future restart).
+                let configuration = session.video_configuration().cloned();
+                let mut inner = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
+                if !self.stopped.load(Ordering::Acquire)
+                    && self.generation.load(Ordering::Acquire) == generation
+                {
+                    *inner = Some(session);
+                } else {
+                    // A stop raced the read. Do not leak the completed frame
+                    // into a newer consumer or retain the detached session.
+                    drop(inner);
+                    return Ok(None);
+                }
+                if let Some(configuration) = configuration {
+                    *self
+                        .video_configuration
+                        .lock()
+                        .unwrap_or_else(PoisonError::into_inner) = Some(configuration);
+                }
+                Ok(Some(frame.into()))
+            }
+            Ok(None) => Ok(None),
+            Err(error) => Err(error.into()),
+        }
+    }
+
+    /// Returns codec configuration advertised during RTSP negotiation.
+    #[must_use]
+    pub fn video_configuration(&self) -> Option<MobileCameraVideoConfigurationDto> {
+        self.video_configuration
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .as_ref()
+            .map(Into::into)
+    }
+
+    /// Stops the preview and releases the underlying RTSP session.
+    pub fn stop(&self) {
+        self.stopped.store(true, Ordering::Release);
+        self.generation.fetch_add(1, Ordering::AcqRel);
+        self.stop.notify_waiters();
+        let mut inner = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
+        inner.take();
+    }
+}
+
+fn mobile_camera_preview_from_session(
+    session: RetinaRtspPreviewSession,
+) -> Arc<MobileCameraPreviewSession> {
+    let video_configuration = session.video_configuration().cloned();
+    Arc::new(MobileCameraPreviewSession {
+        inner: Mutex::new(Some(session)),
+        video_configuration: Mutex::new(video_configuration),
+        stop: Arc::new(Notify::new()),
+        stopped: AtomicBool::new(false),
+        generation: AtomicU64::new(0),
+    })
+}
+
+/// Connects a mobile RTSP preview only when its host matches the selected
+/// camera origin.
+///
+/// The URI comes from camera-reported metadata, so the mobile caller supplies
+/// the origin it explicitly selected during HTTP discovery.
+///
+/// # Errors
+///
+/// Returns an error when `expected_address` is not an IPv4 address, the URI is
+/// malformed or non-local, it names a different address, or the RTSP handshake
+/// fails.
+#[uniffi::export(async_runtime = "tokio")]
+pub async fn mobile_camera_preview_connect_for_origin(
+    uri: String,
+    expected_address: String,
+) -> Result<Arc<MobileCameraPreviewSession>, MobileCameraPreviewError> {
+    let expected_address = expected_address
+        .parse::<Ipv4Addr>()
+        .map_err(|_| MobileCameraPreviewError::NonLocalUri)?;
+    let session = RetinaRtspPreviewSession::connect_for_origin(&uri, expected_address).await?;
+    Ok(mobile_camera_preview_from_session(session))
+}
+
+/// Mobile-facing Annex-B H.264 file sink for encoded preview frames.
+#[derive(Debug, uniffi::Object)]
+pub struct MobileCameraPreviewFileSink {
+    inner: Mutex<Option<RetinaH264FileSink>>,
+}
+
+/// Failure while creating or writing an encoded preview file.
+#[derive(Clone, Debug, Eq, PartialEq, thiserror::Error, uniffi::Error)]
+pub enum MobileCameraPreviewFileError {
+    /// The destination could not be created.
+    #[error("could not create preview file")]
+    Create,
+    /// The supplied frame was not a valid bounded preview frame.
+    #[error("invalid preview frame")]
+    InvalidFrame,
+    /// A valid frame could not be written or was not valid Retina H.264 data.
+    #[error("could not write preview frame")]
+    Write,
+    /// The sink has already been finished.
+    #[error("preview file sink is finished")]
+    Finished,
+}
+
+#[uniffi::export]
+impl MobileCameraPreviewFileSink {
+    /// Creates or truncates an Annex-B H.264 elementary-stream file.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`MobileCameraPreviewFileError::Create`] when the destination
+    /// cannot be opened.
+    #[uniffi::constructor]
+    pub fn create(path: String) -> Result<Arc<Self>, MobileCameraPreviewFileError> {
+        let sink =
+            RetinaH264FileSink::create(path).map_err(|_| MobileCameraPreviewFileError::Create)?;
+        Ok(Arc::new(Self {
+            inner: Mutex::new(Some(sink)),
+        }))
+    }
+
+    /// Writes one encoded preview frame to the file.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`MobileCameraPreviewFileError::Finished`] after finishing,
+    /// [`MobileCameraPreviewFileError::InvalidFrame`] for an invalid DTO, or
+    /// [`MobileCameraPreviewFileError::Write`] for malformed H.264 data or an
+    /// I/O failure.
+    pub fn write_frame(
+        &self,
+        frame: MobileCameraVideoFrameDto,
+    ) -> Result<(), MobileCameraPreviewFileError> {
+        let mut inner = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
+        let sink = inner
+            .as_mut()
+            .ok_or(MobileCameraPreviewFileError::Finished)?;
+        let frame = frame.into_retina_frame()?;
+        sink.write_frame(&frame)
+            .map_err(|_| MobileCameraPreviewFileError::Write)
+    }
+
+    /// Flushes buffered bytes and closes the file.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`MobileCameraPreviewFileError::Finished`] if this sink was
+    /// already finished, or [`MobileCameraPreviewFileError::Write`] if the
+    /// final flush fails.
+    pub fn finish(&self) -> Result<(), MobileCameraPreviewFileError> {
+        let sink = self
+            .inner
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .take()
+            .ok_or(MobileCameraPreviewFileError::Finished)?;
+        sink.finish()
+            .map_err(|_| MobileCameraPreviewFileError::Write)
+    }
+}
+
+/// Read-only command supported by the Novatek R3 Pro adapter.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Enum)]
+pub enum MobileNovatekReadCommandDto {
+    /// Source-backed command `2016` with semantics retained as opaque status.
+    Command2016,
+    /// Source-backed live-view format and RTSP-link command `2019`.
+    LiveViewFormat,
+    /// Source-backed firmware-version command `3012`.
+    FirmwareVersion,
+    /// Source-backed configuration/status command `3014`.
+    Configuration,
+    /// Source-backed media-list command `3015`.
+    MediaList,
+    /// Source-backed storage-presence command `3024`.
+    StoragePresent,
+}
+
+impl From<MobileNovatekReadCommandDto> for NovatekReadCommand {
+    fn from(command: MobileNovatekReadCommandDto) -> Self {
+        match command {
+            MobileNovatekReadCommandDto::Command2016 => Self::Command2016,
+            MobileNovatekReadCommandDto::LiveViewFormat => Self::LiveViewFormat,
+            MobileNovatekReadCommandDto::FirmwareVersion => Self::FirmwareVersion,
+            MobileNovatekReadCommandDto::Configuration => Self::Configuration,
+            MobileNovatekReadCommandDto::MediaList => Self::MediaList,
+            MobileNovatekReadCommandDto::StoragePresent => Self::StoragePresent,
+        }
+    }
+}
+
+/// Explicit onboard-recording request exposed to a mobile client.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Enum)]
+pub enum MobileNovatekRecordingCommandDto {
+    /// Request that the camera start recording.
+    Start,
+    /// Request that the camera stop recording.
+    Stop,
+}
+
+/// Outcome reported by a bounded Novatek command response.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Enum)]
+pub enum MobileNovatekCommandOutcomeDto {
+    /// The camera response reported status zero.
+    Acknowledged,
+    /// The camera response reported a nonzero status.
+    Refused,
+    /// The response did not provide a usable status.
+    Unknown,
+}
+
+impl From<MobileNovatekRecordingCommandDto> for NovatekRecordingCommand {
+    fn from(command: MobileNovatekRecordingCommandDto) -> Self {
+        match command {
+            MobileNovatekRecordingCommandDto::Start => Self::Start,
+            MobileNovatekRecordingCommandDto::Stop => Self::Stop,
+        }
+    }
+}
+
+/// One Novatek command/status pair returned to a mobile client.
+#[derive(Clone, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct MobileNovatekCommandStatusDto {
+    /// Numeric command identifier reported by the camera.
+    pub command_id: u16,
+    /// Camera-reported status value.
+    pub status: u16,
+}
+
+/// One bounded Novatek media record returned to a mobile client.
+#[derive(Clone, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct MobileNovatekMediaEntryDto {
+    /// Camera-reported file name.
+    pub name: String,
+    /// Camera-reported path.
+    pub path: String,
+    /// File size in bytes.
+    pub size_bytes: u64,
+    /// Camera-reported timestamp code.
+    pub timecode: u64,
+    /// Camera-reported display time.
+    pub time: String,
+    /// Camera-reported attribute bits.
+    pub attributes: u32,
+}
+
+/// Bounded, read-only Novatek evidence collected for the R3 Pro profile.
+#[derive(Clone, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct MobileNovatekReadOnlySnapshotDto {
+    /// Firmware version reported by command `3012`.
+    pub firmware_version: String,
+    /// Movie-preview RTSP URI reported by command `2019`.
+    pub movie_rtsp_uri: String,
+    /// Photo-preview RTSP URI reported by command `2019`.
+    pub photo_rtsp_uri: String,
+    /// Configuration/status pairs reported by command `3014`.
+    pub configuration: Vec<MobileNovatekCommandStatusDto>,
+    /// Whether command `3024` reports an inserted storage card.
+    pub storage_present: bool,
+    /// Bounded media records reported by command `3015`.
+    pub media: Vec<MobileNovatekMediaEntryDto>,
+}
+
+/// Failure returned when a captured Novatek response cannot be parsed.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, thiserror::Error, uniffi::Error)]
+pub enum MobileNovatekParseError {
+    /// One or more responses were malformed or exceeded parser bounds.
+    #[error("invalid Novatek read-only response")]
+    InvalidResponse,
+}
+
+/// Failure returned when a mutating Novatek target is requested without the
+/// verified R3V1 firmware and command-capability proofs.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, thiserror::Error, uniffi::Error)]
+pub enum MobileNovatekProfileError {
+    /// The reported firmware is outside the verified R3V1 family.
+    #[error("unsupported Novatek firmware profile")]
+    UnsupportedFirmware,
+    /// The reported firmware exceeds the bounded identity representation.
+    #[error("Novatek firmware version is too long")]
+    FirmwareVersionTooLong,
+    /// Read-only configuration did not advertise the requested command.
+    #[error("Novatek command capability is not advertised")]
+    CapabilityNotAdvertised,
+    /// The adapter supplied more command/status pairs than Rust retains.
+    #[error("Novatek configuration is too large")]
+    ConfigurationTooLarge,
+    /// The adapter supplied ambiguous duplicate command/status evidence.
+    #[error("Novatek configuration is malformed")]
+    ConfigurationMalformed,
+}
+
+impl From<NovatekProfileError> for MobileNovatekProfileError {
+    fn from(error: NovatekProfileError) -> Self {
+        match error {
+            NovatekProfileError::UnsupportedFirmware => Self::UnsupportedFirmware,
+            NovatekProfileError::FirmwareVersionTooLong => Self::FirmwareVersionTooLong,
+        }
+    }
+}
+
+impl From<NovatekCapabilityError> for MobileNovatekProfileError {
+    fn from(_: NovatekCapabilityError) -> Self {
+        Self::CapabilityNotAdvertised
+    }
+}
+
+impl From<NovatekConfigurationError> for MobileNovatekProfileError {
+    fn from(error: NovatekConfigurationError) -> Self {
+        match error {
+            NovatekConfigurationError::TooManyStatuses { .. } => Self::ConfigurationTooLarge,
+            NovatekConfigurationError::DuplicateCommand { .. }
+            | NovatekConfigurationError::InvalidCommand { .. } => Self::ConfigurationMalformed,
+        }
+    }
+}
+
+/// Failure while establishing the Rust-owned validated Novatek session.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, thiserror::Error, uniffi::Error)]
+pub enum MobileNovatekSessionError {
+    /// The selected origin was not a validated local IPv4 origin.
+    #[error("invalid Novatek camera origin")]
+    InvalidOrigin,
+    /// The reported firmware is outside the verified R3V1 family.
+    #[error("unsupported Novatek firmware profile")]
+    UnsupportedFirmware,
+    /// The reported firmware exceeds the bounded identity representation.
+    #[error("Novatek firmware version is too long")]
+    FirmwareVersionTooLong,
+    /// The supplied configuration exceeds Rust's fixed bound.
+    #[error("Novatek configuration is too large")]
+    ConfigurationTooLarge,
+    /// The supplied configuration contains ambiguous or reserved evidence.
+    #[error("Novatek configuration is malformed")]
+    ConfigurationMalformed,
+}
+
+impl From<NovatekSessionError> for MobileNovatekSessionError {
+    fn from(error: NovatekSessionError) -> Self {
+        match error {
+            NovatekSessionError::Profile(NovatekProfileError::UnsupportedFirmware) => {
+                Self::UnsupportedFirmware
+            }
+            NovatekSessionError::Profile(NovatekProfileError::FirmwareVersionTooLong) => {
+                Self::FirmwareVersionTooLong
+            }
+            NovatekSessionError::Configuration(NovatekConfigurationError::TooManyStatuses {
+                ..
+            }) => Self::ConfigurationTooLarge,
+            NovatekSessionError::Configuration(
+                NovatekConfigurationError::DuplicateCommand { .. }
+                | NovatekConfigurationError::InvalidCommand { .. },
+            ) => Self::ConfigurationMalformed,
+        }
+    }
+}
+
+/// Rust-owned validated R3V1 Novatek session evidence.
+#[derive(Debug, uniffi::Object)]
+pub struct MobileNovatekSession {
+    inner: NovatekR3V1Session,
+}
+
+#[uniffi::export]
+impl MobileNovatekSession {
+    /// Establishes one session from a validated local origin and read-only evidence.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the origin, firmware gate, or bounded `3014`
+    /// configuration evidence is invalid.
+    #[uniffi::constructor]
+    #[allow(
+        clippy::needless_pass_by_value,
+        reason = "UniFFI constructors own boundary DTOs and strings"
+    )]
+    pub fn new(
+        origin: MobileNovatekHttpOriginDto,
+        firmware_version: String,
+        configuration: Vec<MobileNovatekCommandStatusDto>,
+    ) -> Result<Arc<Self>, MobileNovatekSessionError> {
+        let address = origin
+            .address
+            .parse::<Ipv4Addr>()
+            .map_err(|_| MobileNovatekSessionError::InvalidOrigin)?;
+        let origin = NovatekHttpOrigin::new(address, origin.port)
+            .map_err(|_| MobileNovatekSessionError::InvalidOrigin)?;
+        let inner = NovatekR3V1Session::new(
+            origin,
+            &firmware_version,
+            configuration
+                .into_iter()
+                .map(|status| (status.command_id, status.status)),
+        )?;
+        Ok(Arc::new(Self { inner }))
+    }
+
+    /// Returns the retained validated local origin.
+    #[must_use]
+    pub fn origin(&self) -> MobileNovatekHttpOriginDto {
+        MobileNovatekHttpOriginDto {
+            address: self.inner.origin().address().to_string(),
+            port: self.inner.origin().port(),
+        }
+    }
+
+    /// Returns the retained verified firmware identity.
+    #[must_use]
+    pub fn firmware_version(&self) -> String {
+        self.inner.firmware_version().to_owned()
+    }
+
+    /// Returns the bounded `3014` command/status evidence retained by Rust.
+    #[must_use]
+    pub fn configuration(&self) -> Vec<MobileNovatekCommandStatusDto> {
+        self.inner
+            .configuration()
+            .statuses()
+            .iter()
+            .map(|status| MobileNovatekCommandStatusDto {
+                command_id: status.command_id().get(),
+                status: status.status().get(),
+            })
+            .collect()
+    }
+
+    /// Builds a recording target from the retained firmware and capability proofs.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`MobileNovatekProfileError::CapabilityNotAdvertised`] when the
+    /// retained configuration does not acknowledge command `2001`.
+    pub fn recording_command_target(
+        &self,
+        command: MobileNovatekRecordingCommandDto,
+    ) -> Result<String, MobileNovatekProfileError> {
+        self.inner
+            .recording_command_target(command.into())
+            .map(str::to_owned)
+            .map_err(Into::into)
+    }
+
+    /// Builds a still-capture target from the retained firmware and capability proofs.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`MobileNovatekProfileError::CapabilityNotAdvertised`] when the
+    /// retained configuration does not acknowledge command `1001`.
+    pub fn still_capture_command_target(&self) -> Result<String, MobileNovatekProfileError> {
+        self.inner
+            .still_capture_command_target(NovatekStillCaptureCommand)
+            .map(str::to_owned)
+            .map_err(Into::into)
+    }
+}
+
+/// Failure returned when validating a mobile-supplied Novatek origin.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, thiserror::Error, uniffi::Error)]
+pub enum MobileNovatekOriginError {
+    /// The address was not valid IPv4 text.
+    #[error("invalid IPv4 address")]
+    InvalidAddress,
+    /// The address was not private, link-local, or loopback.
+    #[error("origin is not local")]
+    NonLocalAddress,
+    /// Port zero cannot identify a camera HTTP service.
+    #[error("origin has an invalid TCP port")]
+    InvalidPort,
+}
+
+/// Failure returned when a camera-reported media path is not safe to download.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, thiserror::Error, uniffi::Error)]
+pub enum MobileNovatekMediaPathError {
+    /// The path is not rooted at the camera's validated Novatek volume.
+    #[error("invalid Novatek media path")]
+    InvalidPath,
+}
+
+/// Validated local Novatek HTTP origin returned to a mobile client.
+#[derive(Clone, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct MobileNovatekHttpOriginDto {
+    /// Validated IPv4 address text.
+    pub address: String,
+    /// Validated TCP port.
+    pub port: u16,
+}
+
+/// Returns the fixed relative target for a read-only Novatek command.
+#[uniffi::export]
+#[must_use]
+pub fn mobile_novatek_read_command_target(command: MobileNovatekReadCommandDto) -> String {
+    NovatekReadCommand::from(command)
+        .request_target()
+        .to_owned()
+}
+
+/// Maps a validated camera media path to an origin-relative HTTP target.
+///
+/// The returned target is safe to append to a caller-validated local origin.
+/// No network request is made by this helper.
+///
+/// # Errors
+///
+/// Returns [`MobileNovatekMediaPathError::InvalidPath`] when the supplied
+/// path is not a bounded Novatek media path.
+#[uniffi::export]
+#[allow(
+    clippy::needless_pass_by_value,
+    reason = "UniFFI exports owned strings"
+)]
+pub fn mobile_novatek_media_download_target(
+    path: String,
+) -> Result<String, MobileNovatekMediaPathError> {
+    cutout_protocols::media_download_target(&path)
+        .map(|target| target.as_str().to_owned())
+        .map_err(|error| match error {
+            NovatekMediaPathError::InvalidRoot
+            | NovatekMediaPathError::UnsafeComponent
+            | NovatekMediaPathError::ValueTooLong { .. } => {
+                MobileNovatekMediaPathError::InvalidPath
+            }
+        })
+}
+
+/// Maps a validated camera media path to its source-backed thumbnail target.
+///
+/// No network request is made by this helper. The caller must gate the
+/// command on read-only configuration evidence before fetching it.
+///
+/// # Errors
+///
+/// Returns [`MobileNovatekMediaPathError::InvalidPath`] when the path is not a
+/// bounded, camera-rooted Novatek path.
+#[uniffi::export]
+#[allow(
+    clippy::needless_pass_by_value,
+    reason = "UniFFI exports owned strings"
+)]
+pub fn mobile_novatek_media_thumbnail_target(
+    path: String,
+) -> Result<String, MobileNovatekMediaPathError> {
+    cutout_protocols::media_thumbnail_target(&path)
+        .map(|target| target.as_str().to_owned())
+        .map_err(|error| match error {
+            NovatekMediaPathError::InvalidRoot
+            | NovatekMediaPathError::UnsafeComponent
+            | NovatekMediaPathError::ValueTooLong { .. } => {
+                MobileNovatekMediaPathError::InvalidPath
+            }
+        })
+}
+
+/// Returns whether a firmware string is in the verified R3V1 R3 Pro family.
+#[uniffi::export]
+#[must_use]
+#[allow(
+    clippy::needless_pass_by_value,
+    reason = "UniFFI exports owned strings"
+)]
+pub fn mobile_novatek_firmware_is_r3_pro(firmware_version: String) -> bool {
+    is_r3_pro_firmware(&firmware_version)
+}
+
+/// Validates a local IPv4 origin before the platform network adapter connects.
+///
+/// # Errors
+///
+/// Returns an error when `address` is not IPv4 text, is not a local address,
+/// or `port` is zero.
+#[uniffi::export]
+#[allow(
+    clippy::needless_pass_by_value,
+    reason = "UniFFI exports owned strings"
+)]
+pub fn mobile_validate_novatek_http_origin(
+    address: String,
+    port: u16,
+) -> Result<MobileNovatekHttpOriginDto, MobileNovatekOriginError> {
+    let address = address
+        .parse::<Ipv4Addr>()
+        .map_err(|_| MobileNovatekOriginError::InvalidAddress)?;
+    let origin = NovatekHttpOrigin::new(address, port).map_err(|error| match error {
+        NovatekOriginError::NonLocalAddress => MobileNovatekOriginError::NonLocalAddress,
+        NovatekOriginError::InvalidPort => MobileNovatekOriginError::InvalidPort,
+    })?;
+    Ok(MobileNovatekHttpOriginDto {
+        address: origin.address().to_string(),
+        port: origin.port(),
+    })
+}
+
+/// Parses captured Novatek responses into bounded mobile-owned evidence.
+///
+/// # Errors
+///
+/// Returns [`MobileNovatekParseError::InvalidResponse`] when any captured
+/// response is malformed or exceeds the Rust parser's fixed bounds.
+#[uniffi::export]
+#[allow(
+    clippy::needless_pass_by_value,
+    reason = "UniFFI exports owned byte buffers"
+)]
+pub fn mobile_parse_novatek_read_only_snapshot(
+    firmware_response: Vec<u8>,
+    live_view_response: Vec<u8>,
+    configuration_response: Vec<u8>,
+    storage_response: Vec<u8>,
+    media_response: Vec<u8>,
+) -> Result<MobileNovatekReadOnlySnapshotDto, MobileNovatekParseError> {
+    let snapshot = parse_read_only_snapshot(
+        &firmware_response,
+        &live_view_response,
+        &configuration_response,
+        &storage_response,
+        &media_response,
+    )
+    .map_err(|_| MobileNovatekParseError::InvalidResponse)?;
+    Ok(MobileNovatekReadOnlySnapshotDto {
+        firmware_version: snapshot.firmware().as_str().to_owned(),
+        movie_rtsp_uri: snapshot.live_view().movie().as_str().to_owned(),
+        photo_rtsp_uri: snapshot.live_view().photo().as_str().to_owned(),
+        configuration: snapshot
+            .configuration()
+            .statuses()
+            .iter()
+            .map(|status| MobileNovatekCommandStatusDto {
+                command_id: status.command_id().get(),
+                status: status.status().get(),
+            })
+            .collect(),
+        storage_present: snapshot.storage() == NovatekStoragePresence::Present,
+        media: snapshot
+            .media()
+            .entries()
+            .iter()
+            .map(|entry| MobileNovatekMediaEntryDto {
+                name: entry.name().to_owned(),
+                path: entry.path().to_owned(),
+                size_bytes: entry.size_bytes(),
+                timecode: entry.timecode(),
+                time: entry.time().to_owned(),
+                attributes: entry.attributes(),
+            })
+            .collect(),
+    })
+}
+
+/// Parses a bounded Novatek command response without inferring state change.
+/// The reported command must match `expected_command_id`; a status from a
+/// different command is never treated as an acknowledgement.
+///
+/// # Errors
+///
+/// Returns [`MobileNovatekParseError::InvalidResponse`] when the response is
+/// not valid bounded UTF-8 or contains a malformed status value.
+#[uniffi::export]
+#[allow(
+    clippy::needless_pass_by_value,
+    reason = "UniFFI exports owned byte buffers"
+)]
+pub fn mobile_parse_novatek_command_outcome(
+    response: Vec<u8>,
+    expected_command_id: u16,
+) -> Result<MobileNovatekCommandOutcomeDto, MobileNovatekParseError> {
+    let outcome = cutout_protocols::parse_command_response_for_id(&response, expected_command_id)
+        .map_err(|_| MobileNovatekParseError::InvalidResponse)?;
+    Ok(match outcome {
+        NovatekCommandOutcome::Acknowledged => MobileNovatekCommandOutcomeDto::Acknowledged,
+        NovatekCommandOutcome::Refused { .. } => MobileNovatekCommandOutcomeDto::Refused,
+        NovatekCommandOutcome::Unknown => MobileNovatekCommandOutcomeDto::Unknown,
+    })
+}
 
 /// Mobile discovery candidate support state.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Enum)]
@@ -960,6 +2103,7 @@ impl From<CoreDiscoveryCandidateSupport> for DiscoveryCandidateSupport {
 }
 
 #[uniffi::export]
+#[allow(clippy::needless_pass_by_value)]
 impl CutoutSessionStateHandle {
     /// Legacy standalone detector entry point used only before connection admission.
     pub fn begin_identification_probe_at(
@@ -999,10 +2143,10 @@ impl CutoutSessionStateHandle {
             .map(GattFingerprint::from)
             .collect::<Vec<_>>();
         let mut state = self.lock_inner();
-        state
-            .observe_gatt_unscoped(&fingerprints)
-            .map(Into::into)
-            .unwrap_or_else(|| state.detector().resolution(state.session_state()).into())
+        state.observe_gatt_unscoped(&fingerprints).map_or_else(
+            || state.detector().resolution(state.session_state()).into(),
+            Into::into,
+        )
     }
 
     pub fn observe_notification(&self, bytes: Vec<u8>) -> DeviceDetectionResolutionRecord {
@@ -1049,8 +2193,10 @@ impl CutoutSessionStateHandle {
             .observe_detection_unscoped(DeviceDetectionEvent::ProbeTimeout {
                 probe: PendingProbe::BegodeName,
             })
-            .map(Into::into)
-            .unwrap_or_else(|| state.detector().resolution(state.session_state()).into())
+            .map_or_else(
+                || state.detector().resolution(state.session_state()).into(),
+                Into::into,
+            )
     }
     pub fn observe_begode_firmware_probe_timeout(&self) -> DeviceDetectionResolutionRecord {
         let mut state = self.lock_inner();
@@ -1058,8 +2204,10 @@ impl CutoutSessionStateHandle {
             .observe_detection_unscoped(DeviceDetectionEvent::ProbeTimeout {
                 probe: PendingProbe::BegodeFirmware,
             })
-            .map(Into::into)
-            .unwrap_or_else(|| state.detector().resolution(state.session_state()).into())
+            .map_or_else(
+                || state.detector().resolution(state.session_state()).into(),
+                Into::into,
+            )
     }
     pub fn observe_begode_imu_probe_timeout(&self) -> DeviceDetectionResolutionRecord {
         let mut state = self.lock_inner();
@@ -1067,8 +2215,10 @@ impl CutoutSessionStateHandle {
             .observe_detection_unscoped(DeviceDetectionEvent::ProbeTimeout {
                 probe: PendingProbe::BegodeImu,
             })
-            .map(Into::into)
-            .unwrap_or_else(|| state.detector().resolution(state.session_state()).into())
+            .map_or_else(
+                || state.detector().resolution(state.session_state()).into(),
+                Into::into,
+            )
     }
     pub fn expire_begode_probe_responses(
         &self,
@@ -1243,6 +2393,115 @@ impl CutoutSessionStateHandle {
             .into_iter()
             .map(Into::into)
             .collect()
+    }
+
+    /// Returns the current Rust-owned camera preview and recording state.
+    #[must_use]
+    pub fn camera_snapshot(&self) -> MobileCameraSnapshotDto {
+        self.lock_inner().session_state().camera().to_owned().into()
+    }
+
+    /// Captures an identity for asynchronous camera work.
+    #[must_use]
+    pub fn camera_session_token(&self) -> MobileCameraSessionTokenDto {
+        self.lock_inner().session_state().camera().token().into()
+    }
+
+    /// Returns whether asynchronous camera work still belongs to the lifecycle.
+    #[must_use]
+    pub fn camera_session_token_is_current(&self, token: MobileCameraSessionTokenDto) -> bool {
+        self.lock_inner()
+            .session_state()
+            .camera()
+            .is_current(token.into())
+    }
+
+    /// Retires asynchronous camera work without changing presentation truth.
+    pub fn advance_camera_generation(&self) {
+        self.lock_inner()
+            .session_state_mut()
+            .camera_mut()
+            .advance_generation();
+    }
+
+    /// Retires the camera lifecycle and returns it to its non-optimistic baseline.
+    pub fn invalidate_camera_lifecycle(&self) {
+        self.lock_inner()
+            .session_state_mut()
+            .camera_mut()
+            .invalidate();
+    }
+
+    /// Records a foreground preview observation without changing recording truth.
+    pub fn observe_camera_preview(&self, preview: MobileCameraPreviewStateDto) {
+        self.lock_inner()
+            .session_state_mut()
+            .camera_mut()
+            .observe_preview(preview.into());
+    }
+
+    /// Reduces one platform preview lifecycle event into Rust-owned state.
+    pub fn reduce_camera_preview(&self, event: MobileCameraPreviewEventDto) {
+        let preview = match event {
+            MobileCameraPreviewEventDto::Started => CoreCameraPreviewState::Buffering,
+            MobileCameraPreviewEventDto::FrameReceived => CoreCameraPreviewState::Live,
+            MobileCameraPreviewEventDto::Interrupted => CoreCameraPreviewState::Interrupted,
+            MobileCameraPreviewEventDto::Stopped => CoreCameraPreviewState::Stopped,
+            MobileCameraPreviewEventDto::Unavailable => CoreCameraPreviewState::Unavailable,
+        };
+        self.lock_inner()
+            .session_state_mut()
+            .camera_mut()
+            .observe_preview(preview);
+    }
+
+    /// Records authoritative onboard recording truth without changing preview state.
+    pub fn observe_camera_onboard_recording(
+        &self,
+        onboard_recording: MobileCameraOnboardRecordingStateDto,
+    ) {
+        self.lock_inner()
+            .session_state_mut()
+            .camera_mut()
+            .observe_onboard_recording(onboard_recording.into());
+    }
+
+    /// Records bounded camera-media provenance without copying video bytes into
+    /// the Rust session state.
+    ///
+    /// # Errors
+    ///
+    /// Returns a typed error when camera metadata exceeds the Rust-owned bounds
+    /// or contains an empty required identifier.
+    pub fn record_camera_media_provenance(
+        &self,
+        input: MobileCameraMediaProvenanceInput,
+    ) -> Result<(), MobileCameraMediaProvenanceError> {
+        let record = input.into_core()?;
+        self.lock_inner()
+            .session_state_mut()
+            .record_camera_media_provenance(record);
+        Ok(())
+    }
+
+    /// Returns bounded camera-media provenance retained by the Rust session.
+    #[must_use]
+    pub fn camera_media_provenance(&self) -> Vec<MobileCameraMediaProvenanceDto> {
+        self.lock_inner()
+            .session_state()
+            .camera_provenance()
+            .media()
+            .iter()
+            .map(MobileCameraMediaProvenanceDto::from)
+            .collect()
+    }
+
+    /// Clears camera-media provenance for the next ride capture.
+    pub fn clear_camera_media_provenance(&self) {
+        self.lock_inner()
+            .session_state_mut()
+            .camera_provenance
+            .clear();
     }
 
     /// Applies one typed Apple-platform event to the Rust-owned ride lifecycle.
@@ -2463,7 +3722,7 @@ pub enum MobileCommandDto {
     /// Set the Aero voltage correction in tenths of a percent.
     SetAeroVoltageCorrection(MobileAeroVoltageCorrectionDto),
 
-    /// Set the official NOSFET MxV raw maximum-charge value (0..=70).
+    /// Set the official NOSFET `MxV` raw maximum-charge value (0..=70).
     SetAeroMaxChargeVoltageRaw(MobileAeroMaxChargeVoltageRawDto),
 
     /// Set the wheel display units independently of phone formatting.
@@ -2576,7 +3835,7 @@ pub struct MobileAeroVoltageCorrectionDto {
     pub tenths_of_percent: i8,
 }
 
-/// Official NOSFET MxV raw maximum-charge value.
+/// Official NOSFET `MxV` raw maximum-charge value.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Record)]
 pub struct MobileAeroMaxChargeVoltageRawDto {
     /// Raw value accepted by the official 0..=70 progress control.
@@ -2948,7 +4207,7 @@ pub struct MobileEucSettingsCapabilitiesDto {
     /// NOSFET brake overpressure alarm write support.
     pub aero_brake_overpressure_alarm: MobileSettingWriteSupportDto,
 
-    /// NOSFET Aero raw MxV maximum-charge write support.
+    /// NOSFET Aero raw `MxV` maximum-charge write support.
     pub aero_max_charge_voltage_raw: MobileSettingWriteSupportDto,
 
     /// NOSFET/Veteran MD pedal-hardness write support.
@@ -3472,7 +4731,7 @@ aero_setting_state_dto!(
 aero_setting_state_dto!(
     MobileAeroMaxChargeVoltageRawStateDto,
     MobileAeroMaxChargeVoltageRawDto,
-    "Aero raw MxV maximum-charge lifecycle state."
+    "Aero raw `MxV` maximum-charge lifecycle state."
 );
 aero_setting_state_dto!(
     MobileAeroHighSpeedModeStateDto,
@@ -4378,6 +5637,7 @@ impl MobileEucSettingTrackers {
         }
     }
 
+    #[allow(clippy::too_many_lines)]
     fn observe_command(
         &mut self,
         command: Option<MobileCommandDto>,
@@ -4441,8 +5701,9 @@ impl MobileEucSettingTrackers {
                     Some(CoreAeroGyroCalibrationState::Waiting) => {
                         CoreAeroGyroCalibrationState::Complete
                     }
-                    Some(CoreAeroGyroCalibrationState::Idle)
-                    | Some(CoreAeroGyroCalibrationState::Complete)
+                    Some(
+                        CoreAeroGyroCalibrationState::Idle | CoreAeroGyroCalibrationState::Complete,
+                    )
                     | None => CoreAeroGyroCalibrationState::Waiting,
                 };
                 self.aero_gyro_calibration
@@ -4542,6 +5803,7 @@ impl MobileEucSettingTrackers {
         }
     }
 
+    #[allow(clippy::too_many_lines)]
     fn observe_readback(&mut self, readback: &MobileSettingsReadbackDto, now: MonotonicTimestamp) {
         if let Some(value) =
             settings_entry(&readback.entries, cutout_protocols::AERO_FIELD_WHEEL_UNITS)
@@ -5258,6 +6520,7 @@ fn mobile_aero_speed_setting_state(
     snapshot
 }
 
+#[allow(clippy::too_many_lines)]
 fn mobile_aero_pwm_setting_state(
     state: CoreSettingState<CoreAeroPwmSetting>,
 ) -> MobileAeroPwmSettingStateDto {
@@ -8754,6 +10017,7 @@ impl RideDatabaseHandle {
     ///
     /// Returns a typed database error when the device identity, timestamp, queue, or storage
     /// transaction is invalid.
+    #[allow(clippy::needless_pass_by_value)]
     pub fn record_bms_voltage_samples(
         &self,
         device_identity: String,
@@ -9894,13 +11158,13 @@ impl RideDatabaseHandle {
 
     fn settle_recovered_ride(
         &self,
-        id: MobileRideIdDto,
+        id: &MobileRideIdDto,
         discard_empty: bool,
         occurred_at_milliseconds: u64,
         monotonic_at_milliseconds: u64,
         replacement_candidate_vehicle: Option<&str>,
     ) -> Result<Option<MobileRideIdDto>, MobileRideDatabaseError> {
-        let id = parse_mobile_ride_id(&id)?;
+        let id = parse_mobile_ride_id(id)?;
         self.inner
             .settle_recovered_ride(
                 id,
@@ -10017,6 +11281,10 @@ impl MobileRideMapCore {
     /// Native clients must enter through `CutoutSessionStateHandle`, which proves that the
     /// connection is current and verified before this operation can run.
     #[cfg(test)]
+    #[allow(
+        clippy::needless_pass_by_value,
+        reason = "test helper mirrors the owned native-facing input shape"
+    )]
     pub(crate) fn ensure_recording_for_vehicle(
         &self,
         platform_identifier: String,
@@ -10024,7 +11292,7 @@ impl MobileRideMapCore {
         automatic_policy: MobileRideMapAutomaticRecordingPolicyDto,
     ) -> Result<MobileRideMapCoreSnapshotDto, MobileRideMapCoreErrorDto> {
         self.ensure_recording_for_vehicle_with_connection_generation(
-            platform_identifier,
+            &platform_identifier,
             at_ms,
             None,
             Some(automatic_policy),
@@ -10033,6 +11301,10 @@ impl MobileRideMapCore {
     }
 
     /// Applies connection policy for an already verified Rust connection attempt.
+    #[allow(
+        clippy::needless_pass_by_value,
+        reason = "the verified connection boundary owns its copied platform identifier"
+    )]
     pub(crate) fn ensure_recording_for_vehicle_on_connection(
         &self,
         platform_identifier: String,
@@ -10040,7 +11312,7 @@ impl MobileRideMapCore {
         connection_generation: u64,
     ) -> Result<Option<MobileRideMapCoreSnapshotDto>, MobileRideMapCoreErrorDto> {
         self.ensure_recording_for_vehicle_with_connection_generation(
-            platform_identifier,
+            &platform_identifier,
             at_ms,
             Some(connection_generation),
             None,
@@ -10049,6 +11321,10 @@ impl MobileRideMapCore {
 
     /// Associates a verified vehicle with the active recording for Rust-owned tests and flows.
     #[cfg(test)]
+    #[allow(
+        clippy::needless_pass_by_value,
+        reason = "test helper mirrors the owned native-facing input shape"
+    )]
     pub(crate) fn observe_vehicle_connection(
         &self,
         platform_identifier: String,
@@ -10105,21 +11381,21 @@ impl MobileRideMapCoreInner {
             }
             completed.push(match result {
                 Ok(result) if result.admission() == ride_maps::LocationAdmission::Accepted => {
-                    if !self
+                    if self
                         .recorder
                         .record_admitted_sample(pending.admitted_sample)
                     {
-                        MobileRideMapCoreDecisionDto::StorageError {
-                            message: "accepted location could not settle into ride projection"
-                                .to_owned(),
-                        }
-                    } else {
                         self.revision = self.revision.saturating_add(1);
                         let mut point = pending.point;
                         if let Some(sequence) = result.sequence() {
                             point.sequence = sequence;
                         }
                         MobileRideMapCoreDecisionDto::Accepted { point }
+                    } else {
+                        MobileRideMapCoreDecisionDto::StorageError {
+                            message: "accepted location could not settle into ride projection"
+                                .to_owned(),
+                        }
                     }
                 }
                 Ok(result) if result.admission() == ride_maps::LocationAdmission::Duplicate => {
@@ -10374,6 +11650,10 @@ impl MobileRideMapCoreInner {
         }
     }
 
+    #[allow(
+        clippy::too_many_lines,
+        reason = "recovery is one ordered transaction whose intermediate state must remain visible"
+    )]
     fn restore_active_ride(
         &mut self,
         at_ms: u64,
@@ -10510,7 +11790,7 @@ impl MobileRideMapCoreInner {
             .map(|identity| identity.as_str().to_owned());
         let replacement = database
             .settle_recovered_ride(
-                ride.id.clone(),
+                &ride.id,
                 discard_empty,
                 now,
                 at_ms,
@@ -10520,7 +11800,11 @@ impl MobileRideMapCoreInner {
         self.recoverable_updated_at_milliseconds = None;
         if let Some(replacement) = replacement {
             self.reset_after_recovery_settlement();
-            self.start_gps_only_at_with_id(at_ms, replacement_candidate, Some(replacement))?;
+            self.start_gps_only_at_with_id(
+                at_ms,
+                replacement_candidate.as_deref(),
+                Some(replacement),
+            )?;
         } else if discard_empty {
             self.reset_after_recovery_settlement();
         } else {
@@ -10693,18 +11977,17 @@ impl MobileRideMapCoreInner {
         &mut self,
         at_ms: u64,
     ) -> Result<MobileRideMapCoreSnapshotDto, MobileRideMapCoreErrorDto> {
-        self.start_gps_only_at(
-            at_ms,
-            self.last_connected_vehicle
-                .as_ref()
-                .map(|identity| identity.as_str().to_owned()),
-        )
+        let candidate_vehicle = self
+            .last_connected_vehicle
+            .as_ref()
+            .map(|identity| identity.as_str().to_owned());
+        self.start_gps_only_at(at_ms, candidate_vehicle.as_deref())
     }
 
     fn start_gps_only_at(
         &mut self,
         at_ms: u64,
-        candidate_vehicle: Option<String>,
+        candidate_vehicle: Option<&str>,
     ) -> Result<MobileRideMapCoreSnapshotDto, MobileRideMapCoreErrorDto> {
         self.start_gps_only_at_with_id(at_ms, candidate_vehicle, None)
     }
@@ -10712,7 +11995,7 @@ impl MobileRideMapCoreInner {
     fn start_gps_only_at_with_id(
         &mut self,
         at_ms: u64,
-        candidate_vehicle: Option<String>,
+        candidate_vehicle: Option<&str>,
         existing_id: Option<MobileRideIdDto>,
     ) -> Result<MobileRideMapCoreSnapshotDto, MobileRideMapCoreErrorDto> {
         if self.recorder.state().is_some_and(|current| {
@@ -10731,20 +12014,14 @@ impl MobileRideMapCoreInner {
         staged_recorder
             .start(
                 ride_maps::MonotonicMilliseconds::new(at_ms),
-                candidate_vehicle
-                    .as_deref()
-                    .and_then(ride_maps::VehicleIdentity::new),
+                candidate_vehicle.and_then(ride_maps::VehicleIdentity::new),
             )
             .map_err(|_| MobileRideMapCoreErrorDto::AlreadyRecording)?;
         let id = if let Some(existing_id) = existing_id {
             existing_id
         } else if let Some(database) = self.database.as_ref() {
             database
-                .create_started_live_ride(
-                    wall_clock_milliseconds()?,
-                    at_ms,
-                    candidate_vehicle.as_deref(),
-                )
+                .create_started_live_ride(wall_clock_milliseconds()?, at_ms, candidate_vehicle)
                 .map_err(map_core_error)?
         } else {
             mobile_ride_id_from_uuid(Uuid::new_v4())
@@ -10938,16 +12215,20 @@ impl MobileRideMapCore {
         state.start_gps_only(at_ms)
     }
 
+    #[allow(
+        clippy::too_many_lines,
+        reason = "connection policy is one ordered transaction with visible intermediate state"
+    )]
     fn ensure_recording_for_vehicle_with_connection_generation(
         &self,
-        platform_identifier: String,
+        platform_identifier: &str,
         at_ms: u64,
         connection_generation: Option<u64>,
         explicit_policy: Option<MobileRideMapAutomaticRecordingPolicyDto>,
     ) -> Result<Option<MobileRideMapCoreSnapshotDto>, MobileRideMapCoreErrorDto> {
-        let identity = ride_maps::VehicleIdentity::new(&platform_identifier)
+        let identity = ride_maps::VehicleIdentity::new(platform_identifier)
             .ok_or(MobileRideMapCoreErrorDto::InvalidVehicleIdentity)?;
-        let platform_identifier = identity.as_str().to_owned();
+        let platform_identifier = identity.as_str();
         let mut state = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
         state.require_ready()?;
         let connection_generation_consumed = connection_generation.is_some_and(|generation| {
@@ -10966,12 +12247,12 @@ impl MobileRideMapCore {
         if let Some(database) = state.database.as_ref() {
             database
                 .inner
-                .remember_last_connected_device(&platform_identifier, wall_clock_milliseconds()?)
+                .remember_last_connected_device(platform_identifier, wall_clock_milliseconds()?)
                 .map_err(map_storage_core_error)?;
         }
         state.last_connected_vehicle = Some(identity.clone());
         let automatic_policy =
-            explicit_policy.unwrap_or(state.automatic_policy_for_vehicle(&platform_identifier)?);
+            explicit_policy.unwrap_or(state.automatic_policy_for_vehicle(platform_identifier)?);
         let current_vehicle = state
             .recorder
             .associated_vehicle()
@@ -10996,10 +12277,9 @@ impl MobileRideMapCore {
             {
                 let wall_clock_milliseconds = wall_clock_milliseconds()?;
                 let matches_vehicle = state.recorder.associated_vehicle()
-                    == Some(platform_identifier.as_str())
+                    == Some(platform_identifier)
                     || (state.recorder.associated_vehicle().is_none()
-                        && state.recorder.candidate_vehicle()
-                            == Some(platform_identifier.as_str()));
+                        && state.recorder.candidate_vehicle() == Some(platform_identifier));
                 let within_resume_window =
                     state
                         .recoverable_updated_at_milliseconds
@@ -11067,7 +12347,7 @@ impl MobileRideMapCore {
                     .update_ride_map_metadata(
                         id,
                         staged.candidate_vehicle().map(str::to_owned),
-                        Some(platform_identifier),
+                        Some(platform_identifier.to_owned()),
                         staged
                             .associated_at_milliseconds()
                             .map(ride_maps::MonotonicMilliseconds::as_u64),
@@ -11096,7 +12376,8 @@ impl MobileRideMapCore {
             // after transient outcomes such as TimestampOutOfOrder. Only a confirmed or already
             // confirmed association closes the connection-generation retry window.
             state.last_connection_transition_generation = Some(generation);
-            state.last_connection_transition_ride_id = state.ride_id.clone();
+            let ride_id = state.ride_id.clone();
+            state.last_connection_transition_ride_id = ride_id;
         }
         Ok(Some(state.snapshot(lifecycle.into())))
     }
@@ -11950,13 +13231,17 @@ impl MobileRideMapCoreInner {
 
 impl MobileRideMapCore {
     #[cfg(test)]
+    #[allow(
+        clippy::needless_pass_by_value,
+        reason = "test helper mirrors the owned native-facing input shape"
+    )]
     pub(crate) fn start_gps_only_with_candidate(
         &self,
         at_ms: u64,
         candidate_vehicle: Option<String>,
     ) -> Result<MobileRideMapCoreSnapshotDto, MobileRideMapCoreErrorDto> {
         let mut state = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
-        state.start_gps_only_at(at_ms, candidate_vehicle)
+        state.start_gps_only_at(at_ms, candidate_vehicle.as_deref())
     }
 
     fn transition_at(
@@ -14969,7 +16254,7 @@ pub struct MobileAeroSettingsSimulatorReadbackDto {
     pub lateral_tilt_limit: Option<MobileAeroLateralTiltLimitDto>,
     pub voltage_correction: Option<MobileAeroVoltageCorrectionDto>,
 
-    /// Current official MxV raw maximum-charge value.
+    /// Current official `MxV` raw maximum-charge value.
     pub max_charge_voltage_raw: Option<MobileAeroMaxChargeVoltageRawDto>,
 
     /// Simulated wheel display units.
@@ -15335,7 +16620,7 @@ impl AeroBenignControlSession {
     pub fn aero_voltage_correction_state(&self) -> MobileAeroVoltageCorrectionStateDto {
         self.lock_settings().aero_voltage_correction()
     }
-    /// Returns the Rust-owned raw MxV maximum-charge lifecycle state.
+    /// Returns the Rust-owned raw `MxV` maximum-charge lifecycle state.
     pub fn aero_max_charge_voltage_raw_state(&self) -> MobileAeroMaxChargeVoltageRawStateDto {
         self.lock_settings().aero_max_charge_voltage_raw()
     }
@@ -15420,8 +16705,9 @@ fn mobile_aero_setting_support(
         MobileCommandDto::SetAeroHighBeam(_) => capabilities.aero_high_beam,
         MobileCommandDto::ResetTripMeter => capabilities.reset_trip_meter,
         MobileCommandDto::SetAeroTiltbackSpeed(_) => capabilities.aero_tiltback_speed,
-        MobileCommandDto::SetAeroPwmPercent(_) => capabilities.aero_pwm_percent,
-        MobileCommandDto::SetAeroPwmOff => capabilities.aero_pwm_percent,
+        MobileCommandDto::SetAeroPwmPercent(_) | MobileCommandDto::SetAeroPwmOff => {
+            capabilities.aero_pwm_percent
+        }
         MobileCommandDto::SetAeroGyroCalibration => capabilities.aero_gyro_calibration,
         MobileCommandDto::SetAeroRidingMode(_) => capabilities.aero_riding_mode,
         MobileCommandDto::SetAeroBrakeOverpressureAlarm(_) => {
@@ -15510,11 +16796,6 @@ fn mobile_command_is_valid(command: MobileCommandDto) -> bool {
         MobileCommandDto::SetAeroMaxChargeVoltageRaw(value) => {
             CoreAeroMaxChargeVoltageRaw::new(value.raw).is_some()
         }
-        MobileCommandDto::SetAeroHighSpeedMode(_)
-        | MobileCommandDto::SetAeroLowBatteryMode(_)
-        | MobileCommandDto::SetAeroTransportMode(_) => true,
-        MobileCommandDto::SetAeroGyroCalibration => true,
-        MobileCommandDto::SetAeroRidingMode(_) => true,
         MobileCommandDto::SetAeroBrakeOverpressureAlarm(value) => {
             CoreAeroBrakeOverpressureAlarm::new(value.percent).is_some()
         }
@@ -15591,6 +16872,7 @@ fn mobile_channel_bytes(channel: &[u8]) -> [u8; 16] {
 }
 
 impl From<MobileCommandDto> for DeviceCommandDto {
+    #[allow(clippy::too_many_lines)]
     fn from(command: MobileCommandDto) -> Self {
         match command {
             MobileCommandDto::RequestIdentity => Self::RequestIdentity,
@@ -15744,9 +17026,9 @@ fn mobile_command_from_command_kind(command: CommandKindDto) -> Option<MobileCom
         CommandKindDto::SoundHorn => Some(MobileCommandDto::SoundHorn),
         CommandKindDto::SetAeroPwmOff => Some(MobileCommandDto::SetAeroPwmOff),
         CommandKindDto::SetAeroGyroCalibration => Some(MobileCommandDto::SetAeroGyroCalibration),
-        CommandKindDto::SetAeroRidingMode => None,
-        CommandKindDto::SetAeroBrakeOverpressureAlarm => None,
         CommandKindDto::SetAeroTiltbackSpeed
+        | CommandKindDto::SetAeroRidingMode
+        | CommandKindDto::SetAeroBrakeOverpressureAlarm
         | CommandKindDto::SetAeroPwmPercent
         | CommandKindDto::SetAeroPedalHardness
         | CommandKindDto::SetAeroDisplayBacklight
@@ -17355,7 +18637,7 @@ impl FalconBenignControlSession {
     pub fn aero_voltage_correction_state(&self) -> MobileAeroVoltageCorrectionStateDto {
         self.lock_settings().aero_voltage_correction()
     }
-    /// Returns the unsupported raw MxV maximum-charge lifecycle state.
+    /// Returns the unsupported raw `MxV` maximum-charge lifecycle state.
     pub fn aero_max_charge_voltage_raw_state(&self) -> MobileAeroMaxChargeVoltageRawStateDto {
         self.lock_settings().aero_max_charge_voltage_raw()
     }
@@ -17626,6 +18908,105 @@ mod tests {
     }
 
     #[test]
+    fn mobile_preview_frame_conversion_rejects_invalid_clock_rate_and_size() {
+        let invalid_clock_rate = MobileCameraVideoFrameDto {
+            data: vec![0, 0, 0, 1, 0x65],
+            parameter_sets: Vec::new(),
+            loss: 0,
+            is_random_access_point: false,
+            timestamp: 0,
+            clock_rate_hz: 0,
+        };
+        assert_eq!(
+            invalid_clock_rate.into_retina_frame(),
+            Err(MobileCameraPreviewFileError::InvalidFrame)
+        );
+
+        let oversized = MobileCameraVideoFrameDto {
+            data: vec![0; 8 * 1024 * 1024 + 1],
+            parameter_sets: Vec::new(),
+            loss: 0,
+            is_random_access_point: false,
+            timestamp: 0,
+            clock_rate_hz: 90_000,
+        };
+        assert_eq!(
+            oversized.into_retina_frame(),
+            Err(MobileCameraPreviewFileError::InvalidFrame)
+        );
+    }
+
+    #[test]
+    fn novatek_session_retains_validated_origin_and_capability_evidence() {
+        let session = MobileNovatekSession::new(
+            MobileNovatekHttpOriginDto {
+                address: "192.168.1.254".to_owned(),
+                port: 80,
+            },
+            "R3V1.1_20240411".to_owned(),
+            vec![
+                MobileNovatekCommandStatusDto {
+                    command_id: 2001,
+                    status: 0,
+                },
+                MobileNovatekCommandStatusDto {
+                    command_id: 1001,
+                    status: 0,
+                },
+            ],
+        )
+        .expect("validated R3V1 evidence establishes the session");
+
+        assert_eq!(session.origin().address, "192.168.1.254");
+        assert_eq!(session.firmware_version(), "R3V1.1_20240411");
+        assert_eq!(session.configuration().len(), 2);
+        assert_eq!(
+            session
+                .recording_command_target(MobileNovatekRecordingCommandDto::Start)
+                .expect("recording capability is retained"),
+            "/?custom=1&cmd=2001&str=1"
+        );
+        assert_eq!(
+            session
+                .still_capture_command_target()
+                .expect("still capability is retained"),
+            "/?custom=1&cmd=1001"
+        );
+    }
+
+    #[test]
+    fn novatek_command_outcome_ffi_preserves_ack_refusal_and_unknown() {
+        assert_eq!(
+            mobile_parse_novatek_command_outcome(
+                br"<Function><Cmd>2001</Cmd><Status>0</Status></Function>".to_vec(),
+                2001,
+            ),
+            Ok(MobileNovatekCommandOutcomeDto::Acknowledged)
+        );
+        assert_eq!(
+            mobile_parse_novatek_command_outcome(
+                br"<Function><Cmd>2001</Cmd><Status>7</Status></Function>".to_vec(),
+                2001,
+            ),
+            Ok(MobileNovatekCommandOutcomeDto::Refused)
+        );
+        assert_eq!(
+            mobile_parse_novatek_command_outcome(
+                br"<Function><Cmd>2001</Cmd></Function>".to_vec(),
+                2001,
+            ),
+            Ok(MobileNovatekCommandOutcomeDto::Unknown)
+        );
+        assert_eq!(
+            mobile_parse_novatek_command_outcome(
+                br"<Function><Cmd>3024</Cmd><Status>0</Status></Function>".to_vec(),
+                2001,
+            ),
+            Err(MobileNovatekParseError::InvalidResponse)
+        );
+    }
+
+    #[test]
     fn production_snapshot_projects_supported_rider_metrics_through_mobile_ffi() {
         let core_snapshot = cutout_core::TelemetrySnapshot {
             voltage: Some(Measured::reported(CoreVoltage::from_millivolts(62_800))),
@@ -17714,7 +19095,7 @@ mod tests {
         assert!(core.is_ready());
         assert!(core.start_gps_only(1).is_ok());
         database.shutdown().expect("database shuts down");
-        let _ = std::fs::remove_file(path);
+        let _ = fs::remove_file(path);
     }
 
     #[test]
@@ -20793,7 +22174,7 @@ mod tests {
             VerificationStatus::HardwareVerified,
         )
         .expect("documented Veteran cell page")
-        .with_observed_at(cutout_core::MonotonicTimestamp::new(42));
+        .with_observed_at(MonotonicTimestamp::new(42));
 
         let snapshot = MobileBmsSnapshotDto::from(BatteryReadbackDto::from(readback));
 
@@ -25143,6 +26524,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::too_many_lines)]
     fn mobile_ride_map_core_manual_resume_rebases_a_recovered_clock() {
         let _guard = RIDE_DATABASE_TEST_LOCK
             .lock()
@@ -26212,7 +27594,7 @@ mod tests {
                 course_degrees: None,
                 course_accuracy_degrees: None,
             }];
-            let stale = state
+            let stale_points = state
                 .ingest_location_batch(
                     original.recording_token,
                     4_000,
@@ -26221,7 +27603,7 @@ mod tests {
                 )
                 .unwrap();
             assert!(
-                stale.is_empty(),
+                stale_points.is_empty(),
                 "old input generation cannot write to resumed or new ride"
             );
             assert_eq!(
