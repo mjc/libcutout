@@ -11085,7 +11085,16 @@ impl MobileRideMapCore {
             .recorder
             .state()
             .ok_or(MobileRideMapCoreErrorDto::NoActiveRide)?;
-        if let Some(generation) = connection_generation {
+        if let Some(generation) = connection_generation
+            && matches!(
+                association,
+                ride_maps::VehicleAssociation::Associated
+                    | ride_maps::VehicleAssociation::AlreadyAssociated
+            )
+        {
+            // Lifecycle admission is consumed by generation, but association remains retryable
+            // after transient outcomes such as TimestampOutOfOrder. Only a confirmed or already
+            // confirmed association closes the connection-generation retry window.
             state.last_connection_transition_generation = Some(generation);
             state.last_connection_transition_ride_id = state.ride_id.clone();
         }
@@ -24985,6 +24994,32 @@ mod tests {
             associated_second.associated_vehicle.as_deref(),
             Some("pev-1")
         );
+    }
+
+    #[test]
+    fn transient_out_of_order_connection_observation_remains_retryable() {
+        let state = MobileRideMapCore::new();
+        let started = state.start_gps_only(1_000).expect("ride starts");
+        assert!(matches!(
+            state
+                .ingest_location(3_000, 1_700_000_003_000, 40.0, -105.0, 3.0)
+                .expect("newer GPS sample is admitted"),
+            MobileRideMapCoreDecisionDto::Accepted { .. }
+        ));
+
+        let delayed = state
+            .ensure_recording_for_vehicle_on_connection("pev-1".to_owned(), 2_000, 7)
+            .expect("delayed connection observation is handled")
+            .expect("the active ride remains visible");
+        assert_eq!(delayed.ride_id, started.ride_id);
+        assert_eq!(delayed.associated_vehicle, None);
+
+        let retried = state
+            .ensure_recording_for_vehicle_on_connection("pev-1".to_owned(), 4_000, 7)
+            .expect("the same connection generation remains retryable")
+            .expect("the active ride remains visible");
+        assert_eq!(retried.ride_id, started.ride_id);
+        assert_eq!(retried.associated_vehicle, Some("pev-1".to_owned()));
     }
 
     #[test]
