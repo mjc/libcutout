@@ -184,9 +184,10 @@ Skipped, submitted-unconfirmed and failed cases cannot count as confirmed tests.
    observed and failed snapshots. Verify display-unit round trips explicitly.
 6. Run reviewed physical cases individually on NF2557. Headlight On/Off is
    physically confirmed with the modern literal commands; the separate AERO
-   brightness-cycle control remains open. Keep sound, lateral tilt, speed
-   alarm, brake alarm, pedal angle, mode switches and trip reset open until
-   their required effects and evidence are established.
+   brightness-cycle control is deferred outside this acceptance baseline. Keep
+   sound, lateral tilt, speed alarm, brake alarm, pedal angle, mode switches
+   and trip reset open until their required effects and evidence are
+   established.
 
 This is the design baseline for further work, not a claim that those repairs
 have already been implemented or that #106 is ready to merge.
