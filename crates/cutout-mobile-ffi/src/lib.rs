@@ -11038,13 +11038,13 @@ impl RideDatabaseHandle {
 
     fn settle_recovered_ride(
         &self,
-        id: MobileRideIdDto,
+        id: &MobileRideIdDto,
         discard_empty: bool,
         occurred_at_milliseconds: u64,
         monotonic_at_milliseconds: u64,
         replacement_candidate_vehicle: Option<&str>,
     ) -> Result<Option<MobileRideIdDto>, MobileRideDatabaseError> {
-        let id = parse_mobile_ride_id(&id)?;
+        let id = parse_mobile_ride_id(id)?;
         self.inner
             .settle_recovered_ride(
                 id,
@@ -11161,6 +11161,10 @@ impl MobileRideMapCore {
     /// Native clients must enter through `CutoutSessionStateHandle`, which proves that the
     /// connection is current and verified before this operation can run.
     #[cfg(test)]
+    #[allow(
+        clippy::needless_pass_by_value,
+        reason = "test helper mirrors the owned native-facing input shape"
+    )]
     pub(crate) fn ensure_recording_for_vehicle(
         &self,
         platform_identifier: String,
@@ -11168,7 +11172,7 @@ impl MobileRideMapCore {
         automatic_policy: MobileRideMapAutomaticRecordingPolicyDto,
     ) -> Result<MobileRideMapCoreSnapshotDto, MobileRideMapCoreErrorDto> {
         self.ensure_recording_for_vehicle_with_connection_generation(
-            platform_identifier,
+            &platform_identifier,
             at_ms,
             None,
             Some(automatic_policy),
@@ -11177,6 +11181,10 @@ impl MobileRideMapCore {
     }
 
     /// Applies connection policy for an already verified Rust connection attempt.
+    #[allow(
+        clippy::needless_pass_by_value,
+        reason = "the verified connection boundary owns its copied platform identifier"
+    )]
     pub(crate) fn ensure_recording_for_vehicle_on_connection(
         &self,
         platform_identifier: String,
@@ -11184,7 +11192,7 @@ impl MobileRideMapCore {
         connection_generation: u64,
     ) -> Result<Option<MobileRideMapCoreSnapshotDto>, MobileRideMapCoreErrorDto> {
         self.ensure_recording_for_vehicle_with_connection_generation(
-            platform_identifier,
+            &platform_identifier,
             at_ms,
             Some(connection_generation),
             None,
@@ -11193,6 +11201,10 @@ impl MobileRideMapCore {
 
     /// Associates a verified vehicle with the active recording for Rust-owned tests and flows.
     #[cfg(test)]
+    #[allow(
+        clippy::needless_pass_by_value,
+        reason = "test helper mirrors the owned native-facing input shape"
+    )]
     pub(crate) fn observe_vehicle_connection(
         &self,
         platform_identifier: String,
@@ -11249,21 +11261,21 @@ impl MobileRideMapCoreInner {
             }
             completed.push(match result {
                 Ok(result) if result.admission() == ride_maps::LocationAdmission::Accepted => {
-                    if !self
+                    if self
                         .recorder
                         .record_admitted_sample(pending.admitted_sample)
                     {
-                        MobileRideMapCoreDecisionDto::StorageError {
-                            message: "accepted location could not settle into ride projection"
-                                .to_owned(),
-                        }
-                    } else {
                         self.revision = self.revision.saturating_add(1);
                         let mut point = pending.point;
                         if let Some(sequence) = result.sequence() {
                             point.sequence = sequence;
                         }
                         MobileRideMapCoreDecisionDto::Accepted { point }
+                    } else {
+                        MobileRideMapCoreDecisionDto::StorageError {
+                            message: "accepted location could not settle into ride projection"
+                                .to_owned(),
+                        }
                     }
                 }
                 Ok(result) if result.admission() == ride_maps::LocationAdmission::Duplicate => {
@@ -11518,6 +11530,10 @@ impl MobileRideMapCoreInner {
         }
     }
 
+    #[allow(
+        clippy::too_many_lines,
+        reason = "recovery is one ordered transaction whose intermediate state must remain visible"
+    )]
     fn restore_active_ride(
         &mut self,
         at_ms: u64,
@@ -11654,7 +11670,7 @@ impl MobileRideMapCoreInner {
             .map(|identity| identity.as_str().to_owned());
         let replacement = database
             .settle_recovered_ride(
-                ride.id.clone(),
+                &ride.id,
                 discard_empty,
                 now,
                 at_ms,
@@ -11664,7 +11680,11 @@ impl MobileRideMapCoreInner {
         self.recoverable_updated_at_milliseconds = None;
         if let Some(replacement) = replacement {
             self.reset_after_recovery_settlement();
-            self.start_gps_only_at_with_id(at_ms, replacement_candidate, Some(replacement))?;
+            self.start_gps_only_at_with_id(
+                at_ms,
+                replacement_candidate.as_deref(),
+                Some(replacement),
+            )?;
         } else if discard_empty {
             self.reset_after_recovery_settlement();
         } else {
@@ -11837,18 +11857,17 @@ impl MobileRideMapCoreInner {
         &mut self,
         at_ms: u64,
     ) -> Result<MobileRideMapCoreSnapshotDto, MobileRideMapCoreErrorDto> {
-        self.start_gps_only_at(
-            at_ms,
-            self.last_connected_vehicle
-                .as_ref()
-                .map(|identity| identity.as_str().to_owned()),
-        )
+        let candidate_vehicle = self
+            .last_connected_vehicle
+            .as_ref()
+            .map(|identity| identity.as_str().to_owned());
+        self.start_gps_only_at(at_ms, candidate_vehicle.as_deref())
     }
 
     fn start_gps_only_at(
         &mut self,
         at_ms: u64,
-        candidate_vehicle: Option<String>,
+        candidate_vehicle: Option<&str>,
     ) -> Result<MobileRideMapCoreSnapshotDto, MobileRideMapCoreErrorDto> {
         self.start_gps_only_at_with_id(at_ms, candidate_vehicle, None)
     }
@@ -11856,7 +11875,7 @@ impl MobileRideMapCoreInner {
     fn start_gps_only_at_with_id(
         &mut self,
         at_ms: u64,
-        candidate_vehicle: Option<String>,
+        candidate_vehicle: Option<&str>,
         existing_id: Option<MobileRideIdDto>,
     ) -> Result<MobileRideMapCoreSnapshotDto, MobileRideMapCoreErrorDto> {
         if self.recorder.state().is_some_and(|current| {
@@ -11875,20 +11894,14 @@ impl MobileRideMapCoreInner {
         staged_recorder
             .start(
                 ride_maps::MonotonicMilliseconds::new(at_ms),
-                candidate_vehicle
-                    .as_deref()
-                    .and_then(ride_maps::VehicleIdentity::new),
+                candidate_vehicle.and_then(ride_maps::VehicleIdentity::new),
             )
             .map_err(|_| MobileRideMapCoreErrorDto::AlreadyRecording)?;
         let id = if let Some(existing_id) = existing_id {
             existing_id
         } else if let Some(database) = self.database.as_ref() {
             database
-                .create_started_live_ride(
-                    wall_clock_milliseconds()?,
-                    at_ms,
-                    candidate_vehicle.as_deref(),
-                )
+                .create_started_live_ride(wall_clock_milliseconds()?, at_ms, candidate_vehicle)
                 .map_err(map_core_error)?
         } else {
             mobile_ride_id_from_uuid(Uuid::new_v4())
@@ -12082,16 +12095,20 @@ impl MobileRideMapCore {
         state.start_gps_only(at_ms)
     }
 
+    #[allow(
+        clippy::too_many_lines,
+        reason = "connection policy is one ordered transaction with visible intermediate state"
+    )]
     fn ensure_recording_for_vehicle_with_connection_generation(
         &self,
-        platform_identifier: String,
+        platform_identifier: &str,
         at_ms: u64,
         connection_generation: Option<u64>,
         explicit_policy: Option<MobileRideMapAutomaticRecordingPolicyDto>,
     ) -> Result<Option<MobileRideMapCoreSnapshotDto>, MobileRideMapCoreErrorDto> {
-        let identity = ride_maps::VehicleIdentity::new(&platform_identifier)
+        let identity = ride_maps::VehicleIdentity::new(platform_identifier)
             .ok_or(MobileRideMapCoreErrorDto::InvalidVehicleIdentity)?;
-        let platform_identifier = identity.as_str().to_owned();
+        let platform_identifier = identity.as_str();
         let mut state = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
         state.require_ready()?;
         let connection_generation_consumed = connection_generation.is_some_and(|generation| {
@@ -12110,12 +12127,12 @@ impl MobileRideMapCore {
         if let Some(database) = state.database.as_ref() {
             database
                 .inner
-                .remember_last_connected_device(&platform_identifier, wall_clock_milliseconds()?)
+                .remember_last_connected_device(platform_identifier, wall_clock_milliseconds()?)
                 .map_err(map_storage_core_error)?;
         }
         state.last_connected_vehicle = Some(identity.clone());
         let automatic_policy =
-            explicit_policy.unwrap_or(state.automatic_policy_for_vehicle(&platform_identifier)?);
+            explicit_policy.unwrap_or(state.automatic_policy_for_vehicle(platform_identifier)?);
         let current_vehicle = state
             .recorder
             .associated_vehicle()
@@ -12140,10 +12157,9 @@ impl MobileRideMapCore {
             {
                 let wall_clock_milliseconds = wall_clock_milliseconds()?;
                 let matches_vehicle = state.recorder.associated_vehicle()
-                    == Some(platform_identifier.as_str())
+                    == Some(platform_identifier)
                     || (state.recorder.associated_vehicle().is_none()
-                        && state.recorder.candidate_vehicle()
-                            == Some(platform_identifier.as_str()));
+                        && state.recorder.candidate_vehicle() == Some(platform_identifier));
                 let within_resume_window =
                     state
                         .recoverable_updated_at_milliseconds
@@ -12211,7 +12227,7 @@ impl MobileRideMapCore {
                     .update_ride_map_metadata(
                         id,
                         staged.candidate_vehicle().map(str::to_owned),
-                        Some(platform_identifier),
+                        Some(platform_identifier.to_owned()),
                         staged
                             .associated_at_milliseconds()
                             .map(ride_maps::MonotonicMilliseconds::as_u64),
@@ -12240,7 +12256,8 @@ impl MobileRideMapCore {
             // after transient outcomes such as TimestampOutOfOrder. Only a confirmed or already
             // confirmed association closes the connection-generation retry window.
             state.last_connection_transition_generation = Some(generation);
-            state.last_connection_transition_ride_id = state.ride_id.clone();
+            let ride_id = state.ride_id.clone();
+            state.last_connection_transition_ride_id = ride_id;
         }
         Ok(Some(state.snapshot(lifecycle.into())))
     }
@@ -13094,13 +13111,17 @@ impl MobileRideMapCoreInner {
 
 impl MobileRideMapCore {
     #[cfg(test)]
+    #[allow(
+        clippy::needless_pass_by_value,
+        reason = "test helper mirrors the owned native-facing input shape"
+    )]
     pub(crate) fn start_gps_only_with_candidate(
         &self,
         at_ms: u64,
         candidate_vehicle: Option<String>,
     ) -> Result<MobileRideMapCoreSnapshotDto, MobileRideMapCoreErrorDto> {
         let mut state = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
-        state.start_gps_only_at(at_ms, candidate_vehicle)
+        state.start_gps_only_at(at_ms, candidate_vehicle.as_deref())
     }
 
     fn transition_at(
@@ -18981,7 +19002,7 @@ mod tests {
         assert!(core.is_ready());
         assert!(core.start_gps_only(1).is_ok());
         database.shutdown().expect("database shuts down");
-        let _ = std::fs::remove_file(path);
+        let _ = fs::remove_file(path);
     }
 
     #[test]
