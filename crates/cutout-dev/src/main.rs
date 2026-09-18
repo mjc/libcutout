@@ -125,8 +125,21 @@ fn build_apple_client(root: &Path, tool: &str, args: &[String]) -> Result<()> {
     prepare_swift_ffi(root, &lock)?;
     let mut build = command("/usr/bin/xcrun");
     build.current_dir(root).arg(tool).args(args);
-    let _inherited_lock = attach_lock_handle(&mut build, &lock)?;
-    run(&mut build, "build Apple client")
+    handoff_apple_client(&mut build, &lock)
+}
+
+#[cfg(unix)]
+fn handoff_apple_client(build: &mut Command, lock: &fs::File) -> Result<()> {
+    use std::os::unix::process::CommandExt;
+
+    let _inherited_lock = attach_lock_handle(build, lock)?;
+    // Replace this coordinator so signals to its PID reach the native tool.
+    Err(build.exec()).context("failed to build Apple client")
+}
+
+#[cfg(not(unix))]
+fn handoff_apple_client(_build: &mut Command, _lock: &fs::File) -> Result<()> {
+    bail!("native Apple builds require Unix file-descriptor inheritance")
 }
 
 #[cfg(unix)]
@@ -136,22 +149,17 @@ fn attach_lock_handle(command: &mut Command, lock: &fs::File) -> Result<fs::File
 
     let inherited_lock = lock.try_clone()?;
     let lock_fd = inherited_lock.as_raw_fd();
-    // SAFETY: dup2 is async-signal-safe, and the duplicated descriptor is
-    // intentionally left open across exec so the native build keeps the lock.
+    // SAFETY: fcntl is async-signal-safe. The owned clone remains open across
+    // exec so the native tool keeps the lock, and closes normally if exec fails.
     unsafe {
         command.pre_exec(move || {
-            if libc::dup2(lock_fd, 3) == -1 {
+            if libc::fcntl(lock_fd, libc::F_SETFD, 0) == -1 {
                 return Err(std::io::Error::last_os_error());
             }
             Ok(())
         });
     }
     Ok(inherited_lock)
-}
-
-#[cfg(not(unix))]
-fn attach_lock_handle(_command: &mut Command, _lock: &fs::File) -> Result<fs::File> {
-    bail!("native Apple builds require Unix file-descriptor inheritance")
 }
 
 fn run_aero_settings_simulator() -> Result<()> {
@@ -1779,6 +1787,154 @@ mod tests {
         contender.try_lock().unwrap();
         drop(contender);
         fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn terminal_native_handoff_reports_exec_failure_without_leaking_lock() {
+        // Run exec failure in a disposable process: pre_exec may change its FDs.
+        if let Some(root) = env::var_os("CUTOUT_HANDOFF_FAILURE_ROOT") {
+            let root = PathBuf::from(root);
+            // Keep an unrelated descriptor open before acquiring the lock.
+            let _unrelated = fs::File::create(root.join("unrelated")).unwrap();
+            let lock = lock_swift_ffi(&root).unwrap();
+            let error =
+                handoff_apple_client(&mut Command::new(root.join("missing")), &lock).unwrap_err();
+            assert!(error.to_string().contains("build Apple client"));
+            assert_eq!(
+                error.downcast_ref::<std::io::Error>().unwrap().kind(),
+                std::io::ErrorKind::NotFound
+            );
+            drop(lock);
+            let contender = fs::OpenOptions::new()
+                .read(true)
+                .write(true)
+                .open(root.join(SWIFT_FFI_LOCK))
+                .unwrap();
+            contender
+                .try_lock()
+                .expect("failed exec must release the lock");
+            return;
+        }
+        let root = tempfile::tempdir().unwrap();
+        let result = Command::new(env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "tests::terminal_native_handoff_reports_exec_failure_without_leaking_lock",
+                "--nocapture",
+            ])
+            .env("CUTOUT_HANDOFF_FAILURE_ROOT", root.path())
+            .output()
+            .unwrap();
+        assert!(result.status.success(), "{result:?}");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn terminal_native_handoff_preserves_pid_lock_and_interrupt_exit() {
+        check_terminal_native_handoff("INT", libc::SIGINT);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn terminal_native_handoff_preserves_pid_lock_and_terminate_exit() {
+        check_terminal_native_handoff("TERM", libc::SIGTERM);
+    }
+
+    #[cfg(unix)]
+    fn check_terminal_native_handoff(signal: &str, expected_signal: i32) {
+        use std::{
+            io::{BufRead, Write},
+            os::unix::process::ExitStatusExt,
+            process::Stdio,
+            sync::mpsc,
+            time::{Duration, Instant},
+        };
+
+        struct ReapedChild(std::process::Child);
+        impl Drop for ReapedChild {
+            fn drop(&mut self) {
+                self.0.stdin.take();
+                let _ = self.0.kill();
+                let _ = self.0.wait();
+            }
+        }
+
+        let test = if signal == "INT" {
+            "tests::terminal_native_handoff_preserves_pid_lock_and_interrupt_exit"
+        } else {
+            "tests::terminal_native_handoff_preserves_pid_lock_and_terminate_exit"
+        };
+        if let Some(root) = env::var_os("CUTOUT_HANDOFF_ROOT") {
+            let root = PathBuf::from(root);
+            if env::var_os("CUTOUT_HANDOFF_REPLACEMENT").is_some() {
+                println!("replacement_pid={}", std::process::id());
+                std::io::stdout().flush().unwrap();
+                // Stay alive until signalled, or exit on EOF if the parent fails.
+                let _ = std::io::stdin().read_line(&mut String::new());
+                return;
+            }
+            let lock = lock_swift_ffi(&root).unwrap();
+            let mut replacement = Command::new(env::current_exe().unwrap());
+            replacement.args(["--exact", test, "--nocapture"]);
+            replacement.env("CUTOUT_HANDOFF_REPLACEMENT", "1");
+            handoff_apple_client(&mut replacement, &lock).unwrap();
+            return;
+        }
+
+        let root = tempfile::tempdir().unwrap();
+        let mut child = ReapedChild(
+            Command::new(env::current_exe().unwrap())
+                .args(["--exact", test, "--nocapture"])
+                .env("CUTOUT_HANDOFF_ROOT", root.path())
+                .stdin(Stdio::piped())
+                .stdout(Stdio::piped())
+                .spawn()
+                .unwrap(),
+        );
+        let output = child.0.stdout.take().unwrap();
+        let (sender, receiver) = mpsc::channel();
+        std::thread::spawn(move || {
+            for line in std::io::BufReader::new(output).lines() {
+                let Ok(line) = line else { break };
+                if let Some(pid) = line.strip_prefix("replacement_pid=") {
+                    let _ = sender.send(pid.parse::<u32>().unwrap());
+                    break;
+                }
+            }
+        });
+        let pid = receiver.recv_timeout(Duration::from_secs(10)).unwrap();
+        let contender = fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(root.path().join(SWIFT_FFI_LOCK))
+            .unwrap();
+        let lock_was_held = matches!(contender.try_lock(), Err(fs::TryLockError::WouldBlock));
+        assert!(
+            Command::new("kill")
+                .args([&format!("-{signal}"), &pid.to_string()])
+                .status()
+                .unwrap()
+                .success()
+        );
+        let deadline = Instant::now() + Duration::from_secs(10);
+        let status = loop {
+            if let Some(status) = child.0.try_wait().unwrap() {
+                break status;
+            }
+            assert!(Instant::now() < deadline, "replacement failed to exit");
+            std::thread::sleep(Duration::from_millis(10));
+        };
+        assert_eq!(
+            pid,
+            child.0.id(),
+            "native handoff must replace the coordinator"
+        );
+        assert!(lock_was_held, "replacement must retain the FFI lock");
+        assert_eq!(status.signal(), Some(expected_signal));
+        contender
+            .try_lock()
+            .expect("replacement exit must release the lock");
     }
 
     #[cfg(unix)]
