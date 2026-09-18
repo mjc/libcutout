@@ -24,7 +24,6 @@ control_wire_schema! {
         PedalDipCompensation => Layout::Field { magic: *b"LdAp", bank: &[1, 2], offset: 28 },
         Horn => Layout::Field { magic: *b"LkAp", bank: &[0], offset: 9 },
         ResetTrip => Layout::Field { magic: *b"LkAp", bank: &[0], offset: 6 },
-        Headlight => Layout::Field { magic: *b"LkAp", bank: &[1], offset: 8 },
         RidingPreset => Layout::Field { magic: *b"LkAp", bank: &[1], offset: 7 },
         AsciiHorn => Layout::Literal(b"OLDCMDb"),
         AsciiResetTrip => Layout::Literal(b"CLEARMETER"),

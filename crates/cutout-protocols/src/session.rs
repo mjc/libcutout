@@ -5414,7 +5414,7 @@ mod tests {
         assert!(matches!(
             output.as_slice(),
             [SessionOutput::Transport(TransportAction::Write { bytes, .. })]
-                if bytes.as_slice().starts_with(b"LkAp")
+                if bytes.as_slice() == b"SetLightON"
         ));
 
         output.clear();

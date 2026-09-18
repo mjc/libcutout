@@ -259,12 +259,8 @@ mod tests {
         let notifications = nf2557_notifications();
         let (mut owner, token) = connected_nf2557(&notifications);
         for (at, enabled, expected) in [
-            (10, true, hex_literal::hex!("4c6b41700d0180800157ed3bd5")),
-            (
-                5_010,
-                false,
-                hex_literal::hex!("4c6b41700d0180800020ea0b43"),
-            ),
+            (10, true, &b"SetLightON"[..]),
+            (5_010, false, &b"SetLightOFF"[..]),
         ] {
             replay_nf2557(&mut owner, &token, &notifications, at);
             let step = owner
@@ -293,7 +289,7 @@ mod tests {
                 writes,
                 [(
                     crate::VETERAN_DATA_CHANNEL,
-                    expected.as_slice(),
+                    expected,
                     cutout_core::WriteMode::WithoutResponse
                 )]
             );

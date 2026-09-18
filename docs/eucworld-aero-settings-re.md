@@ -110,7 +110,7 @@ host submission or operation completion; those gaps are tracked in the
 | `transportation_mode` | W | 0/1, Ld pos 17 | Page-8 byte 57; typed encoder/readback/UI implemented on the settings branch; physical write proof pending |
 | `charging_voltage_limit` | G | Raw page-8 byte 64; official generic UI uses decivolts minus 1450 at Ld pos 24 | Raw readback is retained as a diagnostic; no write or voltage conversion is exposed because the generic `145 + raw / 10` display would report 149.6 V for a 126 V Aero pack |
 | `voltage_correction` | X | Signed −15…15, displayed in tenths of a percent, Ld pos 19 | Page-8 byte 59 signed; typed mobile readback implemented; not a volts offset |
-| `headlight_mode` | M | Off/On; binary pos 8 or legacy ASCII | This EUC World menu field is not the command used by Cutout's canonical Aero Headlight control; Cutout follows the official Aero light frame and does not infer a second light setting from this entry |
+| `headlight_mode` | M | Off/On; modern `SetLightON`/`SetLightOFF` literals, with an older model-gated binary branch | Cutout's canonical Aero Headlight control follows the modern literal commands in both detected Veteran command modes; it does not infer a second light setting from this entry |
 | `riding_mode` | T | UI hard/medium/soft → binary 3/2/1 at pos 7, or legacy ASCII | Distinct from MD; Cutout exposes both the modern binary command and legacy presets |
 
 The speed bounds above are in km/h; Cutout's canonical request quantities use

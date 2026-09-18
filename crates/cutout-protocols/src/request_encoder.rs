@@ -362,15 +362,17 @@ fn veteran_mode_control_payload(
         DeviceCommand::SetSetting {
             id: SettingId::HighBeam,
             value: DeviceSettingValue::Boolean(enabled),
-        } => (
-            if enabled {
-                VeteranWire::AsciiHeadlightOn
+        } => {
+            // The modern Aero headlight command is a literal command in both
+            // Veteran command modes. The binary LkAp field is present in the
+            // shared protocol schema, but sending it to NF2557 produces no
+            // physical effect; DarknessBot and EUC World use these literals.
+            return Some(if enabled {
+                VeteranWire::AsciiHeadlightOn.select(1)
             } else {
-                VeteranWire::AsciiHeadlightOff
-            },
-            VeteranWire::Headlight,
-            u8::from(enabled),
-        ),
+                VeteranWire::AsciiHeadlightOff.select(0)
+            });
+        }
         DeviceCommand::SetSetting {
             id: SettingId::RidingPreset,
             value: DeviceSettingValue::Choice(value),
@@ -781,16 +783,10 @@ mod tests {
         .expect("NOSFET high-beam command encodes");
 
         assert_eq!(on.command, CommandKind::SetSetting);
-        assert_eq!(
-            on.payload.as_slice(),
-            &hex_literal::hex!("4c6b41700d0180800157ed3bd5")
-        );
+        assert_eq!(on.payload.as_slice(), b"SetLightON");
         assert_eq!(on.mode, WriteMode::WithoutResponse);
         assert_eq!(off.command, CommandKind::SetSetting);
-        assert_eq!(
-            off.payload.as_slice(),
-            &hex_literal::hex!("4c6b41700d0180800020ea0b43")
-        );
+        assert_eq!(off.payload.as_slice(), b"SetLightOFF");
         assert_eq!(off.mode, WriteMode::WithoutResponse);
         assert_eq!(
             NosfetDialect::encode(DeviceCommand::SetSetting {
@@ -927,6 +923,16 @@ mod tests {
                 value: DeviceSettingValue::Boolean(true),
             },
             VeteranCommandMode::Ascii,
+        )
+        .unwrap();
+        assert_eq!(high_beam.payload.as_slice(), b"SetLightON");
+
+        let high_beam = NosfetDialect::encode_in_mode(
+            DeviceCommand::SetSetting {
+                id: SettingId::HighBeam,
+                value: DeviceSettingValue::Boolean(true),
+            },
+            VeteranCommandMode::Binary,
         )
         .unwrap();
         assert_eq!(high_beam.payload.as_slice(), b"SetLightON");
@@ -1288,7 +1294,7 @@ mod tests {
     }
 
     #[test]
-    fn aero_high_beam_encodes_the_official_single_lkap_frame() {
+    fn aero_high_beam_encodes_the_official_modern_literal_command() {
         let encoded = NosfetDialect::encode_in_mode(
             DeviceCommand::SetSetting {
                 id: SettingId::HighBeam,
@@ -1299,12 +1305,7 @@ mod tests {
         .expect("Aero high beam encodes");
 
         assert_eq!(encoded.command, CommandKind::SetSetting);
-        assert_eq!(&encoded.payload.as_slice()[..5], b"LkAp\r");
-        assert_eq!(&encoded.payload.as_slice()[5..9], &[1, 0x80, 0x80, 1]);
-        let frame_len = usize::from(encoded.payload.as_slice()[4]);
-        let crc_offset = frame_len - 4;
-        let expected_crc = crc32(&encoded.payload.as_slice()[..crc_offset]).to_be_bytes();
-        assert_eq!(&encoded.payload.as_slice()[crc_offset..], &expected_crc);
+        assert_eq!(encoded.payload.as_slice(), b"SetLightON");
         assert_eq!(encoded.mode, WriteMode::WithoutResponse);
     }
 

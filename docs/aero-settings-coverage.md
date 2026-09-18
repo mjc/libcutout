@@ -19,7 +19,7 @@ and Aero the model used by the NF2557 fixture.
 
 | Setting | Rust / CLI / mobile / Tune | Live confirmation |
 | --- | --- | --- |
-| Headlight | Implemented as the one canonical Aero lighting control with direct Off/On values | The Aero profile emits the official single `LkAp` frame; there is no second high-beam/headlight control or decoded light-state readback |
+| Headlight | Implemented as the one canonical Aero lighting control with direct Off/On values | The Aero profile emits the modern `SetLightON`/`SetLightOFF` command used by DarknessBot and EUC World; the wheel does not expose a decoded light-state readback |
 | Trip reset | Implemented, with reset lifecycle feedback | Transport submission is not confirmation |
 | Legacy hard / medium / soft | Implemented as the semantic riding preset | Generic family pedal readback does not establish Aero numeric MD state |
 | Speed limit / TLT stop speed (V) | Implemented by the semantic `SettingId::TiltbackSpeed` control | EUC World `vn_speed_limit` and the official `StopSpeedSettingActivity` share LdAp position 12; typed page-8 byte 52 readback; new writes still need device proof |
@@ -92,7 +92,8 @@ restoration. Preserve positive reports without using them to close other paths:
 | --- | --- | --- |
 | Beeper volume, tilt-back speed, PWM tilt-back, pedal hardness, dynamic assist, pedal dip, voltage correction | User reported working | Individually record exact targets, units, effect, available readback and restoration under the repaired lifecycle |
 | Display brightness | User previously reported working; a live mirrored NF2557 test requested 1%, displayed `Wheel 0%`, and ended `Not confirmed`; the requested target was restored to 0% | Determine whether the request was submitted, why no matching readback arrived, and why the operation did not produce a clean terminal result |
-| Headlight, horn, reset trip, pedal angle | User reported no effect | Establish correct applicability/encoding and required physical effect; transport submission alone is insufficient |
+| Headlight | The binary `LkAp` frame was transmitted but had no physical effect on NF2557 | Use the modern literal `SetLightON`/`SetLightOFF` commands and re-verify the physical lamp effect; transport submission alone is insufficient |
+| Horn, reset trip, pedal angle | User reported no effect | Establish correct applicability/encoding and required physical effect; transport submission alone is insufficient |
 | Lateral tilt and speed alarm | Repeated unconfirmed/timeout results; speed alarm also had a reported crash | Resolve encoding, display-unit conversion, observation acquisition and terminal outcomes; reproduce the crash path offline |
 | Brake alarm | Initially reported working without updating the wheel percentage; later 120 reported sent without confirmation | Establish desired effect and fresh reported percentage separately |
 | High-speed and low-battery modes | Beeped but were not confirmed | Sound is not state confirmation; verify mode observation and effect |
