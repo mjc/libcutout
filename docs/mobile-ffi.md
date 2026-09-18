@@ -231,6 +231,13 @@ devenv shell -- cutout-melk-live
 
 ### Live Aero settings validation on macOS
 
+The mutating harness is under design review. Its checkpoint implementation has
+known retry, deadline and outcome-reporting defects; the opt-in switches do not
+make it suitable for physical acceptance testing. Use connection-only observation
+while the [settings design review](settings-design-review.md) is addressed. The
+settings invocation below documents the existing interface, not a recommended
+hardware test procedure.
+
 `validate:aero-live-connection` remains read-only unless the settings mode is
 explicitly enabled. With the wheel powered on, stationary, and advertising,
 run the macOS CoreBluetooth validator against the NF2557 fixture:

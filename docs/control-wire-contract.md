@@ -1,5 +1,10 @@
 # Protocol and dialect command ownership
 
+This document describes the implemented wire-schema checks. The broader
+[settings design review](settings-design-review.md) records remaining gaps in
+semantic bindings, native transport outcomes, readback and physical testing.
+Schema collision checks alone do not establish control correctness.
+
 Manufacturers, device models, base protocols, and dialects are separate concepts:
 
 - Veteran is the community name for the protocol shared by Leaperkim and NOSFET.
