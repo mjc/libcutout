@@ -802,6 +802,23 @@ public final class MobileRideMapState: @unchecked Sendable {
         }
     }
 
+    private func ffiRideID(_ rideID: String) throws -> MobileRideIdDto {
+        guard let uuid = UUID(uuidString: rideID) else {
+            throw MobileRideMapError.rideNotFound
+        }
+        return MobileRideIdDto(bytes: withUnsafeBytes(of: uuid) { Data($0) })
+    }
+
+    private func rideIDString(_ rideID: MobileRideIdDto) -> String {
+        guard rideID.bytes.count == 16 else { return "" }
+        return UUID(uuid: (
+            rideID.bytes[0], rideID.bytes[1], rideID.bytes[2], rideID.bytes[3],
+            rideID.bytes[4], rideID.bytes[5], rideID.bytes[6], rideID.bytes[7],
+            rideID.bytes[8], rideID.bytes[9], rideID.bytes[10], rideID.bytes[11],
+            rideID.bytes[12], rideID.bytes[13], rideID.bytes[14], rideID.bytes[15]
+        )).uuidString.lowercased()
+    }
+
     public func currentSnapshot() -> MobileRideMapSnapshotDto? {
         core?.currentSnapshot(atMs: Self.monotonicMillisecondsNow()).map(mapSnapshot)
     }
@@ -943,35 +960,35 @@ public final class MobileRideMapState: @unchecked Sendable {
     /// Returns a bounded stored music timeline for one ride.
     public func storedMusicEvents(rideID: String) throws -> [MobileMusicRideEventDto] {
         try withCore {
-            try $0.storedMusicEvents(rideId: MobileRideIdDto(value: rideID))
+            try $0.storedMusicEvents(rideId: ffiRideID(rideID))
         }
     }
 
     /// Returns the durable state of one ride's music-history record.
     public func storedMusicHistoryState(rideID: String) throws -> MobileMusicHistoryStateDto {
         try withDatabase {
-            try $0.musicHistoryState(rideId: MobileRideIdDto(value: rideID))
+            try $0.musicHistoryState(rideId: ffiRideID(rideID))
         }
     }
 
     /// Returns the durable history state and events from one Rust worker query.
     public func storedMusicHistory(rideID: String) throws -> MobileMusicHistoryDto {
         try withDatabase {
-            try $0.musicHistory(rideId: MobileRideIdDto(value: rideID))
+            try $0.musicHistory(rideId: ffiRideID(rideID))
         }
     }
 
     /// Permanently deletes stored music metadata for one ride.
     public func deleteStoredMusicHistory(rideID: String) throws {
         try withCore {
-            try $0.deleteStoredMusicHistory(rideId: MobileRideIdDto(value: rideID))
+            try $0.deleteStoredMusicHistory(rideId: ffiRideID(rideID))
         }
     }
 
     /// Redacts stored music metadata for one ride.
     public func redactStoredMusicHistory(rideID: String) throws {
         try withCore {
-            try $0.redactStoredMusicHistory(rideId: MobileRideIdDto(value: rideID))
+            try $0.redactStoredMusicHistory(rideId: ffiRideID(rideID))
         }
     }
 
@@ -1103,12 +1120,43 @@ public final class MobileRideMapState: @unchecked Sendable {
             )
             let projectionCancellation = cancellation ?? MobileRideMapProjectionCancellation()
             let projection = try database.projectRoutePointsCancellable(
-                rideId: MobileRideIdDto(value: rideID),
+                rideId: try ffiRideID(rideID),
                 options: options,
                 cancellation: projectionCancellation.ffi
             )
             return map(projection)
         }
+    }
+
+    /// Projects the current ride through its durable route when storage is available.
+    ///
+    /// The live recorder is intentionally bounded, so using it after recovery would replace a
+    /// complete durable route with only its continuation tail. In-memory map tests still use the
+    /// recorder projection because they have no durable route to query.
+    public func projectCurrentRoutePoints(
+        budget: UInt32,
+        viewport: MobileGeoBoundsDto? = nil,
+        privacy: MobileRideMapRoutePrivacyPolicy = .precise,
+        durableCancellation: MobileRideMapProjectionCancellation? = nil,
+        liveCancellation: MobileLiveRideMapProjectionCancellation? = nil
+    ) throws -> MobileRideMapRouteProjection {
+        if database != nil,
+           let rideID = core?.currentSnapshot(atMs: Self.monotonicMillisecondsNow())?.rideId
+        {
+            return try projectStoredPoints(
+                rideID: rideID,
+                budget: budget,
+                viewport: viewport,
+                privacy: privacy,
+                cancellation: durableCancellation
+            )
+        }
+        return try projectPoints(
+            budget: budget,
+            viewport: viewport,
+            privacy: privacy,
+            cancellation: liveCancellation
+        )
     }
 
     public func storedSummaries(limit: UInt32) throws -> [MobileRideMapHistorySummaryDto] {
@@ -1128,7 +1176,7 @@ public final class MobileRideMapState: @unchecked Sendable {
 
     public func storedHistoryRide(rideID: String) throws -> MobileRideMapHistorySummaryDto? {
         try withDatabase { database in
-            let ride = try database.findRide(rideId: MobileRideIdDto(value: rideID))
+            let ride = try database.findRide(rideId: try ffiRideID(rideID))
             return ride.map(mapHistorySummary)
         }
     }
@@ -1171,7 +1219,7 @@ public final class MobileRideMapState: @unchecked Sendable {
             )
             let options = MobileRideHistoryContextOptionsDto(
                 filter: filter,
-                selectedRideId: selectedRideID.map(MobileRideIdDto.init(value:)),
+                selectedRideId: try selectedRideID.map(ffiRideID),
                 budget: ffiBudget,
                 viewport: viewport,
                 privacy: Self.ffiPrivacyPolicy(privacy)
@@ -1191,7 +1239,7 @@ public final class MobileRideMapState: @unchecked Sendable {
 
     private func mapHistorySummary(_ ride: MobileRideRecordDto) -> MobileRideMapHistorySummaryDto {
         MobileRideMapHistorySummaryDto(
-            rideID: ride.id.value,
+            rideID: rideIDString(ride.id),
             state: mapState(ride.state),
             summary: MobileRideMapSummaryDto(
                 pointCount: ride.summary.pointCount,
@@ -1212,7 +1260,7 @@ public final class MobileRideMapState: @unchecked Sendable {
     public func storedPointsAfter(rideId: String, afterCursor: UInt64?, limit: UInt32) throws -> MobileRideMapPointBatchDto {
         try withDatabase { database in
             let page = try database.routePoints(
-                rideId: MobileRideIdDto(value: rideId),
+                rideId: try ffiRideID(rideId),
                 cursor: afterCursor.map(MobileRoutePointCursorDto.init(sequence:)),
                 limit: limit
             )
@@ -1333,7 +1381,7 @@ public final class MobileRideMapState: @unchecked Sendable {
         MobileRideMapHistoryContextProjection(
             routes: projection.routes.map {
                 MobileRideMapHistoryContextRoute(
-                    rideID: $0.rideId.value,
+                    rideID: rideIDString($0.rideId),
                     projection: map($0.projection)
                 )
             },

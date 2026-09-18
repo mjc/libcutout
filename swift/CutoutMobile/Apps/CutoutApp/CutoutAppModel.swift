@@ -315,6 +315,7 @@ final class CutoutAppModel {
     private var rideMapLiveProjectionTask: Task<Void, Never>?
     private var rideMapDurationTask: Task<Void, Never>?
     private var rideMapLiveProjectionCancellation: MobileLiveRideMapProjectionCancellation?
+    private var rideMapDurableProjectionCancellation: MobileRideMapProjectionCancellation?
     private var rideMapLiveProjectionGeneration: UInt64 = 0
     private var rideMapLiveProjectionEnabled = false
     private static let liveActivityUpdateIntervalMilliseconds: UInt64 = 1_000
@@ -2158,6 +2159,7 @@ final class CutoutAppModel {
         rideMapLiveProjectionGeneration &+= 1
         rideMapLiveProjectionEnabled = true
         rideMapLiveProjectionCancellation?.cancel()
+        rideMapDurableProjectionCancellation?.cancel()
         guard rideMapLiveProjectionTask == nil else { return }
 
         guard let state = core.rideMapStateHandle else { return }
@@ -2166,15 +2168,22 @@ final class CutoutAppModel {
             defer {
                 self?.rideMapLiveProjectionTask = nil
                 self?.rideMapLiveProjectionCancellation = nil
+                self?.rideMapDurableProjectionCancellation = nil
             }
             while let self {
                 guard self.rideMapLiveProjectionEnabled else { break }
                 let generation = self.rideMapLiveProjectionGeneration
-                let cancellation = MobileLiveRideMapProjectionCancellation()
-                self.rideMapLiveProjectionCancellation = cancellation
+                let liveCancellation = MobileLiveRideMapProjectionCancellation()
+                let durableCancellation = MobileRideMapProjectionCancellation()
+                self.rideMapLiveProjectionCancellation = liveCancellation
+                self.rideMapDurableProjectionCancellation = durableCancellation
                 do {
                     let projection = try await Self.runCancellableDetached(priority: .userInitiated) {
-                        try state.projectPoints(budget: budget, cancellation: cancellation)
+                        try state.projectCurrentRoutePoints(
+                            budget: budget,
+                            durableCancellation: durableCancellation,
+                            liveCancellation: liveCancellation
+                        )
                     }
                     guard self.rideMapLiveProjectionEnabled else {
                         break
@@ -2233,6 +2242,7 @@ final class CutoutAppModel {
         rideMapLiveProjectionGeneration &+= 1
         rideMapLiveProjectionEnabled = false
         rideMapLiveProjectionCancellation?.cancel()
+        rideMapDurableProjectionCancellation?.cancel()
         if clearPoints {
             clearLiveProjectionState()
             rideMapLastDecision = nil

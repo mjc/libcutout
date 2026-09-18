@@ -243,7 +243,7 @@ final class RideMapStateTests: XCTestCase {
 
         let rideID = try state.startGpsOnly(atMs: 1_000).rideID
         try database.updateRideMapMetadata(
-            id: MobileRideIdDto(value: rideID),
+            id: MobileRideIdDto(bytes: withUnsafeBytes(of: UUID(uuidString: rideID)!) { Data($0) }),
             candidateVehicle: nil,
             associatedVehicle: platformIdentifier,
             associatedAtMilliseconds: 1_001,
@@ -635,6 +635,34 @@ final class RideMapStateTests: XCTestCase {
         XCTAssertEqual(projection.canonicalStartSequence, 0)
         XCTAssertEqual(projection.canonicalEndSequence, 3)
         XCTAssertTrue(projection.pointsOmittedByBudget)
+    }
+
+    func testCurrentRouteProjectionRetainsTheDurableRouteAfterLiveUpdates() async throws {
+        let state = MobileRideMapState()
+        _ = try state.startGpsOnly(atMs: 1_000)
+
+        for (offset, latitudeDegrees) in [
+            (1_001, 40.0),
+            (2_001, 40.0001),
+            (3_001, 40.0002),
+            (4_001, 40.0003),
+        ] {
+            _ = await settle(state, try state.ingestLocation(
+                monotonicMs: UInt64(offset),
+                wallClockUnixMs: 1_700_000_000_000 + UInt64(offset),
+                latitudeDegrees: latitudeDegrees,
+                longitudeDegrees: -105.0,
+                horizontalAccuracyMeters: 3
+            ))
+        }
+
+        let projection = try state.projectCurrentRoutePoints(budget: 2)
+
+        XCTAssertEqual(projection.sourcePointCount, 4)
+        XCTAssertEqual(projection.canonicalStartSequence, 0)
+        XCTAssertEqual(projection.canonicalEndSequence, 3)
+        XCTAssertEqual(projection.points.first?.sequence, 0)
+        XCTAssertEqual(projection.points.last?.sequence, 3)
     }
 
     func testMapStatePointsAfterReturnsTheCompleteRustPagedSequence() async throws {
