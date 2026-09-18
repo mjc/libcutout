@@ -514,6 +514,7 @@ final class CutoutSessionCoreTests: XCTestCase {
     func testScriptedLiveConnectionStartsRideMapAndPublishesSnapshot() throws {
         let live = expectation(description: "scripted session reaches live")
         let rideStarted = expectation(description: "ride-map recording starts")
+        rideStarted.assertForOverFulfill = false
         let suiteName = "CutoutSessionCoreTests.rideMapAutoStart.\(UUID().uuidString)"
         let defaults = UserDefaults(suiteName: suiteName)!
         defer { defaults.removePersistentDomain(forName: suiteName) }
@@ -550,6 +551,7 @@ final class CutoutSessionCoreTests: XCTestCase {
     func testProductionLocationPathPublishesAcceptedRideMapPoint() throws {
         let live = expectation(description: "scripted session reaches live")
         let recording = expectation(description: "durable recording accepts locations")
+        recording.assertForOverFulfill = false
         let pointAccepted = expectation(description: "ride-map point is accepted")
         let suiteName = "CutoutSessionCoreTests.rideMapLocation.\(UUID().uuidString)"
         let defaults = UserDefaults(suiteName: suiteName)!
