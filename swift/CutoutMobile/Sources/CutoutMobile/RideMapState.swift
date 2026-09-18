@@ -1135,13 +1135,14 @@ public final class MobileRideMapState: @unchecked Sendable {
     /// recorder projection because they have no durable route to query.
     public func projectCurrentRoutePoints(
         budget: UInt32,
+        rideID: String? = nil,
         viewport: MobileGeoBoundsDto? = nil,
         privacy: MobileRideMapRoutePrivacyPolicy = .precise,
         durableCancellation: MobileRideMapProjectionCancellation? = nil,
         liveCancellation: MobileLiveRideMapProjectionCancellation? = nil
     ) throws -> MobileRideMapRouteProjection {
         if database != nil,
-           let rideID = core?.currentSnapshot(atMs: Self.monotonicMillisecondsNow())?.rideId
+           let rideID = rideID ?? core?.currentSnapshot(atMs: Self.monotonicMillisecondsNow())?.rideId
         {
             return try projectStoredPoints(
                 rideID: rideID,

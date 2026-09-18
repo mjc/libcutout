@@ -2205,6 +2205,7 @@ final class CutoutAppModel {
                     let projection = try await Self.runCancellableDetached(priority: .userInitiated) {
                         try state.projectCurrentRoutePoints(
                             budget: budget,
+                            rideID: rideID,
                             durableCancellation: durableCancellation,
                             liveCancellation: liveCancellation
                         )
