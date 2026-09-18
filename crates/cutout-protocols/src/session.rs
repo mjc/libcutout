@@ -5305,7 +5305,7 @@ mod tests {
         assert!(output.iter().any(|item| matches!(
             item,
             SessionOutput::Transport(TransportAction::Write { bytes, .. })
-                if bytes.as_slice() == hex_literal::hex!("4c6b41700b0001090a31f8")
+                if bytes.as_slice() == b"CLEARMETER"
         )));
     }
 

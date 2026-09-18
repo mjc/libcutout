@@ -1154,6 +1154,7 @@ final class CutoutAppModel {
             try core.startRideMapGpsOnly(atMs: currentMonotonicTime.rawValue)
         }
         guard started else { return false }
+        _ = core.resetTripMeterForNewRide()
         core.resetRideMapLocationAdmission()
         // Apply the user's default to the fresh Rust-owned ride timeline.
         core.updateMusicCaptureObservation(nil)

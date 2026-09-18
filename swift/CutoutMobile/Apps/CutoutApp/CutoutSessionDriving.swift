@@ -41,6 +41,8 @@ protocol CutoutSessionDriving: AnyObject {
     func submitDeviceAction(token: ConnectionAttemptToken, id: DeviceActionID) throws
     func setDeviceControlsValidation(token: ConnectionAttemptToken, authorized: Bool) throws
     func now() -> MonotonicMilliseconds
+    @discardableResult
+    func resetTripMeterForNewRide() -> Bool
 
     func resetRideMapLocationAdmission()
     func updateRideLocationDemand(for state: MobileRideMapStateDto)
@@ -61,6 +63,9 @@ extension CutoutSessionDriving {
 
     var isRecordOnlyConnection: Bool { false }
     var rideMapStateHandle: MobileRideMapState? { nil }
+
+    @discardableResult
+    func resetTripMeterForNewRide() -> Bool { false }
 
     var rideMapStorageError: String? {
         guard let state = rideMapStateHandle else { return "Rust ride database is unavailable" }

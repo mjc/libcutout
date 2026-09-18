@@ -743,6 +743,7 @@ final class CutoutAppModelTests: XCTestCase {
 
         XCTAssertFalse(model.isRideMapRecording)
         XCTAssertTrue(model.startGpsOnlyRide())
+        XCTAssertEqual(driver.tripMeterResetCount, 1)
         XCTAssertEqual(driver.resetRideMapLocationAdmissionCount, 1)
         XCTAssertTrue(model.isRideMapRecording)
         XCTAssertEqual(driver.rideLocationDemandStates, [.active])
@@ -767,6 +768,11 @@ final class CutoutAppModelTests: XCTestCase {
         XCTAssertEqual(driver.resetRideMapLocationAdmissionCount, 1)
 
         XCTAssertFalse(model.startGpsOnlyRide())
+        XCTAssertEqual(
+            driver.tripMeterResetCount,
+            1,
+            "a rejected start must not reset the device trip meter"
+        )
         XCTAssertEqual(
             driver.resetRideMapLocationAdmissionCount,
             1,
@@ -3708,6 +3714,7 @@ private final class SessionDriverSpy: CutoutSessionDriving {
     private(set) var captureAnnotations = [String]()
     private(set) var flushCaptureCount = 0
     private(set) var disconnectCount = 0
+    private(set) var tripMeterResetCount = 0
     private(set) var resetRideMapLocationAdmissionCount = 0
     private(set) var rideLocationDemandStates = [MobileRideMapStateDto]()
     var nowValue: UInt64 = 0
@@ -3783,6 +3790,12 @@ private final class SessionDriverSpy: CutoutSessionDriving {
 
     func disconnectAndScan() {
         disconnectCount += 1
+    }
+
+    @discardableResult
+    func resetTripMeterForNewRide() -> Bool {
+        tripMeterResetCount += 1
+        return true
     }
 
     func resetRideMapLocationAdmission() {

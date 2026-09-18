@@ -358,7 +358,12 @@ fn veteran_mode_control_payload(
         DeviceCommand::InvokeAction(cutout_core::DeviceActionRequest {
             id: DeviceActionId::ResetTripMeter,
             step: DeviceActionStep::Invoke,
-        }) => (VeteranWire::AsciiResetTrip, VeteranWire::ResetTrip, 1),
+        }) => {
+            // NF2557's established reset command is the literal CLEARMETER command.
+            // Do not select an unverified binary candidate merely because the
+            // connection starts in binary mode.
+            return Some(VeteranWire::AsciiResetTrip.select(1));
+        }
         DeviceCommand::SetSetting {
             id: SettingId::HighBeam,
             value: DeviceSettingValue::Boolean(enabled),
@@ -820,10 +825,7 @@ mod tests {
         .expect("trip reset is a supported Aero settings write");
 
         assert_eq!(reset.command, CommandKind::ResetTripMeter);
-        assert_eq!(
-            reset.payload.as_slice(),
-            &hex_literal::hex!("4c6b41700b0001090a31f8")
-        );
+        assert_eq!(reset.payload.as_slice(), b"CLEARMETER");
         assert_eq!(reset.mode, WriteMode::WithoutResponse);
     }
 
@@ -871,7 +873,7 @@ mod tests {
                     step: DeviceActionStep::Invoke,
                 }),
                 b"CLEARMETER".as_slice(),
-                hex_literal::hex!("4c6b41700b0001090a31f8").as_slice(),
+                b"CLEARMETER".as_slice(),
             ),
             (
                 DeviceCommand::SetSetting {

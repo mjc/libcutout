@@ -38,7 +38,7 @@ for the settings already implemented in Rust:
 | `changeRidingLevel` | Selects an advanced `LdAp` frame (declared length 24) or a legacy binary frame based on the adapter's riding-mode flag | `SettingId::RidingPreset` covers the source-backed modern command; legacy selection still needs a model/firmware gate |
 | `changeLimitSpeed` | Stores the app's limit-speed preference and delegates to `changeMaxSpeed` only when the adapter's limit-mode flag is enabled; it is not a second wheel setting | `SettingId::TiltbackSpeed`; no separate limit-mode wheel write is inferred |
 | `changeLimitMode` | Updates the app/device preference record and conditionally invokes `changeMaxSpeed`; no independent command builder is present | App policy, not a separate benign wheel command |
-| `resetSingleMileage` | Protocol-v2 branch constructs a multi-write reset sequence; the recovered AOT does not expose a stable setting key or generic model gate | `DeviceActionId::ResetTripMeter` exists, but the multi-step legacy sequence remains outside the generic API |
+| `resetSingleMileage` | Protocol-v2 branch constructs a multi-write reset sequence; the recovered AOT does not expose a stable setting key or generic model gate | The established Aero-compatible reset command is the literal `CLEARMETER`; the un-gated multi-write legacy path remains outside the generic API |
 
 The byte shapes, positions, and CRCs are covered by the existing Rust golden
 frame tests. The older `changeTorchMode` branch is recorded as evidence but is
@@ -126,7 +126,7 @@ Remaining menu keys are accounted for separately, not invented as new wheel writ
 | Key | Classification / remaining trace |
 | --- | --- |
 | `vn_headlight_persistent` | App persistence preference; not another physical lighting mode |
-| `reset_user_distance` | Reset action through the app confirmation handler; Cutout trip reset exists, binary/legacy parity still needs tracing |
+| `reset_user_distance` | Reset action through the app confirmation handler; the generic trip-reset action is attempted for any live device profile that exposes a trip meter, with the current Aero encoding as the established `CLEARMETER` command |
 | `vn_download_event_log` | Log retrieval, not a settings mutation |
 | `vn_safety_margin_scaling` | App-side correction setting; do not confuse with the PWT wheel command |
 | `vn_firmware_list` | Firmware listing/update entry point; not authorized by ordinary settings writes |
@@ -191,4 +191,8 @@ until their protocol gate and device behavior are independently established.
 `changeLimitSpeed` and `changeLimitMode` do not add new wheel commands: the
 recovered code only persists policy and, in one branch, delegates to the
 already traced maximum-speed setter.
+The current Aero trip reset uses the separately established `CLEARMETER` literal;
+other devices should add their own checked dialect encoding when their trip-meter
+capability is exposed. The recovered multi-write path is not substituted without
+a model/firmware gate.
 Unknown manufacturer-menu items stay open.

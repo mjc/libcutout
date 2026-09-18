@@ -850,6 +850,26 @@ public final class CutoutSessionCore: NSObject {
             }
         }.get()
     }
+    /// Attempts the generic trip-meter reset action for a new ride when the
+    /// selected device profile exposes that capability.
+    ///
+    /// The wheel has no completion readback for this action, so this reports only
+    /// whether the command was accepted by the live transport.
+    @discardableResult
+    public func resetTripMeterForNewRide() -> Bool {
+        onBleQueue {
+            guard let owner = liveOwner else { return false }
+            do {
+                _ = try owner.submitAction(.resetTripMeter, at: clock.now())
+                record("trip_meter_reset_on_new_ride=submitted")
+                return true
+            } catch {
+                record("trip_meter_reset_on_new_ride=failed")
+                return false
+            }
+        }
+    }
+
     public func setDeviceControlsValidation(token: ConnectionAttemptToken, authorized: Bool) throws {
         try onBleQueue {
             Result {
@@ -2011,12 +2031,20 @@ public final class CutoutSessionCore: NSObject {
                   self.connectionSnapshot.generation == connectionGeneration
             else { return }
             do {
+                let previousRideID = rideMapState
+                    .currentSnapshot(atMs: receivedAt.rawValue)?.rideID
                 let snapshot = try rideMapState.ensureRecordingForVerifiedConnection(
                     connectionState: self.rustSessionState,
                     token: token,
                     atMs: receivedAt.rawValue,
                 )
                 if snapshot != nil {
+                    // Admission returns the current ride for repeated notifications too.
+                    // Only reset when Rust created a different ride, so reconnects and
+                    // telemetry notifications cannot clear the same trip repeatedly.
+                    if snapshot?.rideID != previousRideID {
+                        _ = self.resetTripMeterForNewRide()
+                    }
                     _ = try rideMapState.observeTelemetry(atMs: receivedAt.rawValue)
                     if let snapshot = rideMapState.currentSnapshot(atMs: receivedAt.rawValue) {
                         self.publishRideMapSnapshot(snapshot)
