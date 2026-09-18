@@ -409,7 +409,7 @@ pub const fn aero_control_profile() -> DeviceControlProfile {
             SettingId::SpeedAlarmThreshold,
             SettingId::PedalAngle,
         ],
-        &[SettingId::HighBeam],
+        &[],
         &[
             SettingId::TiltbackSpeed,
             SettingId::SpeedAlarmThreshold,
@@ -838,11 +838,29 @@ mod tests {
                 "{id:?}"
             );
         }
-        assert!(
+        for id in [
+            SettingId::PwmTiltback,
+            SettingId::SpeedAlarmThreshold,
+            SettingId::LateralTiltLimit,
+            SettingId::BrakeOverpressureAlarm,
+            SettingId::BeeperVolumePercent,
+            SettingId::HighSpeedMode,
+            SettingId::LowBatteryMode,
+        ] {
+            assert!(
+                aero.iter()
+                    .find(|entry| entry.id == id)
+                    .unwrap()
+                    .confirmation_supported,
+                "{id:?} has device readback; an unconfirmed write must not disable it"
+            );
+        }
+        assert_eq!(
             aero.iter()
-                .find(|entry| entry.id == SettingId::PwmTiltback)
+                .find(|entry| entry.id == SettingId::HighBeam)
                 .unwrap()
-                .confirmation_supported
+                .write_verification,
+            VerificationStatus::Unverified
         );
     }
 
@@ -988,11 +1006,7 @@ mod tests {
             assert_eq!(descriptor.access, SettingAccess::Writable, "{id:?}");
             assert_eq!(
                 descriptor.write_verification,
-                if id == SettingId::HighBeam {
-                    VerificationStatus::HardwareVerified
-                } else {
-                    VerificationStatus::Unverified
-                },
+                VerificationStatus::Unverified,
                 "{id:?}"
             );
             let values: Vec<_> = match &descriptor.control {

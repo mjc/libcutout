@@ -5381,6 +5381,15 @@ mod tests {
             ),
             (
                 DeviceCommand::SetSetting {
+                    id: cutout_core::SettingId::LateralTiltLimit,
+                    value: cutout_core::DeviceSettingValue::Number(55),
+                },
+                *b"LkAp",
+                17,
+                55,
+            ),
+            (
+                DeviceCommand::SetSetting {
                     id: cutout_core::SettingId::SpeedAlarmThreshold,
                     value: cutout_core::DeviceSettingValue::Number(560),
                 },

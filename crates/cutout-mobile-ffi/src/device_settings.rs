@@ -664,11 +664,7 @@ mod tests {
         for descriptor in writable {
             assert_eq!(
                 descriptor.write_verification,
-                if descriptor.id == MobileSettingIdDto::HighBeam {
-                    MobileVerificationStatusDto::HardwareVerified
-                } else {
-                    MobileVerificationStatusDto::Unverified
-                }
+                MobileVerificationStatusDto::Unverified
             );
             let value = match &descriptor.control {
                 MobileSettingControlDto::Boolean => MobileSettingValueDto::Boolean { value: true },

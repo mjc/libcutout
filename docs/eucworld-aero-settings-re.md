@@ -71,6 +71,18 @@ with bytes 5–6 = `01 02`; intervening bytes are `80`. Total frame size is
 `pos + 5`, including the trailing four-byte CRC32. `Lk` setters use `LkAp` and
 byte 5 = `01`; the serializer can select `LdAp` for newer firmware, so these
 are not unconditional family-wide encodings. Preserve protocol/firmware gates.
+That does **not** authorize replacing a field's header and discriminator while
+keeping its offset: `LdAp` position 12 is tilt-back, not speed alarm, and
+`LdAp` position 17 is transport mode, not lateral tilt.
+
+Cutout's setting encoder now represents these banks with separate `LkField`
+and `LdField` types. Each field's byte offset is an explicit enum discriminant,
+so duplicate offsets within a bank fail compilation. Each bank owns its header
+and discriminator; setting call sites supply neither raw bytes nor offsets.
+The speed-alarm/lateral-tilt regression checks both bank separation and the
+resulting frames, and the session test checks the bytes scheduled for transport.
+These checks prevent the discovered aliasing bug; they do not establish that
+the remaining NF2557 physical-control failures have been resolved.
 
 | EUC World key (`vn_` prefix omitted) | Setter | Values and frame | Readback / Cutout gap |
 | --- | --- | --- | --- |

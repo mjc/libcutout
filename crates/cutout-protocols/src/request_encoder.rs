@@ -271,91 +271,53 @@ impl AeroControlEncoder {
             AeroWireCommand::SetAeroDisplayBacklight(value) => {
                 return Some(EncodedControl {
                     command: command.kind(),
-                    payload: aero_binary_frame(
-                        *b"LdAp",
-                        &[0x01, 0x02, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80],
-                        value.percent(),
-                    )?,
+                    payload: aero_setting_frames::LdField::DisplayBrightness
+                        .encode(value.percent())?,
                     mode: WriteMode::WithoutResponse,
                 });
             }
             AeroWireCommand::SetAeroBeeperVolume(value) => {
                 return Some(EncodedControl {
                     command: command.kind(),
-                    payload: aero_binary_frame(
-                        *b"LdAp",
-                        &[
-                            0x01, 0x02, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80,
-                            0x80, 0x80, 0x80, 0x80, 0x80, 0x80,
-                        ],
-                        value.percent(),
-                    )?,
+                    payload: aero_setting_frames::LdField::BeeperVolume.encode(value.percent())?,
                     mode: WriteMode::WithoutResponse,
                 });
             }
             AeroWireCommand::SetAeroDynamicAssist(value) => {
                 return Some(EncodedControl {
                     command: command.kind(),
-                    payload: aero_binary_frame(
-                        *b"LdAp",
-                        &[
-                            0x01, 0x02, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80,
-                            0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80,
-                        ],
-                        value.percent(),
-                    )?,
+                    payload: aero_setting_frames::LdField::DynamicAssist.encode(value.percent())?,
                     mode: WriteMode::WithoutResponse,
                 });
             }
             AeroWireCommand::SetAeroPedalDipCompensation(value) => {
                 return Some(EncodedControl {
                     command: command.kind(),
-                    payload: aero_binary_frame(
-                        *b"LdAp",
-                        &[
-                            0x01, 0x02, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80,
-                            0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80,
-                        ],
-                        value.percent(),
-                    )?,
+                    payload: aero_setting_frames::LdField::PedalDipCompensation
+                        .encode(value.percent())?,
                     mode: WriteMode::WithoutResponse,
                 });
             }
             AeroWireCommand::SetAeroLateralTiltLimit(value) => {
                 return Some(EncodedControl {
                     command: command.kind(),
-                    payload: aero_binary_frame(
-                        *b"LkAp",
-                        &[
-                            0x01, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80,
-                        ],
-                        value.degrees(),
-                    )?,
+                    payload: aero_setting_frames::LkField::LateralTilt.encode(value.degrees())?,
                     mode: WriteMode::WithoutResponse,
                 });
             }
             AeroWireCommand::SetAeroVoltageCorrection(value) => {
                 return Some(EncodedControl {
                     command: command.kind(),
-                    payload: aero_binary_frame(
-                        *b"LdAp",
-                        &[
-                            0x01, 0x02, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80,
-                            0x80, 0x80,
-                        ],
-                        u8::from_ne_bytes(value.tenths_of_percent().to_ne_bytes()),
-                    )?,
+                    payload: aero_setting_frames::LdField::VoltageCorrection
+                        .encode(u8::from_ne_bytes(value.tenths_of_percent().to_ne_bytes()))?,
                     mode: WriteMode::WithoutResponse,
                 });
             }
             AeroWireCommand::SetAeroTiltbackSpeed(speed) => {
                 return Some(EncodedControl {
                     command: command.kind(),
-                    payload: aero_binary_frame(
-                        *b"LdAp",
-                        &[0x01, 0x02, 0x80, 0x80, 0x80, 0x80, 0x80],
-                        speed.kilometres_per_hour(),
-                    )?,
+                    payload: aero_setting_frames::LdField::TiltbackSpeed
+                        .encode(speed.kilometres_per_hour())?,
                     mode: WriteMode::WithoutResponse,
                 });
             }
@@ -366,126 +328,78 @@ impl AeroControlEncoder {
                 };
                 return Some(EncodedControl {
                     command: command.kind(),
-                    payload: aero_binary_frame(
-                        *b"LdAp",
-                        &[0x01, 0x02, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80],
-                        wire_value,
-                    )?,
+                    payload: aero_setting_frames::LdField::PwmTiltback.encode(wire_value)?,
                     mode: WriteMode::WithoutResponse,
                 });
             }
             AeroWireCommand::SetAeroGyroCalibration => {
                 return Some(EncodedControl {
                     command: command.kind(),
-                    payload: aero_binary_frame(
-                        *b"LdAp",
-                        &[
-                            0x01, 0x02, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80,
-                        ],
-                        1,
-                    )?,
+                    payload: aero_setting_frames::LdField::GyroCalibration.encode(1)?,
                     mode: WriteMode::WithoutResponse,
                 });
             }
             AeroWireCommand::SetAeroBrakeOverpressureAlarm(value) => {
                 return Some(EncodedControl {
                     command: command.kind(),
-                    payload: aero_binary_frame(
-                        *b"LdAp",
-                        &[
-                            0x01, 0x02, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80,
-                            0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80,
-                        ],
-                        value.percent(),
-                    )?,
+                    payload: aero_setting_frames::LdField::BrakeOverpressureAlarm
+                        .encode(value.percent())?,
                     mode: WriteMode::WithoutResponse,
                 });
             }
             AeroWireCommand::SetAeroPedalHardness(percent) => {
                 return Some(EncodedControl {
                     command: command.kind(),
-                    payload: aero_binary_frame(
-                        *b"LdAp",
-                        &[0x01, 0x02, 0x80, 0x80, 0x80],
-                        percent.percent(),
-                    )?,
+                    payload: aero_setting_frames::LdField::PedalHardness
+                        .encode(percent.percent())?,
                     mode: WriteMode::WithoutResponse,
                 });
             }
             AeroWireCommand::SetAeroWheelUnits(units) => {
                 return Some(EncodedControl {
                     command: command.kind(),
-                    payload: aero_binary_frame(
-                        *b"LdAp",
-                        &[
-                            0x01, 0x02, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80,
-                            0x80,
-                        ],
-                        units.display_mode(),
-                    )?,
+                    payload: aero_setting_frames::LdField::DisplayUnits
+                        .encode(units.display_mode())?,
                     mode: WriteMode::WithoutResponse,
                 });
             }
             AeroWireCommand::SetAeroHighSpeedMode(value) => {
                 return Some(EncodedControl {
                     command: command.kind(),
-                    payload: aero_binary_frame(
-                        *b"LdAp",
-                        &[
-                            0x01, 0x02, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80,
-                            0x80, 0x80, 0x80, 0x80,
-                        ],
-                        u8::from(value.enabled()),
-                    )?,
+                    payload: aero_setting_frames::LdField::HighSpeedMode
+                        .encode(u8::from(value.enabled()))?,
                     mode: WriteMode::WithoutResponse,
                 });
             }
             AeroWireCommand::SetAeroLowBatteryMode(value) => {
                 return Some(EncodedControl {
                     command: command.kind(),
-                    payload: aero_binary_frame(
-                        *b"LdAp",
-                        &[
-                            0x01, 0x02, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80,
-                            0x80, 0x80, 0x80,
-                        ],
-                        u8::from(value.enabled()),
-                    )?,
+                    payload: aero_setting_frames::LdField::LowBatteryMode
+                        .encode(u8::from(value.enabled()))?,
                     mode: WriteMode::WithoutResponse,
                 });
             }
             AeroWireCommand::SetAeroTransportMode(value) => {
                 return Some(EncodedControl {
                     command: command.kind(),
-                    payload: aero_binary_frame(
-                        *b"LdAp",
-                        &[
-                            0x01, 0x02, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80,
-                        ],
-                        u8::from(value.enabled()),
-                    )?,
+                    payload: aero_setting_frames::LdField::TransportMode
+                        .encode(u8::from(value.enabled()))?,
                     mode: WriteMode::WithoutResponse,
                 });
             }
             AeroWireCommand::SetAeroAlarmSpeed(speed) => {
                 return Some(EncodedControl {
                     command: command.kind(),
-                    payload: aero_binary_frame(
-                        *b"LkAp",
-                        &[0x01, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80],
-                        speed.kilometres_per_hour(),
-                    )?,
+                    payload: aero_setting_frames::LkField::SpeedAlarm
+                        .encode(speed.kilometres_per_hour())?,
                     mode: WriteMode::WithoutResponse,
                 });
             }
             AeroWireCommand::SetAeroAngleAdjustment(angle) => {
                 return Some(EncodedControl {
                     command: command.kind(),
-                    payload: aero_binary_frame(
-                        *b"LkAp",
-                        &[0x01, 0x80, 0x80, 0x80, 0x80, 0x80],
-                        u8::from_ne_bytes(angle.tenths_of_degree().to_ne_bytes()),
-                    )?,
+                    payload: aero_setting_frames::LkField::PedalAngle
+                        .encode(u8::from_ne_bytes(angle.tenths_of_degree().to_ne_bytes()))?,
                     mode: WriteMode::WithoutResponse,
                 });
             }
@@ -576,6 +490,56 @@ fn aero_binary_frame(magic: [u8; 4], payload_head: &[u8], value: u8) -> Option<W
     let crc = crc32(frame.as_slice()).to_be_bytes();
     frame.try_extend_from_slice(&crc).ok()?;
     Some(request_payload(frame.as_slice()))
+}
+
+// Field offsets are enum discriminants: Rust rejects duplicates within a bank.
+// Each bank owns its serializer; callers cannot supply a header or offset.
+mod aero_setting_frames {
+    use cutout_core::WritePayload;
+
+    #[derive(Clone, Copy)]
+    #[repr(u8)]
+    pub(super) enum LkField {
+        PedalAngle = 11,
+        SpeedAlarm = 12,
+        LateralTilt = 17,
+    }
+
+    #[derive(Clone, Copy)]
+    #[repr(u8)]
+    pub(super) enum LdField {
+        PedalHardness = 10,
+        TiltbackSpeed = 12,
+        PwmTiltback = 13,
+        DisplayBrightness = 15,
+        GyroCalibration = 16,
+        TransportMode = 17,
+        DisplayUnits = 18,
+        VoltageCorrection = 19,
+        LowBatteryMode = 20,
+        HighSpeedMode = 21,
+        BeeperVolume = 23,
+        BrakeOverpressureAlarm = 25,
+        DynamicAssist = 26,
+        PedalDipCompensation = 28,
+    }
+
+    impl LkField {
+        pub(super) fn encode(self, value: u8) -> Option<WritePayload> {
+            let mut head = [0x80; 12];
+            head[0] = 0x01;
+            super::aero_binary_frame(*b"LkAp", &head[..self as usize - 5], value)
+        }
+    }
+
+    impl LdField {
+        pub(super) fn encode(self, value: u8) -> Option<WritePayload> {
+            let mut head = [0x80; 23];
+            head[0] = 0x01;
+            head[1] = 0x02;
+            super::aero_binary_frame(*b"LdAp", &head[..self as usize - 5], value)
+        }
+    }
 }
 
 /// Begode Falcon benign-control encoder.
@@ -1155,6 +1119,17 @@ mod tests {
             ),
             (
                 DeviceCommand::SetSetting {
+                    id: SettingId::LateralTiltLimit,
+                    value: DeviceSettingValue::Number(55),
+                },
+                *b"LkAp",
+                22,
+                &[
+                    0x01, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 55,
+                ][..],
+            ),
+            (
+                DeviceCommand::SetSetting {
                     id: SettingId::SpeedAlarmThreshold,
                     value: DeviceSettingValue::Number(200),
                 },
@@ -1184,6 +1159,33 @@ mod tests {
             let expected_crc = crc32(&encoded.payload.as_slice()[..body_len]).to_be_bytes();
             assert_eq!(&encoded.payload.as_slice()[body_len..], &expected_crc);
         }
+    }
+
+    #[test]
+    fn aero_alarm_and_lateral_tilt_do_not_target_other_settings() {
+        let encode = |id, value| {
+            AeroControlEncoder::encode(DeviceCommand::SetSetting { id, value })
+                .unwrap()
+                .payload
+        };
+        let alarm = encode(
+            SettingId::SpeedAlarmThreshold,
+            DeviceSettingValue::Number(560),
+        );
+        let tiltback = encode(SettingId::TiltbackSpeed, DeviceSettingValue::Number(560));
+        assert_ne!(
+            alarm, tiltback,
+            "speed alarm must not change tilt-back speed"
+        );
+        assert_eq!(&alarm.as_slice()[..7], b"LkAp\x11\x01\x80");
+        assert_eq!(&tiltback.as_slice()[..7], b"LdAp\x11\x01\x02");
+
+        let lateral = encode(SettingId::LateralTiltLimit, DeviceSettingValue::Number(55));
+        let transport = encode(SettingId::TransportMode, DeviceSettingValue::Boolean(true));
+        // These share a value offset, but must address different command banks.
+        assert_ne!(&lateral.as_slice()[..17], &transport.as_slice()[..17]);
+        assert_eq!(&lateral.as_slice()[..7], b"LkAp\x16\x01\x80");
+        assert_eq!(&transport.as_slice()[..7], b"LdAp\x16\x01\x02");
     }
 
     #[test]
