@@ -45,6 +45,10 @@ impl RideWriteState {
         self.lifecycle
     }
 
+    pub(super) const fn paused_at_milliseconds(&self) -> Option<u64> {
+        self.paused_at_ms
+    }
+
     #[cfg(test)]
     pub(super) const fn with_duration(
         source: RideSource,

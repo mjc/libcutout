@@ -4154,18 +4154,38 @@ fn settle_recovered_ride(
     replacement_candidate_vehicle: Option<&str>,
 ) -> Result<Option<RideId>, StorageError> {
     let transaction = connection.transaction()?;
-    let terminal_event = if discard_empty {
-        RideEvent::Discard
+    if discard_empty {
+        transition_ride(
+            &transaction,
+            ride_id,
+            RideEvent::Discard,
+            occurred_at_ms,
+            Some(monotonic_at_ms),
+        )?;
     } else {
-        RideEvent::Save
-    };
-    transition_ride(
-        &transaction,
-        ride_id,
-        terminal_event,
-        occurred_at_ms,
-        Some(monotonic_at_ms),
-    )?;
+        let write_state = load_ride_write_state(&transaction, ride_id)?;
+        // Database-open recovery stores an explicit pause as Interrupted so the mobile core can
+        // decide whether the 24-hour policy has expired. Once it expires, settle it through the
+        // effective Paused lifecycle: Stop closes the pause timing, then Save publishes history.
+        if write_state.lifecycle() == RideLifecycleState::Interrupted
+            && write_state.paused_at_milliseconds().is_some()
+        {
+            transition_ride(
+                &transaction,
+                ride_id,
+                RideEvent::Stop,
+                occurred_at_ms,
+                Some(monotonic_at_ms),
+            )?;
+        }
+        transition_ride(
+            &transaction,
+            ride_id,
+            RideEvent::Save,
+            occurred_at_ms,
+            Some(monotonic_at_ms),
+        )?;
+    }
     let replacement = replacement_candidate_vehicle.map(|candidate| {
         create_started_live_ride_in_transaction(
             &transaction,
