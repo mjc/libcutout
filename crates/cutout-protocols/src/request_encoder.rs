@@ -173,7 +173,7 @@ fn nosfet_command(command: DeviceCommand) -> Option<NosfetCommand> {
             ))
         }
         (SettingId::TiltbackSpeed, DeviceSettingValue::Number(value)) => Some(
-            NosfetCommand::TiltbackSpeed(VeteranSpeedSetting::new(number(value / 10)?)?),
+            NosfetCommand::TiltbackSpeed(VeteranSpeedSetting::new(exact_deci_kmh(value)?)?),
         ),
         (SettingId::PwmTiltback, DeviceSettingValue::Number(value)) => {
             Some(NosfetCommand::PwmPercent(
@@ -207,7 +207,7 @@ fn nosfet_command(command: DeviceCommand) -> Option<NosfetCommand> {
             NosfetCommand::TransportMode(VeteranTransportMode::new(value)),
         ),
         (SettingId::SpeedAlarmThreshold, DeviceSettingValue::Number(value)) => Some(
-            NosfetCommand::AlarmSpeed(VeteranSpeedSetting::new(number(value / 10)?)?),
+            NosfetCommand::AlarmSpeed(VeteranSpeedSetting::new(exact_deci_kmh(value)?)?),
         ),
         (SettingId::PedalAngle, DeviceSettingValue::Number(value)) => Some(
             NosfetCommand::AngleAdjustment(VeteranAngleAdjustment::new(i8::try_from(value).ok()?)?),
@@ -223,6 +223,13 @@ fn nosfet_command(command: DeviceCommand) -> Option<NosfetCommand> {
         }
         _ => None,
     }
+}
+
+/// Converts the canonical deci-km/h setting without silently changing its value.
+fn exact_deci_kmh(value: i32) -> Option<u8> {
+    (value >= 0 && value % 10 == 0)
+        .then(|| u8::try_from(value / 10).ok())
+        .flatten()
 }
 
 impl VeteranCommandModeDetector {
@@ -467,7 +474,7 @@ fn begode_wire_command(command: DeviceCommand) -> Option<BegodeWireCommand> {
             BegodeWireCommand::SpeedAlarmMode(SpeedAlarmMode::StageOneOnly),
         ),
         (SettingId::MaximumSpeed, DeviceSettingValue::Number(value)) => Some(
-            BegodeWireCommand::MaxSpeed(BegodeMaxSpeed::new(u8::try_from(value / 10).ok()?)?),
+            BegodeWireCommand::MaxSpeed(BegodeMaxSpeed::new(exact_deci_kmh(value)?)?),
         ),
         (SettingId::BeeperVolumeLevel, DeviceSettingValue::Number(value)) => Some(
             BegodeWireCommand::BeeperVolume(BegodeBeeperVolume::new(u8::try_from(value).ok()?)?),
@@ -1025,6 +1032,28 @@ mod tests {
         assert_ne!(&lateral.as_slice()[..17], &transport.as_slice()[..17]);
         assert_eq!(&lateral.as_slice()[..7], b"LkAp\x16\x01\x80");
         assert_eq!(&transport.as_slice()[..7], b"LdAp\x16\x01\x02");
+    }
+
+    #[test]
+    fn speed_encoders_reject_inexact_canonical_values_instead_of_truncating() {
+        for id in [SettingId::TiltbackSpeed, SettingId::SpeedAlarmThreshold] {
+            assert_eq!(
+                NosfetDialect::encode(DeviceCommand::SetSetting {
+                    id,
+                    value: DeviceSettingValue::Number(348),
+                }),
+                None,
+                "NOSFET must not turn 34.8 deci-km/h into 34 km/h"
+            );
+        }
+        assert_eq!(
+            FalconDialect::encode_settings_sequence(DeviceCommand::SetSetting {
+                id: SettingId::MaximumSpeed,
+                value: DeviceSettingValue::Number(348),
+            }),
+            None,
+            "Falcon must not turn 34.8 deci-km/h into 34 km/h"
+        );
     }
 
     #[test]
