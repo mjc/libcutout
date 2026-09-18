@@ -1223,7 +1223,7 @@ fn command(program: impl AsRef<OsStr>) -> Command {
         .env(
             "DEVELOPER_DIR",
             env::var_os("CUTOUT_DEVELOPER_DIR")
-            .unwrap_or_else(|| "/Applications/Xcode.app/Contents/Developer".into()),
+                .unwrap_or_else(|| "/Applications/Xcode.app/Contents/Developer".into()),
         )
         .env_remove("SDKROOT");
     command

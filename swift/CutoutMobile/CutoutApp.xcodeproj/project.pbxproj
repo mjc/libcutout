@@ -7,13 +7,10 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
-		300000000000000000000041 /* Apps/CutoutApp/AppSetupView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 400000000000000000000041 /* Apps/CutoutApp/AppSetupView.swift */; };
 		111111111111111111111111 /* Apps/CutoutApp/CutoutApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 111111111111111111111121 /* Apps/CutoutApp/CutoutApp.swift */; };
 		111111111111111111111112 /* Apps/CutoutApp/ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 111111111111111111111122 /* Apps/CutoutApp/ContentView.swift */; };
 		111111111111111111111113 /* Apps/CutoutApp/CutoutAppModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 111111111111111111111123 /* Apps/CutoutApp/CutoutAppModel.swift */; };
 		111111111111111111111114 /* Apps/CutoutApp/Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 111111111111111111111125 /* Apps/CutoutApp/Assets.xcassets */; };
-		300000000000000000000044 /* Apps/CutoutApp/PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = 400000000000000000000044 /* Apps/CutoutApp/PrivacyInfo.xcprivacy */; };
-		300000000000000000000045 /* Apps/CutoutApp/PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = 400000000000000000000044 /* Apps/CutoutApp/PrivacyInfo.xcprivacy */; };
 		111111111111111111111129 /* Apps/CutoutApp/CutoutAppRoute.swift in Sources */ = {isa = PBXBuildFile; fileRef = 111111111111111111111128 /* Apps/CutoutApp/CutoutAppRoute.swift */; };
 		222222222222222222222111 /* Apps/CutoutLiveActivityExtension/CutoutLiveActivityExtension.swift in Sources */ = {isa = PBXBuildFile; fileRef = 222222222222222222222121 /* Apps/CutoutLiveActivityExtension/CutoutLiveActivityExtension.swift */; };
 		222222222222222222222112 /* CutoutMobile in Frameworks */ = {isa = PBXBuildFile; productRef = 222222222222222222222181 /* CutoutMobile */; };
@@ -39,15 +36,18 @@
 		300000000000000000000015 /* Apps/CutoutApp/PevScreenTheme.swift in Sources */ = {isa = PBXBuildFile; fileRef = 400000000000000000000015 /* Apps/CutoutApp/PevScreenTheme.swift */; };
 		300000000000000000000016 /* Apps/CutoutApp/VescDebugViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = 400000000000000000000016 /* Apps/CutoutApp/VescDebugViews.swift */; };
 		300000000000000000000017 /* Apps/CutoutApp/VescRideViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = 400000000000000000000017 /* Apps/CutoutApp/VescRideViews.swift */; };
-		300000000000000000000023 /* Apps/CutoutApp/VescRideScreenPresentation.swift in Sources */ = {isa = PBXBuildFile; fileRef = 400000000000000000000023 /* Apps/CutoutApp/VescRideScreenPresentation.swift */; };
-		300000000000000000000024 /* Apps/CutoutApp/BmsDetailLayout.swift in Sources */ = {isa = PBXBuildFile; fileRef = 400000000000000000000024 /* Apps/CutoutApp/BmsDetailLayout.swift */; };
 		300000000000000000000018 /* Apps/CutoutApp/PevRideHeroSection.swift in Sources */ = {isa = PBXBuildFile; fileRef = 400000000000000000000018 /* Apps/CutoutApp/PevRideHeroSection.swift */; };
 		300000000000000000000019 /* Apps/CutoutApp/PevRideDashboardShell.swift in Sources */ = {isa = PBXBuildFile; fileRef = 400000000000000000000019 /* Apps/CutoutApp/PevRideDashboardShell.swift */; };
 		30000000000000000000001A /* Apps/CutoutApp/CutoutUITestSessionFixture.swift in Sources */ = {isa = PBXBuildFile; fileRef = 40000000000000000000001A /* Apps/CutoutApp/CutoutUITestSessionFixture.swift */; };
 		30000000000000000000001B /* Apps/CutoutApp/CutoutAppState.swift in Sources */ = {isa = PBXBuildFile; fileRef = 40000000000000000000001B /* Apps/CutoutApp/CutoutAppState.swift */; };
 		30000000000000000000001C /* Apps/CutoutApp/CutoutRouteViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = 40000000000000000000001C /* Apps/CutoutApp/CutoutRouteViews.swift */; };
-		AABBCC000000000000000001 /* Apps/CutoutApp/LightingPlaybackControls.swift in Sources */ = {isa = PBXBuildFile; fileRef = AABBCC000000000000000002 /* Apps/CutoutApp/LightingPlaybackControls.swift */; };
-		AABBCC000000000000000003 /* Apps/CutoutApp/LightingRouteView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AABBCC000000000000000004 /* Apps/CutoutApp/LightingRouteView.swift */; };
+		30000000000000000000001D /* Apps/CutoutApp/CaptureQuickLabel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 40000000000000000000001D /* Apps/CutoutApp/CaptureQuickLabel.swift */; };
+		30000000000000000000001E /* Apps/CutoutApp/CutoutSessionDriving.swift in Sources */ = {isa = PBXBuildFile; fileRef = 40000000000000000000001E /* Apps/CutoutApp/CutoutSessionDriving.swift */; };
+		30000000000000000000001F /* Apps/CutoutApp/PevDashboardPresentation.swift in Sources */ = {isa = PBXBuildFile; fileRef = 40000000000000000000001F /* Apps/CutoutApp/PevDashboardPresentation.swift */; };
+		300000000000000000000020 /* Apps/CutoutApp/AppLocalization.swift in Sources */ = {isa = PBXBuildFile; fileRef = 400000000000000000000020 /* Apps/CutoutApp/AppLocalization.swift */; };
+		300000000000000000000021 /* Apps/CutoutApp/ConnectionPresentation.swift in Sources */ = {isa = PBXBuildFile; fileRef = 400000000000000000000021 /* Apps/CutoutApp/ConnectionPresentation.swift */; };
+		300000000000000000000023 /* Apps/CutoutApp/VescRideScreenPresentation.swift in Sources */ = {isa = PBXBuildFile; fileRef = 400000000000000000000023 /* Apps/CutoutApp/VescRideScreenPresentation.swift */; };
+		300000000000000000000024 /* Apps/CutoutApp/BmsDetailLayout.swift in Sources */ = {isa = PBXBuildFile; fileRef = 400000000000000000000024 /* Apps/CutoutApp/BmsDetailLayout.swift */; };
 		300000000000000000000025 /* Apps/CutoutApp/RideMapRouteView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 400000000000000000000025 /* Apps/CutoutApp/RideMapRouteView.swift */; };
 		300000000000000000000026 /* Apps/CutoutApp/RideMapCanvasView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 400000000000000000000026 /* Apps/CutoutApp/RideMapCanvasView.swift */; };
 		300000000000000000000027 /* Apps/CutoutApp/RideMapControlsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 400000000000000000000027 /* Apps/CutoutApp/RideMapControlsView.swift */; };
@@ -60,18 +60,18 @@
 		30000000000000000000002E /* Apps/CutoutApp/RideMapHistoryContentSections.swift in Sources */ = {isa = PBXBuildFile; fileRef = 40000000000000000000002E /* Apps/CutoutApp/RideMapHistoryContentSections.swift */; };
 		30000000000000000000002F /* Apps/CutoutApp/RideMapHistoryDetailSections.swift in Sources */ = {isa = PBXBuildFile; fileRef = 40000000000000000000002F /* Apps/CutoutApp/RideMapHistoryDetailSections.swift */; };
 		300000000000000000000030 /* Apps/CutoutApp/RideMapHistoryStyling.swift in Sources */ = {isa = PBXBuildFile; fileRef = 400000000000000000000030 /* Apps/CutoutApp/RideMapHistoryStyling.swift */; };
-		30000000000000000000001D /* Apps/CutoutApp/CaptureQuickLabel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 40000000000000000000001D /* Apps/CutoutApp/CaptureQuickLabel.swift */; };
-		30000000000000000000001E /* Apps/CutoutApp/CutoutSessionDriving.swift in Sources */ = {isa = PBXBuildFile; fileRef = 40000000000000000000001E /* Apps/CutoutApp/CutoutSessionDriving.swift */; };
-		30000000000000000000001F /* Apps/CutoutApp/PevDashboardPresentation.swift in Sources */ = {isa = PBXBuildFile; fileRef = 40000000000000000000001F /* Apps/CutoutApp/PevDashboardPresentation.swift */; };
-		300000000000000000000020 /* Apps/CutoutApp/AppLocalization.swift in Sources */ = {isa = PBXBuildFile; fileRef = 400000000000000000000020 /* Apps/CutoutApp/AppLocalization.swift */; };
-		300000000000000000000021 /* Apps/CutoutApp/ConnectionPresentation.swift in Sources */ = {isa = PBXBuildFile; fileRef = 400000000000000000000021 /* Apps/CutoutApp/ConnectionPresentation.swift */; };
+		300000000000000000000041 /* Apps/CutoutApp/AppSetupView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 400000000000000000000041 /* Apps/CutoutApp/AppSetupView.swift */; };
+		300000000000000000000044 /* Apps/CutoutApp/PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = 400000000000000000000044 /* Apps/CutoutApp/PrivacyInfo.xcprivacy */; };
+		300000000000000000000045 /* Apps/CutoutApp/PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = 400000000000000000000044 /* Apps/CutoutApp/PrivacyInfo.xcprivacy */; };
 		444444444444444444444401 /* UITests/CutoutAppUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 444444444444444444444411 /* UITests/CutoutAppUITests.swift */; };
-		500000000000000000000101 /* Apps/Localizable.xcstrings in Resources */ = {isa = PBXBuildFile; fileRef = 500000000000000000000201 /* Apps/Localizable.xcstrings */; };
-		500000000000000000000102 /* Apps/Localizable.xcstrings in Resources */ = {isa = PBXBuildFile; fileRef = 500000000000000000000201 /* Apps/Localizable.xcstrings */; };
-		C00100000000000000000001 /* TabAccentColors.swift in Sources */ = {isa = PBXBuildFile; fileRef = C00100000000000000000011 /* TabAccentColors.swift */; };
-		C00100000000000000000002 /* TabAccentColors.swift in Sources */ = {isa = PBXBuildFile; fileRef = C00100000000000000000011 /* TabAccentColors.swift */; };
-		C00100000000000000000003 /* TabAccentColorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C00100000000000000000012 /* TabAccentColorTests.swift */; };
+		500000000000000000000101 /* Apps/CutoutApp/Localizable.xcstrings in Resources */ = {isa = PBXBuildFile; fileRef = 500000000000000000000201 /* Apps/CutoutApp/Localizable.xcstrings */; };
+		500000000000000000000102 /* Apps/CutoutApp/Localizable.xcstrings in Resources */ = {isa = PBXBuildFile; fileRef = 500000000000000000000201 /* Apps/CutoutApp/Localizable.xcstrings */; };
 		A6FD381C839A4BD98A66DDD6 /* Apps/CutoutApp/DeviceControlsForm.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5EC7F605A4BE4DD590E4C995 /* Apps/CutoutApp/DeviceControlsForm.swift */; };
+		AABBCC000000000000000001 /* Apps/CutoutApp/LightingPlaybackControls.swift in Sources */ = {isa = PBXBuildFile; fileRef = AABBCC000000000000000002 /* Apps/CutoutApp/LightingPlaybackControls.swift */; };
+		AABBCC000000000000000003 /* Apps/CutoutApp/LightingRouteView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AABBCC000000000000000004 /* Apps/CutoutApp/LightingRouteView.swift */; };
+		C00100000000000000000001 /* Apps/CutoutApp/TabAccentColors.swift in Sources */ = {isa = PBXBuildFile; fileRef = C00100000000000000000011 /* Apps/CutoutApp/TabAccentColors.swift */; };
+		C00100000000000000000002 /* Apps/CutoutApp/TabAccentColors.swift in Sources */ = {isa = PBXBuildFile; fileRef = C00100000000000000000011 /* Apps/CutoutApp/TabAccentColors.swift */; };
+		C00100000000000000000003 /* UITests/TabAccentColorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C00100000000000000000012 /* UITests/TabAccentColorTests.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -81,6 +81,13 @@
 			proxyType = 1;
 			remoteGlobalIDString = 222222222222222222222161;
 			remoteInfo = CutoutLiveActivityExtension;
+		};
+		444444444444444444444501 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 111111111111111111111191 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 111111111111111111111161;
+			remoteInfo = CutoutApp;
 		};
 /* End PBXContainerItemProxy section */
 
@@ -99,8 +106,6 @@
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
-		400000000000000000000041 /* Apps/CutoutApp/AppSetupView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Apps/CutoutApp/AppSetupView.swift; sourceTree = SOURCE_ROOT; };
-		400000000000000000000044 /* Apps/CutoutApp/PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Apps/CutoutApp/PrivacyInfo.xcprivacy; sourceTree = SOURCE_ROOT; };
 		111111111111111111111121 /* Apps/CutoutApp/CutoutApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Apps/CutoutApp/CutoutApp.swift; sourceTree = SOURCE_ROOT; };
 		111111111111111111111122 /* Apps/CutoutApp/ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Apps/CutoutApp/ContentView.swift; sourceTree = SOURCE_ROOT; };
 		111111111111111111111123 /* Apps/CutoutApp/CutoutAppModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Apps/CutoutApp/CutoutAppModel.swift; sourceTree = SOURCE_ROOT; };
@@ -131,15 +136,18 @@
 		400000000000000000000015 /* Apps/CutoutApp/PevScreenTheme.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Apps/CutoutApp/PevScreenTheme.swift; sourceTree = SOURCE_ROOT; };
 		400000000000000000000016 /* Apps/CutoutApp/VescDebugViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Apps/CutoutApp/VescDebugViews.swift; sourceTree = SOURCE_ROOT; };
 		400000000000000000000017 /* Apps/CutoutApp/VescRideViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Apps/CutoutApp/VescRideViews.swift; sourceTree = SOURCE_ROOT; };
-		400000000000000000000023 /* Apps/CutoutApp/VescRideScreenPresentation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Apps/CutoutApp/VescRideScreenPresentation.swift; sourceTree = SOURCE_ROOT; };
-		400000000000000000000024 /* Apps/CutoutApp/BmsDetailLayout.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Apps/CutoutApp/BmsDetailLayout.swift; sourceTree = SOURCE_ROOT; };
 		400000000000000000000018 /* Apps/CutoutApp/PevRideHeroSection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Apps/CutoutApp/PevRideHeroSection.swift; sourceTree = SOURCE_ROOT; };
 		400000000000000000000019 /* Apps/CutoutApp/PevRideDashboardShell.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Apps/CutoutApp/PevRideDashboardShell.swift; sourceTree = SOURCE_ROOT; };
 		40000000000000000000001A /* Apps/CutoutApp/CutoutUITestSessionFixture.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Apps/CutoutApp/CutoutUITestSessionFixture.swift; sourceTree = SOURCE_ROOT; };
 		40000000000000000000001B /* Apps/CutoutApp/CutoutAppState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Apps/CutoutApp/CutoutAppState.swift; sourceTree = SOURCE_ROOT; };
 		40000000000000000000001C /* Apps/CutoutApp/CutoutRouteViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Apps/CutoutApp/CutoutRouteViews.swift; sourceTree = SOURCE_ROOT; };
-		AABBCC000000000000000002 /* Apps/CutoutApp/LightingPlaybackControls.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Apps/CutoutApp/LightingPlaybackControls.swift; sourceTree = SOURCE_ROOT; };
-		AABBCC000000000000000004 /* Apps/CutoutApp/LightingRouteView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Apps/CutoutApp/LightingRouteView.swift; sourceTree = SOURCE_ROOT; };
+		40000000000000000000001D /* Apps/CutoutApp/CaptureQuickLabel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Apps/CutoutApp/CaptureQuickLabel.swift; sourceTree = SOURCE_ROOT; };
+		40000000000000000000001E /* Apps/CutoutApp/CutoutSessionDriving.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Apps/CutoutApp/CutoutSessionDriving.swift; sourceTree = SOURCE_ROOT; };
+		40000000000000000000001F /* Apps/CutoutApp/PevDashboardPresentation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Apps/CutoutApp/PevDashboardPresentation.swift; sourceTree = SOURCE_ROOT; };
+		400000000000000000000020 /* Apps/CutoutApp/AppLocalization.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Apps/CutoutApp/AppLocalization.swift; sourceTree = SOURCE_ROOT; };
+		400000000000000000000021 /* Apps/CutoutApp/ConnectionPresentation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Apps/CutoutApp/ConnectionPresentation.swift; sourceTree = SOURCE_ROOT; };
+		400000000000000000000023 /* Apps/CutoutApp/VescRideScreenPresentation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Apps/CutoutApp/VescRideScreenPresentation.swift; sourceTree = SOURCE_ROOT; };
+		400000000000000000000024 /* Apps/CutoutApp/BmsDetailLayout.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Apps/CutoutApp/BmsDetailLayout.swift; sourceTree = SOURCE_ROOT; };
 		400000000000000000000025 /* Apps/CutoutApp/RideMapRouteView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Apps/CutoutApp/RideMapRouteView.swift; sourceTree = SOURCE_ROOT; };
 		400000000000000000000026 /* Apps/CutoutApp/RideMapCanvasView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Apps/CutoutApp/RideMapCanvasView.swift; sourceTree = SOURCE_ROOT; };
 		400000000000000000000027 /* Apps/CutoutApp/RideMapControlsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Apps/CutoutApp/RideMapControlsView.swift; sourceTree = SOURCE_ROOT; };
@@ -152,17 +160,16 @@
 		40000000000000000000002E /* Apps/CutoutApp/RideMapHistoryContentSections.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Apps/CutoutApp/RideMapHistoryContentSections.swift; sourceTree = SOURCE_ROOT; };
 		40000000000000000000002F /* Apps/CutoutApp/RideMapHistoryDetailSections.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Apps/CutoutApp/RideMapHistoryDetailSections.swift; sourceTree = SOURCE_ROOT; };
 		400000000000000000000030 /* Apps/CutoutApp/RideMapHistoryStyling.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Apps/CutoutApp/RideMapHistoryStyling.swift; sourceTree = SOURCE_ROOT; };
-		40000000000000000000001D /* Apps/CutoutApp/CaptureQuickLabel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Apps/CutoutApp/CaptureQuickLabel.swift; sourceTree = SOURCE_ROOT; };
-		40000000000000000000001E /* Apps/CutoutApp/CutoutSessionDriving.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Apps/CutoutApp/CutoutSessionDriving.swift; sourceTree = SOURCE_ROOT; };
-		40000000000000000000001F /* Apps/CutoutApp/PevDashboardPresentation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Apps/CutoutApp/PevDashboardPresentation.swift; sourceTree = SOURCE_ROOT; };
-		400000000000000000000020 /* Apps/CutoutApp/AppLocalization.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Apps/CutoutApp/AppLocalization.swift; sourceTree = SOURCE_ROOT; };
-		400000000000000000000021 /* Apps/CutoutApp/ConnectionPresentation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Apps/CutoutApp/ConnectionPresentation.swift; sourceTree = SOURCE_ROOT; };
+		400000000000000000000041 /* Apps/CutoutApp/AppSetupView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Apps/CutoutApp/AppSetupView.swift; sourceTree = SOURCE_ROOT; };
+		400000000000000000000044 /* Apps/CutoutApp/PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Apps/CutoutApp/PrivacyInfo.xcprivacy; sourceTree = SOURCE_ROOT; };
 		444444444444444444444411 /* UITests/CutoutAppUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UITests/CutoutAppUITests.swift; sourceTree = SOURCE_ROOT; };
 		444444444444444444444412 /* CutoutAppUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = CutoutAppUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		500000000000000000000201 /* Apps/CutoutApp/Localizable.xcstrings */ = {isa = PBXFileReference; lastKnownFileType = text.json.xcstrings; path = Apps/CutoutApp/Localizable.xcstrings; sourceTree = SOURCE_ROOT; };
-		C00100000000000000000011 /* TabAccentColors.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Apps/CutoutApp/TabAccentColors.swift; sourceTree = SOURCE_ROOT; };
-		C00100000000000000000012 /* TabAccentColorTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UITests/TabAccentColorTests.swift; sourceTree = SOURCE_ROOT; };
 		5EC7F605A4BE4DD590E4C995 /* Apps/CutoutApp/DeviceControlsForm.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Apps/CutoutApp/DeviceControlsForm.swift; sourceTree = SOURCE_ROOT; };
+		AABBCC000000000000000002 /* Apps/CutoutApp/LightingPlaybackControls.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Apps/CutoutApp/LightingPlaybackControls.swift; sourceTree = SOURCE_ROOT; };
+		AABBCC000000000000000004 /* Apps/CutoutApp/LightingRouteView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Apps/CutoutApp/LightingRouteView.swift; sourceTree = SOURCE_ROOT; };
+		C00100000000000000000011 /* Apps/CutoutApp/TabAccentColors.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Apps/CutoutApp/TabAccentColors.swift; sourceTree = SOURCE_ROOT; };
+		C00100000000000000000012 /* UITests/TabAccentColorTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UITests/TabAccentColorTests.swift; sourceTree = SOURCE_ROOT; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -209,7 +216,7 @@
 			children = (
 				111111111111111111111121 /* Apps/CutoutApp/CutoutApp.swift */,
 				111111111111111111111122 /* Apps/CutoutApp/ContentView.swift */,
-				C00100000000000000000011 /* TabAccentColors.swift */,
+				C00100000000000000000011 /* Apps/CutoutApp/TabAccentColors.swift */,
 				111111111111111111111123 /* Apps/CutoutApp/CutoutAppModel.swift */,
 				40000000000000000000001B /* Apps/CutoutApp/CutoutAppState.swift */,
 				40000000000000000000001C /* Apps/CutoutApp/CutoutRouteViews.swift */,
@@ -274,6 +281,7 @@
 			children = (
 				111111111111111111111124 /* CutoutApp.app */,
 				222222222222222222222124 /* CutoutLiveActivityExtension.appex */,
+				444444444444444444444412 /* CutoutAppUITests.xctest */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -284,7 +292,7 @@
 				111111111111111111111126 /* Apps/CutoutApp/Info.plist */,
 				400000000000000000000044 /* Apps/CutoutApp/PrivacyInfo.xcprivacy */,
 				111111111111111111111125 /* Apps/CutoutApp/Assets.xcassets */,
-				500000000000000000000201 /* Apps/Localizable.xcstrings */,
+				500000000000000000000201 /* Apps/CutoutApp/Localizable.xcstrings */,
 			);
 			path = Resources;
 			sourceTree = "<group>";
@@ -304,7 +312,7 @@
 			isa = PBXGroup;
 			children = (
 				444444444444444444444411 /* UITests/CutoutAppUITests.swift */,
-				C00100000000000000000012 /* TabAccentColorTests.swift */,
+				C00100000000000000000012 /* UITests/TabAccentColorTests.swift */,
 			);
 			path = UITests;
 			sourceTree = "<group>";
@@ -422,7 +430,7 @@
 			files = (
 				111111111111111111111114 /* Apps/CutoutApp/Assets.xcassets in Resources */,
 				300000000000000000000044 /* Apps/CutoutApp/PrivacyInfo.xcprivacy in Resources */,
-				500000000000000000000101 /* Apps/Localizable.xcstrings in Resources */,
+				500000000000000000000101 /* Apps/CutoutApp/Localizable.xcstrings in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -432,7 +440,7 @@
 			files = (
 				222222222222222222222114 /* Apps/CutoutLiveActivityExtension/Assets.xcassets in Resources */,
 				300000000000000000000045 /* Apps/CutoutApp/PrivacyInfo.xcprivacy in Resources */,
-				500000000000000000000102 /* Apps/Localizable.xcstrings in Resources */,
+				500000000000000000000102 /* Apps/CutoutApp/Localizable.xcstrings in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -452,7 +460,7 @@
 			files = (
 				111111111111111111111111 /* Apps/CutoutApp/CutoutApp.swift in Sources */,
 				111111111111111111111112 /* Apps/CutoutApp/ContentView.swift in Sources */,
-				C00100000000000000000001 /* TabAccentColors.swift in Sources */,
+				C00100000000000000000001 /* Apps/CutoutApp/TabAccentColors.swift in Sources */,
 				111111111111111111111113 /* Apps/CutoutApp/CutoutAppModel.swift in Sources */,
 				30000000000000000000001B /* Apps/CutoutApp/CutoutAppState.swift in Sources */,
 				30000000000000000000001C /* Apps/CutoutApp/CutoutRouteViews.swift in Sources */,
@@ -518,22 +526,12 @@
 			buildActionMask = 2147483647;
 			files = (
 				444444444444444444444401 /* UITests/CutoutAppUITests.swift in Sources */,
-				C00100000000000000000002 /* TabAccentColors.swift in Sources */,
-				C00100000000000000000003 /* TabAccentColorTests.swift in Sources */,
+				C00100000000000000000002 /* Apps/CutoutApp/TabAccentColors.swift in Sources */,
+				C00100000000000000000003 /* UITests/TabAccentColorTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXSourcesBuildPhase section */
-
-/* Begin PBXContainerItemProxy section */
-		444444444444444444444501 /* PBXContainerItemProxy */ = {
-			isa = PBXContainerItemProxy;
-			containerPortal = 111111111111111111111191 /* Project object */;
-			proxyType = 1;
-			remoteGlobalIDString = 111111111111111111111161;
-			remoteInfo = CutoutApp;
-		};
-/* End PBXContainerItemProxy section */
 
 /* Begin PBXTargetDependency section */
 		222222222222222222222191 /* PBXTargetDependency */ = {
@@ -560,6 +558,7 @@
 				DEVELOPMENT_TEAM = 2RH32Y5HM5;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = Apps/CutoutApp/Info.plist;
+				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.sports";
 				IPHONEOS_DEPLOYMENT_TARGET = 27.0;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
@@ -571,7 +570,7 @@
 				SDKROOT = iphoneos;
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_VERSION = 6.0;
-				TARGETED_DEVICE_FAMILY = "1";
+				TARGETED_DEVICE_FAMILY = 1;
 			};
 			name = Debug;
 		};
@@ -586,6 +585,7 @@
 				DEVELOPMENT_TEAM = 2RH32Y5HM5;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = Apps/CutoutApp/Info.plist;
+				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.sports";
 				IPHONEOS_DEPLOYMENT_TARGET = 27.0;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
@@ -597,7 +597,7 @@
 				SDKROOT = iphoneos;
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_VERSION = 6.0;
-				TARGETED_DEVICE_FAMILY = "1";
+				TARGETED_DEVICE_FAMILY = 1;
 			};
 			name = Release;
 		};
@@ -649,7 +649,7 @@
 				SKIP_INSTALL = YES;
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_VERSION = 6.0;
-				TARGETED_DEVICE_FAMILY = "1";
+				TARGETED_DEVICE_FAMILY = 1;
 			};
 			name = Debug;
 		};
@@ -676,7 +676,7 @@
 				SKIP_INSTALL = YES;
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_VERSION = 6.0;
-				TARGETED_DEVICE_FAMILY = "1";
+				TARGETED_DEVICE_FAMILY = 1;
 			};
 			name = Release;
 		};
@@ -693,7 +693,7 @@
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = iphoneos;
 				SWIFT_VERSION = 6.0;
-				TARGETED_DEVICE_FAMILY = "1";
+				TARGETED_DEVICE_FAMILY = 1;
 				TARGET_APPLICATION = CutoutApp;
 				TEST_TARGET_NAME = CutoutApp;
 				USES_XCTRUNNER = YES;
@@ -713,7 +713,7 @@
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = iphoneos;
 				SWIFT_VERSION = 6.0;
-				TARGETED_DEVICE_FAMILY = "1";
+				TARGETED_DEVICE_FAMILY = 1;
 				TARGET_APPLICATION = CutoutApp;
 				TEST_TARGET_NAME = CutoutApp;
 				USES_XCTRUNNER = YES;
@@ -764,7 +764,7 @@
 /* Begin XCLocalSwiftPackageReference section */
 		111111111111111111111180 /* XCLocalSwiftPackageReference "." */ = {
 			isa = XCLocalSwiftPackageReference;
-			relativePath = ".";
+			relativePath = .;
 		};
 /* End XCLocalSwiftPackageReference section */
 
