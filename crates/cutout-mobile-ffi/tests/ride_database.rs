@@ -4,11 +4,20 @@ use std::{
 };
 
 use cutout_mobile_ffi::{
-    MobileRideEventDto, MobileRideLifecycleStateDto, MobileRideLocationDto, MobileRideSourceDto,
+    MobileRideIdDto, MobileRideLifecycleStateDto, MobileRideMapCore,
     MobileStoredBmsVoltageSampleDto, Voltage, open_ride_database,
 };
 
 static TEST_LOCK: Mutex<()> = Mutex::new(());
+
+fn mobile_ride_id(value: &str) -> MobileRideIdDto {
+    MobileRideIdDto {
+        bytes: uuid::Uuid::parse_str(value)
+            .expect("ride identifier is a UUID")
+            .into_bytes()
+            .to_vec(),
+    }
+}
 
 #[test]
 fn mobile_clients_open_the_rust_owned_database() {
@@ -89,25 +98,21 @@ fn mobile_clients_bootstrap_recovered_rides_and_page_history() {
     let _ = fs::remove_file(&path);
     let path_string = path.to_string_lossy().into_owned();
     let handle = open_ride_database(path_string.clone()).expect("database opens");
-    let ride_id = handle
-        .create_ride(MobileRideSourceDto::Live, 100)
-        .expect("ride is created");
-    handle
-        .transition(ride_id.clone(), MobileRideEventDto::Start, 0)
-        .expect("ride starts");
-    handle
-        .append_location(
-            ride_id.clone(),
-            MobileRideLocationDto {
-                latitude_degrees: 39.7392,
-                longitude_degrees: -104.9903,
-                monotonic_milliseconds: 1,
-                wall_clock_unix_milliseconds: 102,
-                horizontal_accuracy_millimetres: Some(1_000),
-                source: MobileRideSourceDto::Live,
-            },
-        )
-        .expect("location is stored");
+    let state = MobileRideMapCore::with_database(handle.clone());
+    state.restore(100).expect("map state restores");
+    let ride_id = mobile_ride_id(
+        &state
+            .start_gps_only(100)
+            .expect("ride is created and started")
+            .ride_id,
+    );
+    state
+        .ingest_location(101, 102, 39.7392, -104.9903, 1.0)
+        .expect("location is admitted");
+    while state.has_pending_location_writes() {
+        let _ = state.poll_location_writes();
+        std::thread::yield_now();
+    }
     handle.shutdown().expect("database worker shuts down");
 
     let reopened = open_ride_database(path_string).expect("database reopens");

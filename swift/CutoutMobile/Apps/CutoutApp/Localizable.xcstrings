@@ -663,6 +663,18 @@
       "comment" : "Generic cancel action label.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Cancel" } } }
     },
+    "app.startup.loading" : {
+      "comment" : "Shown while the application opens durable state.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Loading…" } } }
+    },
+    "app.startup.unavailable" : {
+      "comment" : "Title shown when durable application startup fails.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Application unavailable" } } }
+    },
+    "app.startup.retry" : {
+      "comment" : "Retries opening durable application state after startup failure.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Retry" } } }
+    },
     "navigation.section.tune" : {
       "comment" : "Title for the EUC settings and tuning section.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Tune" } } }

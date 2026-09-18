@@ -10,7 +10,7 @@ use cutout_ride_maps::{
     RouteDisplayBudget, RouteDisplayPoint, RouteEndpointMetadata, RoutePrivacyPolicy,
     RouteProjectionAccumulator, RouteSegmentDisplayMetadata, RouteTelemetryState, RouteViewport,
     TransitionError, VehicleIdentity, WallClockUnixMilliseconds, count_segment_runs,
-    route_camera_region, route_segment_display_metadata,
+    route_camera_region, route_camera_region_with_privacy, route_segment_display_metadata,
 };
 use hex::encode as hex_encode;
 use rusqlite::{Connection, ErrorCode, OptionalExtension, params};
@@ -1079,6 +1079,18 @@ impl RideSessionMarkerKey {
     }
 }
 
+/// Stable key for the one last-connected-device row.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct LastConnectedDeviceKey(Uuid);
+
+impl LastConnectedDeviceKey {
+    pub(crate) const VALUE: Self = Self(Uuid::from_u128(3));
+
+    pub(crate) fn blob(self) -> Vec<u8> {
+        self.0.as_bytes().to_vec()
+    }
+}
+
 /// Validated `SQLite` row identifier used only to connect a spatial table to its R*Tree row.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct SpatialRowId(i64);
@@ -1478,6 +1490,7 @@ pub struct LocationWriteResult {
 pub struct RoutePointProjection {
     points: Vec<RouteDisplayPoint>,
     camera_region: Option<RouteCameraRegion>,
+    canonical_camera_region: Option<RouteCameraRegion>,
     source_point_count: u64,
     source_segment_count: u64,
     candidate_point_count: u64,
@@ -1512,6 +1525,12 @@ impl RoutePointProjection {
     #[must_use]
     pub const fn camera_region(&self) -> Option<RouteCameraRegion> {
         self.camera_region
+    }
+
+    /// Returns the camera region for all canonical route points after privacy projection.
+    #[must_use]
+    pub const fn canonical_camera_region(&self) -> Option<RouteCameraRegion> {
+        self.canonical_camera_region
     }
 
     /// Returns the complete durable point count before LOD or viewport filtering.
@@ -2062,6 +2081,34 @@ impl RideDatabase {
         })
     }
 
+    /// Atomically settles one recovered ride and optionally creates its replacement.
+    ///
+    /// The old ride and replacement share one SQLite transaction. A failed replacement therefore
+    /// rolls back finalization instead of leaving recovery with a saved ride and no new session.
+    /// Retrying after a committed transaction observes the replacement as the next recoverable
+    /// ride after the next database acquisition, so recovery cannot duplicate it.
+    pub fn settle_recovered_ride(
+        &self,
+        ride_id: RideId,
+        discard_empty: bool,
+        occurred_at_ms: u64,
+        monotonic_at_ms: u64,
+        replacement_candidate_vehicle: Option<&str>,
+    ) -> Result<Option<RideId>, StorageError> {
+        let replacement_candidate_vehicle = normalize_optional_stored_text(
+            replacement_candidate_vehicle,
+            "replacement candidate vehicle",
+        )?;
+        self.request_blocking(move |reply| Command::SettleRecoveredRide {
+            ride_id,
+            discard_empty,
+            occurred_at_ms,
+            monotonic_at_ms,
+            replacement_candidate_vehicle,
+            reply,
+        })
+    }
+
     /// Replaces the Rust-owned candidate, association, and telemetry metadata for one ride.
     ///
     /// Every argument is written as given. A `None` argument clears that stored column, so
@@ -2170,6 +2217,47 @@ impl RideDatabase {
     /// Returns [`StorageError`] when the worker cannot commit the deletion.
     pub fn clear_selected_device(&self) -> Result<(), StorageError> {
         self.request(|reply| Command::ClearSelectedDevice { reply })
+    }
+
+    /// Stores the last verified platform-local device identity independently of user selection.
+    ///
+    /// This record is Rust-owned connection history. It is deliberately not changed by clearing
+    /// the user's selected device, because a later explicit GPS-only start may still use the
+    /// last verified connection as an association candidate.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StorageError`] when the identity is empty or the worker cannot commit it.
+    pub fn remember_last_connected_device(
+        &self,
+        platform_identifier: &str,
+        updated_at_ms: u64,
+    ) -> Result<(), StorageError> {
+        let platform_identifier =
+            normalize_stored_text(platform_identifier, "platform identifier")?;
+        self.request(move |reply| Command::RememberLastConnectedDevice {
+            platform_identifier,
+            updated_at_ms,
+            reply,
+        })
+    }
+
+    /// Loads the last verified platform-local device identity.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StorageError`] when the worker cannot query the value.
+    pub fn last_connected_device(&self) -> Result<Option<String>, StorageError> {
+        self.request(|reply| Command::LastConnectedDevice { reply })
+    }
+
+    /// Clears the Rust-owned last-connected-device record.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StorageError`] when the worker cannot commit the deletion.
+    pub fn clear_last_connected_device(&self) -> Result<(), StorageError> {
+        self.request(|reply| Command::ClearLastConnectedDevice { reply })
     }
 
     /// Stores the opt-in music-history policy for one ride.
@@ -2982,7 +3070,11 @@ impl RideDatabase {
         self.request(move |reply| Command::FindRide { ride_id, reply })
     }
 
-    /// Finds the newest ride that still needs lifecycle recovery.
+    /// Finds the newest open ride that can be adopted by a map core.
+    ///
+    /// A database-open pass normally changes active and paused rides to interrupted. The active
+    /// and paused cases remain here for same-process retries after another core has already
+    /// durably restored the ride. Terminal rides are never recovery candidates.
     ///
     /// # Errors
     ///
@@ -3389,6 +3481,14 @@ enum Command {
         candidate_vehicle: Option<String>,
         reply: Reply<RideId>,
     },
+    SettleRecoveredRide {
+        ride_id: RideId,
+        discard_empty: bool,
+        occurred_at_ms: u64,
+        monotonic_at_ms: u64,
+        replacement_candidate_vehicle: Option<String>,
+        reply: Reply<Option<RideId>>,
+    },
     CreateStartedRide {
         source: RideSource,
         created_at_ms: u64,
@@ -3440,6 +3540,17 @@ enum Command {
         reply: Reply<Option<String>>,
     },
     ClearSelectedDevice {
+        reply: Reply<()>,
+    },
+    RememberLastConnectedDevice {
+        platform_identifier: String,
+        updated_at_ms: u64,
+        reply: Reply<()>,
+    },
+    LastConnectedDevice {
+        reply: Reply<Option<String>>,
+    },
+    ClearLastConnectedDevice {
         reply: Reply<()>,
     },
     RecordMusicEvent {
@@ -4024,6 +4135,79 @@ fn create_started_live_ride(
     candidate_vehicle: Option<&str>,
 ) -> Result<RideId, StorageError> {
     let transaction = connection.transaction()?;
+    let ride_id = create_started_live_ride_in_transaction(
+        &transaction,
+        created_at_ms,
+        monotonic_created_at_ms,
+        candidate_vehicle,
+    )?;
+    transaction.commit()?;
+    Ok(ride_id)
+}
+
+fn settle_recovered_ride(
+    connection: &mut Connection,
+    ride_id: RideId,
+    discard_empty: bool,
+    occurred_at_ms: u64,
+    monotonic_at_ms: u64,
+    replacement_candidate_vehicle: Option<&str>,
+) -> Result<Option<RideId>, StorageError> {
+    let transaction = connection.transaction()?;
+    if discard_empty {
+        transition_ride(
+            &transaction,
+            ride_id,
+            RideEvent::Discard,
+            occurred_at_ms,
+            Some(monotonic_at_ms),
+        )?;
+    } else {
+        let write_state = load_ride_write_state(&transaction, ride_id)?;
+        // Database-open recovery stores an explicit pause as Interrupted so the mobile core can
+        // decide whether the 24-hour policy has expired. Once it expires, settle it through the
+        // effective Paused lifecycle: Stop closes the pause timing, then Save publishes history.
+        if write_state.lifecycle() == RideLifecycleState::Interrupted
+            && write_state.paused_at_milliseconds().is_some()
+        {
+            transition_ride(
+                &transaction,
+                ride_id,
+                RideEvent::Stop,
+                occurred_at_ms,
+                Some(monotonic_at_ms),
+            )?;
+        }
+        transition_ride(
+            &transaction,
+            ride_id,
+            RideEvent::Save,
+            occurred_at_ms,
+            Some(monotonic_at_ms),
+        )?;
+    }
+    let replacement = replacement_candidate_vehicle.map(|candidate| {
+        create_started_live_ride_in_transaction(
+            &transaction,
+            occurred_at_ms,
+            monotonic_at_ms,
+            Some(candidate),
+        )
+    });
+    let replacement = match replacement {
+        Some(result) => Some(result?),
+        None => None,
+    };
+    transaction.commit()?;
+    Ok(replacement)
+}
+
+fn create_started_live_ride_in_transaction(
+    transaction: &rusqlite::Transaction<'_>,
+    created_at_ms: u64,
+    monotonic_created_at_ms: u64,
+    candidate_vehicle: Option<&str>,
+) -> Result<RideId, StorageError> {
     let ride_id = RideId::new();
     transaction.execute(
         "INSERT INTO rides
@@ -4037,7 +4221,6 @@ fn create_started_live_ride(
             candidate_vehicle,
         ],
     )?;
-    transaction.commit()?;
     Ok(ride_id)
 }
 
@@ -5195,6 +5378,44 @@ fn selected_device(connection: &Connection) -> Result<Option<String>, StorageErr
         )
         .optional()
         .map_err(StorageError::from)
+}
+
+fn remember_last_connected_device(
+    connection: &Connection,
+    platform_identifier: &str,
+    updated_at_ms: u64,
+) -> Result<(), StorageError> {
+    connection.execute(
+        "INSERT INTO last_connected_device (singleton_key, platform_identifier, updated_at_ms)
+         VALUES (?1, ?2, ?3)
+         ON CONFLICT(singleton_key) DO UPDATE SET platform_identifier = excluded.platform_identifier,
+             updated_at_ms = excluded.updated_at_ms",
+        params![
+            LastConnectedDeviceKey::VALUE.blob(),
+            platform_identifier,
+            updated_at_ms
+        ],
+    )?;
+    Ok(())
+}
+
+fn last_connected_device(connection: &Connection) -> Result<Option<String>, StorageError> {
+    connection
+        .query_row(
+            "SELECT platform_identifier FROM last_connected_device WHERE singleton_key = ?1",
+            [LastConnectedDeviceKey::VALUE.blob()],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(StorageError::from)
+}
+
+fn clear_last_connected_device(connection: &Connection) -> Result<(), StorageError> {
+    connection.execute(
+        "DELETE FROM last_connected_device WHERE singleton_key = ?1",
+        [LastConnectedDeviceKey::VALUE.blob()],
+    )?;
+    Ok(())
 }
 
 /// Durable music retention state, separate from whether any events exist.
@@ -6634,7 +6855,7 @@ fn newest_recoverable_ride(connection: &Connection) -> Result<Option<RideRecord>
                     (SELECT display_name FROM devices
                      WHERE platform_identifier = rides.associated_vehicle)
              FROM rides
-             WHERE state IN ('active', 'paused', 'stopped', 'interrupted')
+             WHERE state IN ('active', 'paused', 'interrupted')
              ORDER BY created_at_ms DESC, id DESC
              LIMIT 1",
             [],
@@ -6997,6 +7218,12 @@ fn project_route_points(
         return Ok(RoutePointProjection {
             points: Vec::new(),
             camera_region: None,
+            canonical_camera_region: canonical_route_camera_region(
+                connection,
+                &ride_id,
+                privacy,
+                cancellation,
+            )?,
             source_point_count: counts.source_point_count,
             source_segment_count: counts.source_segment_count,
             candidate_point_count: counts.candidate_point_count,
@@ -7020,6 +7247,12 @@ fn project_route_points(
     Ok(RoutePointProjection {
         points: projected.points,
         camera_region: projected.camera_region,
+        canonical_camera_region: canonical_route_camera_region(
+            connection,
+            &ride_id,
+            privacy,
+            cancellation,
+        )?,
         source_point_count: counts.source_point_count,
         source_segment_count: counts.source_segment_count,
         candidate_point_count: counts.candidate_point_count,
@@ -7029,6 +7262,37 @@ fn project_route_points(
         endpoint_metadata,
         segments: projected.segments,
     })
+}
+
+fn canonical_route_camera_region(
+    connection: &Connection,
+    ride_id: &str,
+    privacy: RoutePrivacyPolicy,
+    cancellation: Option<&RouteProjectionCancellation>,
+) -> Result<Option<RouteCameraRegion>, StorageError> {
+    projection_checkpoint(cancellation)?;
+    let mut statement = projection_sqlite(
+        connection.prepare(
+            "SELECT latitude_e7, longitude_e7
+             FROM ride_points WHERE ride_id = ?1 ORDER BY sequence ASC",
+        ),
+        cancellation,
+    )?;
+    let mut rows = projection_sqlite(statement.query([ride_id]), cancellation)?;
+    let mut coordinates = Vec::new();
+    while let Some(row) = projection_sqlite(rows.next(), cancellation)? {
+        projection_checkpoint(cancellation)?;
+        let coordinate =
+            Coordinate::from_fixed_parts(row.get(0)?, row.get(1)?).map_err(|error| {
+                rusqlite::Error::FromSqlConversionFailure(
+                    0,
+                    rusqlite::types::Type::Integer,
+                    Box::new(error),
+                )
+            })?;
+        coordinates.push(coordinate);
+    }
+    Ok(route_camera_region_with_privacy(coordinates, privacy))
 }
 
 fn project_route_candidates(

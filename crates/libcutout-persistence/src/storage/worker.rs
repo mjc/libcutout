@@ -1,16 +1,18 @@
 use super::{
     Command, SegmentStartReasonInput, SpatialSchemaState, abort_pevcap_import, append_location,
     append_location_with_result, append_pevcap_location_batch, append_trail_segment, backup,
-    begin_pevcap_import, clear_ride_session_marker, clear_selected_device, create_map_point,
-    create_ride, create_started_live_ride, create_started_ride, create_trail, delete_music_history,
-    device_name, export_ride_json, find_ride, finish_pevcap_import, integrity_check,
+    begin_pevcap_import, clear_last_connected_device, clear_ride_session_marker,
+    clear_selected_device, create_map_point, create_ride, create_started_live_ride,
+    create_started_ride, create_trail, delete_music_history, device_name, export_ride_json,
+    find_ride, finish_pevcap_import, integrity_check, last_connected_device,
     list_ride_history_vehicle_options, list_rides, load_summary, load_summary_with_duration,
     map_points_in_bounds, migrate_device_name, music_events, music_history, music_history_policy,
     music_history_state, newest_recoverable_ride, pevcap_import_receipt, project_history_context,
     project_route_points, rebuild_spatial_indexes, record_bms_voltage_samples, record_music_event,
-    remember_selected_device, remove_voltage_sag_model, ride_session_marker, route_points,
-    save_device_name, save_music_event, save_music_history_policy, save_ride_session_marker,
-    save_selected_device, save_voltage_sag_model, selected_device, sqlite_capabilities,
+    remember_last_connected_device, remember_selected_device, remove_voltage_sag_model,
+    ride_session_marker, route_points, save_device_name, save_music_event,
+    save_music_history_policy, save_ride_session_marker, save_selected_device,
+    save_voltage_sag_model, selected_device, settle_recovered_ride, sqlite_capabilities,
     trail_segments_in_bounds, transition_ride, update_ride_map_metadata, voltage_sag_model,
 };
 use rusqlite::Connection;
@@ -128,6 +130,23 @@ impl DatabaseWorker<'_> {
                     candidate_vehicle.as_deref(),
                 ));
             }
+            Command::SettleRecoveredRide {
+                ride_id,
+                discard_empty,
+                occurred_at_ms,
+                monotonic_at_ms,
+                replacement_candidate_vehicle,
+                reply,
+            } => {
+                let _ = reply.send(settle_recovered_ride(
+                    connection,
+                    ride_id,
+                    discard_empty,
+                    occurred_at_ms,
+                    monotonic_at_ms,
+                    replacement_candidate_vehicle.as_deref(),
+                ));
+            }
             Command::CreateStartedRide {
                 source,
                 created_at_ms,
@@ -226,6 +245,23 @@ impl DatabaseWorker<'_> {
             }
             Command::ClearSelectedDevice { reply } => {
                 let _ = reply.send(clear_selected_device(connection));
+            }
+            Command::RememberLastConnectedDevice {
+                platform_identifier,
+                updated_at_ms,
+                reply,
+            } => {
+                let _ = reply.send(remember_last_connected_device(
+                    connection,
+                    &platform_identifier,
+                    updated_at_ms,
+                ));
+            }
+            Command::LastConnectedDevice { reply } => {
+                let _ = reply.send(last_connected_device(connection));
+            }
+            Command::ClearLastConnectedDevice { reply } => {
+                let _ = reply.send(clear_last_connected_device(connection));
             }
             Command::RecordMusicEvent {
                 ride_id,

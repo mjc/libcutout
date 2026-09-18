@@ -18,7 +18,7 @@ protocol CutoutSessionDriving: AnyObject {
     var onPhoneLocationSnapshotChange: ((MobilePhoneLocationSnapshotDto, MonotonicMilliseconds) -> Void)? { get set }
     var onRideMapDecisionChange: ((MobileRideMapSnapshotDto, MobileRideMapDecisionDto) -> Void)? { get set }
     var onRideMapSnapshotChange: ((MobileRideMapSnapshotDto) -> Void)? { get set }
-    var onRideMapErrorChange: ((MobileRideMapError) -> Void)? { get set }
+    var onRideMapErrorChange: ((MobileRideMapErrorEvent) -> Void)? { get set }
     var onRideMapAvailabilityChange: ((MobileRideMapAvailability) -> Void)? { get set }
     var onProtocolIdentityCandidateChange: ((DevicePickerDiscoveryCandidate?) -> Void)? { get set }
     var onBluetoothRestorationResolved: ((String?) -> Void)? { get set }
@@ -45,7 +45,7 @@ protocol CutoutSessionDriving: AnyObject {
 
     func resetRideMapLocationAdmission()
     func updateRideLocationDemand(for state: MobileRideMapStateDto)
-    func startRideMapGpsOnly(atMs: UInt64, lastConnectedVehicle: String?) throws -> MobileRideMapSnapshotDto
+    func startRideMapGpsOnly(atMs: UInt64) throws -> MobileRideMapSnapshotDto
     func pauseRideMap(atMs: UInt64) throws -> MobileRideMapSnapshotDto
     func resumeRideMap(atMs: UInt64) throws -> MobileRideMapSnapshotDto
     func stopRideMap(atMs: UInt64) throws -> MobileRideMapSnapshotDto
@@ -70,7 +70,9 @@ extension CutoutSessionDriving {
     }
 
     var rideMapAvailability: MobileRideMapAvailability {
-        rideMapStorageError == nil ? .ready : .storageUnavailable
+        guard let state = rideMapStateHandle else { return .storageUnavailable }
+        if rideMapStorageError != nil { return .storageUnavailable }
+        return state.isReady ? .ready : .checking
     }
 
     private func requireRideMapState() throws -> MobileRideMapState {
@@ -82,8 +84,8 @@ extension CutoutSessionDriving {
 
     func resetRideMapLocationAdmission() {}
 
-    func startRideMapGpsOnly(atMs: UInt64, lastConnectedVehicle: String?) throws -> MobileRideMapSnapshotDto {
-        try requireRideMapState().startGpsOnly(atMs: atMs, lastConnectedVehicle: lastConnectedVehicle)
+    func startRideMapGpsOnly(atMs: UInt64) throws -> MobileRideMapSnapshotDto {
+        try requireRideMapState().startGpsOnly(atMs: atMs)
     }
 
     func pauseRideMap(atMs: UInt64) throws -> MobileRideMapSnapshotDto {

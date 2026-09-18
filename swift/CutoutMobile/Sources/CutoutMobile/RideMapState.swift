@@ -31,11 +31,40 @@ public enum MobileRideMapError: Error, Equatable, Hashable, Sendable {
     case noActiveRide
     case invalidTransition
     case invalidLocation
+    case invalidVehicleIdentity
+    case staleConnection
     case invalidRouteProjection
     case invalidMusicInput(String)
     case rideNotFound
     case cancelled
     case storageError(String)
+}
+
+/// Rust-owned ride identity captured when an asynchronous map operation starts.
+public struct MobileRideMapErrorContext: Equatable, Hashable, Sendable {
+    public let rideID: String?
+    public let generation: UInt64?
+
+    public init(recordingToken: MobileRideMapRecordingTokenDto?) {
+        rideID = recordingToken?.rideId
+        generation = recordingToken?.generation
+    }
+
+    public init(snapshot: MobileRideMapSnapshotDto?) {
+        rideID = snapshot?.recordingToken?.rideId ?? snapshot?.rideID
+        generation = snapshot?.recordingToken?.generation
+    }
+}
+
+/// An asynchronous map error paired with the Rust identity that produced it.
+public struct MobileRideMapErrorEvent: Equatable, Hashable, Sendable {
+    public let context: MobileRideMapErrorContext
+    public let error: MobileRideMapError
+
+    public init(context: MobileRideMapErrorContext, error: MobileRideMapError) {
+        self.context = context
+        self.error = error
+    }
 }
 
 
@@ -371,6 +400,7 @@ public struct MobileRideMapRouteProjection: Equatable, Hashable, Sendable {
     public let canonicalStartVisible: Bool
     public let canonicalEndVisible: Bool
     public let cameraRegion: MobileRideMapCameraRegion?
+    public let canonicalCameraRegion: MobileRideMapCameraRegion?
     /// Rust-owned distinction between an empty ride and an empty viewport.
     public let presence: MobileRideMapRoutePresence
 
@@ -388,6 +418,7 @@ public struct MobileRideMapRouteProjection: Equatable, Hashable, Sendable {
         canonicalStartVisible: Bool = false,
         canonicalEndVisible: Bool = false,
         cameraRegion: MobileRideMapCameraRegion? = nil,
+        canonicalCameraRegion: MobileRideMapCameraRegion? = nil,
         presence: MobileRideMapRoutePresence
     ) {
         self.points = points
@@ -403,6 +434,7 @@ public struct MobileRideMapRouteProjection: Equatable, Hashable, Sendable {
         self.canonicalStartVisible = canonicalStartVisible
         self.canonicalEndVisible = canonicalEndVisible
         self.cameraRegion = cameraRegion
+        self.canonicalCameraRegion = canonicalCameraRegion
         self.presence = presence
     }
 
@@ -685,8 +717,8 @@ public enum MobileRideMapDecisionReason: Equatable, Hashable, Sendable {
 
 public enum MobileRideMapDecisionDto: Equatable, Hashable, Sendable {
     /// The point passed admission but is still awaiting durable SQLite confirmation.
-    case pending(point: MobileRideMapPointDto, segmentStarted: Bool)
-    case accepted(point: MobileRideMapPointDto, segmentStarted: Bool)
+    case pending(point: MobileRideMapPointDto)
+    case accepted(point: MobileRideMapPointDto)
     case rejected(reason: MobileRideMapDecisionReason)
     case ignored(reason: MobileRideMapDecisionReason)
     /// Durable persistence could not confirm this point. The point is not part of the durable ride.
@@ -699,7 +731,10 @@ public enum MobileRideMapDecisionDto: Equatable, Hashable, Sendable {
 public final class MobileRideMapState: @unchecked Sendable {
     private let core: MobileRideMapCore?
     private let database: RideDatabaseHandle?
-    public let initializationError: MobileRideMapError?
+    public var initializationError: MobileRideMapError? {
+        if let storageUnavailableError { return storageUnavailableError }
+        return core?.initializationError().map(Self.mapCoreError)
+    }
     private let storageUnavailableError: MobileRideMapError?
 
 #if DEBUG
@@ -717,6 +752,7 @@ public final class MobileRideMapState: @unchecked Sendable {
             return
         }
         self.init(database: database)
+        _ = try? restore(atMs: Self.monotonicMillisecondsNow())
         if let core, core.currentSnapshot(atMs: Self.monotonicMillisecondsNow()) != nil {
             // Discard is only valid for a stopped ride. Finish any leftover debug
             // ride before clearing it so each convenience instance starts empty.
@@ -728,18 +764,15 @@ public final class MobileRideMapState: @unchecked Sendable {
 
     public init(database: RideDatabaseHandle) {
         let core = MobileRideMapCore.withDatabase(database: database)
-        let initializationError = core.initializationError().map(Self.mapCoreError)
-        self.core = initializationError == nil ? core : nil
+        self.core = core
         self.database = database
-        self.initializationError = initializationError
-        storageUnavailableError = initializationError
+        storageUnavailableError = nil
     }
 
     init(storageUnavailable message: String) {
         core = nil
         database = nil
         let error = MobileRideMapError.storageError(message)
-        initializationError = error
         storageUnavailableError = error
     }
 
@@ -769,6 +802,23 @@ public final class MobileRideMapState: @unchecked Sendable {
         }
     }
 
+    private func ffiRideID(_ rideID: String) throws -> MobileRideIdDto {
+        guard let uuid = UUID(uuidString: rideID) else {
+            throw MobileRideMapError.rideNotFound
+        }
+        return MobileRideIdDto(bytes: withUnsafeBytes(of: uuid) { Data($0) })
+    }
+
+    private func rideIDString(_ rideID: MobileRideIdDto) -> String {
+        guard rideID.bytes.count == 16 else { return "" }
+        return UUID(uuid: (
+            rideID.bytes[0], rideID.bytes[1], rideID.bytes[2], rideID.bytes[3],
+            rideID.bytes[4], rideID.bytes[5], rideID.bytes[6], rideID.bytes[7],
+            rideID.bytes[8], rideID.bytes[9], rideID.bytes[10], rideID.bytes[11],
+            rideID.bytes[12], rideID.bytes[13], rideID.bytes[14], rideID.bytes[15]
+        )).uuidString.lowercased()
+    }
+
     public func currentSnapshot() -> MobileRideMapSnapshotDto? {
         core?.currentSnapshot(atMs: Self.monotonicMillisecondsNow()).map(mapSnapshot)
     }
@@ -777,21 +827,36 @@ public final class MobileRideMapState: @unchecked Sendable {
         core?.currentSnapshot(atMs: atMs).map(mapSnapshot)
     }
 
-    public func startGpsOnly(atMs: UInt64, lastConnectedVehicle: String?) throws -> MobileRideMapSnapshotDto {
+    public var isReady: Bool {
+        core?.isReady() ?? false
+    }
+
+    /// Completes Rust-owned recovery without projecting the route. The caller owns the queue
+    /// used to invoke this method; subsequent route display uses the cancellable projection API.
+    @discardableResult
+    public func restore(atMs: UInt64) throws -> MobileRideMapSnapshotDto? {
         try withCore {
-            mapSnapshot(try $0.startGpsOnly(atMs: atMs, lastConnectedVehicle: lastConnectedVehicle))
+            try $0.restore(atMs: atMs).map(mapSnapshot)
         }
     }
 
-    public func ensureRecordingForVehicle(
-        platformIdentifier: String,
-        atMs: UInt64
-    ) throws -> MobileRideMapSnapshotDto {
+    public func startGpsOnly(atMs: UInt64) throws -> MobileRideMapSnapshotDto {
         try withCore {
-            mapSnapshot(try $0.ensureRecordingForVehicle(
-                platformIdentifier: platformIdentifier,
+            mapSnapshot(try $0.startGpsOnly(atMs: atMs))
+        }
+    }
+
+    public func ensureRecordingForVerifiedConnection(
+        connectionState: CutoutSessionStateHandle,
+        token: ConnectionAttemptToken,
+        atMs: UInt64
+    ) throws -> MobileRideMapSnapshotDto? {
+        try withCore {
+            try connectionState.ensureRideRecordingForVerifiedConnection(
+                rideMap: $0,
+                token: token,
                 atMs: atMs
-            ))
+            ).map(mapSnapshot)
         }
     }
 
@@ -813,12 +878,6 @@ public final class MobileRideMapState: @unchecked Sendable {
 
     public func discard() throws -> MobileRideMapSnapshotDto {
         try transition { try $0.discard() }
-    }
-
-    public func observeVehicleConnection(platformIdentifier: String, atMs: UInt64) throws -> MobileRideMapAssociationDto {
-        try withCore {
-            map(try $0.observeVehicleConnection(platformIdentifier: platformIdentifier, atMs: atMs))
-        }
     }
 
     public func observeTelemetry(atMs: UInt64) throws -> MobileRideMapTelemetryObservation {
@@ -901,35 +960,35 @@ public final class MobileRideMapState: @unchecked Sendable {
     /// Returns a bounded stored music timeline for one ride.
     public func storedMusicEvents(rideID: String) throws -> [MobileMusicRideEventDto] {
         try withCore {
-            try $0.storedMusicEvents(rideId: MobileRideIdDto(value: rideID))
+            try $0.storedMusicEvents(rideId: ffiRideID(rideID))
         }
     }
 
     /// Returns the durable state of one ride's music-history record.
     public func storedMusicHistoryState(rideID: String) throws -> MobileMusicHistoryStateDto {
         try withDatabase {
-            try $0.musicHistoryState(rideId: MobileRideIdDto(value: rideID))
+            try $0.musicHistoryState(rideId: ffiRideID(rideID))
         }
     }
 
     /// Returns the durable history state and events from one Rust worker query.
     public func storedMusicHistory(rideID: String) throws -> MobileMusicHistoryDto {
         try withDatabase {
-            try $0.musicHistory(rideId: MobileRideIdDto(value: rideID))
+            try $0.musicHistory(rideId: ffiRideID(rideID))
         }
     }
 
     /// Permanently deletes stored music metadata for one ride.
     public func deleteStoredMusicHistory(rideID: String) throws {
         try withCore {
-            try $0.deleteStoredMusicHistory(rideId: MobileRideIdDto(value: rideID))
+            try $0.deleteStoredMusicHistory(rideId: ffiRideID(rideID))
         }
     }
 
     /// Redacts stored music metadata for one ride.
     public func redactStoredMusicHistory(rideID: String) throws {
         try withCore {
-            try $0.redactStoredMusicHistory(rideId: MobileRideIdDto(value: rideID))
+            try $0.redactStoredMusicHistory(rideId: ffiRideID(rideID))
         }
     }
 
@@ -1061,12 +1120,44 @@ public final class MobileRideMapState: @unchecked Sendable {
             )
             let projectionCancellation = cancellation ?? MobileRideMapProjectionCancellation()
             let projection = try database.projectRoutePointsCancellable(
-                rideId: MobileRideIdDto(value: rideID),
+                rideId: try ffiRideID(rideID),
                 options: options,
                 cancellation: projectionCancellation.ffi
             )
             return map(projection)
         }
+    }
+
+    /// Projects the current ride through its durable route when storage is available.
+    ///
+    /// The live recorder is intentionally bounded, so using it after recovery would replace a
+    /// complete durable route with only its continuation tail. In-memory map tests still use the
+    /// recorder projection because they have no durable route to query.
+    public func projectCurrentRoutePoints(
+        budget: UInt32,
+        rideID: String? = nil,
+        viewport: MobileGeoBoundsDto? = nil,
+        privacy: MobileRideMapRoutePrivacyPolicy = .precise,
+        durableCancellation: MobileRideMapProjectionCancellation? = nil,
+        liveCancellation: MobileLiveRideMapProjectionCancellation? = nil
+    ) throws -> MobileRideMapRouteProjection {
+        if database != nil,
+           let rideID = rideID ?? core?.currentSnapshot(atMs: Self.monotonicMillisecondsNow())?.rideId
+        {
+            return try projectStoredPoints(
+                rideID: rideID,
+                budget: budget,
+                viewport: viewport,
+                privacy: privacy,
+                cancellation: durableCancellation
+            )
+        }
+        return try projectPoints(
+            budget: budget,
+            viewport: viewport,
+            privacy: privacy,
+            cancellation: liveCancellation
+        )
     }
 
     public func storedSummaries(limit: UInt32) throws -> [MobileRideMapHistorySummaryDto] {
@@ -1086,7 +1177,7 @@ public final class MobileRideMapState: @unchecked Sendable {
 
     public func storedHistoryRide(rideID: String) throws -> MobileRideMapHistorySummaryDto? {
         try withDatabase { database in
-            let ride = try database.findRide(rideId: MobileRideIdDto(value: rideID))
+            let ride = try database.findRide(rideId: try ffiRideID(rideID))
             return ride.map(mapHistorySummary)
         }
     }
@@ -1129,7 +1220,7 @@ public final class MobileRideMapState: @unchecked Sendable {
             )
             let options = MobileRideHistoryContextOptionsDto(
                 filter: filter,
-                selectedRideId: selectedRideID.map(MobileRideIdDto.init(value:)),
+                selectedRideId: try selectedRideID.map(ffiRideID),
                 budget: ffiBudget,
                 viewport: viewport,
                 privacy: Self.ffiPrivacyPolicy(privacy)
@@ -1149,7 +1240,7 @@ public final class MobileRideMapState: @unchecked Sendable {
 
     private func mapHistorySummary(_ ride: MobileRideRecordDto) -> MobileRideMapHistorySummaryDto {
         MobileRideMapHistorySummaryDto(
-            rideID: ride.id.value,
+            rideID: rideIDString(ride.id),
             state: mapState(ride.state),
             summary: MobileRideMapSummaryDto(
                 pointCount: ride.summary.pointCount,
@@ -1170,7 +1261,7 @@ public final class MobileRideMapState: @unchecked Sendable {
     public func storedPointsAfter(rideId: String, afterCursor: UInt64?, limit: UInt32) throws -> MobileRideMapPointBatchDto {
         try withDatabase { database in
             let page = try database.routePoints(
-                rideId: MobileRideIdDto(value: rideId),
+                rideId: try ffiRideID(rideId),
                 cursor: afterCursor.map(MobileRoutePointCursorDto.init(sequence:)),
                 limit: limit
             )
@@ -1252,6 +1343,14 @@ public final class MobileRideMapState: @unchecked Sendable {
                     longitudeSpanDegrees: $0.longitudeSpanDegrees
                 )
             },
+            canonicalCameraRegion: projection.canonicalCameraRegion.map {
+                MobileRideMapCameraRegion(
+                    centerLatitudeDegrees: $0.centerLatitudeDegrees,
+                    centerLongitudeDegrees: $0.centerLongitudeDegrees,
+                    latitudeSpanDegrees: $0.latitudeSpanDegrees,
+                    longitudeSpanDegrees: $0.longitudeSpanDegrees
+                )
+            },
             presence: map(projection.routePresence)
         )
     }
@@ -1283,7 +1382,7 @@ public final class MobileRideMapState: @unchecked Sendable {
         MobileRideMapHistoryContextProjection(
             routes: projection.routes.map {
                 MobileRideMapHistoryContextRoute(
-                    rideID: $0.rideId.value,
+                    rideID: rideIDString($0.rideId),
                     projection: map($0.projection)
                 )
             },
@@ -1315,10 +1414,10 @@ public final class MobileRideMapState: @unchecked Sendable {
 
     private func map(_ decision: MobileRideMapCoreDecisionDto) -> MobileRideMapDecisionDto {
         switch decision {
-        case let .pending(point, segmentStarted):
-            return .pending(point: mapPoint(point), segmentStarted: segmentStarted)
-        case let .accepted(point, segmentStarted):
-            return .accepted(point: mapPoint(point), segmentStarted: segmentStarted)
+        case let .pending(point):
+            return .pending(point: mapPoint(point))
+        case let .accepted(point):
+            return .accepted(point: mapPoint(point))
         case let .rejected(reason):
             return .rejected(reason: map(reason))
         case let .ignored(reason):
@@ -1451,6 +1550,8 @@ public final class MobileRideMapState: @unchecked Sendable {
         case .NoActiveRide: return .noActiveRide
         case .InvalidTransition: return .invalidTransition
         case .InvalidLocation: return .invalidLocation
+        case .InvalidVehicleIdentity: return .invalidVehicleIdentity
+        case .StaleConnection: return .staleConnection
         case .InvalidRouteProjection: return .invalidRouteProjection
         case .Cancelled: return .cancelled
         case let .InvalidMusicInput(message): return .invalidMusicInput(message)

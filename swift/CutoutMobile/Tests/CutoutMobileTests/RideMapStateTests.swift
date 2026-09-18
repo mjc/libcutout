@@ -1,12 +1,18 @@
 import XCTest
+import Foundation
 import CutoutMobileFFI
 @testable import CutoutMobile
+
+private let vescReply: [UInt8] = [
+    2, 20, 157, 7, 1, 2, 97, 98, 99, 49, 50, 51, 0, 117, 115, 101, 114, 104, 97, 115, 104,
+    0, 38, 208, 3,
+]
 
 final class RideMapStateTests: XCTestCase {
     func testActiveSnapshotCarriesAsyncLocationRecordingToken() throws {
         let state = MobileRideMapState()
 
-        let started = try state.startGpsOnly(atMs: 1_000, lastConnectedVehicle: nil)
+        let started = try state.startGpsOnly(atMs: 1_000)
         XCTAssertEqual(started.recordingToken?.rideId, started.rideID)
         XCTAssertNotNil(started.recordingToken)
 
@@ -17,7 +23,7 @@ final class RideMapStateTests: XCTestCase {
     func testMusicHistoryProjectsRustRetentionAndObservationTime() throws {
         let state = MobileRideMapState()
         XCTAssertNil(state.currentMusicHistory())
-        _ = try state.startGpsOnly(atMs: 1_000, lastConnectedVehicle: nil)
+        _ = try state.startGpsOnly(atMs: 1_000)
         XCTAssertEqual(state.currentMusicHistory()?.status, .missing)
         try state.setMusicHistoryPolicy(.humanReadable)
         let snapshot = MobileMusicSnapshotDto(
@@ -48,19 +54,19 @@ final class RideMapStateTests: XCTestCase {
         let state = MobileRideMapState()
 
         XCTAssertEqual(state.currentMusicHistoryPolicy(), .disabled)
-        _ = try state.startGpsOnly(atMs: 1_000, lastConnectedVehicle: nil)
+        _ = try state.startGpsOnly(atMs: 1_000)
         try state.setMusicHistoryPolicy(.humanReadable)
         XCTAssertEqual(state.currentMusicHistoryPolicy(), .humanReadable)
 
         _ = try state.stop(atMs: 2_000)
         _ = try state.save()
-        _ = try state.startGpsOnly(atMs: 3_000, lastConnectedVehicle: nil)
+        _ = try state.startGpsOnly(atMs: 3_000)
         XCTAssertEqual(state.currentMusicHistoryPolicy(), .disabled)
     }
 
     func testDeletingStoredMusicHistoryPreservesRide() throws {
         let state = MobileRideMapState()
-        _ = try state.startGpsOnly(atMs: 1_000, lastConnectedVehicle: nil)
+        _ = try state.startGpsOnly(atMs: 1_000)
         try state.setMusicHistoryPolicy(.humanReadable)
         let snapshot = MobileMusicSnapshotDto(
             provider: .appleMusic,
@@ -185,7 +191,7 @@ final class RideMapStateTests: XCTestCase {
     func testHistoryContextProjectionExcludesSelectedRideAndUsesRustBudget() async throws {
         let state = MobileRideMapState()
         let fixtureStartMs: UInt64 = 4_000_000_000_000
-        _ = try state.startGpsOnly(atMs: fixtureStartMs, lastConnectedVehicle: nil)
+        _ = try state.startGpsOnly(atMs: fixtureStartMs)
         _ = await settle(state, try state.ingestLocation(
             monotonicMs: fixtureStartMs + 1,
             wallClockUnixMs: 1_700_000_000_101,
@@ -196,7 +202,7 @@ final class RideMapStateTests: XCTestCase {
         _ = try state.stop(atMs: fixtureStartMs + 100)
         _ = try state.save()
 
-        _ = try state.startGpsOnly(atMs: fixtureStartMs + 200, lastConnectedVehicle: nil)
+        _ = try state.startGpsOnly(atMs: fixtureStartMs + 200)
         _ = await settle(state, try state.ingestLocation(
             monotonicMs: fixtureStartMs + 201,
             wallClockUnixMs: 1_700_000_000_301,
@@ -230,24 +236,26 @@ final class RideMapStateTests: XCTestCase {
 
     func testHistoricalVehicleDisplayNameAndFilterOptionsComeFromRustDeviceTable() throws {
         let database = try XCTUnwrap(MobileRideMapState.debugDatabase)
+        // The convenience state finishes and discards any active debug ride left by an earlier
+        // test before this test creates its durable history fixture.
+        let state = MobileRideMapState()
         let platformIdentifier = "corebluetooth-history-\(UUID().uuidString)"
 
-        let rideID = try database.createRide(source: .live, createdAtMilliseconds: 1_000)
-        _ = try database.transition(id: rideID, event: .start, monotonicAtMilliseconds: 1_000)
+        let rideID = try state.startGpsOnly(atMs: 1_000).rideID
+        try database.updateRideMapMetadata(
+            id: MobileRideIdDto(bytes: withUnsafeBytes(of: UUID(uuidString: rideID)!) { Data($0) }),
+            candidateVehicle: nil,
+            associatedVehicle: platformIdentifier,
+            associatedAtMilliseconds: 1_001,
+            lastTelemetryAtMilliseconds: nil
+        )
         try database.saveDeviceName(
             platformIdentifier: platformIdentifier,
             displayName: "NF2557",
             updatedAtMilliseconds: 1_001
         )
-        try database.updateRideMapMetadata(
-            id: rideID,
-            candidateVehicle: nil,
-            associatedVehicle: platformIdentifier,
-            associatedAtMilliseconds: nil,
-            lastTelemetryAtMilliseconds: nil
-        )
-        _ = try database.transition(id: rideID, event: .stop, monotonicAtMilliseconds: 2_000)
-        _ = try database.transition(id: rideID, event: .save, monotonicAtMilliseconds: 2_000)
+        _ = try state.stop(atMs: 2_000)
+        _ = try state.save()
 
         let page = try database.listRidesFiltered(
             cursor: nil,
@@ -258,6 +266,7 @@ final class RideMapStateTests: XCTestCase {
             ),
             limit: 50
         )
+        XCTAssertEqual(page.rides.first?.associatedVehicle, platformIdentifier)
         XCTAssertEqual(page.rides.first?.associatedVehicleName, "NF2557")
         let options = try database.listRideHistoryVehicleOptions()
         XCTAssertTrue(options.contains(
@@ -299,7 +308,7 @@ final class RideMapStateTests: XCTestCase {
         XCTAssertNil(state.currentSnapshot())
         XCTAssertEqual(state.pollLocationWrites(), [.storageError(message: "database unavailable")])
         XCTAssertThrowsError(
-            try state.startGpsOnly(atMs: 100, lastConnectedVehicle: nil)
+            try state.startGpsOnly(atMs: 100)
         ) { error in
             XCTAssertEqual(error as? MobileRideMapError, .storageError("database unavailable"))
         }
@@ -354,7 +363,7 @@ final class RideMapStateTests: XCTestCase {
             XCTAssertEqual(error as? MobileRideMapError, .noActiveRide)
         }
 
-        _ = try state.startGpsOnly(atMs: 100, lastConnectedVehicle: nil)
+        _ = try state.startGpsOnly(atMs: 100)
         _ = try state.ingestLocation(
             monotonicMs: 100,
             wallClockUnixMs: 1_700_000_000_100,
@@ -397,7 +406,19 @@ final class RideMapStateTests: XCTestCase {
     func testMapStateKeepsLifecycleAndRouteProjectionTyped() async throws {
         let state = MobileRideMapState()
 
-        _ = try state.startGpsOnly(atMs: 100, lastConnectedVehicle: "pev-1")
+        let connectionState = CutoutSessionStateHandle()
+        let token = try XCTUnwrap(
+            connectionState.beginConnectionAttempt(platformIdentifier: "pev-1", nowMs: 150).token
+        )
+        _ = connectionState.connectionLinkEstablished(token: token)
+        _ = connectionState.observeConnectionNotification(token: token, bytes: Data(vescReply))
+        _ = connectionState.resolveDeviceSession(token: token, identificationComplete: true, nowMs: 200)
+        XCTAssertNil(try state.ensureRecordingForVerifiedConnection(
+            connectionState: connectionState,
+            token: token,
+            atMs: 200
+        ))
+        _ = try state.startGpsOnly(atMs: 100)
         XCTAssertEqual(
             state.currentSnapshot(atMs: 1_100)?.summary.durationMilliseconds,
             1_000
@@ -409,9 +430,13 @@ final class RideMapStateTests: XCTestCase {
             longitudeDegrees: -104.9903,
             horizontalAccuracyMeters: 4
         ))
-        XCTAssertEqual(try state.observeVehicleConnection(platformIdentifier: "pev-1", atMs: 200), .associated)
+        _ = try state.ensureRecordingForVerifiedConnection(
+            connectionState: connectionState,
+            token: token,
+            atMs: 200
+        )
 
-        guard case let .accepted(point, _) = decision else {
+        guard case let .accepted(point) = decision else {
             return XCTFail("expected the location to be admitted")
         }
         let secondDecision = await settle(state, try state.ingestLocation(
@@ -434,8 +459,7 @@ final class RideMapStateTests: XCTestCase {
                     monotonicMs: 2_000,
                     horizontalAccuracyMeters: 4,
                     telemetryState: .associatedNoTelemetry
-                ),
-                segmentStarted: false
+                )
             )
         )
         let stopped = try state.stop(atMs: 2_000)
@@ -463,7 +487,7 @@ final class RideMapStateTests: XCTestCase {
 
     func testMapStateProjectsBoundedLiveRouteAndRejectsInvalidBudget() async throws {
         let state = MobileRideMapState()
-        _ = try state.startGpsOnly(atMs: 1_000, lastConnectedVehicle: nil)
+        _ = try state.startGpsOnly(atMs: 1_000)
         for (monotonicMs, latitudeDegrees) in [
             (1_001, 40.0),
             (2_001, 40.0001),
@@ -508,7 +532,7 @@ final class RideMapStateTests: XCTestCase {
 
     func testMapStateProjectsCanonicalBackgroundGapCount() async throws {
         let state = MobileRideMapState()
-        _ = try state.startGpsOnly(atMs: 1_000, lastConnectedVehicle: nil)
+        _ = try state.startGpsOnly(atMs: 1_000)
 
         for (monotonicMs, latitudeDegrees) in [
             (1_001, 40.0),
@@ -531,7 +555,7 @@ final class RideMapStateTests: XCTestCase {
 
     func testLiveProjectionCancellationIsTypedAndLeavesCompatibilityPathUsable() async throws {
         let state = MobileRideMapState()
-        _ = try state.startGpsOnly(atMs: 1_000, lastConnectedVehicle: nil)
+        _ = try state.startGpsOnly(atMs: 1_000)
         _ = await settle(state, try state.ingestLocation(
             monotonicMs: 1_001,
             wallClockUnixMs: 1_700_000_001_001,
@@ -553,7 +577,7 @@ final class RideMapStateTests: XCTestCase {
 
     func testStoredProjectionHonorsRustCancellationToken() async throws {
         let state = MobileRideMapState()
-        _ = try state.startGpsOnly(atMs: 1_000, lastConnectedVehicle: nil)
+        _ = try state.startGpsOnly(atMs: 1_000)
         _ = await settle(state, try state.ingestLocation(
             monotonicMs: 1_001,
             wallClockUnixMs: 1_700_000_001_001,
@@ -582,7 +606,7 @@ final class RideMapStateTests: XCTestCase {
 
     func testStoredProjectionUsesRustBoundedRouteContract() async throws {
         let state = MobileRideMapState()
-        _ = try state.startGpsOnly(atMs: 1_000, lastConnectedVehicle: nil)
+        _ = try state.startGpsOnly(atMs: 1_000)
 
         for (offset, latitudeDegrees) in [
             (1_001, 40.0),
@@ -613,9 +637,37 @@ final class RideMapStateTests: XCTestCase {
         XCTAssertTrue(projection.pointsOmittedByBudget)
     }
 
+    func testCurrentRouteProjectionRetainsTheDurableRouteAfterLiveUpdates() async throws {
+        let state = MobileRideMapState()
+        _ = try state.startGpsOnly(atMs: 1_000)
+
+        for (offset, latitudeDegrees) in [
+            (1_001, 40.0),
+            (2_001, 40.0001),
+            (3_001, 40.0002),
+            (4_001, 40.0003),
+        ] {
+            _ = await settle(state, try state.ingestLocation(
+                monotonicMs: UInt64(offset),
+                wallClockUnixMs: 1_700_000_000_000 + UInt64(offset),
+                latitudeDegrees: latitudeDegrees,
+                longitudeDegrees: -105.0,
+                horizontalAccuracyMeters: 3
+            ))
+        }
+
+        let projection = try state.projectCurrentRoutePoints(budget: 2)
+
+        XCTAssertEqual(projection.sourcePointCount, 4)
+        XCTAssertEqual(projection.canonicalStartSequence, 0)
+        XCTAssertEqual(projection.canonicalEndSequence, 3)
+        XCTAssertEqual(projection.points.first?.sequence, 0)
+        XCTAssertEqual(projection.points.last?.sequence, 3)
+    }
+
     func testMapStatePointsAfterReturnsTheCompleteRustPagedSequence() async throws {
         let state = MobileRideMapState()
-        _ = try state.startGpsOnly(atMs: 1_000, lastConnectedVehicle: nil)
+        _ = try state.startGpsOnly(atMs: 1_000)
         for offset in 0 ..< 4_097 {
             let monotonicMs = UInt64(1_001 + offset)
             _ = await settle(state, try state.ingestLocation(
