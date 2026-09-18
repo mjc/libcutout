@@ -31,7 +31,7 @@ and Aero the model used by the NF2557 fixture.
 | Low-battery mode (P) | Implemented as a typed toggle | Page-8 byte 60 readback decoded; new writes still need device proof |
 | Transportation mode (W/TRM) | Implemented as a typed toggle | Page-8 byte 57 readback decoded; new writes still need device proof |
 | ANG TLT gyro calibration | Implemented as a stationary source-backed toggle; page-8 byte 56 reports idle/waiting/complete | Official NOSFET app frame and state mapping are decoded; the simulator and Tune surface now stop a completed calibration with the same command; physical calibration effect still needs device proof |
-| Display backlight (J) | Implemented as a typed 0–100% control | Page-8 byte 55 reaches mobile state; new writes still need device proof |
+| Display backlight (J) | Implemented as a typed 0–100% control | Page-8 byte 55 reaches mobile state; a live mirrored NF2557 test requesting 1% left the wheel at 0% and the app reported `Not confirmed`; the target was restored to 0% |
 | Beeper volume (F) | Implemented as a typed 0–100% control | Page-8 byte 63 reaches mobile state; new writes still need device proof |
 | Dynamic assist (L) | Implemented as a typed 0–100% control | Page-8 byte 66 reaches mobile state; new writes still need device proof |
 | Pedal-dip compensation (Q) | Implemented as a typed 0–100% control | Page-8 byte 68 reaches mobile state; new writes still need device proof |
@@ -46,9 +46,10 @@ and alarms, five ride-feel controls, and four wheel modes. Source/hardware
 evidence remains distinct from ordinary command availability;
 the production descriptor does not claim a physical test. Rust owns the model,
 value-bound, fresh-speed, command sequencing, and lifecycle policy. Enforcement
-is incomplete across lower-level encoding and delayed native transport: accepted
-plans can precede host submission, queued writes can lose operation identity,
-and speed encoding can truncate inexact values. Swift submits typed values and
+is incomplete across lower-level binding and delayed native transport: accepted
+plans can precede host submission and queued writes can lose operation identity.
+The low-level NOSFET/Falcon encoders now reject inexact speed values instead of
+truncating them. Swift submits typed values and
 renders state; it must not supply a second policy. Simulator state is synthetic
 evidence and must not become a live readback claim.
 
@@ -60,7 +61,8 @@ restoration. Preserve positive reports without using them to close other paths:
 
 | Controls | Reported result | Remaining acceptance |
 | --- | --- | --- |
-| Display brightness, beeper volume, tilt-back speed, PWM tilt-back, pedal hardness, dynamic assist, pedal dip, voltage correction | User reported working | Individually record exact targets, units, effect, available readback and restoration under the repaired lifecycle |
+| Beeper volume, tilt-back speed, PWM tilt-back, pedal hardness, dynamic assist, pedal dip, voltage correction | User reported working | Individually record exact targets, units, effect, available readback and restoration under the repaired lifecycle |
+| Display brightness | User previously reported working; a live mirrored NF2557 test requested 1%, displayed `Wheel 0%`, and ended `Not confirmed`; the requested target was restored to 0% | Determine whether the request was submitted, why no matching readback arrived, and why the operation did not produce a clean terminal result |
 | Headlight, horn, reset trip, pedal angle | User reported no effect | Establish correct applicability/encoding and required physical effect; transport submission alone is insufficient |
 | Lateral tilt and speed alarm | Repeated unconfirmed/timeout results; speed alarm also had a reported crash | Resolve encoding, display-unit conversion, observation acquisition and terminal outcomes; reproduce the crash path offline |
 | Brake alarm | Initially reported working without updating the wheel percentage; later 120 reported sent without confirmation | Establish desired effect and fresh reported percentage separately |
