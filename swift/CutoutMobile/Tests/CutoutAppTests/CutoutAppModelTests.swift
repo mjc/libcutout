@@ -176,6 +176,20 @@ final class CutoutAppModelTests: XCTestCase {
     }
 
     @MainActor
+    func testMusicMonitoringWaitsForActiveSceneAfterStartup() {
+        let model = CutoutAppModel(core: SessionDriverSpy(rows: []))
+
+        model.start(sceneIsActive: false)
+
+        XCTAssertNil(model.musicNowPlaying)
+
+        model.appDidBecomeActive()
+
+        XCTAssertEqual(model.musicNowPlaying?.provider, .appleMusic)
+        XCTAssertEqual(model.musicNowPlaying?.state, .unavailable)
+    }
+
+    @MainActor
     func testValidObservationClearsRecoveredValidationErrorWithoutATransition() {
         let model = CutoutAppModel(core: SessionDriverSpy(rows: []))
         let capabilities = MobileMusicCapabilitiesDto(
@@ -1057,6 +1071,15 @@ final class CutoutAppModelTests: XCTestCase {
                 currentGeneration: 3,
                 enabled: true,
                 rideID: "ride-a",
+                currentRideID: "ride-b"
+            )
+        )
+        XCTAssertTrue(
+            CutoutAppModel.shouldApplyLiveProjection(
+                generation: 4,
+                currentGeneration: 4,
+                enabled: true,
+                rideID: "ride-b",
                 currentRideID: "ride-b"
             )
         )

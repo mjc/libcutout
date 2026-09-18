@@ -115,7 +115,7 @@ struct CutoutApp: App {
             let lighting = LightingRouteModel()
             self.lighting = lighting
             model = opened
-            opened.start()
+            opened.start(sceneIsActive: scenePhase == .active)
             lighting.startIfRemembered()
             if let pendingMusicURL {
                 _ = opened.handleMusicURL(pendingMusicURL)

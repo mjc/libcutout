@@ -1133,7 +1133,7 @@ final class CutoutAppModel {
         }
     }
 
-    func start() {
+    func start(sceneIsActive: Bool = true) {
         guard hasStarted == false else { return }
         hasStarted = true
         permitsStoredDeviceAutoPairing = false
@@ -1142,6 +1142,13 @@ final class CutoutAppModel {
         core.start()
         guard musicMonitoringPreferenceStore.isEnabled else { return }
         musicProviderLifecycle.requestMonitor(request: .observe)
+        guard sceneIsActive else {
+            // Preserve the requested monitoring intent, but establish the current scene state
+            // before any provider work starts. A startup that completes in the background must
+            // wait for the next active transition instead of briefly starting and then stopping.
+            _ = musicProviderLifecycle.suspend()
+            return
+        }
         beginMusicMonitoring()
     }
 
@@ -2174,7 +2181,6 @@ final class CutoutAppModel {
         guard rideMapLiveProjectionTask == nil else { return }
 
         guard let state = core.rideMapStateHandle else { return }
-        guard let rideID = rideMapSnapshot?.rideID, rideID.isEmpty == false else { return }
         let budget = Self.rideMapLimits.liveTailPointLimit
         rideMapLiveProjectionTask = Task { [weak self] in
             defer {
@@ -2184,6 +2190,12 @@ final class CutoutAppModel {
             }
             while let self {
                 guard self.rideMapLiveProjectionEnabled else { break }
+                // Capture the identity for this individual query. A replacement can arrive
+                // while the previous query is unwinding; the surviving task must then retry
+                // the replacement ride instead of comparing every result with the old ride.
+                guard let rideID = self.rideMapSnapshot?.rideID, rideID.isEmpty == false else {
+                    break
+                }
                 let generation = self.rideMapLiveProjectionGeneration
                 let liveCancellation = MobileLiveRideMapProjectionCancellation()
                 let durableCancellation = MobileRideMapProjectionCancellation()
