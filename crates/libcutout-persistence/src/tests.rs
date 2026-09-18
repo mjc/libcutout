@@ -158,7 +158,7 @@ fn pre_music_v16_migration_preserves_existing_capture_tables() {
         connection
             .query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0))
             .unwrap(),
-        22
+        23
     );
     for table in ["pevcap_captures", "pevcap_capture_chunks"] {
         assert!(
@@ -1613,6 +1613,9 @@ fn database_persists_migrated_mobile_state() {
     ));
     let database = RideDatabase::open(&path).unwrap();
     database
+        .remember_last_connected_device("  ios-local-aero  ", 41)
+        .unwrap();
+    database
         .save_selected_device("  ios-local-aero  ", 42)
         .unwrap();
     assert_eq!(
@@ -1641,6 +1644,10 @@ fn database_persists_migrated_mobile_state() {
 
     let reopened = RideDatabase::open(&path).unwrap();
     assert_eq!(
+        reopened.last_connected_device().unwrap().as_deref(),
+        Some("ios-local-aero")
+    );
+    assert_eq!(
         reopened.selected_device().unwrap().as_deref(),
         Some("ios-local-aero")
     );
@@ -1651,9 +1658,11 @@ fn database_persists_migrated_mobile_state() {
     assert_eq!(reopened.voltage_sag_model("device-1").unwrap(), Some(model));
     assert_eq!(reopened.ride_session_marker().unwrap(), Some(vec![1, 2, 3]));
     reopened.clear_selected_device().unwrap();
+    reopened.clear_last_connected_device().unwrap();
     reopened.remove_voltage_sag_model("device-1").unwrap();
     reopened.clear_ride_session_marker().unwrap();
     assert_eq!(reopened.selected_device().unwrap(), None);
+    assert_eq!(reopened.last_connected_device().unwrap(), None);
     assert_eq!(reopened.voltage_sag_model("device-1").unwrap(), None);
     assert_eq!(reopened.ride_session_marker().unwrap(), None);
     reopened.shutdown().unwrap();
@@ -2871,7 +2880,7 @@ fn legacy_schema_versions_migrate_to_the_current_schema() {
         let current_version: i64 = connection
             .pragma_query_value(None, "user_version", |row| row.get(0))
             .unwrap();
-        assert_eq!(current_version, 22);
+        assert_eq!(current_version, 23);
         let music_tables: i64 = connection
             .query_row(
                 "SELECT COUNT(*) FROM sqlite_schema
@@ -3082,7 +3091,7 @@ fn version_20_database_adds_device_scoped_bms_history_without_resetting_existing
     let version: i64 = connection
         .pragma_query_value(None, "user_version", |row| row.get(0))
         .unwrap();
-    assert_eq!(version, 22);
+    assert_eq!(version, 23);
     let table: String = connection
         .query_row(
             "SELECT name FROM sqlite_schema WHERE type = 'table' AND name = 'bms_voltage_samples'",
@@ -3494,7 +3503,7 @@ fn schema_v13_spatial_rows_migrate_without_integer_domain_ids() {
     let version: i64 = connection
         .pragma_query_value(None, "user_version", |row| row.get(0))
         .unwrap();
-    assert_eq!(version, 22);
+    assert_eq!(version, 23);
     let rtree_id: i64 = connection
         .query_row(
             "SELECT rtree_id FROM trail_segment_spatial_keys",
@@ -3560,7 +3569,7 @@ fn schema_v12_singleton_rows_migrate_to_uuid_keys_without_data_loss() {
     let version: i64 = connection
         .pragma_query_value(None, "user_version", |row| row.get(0))
         .unwrap();
-    assert_eq!(version, 22);
+    assert_eq!(version, 23);
     let selected_key_length: u64 = connection
         .query_row(
             "SELECT length(singleton_key) FROM selected_device",
@@ -4078,7 +4087,7 @@ fn version_eight_migration_adds_monotonic_ride_start_column() {
             |row| row.get(0),
         )
         .unwrap();
-    assert_eq!(version, 22);
+    assert_eq!(version, 23);
     assert!(has_monotonic_start);
 
     let _ = std::fs::remove_file(path);
@@ -4276,6 +4285,52 @@ fn route_projection_is_bounded_viewport_aware_and_cancellable() {
         ),
         Err(StorageError::Cancelled)
     ));
+
+    database.shutdown().unwrap();
+    let _ = std::fs::remove_file(path);
+}
+
+#[test]
+fn route_projection_camera_bounds_include_points_omitted_by_display_lod() {
+    let _guard = test_guard();
+    let path = std::env::temp_dir().join(format!(
+        "libcutout-persistence-route-camera-bounds-{}.sqlite",
+        uuid::Uuid::new_v4()
+    ));
+    let database = RideDatabase::open(&path).unwrap();
+    let ride = database.create_ride(RideSource::Live, 10).unwrap();
+    database.transition(ride, RideEvent::Start).unwrap();
+
+    for (sequence, latitude) in [(0_u64, 40.0), (1, 40.01), (2, 40.0)] {
+        let sample = LocationSample::new(
+            Coordinate::from_degrees(latitude, -105.0).unwrap(),
+            1_000 + sequence * 60_000,
+            1_700_000_000_000 + sequence * 60_000,
+            None,
+            LocationSource::Live,
+        );
+        assert_eq!(
+            database.append_location(ride, sample).unwrap(),
+            LocationAdmission::Accepted
+        );
+    }
+
+    let projection = database
+        .project_route_points(
+            ride,
+            None,
+            RouteDisplayBudget::new(2).unwrap(),
+            RoutePrivacyPolicy::Precise,
+        )
+        .unwrap();
+    assert_eq!(projection.points().len(), 2);
+    let display_region = projection.camera_region().unwrap();
+    let canonical_region = projection.canonical_camera_region().unwrap();
+    assert!(
+        canonical_region.latitude_span_degrees() > display_region.latitude_span_degrees(),
+        "canonical bounds must include extrema omitted by display LOD: canonical={canonical_region:?}, display={display_region:?}"
+    );
+    assert!((canonical_region.center_latitude_degrees() - 40.005).abs() < 0.000_001);
 
     database.shutdown().unwrap();
     let _ = std::fs::remove_file(path);

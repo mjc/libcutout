@@ -48,6 +48,7 @@ struct RideMapCanvasView: View {
         let pointCount: Int
         let segmentMetadata: [SegmentMetadata]
         let contextRouteMetadata: [ContextRouteMetadata]
+        let cameraFitID: String?
     }
 
     let points: [MobileRideMapRouteDisplayPoint]
@@ -63,6 +64,7 @@ struct RideMapCanvasView: View {
     /// camera or participate in the selected route's endpoint annotations.
     let contextRoutes: [MobileRideMapHistoryContextRoute]
     let fitsRouteOnChange: Bool
+    var cameraFitID: String? = nil
     @Binding var mapPosition: MapCameraPosition
     @Binding var isApplyingCamera: Bool
     let cameraDidChange: (MKCoordinateRegion) -> Void
@@ -137,7 +139,8 @@ struct RideMapCanvasView: View {
         projectionVersion: UInt64,
         points: [MobileRideMapRouteDisplayPoint],
         segments: [MobileRideMapSegmentDisplayMetadata] = [],
-        contextRoutes: [MobileRideMapHistoryContextRoute] = []
+        contextRoutes: [MobileRideMapHistoryContextRoute] = [],
+        cameraFitID: String? = nil
     ) -> PathKey {
         return PathKey(
             routeID: routeID,
@@ -160,8 +163,13 @@ struct RideMapCanvasView: View {
                     firstSequence: $0.projection.points.first?.sequence,
                     lastSequence: $0.projection.points.last?.sequence
                 )
-            }
+            },
+            cameraFitID: cameraFitID
         )
+    }
+
+    static func cameraFitID(routeID: String, fitVersion: UInt64) -> String {
+        "\(routeID):fit-\(fitVersion)"
     }
 
     static func mapRegion(
@@ -345,9 +353,10 @@ struct RideMapCanvasView: View {
             let key = pathKey
             updatePaths(for: key)
             rebuildContextPaths()
-            if fitsRouteOnChange, fittedRouteID != key.routeID, points.isEmpty == false {
-                fitMap(to: cameraRegion)
-                fittedRouteID = key.routeID
+            let cameraFitID = key.cameraFitID ?? key.routeID
+            if fitsRouteOnChange, fittedRouteID != cameraFitID, points.isEmpty == false,
+               fitMap(to: cameraRegion) {
+                fittedRouteID = cameraFitID
             }
         }
         .accessibilityLabel(localizedAppText("ride_map.map_alternative"))
@@ -360,7 +369,8 @@ struct RideMapCanvasView: View {
             projectionVersion: projectionVersion,
             points: points,
             segments: segments,
-            contextRoutes: contextRoutes
+            contextRoutes: contextRoutes,
+            cameraFitID: cameraFitID
         )
     }
 
@@ -504,10 +514,12 @@ struct RideMapCanvasView: View {
         CLLocationCoordinate2D(latitude: point.latitudeDegrees, longitude: point.longitudeDegrees)
     }
 
-    private func fitMap(to cameraRegion: MobileRideMapCameraRegion?) {
-        guard let cameraRegion, let region = Self.mapRegion(for: cameraRegion) else { return }
+    @discardableResult
+    private func fitMap(to cameraRegion: MobileRideMapCameraRegion?) -> Bool {
+        guard let cameraRegion, let region = Self.mapRegion(for: cameraRegion) else { return false }
         isApplyingCamera = true
         mapPosition = .region(region)
+        return true
     }
 
 }

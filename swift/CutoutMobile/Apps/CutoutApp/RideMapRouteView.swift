@@ -26,6 +26,11 @@ struct RideMapRouteView: View {
     private let showBackButton: Bool
     private let back: (() -> Void)?
     @Environment(\.dismiss) private var dismiss
+
+    static func liveRouteID(for snapshot: MobileRideMapSnapshotDto?) -> String {
+        snapshot?.rideID ?? "live"
+    }
+
     init(
         model: CutoutAppModel,
         presentation: RideMapPresentationState,
@@ -97,7 +102,7 @@ struct RideMapRouteView: View {
     private var liveContent: some View {
         RideMapLiveContentView(
             displayPoints: model.rideMapLiveDisplayPoints,
-            routeID: "live",
+            routeID: Self.liveRouteID(for: model.rideMapSnapshot),
             projectionVersion: model.rideMapLiveProjectionVersion,
             endpointMetadata: model.rideMapLiveEndpointMetadata,
             cameraRegion: model.rideMapLiveCameraRegion,
@@ -136,6 +141,7 @@ struct RideMapRouteView: View {
             endpointMetadata: model.rideMapHistoryEndpointMetadata,
             segments: model.rideMapHistorySegments,
             contextRoutes: model.rideMapHistoryContextRoutes,
+            cameraFitVersion: model.rideMapHistoryCameraFitVersion,
             projectionVersion: model.rideMapHistoryProjectionVersion,
             pointsTruncated: model.rideMapHistoryPointsTruncated,
             segmentsOmittedByBudget: model.rideMapHistorySegmentsOmittedByBudget,
@@ -193,6 +199,7 @@ struct RideMapRouteView: View {
                 endpointMetadata: model.rideMapHistoryDetailEndpointMetadata,
                 segments: model.rideMapHistoryDetailSegments,
                 projectionVersion: model.rideMapHistoryDetailProjectionVersion,
+                cameraFitVersion: model.rideMapHistoryDetailCameraFitVersion,
                 pointsTruncated: model.rideMapHistoryDetailPointsTruncated,
                 segmentsOmittedByBudget: model.rideMapHistoryDetailSegmentsOmittedByBudget,
                 canonicalBackgroundGapCount: model.rideMapHistoryDetailBackgroundGapCount,

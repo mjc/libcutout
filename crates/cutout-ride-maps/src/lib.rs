@@ -14,8 +14,8 @@ mod lifecycle;
 pub use lifecycle::{RideEvent, RideLifecycleState, TransitionError, ValidatedRideTransition};
 mod location;
 pub use location::{
-    LocationAdmission, LocationSample, LocationSource, MonotonicMilliseconds,
-    WallClockUnixMilliseconds,
+    AdmittedLocationSample, LocationAdmission, LocationSample, LocationSource,
+    MonotonicMilliseconds, WallClockUnixMilliseconds,
 };
 mod summary;
 pub use summary::{
@@ -36,8 +36,8 @@ pub use projection::{
     RouteEndpointMetadata, RoutePrivacyClass, RoutePrivacyGridE7, RoutePrivacyPolicy,
     RouteProjectionAccumulator, RouteProjectionError, RouteSegmentDisplayMetadata, RouteViewport,
     count_segment_runs, project_route_points, project_route_points_cancellable,
-    project_route_points_from_iter, route_camera_region, route_endpoint_metadata,
-    route_segment_display_metadata,
+    project_route_points_from_iter, route_camera_region, route_camera_region_with_privacy,
+    route_endpoint_metadata, route_segment_display_metadata,
 };
 
 #[cfg(test)]

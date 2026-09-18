@@ -49,6 +49,7 @@ struct RideMapHistoryDetailView: View {
     let endpointMetadata: MobileRideMapRouteEndpointMetadata
     let segments: [MobileRideMapSegmentDisplayMetadata]
     let projectionVersion: UInt64
+    var cameraFitVersion: UInt64 = 0
     let pointsTruncated: Bool
     let segmentsOmittedByBudget: Bool
     let canonicalBackgroundGapCount: UInt64
@@ -144,8 +145,8 @@ struct RideMapHistoryDetailView: View {
         return selectedHistoryID != initialHistoryID
     }
 
-    static func routeID(for historyID: String?) -> String {
-        historyID ?? "history-detail"
+    static func routeID(for historyID: String?, cameraFitVersion: UInt64 = 0) -> String {
+        "\(historyID ?? "history-detail"):fit-\(cameraFitVersion)"
     }
 
     @MainActor
@@ -163,7 +164,10 @@ struct RideMapHistoryDetailView: View {
                         if projectionRideID == activeHistoryID {
                             RideMapHistoryDetailMap(
                                 points: displayPoints,
-                                routeID: Self.routeID(for: activeHistoryID),
+                                routeID: Self.routeID(
+                                    for: activeHistoryID,
+                                    cameraFitVersion: cameraFitVersion
+                                ),
                                 projectionVersion: projectionVersion,
                                 endpointMetadata: endpointMetadata,
                                 cameraRegion: cameraRegion,

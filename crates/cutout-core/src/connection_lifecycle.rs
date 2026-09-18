@@ -1,6 +1,7 @@
 //! Attempt identity and terminal detection state shared by mobile transports.
 
 use crate::MonotonicTimestamp;
+use std::marker::PhantomData;
 
 /// Identity of one connection attempt, including retries of the same device.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -9,6 +10,31 @@ pub struct ConnectionAttemptToken {
     generation: u64,
     /// Platform identifier selected for this attempt.
     platform_identifier: String,
+}
+
+/// Borrowed proof that an attempt is current, connected, and protocol-verified.
+///
+/// The proof is tied to the lifecycle borrow that produced it. Callers must obtain a new proof
+/// after any lifecycle mutation instead of carrying a Boolean verification result across a
+/// connection transition.
+#[derive(Debug)]
+pub struct VerifiedConnectionAttempt<'a> {
+    token: &'a ConnectionAttemptToken,
+    _lifecycle: PhantomData<&'a ConnectionAttemptLifecycle>,
+}
+
+impl VerifiedConnectionAttempt<'_> {
+    /// Returns the verified platform identity.
+    #[must_use]
+    pub fn platform_identifier(&self) -> &str {
+        self.token.platform_identifier()
+    }
+
+    /// Returns the connection generation captured by this proof.
+    #[must_use]
+    pub const fn generation(&self) -> u64 {
+        self.token.generation()
+    }
 }
 
 impl ConnectionAttemptToken {
@@ -112,9 +138,22 @@ impl ConnectionAttemptLifecycle {
     /// Atomically checks identity and permission to admit decoded ride telemetry.
     #[must_use]
     pub fn is_verified(&self, token: &ConnectionAttemptToken) -> bool {
-        self.is_current(token)
+        self.verified_attempt(token).is_some()
+    }
+
+    /// Borrows the current attempt only while it is connected and protocol-verified.
+    #[must_use]
+    pub fn verified_attempt<'a>(
+        &'a self,
+        token: &'a ConnectionAttemptToken,
+    ) -> Option<VerifiedConnectionAttempt<'a>> {
+        (self.is_current(token)
             && self.snapshot.readiness == ConnectionReadiness::Verified
-            && self.snapshot.transport == ConnectionTransportState::Connected
+            && self.snapshot.transport == ConnectionTransportState::Connected)
+            .then_some(VerifiedConnectionAttempt {
+                token,
+                _lifecycle: PhantomData,
+            })
     }
 
     /// Completes pending identification exactly once.
@@ -271,6 +310,25 @@ mod tests {
             lifecycle.snapshot().readiness,
             ConnectionReadiness::Disconnected
         );
+    }
+
+    #[test]
+    fn verified_attempt_guard_exposes_only_current_connected_identity() {
+        let mut lifecycle = ConnectionAttemptLifecycle::default();
+        let token = lifecycle.begin("A".into(), MonotonicTimestamp::new(100));
+
+        assert!(lifecycle.verified_attempt(&token).is_none());
+        assert!(lifecycle.connected(&token));
+        assert!(lifecycle.finish_detection(&token, true));
+
+        let verified = lifecycle
+            .verified_attempt(&token)
+            .expect("connected verified attempt");
+        assert_eq!(verified.platform_identifier(), "A");
+        assert_eq!(verified.generation(), token.generation());
+
+        lifecycle.disconnect();
+        assert!(lifecycle.verified_attempt(&token).is_none());
     }
 
     #[test]

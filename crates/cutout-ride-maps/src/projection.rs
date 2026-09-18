@@ -93,6 +93,18 @@ pub fn route_camera_region(
     })
 }
 
+/// Computes a camera region from the complete canonical coordinate set after applying privacy.
+///
+/// This is intentionally separate from bounded display projection: a display budget may omit
+/// the coordinate that establishes one of the route extrema.
+#[must_use]
+pub fn route_camera_region_with_privacy(
+    points: impl IntoIterator<Item = Coordinate>,
+    privacy: RoutePrivacyPolicy,
+) -> Option<RouteCameraRegion> {
+    route_camera_region(points.into_iter().map(|point| privacy.project(point).0))
+}
+
 // Camera spans are bounded by the valid WGS84 domain and a small display pad, so every value is
 // below 2^53 and this conversion is exact despite the integer type being wider than f64's mantissa.
 #[allow(clippy::cast_precision_loss)]

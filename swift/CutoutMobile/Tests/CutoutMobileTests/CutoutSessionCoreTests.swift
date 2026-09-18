@@ -162,7 +162,7 @@ final class CutoutSessionCoreTests: XCTestCase {
             _ = try? state.stop(atMs: 200)
             _ = try? state.discard()
         }
-        _ = try state.startGpsOnly(atMs: 100, lastConnectedVehicle: nil)
+        _ = try state.startGpsOnly(atMs: 100)
         let decision = try state.ingestLocation(
             monotonicMs: 100,
             wallClockUnixMs: 1_700_000_000_100,
@@ -171,7 +171,7 @@ final class CutoutSessionCoreTests: XCTestCase {
             horizontalAccuracyMeters: 4
         )
 
-        guard case let .pending(point, segmentStarted) = decision else {
+        guard case let .pending(point) = decision else {
             return XCTFail("database-backed ingestion should return pending, got \(decision)")
         }
 
@@ -187,11 +187,10 @@ final class CutoutSessionCoreTests: XCTestCase {
         }
 
 
-        guard case let .accepted(acceptedPoint, acceptedSegmentStarted) = accepted else {
+        guard case let .accepted(acceptedPoint) = accepted else {
             return XCTFail("pending location did not produce a durable acceptance")
         }
         XCTAssertEqual(acceptedPoint, point)
-        XCTAssertEqual(acceptedSegmentStarted, segmentStarted)
     }
 
 
@@ -511,9 +510,15 @@ final class CutoutSessionCoreTests: XCTestCase {
         XCTAssertNil(core.displayState.speed.millimetersPerSecond)
     }
 
-    func testScriptedLiveConnectionStartsRideMapAndPublishesSnapshot() {
+    func testScriptedLiveConnectionStartsRideMapAndPublishesSnapshot() throws {
         let live = expectation(description: "scripted session reaches live")
         let rideStarted = expectation(description: "ride-map recording starts")
+        let suiteName = "CutoutSessionCoreTests.rideMapAutoStart.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let database = try XCTUnwrap(MobileRideMapState.debugDatabase)
+        let selectedDeviceStore = DevicePickerSelectionStore(database: database, defaults: defaults)
+        selectedDeviceStore.save(platformIdentifier: scriptedVescCandidate.platformIdentifier)
         let core = CutoutSessionCore(
             testScript: CutoutSessionTestScript(
                 candidate: scriptedVescCandidate,
@@ -525,7 +530,8 @@ final class CutoutSessionCoreTests: XCTestCase {
                 startsLive: true,
                 connectionDelayMilliseconds: 0
             ),
-            rideMapState: MobileRideMapState()
+            rideMapState: MobileRideMapState(),
+            selectedDeviceStore: selectedDeviceStore
         )
         core.onPhaseChange = { phase in
             if phase == .live { live.fulfill() }
@@ -540,10 +546,16 @@ final class CutoutSessionCoreTests: XCTestCase {
         XCTAssertEqual(core.rideMapStateHandle?.currentSnapshot()?.state, .active)
     }
 
-    func testProductionLocationPathPublishesAcceptedRideMapPoint() {
+    func testProductionLocationPathPublishesAcceptedRideMapPoint() throws {
         let live = expectation(description: "scripted session reaches live")
         let recording = expectation(description: "durable recording accepts locations")
         let pointAccepted = expectation(description: "ride-map point is accepted")
+        let suiteName = "CutoutSessionCoreTests.rideMapLocation.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let database = try XCTUnwrap(MobileRideMapState.debugDatabase)
+        let selectedDeviceStore = DevicePickerSelectionStore(database: database, defaults: defaults)
+        selectedDeviceStore.save(platformIdentifier: scriptedVescCandidate.platformIdentifier)
         let core = CutoutSessionCore(
             testScript: CutoutSessionTestScript(
                 candidate: scriptedVescCandidate,
@@ -555,7 +567,8 @@ final class CutoutSessionCoreTests: XCTestCase {
                 startsLive: true,
                 connectionDelayMilliseconds: 0
             ),
-            rideMapState: MobileRideMapState()
+            rideMapState: MobileRideMapState(),
+            selectedDeviceStore: selectedDeviceStore
         )
         core.onPhaseChange = { phase in
             if phase == .live { live.fulfill() }

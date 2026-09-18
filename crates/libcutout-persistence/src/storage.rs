@@ -10,7 +10,7 @@ use cutout_ride_maps::{
     RouteDisplayBudget, RouteDisplayPoint, RouteEndpointMetadata, RoutePrivacyPolicy,
     RouteProjectionAccumulator, RouteSegmentDisplayMetadata, RouteTelemetryState, RouteViewport,
     TransitionError, VehicleIdentity, WallClockUnixMilliseconds, count_segment_runs,
-    route_camera_region, route_segment_display_metadata,
+    route_camera_region, route_camera_region_with_privacy, route_segment_display_metadata,
 };
 use hex::encode as hex_encode;
 use rusqlite::{Connection, ErrorCode, OptionalExtension, params};
@@ -1079,6 +1079,18 @@ impl RideSessionMarkerKey {
     }
 }
 
+/// Stable key for the one last-connected-device row.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct LastConnectedDeviceKey(Uuid);
+
+impl LastConnectedDeviceKey {
+    pub(crate) const VALUE: Self = Self(Uuid::from_u128(3));
+
+    pub(crate) fn blob(self) -> Vec<u8> {
+        self.0.as_bytes().to_vec()
+    }
+}
+
 /// Validated `SQLite` row identifier used only to connect a spatial table to its R*Tree row.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct SpatialRowId(i64);
@@ -1478,6 +1490,7 @@ pub struct LocationWriteResult {
 pub struct RoutePointProjection {
     points: Vec<RouteDisplayPoint>,
     camera_region: Option<RouteCameraRegion>,
+    canonical_camera_region: Option<RouteCameraRegion>,
     source_point_count: u64,
     source_segment_count: u64,
     candidate_point_count: u64,
@@ -1512,6 +1525,12 @@ impl RoutePointProjection {
     #[must_use]
     pub const fn camera_region(&self) -> Option<RouteCameraRegion> {
         self.camera_region
+    }
+
+    /// Returns the camera region for all canonical route points after privacy projection.
+    #[must_use]
+    pub const fn canonical_camera_region(&self) -> Option<RouteCameraRegion> {
+        self.canonical_camera_region
     }
 
     /// Returns the complete durable point count before LOD or viewport filtering.
@@ -2170,6 +2189,47 @@ impl RideDatabase {
     /// Returns [`StorageError`] when the worker cannot commit the deletion.
     pub fn clear_selected_device(&self) -> Result<(), StorageError> {
         self.request(|reply| Command::ClearSelectedDevice { reply })
+    }
+
+    /// Stores the last verified platform-local device identity independently of user selection.
+    ///
+    /// This record is Rust-owned connection history. It is deliberately not changed by clearing
+    /// the user's selected device, because a later explicit GPS-only start may still use the
+    /// last verified connection as an association candidate.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StorageError`] when the identity is empty or the worker cannot commit it.
+    pub fn remember_last_connected_device(
+        &self,
+        platform_identifier: &str,
+        updated_at_ms: u64,
+    ) -> Result<(), StorageError> {
+        let platform_identifier =
+            normalize_stored_text(platform_identifier, "platform identifier")?;
+        self.request(move |reply| Command::RememberLastConnectedDevice {
+            platform_identifier,
+            updated_at_ms,
+            reply,
+        })
+    }
+
+    /// Loads the last verified platform-local device identity.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StorageError`] when the worker cannot query the value.
+    pub fn last_connected_device(&self) -> Result<Option<String>, StorageError> {
+        self.request(|reply| Command::LastConnectedDevice { reply })
+    }
+
+    /// Clears the Rust-owned last-connected-device record.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StorageError`] when the worker cannot commit the deletion.
+    pub fn clear_last_connected_device(&self) -> Result<(), StorageError> {
+        self.request(|reply| Command::ClearLastConnectedDevice { reply })
     }
 
     /// Stores the opt-in music-history policy for one ride.
@@ -3440,6 +3500,17 @@ enum Command {
         reply: Reply<Option<String>>,
     },
     ClearSelectedDevice {
+        reply: Reply<()>,
+    },
+    RememberLastConnectedDevice {
+        platform_identifier: String,
+        updated_at_ms: u64,
+        reply: Reply<()>,
+    },
+    LastConnectedDevice {
+        reply: Reply<Option<String>>,
+    },
+    ClearLastConnectedDevice {
         reply: Reply<()>,
     },
     RecordMusicEvent {
@@ -5195,6 +5266,44 @@ fn selected_device(connection: &Connection) -> Result<Option<String>, StorageErr
         )
         .optional()
         .map_err(StorageError::from)
+}
+
+fn remember_last_connected_device(
+    connection: &Connection,
+    platform_identifier: &str,
+    updated_at_ms: u64,
+) -> Result<(), StorageError> {
+    connection.execute(
+        "INSERT INTO last_connected_device (singleton_key, platform_identifier, updated_at_ms)
+         VALUES (?1, ?2, ?3)
+         ON CONFLICT(singleton_key) DO UPDATE SET platform_identifier = excluded.platform_identifier,
+             updated_at_ms = excluded.updated_at_ms",
+        params![
+            LastConnectedDeviceKey::VALUE.blob(),
+            platform_identifier,
+            updated_at_ms
+        ],
+    )?;
+    Ok(())
+}
+
+fn last_connected_device(connection: &Connection) -> Result<Option<String>, StorageError> {
+    connection
+        .query_row(
+            "SELECT platform_identifier FROM last_connected_device WHERE singleton_key = ?1",
+            [LastConnectedDeviceKey::VALUE.blob()],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(StorageError::from)
+}
+
+fn clear_last_connected_device(connection: &Connection) -> Result<(), StorageError> {
+    connection.execute(
+        "DELETE FROM last_connected_device WHERE singleton_key = ?1",
+        [LastConnectedDeviceKey::VALUE.blob()],
+    )?;
+    Ok(())
 }
 
 /// Durable music retention state, separate from whether any events exist.
@@ -6997,6 +7106,12 @@ fn project_route_points(
         return Ok(RoutePointProjection {
             points: Vec::new(),
             camera_region: None,
+            canonical_camera_region: canonical_route_camera_region(
+                connection,
+                &ride_id,
+                privacy,
+                cancellation,
+            )?,
             source_point_count: counts.source_point_count,
             source_segment_count: counts.source_segment_count,
             candidate_point_count: counts.candidate_point_count,
@@ -7020,6 +7135,12 @@ fn project_route_points(
     Ok(RoutePointProjection {
         points: projected.points,
         camera_region: projected.camera_region,
+        canonical_camera_region: canonical_route_camera_region(
+            connection,
+            &ride_id,
+            privacy,
+            cancellation,
+        )?,
         source_point_count: counts.source_point_count,
         source_segment_count: counts.source_segment_count,
         candidate_point_count: counts.candidate_point_count,
@@ -7029,6 +7150,37 @@ fn project_route_points(
         endpoint_metadata,
         segments: projected.segments,
     })
+}
+
+fn canonical_route_camera_region(
+    connection: &Connection,
+    ride_id: &str,
+    privacy: RoutePrivacyPolicy,
+    cancellation: Option<&RouteProjectionCancellation>,
+) -> Result<Option<RouteCameraRegion>, StorageError> {
+    projection_checkpoint(cancellation)?;
+    let mut statement = projection_sqlite(
+        connection.prepare(
+            "SELECT latitude_e7, longitude_e7
+             FROM ride_points WHERE ride_id = ?1 ORDER BY sequence ASC",
+        ),
+        cancellation,
+    )?;
+    let mut rows = projection_sqlite(statement.query([ride_id]), cancellation)?;
+    let mut coordinates = Vec::new();
+    while let Some(row) = projection_sqlite(rows.next(), cancellation)? {
+        projection_checkpoint(cancellation)?;
+        let coordinate =
+            Coordinate::from_fixed_parts(row.get(0)?, row.get(1)?).map_err(|error| {
+                rusqlite::Error::FromSqlConversionFailure(
+                    0,
+                    rusqlite::types::Type::Integer,
+                    Box::new(error),
+                )
+            })?;
+        coordinates.push(coordinate);
+    }
+    Ok(route_camera_region_with_privacy(coordinates, privacy))
 }
 
 fn project_route_candidates(

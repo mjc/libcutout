@@ -21,6 +21,17 @@ struct MusicHistoryQueryResult: Equatable, Sendable {
     let error: MobileRideMapError?
 }
 
+private struct RideMapHistoryDetailLoadRequest: Sendable {
+    let rideID: String
+    let generation: UInt64
+}
+
+private struct RideMapHistoryDetailViewportRequest: Sendable {
+    let rideID: String
+    let projectionRideID: String
+    let generation: UInt64
+}
+
 @MainActor
 @Observable
 final class CutoutAppModel {
@@ -102,6 +113,8 @@ final class CutoutAppModel {
     private(set) var rideMapHistoryDetailEndpointMetadata = MobileRideMapRouteEndpointMetadata.empty
     private(set) var rideMapHistoryDetailSegments = [MobileRideMapSegmentDisplayMetadata]()
     private(set) var rideMapHistoryDetailBackgroundGapCount: UInt64 = 0
+    private(set) var rideMapHistoryDetailCameraFitVersion: UInt64 = 0
+    private(set) var rideMapHistoryCameraFitVersion: UInt64 = 0
     private(set) var rideMapHistoryDetailPointsTruncated = false
     private(set) var rideMapHistoryDetailSourcePointsOmittedByBudget = false
     private(set) var rideMapHistoryDetailSourceSegmentsOmittedByBudget = false
@@ -291,6 +304,7 @@ final class CutoutAppModel {
     private var rideMapVehicleNameCache = [String: String]()
     private var rideMapHistoryLoadTask: Task<Void, Never>?
     private var rideMapHistoryPageTask: Task<Void, Never>?
+    private var rideMapHistoryQueryGeneration: UInt64 = 0
     private var rideMapHistorySelectionTask: Task<Void, Never>?
     private var rideMapHistoryDetailLoadGeneration: UInt64 = 0
     private var rideMapHistorySelectionCancellation: MobileRideMapProjectionCancellation?
@@ -444,8 +458,14 @@ final class CutoutAppModel {
             self.rideMapLiveTelemetryState = snapshot.telemetryState
             self.updateRideMapDurationTicker()
         }
-        self.core.onRideMapErrorChange = { [weak self] error in
-            self?.rideMapLiveError = error
+        self.core.onRideMapErrorChange = { [weak self] event in
+            guard let self,
+                  Self.shouldApplyRideMapError(
+                      context: event.context,
+                      currentSnapshot: self.rideMapSnapshot
+                  )
+            else { return }
+            self.rideMapLiveError = event.error
         }
         self.core.onRideMapAvailabilityChange = { [weak self] availability in
             self?.rideMapAvailability = availability
@@ -1077,14 +1097,11 @@ final class CutoutAppModel {
 
     @discardableResult
     func startGpsOnlyRide() -> Bool {
-        core.resetRideMapLocationAdmission()
         let started = applyRideMapCommand(resetPoints: true) {
-            try core.startRideMapGpsOnly(
-                atMs: currentMonotonicTime.rawValue,
-                lastConnectedVehicle: selectedDeviceStore.platformIdentifier
-            )
+            try core.startRideMapGpsOnly(atMs: currentMonotonicTime.rawValue)
         }
         guard started else { return false }
+        core.resetRideMapLocationAdmission()
         // Apply the user's default to the fresh Rust-owned ride timeline.
         core.updateMusicCaptureObservation(nil)
         let defaultPolicy = musicHistoryPolicyStore.policy
@@ -1234,6 +1251,8 @@ final class CutoutAppModel {
     func loadRideMapHistory(selecting requestedRideID: String? = nil) {
         rideMapHistoryLoadTask?.cancel()
         rideMapHistoryPageTask?.cancel()
+        rideMapHistoryQueryGeneration &+= 1
+        let queryGeneration = rideMapHistoryQueryGeneration
         // A reload changes the query that owns the selected route. Do not let an
         // older route request repopulate points after the new page arrives.
         invalidateRideMapHistoryProjectionWork()
@@ -1261,7 +1280,6 @@ final class CutoutAppModel {
             return
         }
         let filter = rideMapHistoryFilter
-        let existingSelectedID = selectedRideMapHistoryID
         rideMapHistoryLoadTask = Task { [weak self] in
             do {
                 let result = try await Self.runCancellableDetached(priority: .userInitiated) {
@@ -1283,7 +1301,13 @@ final class CutoutAppModel {
                     }
                     return (summaries, page.nextCursor, vehicleOptions)
                 }
-                guard !Task.isCancelled, let self else { return }
+                guard let self,
+                      Self.shouldApplyHistoryQuery(
+                          generation: queryGeneration,
+                          currentGeneration: self.rideMapHistoryQueryGeneration,
+                          isCancelled: Task.isCancelled
+                      )
+                else { return }
                 self.rideMapHistoryLoadTask = nil
                 self.rideMapHistoryLoading = false
                 self.rideMapHistory = result.0
@@ -1308,7 +1332,9 @@ final class CutoutAppModel {
                 )
                 let selectedID = Self.preferredHistorySelection(
                     requestedID: requestedRideID,
-                    currentID: existingSelectedID,
+                    // Selection is mutable while the query is off-main. Read it only after
+                    // the result is admitted so a user selection made during the reload wins.
+                    currentID: self.selectedRideMapHistoryID,
                     summaries: result.0
                 )
                 guard let selectedID else {
@@ -1322,11 +1348,18 @@ final class CutoutAppModel {
                 }
                 self.selectRideMapHistory(selectedID)
             } catch {
-                guard !Task.isCancelled, let self else { return }
+                guard let self,
+                      Self.shouldApplyHistoryQuery(
+                          generation: queryGeneration,
+                          currentGeneration: self.rideMapHistoryQueryGeneration,
+                          isCancelled: Task.isCancelled
+                      )
+                else { return }
                 self.rideMapHistoryLoadTask = nil
-                // Preserve the last good page so a transient storage failure does not
-                // turn an otherwise usable history screen into an empty state, but never
-                // present its selected route as current after the load that owns it fails.
+                // Preserve the last good page and selected route so a transient storage failure does
+                // not turn an otherwise usable history screen into an empty state. The error remains
+                // visible while the retained projection and identity keep the map and Retry action
+                // usable; explicit source invalidation clears the projection separately.
                 self.applyRideMapHistoryLoadFailure(Self.mapRideMapError(error))
             }
         }
@@ -1336,7 +1369,6 @@ final class CutoutAppModel {
         invalidateRideMapHistoryProjectionWork()
         rideMapHistoryLoading = false
         rideMapHistoryError = error
-        clearRideMapHistoryRouteProjection()
         rideMapHistoryRouteLoading = false
         rideMapHistoryRouteError = error
         rideMapHistoryDetailRouteLoading = false
@@ -1448,6 +1480,8 @@ final class CutoutAppModel {
               rideMapHistoryLoading == false
         else { return }
         rideMapHistoryPageTask?.cancel()
+        rideMapHistoryQueryGeneration &+= 1
+        let queryGeneration = rideMapHistoryQueryGeneration
         guard let state = core.rideMapStateHandle else { return }
         let cursor = rideMapHistoryCursor
         let filter = rideMapHistoryFilter
@@ -1460,7 +1494,14 @@ final class CutoutAppModel {
                         filter: filter
                     )
                 }
-                guard !Task.isCancelled, let self else { return }
+                guard let self,
+                      Self.shouldApplyHistoryQuery(
+                          generation: queryGeneration,
+                          currentGeneration: self.rideMapHistoryQueryGeneration,
+                          isCancelled: Task.isCancelled
+                      )
+                else { return }
+                self.rideMapHistoryPageTask = nil
                 self.rideMapHistory = Self.appendingUniqueHistory(
                     existing: self.rideMapHistory,
                     incoming: page.summaries,
@@ -1482,7 +1523,14 @@ final class CutoutAppModel {
                 self.rideMapHistoryCanLoadMore = page.nextCursor != nil
                 self.rideMapHistoryError = nil
             } catch {
-                guard !Task.isCancelled, let self else { return }
+                guard let self,
+                      Self.shouldApplyHistoryQuery(
+                          generation: queryGeneration,
+                          currentGeneration: self.rideMapHistoryQueryGeneration,
+                          isCancelled: Task.isCancelled
+                      )
+                else { return }
+                self.rideMapHistoryPageTask = nil
                 self.rideMapHistoryError = Self.mapRideMapError(error)
             }
         }
@@ -1617,6 +1665,14 @@ final class CutoutAppModel {
         !isCancelled && loadGeneration == currentGeneration && selectedRideID == rideID
     }
 
+    static func shouldApplyHistoryQuery(
+        generation: UInt64,
+        currentGeneration: UInt64,
+        isCancelled: Bool
+    ) -> Bool {
+        !isCancelled && generation == currentGeneration
+    }
+
     static func shouldApplyHistoryDetailViewport(
         rideID: String,
         selectedRideID: String?,
@@ -1633,6 +1689,28 @@ final class CutoutAppModel {
             && currentProjectionRideID == expectedProjectionRideID
     }
 
+    private func admits(_ request: RideMapHistoryDetailLoadRequest, isCancelled: Bool) -> Bool {
+        Self.shouldApplyHistoryDetailLoad(
+            rideID: request.rideID,
+            selectedRideID: selectedRideMapHistoryID,
+            loadGeneration: request.generation,
+            currentGeneration: rideMapHistoryDetailLoadGeneration,
+            isCancelled: isCancelled
+        )
+    }
+
+    private func admits(_ request: RideMapHistoryDetailViewportRequest, isCancelled: Bool) -> Bool {
+        Self.shouldApplyHistoryDetailViewport(
+            rideID: request.rideID,
+            selectedRideID: selectedRideMapHistoryID,
+            expectedProjectionRideID: request.projectionRideID,
+            currentProjectionRideID: rideMapHistoryDetailProjectionRideID,
+            loadGeneration: request.generation,
+            currentGeneration: rideMapHistoryDetailLoadGeneration,
+            isCancelled: isCancelled
+        )
+    }
+
     func projectRideMapHistoryDetailViewport(_ viewport: MobileGeoBoundsDto?) {
         guard let selectedRideMapHistoryID,
               rideMapHistory.contains(where: { $0.rideID == selectedRideMapHistoryID }),
@@ -1641,7 +1719,11 @@ final class CutoutAppModel {
         else {
             return
         }
-        let detailLoadGeneration = rideMapHistoryDetailLoadGeneration
+        let request = RideMapHistoryDetailViewportRequest(
+            rideID: selectedRideMapHistoryID,
+            projectionRideID: projectionRideID,
+            generation: rideMapHistoryDetailLoadGeneration
+        )
         rideMapHistoryViewportCancellation?.cancel()
         rideMapHistoryViewportTask?.cancel()
         rideMapHistoryDetailRouteError = nil
@@ -1668,7 +1750,7 @@ final class CutoutAppModel {
                 let result = try await withTaskCancellationHandler(operation: {
                     try await Self.runCancellableDetached(priority: .userInitiated) {
                         try state.projectStoredPoints(
-                            rideID: selectedRideMapHistoryID,
+                            rideID: request.rideID,
                             budget: budget,
                             viewport: viewport,
                             cancellation: cancellation
@@ -1677,20 +1759,11 @@ final class CutoutAppModel {
                 }, onCancel: {
                     cancellation.cancel()
                 })
-                guard let self,
-                      Self.shouldApplyHistoryDetailViewport(
-                          rideID: selectedRideMapHistoryID,
-                          selectedRideID: self.selectedRideMapHistoryID,
-                          expectedProjectionRideID: projectionRideID,
-                          currentProjectionRideID: self.rideMapHistoryDetailProjectionRideID,
-                          loadGeneration: detailLoadGeneration,
-                          currentGeneration: self.rideMapHistoryDetailLoadGeneration,
-                          isCancelled: Task.isCancelled
-                      )
+                guard let self, self.admits(request, isCancelled: Task.isCancelled)
                 else { return }
                 self.replaceRideMapHistoryDetailDisplayPoints(
                     result.points,
-                    cameraRegion: result.cameraRegion,
+                    cameraRegion: result.canonicalCameraRegion ?? result.cameraRegion,
                     endpointMetadata: result.endpointMetadata,
                     segments: result.segments,
                     backgroundGapCount: result.backgroundGapCount,
@@ -1707,7 +1780,8 @@ final class CutoutAppModel {
                 self.rideMapHistoryDetailRouteError = nil
                 self.rideMapHistoryDetailRouteLoading = false
             } catch {
-                guard !Task.isCancelled, let self else { return }
+                guard let self, self.admits(request, isCancelled: Task.isCancelled)
+                else { return }
                 let mappedError = Self.mapRideMapError(error)
                 if mappedError == .cancelled {
                     return
@@ -1736,7 +1810,10 @@ final class CutoutAppModel {
             return
         }
         invalidateRideMapHistoryProjectionWork()
-        let detailLoadGeneration = rideMapHistoryDetailLoadGeneration
+        let request = RideMapHistoryDetailLoadRequest(
+            rideID: rideID,
+            generation: rideMapHistoryDetailLoadGeneration
+        )
         rideMapHistoryContextTask?.cancel()
         rideMapHistoryContextTask = nil
         rideMapHistoryContextProjection = nil
@@ -1775,13 +1852,13 @@ final class CutoutAppModel {
                 let result = try await withTaskCancellationHandler(operation: {
                     try await Self.runCancellableDetached(priority: .userInitiated) {
                         let projection = try state.projectStoredPoints(
-                            rideID: rideID,
+                            rideID: request.rideID,
                             budget: budget,
                             cancellation: cancellation
                         )
                         let musicHistory: MusicHistoryQueryResult
                         do {
-                            let storedHistory = try state.storedMusicHistory(rideID: rideID)
+                            let storedHistory = try state.storedMusicHistory(rideID: request.rideID)
                             musicHistory = MusicHistoryQueryResult(
                                 events: storedHistory.events,
                                 state: storedHistory.historyState,
@@ -1799,21 +1876,16 @@ final class CutoutAppModel {
                 }, onCancel: {
                     cancellation.cancel()
                 })
-                guard let self,
-                      Self.shouldApplyHistoryDetailLoad(
-                          rideID: rideID,
-                          selectedRideID: self.selectedRideMapHistoryID,
-                          loadGeneration: detailLoadGeneration,
-                          currentGeneration: self.rideMapHistoryDetailLoadGeneration,
-                          isCancelled: Task.isCancelled
-                      )
+                guard let self, self.admits(request, isCancelled: Task.isCancelled)
                 else { return }
                 let (projection, musicHistory) = result
+                self.rideMapHistoryCameraFitVersion &+= 1
+                self.rideMapHistoryDetailCameraFitVersion &+= 1
                 self.rideMapHistoryRouteError = nil
                 self.rideMapHistoryDetailRouteError = nil
                 self.replaceRideMapHistoryDisplayPoints(
                     projection.points,
-                    cameraRegion: projection.cameraRegion,
+                    cameraRegion: projection.canonicalCameraRegion ?? projection.cameraRegion,
                     endpointMetadata: projection.endpointMetadata,
                     segments: projection.segments,
                     backgroundGapCount: projection.backgroundGapCount,
@@ -1826,11 +1898,11 @@ final class CutoutAppModel {
                 self.rideMapHistoryDetailMusicTimelineUnavailable = musicHistory.error != nil
                 self.rideMapHistoryDetailMusicState = musicHistory.state
                 self.rideMapHistoryDetailMusicError = musicHistory.error
-                self.rideMapHistoryDetailProjectionRideID = rideID
+                self.rideMapHistoryDetailProjectionRideID = request.rideID
                 self.rideMapHistoryDetailRoutePresence = projection.presence
                 self.replaceRideMapHistoryDetailDisplayPoints(
                     projection.points,
-                    cameraRegion: projection.cameraRegion,
+                    cameraRegion: projection.canonicalCameraRegion ?? projection.cameraRegion,
                     endpointMetadata: projection.endpointMetadata,
                     segments: projection.segments,
                     backgroundGapCount: projection.backgroundGapCount,
@@ -1843,7 +1915,8 @@ final class CutoutAppModel {
                 self.rideMapHistoryRouteLoading = false
                 self.rideMapHistoryDetailRouteLoading = false
             } catch {
-                guard !Task.isCancelled, let self else { return }
+                guard let self, self.admits(request, isCancelled: Task.isCancelled)
+                else { return }
                 self.rideMapHistoryRouteError = Self.mapRideMapError(error)
                 self.rideMapHistoryRouteLoading = false
                 self.rideMapHistoryDetailRouteError = self.rideMapHistoryRouteError
@@ -2000,6 +2073,16 @@ final class CutoutAppModel {
         !liveProjectionEnabled && restorationGeneration == currentGeneration
     }
 
+    static func shouldApplyRideMapError(
+        context: MobileRideMapErrorContext,
+        currentSnapshot: MobileRideMapSnapshotDto?
+    ) -> Bool {
+        guard let currentSnapshot else { return context.rideID == nil }
+        guard context.rideID == currentSnapshot.rideID else { return false }
+        guard let generation = context.generation else { return true }
+        return currentSnapshot.recordingToken?.generation == generation
+    }
+
     private func applyRideMapDecision(
         snapshot: MobileRideMapSnapshotDto,
         decision: MobileRideMapDecisionDto
@@ -2009,9 +2092,9 @@ final class CutoutAppModel {
         rideMapSnapshot = snapshot
         rideMapLastDecision = decision
         switch decision {
-        case let .pending(point, _):
+        case let .pending(point):
             rideMapLiveTelemetryState = point.telemetryState
-        case let .accepted(point, _):
+        case let .accepted(point):
             rideMapLiveTelemetryState = point.telemetryState
             requestLiveProjection()
         case .rejected, .ignored, .storageError:
@@ -2086,7 +2169,7 @@ final class CutoutAppModel {
     private func applyLiveProjection(_ projection: MobileRideMapRouteProjection) {
         rideMapLiveProjectionVersion &+= 1
         rideMapLiveDisplayPoints = projection.points
-        rideMapLiveCameraRegion = projection.cameraRegion
+        rideMapLiveCameraRegion = projection.canonicalCameraRegion ?? projection.cameraRegion
         rideMapLiveEndpointMetadata = projection.endpointMetadata
         rideMapLiveSegments = projection.segments
         rideMapLiveBackgroundGapCount = projection.backgroundGapCount

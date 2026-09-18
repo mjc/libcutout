@@ -31,11 +31,40 @@ public enum MobileRideMapError: Error, Equatable, Hashable, Sendable {
     case noActiveRide
     case invalidTransition
     case invalidLocation
+    case invalidVehicleIdentity
+    case staleConnection
     case invalidRouteProjection
     case invalidMusicInput(String)
     case rideNotFound
     case cancelled
     case storageError(String)
+}
+
+/// Rust-owned ride identity captured when an asynchronous map operation starts.
+public struct MobileRideMapErrorContext: Equatable, Hashable, Sendable {
+    public let rideID: String?
+    public let generation: UInt64?
+
+    public init(recordingToken: MobileRideMapRecordingTokenDto?) {
+        rideID = recordingToken?.rideId
+        generation = recordingToken?.generation
+    }
+
+    public init(snapshot: MobileRideMapSnapshotDto?) {
+        rideID = snapshot?.recordingToken?.rideId ?? snapshot?.rideID
+        generation = snapshot?.recordingToken?.generation
+    }
+}
+
+/// An asynchronous map error paired with the Rust identity that produced it.
+public struct MobileRideMapErrorEvent: Equatable, Hashable, Sendable {
+    public let context: MobileRideMapErrorContext
+    public let error: MobileRideMapError
+
+    public init(context: MobileRideMapErrorContext, error: MobileRideMapError) {
+        self.context = context
+        self.error = error
+    }
 }
 
 
@@ -371,6 +400,7 @@ public struct MobileRideMapRouteProjection: Equatable, Hashable, Sendable {
     public let canonicalStartVisible: Bool
     public let canonicalEndVisible: Bool
     public let cameraRegion: MobileRideMapCameraRegion?
+    public let canonicalCameraRegion: MobileRideMapCameraRegion?
     /// Rust-owned distinction between an empty ride and an empty viewport.
     public let presence: MobileRideMapRoutePresence
 
@@ -388,6 +418,7 @@ public struct MobileRideMapRouteProjection: Equatable, Hashable, Sendable {
         canonicalStartVisible: Bool = false,
         canonicalEndVisible: Bool = false,
         cameraRegion: MobileRideMapCameraRegion? = nil,
+        canonicalCameraRegion: MobileRideMapCameraRegion? = nil,
         presence: MobileRideMapRoutePresence
     ) {
         self.points = points
@@ -403,6 +434,7 @@ public struct MobileRideMapRouteProjection: Equatable, Hashable, Sendable {
         self.canonicalStartVisible = canonicalStartVisible
         self.canonicalEndVisible = canonicalEndVisible
         self.cameraRegion = cameraRegion
+        self.canonicalCameraRegion = canonicalCameraRegion
         self.presence = presence
     }
 
@@ -685,8 +717,8 @@ public enum MobileRideMapDecisionReason: Equatable, Hashable, Sendable {
 
 public enum MobileRideMapDecisionDto: Equatable, Hashable, Sendable {
     /// The point passed admission but is still awaiting durable SQLite confirmation.
-    case pending(point: MobileRideMapPointDto, segmentStarted: Bool)
-    case accepted(point: MobileRideMapPointDto, segmentStarted: Bool)
+    case pending(point: MobileRideMapPointDto)
+    case accepted(point: MobileRideMapPointDto)
     case rejected(reason: MobileRideMapDecisionReason)
     case ignored(reason: MobileRideMapDecisionReason)
     /// Durable persistence could not confirm this point. The point is not part of the durable ride.
@@ -777,21 +809,23 @@ public final class MobileRideMapState: @unchecked Sendable {
         core?.currentSnapshot(atMs: atMs).map(mapSnapshot)
     }
 
-    public func startGpsOnly(atMs: UInt64, lastConnectedVehicle: String?) throws -> MobileRideMapSnapshotDto {
+    public func startGpsOnly(atMs: UInt64) throws -> MobileRideMapSnapshotDto {
         try withCore {
-            mapSnapshot(try $0.startGpsOnly(atMs: atMs, lastConnectedVehicle: lastConnectedVehicle))
+            mapSnapshot(try $0.startGpsOnly(atMs: atMs))
         }
     }
 
-    public func ensureRecordingForVehicle(
-        platformIdentifier: String,
+    public func ensureRecordingForVerifiedConnection(
+        connectionState: CutoutSessionStateHandle,
+        token: ConnectionAttemptToken,
         atMs: UInt64
-    ) throws -> MobileRideMapSnapshotDto {
+    ) throws -> MobileRideMapSnapshotDto? {
         try withCore {
-            mapSnapshot(try $0.ensureRecordingForVehicle(
-                platformIdentifier: platformIdentifier,
+            try connectionState.ensureRideRecordingForVerifiedConnection(
+                rideMap: $0,
+                token: token,
                 atMs: atMs
-            ))
+            ).map(mapSnapshot)
         }
     }
 
@@ -813,12 +847,6 @@ public final class MobileRideMapState: @unchecked Sendable {
 
     public func discard() throws -> MobileRideMapSnapshotDto {
         try transition { try $0.discard() }
-    }
-
-    public func observeVehicleConnection(platformIdentifier: String, atMs: UInt64) throws -> MobileRideMapAssociationDto {
-        try withCore {
-            map(try $0.observeVehicleConnection(platformIdentifier: platformIdentifier, atMs: atMs))
-        }
     }
 
     public func observeTelemetry(atMs: UInt64) throws -> MobileRideMapTelemetryObservation {
@@ -1252,6 +1280,14 @@ public final class MobileRideMapState: @unchecked Sendable {
                     longitudeSpanDegrees: $0.longitudeSpanDegrees
                 )
             },
+            canonicalCameraRegion: projection.canonicalCameraRegion.map {
+                MobileRideMapCameraRegion(
+                    centerLatitudeDegrees: $0.centerLatitudeDegrees,
+                    centerLongitudeDegrees: $0.centerLongitudeDegrees,
+                    latitudeSpanDegrees: $0.latitudeSpanDegrees,
+                    longitudeSpanDegrees: $0.longitudeSpanDegrees
+                )
+            },
             presence: map(projection.routePresence)
         )
     }
@@ -1315,10 +1351,10 @@ public final class MobileRideMapState: @unchecked Sendable {
 
     private func map(_ decision: MobileRideMapCoreDecisionDto) -> MobileRideMapDecisionDto {
         switch decision {
-        case let .pending(point, segmentStarted):
-            return .pending(point: mapPoint(point), segmentStarted: segmentStarted)
-        case let .accepted(point, segmentStarted):
-            return .accepted(point: mapPoint(point), segmentStarted: segmentStarted)
+        case let .pending(point):
+            return .pending(point: mapPoint(point))
+        case let .accepted(point):
+            return .accepted(point: mapPoint(point))
         case let .rejected(reason):
             return .rejected(reason: map(reason))
         case let .ignored(reason):
@@ -1451,6 +1487,8 @@ public final class MobileRideMapState: @unchecked Sendable {
         case .NoActiveRide: return .noActiveRide
         case .InvalidTransition: return .invalidTransition
         case .InvalidLocation: return .invalidLocation
+        case .InvalidVehicleIdentity: return .invalidVehicleIdentity
+        case .StaleConnection: return .staleConnection
         case .InvalidRouteProjection: return .invalidRouteProjection
         case .Cancelled: return .cancelled
         case let .InvalidMusicInput(message): return .invalidMusicInput(message)
