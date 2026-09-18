@@ -113,13 +113,13 @@ use cutout_protocols::{
     ConcreteFalconBenignControlSession, ConcreteFalconProfileDto, ConcreteSessionErrorDto,
     ConcreteSessionStepResultDto, DeviceDetectionEvent, DeviceDetectionResolution, DeviceFamily,
     IdentityBannerEvidence, NOSFET_AERO_REGISTRY_ENTRY, NovatekCapabilityError,
-    NovatekCommandOutcome, NovatekConfiguration, NovatekConfigurationError, NovatekHttpOrigin,
-    NovatekMediaPathError, NovatekOriginError, NovatekProfileError, NovatekR3V1Profile,
-    NovatekR3V1Session, NovatekReadCommand, NovatekRecordingCommand, NovatekSessionError,
-    NovatekStillCaptureCommand, NovatekStoragePresence, PendingProbe, ProtocolFamilyClassification,
-    ProtocolFamilyState, ProtocolModelIdentityEvidence, RetinaH264FileSink, RetinaRtspError,
-    RetinaRtspPreviewSession, RetinaVideoClockRate, RetinaVideoConfiguration, RetinaVideoFrame,
-    StagedIdentityInput, StagedIdentityOutcome, VETERAN_FIELD_AUTO_SHUTDOWN_TIME_REMAINING_SECONDS,
+    NovatekCommandOutcome, NovatekConfigurationError, NovatekHttpOrigin, NovatekMediaPathError,
+    NovatekOriginError, NovatekProfileError, NovatekR3V1Session, NovatekReadCommand,
+    NovatekRecordingCommand, NovatekSessionError, NovatekStillCaptureCommand,
+    NovatekStoragePresence, PendingProbe, ProtocolFamilyClassification, ProtocolFamilyState,
+    ProtocolModelIdentityEvidence, RetinaH264FileSink, RetinaRtspError, RetinaRtspPreviewSession,
+    RetinaVideoClockRate, RetinaVideoConfiguration, RetinaVideoFrame, StagedIdentityInput,
+    StagedIdentityOutcome, VETERAN_FIELD_AUTO_SHUTDOWN_TIME_REMAINING_SECONDS,
     VETERAN_FIELD_CHARGE_MODE, VETERAN_FIELD_PEDALS_MODE, VETERAN_FIELD_SPEED_ALERT_DECI_KMH,
     VETERAN_FIELD_SPEED_TILTBACK_DECI_KMH, VescBatteryType as CoreVescBatteryType,
     VescBoardProfile as CoreVescBoardProfile, VescReadOnlySession as CoreVescReadOnlySession,
@@ -772,13 +772,6 @@ pub enum MobileNovatekRecordingCommandDto {
     Stop,
 }
 
-/// Explicit still-capture request exposed to a mobile client.
-#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Enum)]
-pub enum MobileNovatekStillCaptureCommandDto {
-    /// Request that the camera capture a still image.
-    Capture,
-}
-
 /// Outcome reported by a bounded Novatek command response.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Enum)]
 pub enum MobileNovatekCommandOutcomeDto {
@@ -788,12 +781,6 @@ pub enum MobileNovatekCommandOutcomeDto {
     Refused,
     /// The response did not provide a usable status.
     Unknown,
-}
-
-impl From<MobileNovatekStillCaptureCommandDto> for NovatekStillCaptureCommand {
-    fn from(_: MobileNovatekStillCaptureCommandDto) -> Self {
-        Self
-    }
 }
 
 impl From<MobileNovatekRecordingCommandDto> for NovatekRecordingCommand {
@@ -1135,64 +1122,6 @@ pub fn mobile_novatek_media_thumbnail_target(
                 MobileNovatekMediaPathError::InvalidPath
             }
         })
-}
-
-/// Returns the fixed target for an explicit onboard-recording request after
-/// proving the verified R3V1 firmware profile and `3014` capability evidence.
-///
-/// A successful HTTP request is not recording readback; callers must keep
-/// camera recording state unconfirmed until a camera status response arrives.
-///
-/// # Errors
-///
-/// Returns [`MobileNovatekProfileError`] when the firmware or advertised command capability is
-/// outside the verified R3V1 profile.
-#[uniffi::export]
-#[allow(clippy::needless_pass_by_value)]
-pub fn mobile_novatek_recording_command_target(
-    firmware_version: String,
-    configuration: Vec<MobileNovatekCommandStatusDto>,
-    command: MobileNovatekRecordingCommandDto,
-) -> Result<String, MobileNovatekProfileError> {
-    let profile = NovatekR3V1Profile::parse(&firmware_version)?;
-    let configuration = NovatekConfiguration::from_status_pairs(
-        configuration
-            .into_iter()
-            .map(|status| (status.command_id, status.status)),
-    )?;
-    let capability = profile.recording_capability(&configuration)?;
-    Ok(NovatekRecordingCommand::from(command)
-        .request_target_for_capability(&capability)
-        .to_owned())
-}
-
-/// Returns the fixed target for an explicit still-capture request after
-/// proving the verified R3V1 firmware profile and `3014` capability evidence.
-///
-/// A successful HTTP request is not camera acknowledgement or media readback;
-/// callers must wait for a later media-list response before presenting a file.
-///
-/// # Errors
-///
-/// Returns [`MobileNovatekProfileError`] when the firmware or advertised command capability is
-/// outside the verified R3V1 profile.
-#[uniffi::export]
-#[allow(clippy::needless_pass_by_value)]
-pub fn mobile_novatek_still_capture_command_target(
-    firmware_version: String,
-    configuration: Vec<MobileNovatekCommandStatusDto>,
-    command: MobileNovatekStillCaptureCommandDto,
-) -> Result<String, MobileNovatekProfileError> {
-    let profile = NovatekR3V1Profile::parse(&firmware_version)?;
-    let configuration = NovatekConfiguration::from_status_pairs(
-        configuration
-            .into_iter()
-            .map(|status| (status.command_id, status.status)),
-    )?;
-    let capability = profile.still_capture_capability(&configuration)?;
-    Ok(NovatekStillCaptureCommand::from(command)
-        .request_target_for_capability(&capability)
-        .to_owned())
 }
 
 /// Returns whether a firmware string is in the verified R3V1 R3 Pro family.
@@ -18952,71 +18881,6 @@ mod tests {
         assert_eq!(
             oversized.into_retina_frame(),
             Err(MobileCameraPreviewFileError::InvalidFrame)
-        );
-    }
-
-    #[test]
-    fn novatek_mutating_targets_require_the_verified_r3v1_profile() {
-        assert_eq!(
-            mobile_novatek_recording_command_target(
-                "R3V1.1_20240411".to_owned(),
-                vec![MobileNovatekCommandStatusDto {
-                    command_id: 2001,
-                    status: 0,
-                }],
-                MobileNovatekRecordingCommandDto::Start,
-            ),
-            Ok("/?custom=1&cmd=2001&str=1".to_owned())
-        );
-        assert_eq!(
-            mobile_novatek_still_capture_command_target(
-                "R4V2.0_20250101".to_owned(),
-                vec![MobileNovatekCommandStatusDto {
-                    command_id: 1001,
-                    status: 0,
-                }],
-                MobileNovatekStillCaptureCommandDto::Capture,
-            ),
-            Err(MobileNovatekProfileError::UnsupportedFirmware)
-        );
-        assert_eq!(
-            mobile_novatek_recording_command_target(
-                "R3V1.1_20240411".to_owned(),
-                Vec::new(),
-                MobileNovatekRecordingCommandDto::Start,
-            ),
-            Err(MobileNovatekProfileError::CapabilityNotAdvertised)
-        );
-        let oversized_configuration = (1..34)
-            .map(|command_id| MobileNovatekCommandStatusDto {
-                command_id,
-                status: 0,
-            })
-            .collect();
-        assert_eq!(
-            mobile_novatek_recording_command_target(
-                "R3V1.1_20240411".to_owned(),
-                oversized_configuration,
-                MobileNovatekRecordingCommandDto::Start,
-            ),
-            Err(MobileNovatekProfileError::ConfigurationTooLarge)
-        );
-        assert_eq!(
-            mobile_novatek_recording_command_target(
-                "R3V1.1_20240411".to_owned(),
-                vec![
-                    MobileNovatekCommandStatusDto {
-                        command_id: 2001,
-                        status: 0,
-                    },
-                    MobileNovatekCommandStatusDto {
-                        command_id: 2001,
-                        status: 7,
-                    },
-                ],
-                MobileNovatekRecordingCommandDto::Start,
-            ),
-            Err(MobileNovatekProfileError::ConfigurationMalformed)
         );
     }
 
