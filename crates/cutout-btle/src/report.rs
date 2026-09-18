@@ -83,6 +83,10 @@ impl SessionBridgeReport {
 }
 
 /// Timestamped semantic event emitted by the bridge.
+#[allow(
+    clippy::large_enum_variant,
+    reason = "bridge events preserve the owned read-only response without another allocation"
+)]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum SessionBridgeEvent {
     /// Link-down event emitted by the protocol session after transport disconnect.

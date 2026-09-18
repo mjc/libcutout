@@ -7698,6 +7698,10 @@ pub enum TransportAction {
 }
 
 /// Semantic event emitted by a protocol session.
+#[allow(
+    clippy::large_enum_variant,
+    reason = "semantic events preserve the owned read-only response without another allocation"
+)]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum DeviceEvent {
     /// Link-up event accepted by the session.
@@ -7737,6 +7741,10 @@ impl DeviceEvent {
 }
 
 /// Output emitted by a protocol session for the host to drain.
+#[allow(
+    clippy::large_enum_variant,
+    reason = "session outputs preserve the owned semantic event without another allocation"
+)]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum SessionOutput {
     /// Transport action to execute outside the protocol engine.

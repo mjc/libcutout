@@ -88,6 +88,7 @@ impl From<DeviceConnectionStep> for MobileDeviceSessionStepDto {
 }
 
 #[uniffi::export]
+#[allow(clippy::needless_pass_by_value)]
 impl CutoutSessionStateHandle {
     /// Observes bytes only for the attempt that owned the native callback.
     #[allow(

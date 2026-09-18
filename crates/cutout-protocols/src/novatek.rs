@@ -1704,10 +1704,10 @@ mod tests {
 
     #[test]
     fn media_list_rejects_duplicate_paths() {
-        let response = br#"<LIST>
+        let response = br"<LIST>
 <File><NAME>one.TS</NAME><FPATH>A:\Novatek\Movie\one.TS</FPATH><SIZE>1</SIZE><TIMECODE>1</TIMECODE><TIME>2025/01/01 00:00:00</TIME><ATTR>0</ATTR></File>
 <File><NAME>duplicate.TS</NAME><FPATH>A:\Novatek\Movie\one.TS</FPATH><SIZE>2</SIZE><TIMECODE>2</TIMECODE><TIME>2025/01/01 00:00:01</TIME><ATTR>0</ATTR></File>
-</LIST>"#;
+</LIST>";
 
         assert_eq!(
             parse_media_list_response(response),

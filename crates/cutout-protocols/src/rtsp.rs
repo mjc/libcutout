@@ -394,7 +394,10 @@ fn parse_length_prefixed_access_unit(data: &[u8]) -> Result<Vec<&[u8]>, &'static
         if nal_length == 0 || nal_length > data.len() - cursor {
             return Err("H.264 NAL length exceeds access unit");
         }
-        nals.push(&data[cursor..cursor + nal_length]);
+        let nal = data
+            .get(cursor..cursor + nal_length)
+            .ok_or("H.264 NAL range is invalid")?;
+        nals.push(nal);
         cursor += nal_length;
     }
     Ok(nals)
