@@ -116,6 +116,16 @@ final class CutoutSessionCoreTests: XCTestCase {
         XCTAssertEqual(core.phoneLocationSnapshot.latestSample?.longitudeDegrees, -104.9903)
     }
 
+    func testAuthorizationChangePublishesRideMapAvailabilityWithoutLocationDemand() {
+        let core = CutoutSessionCore()
+        var publications = 0
+        core.onRideMapAvailabilityChange = { _ in publications += 1 }
+
+        core.locationManagerDidChangeAuthorization(CLLocationManager())
+
+        XCTAssertEqual(publications, 1)
+    }
+
     private static func location(timestamp: Date, latitude: CLLocationDegrees) -> CLLocation {
         CLLocation(
             coordinate: CLLocationCoordinate2D(latitude: latitude, longitude: -104.9903),
